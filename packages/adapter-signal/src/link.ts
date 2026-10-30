@@ -26,8 +26,8 @@ export interface LinkOptions {
   deviceName: string;
   children: ChildRegistry;
   log: Logger;
-  /** A fresh URI to show as a QR code; `note` explains why a previous scan failed. */
-  onUri: (uri: string, note?: string) => void;
+  /** A fresh URI to show as a QR code until `refreshAt`; `note` explains why a previous scan failed. */
+  onUri: (uri: string, note: string | undefined, refreshAt: number) => void;
   /** The phone scanned the code; signal-cli is finishing the registration. */
   onScanned: () => void;
   /** Linked; `number` as printed by signal-cli. */
@@ -47,6 +47,8 @@ interface Attempt {
   proc: Subprocess;
   uri: string | null;
   scanned: boolean;
+  /** We stopped it on purpose (a newer code replaced it, or another attempt won). */
+  retired: boolean;
   lastErr: string;
 }
 
@@ -111,7 +113,7 @@ export class LinkFlow {
     const n = ++this.counter;
     const proc = Bun.spawn(this.o.argv(this.o.deviceName), { env: this.o.env, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
     this.o.children.add(proc);
-    const a: Attempt = { n, proc, uri: null, scanned: false, lastErr: '' };
+    const a: Attempt = { n, proc, uri: null, scanned: false, retired: false, lastErr: '' };
     this.attempts.add(a);
     let number: string | null = null;
     const out = readLines(proc.stdout as ReadableStream<Uint8Array>, (line) => {
@@ -136,17 +138,23 @@ export class LinkFlow {
     this.o.log('info', `link attempt #${a.n}: device link URI ready (${redactLinkUri(uri)})`);
     if (this.stopped || this.done) return;
     if ([...this.attempts].some((x) => x !== a && x.scanned)) {
-      void stopProcess(a.proc, 2000); // an older code is already being used
+      this.retire(a); // an older code is already being used
       return;
     }
+    const after = this.o.rotateAfterMs ?? 80_000;
     this.failures = 0;
     this.published = a;
-    this.o.onUri(uri, this.note);
+    this.o.onUri(uri, this.note, Date.now() + after);
     this.note = undefined;
     // Retire older attempts: their codes are about to expire anyway.
-    for (const x of this.attempts) if (x !== a && !x.scanned) void stopProcess(x.proc, 2000);
+    for (const x of this.attempts) if (x !== a && !x.scanned) this.retire(x);
     clearTimeout(this.rotateTimer);
-    this.rotateTimer = setTimeout(() => this.rotate(), this.o.rotateAfterMs ?? 80_000);
+    this.rotateTimer = setTimeout(() => this.rotate(), after);
+  }
+
+  private retire(a: Attempt) {
+    a.retired = true;
+    void stopProcess(a.proc, 2000);
   }
 
   private rotate() {
@@ -166,7 +174,7 @@ export class LinkFlow {
     a.scanned = true;
     this.o.log('info', `link attempt #${a.n}: the phone scanned the code, finishing the link`);
     clearTimeout(this.rotateTimer);
-    for (const x of this.attempts) if (x !== a) void stopProcess(x.proc, 2000);
+    for (const x of this.attempts) if (x !== a) this.retire(x);
     this.o.onScanned();
   }
 
@@ -176,7 +184,7 @@ export class LinkFlow {
     if (code === 0 && number) {
       this.done = true;
       clearTimeout(this.rotateTimer);
-      for (const x of this.attempts) void stopProcess(x.proc, 2000);
+      for (const x of this.attempts) this.retire(x);
       this.o.onLinked(number);
       return;
     }
@@ -189,6 +197,8 @@ export class LinkFlow {
       this.spawn();
       return;
     }
+    // A code that died before we replaced it: say why, so a failed scan is not silent.
+    if (a.uri && !a.retired) this.o.log(/timed out/i.test(why) ? 'info' : 'warn', `link attempt #${a.n} ended: ${why}`);
     if (this.paused) return;
     const newest = a.n === this.counter;
     if (!a.uri) {

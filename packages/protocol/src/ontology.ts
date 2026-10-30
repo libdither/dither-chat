@@ -56,6 +56,8 @@ export interface Attention {
   liveView?: boolean;
   /** A URI to render as a QR code (Signal device linking). */
   qr?: string;
+  /** When the adapter replaces `qr` with a fresh code (ms since epoch). */
+  qrRefreshAt?: number;
   detail?: unknown;
 }
 

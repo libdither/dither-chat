@@ -34,6 +34,7 @@ const st = newState();
 let selfUser: RawUser | undefined;
 let lastPage: PageState = 'loading';
 let lastFinders: Record<string, boolean> = {};
+let gotFinders = false;
 let snapshotReceived = false;
 
 let status: P.AccountStatus = 'connecting';
@@ -134,6 +135,7 @@ function handleBridge(msg: BridgeUp) {
       break;
     case 'finders':
       lastFinders = msg.results;
+      gotFinders = true;
       log('info', 'finder results', { results: msg.results, detail: msg.detail });
       evaluateHealth();
       break;
@@ -160,21 +162,27 @@ function onPageState(state: PageState) {
   if (state === 'captcha') setStatus('attention', { kind: 'captcha', message: 'A captcha is on screen. Open the live view to solve it.', liveView: true });
   else if (state === 'verify') setStatus('attention', { kind: 'verify', message: 'Discord wants to verify this login. Open the live view.', liveView: true });
   else if (state === 'login') setStatus('attention', { kind: 'login', message: 'Not logged in. Open the live view and sign in.', liveView: true });
+  else if (state === 'crashed') setStatus('attention', { kind: 'unknown', message: 'The Discord page failed to load and is reloading. Open the live view if it stays stuck.', liveView: true });
   else if (state === 'app') {
+    if (gotFinders && evaluateHealth()) return;
     // Logged in; wait for the snapshot before claiming 'online'.
     if (snapshotReceived) setStatus('online', null);
     else if (status !== 'online') setStatus('connecting', null);
   }
 }
 
-/** If we are logged in but core modules did not resolve, the client changed on us. */
-function evaluateHealth() {
-  if (lastPage !== 'app') return;
+/** If we are logged in but core modules did not resolve, the client changed on us. Returns true if broken. */
+function evaluateHealth(): boolean {
+  if (lastPage !== 'app') return false;
   const critical = ['Dispatcher', 'ChannelStore', 'MessageActions'];
   const broken = critical.filter((k) => !lastFinders[k]);
   if (broken.length) {
     setStatus('attention', { kind: 'selector_broken', message: `Discord changed; these hooks no longer resolve: ${broken.join(', ')}`, detail: lastFinders, liveView: true });
+    return true;
   }
+  // A later report (modules from a lazy chunk) can clear an earlier failure.
+  if (attention?.kind === 'selector_broken') setStatus(snapshotReceived ? 'online' : 'connecting', null);
+  return false;
 }
 
 // ------------------------------------------------------------------- snapshot

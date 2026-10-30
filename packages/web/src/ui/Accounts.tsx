@@ -1,6 +1,6 @@
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, NETWORKS } from '@dither-chat/protocol';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { renderSVG } from 'uqr';
 import { ago } from '../format.ts';
 import { netName } from '../model.ts';
@@ -57,9 +57,63 @@ export function AccountsSidebar({ active, onAdd }: { active?: string; onAdd: () 
   );
 }
 
-function Qr({ text }: { text: string }) {
-  const svg = renderSVG(text, { border: 2, whiteColor: '#ffffff', blackColor: '#000000' });
-  return <div class="qr" dangerouslySetInnerHTML={{ __html: svg }} />;
+/** Black on white with a four-module quiet zone and square edges, the way phone scanners want it. */
+function qrSvg(text: string) {
+  return renderSVG(text, { ecc: 'M', border: 4, whiteColor: '#ffffff', blackColor: '#000000' }).replace('<svg ', '<svg shape-rendering="crispEdges" ');
+}
+
+const coarsePointer = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+
+function LinkCode({ account, at }: { account: P.AccountView; at: P.Attention }) {
+  const [full, setFull] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [now, setNow] = useState(Date.now());
+  const svg = useMemo(() => (at.qr ? qrSvg(at.qr) : null), [at.qr]);
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  useEffect(() => {
+    if (!full) return;
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && setFull(false);
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, [full]);
+  const left = at.qrRefreshAt ? Math.max(0, Math.ceil((at.qrRefreshAt - now) / 1000)) : null;
+  const timer = !svg ? null : left === null ? 'It refreshes on its own when it expires.' : left > 0 ? `A new code replaces this one in ${left}s.` : 'Getting a new code…';
+  const fresh = async () => {
+    setBusy(true);
+    try {
+      await api(`/api/accounts/${account.id}/action`, { body: { action: 'refreshLink' } });
+    } catch (e: any) {
+      toast({ kind: 'error', title: 'No new code', body: e.message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div class="attention-qr">
+      {svg && <button class="qr" title="Show full screen" aria-label="Show the code full screen" onClick={() => setFull(true)} dangerouslySetInnerHTML={{ __html: svg }} />}
+      <div class="qr-side">
+        <ol>
+          <li>Open Signal on your phone.</li>
+          <li>Settings → Linked devices → Link new device.</li>
+          <li>Point the camera at this code. Tap it to fill the screen.</li>
+        </ol>
+        {timer && <p class="qr-timer">{timer}</p>}
+        {coarsePointer && <p class="qr-note">A phone can't scan its own screen. If this is the phone you're linking, open this page on a computer.</p>}
+        <button class="btn ghost" disabled={busy} onClick={fresh}>
+          <Icon name="refresh" size={15} /> New code
+        </button>
+      </div>
+      {full && svg && (
+        <div class="qr-full" role="dialog" aria-label="Signal link code" onClick={() => setFull(false)}>
+          <div class="qr-full-code" dangerouslySetInnerHTML={{ __html: svg }} />
+          <p>{timer} Tap anywhere to close.</p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function LiveView({ account, onClose }: { account: P.AccountView; onClose: () => void }) {
@@ -132,16 +186,7 @@ function AttentionBlock({ a }: { a: P.AccountView }) {
           <small>since {ago(at.since)}</small>
         </div>
       </div>
-      {at.qr && (
-        <div class="attention-qr">
-          <Qr text={at.qr} />
-          <ol>
-            <li>Open Signal on your phone.</li>
-            <li>Settings → Linked devices → Link new device.</li>
-            <li>Scan this code. It refreshes on its own when it expires.</li>
-          </ol>
-        </div>
-      )}
+      {at.kind === 'link_device' && <LinkCode account={a} at={at} />}
       {at.liveView && (
         <button class="btn primary" onClick={() => setLive(true)}>
           <Icon name="monitor" size={15} /> Open live view

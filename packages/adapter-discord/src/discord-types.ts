@@ -152,7 +152,7 @@ export interface RawSnapshot {
 // service worker  <->  adapter process, over ws://127.0.0.1:<port>/?token=...
 
 /** The auth/page/gateway state the hook reports. Drives adapter status. */
-export type PageState = 'loading' | 'login' | 'app' | 'captcha' | 'verify';
+export type PageState = 'loading' | 'login' | 'app' | 'captcha' | 'verify' | 'crashed';
 
 /** service worker -> adapter */
 export type BridgeUp =

@@ -227,13 +227,13 @@ export class SignalAdapter {
       log: this.host.log,
       rotateAfterMs: this.opts.linkRotateMs,
       maxActiveMs: this.opts.linkMaxActiveMs,
-      onUri: (qr, note) => this.setStatus('attention', { kind: 'link_device', message: (note ? note + ' ' : '') + intro + LINK_MESSAGE, qr }),
+      onUri: (qr, note, qrRefreshAt) => this.setStatus('attention', { kind: 'link_device', message: (note ? note + ' ' : '') + intro + LINK_MESSAGE, qr, qrRefreshAt }),
       onScanned: () => this.setStatus('connecting', null),
       onTrouble: (message) => this.setStatus('attention', { kind: 'link_device', message }),
       onPaused: () =>
         this.setStatus('attention', {
           kind: 'link_device',
-          message: 'The QR code expired. Run the "startLink" action (or restart the account) for a new one.',
+          message: 'The QR code expired. Press New code for another one.',
         }),
       onLinked: (number) => this.linked(number).catch((e) => this.host.log('error', `after linking: ${e?.stack ?? e}`)),
     });

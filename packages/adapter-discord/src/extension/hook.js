@@ -25,130 +25,202 @@
   }
 
   // -------------------------------------------------------------- webpack grab
-  let wreq = null;
-  const onReady = [];
-  function whenReady(fn) {
-    if (wreq) fn();
-    else onReady.push(fn);
-  }
-  function fireReady() {
-    while (onReady.length) {
-      try {
-        onReady.shift()();
-      } catch (e) {
-        log('error', 'ready handler threw', String(e));
-      }
-    }
-  }
+  // Discord ships several rspack runtimes (web, fast-connect, sentry,
+  // libdiscore-wasm-fetch) that share window.webpackChunkdiscord_app. Each one
+  // wraps the push installed before it, and every chunk script assigns the
+  // global again right before pushing. The hook must leave that chain exactly as
+  // the runtimes built it: re-wrapping push on each assignment drops them out of
+  // it, and lazy chunks then never load ("Loading chunk N failed").
+  //
+  // Each time a runtime installs its push we send a probe chunk down the chain.
+  // Every runtime on it hands the probe its require, and module lookups search
+  // all of their caches.
+  const requires = new Set();
 
-  function grabRequire(chunkArray) {
+  function probe(chunks) {
     try {
-      chunkArray.push([
+      chunks.push([
         [Symbol(TAG)],
         {},
         (r) => {
-          wreq = r;
+          if (r && r.c) requires.add(r);
         },
       ]);
     } catch (e) {
-      log('error', 'push chunk failed', String(e));
+      log('error', 'probe chunk failed', String(e));
     }
-    if (wreq) fireReady();
   }
 
   function installWebpackHook() {
-    // If the bundle already created the array (script injected late), just push.
-    const existing = window.webpackChunkdiscord_app;
-    if (existing && typeof existing.push === 'function') {
-      grabRequire(existing);
-      return;
+    const hooked = new WeakSet();
+    const hookArray = (chunks) => {
+      if (!chunks || typeof chunks !== 'object' || hooked.has(chunks)) return;
+      hooked.add(chunks);
+      let push = chunks.push;
+      Object.defineProperty(chunks, 'push', {
+        configurable: true,
+        get: () => push,
+        set(fn) {
+          push = fn;
+          probe(chunks);
+        },
+      });
+    };
+    let stored = window.webpackChunkdiscord_app;
+    if (stored) {
+      // Injected late: some runtimes may already be on the chain.
+      if (Object.prototype.hasOwnProperty.call(stored, 'push')) probe(stored);
+      hookArray(stored);
     }
-    // Otherwise intercept the assignment, then intercept the array's `push` so we
-    // run once webpack installs its real push (Vencord's document_start trick).
-    let stored;
     Object.defineProperty(window, 'webpackChunkdiscord_app', {
       configurable: true,
       enumerable: true,
       get: () => stored,
       set(v) {
         stored = v;
-        try {
-          let realPush;
-          Object.defineProperty(v, 'push', {
-            configurable: true,
-            get: () => realPush || Array.prototype.push,
-            set(fn) {
-              realPush = fn;
-              // webpack just installed its push; now our chunk gets the require.
-              Object.defineProperty(v, 'push', { value: fn, configurable: true, writable: true });
-              grabRequire(v);
-            },
-          });
-        } catch (e) {
-          log('error', 'intercept push failed', String(e));
-        }
+        hookArray(v);
       },
     });
   }
 
   // -------------------------------------------------------------- module lookup
-  function allExports() {
+  // rspack mangles export names, so every export of every module is a candidate.
+  function candidates() {
     const out = [];
-    const cache = wreq && wreq.c;
-    if (!cache) return out;
-    for (const id in cache) {
-      const mod = cache[id] && cache[id].exports;
-      if (!mod || typeof mod !== 'object') continue;
-      out.push(mod);
-      if (mod.default && typeof mod.default === 'object') out.push(mod.default);
-      if (mod.Z && typeof mod.Z === 'object') out.push(mod.Z);
-      if (mod.ZP && typeof mod.ZP === 'object') out.push(mod.ZP);
+    const seen = new Set();
+    const add = (v) => {
+      if (v && typeof v === 'object' && !seen.has(v)) {
+        seen.add(v);
+        out.push(v);
+      }
+    };
+    for (const r of requires) {
+      const cache = r.c;
+      for (const id in cache) {
+        let exp;
+        try {
+          exp = cache[id] && cache[id].exports;
+        } catch (e) {
+          continue;
+        }
+        if (!exp || (typeof exp !== 'object' && typeof exp !== 'function') || exp === window) continue;
+        add(exp);
+        let keys;
+        try {
+          keys = Object.keys(exp);
+        } catch (e) {
+          continue;
+        }
+        if (keys.length > 64) continue; // icon sets, constant tables
+        for (const k of keys) {
+          try {
+            add(exp[k]);
+          } catch (e) {
+            /* export binding not initialized yet */
+          }
+        }
+      }
     }
     return out;
   }
-  function find(filter) {
-    for (const m of allExports()) {
-      try {
-        if (filter(m)) return m;
-      } catch (e) {
-        /* some getters throw */
-      }
-    }
-    return null;
+  function moduleCount() {
+    let n = 0;
+    for (const r of requires) n += Object.keys(r.c).length;
+    return n;
   }
-  function findStore(name) {
-    return find((m) => m && typeof m.getName === 'function' && safeName(m) === name && typeof m.emitChange === 'function');
-  }
-  function safeName(m) {
+  function storeName(m) {
     try {
-      return m.getName();
+      return typeof m.getName === 'function' && typeof m.emitChange === 'function' ? m.getName() : null;
     } catch (e) {
       return null;
     }
   }
 
   // --------------------------------------------------------------- the modules
-  const mod = {};
-  function resolveModules() {
-    mod.Dispatcher = find((m) => m && typeof m.dispatch === 'function' && typeof m.subscribe === 'function' && (m._actionHandlers || m._subscriptions || typeof m.isDispatching === 'function'));
-    mod.UserStore = findStore('UserStore');
-    mod.GuildStore = findStore('GuildStore');
-    mod.ChannelStore = findStore('ChannelStore');
-    mod.GuildChannelStore = findStore('GuildChannelStore');
-    mod.ReadStateStore = findStore('ReadStateStore');
-    mod.RelationshipStore = findStore('RelationshipStore');
-    mod.UserGuildSettingsStore = findStore('UserGuildSettingsStore');
-    mod.GuildMemberStore = findStore('GuildMemberStore');
-    mod.ThreadStore = findStore('ThreadsStore') || findStore('ThreadStore') || findStore('ActiveThreadsStore');
+  const isStore =
+    (...names) =>
+    (m) =>
+      names.includes(storeName(m));
+  const FINDERS = {
+    Dispatcher: (m) => typeof m.dispatch === 'function' && typeof m.subscribe === 'function' && !!(m._actionHandlers || m._subscriptions || typeof m.isDispatching === 'function'),
+    UserStore: isStore('UserStore'),
+    GuildStore: isStore('GuildStore'),
+    ChannelStore: isStore('ChannelStore'),
+    GuildChannelStore: isStore('GuildChannelStore'),
+    ReadStateStore: isStore('ReadStateStore'),
+    RelationshipStore: isStore('RelationshipStore'),
+    UserGuildSettingsStore: isStore('UserGuildSettingsStore'),
+    GuildMemberStore: isStore('GuildMemberStore'),
+    ThreadStore: isStore('ThreadsStore', 'ThreadStore', 'ActiveThreadsStore'),
     // REST client: an object exposing the http verbs.
-    mod.Rest = find((m) => m && ['get', 'post', 'put', 'patch', 'del'].every((k) => typeof m[k] === 'function') && (m.getAPIBaseURL || m.V6 || m.V8 || true));
+    Rest: (m) => ['get', 'post', 'put', 'patch', 'del'].every((k) => typeof m[k] === 'function'),
     // Message actions: sendMessage / editMessage / fetchMessages.
-    mod.MessageActions = find((m) => m && typeof m.sendMessage === 'function' && typeof m.editMessage === 'function');
+    MessageActions: (m) => typeof m.sendMessage === 'function' && typeof m.editMessage === 'function',
+  };
+  // Nothing works without these; the others only degrade features.
+  const CORE = ['Dispatcher', 'UserStore', 'ChannelStore', 'GuildStore'];
+  const mod = {};
 
+  /** One pass over every module, filling in whatever `mod` still lacks. */
+  function resolveModules() {
+    const missing = Object.keys(FINDERS).filter((k) => !mod[k]);
+    if (missing.length) {
+      for (const m of candidates()) {
+        for (let i = missing.length - 1; i >= 0; i--) {
+          let hit = false;
+          try {
+            hit = FINDERS[missing[i]](m);
+          } catch (e) {
+            /* some getters throw */
+          }
+          if (hit) mod[missing.splice(i, 1)[0]] = m;
+        }
+        if (!missing.length) break;
+      }
+    }
     const results = {};
-    for (const k of Object.keys(mod)) results[k] = !!mod[k];
-    up({ t: 'finders', results, detail: `cacheSize=${wreq && wreq.c ? Object.keys(wreq.c).length : 0}` });
+    for (const k of Object.keys(FINDERS)) results[k] = !!mod[k];
     return results;
+  }
+
+  // The stores exist only once the app's own modules have run, so keep looking
+  // until the core ones resolve. Success is reported at once, failure only after
+  // a grace period (the adapter turns it into a "client changed" card).
+  const startedAt = Date.now();
+  let coreReady = false;
+  let lastReport = '';
+  function report(results) {
+    const key = JSON.stringify(results);
+    if (key === lastReport) return;
+    lastReport = key;
+    up({ t: 'finders', results, detail: `runtimes=${requires.size} modules=${moduleCount()}` });
+  }
+  function resolveTick() {
+    const results = resolveModules();
+    const age = Date.now() - startedAt;
+    if (CORE.every((k) => results[k])) {
+      report(results);
+      if (!coreReady) {
+        coreReady = true;
+        subscribeDispatch();
+        // Already logged in: CONNECTION_OPEN may have fired before we subscribed.
+        setTimeout(() => {
+          if (!snapshotSent && currentUser()) maybeSendSnapshot('warm-start');
+        }, 4000);
+      }
+      // Optional modules can arrive with later chunks; stop looking after a while.
+      if (!Object.values(results).every(Boolean) && age < 5 * 60_000) setTimeout(resolveTick, 5000);
+      return;
+    }
+    if (age > 90_000) report(results);
+    setTimeout(resolveTick, age > 120_000 ? 10_000 : 1000);
+  }
+  function currentUser() {
+    try {
+      return mod.UserStore && mod.UserStore.getCurrentUser();
+    } catch (e) {
+      return null;
+    }
   }
 
   // ------------------------------------------------------------- whitelisting
@@ -327,19 +399,11 @@
   }
 
   function maybeSendSnapshot(reason) {
-    if (!wreq) return;
-    resolveModulesOnce();
+    if (!coreReady) return;
     const data = buildSnapshot();
     snapshotSent = true;
     up({ t: 'snapshot', data });
     log('info', 'snapshot sent (' + reason + ')', { guilds: (data.guilds || []).length, channels: (data.channels || []).length, dms: (data.privateChannels || []).length });
-  }
-
-  let modulesResolved = false;
-  function resolveModulesOnce() {
-    if (modulesResolved) return;
-    modulesResolved = true;
-    resolveModules();
   }
 
   // ----------------------------------------------------------- dispatch relay
@@ -423,7 +487,7 @@
 
   // --------------------------------------------------------------- commands
   async function runCommand(cmd) {
-    resolveModulesOnce();
+    if (!coreReady) throw new Error('the Discord client has not finished loading');
     switch (cmd.kind) {
       case 'send':
         return sendMessage(cmd);
@@ -486,8 +550,33 @@
     if (document.querySelector('iframe[src*="hcaptcha"], iframe[src*="captcha"]')) state = 'captcha';
     const bodyText = (document.body && document.body.innerText) || '';
     if (/suspicious activity|verify your|phone number to continue|verification required/i.test(bodyText)) state = 'verify';
+    // Discord's full-page error when a lazy chunk will not load.
+    if (/Loading chunk \S+ failed/i.test(bodyText)) {
+      state = 'crashed';
+      reloadAfterCrash();
+    }
     up({ t: 'page', state, url: href });
     return state;
+  }
+
+  // A reload is what a person would do here, and it nearly always works. At most
+  // three per ten minutes, so a page that keeps failing stays up for the live view.
+  let reloadScheduled = false;
+  function reloadAfterCrash() {
+    if (reloadScheduled) return;
+    const key = TAG + 'reloads';
+    let recent = [];
+    try {
+      recent = JSON.parse(sessionStorage.getItem(key) || '[]').filter((t) => Date.now() - t < 10 * 60_000);
+    } catch (e) {}
+    if (recent.length >= 3) return;
+    reloadScheduled = true;
+    recent.push(Date.now());
+    try {
+      sessionStorage.setItem(key, JSON.stringify(recent));
+    } catch (e) {}
+    log('warn', 'Discord could not load a chunk; reloading the page');
+    setTimeout(() => location.reload(), 5000);
   }
 
   // ------------------------------------------------------------------- wiring
@@ -504,17 +593,7 @@
   });
 
   installWebpackHook();
-  whenReady(() => {
-    resolveModulesOnce();
-    subscribeDispatch();
-    // If we connected before our subscriber attached, send a snapshot anyway.
-    try {
-      const connected = mod.Dispatcher && false; // Discord has no simple "is gateway open" flag; rely on CONNECTION_OPEN + a delayed attempt.
-    } catch (e) {}
-    setTimeout(() => {
-      if (!snapshotSent && mod.UserStore && mod.UserStore.getCurrentUser && mod.UserStore.getCurrentUser()) maybeSendSnapshot('warm-start');
-    }, 4000);
-  });
+  setTimeout(resolveTick, 500);
 
   // Page-state polling so the adapter can show login / captcha / verify promptly.
   const poll = () => detectPageState();
