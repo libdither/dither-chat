@@ -1,0 +1,484 @@
+/**
+ * Client-side view of the ontology: names, paths, trees and unread
+ * aggregation derived from the hub's normalized data. Everything here is
+ * memoized per `rev`.
+ */
+import type * as P from '@dither-chat/protocol';
+import { NETWORK_META } from '@dither-chat/protocol';
+import { db, inbox, isSelfIdentity, prefs, rev } from './state.ts';
+
+const memos = new Map<string, { rev: number; value: unknown }>();
+function memo<T>(key: string, fn: () => T): T {
+  const m = memos.get(key);
+  if (m && m.rev === rev.value) return m.value as T;
+  const value = fn();
+  memos.set(key, { rev: rev.value, value });
+  return value;
+}
+
+export const netName = (n: P.Network) => NETWORK_META[n].name;
+export const netColor = (n: P.Network) => NETWORK_META[n].color;
+
+// ------------------------------------------------------------------ visibility (demo toggle)
+
+export function visibleAccount(id: string) {
+  const a = db.accounts.get(id);
+  return !!a && (prefs.value.showDemo || !a.demo);
+}
+export function visibleConv(c: P.ConversationView) {
+  return c.vantages.some((v) => visibleAccount(v.accountId));
+}
+export function visibleSpace(s: P.SpaceView) {
+  return s.accountIds.some(visibleAccount);
+}
+
+// ------------------------------------------------------------------ names
+
+/** Replace raw <@id> / <#id> tokens in stored preview text with readable names. */
+export function resolveTokens(text: string, network: P.Network): string {
+  return text
+    .replace(/<@!?([^>\s]+)>/g, (_, id) => {
+      const hid = db.identityByNative.get(`${network}:${id}`);
+      return '@' + (hid ? (isSelfIdentity(hid) ? 'you' : authorName(hid)) : 'user');
+    })
+    .replace(/<#([^>\s]+)>/g, (_, id) => {
+      for (const c of db.conversations.values()) if (c.network === network && c.nativeId === id) return '#' + convTitle(c);
+      return '#channel';
+    })
+    .replace(/<a?:(\w+):\d+>/g, ':$1:');
+}
+
+export function identityName(id: string | null | undefined): string {
+  if (!id) return 'Unknown';
+  const i = db.identities.get(id);
+  if (!i) return 'Unknown';
+  return i.displayName || i.handle || i.nativeId;
+}
+
+export function personOf(identityId: string | null | undefined): P.PersonView | null {
+  if (!identityId) return null;
+  const i = db.identities.get(identityId);
+  return i?.personId ? (db.persons.get(i.personId) ?? null) : null;
+}
+
+/** Author label: the person's name when they are someone you know, else the network display name. */
+export function authorName(identityId: string | null | undefined): string {
+  if (isSelfIdentity(identityId)) return 'You';
+  const p = personOf(identityId);
+  return p && !p.isSelf ? p.name : identityName(identityId);
+}
+
+export function peerIdentity(c: P.ConversationView): string | null {
+  return c.participantIds.find((p) => !isSelfIdentity(p)) ?? null;
+}
+
+export function convTitle(c: P.ConversationView | undefined | null): string {
+  if (!c) return 'Unknown';
+  if (c.shape === 'direct') {
+    const p = c.peerPersonId ? db.persons.get(c.peerPersonId) : null;
+    return p?.name ?? identityName(peerIdentity(c));
+  }
+  if (c.shape === 'self') return c.name ?? 'Notes to self';
+  if (c.name) return c.name;
+  if (c.shape === 'group')
+    return (
+      c.participantIds
+        .filter((p) => !isSelfIdentity(p))
+        .slice(0, 3)
+        .map(identityName)
+        .join(', ') || 'Group'
+    );
+  return 'Unnamed';
+}
+
+/** "#dev" for channels, plain names otherwise. */
+export function convLabel(c: P.ConversationView): string {
+  const t = convTitle(c);
+  return c.shape === 'channel' && c.network === 'discord' && c.variant !== 'voice' && c.variant !== 'stage' ? `#${t}` : t;
+}
+
+export function kindLabel(c: P.ConversationView): string {
+  const n = netName(c.network);
+  const variant = { text: '', announcement: 'announcement ', forum: 'forum ', voice: 'voice ', stage: 'stage ', media: 'media ', rules: 'rules ' }[c.variant] ?? '';
+  switch (c.shape) {
+    case 'direct':
+      return c.network === 'signal' ? 'Signal chat' : `${n} DM`;
+    case 'group':
+      return c.network === 'discord' ? 'Discord group DM' : c.network === 'signal' ? 'Signal group' : 'Matrix room (private)';
+    case 'self':
+      return `${n} notes to self`;
+    case 'thread': {
+      const parent = c.parentId ? db.conversations.get(c.parentId) : null;
+      return parent?.variant === 'forum' ? `${n} forum post` : `${n} thread`;
+    }
+    case 'channel':
+      return c.network === 'discord' ? `Discord ${variant}channel` : c.spaceIds.length ? `Matrix ${variant}room` : 'Matrix room (no space)';
+  }
+}
+
+// ------------------------------------------------------------------ hierarchy
+
+export function spaceParents(id: string): P.SpaceView[] {
+  return (db.parents.get(id) ?? []).map((e) => db.spaces.get(e.parentId)).filter((s): s is P.SpaceView => !!s);
+}
+
+/** The community a space belongs to: itself if it is one, else its nearest community ancestor. */
+export function communityOfSpace(id: string): P.SpaceView | null {
+  let s = db.spaces.get(id) ?? null;
+  const seen = new Set<string>();
+  while (s && s.kind === 'section' && !seen.has(s.id)) {
+    seen.add(s.id);
+    s = spaceParents(s.id)[0] ?? null;
+  }
+  return s;
+}
+
+/** Walk to the top of the visible community graph (Matrix subspaces nest). */
+export function rootCommunity(id: string): P.SpaceView | null {
+  let s = communityOfSpace(id);
+  const seen = new Set<string>();
+  while (s && !seen.has(s.id)) {
+    seen.add(s.id);
+    const up = spaceParents(s.id).find((p) => p.kind === 'community');
+    if (!up) break;
+    s = up;
+  }
+  return s;
+}
+
+/** Threads inherit their parent's place. */
+export function placeConv(c: P.ConversationView): P.ConversationView {
+  return c.shape === 'thread' && c.parentId ? (db.conversations.get(c.parentId) ?? c) : c;
+}
+
+export function communitiesOf(c: P.ConversationView): P.SpaceView[] {
+  const base = placeConv(c);
+  const out: P.SpaceView[] = [];
+  for (const sid of base.spaceIds) {
+    const com = communityOfSpace(sid);
+    if (com && !out.some((x) => x.id === com.id)) out.push(com);
+  }
+  return out;
+}
+
+export interface Crumb {
+  label: string;
+  kind: 'network' | 'space' | 'section' | 'conversation';
+  id?: string;
+}
+
+/** Discord › libdither › Development › #dev › DHT bootstrap refactor */
+export function crumbs(c: P.ConversationView, within?: string): Crumb[] {
+  const out: Crumb[] = [{ label: netName(c.network), kind: 'network' }];
+  const base = placeConv(c);
+  const sid = (within && base.spaceIds.find((s) => communityOfSpace(s)?.id === within || s === within)) ?? base.spaceIds[0];
+  if (sid) {
+    const chain: P.SpaceView[] = [];
+    let s: P.SpaceView | null = db.spaces.get(sid) ?? null;
+    const seen = new Set<string>();
+    while (s && !seen.has(s.id)) {
+      seen.add(s.id);
+      chain.unshift(s);
+      s = spaceParents(s.id)[0] ?? null;
+    }
+    for (const sp of chain) out.push({ label: sp.name, kind: sp.kind === 'community' ? 'space' : 'section', id: sp.id });
+  } else if (c.shape === 'direct' || c.shape === 'self') {
+    out.push({ label: c.shape === 'self' ? 'Notes' : 'Direct messages', kind: 'section' });
+  } else if (base.shape === 'group') {
+    out.push({ label: 'Groups', kind: 'section' });
+  }
+  if (base !== c) out.push({ label: convLabel(base), kind: 'conversation', id: base.id });
+  out.push({ label: convLabel(c), kind: 'conversation', id: c.id });
+  return out;
+}
+
+export interface TreeNode {
+  kind: 'section' | 'subspace' | 'conversation';
+  id: string;
+  position: string | null;
+}
+
+export function spaceChildren(id: string): TreeNode[] {
+  return memo('children:' + id, () =>
+    (db.children.get(id) ?? [])
+      .map((e): TreeNode | null => {
+        if (e.childKind === 'conversation') {
+          const c = db.conversations.get(e.childId);
+          return c && visibleConv(c) ? { kind: 'conversation', id: c.id, position: e.position } : null;
+        }
+        const s = db.spaces.get(e.childId);
+        if (!s || !visibleSpace(s)) return null;
+        return { kind: s.kind === 'section' ? 'section' : 'subspace', id: s.id, position: e.position };
+      })
+      .filter((x): x is TreeNode => !!x)
+      .sort((a, b) => {
+        // Uncategorized channels first (Discord), then by position, then name.
+        const rank = (n: TreeNode) => (n.kind === 'conversation' ? 0 : 1);
+        if (rank(a) !== rank(b) && db.spaces.get(id)?.network === 'discord') return rank(a) - rank(b);
+        return (a.position ?? '~').localeCompare(b.position ?? '~') || nodeName(a).localeCompare(nodeName(b));
+      }),
+  );
+}
+
+function nodeName(n: TreeNode) {
+  return n.kind === 'conversation' ? convTitle(db.conversations.get(n.id)) : (db.spaces.get(n.id)?.name ?? '');
+}
+
+export function threadsOf(convId: string): P.ConversationView[] {
+  return (db.threads.get(convId) ?? [])
+    .map((id) => db.conversations.get(id)!)
+    .filter((t) => t && visibleConv(t))
+    .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0));
+}
+
+/** Communities that should get a rail icon: not nested under another visible community, not inside a folder. */
+export function railCommunities(): P.SpaceView[] {
+  return memo('rail', () => {
+    const inFolder = new Set(db.folders.flatMap((f) => f.items.filter((i) => i.kind === 'space').map((i) => i.id)));
+    return [...db.spaces.values()]
+      .filter((s) => s.kind === 'community' && visibleSpace(s) && !inFolder.has(s.id))
+      .filter((s) => !spaceParents(s.id).some((p) => p.kind === 'community' && visibleSpace(p)))
+      .sort((a, b) => activityOfSpace(b.id) - activityOfSpace(a.id));
+  });
+}
+
+export function allCommunities(): P.SpaceView[] {
+  return memo('allCommunities', () =>
+    [...db.spaces.values()]
+      .filter((s) => s.kind === 'community' && visibleSpace(s) && !spaceParents(s.id).some((p) => p.kind === 'community' && visibleSpace(p)))
+      .sort((a, b) => activityOfSpace(b.id) - activityOfSpace(a.id)),
+  );
+}
+
+/** Every conversation under a space, through sections, subspaces and threads. */
+export function convsUnder(id: string): P.ConversationView[] {
+  return memo('under:' + id, () => {
+    const out = new Map<string, P.ConversationView>();
+    const seen = new Set<string>();
+    const walk = (sid: string) => {
+      if (seen.has(sid)) return;
+      seen.add(sid);
+      for (const e of db.children.get(sid) ?? []) {
+        if (e.childKind === 'space') walk(e.childId);
+        else {
+          const c = db.conversations.get(e.childId);
+          if (c && visibleConv(c)) {
+            out.set(c.id, c);
+            for (const t of threadsOf(c.id)) out.set(t.id, t);
+          }
+        }
+      }
+    };
+    walk(id);
+    return [...out.values()];
+  });
+}
+
+export function activityOfSpace(id: string): number {
+  return memo('act:' + id, () => Math.max(0, ...convsUnder(id).map((c) => c.lastMessageAt ?? 0)));
+}
+
+// ------------------------------------------------------------------ notification level (mirrors hub triage.ts)
+
+const DEFAULT_LEVEL: Record<P.Shape, P.NotifyLevel> = { direct: 'all', group: 'smart', channel: 'mentions', thread: 'mentions', self: 'none' };
+const rank = (l: P.NotifyLevel) => ({ none: 0, digest: 1, mentions: 2, smart: 3, all: 4 })[l];
+
+export interface Effective {
+  level: P.NotifyLevel;
+  source: string;
+  explicit: boolean;
+  scope: P.NotifyScope | 'default' | 'native';
+}
+
+export function effectiveLevel(c: P.ConversationView): Effective {
+  return memo('lvl:' + c.id, () => {
+    const rules = new Map(db.rules.map((r) => [`${r.scope}:${r.target ?? ''}`, r.level]));
+    const hit = (scope: string, target: string | null) => rules.get(`${scope}:${target ?? ''}`);
+    let l: P.NotifyLevel | undefined;
+    if ((l = hit('conversation', c.id))) return { level: l, source: 'this conversation', explicit: true, scope: 'conversation' };
+    const parent = c.shape === 'thread' && c.parentId ? db.conversations.get(c.parentId) : undefined;
+    if (parent && (l = hit('conversation', parent.id))) return { level: l, source: convLabel(parent), explicit: true, scope: 'conversation' };
+    // Breadth-first over containing spaces.
+    const seen = new Set<string>();
+    let frontier = [...(parent ?? c).spaceIds];
+    while (frontier.length) {
+      const next: string[] = [];
+      for (const sid of frontier) {
+        if (seen.has(sid)) continue;
+        seen.add(sid);
+        const s = db.spaces.get(sid);
+        if (s && (l = hit('space', sid))) return { level: l, source: s.kind === 'section' ? s.name : `${s.name} (${NETWORK_META[s.network].spaceNoun})`, explicit: true, scope: 'space' };
+        next.push(...(db.parents.get(sid) ?? []).map((e) => e.parentId));
+      }
+      frontier = next;
+    }
+    let base: Effective | null = null;
+    for (const v of c.vantages) {
+      if ((l = hit('account', v.accountId))) {
+        base = { level: l, source: `account ${db.accounts.get(v.accountId)?.label}`, explicit: false, scope: 'account' };
+        break;
+      }
+    }
+    if (!base && (l = hit('network', c.network))) base = { level: l, source: `all of ${netName(c.network)}`, explicit: false, scope: 'network' };
+    if (!base && (l = hit('global', null))) base = { level: l, source: 'global default', explicit: false, scope: 'global' };
+    if (!base) base = { level: DEFAULT_LEVEL[c.shape], source: `default for ${c.shape === 'direct' ? 'DMs' : c.shape + 's'}`, explicit: false, scope: 'default' };
+    const mute = nativeMuteLevel(c, parent);
+    if (mute && rank(base.level) > rank(mute)) return { level: mute, source: `muted in ${netName(c.network)}`, explicit: false, scope: 'native' };
+    return base;
+  });
+}
+
+function nativeMuteLevel(c: P.ConversationView, parent?: P.ConversationView): P.NotifyLevel | null {
+  const now = Date.now();
+  const mutes: (P.NativeMute | null)[] = [c.nativeMute, parent?.nativeMute ?? null, ...(parent ?? c).spaceIds.map((s) => db.spaces.get(s)?.nativeMute ?? null)];
+  let best: P.NotifyLevel | null = null;
+  for (const m of mutes) {
+    if (!m) continue;
+    const lv: P.NotifyLevel | null = m.level === 'none' || (m.until && m.until > now) ? 'digest' : m.level === 'mentions' ? 'mentions' : null;
+    if (lv && (!best || rank(lv) < rank(best))) best = lv;
+  }
+  return best;
+}
+
+export const LEVEL_LABEL: Record<P.NotifyLevel, string> = { all: 'All messages', smart: 'Smart', mentions: 'Mentions', digest: 'Digest', none: 'Off' };
+
+// ------------------------------------------------------------------ unread
+
+export interface Unread {
+  unread: number;
+  mentions: number;
+  /** Shown as a red count: mentions, or any message in a DM/group you listen to. */
+  badge: number;
+  muted: boolean;
+}
+
+export function unreadOf(c: P.ConversationView): Unread {
+  const vs = c.vantages.filter((v) => visibleAccount(v.accountId));
+  const unread = Math.max(0, ...vs.map((v) => v.unread));
+  const mentions = Math.max(0, ...vs.map((v) => v.mentions));
+  const lvl = effectiveLevel(c).level;
+  const muted = lvl === 'none' || lvl === 'digest';
+  const loud = (c.shape === 'direct' || c.shape === 'group') && !muted;
+  return { unread, mentions, badge: loud ? unread : muted && lvl === 'none' ? 0 : mentions, muted };
+}
+
+export function sumUnread(convs: P.ConversationView[]): Unread {
+  let unread = 0,
+    mentions = 0,
+    badge = 0;
+  for (const c of convs) {
+    const u = unreadOf(c);
+    if (u.muted && !u.badge) continue;
+    unread += u.unread;
+    mentions += u.mentions;
+    badge += u.badge;
+  }
+  return { unread, mentions, badge, muted: false };
+}
+
+export function spaceUnread(id: string): Unread {
+  return memo('su:' + id, () => sumUnread(convsUnder(id)));
+}
+
+export function folderConvs(f: P.FolderView): P.ConversationView[] {
+  return memo('fc:' + f.id, () => {
+    const out = new Map<string, P.ConversationView>();
+    for (const it of f.items) {
+      if (it.kind === 'space') for (const c of convsUnder(it.id)) out.set(c.id, c);
+      else if (it.kind === 'conversation') {
+        const c = db.conversations.get(it.id);
+        if (c && visibleConv(c)) out.set(c.id, c);
+      } else for (const c of directsOf(it.id)) out.set(c.id, c);
+    }
+    return [...out.values()];
+  });
+}
+
+// ------------------------------------------------------------------ people, groups
+
+export function directsOf(personId: string): P.ConversationView[] {
+  return memo('directs:' + personId, () =>
+    [...db.conversations.values()].filter((c) => c.shape === 'direct' && c.peerPersonId === personId && visibleConv(c)).sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0)),
+  );
+}
+
+export function people(): { person: P.PersonView; directs: P.ConversationView[]; last: number }[] {
+  return memo('people', () =>
+    [...db.persons.values()]
+      .filter((p) => !p.isSelf)
+      .map((person) => {
+        const directs = directsOf(person.id);
+        return { person, directs, last: Math.max(0, ...directs.map((d) => d.lastMessageAt ?? 0)) };
+      })
+      .filter((x) => x.directs.length)
+      .sort((a, b) => Number(b.person.starred) - Number(a.person.starred) || b.last - a.last),
+  );
+}
+
+export function groupsLists() {
+  return memo('groups', () => {
+    const all = [...db.conversations.values()].filter(visibleConv);
+    const byRecent = (a: P.ConversationView, b: P.ConversationView) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0);
+    return {
+      groups: all.filter((c) => c.shape === 'group').sort(byRecent),
+      rooms: all.filter((c) => c.shape === 'channel' && !c.spaceIds.length).sort(byRecent),
+      notes: all.filter((c) => c.shape === 'self').sort(byRecent),
+    };
+  });
+}
+
+export function accountsOf(network: P.Network): P.AccountView[] {
+  return [...db.accounts.values()].filter((a) => a.network === network && visibleAccount(a.id));
+}
+
+/** Account annotations only appear when you have more than one account on that network. */
+export function annotateAccounts(network: P.Network): boolean {
+  return accountsOf(network).length > 1;
+}
+
+// ------------------------------------------------------------------ inbox
+
+export interface InboxSections {
+  attention: P.AccountView[];
+  priority: P.ConversationView[];
+  unread: P.ConversationView[];
+  recent: P.ConversationView[];
+}
+
+export function inboxSections(): InboxSections {
+  return memo('inbox', () => {
+    const lastRead = (c: P.ConversationView) => Math.min(...c.vantages.map((v) => v.lastReadTs ?? 0));
+    const pushed = new Set<string>();
+    for (const m of inbox.value) {
+      const c = db.conversations.get(m.conversationId);
+      if (c && m.triage?.decision === 'push' && m.ts > lastRead(c) && unreadOf(c).unread > 0) pushed.add(c.id);
+    }
+    const all = [...db.conversations.values()].filter(visibleConv);
+    const byRecent = (a: P.ConversationView, b: P.ConversationView) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0);
+    const priority = all.filter((c) => pushed.has(c.id)).sort(byRecent);
+    const unread = all
+      .filter((c) => !pushed.has(c.id))
+      .filter((c) => {
+        const u = unreadOf(c);
+        if (!u.unread) return false;
+        const lvl = effectiveLevel(c).level;
+        if (lvl === 'none' || lvl === 'digest') return false;
+        return c.shape === 'direct' || c.shape === 'group' || c.shape === 'self' || u.mentions > 0 || lvl === 'all';
+      })
+      .sort(byRecent);
+    const shown = new Set([...priority, ...unread].map((c) => c.id));
+    const recent = all.filter((c) => !shown.has(c.id) && (c.shape === 'direct' || c.shape === 'group' || c.shape === 'self')).sort(byRecent);
+    const attention = [...db.accounts.values()].filter((a) => a.attention && visibleAccount(a.id));
+    return { attention, priority, unread, recent };
+  });
+}
+
+export function deepLink(c: P.ConversationView): string | null {
+  const base = placeConv(c);
+  if (c.network === 'discord') {
+    const guild = communitiesOf(c)[0];
+    return `https://discord.com/channels/${guild?.nativeId ?? '@me'}/${c.nativeId}`;
+  }
+  if (c.network === 'matrix') return `https://matrix.to/#/${encodeURIComponent(base.nativeId.split('|')[0])}`;
+  return null;
+}

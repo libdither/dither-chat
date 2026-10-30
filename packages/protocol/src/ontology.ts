@@ -76,6 +76,6 @@ export type AttachmentKind = 'image' | 'video' | 'audio' | 'file';
 /** Brand colours used to annotate the source of every object in the UI. */
 export const NETWORK_META: Record<Network, { name: string; color: string; spaceNoun: string; sectionNoun: string }> = {
   discord: { name: 'Discord', color: '#5865F2', spaceNoun: 'server', sectionNoun: 'category' },
-  signal: { name: 'Signal', color: '#3A76F0', spaceNoun: 'group', sectionNoun: 'section' },
+  signal: { name: 'Signal', color: '#3A91F5', spaceNoun: 'group', sectionNoun: 'section' },
   matrix: { name: 'Matrix', color: '#0DBD8B', spaceNoun: 'space', sectionNoun: 'subspace' },
 };

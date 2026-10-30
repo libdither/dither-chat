@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "dither-chat bridge",
+  "version": "0.1.0",
+  "description": "Relays normalized facts from the Discord web client to a local dither-chat adapter. Personal use.",
+  "minimum_chrome_version": "111",
+  "background": { "service_worker": "sw.js" },
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["https://discord.com/*", "https://*.discord.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://discord.com/*"],
+      "js": ["hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://discord.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    }
+  ],
+  "web_accessible_resources": [{ "resources": ["config.json"], "matches": ["https://discord.com/*"] }]
+}

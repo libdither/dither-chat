@@ -1,0 +1,526 @@
+/*
+ * MAIN-world content script, injected at document_start on discord.com.
+ *
+ * This runs the real Discord web client's own modules (the Vencord approach): it
+ * grabs webpack's require by pushing a chunk onto window.webpackChunkdiscord_app,
+ * locates the Flux dispatcher, a handful of stores, the REST module and the
+ * message actions, then (a) forwards a whitelisted snapshot + whitelisted live
+ * events out to the ISOLATED world, and (b) runs commands through the client's
+ * own code paths so requests look like any other action the user took.
+ *
+ * It never touches the network itself and never sees the adapter token; it only
+ * posts window messages to content.js. Plain JS on purpose (no build step).
+ */
+(() => {
+  'use strict';
+  const TAG = '__dither_bridge__';
+  const log = (level, msg, data) => post({ t: 'log', level, msg, data });
+  const up = (payload) => post(payload);
+  function post(payload) {
+    try {
+      window.postMessage({ [TAG]: 'up', payload }, location.origin);
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  // -------------------------------------------------------------- webpack grab
+  let wreq = null;
+  const onReady = [];
+  function whenReady(fn) {
+    if (wreq) fn();
+    else onReady.push(fn);
+  }
+  function fireReady() {
+    while (onReady.length) {
+      try {
+        onReady.shift()();
+      } catch (e) {
+        log('error', 'ready handler threw', String(e));
+      }
+    }
+  }
+
+  function grabRequire(chunkArray) {
+    try {
+      chunkArray.push([
+        [Symbol(TAG)],
+        {},
+        (r) => {
+          wreq = r;
+        },
+      ]);
+    } catch (e) {
+      log('error', 'push chunk failed', String(e));
+    }
+    if (wreq) fireReady();
+  }
+
+  function installWebpackHook() {
+    // If the bundle already created the array (script injected late), just push.
+    const existing = window.webpackChunkdiscord_app;
+    if (existing && typeof existing.push === 'function') {
+      grabRequire(existing);
+      return;
+    }
+    // Otherwise intercept the assignment, then intercept the array's `push` so we
+    // run once webpack installs its real push (Vencord's document_start trick).
+    let stored;
+    Object.defineProperty(window, 'webpackChunkdiscord_app', {
+      configurable: true,
+      enumerable: true,
+      get: () => stored,
+      set(v) {
+        stored = v;
+        try {
+          let realPush;
+          Object.defineProperty(v, 'push', {
+            configurable: true,
+            get: () => realPush || Array.prototype.push,
+            set(fn) {
+              realPush = fn;
+              // webpack just installed its push; now our chunk gets the require.
+              Object.defineProperty(v, 'push', { value: fn, configurable: true, writable: true });
+              grabRequire(v);
+            },
+          });
+        } catch (e) {
+          log('error', 'intercept push failed', String(e));
+        }
+      },
+    });
+  }
+
+  // -------------------------------------------------------------- module lookup
+  function allExports() {
+    const out = [];
+    const cache = wreq && wreq.c;
+    if (!cache) return out;
+    for (const id in cache) {
+      const mod = cache[id] && cache[id].exports;
+      if (!mod || typeof mod !== 'object') continue;
+      out.push(mod);
+      if (mod.default && typeof mod.default === 'object') out.push(mod.default);
+      if (mod.Z && typeof mod.Z === 'object') out.push(mod.Z);
+      if (mod.ZP && typeof mod.ZP === 'object') out.push(mod.ZP);
+    }
+    return out;
+  }
+  function find(filter) {
+    for (const m of allExports()) {
+      try {
+        if (filter(m)) return m;
+      } catch (e) {
+        /* some getters throw */
+      }
+    }
+    return null;
+  }
+  function findStore(name) {
+    return find((m) => m && typeof m.getName === 'function' && safeName(m) === name && typeof m.emitChange === 'function');
+  }
+  function safeName(m) {
+    try {
+      return m.getName();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // --------------------------------------------------------------- the modules
+  const mod = {};
+  function resolveModules() {
+    mod.Dispatcher = find((m) => m && typeof m.dispatch === 'function' && typeof m.subscribe === 'function' && (m._actionHandlers || m._subscriptions || typeof m.isDispatching === 'function'));
+    mod.UserStore = findStore('UserStore');
+    mod.GuildStore = findStore('GuildStore');
+    mod.ChannelStore = findStore('ChannelStore');
+    mod.GuildChannelStore = findStore('GuildChannelStore');
+    mod.ReadStateStore = findStore('ReadStateStore');
+    mod.RelationshipStore = findStore('RelationshipStore');
+    mod.UserGuildSettingsStore = findStore('UserGuildSettingsStore');
+    mod.GuildMemberStore = findStore('GuildMemberStore');
+    mod.ThreadStore = findStore('ThreadsStore') || findStore('ThreadStore') || findStore('ActiveThreadsStore');
+    // REST client: an object exposing the http verbs.
+    mod.Rest = find((m) => m && ['get', 'post', 'put', 'patch', 'del'].every((k) => typeof m[k] === 'function') && (m.getAPIBaseURL || m.V6 || m.V8 || true));
+    // Message actions: sendMessage / editMessage / fetchMessages.
+    mod.MessageActions = find((m) => m && typeof m.sendMessage === 'function' && typeof m.editMessage === 'function');
+
+    const results = {};
+    for (const k of Object.keys(mod)) results[k] = !!mod[k];
+    up({ t: 'finders', results, detail: `cacheSize=${wreq && wreq.c ? Object.keys(wreq.c).length : 0}` });
+    return results;
+  }
+
+  // ------------------------------------------------------------- whitelisting
+  const pickUser = (u) => u && { id: u.id, username: u.username, global_name: u.globalName ?? u.global_name ?? null, discriminator: u.discriminator, avatar: u.avatar, bot: !!u.bot };
+  const pickChannel = (c) =>
+    c && {
+      id: c.id,
+      type: c.type,
+      guild_id: c.guild_id ?? c.guildId ?? null,
+      name: c.name ?? null,
+      topic: c.topic ?? null,
+      position: c.position,
+      parent_id: c.parent_id ?? c.parentId ?? null,
+      recipients: Array.isArray(c.recipients) ? c.recipients.map((r) => (typeof r === 'string' ? resolveUser(r) : pickUser(r))).filter(Boolean) : undefined,
+      owner_id: c.ownerId ?? c.owner_id ?? null,
+      icon: c.icon ?? null,
+      thread_metadata: c.threadMetadata ? { archived: !!c.threadMetadata.archived, locked: !!c.threadMetadata.locked } : c.thread_metadata,
+      last_message_id: c.lastMessageId ?? c.last_message_id ?? null,
+    };
+  const pickGuild = (g) => g && { id: g.id, name: g.name, icon: g.icon, description: g.description ?? null, rules_channel_id: g.rulesChannelId ?? g.rules_channel_id ?? null };
+  const pickEmoji = (e) => e && { id: e.id ?? null, name: e.name ?? null };
+  const pickAttachment = (a) => a && { id: a.id, filename: a.filename, content_type: a.content_type, size: a.size, width: a.width, height: a.height, url: a.url, proxy_url: a.proxy_url };
+  const pickEmbed = (e) => e && { type: e.type, title: e.title, description: e.rawDescription ?? e.description, url: e.url, provider: e.provider && { name: e.provider.name }, thumbnail: e.thumbnail && { url: e.thumbnail.url ?? e.thumbnail.proxyURL }, image: e.image && { url: e.image.url ?? e.image.proxyURL } };
+  function pickMessage(m) {
+    if (!m) return null;
+    return {
+      id: m.id,
+      channel_id: m.channel_id ?? m.channelId,
+      guild_id: m.guild_id ?? m.guildId ?? null,
+      author: pickUser(m.author),
+      content: m.content ?? '',
+      timestamp: typeof m.timestamp === 'string' ? m.timestamp : m.timestamp && m.timestamp.toISOString ? m.timestamp.toISOString() : new Date().toISOString(),
+      edited_timestamp: m.edited_timestamp ?? (m.editedTimestamp && m.editedTimestamp.toISOString ? m.editedTimestamp.toISOString() : m.editedTimestamp) ?? null,
+      type: m.type,
+      mention_everyone: !!(m.mention_everyone ?? m.mentionEveryone),
+      mentions: Array.isArray(m.mentions) ? m.mentions.map((u) => (typeof u === 'string' ? { id: u } : pickUser(u))).filter(Boolean) : undefined,
+      attachments: Array.isArray(m.attachments) ? m.attachments.map(pickAttachment) : undefined,
+      embeds: Array.isArray(m.embeds) ? m.embeds.map(pickEmbed) : undefined,
+      reactions: Array.isArray(m.reactions) ? m.reactions.map((r) => ({ emoji: pickEmoji(r.emoji), count: r.count, me: !!r.me })) : undefined,
+      message_reference: m.message_reference ?? (m.messageReference ? { message_id: m.messageReference.messageId ?? m.messageReference.message_id, channel_id: m.messageReference.channelId } : undefined),
+      thread: m.thread ? pickChannel(m.thread) : undefined,
+    };
+  }
+  function resolveUser(id) {
+    try {
+      return pickUser(mod.UserStore.getUser(id));
+    } catch (e) {
+      return { id };
+    }
+  }
+
+  // ---------------------------------------------------------------- snapshot
+  let snapshotSent = false;
+  function buildSnapshot() {
+    const data = {};
+    const users = new Map();
+    const addUser = (u) => {
+      if (u && u.id && !users.has(u.id)) users.set(u.id, u);
+    };
+    try {
+      const me = mod.UserStore && mod.UserStore.getCurrentUser();
+      if (me) data.self = pickUser(me);
+    } catch (e) {}
+    try {
+      const guilds = mod.GuildStore ? mod.GuildStore.getGuilds() : {};
+      data.guilds = Object.values(guilds).map(pickGuild).filter(Boolean);
+      const channels = [];
+      for (const gid of Object.keys(guilds)) {
+        const list = guildChannels(gid);
+        for (const c of list) channels.push(c);
+      }
+      data.channels = channels;
+    } catch (e) {
+      log('warn', 'guild/channel snapshot failed', String(e));
+    }
+    try {
+      data.threads = activeThreads();
+    } catch (e) {}
+    try {
+      const priv = mod.ChannelStore && (mod.ChannelStore.getMutablePrivateChannels ? mod.ChannelStore.getMutablePrivateChannels() : null);
+      const list = priv ? Object.values(priv) : getSortedPrivate();
+      data.privateChannels = list.map(pickChannel).filter(Boolean);
+      for (const c of list) if (Array.isArray(c.recipients)) for (const r of c.recipients) addUser(typeof r === 'string' ? resolveUser(r) : pickUser(r));
+    } catch (e) {
+      log('warn', 'private channel snapshot failed', String(e));
+    }
+    try {
+      const rel = mod.RelationshipStore;
+      if (rel) {
+        const map = rel.getRelationships ? rel.getRelationships() : {};
+        data.relationships = Object.entries(map).map(([id, type]) => ({ id, type }));
+        for (const id of Object.keys(map)) addUser(resolveUser(id));
+      }
+    } catch (e) {}
+    try {
+      data.readStates = readStates();
+    } catch (e) {}
+    try {
+      data.guildSettings = guildSettings();
+    } catch (e) {}
+    data.users = Array.from(users.values());
+    return data;
+  }
+
+  function guildChannels(gid) {
+    const out = [];
+    const gcs = mod.GuildChannelStore;
+    if (gcs && gcs.getChannels) {
+      const g = gcs.getChannels(gid);
+      if (g) {
+        for (const key of Object.keys(g)) {
+          const bucket = g[key];
+          if (Array.isArray(bucket)) for (const entry of bucket) if (entry && entry.channel) out.push(pickChannel(entry.channel));
+        }
+      }
+    }
+    if (!out.length && mod.ChannelStore && mod.ChannelStore.getMutableGuildChannelsForGuild) {
+      const map = mod.ChannelStore.getMutableGuildChannelsForGuild(gid) || {};
+      for (const c of Object.values(map)) out.push(pickChannel(c));
+    }
+    return out.filter(Boolean);
+  }
+  function activeThreads() {
+    const out = [];
+    const ts = mod.ThreadStore;
+    try {
+      if (ts && ts.getActiveUnjoinedThreadsForGuild) return out; // handled lazily elsewhere
+    } catch (e) {}
+    return out;
+  }
+  function getSortedPrivate() {
+    try {
+      return mod.ChannelStore.getSortedPrivateChannels ? mod.ChannelStore.getSortedPrivateChannels() : [];
+    } catch (e) {
+      return [];
+    }
+  }
+  function readStates() {
+    const rss = mod.ReadStateStore;
+    if (!rss) return [];
+    try {
+      if (rss.getAllReadStates) {
+        const all = rss.getAllReadStates();
+        const arr = Array.isArray(all) ? all : Object.values(all || {});
+        return arr.map((r) => ({ id: r.channelId ?? r.id, last_message_id: r.lastMessageId ?? r.last_message_id ?? null, mention_count: r.mentionCount ?? r._mentionCount ?? 0 })).filter((r) => r.id);
+      }
+    } catch (e) {}
+    return [];
+  }
+  function guildSettings() {
+    const gs = mod.UserGuildSettingsStore;
+    if (!gs) return [];
+    try {
+      const all = gs.getAllSettings ? gs.getAllSettings() : null;
+      if (all) return normalizeGuildSettings(all);
+    } catch (e) {}
+    return [];
+  }
+  function normalizeGuildSettings(all) {
+    const list = [];
+    const src = all.userGuildSettings || all;
+    const entries = Array.isArray(src) ? src : Object.values(src || {});
+    for (const s of entries) {
+      if (!s) continue;
+      list.push({
+        guild_id: s.guildId ?? s.guild_id ?? null,
+        muted: !!s.muted,
+        mute_config: s.muteConfig ? { end_time: s.muteConfig.endTime ?? s.muteConfig.end_time ?? null } : null,
+        message_notifications: s.messageNotifications ?? s.message_notifications,
+        channel_overrides: Array.isArray(s.channelOverrides || s.channel_overrides)
+          ? (s.channelOverrides || s.channel_overrides).map((o) => ({ channel_id: o.channelId ?? o.channel_id, muted: !!o.muted, mute_config: o.muteConfig ? { end_time: o.muteConfig.endTime ?? null } : null, message_notifications: o.messageNotifications ?? o.message_notifications }))
+          : [],
+      });
+    }
+    return list;
+  }
+
+  function maybeSendSnapshot(reason) {
+    if (!wreq) return;
+    resolveModulesOnce();
+    const data = buildSnapshot();
+    snapshotSent = true;
+    up({ t: 'snapshot', data });
+    log('info', 'snapshot sent (' + reason + ')', { guilds: (data.guilds || []).length, channels: (data.channels || []).length, dms: (data.privateChannels || []).length });
+  }
+
+  let modulesResolved = false;
+  function resolveModulesOnce() {
+    if (modulesResolved) return;
+    modulesResolved = true;
+    resolveModules();
+  }
+
+  // ----------------------------------------------------------- dispatch relay
+  const FORWARD = [
+    'MESSAGE_CREATE',
+    'MESSAGE_UPDATE',
+    'MESSAGE_DELETE',
+    'MESSAGE_REACTION_ADD',
+    'MESSAGE_REACTION_REMOVE',
+    'CHANNEL_CREATE',
+    'CHANNEL_UPDATE',
+    'CHANNEL_DELETE',
+    'GUILD_CREATE',
+    'GUILD_UPDATE',
+    'GUILD_DELETE',
+    'THREAD_CREATE',
+    'THREAD_UPDATE',
+    'THREAD_DELETE',
+    'THREAD_LIST_SYNC',
+    'MESSAGE_ACK',
+    'TYPING_START',
+  ];
+  function subscribeDispatch() {
+    const d = mod.Dispatcher;
+    if (!d) return;
+    const handler = (event) => (action) => {
+      try {
+        up({ t: 'dispatch', event, data: shrink(event, action) });
+      } catch (e) {
+        /* ignore */
+      }
+    };
+    for (const ev of FORWARD) {
+      try {
+        d.subscribe(ev, handler(ev));
+      } catch (e) {
+        log('warn', 'subscribe failed for ' + ev, String(e));
+      }
+    }
+    try {
+      d.subscribe('CONNECTION_OPEN', () => maybeSendSnapshot('CONNECTION_OPEN'));
+    } catch (e) {}
+    log('info', 'subscribed to ' + FORWARD.length + ' dispatch events');
+  }
+
+  // Keep only the whitelisted shape of each forwarded action.
+  function shrink(event, a) {
+    switch (event) {
+      case 'MESSAGE_CREATE':
+      case 'MESSAGE_UPDATE':
+        return { message: pickMessage(a.message), optimistic: a.optimistic, channelId: a.channelId };
+      case 'MESSAGE_DELETE':
+        return { id: a.id, channelId: a.channelId, guildId: a.guildId };
+      case 'MESSAGE_REACTION_ADD':
+      case 'MESSAGE_REACTION_REMOVE':
+        return { channelId: a.channelId, messageId: a.messageId, userId: a.userId, emoji: pickEmoji(a.emoji) };
+      case 'CHANNEL_CREATE':
+      case 'CHANNEL_UPDATE':
+      case 'THREAD_CREATE':
+      case 'THREAD_UPDATE':
+        return { channel: pickChannel(a.channel) };
+      case 'CHANNEL_DELETE':
+      case 'THREAD_DELETE':
+        return { channel: pickChannel(a.channel) || { id: a.id, guild_id: a.guildId } };
+      case 'GUILD_CREATE':
+        return { guild: pickGuild(a.guild) };
+      case 'GUILD_UPDATE':
+        return { guild: pickGuild(a.guild) };
+      case 'GUILD_DELETE':
+        return { id: a.guild ? a.guild.id : a.id };
+      case 'THREAD_LIST_SYNC':
+        return { guildId: a.guildId, threads: Array.isArray(a.threads) ? a.threads.map(pickChannel) : [] };
+      case 'MESSAGE_ACK':
+        return { channelId: a.channelId, messageId: a.messageId, mentionCount: a.mentionCount };
+      case 'TYPING_START':
+        return { channelId: a.channelId, userId: a.userId };
+      default:
+        return {};
+    }
+  }
+
+  // --------------------------------------------------------------- commands
+  async function runCommand(cmd) {
+    resolveModulesOnce();
+    switch (cmd.kind) {
+      case 'send':
+        return sendMessage(cmd);
+      case 'history':
+        return history(cmd);
+      case 'markRead':
+        return rest('post', `/channels/${cmd.channelId}/messages/${cmd.messageId}/ack`, undefined, { token: null });
+      case 'react': {
+        const e = encodeURIComponent(cmd.emoji);
+        if (cmd.remove) return rest('del', `/channels/${cmd.channelId}/messages/${cmd.messageId}/reactions/${e}/@me`);
+        return rest('put', `/channels/${cmd.channelId}/messages/${cmd.messageId}/reactions/${e}/@me`);
+      }
+      case 'edit':
+        if (mod.MessageActions && mod.MessageActions.editMessage) return mod.MessageActions.editMessage(cmd.channelId, cmd.messageId, { content: cmd.content }), { ok: true };
+        return rest('patch', `/channels/${cmd.channelId}/messages/${cmd.messageId}`, undefined, { content: cmd.content });
+      case 'redact':
+        if (mod.MessageActions && mod.MessageActions.deleteMessage) return mod.MessageActions.deleteMessage(cmd.channelId, cmd.messageId), { ok: true };
+        return rest('del', `/channels/${cmd.channelId}/messages/${cmd.messageId}`);
+      default:
+        throw new Error('unknown command ' + cmd.kind);
+    }
+  }
+
+  async function sendMessage(cmd) {
+    const ma = mod.MessageActions;
+    const options = cmd.replyTo ? { messageReference: { channelId: cmd.channelId, messageId: cmd.replyTo } } : {};
+    if (ma && ma.sendMessage) {
+      await ma.sendMessage(cmd.channelId, { content: cmd.content, tts: false, invalidEmojis: [], validNonShortcutEmojis: [] }, undefined, options);
+      return { nativeId: null, nonce: cmd.nonce };
+    }
+    const body = { content: cmd.content, nonce: cmd.nonce, tts: false };
+    if (cmd.replyTo) body.message_reference = { channel_id: cmd.channelId, message_id: cmd.replyTo };
+    const res = await rest('post', `/channels/${cmd.channelId}/messages`, undefined, body);
+    return { nativeId: res && res.body ? res.body.id : null, nonce: cmd.nonce };
+  }
+
+  async function history(cmd) {
+    const query = { limit: Math.min(cmd.limit || 50, 100) };
+    if (cmd.beforeId) query.before = cmd.beforeId;
+    const res = await rest('get', `/channels/${cmd.channelId}/messages`, query);
+    const arr = (res && res.body) || [];
+    return { messages: arr.map(pickMessage).filter(Boolean) };
+  }
+
+  async function rest(verb, url, query, body) {
+    const r = mod.Rest;
+    if (!r || typeof r[verb] !== 'function') throw new Error('REST module unavailable (' + verb + ')');
+    const res = await r[verb]({ url, query, body });
+    return res;
+  }
+
+  // --------------------------------------------------------------- page state
+  function detectPageState() {
+    const href = location.href;
+    const path = location.pathname;
+    let state = 'loading';
+    if (/\/login|\/register/.test(path)) state = 'login';
+    else if (/^\/(app|channels)/.test(path)) state = 'app';
+    // captcha / verification overlays
+    if (document.querySelector('iframe[src*="hcaptcha"], iframe[src*="captcha"]')) state = 'captcha';
+    const bodyText = (document.body && document.body.innerText) || '';
+    if (/suspicious activity|verify your|phone number to continue|verification required/i.test(bodyText)) state = 'verify';
+    up({ t: 'page', state, url: href });
+    return state;
+  }
+
+  // ------------------------------------------------------------------- wiring
+  window.addEventListener('message', (e) => {
+    if (e.source !== window || !e.data || e.data[TAG] !== 'down') return;
+    const payload = e.data.payload;
+    if (!payload) return;
+    if (payload.t === 'cmd') {
+      Promise.resolve()
+        .then(() => runCommand(payload.cmd))
+        .then((result) => up({ t: 'reply', id: payload.id, ok: true, result }))
+        .catch((err) => up({ t: 'reply', id: payload.id, ok: false, error: String((err && err.message) || err) }));
+    }
+  });
+
+  installWebpackHook();
+  whenReady(() => {
+    resolveModulesOnce();
+    subscribeDispatch();
+    // If we connected before our subscriber attached, send a snapshot anyway.
+    try {
+      const connected = mod.Dispatcher && false; // Discord has no simple "is gateway open" flag; rely on CONNECTION_OPEN + a delayed attempt.
+    } catch (e) {}
+    setTimeout(() => {
+      if (!snapshotSent && mod.UserStore && mod.UserStore.getCurrentUser && mod.UserStore.getCurrentUser()) maybeSendSnapshot('warm-start');
+    }, 4000);
+  });
+
+  // Page-state polling so the adapter can show login / captcha / verify promptly.
+  const poll = () => detectPageState();
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', poll);
+  poll();
+  setInterval(poll, 3000);
+  // Surfaced in the adapter log so the "not automated" property is easy to confirm.
+  log('info', 'hook.js installed; navigator.webdriver=' + String(navigator.webdriver));
+})();

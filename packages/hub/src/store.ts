@@ -64,10 +64,12 @@ const PREVIEW_LEN = 140;
 
 export function previewText(body: string, kind: string): string {
   if (kind === 'encrypted') return 'Encrypted message';
+  // Keep <@id> / <#id> tokens intact: the client resolves them to names.
   const t = body
     .replace(/```[\s\S]*?```/g, '[code]')
     .replace(/\|\|([\s\S]*?)\|\|/g, '[spoiler]')
-    .replace(/[*_~`>]/g, '')
+    .replace(/^\s*>\s?/gm, '')
+    .replace(/[*_~`]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
   return t.length > PREVIEW_LEN ? t.slice(0, PREVIEW_LEN - 1) + '…' : t;
