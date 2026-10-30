@@ -1,0 +1,8 @@
+{
+  "name": "@dither-chat/adapter-matrix",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@dither-chat/protocol": "workspace:*"
+  }
+}

@@ -1,3 +1,4 @@
+export {};
 /**
  * Small CLI over the hub's HTTP API (the hub must be running).
  *

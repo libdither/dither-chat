@@ -234,6 +234,9 @@ export class Store {
         }
         case 'read': {
           const cid = hubId('cnv', acc.network, ev.conversation);
+          // Ignore read state for a conversation we haven't been told about yet,
+          // so we don't leave an orphan vantage pointing at nothing.
+          if (!this.db.query('SELECT 1 FROM conversation WHERE id = ?').get(cid)) break;
           this.ensureVantage(acc.id, 'conversation', cid);
           const v = this.db.query(`SELECT last_read_ts FROM vantage WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`).get(acc.id, cid) as Row;
           const upTo = Math.max(v?.last_read_ts ?? 0, ev.upToTs);

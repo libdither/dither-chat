@@ -105,7 +105,9 @@ export function linkHub(opts: LinkOptions): HubLink {
     emit: (ev) => send(JSON.stringify(ev)),
     log: (level, msg, data) => {
       send(JSON.stringify({ t: 'log', level, msg, data } satisfies AdapterEvent));
-      if (level !== 'debug') console.log(`[${level}] ${msg}`, data ?? '');
+      // When connected, the hub already persists this via the log event; only
+      // echo to stdout when standalone (else every line lands in adapter.log twice).
+      if (level !== 'debug' && !open) console.log(`[${level}] ${msg}`, data ?? '');
     },
     secret: <T>() => {
       const p = join(accountDir, 'secret.json');

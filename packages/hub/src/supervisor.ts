@@ -113,7 +113,7 @@ export class Supervisor {
       },
       stdout: 'pipe',
       stderr: 'pipe',
-      onExit: (_p, code, signal) => this.exited(id, code, signal),
+      onExit: (p, code, signal) => this.exited(id, p, code, signal),
     });
     r.proc = proc;
     for (const stream of [proc.stdout, proc.stderr]) {
@@ -128,9 +128,12 @@ export class Supervisor {
     }
   }
 
-  private exited(id: string, code: number | null, signal: unknown) {
+  private exited(id: string, proc: Subprocess, code: number | null, signal: unknown) {
     const r = this.running.get(id);
-    if (!r) return;
+    // A stale process can exit after restart() has already started its
+    // replacement (onExit and `await proc.exited` are not ordered). Ignore it,
+    // or we'd clear the live handle and spawn a second adapter for this account.
+    if (!r || (r.proc && r.proc !== proc)) return;
     r.proc = undefined;
     appendFileSync(join(this.accountDir(id), 'adapter.log'), `--- exited code=${code} signal=${signal}\n`);
     if (r.stopping) return;
