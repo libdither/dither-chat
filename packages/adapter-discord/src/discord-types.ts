@@ -64,6 +64,8 @@ export interface RawEmbed {
   description?: string;
   url?: string;
   provider?: { name?: string };
+  author?: { name?: string };
+  fields?: { name: string; value: string }[];
   thumbnail?: { url?: string };
   image?: { url?: string };
 }
@@ -99,6 +101,10 @@ export interface RawMessage {
   message_reference?: RawMessageReference;
   /** present on the message that started a thread */
   thread?: RawChannel;
+  /** a forward: the content lives here, and the message's own fields are empty */
+  message_snapshots?: { content?: string; attachments?: RawAttachment[]; embeds?: RawEmbed[] }[];
+  sticker_items?: { name: string }[];
+  poll?: { question?: string; answers?: string[] };
   nonce?: string | number;
 }
 
@@ -164,7 +170,7 @@ export type BridgeUp =
   | { t: 'identities'; users: RawUser[] }
   | { t: 'dispatch'; event: DispatchName; data: any }
   | { t: 'reply'; id: string; ok: true; result?: unknown }
-  | { t: 'reply'; id: string; ok: false; error: string }
+  | { t: 'reply'; id: string; ok: false; error: string; retryAfter?: number }
   | { t: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; msg: string; data?: unknown };
 
 /** Flux actions the hook forwards. Keep this list in sync with hook.js. */
@@ -175,7 +181,7 @@ export type DispatchName =
   | 'MESSAGE_REACTION_ADD'
   | 'MESSAGE_REACTION_REMOVE'
   | 'CHANNEL_CREATE'
-  | 'CHANNEL_UPDATE'
+  | 'CHANNEL_UPDATES'
   | 'CHANNEL_DELETE'
   | 'GUILD_CREATE'
   | 'GUILD_UPDATE'

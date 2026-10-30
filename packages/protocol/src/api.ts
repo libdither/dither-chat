@@ -129,6 +129,17 @@ export interface TriageView {
   feedback: 'should_push' | 'should_not_push' | null;
 }
 
+/** A link preview or bot card attached to a message. */
+export interface EmbedView {
+  title?: string;
+  description?: string;
+  url?: string;
+  provider?: string;
+  author?: string;
+  image?: string;
+  fields?: { name: string; value: string }[];
+}
+
 export interface MessageView {
   id: string;
   conversationId: string;
@@ -144,6 +155,7 @@ export interface MessageView {
   mentionsSelf: boolean;
   deleted: boolean;
   attachments: AttachmentView[];
+  embeds: EmbedView[];
   reactions: { key: string; identityIds: string[] }[];
   seenVia: string[];
   triage: TriageView | null;

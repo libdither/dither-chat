@@ -14,10 +14,13 @@ const HOOK = readFileSync(process.env.HOOK_PATH ?? join(import.meta.dir, '../src
 function page(pathname = '/app') {
   const posted: any[] = [];
   const timers: (() => void)[] = [];
+  const intervals: (() => void)[] = [];
   const store = new Map<string, string>();
   const win: any = {
     postMessage: (msg: any) => posted.push(msg.__dither_bridge__ === 'up' ? msg.payload : msg),
-    addEventListener() {},
+    addEventListener(type: string, fn: (e: any) => void) {
+      if (type === 'message') win.message = fn;
+    },
   };
   const doc = { readyState: 'complete', addEventListener() {}, querySelector: () => null, body: { innerText: '' } };
   const loc = { origin: 'https://discord.com', href: `https://discord.com${pathname}`, pathname, reload() {} };
@@ -30,11 +33,13 @@ function page(pathname = '/app') {
       { webdriver: false },
       session,
       (fn: () => void) => timers.push(fn),
-      () => 0,
+      (fn: () => void) => intervals.push(fn),
     );
   /** Run the timers queued so far (not the ones they queue). */
   const tick = () => timers.splice(0).forEach((fn) => fn());
-  return { win, posted, runHook, tick };
+  /** The page-state poll, as setInterval would run it. */
+  const poll = () => intervals.forEach((fn) => fn());
+  return { win, posted, runHook, tick, poll };
 }
 
 /** One rspack runtime: the jsonp callback and push install, as in Discord's bundles. */
@@ -89,15 +94,34 @@ function store(name: string, extra: Record<string, unknown> = {}) {
   return { getName: () => name, emitChange() {}, ...extra };
 }
 
-const subscribed: string[] = [];
-const dispatcher = { dispatch() {}, subscribe: (ev: string) => subscribed.push(ev), unsubscribe() {}, isDispatching: () => false, _subscriptions: {} };
+const handlers = new Map<string, ((action: any) => void)[]>();
+const dispatcher = {
+  dispatch() {},
+  subscribe: (ev: string, fn: (action: any) => void) => void handlers.set(ev, [...(handlers.get(ev) ?? []), fn]),
+  unsubscribe() {},
+  isDispatching: () => false,
+  _subscriptions: {},
+};
+const emit = (ev: string, action: any = {}) => (handlers.get(ev) ?? []).forEach((fn) => fn(action));
+
+let me: { id: string; username: string } | null = null;
+const rest = { get() {}, post() {}, put() {}, patch() {}, del() {} };
+const messageActions = { sendMessage() {}, editMessage() {} };
 
 // rspack mangles export names: the stores sit under short keys, not `default`.
 const storeModule = (_m: any, e: any) => {
   Object.defineProperty(e, 'A', { enumerable: true, get: () => dispatcher });
-  Object.defineProperty(e, 'Ay', { enumerable: true, get: () => store('UserStore', { getCurrentUser: () => null }) });
+  Object.defineProperty(e, 'Ay', { enumerable: true, get: () => store('UserStore', { getCurrentUser: () => me }) });
   e.Bk = store('ChannelStore');
-  e.Cx = store('GuildStore');
+  e.Cx = store('GuildStore', { getGuilds: () => ({}) });
+  e.Bo = rest;
+  e.Dm = messageActions;
+};
+
+// An i18n message bundle in the real client: answers every key with a function.
+const intlBundle = (_m: any, e: any) => {
+  const lookups: unknown[] = [];
+  e.default = new Proxy({}, { get: (_t, key) => (arg: unknown) => void lookups.push([key, arg]) });
 };
 
 describe('hook.js with several rspack runtimes', () => {
@@ -133,7 +157,100 @@ describe('hook.js with several rspack runtimes', () => {
     const report = p.posted.find((m) => m.t === 'finders');
     expect(report?.results).toMatchObject({ Dispatcher: true, UserStore: true, ChannelStore: true, GuildStore: true });
     expect(report.detail).toContain('runtimes=2');
-    expect(subscribed).toContain('MESSAGE_CREATE');
+    expect(handlers.has('MESSAGE_CREATE')).toBe(true);
+  });
+
+  test('is not fooled by a Proxy that answers every key', async () => {
+    handlers.clear();
+    const p = page();
+    p.runHook();
+    const web = runtime(p.win, 'web');
+    chunk(p.win, '700', { i18n: intlBundle, stores: storeModule });
+    web.T('i18n'); // ahead of the real modules, as in the real client
+    web.T('stores');
+    p.tick();
+    expect(handlers.has('MESSAGE_CREATE')).toBe(true);
+    // Commands reach the real REST and message modules, not the bundle.
+    const calls: string[] = [];
+    rest.get = () => {
+      calls.push('rest');
+      return { body: [] } as any;
+    };
+    const sent = p.posted.length;
+    p.win.message?.({ source: p.win, data: { __dither_bridge__: 'down', payload: { t: 'cmd', id: 'x', cmd: { kind: 'history', channelId: '1' } } } });
+    await Bun.sleep(0);
+    expect(calls).toEqual(['rest']);
+    expect(p.posted.slice(sent).find((m) => m.t === 'reply')).toMatchObject({ id: 'x', ok: true, result: { messages: [] } });
+  });
+
+  test('reports a REST rejection with its message and retry_after', async () => {
+    handlers.clear();
+    const p = page();
+    p.runHook();
+    const web = runtime(p.win, 'web');
+    chunk(p.win, '700', { stores: storeModule });
+    web.T('stores');
+    p.tick();
+    rest.get = () => Promise.reject({ status: 429, body: { message: 'You are being rate limited.', retry_after: 2.5 } }) as any;
+    p.win.message?.({ source: p.win, data: { __dither_bridge__: 'down', payload: { t: 'cmd', id: 'y', cmd: { kind: 'history', channelId: '1' } } } });
+    await Bun.sleep(0);
+    expect(p.posted.find((m) => m.t === 'reply')).toMatchObject({ ok: false, error: 'You are being rate limited. (429)', retryAfter: 2.5 });
+  });
+
+  test('sends without waiting for the channel to load, with a raw reply reference', async () => {
+    handlers.clear();
+    const p = page();
+    p.runHook();
+    const web = runtime(p.win, 'web');
+    chunk(p.win, '700', { stores: storeModule });
+    web.T('stores');
+    p.tick();
+    const calls: any[][] = [];
+    messageActions.sendMessage = ((...args: any[]) => {
+      calls.push(args);
+      return Promise.resolve({ body: { id: '77' } });
+    }) as any;
+    p.win.message?.({ source: p.win, data: { __dither_bridge__: 'down', payload: { t: 'cmd', id: 's', cmd: { kind: 'send', channelId: '5', content: 'hi', replyTo: '4', nonce: 'n1' } } } });
+    await Bun.sleep(0);
+    expect(calls[0][2]).toBe(false); // true or undefined hangs until the channel is on screen
+    expect(calls[0][3]).toEqual({ nonce: 'n1', messageReference: { channel_id: '5', message_id: '4' } });
+    expect(p.posted.find((m) => m.t === 'reply')).toMatchObject({ id: 's', ok: true, result: { nativeId: '77' } });
+  });
+
+  test('sends the snapshot when the login finishes', () => {
+    handlers.clear();
+    me = null;
+    const p = page();
+    p.runHook();
+    const web = runtime(p.win, 'web');
+    chunk(p.win, '700', { stores: storeModule });
+    web.T('stores');
+    p.tick();
+    p.poll();
+    expect(p.posted.some((m) => m.t === 'snapshot')).toBe(false); // the login form is up
+
+    me = { id: '1', username: 'someone' };
+    emit('CONNECTION_OPEN');
+    expect(p.posted.filter((m) => m.t === 'snapshot')[0].data.self.id).toBe('1');
+    p.poll(); // no second copy from the poll...
+    expect(p.posted.filter((m) => m.t === 'snapshot')).toHaveLength(1);
+    emit('CONNECTION_OPEN'); // ...but a reconnect refreshes it
+    expect(p.posted.filter((m) => m.t === 'snapshot')).toHaveLength(2);
+    me = null;
+  });
+
+  test('sends the snapshot when CONNECTION_OPEN fired before the hook subscribed', () => {
+    handlers.clear();
+    me = { id: '1', username: 'someone' };
+    const p = page();
+    p.runHook();
+    const web = runtime(p.win, 'web');
+    chunk(p.win, '700', { stores: storeModule });
+    web.T('stores');
+    p.tick();
+    p.poll();
+    expect(p.posted.filter((m) => m.t === 'snapshot')).toHaveLength(1);
+    me = null;
   });
 
   test('keeps looking until the stores exist', () => {

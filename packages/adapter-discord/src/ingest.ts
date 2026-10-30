@@ -10,7 +10,7 @@
  */
 
 import type * as P from '@dither-chat/protocol';
-import type { DispatchName, RawChannel, RawGuild, RawGuildSettings, RawSnapshot } from './discord-types.ts';
+import type { DispatchName, RawChannel, RawGuild, RawGuildSettings, RawMessage, RawSnapshot } from './discord-types.ts';
 import { CHANNEL_TYPE, channelMute, isThread, mapCategory, mapGuild, mapGuildChannel, mapMessage, mapMute, mapPrivateChannel, mapReadState, mapThread, mapUser, reactionKey, snowflakeToMs } from './map.ts';
 
 export interface AdapterState {
@@ -19,10 +19,12 @@ export interface AdapterState {
   guildSettings: Map<string | null, RawGuildSettings>;
   known: Set<string>;
   friends: Set<string>;
+  /** user id -> what we last told the hub about them */
+  users: Map<string, string>;
 }
 
 export function newState(): AdapterState {
-  return { selfId: '', guilds: new Map(), guildSettings: new Map(), known: new Set(), friends: new Set() };
+  return { selfId: '', guilds: new Map(), guildSettings: new Map(), known: new Set(), friends: new Set(), users: new Map() };
 }
 
 export interface SnapshotResult {
@@ -73,12 +75,27 @@ export function translateSnapshot(data: RawSnapshot, st: AdapterState): Snapshot
     if (upToTs > 0) events.push({ t: 'read', conversation: rs.id, upToTs, mentions });
   }
 
-  const mentionChannels = (data.readStates ?? []).filter((r) => (r.mention_count ?? 0) > 0).map((r) => r.id);
+  // Not every read state is a channel (guild-level ones share the table).
+  const mentionChannels = (data.readStates ?? []).filter((r) => (r.mention_count ?? 0) > 0 && st.known.has(r.id)).map((r) => r.id);
   const backfillTargets: string[] = [];
   for (const c of data.privateChannels ?? []) backfillTargets.push(c.id);
   for (const id of mentionChannels) if (!backfillTargets.includes(id)) backfillTargets.push(id);
 
   return { events, backfillTargets };
+}
+
+/** A message and the people it names. Guild members are not in the snapshot, so this is the only place the hub learns their names. */
+export function messageEvents(m: RawMessage, st: AdapterState, live: boolean): P.AdapterEvent[] {
+  const events: P.AdapterEvent[] = [];
+  for (const u of [m.author, ...(m.mentions ?? [])]) {
+    if (!u?.username || u.id === st.selfId) continue;
+    const known = JSON.stringify([u.username, u.global_name, u.avatar]);
+    if (st.users.get(u.id) === known) continue;
+    st.users.set(u.id, known);
+    events.push({ t: 'identity', identity: mapUser(u, { contact: st.friends.has(u.id) }) });
+  }
+  events.push({ t: 'message', live, message: mapMessage(m, st.selfId) });
+  return events;
 }
 
 function guildChannelEvents(c: RawChannel, st: AdapterState): P.AdapterEvent[] {
@@ -93,9 +110,10 @@ export function translateDispatch(event: DispatchName, a: any, st: AdapterState)
   const selfId = st.selfId;
   switch (event) {
     case 'MESSAGE_CREATE':
-      return a.message ? [{ t: 'message', live: true, message: mapMessage(a.message, selfId) }] : [];
+      // An optimistic one is the client echoing a send in flight under a temporary id; the real one follows from the gateway.
+      return a.message && !a.optimistic ? messageEvents(a.message, st, true) : [];
     case 'MESSAGE_UPDATE':
-      return a.message && a.message.author ? [{ t: 'message', live: true, message: mapMessage(a.message, selfId) }] : [];
+      return a.message && a.message.author ? messageEvents(a.message, st, true) : [];
     case 'MESSAGE_DELETE':
       return a.id && a.channelId ? [{ t: 'delete', conversation: a.channelId, nativeId: a.id }] : [];
     case 'MESSAGE_REACTION_ADD':
@@ -104,8 +122,9 @@ export function translateDispatch(event: DispatchName, a: any, st: AdapterState)
         ? [{ t: 'reaction', conversation: a.channelId, message: a.messageId, author: a.userId, key: reactionKey(a.emoji), remove: event === 'MESSAGE_REACTION_REMOVE' }]
         : [];
     case 'CHANNEL_CREATE':
-    case 'CHANNEL_UPDATE':
       return a.channel ? routeChannel(a.channel, st) : [];
+    case 'CHANNEL_UPDATES':
+      return (a.channels ?? []).flatMap((c: RawChannel) => routeChannel(c, st));
     case 'CHANNEL_DELETE':
       return a.channel?.id ? [{ t: 'leave', kind: 'conversation', nativeId: a.channel.id }] : [];
     case 'GUILD_CREATE':

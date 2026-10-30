@@ -13,8 +13,8 @@
 import { linkHub } from '@dither-chat/protocol/client';
 import type * as P from '@dither-chat/protocol';
 import type { BridgeUp, HookCommand, PageState, RawUser } from './discord-types.ts';
-import { newState, translateDispatch, translateSnapshot } from './ingest.ts';
-import { DISCORD_EPOCH, mapMessage, mapUser } from './map.ts';
+import { messageEvents, newState, translateDispatch, translateSnapshot } from './ingest.ts';
+import { DISCORD_EPOCH, mapUser } from './map.ts';
 import { BridgeServer, PaceQueue } from './server.ts';
 import { Sandbox, pickDisplay } from './sandbox.ts';
 
@@ -196,19 +196,23 @@ function ingestSnapshot(data: Parameters<typeof translateSnapshot>[0]) {
   void startupBackfill(backfillTargets);
 }
 
-/** Fetch only recent messages for the given channels (DMs + unread mentions); everything else loads lazily. */
+const backfilled = new Set<string>();
+
+/** Fetch only recent messages for the given channels (DMs + unread mentions); everything else loads lazily. Every reconnect re-sends the snapshot, so each channel only once. */
 async function startupBackfill(targets: string[]) {
-  for (const channelId of targets.slice(0, 40)) {
+  const todo = targets.filter((id) => !backfilled.has(id)).slice(0, 40);
+  for (const id of todo) backfilled.add(id);
+  for (const channelId of todo) {
     try {
       await historyPace.run('backfill', async () => {
         const res = await bridge.request<{ messages: any[] }>({ kind: 'history', channelId, limit: 20 }, 30_000);
-        for (const raw of res.messages ?? []) hub.emit({ t: 'message', live: false, message: mapMessage(raw, st.selfId) });
+        for (const raw of res.messages ?? []) for (const ev of messageEvents(raw, st, false)) hub.emit(ev);
       });
     } catch (e) {
       log('debug', 'backfill failed', { channelId, error: String(e) });
     }
   }
-  log('info', 'startup backfill complete', { channels: targets.length });
+  if (todo.length) log('info', 'startup backfill complete', { channels: todo.length });
 }
 
 // ------------------------------------------------------------- hub -> adapter
@@ -224,7 +228,7 @@ async function onCommand(cmd: P.AdapterCommand): Promise<unknown> {
       const beforeId = cmd.beforeTs ? tsToSnowflake(cmd.beforeTs) : undefined;
       const r = await historyPace.run('history', () => bridge.request<{ messages: any[] }>({ kind: 'history', channelId: cmd.conversation, limit: cmd.limit, beforeId }, 45_000));
       const messages = r?.messages ?? [];
-      for (const raw of messages) hub.emit({ t: 'message', live: false, message: mapMessage(raw, st.selfId) });
+      for (const raw of messages) for (const ev of messageEvents(raw, st, false)) hub.emit(ev);
       return { count: messages.length, done: messages.length < cmd.limit };
     }
     case 'markRead':

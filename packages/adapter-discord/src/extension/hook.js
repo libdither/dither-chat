@@ -85,11 +85,20 @@
 
   // -------------------------------------------------------------- module lookup
   // rspack mangles export names, so every export of every module is a candidate.
+  // Except i18n message bundles: they are Proxies that answer every key with a
+  // function, so they would pass any shape test and sit ahead of the real modules.
+  function answersAnyKey(v) {
+    try {
+      return v[TAG + 'no_such_key'] !== undefined;
+    } catch (e) {
+      return true;
+    }
+  }
   function candidates() {
     const out = [];
     const seen = new Set();
     const add = (v) => {
-      if (v && typeof v === 'object' && !seen.has(v)) {
+      if (v && typeof v === 'object' && !seen.has(v) && !answersAnyKey(v)) {
         seen.add(v);
         out.push(v);
       }
@@ -203,10 +212,6 @@
       if (!coreReady) {
         coreReady = true;
         subscribeDispatch();
-        // Already logged in: CONNECTION_OPEN may have fired before we subscribed.
-        setTimeout(() => {
-          if (!snapshotSent && currentUser()) maybeSendSnapshot('warm-start');
-        }, 4000);
       }
       // Optional modules can arrive with later chunks; stop looking after a while.
       if (!Object.values(results).every(Boolean) && age < 5 * 60_000) setTimeout(resolveTick, 5000);
@@ -243,7 +248,20 @@
   const pickGuild = (g) => g && { id: g.id, name: g.name, icon: g.icon, description: g.description ?? null, rules_channel_id: g.rulesChannelId ?? g.rules_channel_id ?? null };
   const pickEmoji = (e) => e && { id: e.id ?? null, name: e.name ?? null };
   const pickAttachment = (a) => a && { id: a.id, filename: a.filename, content_type: a.content_type, size: a.size, width: a.width, height: a.height, url: a.url, proxy_url: a.proxy_url };
-  const pickEmbed = (e) => e && { type: e.type, title: e.title, description: e.rawDescription ?? e.description, url: e.url, provider: e.provider && { name: e.provider.name }, thumbnail: e.thumbnail && { url: e.thumbnail.url ?? e.thumbnail.proxyURL }, image: e.image && { url: e.image.url ?? e.image.proxyURL } };
+  // Discord's own proxy for embed images when there is one: the hub fetches these, and must not hit whatever host a message names.
+  const pickEmbedImage = (i) => i && { url: i.proxy_url ?? i.proxyURL ?? i.url };
+  const pickEmbed = (e) =>
+    e && {
+      type: e.type,
+      title: e.rawTitle ?? e.title,
+      description: e.rawDescription ?? e.description,
+      url: e.url,
+      provider: e.provider && { name: e.provider.name },
+      author: e.author && { name: e.author.name },
+      fields: Array.isArray(e.fields) ? e.fields.map((f) => ({ name: f.rawName ?? f.name, value: f.rawValue ?? f.value })) : undefined,
+      thumbnail: pickEmbedImage(e.thumbnail),
+      image: pickEmbedImage(e.image),
+    };
   function pickMessage(m) {
     if (!m) return null;
     return {
@@ -256,12 +274,17 @@
       edited_timestamp: m.edited_timestamp ?? (m.editedTimestamp && m.editedTimestamp.toISOString ? m.editedTimestamp.toISOString() : m.editedTimestamp) ?? null,
       type: m.type,
       mention_everyone: !!(m.mention_everyone ?? m.mentionEveryone),
-      mentions: Array.isArray(m.mentions) ? m.mentions.map((u) => (typeof u === 'string' ? { id: u } : pickUser(u))).filter(Boolean) : undefined,
+      mentions: Array.isArray(m.mentions) ? m.mentions.map((u) => (typeof u === 'string' ? resolveUser(u) : pickUser(u))).filter(Boolean) : undefined,
       attachments: Array.isArray(m.attachments) ? m.attachments.map(pickAttachment) : undefined,
       embeds: Array.isArray(m.embeds) ? m.embeds.map(pickEmbed) : undefined,
       reactions: Array.isArray(m.reactions) ? m.reactions.map((r) => ({ emoji: pickEmoji(r.emoji), count: r.count, me: !!r.me })) : undefined,
       message_reference: m.message_reference ?? (m.messageReference ? { message_id: m.messageReference.messageId ?? m.messageReference.message_id, channel_id: m.messageReference.channelId } : undefined),
       thread: m.thread ? pickChannel(m.thread) : undefined,
+      message_snapshots: Array.isArray(m.message_snapshots)
+        ? m.message_snapshots.map((s) => s.message && { content: s.message.content ?? '', attachments: (s.message.attachments ?? []).map(pickAttachment), embeds: (s.message.embeds ?? []).map(pickEmbed) }).filter(Boolean)
+        : undefined,
+      sticker_items: Array.isArray(m.sticker_items) ? m.sticker_items.map((s) => ({ name: s.name })) : undefined,
+      poll: m.poll && m.poll.question ? { question: m.poll.question.text, answers: (m.poll.answers ?? []).map((a) => a.poll_media && a.poll_media.text).filter(Boolean) } : undefined,
     };
   }
   function resolveUser(id) {
@@ -414,7 +437,7 @@
     'MESSAGE_REACTION_ADD',
     'MESSAGE_REACTION_REMOVE',
     'CHANNEL_CREATE',
-    'CHANNEL_UPDATE',
+    'CHANNEL_UPDATES',
     'CHANNEL_DELETE',
     'GUILD_CREATE',
     'GUILD_UPDATE',
@@ -460,8 +483,9 @@
       case 'MESSAGE_REACTION_ADD':
       case 'MESSAGE_REACTION_REMOVE':
         return { channelId: a.channelId, messageId: a.messageId, userId: a.userId, emoji: pickEmoji(a.emoji) };
+      case 'CHANNEL_UPDATES':
+        return { channels: Array.isArray(a.channels) ? a.channels.map(pickChannel) : [] };
       case 'CHANNEL_CREATE':
-      case 'CHANNEL_UPDATE':
       case 'THREAD_CREATE':
       case 'THREAD_UPDATE':
         return { channel: pickChannel(a.channel) };
@@ -513,10 +537,11 @@
 
   async function sendMessage(cmd) {
     const ma = mod.MessageActions;
-    const options = cmd.replyTo ? { messageReference: { channelId: cmd.channelId, messageId: cmd.replyTo } } : {};
     if (ma && ma.sendMessage) {
-      await ma.sendMessage(cmd.channelId, { content: cmd.content, tts: false, invalidEmojis: [], validNonShortcutEmojis: [] }, undefined, options);
-      return { nativeId: null, nonce: cmd.nonce };
+      const options = { nonce: cmd.nonce, ...(cmd.replyTo ? { messageReference: { channel_id: cmd.channelId, message_id: cmd.replyTo } } : {}) };
+      // false: by default this waits for the channel to load, which only happens once it is on screen.
+      const res = await ma.sendMessage(cmd.channelId, { content: cmd.content, tts: false, invalidEmojis: [], validNonShortcutEmojis: [] }, false, options);
+      return { nativeId: res && res.body ? res.body.id : null, nonce: cmd.nonce };
     }
     const body = { content: cmd.content, nonce: cmd.nonce, tts: false };
     if (cmd.replyTo) body.message_reference = { channel_id: cmd.channelId, message_id: cmd.replyTo };
@@ -579,6 +604,12 @@
     setTimeout(() => location.reload(), 5000);
   }
 
+  // The REST client rejects with its response object, not an Error.
+  function describeError(err) {
+    if (err && err.status) return `${(err.body && err.body.message) || 'HTTP error'} (${err.status})`;
+    return String((err && err.message) || err);
+  }
+
   // ------------------------------------------------------------------- wiring
   window.addEventListener('message', (e) => {
     if (e.source !== window || !e.data || e.data[TAG] !== 'down') return;
@@ -588,7 +619,7 @@
       Promise.resolve()
         .then(() => runCommand(payload.cmd))
         .then((result) => up({ t: 'reply', id: payload.id, ok: true, result }))
-        .catch((err) => up({ t: 'reply', id: payload.id, ok: false, error: String((err && err.message) || err) }));
+        .catch((err) => up({ t: 'reply', id: payload.id, ok: false, error: describeError(err), retryAfter: err && err.body && err.body.retry_after }));
     }
   });
 
@@ -596,7 +627,11 @@
   setTimeout(resolveTick, 500);
 
   // Page-state polling so the adapter can show login / captcha / verify promptly.
-  const poll = () => detectPageState();
+  const poll = () => {
+    detectPageState();
+    // CONNECTION_OPEN may have fired before we subscribed; it re-sends the full picture when it does fire.
+    if (coreReady && !snapshotSent && currentUser()) maybeSendSnapshot('logged in');
+  };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', poll);
   poll();
   setInterval(poll, 3000);

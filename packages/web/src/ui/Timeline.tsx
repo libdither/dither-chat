@@ -6,6 +6,7 @@ import { isJumbo, renderMarkdown } from '../markdown.ts';
 import {
   LEVEL_LABEL,
   authorName,
+  plainBody,
   convLabel,
   convTitle,
   crumbs,
@@ -293,7 +294,7 @@ function Attachments({ m }: { m: P.MessageView }) {
           const h = a.height ?? 300;
           const scale = Math.min(1, 400 / w, 300 / h);
           return (
-            <a class="att-img" href={a.url} target="_blank" rel="noreferrer" style={{ width: Math.round(w * scale), aspectRatio: `${w} / ${h}` }}>
+            <a class="att-img" href={a.url} target="_blank" rel="noreferrer" style={{ width: `${Math.round(w * scale)}px`, aspectRatio: `${w} / ${h}` }}>
               <img src={a.url} alt={a.name ?? ''} loading="lazy" />
             </a>
           );
@@ -312,6 +313,30 @@ function Attachments({ m }: { m: P.MessageView }) {
           </a>
         );
       })}
+    </div>
+  );
+}
+
+function Embeds({ m }: { m: P.MessageView }) {
+  if (!m.embeds.length) return null;
+  const ctx = useMdContext(m.network);
+  const md = (text: string) => ({ __html: renderMarkdown(text, ctx) });
+  return (
+    <div class="embeds">
+      {m.embeds.map((e) => (
+        <div class="embed">
+          {(e.provider || e.author) && <small>{[e.provider, e.author].filter(Boolean).join(' · ')}</small>}
+          {e.title && (e.url && /^https?:\/\//i.test(e.url) ? <a class="embed-title" href={e.url} target="_blank" rel="noreferrer noopener">{e.title}</a> : <b class="embed-title">{e.title}</b>)}
+          {e.description && <div class="msg-body" dangerouslySetInnerHTML={md(e.description)} />}
+          {e.fields?.map((f) => (
+            <div class="embed-field">
+              <b>{f.name}</b>
+              <div class="msg-body" dangerouslySetInnerHTML={md(f.value)} />
+            </div>
+          ))}
+          {e.image && <img class="embed-image" src={e.image} alt="" loading="lazy" onError={(ev) => ev.currentTarget.remove()} />}
+        </div>
+      ))}
     </div>
   );
 }
@@ -415,7 +440,7 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
           <button class="reply-quote" onClick={() => document.getElementById(`m-${target.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>
             <Icon name="reply" size={12} />
             <b>{isSelfIdentity(target.authorId) ? 'You' : authorName(target.authorId)}</b>
-            <span>{target.deleted ? 'Message deleted' : target.body.slice(0, 120) || 'Attachment'}</span>
+            <span>{target.deleted ? 'Message deleted' : plainBody(target.body, target.network).slice(0, 120) || 'Attachment'}</span>
           </button>
         )}
         {!grouped && (
@@ -440,6 +465,7 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
         <Body m={m} />
         {grouped && m.editedTs && <span class="msg-edited">(edited)</span>}
         <Attachments m={m} />
+        <Embeds m={m} />
         <Reactions m={m} />
         {thread && (
           <button class="thread-chip" onClick={() => openConv(thread)}>
@@ -570,7 +596,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       {reply && (
         <div class="composer-reply">
           <Icon name="reply" size={13} /> Replying to <b>{isSelfIdentity(reply.authorId) ? 'yourself' : authorName(reply.authorId)}</b>
-          <span>{reply.body.slice(0, 80)}</span>
+          <span>{plainBody(reply.body, reply.network).slice(0, 80)}</span>
           <button class="icon-btn small" onClick={clearReply} aria-label="Cancel reply">
             <Icon name="x" size={13} />
           </button>

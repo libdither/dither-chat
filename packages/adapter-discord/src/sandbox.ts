@@ -91,6 +91,16 @@ export class Sandbox {
     );
   }
 
+  /** Chromium must not offer to keep a password typed into the live view: this profile runs on --password-store=basic. */
+  private disablePasswordManager() {
+    const path = join(this.profileDir, 'Default', 'Preferences');
+    const prefs = readConfigFile<Record<string, any>>(path, {});
+    prefs.credentials_enable_service = false;
+    prefs.profile = { ...prefs.profile, password_manager_enabled: false };
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify(prefs));
+  }
+
   private spawn(name: string, cmd: string[], env?: Record<string, string>): Subprocess {
     this.opts.log('debug', `spawn ${name}`, cmd.join(' '));
     const proc = Bun.spawn(cmd, {
@@ -121,6 +131,7 @@ export class Sandbox {
   async start(): Promise<Bins> {
     const bins = resolveBins(this.opts.log);
     this.prepareExtension();
+    this.disablePasswordManager();
     const d = `:${this.opts.display}`;
     const { width, height } = this.opts;
 

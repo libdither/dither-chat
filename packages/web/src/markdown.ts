@@ -21,11 +21,13 @@ export function renderMarkdown(src: string, ctx: MdContext): string {
   let s = src.replace(/```([\w+-]*)\n?([\s\S]*?)```/g, (_, lang, code) => slot(`<pre class="md-code"${lang ? ` data-lang="${esc(lang)}"` : ''}><code>${esc(code.replace(/\n$/, ''))}</code></pre>`));
   s = s.replace(/`([^`\n]+)`/g, (_, code) => slot(`<code class="md-inline">${esc(code)}</code>`));
   // Mentions and room links before escaping eats the angle brackets.
+  s = s.replace(/<@&\d+>/g, () => slot('<span class="mention">@role</span>'));
   s = s.replace(/<@!?([^>\s]+)>/g, (_, id) => {
     const u = ctx.user(id);
-    return slot(`<span class="mention${u?.self ? ' self' : ''}">@${esc(u?.name ?? id)}</span>`);
+    // Discord user ids mean nothing to a reader; a Matrix id still does.
+    return slot(`<span class="mention${u?.self ? ' self' : ''}">@${esc(u?.name ?? (/^\d+$/.test(id) ? 'user' : id))}</span>`);
   });
-  s = s.replace(/<#([^>\s]+)>/g, (_, id) => slot(`<span class="mention room">#${esc(ctx.room(id) ?? id)}</span>`));
+  s = s.replace(/<#([^>\s]+)>/g, (_, id) => slot(`<span class="mention room">#${esc(ctx.room(id) ?? (/^\d+$/.test(id) ? 'channel' : id))}</span>`));
   s = s.replace(/<a?:(\w+):\d+>/g, (_, name) => slot(`<span class="emoji-custom">:${esc(name)}:</span>`));
   s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, text, url) => slot(`<a href="${esc(url)}" target="_blank" rel="noreferrer noopener">${esc(text)}</a>`));
   s = s.replace(/\bhttps?:\/\/[^\s<>()]+[^\s<>().,;:!?'"]/g, (url) => slot(`<a href="${esc(url)}" target="_blank" rel="noreferrer noopener">${esc(url)}</a>`));
@@ -52,7 +54,8 @@ export function renderMarkdown(src: string, ctx: MdContext): string {
     if (m) quote.push(m[1]);
     else {
       flush();
-      out.push(line);
+      // Discord's line-level headings and small print.
+      out.push(line.replace(/^#{1,3} (.+)$/, '<strong>$1</strong>').replace(/^-# (.+)$/, '<small>$1</small>'));
     }
   }
   flush();

@@ -37,6 +37,7 @@ export function visibleSpace(s: P.SpaceView) {
 /** Replace raw <@id> / <#id> tokens in stored preview text with readable names. */
 export function resolveTokens(text: string, network: P.Network): string {
   return text
+    .replace(/<@&\d+>/g, '@role')
     .replace(/<@!?([^>\s]+)>/g, (_, id) => {
       const hid = db.identityByNative.get(`${network}:${id}`);
       return '@' + (hid ? (isSelfIdentity(hid) ? 'you' : authorName(hid)) : 'user');
@@ -46,6 +47,17 @@ export function resolveTokens(text: string, network: P.Network): string {
       return '#channel';
     })
     .replace(/<a?:(\w+):\d+>/g, ':$1:');
+}
+
+/** A message body as one plain line, for quotes. */
+export function plainBody(body: string, network: P.Network): string {
+  return resolveTokens(body, network)
+    .replace(/```[\s\S]*?```/g, '[code]')
+    .replace(/\|\|[\s\S]*?\|\|/g, '[spoiler]')
+    .replace(/^\s*(>|-#|#{1,3})\s/gm, '')
+    .replace(/\*\*|__|~~|[*`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export function identityName(id: string | null | undefined): string {

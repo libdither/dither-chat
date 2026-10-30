@@ -237,6 +237,18 @@ describe('messages', () => {
     expect(f.replyTo).toBe('700000000000000000');
   });
 
+  test('a forward, a sticker and a poll say something despite empty content', () => {
+    const empty = { ...base, content: '' };
+    const att = { id: '9', filename: 'a.png', url: 'https://cdn.discordapp.com/a.png' };
+    const forward = mapMessage({ ...empty, message_snapshots: [{ content: 'line one\nline two', attachments: [att], embeds: [{ title: 'card' }] }] }, SELF);
+    expect(forward.body).toBe('> line one\n> line two');
+    expect(forward.attachments?.map((a) => a.nativeId)).toEqual(['9']);
+    expect((forward.extra as any).embeds[0].title).toBe('card');
+    expect(mapMessage({ ...empty, sticker_items: [{ name: 'wave' }] }, SELF).body).toBe('[sticker: wave]');
+    expect(mapMessage({ ...empty, poll: { question: 'Tea?', answers: ['yes', 'no'] } }, SELF).body).toBe('**Tea?**\n- yes\n- no');
+    expect(mapMessage({ ...empty, type: 20 }, SELF).kind).toBe('text');
+  });
+
   test('mentions self by id, by <@!nick>, and @everyone', () => {
     expect(mapMessage({ ...base, content: `hey <@${SELF}>`, mentions: [self] }, SELF).mentionsSelf).toBe(true);
     expect(mapMessage({ ...base, content: `hey <@!${SELF}>` }, SELF).body).toBe(`hey <@${SELF}>`);

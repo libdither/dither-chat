@@ -790,6 +790,7 @@ export class Store {
           height: a.height,
           url: this.media(a.url, seenVia[0]) ?? '',
         })),
+        embeds: json<{ embeds?: P.EmbedView[] }>(r.extra, {}).embeds?.map((e) => ({ ...e, image: this.media(e.image, seenVia[0]) ?? undefined })) ?? [],
         reactions: [...rx].map(([key, identityIds]) => ({ key, identityIds })),
         seenVia,
         triage: t ? { decision: t.decision, score: t.score, reasons: json(t.reasons, []), decidedBy: t.decided_by, feedback: t.feedback } : null,

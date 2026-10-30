@@ -263,6 +263,8 @@ export function systemMessageText(m: RawMessage): string | null {
     case undefined:
     case 0: // DEFAULT
     case 19: // REPLY
+    case 20: // CHAT_INPUT_COMMAND: a bot answering a slash command
+    case 23: // CONTEXT_MENU_COMMAND
       return null;
   }
   const who = m.author ? userDisplayName(m.author) : 'Someone';
@@ -287,7 +289,7 @@ export function systemMessageText(m: RawMessage): string | null {
     case 11:
       return `${who} boosted the server.`;
     case 12:
-      return `${who} is live.`;
+      return `${who} followed a channel.`;
     case 15:
     case 16:
     case 17:
@@ -323,23 +325,39 @@ export function messageKind(m: RawMessage, system: string | null): MessageKind {
   return 'text';
 }
 
+function allAttachments(m: RawMessage) {
+  return [...(m.attachments ?? []), ...(m.message_snapshots?.flatMap((s) => s.attachments ?? []) ?? [])];
+}
+
 /** Whitelisted subset of an embed, for MessageFact.extra. */
 function embedExtra(m: RawMessage) {
-  if (!m.embeds || !m.embeds.length) return undefined;
-  const embeds = m.embeds.slice(0, 6).map((e) => ({
+  const raw = [...(m.embeds ?? []), ...(m.message_snapshots?.flatMap((s) => s.embeds ?? []) ?? [])];
+  if (!raw.length) return undefined;
+  const embeds = raw.slice(0, 6).map((e) => ({
     type: e.type,
     title: e.title,
     description: e.description,
     url: e.url,
     provider: e.provider?.name,
+    author: e.author?.name,
     image: e.image?.url ?? e.thumbnail?.url,
+    fields: e.fields,
   }));
   return { embeds };
 }
 
+/** What a message says when its content is empty: a forward, a sticker or a poll. */
+function bodyFallback(m: RawMessage): string {
+  const forwarded = m.message_snapshots?.map((s) => s.content).filter(Boolean).join('\n');
+  if (forwarded) return forwarded.replace(/^/gm, '> ');
+  if (m.sticker_items?.length) return m.sticker_items.map((s) => `[sticker: ${s.name}]`).join(' ');
+  if (m.poll?.question) return [`**${m.poll.question}**`, ...(m.poll.answers ?? []).map((a) => `- ${a}`)].join('\n');
+  return '';
+}
+
 export function mapMessage(m: RawMessage, selfId: string): MessageFact {
   const system = systemMessageText(m);
-  const body = system !== null ? system : normalizeMentions(m.content ?? '');
+  const body = system !== null ? system : normalizeMentions(m.content || bodyFallback(m));
   const mentionsSelf =
     !!m.mention_everyone || (m.mentions?.some((u) => u.id === selfId) ?? false) || body.includes(`<@${selfId}>`);
   const extra = embedExtra(m);
@@ -356,7 +374,7 @@ export function mapMessage(m: RawMessage, selfId: string): MessageFact {
     // A message carrying a `thread` object is the root of that thread conversation.
     threadRoot: m.thread?.id,
     mentionsSelf: mentionsSelf || undefined,
-    attachments: m.attachments?.length ? m.attachments.map(mapAttachment) : undefined,
+    attachments: allAttachments(m).length ? allAttachments(m).map(mapAttachment) : undefined,
     reactions: m.reactions?.length
       ? m.reactions.map((r) => ({ key: reactionKey(r.emoji), authors: r.me ? [selfId] : [] }))
       : undefined,

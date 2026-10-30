@@ -168,8 +168,10 @@ export async function api<T = any>(path: string, init?: { method?: string; body?
     headers: init?.body !== undefined ? { 'content-type': 'application/json' } : undefined,
   });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!res.ok) throw new Error(data?.error ?? `${res.status}`);
+  // Not everything here is JSON: the account log and the access gate's refusals are plain text.
+  const json = res.headers.get('content-type')?.includes('json');
+  const data = json && text ? JSON.parse(text) : text || null;
+  if (!res.ok) throw new Error(data?.error ?? (text.slice(0, 200) || `${res.status}`));
   return data as T;
 }
 
@@ -381,15 +383,31 @@ export async function loadTimeline(key: string, older = false): Promise<void> {
     for (const m of page.messages) upsertInto(t.messages, m);
     t.hasMore = page.hasMore;
     if (page.conversationIds) t.conversationIds = page.conversationIds;
-    // Nothing stored locally: ask the network for history (Discord and Matrix can backfill).
-    if (kind === 'c' && older && !page.messages.length) {
-      const r = await api<{ count?: number; done?: boolean }>(`/api/conversations/${id}/history`, { body: { beforeTs: before, limit: 50 } }).catch(() => null);
-      t.hasMore = !!r && !r.done && (r.count ?? 0) > 0;
+    if (kind === 'c' && older) {
+      // Stored messages ran out, which is not the start of the conversation: Discord and Matrix can backfill.
+      if (!page.hasMore) t.hasMore = await fromNetwork(t, id, t.messages[0]?.ts);
+    } else if (kind === 'c') {
+      // Large Discord servers push live messages only for channels open in the client, so what is stored may be
+      // stale: ask for the latest on open. Show what we have meanwhile, unless that is nothing.
+      if (page.messages.length) {
+        t.hasMore = true;
+        void fromNetwork(t, id).then(() => rev.value++);
+      } else t.hasMore = await fromNetwork(t, id);
     }
   } finally {
     t.loading = false;
     rev.value++;
   }
+}
+
+/** Ask the conversation's network for messages, then show what the hub stored. Returns whether there may be older ones. */
+async function fromNetwork(t: Timeline, conversationId: string, beforeTs?: number): Promise<boolean> {
+  const r = await api<{ count?: number; done?: boolean }>(`/api/conversations/${conversationId}/history`, { body: { beforeTs, limit: 50 } }).catch(() => null);
+  if (!r?.count) return false;
+  const page = await api<P.MessagePage>(`/api/conversations/${conversationId}/messages?limit=60${beforeTs ? `&before=${beforeTs}` : ''}`).catch(() => null);
+  page?.identities.forEach(putIdentity);
+  for (const m of page?.messages ?? []) upsertInto(t.messages, m);
+  return !r.done;
 }
 
 function refreshTimeline(key: string) {

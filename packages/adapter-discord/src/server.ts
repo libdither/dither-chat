@@ -74,7 +74,7 @@ export class BridgeServer {
               self.pending.delete(msg.id);
               clearTimeout(p.timer);
               if (msg.ok) p.resolve(msg.result);
-              else p.reject(new Error(msg.error));
+              else p.reject(Object.assign(new Error(msg.error), { retry_after: msg.retryAfter }));
             }
             return;
           }

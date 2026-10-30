@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { Store } from '../../hub/src/store.ts';
 import type { AccountRow } from '../../hub/src/store.ts';
 import { hubId } from '@dither-chat/protocol/ids';
-import { newState, translateDispatch, translateSnapshot } from '../src/ingest.ts';
+import { messageEvents, newState, translateDispatch, translateSnapshot } from '../src/ingest.ts';
 import type { RawSnapshot } from '../src/discord-types.ts';
 
 const GUILD = '200000000000000001';
@@ -151,6 +151,41 @@ describe('hub ingest of adapter facts', () => {
     const beginners = boot.conversations.find((c) => c.nativeId === CH_BEGINNERS)!;
     const v = beginners.vantages.find((x) => x.accountId === acc.id)!;
     expect(v.mentions).toBeGreaterThanOrEqual(1);
+  });
+
+  test('a message names its author and mentions, once each', () => {
+    const st = newState();
+    st.selfId = SELF;
+    const bot = { id: '400000000000000009', username: 'Midjourney Bot', bot: true };
+    const stranger = { id: '400000000000000010', username: 'someone', global_name: 'Some One' };
+    const raw = { id: '700000000000000020', channel_id: CH_BEGINNERS, author: bot, content: `done <@${stranger.id}>`, timestamp: '2024-06-01T12:01:00.000Z', mentions: [stranger, { id: SELF, username: 'zyansheep' }], type: 20, embeds: [{ title: 'Job', description: 'finished', image: { url: 'https://cdn.discordapp.com/x.png' } }] };
+    const events = messageEvents(raw, st, false);
+    expect(events.map((e) => e.t)).toEqual(['identity', 'identity', 'message']);
+    expect(messageEvents({ ...raw, id: '700000000000000021' }, st, false).map((e) => e.t)).toEqual(['message']);
+    for (const ev of events) store.ingest(acc, ev);
+
+    const page = store.messages(hubId('cnv', 'discord', CH_BEGINNERS), null, 50);
+    expect(page.identities.find((i) => i.nativeId === bot.id)).toMatchObject({ displayName: 'Midjourney Bot', isBot: true });
+    expect(page.identities.find((i) => i.nativeId === stranger.id)?.displayName).toBe('Some One');
+    const msg = page.messages.find((m) => m.nativeId === raw.id)!;
+    expect(msg.kind).toBe('text'); // a slash command reply is an ordinary message
+    expect(msg.embeds).toMatchObject([{ title: 'Job', description: 'finished' }]);
+    expect(msg.embeds[0].image).toBe('https://cdn.discordapp.com/x.png'); // this test Store's signer passes URLs through
+  });
+
+  test('the echo of a send in flight is dropped; the real message is not', () => {
+    const st = newState();
+    st.selfId = SELF;
+    const message = { id: '700000000000000030', channel_id: DM, author: { id: SELF, username: 'zyansheep' }, content: 'hi', timestamp: '2024-06-01T12:02:00.000Z' };
+    expect(translateDispatch('MESSAGE_CREATE', { message, optimistic: true }, st)).toEqual([]);
+    expect(translateDispatch('MESSAGE_CREATE', { message }, st).map((e) => e.t)).toEqual(['message']);
+  });
+
+  test('a rename arrives through CHANNEL_UPDATES', () => {
+    const st = newState();
+    st.selfId = SELF;
+    translateDispatch('CHANNEL_UPDATES', { channels: [{ id: GDM, type: 3, name: 'renamed', recipients: [{ id: ALICE, username: 'alice.chen' }] }] }, st).forEach((ev) => store.ingest(acc, ev));
+    expect(store.bootstrap().conversations.find((c) => c.nativeId === GDM)?.name).toBe('renamed');
   });
 
   test('backfill targets are DMs plus unread-mention channels only', () => {

@@ -18,7 +18,7 @@ export function NetGlyph({ network, size = 14, color }: { network: P.Network; si
 /** Round source badge: network colour with its glyph. */
 export function NetBadge({ network, size = 16, class: cls }: { network: P.Network; size?: number; class?: string }) {
   return (
-    <span class={`net-badge ${cls ?? ''}`} style={{ width: size, height: size, background: netColor(network) }} title={netName(network)}>
+    <span class={`net-badge ${cls ?? ''}`} style={{ width: `${size}px`, height: `${size}px`, background: netColor(network) }} title={netName(network)}>
       <NetGlyph network={network} size={Math.round(size * 0.62)} color="#fff" />
     </span>
   );
@@ -32,7 +32,7 @@ export function AccountDots({ network, accountIds, size = 8, force }: { network:
   return (
     <span class="acc-dots" title={`via ${accs.map((a) => a.label).join(' + ')}`}>
       {accs.map((a) => (
-        <span class="acc-dot" style={{ width: size, height: size, background: a.color }} />
+        <span class="acc-dot" style={{ width: `${size}px`, height: `${size}px`, background: a.color }} />
       ))}
     </span>
   );
@@ -88,11 +88,11 @@ export function Avatar({
   const [broken, setBroken] = useState(false);
   const radius = square ? Math.round(size * 0.3) : size / 2;
   return (
-    <span class="avatar" style={{ width: size, height: size }}>
+    <span class="avatar" style={{ width: `${size}px`, height: `${size}px` }}>
       {url && !broken ? (
-        <img src={url} alt="" width={size} height={size} style={{ borderRadius: radius }} onError={() => setBroken(true)} loading="lazy" />
+        <img src={url} alt="" width={size} height={size} style={{ borderRadius: `${radius}px` }} onError={() => setBroken(true)} loading="lazy" />
       ) : (
-        <span class="avatar-fallback" style={{ borderRadius: radius, background: hueOf(id), fontSize: Math.max(10, Math.round(size * (icon ? 0.5 : 0.36))) }}>
+        <span class="avatar-fallback" style={{ borderRadius: `${radius}px`, background: hueOf(id), fontSize: `${Math.max(10, Math.round(size * (icon ? 0.5 : 0.36)))}px` }}>
           {icon ?? initials(name)}
         </span>
       )}

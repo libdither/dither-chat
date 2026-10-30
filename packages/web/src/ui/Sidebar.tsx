@@ -299,7 +299,7 @@ function ChannelRow({ c, active, depth, onOpen, alsoIn }: { c: P.ConversationVie
     <>
       <button
         class={`chan ${c.id === active ? 'active' : ''} ${u.unread && !u.muted ? 'unread' : ''} ${u.muted ? 'muted' : ''}`}
-        style={{ paddingLeft: 10 + depth * 12 }}
+        style={{ paddingLeft: `${10 + depth * 12}px` }}
         onClick={() => onOpen(c)}
         title={kindLabel(c)}
       >
@@ -319,7 +319,7 @@ function ChannelRow({ c, active, depth, onOpen, alsoIn }: { c: P.ConversationVie
         return (
           <button
             class={`chan thread ${t.id === active ? 'active' : ''} ${tu.unread && !tu.muted ? 'unread' : ''}`}
-            style={{ paddingLeft: 26 + depth * 12 }}
+            style={{ paddingLeft: `${26 + depth * 12}px` }}
             onClick={() => onOpen(t)}
             title={kindLabel(t)}
           >
@@ -346,12 +346,13 @@ export function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<s
           return <ChannelRow c={c} active={active} depth={depth} onOpen={onOpen} alsoIn={also.filter(Boolean)} />;
         }
         const s = db.spaces.get(k.id)!;
+        if (k.kind === 'section' && !spaceChildren(s.id).length) return null; // a category whose channels this account can't see
         const key = `space:${s.id}`;
         const collapsed = isCollapsed(key);
         const u = spaceUnread(s.id);
         return (
           <div class={`tree-group ${k.kind}`}>
-            <button class="tree-head" style={{ paddingLeft: 6 + depth * 12 }} onClick={() => setPrefs({ collapsed: { ...prefs.value.collapsed, [key]: !collapsed } })}>
+            <button class="tree-head" style={{ paddingLeft: `${6 + depth * 12}px` }} onClick={() => setPrefs({ collapsed: { ...prefs.value.collapsed, [key]: !collapsed } })}>
               <Icon name={collapsed ? 'chevronRight' : 'chevronDown'} size={11} />
               {k.kind === 'subspace' && <NetGlyph network={s.network} size={11} />}
               <span>{k.kind === 'section' ? s.name.toUpperCase() : s.name}</span>
