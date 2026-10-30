@@ -1,0 +1,99 @@
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { applyDemoOverlay, createDemoAccounts, demoFactory } from './demo.ts';
+import { HubServer, mediaSigner } from './server.ts';
+import { Store } from './store.ts';
+import { Supervisor } from './supervisor.ts';
+import { Triage } from './triage.ts';
+
+const args = process.argv.slice(2);
+const flag = (n: string) => args.includes(`--${n}`) || process.env[`DITHER_${n.toUpperCase()}`] === '1';
+const opt = (n: string, d: string) => {
+  const i = args.indexOf(`--${n}`);
+  return i >= 0 ? args[i + 1] : (process.env[`DITHER_${n.toUpperCase()}`] ?? d);
+};
+
+const repoRoot = resolve(import.meta.dir, '../../..');
+const dataDir = resolve(opt('data', join(repoRoot, '.data')));
+const port = Number(opt('port', '8460'));
+const hostname = opt('host', '0.0.0.0');
+const webDist = resolve(opt('web', join(repoRoot, 'packages/web/dist')));
+
+if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+const secretPath = join(dataDir, 'hub-secret');
+if (!existsSync(secretPath)) writeFileSync(secretPath, Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url'), { mode: 0o600 });
+chmodSync(secretPath, 0o600);
+const secret = readFileSync(secretPath, 'utf8').trim();
+
+const store = new Store(join(dataDir, 'hub.sqlite'), mediaSigner(secret));
+const model = process.env.DITHER_TRIAGE_MODEL
+  ? { url: process.env.DITHER_OLLAMA_URL ?? 'http://127.0.0.1:11434', name: process.env.DITHER_TRIAGE_MODEL }
+  : undefined;
+const triage = new Triage(store, model);
+
+// Triage runs serially so notifications keep message order.
+let queue = Promise.resolve();
+function triageLater(ids: string[]) {
+  queue = queue.then(async () => {
+    for (const id of ids) {
+      const d = await triage.decide(id).catch((e) => (console.error('triage failed', e), null));
+      if (!d) continue;
+      store.setTriage(id, d);
+      store.dirty.messages.set(id, true);
+      if (d.decision === 'push') {
+        const conversationId = store.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', id)!.conversation_id;
+        server.notify({ t: 'notify', messageId: id, conversationId, title: d.title, body: d.body, reasons: d.reasons });
+        ntfy(d.title, d.body, conversationId).catch(() => {});
+      }
+    }
+  });
+}
+
+/** Optional phone push through a self-hosted ntfy topic (off unless DITHER_NTFY_URL is set). */
+async function ntfy(title: string, body: string, conversationId: string) {
+  const url = process.env.DITHER_NTFY_URL;
+  if (!url) return;
+  const headers: Record<string, string> = { Title: title, Tags: 'speech_balloon' };
+  if (process.env.DITHER_NTFY_TOKEN) headers.Authorization = `Bearer ${process.env.DITHER_NTFY_TOKEN}`;
+  if (process.env.DITHER_PUBLIC_URL) headers.Click = `${process.env.DITHER_PUBLIC_URL}/#/c/${conversationId}`;
+  await fetch(url, { method: 'POST', body, headers, signal: AbortSignal.timeout(5000) });
+}
+
+const sup = new Supervisor(store, {
+  hubAdapterUrl: `ws://127.0.0.1:${port}/adapter`,
+  dataDir,
+  repoRoot,
+  inproc: demoFactory,
+  onFresh: triageLater,
+});
+
+const server = new HubServer(store, sup, triage, {
+  port,
+  hostname,
+  dataDir,
+  webDist,
+  secret,
+  onDemoReset: async () => {
+    for (const a of store.accounts().filter((a) => a.demo)) {
+      await sup.stop(a.id);
+      store.deleteAccount(a.id);
+    }
+    store.db.query(`DELETE FROM meta WHERE key = 'demo_overlay'`).run();
+    for (const a of createDemoAccounts(store)) sup.start(a.id);
+    applyDemoOverlay(store);
+  },
+});
+
+if (flag('demo') && !store.accounts().some((a) => a.demo)) createDemoAccounts(store);
+sup.startAll();
+if (store.accounts().some((a) => a.demo)) applyDemoOverlay(store);
+server.start();
+console.log(`dither-chat hub on http://${hostname}:${port}  data=${dataDir}`);
+
+const shutdown = async () => {
+  server.stop();
+  await sup.stopAll();
+  process.exit(0);
+};
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);

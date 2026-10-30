@@ -1,0 +1,135 @@
+/**
+ * Adapter-side link to the hub. Every out-of-process adapter uses this:
+ *
+ *   const hub = linkHub({
+ *     onConnect: () => { hub.emit({ t: 'hello', ... }); resendSnapshot(); },
+ *     onCommand: async (cmd) => { ...; return result },   // auto-replied if cmd has an id
+ *   });
+ *
+ * Events emitted while disconnected are queued (bounded) and flushed on reconnect.
+ * Throwing from onCommand sends { ok: false, error }.
+ */
+
+import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import type { AdapterCommand, AdapterEvent } from './adapter.ts';
+
+export interface HubLink {
+  readonly accountId: string;
+  readonly accountDir: string;
+  readonly config: Record<string, any>;
+  readonly label: string;
+  emit(ev: AdapterEvent): void;
+  log(level: 'debug' | 'info' | 'warn' | 'error', msg: string, data?: unknown): void;
+  /** Contents of $DITHER_ACCOUNT_DIR/secret.json ({} if absent). */
+  secret<T = Record<string, any>>(): T;
+  saveSecret(value: unknown): void;
+  readonly connected: boolean;
+  close(): void;
+}
+
+export interface LinkOptions {
+  onCommand: (cmd: AdapterCommand) => unknown | Promise<unknown>;
+  /** Called on every (re)connect, after queued events are flushed. Re-send hello and status here. */
+  onConnect?: () => void;
+  onShutdown?: () => void | Promise<void>;
+}
+
+const MAX_QUEUE = 100_000;
+
+export function linkHub(opts: LinkOptions): HubLink {
+  const env = (k: string) => {
+    const v = process.env[k];
+    if (!v) throw new Error(`missing ${k}; adapters are started by the hub`);
+    return v;
+  };
+  const url = `${env('DITHER_HUB_URL')}?account=${encodeURIComponent(env('DITHER_ACCOUNT_ID'))}&token=${encodeURIComponent(env('DITHER_ADAPTER_TOKEN'))}`;
+  const accountDir = env('DITHER_ACCOUNT_DIR');
+  const config = JSON.parse(process.env.DITHER_ACCOUNT_CONFIG || '{}');
+  const queue: string[] = [];
+  let ws: WebSocket | null = null;
+  let open = false;
+  let closed = false;
+  let attempt = 0;
+
+  const send = (s: string) => {
+    if (open && ws) ws.send(s);
+    else {
+      queue.push(s);
+      if (queue.length > MAX_QUEUE) queue.splice(0, queue.length - MAX_QUEUE);
+    }
+  };
+
+  const connect = () => {
+    if (closed) return;
+    ws = new WebSocket(url);
+    ws.onopen = () => {
+      open = true;
+      attempt = 0;
+      while (queue.length) ws!.send(queue.shift()!);
+      opts.onConnect?.();
+    };
+    ws.onmessage = async (e) => {
+      let cmd: AdapterCommand;
+      try {
+        cmd = JSON.parse(String(e.data));
+      } catch {
+        return;
+      }
+      if (cmd.t === 'shutdown') {
+        await opts.onShutdown?.();
+        process.exit(0);
+      }
+      try {
+        const result = await opts.onCommand(cmd);
+        if ('id' in cmd) send(JSON.stringify({ t: 'reply', id: cmd.id, ok: true, result } satisfies AdapterEvent));
+      } catch (err: any) {
+        if ('id' in cmd) send(JSON.stringify({ t: 'reply', id: cmd.id, ok: false, error: String(err?.message ?? err) } satisfies AdapterEvent));
+      }
+    };
+    ws.onclose = () => {
+      open = false;
+      if (closed) return;
+      const delay = Math.min(30_000, 500 * 2 ** attempt++);
+      setTimeout(connect, delay);
+    };
+    ws.onerror = () => {};
+  };
+  connect();
+
+  const link: HubLink = {
+    accountId: env('DITHER_ACCOUNT_ID'),
+    accountDir,
+    config,
+    label: process.env.DITHER_ACCOUNT_LABEL ?? '',
+    emit: (ev) => send(JSON.stringify(ev)),
+    log: (level, msg, data) => {
+      send(JSON.stringify({ t: 'log', level, msg, data } satisfies AdapterEvent));
+      if (level !== 'debug') console.log(`[${level}] ${msg}`, data ?? '');
+    },
+    secret: <T>() => {
+      const p = join(accountDir, 'secret.json');
+      return (existsSync(p) ? JSON.parse(readFileSync(p, 'utf8') || '{}') : {}) as T;
+    },
+    saveSecret: (value) => {
+      const p = join(accountDir, 'secret.json');
+      writeFileSync(p, JSON.stringify(value, null, 2), { mode: 0o600 });
+      chmodSync(p, 0o600);
+    },
+    get connected() {
+      return open;
+    },
+    close: () => {
+      closed = true;
+      ws?.close();
+    },
+  };
+
+  const stop = async () => {
+    await opts.onShutdown?.();
+    process.exit(0);
+  };
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
+  return link;
+}

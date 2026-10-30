@@ -1,0 +1,10 @@
+{
+  "name": "@dither-chat/protocol",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ids": "./src/ids.ts",
+    "./client": "./src/adapter-client.ts"
+  }
+}

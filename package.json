@@ -1,0 +1,16 @@
+{
+  "name": "dither-chat",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "hub": "bun packages/hub/src/main.ts",
+    "web:dev": "cd packages/web && bunx --bun vite",
+    "web:build": "cd packages/web && bunx --bun vite build",
+    "typecheck": "bunx tsc -p packages/hub --noEmit && bunx tsc -p packages/web --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.0"
+  }
+}

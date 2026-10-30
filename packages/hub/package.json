@@ -1,0 +1,11 @@
+{
+  "name": "@dither-chat/hub",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/main.ts"
+  },
+  "dependencies": {
+    "@dither-chat/protocol": "workspace:*"
+  }
+}
