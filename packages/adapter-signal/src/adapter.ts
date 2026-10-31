@@ -637,6 +637,10 @@ export class SignalAdapter {
         this.host.emit({ t: 'reaction', conversation: cmd.conversation, message: cmd.message, author: this.self, key: cmd.key, ...(cmd.remove ? { remove: true } : {}) });
         return {};
       }
+      case 'reactionContext':
+        return this.reactionContext(cmd.conversation);
+      case 'reactors':
+        return { authors: [] }; // Signal names every reactor up front
       case 'redact': {
         const m = this.message(cmd.message);
         if (m.author !== this.self) throw new Error('Signal only lets you delete your own messages for everyone');
@@ -654,6 +658,13 @@ export class SignalAdapter {
       case 'shutdown':
         return undefined;
     }
+  }
+
+  /** Signal has no custom emoji or super reactions. The one thing that stops you is having left the group. */
+  private reactionContext(conversation: string): P.ReactionContext {
+    const t = parseConversation(conversation, this.self);
+    const left = t?.kind === 'group' && this.state.groups.get(t.groupId)?.isMember === false;
+    return { canReact: !left, ...(left ? { reason: 'You are no longer in this group.' } : {}), custom: [] };
   }
 
   private async call<T = SigSendResult>(method: string, params: Record<string, unknown>, timeoutMs = 90_000): Promise<T> {

@@ -10,8 +10,8 @@
  */
 
 import type * as P from '@dither-chat/protocol';
-import type { DispatchName, RawChannel, RawGuild, RawGuildSettings, RawMessage, RawSnapshot } from './discord-types.ts';
-import { CHANNEL_TYPE, channelMute, isThread, mapCategory, mapGuild, mapGuildChannel, mapMessage, mapMute, mapPrivateChannel, mapReadState, mapThread, mapUser, reactionKey, snowflakeToMs } from './map.ts';
+import type { DispatchName, RawChannel, RawGuild, RawGuildSettings, RawMessage, RawSnapshot, RawUser } from './discord-types.ts';
+import { CHANNEL_TYPE, channelMute, customEmoji, isThread, mapCategory, mapGuild, mapGuildChannel, mapMessage, mapMute, mapPrivateChannel, mapReadState, mapThread, mapUser, reactionKey, snowflakeToMs } from './map.ts';
 
 export interface AdapterState {
   selfId: string;
@@ -86,15 +86,22 @@ export function translateSnapshot(data: RawSnapshot, st: AdapterState): Snapshot
 
 /** A message and the people it names. Guild members are not in the snapshot, so this is the only place the hub learns their names. */
 export function messageEvents(m: RawMessage, st: AdapterState, live: boolean): P.AdapterEvent[] {
+  const message = mapMessage(m, st.selfId);
+  // A message fetched over REST is the whole truth, so no reactions means none are left. A gateway update may just not say.
+  if (!live) message.reactions ??= [];
+  return [...userFacts([m.author, ...(m.mentions ?? [])], st), { t: 'message', live, message }];
+}
+
+/** Identity facts for users the hub has not heard about yet, or not in this form. */
+export function userFacts(users: (RawUser | null | undefined)[], st: AdapterState): P.AdapterEvent[] {
   const events: P.AdapterEvent[] = [];
-  for (const u of [m.author, ...(m.mentions ?? [])]) {
+  for (const u of users) {
     if (!u?.username || u.id === st.selfId) continue;
     const known = JSON.stringify([u.username, u.global_name, u.avatar]);
     if (st.users.get(u.id) === known) continue;
     st.users.set(u.id, known);
     events.push({ t: 'identity', identity: mapUser(u, { contact: st.friends.has(u.id) }) });
   }
-  events.push({ t: 'message', live, message: mapMessage(m, st.selfId) });
   return events;
 }
 
@@ -118,9 +125,26 @@ export function translateDispatch(event: DispatchName, a: any, st: AdapterState)
       return a.id && a.channelId ? [{ t: 'delete', conversation: a.channelId, nativeId: a.id }] : [];
     case 'MESSAGE_REACTION_ADD':
     case 'MESSAGE_REACTION_REMOVE':
-      return a.messageId && a.emoji
-        ? [{ t: 'reaction', conversation: a.channelId, message: a.messageId, author: a.userId, key: reactionKey(a.emoji), remove: event === 'MESSAGE_REACTION_REMOVE' }]
-        : [];
+      // An optimistic one is the client's own guess; the gateway confirms it.
+      if (!a.messageId || !a.emoji || a.optimistic) return [];
+      return [
+        ...userFacts([a.user], st),
+        {
+          t: 'reaction',
+          conversation: a.channelId,
+          message: a.messageId,
+          author: a.userId,
+          key: reactionKey(a.emoji),
+          ...(event === 'MESSAGE_REACTION_REMOVE' ? { remove: true } : {}),
+          ...(a.reactionType === 1 ? { style: 'super' as const } : {}),
+          ...(a.colors?.length ? { colors: a.colors } : {}),
+          ...(a.emoji.id ? { emoji: customEmoji(a.emoji) } : {}),
+        },
+      ];
+    case 'MESSAGE_REACTION_REMOVE_ALL':
+      return a.messageId ? [{ t: 'reactionsCleared', conversation: a.channelId, message: a.messageId }] : [];
+    case 'MESSAGE_REACTION_REMOVE_EMOJI':
+      return a.messageId && a.emoji ? [{ t: 'reactionsCleared', conversation: a.channelId, message: a.messageId, key: reactionKey(a.emoji) }] : [];
     case 'CHANNEL_CREATE':
       return a.channel ? routeChannel(a.channel, st) : [];
     case 'CHANNEL_UPDATES':

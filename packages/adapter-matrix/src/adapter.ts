@@ -13,6 +13,7 @@
 
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
+import { canonicalReactionKey } from '@dither-chat/protocol';
 import type { HubLink } from '@dither-chat/protocol/client';
 import { AdapterDb, type ThreadRow } from './db.ts';
 import { markdownToMatrix, snippet } from './format.ts';
@@ -40,6 +41,25 @@ const FILTER = {
   presence: { not_types: ['*'] },
   account_data: { types: ['m.direct', 'm.push_rules'] },
 };
+/** Describe a custom emoji reaction: its key is the image's mxc: URI. */
+function packEmoji(url: string, shortcode?: unknown): P.CustomEmojiFact {
+  const name = typeof shortcode === 'string' ? shortcode.replace(/^:|:$/g, '') : '';
+  return { key: url, name: name || 'custom emoji', url };
+}
+
+/** An MSC2545 image pack, keeping the images usable as emoji (no `usage`, or one that lists emoticon). */
+function imagePack(id: string, fallbackName: string, content: any): P.ReactionContext['custom'][number] | null {
+  const packUsage: unknown = content?.pack?.usage;
+  const usableAs = (u: unknown) => !Array.isArray(u) || u.includes('emoticon');
+  if (!content?.images || !usableAs(packUsage)) return null;
+  const emoji: P.CustomEmojiFact[] = [];
+  for (const [name, img] of Object.entries<any>(content.images)) {
+    if (typeof img?.url === 'string' && img.url.startsWith('mxc://') && usableAs(img.usage)) emoji.push({ key: img.url, name, url: img.url });
+  }
+  const icon = content.pack?.avatar_url;
+  return { id, name: typeof content.pack?.display_name === 'string' ? content.pack.display_name : fallbackName, ...(typeof icon === 'string' ? { icon } : {}), emoji };
+}
+
 const FILTER_KEY = `filter:${Bun.hash(JSON.stringify(FILTER)).toString(36)}`;
 const LAZY = JSON.stringify({ lazy_load_members: true });
 
@@ -703,10 +723,13 @@ export class MatrixAdapter {
     return best;
   }
 
-  private reactionSnapshot(target: string): { key: string; authors: string[] }[] {
+  private reactionSnapshot(target: string): P.ReactionFact[] {
     const by = new Map<string, Set<string>>();
-    for (const r of this.db.reactionsFor(target)) (by.get(r.key) ?? by.set(r.key, new Set()).get(r.key)!).add(r.sender);
-    return [...by].map(([key, authors]) => ({ key, authors: [...authors] }));
+    for (const r of this.db.reactionsFor(target)) {
+      const key = canonicalReactionKey(r.key);
+      (by.get(key) ?? by.set(key, new Set()).get(key)!).add(r.sender);
+    }
+    return [...by].map(([key, authors]) => ({ key, authors: [...authors], ...(key.startsWith('mxc://') ? { emoji: packEmoji(key) } : {}) }));
   }
 
   private buildMessage(room: Room, ev: MxEvent, conv: string, ctx: Ctx): P.MessageFact | null {
@@ -803,7 +826,8 @@ export class MatrixAdapter {
     if (rel.relType !== 'm.annotation' || !rel.eventId || !rel.key) return;
     this.db.putReaction({ id: ev.event_id, room: room.id, target: rel.eventId, key: rel.key, sender: ev.sender, ts: ev.origin_server_ts });
     const conv = this.db.event(rel.eventId)?.conv ?? room.id;
-    this.hub.emit({ t: 'reaction', conversation: conv, message: rel.eventId, author: ev.sender, key: rel.key });
+    const shortcode = ev.content?.['com.beeper.reaction.shortcode'] ?? ev.content?.shortcode;
+    this.hub.emit({ t: 'reaction', conversation: conv, message: rel.eventId, author: ev.sender, key: rel.key, ...(rel.key.startsWith('mxc://') ? { emoji: packEmoji(rel.key, shortcode) } : {}) });
   }
 
   private async redactionEvent(room: Room, ev: MxEvent, ctx: Ctx) {
@@ -971,7 +995,11 @@ export class MatrixAdapter {
       case 'markRead':
         return this.markRead(cmd.conversation, cmd.upTo);
       case 'react':
-        return this.react(cmd.conversation, cmd.message, cmd.key, !!cmd.remove);
+        return this.react(cmd.conversation, cmd.message, cmd.key, !!cmd.remove, cmd.emoji);
+      case 'reactionContext':
+        return this.reactionContext(cmd.conversation);
+      case 'reactors':
+        return { authors: [] }; // reaction events name their senders
       case 'edit':
         return this.edit(cmd.conversation, cmd.message, cmd.body);
       case 'redact':
@@ -1075,13 +1103,22 @@ export class MatrixAdapter {
     return { nativeId: res.event_id };
   }
 
-  private async react(conversation: string, message: string, key: string, remove: boolean) {
+  /** Our reactions on a message with this key, however a client spelled the emoji. */
+  private myReactions(message: string, key: string) {
+    const want = canonicalReactionKey(key);
+    return this.db.reactionsFor(message).filter((r) => r.sender === this.selfId && canonicalReactionKey(r.key) === want);
+  }
+
+  private async react(conversation: string, message: string, key: string, remove: boolean, emoji?: P.CustomEmojiFact) {
     const { roomId } = splitConversation(conversation);
     this.joinedRoom(roomId);
-    let mine = this.db.reactionsBy(message, this.selfId, key);
+    let mine = this.myReactions(message, key);
     if (!remove) {
       if (mine.length) return { nativeId: mine[0].id };
-      const id = await this.sendEvent(roomId, 'm.reaction', { 'm.relates_to': { rel_type: 'm.annotation', event_id: message, key } });
+      const content: Record<string, unknown> = { 'm.relates_to': { rel_type: 'm.annotation', event_id: message, key } };
+      // Custom emoji react with the image's mxc: URI. Clients read the name from one of these two.
+      if (emoji) content['com.beeper.reaction.shortcode'] = content.shortcode = `:${emoji.name}:`;
+      const id = await this.sendEvent(roomId, 'm.reaction', content);
       this.db.putReaction({ id, room: roomId, target: message, key, sender: this.selfId, ts: Date.now() });
       return { nativeId: id };
     }
@@ -1091,15 +1128,53 @@ export class MatrixAdapter {
         const res = await this.api().request('GET', `/_matrix/client/v1/rooms/${enc(roomId)}/relations/${enc(message)}/m.annotation/m.reaction`, { query: { limit: 100 } });
         for (const ev of res.chunk ?? []) {
           const rel = relationOf(ev.content);
-          if (ev.sender === this.selfId && rel.key === key) this.db.putReaction({ id: ev.event_id, room: roomId, target: message, key, sender: this.selfId, ts: ev.origin_server_ts });
+          if (ev.sender === this.selfId && rel.key && canonicalReactionKey(rel.key) === canonicalReactionKey(key)) this.db.putReaction({ id: ev.event_id, room: roomId, target: message, key: rel.key, sender: this.selfId, ts: ev.origin_server_ts });
         }
       } catch (e) {
         this.log('debug', `relations lookup failed: ${describe(e)}`);
       }
-      mine = this.db.reactionsBy(message, this.selfId, key);
+      mine = this.myReactions(message, key);
     }
     for (const r of mine) await this.redact(roomId, r.id);
     return { removed: mine.length };
+  }
+
+  /** Power levels decide whether you can react at all; image packs (MSC2545) are the custom emoji. */
+  private async reactionContext(conversation: string): Promise<P.ReactionContext> {
+    const { roomId } = splitConversation(conversation);
+    const room = this.joinedRoom(roomId);
+    const canReact = room.powerLevel(this.selfId) >= room.requiredLevel('m.reaction', false);
+    return { canReact, ...(canReact ? {} : { reason: 'This room does not let you react.' }), custom: canReact ? await this.imagePacks(roomId) : [] };
+  }
+
+  /** Forgotten on the `resync` action, like everything else read from the server. */
+  private packCache = new Map<string, { at: number; pack: P.ReactionContext['custom'][number] | null }>();
+
+  /** The room's own pack, then your personal pack, then packs you enabled everywhere. Cached briefly: each is a request. */
+  private async imagePacks(roomId: string): Promise<P.ReactionContext['custom']> {
+    const c = this.api();
+    const fetchPack = async (cacheKey: string, name: string, path: string) => {
+      const hit = this.packCache.get(cacheKey);
+      if (hit && Date.now() - hit.at < 300_000) return hit.pack;
+      const content = await c.request('GET', path).catch(() => null);
+      const pack = content ? imagePack(cacheKey, name, content) : null;
+      this.packCache.set(cacheKey, { at: Date.now(), pack });
+      return pack;
+    };
+    const roomName = this.dir.rooms.get(roomId);
+    const packs = [
+      await fetchPack(`room:${roomId}`, (roomName && this.dir.displayName(roomName)) || 'This room', `/_matrix/client/v3/rooms/${enc(roomId)}/state/im.ponies.room_emotes/`),
+      await fetchPack('user', 'Your emoji', `/_matrix/client/v3/user/${enc(this.selfId)}/account_data/im.ponies.user_emotes`),
+    ];
+    const enabled = await c.request('GET', `/_matrix/client/v3/user/${enc(this.selfId)}/account_data/im.ponies.emote_rooms`).catch(() => null);
+    for (const [rid, keys] of Object.entries<any>(enabled?.rooms ?? {})) {
+      for (const stateKey of Object.keys(keys ?? {})) {
+        if (rid === roomId && !stateKey) continue;
+        const from = this.dir.rooms.get(rid);
+        packs.push(await fetchPack(`room:${rid}|${stateKey}`, (from && this.dir.displayName(from)) || 'Emoji pack', `/_matrix/client/v3/rooms/${enc(rid)}/state/im.ponies.room_emotes/${enc(stateKey)}`));
+      }
+    }
+    return packs.filter((p): p is NonNullable<typeof p> => !!p && p.emoji.length > 0);
   }
 
   private async markRead(conversation: string, upTo: string) {
@@ -1168,6 +1243,7 @@ export class MatrixAdapter {
   private async action(action: string, args: unknown) {
     switch (action) {
       case 'resync':
+        this.packCache.clear();
         return this.resync();
       case 'relogin':
         return this.relogin(args);

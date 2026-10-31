@@ -40,6 +40,7 @@
       "name": "@dither-chat/web",
       "dependencies": {
         "@dither-chat/protocol": "workspace:*",
+        "@emoji-mart/data": "^1.2.1",
         "@novnc/novnc": "^1.7.0",
         "@preact/signals": "^2.11.4",
         "preact": "^11.1.0",
@@ -105,6 +106,8 @@
     "@dither-chat/protocol": ["@dither-chat/protocol@workspace:packages/protocol"],
 
     "@dither-chat/web": ["@dither-chat/web@workspace:packages/web"],
+
+    "@emoji-mart/data": ["@emoji-mart/data@1.2.1", "", {}, "sha512-no2pQMWiBy6gpBEiqGeU77/bFejDqUTRY7KX+0+iur13op3bqUsXdnwoZs6Xb1zbv0gAj5VvS1PWoUUckSr5Dw=="],
 
     "@jridgewell/gen-mapping": ["@jridgewell/gen-mapping@0.3.13", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.0", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA=="],
 

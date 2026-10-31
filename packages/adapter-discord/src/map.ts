@@ -8,14 +8,17 @@
  *   13 stage  15 forum  16 media  1 DM  3 group DM
  */
 
+import { discordEmojiUrl } from '@dither-chat/protocol';
 import type {
   AttachmentKind,
   AttachmentFact,
   ConversationFact,
+  CustomEmojiFact,
   IdentityFact,
   MessageFact,
   MessageKind,
   NativeMute,
+  ReactionFact,
   Shape,
   SpaceFact,
   Variant,
@@ -23,6 +26,7 @@ import type {
 import type {
   RawAttachment,
   RawChannel,
+  RawEmoji,
   RawGuild,
   RawGuildSettings,
   RawMessage,
@@ -309,9 +313,31 @@ export function systemMessageText(m: RawMessage): string | null {
 }
 
 /** Reaction emoji -> a stable key. Custom emoji use "name:id", unicode use the glyph. */
-export function reactionKey(e: { id?: string | null; name: string | null }): string {
+export function reactionKey(e: RawEmoji): string {
   if (e.id) return `${e.name ?? '_'}:${e.id}`;
   return e.name ?? '';
+}
+
+export function customEmoji(e: RawEmoji): CustomEmojiFact | undefined {
+  if (!e.id) return undefined;
+  return { key: reactionKey(e), name: e.name ?? 'emoji', url: discordEmojiUrl(e.id, e.animated), animated: !!e.animated };
+}
+
+/**
+ * Discord reports reactions as totals plus "did you", with normal and super counted apart.
+ * The people behind a total are only known once someone asks (the `reactors` command).
+ */
+export function reactionFacts(m: RawMessage, selfId: string): ReactionFact[] {
+  const facts: ReactionFact[] = [];
+  for (const r of m.reactions ?? []) {
+    const key = reactionKey(r.emoji);
+    const emoji = customEmoji(r.emoji);
+    const burst = r.count_details?.burst ?? r.burst_count ?? 0;
+    const normal = r.count_details?.normal ?? r.count ?? 0;
+    if (burst > 0) facts.push({ key, style: 'super', count: burst, authors: r.me_burst ? [selfId] : [], ...(r.burst_colors?.length ? { colors: r.burst_colors } : {}), ...(emoji ? { emoji } : {}) });
+    if (normal > 0) facts.push({ key, count: normal, authors: r.me ? [selfId] : [], ...(emoji ? { emoji } : {}) });
+  }
+  return facts;
 }
 
 /** Discord uses <@!id> for nickname mentions; the ontology wants <@id>. */
@@ -375,9 +401,7 @@ export function mapMessage(m: RawMessage, selfId: string): MessageFact {
     threadRoot: m.thread?.id,
     mentionsSelf: mentionsSelf || undefined,
     attachments: allAttachments(m).length ? allAttachments(m).map(mapAttachment) : undefined,
-    reactions: m.reactions?.length
-      ? m.reactions.map((r) => ({ key: reactionKey(r.emoji), authors: r.me ? [selfId] : [] }))
-      : undefined,
+    reactions: m.reactions?.length ? reactionFacts(m, selfId) : undefined,
     extra,
   };
 }

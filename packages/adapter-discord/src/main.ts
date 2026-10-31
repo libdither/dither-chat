@@ -12,9 +12,9 @@
 
 import { linkHub } from '@dither-chat/protocol/client';
 import type * as P from '@dither-chat/protocol';
-import type { BridgeUp, HookCommand, PageState, RawUser } from './discord-types.ts';
-import { messageEvents, newState, translateDispatch, translateSnapshot } from './ingest.ts';
-import { DISCORD_EPOCH, mapUser } from './map.ts';
+import type { BridgeUp, HookCommand, PageState, RawEmoji, RawGuild, RawUser } from './discord-types.ts';
+import { messageEvents, newState, translateDispatch, translateSnapshot, userFacts } from './ingest.ts';
+import { customEmoji, DISCORD_EPOCH, guildIconUrl, mapUser } from './map.ts';
 import { BridgeServer, PaceQueue } from './server.ts';
 import { Sandbox, pickDisplay } from './sandbox.ts';
 
@@ -24,6 +24,14 @@ const HEIGHT = 800;
 
 const hub = linkHub({ onCommand, onConnect, onShutdown });
 const log = (level: 'debug' | 'info' | 'warn' | 'error', msg: string, data?: unknown) => hub.log(level, msg, data);
+
+interface RawReactionContext {
+  canReact: boolean;
+  reason?: string;
+  existingOnly?: boolean;
+  nitro: boolean;
+  custom: { guild: RawGuild; here: boolean; emoji: RawEmoji[] }[];
+}
 
 // -------------------------------------------------------------------- state
 const { display, vncPort } = pickDisplay(hub.accountId, hub.config);
@@ -233,8 +241,28 @@ async function onCommand(cmd: P.AdapterCommand): Promise<unknown> {
     }
     case 'markRead':
       return pace.run('markRead', () => bridge.request({ kind: 'markRead', channelId: cmd.conversation, messageId: cmd.upTo }, 20_000));
-    case 'react':
-      return pace.run('react', () => bridge.request({ kind: 'react', channelId: cmd.conversation, messageId: cmd.message, emoji: cmd.key, remove: cmd.remove }, 20_000));
+    case 'react': {
+      const burst = cmd.style === 'super';
+      await pace.run('react', () => bridge.request({ kind: 'react', channelId: cmd.conversation, messageId: cmd.message, emoji: cmd.key, remove: cmd.remove, burst }, 20_000));
+      // Discord pushes nothing for server channels that are not open in the client, so say it ourselves.
+      hub.emit({ t: 'reaction', conversation: cmd.conversation, message: cmd.message, author: st.selfId, key: cmd.key, ...(cmd.remove ? { remove: true } : {}), ...(burst ? { style: 'super' as const } : {}), ...(cmd.emoji ? { emoji: cmd.emoji } : {}) });
+      return {};
+    }
+    case 'reactors': {
+      const res = await historyPace.run('reactors', () => bridge.request<{ users: RawUser[] }>({ kind: 'reactors', channelId: cmd.conversation, messageId: cmd.message, emoji: cmd.key, burst: cmd.style === 'super' }, 20_000));
+      for (const ev of userFacts(res.users ?? [], st)) hub.emit(ev);
+      return { authors: (res.users ?? []).map((u) => u.id) };
+    }
+    case 'reactionContext': {
+      const r = await bridge.request<RawReactionContext>({ kind: 'reactionContext', channelId: cmd.conversation }, 10_000);
+      return {
+        canReact: r.canReact,
+        reason: r.reason,
+        existingOnly: r.existingOnly,
+        custom: r.custom.map((g) => ({ id: g.guild.id, name: g.guild.name, icon: guildIconUrl(g.guild), emoji: g.emoji.map((e) => customEmoji(e)!) })),
+        super: r.nitro ? { available: true } : { available: false, reason: 'Super reactions need Discord Nitro.' },
+      } satisfies P.ReactionContext;
+    }
     case 'edit':
       return pace.run('edit', () => bridge.request({ kind: 'edit', channelId: cmd.conversation, messageId: cmd.message, content: cmd.body }, 20_000));
     case 'redact':

@@ -140,9 +140,26 @@ const img = (url: string, name: string, w: number, hh: number): P.AttachmentFact
 
 // ------------------------------------------------------------------ places
 
+const SUPER_COLORS = ['#ff7ad9', '#7c5cff', '#4ad7ff'];
+
+/** A small solid badge, so the demo's custom emoji need nothing from the network. */
+const badge = (glyph: string, a: string, b: string) =>
+  `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="${a}"/><stop offset="1" stop-color="${b}"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="url(#g)"/><text x="32" y="44" font-size="34" text-anchor="middle" font-family="sans-serif" fill="#fff">${glyph}</text></svg>`)}`;
+
+const DEMO_EMOJI: P.CustomEmojiFact[] = [
+  { key: 'dither:9001', name: 'dither', url: badge('D', '#7c5cff', '#b79bff') },
+  { key: 'shipit:9002', name: 'shipit', url: badge('!', '#ff8c61', '#e86a92') },
+  { key: 'lgtm:9003', name: 'lgtm', url: badge('✓', '#2ecc71', '#0dbd8b') },
+  { key: 'wat:9004', name: 'wat', url: badge('?', '#f2a541', '#f7d154') },
+  { key: 'ferris:9005', name: 'ferris', url: badge('R', '#d9480f', '#f76707') },
+  { key: 'borrowck:9006', name: 'borrowck', url: badge('&amp;', '#5c7cfa', '#364fc7') },
+];
+
 interface MsgOpts {
   reply?: number;
   react?: Record<string, P.IdentityFact[]>;
+  /** Reactions as Discord reports them: totals, super reactions, custom emoji. */
+  fancy?: P.ReactionFact[];
   edited?: boolean;
   kind?: P.MessageKind;
   att?: P.AttachmentFact[];
@@ -334,7 +351,16 @@ const CONVS: DemoConv[] = [
     acc: ['dmain'],
     fact: dch(['dmain'], 'rust-offtopic', 'off-topic', 'rust-chat', 0),
     msgs: [
-      [DAY + 100, D.owl, 'my ferris plushie arrived', { att: [img(ART.crab, 'ferris.png', 480, 360)], react: { '🦀': [D.tim, D.mara, D.bea] } }],
+      [DAY + 100, D.owl, 'my ferris plushie arrived', {
+          att: [img(ART.crab, 'ferris.png', 480, 360)],
+          react: { '🦀': [D.tim, D.mara, D.bea] },
+          fancy: [
+            { key: DEMO_EMOJI[4].key, style: 'super', count: 6, authors: [D.tim.nativeId], colors: SUPER_COLORS, emoji: DEMO_EMOJI[4] },
+            { key: '🎉', style: 'super', count: 2, authors: [D.mara.nativeId], colors: ['#ffd166', '#ef476f'] },
+            { key: DEMO_EMOJI[0].key, count: 41, authors: [D.bea.nativeId], emoji: DEMO_EMOJI[0] },
+            { key: '❤️', count: 128, authors: [] },
+          ],
+        }],
       [DAY + 95, D.tim, 'rewrite the plushie in rust'],
       [DAY + 90, D.mara, 'it is already memory safe, it has no pointers'],
       [3 * H, D.bea, 'hot take: `unwrap()` in examples is fine'],
@@ -706,6 +732,22 @@ class DemoAdapter implements InprocAdapter {
     this.self = key === 'dmain' ? D.zyan : key === 'dalt' ? D.zyn : key === 'sig' ? S.self : M.self;
   }
 
+  /** The demo plays a Nitro account on Discord, and a room image pack on Matrix, so every path can be tried. */
+  private reactionContext(): P.ReactionContext {
+    if (this.network === 'discord') {
+      return {
+        canReact: true,
+        custom: [
+          { id: 'demo-here', name: 'This server', emoji: DEMO_EMOJI.slice(0, 4) },
+          { id: 'demo-other', name: 'Rust Programming Language', emoji: DEMO_EMOJI.slice(4) },
+        ],
+        super: { available: true },
+      };
+    }
+    if (this.network === 'matrix') return { canReact: true, custom: [{ id: 'demo-pack', name: 'Housemates pack', emoji: DEMO_EMOJI.slice(0, 3).map((e) => ({ ...e, key: `mxc://demo/${e.name}` })) }] };
+    return { canReact: true, custom: [] };
+  }
+
   start(emit: (ev: P.AdapterEvent) => void) {
     this.emit = emit;
     running.set(this.key, this);
@@ -746,7 +788,7 @@ class DemoAdapter implements InprocAdapter {
             threadRoot: o.thread,
             mentionsSelf: body.includes(`<@${this.self.nativeId}>`),
             attachments: o.att,
-            reactions: o.react ? Object.entries(o.react).map(([key, who]) => ({ key, authors: who.map((w) => w.nativeId) })) : undefined,
+            reactions: o.react || o.fancy ? [...(o.fancy ?? []), ...Object.entries(o.react ?? {}).map(([key, who]) => ({ key, authors: who.map((w) => w.nativeId) }))] : undefined,
           },
         });
       });
@@ -801,8 +843,14 @@ class DemoAdapter implements InprocAdapter {
         break;
       }
       case 'react':
-        this.emit({ t: 'reaction', conversation: cmd.conversation, message: cmd.message, author: this.self.nativeId, key: cmd.key, remove: cmd.remove });
+        this.emit({ t: 'reaction', conversation: cmd.conversation, message: cmd.message, author: this.self.nativeId, key: cmd.key, remove: cmd.remove, style: cmd.style, ...(cmd.style === 'super' ? { colors: SUPER_COLORS } : {}), emoji: cmd.emoji });
         reply();
+        break;
+      case 'reactionContext':
+        reply(this.reactionContext());
+        break;
+      case 'reactors':
+        reply({ authors: Object.values(D).filter((i) => i !== D.zyan && i !== D.zyn).slice(0, 5).map((i) => i.nativeId) });
         break;
       case 'history':
         reply({ count: 0, done: true });

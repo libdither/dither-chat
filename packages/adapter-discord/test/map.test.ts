@@ -281,9 +281,24 @@ describe('messages', () => {
       SELF,
     );
     expect(f.reactions).toEqual([
-      { key: '🎉', authors: [SELF] },
-      { key: 'ferris:55', authors: [] },
+      { key: '🎉', count: 3, authors: [SELF] },
+      { key: 'ferris:55', count: 1, authors: [], emoji: { key: 'ferris:55', name: 'ferris', url: 'https://cdn.discordapp.com/emojis/55.webp?size=64', animated: false } },
     ]);
+  });
+
+  test('reactions snapshot: super reactions count apart, with their colours', () => {
+    const f = mapMessage(
+      {
+        ...base,
+        reactions: [{ emoji: { id: '7', name: 'party', animated: true }, count: 5, count_details: { normal: 2, burst: 3 }, burst_count: 3, me: false, me_burst: true, burst_colors: ['#ff0000', '#00ff00'] }],
+      },
+      SELF,
+    );
+    expect(f.reactions).toMatchObject([
+      { key: 'party:7', style: 'super', count: 3, authors: [SELF], colors: ['#ff0000', '#00ff00'], emoji: { animated: true, url: 'https://cdn.discordapp.com/emojis/7.webp?size=64&animated=true' } },
+      { key: 'party:7', count: 2, authors: [] },
+    ]);
+    expect(f.reactions![1].style).toBeUndefined();
   });
 
   test('system messages: kind system + readable text', () => {

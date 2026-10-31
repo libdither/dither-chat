@@ -73,6 +73,53 @@ export type NotifyScope = 'global' | 'network' | 'account' | 'space' | 'conversa
 export type TriageDecision = 'push' | 'digest' | 'silent';
 
 export type MessageKind = 'text' | 'media' | 'system' | 'sticker' | 'call' | 'encrypted';
+
+/**
+ * Reactions, one vocabulary for all networks (docs/reactions.md).
+ *
+ * A reaction is a key and a style. The key is a Unicode emoji in canonical form, free text where a
+ * network allows it, or an opaque native id for a custom emoji (Discord "name:id", Matrix mxc://),
+ * which is described by a catalog entry. The style is 'super' for Discord's burst reactions and
+ * 'normal' for everything else; a person can do both on one key, so they count separately.
+ */
+export type ReactionStyle = 'normal' | 'super';
+
+/** What a network allows anywhere. What is available in one place comes from ReactionContext. */
+export interface ReactionRules {
+  /** One reaction per person per message: a new one replaces the old. */
+  exclusive: boolean;
+  /** Any text works as a reaction, not just emoji. */
+  freeText: boolean;
+  /** Most distinct reactions a message can hold. */
+  maxDistinct?: number;
+}
+
+export const REACTION_RULES: Record<Network, ReactionRules> = {
+  discord: { exclusive: false, freeText: false, maxDistinct: 20 },
+  signal: { exclusive: true, freeText: false },
+  matrix: { exclusive: false, freeText: true },
+};
+
+export function discordEmojiUrl(id: string, animated?: boolean): string {
+  return `https://cdn.discordapp.com/emojis/${id}.webp?size=64${animated ? '&animated=true' : ''}`;
+}
+
+/**
+ * The same emoji reaches us with and without variation selectors (Element adds U+FE0F to everything,
+ * others send a bare heart that renders as text). Fully qualified form, so they count as one reaction.
+ */
+export function canonicalReactionKey(key: string): string {
+  if (/^[\x00-\x7F]*$/.test(key)) return key; // "+1", "name:id", "mxc://..."
+  const chars = [...key.replace(/\uFE0F/g, '')];
+  return chars
+    .map((c, i) => {
+      const next = chars[i + 1] ?? '';
+      const textByDefault = /^\p{Emoji}$/u.test(c) && !/^\p{Emoji_Presentation}$/u.test(c);
+      if (!textByDefault || /^\p{Emoji_Modifier}$/u.test(next)) return c;
+      return /^[0-9#*]$/.test(c) && next !== '\u20E3' ? c : c + '\uFE0F';
+    })
+    .join('');
+}
 export type AttachmentKind = 'image' | 'video' | 'audio' | 'file';
 
 /** Brand colours used to annotate the source of every object in the UI. */

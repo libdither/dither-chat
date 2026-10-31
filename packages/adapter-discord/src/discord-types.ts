@@ -70,10 +70,21 @@ export interface RawEmbed {
   image?: { url?: string };
 }
 
+export interface RawEmoji {
+  id?: string | null;
+  name: string | null;
+  animated?: boolean;
+}
+
 export interface RawReaction {
-  emoji: { id?: string | null; name: string | null };
+  emoji: RawEmoji;
+  /** Normal plus super, unless count_details is there. */
   count?: number;
+  count_details?: { normal?: number; burst?: number };
+  burst_count?: number;
   me?: boolean;
+  me_burst?: boolean;
+  burst_colors?: string[];
 }
 
 export interface RawMessageReference {
@@ -180,6 +191,8 @@ export type DispatchName =
   | 'MESSAGE_DELETE'
   | 'MESSAGE_REACTION_ADD'
   | 'MESSAGE_REACTION_REMOVE'
+  | 'MESSAGE_REACTION_REMOVE_ALL'
+  | 'MESSAGE_REACTION_REMOVE_EMOJI'
   | 'CHANNEL_CREATE'
   | 'CHANNEL_UPDATES'
   | 'CHANNEL_DELETE'
@@ -202,7 +215,9 @@ export type HookCommand =
   | { kind: 'send'; channelId: string; content: string; replyTo?: string; nonce: string }
   | { kind: 'history'; channelId: string; limit: number; beforeId?: string }
   | { kind: 'markRead'; channelId: string; messageId: string }
-  | { kind: 'react'; channelId: string; messageId: string; emoji: string; remove?: boolean }
+  | { kind: 'react'; channelId: string; messageId: string; emoji: string; remove?: boolean; burst?: boolean }
+  | { kind: 'reactors'; channelId: string; messageId: string; emoji: string; burst?: boolean }
+  | { kind: 'reactionContext'; channelId: string }
   | { kind: 'edit'; channelId: string; messageId: string; content: string }
   | { kind: 'redact'; channelId: string; messageId: string }
   | { kind: 'fetchMedia'; url: string };

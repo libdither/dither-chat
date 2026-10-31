@@ -12,6 +12,7 @@ import type {
   Network,
   NotifyLevel,
   NotifyScope,
+  ReactionStyle,
   Shape,
   SpaceKind,
   TriageDecision,
@@ -140,6 +141,41 @@ export interface EmbedView {
   fields?: { name: string; value: string }[];
 }
 
+export interface CustomEmojiView {
+  key: string;
+  name: string;
+  url: string;
+  animated: boolean;
+}
+
+export interface ReactionView {
+  key: string;
+  style: ReactionStyle;
+  /** The total. Can exceed identityIds: Discord reports totals without naming everyone. */
+  count: number;
+  identityIds: string[];
+  emoji?: CustomEmojiView;
+  colors?: string[];
+}
+
+/** What one of your accounts can react with in a conversation. */
+export interface ReactionContextView {
+  accountId: string | null;
+  canReact: boolean;
+  reason?: string;
+  existingOnly?: boolean;
+  custom: { id: string; name: string; icon: string | null; emoji: CustomEmojiView[] }[];
+  super?: { available: boolean; reason?: string };
+}
+
+/** How often you have reacted with something: the quick row and "frequently used". */
+export interface ReactionUsage {
+  key: string;
+  network: Network;
+  count: number;
+  emoji?: CustomEmojiView;
+}
+
 export interface MessageView {
   id: string;
   conversationId: string;
@@ -156,7 +192,7 @@ export interface MessageView {
   deleted: boolean;
   attachments: AttachmentView[];
   embeds: EmbedView[];
-  reactions: { key: string; identityIds: string[] }[];
+  reactions: ReactionView[];
   seenVia: string[];
   triage: TriageView | null;
 }
@@ -187,6 +223,7 @@ export interface Bootstrap {
   conversations: ConversationView[];
   folders: FolderView[];
   rules: RuleView[];
+  reactionUsage: ReactionUsage[];
   now: number;
 }
 

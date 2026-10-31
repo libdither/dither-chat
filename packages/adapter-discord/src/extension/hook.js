@@ -161,6 +161,10 @@
     UserGuildSettingsStore: isStore('UserGuildSettingsStore'),
     GuildMemberStore: isStore('GuildMemberStore'),
     ThreadStore: isStore('ThreadsStore', 'ThreadStore', 'ActiveThreadsStore'),
+    EmojiStore: isStore('EmojiStore'),
+    PermissionStore: isStore('PermissionStore'),
+    // The client's own answer to "can I use this emoji here", Nitro and permissions included.
+    EmojiRules: (m) => typeof m.getEmojiUnavailableReason === 'function',
     // REST client: an object exposing the http verbs.
     Rest: (m) => ['get', 'post', 'put', 'patch', 'del'].every((k) => typeof m[k] === 'function'),
     // Message actions: sendMessage / editMessage / fetchMessages.
@@ -246,7 +250,7 @@
       last_message_id: c.lastMessageId ?? c.last_message_id ?? null,
     };
   const pickGuild = (g) => g && { id: g.id, name: g.name, icon: g.icon, description: g.description ?? null, rules_channel_id: g.rulesChannelId ?? g.rules_channel_id ?? null };
-  const pickEmoji = (e) => e && { id: e.id ?? null, name: e.name ?? null };
+  const pickEmoji = (e) => e && { id: e.id ?? null, name: e.name ?? null, animated: !!e.animated };
   const pickAttachment = (a) => a && { id: a.id, filename: a.filename, content_type: a.content_type, size: a.size, width: a.width, height: a.height, url: a.url, proxy_url: a.proxy_url };
   // Discord's own proxy for embed images when there is one: the hub fetches these, and must not hit whatever host a message names.
   const pickEmbedImage = (i) => i && { url: i.proxy_url ?? i.proxyURL ?? i.url };
@@ -277,7 +281,9 @@
       mentions: Array.isArray(m.mentions) ? m.mentions.map((u) => (typeof u === 'string' ? resolveUser(u) : pickUser(u))).filter(Boolean) : undefined,
       attachments: Array.isArray(m.attachments) ? m.attachments.map(pickAttachment) : undefined,
       embeds: Array.isArray(m.embeds) ? m.embeds.map(pickEmbed) : undefined,
-      reactions: Array.isArray(m.reactions) ? m.reactions.map((r) => ({ emoji: pickEmoji(r.emoji), count: r.count, me: !!r.me })) : undefined,
+      reactions: Array.isArray(m.reactions)
+        ? m.reactions.map((r) => ({ emoji: pickEmoji(r.emoji), count: r.count, count_details: r.count_details, burst_count: r.burst_count, me: !!r.me, me_burst: !!r.me_burst, burst_colors: r.burst_colors }))
+        : undefined,
       message_reference: m.message_reference ?? (m.messageReference ? { message_id: m.messageReference.messageId ?? m.messageReference.message_id, channel_id: m.messageReference.channelId } : undefined),
       thread: m.thread ? pickChannel(m.thread) : undefined,
       message_snapshots: Array.isArray(m.message_snapshots)
@@ -436,6 +442,8 @@
     'MESSAGE_DELETE',
     'MESSAGE_REACTION_ADD',
     'MESSAGE_REACTION_REMOVE',
+    'MESSAGE_REACTION_REMOVE_ALL',
+    'MESSAGE_REACTION_REMOVE_EMOJI',
     'CHANNEL_CREATE',
     'CHANNEL_UPDATES',
     'CHANNEL_DELETE',
@@ -482,7 +490,10 @@
         return { id: a.id, channelId: a.channelId, guildId: a.guildId };
       case 'MESSAGE_REACTION_ADD':
       case 'MESSAGE_REACTION_REMOVE':
-        return { channelId: a.channelId, messageId: a.messageId, userId: a.userId, emoji: pickEmoji(a.emoji) };
+        return { channelId: a.channelId, messageId: a.messageId, userId: a.userId, user: resolveUser(a.userId), emoji: pickEmoji(a.emoji), optimistic: !!a.optimistic, colors: a.colors, reactionType: a.reactionType };
+      case 'MESSAGE_REACTION_REMOVE_ALL':
+      case 'MESSAGE_REACTION_REMOVE_EMOJI':
+        return { channelId: a.channelId, messageId: a.messageId, emoji: pickEmoji(a.emoji) };
       case 'CHANNEL_UPDATES':
         return { channels: Array.isArray(a.channels) ? a.channels.map(pickChannel) : [] };
       case 'CHANNEL_CREATE':
@@ -520,10 +531,19 @@
       case 'markRead':
         return rest('post', `/channels/${cmd.channelId}/messages/${cmd.messageId}/ack`, undefined, { token: null });
       case 'react': {
-        const e = encodeURIComponent(cmd.emoji);
-        if (cmd.remove) return rest('del', `/channels/${cmd.channelId}/messages/${cmd.messageId}/reactions/${e}/@me`);
-        return rest('put', `/channels/${cmd.channelId}/messages/${cmd.messageId}/reactions/${e}/@me`);
+        const url = `/channels/${cmd.channelId}/messages/${cmd.messageId}/reactions/${encodeURIComponent(cmd.emoji)}`;
+        const type = cmd.burst ? 1 : 0;
+        if (cmd.remove) await rest('del', `${url}/${type}/@me`, { location: 'Message', burst: !!cmd.burst });
+        else await rest('put', `${url}/@me`, { location: 'Message', type });
+        return { ok: true };
       }
+      case 'reactors': {
+        const url = `/channels/${cmd.channelId}/messages/${cmd.messageId}/reactions/${encodeURIComponent(cmd.emoji)}`;
+        const res = await rest('get', url, { limit: 100, type: cmd.burst ? 1 : 0 });
+        return { users: ((res && res.body) || []).map(pickUser).filter(Boolean) };
+      }
+      case 'reactionContext':
+        return reactionContext(cmd.channelId);
       case 'edit':
         if (mod.MessageActions && mod.MessageActions.editMessage) return mod.MessageActions.editMessage(cmd.channelId, cmd.messageId, { content: cmd.content }), { ok: true };
         return rest('patch', `/channels/${cmd.channelId}/messages/${cmd.messageId}`, undefined, { content: cmd.content });
@@ -533,6 +553,54 @@
       default:
         throw new Error('unknown command ' + cmd.kind);
     }
+  }
+
+  // ---------------------------------------------------------------- reacting
+  const PERM_ADD_REACTIONS = 1n << 6n;
+  const PERM_READ_HISTORY = 1n << 16n;
+  const EMOJI_INTENT_REACTION = 0;
+
+  function reactionContext(channelId) {
+    const channel = mod.ChannelStore.getChannel(channelId);
+    const guildId = (channel && (channel.guild_id ?? channel.getGuildId?.())) || null;
+    const can = (bit) => {
+      try {
+        return !guildId || !mod.PermissionStore || mod.PermissionStore.can(bit, channel);
+      } catch (e) {
+        return true;
+      }
+    };
+    const canRead = can(PERM_READ_HISTORY);
+    const nitro = ((currentUser() && currentUser().premiumType) || 0) > 0;
+    return {
+      canReact: canRead,
+      reason: canRead ? undefined : 'You cannot read message history in this channel, which reacting needs.',
+      existingOnly: !can(PERM_ADD_REACTIONS),
+      custom: customEmojiGroups(channel, guildId, nitro),
+      nitro,
+    };
+  }
+
+  function customEmojiGroups(channel, guildId, nitro) {
+    const store = mod.EmojiStore;
+    if (!store) return [];
+    const usable = (e) => {
+      try {
+        if (mod.EmojiRules) return mod.EmojiRules.getEmojiUnavailableReason({ emoji: e, channel, intention: EMOJI_INTENT_REACTION }) == null;
+      } catch (err) {
+        /* fall through to the plain rule */
+      }
+      return e.available !== false && (nitro || (e.guildId === guildId && !e.animated));
+    };
+    const ids = Object.keys(store.getGuilds() || {}).sort((a, b) => (b === guildId) - (a === guildId));
+    const groups = [];
+    for (const id of ids) {
+      const emoji = (store.getGuildEmoji(id) || []).filter(usable).map((e) => ({ id: e.id, name: e.name, animated: !!e.animated }));
+      if (!emoji.length) continue;
+      const guild = mod.GuildStore.getGuild(id);
+      groups.push({ guild: pickGuild(guild) || { id, name: 'Server' }, here: id === guildId, emoji });
+    }
+    return groups;
   }
 
   async function sendMessage(cmd) {

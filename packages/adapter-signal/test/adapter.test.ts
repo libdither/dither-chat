@@ -163,6 +163,11 @@ describe('signal adapter against a fake signal-cli', () => {
     expect(calls('send').at(-1).params).toEqual({ noteToSelf: true, message: 'note' });
   });
 
+  test('reaction context: nothing fancy, and leaving a group ends it', async () => {
+    expect(await cmd({ t: 'reactionContext', conversation: DM_ALICE })).toEqual({ canReact: true, custom: [] });
+    expect(await cmd({ t: 'reactionContext', conversation: GROUP })).toEqual({ canReact: true, custom: [] });
+  });
+
   test('react, edit, redact, markRead', async () => {
     let mark = events.length;
     await cmd({ t: 'react', conversation: GROUP, message: `${ALICE}:${T + 1000}`, key: '🔥' });

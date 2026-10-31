@@ -23,7 +23,7 @@
  * native ID on the adapter's own network.
  */
 
-import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, Shape, SpaceKind, Variant } from './ontology.ts';
+import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, ReactionStyle, Shape, SpaceKind, Variant } from './ontology.ts';
 
 export type Capability =
   | 'send'
@@ -118,8 +118,41 @@ export interface MessageFact {
   mentionsSelf?: boolean;
   attachments?: AttachmentFact[];
   /** Full reaction snapshot (backfill). Live changes use the `reaction` event. */
-  reactions?: { key: string; authors: string[] }[];
+  reactions?: ReactionFact[];
   extra?: Record<string, unknown>;
+}
+
+/** A custom emoji. Reactions refer to it by key; the hub keeps a catalog per network. */
+export interface CustomEmojiFact {
+  key: string; //     Discord "name:id" | Matrix mxc://
+  name: string; //    shortcode, without colons
+  url: MediaUrl;
+  animated?: boolean;
+}
+
+export interface ReactionFact {
+  key: string;
+  style?: ReactionStyle;
+  /** Who reacted, as far as the network says. */
+  authors: string[];
+  /** The network's total, when it does not name everyone (Discord). Omit when authors is the full list. */
+  count?: number;
+  /** Super reactions: the colours of the effect, as CSS hex. */
+  colors?: string[];
+  emoji?: CustomEmojiFact;
+}
+
+/** What this account can react with here. Network-wide rules are in REACTION_RULES. */
+export interface ReactionContext {
+  canReact: boolean;
+  /** Why not, or a limit worth knowing. Shown in the picker. */
+  reason?: string;
+  /** Only reactions already on the message can be added to (Discord without Add Reactions). */
+  existingOnly?: boolean;
+  /** Custom emoji usable here: this server first, then others, Matrix image packs. */
+  custom: { id: string; name: string; icon?: MediaUrl; emoji: CustomEmojiFact[] }[];
+  /** Absent: this network has no super reactions. */
+  super?: { available: boolean; reason?: string };
 }
 
 /**
@@ -161,7 +194,9 @@ export type AdapterEvent =
   /** Create or replace (edits re-send the whole message). live=false marks backfill: no notifications. */
   | { t: 'message'; message: MessageFact; live?: boolean }
   | { t: 'delete'; conversation: string; nativeId: string }
-  | { t: 'reaction'; conversation: string; message: string; author: string; key: string; remove?: boolean }
+  | { t: 'reaction'; conversation: string; message: string; author: string; key: string; remove?: boolean; style?: ReactionStyle; colors?: string[]; emoji?: CustomEmojiFact }
+  /** A moderator removed every reaction on a message, or every one with this key. */
+  | { t: 'reactionsCleared'; conversation: string; message: string; key?: string }
   /** Read state as the network reports it. Counts override the hub's own tally when given. */
   | { t: 'read'; conversation: string; upToTs: number; unread?: number; mentions?: number }
   | { t: 'typing'; conversation: string; author: string }
@@ -177,7 +212,11 @@ export type AdapterCommand =
   /** Backfill older messages as message facts with live=false; reply.result: { count, done } */
   | { t: 'history'; id: string; conversation: string; beforeTs?: number; limit: number }
   | { t: 'markRead'; id: string; conversation: string; upTo: string }
-  | { t: 'react'; id: string; conversation: string; message: string; key: string; remove?: boolean }
+  | { t: 'react'; id: string; conversation: string; message: string; key: string; remove?: boolean; style?: ReactionStyle; emoji?: CustomEmojiFact }
+  /** reply.result: ReactionContext */
+  | { t: 'reactionContext'; id: string; conversation: string; message?: string }
+  /** Name the people behind a total: identity facts first, then reply.result: { authors: string[] } */
+  | { t: 'reactors'; id: string; conversation: string; message: string; key: string; style?: ReactionStyle }
   | { t: 'edit'; id: string; conversation: string; message: string; body: string }
   | { t: 'redact'; id: string; conversation: string; message: string }
   /** reply.result: { mime: string, base64: string } */

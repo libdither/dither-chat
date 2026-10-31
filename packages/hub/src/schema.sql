@@ -177,11 +177,34 @@ CREATE TABLE IF NOT EXISTS attachment (
 );
 CREATE INDEX IF NOT EXISTS attachment_message ON attachment(message_id);
 
+-- Who reacted, as far as we know. See docs/reactions.md.
 CREATE TABLE IF NOT EXISTS reaction (
   message_id  TEXT NOT NULL REFERENCES message(id) ON DELETE CASCADE,
   identity_id TEXT NOT NULL REFERENCES identity(id) ON DELETE CASCADE,
   key         TEXT NOT NULL,
-  PRIMARY KEY (message_id, identity_id, key)
+  style       TEXT NOT NULL DEFAULT 'normal' CHECK (style IN ('normal', 'super')),
+  PRIMARY KEY (message_id, identity_id, key, style)
+);
+
+-- One row per reaction shown on a message, in the order they first appeared.
+CREATE TABLE IF NOT EXISTS reaction_tally (
+  seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id TEXT NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+  key        TEXT NOT NULL,
+  style      TEXT NOT NULL DEFAULT 'normal',
+  count      INTEGER,                         -- the network's total; NULL when it names every reactor
+  colors     TEXT,                            -- JSON array of CSS colours (super reactions)
+  UNIQUE (message_id, key, style)
+);
+
+-- Custom emoji seen on reactions or offered by a ReactionContext.
+CREATE TABLE IF NOT EXISTS custom_emoji (
+  network  TEXT NOT NULL,
+  key      TEXT NOT NULL,
+  name     TEXT NOT NULL,
+  url      TEXT NOT NULL,
+  animated INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (network, key)
 );
 
 -- 5. overlay (hub-only) ------------------------------------------------------

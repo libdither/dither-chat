@@ -24,6 +24,7 @@ export const db = {
   /** conversation id -> its threads */
   threads: new Map<string, string[]>(),
   identityByNative: new Map<string, string>(),
+  reactionUsage: [] as P.ReactionUsage[],
 };
 
 export interface Timeline {
@@ -76,9 +77,11 @@ export interface Prefs {
   sendAs: Record<string, string>;
   via: Record<string, string>;
   notifications: boolean;
+  /** Index into the emoji catalog's skins; 0 is the default yellow. */
+  skinTone: number;
 }
 const PREFS_KEY = 'dither-chat:prefs';
-const defaults: Prefs = { theme: 'dark', details: false, showDemo: true, collapsed: {}, sendAs: {}, via: {}, notifications: false };
+const defaults: Prefs = { theme: 'dark', details: false, showDemo: true, collapsed: {}, sendAs: {}, via: {}, notifications: false, skinTone: 0 };
 export const prefs = signal<Prefs>({ ...defaults, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') });
 export function setPrefs(p: Partial<Prefs>) {
   prefs.value = { ...prefs.value, ...p };
@@ -210,6 +213,7 @@ function putIdentity(i: P.IdentityView) {
 
 export function applyBootstrap(b: P.Bootstrap) {
   db.selfPersonId = b.selfPersonId;
+  db.reactionUsage = b.reactionUsage ?? [];
   db.accounts = new Map(b.accounts.map((a) => [a.id, a]));
   db.persons = new Map(b.persons.map((p) => [p.id, p]));
   db.identities.clear();
@@ -234,6 +238,17 @@ function upsertInto(list: P.MessageView[], m: P.MessageView) {
   let j = list.length;
   while (j > 0 && list[j - 1].ts > m.ts) j--;
   list.splice(j, 0, m);
+}
+
+/** Change every copy of a message the client holds. */
+export function patchMessage(id: string, patch: (m: P.MessageView) => P.MessageView) {
+  for (const t of timelines.values()) {
+    const i = t.messages.findIndex((x) => x.id === id);
+    if (i >= 0) t.messages[i] = patch(t.messages[i]);
+  }
+  const q = quoted.get(id);
+  if (q) quoted.set(id, patch(q));
+  rev.value++;
 }
 
 export function applyEvents(events: P.ClientEvent[]) {
@@ -452,7 +467,6 @@ export function markRead(conversationId: string) {
   );
 }
 
-export const react = (messageId: string, key: string, remove = false) => api(`/api/messages/${messageId}/react`, { body: { key, remove } });
 export const feedback = (messageId: string, fb: P.TriageView['feedback']) => api(`/api/messages/${messageId}/feedback`, { body: { feedback: fb } });
 export const setRule = (scope: P.NotifyScope, target: string | null, level: P.NotifyLevel | null) => api('/api/rules', { method: 'PUT', body: { scope, target, level } });
 export const saveFolders = (folders: P.FolderView[]) => api('/api/folders', { method: 'PUT', body: { folders } });

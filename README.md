@@ -65,6 +65,7 @@ the server only answers loopback + tailnet ranges).
 | Hub, PWA, demo world | done |
 | Matrix adapter | done — verified end-to-end against a local homeserver (E2EE rooms show as encrypted for now) |
 | Signal adapter | done — QR device-link + messaging via signal-cli; a live link needs your phone |
+| Reactions across networks | done: custom emoji, Discord super reactions, Signal's one-per-person, Matrix image packs ([docs/reactions.md](docs/reactions.md)). Sending a super reaction is untested for lack of Nitro |
 | Discord adapter (sandboxed real web client) | works on a live account: login through the live view, snapshot, history, send, reply, react. DMs and group DMs arrive live. Server channels do not: while the client sits idle, Discord pushes nothing for them, so they update when opened |
 
 ## License

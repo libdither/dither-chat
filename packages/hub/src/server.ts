@@ -3,7 +3,7 @@ import { createHmac } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META, NETWORKS } from '@dither-chat/protocol';
+import { discordEmojiUrl, NETWORK_META, NETWORKS } from '@dither-chat/protocol';
 import type { Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
 import type { Triage } from './triage.ts';
@@ -178,6 +178,8 @@ export class HubServer {
       return new Response('upgrade failed', { status: 400 });
     }
     if ((m = path.match(/^\/media\/([\w-]+)\/([\w-]+)$/))) return this.media(m[1], m[2], url.searchParams.get('a'));
+    // Custom emoji inside message bodies: the id is all a body has, and it can only reach Discord's CDN.
+    if ((m = path.match(/^\/emoji\/discord\/(\d+)(\.animated)?$/))) return this.fetchMedia(discordEmojiUrl(m[1], !!m[2]), null);
     if (path.startsWith('/api/')) return this.api(req, url, path);
     return this.static(path);
   }
@@ -206,6 +208,14 @@ export class HubServer {
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/messages$/))) return ok(s.messages(m[1], num('before'), Math.min(num('limit') ?? 60, 200)));
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/timeline$/))) return ok(s.personTimeline(m[1], num('before'), Math.min(num('limit') ?? 60, 200)));
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/notify$/))) return ok(this.triage.effectiveLevel(m[1]));
+    if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/reaction-context$/))) {
+      const conv = s.nativeOf('conversation', m[1]);
+      if (!conv) return bad('no such conversation', 404);
+      const accountId = this.pickAccount(m[1], url.searchParams.get('account') ?? undefined);
+      if (!accountId || !this.sup.online(accountId)) return ok({ accountId, canReact: false, reason: 'No connected account can react here.', custom: [] } satisfies P.ReactionContextView);
+      const ctx = await this.sup.command<P.ReactionContext>(accountId, { t: 'reactionContext', conversation: conv.nativeId }, 15_000).catch(() => null);
+      return ok(s.reactionContextView(accountId, conv.network, ctx ?? { canReact: true, custom: [] }));
+    }
 
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/send$/)) && method === 'POST') {
       const b = await body<{ body: string; accountId?: string; replyTo?: string }>();
@@ -238,14 +248,39 @@ export class HubServer {
       return ok(r ?? { count: 0, done: true });
     }
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/react$/)) && method === 'POST') {
-      const b = await body<{ key: string; remove?: boolean; accountId?: string }>();
+      const b = await body<{ key: string; remove?: boolean; style?: P.ReactionStyle; accountId?: string }>();
+      if (!b.key) return bad('nothing to react with');
       const msg = s.one<{ conversation_id: string; native_id: string }>('SELECT conversation_id, native_id FROM message WHERE id = ?', m[1]);
       if (!msg) return bad('no such message', 404);
       const conv = s.nativeOf('conversation', msg.conversation_id)!;
-      const accountId = this.pickAccount(msg.conversation_id, b.accountId);
-      if (!accountId) return bad('no connected account', 409);
-      await this.sup.command(accountId, { t: 'react', conversation: conv.nativeId, message: msg.native_id, key: b.key, remove: b.remove });
-      return ok();
+      const style = b.style ?? 'normal';
+      // Taking a reaction back has to go through the account that made it.
+      const accountId = (b.remove && s.reactionAccount(m[1], b.key, style)) || this.pickAccount(msg.conversation_id, b.accountId);
+      if (!accountId) return bad('no connected account can react here', 409);
+      await this.sup.command(accountId, { t: 'react', conversation: conv.nativeId, message: msg.native_id, key: b.key, remove: b.remove, style, emoji: s.customEmoji(conv.network, b.key) });
+      this.flush();
+      return ok({ ok: true, accountId });
+    }
+    if ((m = path.match(/^\/api\/messages\/([\w-]+)\/reactors$/))) {
+      const key = url.searchParams.get('key') ?? '';
+      const style = (url.searchParams.get('style') ?? 'normal') as P.ReactionStyle;
+      const msg = s.one<{ conversation_id: string; native_id: string }>('SELECT conversation_id, native_id FROM message WHERE id = ?', m[1]);
+      if (!msg) return bad('no such message', 404);
+      const shown = () => s.messageView(m![1])?.reactions.find((r) => r.key === key && r.style === style);
+      const before = shown();
+      // Only ask the network when it has not told us everyone already.
+      if (before && before.count > before.identityIds.length) {
+        const conv = s.nativeOf('conversation', msg.conversation_id)!;
+        const accountId = this.pickAccount(msg.conversation_id);
+        const acc = accountId ? s.account(accountId) : null;
+        if (acc && this.sup.online(acc.id)) {
+          const r = await this.sup.command<{ authors?: string[] }>(acc.id, { t: 'reactors', conversation: conv.nativeId, message: msg.native_id, key, style }, 20_000).catch(() => null);
+          if (r?.authors?.length) s.addKnownReactors(acc, m[1], key, style, r.authors);
+          this.flush();
+        }
+      }
+      const after = shown();
+      return ok({ count: after?.count ?? 0, identityIds: after?.identityIds ?? [], identities: s.identitiesByIds(after?.identityIds ?? []) });
     }
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/feedback$/)) && method === 'POST') {
       const b = await body<{ feedback: P.TriageView['feedback'] }>();
@@ -350,6 +385,10 @@ export class HubServer {
     const raw = Buffer.from(b64, 'base64url').toString('utf8');
     const expect = createHmac('sha256', this.opts.secret).update(`${raw}|${accountId ?? ''}`).digest('base64url').slice(0, 16);
     if (sig !== expect) return new Response('bad signature', { status: 403 });
+    return this.fetchMedia(raw, accountId);
+  }
+
+  private async fetchMedia(raw: string, accountId: string | null): Promise<Response> {
     const cacheDir = join(this.opts.dataDir, 'media-cache');
     if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
     const key = new Bun.CryptoHasher('sha256').update(raw).digest('hex');

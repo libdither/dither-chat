@@ -28,7 +28,13 @@ export function renderMarkdown(src: string, ctx: MdContext): string {
     return slot(`<span class="mention${u?.self ? ' self' : ''}">@${esc(u?.name ?? (/^\d+$/.test(id) ? 'user' : id))}</span>`);
   });
   s = s.replace(/<#([^>\s]+)>/g, (_, id) => slot(`<span class="mention room">#${esc(ctx.room(id) ?? (/^\d+$/.test(id) ? 'channel' : id))}</span>`));
-  s = s.replace(/<a?:(\w+):\d+>/g, (_, name) => slot(`<span class="emoji-custom">:${esc(name)}:</span>`));
+  s = s.replace(/<(a?):(\w+):(\d+)>/g, (_, anim, name, id) =>
+    slot(
+      ctx.network === 'discord'
+        ? `<img class="emoji-img inline" src="/emoji/discord/${id}${anim ? '.animated' : ''}" alt=":${esc(name)}:" title=":${esc(name)}:" loading="lazy">`
+        : `<span class="emoji-custom">:${esc(name)}:</span>`,
+    ),
+  );
   s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, text, url) => slot(`<a href="${esc(url)}" target="_blank" rel="noreferrer noopener">${esc(text)}</a>`));
   s = s.replace(/\bhttps?:\/\/[^\s<>()]+[^\s<>().,;:!?'"]/g, (url) => slot(`<a href="${esc(url)}" target="_blank" rel="noreferrer noopener">${esc(url)}</a>`));
 

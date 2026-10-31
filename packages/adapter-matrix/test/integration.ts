@@ -11,6 +11,7 @@
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { enc, MatrixClient } from '../src/http.ts';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
@@ -162,6 +163,35 @@ try {
   await command({ t: 'react', conversation: R.notes, message: sent.nativeId, key: '🎉', remove: true });
   await waitFor((e) => e.t === 'reaction' && e.message === sent.nativeId && e.key === '🎉' && !!e.remove);
   check(true, 'react remove: our reaction is redacted and a remove fact arrives');
+
+  // Spellings of one emoji are one reaction: a key another client sent with U+FE0F is still ours to remove.
+  const fe0f = await command({ t: 'react', conversation: R.notes, message: sent.nativeId, key: '👍\uFE0F' });
+  check(!!fe0f.nativeId, 'react: a key with a variation selector is accepted');
+  await waitFor((e) => e.t === 'reaction' && e.message === sent.nativeId && e.key === '👍\uFE0F' && !e.remove);
+  await command({ t: 'react', conversation: R.notes, message: sent.nativeId, key: '👍', remove: true });
+  await waitFor((e) => e.t === 'reaction' && e.message === sent.nativeId && e.key === '👍\uFE0F' && !!e.remove);
+  check(true, 'react remove: finds our reaction whatever spelling it was sent in');
+
+  // Custom emoji: an MSC2545 room image pack shows up in the context, and reacting with one carries its name.
+  const plain = (await command({ t: 'reactionContext', conversation: R.notes })) as P.ReactionContext;
+  check(plain.canReact === true && !plain.super, 'context: can react here, and Matrix has no super reactions', plain);
+  const zyan = new MatrixClient(tb.baseUrl);
+  zyan.accessToken = tb.users.zyan.accessToken;
+  const mxc = 'mxc://dither.test/integration-emote';
+  await zyan.request('PUT', `/_matrix/client/v3/rooms/${enc(R.notes)}/state/im.ponies.room_emotes/`, {
+    body: { pack: { display_name: 'Test pack' }, images: { partyparrot: { url: mxc }, sticker_only: { url: 'mxc://dither.test/nope', usage: ['sticker'] } } },
+  });
+  await command({ t: 'action', action: 'resync' });
+  const ctx = (await command({ t: 'reactionContext', conversation: R.notes })) as P.ReactionContext;
+  const pack = ctx.custom.find((g) => g.name === 'Test pack');
+  check(pack?.emoji.length === 1 && pack.emoji[0].key === mxc && pack.emoji[0].name === 'partyparrot', 'context: the room pack is offered, without sticker-only images', ctx.custom);
+  await command({ t: 'react', conversation: R.notes, message: sent.nativeId, key: mxc, emoji: pack?.emoji[0] });
+  const custom = await waitFor<Extract<P.AdapterEvent, { t: 'reaction' }>>((e) => e.t === 'reaction' && e.message === sent.nativeId && e.key === mxc && !e.remove);
+  check(custom.emoji?.name === 'partyparrot' && custom.emoji.url === mxc, 'react: a custom emoji comes back described', custom.emoji);
+  await command({ t: 'react', conversation: R.notes, message: sent.nativeId, key: mxc, remove: true });
+  await waitFor((e) => e.t === 'reaction' && e.message === sent.nativeId && e.key === mxc && !!e.remove);
+  check(true, 'react remove: a custom emoji reaction can be taken back');
+  await zyan.request('PUT', `/_matrix/client/v3/rooms/${enc(R.notes)}/state/im.ponies.room_emotes/`, { body: {} });
   await command({ t: 'markRead', conversation: R.notes, upTo: sent.nativeId });
   check(true, 'markRead: receipt + read marker accepted');
   await command({ t: 'redact', conversation: R.notes, message: sent.nativeId });

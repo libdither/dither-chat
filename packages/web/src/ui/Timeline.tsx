@@ -29,7 +29,6 @@ import {
   pending,
   prefs,
   quoted,
-  react,
   rev,
   route,
   send,
@@ -39,11 +38,12 @@ import {
   timelines,
   typing,
 } from '../state.ts';
+import { reactionContext, sheetFor } from '../reactions.ts';
 import { AccountChip, AccountDots, Avatar, Empty, Menu, NetBadge, NetGlyph, levelIcon, variantIcon } from './bits.tsx';
+import { HoverReactions, ReactionBar, useLongPress } from './Reactions.tsx';
 import { Icon } from './icons.tsx';
 import { openConv } from './Sidebar.tsx';
 
-const QUICK = ['👍', '❤️', '😂', '🎉', '👀', '🙏'];
 
 // ------------------------------------------------------------------ header
 
@@ -341,23 +341,6 @@ function Embeds({ m }: { m: P.MessageView }) {
   );
 }
 
-function Reactions({ m }: { m: P.MessageView }) {
-  if (!m.reactions.length) return null;
-  return (
-    <div class="reactions">
-      {m.reactions.map((r) => {
-        const mine = r.identityIds.some(isSelfIdentity);
-        return (
-          <button class={`reaction ${mine ? 'mine' : ''}`} title={r.identityIds.map(authorName).join(', ')} onClick={() => react(m.id, r.key, mine)}>
-            <span class="reaction-key">{r.key}</span>
-            <span class="reaction-n">{r.identityIds.length}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 function TriageNote({ m }: { m: P.MessageView }) {
   const t = m.triage;
   if (!t) return null;
@@ -416,16 +399,18 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
   const target = m.replyToId ? (timelines.get(timelineKey('c', m.conversationId))?.messages.find((x) => x.id === m.replyToId) ?? quoted.get(m.replyToId)) : null;
   const thread = m.threadId ? db.conversations.get(m.threadId) : null;
   const seenVia = m.seenVia.map((id) => db.accounts.get(id)).filter((a): a is P.AccountView => !!a);
+  const press = useLongPress(() => (sheetFor.value = { message: m, onReply: () => onReply(m) }));
 
   if (m.kind === 'system')
     return (
-      <div class="msg system" id={`m-${m.id}`}>
+      <div class="msg system" id={`m-${m.id}`} {...press}>
         <Icon name="chevronRight" size={12} /> <Body m={m} /> <span class="msg-time">{clock(m.ts)}</span>
+        <ReactionBar m={m} />
       </div>
     );
 
   return (
-    <div class={`msg ${grouped ? 'grouped' : ''} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''}`} id={`m-${m.id}`}>
+    <div class={`msg ${grouped ? 'grouped' : ''} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''}`} id={`m-${m.id}`} {...press}>
       <div class="msg-gutter">
         {grouped ? (
           <span class="msg-time-hover" title={fullTime(m.ts)}>
@@ -466,7 +451,7 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
         {grouped && m.editedTs && <span class="msg-edited">(edited)</span>}
         <Attachments m={m} />
         <Embeds m={m} />
-        <Reactions m={m} />
+        <ReactionBar m={m} />
         {thread && (
           <button class="thread-chip" onClick={() => openConv(thread)}>
             <Icon name="thread" size={13} />
@@ -476,11 +461,7 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
         )}
       </div>
       <div class="msg-actions">
-        {QUICK.slice(0, 3).map((k) => (
-          <button class="icon-btn small" title={`React ${k}`} onClick={() => react(m.id, k)}>
-            {k}
-          </button>
-        ))}
+        <HoverReactions m={m} />
         <button class="icon-btn small" title="Reply" onClick={() => onReply(m)}>
           <Icon name="reply" size={15} />
         </button>
@@ -691,6 +672,7 @@ export function ConversationPane({ convId, onBack }: { convId: string; onBack?: 
   const [reply, setReply] = useState<P.MessageView | null>(null);
   const unreadAt = useMemo(() => (c ? firstUnread([c]) : null), [convId]);
   useEffect(() => setReply(null), [convId]);
+  useEffect(() => void reactionContext(convId), [convId]);
   if (!c) return <Empty icon="groups" title="Conversation not found" />;
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && visibleAccount(a.id));
   const sendAsValue = prefs.value.sendAs[c.id] ?? accounts.find((a) => a.status === 'online')?.id ?? accounts[0]?.id;

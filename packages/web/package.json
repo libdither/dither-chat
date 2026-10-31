@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@dither-chat/protocol": "workspace:*",
+    "@emoji-mart/data": "^1.2.1",
     "@novnc/novnc": "^1.7.0",
     "@preact/signals": "^2.11.4",
     "preact": "^11.1.0",

@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
+import { canonicalReactionKey, REACTION_RULES } from '@dither-chat/protocol';
 
 type Row = Record<string, any>;
 
@@ -82,9 +83,29 @@ export class Store {
 
   constructor(path: string, private media: MediaSigner) {
     this.db = new Database(path, { create: true, strict: true });
-    this.db.exec(readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'));
+    const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
+    const reactionsBefore = this.oldReactions();
+    this.db.exec(schema);
+    this.adoptOldReactions(reactionsBefore);
     for (const r of this.db.query('SELECT self_identity FROM account WHERE self_identity IS NOT NULL').all() as Row[]) {
       this.selfIdentities.add(r.self_identity);
+    }
+  }
+
+  /** Reaction rows from before styles and tallies existed; drops the old table so the schema can rebuild it. */
+  private oldReactions(): Row[] {
+    const cols = this.db.query('PRAGMA table_info(reaction)').all() as Row[];
+    if (!cols.length || cols.some((c) => c.name === 'style')) return [];
+    const rows = this.db.query('SELECT message_id, identity_id, key FROM reaction ORDER BY rowid').all() as Row[];
+    this.db.exec('DROP TABLE reaction');
+    return rows;
+  }
+
+  private adoptOldReactions(rows: Row[]) {
+    for (const r of rows) {
+      const key = canonicalReactionKey(r.key);
+      this.db.query('INSERT OR IGNORE INTO reaction (message_id, identity_id, key) VALUES (?, ?, ?)').run(r.message_id, r.identity_id, key);
+      this.db.query('INSERT OR IGNORE INTO reaction_tally (message_id, key) VALUES (?, ?)').run(r.message_id, key);
     }
   }
 
@@ -226,10 +247,16 @@ export class Store {
         case 'reaction': {
           const mid = hubId('msg', acc.network, ev.message);
           if (!this.db.query('SELECT 1 FROM message WHERE id = ?').get(mid)) break;
-          const iid = this.ensureIdentity(acc, ev.author);
-          if (ev.remove) this.db.query('DELETE FROM reaction WHERE message_id = ? AND identity_id = ? AND key = ?').run(mid, iid, ev.key);
-          else this.db.query('INSERT OR IGNORE INTO reaction (message_id, identity_id, key) VALUES (?, ?, ?)').run(mid, iid, ev.key);
-          this.dirty.messages.set(mid, true);
+          this.applyReaction(acc, mid, ev);
+          this.markReacted(mid);
+          break;
+        }
+        case 'reactionsCleared': {
+          const mid = hubId('msg', acc.network, ev.message);
+          const key = ev.key === undefined ? null : canonicalReactionKey(ev.key);
+          this.db.query('DELETE FROM reaction WHERE message_id = ? AND (? IS NULL OR key = ?)').run(mid, key, key);
+          this.db.query('DELETE FROM reaction_tally WHERE message_id = ? AND (? IS NULL OR key = ?)').run(mid, key, key);
+          this.markReacted(mid);
           break;
         }
         case 'read': {
@@ -507,11 +534,7 @@ export class Store {
           .run(hubId('att', acc.network, `${f.nativeId}#${a.nativeId ?? i}`), id, a.kind, a.mime ?? null, a.name ?? null, a.size ?? null, a.width ?? null, a.height ?? null, a.url, i);
       });
     }
-    if (f.reactions) {
-      this.db.query('DELETE FROM reaction WHERE message_id = ?').run(id);
-      for (const r of f.reactions)
-        for (const a of r.authors) this.db.query('INSERT OR IGNORE INTO reaction (message_id, identity_id, key) VALUES (?, ?, ?)').run(id, this.ensureIdentity(acc, a), r.key);
-    }
+    if (f.reactions) this.reactionSnapshot(acc, id, f.reactions);
     const newForAccount = this.db.query('INSERT OR IGNORE INTO message_seen (message_id, account_id) VALUES (?, ?)').run(id, acc.id).changes > 0;
 
     const conv = this.db.query('SELECT last_message_at FROM conversation WHERE id = ?').get(cid) as Row;
@@ -746,12 +769,167 @@ export class Store {
     };
   }
 
+  // ------------------------------------------------------------ reactions
+
+  private markReacted(mid: string) {
+    // Not news in itself, so it never turns a quiet update into a live one.
+    this.dirty.messages.set(mid, this.dirty.messages.get(mid) ?? false);
+  }
+
+  private putEmoji(network: P.Network, e: P.CustomEmojiFact) {
+    this.db
+      .query(
+        `INSERT INTO custom_emoji (network, key, name, url, animated) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (network, key) DO UPDATE SET name = excluded.name, url = excluded.url, animated = excluded.animated`,
+      )
+      .run(network, e.key, e.name, e.url, e.animated ? 1 : 0);
+  }
+
+  /** One person added or took back one reaction. */
+  private applyReaction(acc: AccountRow, mid: string, ev: Extract<P.AdapterEvent, { t: 'reaction' }>) {
+    const iid = this.ensureIdentity(acc, ev.author);
+    const key = canonicalReactionKey(ev.key);
+    const style = ev.style ?? 'normal';
+    if (ev.emoji) this.putEmoji(acc.network, ev.emoji);
+    if (ev.remove) {
+      const known = this.db.query('DELETE FROM reaction WHERE message_id = ? AND identity_id = ? AND key = ? AND style = ?').run(mid, iid, key, style).changes > 0;
+      // Totals include people we never knew by name, so they go down anyway. Your own reactions are
+      // always known, so a second removal of yours is only an echo of the first.
+      if (known || !this.isSelf(iid)) this.db.query('UPDATE reaction_tally SET count = count - 1 WHERE message_id = ? AND key = ? AND style = ? AND count IS NOT NULL').run(mid, key, style);
+      this.dropEmptyTallies(mid);
+      return;
+    }
+    if (REACTION_RULES[acc.network].exclusive) {
+      const others = this.db.query('SELECT key, style FROM reaction WHERE message_id = ? AND identity_id = ? AND NOT (key = ? AND style = ?)').all(mid, iid, key, style) as Row[];
+      for (const o of others) {
+        this.db.query('DELETE FROM reaction WHERE message_id = ? AND identity_id = ? AND key = ? AND style = ?').run(mid, iid, o.key, o.style);
+        this.db.query('UPDATE reaction_tally SET count = count - 1 WHERE message_id = ? AND key = ? AND style = ? AND count IS NOT NULL').run(mid, o.key, o.style);
+      }
+      this.dropEmptyTallies(mid);
+    }
+    const added = this.db.query('INSERT OR IGNORE INTO reaction (message_id, identity_id, key, style) VALUES (?, ?, ?, ?)').run(mid, iid, key, style).changes > 0;
+    this.db.query('INSERT OR IGNORE INTO reaction_tally (message_id, key, style) VALUES (?, ?, ?)').run(mid, key, style);
+    if (added) this.db.query('UPDATE reaction_tally SET count = count + 1 WHERE message_id = ? AND key = ? AND style = ? AND count IS NOT NULL').run(mid, key, style);
+    if (ev.colors?.length) this.db.query('UPDATE reaction_tally SET colors = ? WHERE message_id = ? AND key = ? AND style = ?').run(JSON.stringify(ev.colors), mid, key, style);
+  }
+
+  private dropEmptyTallies(mid: string) {
+    this.db
+      .query(
+        `DELETE FROM reaction_tally WHERE message_id = ? AND COALESCE(count, 0) <= 0 AND NOT EXISTS (
+           SELECT 1 FROM reaction r WHERE r.message_id = reaction_tally.message_id AND r.key = reaction_tally.key AND r.style = reaction_tally.style)`,
+      )
+      .run(mid);
+  }
+
+  /** The whole reaction state of a message, as one account's network reports it. */
+  private reactionSnapshot(acc: AccountRow, mid: string, facts: P.ReactionFact[]) {
+    const present = new Set(facts.map((r) => `${r.style ?? 'normal'}|${canonicalReactionKey(r.key)}`));
+    for (const t of this.db.query('SELECT key, style FROM reaction_tally WHERE message_id = ?').all(mid) as Row[]) {
+      if (present.has(`${t.style}|${t.key}`)) continue;
+      this.db.query('DELETE FROM reaction WHERE message_id = ? AND key = ? AND style = ?').run(mid, t.key, t.style);
+      this.db.query('DELETE FROM reaction_tally WHERE message_id = ? AND key = ? AND style = ?').run(mid, t.key, t.style);
+    }
+    for (const r of facts) {
+      const key = canonicalReactionKey(r.key);
+      const style = r.style ?? 'normal';
+      if (r.emoji) this.putEmoji(acc.network, r.emoji);
+      const authors = r.authors.map((a) => this.ensureIdentity(acc, a));
+      if (r.count === undefined) this.db.query('DELETE FROM reaction WHERE message_id = ? AND key = ? AND style = ?').run(mid, key, style);
+      // A partial list keeps whoever we learned about, but this account does know whether it reacted itself.
+      else if (acc.self_identity && !authors.includes(acc.self_identity)) {
+        this.db.query('DELETE FROM reaction WHERE message_id = ? AND identity_id = ? AND key = ? AND style = ?').run(mid, acc.self_identity, key, style);
+      }
+      for (const a of authors) this.db.query('INSERT OR IGNORE INTO reaction (message_id, identity_id, key, style) VALUES (?, ?, ?, ?)').run(mid, a, key, style);
+      this.db
+        .query(
+          `INSERT INTO reaction_tally (message_id, key, style, count, colors) VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT (message_id, key, style) DO UPDATE SET count = excluded.count, colors = COALESCE(excluded.colors, colors)`,
+        )
+        .run(mid, key, style, r.count ?? null, r.colors?.length ? JSON.stringify(r.colors) : null);
+    }
+    this.dropEmptyTallies(mid);
+  }
+
+  private emojiView(row: Row | undefined, accountId: string | null | undefined): P.CustomEmojiView | undefined {
+    return row && { key: row.key, name: row.name, url: this.media(row.url, accountId) ?? '', animated: !!row.animated };
+  }
+
+  /** The catalog entry for a key, as an adapter needs it. */
+  customEmoji(network: P.Network, key: string): P.CustomEmojiFact | undefined {
+    const r = this.db.query('SELECT * FROM custom_emoji WHERE network = ? AND key = ?').get(network, key) as Row | null;
+    return r ? { key: r.key, name: r.name, url: r.url, animated: !!r.animated } : undefined;
+  }
+
+  /** Remember what an adapter offered, so reactions made from the picker can be described later. */
+  reactionContextView(accountId: string, network: P.Network, ctx: P.ReactionContext): P.ReactionContextView {
+    this.db.transaction(() => {
+      for (const g of ctx.custom) for (const e of g.emoji) this.putEmoji(network, e);
+    })();
+    return {
+      ...ctx,
+      accountId,
+      custom: ctx.custom.map((g) => ({
+        id: g.id,
+        name: g.name,
+        icon: this.media(g.icon, accountId),
+        emoji: g.emoji.map((e) => ({ key: e.key, name: e.name, url: this.media(e.url, accountId) ?? '', animated: !!e.animated })),
+      })),
+    };
+  }
+
+  /** Which of your accounts holds a reaction, so taking it back goes through the right one. */
+  reactionAccount(messageId: string, key: string, style: P.ReactionStyle): string | null {
+    const r = this.db
+      .query(
+        `SELECT a.id FROM reaction r JOIN account a ON a.self_identity = r.identity_id
+         WHERE r.message_id = ? AND r.key = ? AND r.style = ? LIMIT 1`,
+      )
+      .get(messageId, canonicalReactionKey(key), style) as Row | null;
+    return r?.id ?? null;
+  }
+
+  /** Names behind a total. They are already in the count. */
+  addKnownReactors(acc: AccountRow, messageId: string, key: string, style: P.ReactionStyle, authors: string[]) {
+    const k = canonicalReactionKey(key);
+    for (const a of authors) this.db.query('INSERT OR IGNORE INTO reaction (message_id, identity_id, key, style) VALUES (?, ?, ?, ?)').run(messageId, this.ensureIdentity(acc, a), k, style);
+    this.markReacted(messageId);
+  }
+
+  private reactionUsage(): P.ReactionUsage[] {
+    const rows = this.db
+      .query(
+        `SELECT r.key, i.network, COUNT(*) AS n, e.key AS emoji_key, e.name, e.url, e.animated
+         FROM reaction r
+         JOIN account a ON a.self_identity = r.identity_id
+         JOIN identity i ON i.id = r.identity_id
+         LEFT JOIN custom_emoji e ON e.network = i.network AND e.key = r.key
+         WHERE a.demo = 0 OR NOT EXISTS (SELECT 1 FROM account WHERE demo = 0)
+         GROUP BY r.key, i.network ORDER BY n DESC LIMIT 60`,
+      )
+      .all() as Row[];
+    return rows.map((r) => ({
+      key: r.key,
+      network: r.network,
+      count: r.n,
+      emoji: r.emoji_key ? this.emojiView({ key: r.emoji_key, name: r.name, url: r.url, animated: r.animated }, this.accountOfNetwork(r.network)) : undefined,
+    }));
+  }
+
+  private accountOfNetwork(network: P.Network): string | null {
+    return (this.db.query('SELECT id FROM account WHERE network = ? AND demo = 0 LIMIT 1').get(network) as Row | null)?.id ?? null;
+  }
+
   private messageViews(rows: Row[]): P.MessageView[] {
     if (!rows.length) return [];
     const ids = rows.map((r) => r.id);
     const ph = ids.map(() => '?').join(',');
     const atts = this.db.query(`SELECT * FROM attachment WHERE message_id IN (${ph}) ORDER BY position`).all(...ids) as Row[];
     const reacts = this.db.query(`SELECT * FROM reaction WHERE message_id IN (${ph})`).all(...ids) as Row[];
+    const tallies = this.db.query(`SELECT * FROM reaction_tally WHERE message_id IN (${ph}) ORDER BY seq`).all(...ids) as Row[];
+    const emoji = new Map(
+      (this.db.query(`SELECT * FROM custom_emoji WHERE (network, key) IN (SELECT m.network, t.key FROM reaction_tally t JOIN message m ON m.id = t.message_id WHERE t.message_id IN (${ph}))`).all(...ids) as Row[]).map((e) => [`${e.network}|${e.key}`, e]),
+    );
     const seen = this.db.query(`SELECT * FROM message_seen WHERE message_id IN (${ph})`).all(...ids) as Row[];
     const tri = this.db.query(`SELECT * FROM triage WHERE message_id IN (${ph})`).all(...ids) as Row[];
     const by = <T extends Row>(xs: T[]) => {
@@ -759,12 +937,12 @@ export class Store {
       for (const x of xs) (m.get(x.message_id) ?? m.set(x.message_id, []).get(x.message_id)!).push(x);
       return m;
     };
-    const A = by(atts), R = by(reacts), S = by(seen);
+    const A = by(atts), R = by(reacts), S = by(seen), RT = by(tallies);
     const T = new Map(tri.map((t) => [t.message_id, t]));
     return rows.map((r) => {
       const seenVia = (S.get(r.id) ?? []).map((s) => s.account_id);
       const rx = new Map<string, string[]>();
-      for (const x of R.get(r.id) ?? []) (rx.get(x.key) ?? rx.set(x.key, []).get(x.key)!).push(x.identity_id);
+      for (const x of R.get(r.id) ?? []) (rx.get(`${x.style}|${x.key}`) ?? rx.set(`${x.style}|${x.key}`, []).get(`${x.style}|${x.key}`)!).push(x.identity_id);
       const t = T.get(r.id);
       return {
         id: r.id,
@@ -791,7 +969,14 @@ export class Store {
           url: this.media(a.url, seenVia[0]) ?? '',
         })),
         embeds: json<{ embeds?: P.EmbedView[] }>(r.extra, {}).embeds?.map((e) => ({ ...e, image: this.media(e.image, seenVia[0]) ?? undefined })) ?? [],
-        reactions: [...rx].map(([key, identityIds]) => ({ key, identityIds })),
+        reactions: (RT.get(r.id) ?? [])
+          .map((t): P.ReactionView => {
+            const identityIds = rx.get(`${t.style}|${t.key}`) ?? [];
+            const e = this.emojiView(emoji.get(`${r.network}|${t.key}`), seenVia[0]);
+            const colors = json<string[] | null>(t.colors, null);
+            return { key: t.key, style: t.style, count: Math.max(t.count ?? 0, identityIds.length), identityIds, ...(e ? { emoji: e } : {}), ...(colors ? { colors } : {}) };
+          })
+          .filter((x) => x.count > 0),
         seenVia,
         triage: t ? { decision: t.decision, score: t.score, reasons: json(t.reasons, []), decidedBy: t.decided_by, feedback: t.feedback } : null,
       };
@@ -955,6 +1140,7 @@ export class Store {
       conversations,
       folders: this.folders(),
       rules: this.rules(),
+      reactionUsage: this.reactionUsage(),
       now: Date.now(),
     };
   }

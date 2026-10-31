@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { Store } from '../../hub/src/store.ts';
 import type { AccountRow } from '../../hub/src/store.ts';
 import { hubId } from '@dither-chat/protocol/ids';
+import type * as P from '@dither-chat/protocol';
 import { messageEvents, newState, translateDispatch, translateSnapshot } from '../src/ingest.ts';
 import type { RawSnapshot } from '../src/discord-types.ts';
 
@@ -179,6 +180,31 @@ describe('hub ingest of adapter facts', () => {
     const message = { id: '700000000000000030', channel_id: DM, author: { id: SELF, username: 'zyansheep' }, content: 'hi', timestamp: '2024-06-01T12:02:00.000Z' };
     expect(translateDispatch('MESSAGE_CREATE', { message, optimistic: true }, st)).toEqual([]);
     expect(translateDispatch('MESSAGE_CREATE', { message }, st).map((e) => e.t)).toEqual(['message']);
+  });
+
+  test('a live reaction names who did it, and the client echo of your own is ignored', () => {
+    const st = newState();
+    st.selfId = SELF;
+    const base = { channelId: CH_BEGINNERS, messageId: '700000000000000010', userId: '400000000000000050', emoji: { id: '7', name: 'party', animated: true } };
+    expect(translateDispatch('MESSAGE_REACTION_ADD', { ...base, optimistic: true }, st)).toEqual([]);
+    const events = translateDispatch('MESSAGE_REACTION_ADD', { ...base, reactionType: 1, colors: ['#f00'], user: { id: base.userId, username: 'zed', global_name: 'Zed' } }, st);
+    expect(events.map((e) => e.t)).toEqual(['identity', 'reaction']);
+    expect(events[1]).toMatchObject({ key: 'party:7', style: 'super', colors: ['#f00'], emoji: { name: 'party', animated: true } });
+    for (const ev of events) store.ingest(acc, ev);
+    const msg = store.messages(hubId('cnv', 'discord', CH_BEGINNERS), null, 50);
+    const m = msg.messages.find((x) => x.nativeId === base.messageId)!;
+    expect(m.reactions.find((r) => r.key === 'party:7')).toMatchObject({ style: 'super', count: 1, colors: ['#f00'], emoji: { name: 'party', animated: true } });
+    expect(msg.identities.find((i) => i.nativeId === base.userId)?.displayName).toBe('Zed');
+  });
+
+  test('a fetched message with no reactions has none left', () => {
+    const st = newState();
+    st.selfId = SELF;
+    const raw = { id: '700000000000000040', channel_id: CH_BEGINNERS, author: { id: ALICE, username: 'alice.chen' }, content: 'x', timestamp: '2024-06-01T12:03:00.000Z' };
+    const backfill = messageEvents(raw, st, false).find((e) => e.t === 'message') as Extract<P.AdapterEvent, { t: 'message' }>;
+    expect(backfill.message.reactions).toEqual([]);
+    const live = messageEvents(raw, st, true).find((e) => e.t === 'message') as Extract<P.AdapterEvent, { t: 'message' }>;
+    expect(live.message.reactions).toBeUndefined();
   });
 
   test('a rename arrives through CHANNEL_UPDATES', () => {

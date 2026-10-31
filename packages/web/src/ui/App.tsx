@@ -4,6 +4,7 @@ import { AccountPane, AccountsSidebar, AddAccount } from './Accounts.tsx';
 import { ConversationDetails, PersonDetails } from './Details.tsx';
 import { Icon } from './icons.tsx';
 import { InboxBoard } from './Inbox.tsx';
+import { ReactionLayer } from './Reactions.tsx';
 import { Rail } from './Rail.tsx';
 import { SearchPane } from './Search.tsx';
 import { SettingsPane } from './Settings.tsx';
@@ -183,6 +184,7 @@ export function App() {
         ))}
       </nav>
       {adding && <AddAccount onClose={() => setAdding(false)} />}
+      <ReactionLayer />
       <Toasts />
     </div>
   );
