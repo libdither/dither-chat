@@ -8,11 +8,13 @@ import { Icon } from './icons.tsx';
 import { PlaceMenu } from './Organize.tsx';
 import { InboxBoard } from './Inbox.tsx';
 import { ReactionLayer } from './Reactions.tsx';
+import { ProfilePane } from './Profile.tsx';
 import { Rail } from './Rail.tsx';
 import { SearchPane } from './Search.tsx';
 import { SettingsPane } from './Settings.tsx';
 import { FolderSidebar, GroupsSidebar, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar } from './Sidebar.tsx';
 import { ConversationPane, PersonPane } from './Timeline.tsx';
+import { Switcher } from './Switcher.tsx';
 import { Toasts } from './Toasts.tsx';
 import { applyUpdate, updateReady } from '../pwa.ts';
 
@@ -20,9 +22,11 @@ import { applyUpdate, updateReady } from '../pwa.ts';
 function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'conv' | 'person'; id: string } } {
   switch (r.view) {
     case 'inbox':
-      return r.conv ? { pane: <ConversationPane convId={r.conv} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <InboxBoard /> };
+      return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <InboxBoard /> };
     case 'people':
       return r.person ? { pane: <PersonPane personId={r.person} onBack={back} />, detail: { kind: 'person', id: r.person } } : { pane: <WelcomePane view="people" /> };
+    case 'profile':
+      return { pane: <ProfilePane personId={r.person} identityId={r.identity} onBack={() => history.back()} /> };
     case 'groups':
       return r.conv ? { pane: <ConversationPane convId={r.conv} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <WelcomePane view="groups" /> };
     case 'space':
@@ -42,7 +46,7 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
     case 'directory':
       return { pane: <DirectoryPane /> };
     case 'search':
-      return r.conv ? { pane: <ConversationPane convId={r.conv} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <SearchPane q={r.q} /> };
+      return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <SearchPane q={r.q} /> };
   }
 }
 
@@ -51,6 +55,8 @@ function sidebarFor(r: Route, onAdd: () => void) {
     case 'inbox':
       return <InboxSidebar activeConv={r.conv} />;
     case 'people':
+      return <PeopleSidebar activePerson={r.person} />;
+    case 'profile':
       return <PeopleSidebar activePerson={r.person} />;
     case 'groups':
       return <GroupsSidebar activeConv={r.conv} />;
@@ -163,7 +169,7 @@ export function App() {
   const personOpen = r.view === 'people' && r.person !== undefined;
   const accountOpen = r.view === 'accounts' && r.account !== undefined;
   const full = r.view === 'directory';
-  const detailOpen = r.view === 'settings' || convOpen || personOpen || accountOpen || r.view === 'search' || (r.view === 'folder' && (r.conv || r.person));
+  const detailOpen = r.view === 'settings' || r.view === 'profile' || convOpen || personOpen || accountOpen || r.view === 'search' || (r.view === 'folder' && (r.conv || r.person));
 
   if (!loaded.value)
     return (
@@ -202,6 +208,7 @@ export function App() {
       <Toasts />
       <DragLayer />
       <PlaceMenu />
+      <Switcher />
     </div>
   );
 }

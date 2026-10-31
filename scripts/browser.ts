@@ -92,6 +92,7 @@ export async function launch(opts: { caCert?: string; host?: string } = {}) {
       throw new Error(`timed out waiting for: ${expr}`);
     },
   };
+  await page.send('Emulation.setFocusEmulationEnabled', { enabled: true });
   await page.send('Page.enable');
   await page.send('Runtime.enable');
   await page.send('Network.enable');

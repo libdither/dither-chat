@@ -275,9 +275,24 @@ export class HubServer {
     }
     if (path === '/api/bootstrap') return ok(s.bootstrap());
     if (path === '/api/inbox') return ok(s.inbox(num('since') ?? Date.now() - 7 * 86_400_000));
-    if (path === '/api/search') return ok(s.search(url.searchParams.get('q') ?? '', 60));
+    if (path === '/api/search') return ok(s.search(url.searchParams.get('q') ?? '', Math.min(num('limit') ?? 40, 100), url.searchParams.get('cursor')));
 
+    if ((m = path.match(/^\/api\/messages\/([\w-]+)\/context$/))) {
+      const page = s.messageContext(m[1], Math.min(num('around') ?? 30, 100));
+      return page ? ok(page) : bad('no such message', 404);
+    }
+    if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/messages$/)) && num('after') !== null) return ok(s.messagesAfter(m[1], num('after')!, Math.min(num('limit') ?? 60, 200)));
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/messages$/))) return ok(s.messages(m[1], num('before'), Math.min(num('limit') ?? 60, 200)));
+    if ((m = path.match(/^\/api\/persons\/([\w-]+)\/profile$/)) || (m = path.match(/^\/api\/identities\/([\w-]+)\/profile$/))) {
+      const p = s.profile(path.startsWith('/api/persons/') ? { personId: m[1] } : { identityId: m[1] });
+      return p ? ok(p) : bad('nobody by that id', 404);
+    }
+    if ((m = path.match(/^\/api\/identities\/([\w-]+)\/person$/)) && method === 'POST') {
+      if (!s.nativeOf('identity', m[1])) return bad('no such identity', 404);
+      const personId = s.ensurePerson(m[1]);
+      this.flush();
+      return ok({ personId });
+    }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/timeline$/))) return ok(s.personTimeline(m[1], num('before'), Math.min(num('limit') ?? 60, 200)));
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/notify$/))) return ok(this.triage.effectiveLevel(m[1]));
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/reaction-context$/))) {
@@ -368,12 +383,13 @@ export class HubServer {
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)$/)) && method === 'PATCH') {
       s.updatePerson(m[1], await body());
+      this.flush();
       return ok();
     }
     if ((m = path.match(/^\/api\/identities\/([\w-]+)\/split$/)) && method === 'POST') {
-      s.splitIdentity(m[1]);
+      const personId = s.splitIdentity(m[1]);
       this.flush();
-      return ok();
+      return ok({ personId });
     }
     if (path === '/api/folders' && method === 'PUT') {
       const b = await body<{ folders: P.FolderView[] }>();

@@ -155,6 +155,20 @@ CREATE TABLE IF NOT EXISTS message (
 );
 CREATE INDEX IF NOT EXISTS message_conv_ts ON message(conversation_id, ts);
 
+-- Full-text search over bodies, kept current by triggers. Store backfills it once for older databases.
+-- It follows message.rowid, so after a VACUUM run: INSERT INTO message_fts(message_fts) VALUES ('rebuild');
+CREATE VIRTUAL TABLE IF NOT EXISTS message_fts USING fts5(body, content = 'message', content_rowid = 'rowid', tokenize = "unicode61 remove_diacritics 2");
+CREATE TRIGGER IF NOT EXISTS message_fts_insert AFTER INSERT ON message BEGIN
+  INSERT INTO message_fts (rowid, body) VALUES (new.rowid, new.body);
+END;
+CREATE TRIGGER IF NOT EXISTS message_fts_delete AFTER DELETE ON message BEGIN
+  INSERT INTO message_fts (message_fts, rowid, body) VALUES ('delete', old.rowid, old.body);
+END;
+CREATE TRIGGER IF NOT EXISTS message_fts_update AFTER UPDATE OF body ON message WHEN old.body IS NOT new.body BEGIN
+  INSERT INTO message_fts (message_fts, rowid, body) VALUES ('delete', old.rowid, old.body);
+  INSERT INTO message_fts (rowid, body) VALUES (new.rowid, new.body);
+END;
+
 -- The same message arriving through several accounts is stored once.
 CREATE TABLE IF NOT EXISTS message_seen (
   message_id TEXT NOT NULL REFERENCES message(id) ON DELETE CASCADE,

@@ -39,6 +39,8 @@ export interface Timeline {
   loading: boolean;
   /** person timelines: the direct conversations merged into it */
   conversationIds?: string[];
+  /** Jumped to an old message: this window does not reach the latest ones. */
+  detached?: boolean;
 }
 export const timelines = new Map<string, Timeline>();
 /** Messages referenced by replies that are outside the loaded page. */
@@ -99,8 +101,9 @@ export function setPrefs(p: Partial<Prefs>) {
 // ------------------------------------------------------------------ routing
 
 export type Route =
-  | { view: 'inbox'; conv?: string }
+  | { view: 'inbox'; conv?: string; msg?: string }
   | { view: 'people'; person?: string }
+  | { view: 'profile'; person?: string; identity?: string }
   | { view: 'groups'; conv?: string }
   | { view: 'spaces' }
   | { view: 'space'; space: string; conv?: string }
@@ -108,7 +111,7 @@ export type Route =
   | { view: 'accounts'; account?: string }
   | { view: 'settings' }
   | { view: 'directory' }
-  | { view: 'search'; q: string; conv?: string };
+  | { view: 'search'; q: string; conv?: string; msg?: string };
 
 export function parseHash(h = location.hash): Route {
   const [path, query] = h.replace(/^#\/?/, '').split('?');
@@ -117,6 +120,10 @@ export function parseHash(h = location.hash): Route {
   switch (p[0]) {
     case 'people':
       return { view: 'people', person: p[1] };
+    case 'p':
+      return { view: 'profile', person: p[1] };
+    case 'i':
+      return { view: 'profile', identity: p[1] };
     case 'groups':
       return { view: 'groups', conv: p[1] === 'c' ? p[2] : undefined };
     case 'spaces':
@@ -132,11 +139,11 @@ export function parseHash(h = location.hash): Route {
     case 'directory':
       return { view: 'directory' };
     case 'search':
-      return { view: 'search', q: q.get('q') ?? '', conv: p[1] === 'c' ? p[2] : undefined };
+      return { view: 'search', q: q.get('q') ?? '', conv: p[1] === 'c' ? p[2] : undefined, msg: q.get('m') ?? undefined };
     case 'c':
-      return { view: 'inbox', conv: p[1] };
+      return { view: 'inbox', conv: p[1], msg: q.get('m') ?? undefined };
     default:
-      return { view: 'inbox', conv: p[1] === 'c' ? p[2] : undefined };
+      return { view: 'inbox', conv: p[1] === 'c' ? p[2] : undefined, msg: q.get('m') ?? undefined };
   }
 }
 
@@ -144,9 +151,11 @@ export function href(r: Route): string {
   const e = encodeURIComponent;
   switch (r.view) {
     case 'inbox':
-      return r.conv ? `#/inbox/c/${e(r.conv)}` : '#/inbox';
+      return r.conv ? `#/inbox/c/${e(r.conv)}${r.msg ? `?m=${e(r.msg)}` : ''}` : '#/inbox';
     case 'people':
       return r.person ? `#/people/${e(r.person)}` : '#/people';
+    case 'profile':
+      return r.person ? `#/p/${e(r.person)}` : `#/i/${e(r.identity ?? '')}`;
     case 'groups':
       return r.conv ? `#/groups/c/${e(r.conv)}` : '#/groups';
     case 'spaces':
@@ -162,7 +171,7 @@ export function href(r: Route): string {
     case 'directory':
       return '#/directory';
     case 'search':
-      return `#/search${r.conv ? `/c/${e(r.conv)}` : ''}?q=${e(r.q)}`;
+      return `#/search${r.conv ? `/c/${e(r.conv)}` : ''}?q=${e(r.q)}${r.msg ? `&m=${e(r.msg)}` : ''}`;
   }
 }
 
@@ -320,7 +329,7 @@ export function applyEvents(events: P.ClientEvent[]) {
           if (!(db.parents.get(c.id) ?? []).some((e) => e.parentId === sid)) addEdge({ parentId: sid, childKind: 'conversation', childId: c.id, position: null });
         // A newer message we have not seen: refresh open timelines for it.
         const t = timelines.get('c:' + c.id);
-        if (t && c.lastMessage && !t.messages.some((m) => m.id === c.lastMessage!.id) && !t.loading) refreshTimeline(t.key);
+        if (t && !t.detached && c.lastMessage && !t.messages.some((m) => m.id === c.lastMessage!.id) && !t.loading) refreshTimeline(t.key);
         break;
       }
       case 'conversation.removed':
@@ -331,7 +340,8 @@ export function applyEvents(events: P.ClientEvent[]) {
         ev.identities.forEach(putIdentity);
         const m = ev.message;
         const t = timelines.get('c:' + m.conversationId);
-        if (t) upsertInto(t.messages, m);
+        // A detached window only takes updates to what it holds: a new message would leave a silent gap.
+        if (t && (!t.detached || t.messages.some((x) => x.id === m.id))) upsertInto(t.messages, m);
         const conv = db.conversations.get(m.conversationId);
         if (conv?.shape === 'direct' && conv.peerPersonId) {
           const pt = timelines.get('p:' + conv.peerPersonId);
@@ -463,6 +473,46 @@ async function fromNetwork(t: Timeline, conversationId: string, beforeTs?: numbe
   return !r.done;
 }
 
+/** Make sure a message is loaded, replacing the window around it if it is not. */
+export async function jumpTo(conversationId: string, messageId: string) {
+  const key = timelineKey('c', conversationId);
+  if (timelines.get(key)?.messages.some((m) => m.id === messageId)) return;
+  const page = await api<P.MessageContext>(`/api/messages/${messageId}/context`).catch(() => null);
+  if (!page) return toast({ kind: 'error', title: 'Message not found', body: 'It may have been deleted.' });
+  page.identities.forEach(putIdentity);
+  timelines.set(key, { key, messages: page.messages, hasMore: page.hasMore, loading: false, detached: page.hasNewer });
+  rev.value++;
+}
+
+export async function loadNewer(key: string) {
+  const t = timelines.get(key);
+  const lastTs = t?.messages[t.messages.length - 1]?.ts;
+  if (!t?.detached || t.loading || lastTs === undefined) return;
+  t.loading = true;
+  const id = key.slice(2);
+  try {
+    const page = await api<P.MessagePage>(`/api/conversations/${id}/messages?after=${lastTs}&limit=60`);
+    page.identities.forEach(putIdentity);
+    for (const m of page.messages) upsertInto(t.messages, m);
+    t.detached = page.hasMore;
+  } finally {
+    t.loading = false;
+    rev.value++;
+  }
+}
+
+/** Back to the live end of a conversation. */
+export function toLatest(key: string) {
+  timelines.delete(key);
+  return loadTimeline(key);
+}
+
+/** Open a conversation at a message. */
+export function openMessage(conversationId: string, messageId: string) {
+  const r = route.value;
+  go(r.view === 'search' ? { view: 'search', q: r.q, conv: conversationId, msg: messageId } : { view: 'inbox', conv: conversationId, msg: messageId });
+}
+
 function refreshTimeline(key: string) {
   const t = timelines.get(key);
   if (!t) return;
@@ -492,6 +542,13 @@ export async function send(conversationId: string, body: string, opts: { account
   } catch (e: any) {
     pending.value = pending.value.map((x) => (x.tempId === tempId ? { ...x, failed: e.message } : x));
   }
+}
+
+/** Whoever this identity is, as far as the hub knows. */
+export function openProfile(identityId: string | null | undefined) {
+  if (!identityId) return;
+  const personId = db.identities.get(identityId)?.personId;
+  go(personId ? { view: 'profile', person: personId } : { view: 'profile', identity: identityId });
 }
 
 const readTimers = new Map<string, ReturnType<typeof setTimeout>>();

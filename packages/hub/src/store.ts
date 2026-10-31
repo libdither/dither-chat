@@ -2,7 +2,7 @@ import { Database } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
-import { canonicalReactionKey, REACTION_RULES } from '@dither-chat/protocol';
+import { canonicalReactionKey, parseSearch, REACTION_RULES } from '@dither-chat/protocol';
 
 type Row = Record<string, any>;
 
@@ -76,6 +76,18 @@ export function previewText(body: string, kind: string): string {
   return t.length > PREVIEW_LEN ? t.slice(0, PREVIEW_LEN - 1) + '…' : t;
 }
 
+const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => '\\' + c);
+
+/** A snippet for a match SQLite's tokens could not see. */
+function markSnippet(body: string, terms: string[]): string {
+  const lower = body.toLowerCase();
+  const first = Math.min(...terms.map((t) => lower.indexOf(t.toLowerCase())).filter((i) => i >= 0));
+  const start = Math.max(0, (Number.isFinite(first) ? first : 0) - 60);
+  let out = (start ? '…' : '') + body.slice(start, start + 200) + (body.length > start + 200 ? '…' : '');
+  for (const t of terms) out = out.replace(new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), (m) => `\u0001${m}\u0002`);
+  return out;
+}
+
 export class Store {
   readonly db: Database;
   readonly dirty = new Dirty();
@@ -87,6 +99,10 @@ export class Store {
     const reactionsBefore = this.oldReactions();
     this.db.exec(schema);
     this.adoptOldReactions(reactionsBefore);
+    // Messages from before full-text search existed.
+    if (!this.db.query(`SELECT 1 FROM meta WHERE key = 'fts_backfilled'`).get()) {
+      this.db.exec(`INSERT INTO message_fts (message_fts) VALUES ('rebuild'); INSERT INTO meta (key, value) VALUES ('fts_backfilled', '1');`);
+    }
     for (const r of this.db.query('SELECT self_identity FROM account WHERE self_identity IS NOT NULL').all() as Row[]) {
       this.selfIdentities.add(r.self_identity);
     }
@@ -599,15 +615,28 @@ export class Store {
     if (!r?.person_id) return;
     const old = r.person_id as string;
     this.db.query('UPDATE identity SET person_id = NULL WHERE id = ?').run(identityId);
-    const pid = this.ensurePerson(identityId);
-    const left = this.db.query('SELECT COUNT(*) AS n FROM identity WHERE person_id = ?').get(old) as Row;
-    if (!left.n) {
+    const left = (this.db.query('SELECT COUNT(*) AS n FROM identity WHERE person_id = ?').get(old) as Row).n as number;
+    // Its deterministic person may be the merged one, kept going by the others: that would rejoin them.
+    const natural = 'per_' + identityId.slice(4);
+    let pid: string;
+    if (natural === old && left) {
+      const i = this.db.query('SELECT display_name, handle, native_id, avatar_url FROM identity WHERE id = ?').get(identityId) as Row;
+      pid = randomId('per');
+      this.db.query('INSERT INTO person (id, name, avatar_url, created_at) VALUES (?, ?, ?, ?)').run(pid, i.display_name ?? i.handle ?? i.native_id, i.avatar_url, Date.now());
+      this.db.query('UPDATE identity SET person_id = ? WHERE id = ?').run(pid, identityId);
+    } else {
+      if (natural === old) this.db.query('DELETE FROM person WHERE id = ?').run(old);
+      pid = this.ensurePerson(identityId);
+    }
+    this.dirty.identities.add(identityId);
+    if (!left && natural !== old) {
       this.db.query('DELETE FROM person WHERE id = ?').run(old);
       this.dirty.removed.push({ t: 'person.removed', id: old });
-    } else this.dirty.persons.add(old);
+    } else if (left) this.dirty.persons.add(old);
     this.dirty.persons.add(pid);
     this.touchDirectsOf(pid);
     this.touchDirectsOf(old);
+    return pid;
   }
 
   updatePerson(id: string, patch: { name?: string; starred?: boolean; note?: string }) {
@@ -1137,6 +1166,39 @@ export class Store {
     return { messages: msgs, identities: this.identitiesOf(msgs), hasMore, conversationIds: convs };
   }
 
+  /** By person, or by identity for someone who is only a name in a channel so far. */
+  profile(ref: { personId?: string; identityId?: string }): P.ProfileView | null {
+    const person = ref.personId ? (this.db.query('SELECT * FROM person WHERE id = ?').get(ref.personId) as Row | null) : null;
+    const ids = person
+      ? (this.db.query('SELECT id FROM identity WHERE person_id = ?').all(person.id) as Row[]).map((r) => r.id as string)
+      : ref.identityId && this.db.query('SELECT 1 FROM identity WHERE id = ?').get(ref.identityId)
+        ? [ref.identityId]
+        : [];
+    if (!ids.length && !person) return null;
+    const ph = ids.map(() => '?').join(',') || "''";
+    const convs = this.db
+      .query(
+        `SELECT c.id, COALESCE(m.n, 0) AS n, m.last FROM conversation c
+         LEFT JOIN (SELECT conversation_id, COUNT(*) AS n, MAX(ts) AS last FROM message WHERE author_id IN (${ph}) AND deleted = 0 GROUP BY conversation_id) m ON m.conversation_id = c.id
+         WHERE m.n IS NOT NULL OR EXISTS (SELECT 1 FROM participant p WHERE p.conversation_id = c.id AND p.identity_id IN (${ph}))
+         ORDER BY COALESCE(m.last, 0) DESC LIMIT 100`,
+      )
+      .all(...ids, ...ids) as Row[];
+    const recent = this.messageViews(this.db.query(`SELECT * FROM message WHERE author_id IN (${ph}) AND deleted = 0 ORDER BY ts DESC LIMIT 15`).all(...ids) as Row[]);
+    const span = this.db.query(`SELECT COUNT(*) AS n, MIN(ts) AS first FROM message WHERE author_id IN (${ph}) AND deleted = 0`).get(...ids) as Row;
+    return {
+      personId: person?.id ?? ((this.db.query('SELECT person_id FROM identity WHERE id = ?').get(ids[0] ?? '') as Row | null)?.person_id ?? null),
+      note: person?.note ?? null,
+      identityIds: ids,
+      identities: this.identitiesByIds(ids),
+      conversations: convs.map((c) => ({ id: c.id, messages: c.n, lastTs: c.last ?? null })),
+      recent,
+      mentioned: this.identitiesOf(recent),
+      totalMessages: span.n,
+      firstSeenTs: span.first ?? null,
+    };
+  }
+
   inbox(sinceTs: number): P.InboxPage {
     const rows = this.db
       .query(
@@ -1148,13 +1210,133 @@ export class Store {
     return { items: msgs.map((m) => ({ message: m, conversationId: m.conversationId })), identities: this.identitiesOf(msgs) };
   }
 
-  search(q: string, limit = 50): P.MessagePage {
-    const like = `%${q.replace(/[%_]/g, (c) => '\\' + c)}%`;
-    const rows = this.db
-      .query(`SELECT * FROM message WHERE deleted = 0 AND body LIKE ? ESCAPE '\\' ORDER BY ts DESC LIMIT ?`)
-      .all(like, limit) as Row[];
+  /** Quoted for FTS5, so what people type can never be a syntax error or an operator. */
+  private ftsQuery(q: P.SearchQuery): string | null {
+    const quote = (t: string) => `"${t.replace(/"/g, '""')}"`;
+    const parts = [...q.phrases.map(quote), ...q.terms.map((t, i) => quote(t) + (i === q.terms.length - 1 ? '*' : ''))];
+    if (!parts.length) return null;
+    return parts.join(' ') + q.not.map((t) => ` NOT ${quote(t)}`).join('');
+  }
+
+  /** Conversations in, or under, places whose name matches: channels, rooms, groups, whole communities. */
+  private conversationsNamed(name: string): string[] {
+    if (/^cnv_/.test(name)) return [name];
+    const like = `%${likeEscape(name)}%`;
+    const out = new Set((this.db.query(`SELECT id FROM conversation WHERE name LIKE ? ESCAPE '\\'`).all(like) as Row[]).map((r) => r.id as string));
+    let frontier = (this.db.query(`SELECT id FROM space WHERE name LIKE ? ESCAPE '\\' OR id = ?`).all(like, name) as Row[]).map((r) => r.id as string);
+    const seen = new Set(frontier);
+    while (frontier.length) {
+      const next: string[] = [];
+      for (const sid of frontier) {
+        for (const e of this.db.query('SELECT child_kind, child_id FROM space_edge WHERE parent_id = ?').all(sid) as Row[]) {
+          if (e.child_kind === 'conversation') out.add(e.child_id);
+          else if (!seen.has(e.child_id)) (seen.add(e.child_id), next.push(e.child_id));
+        }
+      }
+      frontier = next;
+    }
+    for (const id of [...out]) for (const t of this.db.query('SELECT id FROM conversation WHERE parent_id = ?').all(id) as Row[]) out.add(t.id);
+    return [...out];
+  }
+
+  private identitiesNamed(name: string): string[] {
+    if (/^idn_/.test(name)) return [name];
+    const like = `%${likeEscape(name)}%`;
+    return (
+      this.db
+        .query(
+          `SELECT i.id FROM identity i LEFT JOIN person p ON p.id = i.person_id
+           WHERE i.display_name LIKE ?1 ESCAPE '\\' OR i.handle LIKE ?1 ESCAPE '\\' OR i.native_id = ?2 OR p.name LIKE ?1 ESCAPE '\\'`,
+        )
+        .all(like, name) as Row[]
+    ).map((r) => r.id);
+  }
+
+  search(input: string, limit = 50, cursor: string | null = null): P.SearchPage {
+    const q = parseSearch(input);
+    const where: string[] = ['m.deleted = 0'];
+    const args: any[] = [];
+    const within = (col: string, ids: string[]) => {
+      // More ids than SQLite takes as parameters: inline through json_each.
+      where.push(`${col} IN (SELECT value FROM json_each(?))`);
+      args.push(JSON.stringify(ids));
+    };
+    for (const f of q.from) within('m.author_id', this.identitiesNamed(f));
+    for (const f of q.in) within('m.conversation_id', this.conversationsNamed(f));
+    if (q.network.length) within('m.network', q.network);
+    if (q.mentionsMe) where.push('m.mentions_self = 1');
+    if (q.after !== null) (where.push('m.ts >= ?'), args.push(q.after));
+    if (q.before !== null) (where.push('m.ts < ?'), args.push(q.before));
+    for (const h of q.has) {
+      if (h === 'attachment') where.push('EXISTS (SELECT 1 FROM attachment a WHERE a.message_id = m.id)');
+      else if (h === 'link') where.push(`m.body LIKE '%http%://%'`);
+      else if (h === 'reaction') where.push('EXISTS (SELECT 1 FROM reaction_tally t WHERE t.message_id = m.id)');
+      else (where.push('EXISTS (SELECT 1 FROM attachment a WHERE a.message_id = m.id AND a.kind = ?)'), args.push(h));
+    }
+    const offset = q.relevance && cursor ? Number(cursor) || 0 : 0;
+    if (cursor && !q.relevance) {
+      const [ts, rowid] = cursor.split(':').map(Number);
+      where.push('(m.ts, m.rowid) < (?, ?)');
+      args.push(ts, rowid);
+    }
+    const fts = this.ftsQuery(q);
+    const take = limit + 1;
+    const order = 'm.ts DESC, m.rowid DESC';
+    const texts = [...q.phrases, ...q.terms];
+
+    let rows: Row[] = [];
+    let mode: P.SearchPage['mode'] = fts ? 'fulltext' : 'filters';
+    if (fts) {
+      rows = this.db
+        .query(
+          `SELECT m.*, m.rowid AS rid, snippet(message_fts, 0, char(1), char(2), '…', 28) AS snip FROM message_fts JOIN message m ON m.rowid = message_fts.rowid
+           WHERE message_fts MATCH ? AND ${where.join(' AND ')} ORDER BY ${q.relevance ? 'bm25(message_fts), m.ts DESC' : order} LIMIT ? OFFSET ?`,
+        )
+        .all(fts, ...args, take, offset) as Row[];
+      // Tokens miss the middle of a word, and CJK text is one long token. Better slow than empty.
+      if (!rows.length && !cursor) {
+        mode = 'substring';
+        const like = texts.map(() => `m.body LIKE ? ESCAPE '\\'`);
+        rows = (this.db
+          .query(`SELECT m.*, m.rowid AS rid FROM message m WHERE ${[...like, ...where].join(' AND ')} ORDER BY ${order} LIMIT ?`)
+          .all(...texts.map((t) => `%${likeEscape(t)}%`), ...args, take) as Row[]).map((r) => ({ ...r, snip: markSnippet(r.body, texts) }));
+      }
+    } else if (texts.length || q.not.length || where.length > 1) {
+      rows = (this.db.query(`SELECT m.*, m.rowid AS rid FROM message m WHERE ${where.join(' AND ')} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...args, take, offset) as Row[]).map((r) => ({ ...r, snip: previewText(r.body, r.kind) }));
+    }
+
+    const more = rows.length > limit;
+    const page = rows.slice(0, limit);
+    const views = this.messageViews(page);
+    const snips = new Map(page.map((r) => [r.id, r.snip as string]));
+    const last = page[page.length - 1];
+    const needle = [...q.phrases, ...q.terms].join(' ').trim();
+    const people = needle.length >= 2 ? this.identitiesNamed(needle).slice(0, 12) : [];
+    const shownIds = this.identitiesOf(views).map((i) => i.id);
+    return {
+      hits: views.map((m) => ({ message: m, snippet: snips.get(m.id) ?? '' })),
+      identities: this.identitiesByIds([...shownIds, ...people]),
+      people,
+      next: !more ? null : q.relevance ? String(offset + limit) : `${last.ts}:${last.rid}`,
+      mode,
+    };
+  }
+
+  /** A message and what surrounds it, for jumping there. */
+  messageContext(messageId: string, around: number): P.MessageContext | null {
+    const t = this.db.query('SELECT rowid AS rid, * FROM message WHERE id = ?').get(messageId) as Row | null;
+    if (!t) return null;
+    const older = this.db.query('SELECT * FROM message WHERE conversation_id = ? AND ts < ? ORDER BY ts DESC LIMIT ?').all(t.conversation_id, t.ts, around + 1) as Row[];
+    const newer = this.db.query('SELECT * FROM message WHERE conversation_id = ? AND ts >= ? AND id != ? ORDER BY ts ASC LIMIT ?').all(t.conversation_id, t.ts, t.id, around + 1) as Row[];
+    const rows = [...older.slice(0, around).reverse(), t, ...newer.slice(0, around)];
     const msgs = this.messageViews(rows);
-    return { messages: msgs, identities: this.identitiesOf(msgs), hasMore: false };
+    return { messages: msgs, identities: this.identitiesOf(msgs), hasMore: older.length > around, hasNewer: newer.length > around };
+  }
+
+  messagesAfter(conversationId: string, afterTs: number, limit: number): P.MessagePage {
+    const rows = this.db.query('SELECT * FROM message WHERE conversation_id = ? AND ts > ? ORDER BY ts ASC LIMIT ?').all(conversationId, afterTs, limit + 1) as Row[];
+    const msgs = this.messageViews(rows.slice(0, limit));
+    return { messages: msgs, identities: this.identitiesOf(msgs), hasMore: rows.length > limit };
   }
 
   folders(): P.FolderView[] {

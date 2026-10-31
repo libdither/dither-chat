@@ -250,6 +250,43 @@ export interface PlaceStats {
   mine: Record<string, number>;
 }
 
+/** Everything the hub has stored about someone. It only knows what crossed your accounts. */
+export interface ProfileView {
+  personId: string | null;
+  note: string | null;
+  identityIds: string[];
+  identities: IdentityView[];
+  /** Places they have posted in or are listed as a member of, most recent first. */
+  conversations: { id: string; messages: number; lastTs: number | null }[];
+  recent: MessageView[];
+  /** Everyone else named in those messages. */
+  mentioned: IdentityView[];
+  totalMessages: number;
+  firstSeenTs: number | null;
+}
+
+export interface SearchHit {
+  message: MessageView;
+  /** The matching text, with matches between \u0001 and \u0002. Plain text otherwise, not HTML. */
+  snippet: string;
+}
+
+export interface SearchPage {
+  hits: SearchHit[];
+  /** Identities for rendering, including people matched by name. */
+  identities: IdentityView[];
+  /** Identity ids whose name matches, for people the client may not hold. */
+  people: string[];
+  /** Pass as &cursor= for the next page; null at the end. */
+  next: string | null;
+  mode: 'fulltext' | 'substring' | 'filters';
+}
+
+/** A message with what surrounds it, for jumping to it. */
+export interface MessageContext extends MessagePage {
+  hasNewer: boolean;
+}
+
 export interface RuleView {
   id: string;
   scope: NotifyScope;

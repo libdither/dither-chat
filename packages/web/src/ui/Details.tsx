@@ -2,7 +2,7 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { useState } from 'preact/hooks';
 import { LEVEL_LABEL, communitiesOf, convLabel, convTitle, deepLink, directsOf, effectiveLevel, identityName, kindLabel, netName, placeConv, threadsOf } from '../model.ts';
-import { api, db, go, isSelfIdentity, prefs, rev, setPrefs, setRule } from '../state.ts';
+import { api, db, go, isSelfIdentity, openProfile, prefs, rev, setPrefs, setRule } from '../state.ts';
 import { AccountChip, Avatar, NetBadge, NetGlyph, levelIcon } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { openConv } from './Sidebar.tsx';
@@ -158,7 +158,7 @@ export function ConversationDetails({ convId }: { convId: string }) {
                 const p = i.personId ? db.persons.get(i.personId) : null;
                 const self = isSelfIdentity(i.id);
                 return (
-                  <button class="member" onClick={() => p && !self && go({ view: 'people', person: p.id })} disabled={!p || self}>
+                  <button class="member" onClick={() => openProfile(i.id)}>
                     <Avatar id={p?.id ?? i.id} name={p?.name ?? identityName(i.id)} url={p?.avatar ?? i.avatar} size={28} />
                     <span>
                       <b>{self ? 'You' : (p?.name ?? identityName(i.id))}</b>
@@ -215,6 +215,9 @@ export function PersonDetails({ personId }: { personId: string }) {
         </button>
       </header>
       <div class="det-scroll">
+        <button class="btn ghost small" onClick={() => go({ view: 'profile', person: p.id })}>
+          <Icon name="user" size={13} /> Full profile
+        </button>
         <Section title="Identities">
           <p class="det-note">A person is hub-only: it joins identities you know are the same human. Networks never see it.</p>
           {ids.map((i) => (

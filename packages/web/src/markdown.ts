@@ -25,7 +25,7 @@ export function renderMarkdown(src: string, ctx: MdContext): string {
   s = s.replace(/<@!?([^>\s]+)>/g, (_, id) => {
     const u = ctx.user(id);
     // Discord user ids mean nothing to a reader; a Matrix id still does.
-    return slot(`<span class="mention${u?.self ? ' self' : ''}">@${esc(u?.name ?? (/^\d+$/.test(id) ? 'user' : id))}</span>`);
+    return slot(`<span class="mention${u?.self ? ' self' : ''}" data-user="${esc(id)}" role="link" tabindex="0">@${esc(u?.name ?? (/^\d+$/.test(id) ? 'user' : id))}</span>`);
   });
   s = s.replace(/<#([^>\s]+)>/g, (_, id) => slot(`<span class="mention room">#${esc(ctx.room(id) ?? (/^\d+$/.test(id) ? 'channel' : id))}</span>`));
   s = s.replace(/<(a?):(\w+):(\d+)>/g, (_, anim, name, id) =>

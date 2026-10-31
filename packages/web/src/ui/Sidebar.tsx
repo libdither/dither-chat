@@ -164,7 +164,7 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
         }}
       >
         <Icon name="search" size={15} />
-        <input placeholder="Search all messages" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} />
+        <input placeholder="Search all messages (Ctrl+K to jump)" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} />
       </form>
       <div class="side-scroll">
         {s.attention.length > 0 && (

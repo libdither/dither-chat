@@ -34,6 +34,10 @@ import {
   send,
   setPrefs,
   setRule,
+  jumpTo,
+  loadNewer,
+  openProfile,
+  toLatest,
   timelineKey,
   timelines,
   typing,
@@ -198,10 +202,15 @@ function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void 
       </div>
       <div class="conv-head-actions">
         {person && isDirect && (
-          <button class="hdr-btn" title="Open the merged thread with this person" onClick={() => go({ view: 'people', person: person.id })}>
-            <Icon name="user" size={16} />
-            <span class="hdr-btn-label">All chats</span>
-          </button>
+          <>
+            <button class="hdr-btn" title="Profile" onClick={() => go({ view: 'profile', person: person.id })}>
+              <Icon name="info" size={16} />
+            </button>
+            <button class="hdr-btn" title="Open the merged thread with this person" onClick={() => go({ view: 'people', person: person.id })}>
+              <Icon name="user" size={16} />
+              <span class="hdr-btn-label">All chats</span>
+            </button>
+          </>
         )}
         <LevelMenu c={c} />
         <button class={`hdr-btn ${prefs.value.details ? 'on' : ''}`} onClick={() => setPrefs({ details: !prefs.value.details })} title="Details">
@@ -281,7 +290,12 @@ function Body({ m }: { m: P.MessageView }) {
       </div>
     );
   if (!m.body) return null;
-  return <div class={`msg-body ${isJumbo(m.body) ? 'jumbo' : ''}`} dangerouslySetInnerHTML={{ __html: html }} onClick={(e) => (e.target as HTMLElement).classList?.contains('spoiler') && (e.target as HTMLElement).classList.add('shown')} />;
+  return <div class={`msg-body ${isJumbo(m.body) ? 'jumbo' : ''}`} dangerouslySetInnerHTML={{ __html: html }} onClick={(e) => {
+    const el = e.target as HTMLElement;
+    if (el.classList?.contains('spoiler')) el.classList.add('shown');
+    const user = el.dataset?.user;
+    if (user) openProfile(db.identityByNative.get(`${m.network}:${user}`));
+  }} />;
 }
 
 function Attachments({ m }: { m: P.MessageView }) {
@@ -417,7 +431,9 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
             {clock(m.ts)}
           </span>
         ) : (
-          <Avatar id={person?.id ?? m.authorId ?? m.id} name={name} url={person?.avatar ?? author?.avatar} size={36} />
+          <button class="avatar-btn" onClick={() => openProfile(m.authorId)} aria-label={`Profile of ${name}`}>
+            <Avatar id={person?.id ?? m.authorId ?? m.id} name={name} url={person?.avatar ?? author?.avatar} size={36} />
+          </button>
         )}
       </div>
       <div class="msg-main">
@@ -430,7 +446,7 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
         )}
         {!grouped && (
           <div class="msg-head">
-            <span class={`msg-author ${self ? 'self' : ''}`} title={author ? `${author.displayName ?? ''} ${author.handle ? '· ' + author.handle : ''} on ${netName(author.network)}` : ''}>
+            <span class={`msg-author ${self ? 'self' : ''}`} role="link" tabindex={0} onClick={() => openProfile(m.authorId)} onKeyDown={(e) => e.key === 'Enter' && openProfile(m.authorId)} title={author ? `${author.displayName ?? ''} ${author.handle ? '· ' + author.handle : ''} on ${netName(author.network)}` : ''}>
               {name}
             </span>
             {author?.isBot && <span class="bot-tag">BOT</span>}
@@ -473,20 +489,36 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
 
 // ------------------------------------------------------------------ timeline
 
-function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs }: { tkey: string; convIds: string[]; merged: boolean; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null }) {
+function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tkey: string; convIds: string[]; merged: boolean; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string }) {
   rev.value;
   const scroller = useRef<HTMLDivElement>(null);
   const t = timelines.get(tkey);
+  const [flash, setFlash] = useState<string | null>(null);
+  const scrolledTo = useRef<string | null>(null);
   useEffect(() => {
-    loadTimeline(tkey);
-  }, [tkey]);
+    if (focus) void jumpTo(convIds[0], focus);
+    else loadTimeline(tkey);
+    scrolledTo.current = null;
+  }, [tkey, focus]);
+  useEffect(() => {
+    if (!focus || scrolledTo.current === focus) return;
+    const el = document.getElementById(`m-${focus}`);
+    if (!el) return;
+    scrolledTo.current = focus;
+    el.scrollIntoView({ block: 'center' });
+    setFlash(focus);
+    const id = setTimeout(() => setFlash(null), 2500);
+    return () => clearTimeout(id);
+  });
 
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
     // column-reverse: scrollTop is 0 at the bottom and negative going up.
     if (el.scrollHeight + el.scrollTop - el.clientHeight < 400) loadTimeline(tkey, true);
-    if (Math.abs(el.scrollTop) < 40 && document.visibilityState === 'visible') convIds.forEach(markRead);
+    if (t?.detached) {
+      if (Math.abs(el.scrollTop) < 400) void loadNewer(tkey);
+    } else if (Math.abs(el.scrollTop) < 40 && document.visibilityState === 'visible') convIds.forEach(markRead);
   };
   useEffect(() => {
     const id = setTimeout(() => onScroll(), 300);
@@ -517,7 +549,7 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs }: { tkey: str
       dividerDone = true;
     }
     const grouped = !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId;
-    items.push(<MessageItem key={m.id} m={m} grouped={grouped} merged={merged} onReply={onReply} highlight={false} />);
+    items.push(<MessageItem key={m.id} m={m} grouped={grouped} merged={merged} onReply={onReply} highlight={m.id === flash} />);
     prev = m;
   }
 
@@ -525,6 +557,11 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs }: { tkey: str
     <div class="timeline-scroll" ref={scroller} onScroll={onScroll}>
       <div class="timeline-inner">
         {t && !t.hasMore && msgs.length > 0 && <div class="timeline-start">This is the start of what dither-chat has stored here.</div>}
+        {t?.detached && (
+          <button class="jump-latest" onClick={() => void toLatest(tkey)}>
+            <Icon name="chevronDown" size={14} /> Older messages. Jump to the latest
+          </button>
+        )}
         {t?.loading && <div class="timeline-loading">Loading…</div>}
         {t && !t.loading && msgs.length === 0 && <Empty icon="groups" title="No messages yet" />}
         {items}
@@ -666,7 +703,7 @@ function ForumView({ c }: { c: P.ConversationView }) {
   );
 }
 
-export function ConversationPane({ convId, onBack }: { convId: string; onBack?: () => void }) {
+export function ConversationPane({ convId, onBack, focus }: { convId: string; onBack?: () => void; focus?: string }) {
   rev.value;
   const c = db.conversations.get(convId);
   const [reply, setReply] = useState<P.MessageView | null>(null);
@@ -685,7 +722,7 @@ export function ConversationPane({ convId, onBack }: { convId: string; onBack?: 
       ) : (
         <>
           {voice && <div class="voice-note"><Icon name="voice" size={14} /> Voice isn't relayed. This shows the channel's text chat.</div>}
-          <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} merged={false} onReply={setReply} firstUnreadTs={unreadAt} />
+          <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} merged={false} onReply={setReply} firstUnreadTs={unreadAt} focus={focus} />
         </>
       )}
       <Composer
