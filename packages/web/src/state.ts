@@ -553,10 +553,33 @@ export function openProfile(identityId: string | null | undefined) {
   go(personId ? { view: 'profile', person: personId } : { view: 'profile', identity: identityId });
 }
 
+/** The message the composer is rewriting. */
+export const editing = signal<P.MessageView | null>(null);
+
+function ownAccount(m: P.MessageView) {
+  return [...db.accounts.values()].find((a) => a.selfIdentityId === m.authorId);
+}
+export const canEdit = (m: P.MessageView) => !m.deleted && m.kind !== 'system' && !!ownAccount(m)?.capabilities.includes('edit');
+export const canDelete = (m: P.MessageView) => !m.deleted && !!ownAccount(m)?.capabilities.includes('redact');
+
+export function startEditing(m: P.MessageView) {
+  const r = route.value;
+  if (!('conv' in r) || r.conv !== m.conversationId) go({ view: 'inbox', conv: m.conversationId });
+  editing.value = m;
+}
+export const editMessage = (m: P.MessageView, body: string) =>
+  api(`/api/messages/${m.id}/edit`, { body: { body } }).catch((e) => toast({ kind: 'error', title: 'Could not edit', body: e.message }));
+export function deleteMessage(m: P.MessageView) {
+  if (!confirm('Delete this message for everyone? This goes to the network and cannot be undone.')) return;
+  api(`/api/messages/${m.id}/delete`, { body: {} }).catch((e) => toast({ kind: 'error', title: 'Could not delete', body: e.message }));
+}
+
 const readTimers = new Map<string, ReturnType<typeof setTimeout>>();
 export function markRead(conversationId: string) {
   const c = db.conversations.get(conversationId);
   if (!c || !c.vantages.some((v) => v.unread || v.mentions)) return;
+  // Read here means the notification on this device has done its job.
+  if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistration().then((reg) => reg?.getNotifications({ tag: conversationId })).then((ns) => ns?.forEach((n) => n.close())).catch(() => {});
   clearTimeout(readTimers.get(conversationId));
   readTimers.set(
     conversationId,

@@ -113,3 +113,34 @@ test('deleting a folder forgets its arrangement', () => {
   store.setFolders([]);
   expect(store.placePrefs().some((p) => p.id === 'f1')).toBe(false);
 });
+
+test('edit and delete go through the account that wrote it, where the network allows', async () => {
+  const sent: any[] = [];
+  const sup = { authorize: () => null, online: () => true, command: async (id: string, c: any) => (sent.push([id, c]), undefined) } as any;
+  const p2 = port + 2;
+  const hub = new HubServer(store, sup, new Triage(store), { port: p2, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+  hub.start();
+  const a = store.createAccount({ network: 'discord', label: 'mine', color: '#000', adapter: 'discord' });
+  const n = store.createAccount({ network: 'signal', label: 'noedit', color: '#111', adapter: 'signal' });
+  store.ingest(a, { t: 'status', status: 'online', self: { nativeId: 'me', isSelf: true } });
+  store.ingest(n, { t: 'status', status: 'online', self: { nativeId: 'sigme', isSelf: true } });
+  store.ingest(a, { t: 'hello', network: 'discord', version: '1', capabilities: ['edit', 'redact'] });
+  store.ingest(a, { t: 'conversation', conversation: { nativeId: 'cc', shape: 'group', name: 'c' } });
+  store.ingest(n, { t: 'conversation', conversation: { nativeId: 'nc', shape: 'group', name: 'n' } });
+  const fresh = store.account(a.id)!;
+  store.ingest(fresh, { t: 'message', message: { nativeId: 'mine1', conversation: 'cc', author: 'me', ts: 5, body: 'x' } });
+  store.ingest(fresh, { t: 'message', message: { nativeId: 'theirs', conversation: 'cc', author: 'them', ts: 6, body: 'y' } });
+  store.ingest(store.account(n.id)!, { t: 'message', message: { nativeId: 'sig1', conversation: 'nc', author: 'sigme', ts: 7, body: 'z' } });
+  const post = (id: string, verb: string, body: unknown = {}) => fetch(`http://127.0.0.1:${p2}/api/messages/${hubIdMsg(id)}/${verb}`, { method: 'POST', body: JSON.stringify(body) });
+  const hubIdMsg = (nid: string) => store.one<{ id: string }>('SELECT id FROM message WHERE native_id = ?', nid)!.id;
+  expect((await post('theirs', 'edit', { body: 'hacked' })).status).toBe(403);
+  expect((await post('sig1', 'delete')).status).toBe(409);
+  expect((await post('mine1', 'edit', { body: ' ' })).status).toBe(400);
+  expect((await post('mine1', 'edit', { body: 'new' })).status).toBe(200);
+  expect((await post('mine1', 'delete')).status).toBe(200);
+  expect(sent.map(([id, c]) => [id, c.t, c.message, c.body])).toEqual([
+    [a.id, 'edit', 'mine1', 'new'],
+    [a.id, 'redact', 'mine1', undefined],
+  ]);
+  hub.stop();
+});

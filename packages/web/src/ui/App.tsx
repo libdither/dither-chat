@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
+import { sumUnread, visibleConv } from '../model.ts';
 import { connected, db, go, loaded, prefs, rev, route, toasts, type Route } from '../state.ts';
 import { AccountPane, AccountsSidebar, AddAccount } from './Accounts.tsx';
 import { ConversationDetails, PersonDetails } from './Details.tsx';
@@ -150,6 +151,11 @@ export function App() {
   const r = route.value;
   const [adding, setAdding] = useState(false);
   useTheme();
+  // The installed app's icon shows what wants you, where the platform has badges.
+  const badge = loaded.value ? sumUnread([...db.conversations.values()].filter(visibleConv)).badge : 0;
+  useEffect(() => {
+    if ('setAppBadge' in navigator) (badge ? navigator.setAppBadge(badge) : navigator.clearAppBadge()).catch(() => {});
+  }, [badge]);
   const backRoute: Route =
     r.view === 'space'
       ? { view: 'space', space: r.space }

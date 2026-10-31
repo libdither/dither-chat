@@ -4,7 +4,7 @@ import { NETWORK_META, REACTION_RULES } from '@dither-chat/protocol';
 import { loadEmoji, searchEmoji, SKIN_TONES, skinOf, type EmojiCategory } from '../emoji.ts';
 import { authorName, plainBody } from '../model.ts';
 import { hasMine, pickerFor, quickReactions, reactionContext, reactionScope, reactorsFor, reactorsLabel, sheetFor, toggleReaction, type Picked } from '../reactions.ts';
-import { api, db, isSelfIdentity, prefs, rev, setPrefs, toast } from '../state.ts';
+import { canDelete, canEdit, deleteMessage, startEditing, api, db, isSelfIdentity, prefs, rev, setPrefs, toast } from '../state.ts';
 import { Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';
 
@@ -470,6 +470,28 @@ function MessageSheet({ m, onReply, onClose }: { m: P.MessageView; onReply: () =
             }}
           >
             <Icon name="copy" size={18} /> Copy text
+          </button>
+        )}
+        {canEdit(m) && (
+          <button
+            class="sheet-action"
+            onClick={() => {
+              startEditing(m);
+              onClose();
+            }}
+          >
+            <Icon name="settings" size={18} /> Edit
+          </button>
+        )}
+        {canDelete(m) && (
+          <button
+            class="sheet-action"
+            onClick={() => {
+              onClose();
+              deleteMessage(m);
+            }}
+          >
+            <Icon name="trash" size={18} /> Delete
           </button>
         )}
       </div>

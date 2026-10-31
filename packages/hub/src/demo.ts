@@ -756,7 +756,7 @@ class DemoAdapter implements InprocAdapter {
     const firstRun = !existsSync(marker);
     const ago = (min: number) => epoch - min * 60_000;
 
-    emit({ t: 'hello', network: this.network, version: 'demo', capabilities: ['send', 'history', 'react', 'markRead', 'threads'] });
+    emit({ t: 'hello', network: this.network, version: 'demo', capabilities: ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact'] });
     emit({ t: 'status', status: 'online', self: { ...this.self, isSelf: true } });
     const pool = this.network === 'discord' ? D : this.network === 'signal' ? S : M;
     for (const i of Object.values(pool)) if (i !== this.self && !(this.network === 'discord' && (i === D.zyan || i === D.zyn))) emit({ t: 'identity', identity: i });
@@ -844,6 +844,14 @@ class DemoAdapter implements InprocAdapter {
       }
       case 'react':
         this.emit({ t: 'reaction', conversation: cmd.conversation, message: cmd.message, author: this.self.nativeId, key: cmd.key, remove: cmd.remove, style: cmd.style, ...(cmd.style === 'super' ? { colors: SUPER_COLORS } : {}), emoji: cmd.emoji });
+        reply();
+        break;
+      case 'edit':
+        this.emit({ t: 'message', live: false, message: { nativeId: cmd.message, conversation: cmd.conversation, author: this.self.nativeId, ts: 0, editedTs: Date.now(), body: cmd.body } });
+        reply();
+        break;
+      case 'redact':
+        this.emit({ t: 'delete', conversation: cmd.conversation, nativeId: cmd.message });
         reply();
         break;
       case 'reactionContext':

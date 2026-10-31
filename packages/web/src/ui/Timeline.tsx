@@ -34,7 +34,13 @@ import {
   send,
   setPrefs,
   setRule,
+  canDelete,
+  canEdit,
+  deleteMessage,
+  editMessage,
+  editing,
   jumpTo,
+  startEditing,
   loadNewer,
   openProfile,
   toLatest,
@@ -478,6 +484,16 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
       </div>
       <div class="msg-actions">
         <HoverReactions m={m} />
+        {canEdit(m) && (
+          <button class="icon-btn small" title="Edit" onClick={() => startEditing(m)}>
+            <Icon name="settings" size={14} />
+          </button>
+        )}
+        {canDelete(m) && (
+          <button class="icon-btn small" title="Delete" onClick={() => deleteMessage(m)}>
+            <Icon name="trash" size={14} />
+          </button>
+        )}
         <button class="icon-btn small" title="Reply" onClick={() => onReply(m)}>
           <Icon name="reply" size={15} />
         </button>
@@ -591,8 +607,31 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   clearReply: () => void;
   disabledReason?: string | null;
 }) {
-  const [text, setText] = useState('');
+  const draftKey = `dither-chat:draft:${targets.convId}`;
+  const [text, setText] = useState(() => localStorage.getItem(draftKey) ?? '');
   const ta = useRef<HTMLTextAreaElement>(null);
+  const edit = editing.value?.conversationId === targets.convId ? editing.value : null;
+  // A half-written message waits for you in its own conversation.
+  useEffect(() => {
+    setText(localStorage.getItem(draftKey) ?? '');
+    editing.value = null;
+  }, [draftKey]);
+  useEffect(() => {
+    if (edit) {
+      setText(edit.body);
+      ta.current?.focus();
+    }
+  }, [edit]);
+  const type = (v: string) => {
+    setText(v);
+    if (edit) return;
+    if (v) localStorage.setItem(draftKey, v);
+    else localStorage.removeItem(draftKey);
+  };
+  const cancelEdit = () => {
+    editing.value = null;
+    setText(localStorage.getItem(draftKey) ?? '');
+  };
   useLayoutEffect(() => {
     const el = ta.current;
     if (!el) return;
@@ -605,12 +644,25 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   const submit = () => {
     const body = text.trim();
     if (!body || disabledReason) return;
+    if (edit) {
+      if (body !== edit.body) editMessage(edit, body);
+      cancelEdit();
+      return;
+    }
     send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id });
-    setText('');
+    type('');
     clearReply();
   };
   return (
     <div class="composer">
+      {edit && (
+        <div class="composer-reply">
+          <Icon name="settings" size={13} /> Editing your message
+          <button class="icon-btn small" onClick={cancelEdit} aria-label="Cancel editing">
+            <Icon name="x" size={13} />
+          </button>
+        </div>
+      )}
       {reply && (
         <div class="composer-reply">
           <Icon name="reply" size={13} /> Replying to <b>{isSelfIdentity(reply.authorId) ? 'yourself' : authorName(reply.authorId)}</b>
@@ -655,7 +707,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           value={text}
           placeholder={disabledReason ?? placeholder}
           disabled={!!disabledReason}
-          onInput={(e) => setText((e.target as HTMLTextAreaElement).value)}
+          onInput={(e) => type((e.target as HTMLTextAreaElement).value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
               e.preventDefault();

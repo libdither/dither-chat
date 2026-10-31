@@ -371,6 +371,22 @@ export class HubServer {
       const after = shown();
       return ok({ count: after?.count ?? 0, identityIds: after?.identityIds ?? [], identities: s.identitiesByIds(after?.identityIds ?? []) });
     }
+    if ((m = path.match(/^\/api\/messages\/([\w-]+)\/(edit|delete)$/)) && method === 'POST') {
+      const edit = m[2] === 'edit';
+      const b = await body<{ body?: string }>();
+      if (edit && !b.body?.trim()) return bad('empty message');
+      const msg = s.one<{ conversation_id: string; native_id: string; author_id: string }>('SELECT conversation_id, native_id, author_id FROM message WHERE id = ?', m[1]);
+      if (!msg) return bad('no such message', 404);
+      // Only the account that wrote it can change it, and only on a network that allows it.
+      const acc = s.accounts().find((a) => a.self_identity === msg.author_id);
+      if (!acc) return bad('this message is not yours', 403);
+      if (!(JSON.parse(acc.capabilities) as P.Capability[]).includes(edit ? 'edit' : 'redact')) return bad(`${NETWORK_META[acc.network].name} does not support this here`, 409);
+      if (!this.sup.online(acc.id)) return bad(`${acc.label} is not connected`, 409);
+      const conversation = s.nativeOf('conversation', msg.conversation_id)!.nativeId;
+      await this.sup.command(acc.id, edit ? { t: 'edit', conversation, message: msg.native_id, body: b.body! } : { t: 'redact', conversation, message: msg.native_id });
+      this.flush();
+      return ok();
+    }
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/feedback$/)) && method === 'POST') {
       const b = await body<{ feedback: P.TriageView['feedback'] }>();
       s.triageFeedback(m[1], b.feedback ?? null);
