@@ -94,7 +94,7 @@ Accounts stay on hub-machine until you decide otherwise. One Discord or Signal s
 1. Stop the source hub: `systemctl --user stop dither-chat` on hub-machine, and leave it stopped.
 2. Copy `.data/` over an encrypted channel (`rsync -a` over Tailscale), excluding `.data/tls` so the destination keeps its own CA.
    It holds `accounts/<id>/secret.json`, Signal keys and Discord browser profiles.
-3. Run the destination without `--demo`, or remove demo accounts with Settings → Reset demo data beforehand if they matter to you.
+3. Remove `--demo` from the destination's service. Existing demo accounts stay until deleted on the Accounts page.
 4. Start the destination and check every account on the Accounts page. Discord may ask for a captcha or re-login from a new
    machine; do that in the live view yourself. Signal linked devices move with their keys.
 5. Delete `.data` from the source only after the destination has run cleanly for a while.

@@ -15,7 +15,7 @@ let server: HubServer;
 let store: Store;
 
 beforeAll(() => {
-  Bun.spawnSync(['sh', resolve(import.meta.dir, '../../../scripts/tls-init.sh'), dir, 'hub.test.example', '127.0.0.1'], { stdout: 'ignore' });
+  Bun.spawnSync(['sh', resolve(import.meta.dir, '../../../scripts/tls-init.sh'), dir, 'hub.test.example'], { stdout: 'ignore' });
   store = new Store(join(dir, 'hub.sqlite'), mediaSigner('s'));
   const sup = { authorize: () => null, online: () => false } as any;
   server = new HubServer(store, sup, new Triage(store), {
@@ -42,12 +42,13 @@ const ca = () => Bun.file(join(dir, 'tls/ca.crt')).text();
 const tls = { rejectUnauthorized: false };
 
 test('HTTPS verifies against the private CA and only against it', async () => {
-  const handshake = (...args: string[]) => {
-    const r = Bun.spawnSync(['openssl', 's_client', '-connect', `127.0.0.1:${port}`, '-verify_return_error', '-verify_ip', '127.0.0.1', ...args], { stdin: new Blob(['']) as any, stdout: 'pipe', stderr: 'pipe' });
-    return r.stdout.toString();
+  // Async: the server under test runs on this very event loop.
+  const handshake = async (...args: string[]) => {
+    const p = Bun.spawn(['openssl', 's_client', '-connect', `127.0.0.1:${port}`, '-verify_hostname', 'hub.test.example', ...args], { stdin: 'ignore', stdout: 'pipe', stderr: 'ignore' });
+    return new Response(p.stdout).text();
   };
-  expect(handshake('-CAfile', join(dir, 'tls/ca.crt'))).toContain('Verify return code: 0 (ok)');
-  expect(handshake('-CApath', '/nonexistent', '-no-CAfile')).not.toContain('Verify return code: 0 (ok)');
+  expect(await handshake('-CAfile', join(dir, 'tls/ca.crt'))).toContain('Verify return code: 0 (ok)');
+  expect(await handshake('-no-CAfile', '-no-CApath')).not.toContain('Verify return code: 0 (ok)');
   expect((await fetch(`https://127.0.0.1:${port}/api/health`, { tls })).status).toBe(200);
 });
 
