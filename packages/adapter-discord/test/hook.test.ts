@@ -317,6 +317,45 @@ describe('hook.js with several rspack runtimes', () => {
     });
   });
 
+  test('reports why a sign-in failed, without tickets or tokens', () => {
+    handlers.clear();
+    me = null;
+    const logLines = [
+      '2026-10-31T00:36:13.662Z -> Network -> Completed POST to https://discord.com/api/v9/auth/location-metadata with status: 200',
+      '2026-10-31T00:36:13.700Z -> Network -> Completed POST to https://discord.com/api/v9/users/@me/remote-auth/login with status: 400 and body: {"captcha_key":["captcha-required"],"captcha_sitekey":"abc","captcha_rqdata":"secretish"}',
+      '2026-10-31T00:36:33.938Z -> Network -> Completed POST to https://discord.com/api/v9/users/@me/remote-auth/login with status: 400 and body: {"captcha_key":["invalid-response"]}',
+      '2026-10-31T00:36:53.531Z -> Network -> Completed POST to https://discord.com/api/v9/users/@me/remote-auth/login with status: 404 and body: {"message":"Invalid remote authentication ticket","code":20042}',
+      '2026-10-31T00:36:54.000Z -> Network -> Completed GET to https://discord.com/api/v9/channels/1/messages with status: 403 and body: {"message":"Missing Access"}',
+    ];
+    const p = page();
+    p.runHook();
+    const web = runtime(p.win, 'web');
+    chunk(p.win, '700', {
+      stores: storeModule,
+      log: (_m: any, e: any) => {
+        e.z8 = function (category: string) {
+          return category;
+        };
+        e.As = function (filter: string[]) {
+          const r = { toArray: () => logLines.map((message) => ({ message })) };
+          return r.toArray().filter(() => filter.includes('Network')).map((x) => x.message).join('\n');
+        };
+      },
+    });
+    web.T('stores');
+    web.T('log');
+    p.tick();
+    p.poll();
+    p.poll(); // no repeats
+    const issues = p.posted.filter((m) => m.t === 'loginIssue');
+    expect(issues).toEqual([
+      { t: 'loginIssue', route: 'users/@me/remote-auth/login', status: 400, captcha: 'captcha-required', message: undefined, code: undefined },
+      { t: 'loginIssue', route: 'users/@me/remote-auth/login', status: 400, captcha: 'invalid-response', message: undefined, code: undefined },
+      { t: 'loginIssue', route: 'users/@me/remote-auth/login', status: 404, captcha: undefined, message: 'Invalid remote authentication ticket', code: 20042 },
+    ]);
+    expect(JSON.stringify(issues)).not.toContain('secretish');
+  });
+
   test('sends the snapshot when the login finishes', () => {
     handlers.clear();
     me = null;

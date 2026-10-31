@@ -163,13 +163,29 @@ function handleBridge(msg: BridgeUp) {
     case 'dispatch':
       for (const ev of translateDispatch(msg.event, msg.data, st)) hub.emit(ev);
       break;
+    case 'loginIssue':
+      onLoginIssue(msg);
+      break;
   }
+}
+
+/** Why the last sign-in failed, in words, for the account card. The page itself just starts over. */
+let loginNote: string | null = null;
+
+function onLoginIssue(i: Extract<BridgeUp, { t: 'loginIssue' }>) {
+  log('warn', `sign-in: ${i.route} answered ${i.status}${i.captcha ? ` captcha ${i.captcha}` : ''}${i.message ? `: ${i.message}` : ''}`);
+  if (i.route.includes('remote-auth') && /ticket/i.test(i.message ?? '')) {
+    loginNote = "Discord's QR ticket ran out while the captcha was open, so the page started over. Sign in with email and password instead: there is no ticket to run out, and you can paste into the live view.";
+  } else if (i.captcha === 'invalid-response') {
+    loginNote = 'Discord rejected the captcha answer and asked for another. Open the live view to finish it.';
+  } else return;
+  if (lastPage === 'login') onPageState('login');
 }
 
 function onPageState(state: PageState) {
   if (state === 'captcha') setStatus('attention', { kind: 'captcha', message: 'A captcha is on screen. Open the live view to solve it.', liveView: true });
   else if (state === 'verify') setStatus('attention', { kind: 'verify', message: 'Discord wants to verify this login. Open the live view.', liveView: true });
-  else if (state === 'login') setStatus('attention', { kind: 'login', message: 'Not logged in. Open the live view and sign in.', liveView: true });
+  else if (state === 'login') setStatus('attention', { kind: 'login', message: loginNote ?? 'Not logged in. Open the live view and sign in.', liveView: true });
   else if (state === 'crashed') setStatus('attention', { kind: 'unknown', message: 'The Discord page failed to load and is reloading. Open the live view if it stays stuck.', liveView: true });
   else if (state === 'app') {
     if (gotFinders && evaluateHealth()) return;

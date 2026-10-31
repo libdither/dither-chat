@@ -14,7 +14,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Subprocess } from 'bun';
@@ -65,6 +65,21 @@ export function resolveBins(log: SandboxOptions['log']): Bins {
     x11vnc: resolveBin('x11vnc', 'X11VNC_BIN', 'x11vnc', [], log),
     chromium: resolveBin('chromium', 'CHROMIUM_BIN', 'chromium', CHROMIUM_CANDIDATES, log),
   };
+}
+
+/**
+ * Xvfb has no GL of its own, so left alone Chromium runs with WebGL off, which no ordinary desktop
+ * browser does. Point it at the machine's GPU directly, or at its software renderer if there is none.
+ */
+function gpuFlags(): string[] {
+  let render = false;
+  try {
+    render = readdirSync('/dev/dri').some((n) => n.startsWith('renderD'));
+  } catch {
+    /* no /dev/dri at all */
+  }
+  if (render) return ['--ignore-gpu-blocklist', '--use-angle=vulkan', '--enable-features=Vulkan,VulkanFromANGLE,DefaultANGLEVulkan'];
+  return ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
 }
 
 export class Sandbox {
@@ -136,7 +151,9 @@ export class Sandbox {
     const { width, height } = this.opts;
 
     // 1. Virtual display.
-    this.spawn('Xvfb', [bins.xvfb, d, '-screen', '0', `${width}x${height}x24`, '-nolisten', 'tcp', '-nocursor']);
+    // -dpi 96: Xvfb defaults to 100, and Chromium scales itself to match, which makes its window
+    // wider and taller than the display and the page cut off at the edges.
+    this.spawn('Xvfb', [bins.xvfb, d, '-screen', '0', `${width}x${height}x24`, '-nolisten', 'tcp', '-nocursor', '-dpi', '96']);
     await this.waitForDisplay(d, 8000);
 
     // 2. The browser (ordinary window, persistent profile, our extension).
@@ -156,6 +173,7 @@ export class Sandbox {
       `--window-size=${width},${height}`,
       '--window-position=0,0',
     ];
+    flags.push(...gpuFlags());
     if (this.opts.noSandbox) flags.push('--no-sandbox');
     this.spawn('chromium', [bins.chromium, ...flags, this.opts.startUrl], { DISPLAY: d });
 

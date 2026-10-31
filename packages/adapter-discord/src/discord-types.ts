@@ -180,6 +180,8 @@ export type BridgeUp =
   | { t: 'snapshot'; data: RawSnapshot }
   | { t: 'identities'; users: RawUser[] }
   | { t: 'dispatch'; event: DispatchName; data: any }
+  /** A sign-in request Discord refused, from the client's own log. */
+  | { t: 'loginIssue'; route: string; status: number; captcha?: string; message?: string; code?: number }
   | { t: 'reply'; id: string; ok: true; result?: unknown }
   | { t: 'reply'; id: string; ok: false; error: string; retryAfter?: number }
   | { t: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; msg: string; data?: unknown };

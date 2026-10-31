@@ -2899,10 +2899,61 @@ code {
   }
 }
 
+/* The live view takes the whole window: a captcha needs every pixel it can get. */
+.lv-full {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+}
+.lv-bar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  padding-top: calc(6px + env(safe-area-inset-top));
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border);
+}
 .lv-title {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.lv-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lv-paste {
+  flex: 1 1 220px;
+  min-width: 180px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  max-width: 460px;
+}
+.lv-paste input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 13px;
+}
+.lv-paste .btn {
+  height: 32px;
 }
 .lv-state {
   font-size: 11px;
@@ -2913,17 +2964,11 @@ code {
 .lv-state.connected {
   color: var(--good);
 }
-.lv-help {
-  color: var(--text-dim);
-  font-size: 13px;
-  margin: 0 0 12px;
-}
 .lv-screen {
-  background: #000;
-  border-radius: 10px;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
-  min-height: 500px;
-  aspect-ratio: 16 / 10;
+  background: #000;
 }
 
 /* add-account form */

@@ -165,6 +165,11 @@
     PermissionStore: isStore('PermissionStore'),
     // The client's own answer to "can I use this emoji here", Nitro and permissions included.
     EmojiRules: (m) => typeof m.getEmojiUnavailableReason === 'function',
+    // The client's own in-memory log, which records every failed request with its response body.
+    ClientLog: (m) => {
+      const v = Object.values(m);
+      return v.length <= 4 && v.some(isLogReader);
+    },
     // REST client: an object exposing the http verbs.
     Rest: (m) => ['get', 'post', 'put', 'patch', 'del'].every((k) => typeof m[k] === 'function'),
     // Message actions: sendMessage / editMessage / fetchMessages.
@@ -632,6 +637,55 @@
     return res;
   }
 
+  // ------------------------------------------------------------- signing in
+  // When a login fails, the page just starts over. Discord's own log says why, so pass that on, while
+  // signing in only: the route, the status, the captcha verdict and the message. Never tickets or tokens.
+  const isLogReader = (f) => typeof f === 'function' && f.length <= 1 && /\.toArray\(\)\.filter\(/.test(Function.prototype.toString.call(f));
+  const LOGIN_ROUTE = /\/(auth\/[\w/-]+|users\/@me\/remote-auth[\w/-]*)/;
+  let trailUpTo = '';
+
+  function readLoginTrail() {
+    if (!mod.ClientLog || snapshotSent) return;
+    let lines;
+    try {
+      lines = Object.values(mod.ClientLog).find(isLogReader)(['Network']).split('\n');
+    } catch (e) {
+      return;
+    }
+    for (const line of lines) {
+      const hit = line.match(/^(\S+) -> .*Completed \w+ to (\S+) with status: (\d+) and body: (.*)$/);
+      if (!hit || hit[1] <= trailUpTo) continue;
+      const route = hit[2].match(LOGIN_ROUTE);
+      if (!route) continue;
+      trailUpTo = hit[1];
+      let body = {};
+      try {
+        body = JSON.parse(hit[4]);
+      } catch (e) {
+        /* not JSON: the status is still worth having */
+      }
+      up({
+        t: 'loginIssue',
+        route: route[1],
+        status: Number(hit[3]),
+        captcha: Array.isArray(body.captcha_key) ? String(body.captcha_key[0]) : undefined,
+        message: typeof body.message === 'string' ? body.message.slice(0, 160) : undefined,
+        code: typeof body.code === 'number' ? body.code : undefined,
+      });
+    }
+  }
+
+  /** The WebGL renderer the page sees, for the log: a sandbox without one looks nothing like a desktop browser. */
+  function webglRenderer() {
+    try {
+      const gl = document.createElement('canvas').getContext('webgl');
+      const info = gl && gl.getExtension('WEBGL_debug_renderer_info');
+      return gl ? (info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : 'on') : 'off';
+    } catch (e) {
+      return 'off';
+    }
+  }
+
   // --------------------------------------------------------------- page state
   function detectPageState() {
     const href = location.href;
@@ -697,6 +751,7 @@
   // Page-state polling so the adapter can show login / captcha / verify promptly.
   const poll = () => {
     detectPageState();
+    readLoginTrail();
     // CONNECTION_OPEN may have fired before we subscribed; it re-sends the full picture when it does fire.
     if (coreReady && !snapshotSent && currentUser()) maybeSendSnapshot('logged in');
   };
@@ -704,5 +759,5 @@
   poll();
   setInterval(poll, 3000);
   // Surfaced in the adapter log so the "not automated" property is easy to confirm.
-  log('info', 'hook.js installed; navigator.webdriver=' + String(navigator.webdriver));
+  log('info', 'hook.js installed; navigator.webdriver=' + String(navigator.webdriver) + '; devicePixelRatio=' + window.devicePixelRatio + '; webgl=' + webglRenderer());
 })();
