@@ -1,4 +1,4 @@
-import type { Server, ServerWebSocket, Socket } from 'bun';
+import type { Server, ServerWebSocket, Socket, WebSocketHandler } from 'bun';
 import { createHmac } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
@@ -20,6 +20,9 @@ export interface ServerOpts {
   dataDir: string;
   webDist: string;
   secret: string;
+  /** PEM paths. When set, the main port speaks HTTPS and plainPort handles what cannot use it. */
+  tls?: { cert: string; key: string; ca?: string };
+  plainPort?: number;
   onDemoReset?: () => Promise<void>;
 }
 
@@ -36,6 +39,21 @@ export function isTailnet(ip: string) {
   return ip.toLowerCase().startsWith('fd7a:115c:a1e0:');
 }
 
+/**
+ * Cross-site pages get no say here: the hub has no login, only "you are on the tailnet", so a page
+ * open on a tailnet device must not be able to drive it. Browsers always send Origin on these.
+ */
+export function sameOrigin(req: Request): boolean {
+  const origin = req.headers.get('origin');
+  if (!origin) return true; // not a browser: the CLI, curl
+  try {
+    const o = new URL(origin);
+    return o.host === req.headers.get('host') || o.hostname === 'localhost' || o.hostname === '127.0.0.1'; // the vite dev proxy
+  } catch {
+    return false;
+  }
+}
+
 // ------------------------------------------------------------------ media
 
 export function mediaSigner(secret: string) {
@@ -49,6 +67,7 @@ export function mediaSigner(secret: string) {
 
 export class HubServer {
   server!: Server<WsData>;
+  private plain?: Server<WsData>;
   private clients = new Set<ServerWebSocket<ClientData>>();
   private flushTimer?: Timer;
 
@@ -61,20 +80,18 @@ export class HubServer {
 
   start() {
     const self = this;
-    this.server = Bun.serve<WsData, never>({
-      port: this.opts.port,
-      hostname: this.opts.hostname,
-      idleTimeout: 120,
-      async fetch(req, server) {
+    const guarded = (handler: (req: Request, server: Server<WsData>) => Promise<Response | undefined> | Response | undefined) =>
+      async (req: Request, server: Server<WsData>) => {
         try {
-          return await self.route(req, server);
+          return await handler(req, server);
         } catch (e: any) {
           console.error('request failed', req.method, new URL(req.url).pathname, e);
           return Response.json({ error: String(e?.message ?? e) }, { status: 500 });
         }
-      },
-      websocket: {
-        maxPayloadLength: 32 * 1024 * 1024,
+      };
+    const tls = this.opts.tls;
+    const websocket: WebSocketHandler<WsData> = {
+      maxPayloadLength: 32 * 1024 * 1024,
         open(ws) {
           const d = ws.data;
           if (d.kind === 'client') self.clients.add(ws as ServerWebSocket<ClientData>);
@@ -96,8 +113,24 @@ export class HubServer {
           else if (d.kind === 'adapter') self.sup.detach(ws as ServerWebSocket<AdapterSocketData>);
           else d.tcp?.end();
         },
-      },
+    };
+    const common = { idleTimeout: 120, websocket };
+    this.server = Bun.serve<WsData, never>({
+      ...common,
+      port: this.opts.port,
+      hostname: this.opts.hostname,
+      ...(tls ? { tls: { cert: Bun.file(tls.cert), key: Bun.file(tls.key) } } : {}),
+      fetch: guarded((req, server) => self.route(req, server)),
     });
+    // Adapters on this machine still speak ws://, and a device has to fetch the CA before it can trust HTTPS.
+    if (tls && this.opts.plainPort) {
+      this.plain = Bun.serve<WsData, never>({
+        ...common,
+        port: this.opts.plainPort,
+        hostname: this.opts.hostname,
+        fetch: guarded((req, server) => self.plainRoute(req, server)),
+      });
+    }
     this.flushTimer = setInterval(() => this.flush(), 80);
     return this.server;
   }
@@ -105,6 +138,7 @@ export class HubServer {
   stop() {
     clearInterval(this.flushTimer);
     this.server?.stop(true);
+    this.plain?.stop(true);
   }
 
   flush() {
@@ -147,6 +181,38 @@ export class HubServer {
 
   // ---------------------------------------------------------------- routing
 
+  /** The plaintext listener next to HTTPS. WireGuard already authenticates the tailnet, so a CA fetched here is safe to trust. */
+  private plainRoute(req: Request, server: Server<WsData>): Promise<Response | undefined> | Response {
+    const url = new URL(req.url);
+    const ip = server.requestIP(req)?.address ?? '';
+    if (isLoopback(ip) && url.pathname === '/adapter') return this.route(req, server);
+    if (!isLoopback(ip) && !isTailnet(ip)) return new Response('tailnet only', { status: 403 });
+    if (url.pathname === '/ca.crt') return this.caCert();
+    if (url.pathname === '/api/health') return Response.json({ ok: true, now: Date.now() });
+    if (url.pathname === '/trust') return new Response(this.trustPage(req), { headers: { 'content-type': 'text/html; charset=utf-8' } });
+    const host = (req.headers.get('host') ?? url.host).replace(/:\d+$/, '');
+    return Response.redirect(`https://${host}:${this.opts.port}${url.pathname}${url.search}${url.hash}`, 307);
+  }
+
+  private caCert(): Response {
+    const ca = this.opts.tls?.ca;
+    if (!ca || !existsSync(ca)) return new Response('this hub has no private CA', { status: 404 });
+    return new Response(Bun.file(ca), { headers: { 'content-type': 'application/x-x509-ca-cert', 'content-disposition': 'attachment; filename="dither-chat-ca.crt"', 'cache-control': 'no-cache' } });
+  }
+
+  private trustPage(req: Request): string {
+    const host = (req.headers.get('host') ?? '').replace(/:\d+$/, '');
+    const fp = this.opts.tls?.ca && existsSync(this.opts.tls.ca) ? new Bun.CryptoHasher('sha256').update(Buffer.from(readFileSync(this.opts.tls.ca, 'utf8').replace(/-----[^-]+-----|\s/g, ''), 'base64')).digest('hex').toUpperCase().match(/../g)!.join(':') : 'none';
+    return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Trust dither-chat</title>
+<style>body{font:16px system-ui;max-width:40em;margin:2em auto;padding:0 1em;line-height:1.5}code{word-break:break-all}</style>
+<h1>Trust this hub</h1><p>Installing dither-chat needs HTTPS, and this hub uses a private certificate authority limited to the tailnet.</p>
+<ol><li><a href="/ca.crt">Download the certificate</a></li><li>Install it as a trusted CA on this device (steps below)</li><li><a href="https://${host}:${this.opts.port}/">Open dither-chat</a> and install it</li></ol>
+<p>SHA-256 fingerprint:<br><code>${fp}</code></p>
+<ul><li><b>Android:</b> Settings → Security → More security settings → Install from device storage → CA certificate. The exact path varies by vendor; search settings for "CA certificate".</li>
+<li><b>iOS:</b> open the download in Safari, Settings → Profile Downloaded → Install, then Settings → General → About → Certificate Trust Settings → enable it. Install with Share → Add to Home Screen.</li>
+<li><b>Desktop:</b> see docs/deploy.md for your browser.</li></ul>`;
+  }
+
   private async route(req: Request, server: Server<WsData>): Promise<Response | undefined> {
     const url = new URL(req.url);
     const path = url.pathname;
@@ -162,6 +228,10 @@ export class HubServer {
 
     // Everything else: this machine and the tailnet only, never the LAN.
     if (!isLoopback(ip) && !isTailnet(ip)) return new Response('tailnet only', { status: 403 });
+
+    if (path.startsWith('/api/') && req.method !== 'GET' && !sameOrigin(req)) return new Response('cross-site request refused', { status: 403 });
+    if ((path === '/api/live' || path.startsWith('/api/liveview/')) && !sameOrigin(req)) return new Response('cross-site socket refused', { status: 403 });
+    if (path === '/ca.crt') return this.caCert();
 
     if (path === '/api/live') {
       if (server.upgrade(req, { data: { kind: 'client' } satisfies ClientData })) return undefined;
@@ -428,9 +498,14 @@ export class HubServer {
     if (candidate.startsWith(root) && existsSync(candidate) && statSync(candidate).isFile()) {
       const immutable = path.startsWith('/assets/');
       return new Response(Bun.file(candidate), {
-        headers: { 'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache' },
+        headers: {
+          'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
+          ...(path.endsWith('.webmanifest') ? { 'content-type': 'application/manifest+json' } : {}),
+        },
       });
     }
+    // A hashed asset from another build must fail as itself: as HTML it would poison a cache.
+    if (path.startsWith('/assets/')) return new Response('not found', { status: 404 });
     const index = join(root, 'index.html');
     if (existsSync(index)) return new Response(Bun.file(index), { headers: { 'cache-control': 'no-cache', 'content-type': 'text/html; charset=utf-8' } });
     return new Response('dither-chat hub is running; the web app has not been built yet (bun run web:build).', { status: 200 });

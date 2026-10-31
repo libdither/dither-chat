@@ -367,7 +367,9 @@ function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
       if (reg) reg.showNotification(ev.title, opts);
       else new Notification(ev.title, opts).onclick = () => go({ view: 'inbox', conv: ev.conversationId });
     };
-    navigator.serviceWorker?.getRegistration().then(show, () => show());
+    // Not every browser has service workers, and none has them outside a secure context.
+    if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistration().then(show, () => show());
+    else show();
   }
 }
 

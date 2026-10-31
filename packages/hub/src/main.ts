@@ -10,7 +10,7 @@ const args = process.argv.slice(2);
 const flag = (n: string) => args.includes(`--${n}`) || process.env[`DITHER_${n.toUpperCase()}`] === '1';
 const opt = (n: string, d: string) => {
   const i = args.indexOf(`--${n}`);
-  return i >= 0 ? args[i + 1] : (process.env[`DITHER_${n.toUpperCase()}`] ?? d);
+  return i >= 0 ? args[i + 1] : (process.env[`DITHER_${n.toUpperCase().replace(/-/g, '_')}`] ?? d);
 };
 
 const repoRoot = resolve(import.meta.dir, '../../..');
@@ -18,6 +18,10 @@ const dataDir = resolve(opt('data', join(repoRoot, '.data')));
 const port = Number(opt('port', '8460'));
 const hostname = opt('host', '0.0.0.0');
 const webDist = resolve(opt('web', join(repoRoot, 'packages/web/dist')));
+const tlsCert = opt('tls-cert', '');
+const tlsKey = opt('tls-key', '');
+const tls = tlsCert && tlsKey ? { cert: resolve(tlsCert), key: resolve(tlsKey), ca: resolve(opt('tls-ca', join(dataDir, 'tls/ca.crt'))) } : undefined;
+const plainPort = Number(opt('plain-port', String(port + 1)));
 
 if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 const secretPath = join(dataDir, 'hub-secret');
@@ -55,12 +59,12 @@ async function ntfy(title: string, body: string, conversationId: string) {
   if (!url) return;
   const headers: Record<string, string> = { Title: title, Tags: 'speech_balloon' };
   if (process.env.DITHER_NTFY_TOKEN) headers.Authorization = `Bearer ${process.env.DITHER_NTFY_TOKEN}`;
-  if (process.env.DITHER_PUBLIC_URL) headers.Click = `${process.env.DITHER_PUBLIC_URL}/#/c/${conversationId}`;
+  if (process.env.DITHER_PUBLIC_URL) headers.Click = `${process.env.DITHER_PUBLIC_URL}/#/inbox/c/${conversationId}`;
   await fetch(url, { method: 'POST', body, headers, signal: AbortSignal.timeout(5000) });
 }
 
 const sup = new Supervisor(store, {
-  hubAdapterUrl: `ws://127.0.0.1:${port}/adapter`,
+  hubAdapterUrl: `ws://127.0.0.1:${tls ? plainPort : port}/adapter`,
   dataDir,
   repoRoot,
   inproc: demoFactory,
@@ -73,6 +77,8 @@ const server = new HubServer(store, sup, triage, {
   dataDir,
   webDist,
   secret,
+  tls,
+  plainPort,
   onDemoReset: async () => {
     for (const a of store.accounts().filter((a) => a.demo)) {
       await sup.stop(a.id);
@@ -88,7 +94,7 @@ if (flag('demo') && !store.accounts().some((a) => a.demo)) createDemoAccounts(st
 sup.startAll();
 if (store.accounts().some((a) => a.demo)) applyDemoOverlay(store);
 server.start();
-console.log(`dither-chat hub on http://${hostname}:${port}  data=${dataDir}`);
+console.log(`dither-chat hub on ${tls ? 'https' : 'http'}://${hostname}:${port}${tls ? ` (plain http on ${plainPort}: adapters, CA download)` : ''}  data=${dataDir}`);
 
 const shutdown = async () => {
   server.stop();

@@ -11,6 +11,7 @@ import { SettingsPane } from './Settings.tsx';
 import { FolderSidebar, GroupsSidebar, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar } from './Sidebar.tsx';
 import { ConversationPane, PersonPane } from './Timeline.tsx';
 import { Toasts } from './Toasts.tsx';
+import { applyUpdate, updateReady } from '../pwa.ts';
 
 /** What the center pane shows, and whether a details pane is available. */
 function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'conv' | 'person'; id: string } } {
@@ -170,6 +171,11 @@ export function App() {
         <div class="reconnect">
           <span class="dot" /> Reconnecting to the hub…
         </div>
+      )}
+      {updateReady.value && (
+        <button class="update-bar" onClick={applyUpdate}>
+          <Icon name="refresh" size={14} /> A new version is ready. Tap to reload.
+        </button>
       )}
       <Rail />
       <aside class="sidebar">{sidebarFor(r, () => setAdding(true))}</aside>
