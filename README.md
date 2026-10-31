@@ -45,6 +45,8 @@ bun run web:build
 bun run hub -- --demo  # http://localhost:8460 with a seeded demo world
 ```
 
+Browsers only install a PWA over HTTPS. To serve other devices that way, see [docs/deploy.md](docs/deploy.md).
+
 Then add real accounts from the **Accounts** page, or with the CLI:
 
 ```sh
@@ -66,7 +68,16 @@ the server only answers loopback + tailnet ranges).
 | Matrix adapter | done — verified end-to-end against a local homeserver (E2EE rooms show as encrypted for now) |
 | Signal adapter | done — QR device-link + messaging via signal-cli; a live link needs your phone |
 | Reactions across networks | done: custom emoji, Discord super reactions, Signal's one-per-person, Matrix image packs ([docs/reactions.md](docs/reactions.md)). Sending a super reaction is untested for lack of Nitro |
+| Installable PWA | done: HTTPS with a private CA, per-device trust ([docs/deploy.md](docs/deploy.md)), updates reach installed apps. Verified in headless Chromium, not yet on a phone |
+| Arranging the sidebar | done: drag by mouse or touch, folders, pin, hide, stored on the hub |
+| All communities | done: full-screen list with seven orderings, categories by yes/no question (keywords, or a local Ollama model) |
+| Profiles | done: merged identities, shared places, recent messages. Bio and roles are not fetched, and starting a new DM needs an adapter command |
+| Search | done: FTS5, filters, snippets, jump to message, Ctrl+K switcher. Searches what the hub has stored, not the network |
+| Web Push | done: opt-in per device, verified through Google's relay. ntfy stays the self-hosted route |
+| Edit and delete | done in hub and PWA; verified on the demo adapter only |
 | Discord adapter (sandboxed real web client) | works on a live account: login through the live view, snapshot, history, send, reply, react. DMs and group DMs arrive live. Server channels do not: while the client sits idle, Discord pushes nothing for them, so they update when opened |
+
+What is missing and why: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## License
 

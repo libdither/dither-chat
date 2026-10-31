@@ -94,7 +94,7 @@ export function PlaceMenu() {
         {folder && item('groups', 'Open as list', () => go({ view: 'folder', folder: id }))}
         {pref && pos >= 0 && item('star', pref.pinned ? 'Unpin' : 'Pin to top', () => patchPlaces([{ kind: placeKind, id, pinned: !pref.pinned }]))}
         {kind === 'conversation' && !inFolder && item('plus', pref?.railed ? 'Remove from sidebar' : 'Add to sidebar', () => patchPlaces([{ kind: 'conversation', id, railed: !pref?.railed }]))}
-        {pos >= 0 && item('chevronRight', 'Move up', () => step(-1), pos === 0)}
+        {pos >= 0 && item('chevronUp', 'Move up', () => step(-1), pos === 0)}
         {pos >= 0 && item('chevronDown', 'Move down', () => step(1), pos === order.length - 1)}
         {kind !== 'folder' && db.folders.filter((f) => f.id !== inFolder?.id).map((f) => item('folder', `Move to ${f.name}`, () => moveToFolder(m.key, f.id)))}
         {kind !== 'folder' && !inFolder && item('plus', 'New folder with this', () => {

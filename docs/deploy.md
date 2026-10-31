@@ -79,6 +79,20 @@ Firefox has its own store: Settings → Privacy & Security → Certificates → 
 
 To undo: remove the CA in the same settings screen. A trusted CA is sensitive, so `.data/tls/ca.key` should never leave the hub.
 
+## Notifications
+
+Settings → *Push on this device* opts one device in. Web Push passes through the browser vendor's relay (Google, Apple, Mozilla or
+Microsoft). The payload is encrypted end to end, but the relay sees when a push happens and for which device. For no third party at all, set
+`DITHER_NTFY_URL` (and `DITHER_NTFY_TOKEN`, `DITHER_PUBLIC_URL`) to a topic on your own ntfy server. `DITHER_PUSH_SUBJECT` sets the VAPID
+contact, a `mailto:` or `https:` URL. The keys live in `.data/vapid.json` (0600); replacing them invalidates every subscription.
+
+On a demo hub, simulated messages are real pushes to any device that opted in.
+
+## Categories and local models
+
+Categories use keyword matching by default. Set `DITHER_CATEGORY_MODEL=<model>` for a local Ollama model, and `DITHER_OLLAMA_URL` if it is not on
+`127.0.0.1:11434`. The hub refuses to send to a public address unless `DITHER_CATEGORY_ALLOW_REMOTE=1`. It only ever sends names, topics and channel names.
+
 ## Later, the cleaner route: a real certificate through DNS-01
 
 No per-device step at all. Run Caddy (or `lego`) on the hub with a wildcard such as `*.tn.example.net`, using the DNS-01
