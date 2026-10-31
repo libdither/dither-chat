@@ -226,6 +226,18 @@ CREATE TABLE IF NOT EXISTS folder_item (
   PRIMARY KEY (folder_id, item_kind, item_id)
 );
 
+-- How you arranged your sidebar: order, pins, hidden places, closed folders.
+CREATE TABLE IF NOT EXISTS place_pref (
+  kind      TEXT NOT NULL CHECK (kind IN ('folder', 'space', 'conversation')),
+  id        TEXT NOT NULL,
+  position  REAL,
+  pinned    INTEGER NOT NULL DEFAULT 0,
+  hidden    INTEGER NOT NULL DEFAULT 0,
+  open      INTEGER NOT NULL DEFAULT 0,
+  railed    INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (kind, id)
+);
+
 -- Most specific scope wins: conversation > thread parent > section > community
 -- > account > network > global. Person and keyword rules can only raise
 -- urgency (push), never silence a conversation the user asked to hear.

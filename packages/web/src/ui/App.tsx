@@ -2,7 +2,9 @@ import { useEffect, useState } from 'preact/hooks';
 import { connected, db, go, loaded, prefs, rev, route, toasts, type Route } from '../state.ts';
 import { AccountPane, AccountsSidebar, AddAccount } from './Accounts.tsx';
 import { ConversationDetails, PersonDetails } from './Details.tsx';
+import { DragLayer } from './dnd.tsx';
 import { Icon } from './icons.tsx';
+import { PlaceMenu } from './Organize.tsx';
 import { InboxBoard } from './Inbox.tsx';
 import { ReactionLayer } from './Reactions.tsx';
 import { Rail } from './Rail.tsx';
@@ -36,6 +38,8 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       return r.account ? { pane: <AccountPane accountId={r.account} onBack={back} /> } : { pane: <WelcomePane view="accounts" /> };
     case 'settings':
       return { pane: <SettingsPane /> };
+    case 'directory':
+      return { pane: <WelcomePane view="space" /> };
     case 'search':
       return r.conv ? { pane: <ConversationPane convId={r.conv} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <SearchPane q={r.q} /> };
   }
@@ -59,6 +63,8 @@ function sidebarFor(r: Route, onAdd: () => void) {
       return <AccountsSidebar active={r.account} onAdd={onAdd} />;
     case 'settings':
       return <div class="sidebar-inner settings-side"><SettingsNav /></div>;
+    case 'directory':
+      return <SpacesSidebar />;
     case 'search':
       return <InboxSidebar activeConv={r.conv} />;
   }
@@ -192,6 +198,8 @@ export function App() {
       {adding && <AddAccount onClose={() => setAdding(false)} />}
       <ReactionLayer />
       <Toasts />
+      <DragLayer />
+      <PlaceMenu />
     </div>
   );
 }

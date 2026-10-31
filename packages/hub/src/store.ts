@@ -626,6 +626,8 @@ export class Store {
 
   setFolders(folders: P.FolderView[]) {
     const tx = this.db.transaction(() => {
+      const kept = new Set(folders.map((f) => f.id));
+      for (const r of this.db.query('SELECT id FROM folder').all() as Row[]) if (!kept.has(r.id)) this.db.query(`DELETE FROM place_pref WHERE kind = 'folder' AND id = ?`).run(r.id);
       this.db.query('DELETE FROM folder').run();
       folders.forEach((f, i) => {
         const id = f.id || randomId('fld');
@@ -637,6 +639,36 @@ export class Store {
     });
     tx();
     this.dirty.extra.push({ t: 'folders', folders: this.folders() });
+  }
+
+  placePrefs(): P.PlacePrefView[] {
+    return (this.db.query('SELECT * FROM place_pref').all() as Row[]).map((r) => ({
+      kind: r.kind,
+      id: r.id,
+      position: r.position,
+      pinned: !!r.pinned,
+      hidden: !!r.hidden,
+      open: !!r.open,
+      railed: !!r.railed,
+    }));
+  }
+
+  /** Only the fields present change, so two devices arranging different things do not overwrite each other. */
+  patchPlacePrefs(items: P.PlacePrefPatch[]) {
+    const bit = (v: boolean | undefined) => (v === undefined ? null : v ? 1 : 0);
+    this.db.transaction(() => {
+      for (const i of items) {
+        if (!['folder', 'space', 'conversation'].includes(i.kind) || !i.id) continue;
+        this.db.query('INSERT OR IGNORE INTO place_pref (kind, id) VALUES (?, ?)').run(i.kind, i.id);
+        this.db
+          .query(
+            `UPDATE place_pref SET position = CASE WHEN ? THEN ? ELSE position END, pinned = COALESCE(?, pinned), hidden = COALESCE(?, hidden),
+               open = COALESCE(?, open), railed = COALESCE(?, railed) WHERE kind = ? AND id = ?`,
+          )
+          .run(i.position !== undefined ? 1 : 0, i.position ?? null, bit(i.pinned), bit(i.hidden), bit(i.open), bit(i.railed), i.kind, i.id);
+      }
+    })();
+    this.dirty.extra.push({ t: 'placePrefs', prefs: this.placePrefs() });
   }
 
   setRule(scope: P.NotifyScope, target: string | null, level: P.NotifyLevel | null) {
@@ -1139,6 +1171,7 @@ export class Store {
       edges,
       conversations,
       folders: this.folders(),
+      placePrefs: this.placePrefs(),
       rules: this.rules(),
       reactionUsage: this.reactionUsage(),
       now: Date.now(),

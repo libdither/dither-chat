@@ -205,6 +205,23 @@ export interface FolderView {
   items: { kind: 'space' | 'conversation' | 'person'; id: string }[];
 }
 
+/** Where a place sits in your sidebar. Hub-only: networks never see it. */
+export type PlaceKind = 'folder' | 'space' | 'conversation';
+export interface PlacePrefView {
+  kind: PlaceKind;
+  id: string;
+  /** Manual order; null follows activity. */
+  position: number | null;
+  pinned: boolean;
+  /** Out of the sidebar and lists. Notifications are a separate setting and do not change. */
+  hidden: boolean;
+  /** Folders: shown expanded in the sidebar. */
+  open: boolean;
+  /** Conversations: has its own sidebar entry, as communities do by default. */
+  railed: boolean;
+}
+export type PlacePrefPatch = { kind: PlaceKind; id: string } & Partial<Omit<PlacePrefView, 'kind' | 'id'>>;
+
 export interface RuleView {
   id: string;
   scope: NotifyScope;
@@ -222,6 +239,7 @@ export interface Bootstrap {
   edges: SpaceEdgeView[];
   conversations: ConversationView[];
   folders: FolderView[];
+  placePrefs: PlacePrefView[];
   rules: RuleView[];
   reactionUsage: ReactionUsage[];
   now: number;
@@ -258,5 +276,6 @@ export type ClientEvent =
   | { t: 'notify'; messageId: string; conversationId: string; title: string; body: string; reasons: string[] }
   | { t: 'typing'; conversationId: string; identityId: string }
   | { t: 'folders'; folders: FolderView[] }
+  | { t: 'placePrefs'; prefs: PlacePrefView[] }
   | { t: 'rules'; rules: RuleView[] }
   | { t: 'resync' };

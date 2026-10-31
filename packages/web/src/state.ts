@@ -16,6 +16,7 @@ export const db = {
   spaces: new Map<string, P.SpaceView>(),
   conversations: new Map<string, P.ConversationView>(),
   folders: [] as P.FolderView[],
+  placePrefs: new Map<string, P.PlacePrefView>(),
   rules: [] as P.RuleView[],
   /** parentId -> child edges */
   children: new Map<string, P.SpaceEdgeView[]>(),
@@ -99,6 +100,7 @@ export type Route =
   | { view: 'folder'; folder: string; conv?: string; person?: string }
   | { view: 'accounts'; account?: string }
   | { view: 'settings' }
+  | { view: 'directory' }
   | { view: 'search'; q: string; conv?: string };
 
 export function parseHash(h = location.hash): Route {
@@ -120,6 +122,8 @@ export function parseHash(h = location.hash): Route {
       return { view: 'accounts', account: p[1] };
     case 'settings':
       return { view: 'settings' };
+    case 'directory':
+      return { view: 'directory' };
     case 'search':
       return { view: 'search', q: q.get('q') ?? '', conv: p[1] === 'c' ? p[2] : undefined };
     case 'c':
@@ -148,6 +152,8 @@ export function href(r: Route): string {
       return r.account ? `#/accounts/${e(r.account)}` : '#/accounts';
     case 'settings':
       return '#/settings';
+    case 'directory':
+      return '#/directory';
     case 'search':
       return `#/search${r.conv ? `/c/${e(r.conv)}` : ''}?q=${e(r.q)}`;
   }
@@ -211,6 +217,11 @@ function putIdentity(i: P.IdentityView) {
   db.identityByNative.set(`${i.network}:${i.nativeId}`, i.id);
 }
 
+const prefKey = (kind: P.PlaceKind, id: string) => `${kind}:${id}`;
+function setPlacePrefs(prefs: P.PlacePrefView[]) {
+  db.placePrefs = new Map(prefs.map((x) => [prefKey(x.kind, x.id), x]));
+}
+
 export function applyBootstrap(b: P.Bootstrap) {
   db.selfPersonId = b.selfPersonId;
   db.reactionUsage = b.reactionUsage ?? [];
@@ -222,6 +233,7 @@ export function applyBootstrap(b: P.Bootstrap) {
   db.spaces = new Map(b.spaces.map((s) => [s.id, s]));
   db.conversations = new Map(b.conversations.map((c) => [c.id, c]));
   db.folders = b.folders;
+  setPlacePrefs(b.placePrefs ?? []);
   db.rules = b.rules;
   indexEdges(b.edges);
   indexThreads();
@@ -334,6 +346,9 @@ export function applyEvents(events: P.ClientEvent[]) {
       }
       case 'folders':
         db.folders = ev.folders;
+        break;
+      case 'placePrefs':
+        setPlacePrefs(ev.prefs);
         break;
       case 'rules':
         db.rules = ev.rules;
@@ -471,7 +486,25 @@ export function markRead(conversationId: string) {
 
 export const feedback = (messageId: string, fb: P.TriageView['feedback']) => api(`/api/messages/${messageId}/feedback`, { body: { feedback: fb } });
 export const setRule = (scope: P.NotifyScope, target: string | null, level: P.NotifyLevel | null) => api('/api/rules', { method: 'PUT', body: { scope, target, level } });
-export const saveFolders = (folders: P.FolderView[]) => api('/api/folders', { method: 'PUT', body: { folders } });
+/** Shown at once; the hub's event confirms it, and a failure resyncs. */
+export function saveFolders(folders: P.FolderView[]) {
+  db.folders = folders;
+  rev.value++;
+  return api('/api/folders', { method: 'PUT', body: { folders } }).catch(placeFailed);
+}
+export function patchPlaces(items: P.PlacePrefPatch[]) {
+  for (const i of items) {
+    const k = prefKey(i.kind, i.id);
+    const cur = db.placePrefs.get(k) ?? { kind: i.kind, id: i.id, position: null, pinned: false, hidden: false, open: false, railed: false };
+    db.placePrefs.set(k, { ...cur, ...i });
+  }
+  rev.value++;
+  return api('/api/place-prefs', { method: 'PATCH', body: { items } }).catch(placeFailed);
+}
+function placeFailed(e: Error) {
+  toast({ kind: 'error', title: 'Could not save that', body: e.message });
+  bootstrap().catch(() => {});
+}
 
 // ------------------------------------------------------------------ live connection
 

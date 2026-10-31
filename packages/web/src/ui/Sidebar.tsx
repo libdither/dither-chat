@@ -3,7 +3,6 @@ import { NETWORK_META } from '@dither-chat/protocol';
 import { useState } from 'preact/hooks';
 import { ago } from '../format.ts';
 import {
-  allCommunities,
   authorName,
   communitiesOf,
   communityOfSpace,
@@ -12,6 +11,9 @@ import {
   convsUnder,
   directsOf,
   effectiveLevel,
+  folderConvs,
+  placePref,
+  railEntries,
   groupsLists,
   inboxSections,
   kindLabel,
@@ -26,10 +28,13 @@ import {
   threadsOf,
   unreadOf,
   visibleConv,
+  type RailEntry,
 } from '../model.ts';
 import { db, go, prefs, rev, route, setPrefs, type Route } from '../state.ts';
 import { AccountChip, AccountDots, Avatar, Count, NetBadge, NetGlyph, SourceChip, levelIcon, variantIcon } from './bits.tsx';
+import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
+import { dropPlace, openPlaceMenu, placeLabel } from './Organize.tsx';
 
 // ------------------------------------------------------------------ navigation helpers
 
@@ -74,14 +79,18 @@ function placeLine(c: P.ConversationView): string {
 
 // ------------------------------------------------------------------ rows
 
-export function ConvRow({ c, active, onClick, showPlace = true, reason }: { c: P.ConversationView; active: boolean; onClick: () => void; showPlace?: boolean; reason?: string }) {
+export function ConvRow({ c, active, onClick, showPlace = true, reason, menu }: { c: P.ConversationView; active: boolean; onClick: () => void; showPlace?: boolean; reason?: string; menu?: boolean }) {
   const u = unreadOf(c);
   const lvl = effectiveLevel(c);
   const place = showPlace ? placeLine(c) : '';
   const isChannel = c.shape === 'channel' || c.shape === 'thread';
   const com = communitiesOf(c)[0];
   return (
-    <button class={`row conv-row ${active ? 'active' : ''} ${u.unread ? 'unread' : ''} ${u.muted ? 'muted' : ''}`} onClick={onClick}>
+    <button
+      class={`row conv-row ${active ? 'active' : ''} ${u.unread ? 'unread' : ''} ${u.muted ? 'muted' : ''}`}
+      onClick={onClick}
+      {...(menu ? dragProps({ key: `conversation:${c.id}`, label: convTitle(c), group: 'none', onMenu: (x, y) => openPlaceMenu(`conversation:${c.id}`, convTitle(c), x, y) }) : {})}
+    >
       {isChannel && com ? (
         <span class="row-avatar">
           <Avatar id={com.id} name={com.name} url={com.icon} size={36} square network={c.network} accountIds={c.vantages.map((v) => v.accountId)} />
@@ -277,9 +286,9 @@ export function GroupsSidebar({ activeConv }: { activeConv?: string }) {
       </header>
       <div class="side-scroll">
         <SectionHead id="groups-g" label="Group chats" count={g.groups.length} />
-        {!isCollapsed('groups-g') && g.groups.map((c) => <ConvRow c={c} active={c.id === activeConv} onClick={() => open(c)} showPlace={false} />)}
+        {!isCollapsed('groups-g') && g.groups.map((c) => <ConvRow c={c} active={c.id === activeConv} onClick={() => open(c)} showPlace={false} menu />)}
         {g.rooms.length > 0 && <SectionHead id="groups-r" label="Rooms outside a space" count={g.rooms.length} />}
-        {!isCollapsed('groups-r') && g.rooms.map((c) => <ConvRow c={c} active={c.id === activeConv} onClick={() => open(c)} showPlace={false} />)}
+        {!isCollapsed('groups-r') && g.rooms.map((c) => <ConvRow c={c} active={c.id === activeConv} onClick={() => open(c)} showPlace={false} menu />)}
         {g.notes.length > 0 && <SectionHead id="groups-n" label="Notes to self" count={g.notes.length} />}
         {!isCollapsed('groups-n') && g.notes.map((c) => <ConvRow c={c} active={c.id === activeConv} onClick={() => open(c)} showPlace={false} />)}
       </div>
@@ -468,65 +477,89 @@ export function FolderSidebar({ folderId, activeConv, activePerson }: { folderId
 
 // ------------------------------------------------------------------ all communities (mobile tab)
 
+function SpacesEntry({ entry: e, hidden }: { entry: RailEntry; hidden?: boolean }) {
+  const label = placeLabel(e.key);
+  const folderId = e.kind === 'folder' ? e.folder.id : undefined;
+  const props = dragProps({
+    key: e.key,
+    label,
+    group: 'spaces',
+    accepts: !hidden,
+    onDrop: hidden ? undefined : dropPlace,
+    onMenu: (x, y) => openPlaceMenu(e.key, label, x, y),
+  });
+  const pinned = placePref(e.kind, e.key.slice(e.key.indexOf(':') + 1)).pinned;
+  const icon =
+    e.kind === 'folder' ? (
+      <span class="folder-row-icon" style={{ '--folder': e.folder.color ?? '#8b93a7' } as any}>
+        {e.folder.icon ?? <Icon name="folder" />}
+      </span>
+    ) : e.kind === 'space' ? (
+      <Avatar id={e.space.id} name={e.space.name} url={e.space.icon} size={36} square network={e.space.network} accountIds={e.space.accountIds} />
+    ) : (
+      <Avatar id={e.conv.id} name={label} url={e.conv.avatar} size={36} square network={e.conv.network} />
+    );
+  const u = e.kind === 'folder' ? sumUnread(folderConvs(e.folder)) : e.kind === 'space' ? spaceUnread(e.space.id) : unreadOf(e.conv);
+  const sub =
+    e.kind === 'folder'
+      ? `Folder · ${e.folder.items.length} items`
+      : e.kind === 'space'
+        ? `${netName(e.space.network)} ${NETWORK_META[e.space.network].spaceNoun}`
+        : kindLabel(e.conv);
+  return (
+    <button
+      class={`row conv-row place-row ${dropClass(e.key)}`}
+      {...props}
+      onClick={() => (folderId ? go({ view: 'folder', folder: folderId }) : e.kind === 'space' ? go({ view: 'space', space: e.space.id }) : e.kind === 'conversation' ? go({ view: 'groups', conv: e.conv.id }) : undefined)}
+    >
+      <span class="row-avatar">{icon}</span>
+      <span class="row-main">
+        <span class="row-top">
+          <span class="row-title">
+            {label}
+            {pinned && <Icon name="star" size={11} class="row-star" />}
+          </span>
+        </span>
+        <span class="row-bottom">
+          <span class="row-preview">{sub}</span>
+          <Count n={u.badge} />
+        </span>
+      </span>
+    </button>
+  );
+}
+
 export function SpacesSidebar() {
   rev.value;
+  const hidden = railEntries('hidden');
   return (
     <div class="sidebar-inner">
       <header class="side-head">
         <h1>Spaces</h1>
-        <span class="side-sub">Discord servers and Matrix spaces, plus your folders</span>
+        <span class="side-sub">Hold and drag to arrange, tap and hold for more</span>
       </header>
       <div class="side-scroll">
-        {db.folders.length > 0 && <SectionHead id="spaces-f" label="Folders" count={db.folders.length} />}
-        {!isCollapsed('spaces-f') &&
-          db.folders.map((f) => {
-            const u = sumUnread(
-              f.items.flatMap((it) => (it.kind === 'space' ? convsUnder(it.id) : it.kind === 'conversation' ? [db.conversations.get(it.id)!].filter(Boolean) : directsOf(it.id))),
-            );
-            return (
-              <button class="row conv-row" onClick={() => go({ view: 'folder', folder: f.id })}>
-                <span class="row-avatar">
-                  <span class="folder-row-icon" style={{ '--folder': f.color ?? '#8b93a7' } as any}>
-                    {f.icon ?? <Icon name="folder" />}
-                  </span>
-                </span>
-                <span class="row-main">
-                  <span class="row-top">
-                    <span class="row-title">{f.name}</span>
-                  </span>
-                  <span class="row-bottom">
-                    <span class="row-preview">{f.items.length} items</span>
-                    <Count n={u.badge} />
-                  </span>
-                </span>
-              </button>
-            );
-          })}
-        <SectionHead id="spaces-c" label="Communities" />
-        {!isCollapsed('spaces-c') &&
-          allCommunities().map((s) => {
-            const u = spaceUnread(s.id);
-            return (
-              <button class="row conv-row" onClick={() => go({ view: 'space', space: s.id })}>
-                <span class="row-avatar">
-                  <Avatar id={s.id} name={s.name} url={s.icon} size={36} square network={s.network} accountIds={s.accountIds} />
-                </span>
-                <span class="row-main">
-                  <span class="row-top">
-                    <span class="row-title">{s.name}</span>
-                  </span>
-                  <span class="row-bottom">
-                    <span class="row-preview">
-                      {netName(s.network)} {NETWORK_META[s.network].spaceNoun}
-                    </span>
-                    <Count n={u.badge} />
-                  </span>
-                </span>
-              </button>
-            );
-          })}
+        <button class="row conv-row" onClick={() => go({ view: 'directory' })}>
+          <span class="row-avatar">
+            <span class="folder-row-icon">
+              <Icon name="grid" />
+            </span>
+          </span>
+          <span class="row-main">
+            <span class="row-top">
+              <span class="row-title">All communities and groups</span>
+            </span>
+            <span class="row-bottom">
+              <span class="row-preview">Browse, sort and categorise</span>
+            </span>
+          </span>
+        </button>
+        {railEntries().map((e) => (
+          <SpacesEntry entry={e} />
+        ))}
+        {hidden.length > 0 && <SectionHead id="spaces-h" label="Hidden" count={hidden.length} />}
+        {!isCollapsed('spaces-h') && hidden.map((e) => <SpacesEntry entry={e} hidden />)}
       </div>
     </div>
   );
 }
-

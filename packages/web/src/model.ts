@@ -243,15 +243,49 @@ export function threadsOf(convId: string): P.ConversationView[] {
     .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0));
 }
 
-/** Communities that should get a rail icon: not nested under another visible community, not inside a folder. */
-export function railCommunities(): P.SpaceView[] {
-  return memo('rail', () => {
-    const inFolder = new Set(db.folders.flatMap((f) => f.items.filter((i) => i.kind === 'space').map((i) => i.id)));
-    return [...db.spaces.values()]
-      .filter((s) => s.kind === 'community' && visibleSpace(s) && !inFolder.has(s.id))
-      .filter((s) => !spaceParents(s.id).some((p) => p.kind === 'community' && visibleSpace(p)))
-      .sort((a, b) => activityOfSpace(b.id) - activityOfSpace(a.id));
+const NO_PREF: Omit<P.PlacePrefView, 'kind' | 'id'> = { position: null, pinned: false, hidden: false, open: false, railed: false };
+export function placePref(kind: P.PlaceKind, id: string) {
+  return db.placePrefs.get(`${kind}:${id}`) ?? { kind, id, ...NO_PREF };
+}
+
+export type RailEntry = { key: string; kind: 'folder'; folder: P.FolderView } | { key: string; kind: 'space'; space: P.SpaceView } | { key: string; kind: 'conversation'; conv: P.ConversationView };
+
+const placeActivity = (e: RailEntry) =>
+  e.kind === 'folder' ? Math.max(0, ...folderConvs(e.folder).map((c) => c.lastMessageAt ?? 0)) : e.kind === 'space' ? activityOfSpace(e.space.id) : (e.conv.lastMessageAt ?? 0);
+
+/**
+ * Top-level sidebar entries in display order: pinned, then what you arranged, then the rest (folders, then by activity).
+ * Communities are listed by default; a conversation only once you add it. Whatever sits in a folder lives there instead.
+ */
+export function railEntries(which: 'shown' | 'hidden' = 'shown'): RailEntry[] {
+  return memo('rail:' + which, () => {
+    const inFolder = new Set(db.folders.flatMap((f) => f.items.map((i) => `${i.kind}:${i.id}`)));
+    const entries: RailEntry[] = [
+      ...db.folders.map((folder): RailEntry => ({ key: `folder:${folder.id}`, kind: 'folder', folder })),
+      ...allCommunities()
+        .filter((s) => !inFolder.has(`space:${s.id}`))
+        .map((space): RailEntry => ({ key: `space:${space.id}`, kind: 'space', space })),
+      ...[...db.conversations.values()]
+        .filter((c) => visibleConv(c) && !inFolder.has(`conversation:${c.id}`) && placePref('conversation', c.id).railed)
+        .map((conv): RailEntry => ({ key: `conversation:${conv.id}`, kind: 'conversation', conv })),
+    ];
+    const pref = (e: RailEntry) => placePref(e.kind, e.key.slice(e.key.indexOf(':') + 1));
+    return entries
+      .filter((e) => pref(e).hidden === (which === 'hidden'))
+      .sort((a, b) => {
+        const pa = pref(a), pb = pref(b);
+        if (pa.pinned !== pb.pinned) return pa.pinned ? -1 : 1;
+        if ((pa.position === null) !== (pb.position === null)) return pa.position !== null ? -1 : 1;
+        if (pa.position !== null && pb.position !== null) return pa.position - pb.position;
+        if ((a.kind === 'folder') !== (b.kind === 'folder')) return a.kind === 'folder' ? -1 : 1;
+        return placeActivity(b) - placeActivity(a);
+      });
   });
+}
+
+/** Communities that should get a rail icon. */
+export function railCommunities(): P.SpaceView[] {
+  return railEntries().flatMap((e) => (e.kind === 'space' ? [e.space] : []));
 }
 
 export function allCommunities(): P.SpaceView[] {
@@ -431,9 +465,10 @@ export function groupsLists() {
   return memo('groups', () => {
     const all = [...db.conversations.values()].filter(visibleConv);
     const byRecent = (a: P.ConversationView, b: P.ConversationView) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0);
+    const listed = all.filter((c) => !placePref('conversation', c.id).hidden);
     return {
-      groups: all.filter((c) => c.shape === 'group').sort(byRecent),
-      rooms: all.filter((c) => c.shape === 'channel' && !c.spaceIds.length).sort(byRecent),
+      groups: listed.filter((c) => c.shape === 'group').sort(byRecent),
+      rooms: listed.filter((c) => c.shape === 'channel' && !c.spaceIds.length).sort(byRecent),
       notes: all.filter((c) => c.shape === 'self').sort(byRecent),
     };
   });

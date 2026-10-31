@@ -378,6 +378,11 @@ export class HubServer {
       s.setFolders(b.folders ?? []);
       return ok();
     }
+    if (path === '/api/place-prefs' && method === 'PATCH') {
+      const b = await body<{ items: P.PlacePrefPatch[] }>();
+      s.patchPlacePrefs(b.items ?? []);
+      return ok();
+    }
     if (path === '/api/rules' && method === 'PUT') {
       const b = await body<{ scope: P.NotifyScope; target: string | null; level: P.NotifyLevel | null }>();
       s.setRule(b.scope, b.target ?? null, b.level ?? null);

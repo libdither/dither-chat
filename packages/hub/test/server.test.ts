@@ -93,3 +93,23 @@ test('tailnet ranges', () => {
   expect(isTailnet('192.168.68.57')).toBe(false);
   expect(isTailnet('100.128.0.1')).toBe(false);
 });
+
+test('sidebar arrangement persists, field by field', () => {
+  store.patchPlacePrefs([{ kind: 'space', id: 's1', position: 2 }]);
+  store.patchPlacePrefs([{ kind: 'space', id: 's1', pinned: true }, { kind: 'conversation', id: 'c1', hidden: true, railed: true }]);
+  const reopened = new Store(join(dir, 'hub.sqlite'), mediaSigner('s'));
+  const prefs = reopened.bootstrap().placePrefs;
+  reopened.db.close();
+  expect(prefs.find((p) => p.id === 's1')).toEqual({ kind: 'space', id: 's1', position: 2, pinned: true, hidden: false, open: false, railed: false });
+  expect(prefs.find((p) => p.id === 'c1')).toMatchObject({ hidden: true, railed: true, position: null });
+  store.patchPlacePrefs([{ kind: 'space', id: 's1', position: null }]);
+  expect(store.placePrefs().find((p) => p.id === 's1')?.position).toBeNull();
+  expect(store.flush().some((e) => e.t === 'placePrefs')).toBe(true);
+});
+
+test('deleting a folder forgets its arrangement', () => {
+  store.setFolders([{ id: 'f1', name: 'F', icon: null, color: null, items: [] }]);
+  store.patchPlacePrefs([{ kind: 'folder', id: 'f1', open: true }]);
+  store.setFolders([]);
+  expect(store.placePrefs().some((p) => p.id === 'f1')).toBe(false);
+});
