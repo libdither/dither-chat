@@ -89,9 +89,11 @@ export interface Prefs {
   /** Index into the emoji catalog's skins; 0 is the default yellow. */
   skinTone: number;
   directorySort: DirectorySort;
+  /** This device gets Web Push, so the live socket need not raise its own notification. */
+  pushEnabled: boolean;
 }
 const PREFS_KEY = 'dither-chat:prefs';
-const defaults: Prefs = { theme: 'dark', details: false, showDemo: true, collapsed: {}, sendAs: {}, via: {}, notifications: false, skinTone: 0, directorySort: 'recency' };
+const defaults: Prefs = { theme: 'dark', details: false, showDemo: true, collapsed: {}, sendAs: {}, via: {}, notifications: false, skinTone: 0, directorySort: 'recency', pushEnabled: false };
 export const prefs = signal<Prefs>({ ...defaults, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') });
 export function setPrefs(p: Partial<Prefs>) {
   prefs.value = { ...prefs.value, ...p };
@@ -407,7 +409,7 @@ function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
   const viewing = 'conv' in r && r.conv === ev.conversationId && document.visibilityState === 'visible';
   if (viewing) return;
   toast({ kind: 'notify', title: ev.title, body: ev.body, conversationId: ev.conversationId, reasons: ev.reasons }, 8000);
-  if (prefs.value.notifications && 'Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
+  if (!prefs.value.pushEnabled && prefs.value.notifications && 'Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
     const show = (reg?: ServiceWorkerRegistration) => {
       const opts = { body: ev.body, tag: ev.conversationId, data: { conversationId: ev.conversationId } };
       if (reg) reg.showNotification(ev.title, opts);

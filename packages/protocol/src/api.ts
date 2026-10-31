@@ -287,6 +287,17 @@ export interface MessageContext extends MessagePage {
   hasNewer: boolean;
 }
 
+/** One device that opted in to Web Push. The endpoint stays on the hub apart from this fingerprint. */
+export interface PushDeviceView {
+  id: string;
+  label: string;
+  /** Which relay carries it: Google, Apple, Mozilla, Microsoft. */
+  relay: string;
+  createdAt: number;
+  lastOkAt: number | null;
+  lastError: string | null;
+}
+
 export interface RuleView {
   id: string;
   scope: NotifyScope;

@@ -6,6 +6,7 @@ import type * as P from '@dither-chat/protocol';
 import { discordEmojiUrl, NETWORK_META, NETWORKS } from '@dither-chat/protocol';
 import type { Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
+import type { PushService } from './push.ts';
 import type { Triage } from './triage.ts';
 
 const ACCOUNT_COLORS = ['#F2A541', '#E86A92', '#B794F6', '#FF8C61', '#9BE15D', '#5CC8FF', '#F7D154', '#FF6B6B'];
@@ -23,6 +24,7 @@ export interface ServerOpts {
   /** PEM paths. When set, the main port speaks HTTPS and plainPort handles what cannot use it. */
   tls?: { cert: string; key: string; ca?: string };
   plainPort?: number;
+  push?: PushService;
   /** Rescore categories after they change. */
   onCategoriesChanged?: (force?: boolean) => void;
   onDemoReset?: () => Promise<void>;
@@ -400,6 +402,27 @@ export class HubServer {
       const b = await body<{ items: P.PlacePrefPatch[] }>();
       s.patchPlacePrefs(b.items ?? []);
       return ok();
+    }
+    if (path.startsWith('/api/push')) {
+      const push = this.opts.push;
+      if (!push) return bad('push is not available', 404);
+      if (path === '/api/push' && method === 'GET') return ok({ publicKey: push.publicKey, devices: push.devices(), ntfy: !!process.env.DITHER_NTFY_URL });
+      if (path === '/api/push/subscribe' && method === 'POST') {
+        const b = await body<{ subscription: { endpoint?: string; keys?: { p256dh?: string; auth?: string } }; label?: string }>();
+        const sub = b.subscription;
+        if (!sub?.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) return bad('that is not a push subscription');
+        const id = push.subscribe({ endpoint: sub.endpoint, p256dh: sub.keys.p256dh, auth: sub.keys.auth }, b.label);
+        return id ? ok({ id }) : bad('that push service is not one browsers use');
+      }
+      if (path === '/api/push/unsubscribe' && method === 'POST') {
+        const b = await body<{ id?: string; endpoint?: string }>();
+        push.remove(b);
+        return ok();
+      }
+      if (path === '/api/push/test' && method === 'POST') {
+        const b = await body<{ id?: string; endpoint?: string }>();
+        return ok(await push.test(b));
+      }
     }
     if (path === '/api/directory/stats') return ok(s.placeStats(Date.now() - 7 * 86_400_000));
     if (path === '/api/categories' && method === 'POST') {

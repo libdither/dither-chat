@@ -2,10 +2,12 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { join, resolve } from 'node:path';
 import { Categorizer, KeywordProvider, OllamaProvider, type CategoryProvider } from './categorize.ts';
 import { applyDemoOverlay, createDemoAccounts, demoFactory } from './demo.ts';
+import { PushService } from './push.ts';
 import { HubServer, mediaSigner } from './server.ts';
 import { Store } from './store.ts';
 import { Supervisor } from './supervisor.ts';
 import { Triage } from './triage.ts';
+import { loadVapidKeys } from './webpush.ts';
 
 const args = process.argv.slice(2);
 const flag = (n: string) => args.includes(`--${n}`) || process.env[`DITHER_${n.toUpperCase()}`] === '1';
@@ -49,6 +51,7 @@ function triageLater(ids: string[]) {
         const conversationId = store.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', id)!.conversation_id;
         server.notify({ t: 'notify', messageId: id, conversationId, title: d.title, body: d.body, reasons: d.reasons });
         ntfy(d.title, d.body, conversationId).catch(() => {});
+        push.notify(d.title, d.body, conversationId, id).catch((e) => console.error('push failed', e));
       }
     }
   });
@@ -63,6 +66,8 @@ async function ntfy(title: string, body: string, conversationId: string) {
   if (process.env.DITHER_PUBLIC_URL) headers.Click = `${process.env.DITHER_PUBLIC_URL}/#/inbox/c/${conversationId}`;
   await fetch(url, { method: 'POST', body, headers, signal: AbortSignal.timeout(5000) });
 }
+
+const push = new PushService(store, loadVapidKeys(dataDir), process.env.DITHER_PUSH_SUBJECT ?? process.env.DITHER_PUBLIC_URL ?? 'https://github.com/libdither/dither-chat');
 
 function categoryProvider(): CategoryProvider {
   const name = process.env.DITHER_CATEGORY_MODEL;
@@ -93,6 +98,7 @@ const server = new HubServer(store, sup, triage, {
   secret,
   tls,
   plainPort,
+  push,
   onCategoriesChanged: (force) => void categorizer.refresh(force),
   onDemoReset: async () => {
     for (const a of store.accounts().filter((a) => a.demo)) {

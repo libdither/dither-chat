@@ -279,6 +279,19 @@ CREATE TABLE IF NOT EXISTS category_override (
   PRIMARY KEY (category_id, kind, place_id)
 );
 
+-- Devices that opted in to Web Push (webpush.ts).
+CREATE TABLE IF NOT EXISTS push_subscription (
+  id         TEXT PRIMARY KEY,               -- fingerprint of the endpoint
+  endpoint   TEXT NOT NULL UNIQUE,
+  p256dh     TEXT NOT NULL,
+  auth       TEXT NOT NULL,
+  label      TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  last_ok_at INTEGER,
+  last_error TEXT,
+  failures   INTEGER NOT NULL DEFAULT 0
+);
+
 -- Most specific scope wins: conversation > thread parent > section > community
 -- > account > network > global. Person and keyword rules can only raise
 -- urgency (push), never silence a conversation the user asked to hear.

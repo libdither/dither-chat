@@ -4,6 +4,7 @@ import { LEVEL_LABEL, netName } from '../model.ts';
 import { api, db, prefs, rev, setPrefs, setRule, toast } from '../state.ts';
 import { NetBadge, NetGlyph, levelIcon } from './bits.tsx';
 import { Icon } from './icons.tsx';
+import { PushSettings } from './Push.tsx';
 
 const LEVELS: P.NotifyLevel[] = ['all', 'smart', 'mentions', 'digest', 'none'];
 
@@ -106,8 +107,8 @@ export function SettingsPane() {
               setPrefs({ notifications: on });
             }} />
             <span>
-              <b>Browser & phone notifications</b>
-              <small>Push a system notification when something clears triage. On your phone, install this app first (Share → Add to Home Screen).</small>
+              <b>Notifications while the app is running</b>
+              <small>A system notification when something clears triage, delivered over the hub's own connection. It stops when the app is closed; for that, turn on push below.</small>
             </span>
           </label>
           <div class="set-model">
@@ -121,6 +122,8 @@ export function SettingsPane() {
             </div>
           </div>
         </section>
+
+        <PushSettings />
 
         <section class="set-block">
           <h3>Keywords that always ping</h3>
