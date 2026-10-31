@@ -671,6 +671,74 @@ export class Store {
     this.dirty.extra.push({ t: 'placePrefs', prefs: this.placePrefs() });
   }
 
+  // ------------------------------------------------------------ categories (categorize.ts asks the questions)
+
+  /** Which provider fills category_score; shown in Settings. */
+  categoryProvider = 'keyword';
+
+  categories(): P.CategoryView[] {
+    return (this.db.query('SELECT * FROM category ORDER BY position, name').all() as Row[]).map((c) => ({ id: c.id, name: c.name, question: c.question, keywords: json(c.keywords, []), color: c.color }));
+  }
+
+  placeCategories(): P.PlaceCategoryView[] {
+    const rows = this.db
+      .query(
+        `SELECT category_id, kind, place_id, p, provider, NULL AS assigned FROM category_score WHERE NOT EXISTS (
+           SELECT 1 FROM category_override o WHERE o.category_id = category_score.category_id AND o.kind = category_score.kind AND o.place_id = category_score.place_id)
+         UNION ALL
+         SELECT o.category_id, o.kind, o.place_id, s.p, s.provider, o.assigned FROM category_override o
+           LEFT JOIN category_score s ON s.category_id = o.category_id AND s.kind = o.kind AND s.place_id = o.place_id`,
+      )
+      .all() as Row[];
+    return rows.map((r) => ({ categoryId: r.category_id, kind: r.kind, id: r.place_id, p: r.p, provider: r.provider, override: r.assigned === null ? null : !!r.assigned }));
+  }
+
+  putCategory(c: Omit<P.CategoryView, 'id'> & { id?: string }, position?: number): string {
+    const id = c.id ?? randomId('cat');
+    const pos = position ?? (this.db.query('SELECT COALESCE(MAX(position), 0) + 1 AS p FROM category').get() as Row).p;
+    this.db
+      .query(
+        `INSERT INTO category (id, name, question, keywords, color, position) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET name = excluded.name, question = excluded.question, keywords = excluded.keywords, color = excluded.color`,
+      )
+      .run(id, c.name, c.question, JSON.stringify(c.keywords ?? []), c.color ?? null, pos);
+    this.categoriesChanged();
+    return id;
+  }
+
+  deleteCategory(id: string) {
+    this.db.query('DELETE FROM category WHERE id = ?').run(id);
+    this.categoriesChanged();
+  }
+
+  setCategoryOverride(categoryId: string, kind: 'space' | 'conversation', placeId: string, assigned: boolean | null) {
+    if (assigned === null) this.db.query('DELETE FROM category_override WHERE category_id = ? AND kind = ? AND place_id = ?').run(categoryId, kind, placeId);
+    else this.db.query('INSERT OR REPLACE INTO category_override (category_id, kind, place_id, assigned) VALUES (?, ?, ?, ?)').run(categoryId, kind, placeId, assigned ? 1 : 0);
+    this.categoriesChanged();
+  }
+
+  putScores(kind: 'space' | 'conversation', placeId: string, scores: Record<string, number>, provider: string, hash: string) {
+    this.db.transaction(() => {
+      this.db.query('DELETE FROM category_score WHERE kind = ? AND place_id = ?').run(kind, placeId);
+      for (const [cat, p] of Object.entries(scores)) {
+        this.db.query('INSERT OR IGNORE INTO category_score (category_id, kind, place_id, p, provider, input_hash) SELECT id, ?, ?, ?, ?, ? FROM category WHERE id = ?').run(kind, placeId, p, provider, hash, cat);
+      }
+    })();
+  }
+
+  categoriesChanged() {
+    this.dirty.extra = this.dirty.extra.filter((e) => e.t !== 'categories');
+    this.dirty.extra.push({ t: 'categories', categories: this.categories(), placeCategories: this.placeCategories() });
+  }
+
+  placeStats(sinceTs: number): P.PlaceStats {
+    const week: Record<string, number> = {};
+    const mine: Record<string, number> = {};
+    for (const r of this.db.query('SELECT conversation_id AS id, COUNT(*) AS n FROM message WHERE ts >= ? AND deleted = 0 GROUP BY conversation_id').all(sinceTs) as Row[]) week[r.id] = r.n;
+    for (const r of this.db.query(`SELECT conversation_id AS id, MAX(ts) AS ts FROM message WHERE author_id IN (SELECT self_identity FROM account WHERE self_identity IS NOT NULL) GROUP BY conversation_id`).all() as Row[]) mine[r.id] = r.ts;
+    return { week, mine };
+  }
+
   setRule(scope: P.NotifyScope, target: string | null, level: P.NotifyLevel | null) {
     if (level === null) {
       this.db.query('DELETE FROM notify_rule WHERE scope = ? AND target IS ?').run(scope, target);
@@ -1172,6 +1240,9 @@ export class Store {
       conversations,
       folders: this.folders(),
       placePrefs: this.placePrefs(),
+      categories: this.categories(),
+      placeCategories: this.placeCategories(),
+      categoryProvider: this.categoryProvider,
       rules: this.rules(),
       reactionUsage: this.reactionUsage(),
       now: Date.now(),

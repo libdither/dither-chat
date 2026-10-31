@@ -1,7 +1,7 @@
 import type { Network } from './ontology.ts';
 
 /** Hub-id prefixes. Network objects get deterministic ids so ingest is idempotent. */
-export type IdPrefix = 'idn' | 'spc' | 'cnv' | 'msg' | 'att' | 'per' | 'acc' | 'fld' | 'rul';
+export type IdPrefix = 'idn' | 'spc' | 'cnv' | 'msg' | 'att' | 'per' | 'acc' | 'fld' | 'rul' | 'cat';
 
 const enc = new TextEncoder();
 

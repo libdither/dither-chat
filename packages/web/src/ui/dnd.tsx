@@ -22,8 +22,8 @@ export interface DragOpts {
   folder?: string;
   /** Dropping on the middle of this row groups into it. */
   accepts?: boolean;
-  /** Layout of the list, for which half of a row means before or after. */
-  axis?: 'y';
+  /** Rows in a grid compare left and right rather than top and bottom. */
+  axis?: 'x' | 'y';
   onDrop?: (key: string, target: DropTarget) => void;
   onMenu?: (x: number, y: number) => void;
 }
@@ -35,7 +35,7 @@ function targetAt(x: number, y: number, group: string, self: string): DropTarget
   const el = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-dnd-key]');
   if (!el || el.dataset.dndGroup !== group || el.dataset.dndKey === self) return null;
   const r = el.getBoundingClientRect();
-  const t = (y - r.top) / r.height;
+  const t = el.dataset.dndAxis === 'x' ? (x - r.left) / r.width : (y - r.top) / r.height;
   const where: DropWhere = el.dataset.dndAccepts === '1' && t > 0.3 && t < 0.7 ? 'into' : t < 0.5 ? 'before' : 'after';
   return { key: el.dataset.dndKey!, folder: el.dataset.dndFolder, where };
 }
@@ -56,6 +56,7 @@ export function dragProps(o: DragOpts) {
     'data-dnd-group': o.group,
     'data-dnd-folder': o.folder,
     'data-dnd-accepts': o.accepts ? '1' : undefined,
+    'data-dnd-axis': o.axis,
     onContextMenu: (e: MouseEvent) => {
       e.preventDefault();
       // Android fires this for the long press the hold timer already handles.

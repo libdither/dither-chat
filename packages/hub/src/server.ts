@@ -23,6 +23,8 @@ export interface ServerOpts {
   /** PEM paths. When set, the main port speaks HTTPS and plainPort handles what cannot use it. */
   tls?: { cert: string; key: string; ca?: string };
   plainPort?: number;
+  /** Rescore categories after they change. */
+  onCategoriesChanged?: (force?: boolean) => void;
   onDemoReset?: () => Promise<void>;
 }
 
@@ -382,6 +384,38 @@ export class HubServer {
       const b = await body<{ items: P.PlacePrefPatch[] }>();
       s.patchPlacePrefs(b.items ?? []);
       return ok();
+    }
+    if (path === '/api/directory/stats') return ok(s.placeStats(Date.now() - 7 * 86_400_000));
+    if (path === '/api/categories' && method === 'POST') {
+      const b = await body<Partial<P.CategoryView>>();
+      if (!b.name?.trim()) return bad('a category needs a name');
+      const id = s.putCategory({ name: b.name.trim(), question: b.question?.trim() || `Is this community about ${b.name.trim()}?`, keywords: b.keywords ?? [], color: b.color ?? null });
+      this.opts.onCategoriesChanged?.();
+      return ok({ id });
+    }
+    if (path === '/api/categories/rescore' && method === 'POST') {
+      this.opts.onCategoriesChanged?.(true);
+      return ok();
+    }
+    if (path === '/api/category-overrides' && method === 'PUT') {
+      const b = await body<{ categoryId: string; kind: 'space' | 'conversation'; id: string; assigned: boolean | null }>();
+      if (!b.categoryId || !b.id || !['space', 'conversation'].includes(b.kind)) return bad('which category and place?');
+      s.setCategoryOverride(b.categoryId, b.kind, b.id, b.assigned ?? null);
+      return ok();
+    }
+    if ((m = path.match(/^\/api\/categories\/([\w-]+)$/))) {
+      const cur = s.categories().find((c) => c.id === m![1]);
+      if (!cur) return bad('no such category', 404);
+      if (method === 'DELETE') {
+        s.deleteCategory(cur.id);
+        return ok();
+      }
+      if (method === 'PATCH') {
+        const b = await body<Partial<P.CategoryView>>();
+        s.putCategory({ ...cur, ...b, id: cur.id });
+        this.opts.onCategoriesChanged?.();
+        return ok();
+      }
     }
     if (path === '/api/rules' && method === 'PUT') {
       const b = await body<{ scope: P.NotifyScope; target: string | null; level: P.NotifyLevel | null }>();

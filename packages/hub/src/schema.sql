@@ -238,6 +238,33 @@ CREATE TABLE IF NOT EXISTS place_pref (
   PRIMARY KEY (kind, id)
 );
 
+-- Categories are questions; scores are a provider's answers; overrides are yours and always win.
+CREATE TABLE IF NOT EXISTS category (
+  id       TEXT PRIMARY KEY,
+  name     TEXT NOT NULL,
+  question TEXT NOT NULL,
+  keywords TEXT NOT NULL DEFAULT '[]',
+  color    TEXT,
+  position REAL NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS category_score (
+  category_id TEXT NOT NULL REFERENCES category(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL CHECK (kind IN ('space', 'conversation')),
+  place_id    TEXT NOT NULL,
+  p           REAL NOT NULL,
+  provider    TEXT NOT NULL,
+  input_hash  TEXT NOT NULL,
+  PRIMARY KEY (category_id, kind, place_id)
+);
+CREATE INDEX IF NOT EXISTS category_score_place ON category_score(kind, place_id);
+CREATE TABLE IF NOT EXISTS category_override (
+  category_id TEXT NOT NULL REFERENCES category(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL CHECK (kind IN ('space', 'conversation')),
+  place_id    TEXT NOT NULL,
+  assigned    INTEGER NOT NULL,
+  PRIMARY KEY (category_id, kind, place_id)
+);
+
 -- Most specific scope wins: conversation > thread parent > section > community
 -- > account > network > global. Person and keyword rules can only raise
 -- urgency (push), never silence a conversation the user asked to hear.

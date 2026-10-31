@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { connected, db, go, loaded, prefs, rev, route, toasts, type Route } from '../state.ts';
 import { AccountPane, AccountsSidebar, AddAccount } from './Accounts.tsx';
 import { ConversationDetails, PersonDetails } from './Details.tsx';
+import { DirectoryPane } from './Directory.tsx';
 import { DragLayer } from './dnd.tsx';
 import { Icon } from './icons.tsx';
 import { PlaceMenu } from './Organize.tsx';
@@ -39,7 +40,7 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
     case 'settings':
       return { pane: <SettingsPane /> };
     case 'directory':
-      return { pane: <WelcomePane view="space" /> };
+      return { pane: <DirectoryPane /> };
     case 'search':
       return r.conv ? { pane: <ConversationPane convId={r.conv} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <SearchPane q={r.q} /> };
   }
@@ -161,6 +162,7 @@ export function App() {
   const convOpen = 'conv' in r && r.conv !== undefined;
   const personOpen = r.view === 'people' && r.person !== undefined;
   const accountOpen = r.view === 'accounts' && r.account !== undefined;
+  const full = r.view === 'directory';
   const detailOpen = r.view === 'settings' || convOpen || personOpen || accountOpen || r.view === 'search' || (r.view === 'folder' && (r.conv || r.person));
 
   if (!loaded.value)
@@ -172,7 +174,7 @@ export function App() {
     );
 
   return (
-    <div class={`app ${detailOpen ? 'detail-open' : ''} ${showDetails ? 'with-details' : ''}`}>
+    <div class={`app ${detailOpen ? 'detail-open' : ''} ${showDetails ? 'with-details' : ''} ${full ? 'full' : ''}`}>
       {!connected.value && (
         <div class="reconnect">
           <span class="dot" /> Reconnecting to the hub…
@@ -189,7 +191,7 @@ export function App() {
       {showDetails && <>{detail!.kind === 'conv' ? <ConversationDetails convId={detail!.id} /> : <PersonDetails personId={detail!.id} />}</>}
       <nav class="tabbar">
         {MOBILE_TABS.map((t) => (
-          <button class={`tab ${r.view === t.view || (t.view === 'spaces' && r.view === 'space') ? 'active' : ''}`} onClick={() => go(t.route)}>
+          <button class={`tab ${r.view === t.view || (t.view === 'spaces' && (r.view === 'space' || r.view === 'directory')) ? 'active' : ''}`} onClick={() => go(t.route)}>
             <Icon name={t.icon} size={20} />
             <span>{t.label}</span>
           </button>

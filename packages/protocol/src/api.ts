@@ -222,6 +222,34 @@ export interface PlacePrefView {
 }
 export type PlacePrefPatch = { kind: PlaceKind; id: string } & Partial<Omit<PlacePrefView, 'kind' | 'id'>>;
 
+/** A category is a yes/no question asked of each place (hub categorize.ts). */
+export interface CategoryView {
+  id: string;
+  name: string;
+  question: string;
+  /** Used when no model is running. Empty means words from the name and question. */
+  keywords: string[];
+  color: string | null;
+}
+
+export interface PlaceCategoryView {
+  categoryId: string;
+  kind: 'space' | 'conversation';
+  id: string;
+  /** P(yes) from the provider; null if you decided before any score existed. */
+  p: number | null;
+  provider: string | null;
+  /** Your decision, which always beats the score. */
+  override: boolean | null;
+}
+
+export interface PlaceStats {
+  /** Conversation id -> messages stored in the last 7 days. */
+  week: Record<string, number>;
+  /** Conversation id -> when you last posted. */
+  mine: Record<string, number>;
+}
+
 export interface RuleView {
   id: string;
   scope: NotifyScope;
@@ -240,6 +268,9 @@ export interface Bootstrap {
   conversations: ConversationView[];
   folders: FolderView[];
   placePrefs: PlacePrefView[];
+  categories: CategoryView[];
+  placeCategories: PlaceCategoryView[];
+  categoryProvider: string;
   rules: RuleView[];
   reactionUsage: ReactionUsage[];
   now: number;
@@ -277,5 +308,6 @@ export type ClientEvent =
   | { t: 'typing'; conversationId: string; identityId: string }
   | { t: 'folders'; folders: FolderView[] }
   | { t: 'placePrefs'; prefs: PlacePrefView[] }
+  | { t: 'categories'; categories: CategoryView[]; placeCategories: PlaceCategoryView[] }
   | { t: 'rules'; rules: RuleView[] }
   | { t: 'resync' };

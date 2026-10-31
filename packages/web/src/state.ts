@@ -17,6 +17,10 @@ export const db = {
   conversations: new Map<string, P.ConversationView>(),
   folders: [] as P.FolderView[],
   placePrefs: new Map<string, P.PlacePrefView>(),
+  categories: [] as P.CategoryView[],
+  /** `${kind}:${id}` -> what each category says about that place */
+  placeCategories: new Map<string, P.PlaceCategoryView[]>(),
+  categoryProvider: 'keyword',
   rules: [] as P.RuleView[],
   /** parentId -> child edges */
   children: new Map<string, P.SpaceEdgeView[]>(),
@@ -70,6 +74,8 @@ export function toast(t: Omit<Toast, 'id'>, ms = 6000) {
 
 // ------------------------------------------------------------------ prefs
 
+export type DirectorySort = 'recency' | 'activity' | 'unread' | 'name' | 'network' | 'manual' | 'category';
+
 export interface Prefs {
   theme: 'dark' | 'light' | 'system';
   details: boolean;
@@ -80,9 +86,10 @@ export interface Prefs {
   notifications: boolean;
   /** Index into the emoji catalog's skins; 0 is the default yellow. */
   skinTone: number;
+  directorySort: DirectorySort;
 }
 const PREFS_KEY = 'dither-chat:prefs';
-const defaults: Prefs = { theme: 'dark', details: false, showDemo: true, collapsed: {}, sendAs: {}, via: {}, notifications: false, skinTone: 0 };
+const defaults: Prefs = { theme: 'dark', details: false, showDemo: true, collapsed: {}, sendAs: {}, via: {}, notifications: false, skinTone: 0, directorySort: 'recency' };
 export const prefs = signal<Prefs>({ ...defaults, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') });
 export function setPrefs(p: Partial<Prefs>) {
   prefs.value = { ...prefs.value, ...p };
@@ -222,6 +229,15 @@ function setPlacePrefs(prefs: P.PlacePrefView[]) {
   db.placePrefs = new Map(prefs.map((x) => [prefKey(x.kind, x.id), x]));
 }
 
+function setCategories(cats: P.CategoryView[], place: P.PlaceCategoryView[]) {
+  db.categories = cats;
+  db.placeCategories = new Map();
+  for (const x of place) {
+    const k = `${x.kind}:${x.id}`;
+    db.placeCategories.set(k, [...(db.placeCategories.get(k) ?? []), x]);
+  }
+}
+
 export function applyBootstrap(b: P.Bootstrap) {
   db.selfPersonId = b.selfPersonId;
   db.reactionUsage = b.reactionUsage ?? [];
@@ -234,6 +250,8 @@ export function applyBootstrap(b: P.Bootstrap) {
   db.conversations = new Map(b.conversations.map((c) => [c.id, c]));
   db.folders = b.folders;
   setPlacePrefs(b.placePrefs ?? []);
+  setCategories(b.categories ?? [], b.placeCategories ?? []);
+  db.categoryProvider = b.categoryProvider ?? 'keyword';
   db.rules = b.rules;
   indexEdges(b.edges);
   indexThreads();
@@ -349,6 +367,9 @@ export function applyEvents(events: P.ClientEvent[]) {
         break;
       case 'placePrefs':
         setPlacePrefs(ev.prefs);
+        break;
+      case 'categories':
+        setCategories(ev.categories, ev.placeCategories);
         break;
       case 'rules':
         db.rules = ev.rules;

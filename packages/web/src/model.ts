@@ -324,6 +324,15 @@ export function activityOfSpace(id: string): number {
   return memo('act:' + id, () => Math.max(0, ...convsUnder(id).map((c) => c.lastMessageAt ?? 0)));
 }
 
+// ------------------------------------------------------------------ categories
+
+export const memberOf = (x: P.PlaceCategoryView) => x.override ?? (x.p ?? 0) >= 0.5;
+
+export function categoriesOf(kind: 'space' | 'conversation', id: string): P.CategoryView[] {
+  const mine = db.placeCategories.get(`${kind}:${id}`) ?? [];
+  return db.categories.filter((c) => mine.some((x) => x.categoryId === c.id && memberOf(x)));
+}
+
 // ------------------------------------------------------------------ notification level (mirrors hub triage.ts)
 
 const DEFAULT_LEVEL: Record<P.Shape, P.NotifyLevel> = { direct: 'all', group: 'smart', channel: 'mentions', thread: 'mentions', self: 'none' };

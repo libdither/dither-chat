@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { Categorizer, KeywordProvider, OllamaProvider, type CategoryProvider } from './categorize.ts';
 import { applyDemoOverlay, createDemoAccounts, demoFactory } from './demo.ts';
 import { HubServer, mediaSigner } from './server.ts';
 import { Store } from './store.ts';
@@ -63,6 +64,19 @@ async function ntfy(title: string, body: string, conversationId: string) {
   await fetch(url, { method: 'POST', body, headers, signal: AbortSignal.timeout(5000) });
 }
 
+function categoryProvider(): CategoryProvider {
+  const name = process.env.DITHER_CATEGORY_MODEL;
+  if (!name) return new KeywordProvider();
+  try {
+    return new OllamaProvider(process.env.DITHER_OLLAMA_URL ?? 'http://127.0.0.1:11434', name);
+  } catch (e) {
+    console.error(`categories: ${(e as Error).message}; using keywords`);
+    return new KeywordProvider();
+  }
+}
+const categorizer = new Categorizer(store, categoryProvider());
+store.categoryProvider = categorizer.provider.id;
+
 const sup = new Supervisor(store, {
   hubAdapterUrl: `ws://127.0.0.1:${tls ? plainPort : port}/adapter`,
   dataDir,
@@ -79,6 +93,7 @@ const server = new HubServer(store, sup, triage, {
   secret,
   tls,
   plainPort,
+  onCategoriesChanged: (force) => void categorizer.refresh(force),
   onDemoReset: async () => {
     for (const a of store.accounts().filter((a) => a.demo)) {
       await sup.stop(a.id);
@@ -94,6 +109,9 @@ if (flag('demo') && !store.accounts().some((a) => a.demo)) createDemoAccounts(st
 sup.startAll();
 if (store.accounts().some((a) => a.demo)) applyDemoOverlay(store);
 server.start();
+// New servers and renamed channels turn up whenever an adapter says so; unchanged places cost a hash.
+void categorizer.refresh();
+setInterval(() => void categorizer.refresh(), 5 * 60_000);
 console.log(`dither-chat hub on ${tls ? 'https' : 'http'}://${hostname}:${port}${tls ? ` (plain http on ${plainPort}: adapters, CA download)` : ''}  data=${dataDir}`);
 
 const shutdown = async () => {
