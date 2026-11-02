@@ -6,7 +6,7 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 ## What is next, in order
 
 1. **Matrix E2EE on a real account.** Built: reads and writes encrypted rooms, opt-in per account. It has only run against a local homeserver with test clients, never against Element or matrix.org.
-2. **Try it on a real phone.** Install, Web Push, notification clicks and replying from one have only run in desktop Chromium. No code until something breaks, and everything about notifications depends on it.
+2. **Try it on a real phone.** Install, Web Push, notification clicks and replying from one have only run in desktop Chromium. The phone layout and its gestures have run with touch input in a headless phone emulation ([phone.md](phone.md)), never in iOS Safari or on a real keyboard. No code until something breaks, and everything about notifications depends on it.
 3. **Login beyond tailnet membership.** Anyone on the tailnet can read everything, which matters as soon as another person or a shared device joins it.
 4. **Search reach.** Attachment filenames and embed text, then an explicit "Search Discord".
 5. **Calls without media.** Call events on every network, a ringing notification and a link to the network's own app.
@@ -78,6 +78,7 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Feature | Value | Cost | Status | Notes |
 |---|---|---|---|---|
 | Installable PWA over HTTPS | H | M | done | [deploy.md](deploy.md). A private CA remains as the fallback without DNS-01 |
+| Phone layout with Discord's panels and gestures | H | M | done | [phone.md](phone.md): swipe back and to the details, swipe to reply, sheets, back closes layers, image viewer, keyboard, parity audit. Emulated only |
 | Updates reach installed apps | H | L | done | Reload bar, or automatic when the app is out of sight |
 | Public certificate through DNS-01 | M | L | done | Let's Encrypt wildcard through a Caddy on the hub's machine. No per-device step |
 | Login, beyond tailnet membership | M | M | next | Anyone on the tailnet can read everything today |

@@ -51,7 +51,7 @@ not advertised when they are not.
 ## The flow
 
 - **Hover** (desktop): your three most-used emoji, plus the picker.
-- **Long-press** (phone): six most-used emoji, the picker as a bottom sheet, Reply, Copy text.
+- **Long-press** (phone): six most-used emoji, the picker as a bottom sheet, and the rest of the message's actions ([phone.md](phone.md)).
 - **A pill**: tap to join or leave. Right-click or long-press to see who reacted; the hub asks the network only if it has not named everyone yet.
 - **Picker**: reactions on this message, your frequent ones, custom emoji by source, then all of Unicode with search and skin tones. Enter picks the first result. On Matrix, any text works.
 

@@ -27,7 +27,7 @@ adapter (1 per account) ──native-id facts over WS──▶ hub ──▶ PWA
   adapter supervisor. Entry: `packages/hub/src/main.ts`.
 - **`packages/web`** — Preact PWA. Inbox triage board, per-person merged DM
   timelines, Discord/Matrix space trees with threads, folders, notification
-  rules, sandbox live-view (noVNC), mobile layout.
+  rules, sandbox live-view (noVNC), and a phone layout with Discord's panels and gestures.
 - **`packages/adapter-{discord,signal,matrix}`** — one adapter per network.
 
 The ontology has three independent axes — **Shape** (direct / group / channel /
@@ -70,6 +70,7 @@ clients over Tailscale (bind is `0.0.0.0`; the server only answers loopback + ta
 | Signal adapter | done — QR device-link + messaging via signal-cli; a live link needs your phone |
 | Reactions across networks | done: custom emoji, Discord super reactions, Signal's one-per-person, Matrix image packs ([docs/reactions.md](docs/reactions.md)). Sending a super reaction is untested for lack of Nitro |
 | Installable PWA | done: HTTPS through Caddy with a Let's Encrypt wildcard, no per-device step ([docs/deploy.md](docs/deploy.md)), updates reach installed apps. Verified in headless Chromium, not yet on a phone |
+| On a phone | done: the same app, laid out like Discord's: swipe between the lists, the page and its details, swipe to reply, long-press for everything a hover offers, sheets that drag away, back that closes them first, an image viewer, the keyboard and the notch handled. Everything the desktop does is reachable ([docs/phone.md](docs/phone.md)). Verified with touch input in headless Chromium, not yet on a real phone |
 | Arranging the sidebar | done: drag by mouse or touch, folders, pin, hide, stored on the hub |
 | All communities | done: full-screen list with seven orderings, categories by yes/no question (keywords, or a local Ollama model) |
 | Profiles | done: merged identities, shared places, recent messages. Bio and roles are not fetched, and starting a new DM needs an adapter command |
