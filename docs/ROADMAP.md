@@ -14,7 +14,7 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Categories as yes/no questions, with overrides | M | M | done | Keywords by default, local Ollama optional, no hosted provider |
 | Full-text search with filters, snippets, jump to message | H | M | done | FTS5 and a query language. Only searches what the hub has stored |
 | Quick switcher (Ctrl+K) | H | L | done | |
-| Search inside one conversation, from its header | M | L | next | `in:` already does it; needs a button that fills it in |
+| Search inside one conversation, from its header | M | L | done | A button in the header scopes search by conversation id |
 | Server-side history search on the network | M | H | blocked | Discord's search needs its client's private API; Signal has no server history; Matrix cannot search encrypted rooms |
 | Reorder channels inside a server | L | M | later | The network's order is usually what people want |
 

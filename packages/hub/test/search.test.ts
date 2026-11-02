@@ -89,6 +89,10 @@ describe('filters', () => {
   test('in a channel, or anywhere under a community through sections', () => {
     expect(find('borrow in:off-topic')).toEqual(['m3']);
     expect(find('borrow in:"Rust Server"')).toEqual(['m2', 'm1']);
+    // The conversation header scopes by id: a direct chat has no name to match on.
+    const help = store.one<{ id: string }>(`SELECT id FROM conversation WHERE native_id = 'help'`)!.id;
+    expect(find(`borrow in:${help}`)).toEqual(['m2', 'm1']);
+    expect(find(`in:${help}`)).toEqual(['m2', 'm1']);
   });
   test('network, attachment, link, mentions', () => {
     expect(find('network:signal').sort()).toEqual(['m4', 'm5']);

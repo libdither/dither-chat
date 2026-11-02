@@ -1222,7 +1222,7 @@ export class Store {
   private conversationsNamed(name: string): string[] {
     if (/^cnv_/.test(name)) return [name];
     const like = `%${likeEscape(name)}%`;
-    const out = new Set((this.db.query(`SELECT id FROM conversation WHERE name LIKE ? ESCAPE '\\'`).all(like) as Row[]).map((r) => r.id as string));
+    const out = new Set((this.db.query(`SELECT id FROM conversation WHERE name LIKE ? ESCAPE '\\' OR id = ?`).all(like, name) as Row[]).map((r) => r.id as string));
     let frontier = (this.db.query(`SELECT id FROM space WHERE name LIKE ? ESCAPE '\\' OR id = ?`).all(like, name) as Row[]).map((r) => r.id as string);
     const seen = new Set(frontier);
     while (frontier.length) {

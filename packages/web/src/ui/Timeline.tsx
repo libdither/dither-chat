@@ -218,6 +218,9 @@ function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void 
             </button>
           </>
         )}
+        <button class="hdr-btn" title="Search in this conversation" aria-label="Search in this conversation" onClick={() => go({ view: 'search', q: `in:${c.id}` })}>
+          <Icon name="search" size={16} />
+        </button>
         <LevelMenu c={c} />
         <button class={`hdr-btn ${prefs.value.details ? 'on' : ''}`} onClick={() => setPrefs({ details: !prefs.value.details })} title="Details">
           <Icon name="panel" size={16} />

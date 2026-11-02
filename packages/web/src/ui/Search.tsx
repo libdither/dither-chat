@@ -26,6 +26,12 @@ const HAS: [string, string][] = [
   ['reaction', 'Reaction'],
 ];
 
+/** A conversation has no unique name (and a DM has none at all), so the header's button scopes by id. */
+function scopeOf(q: string): P.ConversationView | null {
+  const id = searchOp(q, 'in');
+  return (id && db.conversations.get(id)) || null;
+}
+
 function Filters({ q, set }: { q: string; set: (q: string) => void }) {
   const on = (op: string, val: string) => searchOp(q, op)?.toLowerCase() === val;
   const toggle = (op: string, val: string) => set(setSearchOp(q, op, on(op, val) ? null : val));
@@ -63,7 +69,7 @@ function Filters({ q, set }: { q: string; set: (q: string) => void }) {
       </div>
       <div class="search-fields">
         {field('from', 'From', 'search-people')}
-        {field('in', 'In', 'search-places')}
+        {!scopeOf(q) && field('in', 'In', 'search-places')}
         {date('after', 'After')}
         {date('before', 'Before')}
       </div>
@@ -111,13 +117,16 @@ export function SearchPane({ q }: { q: string }) {
   const [page, setPage] = useState<P.SearchPage | null>(null);
   const [hits, setHits] = useState<P.SearchHit[]>([]);
   const [loading, setLoading] = useState(false);
-  const [draft, setDraft] = useState(q);
+  const scope = scopeOf(q);
+  // The box shows what you typed. A conversation scope is the chip below it, not an opaque id in the text.
+  const typed = scope ? setSearchOp(q, 'in', null) : q;
+  const [draft, setDraft] = useState(typed);
   const box = useRef<HTMLInputElement>(null);
   const set = (next: string) => go({ view: 'search', q: next }, true);
   const absorb = (p: P.SearchPage) => p.identities.forEach((i) => db.identities.set(i.id, i));
-  useEffect(() => setDraft(q), [q]);
+  useEffect(() => setDraft(typed), [q]);
   useEffect(() => {
-    if (!q) box.current?.focus();
+    if (!typed) box.current?.focus();
   }, []);
   useEffect(() => {
     if (!q.trim()) {
@@ -162,13 +171,20 @@ export function SearchPane({ q }: { q: string }) {
           class="search search-main"
           onSubmit={(e) => {
             e.preventDefault();
-            set(draft.trim());
+            set(scope ? setSearchOp(draft.trim(), 'in', scope.id) : draft.trim());
           }}
         >
           <Icon name="search" size={15} />
-          <input ref={box} aria-label="Search" placeholder="Search messages, people and places" value={draft} onInput={(e) => setDraft((e.target as HTMLInputElement).value)} />
+          <input ref={box} aria-label="Search" placeholder={scope ? `Search in ${convTitle(scope)}` : 'Search messages, people and places'} value={draft} onInput={(e) => setDraft((e.target as HTMLInputElement).value)} />
         </form>
       </header>
+      {scope && (
+        <div class="search-scope">
+          <button class="chip-btn on" title="Search everywhere instead" onClick={() => set(setSearchOp(q, 'in', null))}>
+            <NetGlyph network={scope.network} size={11} /> In {scope.shape === 'direct' ? convTitle(scope) : convLabel(scope)} <Icon name="x" size={12} />
+          </button>
+        </div>
+      )}
       <Filters q={q} set={set} />
       <div class="search-results">
         {!q.trim() && (
