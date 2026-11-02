@@ -13,7 +13,7 @@ import { Store } from '../../hub/src/store.ts';
 import type { AccountRow } from '../../hub/src/store.ts';
 import { hubId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
-import { messageEvents, newState, translateDispatch, translateSnapshot } from '../src/ingest.ts';
+import { messageEvents, newState, openedDirect, translateDispatch, translateSnapshot } from '../src/ingest.ts';
 import type { RawSnapshot } from '../src/discord-types.ts';
 
 const GUILD = '200000000000000001';
@@ -212,6 +212,23 @@ describe('hub ingest of adapter facts', () => {
     st.selfId = SELF;
     translateDispatch('CHANNEL_UPDATES', { channels: [{ id: GDM, type: 3, name: 'renamed', recipients: [{ id: ALICE, username: 'alice.chen' }] }] }, st).forEach((ev) => store.ingest(acc, ev));
     expect(store.bootstrap().conversations.find((c) => c.nativeId === GDM)?.name).toBe('renamed');
+  });
+
+  test('a DM opened from here is one conversation with its peer, whatever the gateway then echoes', () => {
+    const st = newState();
+    st.selfId = SELF;
+    const NEW_DM = '600000000000000009';
+    const before = store.bootstrap().conversations.length;
+    openedDirect(FERRIS, { channelId: NEW_DM }, st).forEach((ev) => store.ingest(acc, ev));
+    const opened = () => store.bootstrap().conversations.find((c) => c.nativeId === NEW_DM)!;
+    expect(opened().shape).toBe('direct');
+    expect(opened().participantIds).toContain(hubId('idn', 'discord', FERRIS));
+    translateDispatch('CHANNEL_CREATE', { channel: { id: NEW_DM, type: 1, recipients: [{ id: FERRIS, username: 'ferris', bot: true }] } }, st).forEach((ev) => store.ingest(acc, ev));
+    messageEvents({ id: '700000000000000009', channel_id: NEW_DM, author: { id: SELF, username: 'zyansheep' }, content: 'hi', timestamp: new Date(1_700_000_000_000).toISOString() } as any, st, true).forEach((ev) => store.ingest(acc, ev));
+    expect(store.bootstrap().conversations.length).toBe(before + 1);
+    expect(opened().shape).toBe('direct');
+    expect(opened().lastMessage?.text).toBe('hi');
+    store.flush();
   });
 
   test('backfill targets are DMs plus unread-mention channels only', () => {

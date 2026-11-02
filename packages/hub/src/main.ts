@@ -50,30 +50,40 @@ function triageLater(ids: string[]) {
       store.dirty.messages.set(id, true);
       if (d.decision === 'push') {
         const conversationId = store.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', id)!.conversation_id;
-        deliver(d.title, d.body, conversationId, id, d.reasons);
+        deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id));
       }
     }
   });
 }
 
-function deliver(title: string, body: string, conversationId: string, messageId: string, reasons: string[]) {
+function deliver(title: string, body: string, conversationId: string, messageId: string, reasons: string[], pushExtra: Record<string, unknown> = {}) {
   server.notify({ t: 'notify', messageId, conversationId, title, body, reasons });
   ntfy(title, body, conversationId).catch(() => {});
-  push.notify(title, body, conversationId, messageId).catch((e) => console.error('push failed', e));
+  push.notify(title, body, conversationId, pushExtra).catch((e) => console.error('push failed', e));
+}
+
+/** About the inbox, not a conversation: a click opens the inbox. */
+function deliverDigest(title: string, body: string) {
+  server.notify({ t: 'notify', title, body, reasons: ['Your daily digest'] });
+  ntfy(title, body).catch(() => {});
+  push.notify(title, body, undefined, { inbox: true }).catch((e) => console.error('push failed', e));
 }
 
 setInterval(() => {
+  // First: when both are due, the digest counts what was held and clears it.
+  const digest = triage.takeDailyDigest();
+  if (digest) deliverDigest(digest.title, digest.body);
   const held = triage.takeHeldSummary();
   if (held) deliver(held.title, held.body, held.conversationId, held.messageId, ['Quiet hours ended']);
 }, 60_000);
 
 /** Optional phone push through a self-hosted ntfy topic (off unless DITHER_NTFY_URL is set). */
-async function ntfy(title: string, body: string, conversationId: string) {
+async function ntfy(title: string, body: string, conversationId?: string) {
   const url = process.env.DITHER_NTFY_URL;
   if (!url) return;
   const headers: Record<string, string> = { Title: title, Tags: 'speech_balloon' };
   if (process.env.DITHER_NTFY_TOKEN) headers.Authorization = `Bearer ${process.env.DITHER_NTFY_TOKEN}`;
-  if (process.env.DITHER_PUBLIC_URL) headers.Click = `${process.env.DITHER_PUBLIC_URL}/#/inbox/c/${conversationId}`;
+  if (process.env.DITHER_PUBLIC_URL) headers.Click = `${process.env.DITHER_PUBLIC_URL}/#/inbox${conversationId ? `/c/${conversationId}` : ''}`;
   await fetch(url, { method: 'POST', body, headers, signal: AbortSignal.timeout(5000) });
 }
 

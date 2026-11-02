@@ -5,7 +5,7 @@
  *   /sync loop with a lazy-loading filter, resuming from the stored since token
  *   joined-room state -> SpaceFact / ConversationFact / IdentityFact
  *   timeline events -> MessageFact, reaction, delete, read, typing
- *   hub commands -> send, history, markRead, react, edit, redact, fetchMedia, actions
+ *   hub commands -> send, openDirect, history, markRead, react, edit, redact, fetchMedia, actions
  *
  * Initial sync emits facts with live=false (backfill, no notifications);
  * incremental syncs emit live=true.
@@ -22,12 +22,13 @@ import type { HubLink } from '@dither-chat/protocol/client';
 import { AdapterDb, type ThreadRow, type UtdRow } from './db.ts';
 import type { E2ee, VerificationState } from './e2ee.ts';
 import { markdownToMatrix, snippet } from './format.ts';
+import { openDirect, type DirectHost } from './direct.ts';
 import { enc, MatrixClient, MatrixError } from './http.ts';
 import { encryptedFileOf, isRedacted, mentionsUser, MESSAGE_TYPES, plainTextOf, relationOf, renderContent, replyTarget, type Relation } from './messages.ts';
 import { Directory, Room, STRUCTURAL, type MxEvent } from './rooms.ts';
 
 export const VERSION = '0.1.0';
-const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'threads', 'media', 'sendMedia'];
+const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'threads', 'media', 'sendMedia', 'openDirect'];
 
 const SYNC_TIMEOUT = 30_000;
 const TIMELINE_LIMIT = 50;
@@ -1043,6 +1044,8 @@ export class MatrixAdapter {
     switch (cmd.t) {
       case 'send':
         return cmd.attachments?.length ? this.sendFiles(cmd.conversation, cmd.body, cmd.attachments, cmd.replyTo) : this.send(cmd.conversation, cmd.body, cmd.replyTo);
+      case 'openDirect':
+        return openDirect(this.directHost(), cmd.peer);
       case 'history':
         return this.history(cmd.conversation, cmd.limit);
       case 'markRead':
@@ -1064,6 +1067,20 @@ export class MatrixAdapter {
       case 'shutdown':
         return undefined;
     }
+  }
+
+  private directHost(): DirectHost {
+    return {
+      api: this.api(),
+      dir: this.dir,
+      encrypted: !!this.e2ee,
+      saveDirect: (content) => this.db.set('m.direct', JSON.stringify(content)),
+      identity: (f) => this.emitIdentity(f),
+      announce: (roomId) => {
+        this.emitted.delete(`cnv:${roomId}`);
+        this.emitStructure();
+      },
+    };
   }
 
   private names(roomId: string) {

@@ -3,12 +3,13 @@ import { createHmac } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, discordEmojiUrl, MAX_UPLOAD, NETWORK_META, NETWORKS } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, directTarget, discordEmojiUrl, MAX_UPLOAD, NETWORK_META, NETWORKS, sendBlocker } from '@dither-chat/protocol';
+import { hubId } from '@dither-chat/protocol/ids';
 import type { Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
 import type { PushService } from './push.ts';
 import type { ReadQueue } from './readqueue.ts';
-import { validQuietHours, type Triage } from './triage.ts';
+import { validDailyDigest, validQuietHours, type Triage } from './triage.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
 
 const ACCOUNT_COLORS = ['#F2A541', '#E86A92', '#B794F6', '#FF8C61', '#9BE15D', '#5CC8FF', '#F7D154', '#FF6B6B'];
@@ -327,6 +328,8 @@ export class HubServer {
       if (!conv) return bad('no such conversation', 404);
       const accountId = this.pickAccount(m[1], b.accountId);
       if (!accountId) return bad('no connected account can send here', 409);
+      const refused = this.sendRefusal(m[1], accountId);
+      if (refused) return bad(refused, 409);
       const replyTo = b.replyTo ? s.nativeOf('message', b.replyTo)?.nativeId : undefined;
       const files = this.uploads.get(ids);
       if (!files) return bad('that upload has expired, attach the file again', 410);
@@ -341,6 +344,23 @@ export class HubServer {
       const result = await this.sup.command(accountId, { t: 'send', conversation: conv.nativeId, body: b.body ?? '', replyTo, ...(files.length ? { attachments: files } : {}) }, files.length ? 180_000 : undefined);
       this.uploads.remove(ids);
       return ok({ ok: true, accountId, result });
+    }
+    if (path === '/api/directs' && method === 'POST') {
+      const b = await body<{ accountId?: string; peer?: string }>();
+      const acc = b.accountId ? s.account(b.accountId) : null;
+      if (!acc) return bad('no such account', 404);
+      const name = NETWORK_META[acc.network].name;
+      if (!(JSON.parse(acc.capabilities) as P.Capability[]).includes('openDirect')) return bad(`${acc.label} cannot start conversations on ${name}`, 409);
+      if (!this.sup.online(acc.id)) return bad(`${acc.label} is not connected`, 409);
+      const target = directTarget(acc.network, b.peer ?? '');
+      if ('error' in target) return bad(target.error);
+      if (acc.self_identity === hubId('idn', acc.network, target.peer)) return bad('That is this account');
+      const r = await this.sup.command<P.OpenDirectResult>(acc.id, { t: 'openDirect', peer: target.peer }, 60_000).catch((e: Error) => e);
+      if (r instanceof Error) return bad(r.message, 502);
+      const id = hubId('cnv', acc.network, r.conversation);
+      s.touchConversation(id);
+      this.flush();
+      return ok({ conversation: s.conversationView(id), existed: r.existed, startsAtFirstSend: !!r.startsAtFirstSend } satisfies P.OpenedDirect);
     }
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/read$/)) && method === 'POST') {
       const b = await body<{ upToTs?: number }>();
@@ -517,6 +537,14 @@ export class HubServer {
       }
       return ok({ quietHours: s.quietHours() });
     }
+    if (path === '/api/daily-digest') {
+      if (method === 'PUT') {
+        const b = await body<Partial<P.DailyDigest>>();
+        if (!validDailyDigest(b)) return bad('the digest needs a time and a time zone');
+        this.triage.setDailyDigest({ enabled: !!b.enabled, time: b.time, timezone: b.timezone });
+      }
+      return ok({ dailyDigest: s.dailyDigest() });
+    }
     if (path === '/api/rules' && method === 'PUT') {
       const b = await body<{ scope: P.NotifyScope; target: string | null; level: P.NotifyLevel | null }>();
       s.setRule(b.scope, b.target ?? null, b.level ?? null);
@@ -573,6 +601,21 @@ export class HubServer {
       return new Response(text.slice(-20_000), { headers: { 'content-type': 'text/plain; charset=utf-8' } });
     }
     return bad('not found', 404);
+  }
+
+  private sendRefusal(conversationId: string, accountId: string | null): string | null {
+    const c = this.store.conversationView(conversationId);
+    const acc = accountId ? this.store.account(accountId) : null;
+    return c ? sendBlocker(c, acc ? this.store.accountView(acc) : null) : 'No such conversation';
+  }
+
+  /**
+   * What a push needs for replying from the notification: whether to offer it, and what to quote. The send itself is
+   * re-checked when it arrives, since this can be out of date by then. A DM has no need for a quote.
+   */
+  replyFields(conversationId: string, messageId: string): { canReply?: true; replyTo?: string } {
+    if (this.sendRefusal(conversationId, this.pickAccount(conversationId))) return {};
+    return this.store.conversationView(conversationId)?.shape === 'direct' ? { canReply: true } : { canReply: true, replyTo: messageId };
   }
 
   /** Which account sends into a conversation: the requested one, else the last one you used there, else any connected. */
@@ -651,7 +694,7 @@ export class HubServer {
     return new Response('dither-chat hub is running; the web app has not been built yet (bun run web:build).', { status: 200 });
   }
 
-  /** Queue a notification for connected clients (and ntfy, if configured). */
+  /** Queue a notification for connected clients. */
   notify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
     this.store.dirty.extra.push(ev);
   }

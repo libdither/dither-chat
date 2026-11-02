@@ -30,7 +30,7 @@ import {
   visibleConv,
   type RailEntry,
 } from '../model.ts';
-import { db, go, prefs, rev, route, setPrefs, type Route } from '../state.ts';
+import { db, go, newMessage, prefs, rev, route, setPrefs, type Route } from '../state.ts';
 import { AccountChip, AccountDots, Avatar, Count, NetBadge, NetGlyph, SourceChip, levelIcon, variantIcon } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
@@ -56,6 +56,16 @@ export function homeRoute(c: P.ConversationView): Route {
     if (root) return { view: 'space', space: root.id, conv: c.id };
   }
   return { view: 'groups', conv: c.id };
+}
+
+/** Only there if some connected account can actually start a conversation. */
+function NewMessageButton() {
+  if (![...db.accounts.values()].some((a) => a.status === 'online' && a.capabilities.includes('openDirect'))) return null;
+  return (
+    <button class="icon-btn small side-new" title="New message" aria-label="New message" onClick={() => (newMessage.value = {})}>
+      <Icon name="plus" size={16} />
+    </button>
+  );
 }
 
 function preview(c: P.ConversationView): string {
@@ -153,7 +163,7 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
   return (
     <div class="sidebar-inner">
       <header class="side-head">
-        <h1>Inbox</h1>
+        <h1>Inbox<NewMessageButton /></h1>
         <span class="side-sub">Everything that wants you, from every network</span>
       </header>
       <form
@@ -259,7 +269,7 @@ export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
   return (
     <div class="sidebar-inner">
       <header class="side-head">
-        <h1>People</h1>
+        <h1>People<NewMessageButton /></h1>
         <span class="side-sub">One thread per person, across Signal, Discord and Matrix</span>
       </header>
       <div class="side-scroll">

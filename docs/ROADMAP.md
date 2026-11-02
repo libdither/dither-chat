@@ -6,10 +6,10 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 ## What is next, in order
 
 1. **Matrix E2EE on a real account.** Built: reads and writes encrypted rooms, opt-in per account. It has only run against a local homeserver with test clients, never against Element or matrix.org.
-2. **Try it on a real phone.** Install, Web Push and notification clicks have only run in desktop Chromium. No code until something breaks, and everything about notifications depends on it.
-3. **Start a new DM.** Today a conversation has to exist before you can use it. Needs a new adapter command per network; Signal's cannot be tested without sending from a real account.
-4. **Login beyond tailnet membership.** Anyone on the tailnet can read everything, which matters as soon as another person or a shared device joins it.
-5. **Daily digest as one notification, and replying from a notification.** Both finish what quiet hours and Web Push started.
+2. **Try it on a real phone.** Install, Web Push, notification clicks and replying from one have only run in desktop Chromium. No code until something breaks, and everything about notifications depends on it.
+3. **Login beyond tailnet membership.** Anyone on the tailnet can read everything, which matters as soon as another person or a shared device joins it.
+4. **Search reach.** Attachment filenames and embed text, then an explicit "Search Discord".
+5. **Calls without media.** Call events on every network, a ringing notification and a link to the network's own app.
 
 ## Organising and finding
 
@@ -23,7 +23,11 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Full-text search with filters, snippets, jump to message | H | M | done | FTS5 and a query language. Only searches what the hub has stored |
 | Quick switcher (Ctrl+K) | H | L | done | |
 | Search inside one conversation, from its header | M | L | done | A button in the header scopes search by conversation id |
-| Server-side history search on the network | M | H | blocked | Discord's search needs its client's private API; Signal has no server history; Matrix cannot search encrypted rooms |
+| Search Japanese and other unspaced text | H | L | done | Scans inside words, so unspaced text is found. Slower than the index on a large database; a trigram index would fix that |
+| Index attachment filenames and embed text | M | L | next | Only message bodies are searched today |
+| Search Discord itself, on an explicit click | M | M | next | The guild search route is documented and the hook's client REST can call it. One request per click, never as you type. Needs a live test |
+| Matrix server-side `/search` | M | L | later | Unencrypted rooms only; encrypted ones are indexed here once decrypted |
+| Signal history beyond what the hub received | L | H | blocked | A linked device gets no history |
 | Reorder channels inside a server | L | M | later | The network's order is usually what people want |
 
 ## People
@@ -32,7 +36,7 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 |---|---|---|---|---|
 | Profile page: identities, shared places, recent messages, note | H | M | done | Opens from any author, member or mention |
 | Merge and unmerge, with same-name hints | H | L | done | Hints never merge on their own |
-| Start a new DM from a profile | H | M | next | Needs a new adapter command per network; the profile says so for now |
+| Start a new DM, from a profile or a "New message" dialog | H | M | done | Pick someone known, or type a Matrix ID or Signal number; choose which account when several can. Verified against a local homeserver and the demo adapter. Discord's is only unit-tested against a replica of the client, and Signal's only against a fake signal-cli. New Matrix rooms are unencrypted until E2EE lands |
 | Discord bio, roles, mutual servers | M | M | later | A new adapter command, testable only on a live account |
 | Matrix and Signal extended profiles | L | L | blocked | The protocols hold little more than name and avatar |
 | Presence (online, idle) | M | M | later | Discord and Matrix report it; Signal does not |
@@ -48,7 +52,10 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Mark all read | M | L | done | Everywhere, or per server, folder or person. A paced queue on the hub tells the networks and survives restarts |
 | Typing indicator, outgoing | L | L | later | Shown incoming, not sent |
 | Pinned messages, polls, stickers from the picker | M | M | later | |
-| Voice and video | M | H | blocked | Each network's media stack; out of scope for a text hub |
+| Calls without media: timeline events, ringing push, link out, who is in Discord voice | M | M | next | Signal offers already reach the timeline; hangups and Matrix calls do not. No media stack needed |
+| Matrix calls through Element Call | M | H | later | Standalone is cheapest but is a second login. Self-hosting needs LiveKit and a homeserver you control. MatrixRTC is unmerged |
+| Signal 1:1 voice | L | H | later | signal-cli has it experimentally since 0.14.2, voice only, with no packaged tunnel binary, and would need a WebRTC bridge to the PWA |
+| Discord voice and video | L | H | blocked | A third-party voice client is a banned self-bot. Piping media through the sandbox is fragile and breaks E2EE at the hub, so take the call in Discord's app |
 | Matrix E2EE rooms: read, write, media, edits, reactions | H | H | done | Opt-in per account, with the Rust crypto library. Verified on a local homeserver only, against clients built on the same library and matrix-nio, not Element |
 | Matrix E2EE: old messages through the key backup | H | M | done | Recovery key, Secret Storage key or passphrase. Keys come per session when a message needs them |
 | Matrix E2EE: verifying this device | M | M | done | Emoji with another of your devices, or a Secret Storage key. No QR |
@@ -62,9 +69,9 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Web Push with VAPID, per-device opt-in, test button | H | M | done | Verified through Google's relay on Chromium. iOS and Android not tried on a device |
 | Unread badge on the app icon | M | L | done | Where the platform supports it |
 | ntfy, fully self-hosted | M | L | done | Off unless `DITHER_NTFY_URL` is set |
-| Reply from the notification | M | M | next | Android and desktop allow actions with input; iOS does not |
+| Reply from the notification | M | M | done | A Chromium extension, not in the Notifications standard: `type: 'text'` actions and `event.reply` confirmed in Chromium 155 on desktop, and documented for Android. Firefox has actions but no `reply`, iOS Safari has no actions, so there the notification opens the conversation. Uses the normal send, which now enforces the composer's refusals on the hub. Not offered through ntfy, where it would need an endpoint outside the same-origin check. Never tried with a real typed reply: headless Chromium shows no notification UI |
 | Quiet hours | M | L | done | Holds pushes on a daily schedule, optionally letting starred people through, with one summary when they end |
-| Daily digest delivered as one notification | M | M | next | The digest exists in the inbox only |
+| Daily digest delivered as one notification | M | M | done | Off by default, at a local time. Counts and the busiest places since the last one, and nothing on a day with nothing. Quiet hours hold it until they end, and it replaces their summary. Catches up once after downtime |
 
 ## Hosting
 

@@ -3,7 +3,7 @@ import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { allCommunities, communitiesOf, convLabel, convTitle, netName, people, visibleConv } from '../model.ts';
-import { db, go, type Route } from '../state.ts';
+import { db, go, newMessage, type Route } from '../state.ts';
 import { Avatar, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { homeRoute } from './Sidebar.tsx';
@@ -36,6 +36,7 @@ interface Item {
   icon: any;
   to: Route;
   last: number;
+  act?: () => void;
 }
 
 function items(): Item[] {
@@ -45,6 +46,7 @@ function items(): Item[] {
     { key: 'v:settings', label: 'Settings', sub: 'View', icon: <Icon name="settings" size={18} />, to: { view: 'settings' }, last: 0 },
     { key: 'v:accounts', label: 'Accounts', sub: 'View', icon: <Icon name="power" size={18} />, to: { view: 'accounts' }, last: 0 },
   ];
+  if ([...db.accounts.values()].some((a) => a.status === 'online' && a.capabilities.includes('openDirect'))) out.push({ key: 'a:new', label: 'New message', sub: 'Start a direct conversation', icon: <Icon name="plus" size={18} />, to: { view: 'inbox' }, last: 0, act: () => (newMessage.value = {}) });
   for (const { person, last } of people()) out.push({ key: person.id, label: person.name, sub: 'Person', icon: <Avatar id={person.id} name={person.name} url={person.avatar} size={24} />, to: { view: 'people', person: person.id }, last });
   for (const s of allCommunities()) out.push({ key: s.id, label: s.name, sub: `${netName(s.network)} community`, icon: <Avatar id={s.id} name={s.name} url={s.icon} size={24} square network={s.network} />, to: { view: 'space', space: s.id }, last: 0 });
   for (const f of db.folders) out.push({ key: f.id, label: f.name, sub: 'Folder', icon: <Icon name="folder" size={18} />, to: { view: 'folder', folder: f.id }, last: 0 });
@@ -90,7 +92,8 @@ function SwitcherBox() {
   const pick = (i: Item | undefined) => {
     if (!i) return;
     close();
-    go(i.to);
+    if (i.act) i.act();
+    else go(i.to);
   };
   return (
     <div class="modal-backdrop switcher-back" onClick={(e) => e.target === e.currentTarget && close()}>

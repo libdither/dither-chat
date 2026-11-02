@@ -79,6 +79,8 @@ export function previewText(body: string, kind: string): string {
 const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => '\\' + c);
 
 /** A snippet for a match SQLite's tokens could not see. */
+const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
 function markSnippet(body: string, terms: string[]): string {
   const lower = body.toLowerCase();
   const first = Math.min(...terms.map((t) => lower.indexOf(t.toLowerCase())).filter((i) => i >= 0));
@@ -483,6 +485,12 @@ export class Store {
       }
     }
     if (parent) this.dirty.conversations.add(parent);
+    this.dirty.conversations.add(id);
+  }
+
+  /** A conversation you just opened sorts as recent, though it has no message yet. */
+  touchConversation(id: string, now = Date.now()) {
+    this.db.query('UPDATE conversation SET last_message_at = COALESCE(last_message_at, ?) WHERE id = ?').run(now, id);
     this.dirty.conversations.add(id);
   }
 
@@ -1275,7 +1283,7 @@ export class Store {
       else if (h === 'reaction') where.push('EXISTS (SELECT 1 FROM reaction_tally t WHERE t.message_id = m.id)');
       else (where.push('EXISTS (SELECT 1 FROM attachment a WHERE a.message_id = m.id AND a.kind = ?)'), args.push(h));
     }
-    const offset = q.relevance && cursor ? Number(cursor) || 0 : 0;
+    const offset = q.relevance && cursor ? parseInt(cursor) || 0 : 0;
     if (cursor && !q.relevance) {
       const [ts, rowid] = cursor.split(':').map(Number);
       where.push('(m.ts, m.rowid) < (?, ?)');
@@ -1286,25 +1294,31 @@ export class Store {
     const order = 'm.ts DESC, m.rowid DESC';
     const texts = [...q.phrases, ...q.terms];
 
+    // Tokens miss the middle of a word, and unspaced CJK text is one long token, so a hit in FTS is no proof there are no others.
+    let substring = !!fts && (!!cursor?.endsWith(':s') || texts.some((t) => CJK.test(t)));
+    const without = q.not.map(() => `m.body NOT LIKE ? ESCAPE '\\'`);
+    const withoutArgs = q.not.map((t) => `%${likeEscape(t)}%`);
+
     let rows: Row[] = [];
     let mode: P.SearchPage['mode'] = fts ? 'fulltext' : 'filters';
-    if (fts) {
+    if (fts && !substring) {
       rows = this.db
         .query(
           `SELECT m.*, m.rowid AS rid, snippet(message_fts, 0, char(1), char(2), '…', 28) AS snip FROM message_fts JOIN message m ON m.rowid = message_fts.rowid
            WHERE message_fts MATCH ? AND ${where.join(' AND ')} ORDER BY ${q.relevance ? 'bm25(message_fts), m.ts DESC' : order} LIMIT ? OFFSET ?`,
         )
         .all(fts, ...args, take, offset) as Row[];
-      // Tokens miss the middle of a word, and CJK text is one long token. Better slow than empty.
-      if (!rows.length && !cursor) {
-        mode = 'substring';
-        const like = texts.map(() => `m.body LIKE ? ESCAPE '\\'`);
-        rows = (this.db
-          .query(`SELECT m.*, m.rowid AS rid FROM message m WHERE ${[...like, ...where].join(' AND ')} ORDER BY ${order} LIMIT ?`)
-          .all(...texts.map((t) => `%${likeEscape(t)}%`), ...args, take) as Row[]).map((r) => ({ ...r, snip: markSnippet(r.body, texts) }));
-      }
-    } else if (texts.length || q.not.length || where.length > 1) {
-      rows = (this.db.query(`SELECT m.*, m.rowid AS rid FROM message m WHERE ${where.join(' AND ')} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...args, take, offset) as Row[]).map((r) => ({ ...r, snip: previewText(r.body, r.kind) }));
+      // Better slow than empty.
+      substring = !rows.length && !cursor;
+    } else if (!fts && (q.not.length || where.length > 1)) {
+      rows = (this.db.query(`SELECT m.*, m.rowid AS rid FROM message m WHERE ${[...where, ...without].join(' AND ')} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...args, ...withoutArgs, take, offset) as Row[]).map((r) => ({ ...r, snip: markSnippet(r.body, []) }));
+    }
+    if (substring) {
+      mode = 'substring';
+      const like = texts.map(() => `m.body LIKE ? ESCAPE '\\'`);
+      rows = (this.db
+        .query(`SELECT m.*, m.rowid AS rid FROM message m WHERE ${[...like, ...without, ...where].join(' AND ')} ORDER BY ${order} LIMIT ? OFFSET ?`)
+        .all(...texts.map((t) => `%${likeEscape(t)}%`), ...withoutArgs, ...args, take, offset) as Row[]).map((r) => ({ ...r, snip: markSnippet(r.body, texts) }));
     }
 
     const more = rows.length > limit;
@@ -1319,7 +1333,7 @@ export class Store {
       hits: views.map((m) => ({ message: m, snippet: snips.get(m.id) ?? '' })),
       identities: this.identitiesByIds([...shownIds, ...people]),
       people,
-      next: !more ? null : q.relevance ? String(offset + limit) : `${last.ts}:${last.rid}`,
+      next: !more ? null : (q.relevance ? String(offset + limit) : `${last.ts}:${last.rid}`) + (substring ? ':s' : ''),
       mode,
     };
   }
@@ -1367,6 +1381,24 @@ export class Store {
   setQuietHours = (q: P.QuietHours) => this.setMetaJson('quiet_hours', q);
   quietHeld = () => this.metaJson<{ count: number; conversationId: string; messageId: string }>('quiet_held');
   setQuietHeld = (held: { count: number; conversationId: string; messageId: string } | null) => this.setMetaJson('quiet_held', held);
+  dailyDigest = () => this.metaJson<P.DailyDigest>('daily_digest');
+  setDailyDigest = (d: P.DailyDigest) => this.setMetaJson('daily_digest', d);
+  /** The last daily slot dealt with, and when the digest last started gathering. Kept here so restarts neither repeat nor lose it. */
+  digestState = () => this.metaJson<{ slot: string; since: number }>('daily_digest_state');
+  setDigestState = (st: { slot: string; since: number }) => this.setMetaJson('daily_digest_state', st);
+
+  /** What the inbox's digest section gathered in this window, busiest conversation first. */
+  digestSummary(since: number, until: number): { id: string; count: number }[] {
+    return (
+      this.db
+        .query(
+          `SELECT m.conversation_id AS id, COUNT(*) AS count FROM triage t JOIN message m ON m.id = t.message_id
+           WHERE t.decision = 'digest' AND t.created_at > ? AND t.created_at <= ? AND m.deleted = 0
+           GROUP BY m.conversation_id ORDER BY count DESC, MAX(m.ts) DESC`,
+        )
+        .all(since, until) as { id: string; count: number }[]
+    );
+  }
 
   rules(): P.RuleView[] {
     return (this.db.query('SELECT * FROM notify_rule ORDER BY created_at').all() as Row[]).map((r) => ({

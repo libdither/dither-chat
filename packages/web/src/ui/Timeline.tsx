@@ -1,5 +1,5 @@
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, NETWORK_META } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, NETWORK_META, sendBlocker } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { bytes, clock, dayLabel, fullTime, sameDay } from '../format.ts';
 import { isJumbo, renderMarkdown } from '../markdown.ts';
@@ -815,14 +815,9 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   );
 }
 
-function sendBlocker(c: P.ConversationView, accountId?: string): string | null {
+function composerBlocker(c: P.ConversationView, accountId?: string): string | null {
   const vs = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a);
-  const acc = (accountId && vs.find((a) => a.id === accountId)) || vs.find((a) => a.status === 'online') || vs[0];
-  if (!acc) return 'No account can send here';
-  if (acc.status !== 'online' && acc.status !== 'connecting') return `${netName(acc.network)} · ${acc.label} is ${acc.status === 'attention' ? 'waiting for you (see Accounts)' : acc.status}`;
-  if (c.variant === 'forum') return 'Open a post to reply';
-  if (c.network === 'matrix' && c.encrypted && !acc.capabilities.includes('e2ee')) return 'This room is encrypted. Use "Set up encryption" on the account\'s page (Accounts) to write here';
-  return null;
+  return sendBlocker(c, (accountId && vs.find((a) => a.id === accountId)) || vs.find((a) => a.status === 'online') || vs[0]);
 }
 
 // ------------------------------------------------------------------ panes
@@ -848,6 +843,12 @@ function ForumView({ c }: { c: P.ConversationView }) {
   );
 }
 
+/** Signal's conversations exist only from the first message on, which is worth saying while there is none. */
+function NotStartedNote({ c }: { c: P.ConversationView }) {
+  if (c.network !== 'signal' || c.shape !== 'direct' || c.lastMessage) return null;
+  return <div class="voice-note"><Icon name="info" size={14} /> Nothing exists on Signal yet. {convTitle(c)} sees this conversation when you send the first message.</div>;
+}
+
 export function ConversationPane({ convId, onBack, focus }: { convId: string; onBack?: () => void; focus?: string }) {
   rev.value;
   const c = db.conversations.get(convId);
@@ -867,6 +868,7 @@ export function ConversationPane({ convId, onBack, focus }: { convId: string; on
       ) : (
         <>
           {voice && <div class="voice-note"><Icon name="voice" size={14} /> Voice isn't relayed. This shows the channel's text chat.</div>}
+          <NotStartedNote c={c} />
           <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} merged={false} onReply={setReply} firstUnreadTs={unreadAt} focus={focus} />
         </>
       )}
@@ -875,7 +877,7 @@ export function ConversationPane({ convId, onBack, focus }: { convId: string; on
         placeholder={`Message ${c.shape === 'direct' ? convTitle(c) : convLabel(c)}`}
         reply={reply}
         clearReply={() => setReply(null)}
-        disabledReason={sendBlocker(c, sendAsValue)}
+        disabledReason={composerBlocker(c, sendAsValue)}
         sendAs={
           accounts.length > 1
             ? {
@@ -914,13 +916,14 @@ export function PersonPane({ personId, onBack }: { personId: string; onBack?: ()
   return (
     <section class="pane">
       <PersonHeader person={person} onBack={onBack} />
+      <NotStartedNote c={via} />
       <Timeline tkey={timelineKey('p', personId)} convIds={directs.map((d) => d.id)} merged={directs.length > 1} onReply={setReply} firstUnreadTs={unreadAt} />
       <Composer
         targets={{ convId: via.id }}
         placeholder={`Message ${person.name} on ${netName(via.network)}`}
         reply={reply}
         clearReply={() => setReply(null)}
-        disabledReason={sendBlocker(via)}
+        disabledReason={composerBlocker(via)}
         sendAs={{
           label: `Send to ${person.name} through`,
           value: via.id,

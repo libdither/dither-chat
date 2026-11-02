@@ -13,13 +13,13 @@
 import { readFileSync } from 'node:fs';
 import { linkHub } from '@dither-chat/protocol/client';
 import type * as P from '@dither-chat/protocol';
-import type { BridgeUp, HookCommand, PageState, RawEmoji, RawGuild, RawUser } from './discord-types.ts';
-import { messageEvents, newState, translateDispatch, translateSnapshot, userFacts } from './ingest.ts';
+import type { BridgeUp, HookCommand, PageState, RawChannel, RawEmoji, RawGuild, RawUser } from './discord-types.ts';
+import { messageEvents, newState, openedDirect, translateDispatch, translateSnapshot, userFacts } from './ingest.ts';
 import { customEmoji, DISCORD_EPOCH, guildIconUrl, mapUser } from './map.ts';
 import { BridgeServer, PaceQueue } from './server.ts';
 import { Sandbox, pickDisplay } from './sandbox.ts';
 
-const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'typing', 'threads', 'media', 'liveView', 'sendMedia'];
+const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'typing', 'threads', 'media', 'liveView', 'sendMedia', 'openDirect'];
 const WIDTH = 1280;
 const HEIGHT = 800;
 
@@ -249,6 +249,12 @@ async function onCommand(cmd: P.AdapterCommand): Promise<unknown> {
       const hc: HookCommand = { kind: 'send', channelId: cmd.conversation, content: cmd.body, replyTo: cmd.replyTo, nonce, ...(files?.length ? { files } : {}) };
       const r = await pace.run('send', () => bridge.request<{ nativeId: string | null }>(hc, files?.length ? 170_000 : 30_000));
       return { nativeId: r?.nativeId ?? null };
+    }
+    case 'openDirect': {
+      if (cmd.peer === st.selfId) throw new Error('that is this account');
+      const r = await pace.run('openDirect', () => bridge.request<{ channelId: string; existed: boolean; channel?: RawChannel | null }>({ kind: 'openDirect', userId: cmd.peer }, 30_000));
+      for (const ev of openedDirect(cmd.peer, r, st)) hub.emit(ev);
+      return { conversation: r.channelId, existed: r.existed } satisfies P.OpenDirectResult;
     }
     case 'history': {
       const beforeId = cmd.beforeTs ? tsToSnowflake(cmd.beforeTs) : undefined;

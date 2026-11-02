@@ -756,7 +756,7 @@ class DemoAdapter implements InprocAdapter {
     const firstRun = !existsSync(marker);
     const ago = (min: number) => epoch - min * 60_000;
 
-    emit({ t: 'hello', network: this.network, version: 'demo', capabilities: ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia'] });
+    emit({ t: 'hello', network: this.network, version: 'demo', capabilities: ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect'] });
     emit({ t: 'status', status: 'online', self: { ...this.self, isSelf: true } });
     const pool = this.network === 'discord' ? D : this.network === 'signal' ? S : M;
     for (const i of Object.values(pool)) if (i !== this.self && !(this.network === 'discord' && (i === D.zyan || i === D.zyn))) emit({ t: 'identity', identity: i });
@@ -799,6 +799,26 @@ class DemoAdapter implements InprocAdapter {
     scheduleChatter();
   }
 
+  /** Conversations opened since this adapter started: conversation id -> the peer. */
+  private opened = new Map<string, string>();
+
+  /** The same answers real adapters give, with the Signal rule that nothing exists until the first send. */
+  private openDirect(peer: string): P.OpenDirectResult {
+    const signal = this.network === 'signal';
+    const pool = Object.values(this.network === 'discord' ? D : signal ? S : M);
+    const known = pool.find((i) => i.nativeId === peer || i.handle === peer);
+    if (signal && peer.startsWith('+') && !known && peer.endsWith('00')) throw new Error(`${peer} is not on Signal`);
+    const nativeId = known?.nativeId ?? (signal && peer.startsWith('+') ? `d0000000-0000-4000-8000-${peer.slice(1).padStart(12, '0').slice(-12)}` : peer);
+    const existing = CONVS.find((c) => c.acc.includes(this.key) && c.fact.shape === 'direct' && c.fact.participants?.includes(nativeId));
+    if (existing) return { conversation: existing.fact.nativeId, existed: true, ...(signal ? { startsAtFirstSend: true } : {}) };
+    const conversation = signal ? `dm:${this.self.nativeId}:${nativeId}` : this.network === 'matrix' ? `!direct-${nativeId.replace(/\W/g, '')}:demo` : snow(`dm-${this.key}-${nativeId}`);
+    const existed = this.opened.has(conversation);
+    this.opened.set(conversation, nativeId);
+    if (!known) this.emit({ t: 'identity', identity: { nativeId, handle: peer } });
+    this.emit({ t: 'conversation', conversation: { nativeId: conversation, shape: 'direct', participants: [this.self.nativeId, nativeId], ...(signal ? { encrypted: true } : {}) } });
+    return { conversation, existed, ...(signal ? { startsAtFirstSend: true } : {}) };
+  }
+
   /** A live message from someone else. */
   say(conversation: string, author: P.IdentityFact, body: string) {
     this.emit({
@@ -833,10 +853,11 @@ class DemoAdapter implements InprocAdapter {
         this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), body: cmd.body, replyTo: cmd.replyTo, kind: attachments?.length && !cmd.body ? 'media' : 'text', attachments } });
         reply({ nativeId });
         const conv = CONVS.find((c) => c.fact.nativeId === cmd.conversation);
-        const others = (conv?.fact.participants ?? []).filter((p) => p !== this.self.nativeId);
-        if (conv?.fact.shape === 'direct' && others[0]) {
+        const peer = this.opened.get(cmd.conversation);
+        const others = peer ? [peer] : (conv?.fact.participants ?? []).filter((p) => p !== this.self.nativeId);
+        if ((peer || conv?.fact.shape === 'direct') && others[0]) {
           const lines = REPLIES[others[0]] ?? ['👀', 'got it', 'nice'];
-          const author = Object.values({ ...D, ...S, ...M }).find((i) => i.nativeId === others[0])!;
+          const author = Object.values({ ...D, ...S, ...M }).find((i) => i.nativeId === others[0]) ?? { nativeId: others[0] };
           this.later(3500 + Math.random() * 3000, () => this.say(cmd.conversation, author, lines[Math.floor(Math.random() * lines.length)]));
         } else if (others.length) {
           const who = others[Math.floor(Math.random() * others.length)];
@@ -844,6 +865,13 @@ class DemoAdapter implements InprocAdapter {
         }
         break;
       }
+      case 'openDirect':
+        try {
+          reply(this.openDirect(cmd.peer));
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
+        break;
       case 'react':
         this.emit({ t: 'reaction', conversation: cmd.conversation, message: cmd.message, author: this.self.nativeId, key: cmd.key, remove: cmd.remove, style: cmd.style, ...(cmd.style === 'super' ? { colors: SUPER_COLORS } : {}), emoji: cmd.emoji });
         reply();

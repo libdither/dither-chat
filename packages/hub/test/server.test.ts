@@ -6,6 +6,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { ATTACHMENT_LIMITS, MAX_UPLOAD } from '@dither-chat/protocol';
+import { hubId } from '@dither-chat/protocol/ids';
 import { HubServer, isTailnet, mediaSigner, sameOrigin } from '../src/server.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
@@ -115,6 +116,118 @@ test('deleting a folder forgets its arrangement', () => {
   expect(store.placePrefs().some((p) => p.id === 'f1')).toBe(false);
 });
 
+describe('starting a direct conversation', () => {
+  const sent: any[] = [];
+  let answer: (c: any) => unknown = () => ({});
+  let online = true;
+  const p3 = port + 5;
+  let hub: HubServer;
+  let acc: AccountRow;
+  let bare: AccountRow;
+  const open = (body: unknown, headers: Record<string, string> = {}) => fetch(`http://127.0.0.1:${p3}/api/directs`, { method: 'POST', body: JSON.stringify(body), headers });
+  beforeAll(() => {
+    const sup = { authorize: () => null, online: () => online, command: async (id: string, c: any) => (sent.push([id, c]), answer(c)) } as any;
+    hub = new HubServer(store, sup, new Triage(store), { port: p3, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    hub.start();
+    acc = store.createAccount({ network: 'matrix', label: 'mx', color: '#000', adapter: 'matrix' });
+    bare = store.createAccount({ network: 'matrix', label: 'old', color: '#111', adapter: 'matrix' });
+    store.ingest(acc, { t: 'hello', network: 'matrix', version: '1', capabilities: ['send', 'openDirect'] });
+    store.ingest(acc, { t: 'status', status: 'online', self: { nativeId: '@me:x.org', isSelf: true } });
+    store.ingest(bare, { t: 'hello', network: 'matrix', version: '1', capabilities: ['send'] });
+  });
+  afterAll(() => hub.stop());
+
+  test('the adapter is asked, and its conversation comes back with a person on the other end', async () => {
+    answer = () => {
+      store.ingest(store.account(acc.id)!, { t: 'conversation', conversation: { nativeId: '!new:x.org', shape: 'direct', participants: ['@me:x.org', '@ann:x.org'] } });
+      return { conversation: '!new:x.org', existed: false };
+    };
+    const res = await open({ accountId: acc.id, peer: ' @ann:x.org ' });
+    expect(res.status).toBe(200);
+    const r = (await res.json()) as any;
+    expect(sent.at(-1)).toEqual([acc.id, { t: 'openDirect', peer: '@ann:x.org' }]);
+    expect(r).toMatchObject({ existed: false, startsAtFirstSend: false, conversation: { shape: 'direct', nativeId: '!new:x.org' } });
+    expect(r.conversation.peerPersonId).toBeTruthy();
+    expect(r.conversation.lastMessageAt).toBeGreaterThan(0); // sorts as recent with no message yet
+  });
+  test('what cannot work is refused before any adapter hears of it', async () => {
+    const asked = sent.length;
+    expect((await open({ accountId: 'nope', peer: '@a:x.org' })).status).toBe(404);
+    expect((await open({ accountId: bare.id, peer: '@a:x.org' })).status).toBe(409);
+    expect((await open({ accountId: acc.id, peer: 'not an address' })).status).toBe(400);
+    expect((await open({ accountId: acc.id, peer: '@me:x.org' })).status).toBe(400);
+    online = false;
+    expect((await open({ accountId: acc.id, peer: '@a:x.org' })).status).toBe(409);
+    online = true;
+    expect((await open({ accountId: acc.id, peer: '@a:x.org' }, { origin: 'https://evil.example' })).status).toBe(403);
+    expect(sent.length).toBe(asked);
+  });
+  test("the network's refusal reaches the person who asked", async () => {
+    answer = () => {
+      throw new Error('There is no Matrix user @a:x.org');
+    };
+    const res = await open({ accountId: acc.id, peer: '@a:x.org' });
+    expect(res.status).toBe(502);
+    expect(((await res.json()) as any).error).toContain('no Matrix user');
+  });
+});
+
+describe('what a reply from outside the composer may do', () => {
+  const sent: any[] = [];
+  const p4 = port + 4;
+  let hub: HubServer;
+  let mx: AccountRow;
+  const send = (cnv: string, body: unknown, headers: Record<string, string> = {}) => fetch(`http://127.0.0.1:${p4}/api/conversations/${hubId('cnv', 'matrix', cnv)}/send`, { method: 'POST', body: JSON.stringify(body), headers });
+  beforeAll(() => {
+    const sup = { authorize: () => null, online: () => true, command: async (_: string, c: any) => (sent.push(c), { nativeId: 'x' }) } as any;
+    hub = new HubServer(store, sup, new Triage(store), { port: p4, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    hub.start();
+    mx = store.createAccount({ network: 'matrix', label: 'mxr', color: '#000', adapter: 'matrix' });
+    store.ingest(mx, { t: 'hello', network: 'matrix', version: '1', capabilities: ['send'] });
+    store.ingest(mx, { t: 'status', status: 'online', self: { nativeId: '@r:x.org', isSelf: true } });
+    store.ingest(mx, { t: 'conversation', conversation: { nativeId: '!plain:x.org', shape: 'direct', participants: ['@r:x.org', '@ann:x.org'] } });
+    store.ingest(mx, { t: 'conversation', conversation: { nativeId: '!group:x.org', shape: 'group', name: 'g' } });
+    store.ingest(mx, { t: 'conversation', conversation: { nativeId: '!secret:x.org', shape: 'group', name: 's', encrypted: true } });
+    store.ingest(mx, { t: 'conversation', conversation: { nativeId: '!forum:x.org', shape: 'channel', variant: 'forum', name: 'f' } });
+  });
+  afterAll(() => hub.stop());
+
+  test('nothing goes out plaintext to an encrypted room, and the adapter is never asked', async () => {
+    const before = sent.length;
+    const res = await send('!secret:x.org', { body: 'hi' });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as any).error).toContain('Set up encryption');
+    expect(sent.length).toBe(before);
+  });
+  test('the other composer rules hold here too', async () => {
+    expect((await send('!forum:x.org', { body: 'hi' })).status).toBe(409);
+    store.updateAccount(mx.id, { status: 'attention' });
+    expect((await send('!plain:x.org', { body: 'hi' })).status).toBe(409);
+    store.updateAccount(mx.id, { status: 'online' });
+    expect((await send('!plain:x.org', { body: 'hi' })).status).toBe(200);
+    expect(sent.at(-1)).toMatchObject({ t: 'send', conversation: '!plain:x.org', body: 'hi' });
+  });
+  test('another site cannot use this send, whatever it knows', async () => {
+    const before = sent.length;
+    expect((await send('!plain:x.org', { body: 'hi' }, { origin: 'https://evil.example' })).status).toBe(403);
+    expect(sent.length).toBe(before);
+  });
+  test('a push offers a reply only where a send would pass, and quotes outside DMs', () => {
+    const f = (cnv: string) => hub.replyFields(hubId('cnv', 'matrix', cnv), 'msg_1');
+    expect(f('!plain:x.org')).toEqual({ canReply: true });
+    expect(f('!group:x.org')).toEqual({ canReply: true, replyTo: 'msg_1' });
+    expect(f('!secret:x.org')).toEqual({});
+    expect(f('!forum:x.org')).toEqual({});
+    store.updateAccount(mx.id, { status: 'offline' });
+    expect(f('!plain:x.org')).toEqual({});
+    store.updateAccount(mx.id, { status: 'online' });
+  });
+  test('an adapter that can encrypt lifts the refusal, once it says so', async () => {
+    store.ingest(store.account(mx.id)!, { t: 'hello', network: 'matrix', version: '2', capabilities: ['send', 'e2ee'] });
+    expect((await send('!secret:x.org', { body: 'hi' })).status).toBe(200);
+  });
+});
+
 test('edit and delete go through the account that wrote it, where the network allows', async () => {
   const sent: any[] = [];
   const sup = { authorize: () => null, online: () => true, command: async (id: string, c: any) => (sent.push([id, c]), undefined) } as any;
@@ -170,6 +283,7 @@ describe('sending files', () => {
     hub.start();
     d = store.createAccount({ network: 'discord', label: 'files', color: '#000', adapter: 'discord' });
     store.ingest(d, { t: 'hello', network: 'discord', version: '1', capabilities: ['send', 'sendMedia'] });
+    store.ingest(d, { t: 'status', status: 'online' });
     store.ingest(d, { t: 'conversation', conversation: { nativeId: 'ff', shape: 'group', name: 'f' } });
     store.ingest(d, { t: 'conversation', conversation: { nativeId: 'fails', shape: 'group', name: 'f' } });
   });
@@ -203,6 +317,7 @@ describe('sending files', () => {
   test('an account without the capability is told so', async () => {
     const n = store.createAccount({ network: 'matrix', label: 'plain', color: '#111', adapter: 'matrix' });
     store.ingest(n, { t: 'hello', network: 'matrix', version: '1', capabilities: ['send'] });
+    store.ingest(n, { t: 'status', status: 'online' });
     store.ingest(n, { t: 'conversation', conversation: { nativeId: 'mm', shape: 'group', name: 'm' } });
     const u = await (await up('x')).json();
     const res = await send(cid('mm'), { attachments: [u.id] });

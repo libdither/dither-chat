@@ -142,6 +142,32 @@ describe('staying current', () => {
     expect(b.search('tortoise').hits.map((h) => h.message.nativeId)).toEqual(['old']);
     b.db.close();
   });
+  test('unspaced Japanese is found inside a longer run, even beside a whole-token hit', () => {
+    say(d, 'ja1', 'off', 'bob', 20_000, '明日札幌で会いましょう');
+    say(d, 'ja2', 'off', 'bob', 20_001, '札幌');
+    expect(find('札幌').sort()).toEqual(['ja1', 'ja2']);
+  });
+  test('substring results page without repeating or stopping early', () => {
+    for (let i = 0; i < 7; i++) say(d, `sub${i}`, 'off', 'bob', 30_000 + (i < 4 ? 0 : i), `xxquokkaxx ${i}`);
+    for (const q of ['quokka', 'quokka sort:relevance']) {
+      const seen: string[] = [];
+      let cursor: string | null = null;
+      do {
+        const r = store.search(q, 3, cursor);
+        seen.push(...r.hits.map((h) => h.message.nativeId));
+        cursor = r.next;
+      } while (cursor);
+      expect(new Set(seen).size).toBe(7);
+      expect(seen.length).toBe(7);
+    }
+  });
+  test('-word excludes in substring mode and with nothing else to search for', () => {
+    say(d, 'neg1', 'off', 'bob', 40_000, 'yyocelotyy keep');
+    say(d, 'neg2', 'off', 'bob', 40_001, 'yyocelotyy drop');
+    expect(find('ocelot -drop')).toEqual(['neg1']);
+    expect(find('from:bob -ocelot')).not.toContain('neg1');
+    expect(find('-ocelot')).not.toContain('neg1');
+  });
   test('pages do not repeat or skip', () => {
     for (let i = 0; i < 7; i++) say(d, `p${i}`, 'off', 'bob', 10_000 + (i < 4 ? 0 : i), 'pagination marmot');
     const seen: string[] = [];

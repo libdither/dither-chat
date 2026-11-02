@@ -410,12 +410,12 @@ export function isSelfIdentity(id: string | null | undefined): boolean {
 
 function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
   const r = route.value;
-  const viewing = 'conv' in r && r.conv === ev.conversationId && document.visibilityState === 'visible';
+  const viewing = !!ev.conversationId && 'conv' in r && r.conv === ev.conversationId && document.visibilityState === 'visible';
   if (viewing) return;
   toast({ kind: 'notify', title: ev.title, body: ev.body, conversationId: ev.conversationId, reasons: ev.reasons }, 8000);
   if (!prefs.value.pushEnabled && prefs.value.notifications && 'Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
     const show = (reg?: ServiceWorkerRegistration) => {
-      const opts = { body: ev.body, tag: ev.conversationId, data: { conversationId: ev.conversationId } };
+      const opts = { body: ev.body, tag: ev.conversationId ?? 'dither-digest', data: { conversationId: ev.conversationId, inbox: !ev.conversationId } };
       if (reg) reg.showNotification(ev.title, opts);
       else new Notification(ev.title, opts).onclick = () => go({ view: 'inbox', conv: ev.conversationId });
     };
@@ -556,6 +556,15 @@ export async function send(conversationId: string, body: string, opts: { account
   } catch (e: any) {
     pending.value = pending.value.map((x) => (x.tempId === tempId ? { ...x, failed: e.message } : x));
   }
+}
+
+/** The dialog for starting a direct conversation; open at a known identity when given one. */
+export const newMessage = signal<{ identityId?: string } | null>(null);
+
+export async function openDirect(accountId: string, peer: string): Promise<P.OpenedDirect> {
+  const r = await api<P.OpenedDirect>('/api/directs', { body: { accountId, peer } });
+  if (r.conversation) applyEvents([{ t: 'conversation', conversation: r.conversation }]);
+  return r;
 }
 
 /** Whoever this identity is, as far as the hub knows. */

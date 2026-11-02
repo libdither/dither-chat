@@ -8,6 +8,7 @@ import { DragLayer } from './dnd.tsx';
 import { Icon } from './icons.tsx';
 import { PlaceMenu } from './Organize.tsx';
 import { InboxBoard } from './Inbox.tsx';
+import { NewMessage } from './NewMessage.tsx';
 import { ReactionLayer } from './Reactions.tsx';
 import { ProfilePane } from './Profile.tsx';
 import { Rail } from './Rail.tsx';
@@ -228,6 +229,7 @@ export function App() {
       <DragLayer />
       <PlaceMenu />
       <Switcher />
+      <NewMessage />
     </div>
   );
 }

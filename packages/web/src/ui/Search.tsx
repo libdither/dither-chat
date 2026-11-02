@@ -204,7 +204,7 @@ export function SearchPane({ q }: { q: string }) {
         )}
         {loading && <div class="timeline-loading">Searching…</div>}
         {page && !loading && !visible.length && <Empty icon="search" title="No matching messages">Only what your accounts have fetched is stored here, so older messages may exist on the network.</Empty>}
-        {page?.mode === 'substring' && visible.length > 0 && <p class="set-help search-note">No whole-word match, so these match inside words.</p>}
+        {page?.mode === 'substring' && visible.length > 0 && <p class="set-help search-note">These match inside words, not whole words.</p>}
         {visible.map(({ message: m, snippet }) => {
           const c = db.conversations.get(m.conversationId)!;
           const com = communitiesOf(c)[0];

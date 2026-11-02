@@ -37,9 +37,11 @@ export type Capability =
   | 'media'
   /** Sending files, not just showing them. */
   | 'sendMedia'
-  | 'liveView'
-  /** Reads and writes end-to-end encrypted conversations. */
-  | 'e2ee';
+  /** Reads and writes end-to-end encrypted conversations. Without it the hub refuses writes to encrypted Matrix rooms. */
+  | 'e2ee'
+  /** Starting a direct conversation with someone you have none with. */
+  | 'openDirect'
+  | 'liveView';
 
 // ---------------------------------------------------------------- facts
 
@@ -186,6 +188,16 @@ export interface OutgoingAttachment {
   kind: AttachmentKind;
 }
 
+/** What openDirect answers. The conversation fact has already been emitted when this arrives. */
+export interface OpenDirectResult {
+  /** Native id of the conversation. */
+  conversation: string;
+  /** It was there already, and nothing was created. */
+  existed: boolean;
+  /** Nothing exists on the network until the first message (Signal). */
+  startsAtFirstSend?: boolean;
+}
+
 // ---------------------------------------------------------------- adapter -> hub
 
 export type AdapterEvent =
@@ -222,6 +234,11 @@ export type AdapterEvent =
 export type AdapterCommand =
   /** reply.result: { nativeId } of the sent message if known (the echo still arrives as a message fact). */
   | { t: 'send'; id: string; conversation: string; body: string; replyTo?: string; attachments?: OutgoingAttachment[] }
+  /**
+   * Open or find the direct conversation with this person, without sending anything.
+   * peer: Discord user id | Matrix @user:server | Signal ACI or +phone. reply.result: OpenDirectResult
+   */
+  | { t: 'openDirect'; id: string; peer: string }
   /** Backfill older messages as message facts with live=false; reply.result: { count, done } */
   | { t: 'history'; id: string; conversation: string; beforeTs?: number; limit: number }
   | { t: 'markRead'; id: string; conversation: string; upTo: string }

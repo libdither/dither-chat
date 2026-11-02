@@ -101,6 +101,39 @@ function QuietHoursSettings() {
   );
 }
 
+function DailyDigestSettings() {
+  const [d, setD] = useState<P.DailyDigest | null>(null);
+  useEffect(() => {
+    api<{ dailyDigest: P.DailyDigest | null }>('/api/daily-digest').then((r) => setD(r.dailyDigest ?? { enabled: false, time: '18:00', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }));
+  }, []);
+  if (!d) return null;
+  const save = (patch: Partial<P.DailyDigest>) => {
+    // As with quiet hours: the time means what it means on the device that set it.
+    const next = { ...d, ...patch, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+    setD(next);
+    api('/api/daily-digest', { method: 'PUT', body: next }).catch((e) => toast({ kind: 'error', title: 'Could not save the digest', body: e.message }));
+  };
+  return (
+    <section class="set-block" id="daily-digest">
+      <h3>Daily digest</h3>
+      <label class="toggle-row">
+        <input type="checkbox" checked={d.enabled} onChange={(e) => save({ enabled: (e.target as HTMLInputElement).checked })} />
+        <span>
+          <b>One notification a day about what the digest gathered</b>
+          <small>How many messages and the busiest places since the last one. It opens the inbox. A day with nothing to report sends nothing.</small>
+        </span>
+      </label>
+      <div class="quiet-times">
+        <label class="search-field">
+          <span>At</span>
+          <input class="input" type="time" value={d.time} onChange={(e) => save({ time: (e.target as HTMLInputElement).value })} />
+        </label>
+      </div>
+      <p class="set-help">In {d.timezone}. If quiet hours cover this time, it waits until they end and takes the place of their summary. If the hub was down, one digest catches up.</p>
+    </section>
+  );
+}
+
 export function SettingsPane() {
   rev.value;
   const p = prefs.value;
@@ -187,6 +220,8 @@ export function SettingsPane() {
         <PushSettings />
 
         <QuietHoursSettings />
+
+        <DailyDigestSettings />
 
         <section class="set-block">
           <h3>Keywords that always ping</h3>

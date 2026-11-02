@@ -10,6 +10,9 @@
  * Quiet hours come last: a push decided during them becomes a digest entry with the reason attached, and one
  * summary push goes out when they end.
  *
+ * The daily digest is one notification about what was held back as digest since the last one. Quiet hours hold it
+ * too: it goes out when they end, and takes the place of their summary if both are due.
+ *
  * Every decision is stored with its reasons so the UI can explain it and the
  * user's corrections can become few-shot examples for a local model.
  */
@@ -70,6 +73,22 @@ export function validQuietHours(q: Partial<P.QuietHours>): q is P.QuietHours {
   } catch {
     return false;
   }
+}
+
+/**
+ * The local date of the latest time the digest was due. A later slot than the last one handled means it is due again,
+ * so an hour lost or repeated to daylight saving, or days of downtime, still come to one digest.
+ */
+export function digestSlot(d: Pick<P.DailyDigest, 'time' | 'timezone'>, now: number): string {
+  const { minutes } = localTime(d.timezone, now);
+  const date = (at: number) => new Intl.DateTimeFormat('en-CA', { timeZone: d.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(at);
+  if (minutes >= toMinutes(d.time)) return date(now);
+  // Noon of the local day before: a day of 23 or 25 hours cannot move that across a date.
+  return date(now - (minutes + 12 * 60) * 60_000);
+}
+
+export function validDailyDigest(d: Partial<P.DailyDigest>): d is P.DailyDigest {
+  return validQuietHours({ start: d.time, end: d.time, timezone: d.timezone });
 }
 
 const URGENT = /\b(urgent|asap|emergency|right now|call me|help!|deadline|today|tonight|are you (around|there|free))\b/i;
@@ -210,6 +229,41 @@ export class Triage {
     if (!held || inQuietHours(this.store.quietHours(), now)) return null;
     this.store.setQuietHeld(null);
     return { title: 'Quiet hours are over', body: `${held.count} message${held.count === 1 ? '' : 's'} held for you`, conversationId: held.conversationId, messageId: held.messageId };
+  }
+
+  /** Save the setting. Neither turning it on nor moving the time sends anything at once, or a second one on the same day. */
+  setDailyDigest(d: P.DailyDigest, now = Date.now()) {
+    const s = this.store;
+    const was = s.dailyDigest();
+    const st = s.digestState();
+    s.setDailyDigest(d);
+    if (!d.enabled) return;
+    const slot = digestSlot(d, now);
+    // What piled up while it was off is not news.
+    s.setDigestState({ slot: st && st.slot > slot ? st.slot : slot, since: was?.enabled && st ? st.since : now });
+  }
+
+  /** The digest, if one is due now and has anything to say. Handled once per slot, sent or not, so a crash loses one rather than repeating it. */
+  takeDailyDigest(now = Date.now()): { title: string; body: string } | null {
+    const s = this.store;
+    const d = s.dailyDigest();
+    const st = s.digestState();
+    if (!d?.enabled || !st || inQuietHours(s.quietHours(), now)) return null;
+    const slot = digestSlot(d, now);
+    if (slot <= st.slot) return null;
+    s.setDigestState({ slot, since: now });
+    const convs = s.digestSummary(st.since, now);
+    if (!convs.length) return null;
+    const total = convs.reduce((n, c) => n + c.count, 0);
+    const top = convs.slice(0, 3).map((c) => `${this.placeName(s.one<Row>('SELECT * FROM conversation WHERE id = ?', c.id)!)} (${c.count})`);
+    const more = convs.length - top.length;
+    const held = s.quietHeld();
+    // Held messages are digest entries, so this already counts them: no separate summary on top.
+    if (held) s.setQuietHeld(null);
+    return {
+      title: `Daily digest: ${total} message${total === 1 ? '' : 's'}`,
+      body: `${top.join(', ')}${more ? `, and ${more} more place${more === 1 ? '' : 's'}` : ''}.${held ? ` Includes ${held.count} held by quiet hours.` : ''}`,
+    };
   }
 
   private async decideByRules(messageId: string): Promise<Decision | null> {

@@ -84,6 +84,13 @@ export function translateSnapshot(data: RawSnapshot, st: AdapterState): Snapshot
   return { events, backfillTargets };
 }
 
+/** What the hook answered to openDirect. The gateway's CHANNEL_CREATE says the same again later, harmlessly. */
+export function openedDirect(peer: string, r: { channelId: string; channel?: RawChannel | null }, st: AdapterState): P.AdapterEvent[] {
+  const recipients = r.channel?.recipients?.length ? r.channel.recipients : [{ id: peer } as RawUser];
+  st.known.add(r.channelId);
+  return [...userFacts(recipients, st), { t: 'conversation', conversation: mapPrivateChannel({ id: r.channelId, type: CHANNEL_TYPE.DM, recipients }, st.selfId) }];
+}
+
 /** A message and the people it names. Guild members are not in the snapshot, so this is the only place the hub learns their names. */
 export function messageEvents(m: RawMessage, st: AdapterState, live: boolean): P.AdapterEvent[] {
   const message = mapMessage(m, st.selfId);
