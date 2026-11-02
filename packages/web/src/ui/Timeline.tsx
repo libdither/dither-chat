@@ -50,10 +50,12 @@ import {
   typing,
 } from '../state.ts';
 import { reactionContext, sheetFor } from '../reactions.ts';
-import { AccountChip, AccountDots, Avatar, Empty, Menu, NetBadge, NetGlyph, levelIcon, variantIcon } from './bits.tsx';
+import { AccountChip, AccountDots, Avatar, Empty, Menu, NetBadge, NetGlyph, Skeleton, levelIcon, variantIcon } from './bits.tsx';
 import { HoverReactions, ReactionBar, useLongPress } from './Reactions.tsx';
 import { Icon } from './icons.tsx';
+import { detailsShown, showDetails, swipeReply } from './Pager.ts';
 import { openConv } from './Sidebar.tsx';
+import { viewer, type ViewerImage } from './Viewer.tsx';
 
 
 // ------------------------------------------------------------------ header
@@ -96,7 +98,7 @@ export function LevelMenu({ c }: { c: P.ConversationView }) {
     <Menu
       align="right"
       trigger={(toggle) => (
-        <button class={`hdr-btn level ${eff.level}`} onClick={toggle} title={`Notifications: ${LEVEL_LABEL[eff.level]} (${eff.source})`}>
+        <button class={`hdr-btn level ${eff.level}`} onClick={toggle} title={`Notifications: ${LEVEL_LABEL[eff.level]} (${eff.source})`} aria-label={`Notifications: ${LEVEL_LABEL[eff.level]}`}>
           <Icon name={levelIcon(eff.level)} size={16} />
           <span class="hdr-btn-label">{LEVEL_LABEL[eff.level]}</span>
         </button>
@@ -210,10 +212,10 @@ function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void 
       <div class="conv-head-actions">
         {person && isDirect && (
           <>
-            <button class="hdr-btn" title="Profile" onClick={() => go({ view: 'profile', person: person.id })}>
+            <button class="hdr-btn phone-hide" title="Profile" aria-label="Profile" onClick={() => go({ view: 'profile', person: person.id })}>
               <Icon name="info" size={16} />
             </button>
-            <button class="hdr-btn" title="Open the merged thread with this person" onClick={() => go({ view: 'people', person: person.id })}>
+            <button class="hdr-btn phone-hide" title="Open the merged thread with this person" aria-label="All chats with this person" onClick={() => go({ view: 'people', person: person.id })}>
               <Icon name="user" size={16} />
               <span class="hdr-btn-label">All chats</span>
             </button>
@@ -223,7 +225,7 @@ function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void 
           <Icon name="search" size={16} />
         </button>
         <LevelMenu c={c} />
-        <button class={`hdr-btn ${prefs.value.details ? 'on' : ''}`} onClick={() => setPrefs({ details: !prefs.value.details })} title="Details">
+        <button class={`hdr-btn ${detailsShown() ? 'on' : ''}`} onClick={() => showDetails(!detailsShown())} title="Details" aria-label="Details">
           <Icon name="panel" size={16} />
         </button>
       </div>
@@ -265,7 +267,7 @@ function PersonHeader({ person, onBack }: { person: P.PersonView; onBack?: () =>
         </div>
       </div>
       <div class="conv-head-actions">
-        <button class={`hdr-btn ${prefs.value.details ? 'on' : ''}`} onClick={() => setPrefs({ details: !prefs.value.details })} title="Details">
+        <button class={`hdr-btn ${detailsShown() ? 'on' : ''}`} onClick={() => showDetails(!detailsShown())} title="Details" aria-label="Details">
           <Icon name="panel" size={16} />
         </button>
       </div>
@@ -308,8 +310,16 @@ function Body({ m }: { m: P.MessageView }) {
   }} />;
 }
 
+/** A plain click opens the viewer; a middle or modified click still opens the file in a tab. */
+function openViewer(e: MouseEvent, images: ViewerImage[], index: number) {
+  if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+  e.preventDefault();
+  viewer.value = { images, index };
+}
+
 function Attachments({ m }: { m: P.MessageView }) {
   if (!m.attachments.length) return null;
+  const images = m.attachments.filter((a) => a.kind === 'image');
   return (
     <div class="atts">
       {m.attachments.map((a) => {
@@ -318,7 +328,7 @@ function Attachments({ m }: { m: P.MessageView }) {
           const h = a.height ?? 300;
           const scale = Math.min(1, 400 / w, 300 / h);
           return (
-            <a class="att-img" href={a.url} target="_blank" rel="noreferrer" style={{ width: `${Math.round(w * scale)}px`, aspectRatio: `${w} / ${h}` }}>
+            <a class="att-img" href={a.url} target="_blank" rel="noreferrer" onClick={(e) => openViewer(e, images, images.indexOf(a))} style={{ width: `${Math.round(w * scale)}px`, aspectRatio: `${w} / ${h}` }}>
               <img src={a.url} alt={a.name ?? ''} loading="lazy" />
             </a>
           );
@@ -358,7 +368,9 @@ function Embeds({ m }: { m: P.MessageView }) {
               <div class="msg-body" dangerouslySetInnerHTML={md(f.value)} />
             </div>
           ))}
-          {e.image && <img class="embed-image" src={e.image} alt="" loading="lazy" onError={(ev) => ev.currentTarget.remove()} />}
+          {e.image && (
+            <img class="embed-image" src={e.image} alt="" loading="lazy" onClick={(ev) => openViewer(ev, [{ url: e.image!, name: e.title }], 0)} onError={(ev) => ev.currentTarget.remove()} />
+          )}
         </div>
       ))}
     </div>
@@ -434,7 +446,12 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
     );
 
   return (
-    <div class={`msg ${grouped ? 'grouped' : ''} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''}`} id={`m-${m.id}`} {...press}>
+    <div
+      class={`msg ${grouped ? 'grouped' : ''} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''}`}
+      id={`m-${m.id}`}
+      ref={(el) => void (el && swipeReply.set(el, () => onReply(m)))}
+      {...press}
+    >
       <div class="msg-gutter">
         {grouped ? (
           <span class="msg-time-hover" title={fullTime(m.ts)}>
@@ -495,7 +512,7 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
         <HoverReactions m={m} />
         {canEdit(m) && (
           <button class="icon-btn small" title="Edit" onClick={() => startEditing(m)}>
-            <Icon name="settings" size={14} />
+            <Icon name="pencil" size={14} />
           </button>
         )}
         {canDelete(m) && (
@@ -587,7 +604,8 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
             <Icon name="chevronDown" size={14} /> Older messages. Jump to the latest
           </button>
         )}
-        {t?.loading && <div class="timeline-loading">Loading…</div>}
+        {t?.loading && (msgs.length ? <div class="timeline-loading" role="status"><span class="spinner small" /> Loading older messages</div> : <Skeleton rows={7} kind="msg" />)}
+        {!t && <Skeleton rows={7} kind="msg" />}
         {t && !t.loading && msgs.length === 0 && <Empty icon="groups" title="No messages yet" />}
         {items}
         {mine.map((p) => (
@@ -712,7 +730,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
     >
       {edit && (
         <div class="composer-reply">
-          <Icon name="settings" size={13} /> Editing your message
+          <Icon name="pencil" size={13} /> Editing your message
           <button class="icon-btn small" onClick={cancelEdit} aria-label="Cancel editing">
             <Icon name="x" size={13} />
           </button>
@@ -763,7 +781,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           <Menu
             up
             trigger={(toggle) => (
-              <button class="send-as" onClick={toggle} title={sendAs.label}>
+              <button class="send-as" onClick={toggle} title={sendAs.label} aria-label={sendAs.label}>
                 {sendAs.options.find((o) => o.id === sendAs.value)?.label ?? sendAs.options[0].label}
                 <Icon name="chevronDown" size={12} />
               </button>
@@ -800,8 +818,10 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
             e.preventDefault();
             addFiles(pasted);
           }}
+          enterkeyhint={touchKeyboard() ? 'enter' : 'send'}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+            // A phone keyboard has no Shift+Enter, so there Enter is a new line and the button sends.
+            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && (!touchKeyboard() || e.ctrlKey || e.metaKey)) {
               e.preventDefault();
               submit();
             } else if (e.key === 'Escape') clearReply();
@@ -814,6 +834,8 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
     </div>
   );
 }
+
+const touchKeyboard = () => matchMedia('(pointer: coarse)').matches;
 
 function composerBlocker(c: P.ConversationView, accountId?: string): string | null {
   const vs = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a);

@@ -4,6 +4,7 @@ import type * as P from '@dither-chat/protocol';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { allCommunities, communitiesOf, convLabel, convTitle, netName, people, visibleConv } from '../model.ts';
 import { db, go, newMessage, type Route } from '../state.ts';
+import { useLayer } from '../phone.ts';
 import { Avatar, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { homeRoute } from './Sidebar.tsx';
@@ -80,6 +81,7 @@ function SwitcherBox() {
   const all = useMemo(items, []);
   useEffect(() => box.current?.focus(), []);
   const close = () => (switcherOpen.value = false);
+  useLayer(close);
   const needle = q.trim();
   const found = all
     .map((i) => ({ i, s: fuzzyScore(`${i.label}`, needle) }))

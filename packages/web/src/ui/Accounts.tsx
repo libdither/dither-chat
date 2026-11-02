@@ -1,3 +1,4 @@
+import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, NETWORKS } from '@dither-chat/protocol';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -5,10 +6,14 @@ import { renderSVG } from 'uqr';
 import { ago } from '../format.ts';
 import { netName } from '../model.ts';
 import { api, db, go, prefs, rev, toast } from '../state.ts';
+import { dropLayer, pushLayer, useLayer } from '../phone.ts';
 import { AccountChip, Modal, NetBadge } from './bits.tsx';
 import { Icon } from './icons.tsx';
 
-const STATUS: Record<P.AccountStatus, string> = {
+/** The add-account dialog, opened from the accounts list or from settings. */
+export const addingAccount = signal(false);
+
+export const STATUS: Record<P.AccountStatus, string> = {
   online: 'Online',
   connecting: 'Connecting',
   attention: 'Needs you',
@@ -79,6 +84,11 @@ function LinkCode({ account, at }: { account: P.AccountView; at: P.Attention }) 
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, [full]);
+  useEffect(() => {
+    if (!full) return;
+    const id = pushLayer(() => setFull(false));
+    return () => dropLayer(id);
+  }, [full]);
   const left = at.qrRefreshAt ? Math.max(0, Math.ceil((at.qrRefreshAt - now) / 1000)) : null;
   const timer = !svg ? null : left === null ? 'It refreshes on its own when it expires.' : left > 0 ? `A new code replaces this one in ${left}s.` : 'Getting a new code…';
   const fresh = async () => {
@@ -126,6 +136,7 @@ export function LiveView({ account, onClose }: { account: P.AccountView; onClose
   const [fit, setFit] = useState(true);
   const [text, setText] = useState('');
   const [show, setShow] = useState(false);
+  useLayer(onClose);
 
   /** Put text on the sandbox's clipboard and press Ctrl+V there, into whichever field has focus. */
   const sendText = (value: string, cmdHeld = false) => {

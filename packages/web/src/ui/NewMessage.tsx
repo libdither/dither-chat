@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { directNote, openers } from '../direct.ts';
 import { directsOf, identityName, netName } from '../model.ts';
 import { db, go, newMessage, openDirect } from '../state.ts';
-import { AccountChip, Avatar, NetBadge } from './bits.tsx';
+import { AccountChip, Avatar, NetBadge, useDialog } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { fuzzyScore } from './Switcher.tsx';
 
@@ -50,12 +50,8 @@ function NewMessageBox({ identityId }: { identityId?: string }) {
   const [error, setError] = useState<string | null>(null);
   const box = useRef<HTMLInputElement>(null);
   const close = () => (newMessage.value = null);
+  const dialog = useDialog(close);
   useEffect(() => box.current?.focus(), [target]);
-  useEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === 'Escape' && close();
-    window.addEventListener('keydown', k);
-    return () => window.removeEventListener('keydown', k);
-  }, []);
 
   const needle = q.trim();
   const accounts = [...db.accounts.values()];
@@ -103,8 +99,9 @@ function NewMessageBox({ identityId }: { identityId?: string }) {
 
   const from = target ? openers(accounts, target.network) : [];
   return (
-    <div class="modal-backdrop" onClick={(e) => e.target === e.currentTarget && close()}>
-      <div class="modal new-message" role="dialog" aria-label="New message">
+    <div class="modal-backdrop" onClick={(e) => e.target === e.currentTarget && dialog.dismiss()}>
+      <div class="modal new-message" role="dialog" aria-label="New message" ref={dialog.box}>
+        <div class="sheet-grip" aria-hidden="true" />
         <header class="modal-head">
           <h2>{target ? `Message ${target.name} on ${netName(target.network)}` : 'New message'}</h2>
           <button class="icon-btn small" onClick={close} aria-label="Close">

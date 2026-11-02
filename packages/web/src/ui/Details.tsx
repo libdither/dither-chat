@@ -2,9 +2,10 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { useState } from 'preact/hooks';
 import { LEVEL_LABEL, communitiesOf, convLabel, convTitle, deepLink, directsOf, effectiveLevel, identityName, kindLabel, netName, placeConv, threadsOf } from '../model.ts';
-import { api, db, go, isSelfIdentity, openProfile, prefs, rev, setPrefs, setRule } from '../state.ts';
+import { api, db, go, isSelfIdentity, openProfile, prefs, rev, setRule } from '../state.ts';
 import { AccountChip, Avatar, NetBadge, NetGlyph, levelIcon } from './bits.tsx';
 import { Icon } from './icons.tsx';
+import { showDetails } from './Pager.ts';
 import { openConv } from './Sidebar.tsx';
 
 function Section({ title, children }: { title: string; children: any }) {
@@ -56,11 +57,21 @@ export function ConversationDetails({ convId }: { convId: string }) {
           <h2>{convLabel(c)}</h2>
           <span class="det-kind">{kindLabel(c)}</span>
         </div>
-        <button class="icon-btn" onClick={() => setPrefs({ details: false })} aria-label="Close details">
+        <button class="icon-btn" onClick={() => showDetails(false)} aria-label="Close details">
           <Icon name="x" />
         </button>
       </header>
       <div class="det-scroll">
+        {c.shape === 'direct' && c.peerPersonId && (
+          <div class="btn-row phone-only">
+            <button class="btn ghost small" onClick={() => go({ view: 'profile', person: c.peerPersonId! })}>
+              <Icon name="info" size={13} /> Profile
+            </button>
+            <button class="btn ghost small" onClick={() => go({ view: 'people', person: c.peerPersonId! })}>
+              <Icon name="user" size={13} /> All chats with them
+            </button>
+          </div>
+        )}
         <Section title="Source">
           <dl class="kv">
             <dt>Network</dt>
@@ -210,7 +221,7 @@ export function PersonDetails({ personId }: { personId: string }) {
             Person · {ids.length} {ids.length === 1 ? 'identity' : 'identities'}
           </span>
         </div>
-        <button class="icon-btn" onClick={() => setPrefs({ details: false })} aria-label="Close details">
+        <button class="icon-btn" onClick={() => showDetails(false)} aria-label="Close details">
           <Icon name="x" />
         </button>
       </header>

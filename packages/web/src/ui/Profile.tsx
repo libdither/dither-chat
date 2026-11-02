@@ -5,7 +5,7 @@ import { ago, fullTime } from '../format.ts';
 import { openers } from '../direct.ts';
 import { communitiesOf, convLabel, convTitle, directsOf, identityName, kindLabel, netName, plainBody, rootCommunity } from '../model.ts';
 import { api, db, go, newMessage, openMessage, rev, setRule, toast } from '../state.ts';
-import { Avatar, Empty, NetBadge, NetGlyph } from './bits.tsx';
+import { Avatar, Empty, NetBadge, NetGlyph, Skeleton } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { openConv } from './Sidebar.tsx';
 
@@ -58,7 +58,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     </header>
   );
   if (profile === 'none') return <section class="pane">{head('Profile')}<Empty icon="user" title="Nobody by that id" /></section>;
-  if (!profile) return <section class="pane">{head('Profile')}<div class="timeline-loading">Loading…</div></section>;
+  if (!profile) return <section class="pane">{head('Profile')}<Skeleton rows={4} /></section>;
 
   const ids = (person ? person.identityIds : profile.identityIds).map((id) => db.identities.get(id)).filter((i): i is P.IdentityView => !!i);
   const first = ids[0];

@@ -1,8 +1,9 @@
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { LEVEL_LABEL, netName } from '../model.ts';
-import { api, db, prefs, rev, setPrefs, setRule, toast } from '../state.ts';
-import { NetBadge, NetGlyph, levelIcon } from './bits.tsx';
+import { api, db, go, prefs, rev, setPrefs, setRule, toast } from '../state.ts';
+import { STATUS, addingAccount } from './Accounts.tsx';
+import { AccountChip, NetBadge, NetGlyph, levelIcon } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { PushSettings } from './Push.tsx';
 
@@ -134,6 +135,28 @@ function DailyDigestSettings() {
   );
 }
 
+/** A phone has no rail with an accounts button: they head its settings, the way Discord's "You" tab does. */
+function AccountsBlock() {
+  const accounts = [...db.accounts.values()].filter((a) => prefs.value.showDemo || !a.demo);
+  return (
+    <section class="set-block phone-only" id="set-accounts">
+      <h3>Accounts</h3>
+      {accounts.map((a) => (
+        <button class="link-row acc-link" onClick={() => go({ view: 'accounts', account: a.id })}>
+          <NetBadge network={a.network} size={22} />
+          <AccountChip account={a} small />
+          <span class={`status-pill ${a.status}`}>{STATUS[a.status]}</span>
+          {a.attention && <small class="acc-attention">{a.attention.message}</small>}
+          <Icon name="chevronRight" size={16} class="link-row-go" />
+        </button>
+      ))}
+      <button class="btn ghost small" onClick={() => (addingAccount.value = true)}>
+        <Icon name="plus" size={13} /> Add account
+      </button>
+    </section>
+  );
+}
+
 export function SettingsPane() {
   rev.value;
   const p = prefs.value;
@@ -155,7 +178,9 @@ export function SettingsPane() {
         </div>
       </header>
       <div class="settings-scroll">
-        <section class="set-block">
+        <AccountsBlock />
+
+        <section class="set-block" id="set-defaults">
           <h3>Default notifications</h3>
           <div class="set-rule">
             <span class="set-rule-label">
@@ -182,7 +207,7 @@ export function SettingsPane() {
           </p>
         </section>
 
-        <section class="set-block">
+        <section class="set-block" id="set-triage">
           <h3>Smart triage</h3>
           <label class="toggle-row">
             <input type="checkbox" checked disabled />
@@ -223,7 +248,7 @@ export function SettingsPane() {
 
         <DailyDigestSettings />
 
-        <section class="set-block">
+        <section class="set-block" id="set-keywords">
           <h3>Keywords that always ping</h3>
           <p class="set-help">A message containing one of these pushes no matter where it lands (unless that place is set to Off).</p>
           <div class="keyword-list">
@@ -255,7 +280,7 @@ export function SettingsPane() {
         </section>
 
         {scoped.length > 0 && (
-          <section class="set-block">
+          <section class="set-block" id="set-overrides">
             <h3>Per-place overrides</h3>
             {scoped.map((r) => {
               const l = ruleLabel(r);
@@ -276,7 +301,7 @@ export function SettingsPane() {
           </section>
         )}
 
-        <section class="set-block">
+        <section class="set-block" id="set-appearance">
           <h3>Appearance</h3>
           <div class="set-rule">
             <span class="set-rule-label">Theme</span>

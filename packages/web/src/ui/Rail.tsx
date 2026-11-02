@@ -175,7 +175,7 @@ export function Rail() {
 
   return (
     <nav class="rail" aria-label="Places">
-      <RailItem active={is((r) => r.view === 'inbox')} title="Inbox" badge={priorityCount} onClick={() => go({ view: 'inbox' })}>
+      <RailItem active={is((r) => r.view === 'inbox' || r.view === 'triage')} title="Inbox" badge={priorityCount} onClick={() => go({ view: 'inbox' })}>
         <span class="rail-logo">
           <DitherMark size={26} />
         </span>
@@ -198,14 +198,14 @@ export function Rail() {
           <Icon name="grid" size={20} />
         </RailItem>
       </div>
-      <div class="rail-sep" />
-      <RailItem active={is((r) => r.view === 'accounts')} title="Accounts and connections" onClick={() => go({ view: 'accounts' })}>
+      <div class="rail-sep rail-foot" />
+      <RailItem class="rail-foot" active={is((r) => r.view === 'accounts')} title="Accounts and connections" onClick={() => go({ view: 'accounts' })}>
         <span class="rail-acc">
           <Icon name="power" size={20} />
           {attention && <span class="rail-alert" />}
         </span>
       </RailItem>
-      <RailItem active={is((r) => r.view === 'settings')} title="Notification rules and settings" onClick={() => go({ view: 'settings' })}>
+      <RailItem class="rail-foot" active={is((r) => r.view === 'settings')} title="Notification rules and settings" onClick={() => go({ view: 'settings' })}>
         <Icon name="settings" size={20} />
       </RailItem>
     </nav>

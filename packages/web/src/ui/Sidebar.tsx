@@ -34,6 +34,7 @@ import { db, go, newMessage, prefs, rev, route, setPrefs, type Route } from '../
 import { AccountChip, AccountDots, Avatar, Count, NetBadge, NetGlyph, SourceChip, levelIcon, variantIcon } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
+import { phone } from '../phone.ts';
 import { dropPlace, openPlaceMenu, placeLabel } from './Organize.tsx';
 
 // ------------------------------------------------------------------ navigation helpers
@@ -174,7 +175,7 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
         }}
       >
         <Icon name="search" size={15} />
-        <input placeholder="Search all messages (Ctrl+K to jump)" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} />
+        <input placeholder={phone.value ? 'Search all messages' : 'Search all messages (Ctrl+K to jump)'} enterkeyhint="search" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} />
       </form>
       <div class="side-scroll">
         {s.attention.length > 0 && (

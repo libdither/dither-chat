@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'preact/hooks';
-import { sumUnread, visibleConv } from '../model.ts';
-import { api, connected, db, go, loaded, prefs, readProgress, rev, route, toasts, type Route } from '../state.ts';
-import { AccountPane, AccountsSidebar, AddAccount } from './Accounts.tsx';
+import { searchOp } from '@dither-chat/protocol';
+import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
+import { inboxSections, sumUnread, visibleConv } from '../model.ts';
+import { api, back, connected, db, go, loaded, prefs, previousRoute, readProgress, refresh, rev, route, type Route } from '../state.ts';
+import { dropLayer, phone, pushLayer } from '../phone.ts';
+import { AccountPane, AccountsSidebar, AddAccount, addingAccount } from './Accounts.tsx';
 import { ConversationDetails, PersonDetails } from './Details.tsx';
 import { DirectoryPane } from './Directory.tsx';
 import { DragLayer } from './dnd.tsx';
@@ -18,17 +20,22 @@ import { FolderSidebar, GroupsSidebar, InboxSidebar, PeopleSidebar, SpaceSidebar
 import { ConversationPane, PersonPane } from './Timeline.tsx';
 import { Switcher } from './Switcher.tsx';
 import { Toasts } from './Toasts.tsx';
+import { Viewer } from './Viewer.tsx';
+import { PEEK, panel, usePager, type Rest } from './Pager.ts';
+import { Skeleton } from './bits.tsx';
 import { applyUpdate, updateReady } from '../pwa.ts';
 
 /** What the center pane shows, and whether a details pane is available. */
 function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'conv' | 'person'; id: string } } {
   switch (r.view) {
+    case 'triage':
+      return { pane: <InboxBoard /> };
     case 'inbox':
       return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <InboxBoard /> };
     case 'people':
       return r.person ? { pane: <PersonPane personId={r.person} onBack={back} />, detail: { kind: 'person', id: r.person } } : { pane: <WelcomePane view="people" /> };
     case 'profile':
-      return { pane: <ProfilePane personId={r.person} identityId={r.identity} onBack={() => history.back()} /> };
+      return { pane: <ProfilePane personId={r.person} identityId={r.identity} onBack={back} /> };
     case 'groups':
       return r.conv ? { pane: <ConversationPane convId={r.conv} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <WelcomePane view="groups" /> };
     case 'space':
@@ -54,6 +61,8 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
 
 function sidebarFor(r: Route, onAdd: () => void) {
   switch (r.view) {
+    case 'triage':
+      return <InboxSidebar />;
     case 'inbox':
       return <InboxSidebar activeConv={r.conv} />;
     case 'people':
@@ -88,16 +97,20 @@ function SettingsNav() {
       </header>
       <div class="side-scroll">
         {[
-          ['Default notifications', 'bell'],
-          ['Smart triage', 'sparkles'],
-          ['Keywords', 'at'],
-          ['Per-place overrides', 'layers'],
-          ['Appearance', 'eye'],
-        ].map(([t, i]) => (
-          <div class="settings-nav-item">
+          ['Default notifications', 'bell', 'set-defaults'],
+          ['Smart triage', 'sparkles', 'set-triage'],
+          ['Push and quiet hours', 'bellOff', 'push'],
+          ['Keywords', 'at', 'set-keywords'],
+          ['Per-place overrides', 'layers', 'set-overrides'],
+          ['Appearance', 'eye', 'set-appearance'],
+        ].map(([t, i, id]) => (
+          <button class="settings-nav-item" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
             <Icon name={i} size={16} /> {t}
-          </div>
+          </button>
         ))}
+        <button class="settings-nav-item" onClick={() => go({ view: 'accounts' })}>
+          <Icon name="power" size={16} /> Accounts
+        </button>
       </div>
     </>
   );
@@ -123,13 +136,92 @@ function WelcomePane({ view }: { view: string }) {
   );
 }
 
-const MOBILE_TABS: { view: Route['view']; label: string; icon: string; route: Route }[] = [
-  { view: 'inbox', label: 'Inbox', icon: 'inbox', route: { view: 'inbox' } },
-  { view: 'people', label: 'People', icon: 'users', route: { view: 'people' } },
-  { view: 'groups', label: 'Groups', icon: 'groups', route: { view: 'groups' } },
-  { view: 'spaces', label: 'Spaces', icon: 'layers', route: { view: 'spaces' } },
-  { view: 'settings', label: 'More', icon: 'settings', route: { view: 'settings' } },
-];
+// ------------------------------------------------------------------ the phone's layout
+
+/** A page that slides in over the lists, with somewhere to go back to. */
+function isDetail(r: Route): boolean {
+  switch (r.view) {
+    case 'search':
+      // Searching one conversation is a page of that conversation, with the way back to it.
+      return !!r.conv || !!searchOp(r.q, 'in');
+    case 'inbox':
+    case 'groups':
+    case 'space':
+      return !!r.conv;
+    case 'people':
+      return !!r.person;
+    case 'folder':
+      return !!(r.conv || r.person);
+    case 'accounts':
+      return !!r.account;
+    case 'profile':
+    case 'directory':
+      return true;
+    default:
+      return false;
+  }
+}
+/** A tab's own page: full screen, with the tab bar under it. */
+const isTabRoot = (r: Route) => r.view === 'triage' || r.view === 'settings' || (r.view === 'search' && !isDetail(r));
+/** The list a page belongs to. The list shows that page peeking at its edge. */
+function listOf(r: Route): string {
+  if (r.view === 'space') return `space:${r.space}`;
+  if (r.view === 'folder') return `folder:${r.folder}`;
+  if (r.view === 'profile') return 'people';
+  if (r.view === 'directory') return 'spaces';
+  return r.view;
+}
+/** Where the back button goes from a page when there is no history to go back through. */
+function listRoute(r: Route): Route {
+  switch (r.view) {
+    case 'space':
+      return { view: 'space', space: r.space };
+    case 'folder':
+      return { view: 'folder', folder: r.folder };
+    case 'search':
+      return { view: 'search', q: r.conv ? r.q : '' };
+    case 'profile':
+      return { view: 'people' };
+    case 'directory':
+      return { view: 'spaces' };
+    default:
+      return { view: r.view } as Route;
+  }
+}
+
+type Tab = 'home' | 'triage' | 'search' | 'you';
+const tabOf = (r: Route): Tab => (r.view === 'triage' ? 'triage' : r.view === 'search' ? 'search' : r.view === 'settings' || r.view === 'accounts' ? 'you' : 'home');
+
+/** The last page and the last list on the Home tab, which a phone keeps while you look elsewhere. */
+let lastDetail: Route | null = null;
+let lastHome: Route = { view: 'inbox' };
+
+function TabBar({ r }: { r: Route }) {
+  const tab = tabOf(r);
+  const inb = inboxSections();
+  const all = sumUnread([...db.conversations.values()].filter(visibleConv)).badge;
+  const attention = [...db.accounts.values()].some((a) => a.attention);
+  const tabs: { id: Tab; label: string; icon: string; to: () => Route; badge?: number; dot?: boolean }[] = [
+    { id: 'home', label: 'Home', icon: 'home', to: () => lastHome, badge: all },
+    { id: 'triage', label: 'Triage', icon: 'bell', to: () => ({ view: 'triage' }), badge: inb.priority.length + inb.attention.length },
+    { id: 'search', label: 'Search', icon: 'search', to: () => ({ view: 'search', q: '' }) },
+    { id: 'you', label: 'You', icon: 'user', to: () => ({ view: 'settings' }), dot: attention },
+  ];
+  return (
+    <nav class="tabbar" aria-label="Sections">
+      {tabs.map((t) => (
+        <button class={`tab ${tab === t.id ? 'active' : ''}`} aria-current={tab === t.id ? 'page' : undefined} onClick={() => go(t.to())}>
+          <span class="tab-icon">
+            <Icon name={t.icon} size={22} />
+            {!!t.badge && <span class="tab-badge">{t.badge > 99 ? '99+' : t.badge}</span>}
+            {t.dot && <span class="tab-dot" />}
+          </span>
+          <span>{t.label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
 
 function useTheme() {
   const theme = prefs.value.theme;
@@ -150,7 +242,7 @@ function useTheme() {
 export function App() {
   rev.value;
   const r = route.value;
-  const [adding, setAdding] = useState(false);
+  const p = phone.value;
   useTheme();
   // The installed app's icon shows what wants you, where the platform has badges.
   const badge = loaded.value ? sumUnread([...db.conversations.values()].filter(visibleConv)).badge : 0;
@@ -161,37 +253,67 @@ export function App() {
   useEffect(() => {
     api<{ pending: number }>('/api/read-all').then((p) => (readProgress.value = { pending: p.pending, failed: 0 })).catch(() => {});
   }, []);
-  const backRoute: Route =
-    r.view === 'space'
-      ? { view: 'space', space: r.space }
-      : r.view === 'folder'
-        ? { view: 'folder', folder: r.folder }
-        : r.view === 'search'
-          ? { view: 'search', q: r.q }
-          : r.view === 'accounts'
-            ? { view: 'accounts' }
-            : r.view === 'people'
-              ? { view: 'people' }
-              : { view: r.view } as Route;
-  const { pane, detail } = centerFor(r, () => go(backRoute));
-  const showDetails = prefs.value.details && detail;
-  // On mobile, the center pane replaces the list when something is open.
-  const convOpen = 'conv' in r && r.conv !== undefined;
-  const personOpen = r.view === 'people' && r.person !== undefined;
-  const accountOpen = r.view === 'accounts' && r.account !== undefined;
-  const full = r.view === 'directory';
-  const detailOpen = r.view === 'settings' || r.view === 'profile' || convOpen || personOpen || accountOpen || r.view === 'search' || (r.view === 'folder' && (r.conv || r.person));
+
+  // On a phone the page you are on is a card over the lists; see Pager.ts.
+  const detailRoute = isDetail(r);
+  const tabRoot = isTabRoot(r);
+  if (detailRoute) lastDetail = r;
+  else if (!tabRoot && tabOf(r) === 'home') lastHome = r;
+  const shown = p && !detailRoute && !tabRoot && lastDetail ? lastDetail : r;
+  const { pane, detail } = centerFor(shown, () => back(listRoute(shown)));
+  const details = p ? panel.value === 'details' && !!detail : prefs.value.details && !!detail;
+  const rest: Rest = !p ? 'open' : detailRoute || tabRoot ? (details ? 'details' : 'open') : lastDetail && listOf(lastDetail) === listOf(r) ? 'peek' : 'away';
+  const after = previousRoute() ?? listRoute(r);
+  const backRest: Rest | null = !detailRoute ? null : isDetail(after) || isTabRoot(after) ? 'open' : listOf(after) === listOf(r) ? 'peek' : 'away';
+
+  // The details panel is a layer: back closes it before it leaves the page.
+  const detailsOpen = p && panel.value === 'details';
+  useLayoutEffect(() => {
+    if (!detailsOpen) return;
+    const id = pushLayer(() => (panel.value = 'main'));
+    return () => dropLayer(id);
+  }, [detailsOpen]);
+  useEffect(() => {
+    if (!detail && panel.value === 'details') panel.value = 'main';
+  });
+
+  const app = useRef<HTMLDivElement>(null);
+  const card = useRef<HTMLElement>(null);
+  const pull = useRef<HTMLDivElement>(null);
+  usePager(app, card, pull, {
+    ready: loaded.value,
+    rest,
+    back: backRest,
+    details: !!detail,
+    onBack: () => back(listRoute(r)),
+    onDetails: (open) => (panel.value = open ? 'details' : 'main'),
+    onForward: () => lastDetail && go(lastDetail),
+    onRefresh: refresh,
+  });
 
   if (!loaded.value)
     return (
       <div class="loading-screen">
-        <div class="spinner" />
-        <span>{connected.value ? 'Loading your conversations…' : 'Connecting to the hub…'}</span>
+        <div class="loading-skeleton" aria-hidden="true">
+          <Skeleton rows={9} />
+        </div>
+        <div class="loading-note">
+          <div class="spinner" />
+          <span>{connected.value ? 'Loading your conversations…' : 'Connecting to the hub…'}</span>
+        </div>
       </div>
     );
 
+  const full = r.view === 'directory';
+  const tabs = p && (tabRoot || rest === 'peek' || rest === 'away');
+  // While a page is open or peeking, the list beside it leaves room for its edge.
+  const narrow = p && (detailRoute || rest === 'peek');
   return (
-    <div class={`app ${detailOpen ? 'detail-open' : ''} ${showDetails ? 'with-details' : ''} ${full ? 'full' : ''}`}>
+    <div
+      ref={app}
+      class={`app ${p ? `phone rest-${rest}` : ''} ${!p && details ? 'with-details' : ''} ${full ? 'full' : ''} ${tabs ? 'tabs' : ''} ${tabRoot ? 'tab-root' : ''} ${narrow ? 'narrow' : ''}`}
+      style={{ '--peek': `${PEEK}px` } as any}
+    >
       {!connected.value && (
         <div class="reconnect">
           <span class="dot" /> Reconnecting to the hub…
@@ -212,24 +334,32 @@ export function App() {
         </div>
       )}
       <Rail />
-      <aside class="sidebar">{sidebarFor(r, () => setAdding(true))}</aside>
-      <main class="center">{pane}</main>
-      {showDetails && <>{detail!.kind === 'conv' ? <ConversationDetails convId={detail!.id} /> : <PersonDetails personId={detail!.id} />}</>}
-      <nav class="tabbar">
-        {MOBILE_TABS.map((t) => (
-          <button class={`tab ${r.view === t.view || (t.view === 'spaces' && (r.view === 'space' || r.view === 'directory')) ? 'active' : ''}`} onClick={() => go(t.route)}>
-            <Icon name={t.icon} size={20} />
-            <span>{t.label}</span>
-          </button>
-        ))}
-      </nav>
-      {adding && <AddAccount onClose={() => setAdding(false)} />}
+      <aside class="sidebar">{sidebarFor(r, () => (addingAccount.value = true))}</aside>
+      <main class="center" ref={card} inert={rest === 'away'}>
+        {pane}
+        {p && (rest === 'peek' || rest === 'details') && (
+          <button
+            class="card-shield"
+            aria-label={rest === 'peek' ? 'Back to the conversation' : 'Close the details'}
+            onClick={() => (rest === 'peek' ? lastDetail && go(lastDetail) : (panel.value = 'main'))}
+          />
+        )}
+      </main>
+      {(p ? !!detail : details) && <>{detail!.kind === 'conv' ? <ConversationDetails convId={detail!.id} /> : <PersonDetails personId={detail!.id} />}</>}
+      {p && <TabBar r={r} />}
+      {p && (
+        <div class="ptr" ref={pull} aria-hidden="true">
+          <Icon name="refresh" size={18} />
+        </div>
+      )}
+      {addingAccount.value && <AddAccount onClose={() => (addingAccount.value = false)} />}
       <ReactionLayer />
       <Toasts />
       <DragLayer />
       <PlaceMenu />
       <Switcher />
       <NewMessage />
+      <Viewer />
     </div>
   );
 }

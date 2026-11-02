@@ -2,11 +2,15 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, REACTION_RULES } from '@dither-chat/protocol';
 import { loadEmoji, searchEmoji, SKIN_TONES, skinOf, type EmojiCategory } from '../emoji.ts';
-import { authorName, plainBody } from '../model.ts';
+import { fullTime } from '../format.ts';
+import { authorName, convTitle, netName, plainBody } from '../model.ts';
 import { hasMine, pickerFor, quickReactions, reactionContext, reactionScope, reactorsFor, reactorsLabel, sheetFor, toggleReaction, type Picked } from '../reactions.ts';
-import { canDelete, canEdit, deleteMessage, startEditing, api, db, isSelfIdentity, prefs, rev, setPrefs, toast } from '../state.ts';
+import { canDelete, canEdit, deleteMessage, startEditing, api, db, feedback, isSelfIdentity, openProfile, prefs, rev, setPrefs, toast } from '../state.ts';
+import { haptic, useLayer } from '../phone.ts';
 import { Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';
+import { Sheet } from './Sheet.tsx';
+import { openConv } from './Sidebar.tsx';
 
 const isSheet = () => matchMedia('(max-width: 820px), (pointer: coarse)').matches;
 
@@ -17,28 +21,41 @@ export function Glyph({ k, emoji, size = 18 }: { k: string; emoji?: P.CustomEmoj
   return <span class="emoji-text">{custom ? `:${custom[1]}:` : k}</span>;
 }
 
-/** Long-press, for touch. Scrolling or lifting the finger cancels it. */
+/** Long-press, for touch. Scrolling or lifting the finger cancels it; once it fires, the click that lifting makes does not count. */
 export function useLongPress(onPress: (e: PointerEvent) => void, ms = 420) {
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const start = useRef<{ x: number; y: number } | null>(null);
+  const fired = useRef(false);
   const cancel = () => {
     clearTimeout(timer.current);
     start.current = null;
+  };
+  const swallow = (e: Event) => {
+    e.stopPropagation();
+    e.preventDefault();
   };
   return {
     onPointerDown: (e: PointerEvent) => {
       if (e.pointerType !== 'touch') return;
       start.current = { x: e.clientX, y: e.clientY };
+      fired.current = false;
       timer.current = setTimeout(() => {
         start.current = null;
-        navigator.vibrate?.(10);
+        fired.current = true;
+        haptic(10);
         onPress(e);
       }, ms);
     },
     onPointerMove: (e: PointerEvent) => {
       if (start.current && Math.hypot(e.clientX - start.current.x, e.clientY - start.current.y) > 10) cancel();
     },
-    onPointerUp: cancel,
+    onPointerUp: () => {
+      cancel();
+      if (!fired.current) return;
+      fired.current = false;
+      window.addEventListener('click', swallow, { capture: true, once: true });
+      setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 400);
+    },
     onPointerCancel: cancel,
     onContextMenu: (e: Event) => {
       if (matchMedia('(pointer: coarse)').matches) e.preventDefault();
@@ -234,7 +251,7 @@ function Picker({ m, anchor, onClose }: { m: P.MessageView; anchor: DOMRect | nu
               placeholder={rules.freeText ? 'Search, or type any text' : 'Search emoji'}
               onInput={(e) => setQ((e.target as HTMLInputElement).value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && first && box.current) pick(first, box.current);
+                if (e.key === 'Enter' && first) pick(first, e.currentTarget as HTMLElement);
               }}
             />
           </label>
@@ -345,15 +362,26 @@ function Section({ title, icon, children }: { title: string; icon?: string | nul
 }
 
 function Shell({ sheet, box, onClose, children }: { sheet: boolean; box: { current: HTMLDivElement | null }; onClose: () => void; children: any }) {
+  if (sheet)
+    return (
+      <Sheet onClose={onClose} label="Add a reaction" class="emoji-picker" tall>
+        {children}
+      </Sheet>
+    );
+  return <Popover box={box} onClose={onClose} class="emoji-picker" label="Add a reaction">{children}</Popover>;
+}
+
+/** Desktop: floats beside what opened it. */
+function Popover({ box, onClose, class: cls, label, children }: { box: { current: HTMLDivElement | null }; onClose: () => void; class: string; label?: string; children: any }) {
+  useLayer(onClose);
   useEffect(() => {
     const h = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
   }, []);
   return (
-    <div class={`ep-layer ${sheet ? 'sheet' : ''}`} onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div class="emoji-picker" ref={box} role="dialog" aria-label="Add a reaction">
-        {sheet && <div class="sheet-grip" />}
+    <div class="ep-layer" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div class={cls} ref={box} role="dialog" aria-label={label}>
         {children}
       </div>
     </div>
@@ -379,123 +407,142 @@ function Reactors({ m, reactionKey, style, anchor, onClose }: { m: P.MessageView
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    document.addEventListener('keydown', h);
-    return () => document.removeEventListener('keydown', h);
-  }, []);
+  const sheet = isSheet();
   useLayoutEffect(() => {
     const el = box.current;
-    if (!el) return;
+    if (!el || sheet) return;
     const { width: w, height: h } = el.getBoundingClientRect();
     el.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, anchor.left))}px`;
     el.style.top = `${anchor.top - 8 >= h ? anchor.top - h - 6 : Math.min(innerHeight - h - 8, anchor.bottom + 6)}px`;
   });
   const unknown = count - ids.length;
-  return (
-    <div class="ep-layer" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div class="reactors" ref={box} role="dialog">
-        <h4>
-          {r && <Glyph k={r.key} emoji={r.emoji} size={18} />}
-          {style === 'super' && <Icon name="zap" size={12} />}
-          <span>{count === 1 ? '1 reaction' : `${count} reactions`}</span>
-        </h4>
-        <div class="reactors-list">
-          {[...ids.filter(isSelfIdentity), ...ids.filter((i) => !isSelfIdentity(i))].map((id) => {
-            const name = isSelfIdentity(id) ? 'You' : authorName(id);
-            return (
-              <div class="reactor">
-                <Avatar id={id} name={name} url={db.identities.get(id)?.avatar} size={24} />
-                <span>{name}</span>
-              </div>
-            );
-          })}
-          {loading && <div class="reactor-more">Asking the network…</div>}
-          {!loading && unknown > 0 && <div class="reactor-more">and {unknown} more</div>}
-        </div>
+  const body = (
+    <>
+      <h4>
+        {r && <Glyph k={r.key} emoji={r.emoji} size={18} />}
+        {style === 'super' && <Icon name="zap" size={12} />}
+        <span>{count === 1 ? '1 reaction' : `${count} reactions`}</span>
+      </h4>
+      <div class="reactors-list">
+        {[...ids.filter(isSelfIdentity), ...ids.filter((i) => !isSelfIdentity(i))].map((id) => {
+          const name = isSelfIdentity(id) ? 'You' : authorName(id);
+          return (
+            <div class="reactor">
+              <Avatar id={id} name={name} url={db.identities.get(id)?.avatar} size={24} />
+              <span>{name}</span>
+            </div>
+          );
+        })}
+        {loading && <div class="reactor-more">Asking the network…</div>}
+        {!loading && unknown > 0 && <div class="reactor-more">and {unknown} more</div>}
       </div>
-    </div>
+    </>
+  );
+  if (sheet)
+    return (
+      <Sheet onClose={onClose} label="Who reacted" class="reactors">
+        {body}
+      </Sheet>
+    );
+  return (
+    <Popover box={box} onClose={onClose} class="reactors" label="Who reacted">
+      {body}
+    </Popover>
   );
 }
 
 // ------------------------------------------------------------------ long-press sheet
 
+/**
+ * Long-press on a message: everything its hover bar, its tooltips and its pills offer on a desktop, in one
+ * sheet. The header carries what a hover would have shown: the exact time, the network, the account it came through.
+ */
 function MessageSheet({ m, onReply, onClose }: { m: P.MessageView; onReply: () => void; onClose: () => void }) {
   const scope = reactionScope(m.conversationId);
+  const self = isSelfIdentity(m.authorId);
+  const name = self ? 'You' : authorName(m.authorId);
+  const author = m.authorId ? db.identities.get(m.authorId) : null;
+  const person = author?.personId ? db.persons.get(author.personId) : null;
+  const via = m.seenVia.map((id) => db.accounts.get(id)).filter((a): a is P.AccountView => !!a);
+  const thread = m.threadId ? db.conversations.get(m.threadId) : null;
+  const t = m.triage;
+  const act = (fn: () => void) => () => {
+    onClose();
+    fn();
+  };
+  const action = (icon: string, label: string, fn: () => void, cls = '') => (
+    <button class={`sheet-action ${cls}`} onClick={act(fn)}>
+      <Icon name={icon} size={20} /> {label}
+    </button>
+  );
   return (
-    <div class="ep-layer sheet" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div class="emoji-picker message-sheet" role="dialog" aria-label="Message actions">
-        <div class="sheet-grip" />
-        {scope === 'all' && <div class="sheet-quick">
+    <Sheet onClose={onClose} label="Message actions" class="message-sheet">
+      <div class="msg-sheet-head">
+        <Avatar id={person?.id ?? m.authorId ?? m.id} name={name} url={person?.avatar ?? author?.avatar} size={36} />
+        <span>
+          <b>{name}</b>
+          <small>
+            {fullTime(m.ts)}
+            {m.editedTs ? ' · edited' : ''} · {netName(m.network)}
+            {via.length ? ` via ${via.map((a) => a.label).join(', ')}` : ''}
+          </small>
+        </span>
+      </div>
+      {m.encryptionWarning && (
+        <div class="ep-note">
+          <Icon name="alert" size={13} /> {m.encryptionWarning}
+        </div>
+      )}
+      {scope === 'all' && (
+        <div class="sheet-quick">
           {quickReactions(m.network, 6).map((k) => (
-            <button
-              onClick={() => {
-                toggleReaction(m, { key: k });
-                onClose();
-              }}
-            >
+            <button aria-label={`React ${k}`} onClick={act(() => toggleReaction(m, { key: k }))}>
               {k}
             </button>
           ))}
-          <button
-            class="more"
-            aria-label="More reactions"
-            onClick={() => {
-              onClose();
-              pickerFor.value = { message: m, anchor: null };
-            }}
-          >
+          <button class="more" aria-label="More reactions" onClick={act(() => (pickerFor.value = { message: m, anchor: null }))}>
             <Icon name="smilePlus" size={22} />
           </button>
-        </div>}
-        {scope === 'existing' && <div class="ep-note">You can only add to reactions already on a message here. Tap one to join in.</div>}
-        <button
-          class="sheet-action"
-          onClick={() => {
-            onClose();
-            onReply();
-          }}
-        >
-          <Icon name="reply" size={18} /> Reply
-        </button>
-        {m.body && (
-          <button
-            class="sheet-action"
-            onClick={() => {
-              navigator.clipboard?.writeText(plainBody(m.body, m.network)).then(
-                () => toast({ kind: 'info', title: 'Copied', body: '' }, 1500),
-                () => toast({ kind: 'error', title: 'Could not copy', body: 'The browser refused.' }),
-              );
-              onClose();
-            }}
-          >
-            <Icon name="copy" size={18} /> Copy text
-          </button>
-        )}
-        {canEdit(m) && (
-          <button
-            class="sheet-action"
-            onClick={() => {
-              startEditing(m);
-              onClose();
-            }}
-          >
-            <Icon name="settings" size={18} /> Edit
-          </button>
-        )}
-        {canDelete(m) && (
-          <button
-            class="sheet-action"
-            onClick={() => {
-              onClose();
-              deleteMessage(m);
-            }}
-          >
-            <Icon name="trash" size={18} /> Delete
-          </button>
-        )}
+        </div>
+      )}
+      {scope === 'existing' && <div class="ep-note">You can only add to reactions already on a message here. Tap one to join in.</div>}
+      <div class="sheet-actions">
+        {m.kind !== 'system' && action('reply', 'Reply', onReply)}
+        {canEdit(m) && action('pencil', 'Edit', () => startEditing(m))}
+        {m.body && !m.deleted &&
+          action('copy', 'Copy text', () =>
+            navigator.clipboard?.writeText(plainBody(m.body, m.network)).then(
+              () => toast({ kind: 'info', title: 'Copied', body: '' }, 1500),
+              () => toast({ kind: 'error', title: 'Could not copy', body: 'The browser refused.' }),
+            ),
+          )}
+        {m.replyToId && action('chevronUp', 'Go to the message it replies to', () => document.getElementById(`m-${m.replyToId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }))}
+        {thread && action('thread', `Open thread: ${convTitle(thread)}`, () => openConv(thread))}
+        {m.authorId && action('user', self ? 'Your profile' : `Profile of ${name}`, () => openProfile(m.authorId))}
+        {canDelete(m) && action('trash', 'Delete', () => deleteMessage(m), 'danger')}
       </div>
-    </div>
+      {t && (
+        <div class="sheet-triage">
+          <h4>
+            <Icon name={t.decision === 'push' ? 'bell' : t.decision === 'digest' ? 'layers' : 'bellOff'} size={14} />
+            {t.decision === 'push' ? 'This pinged you because' : t.decision === 'digest' ? 'This went to the digest because' : 'This was silent because'}
+          </h4>
+          <ul>
+            {t.reasons.map((r) => (
+              <li>{r}</li>
+            ))}
+          </ul>
+          <div class="triage-fb">
+            <button class={`chip-btn ${t.feedback === 'should_push' ? 'on' : ''}`} onClick={act(() => feedback(m.id, 'should_push'))}>
+              <Icon name="thumbsUp" size={14} /> {t.decision === 'push' ? 'Right call' : 'Should have pinged'}
+            </button>
+            <button class={`chip-btn ${t.feedback === 'should_not_push' ? 'on' : ''}`} onClick={act(() => feedback(m.id, 'should_not_push'))}>
+              <Icon name="thumbsDown" size={14} /> {t.decision === 'push' ? "Shouldn't have pinged" : 'Right call'}
+            </button>
+          </div>
+        </div>
+      )}
+    </Sheet>
   );
 }
 

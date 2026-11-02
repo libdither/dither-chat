@@ -3,8 +3,8 @@ import { parseSearch, searchOp, setSearchOp } from '@dither-chat/protocol';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { clock, dayLabel } from '../format.ts';
 import { allCommunities, authorName, communitiesOf, convLabel, convTitle, netName, people, resolveTokens, visibleConv } from '../model.ts';
-import { api, db, go, openMessage, openProfile, rev, route } from '../state.ts';
-import { Avatar, Empty, NetBadge, NetGlyph } from './bits.tsx';
+import { api, back, db, go, openMessage, openProfile, rev, route } from '../state.ts';
+import { Avatar, Empty, NetBadge, NetGlyph, Skeleton } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { homeRoute } from './Sidebar.tsx';
 
@@ -164,7 +164,7 @@ export function SearchPane({ q }: { q: string }) {
   return (
     <section class="pane search-pane">
       <header class="conv-head search-head">
-        <button class="icon-btn" onClick={() => go({ view: 'inbox' })} aria-label="Back" title="Back">
+        <button class="icon-btn search-back" onClick={() => back({ view: 'inbox' })} aria-label="Back" title="Back">
           <Icon name="back" />
         </button>
         <form
@@ -202,7 +202,7 @@ export function SearchPane({ q }: { q: string }) {
             ))}
           </div>
         )}
-        {loading && <div class="timeline-loading">Searching…</div>}
+        {loading && <Skeleton rows={4} />}
         {page && !loading && !visible.length && <Empty icon="search" title="No matching messages">Only what your accounts have fetched is stored here, so older messages may exist on the network.</Empty>}
         {page?.mode === 'substring' && visible.length > 0 && <p class="set-help search-note">These match inside words, not whole words.</p>}
         {visible.map(({ message: m, snippet }) => {

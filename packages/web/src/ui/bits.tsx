@@ -1,11 +1,13 @@
-import type { ComponentChildren, JSX } from 'preact';
+import { createPortal, type ComponentChildren, type JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
 import { GLYPH } from '../brand.ts';
 import { hueOf, initials } from '../format.ts';
 import { annotateAccounts, netColor, netName } from '../model.ts';
 import { db } from '../state.ts';
+import { phone, slideAway, useLayer, useSheetDrag } from '../phone.ts';
 import { Icon } from './icons.tsx';
+import { Sheet } from './Sheet.tsx';
 
 export function NetGlyph({ network, size = 14, color }: { network: P.Network; size?: number; color?: string }) {
   return (
@@ -111,15 +113,28 @@ export function Count({ n, muted }: { n: number; muted?: boolean }) {
   return <span class={`count ${muted ? 'muted' : ''}`}>{n > 99 ? '99+' : n}</span>;
 }
 
-export function Modal({ title, onClose, children, wide }: { title: ComponentChildren; onClose: () => void; children: ComponentChildren; wide?: boolean }) {
+/** Dialogs on a phone are bottom sheets: same content, a grabber, and drag down or press back to close. */
+export function useDialog(onClose: () => void) {
+  const box = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+  const dismiss = () => (phone.value ? slideAway(box.current, () => close.current()) : close.current());
+  useLayer(dismiss);
+  useSheetDrag(box, () => close.current(), phone.value);
   useEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && close.current();
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
-  }, [onClose]);
-  return (
-    <div class="modal-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div class={`modal ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true">
+  }, []);
+  return { box, dismiss };
+}
+
+export function Modal({ title, onClose, children, wide }: { title: ComponentChildren; onClose: () => void; children: ComponentChildren; wide?: boolean }) {
+  const { box, dismiss } = useDialog(onClose);
+  return createPortal(
+    <div class="modal-backdrop" onClick={(e) => e.target === e.currentTarget && dismiss()}>
+      <div class={`modal ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" ref={box}>
+        <div class="sheet-grip" aria-hidden="true" />
         <header class="modal-head">
           <h2>{title}</h2>
           <button class="icon-btn" onClick={onClose} aria-label="Close">
@@ -128,7 +143,8 @@ export function Modal({ title, onClose, children, wide }: { title: ComponentChil
         </header>
         <div class="modal-body">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -145,7 +161,14 @@ export function Menu({ trigger, children, align = 'left', up }: { trigger: (open
   return (
     <div class="menu-anchor" ref={ref}>
       {trigger(() => setOpen(!open))}
-      {open && <div class={`menu ${align} ${up ? 'up' : ''}`}>{children(() => setOpen(false))}</div>}
+      {open &&
+        (phone.value ? (
+          <Sheet onClose={() => setOpen(false)} label="Menu">
+            <div class="sheet-menu">{children(() => setOpen(false))}</div>
+          </Sheet>
+        ) : (
+          <div class={`menu ${align} ${up ? 'up' : ''}`}>{children(() => setOpen(false))}</div>
+        ))}
     </div>
   );
 }
@@ -167,4 +190,21 @@ export function variantIcon(v: P.Variant, shape?: P.Shape): string {
 
 export function levelIcon(l: P.NotifyLevel): string {
   return { all: 'bell', smart: 'sparkles', mentions: 'at', digest: 'layers', none: 'bellOff' }[l];
+}
+
+/** Grey shapes where content is about to land, so the layout does not jump when it does. */
+export function Skeleton({ rows = 5, kind = 'row' }: { rows?: number; kind?: 'row' | 'msg' }) {
+  return (
+    <div class={`skeleton ${kind}`} role="status" aria-label="Loading">
+      {Array.from({ length: rows }, (_, i) => (
+        <div class="sk-item">
+          <span class="sk-avatar" />
+          <span class="sk-lines">
+            <span class="sk-line" style={{ width: `${28 + ((i * 37) % 30)}%` }} />
+            <span class="sk-line" style={{ width: `${45 + ((i * 23) % 50)}%` }} />
+          </span>
+        </div>
+      ))}
+    </div>
+  );
 }

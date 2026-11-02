@@ -5,6 +5,8 @@ import { applyDrop, moveStep, type DropTarget, type Layout } from '../layout.ts'
 import { convsUnder, convTitle, directsOf, folderConvs, placePref, railEntries } from '../model.ts';
 import { db, go, markAllRead, patchPlaces, route, saveFolders } from '../state.ts';
 import { Icon } from './icons.tsx';
+import { phone, useLayer } from '../phone.ts';
+import { Sheet } from './Sheet.tsx';
 
 const randomId = () => 'fld_' + Math.random().toString(36).slice(2, 12);
 const splitKey = (key: string) => {
@@ -82,35 +84,53 @@ export function PlaceMenu() {
   );
   const x = Math.min(m.x, window.innerWidth - 240);
   const y = Math.min(m.y, window.innerHeight - 380);
+  const items = (
+    <>
+      <div class="menu-label">{m.label}</div>
+      {item('check', 'Mark as read', () => markAllRead(placeConvs(kind, id), m.label))}
+      {folder && item('folder', pref?.open ? 'Close in sidebar' : 'Open in sidebar', () => patchPlaces([{ kind: 'folder', id, open: !pref?.open }]))}
+      {folder && item('at', 'Rename folder', () => {
+        const name = prompt('Folder name', folder.name)?.trim();
+        if (name) saveFolders(db.folders.map((f) => (f.id === id ? { ...f, name } : f)));
+      })}
+      {folder && item('groups', 'Open as list', () => go({ view: 'folder', folder: id }))}
+      {pref && pos >= 0 && item('star', pref.pinned ? 'Unpin' : 'Pin to top', () => patchPlaces([{ kind: placeKind, id, pinned: !pref.pinned }]))}
+      {kind === 'conversation' && !inFolder && item('plus', pref?.railed ? 'Remove from sidebar' : 'Add to sidebar', () => patchPlaces([{ kind: 'conversation', id, railed: !pref?.railed }]))}
+      {pos >= 0 && item('chevronUp', 'Move up', () => step(-1), pos === 0)}
+      {pos >= 0 && item('chevronDown', 'Move down', () => step(1), pos === order.length - 1)}
+      {kind !== 'folder' && db.folders.filter((f) => f.id !== inFolder?.id).map((f) => item('folder', `Move to ${f.name}`, () => moveToFolder(m.key, f.id)))}
+      {kind !== 'folder' && !inFolder && item('plus', 'New folder with this', () => {
+        const name = prompt('Folder name', 'New folder')?.trim();
+        if (!name) return;
+        const fid = randomId();
+        saveFolders([...db.folders, { id: fid, name, icon: null, color: null, items: [{ kind: kind as 'space' | 'conversation', id }] }]);
+      })}
+      {inFolder && item('unlink', `Take out of ${inFolder.name}`, () => moveToFolder(m.key, null))}
+      {folder && item('trash', 'Delete folder, keep contents', () => {
+        saveFolders(db.folders.filter((f) => f.id !== id));
+        const r = route.value;
+        if (r.view === 'folder' && r.folder === id) go({ view: 'inbox' });
+      })}
+      {pref && kind !== 'folder' && item('eye', pref.hidden ? 'Show again' : 'Hide', () => patchPlaces([{ kind: placeKind, id, hidden: !pref.hidden }]))}
+    </>
+  );
+  if (phone.value)
+    return (
+      <Sheet onClose={close} label={`Arrange ${m.label}`}>
+        <div class="sheet-menu" role="menu">
+          {items}
+        </div>
+      </Sheet>
+    );
+  return <DesktopMenu x={x} y={y} close={close}>{items}</DesktopMenu>;
+}
+
+function DesktopMenu({ x, y, close, children }: { x: number; y: number; close: () => void; children: any }) {
+  useLayer(close);
   return (
     <div class="place-menu-back" onClick={close} onContextMenu={(e) => (e.preventDefault(), close())}>
       <div class="menu place-menu" style={{ left: `${Math.max(8, x)}px`, top: `${Math.max(8, y)}px` }} role="menu" onClick={(e) => e.stopPropagation()}>
-        <div class="menu-label">{m.label}</div>
-        {item('check', 'Mark as read', () => markAllRead(placeConvs(kind, id), m.label))}
-        {folder && item('folder', pref?.open ? 'Close in sidebar' : 'Open in sidebar', () => patchPlaces([{ kind: 'folder', id, open: !pref?.open }]))}
-        {folder && item('at', 'Rename folder', () => {
-          const name = prompt('Folder name', folder.name)?.trim();
-          if (name) saveFolders(db.folders.map((f) => (f.id === id ? { ...f, name } : f)));
-        })}
-        {folder && item('groups', 'Open as list', () => go({ view: 'folder', folder: id }))}
-        {pref && pos >= 0 && item('star', pref.pinned ? 'Unpin' : 'Pin to top', () => patchPlaces([{ kind: placeKind, id, pinned: !pref.pinned }]))}
-        {kind === 'conversation' && !inFolder && item('plus', pref?.railed ? 'Remove from sidebar' : 'Add to sidebar', () => patchPlaces([{ kind: 'conversation', id, railed: !pref?.railed }]))}
-        {pos >= 0 && item('chevronUp', 'Move up', () => step(-1), pos === 0)}
-        {pos >= 0 && item('chevronDown', 'Move down', () => step(1), pos === order.length - 1)}
-        {kind !== 'folder' && db.folders.filter((f) => f.id !== inFolder?.id).map((f) => item('folder', `Move to ${f.name}`, () => moveToFolder(m.key, f.id)))}
-        {kind !== 'folder' && !inFolder && item('plus', 'New folder with this', () => {
-          const name = prompt('Folder name', 'New folder')?.trim();
-          if (!name) return;
-          const fid = randomId();
-          saveFolders([...db.folders, { id: fid, name, icon: null, color: null, items: [{ kind: kind as 'space' | 'conversation', id }] }]);
-        })}
-        {inFolder && item('unlink', `Take out of ${inFolder.name}`, () => moveToFolder(m.key, null))}
-        {folder && item('trash', 'Delete folder, keep contents', () => {
-          saveFolders(db.folders.filter((f) => f.id !== id));
-          const r = route.value;
-          if (r.view === 'folder' && r.folder === id) go({ view: 'inbox' });
-        })}
-        {pref && kind !== 'folder' && item('eye', pref.hidden ? 'Show again' : 'Hide', () => patchPlaces([{ kind: placeKind, id, hidden: !pref.hidden }]))}
+        {children}
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
+import { leaveLayerEntry, takeOverLayers } from './phone.ts';
 
 // ------------------------------------------------------------------ data
 
@@ -105,6 +106,8 @@ export function setPrefs(p: Partial<Prefs>) {
 
 export type Route =
   | { view: 'inbox'; conv?: string; msg?: string }
+  /** The triage board. On a desktop it is the inbox with nothing open; a phone gives it a tab of its own. */
+  | { view: 'triage' }
   | { view: 'people'; person?: string }
   | { view: 'profile'; person?: string; identity?: string }
   | { view: 'groups'; conv?: string }
@@ -139,6 +142,8 @@ export function parseHash(h = location.hash): Route {
       return { view: 'accounts', account: p[1] };
     case 'settings':
       return { view: 'settings' };
+    case 'triage':
+      return { view: 'triage' };
     case 'directory':
       return { view: 'directory' };
     case 'search':
@@ -171,6 +176,8 @@ export function href(r: Route): string {
       return r.account ? `#/accounts/${e(r.account)}` : '#/accounts';
     case 'settings':
       return '#/settings';
+    case 'triage':
+      return '#/triage';
     case 'directory':
       return '#/directory';
     case 'search':
@@ -180,12 +187,31 @@ export function href(r: Route): string {
 
 export const route = signal<Route>(parseHash());
 window.addEventListener('hashchange', () => (route.value = parseHash()));
+/**
+ * Each entry remembers the one before it, so a back button can tell going back from opening the list fresh.
+ * Navigating closes any open sheet or panel, and takes over its history entry rather than stacking on it.
+ */
 export function go(r: Route, replace = false) {
   const h = href(r);
-  if (replace) history.replaceState(null, '', h);
-  else location.hash = h;
+  const layered = takeOverLayers();
+  if (h === location.hash && !replace) {
+    if (layered) leaveLayerEntry();
+    return void (route.value = parseHash(h));
+  }
+  if (replace) history.replaceState({ prev: history.state?.prev ?? null }, '', h);
+  else if (layered) history.replaceState({ prev: location.hash }, '', h);
+  else history.pushState({ prev: location.hash }, '', h);
   route.value = parseHash(h);
 }
+
+/** Back where you came from, or to `fallback` when this page was opened directly. */
+export function back(fallback: Route) {
+  if (history.state?.prev) history.back();
+  else go(fallback, true);
+}
+
+/** The route a back press would land on, when it is known. */
+export const previousRoute = (): Route | null => (history.state?.prev ? parseHash(history.state.prev) : null);
 
 // ------------------------------------------------------------------ http
 
@@ -646,6 +672,19 @@ function placeFailed(e: Error) {
 
 let ws: WebSocket | null = null;
 let backoff = 500;
+let retry: ReturnType<typeof setTimeout> | undefined;
+
+/** Pull to refresh: reconnect now if the socket is down, else load everything again. */
+export async function refresh() {
+  if (!ws || ws.readyState === WebSocket.CLOSED) {
+    clearTimeout(retry);
+    backoff = 500;
+    connect();
+    return;
+  }
+  await bootstrap();
+}
+
 async function bootstrap() {
   const b = await api<P.Bootstrap>('/api/bootstrap');
   applyBootstrap(b);
@@ -671,6 +710,6 @@ export function connect() {
   };
   ws.onclose = () => {
     connected.value = false;
-    setTimeout(connect, (backoff = Math.min(backoff * 2, 15_000)));
+    retry = setTimeout(connect, (backoff = Math.min(backoff * 2, 15_000)));
   };
 }
