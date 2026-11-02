@@ -5,12 +5,11 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 
 ## What is next, in order
 
-1. **Stop plain text going into encrypted Matrix rooms.** The adapter has no crypto store, and from reading the code a text message sent to an encrypted room goes out unencrypted. Files are already refused there. Small, and it should not wait for the next item.
-2. **Matrix E2EE.** The largest gap for replacing Element: encrypted rooms cannot be read, and most Matrix DMs are encrypted. Costly, because it needs a crypto store, device verification and key backup in the adapter.
-3. **Try it on a real phone.** Install, Web Push and notification clicks have only run in desktop Chromium. No code until something breaks, and everything about notifications depends on it.
-4. **Start a new DM.** Today a conversation has to exist before you can use it. Needs a new adapter command per network; Signal's cannot be tested without sending from a real account.
-5. **Login beyond tailnet membership.** Anyone on the tailnet can read everything, which matters as soon as another person or a shared device joins it.
-6. **Daily digest as one notification, and replying from a notification.** Both finish what quiet hours and Web Push started.
+1. **Matrix E2EE.** The largest gap for replacing Element: encrypted rooms can be neither read nor written, and most Matrix DMs are encrypted. Costly, because it needs a crypto store, device verification and key backup in the adapter.
+2. **Try it on a real phone.** Install, Web Push and notification clicks have only run in desktop Chromium. No code until something breaks, and everything about notifications depends on it.
+3. **Start a new DM.** Today a conversation has to exist before you can use it. Needs a new adapter command per network; Signal's cannot be tested without sending from a real account.
+4. **Login beyond tailnet membership.** Anyone on the tailnet can read everything, which matters as soon as another person or a shared device joins it.
+5. **Daily digest as one notification, and replying from a notification.** Both finish what quiet hours and Web Push started.
 
 ## Organising and finding
 

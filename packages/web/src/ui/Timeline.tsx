@@ -816,6 +816,7 @@ function sendBlocker(c: P.ConversationView, accountId?: string): string | null {
   if (!acc) return 'No account can send here';
   if (acc.status !== 'online' && acc.status !== 'connecting') return `${netName(acc.network)} · ${acc.label} is ${acc.status === 'attention' ? 'waiting for you (see Accounts)' : acc.status}`;
   if (c.variant === 'forum') return 'Open a post to reply';
+  if (c.network === 'matrix' && c.encrypted) return 'Sending to encrypted Matrix rooms is not supported yet';
   return null;
 }
 

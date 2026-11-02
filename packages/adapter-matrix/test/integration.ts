@@ -151,6 +151,10 @@ try {
   check(archiveMsgs().filter((e) => num(e.message.body) < 60).every((e) => e.live === false), 'history messages are live=false');
 
   // commands on "Notes to self"
+  const refused = async (cmd: Record<string, unknown>) => command(cmd).then(() => false, (e) => /encrypted/.test(String(e)));
+  check(await refused({ t: 'send', conversation: R.secret, body: 'must not go out in plaintext' }), 'send to an encrypted room is refused');
+  check(await refused({ t: 'react', conversation: R.secret, message: '$none', key: '\u{1F44D}' }), 'react in an encrypted room is refused');
+  check(await refused({ t: 'edit', conversation: R.secret, message: '$none', body: 'must not go out in plaintext' }), 'edit in an encrypted room is refused');
   const sent = await command({ t: 'send', conversation: R.notes, body: '**integration test** <@@alice:dither.test> `code`' });
   const echo = await waitFor<Extract<P.AdapterEvent, { t: 'message' }>>((e) => e.t === 'message' && e.message.nativeId === sent.nativeId);
   check(echo.live === true && echo.message.body === '**integration test** <@@alice:dither.test> `code`', 'send: echo arrives through sync as canonical Markdown', echo.message.body);

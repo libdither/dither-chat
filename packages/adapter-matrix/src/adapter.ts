@@ -1038,6 +1038,13 @@ export class MatrixAdapter {
     return room;
   }
 
+  /** There is no crypto store yet, so anything sent to an encrypted room would be readable by the server. */
+  private plaintextRoom(roomId: string): Room {
+    const room = this.joinedRoom(roomId);
+    if (room.encrypted) throw new Error('this room is end-to-end encrypted, and sending to encrypted rooms is not supported yet');
+    return room;
+  }
+
   private async sendEvent(roomId: string, type: string, content: unknown): Promise<string> {
     const res = await this.api().request('PUT', `/_matrix/client/v3/rooms/${enc(roomId)}/send/${enc(type)}/${enc(this.api().txnId())}`, { body: content });
     return res.event_id;
@@ -1045,7 +1052,7 @@ export class MatrixAdapter {
 
   private async send(conversation: string, body: string, replyTo?: string) {
     const { roomId, root } = splitConversation(conversation);
-    this.joinedRoom(roomId);
+    this.plaintextRoom(roomId);
     const out = markdownToMatrix(body, this.names(roomId));
     const content: Record<string, any> = { msgtype: 'm.text', body: out.body };
     if (out.formatted) {
@@ -1070,8 +1077,7 @@ export class MatrixAdapter {
   /** Matrix has one file per event, and clients vary on captions, so any text goes first as its own message. */
   private async sendFiles(conversation: string, body: string, files: P.OutgoingAttachment[], replyTo?: string) {
     const { roomId, root } = splitConversation(conversation);
-    // There is no crypto store yet, and a plain file in an encrypted room would be readable by the server.
-    if (this.joinedRoom(roomId).encrypted) throw new Error('sending files to encrypted rooms is not supported yet');
+    this.plaintextRoom(roomId);
     let first: string | undefined;
     let reply = replyTo;
     if (body.trim()) {
@@ -1096,7 +1102,7 @@ export class MatrixAdapter {
 
   private async edit(conversation: string, message: string, body: string) {
     const { roomId } = splitConversation(conversation);
-    this.joinedRoom(roomId);
+    this.plaintextRoom(roomId);
     const orig = this.db.event(message);
     if (orig && orig.sender !== this.selfId) throw new Error('only your own messages can be edited');
     const out = markdownToMatrix(body, this.names(roomId));
@@ -1138,7 +1144,8 @@ export class MatrixAdapter {
 
   private async react(conversation: string, message: string, key: string, remove: boolean, emoji?: P.CustomEmojiFact) {
     const { roomId } = splitConversation(conversation);
-    this.joinedRoom(roomId);
+    if (remove) this.joinedRoom(roomId);
+    else this.plaintextRoom(roomId);
     let mine = this.myReactions(message, key);
     if (!remove) {
       if (mine.length) return { nativeId: mine[0].id };
@@ -1170,6 +1177,7 @@ export class MatrixAdapter {
   private async reactionContext(conversation: string): Promise<P.ReactionContext> {
     const { roomId } = splitConversation(conversation);
     const room = this.joinedRoom(roomId);
+    if (room.encrypted) return { canReact: false, reason: 'Reacting in encrypted rooms is not supported yet.', custom: [] };
     const canReact = room.powerLevel(this.selfId) >= room.requiredLevel('m.reaction', false);
     return { canReact, ...(canReact ? {} : { reason: 'This room does not let you react.' }), custom: canReact ? await this.imagePacks(roomId) : [] };
   }

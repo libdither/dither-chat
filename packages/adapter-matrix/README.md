@@ -124,7 +124,8 @@ test messages to "Notes to self" and the `#dev` thread, redacting them afterward
 ## Not done yet
 
 - **End-to-end encryption.** Encrypted events show as kind `encrypted`; nothing is decrypted or
-  encrypted, and the device publishes no keys. Media in encrypted rooms (`file` instead of `url`)
+  encrypted, and the device publishes no keys. Sending, editing and adding reactions in an encrypted
+  room are refused, because they would reach the server in plaintext. Media in encrypted rooms (`file` instead of `url`)
   would be served as ciphertext.
 - Invites are logged, not surfaced (the protocol has no invite fact). State changes (joins, renames)
   are not rendered as system messages.
