@@ -11,6 +11,7 @@ export function Toasts() {
           class={`toast ${t.kind ?? 'info'}`}
           onClick={() => {
             if (t.conversationId) go({ view: 'inbox', conv: t.conversationId });
+            else if (t.kind === 'notify') go({ view: 'inbox' });
             toasts.value = toasts.value.filter((x) => x.id !== t.id);
           }}
         >

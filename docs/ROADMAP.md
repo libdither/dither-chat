@@ -8,7 +8,7 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 1. **Matrix E2EE.** The largest gap for replacing Element: encrypted rooms can be neither read nor written, and most Matrix DMs are encrypted. Costly, because it needs a crypto store, device verification and key backup in the adapter.
 2. **Try it on a real phone.** Install, Web Push and notification clicks have only run in desktop Chromium. No code until something breaks, and everything about notifications depends on it.
 3. **Login beyond tailnet membership.** Anyone on the tailnet can read everything, which matters as soon as another person or a shared device joins it.
-4. **Daily digest as one notification, and replying from a notification.** Both finish what quiet hours and Web Push started.
+4. **Replying from a notification.** It finishes what Web Push started.
 
 ## Organising and finding
 
@@ -60,7 +60,7 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | ntfy, fully self-hosted | M | L | done | Off unless `DITHER_NTFY_URL` is set |
 | Reply from the notification | M | M | next | Android and desktop allow actions with input; iOS does not |
 | Quiet hours | M | L | done | Holds pushes on a daily schedule, optionally letting starred people through, with one summary when they end |
-| Daily digest delivered as one notification | M | M | next | The digest exists in the inbox only |
+| Daily digest delivered as one notification | M | M | done | Off by default, at a local time. Counts and the busiest places since the last one, and nothing on a day with nothing. Quiet hours hold it until they end, and it replaces their summary. Catches up once after downtime |
 
 ## Hosting
 

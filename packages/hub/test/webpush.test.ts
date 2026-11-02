@@ -92,7 +92,7 @@ describe('the service', () => {
     const d = device();
     const other = device();
     svc.subscribe({ endpoint: ep('a'), p256dh: d.p256dh, auth: d.auth64 }, 'Phone');
-    await svc.notify('Alice', 'hello there', 'cnv_1', 'msg_1');
+    await svc.notify('Alice', 'hello there', 'cnv_1', { messageId: 'msg_1' });
     const r = received.at(-1)!;
     expect(r.path).toBe('/a');
     expect(r.headers.get('content-encoding')).toBe('aes128gcm');
@@ -102,6 +102,8 @@ describe('the service', () => {
     expect(Buffer.from(r.body).includes('hello')).toBe(false);
     expect(() => decrypt(r.body, other.ua, other.auth)).toThrow();
     expect(svc.devices()[0]).toMatchObject({ label: 'Phone', lastError: null });
+    await svc.notify('Daily digest: 2 messages', 'Kitchen (2).', undefined, { inbox: true });
+    expect(JSON.parse(decrypt(received.at(-1)!.body, d.ua, d.auth))).toEqual({ title: 'Daily digest: 2 messages', body: 'Kitchen (2).', inbox: true });
     expect(svc.devices()[0].lastOkAt).not.toBeNull();
     svc.remove({ endpoint: ep('a') });
   });
@@ -125,14 +127,14 @@ describe('the service', () => {
     for (const status of [404, 410]) {
       svc.subscribe({ endpoint: ep('dead'), p256dh: d.p256dh, auth: d.auth64 });
       answer = status;
-      await svc.notify('t', 'b', 'c', 'm');
+      await svc.notify('t', 'b', 'c', {});
       expect(svc.devices().length).toBe(0);
     }
     svc.subscribe({ endpoint: ep('flaky'), p256dh: d.p256dh, auth: d.auth64 });
     answer = 500;
-    await svc.notify('t', 'b', 'c', 'm');
+    await svc.notify('t', 'b', 'c', {});
     expect(svc.devices()[0].lastError).toContain('500');
-    for (let i = 0; i < 19; i++) await svc.notify('t', 'b', 'c', 'm');
+    for (let i = 0; i < 19; i++) await svc.notify('t', 'b', 'c', {});
     expect(svc.devices().length).toBe(0);
     answer = 201;
   });
@@ -140,7 +142,7 @@ describe('the service', () => {
   test('an unreachable relay is a failure, not a crash, and subscribing again resets it', async () => {
     const d = device();
     svc.subscribe({ endpoint: 'http://127.0.0.1:1/x', p256dh: d.p256dh, auth: d.auth64 }, 'Gone');
-    await svc.notify('t', 'b', 'c', 'm');
+    await svc.notify('t', 'b', 'c', {});
     expect(svc.devices()[0].lastError).toBeTruthy();
     svc.subscribe({ endpoint: 'http://127.0.0.1:1/x', p256dh: d.p256dh, auth: d.auth64 }, '');
     expect(svc.devices()[0]).toMatchObject({ lastError: null, label: 'Gone' });

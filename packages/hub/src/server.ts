@@ -9,7 +9,7 @@ import type { Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
 import type { PushService } from './push.ts';
 import type { ReadQueue } from './readqueue.ts';
-import { validQuietHours, type Triage } from './triage.ts';
+import { validDailyDigest, validQuietHours, type Triage } from './triage.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
 
 const ACCOUNT_COLORS = ['#F2A541', '#E86A92', '#B794F6', '#FF8C61', '#9BE15D', '#5CC8FF', '#F7D154', '#FF6B6B'];
@@ -535,6 +535,14 @@ export class HubServer {
       }
       return ok({ quietHours: s.quietHours() });
     }
+    if (path === '/api/daily-digest') {
+      if (method === 'PUT') {
+        const b = await body<Partial<P.DailyDigest>>();
+        if (!validDailyDigest(b)) return bad('the digest needs a time and a time zone');
+        this.triage.setDailyDigest({ enabled: !!b.enabled, time: b.time, timezone: b.timezone });
+      }
+      return ok({ dailyDigest: s.dailyDigest() });
+    }
     if (path === '/api/rules' && method === 'PUT') {
       const b = await body<{ scope: P.NotifyScope; target: string | null; level: P.NotifyLevel | null }>();
       s.setRule(b.scope, b.target ?? null, b.level ?? null);
@@ -668,7 +676,7 @@ export class HubServer {
     return new Response('dither-chat hub is running; the web app has not been built yet (bun run web:build).', { status: 200 });
   }
 
-  /** Queue a notification for connected clients (and ntfy, if configured). */
+  /** Queue a notification for connected clients. */
   notify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
     this.store.dirty.extra.push(ev);
   }

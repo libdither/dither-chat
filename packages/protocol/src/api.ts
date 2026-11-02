@@ -326,6 +326,13 @@ export interface QuietHours {
   allowStarred: boolean;
 }
 
+/** One notification a day about what the inbox's digest gathered. The time is in `timezone`, the zone of the device that set it. */
+export interface DailyDigest {
+  enabled: boolean;
+  time: string; // "18:00"
+  timezone: string;
+}
+
 export interface RuleView {
   id: string;
   scope: NotifyScope;
@@ -380,7 +387,8 @@ export type ClientEvent =
   | { t: 'conversation.removed'; id: string }
   | { t: 'message'; message: MessageView; identities: IdentityView[]; live: boolean }
   | { t: 'message.deleted'; id: string; conversationId: string }
-  | { t: 'notify'; messageId: string; conversationId: string; title: string; body: string; reasons: string[] }
+  /** No conversation: it is about the inbox as a whole (the daily digest). */
+  | { t: 'notify'; messageId?: string; conversationId?: string; title: string; body: string; reasons: string[] }
   | { t: 'typing'; conversationId: string; identityId: string }
   | { t: 'folders'; folders: FolderView[] }
   | { t: 'placePrefs'; prefs: PlacePrefView[] }

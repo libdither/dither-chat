@@ -1371,6 +1371,24 @@ export class Store {
   setQuietHours = (q: P.QuietHours) => this.setMetaJson('quiet_hours', q);
   quietHeld = () => this.metaJson<{ count: number; conversationId: string; messageId: string }>('quiet_held');
   setQuietHeld = (held: { count: number; conversationId: string; messageId: string } | null) => this.setMetaJson('quiet_held', held);
+  dailyDigest = () => this.metaJson<P.DailyDigest>('daily_digest');
+  setDailyDigest = (d: P.DailyDigest) => this.setMetaJson('daily_digest', d);
+  /** The last daily slot dealt with, and when the digest last started gathering. Kept here so restarts neither repeat nor lose it. */
+  digestState = () => this.metaJson<{ slot: string; since: number }>('daily_digest_state');
+  setDigestState = (st: { slot: string; since: number }) => this.setMetaJson('daily_digest_state', st);
+
+  /** What the inbox's digest section gathered in this window, busiest conversation first. */
+  digestSummary(since: number, until: number): { id: string; count: number }[] {
+    return (
+      this.db
+        .query(
+          `SELECT m.conversation_id AS id, COUNT(*) AS count FROM triage t JOIN message m ON m.id = t.message_id
+           WHERE t.decision = 'digest' AND t.created_at > ? AND t.created_at <= ? AND m.deleted = 0
+           GROUP BY m.conversation_id ORDER BY count DESC, MAX(m.ts) DESC`,
+        )
+        .all(since, until) as { id: string; count: number }[]
+    );
+  }
 
   rules(): P.RuleView[] {
     return (this.db.query('SELECT * FROM notify_rule ORDER BY created_at').all() as Row[]).map((r) => ({

@@ -16,6 +16,8 @@ export interface Page {
   until(expr: string, ms?: number): Promise<void>;
   errors: string[];
   on(method: string, fn: (params: any) => void): void;
+  /** Evaluate in a service worker whose script URL contains this. */
+  evalWorker<T = any>(url: string, expr: string): Promise<T>;
 }
 
 export async function launch(opts: { caCert?: string; host?: string } = {}) {
@@ -69,6 +71,22 @@ export async function launch(opts: { caCert?: string; host?: string } = {}) {
       const r = await page.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true, userGesture: true });
       if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
       return r.result.value;
+    },
+    async evalWorker(url, expr) {
+      const all = (await fetch(`http://127.0.0.1:${port}/json`).then((r) => r.json())) as any[];
+      const t = all.find((x) => x.type === 'service_worker' && x.url.includes(url));
+      if (!t) throw new Error(`no service worker at ${url}`);
+      const sw = new WebSocket(t.webSocketDebuggerUrl);
+      await new Promise((res, rej) => ((sw.onopen = res), (sw.onerror = rej)));
+      try {
+        const answer = new Promise<any>((res) => (sw.onmessage = (e) => JSON.parse(String(e.data)).id === 1 && res(JSON.parse(String(e.data)))));
+        sw.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: expr, awaitPromise: true, returnByValue: true } }));
+        const r = await answer;
+        if (r.error || r.result?.exceptionDetails) throw new Error(r.error?.message ?? r.result.exceptionDetails.exception?.description ?? r.result.exceptionDetails.text);
+        return r.result.result.value;
+      } finally {
+        sw.close();
+      }
     },
     async goto(url) {
       await page.send('Page.navigate', { url });

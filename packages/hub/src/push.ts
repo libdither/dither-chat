@@ -80,9 +80,9 @@ export class PushService {
     return { ok: false, error };
   }
 
-  async notify(title: string, body: string, conversationId: string, messageId: string) {
+  async notify(title: string, body: string, conversationId: string | undefined, extra: Record<string, unknown>) {
     const rows = this.store.db.query('SELECT * FROM push_subscription').all() as Row[];
-    await Promise.all(rows.map((r) => this.deliver(r, pushPayload(title, body, conversationId, { messageId }))));
+    await Promise.all(rows.map((r) => this.deliver(r, pushPayload(title, body, conversationId, extra))));
   }
 
   async test(ref: { id?: string; endpoint?: string }) {

@@ -61,14 +61,14 @@ self.addEventListener('push', (e) => {
   } catch {}
   e.waitUntil(
     (async () => {
-      const tag = d.conversationId ?? 'dither';
+      const tag = d.conversationId ?? (d.inbox ? 'dither-digest' : 'dither');
       await self.registration.showNotification(d.title ?? 'dither-chat', {
         body: d.body ?? '',
         tag,
         renotify: true,
         icon: '/icon-192.png',
         badge: '/icon-192.png',
-        data: { conversationId: d.conversationId, test: d.test },
+        data: { conversationId: d.conversationId, inbox: d.inbox, test: d.test },
         actions: d.conversationId ? [{ action: 'open', title: 'Open' }] : [],
       });
       // Always shown first: Safari revokes subscriptions that receive a push and show nothing.
@@ -91,12 +91,12 @@ self.addEventListener('pushsubscriptionchange', (e) => {
 
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const conv = e.notification.data && e.notification.data.conversationId;
-  const target = conv ? `/#/inbox/c/${conv}` : '/';
+  const { conversationId: conv, inbox } = e.notification.data ?? {};
+  const target = conv ? `/#/inbox/c/${conv}` : inbox ? '/#/inbox' : '/';
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (cs) => {
       for (const c of cs) {
-        await c.focus();
+        await c.focus().catch(() => {});
         // navigate() refuses a window this worker does not control yet; the page listens for this too.
         c.postMessage({ t: 'open', hash: target.slice(1) });
         return;
