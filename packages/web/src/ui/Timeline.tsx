@@ -296,7 +296,7 @@ function Body({ m }: { m: P.MessageView }) {
   if (m.kind === 'encrypted')
     return (
       <div class="msg-body encrypted">
-        <Icon name="lock" size={13} /> Encrypted message. dither-chat can't decrypt Matrix E2EE yet.
+        <Icon name="lock" size={13} /> Encrypted message, no key for it here. It decrypts by itself when one arrives, once encryption is set up on the account's page.
       </div>
     );
   if (!m.body) return null;
@@ -470,6 +470,11 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
               {clock(m.ts)}
             </span>
             {m.editedTs && <span class="msg-edited">(edited)</span>}
+            {m.encryptionWarning && (
+              <span class="msg-e2ee-warning" title={m.encryptionWarning} aria-label={m.encryptionWarning}>
+                <Icon name="alert" size={12} />
+              </span>
+            )}
             <TriageNote m={m} />
           </div>
         )}
@@ -619,13 +624,13 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   const conv = db.conversations.get(targets.convId);
   const accs = (conv?.vantages ?? []).map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a);
   const sender = accs.find((a) => a.id === targets.accountId) ?? accs.find((a) => a.status === 'online') ?? accs[0];
-  const canAttach = !!conv && !!sender?.capabilities.includes('sendMedia') && !(conv.network === 'matrix' && conv.encrypted);
+  const canAttach = !!conv && !!sender?.capabilities.includes('sendMedia') && !(conv.network === 'matrix' && conv.encrypted && !sender.capabilities.includes('e2ee'));
   const [files, setFiles] = useState<{ file: File; url: string | null }[]>([]);
   const [dropping, setDropping] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
   const addFiles = (list: File[]) => {
     if (!list.length || !conv) return;
-    if (!canAttach) return toast({ kind: 'error', title: 'Cannot send files here', body: conv.encrypted ? 'Files in encrypted Matrix rooms are not supported yet.' : `${netName(conv.network)} is not set up to send files.` });
+    if (!canAttach) return toast({ kind: 'error', title: 'Cannot send files here', body: conv.encrypted ? 'Set up encryption on the account\'s page to send files in encrypted Matrix rooms.' : `${netName(conv.network)} is not set up to send files.` });
     const limit = ATTACHMENT_LIMITS[conv.network];
     const fit = list.filter((f) => f.size <= limit.bytes);
     if (fit.length < list.length) toast({ kind: 'error', title: 'File too large', body: `${netName(conv.network)} takes files up to ${limit.bytes / 1024 / 1024} MB.` });
@@ -816,7 +821,7 @@ function sendBlocker(c: P.ConversationView, accountId?: string): string | null {
   if (!acc) return 'No account can send here';
   if (acc.status !== 'online' && acc.status !== 'connecting') return `${netName(acc.network)} · ${acc.label} is ${acc.status === 'attention' ? 'waiting for you (see Accounts)' : acc.status}`;
   if (c.variant === 'forum') return 'Open a post to reply';
-  if (c.network === 'matrix' && c.encrypted) return 'Sending to encrypted Matrix rooms is not supported yet';
+  if (c.network === 'matrix' && c.encrypted && !acc.capabilities.includes('e2ee')) return 'This room is encrypted. Use "Set up encryption" on the account\'s page (Accounts) to write here';
   return null;
 }
 

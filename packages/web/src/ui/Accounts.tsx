@@ -262,11 +262,64 @@ export function LiveView({ account, onClose }: { account: P.AccountView; onClose
   );
 }
 
+/** The other side of "verify this device" in another client: accept, compare the emoji, say whether they match. */
+function VerifyDevice({ account, verification }: { account: P.AccountView; verification: any }) {
+  const [busy, setBusy] = useState(false);
+  const step = async (name: string) => {
+    setBusy(true);
+    try {
+      await api(`/api/accounts/${account.id}/action`, { body: { action: 'verifyDevice', args: { step: name } } });
+    } catch (e: any) {
+      toast({ kind: 'error', title: 'Verification failed', body: e.message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div class="verify-device">
+      {verification.phase === 'compare' && (
+        <ol class="sas-emoji" aria-label="Emoji to compare">
+          {(verification.emoji ?? []).map((e: { symbol: string; description: string }) => (
+            <li>
+              <span class="sas-symbol">{e.symbol}</span>
+              <span class="sas-name">{e.description}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+      <div class="btn-row">
+        {verification.phase === 'requested' && (
+          <button class="btn primary" disabled={busy} onClick={() => step('accept')}>
+            Accept
+          </button>
+        )}
+        {verification.phase === 'compare' && (
+          <button class="btn primary" disabled={busy} onClick={() => step('confirm')}>
+            They match
+          </button>
+        )}
+        {verification.phase === 'compare' ? (
+          <button class="btn danger" disabled={busy} onClick={() => step('mismatch')}>
+            They don't match
+          </button>
+        ) : (
+          <button class="btn ghost" disabled={busy} onClick={() => step('cancel')}>
+            Cancel
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AttentionBlock({ a }: { a: P.AccountView }) {
   const [live, setLive] = useState(false);
   const at = a.attention!;
+  const verification = (at.detail as any)?.verification;
   const heading =
-    at.kind === 'link_device'
+    verification
+      ? 'Verify this device'
+      : at.kind === 'link_device'
       ? 'Link this hub as a Signal device'
       : at.kind === 'login'
         ? 'Sign in'
@@ -288,6 +341,7 @@ function AttentionBlock({ a }: { a: P.AccountView }) {
         </div>
       </div>
       {at.kind === 'link_device' && <LinkCode account={a} at={at} />}
+      {verification && <VerifyDevice account={a} verification={verification} />}
       {at.liveView && (
         <button class="btn primary" onClick={() => setLive(true)}>
           <Icon name="monitor" size={15} /> Open live view
@@ -296,6 +350,102 @@ function AttentionBlock({ a }: { a: P.AccountView }) {
       {at.kind === 'selector_broken' && at.detail !== undefined && <pre class="detail-dump">{JSON.stringify(at.detail, null, 2)}</pre>}
       {live && <LiveView account={a} onClose={() => setLive(false)} />}
     </div>
+  );
+}
+
+/** Matrix only. Off until asked for: setting it up publishes a new device's keys on the real account. */
+function EncryptionSection({ a }: { a: P.AccountView }) {
+  const [st, setSt] = useState<any>(null);
+  const [key, setKey] = useState('');
+  const [busy, setBusy] = useState('');
+  const call = (action: string, args?: unknown) => api<{ result: any }>(`/api/accounts/${a.id}/action`, { body: { action, ...(args ? { args } : {}) } }).then((r) => r.result);
+  useEffect(() => {
+    let dead = false;
+    const load = () => call('encryptionStatus').then((s) => !dead && setSt(s), () => !dead && setSt(null));
+    load();
+    const t = setInterval(load, 5000);
+    return () => {
+      dead = true;
+      clearInterval(t);
+    };
+  }, [a.id]);
+  const act = async (label: string, action: string, args?: unknown) => {
+    setBusy(label);
+    try {
+      setSt(await call(action, args));
+      setKey('');
+    } catch (e: any) {
+      toast({ kind: 'error', title: 'Encryption', body: e.message });
+    } finally {
+      setBusy('');
+    }
+  };
+  const keyField = (
+    <div class="add-form">
+      <label class="field-label">
+        Recovery key <span class="muted-label">— from your other Matrix client; unlocks old messages. Optional, kept with this account's other secrets on the hub</span>
+      </label>
+      <input class="input" type={'password' as 'text'} autocomplete="off" placeholder="EsT… or your security phrase" value={key} onInput={(e) => setKey((e.target as HTMLInputElement).value)} />
+    </div>
+  );
+  if (!st) return null;
+  if (!st.on || (!st.active && !st.error)) {
+    return (
+      <section class="det-section">
+        <h3>Encryption</h3>
+        <p class="det-note">Encrypted rooms and DMs stay unreadable and read-only until you set this up. Setting up adds this hub to your account as a new device, publishes its keys, and your other clients will show it as unverified until you verify it.</p>
+        {keyField}
+        <div class="btn-row">
+          <button class="btn primary" disabled={!!busy} onClick={() => act('setup', 'setupEncryption', key.trim() ? { recoveryKey: key.trim() } : {})}>
+            <Icon name="lock" size={14} /> {busy === 'setup' ? 'Setting up…' : 'Set up encryption'}
+          </button>
+        </div>
+      </section>
+    );
+  }
+  if (!st.active) {
+    return (
+      <section class="det-section">
+        <h3>Encryption</h3>
+        <p class="det-note">It is switched on, but not working: {st.error}. Encrypted rooms refuse to send until this is fixed.</p>
+      </section>
+    );
+  }
+  return (
+    <section class="det-section">
+      <h3>Encryption</h3>
+      <dl class="kv">
+        <dt>This device</dt>
+        <dd>{st.deviceId}</dd>
+        <dt>Fingerprint</dt>
+        <dd>
+          <code>{st.fingerprint}</code>
+        </dd>
+        <dt>Verified</dt>
+        <dd>{st.verified ? 'Yes, cross-signed' : 'No. Your other clients show this device as unverified'}</dd>
+        <dt>Key backup</dt>
+        <dd>{st.backup ? `Connected, version ${st.backup.version}` : 'Not connected. Old messages stay locked until a recovery key or a verified device opens it'}</dd>
+        <dt>Room keys</dt>
+        <dd>
+          {st.roomKeys} here, {st.undecrypted} {st.undecrypted === 1 ? 'message waits' : 'messages wait'} for a key
+        </dd>
+      </dl>
+      {st.recoveryError && <p class="det-note">{st.recoveryError}</p>}
+      {st.lastVerification && st.lastVerification !== 'verified' && <p class="det-note">Last verification did not finish: {st.lastVerification}</p>}
+      {!st.backup && keyField}
+      <div class="btn-row">
+        {!st.backup && (
+          <button class="btn ghost" disabled={!!busy || !key.trim()} onClick={() => act('key', 'addRecoveryKey', { recoveryKey: key.trim() })}>
+            {busy === 'key' ? 'Checking…' : 'Use recovery key'}
+          </button>
+        )}
+        {!st.verified && !st.verification && (
+          <button class="btn ghost" disabled={!!busy} onClick={() => act('verify', 'verifyDevice', { step: 'start' })}>
+            {busy === 'verify' ? 'Asking…' : 'Verify with another client'}
+          </button>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -375,6 +525,7 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
             </dd>
           </dl>
         </section>
+        {a.network === 'matrix' && !a.demo && <EncryptionSection a={a} />}
         <section class="det-section">
           <h3>Controls</h3>
           <div class="btn-row">

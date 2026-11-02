@@ -198,6 +198,8 @@ export interface MessageView {
   threadId: string | null;
   mentionsSelf: boolean;
   deleted: boolean;
+  /** Something is wrong with this message's encryption, e.g. it came in the clear in an encrypted room. */
+  encryptionWarning?: string;
   attachments: AttachmentView[];
   embeds: EmbedView[];
   reactions: ReactionView[];

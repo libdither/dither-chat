@@ -1073,7 +1073,9 @@ export class Store {
       const rx = new Map<string, string[]>();
       for (const x of R.get(r.id) ?? []) (rx.get(`${x.style}|${x.key}`) ?? rx.set(`${x.style}|${x.key}`, []).get(`${x.style}|${x.key}`)!).push(x.identity_id);
       const t = T.get(r.id);
+      const encryptionWarning = json<{ encryptionWarning?: string }>(r.extra, {}).encryptionWarning;
       return {
+        ...(encryptionWarning ? { encryptionWarning } : {}),
         id: r.id,
         conversationId: r.conversation_id,
         network: r.network,

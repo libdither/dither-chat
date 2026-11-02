@@ -599,7 +599,7 @@ export class HubServer {
 
   private async fetchMedia(raw: string, accountId: string | null): Promise<Response> {
     const cacheDir = join(this.opts.dataDir, 'media-cache');
-    if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
+    if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
     const key = new Bun.CryptoHasher('sha256').update(raw).digest('hex');
     const file = join(cacheDir, key);
     const headers = (mime: string) => ({ 'content-type': mime, 'cache-control': 'private, max-age=604800, immutable' });
@@ -624,8 +624,9 @@ export class HubServer {
       mime = r.mime;
       bytes = Buffer.from(r.base64, 'base64');
     }
-    writeFileSync(file, bytes);
-    writeFileSync(file + '.mime', mime);
+    // Decrypted attachments end up here too.
+    writeFileSync(file, bytes, { mode: 0o600 });
+    writeFileSync(file + '.mime', mime, { mode: 0o600 });
     return new Response(Buffer.from(bytes), { headers: headers(mime) });
   }
 

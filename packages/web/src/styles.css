@@ -1182,6 +1182,37 @@ code {
   line-height: 1.2;
 }
 .msg-body.deleted,
+.msg-e2ee-warning {
+  color: var(--danger, #e5484d);
+  display: inline-flex;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+.verify-device {
+  margin-top: 12px;
+}
+.sas-emoji {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.sas-emoji li {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 64px;
+  text-align: center;
+}
+.sas-symbol {
+  font-size: 30px;
+  line-height: 1.2;
+}
+.sas-name {
+  font-size: 11px;
+}
 .msg-body.encrypted {
   color: var(--text-faint);
   font-style: italic;
