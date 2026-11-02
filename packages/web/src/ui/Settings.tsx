@@ -1,5 +1,5 @@
 import type * as P from '@dither-chat/protocol';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { LEVEL_LABEL, netName } from '../model.ts';
 import { api, db, prefs, rev, setPrefs, setRule, toast } from '../state.ts';
 import { NetBadge, NetGlyph, levelIcon } from './bits.tsx';
@@ -38,6 +38,67 @@ function ruleLabel(r: P.RuleView): { icon: P.Network | null; text: string } {
   }
   const c = r.target ? db.conversations.get(r.target) : null;
   return { icon: c?.network ?? null, text: c ? (c.name ?? 'A conversation') : 'Conversation' };
+}
+
+const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+
+function QuietHoursSettings() {
+  const [q, setQ] = useState<P.QuietHours | null>(null);
+  useEffect(() => {
+    api<{ quietHours: P.QuietHours | null }>('/api/quiet-hours').then((r) =>
+      setQ(r.quietHours ?? { enabled: false, start: '22:00', end: '07:00', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, days: [], allowStarred: true }),
+    );
+  }, []);
+  if (!q) return null;
+  const save = (patch: Partial<P.QuietHours>) => {
+    // The hub may sit in another zone, so times mean what they mean on the device that set them.
+    const next = { ...q, ...patch, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+    setQ(next);
+    api('/api/quiet-hours', { method: 'PUT', body: next }).catch((e) => toast({ kind: 'error', title: 'Could not save quiet hours', body: e.message }));
+  };
+  const days = q.days ?? [];
+  const toggleDay = (d: number) => {
+    const on = days.length ? days : WEEKDAYS.map((_, i) => i);
+    const next = on.includes(d) ? on.filter((x) => x !== d) : [...on, d].sort();
+    save({ days: next.length === 7 ? [] : next });
+  };
+  return (
+    <section class="set-block">
+      <h3>Quiet hours</h3>
+      <label class="toggle-row">
+        <input type="checkbox" checked={q.enabled} onChange={(e) => save({ enabled: (e.target as HTMLInputElement).checked })} />
+        <span>
+          <b>Hold pushes during these hours</b>
+          <small>Messages still land in the inbox, marked with why they were held. One notification when the hours end says how many are waiting.</small>
+        </span>
+      </label>
+      <div class="quiet-times">
+        <label class="search-field">
+          <span>From</span>
+          <input class="input" type="time" value={q.start} onChange={(e) => save({ start: (e.target as HTMLInputElement).value })} />
+        </label>
+        <label class="search-field">
+          <span>Until</span>
+          <input class="input" type="time" value={q.end} onChange={(e) => save({ end: (e.target as HTMLInputElement).value })} />
+        </label>
+        <div class="level-picker">
+          {WEEKDAYS.map((label, d) => (
+            <button class={`chip-btn ${!days.length || days.includes(d) ? 'on' : ''}`} onClick={() => toggleDay(d)}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <label class="toggle-row">
+        <input type="checkbox" checked={q.allowStarred} onChange={(e) => save({ allowStarred: (e.target as HTMLInputElement).checked })} />
+        <span>
+          <b>Starred people still get through</b>
+          <small>Also anyone set to always notify.</small>
+        </span>
+      </label>
+      <p class="set-help">In {q.timezone}. A day counts from when the hours start, so a Friday night runs into Saturday morning.</p>
+    </section>
+  );
 }
 
 export function SettingsPane() {
@@ -124,6 +185,8 @@ export function SettingsPane() {
         </section>
 
         <PushSettings />
+
+        <QuietHoursSettings />
 
         <section class="set-block">
           <h3>Keywords that always ping</h3>

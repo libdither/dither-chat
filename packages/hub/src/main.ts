@@ -50,13 +50,22 @@ function triageLater(ids: string[]) {
       store.dirty.messages.set(id, true);
       if (d.decision === 'push') {
         const conversationId = store.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', id)!.conversation_id;
-        server.notify({ t: 'notify', messageId: id, conversationId, title: d.title, body: d.body, reasons: d.reasons });
-        ntfy(d.title, d.body, conversationId).catch(() => {});
-        push.notify(d.title, d.body, conversationId, id).catch((e) => console.error('push failed', e));
+        deliver(d.title, d.body, conversationId, id, d.reasons);
       }
     }
   });
 }
+
+function deliver(title: string, body: string, conversationId: string, messageId: string, reasons: string[]) {
+  server.notify({ t: 'notify', messageId, conversationId, title, body, reasons });
+  ntfy(title, body, conversationId).catch(() => {});
+  push.notify(title, body, conversationId, messageId).catch((e) => console.error('push failed', e));
+}
+
+setInterval(() => {
+  const held = triage.takeHeldSummary();
+  if (held) deliver(held.title, held.body, held.conversationId, held.messageId, ['Quiet hours ended']);
+}, 60_000);
 
 /** Optional phone push through a self-hosted ntfy topic (off unless DITHER_NTFY_URL is set). */
 async function ntfy(title: string, body: string, conversationId: string) {

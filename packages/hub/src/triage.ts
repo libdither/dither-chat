@@ -7,6 +7,9 @@
  * unless the user set a hub rule on the conversation or one of its spaces.
  * Starred people and keywords can raise a message to 'push'; 'none' is absolute.
  *
+ * Quiet hours come last: a push decided during them becomes a digest entry with the reason attached, and one
+ * summary push goes out when they end.
+ *
  * Every decision is stored with its reasons so the UI can explain it and the
  * user's corrections can become few-shot examples for a local model.
  */
@@ -24,6 +27,8 @@ export interface Decision {
   decidedBy: 'rules' | 'model';
   title: string;
   body: string;
+  /** From a starred person or one set to always notify: may get through quiet hours. */
+  starred?: boolean;
 }
 
 export const DEFAULT_LEVEL: Record<P.Shape, P.NotifyLevel> = {
@@ -33,6 +38,39 @@ export const DEFAULT_LEVEL: Record<P.Shape, P.NotifyLevel> = {
   thread: 'mentions',
   self: 'none',
 };
+
+/** Local weekday and minutes since midnight in a time zone. */
+function localTime(tz: string, now: number): { day: number; minutes: number } {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)!.value;
+  return { day: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(get('weekday')), minutes: +get('hour') * 60 + +get('minute') };
+}
+
+const toMinutes = (hhmm: string) => +hhmm.slice(0, 2) * 60 + +hhmm.slice(3, 5);
+
+/** Are these quiet hours on right now? A window past midnight belongs to the day it started on. */
+export function inQuietHours(q: P.QuietHours | null, now: number): boolean {
+  if (!q?.enabled) return false;
+  const start = toMinutes(q.start);
+  const end = toMinutes(q.end);
+  if (start === end) return false;
+  const { day, minutes } = localTime(q.timezone, now);
+  const startedOn = (d: number) => !q.days?.length || q.days.includes(d);
+  if (start < end) return minutes >= start && minutes < end && startedOn(day);
+  if (minutes >= start) return startedOn(day);
+  return minutes < end && startedOn((day + 6) % 7);
+}
+
+export function validQuietHours(q: Partial<P.QuietHours>): q is P.QuietHours {
+  const time = (s: unknown) => typeof s === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(s);
+  if (!time(q.start) || !time(q.end) || typeof q.timezone !== 'string') return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: q.timezone });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const URGENT = /\b(urgent|asap|emergency|right now|call me|help!|deadline|today|tonight|are you (around|there|free))\b/i;
 const SMART_THRESHOLD = 0.55;
@@ -153,7 +191,28 @@ export class Triage {
     return best ? { level: best } : null;
   }
 
-  async decide(messageId: string): Promise<Decision | null> {
+  async decide(messageId: string, now = Date.now()): Promise<Decision | null> {
+    const d = await this.decideByRules(messageId);
+    if (d?.decision !== 'push') return d;
+    const q = this.store.quietHours();
+    if (!inQuietHours(q, now) || (q!.allowStarred && d.starred)) return d;
+    d.decision = 'digest';
+    d.reasons.unshift(`Held by quiet hours until ${q!.end}`);
+    const held = this.store.quietHeld();
+    const conversationId = this.store.one<Row>('SELECT conversation_id FROM message WHERE id = ?', messageId)!.conversation_id;
+    this.store.setQuietHeld({ count: (held?.count ?? 0) + 1, conversationId, messageId });
+    return d;
+  }
+
+  /** Quiet hours are over and something was held: what to say about it, once. */
+  takeHeldSummary(now = Date.now()): { title: string; body: string; conversationId: string; messageId: string } | null {
+    const held = this.store.quietHeld();
+    if (!held || inQuietHours(this.store.quietHours(), now)) return null;
+    this.store.setQuietHeld(null);
+    return { title: 'Quiet hours are over', body: `${held.count} message${held.count === 1 ? '' : 's'} held for you`, conversationId: held.conversationId, messageId: held.messageId };
+  }
+
+  private async decideByRules(messageId: string): Promise<Decision | null> {
     const s = this.store;
     const m = s.one<Row>('SELECT * FROM message WHERE id = ?', messageId);
     if (!m) return null;
@@ -194,7 +253,7 @@ export class Triage {
 
     if (person?.starred || personRule?.level === 'all') {
       reasons.push(`From ${authorName}, who is starred`);
-      return done('push');
+      return { ...done('push'), starred: true };
     }
     if (keyword) {
       reasons.push(`Matches keyword “${keyword.target}”`);

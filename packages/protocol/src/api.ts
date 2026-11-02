@@ -298,6 +298,18 @@ export interface PushDeviceView {
   lastError: string | null;
 }
 
+/** A daily window with no pushes. Times are in `timezone`, the zone of the device that set them. */
+export interface QuietHours {
+  enabled: boolean;
+  start: string; // "22:00"
+  end: string; //   "07:00"; earlier than start means it ends the next morning
+  timezone: string;
+  /** Weekdays the window starts on, 0 = Sunday. Empty or missing: every day. */
+  days?: number[];
+  /** Starred people, and people set to always notify, still get through. */
+  allowStarred: boolean;
+}
+
 export interface RuleView {
   id: string;
   scope: NotifyScope;

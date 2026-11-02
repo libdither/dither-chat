@@ -52,7 +52,7 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Unread badge on the app icon | M | L | done | Where the platform supports it |
 | ntfy, fully self-hosted | M | L | done | Off unless `DITHER_NTFY_URL` is set |
 | Reply from the notification | M | M | later | Android and desktop allow actions with input; iOS does not |
-| Quiet hours | M | L | next | A rule on top of triage |
+| Quiet hours | M | L | done | Holds pushes on a daily schedule, optionally letting starred people through, with one summary when they end |
 | Daily digest delivered as one notification | M | M | later | The digest exists in the inbox only |
 
 ## Hosting

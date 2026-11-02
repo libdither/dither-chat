@@ -8,7 +8,7 @@ import type { Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
 import type { PushService } from './push.ts';
 import type { ReadQueue } from './readqueue.ts';
-import type { Triage } from './triage.ts';
+import { validQuietHours, type Triage } from './triage.ts';
 
 const ACCOUNT_COLORS = ['#F2A541', '#E86A92', '#B794F6', '#FF8C61', '#9BE15D', '#5CC8FF', '#F7D154', '#FF6B6B'];
 
@@ -485,6 +485,14 @@ export class HubServer {
         this.opts.onCategoriesChanged?.();
         return ok();
       }
+    }
+    if (path === '/api/quiet-hours') {
+      if (method === 'PUT') {
+        const b = await body<Partial<P.QuietHours>>();
+        if (!validQuietHours(b)) return bad('quiet hours need a start, an end and a time zone');
+        s.setQuietHours({ enabled: !!b.enabled, start: b.start, end: b.end, timezone: b.timezone, days: b.days ?? [], allowStarred: !!b.allowStarred });
+      }
+      return ok({ quietHours: s.quietHours() });
     }
     if (path === '/api/rules' && method === 'PUT') {
       const b = await body<{ scope: P.NotifyScope; target: string | null; level: P.NotifyLevel | null }>();

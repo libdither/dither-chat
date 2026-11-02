@@ -3838,6 +3838,13 @@ body.dragging * {
   flex: 1;
   margin: 0;
 }
+.quiet-times {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  margin: 8px 0;
+}
 .search-scope {
   padding: 8px 16px 0;
 }

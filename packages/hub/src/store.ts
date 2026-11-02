@@ -1351,6 +1351,21 @@ export class Store {
     }));
   }
 
+  private metaJson<T>(key: string): T | null {
+    const r = this.db.query('SELECT value FROM meta WHERE key = ?').get(key) as Row | null;
+    return r ? (JSON.parse(r.value) as T) : null;
+  }
+
+  private setMetaJson(key: string, value: unknown) {
+    if (value === null) this.db.query('DELETE FROM meta WHERE key = ?').run(key);
+    else this.db.query('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value').run(key, JSON.stringify(value));
+  }
+
+  quietHours = () => this.metaJson<P.QuietHours>('quiet_hours');
+  setQuietHours = (q: P.QuietHours) => this.setMetaJson('quiet_hours', q);
+  quietHeld = () => this.metaJson<{ count: number; conversationId: string; messageId: string }>('quiet_held');
+  setQuietHeld = (held: { count: number; conversationId: string; messageId: string } | null) => this.setMetaJson('quiet_held', held);
+
   rules(): P.RuleView[] {
     return (this.db.query('SELECT * FROM notify_rule ORDER BY created_at').all() as Row[]).map((r) => ({
       id: r.id,
