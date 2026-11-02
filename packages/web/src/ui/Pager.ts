@@ -258,6 +258,8 @@ export function usePager(app: { current: HTMLElement | null }, card: { current: 
         const target = go ? cur.to! : cur.from!;
         const ms = reducedMotion() ? 0 : settleMs(target - cur.x!, v);
         if (go) {
+          // The keyboard belongs to the page being left.
+          (document.activeElement as HTMLElement | null)?.blur?.();
           applied.current = cur.landing!;
           place(target, ms, () => cur.landing !== 'details' && under(false));
           cur.action!();

@@ -35,8 +35,10 @@ export function useLongPress(onPress: (e: PointerEvent) => void, ms = 420) {
     e.preventDefault();
   };
   return {
-    onPointerDown: (e: PointerEvent) => {
-      if (e.pointerType !== 'touch') return;
+    onPointerDown: (e: PointerEvent & { longPressTaken?: boolean }) => {
+      // A reaction pill sits inside a message: the innermost long-press is the one meant.
+      if (e.pointerType !== 'touch' || e.longPressTaken) return;
+      e.longPressTaken = true;
       start.current = { x: e.clientX, y: e.clientY };
       fired.current = false;
       timer.current = setTimeout(() => {

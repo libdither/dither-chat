@@ -3413,8 +3413,16 @@ code {
   :root {
     --tabbar-h: calc(56px + env(safe-area-inset-bottom));
   }
+  html,
+  body {
+    overscroll-behavior: none;
+  }
   body {
     font-size: 15px;
+  }
+  button,
+  a {
+    -webkit-tap-highlight-color: transparent;
   }
   /* The keyboard: phone.ts sizes the app to what is still visible. */
   #app {
@@ -3693,9 +3701,15 @@ code {
     min-height: 40px;
   }
 
-  /* Messages */
+  /* Messages. Off screen they skip layout and paint, which keeps a long timeline smooth. The timeline is
+     anchored at its bottom (column-reverse), so sizes settling above the view never move what is in it.
+     Only here: on a desktop the hover bar and menus reach outside a message, and this would clip them. */
   .timeline-scroll {
     overscroll-behavior-y: contain;
+  }
+  .msg {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 64px;
   }
   .msg {
     grid-template-columns: 52px 1fr;
@@ -3888,8 +3902,20 @@ code {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  background: rgb(0 0 0 / calc(0.5 * var(--sheet-fade, 1)));
+}
+/* The shade behind a sheet, which lightens as the sheet is dragged down. */
+.sheet-layer::before,
+.modal-backdrop::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: #000;
+  opacity: calc(0.5 * var(--sheet-fade, 1));
   animation: fade-in 0.2s ease-out;
+}
+.modal-backdrop::before {
+  display: none;
 }
 .sheet {
   position: relative;
@@ -4086,8 +4112,11 @@ code {
   .modal-backdrop {
     place-items: end stretch;
     padding: 0;
-    background: rgb(0 0 0 / calc(0.55 * var(--sheet-fade, 1)));
+    background: none;
     backdrop-filter: none;
+  }
+  .modal-backdrop::before {
+    display: block;
   }
   .modal,
   .modal.wide {
@@ -4142,12 +4171,20 @@ code {
   display: grid;
   place-items: center;
   overflow: hidden;
-  background: rgb(0 0 0 / calc(0.94 * var(--viewer-bg, 1)));
   touch-action: none;
   user-select: none;
   animation: fade-in 0.18s ease-out;
 }
+/* Fades as the image is swiped away. */
+.viewer::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: var(--viewer-bg, 1);
+}
 .viewer-img {
+  position: relative;
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
@@ -4284,7 +4321,8 @@ code {
 
 @media (prefers-reduced-motion: reduce) {
   .sheet,
-  .sheet-layer,
+  .sheet-layer::before,
+  .modal-backdrop::before,
   .modal,
   .viewer,
   .menu {

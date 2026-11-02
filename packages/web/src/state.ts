@@ -560,6 +560,8 @@ export async function loadInbox() {
   const page = await api<P.InboxPage>('/api/inbox');
   page.identities.forEach(putIdentity);
   inbox.value = page.items.map((i) => i.message);
+  // What pinged you is counted from the inbox, behind a memo keyed on rev.
+  rev.value++;
 }
 
 // ------------------------------------------------------------------ actions
