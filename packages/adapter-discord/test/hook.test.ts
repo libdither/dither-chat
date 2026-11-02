@@ -219,6 +219,45 @@ describe('hook.js with several rspack runtimes', () => {
     expect(p.posted.find((m) => m.t === 'reply')).toMatchObject({ id: 's', ok: true, result: { nativeId: '77' } });
   });
 
+  test('sends files the way the client does: upload URLs, PUT, then a message naming them', async () => {
+    handlers.clear();
+    const p = page();
+    p.runHook();
+    const web = runtime(p.win, 'web');
+    chunk(p.win, '700', { stores: storeModule });
+    web.T('stores');
+    p.tick();
+    const posts: any[] = [];
+    const realPost = rest.post;
+    rest.post = async (req: any) => {
+      posts.push(req);
+      if (req.url.endsWith('/attachments')) return { body: { attachments: [{ id: '0', upload_url: 'https://storage.example/u', upload_filename: 'up/a.png' }] } };
+      return { body: { id: '88' } };
+    };
+    const puts: { url: string; body: Uint8Array; type: string }[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string, init: any) => {
+      puts.push({ url, body: init.body, type: init.headers['content-type'] });
+      return { ok: true, status: 200 };
+    }) as any;
+    try {
+      p.win.message?.({ source: p.win, data: { __dither_bridge__: 'down', payload: { t: 'cmd', id: 'f', cmd: { kind: 'send', channelId: '5', content: 'look', replyTo: '4', nonce: 'n2', files: [{ name: 'a.png', mime: 'image/png', size: 3, base64: btoa('abc') }] } } } });
+      await Bun.sleep(5);
+    } finally {
+      rest.post = realPost;
+      globalThis.fetch = realFetch;
+    }
+    expect(posts[0]).toMatchObject({ url: '/channels/5/attachments', body: { files: [{ id: '0', filename: 'a.png', file_size: 3 }] } });
+    expect(puts[0].url).toBe('https://storage.example/u');
+    expect(new TextDecoder().decode(puts[0].body)).toBe('abc');
+    expect(puts[0].type).toBe('image/png');
+    expect(posts[1]).toMatchObject({
+      url: '/channels/5/messages',
+      body: { content: 'look', attachments: [{ id: '0', filename: 'a.png', uploaded_filename: 'up/a.png' }], message_reference: { channel_id: '5', message_id: '4' } },
+    });
+    expect(p.posted.find((m) => m.t === 'reply' && m.id === 'f')).toMatchObject({ ok: true, result: { nativeId: '88' } });
+  });
+
   describe('reacting', () => {
     const emojiA = { id: '1', name: 'here', animated: false, available: true, guildId: 'g1' };
     const emojiB = { id: '2', name: 'there', animated: true, available: true, guildId: 'g2' };

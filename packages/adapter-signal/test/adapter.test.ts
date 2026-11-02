@@ -163,6 +163,20 @@ describe('signal adapter against a fake signal-cli', () => {
     expect(calls('send').at(-1).params).toEqual({ noteToSelf: true, message: 'note' });
   });
 
+  test('files go by path, and our copy is what the echo points at', async () => {
+    const src = join(dir, 'spool-file');
+    writeFileSync(src, 'png bytes');
+    const mark = events.length;
+    const res = (await cmd({ t: 'send', conversation: DM_ALICE, body: '', attachments: [{ path: src, name: 'a.png', mime: 'image/png', size: 9, kind: 'image' }] })) as { nativeId: string };
+    expect(calls('send').at(-1).params).toEqual({ recipient: [ALICE], message: '', attachment: [src] });
+    const echo = of('message', mark).find((e) => e.message.nativeId === res.nativeId)!.message;
+    expect(echo.kind).toBe('media');
+    expect(echo.attachments).toHaveLength(1);
+    expect(echo.attachments![0]).toMatchObject({ kind: 'image', mime: 'image/png', name: 'a.png', size: 9 });
+    rmSync(src);
+    expect(readFileSync(echo.attachments![0].url.slice('file://'.length), 'utf8')).toBe('png bytes');
+  });
+
   test('reaction context: nothing fancy, and leaving a group ends it', async () => {
     expect(await cmd({ t: 'reactionContext', conversation: DM_ALICE })).toEqual({ canReact: true, custom: [] });
     expect(await cmd({ t: 'reactionContext', conversation: GROUP })).toEqual({ canReact: true, custom: [] });

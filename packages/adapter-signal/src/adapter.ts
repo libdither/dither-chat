@@ -10,7 +10,7 @@
  * without a hub, and the signal-cli binary is injectable so tests can use a fake.
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type * as P from '@dither-chat/protocol';
@@ -39,7 +39,7 @@ import { AdapterState } from './state.ts';
 import type { SigContact, SigGroup, SigReceive, SigSendResult } from './types.ts';
 
 export const ADAPTER_VERSION = '0.1.0';
-export const CAPABILITIES: P.Capability[] = ['send', 'react', 'edit', 'redact', 'markRead', 'typing', 'media'];
+export const CAPABILITIES: P.Capability[] = ['send', 'react', 'edit', 'redact', 'markRead', 'typing', 'media', 'sendMedia'];
 export const LINK_MESSAGE = 'Scan this QR code in Signal → Settings → Linked devices';
 
 export interface AdapterHost {
@@ -628,7 +628,7 @@ export class SignalAdapter {
         // Linked devices receive no history from the phone.
         return { count: 0, done: true };
       case 'send':
-        return this.send(cmd.conversation, cmd.body, cmd.replyTo);
+        return this.send(cmd.conversation, cmd.body, cmd.replyTo, cmd.attachments);
       case 'edit':
         return this.edit(cmd.conversation, cmd.message, cmd.body);
       case 'react': {
@@ -680,7 +680,7 @@ export class SignalAdapter {
     }
   }
 
-  private async send(conversation: string, body: string, replyTo?: string) {
+  private async send(conversation: string, body: string, replyTo?: string, files: P.OutgoingAttachment[] = []) {
     const self = this.self;
     const st = toSignal(body);
     const params: Record<string, unknown> = { ...this.target(conversation), message: st.text };
@@ -693,7 +693,8 @@ export class SignalAdapter {
       const text = this.state.textOf(replyTo);
       if (text) params.quoteMessage = text;
     }
-    const res = await this.call('send', params);
+    if (files.length) params.attachment = files.map((f) => f.path);
+    const res = await this.call('send', params, files.length ? 170_000 : undefined);
     this.logPartialFailure('send', res);
     const ts = res.timestamp;
     const nativeId = msgId(self, ts);
@@ -701,8 +702,19 @@ export class SignalAdapter {
     if (t.kind === 'dm') this.apply(emptyResult({ t: 'conversation', conversation: directConversation(self, t.peer) }));
     const fact: P.MessageFact = { nativeId, conversation, author: self, ts, kind: 'text', body: fromSignal(st.text, st.styles, st.mentionRanges) };
     if (replyTo) fact.replyTo = replyTo;
+    // No echo comes back to this device. Keep our own copy, the way a received file is kept, since the hub drops its spool.
+    const kept = files.map((f, i) => {
+      const dest = join(this.signalDir, 'attachments', `sent-${ts}-${i}`);
+      mkdirSync(join(this.signalDir, 'attachments'), { recursive: true });
+      copyFileSync(f.path, dest);
+      return { file: dest, fact: { kind: f.kind, mime: f.mime, name: f.name, size: f.size, url: `file://${dest}` } satisfies P.AttachmentFact };
+    });
+    if (kept.length) {
+      fact.attachments = kept.map((k) => k.fact);
+      if (!st.text) fact.kind = 'media';
+    }
     this.host.emit({ t: 'message', live: true, message: fact });
-    this.state.remember(nativeId, conversation, st.text, replyTo);
+    this.state.remember(nativeId, conversation, st.text, replyTo, kept.map((k) => k.file));
     const timer = this.timers.get(conversation);
     if (timer) this.trackExpiry({ nativeId, conversation, ts }, timer, Date.now());
     return { nativeId };

@@ -3,12 +3,13 @@ import { createHmac } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { discordEmojiUrl, NETWORK_META, NETWORKS } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, discordEmojiUrl, MAX_UPLOAD, NETWORK_META, NETWORKS } from '@dither-chat/protocol';
 import type { Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
 import type { PushService } from './push.ts';
 import type { ReadQueue } from './readqueue.ts';
 import { validQuietHours, type Triage } from './triage.ts';
+import { cleanFileName, Uploads } from './uploads.ts';
 
 const ACCOUNT_COLORS = ['#F2A541', '#E86A92', '#B794F6', '#FF8C61', '#9BE15D', '#5CC8FF', '#F7D154', '#FF6B6B'];
 
@@ -76,13 +77,16 @@ export class HubServer {
   private plain?: Server<WsData>;
   private clients = new Set<ServerWebSocket<ClientData>>();
   private flushTimer?: Timer;
+  private uploads: Uploads;
 
   constructor(
     private store: Store,
     private sup: Supervisor,
     private triage: Triage,
     private opts: ServerOpts,
-  ) {}
+  ) {
+    this.uploads = new Uploads(join(opts.dataDir, 'uploads'));
+  }
 
   start() {
     const self = this;
@@ -308,15 +312,34 @@ export class HubServer {
       return ok(s.reactionContextView(accountId, conv.network, ctx ?? { canReact: true, custom: [] }));
     }
 
+    if (path === '/api/uploads' && method === 'POST') {
+      if (Number(req.headers.get('content-length') ?? 0) > MAX_UPLOAD) return bad('that file is too large', 413);
+      const bytes = new Uint8Array(await req.arrayBuffer());
+      if (!bytes.length) return bad('empty file');
+      if (bytes.length > MAX_UPLOAD) return bad('that file is too large', 413);
+      return ok(this.uploads.put(bytes, cleanFileName(req.headers.get('x-file-name')), req.headers.get('content-type') ?? ''));
+    }
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/send$/)) && method === 'POST') {
-      const b = await body<{ body: string; accountId?: string; replyTo?: string }>();
-      if (!b.body?.trim()) return bad('empty message');
+      const b = await body<{ body?: string; accountId?: string; replyTo?: string; attachments?: string[] }>();
+      const ids = b.attachments ?? [];
+      if (!b.body?.trim() && !ids.length) return bad('empty message');
       const conv = s.nativeOf('conversation', m[1]);
       if (!conv) return bad('no such conversation', 404);
       const accountId = this.pickAccount(m[1], b.accountId);
       if (!accountId) return bad('no connected account can send here', 409);
       const replyTo = b.replyTo ? s.nativeOf('message', b.replyTo)?.nativeId : undefined;
-      const result = await this.sup.command(accountId, { t: 'send', conversation: conv.nativeId, body: b.body, replyTo });
+      const files = this.uploads.get(ids);
+      if (!files) return bad('that upload has expired, attach the file again', 410);
+      if (files.length) {
+        const acc = s.account(accountId)!;
+        const limit = ATTACHMENT_LIMITS[conv.network];
+        const name = NETWORK_META[conv.network].name;
+        if (!(JSON.parse(acc.capabilities) as P.Capability[]).includes('sendMedia')) return bad(`${acc.label} cannot send files on ${name}`, 409);
+        if (files.length > limit.files) return bad(`${name} takes ${limit.files} files at a time`, 413);
+        if (files.some((f) => f.size > limit.bytes)) return bad(`${name} takes files up to ${limit.bytes / 1024 / 1024} MB`, 413);
+      }
+      const result = await this.sup.command(accountId, { t: 'send', conversation: conv.nativeId, body: b.body ?? '', replyTo, ...(files.length ? { attachments: files } : {}) }, files.length ? 180_000 : undefined);
+      this.uploads.remove(ids);
       return ok({ ok: true, accountId, result });
     }
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/read$/)) && method === 'POST') {

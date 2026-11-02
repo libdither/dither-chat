@@ -122,6 +122,14 @@ export interface AttachmentView {
   url: string;
 }
 
+/** A file uploaded to the hub and waiting to be sent. */
+export interface UploadView {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+}
+
 export interface TriageView {
   decision: TriageDecision;
   score: number | null;

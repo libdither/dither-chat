@@ -54,6 +54,7 @@ export interface PendingSend {
   ts: number;
   accountId?: string;
   failed?: string;
+  files?: string[];
 }
 export const pending = signal<PendingSend[]>([]);
 export const typing = signal<Record<string, { identityId: string; until: number }[]>>({});
@@ -360,7 +361,7 @@ export function applyEvents(events: P.ClientEvent[]) {
         // An echo of something we sent: drop the optimistic copy.
         if (pending.value.length) {
           const mine = isSelfIdentity(m.authorId);
-          if (mine) pending.value = pending.value.filter((p) => !(p.conversationId === m.conversationId && p.body.trim() === m.body.trim()));
+          if (mine) pending.value = pending.value.filter((p) => !(p.conversationId === m.conversationId && (p.files?.length ? m.attachments.length > 0 : p.body.trim() === m.body.trim())));
         }
         break;
       }
@@ -537,12 +538,20 @@ export async function loadInbox() {
 
 // ------------------------------------------------------------------ actions
 
-export async function send(conversationId: string, body: string, opts: { accountId?: string; replyTo?: string } = {}) {
+async function upload(file: File): Promise<P.UploadView> {
+  const res = await fetch('/api/uploads', { method: 'POST', body: file, headers: { 'content-type': file.type || 'application/octet-stream', 'x-file-name': encodeURIComponent(file.name) } });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return data;
+}
+
+export async function send(conversationId: string, body: string, opts: { accountId?: string; replyTo?: string; files?: File[] } = {}) {
   const tempId = 'tmp-' + Math.random().toString(36).slice(2);
-  const p: PendingSend = { tempId, conversationId, body, ts: Date.now(), accountId: opts.accountId };
+  const p: PendingSend = { tempId, conversationId, body, ts: Date.now(), accountId: opts.accountId, files: opts.files?.map((f) => f.name) };
   pending.value = [...pending.value, p];
   try {
-    await api(`/api/conversations/${conversationId}/send`, { body: { body, accountId: opts.accountId, replyTo: opts.replyTo } });
+    const attachments = opts.files?.length ? (await Promise.all(opts.files.map(upload))).map((u) => u.id) : undefined;
+    await api(`/api/conversations/${conversationId}/send`, { body: { body, accountId: opts.accountId, replyTo: opts.replyTo, attachments } });
     setTimeout(() => (pending.value = pending.value.filter((x) => x.tempId !== tempId)), 30_000);
   } catch (e: any) {
     pending.value = pending.value.map((x) => (x.tempId === tempId ? { ...x, failed: e.message } : x));

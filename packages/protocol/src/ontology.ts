@@ -122,6 +122,20 @@ export function canonicalReactionKey(key: string): string {
 }
 export type AttachmentKind = 'image' | 'video' | 'audio' | 'file';
 
+export function attachmentKind(mime: string): AttachmentKind {
+  const top = mime.split('/')[0];
+  return top === 'image' || top === 'video' || top === 'audio' ? top : 'file';
+}
+
+/** The most the hub takes in one file, in bytes. */
+export const MAX_UPLOAD = 25 * 1024 * 1024;
+/** What each network takes, as far as we can tell without asking. Discord's is the limit without Nitro. */
+export const ATTACHMENT_LIMITS: Record<Network, { bytes: number; files: number }> = {
+  discord: { bytes: 10 * 1024 * 1024, files: 10 },
+  signal: { bytes: MAX_UPLOAD, files: 10 },
+  matrix: { bytes: MAX_UPLOAD - 1024 * 1024, files: 10 },
+};
+
 /** Brand colours used to annotate the source of every object in the UI. */
 export const NETWORK_META: Record<Network, { name: string; color: string; spaceNoun: string; sectionNoun: string }> = {
   discord: { name: 'Discord', color: '#5865F2', spaceNoun: 'server', sectionNoun: 'category' },

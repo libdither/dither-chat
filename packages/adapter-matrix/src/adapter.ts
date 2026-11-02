@@ -22,7 +22,7 @@ import { isRedacted, mentionsUser, MESSAGE_TYPES, plainTextOf, relationOf, rende
 import { Directory, Room, STRUCTURAL, type MxEvent } from './rooms.ts';
 
 export const VERSION = '0.1.0';
-const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'threads', 'media'];
+const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'threads', 'media', 'sendMedia'];
 
 const SYNC_TIMEOUT = 30_000;
 const TIMELINE_LIMIT = 50;
@@ -989,7 +989,7 @@ export class MatrixAdapter {
   async command(cmd: P.AdapterCommand): Promise<unknown> {
     switch (cmd.t) {
       case 'send':
-        return this.send(cmd.conversation, cmd.body, cmd.replyTo);
+        return cmd.attachments?.length ? this.sendFiles(cmd.conversation, cmd.body, cmd.attachments, cmd.replyTo) : this.send(cmd.conversation, cmd.body, cmd.replyTo);
       case 'history':
         return this.history(cmd.conversation, cmd.limit);
       case 'markRead':
@@ -1065,6 +1065,33 @@ export class MatrixAdapter {
       content['m.relates_to'] = { 'm.in_reply_to': { event_id: replyTo } };
     }
     return { nativeId: await this.sendEvent(roomId, 'm.room.message', content) };
+  }
+
+  /** Matrix has one file per event, and clients vary on captions, so any text goes first as its own message. */
+  private async sendFiles(conversation: string, body: string, files: P.OutgoingAttachment[], replyTo?: string) {
+    const { roomId, root } = splitConversation(conversation);
+    // There is no crypto store yet, and a plain file in an encrypted room would be readable by the server.
+    if (this.joinedRoom(roomId).encrypted) throw new Error('sending files to encrypted rooms is not supported yet');
+    let first: string | undefined;
+    let reply = replyTo;
+    if (body.trim()) {
+      first = (await this.send(conversation, body, reply)).nativeId;
+      reply = undefined;
+    }
+    for (const f of files) {
+      const up = await this.api().request<{ content_uri: string }>('POST', '/_matrix/media/v3/upload', { query: { filename: f.name }, body: Bun.file(f.path), contentType: f.mime, timeoutMs: 120_000 });
+      const content: Record<string, any> = { msgtype: `m.${f.kind}`, body: f.name, filename: f.name, url: up.content_uri, info: { mimetype: f.mime, size: f.size } };
+      if (root) {
+        const latest = this.db.thread(threadId(roomId, root))?.latest ?? root;
+        content['m.relates_to'] = { rel_type: 'm.thread', event_id: root, is_falling_back: !reply, 'm.in_reply_to': { event_id: reply ?? latest } };
+      } else if (reply) {
+        content['m.relates_to'] = { 'm.in_reply_to': { event_id: reply } };
+      }
+      const id = await this.sendEvent(roomId, 'm.room.message', content);
+      first ??= id;
+      reply = undefined;
+    }
+    return { nativeId: first };
   }
 
   private async edit(conversation: string, message: string, body: string) {

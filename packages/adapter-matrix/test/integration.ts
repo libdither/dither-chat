@@ -101,7 +101,7 @@ let failed = false;
 try {
   await waitFor((e) => e.t === 'status' && e.status === 'online', 30_000);
   const hello = facts('hello')[0];
-  check(['send', 'history', 'react', 'edit', 'redact', 'markRead', 'threads', 'media'].every((c) => hello?.capabilities.includes(c as P.Capability)), 'hello with all capabilities', hello?.capabilities);
+  check(['send', 'history', 'react', 'edit', 'redact', 'markRead', 'threads', 'media', 'sendMedia'].every((c) => hello?.capabilities.includes(c as P.Capability)), 'hello with all capabilities', hello?.capabilities);
   const self = facts('status').find((e) => e.self)?.self;
   check(self?.nativeId === tb.users.zyan.userId && self?.displayName === 'Zyan', 'status.self from whoami + profile', self);
   check(!JSON.parse(readFileSync(join(dir, 'secret.json'), 'utf8')).password, 'password dropped from secret.json after login');
@@ -197,6 +197,18 @@ try {
   await command({ t: 'redact', conversation: R.notes, message: sent.nativeId });
   await waitFor((e) => e.t === 'delete' && e.nativeId === sent.nativeId);
   check(true, 'redact: delete fact arrives');
+
+  // Sending files: text first, then the file as its own event, and the bytes come back through fetchMedia.
+  const spool = join(dir, 'spool.png');
+  writeFileSync(spool, 'not really a png');
+  const fileSent = await command({ t: 'send', conversation: R.notes, body: 'with a caption', attachments: [{ path: spool, name: 'pic.png', mime: 'image/png', size: 16, kind: 'image' }] });
+  const caption = await waitFor<Extract<P.AdapterEvent, { t: 'message' }>>((e) => e.t === 'message' && e.message.nativeId === fileSent.nativeId);
+  check(caption.message.body === 'with a caption', 'send with files: the text goes first', caption.message.body);
+  const fileEcho = await waitFor<Extract<P.AdapterEvent, { t: 'message' }>>((e) => e.t === 'message' && e.message.conversation === R.notes && !!e.message.attachments?.some((a) => a.name === 'pic.png'));
+  const att = fileEcho.message.attachments!.find((a) => a.name === 'pic.png')!;
+  check(att.kind === 'image' && att.mime === 'image/png' && att.url.startsWith('mxc://'), 'send with files: the file arrives as m.image with an mxc url', att);
+  const back = await command({ t: 'fetchMedia', url: att.url });
+  check(Buffer.from(back.base64, 'base64').toString() === 'not really a png', 'send with files: the bytes round-trip through the homeserver');
 
   const threadSent = await command({ t: 'send', conversation: devThread, body: 'integration test in the thread' });
   const inThread = await waitFor<Extract<P.AdapterEvent, { t: 'message' }>>((e) => e.t === 'message' && e.message.nativeId === threadSent.nativeId);

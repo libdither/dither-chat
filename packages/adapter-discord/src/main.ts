@@ -10,6 +10,7 @@
  * Started by the hub supervisor with DITHER_* env; see protocol/adapter-client.ts.
  */
 
+import { readFileSync } from 'node:fs';
 import { linkHub } from '@dither-chat/protocol/client';
 import type * as P from '@dither-chat/protocol';
 import type { BridgeUp, HookCommand, PageState, RawEmoji, RawGuild, RawUser } from './discord-types.ts';
@@ -18,7 +19,7 @@ import { customEmoji, DISCORD_EPOCH, guildIconUrl, mapUser } from './map.ts';
 import { BridgeServer, PaceQueue } from './server.ts';
 import { Sandbox, pickDisplay } from './sandbox.ts';
 
-const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'typing', 'threads', 'media', 'liveView'];
+const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'typing', 'threads', 'media', 'liveView', 'sendMedia'];
 const WIDTH = 1280;
 const HEIGHT = 800;
 
@@ -244,8 +245,9 @@ async function onCommand(cmd: P.AdapterCommand): Promise<unknown> {
   switch (cmd.t) {
     case 'send': {
       const nonce = randomNonce();
-      const hc: HookCommand = { kind: 'send', channelId: cmd.conversation, content: cmd.body, replyTo: cmd.replyTo, nonce };
-      const r = await pace.run('send', () => bridge.request<{ nativeId: string | null }>(hc, 30_000));
+      const files = cmd.attachments?.map((f) => ({ name: f.name, mime: f.mime, size: f.size, base64: readFileSync(f.path).toString('base64') }));
+      const hc: HookCommand = { kind: 'send', channelId: cmd.conversation, content: cmd.body, replyTo: cmd.replyTo, nonce, ...(files?.length ? { files } : {}) };
+      const r = await pace.run('send', () => bridge.request<{ nativeId: string | null }>(hc, files?.length ? 170_000 : 30_000));
       return { nativeId: r?.nativeId ?? null };
     }
     case 'history': {

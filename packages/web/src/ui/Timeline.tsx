@@ -1,5 +1,5 @@
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, NETWORK_META } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { bytes, clock, dayLabel, fullTime, sameDay } from '../format.ts';
 import { isJumbo, renderMarkdown } from '../markdown.ts';
@@ -27,6 +27,7 @@ import {
   loadTimeline,
   markRead,
   pending,
+  toast,
   prefs,
   quoted,
   rev,
@@ -589,6 +590,11 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
             <div class="msg-gutter" />
             <div class="msg-main">
               <div class="msg-body">{p.body}</div>
+              {p.files?.map((name) => (
+                <div class="pending-file">
+                  <Icon name="paperclip" size={12} /> {name}
+                </div>
+              ))}
               <span class="pending-note">{p.failed ? `Failed: ${p.failed}` : 'Sending…'}</span>
             </div>
           </div>
@@ -610,6 +616,32 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   clearReply: () => void;
   disabledReason?: string | null;
 }) {
+  const conv = db.conversations.get(targets.convId);
+  const accs = (conv?.vantages ?? []).map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a);
+  const sender = accs.find((a) => a.id === targets.accountId) ?? accs.find((a) => a.status === 'online') ?? accs[0];
+  const canAttach = !!conv && !!sender?.capabilities.includes('sendMedia') && !(conv.network === 'matrix' && conv.encrypted);
+  const [files, setFiles] = useState<{ file: File; url: string | null }[]>([]);
+  const [dropping, setDropping] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
+  const addFiles = (list: File[]) => {
+    if (!list.length || !conv) return;
+    if (!canAttach) return toast({ kind: 'error', title: 'Cannot send files here', body: conv.encrypted ? 'Files in encrypted Matrix rooms are not supported yet.' : `${netName(conv.network)} is not set up to send files.` });
+    const limit = ATTACHMENT_LIMITS[conv.network];
+    const fit = list.filter((f) => f.size <= limit.bytes);
+    if (fit.length < list.length) toast({ kind: 'error', title: 'File too large', body: `${netName(conv.network)} takes files up to ${limit.bytes / 1024 / 1024} MB.` });
+    setFiles((cur) => [...cur, ...fit.map((file) => ({ file, url: file.type.startsWith('image/') ? URL.createObjectURL(file) : null }))].slice(0, limit.files));
+  };
+  const dropFile = (i: number) =>
+    setFiles((cur) => {
+      if (cur[i]?.url) URL.revokeObjectURL(cur[i].url!);
+      return cur.filter((_, j) => j !== i);
+    });
+  const clearFiles = () =>
+    setFiles((cur) => {
+      cur.forEach((f) => f.url && URL.revokeObjectURL(f.url));
+      return [];
+    });
+  useEffect(() => clearFiles, [targets.convId]);
   const draftKey = `dither-chat:draft:${targets.convId}`;
   const [text, setText] = useState(() => localStorage.getItem(draftKey) ?? '');
   const ta = useRef<HTMLTextAreaElement>(null);
@@ -646,18 +678,33 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   }, [reply]);
   const submit = () => {
     const body = text.trim();
-    if (!body || disabledReason) return;
+    if ((!body && !files.length) || disabledReason) return;
     if (edit) {
       if (body !== edit.body) editMessage(edit, body);
       cancelEdit();
       return;
     }
-    send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id });
+    send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id, files: files.map((f) => f.file) });
     type('');
+    clearFiles();
     clearReply();
   };
   return (
-    <div class="composer">
+    <div
+      class={`composer ${dropping ? 'dropping' : ''}`}
+      onDragOver={(e) => {
+        if (!e.dataTransfer?.types.includes('Files')) return;
+        e.preventDefault();
+        setDropping(true);
+      }}
+      onDragLeave={() => setDropping(false)}
+      onDrop={(e) => {
+        if (!e.dataTransfer?.files.length) return;
+        e.preventDefault();
+        setDropping(false);
+        addFiles([...e.dataTransfer.files]);
+      }}
+    >
       {edit && (
         <div class="composer-reply">
           <Icon name="settings" size={13} /> Editing your message
@@ -675,7 +722,38 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           </button>
         </div>
       )}
+      {files.length > 0 && (
+        <div class="composer-files">
+          {files.map((f, i) => (
+            <div class="composer-file" title={f.file.name}>
+              {f.url ? <img src={f.url} alt="" /> : <Icon name="file" size={22} />}
+              <span>{f.file.name}</span>
+              <button class="icon-btn small" onClick={() => dropFile(i)} aria-label={`Remove ${f.file.name}`}>
+                <Icon name="x" size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
+        {canAttach && !edit && !disabledReason && (
+          <>
+            <button class="icon-btn attach-btn" onClick={() => picker.current?.click()} title="Attach files" aria-label="Attach files">
+              <Icon name="paperclip" size={17} />
+            </button>
+            <input
+              ref={picker}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                const el = e.target as HTMLInputElement;
+                addFiles([...(el.files ?? [])]);
+                el.value = '';
+              }}
+            />
+          </>
+        )}
         {sendAs && sendAs.options.length > 1 && (
           <Menu
             up
@@ -711,6 +789,12 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           placeholder={disabledReason ?? placeholder}
           disabled={!!disabledReason}
           onInput={(e) => type((e.target as HTMLTextAreaElement).value)}
+          onPaste={(e) => {
+            const pasted = [...(e.clipboardData?.files ?? [])];
+            if (!pasted.length) return;
+            e.preventDefault();
+            addFiles(pasted);
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
               e.preventDefault();
@@ -718,7 +802,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
             } else if (e.key === 'Escape') clearReply();
           }}
         />
-        <button class="send-btn" disabled={!text.trim() || !!disabledReason} onClick={submit} aria-label="Send">
+        <button class="send-btn" disabled={(!text.trim() && !files.length) || !!disabledReason} onClick={submit} aria-label="Send">
           <Icon name="send" size={17} />
         </button>
       </div>

@@ -202,10 +202,12 @@ export function App() {
         </button>
       )}
       {(readProgress.value.pending > 0 || readProgress.value.failed > 0) && (
-        <div class="read-progress" role="status">
+        <div class="read-progress" role="status" onClick={() => (readProgress.value = { ...readProgress.value, failed: 0 })}>
           <Icon name="check" size={13} />
-          {readProgress.value.pending > 0 ? ` Telling the networks: ${readProgress.value.pending} left` : ' Read everywhere it could be'}
-          {readProgress.value.failed > 0 && `, ${readProgress.value.failed} would not go through`}
+          <span>
+            {readProgress.value.pending > 0 ? `Telling the networks: ${readProgress.value.pending} left` : 'Read everywhere it could be'}
+            {readProgress.value.failed > 0 && `, ${readProgress.value.failed} would not go through`}
+          </span>
         </div>
       )}
       <Rail />

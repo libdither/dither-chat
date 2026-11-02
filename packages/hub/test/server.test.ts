@@ -1,12 +1,13 @@
 /**
  * The hub over real sockets: TLS, the plaintext side listener, and who gets refused.
  */
-import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { ATTACHMENT_LIMITS, MAX_UPLOAD } from '@dither-chat/protocol';
 import { HubServer, isTailnet, mediaSigner, sameOrigin } from '../src/server.ts';
-import { Store } from '../src/store.ts';
+import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'dither-srv-'));
@@ -143,4 +144,72 @@ test('edit and delete go through the account that wrote it, where the network al
     [a.id, 'redact', 'mine1', undefined],
   ]);
   hub.stop();
+});
+
+describe('sending files', () => {
+  const p3 = port + 3;
+  const url = `http://127.0.0.1:${p3}`;
+  const sent: any[] = [];
+  let hub: HubServer;
+  let d: AccountRow;
+  const up = (body: BodyInit, headers: Record<string, string> = {}) => fetch(`${url}/api/uploads`, { method: 'POST', body, headers: { 'content-type': 'image/png', 'x-file-name': 'a%20b.png', ...headers } });
+  const send = (conv: string, body: object) => fetch(`${url}/api/conversations/${conv}/send`, { method: 'POST', body: JSON.stringify(body) });
+  const cid = (native: string) => store.one<{ id: string }>('SELECT id FROM conversation WHERE native_id = ?', native)!.id;
+
+  beforeAll(() => {
+    const sup = {
+      authorize: () => null,
+      online: () => true,
+      command: async (_id: string, c: any) => {
+        if (c.conversation === 'fails') throw new Error('network said no');
+        sent.push({ ...c, seen: c.attachments?.map((f: any) => readFileSync(f.path, 'utf8')) });
+        return { nativeId: 'x' };
+      },
+    } as any;
+    hub = new HubServer(store, sup, new Triage(store), { port: p3, hostname: '127.0.0.1', dataDir: join(dir, 'files'), webDist: dir, secret: 's' });
+    hub.start();
+    d = store.createAccount({ network: 'discord', label: 'files', color: '#000', adapter: 'discord' });
+    store.ingest(d, { t: 'hello', network: 'discord', version: '1', capabilities: ['send', 'sendMedia'] });
+    store.ingest(d, { t: 'conversation', conversation: { nativeId: 'ff', shape: 'group', name: 'f' } });
+    store.ingest(d, { t: 'conversation', conversation: { nativeId: 'fails', shape: 'group', name: 'f' } });
+  });
+  afterAll(() => hub.stop());
+
+  test('uploads, sends by id, and cleans up', async () => {
+    const u = await (await up('png bytes')).json();
+    expect(u).toMatchObject({ name: 'a b.png', mime: 'image/png', size: 9 });
+    const res = await send(cid('ff'), { body: '', attachments: [u.id] });
+    expect(res.status).toBe(200);
+    const c = sent.at(-1);
+    expect(c).toMatchObject({ t: 'send', conversation: 'ff', body: '' });
+    expect(c.attachments[0]).toMatchObject({ name: 'a b.png', mime: 'image/png', size: 9, kind: 'image' });
+    expect(c.seen).toEqual(['png bytes']);
+    expect(existsSync(c.attachments[0].path)).toBe(false);
+    expect((await send(cid('ff'), { body: '', attachments: [u.id] })).status).toBe(410);
+  });
+  test('a failed send keeps the file for a retry', async () => {
+    const u = await (await up('again')).json();
+    expect((await send(cid('fails'), { body: 'x', attachments: [u.id] })).status).toBe(500);
+    expect((await send(cid('ff'), { body: 'x', attachments: [u.id] })).status).toBe(200);
+  });
+  test('refuses a cross-site page, an oversized file, a bad name and a network limit', async () => {
+    expect((await up('x', { origin: 'https://evil.example' })).status).toBe(403);
+    expect((await up(new Uint8Array(MAX_UPLOAD + 1))).status).toBe(413);
+    const named = await (await up('x', { 'x-file-name': '..%2F..%2Fetc%2Fpasswd' })).json();
+    expect(named.name).toBe('passwd');
+    const big = await (await up(new Uint8Array(ATTACHMENT_LIMITS.discord.bytes + 1))).json();
+    expect((await send(cid('ff'), { attachments: [big.id] })).status).toBe(413);
+  });
+  test('an account without the capability is told so', async () => {
+    const n = store.createAccount({ network: 'matrix', label: 'plain', color: '#111', adapter: 'matrix' });
+    store.ingest(n, { t: 'hello', network: 'matrix', version: '1', capabilities: ['send'] });
+    store.ingest(n, { t: 'conversation', conversation: { nativeId: 'mm', shape: 'group', name: 'm' } });
+    const u = await (await up('x')).json();
+    const res = await send(cid('mm'), { attachments: [u.id] });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain('cannot send files');
+  });
+  test('an empty message is still refused', async () => {
+    expect((await send(cid('ff'), { body: '  ' })).status).toBe(400);
+  });
 });

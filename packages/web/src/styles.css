@@ -1919,6 +1919,46 @@ code {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.pending-file {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.composer.dropping .composer-box {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.composer-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 8px;
+}
+.composer-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 4px 4px 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  font-size: 12px;
+}
+.composer-file img {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 5px;
+}
+.composer-file span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.attach-btn {
+  align-self: center;
+  margin-left: -6px;
+}
 .composer-box {
   display: flex;
   align-items: flex-end;
@@ -3417,6 +3457,9 @@ code {
   bottom: max(72px, calc(env(safe-area-inset-bottom) + 72px));
   right: 16px;
   z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 6px 12px;
   border-radius: 999px;
   background: var(--bg-raised);
@@ -4003,4 +4046,11 @@ body.dragging * {
 }
 .set-rule-label small {
   color: var(--text-faint);
+}
+
+@media (max-width: 820px) {
+  .conv-head .hdr-btn-label,
+  .conv-head .via {
+    display: none;
+  }
 }

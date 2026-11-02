@@ -8,7 +8,7 @@
  * first seed and stored in the account config.
  */
 
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
@@ -756,7 +756,7 @@ class DemoAdapter implements InprocAdapter {
     const firstRun = !existsSync(marker);
     const ago = (min: number) => epoch - min * 60_000;
 
-    emit({ t: 'hello', network: this.network, version: 'demo', capabilities: ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact'] });
+    emit({ t: 'hello', network: this.network, version: 'demo', capabilities: ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia'] });
     emit({ t: 'status', status: 'online', self: { ...this.self, isSelf: true } });
     const pool = this.network === 'discord' ? D : this.network === 'signal' ? S : M;
     for (const i of Object.values(pool)) if (i !== this.self && !(this.network === 'discord' && (i === D.zyan || i === D.zyn))) emit({ t: 'identity', identity: i });
@@ -828,7 +828,9 @@ class DemoAdapter implements InprocAdapter {
     switch (cmd.t) {
       case 'send': {
         const nativeId = `${cmd.conversation}~sent-${Date.now()}`;
-        this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), body: cmd.body, replyTo: cmd.replyTo } });
+        // The file leaves the spool once this returns, and a demo has nowhere else to keep it.
+        const attachments = cmd.attachments?.map((f) => ({ kind: f.kind, mime: f.mime, name: f.name, size: f.size, url: `data:${f.mime};base64,${readFileSync(f.path).toString('base64')}` }));
+        this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), body: cmd.body, replyTo: cmd.replyTo, kind: attachments?.length && !cmd.body ? 'media' : 'text', attachments } });
         reply({ nativeId });
         const conv = CONVS.find((c) => c.fact.nativeId === cmd.conversation);
         const others = (conv?.fact.participants ?? []).filter((p) => p !== this.self.nativeId);

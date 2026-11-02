@@ -608,7 +608,28 @@
     return groups;
   }
 
+  // How the client itself sends files: ask for upload URLs, PUT the bytes straight to storage, then post
+  // a message that names them. Nothing but the message goes through Discord's API proper.
+  async function sendWithFiles(cmd) {
+    const declared = cmd.files.map((f, i) => ({ id: String(i), filename: f.name, file_size: f.size }));
+    const slots = await rest('post', `/channels/${cmd.channelId}/attachments`, undefined, { files: declared });
+    const attachments = await Promise.all(
+      slots.body.attachments.map(async (slot) => {
+        const f = cmd.files[Number(slot.id)];
+        const bytes = Uint8Array.from(atob(f.base64), (c) => c.charCodeAt(0));
+        const put = await fetch(slot.upload_url, { method: 'PUT', body: bytes, headers: { 'content-type': f.mime } });
+        if (!put.ok) throw new Error(`uploading ${f.name} failed: HTTP ${put.status}`);
+        return { id: slot.id, filename: f.name, uploaded_filename: slot.upload_filename };
+      }),
+    );
+    const body = { content: cmd.content, nonce: cmd.nonce, tts: false, channel_id: cmd.channelId, type: 0, sticker_ids: [], attachments };
+    if (cmd.replyTo) body.message_reference = { channel_id: cmd.channelId, message_id: cmd.replyTo };
+    const res = await rest('post', `/channels/${cmd.channelId}/messages`, undefined, body);
+    return { nativeId: res && res.body ? res.body.id : null, nonce: cmd.nonce };
+  }
+
   async function sendMessage(cmd) {
+    if (cmd.files && cmd.files.length) return sendWithFiles(cmd);
     const ma = mod.MessageActions;
     if (ma && ma.sendMessage) {
       const options = { nonce: cmd.nonce, ...(cmd.replyTo ? { messageReference: { channel_id: cmd.channelId, message_id: cmd.replyTo } } : {}) };

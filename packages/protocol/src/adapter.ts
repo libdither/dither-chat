@@ -35,6 +35,8 @@ export type Capability =
   | 'typing'
   | 'threads'
   | 'media'
+  /** Sending files, not just showing them. */
+  | 'sendMedia'
   | 'liveView';
 
 // ---------------------------------------------------------------- facts
@@ -173,6 +175,15 @@ export interface AttachmentFact {
   url: MediaUrl;
 }
 
+/** A file to send, in the hub's spool. The adapter reads it during the send; the hub deletes it afterwards. */
+export interface OutgoingAttachment {
+  path: string;
+  name: string;
+  mime: string;
+  size: number;
+  kind: AttachmentKind;
+}
+
 // ---------------------------------------------------------------- adapter -> hub
 
 export type AdapterEvent =
@@ -208,7 +219,7 @@ export type AdapterEvent =
 
 export type AdapterCommand =
   /** reply.result: { nativeId } of the sent message if known (the echo still arrives as a message fact). */
-  | { t: 'send'; id: string; conversation: string; body: string; replyTo?: string }
+  | { t: 'send'; id: string; conversation: string; body: string; replyTo?: string; attachments?: OutgoingAttachment[] }
   /** Backfill older messages as message facts with live=false; reply.result: { count, done } */
   | { t: 'history'; id: string; conversation: string; beforeTs?: number; limit: number }
   | { t: 'markRead'; id: string; conversation: string; upTo: string }
