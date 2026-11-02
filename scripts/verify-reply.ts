@@ -84,7 +84,7 @@ try {
   await reply(secret.id, blocked);
   await Bun.sleep(400);
   const failure = await shown(secret.id);
-  check(failure[0]?.title === 'Reply not sent' && failure[0].body.includes('encrypted Matrix rooms') && failure[0].body.includes(blocked), 'a reply forced at an encrypted room is refused by the hub, visibly', failure[0]);
+  check(failure[0]?.title === 'Reply not sent' && failure[0].body.includes('Set up encryption') && failure[0].body.includes(blocked), 'a reply forced at an encrypted room is refused by the hub, visibly', failure[0]);
   check(!(await stored(secret.id)).includes(blocked), 'and nothing was stored or sent');
   await clear();
 
