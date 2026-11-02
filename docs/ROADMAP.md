@@ -59,9 +59,9 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 
 | Feature | Value | Cost | Status | Notes |
 |---|---|---|---|---|
-| Installable PWA over HTTPS with a private CA | H | M | done | [deploy.md](deploy.md) |
+| Installable PWA over HTTPS | H | M | done | [deploy.md](deploy.md). A private CA remains as the fallback without DNS-01 |
 | Updates reach installed apps | H | L | done | Reload bar, or automatic when the app is out of sight |
-| Public certificate through DNS-01 | M | L | next | Needs a Njalla token only you can create. Removes the per-device step |
+| Public certificate through DNS-01 | M | L | done | Let's Encrypt wildcard through a Caddy on the hub's machine. No per-device step |
 | Login, beyond tailnet membership | M | M | later | Anyone on the tailnet can read everything today |
 | Offline reading of recent messages | M | M | later | The shell works offline; data does not |
 | Backups of `.data` | M | L | later | |

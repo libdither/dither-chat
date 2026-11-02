@@ -1,30 +1,44 @@
 # Deploying the hub as an installable PWA
 
 A browser only installs a PWA, runs its service worker and shows notifications in a **secure context**.
-A plain `http://name.tailnet:8460` is not one, so a tailnet hub has to speak HTTPS.
+A plain `http://name.tailnet:8460` is not one, so the hub has to be reached over HTTPS.
 
 ## What runs where
 
-| Port | Protocol | Answers |
+One hub holds the accounts, on a machine that is always on. Phones and laptops are clients. A laptop that sleeps
+makes a poor hub: it misses live messages and pushes.
+
+| Piece | Where | Notes |
 |---|---|---|
-| 8460 | HTTPS | Everything, for loopback and tailnet addresses |
-| 8461 (`--plain-port`) | HTTP | `/adapter` from loopback, `/ca.crt` and `/trust` for the tailnet, redirects everything else to HTTPS |
+| Hub and adapters | hub-machine, `http://100.64.0.10:8460` | Plain HTTP. Answers loopback and tailnet addresses, everything else gets 403 |
+| HTTPS | Caddy on hub-machine, `https://chat.tn.example.net/` | Let's Encrypt wildcard for `*.tn.example.net`, bound to tailnet addresses only |
+| Clients | Any device on the tailnet | Open the address and install. No certificate step |
 
-Requests from any other address get 403, including the LAN. `/adapter` is loopback-only on both ports.
-Adapters connect over plain `ws://127.0.0.1:8461`, so they need no certificate.
+## Certificates: Let's Encrypt through DNS-01 (current)
 
-## Certificates: private CA (current)
+The certificate comes from a DNS-01 challenge, so the name never has to be reachable from the internet. Public DNS points
+`*.tn.example.net` at the machine's tailnet addresses, so the names only lead anywhere from inside the tailnet. They
+cannot sit under `ts.example.net`, because MagicDNS answers NXDOMAIN there for names it does not know. Tailscale's own
+`tailscale cert` and `serve` need Headscale 0.30, which is unreleased.
 
-Headscale 0.28 cannot issue `tailscale cert`, so the hub uses a private CA:
+The Caddy config is in the system's NixOS config, not this repo. The hub's line is:
 
-```sh
-scripts/tls-init.sh .data laptop.ts.example.net 100.64.0.20 fd7a:115c:a1e0::20
+```
+chat.tn.example.net {
+	reverse_proxy 100.64.0.10:8460
+}
 ```
 
-This writes `.data/tls/` (ignored by git; keys are 0600). The CA is **name-constrained** to the tailnet's DNS
-domain and Tailscale's address ranges, so a device that trusts it cannot be fooled about any other site even if
-the key leaks. Run the same command to renew: it keeps the CA, so devices stay trusted, and issues a new server
-certificate. **The server certificate lasts 397 days**, the most browsers accept. Restart the hub afterwards.
+**Caddy must reach the hub through the tailnet address, never loopback.** The hub trusts loopback with `/adapter`, so
+proxying from `127.0.0.1` would hand that endpoint to every tailnet client. Coming from the tailnet address, `/adapter`
+returns 403 through the proxy. Check it after any change:
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' https://chat.tn.example.net/adapter   # 403
+```
+
+The upstream must also see the client's Host, or the hub's same-origin check refuses every write and the live socket.
+Caddy does this by default for an HTTP upstream.
 
 ### The service
 
@@ -34,50 +48,52 @@ certificate. **The server certificate lasts 397 days**, the most browsers accept
 [Service]
 WorkingDirectory=%h/Projects/dither-chat
 Environment=DITHER_DATA=%h/Projects/dither-chat/.data
-Environment=PATH=/etc/profiles/per-user/%u/bin:/run/current-system/sw/bin
-ExecStart=/etc/profiles/per-user/%u/bin/bun packages/hub/src/main.ts --demo --web packages/web/dist --tls-cert .data/tls/server.crt --tls-key .data/tls/server.key
-Restart=on-failure
+Environment=DITHER_PORT=8460
+Environment=DITHER_PUBLIC_URL=https://chat.tn.example.net
+ExecStart=/path/to/bun packages/hub/src/main.ts --web packages/web/dist
+Restart=always
 [Install]
 WantedBy=default.target
 ```
 
 Without `loginctl enable-linger $USER` a user service stops when you log out and does not start at boot.
-A laptop that sleeps takes the hub with it; put accounts on an always-on machine.
 
 To deploy a new version: `git pull && bun install && bun run web:build && systemctl --user restart dither-chat`.
 Installed apps notice the new service worker when reopened (or within an hour) and show a reload bar.
 
-Check a deployment with a private browser that trusts only this CA:
+Check a deployment with a private browser that trusts nothing extra:
 
 ```sh
-bun scripts/verify-pwa.ts https://laptop.ts.example.net:8460/ .data/tls/ca.crt
+bun scripts/verify-pwa.ts https://chat.tn.example.net/
 ```
 
-## Trusting the CA: once per device
+Test through a browser and not only curl. A WebSocket can be refused while `curl /` returns 200.
 
-The device must be on the tailnet. Open **http://laptop.ts.example.net:8461/trust**, which links the certificate
-and shows its fingerprint. Plain HTTP is fine for this step because WireGuard already authenticates the tailnet; compare
-the fingerprint if you want to be sure. Then:
+## Installing
 
-**Android.** Settings → Security & privacy → More security settings → Encryption & credentials → Install a certificate →
-CA certificate → pick `dither-chat-ca.crt`. Menus vary by vendor; search Settings for "CA certificate". Android warns that the
-network may be monitored, which is its standard text for any user CA. Open `https://laptop.ts.example.net:8460/`
-in Chrome → menu → Install app. If Chrome offers only "Add to Home screen", that still opens standalone. Untested on a real
-device: Chrome may be unable to mint a full WebAPK for a site on a private CA.
+Join the tailnet and open **https://chat.tn.example.net/**.
 
-**iOS / iPadOS.** Open the `/trust` page in **Safari** and download the certificate → Settings → Profile Downloaded → Install →
-then the step that is easy to miss: Settings → General → About → Certificate Trust Settings → turn on *dither-chat private CA*.
-Open the HTTPS address in Safari → Share → Add to Home Screen. iOS allows Web Push only for apps added this way (16.4+).
+- **Android:** Chrome → menu → Install app.
+- **iOS / iPadOS:** Safari → Share → Add to Home Screen. iOS allows Web Push only for apps added this way (16.4+).
+- **Desktop:** Chromium or Chrome → the install icon in the address bar. Firefox on desktop cannot install web apps.
 
-**Linux.** Chromium/Chrome: `certutil -A -d sql:$HOME/.pki/nssdb -t C,, -n dither-chat -i dither-chat-ca.crt`
-(from `nss.tools`), or Settings → Privacy and security → Security → Manage certificates → Authorities → Import.
-Firefox has its own store: Settings → Privacy & Security → Certificates → View Certificates → Authorities → Import.
+## Fallback: a private CA, without DNS-01
 
-**macOS.** Double-click the file, then in Keychain Access set *dither-chat private CA* to Always Trust.
+If you cannot do DNS-01, the hub can speak HTTPS itself with a private CA:
 
-**Windows.** Double-click → Install Certificate → Current User → Place in *Trusted Root Certification Authorities*. Firefox needs its own import.
+```sh
+scripts/tls-init.sh .data <dns-name> <ip>...
+bun packages/hub/src/main.ts --tls-cert .data/tls/server.crt --tls-key .data/tls/server.key
+```
 
-To undo: remove the CA in the same settings screen. A trusted CA is sensitive, so `.data/tls/ca.key` should never leave the hub.
+This writes `.data/tls/` (ignored by git; keys are 0600). The CA is name-constrained to the tailnet's DNS domain and Tailscale's
+address ranges, so a device that trusts it cannot be fooled about any other site even if the key leaks. Re-running keeps the
+CA and issues a new server certificate, which lasts 397 days, the most browsers accept.
+
+The main port then speaks HTTPS, and `--plain-port` (default: the next port up) serves `/adapter` to loopback and `/ca.crt` and `/trust`
+to the tailnet. Every device has to trust the CA once from `http://<dns-name>:<plain-port>/trust`, which links the certificate and shows
+its fingerprint. On iOS you must also turn it on under Settings → General → About → Certificate Trust Settings. Chrome on Android may be unable
+to mint a full WebAPK for a site on a private CA. Keep `.data/tls/ca.key` on the hub.
 
 ## Notifications
 
@@ -86,31 +102,22 @@ Microsoft). The payload is encrypted end to end, but the relay sees when a push 
 `DITHER_NTFY_URL` (and `DITHER_NTFY_TOKEN`, `DITHER_PUBLIC_URL`) to a topic on your own ntfy server. `DITHER_PUSH_SUBJECT` sets the VAPID
 contact, a `mailto:` or `https:` URL. The keys live in `.data/vapid.json` (0600); replacing them invalidates every subscription.
 
-On a demo hub, simulated messages are real pushes to any device that opted in.
+A subscription belongs to the origin it was made on, so changing the hub's address means opting in again on each device.
+
+On a hub started with `--demo`, simulated messages are real pushes to any device that opted in.
 
 ## Categories and local models
 
 Categories use keyword matching by default. Set `DITHER_CATEGORY_MODEL=<model>` for a local Ollama model, and `DITHER_OLLAMA_URL` if it is not on
 `127.0.0.1:11434`. The hub refuses to send to a public address unless `DITHER_CATEGORY_ALLOW_REMOTE=1`. It only ever sends names, topics and channel names.
 
-## Later, the cleaner route: a real certificate through DNS-01
+## Moving the hub to another machine
 
-No per-device step at all. Run Caddy (or `lego`) on the hub with a wildcard such as `*.tn.example.net`, using the DNS-01
-challenge through Njalla's API. This requires a Njalla API token that only you can create. MagicDNS answers NXDOMAIN for unknown names under
-`ts.example.net`, so the name has to live outside it, with a public A record to the tailnet address. Tailscale's own `tailscale cert`
-/`serve` needs Headscale 0.30, which is unreleased. Once a public certificate is in place, start the hub with those files
-and remove the private CA from each device.
+One Discord or Signal session must not run from two hubs at once.
 
-## Moving real accounts here
-
-Accounts stay on hub-machine until you decide otherwise. One Discord or Signal session must not run from two hubs at once.
-
-1. Stop the source hub: `systemctl --user stop dither-chat` on hub-machine, and leave it stopped.
-2. Copy `.data/` over an encrypted channel (`rsync -a` over Tailscale), excluding `.data/tls` so the destination keeps its own CA.
-   It holds `accounts/<id>/secret.json`, Signal keys and Discord browser profiles.
-3. Remove `--demo` from the destination's service. Existing demo accounts stay until deleted on the Accounts page.
-4. Start the destination and check every account on the Accounts page. Discord may ask for a captcha or re-login from a new
+1. Stop the source hub: `systemctl --user stop dither-chat`, and leave it stopped.
+2. Copy `.data/` over an encrypted channel (`rsync -a` over Tailscale). It holds `accounts/<id>/secret.json`, Signal keys and Discord browser profiles.
+3. Start the destination and check every account on the Accounts page. Discord may ask for a captcha or re-login from a new
    machine; do that in the live view yourself. Signal linked devices move with their keys.
+4. Point Caddy at the new address. The app keeps its origin, so devices need nothing.
 5. Delete `.data` from the source only after the destination has run cleanly for a while.
-
-An always-on machine is the right home for real accounts: a laptop that sleeps misses live messages and pushes.

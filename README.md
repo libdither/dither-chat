@@ -57,8 +57,8 @@ bun packages/hub/src/cli.ts add discord --label alt          # then sign in via 
 ```
 
 Secrets live under `$DITHER_DATA/accounts/<id>/secret.json` (0600) and never
-leave the hub. Serve to your other devices over Tailscale (bind is `0.0.0.0`;
-the server only answers loopback + tailnet ranges).
+leave the hub. Run one hub on an always-on machine and use your phone and laptops as
+clients over Tailscale (bind is `0.0.0.0`; the server only answers loopback + tailnet ranges).
 
 ## Status
 
@@ -68,7 +68,7 @@ the server only answers loopback + tailnet ranges).
 | Matrix adapter | done — verified end-to-end against a local homeserver (E2EE rooms show as encrypted for now) |
 | Signal adapter | done — QR device-link + messaging via signal-cli; a live link needs your phone |
 | Reactions across networks | done: custom emoji, Discord super reactions, Signal's one-per-person, Matrix image packs ([docs/reactions.md](docs/reactions.md)). Sending a super reaction is untested for lack of Nitro |
-| Installable PWA | done: HTTPS with a private CA, per-device trust ([docs/deploy.md](docs/deploy.md)), updates reach installed apps. Verified in headless Chromium, not yet on a phone |
+| Installable PWA | done: HTTPS through Caddy with a Let's Encrypt wildcard, no per-device step ([docs/deploy.md](docs/deploy.md)), updates reach installed apps. Verified in headless Chromium, not yet on a phone |
 | Arranging the sidebar | done: drag by mouse or touch, folders, pin, hide, stored on the hub |
 | All communities | done: full-screen list with seven orderings, categories by yes/no question (keywords, or a local Ollama model) |
 | Profiles | done: merged identities, shared places, recent messages. Bio and roles are not fetched, and starting a new DM needs an adapter command |
