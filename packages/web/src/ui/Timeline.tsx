@@ -1,5 +1,5 @@
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, NETWORK_META } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, NETWORK_META, sendBlocker } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { bytes, clock, dayLabel, fullTime, sameDay } from '../format.ts';
 import { isJumbo, renderMarkdown } from '../markdown.ts';
@@ -810,14 +810,9 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   );
 }
 
-function sendBlocker(c: P.ConversationView, accountId?: string): string | null {
+function composerBlocker(c: P.ConversationView, accountId?: string): string | null {
   const vs = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a);
-  const acc = (accountId && vs.find((a) => a.id === accountId)) || vs.find((a) => a.status === 'online') || vs[0];
-  if (!acc) return 'No account can send here';
-  if (acc.status !== 'online' && acc.status !== 'connecting') return `${netName(acc.network)} · ${acc.label} is ${acc.status === 'attention' ? 'waiting for you (see Accounts)' : acc.status}`;
-  if (c.variant === 'forum') return 'Open a post to reply';
-  if (c.network === 'matrix' && c.encrypted) return 'Sending to encrypted Matrix rooms is not supported yet';
-  return null;
+  return sendBlocker(c, (accountId && vs.find((a) => a.id === accountId)) || vs.find((a) => a.status === 'online') || vs[0]);
 }
 
 // ------------------------------------------------------------------ panes
@@ -877,7 +872,7 @@ export function ConversationPane({ convId, onBack, focus }: { convId: string; on
         placeholder={`Message ${c.shape === 'direct' ? convTitle(c) : convLabel(c)}`}
         reply={reply}
         clearReply={() => setReply(null)}
-        disabledReason={sendBlocker(c, sendAsValue)}
+        disabledReason={composerBlocker(c, sendAsValue)}
         sendAs={
           accounts.length > 1
             ? {
@@ -923,7 +918,7 @@ export function PersonPane({ personId, onBack }: { personId: string; onBack?: ()
         placeholder={`Message ${person.name} on ${netName(via.network)}`}
         reply={reply}
         clearReply={() => setReply(null)}
-        disabledReason={sendBlocker(via)}
+        disabledReason={composerBlocker(via)}
         sendAs={{
           label: `Send to ${person.name} through`,
           value: via.id,

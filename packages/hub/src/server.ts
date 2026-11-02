@@ -3,7 +3,7 @@ import { createHmac } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, directTarget, discordEmojiUrl, MAX_UPLOAD, NETWORK_META, NETWORKS } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, directTarget, discordEmojiUrl, MAX_UPLOAD, NETWORK_META, NETWORKS, sendBlocker } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import type { Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
@@ -328,6 +328,8 @@ export class HubServer {
       if (!conv) return bad('no such conversation', 404);
       const accountId = this.pickAccount(m[1], b.accountId);
       if (!accountId) return bad('no connected account can send here', 409);
+      const refused = this.sendRefusal(m[1], accountId);
+      if (refused) return bad(refused, 409);
       const replyTo = b.replyTo ? s.nativeOf('message', b.replyTo)?.nativeId : undefined;
       const files = this.uploads.get(ids);
       if (!files) return bad('that upload has expired, attach the file again', 410);
@@ -599,6 +601,21 @@ export class HubServer {
       return new Response(text.slice(-20_000), { headers: { 'content-type': 'text/plain; charset=utf-8' } });
     }
     return bad('not found', 404);
+  }
+
+  private sendRefusal(conversationId: string, accountId: string | null): string | null {
+    const c = this.store.conversationView(conversationId);
+    const acc = accountId ? this.store.account(accountId) : null;
+    return c ? sendBlocker(c, acc ? this.store.accountView(acc) : null) : 'No such conversation';
+  }
+
+  /**
+   * What a push needs for replying from the notification: whether to offer it, and what to quote. The send itself is
+   * re-checked when it arrives, since this can be out of date by then. A DM has no need for a quote.
+   */
+  replyFields(conversationId: string, messageId: string): { canReply?: true; replyTo?: string } {
+    if (this.sendRefusal(conversationId, this.pickAccount(conversationId))) return {};
+    return this.store.conversationView(conversationId)?.shape === 'direct' ? { canReply: true } : { canReply: true, replyTo: messageId };
   }
 
   /** Which account sends into a conversation: the requested one, else the last one you used there, else any connected. */

@@ -50,16 +50,16 @@ function triageLater(ids: string[]) {
       store.dirty.messages.set(id, true);
       if (d.decision === 'push') {
         const conversationId = store.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', id)!.conversation_id;
-        deliver(d.title, d.body, conversationId, id, d.reasons);
+        deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id));
       }
     }
   });
 }
 
-function deliver(title: string, body: string, conversationId: string, messageId: string, reasons: string[]) {
+function deliver(title: string, body: string, conversationId: string, messageId: string, reasons: string[], pushExtra: Record<string, unknown> = {}) {
   server.notify({ t: 'notify', messageId, conversationId, title, body, reasons });
   ntfy(title, body, conversationId).catch(() => {});
-  push.notify(title, body, conversationId, { messageId }).catch((e) => console.error('push failed', e));
+  push.notify(title, body, conversationId, pushExtra).catch((e) => console.error('push failed', e));
 }
 
 /** About the inbox, not a conversation: a click opens the inbox. */

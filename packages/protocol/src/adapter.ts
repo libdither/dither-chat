@@ -37,6 +37,8 @@ export type Capability =
   | 'media'
   /** Sending files, not just showing them. */
   | 'sendMedia'
+  /** Writing to end-to-end encrypted rooms, on a network where that takes real crypto (Matrix). Without it the hub refuses. */
+  | 'sendEncrypted'
   /** Starting a direct conversation with someone you have none with. */
   | 'openDirect'
   | 'liveView';

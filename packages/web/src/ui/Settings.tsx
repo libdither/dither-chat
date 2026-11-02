@@ -129,7 +129,7 @@ function DailyDigestSettings() {
           <input class="input" type="time" value={d.time} onChange={(e) => save({ time: (e.target as HTMLInputElement).value })} />
         </label>
       </div>
-      <p class="set-help">In {d.timezone}. If quiet hours cover this time, it waits until they end and replaces their summary, even for starred people. If the hub was down, one digest catches up.</p>
+      <p class="set-help">In {d.timezone}. If quiet hours cover this time, it waits until they end and takes the place of their summary. If the hub was down, one digest catches up.</p>
     </section>
   );
 }

@@ -34,11 +34,18 @@ export function PushSettings() {
   const [info, setInfo] = useState<PushInfo | null>(null);
   const [mine, setMine] = useState<PushSubscription | null>(null);
   const [busy, setBusy] = useState(false);
+  const [canReply, setCanReply] = useState<boolean | null>(null);
   const why = blocker();
   const reload = () => api<PushInfo>('/api/push').then(setInfo).catch(() => {});
   useEffect(() => {
     reload();
     if (!why) navigator.serviceWorker.ready.then((r) => r.pushManager.getSubscription()).then(setMine).catch(() => {});
+    if (why) return;
+    // Only a service worker can tell: the event that carries the typed text does not exist in a page.
+    const heard = (e: MessageEvent) => e.data?.t === 'canReply' && setCanReply(!!e.data.value);
+    navigator.serviceWorker.addEventListener('message', heard);
+    navigator.serviceWorker.ready.then((r) => r.active?.postMessage('canReply')).catch(() => {});
+    return () => navigator.serviceWorker.removeEventListener('message', heard);
   }, []);
   const run = (fn: () => Promise<void>) => async () => {
     setBusy(true);
@@ -92,6 +99,14 @@ export function PushSettings() {
             <button class="btn small" disabled={busy || !info} onClick={enable}><Icon name="bell" size={13} /> Turn on for this device</button>
           )}
         </div>
+      )}
+      {canReply !== null && (
+        <p class="set-help">
+          {canReply
+            ? 'Replying from a notification works on this browser, where the system shows the box for it. If yours shows none, tapping opens the conversation.'
+            : 'This browser cannot take a reply inside a notification, so tapping one opens the conversation.'}{' '}
+          Rooms the hub cannot send to, like encrypted Matrix rooms, never offer it.
+        </p>
       )}
       {!!info?.devices.length && (
         <>

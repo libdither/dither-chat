@@ -92,13 +92,13 @@ describe('the service', () => {
     const d = device();
     const other = device();
     svc.subscribe({ endpoint: ep('a'), p256dh: d.p256dh, auth: d.auth64 }, 'Phone');
-    await svc.notify('Alice', 'hello there', 'cnv_1', { messageId: 'msg_1' });
+    await svc.notify('Alice', 'hello there', 'cnv_1', { canReply: true, replyTo: 'msg_1' });
     const r = received.at(-1)!;
     expect(r.path).toBe('/a');
     expect(r.headers.get('content-encoding')).toBe('aes128gcm');
     expect(r.headers.get('authorization')).toStartWith('vapid t=');
     expect(Number(r.headers.get('ttl'))).toBeGreaterThan(0);
-    expect(JSON.parse(decrypt(r.body, d.ua, d.auth))).toEqual({ title: 'Alice', body: 'hello there', conversationId: 'cnv_1', messageId: 'msg_1' });
+    expect(JSON.parse(decrypt(r.body, d.ua, d.auth))).toEqual({ title: 'Alice', body: 'hello there', conversationId: 'cnv_1', canReply: true, replyTo: 'msg_1' });
     expect(Buffer.from(r.body).includes('hello')).toBe(false);
     expect(() => decrypt(r.body, other.ua, other.auth)).toThrow();
     expect(svc.devices()[0]).toMatchObject({ label: 'Phone', lastError: null });

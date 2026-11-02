@@ -6,9 +6,8 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 ## What is next, in order
 
 1. **Matrix E2EE.** The largest gap for replacing Element: encrypted rooms can be neither read nor written, and most Matrix DMs are encrypted. Costly, because it needs a crypto store, device verification and key backup in the adapter.
-2. **Try it on a real phone.** Install, Web Push and notification clicks have only run in desktop Chromium. No code until something breaks, and everything about notifications depends on it.
+2. **Try it on a real phone.** Install, Web Push, notification clicks and replying from one have only run in desktop Chromium. No code until something breaks, and everything about notifications depends on it.
 3. **Login beyond tailnet membership.** Anyone on the tailnet can read everything, which matters as soon as another person or a shared device joins it.
-4. **Replying from a notification.** It finishes what Web Push started.
 
 ## Organising and finding
 
@@ -58,7 +57,7 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Web Push with VAPID, per-device opt-in, test button | H | M | done | Verified through Google's relay on Chromium. iOS and Android not tried on a device |
 | Unread badge on the app icon | M | L | done | Where the platform supports it |
 | ntfy, fully self-hosted | M | L | done | Off unless `DITHER_NTFY_URL` is set |
-| Reply from the notification | M | M | next | Android and desktop allow actions with input; iOS does not |
+| Reply from the notification | M | M | done | A Chromium extension, not in the Notifications standard: `type: 'text'` actions and `event.reply` confirmed in Chromium 155 on desktop, and documented for Android. Firefox has actions but no `reply`, iOS Safari has no actions, so there the notification opens the conversation. Uses the normal send, which now enforces the composer's refusals on the hub. Not offered through ntfy, where it would need an endpoint outside the same-origin check. Never tried with a real typed reply: headless Chromium shows no notification UI |
 | Quiet hours | M | L | done | Holds pushes on a daily schedule, optionally letting starred people through, with one summary when they end |
 | Daily digest delivered as one notification | M | M | done | Off by default, at a local time. Counts and the busiest places since the last one, and nothing on a day with nothing. Quiet hours hold it until they end, and it replaces their summary. Catches up once after downtime |
 

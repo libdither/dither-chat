@@ -13,8 +13,13 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k.startsWith('dither-shell-') && k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
 });
+// Typing into a notification is a Chromium extension, not in the Notifications standard. Elsewhere there is no way to
+// read what was typed, so it is not offered there at all and the notification opens the conversation as usual.
+const CAN_REPLY = typeof NotificationEvent !== 'undefined' && 'reply' in NotificationEvent.prototype;
+
 self.addEventListener('message', (e) => {
   if (e.data === 'skipWaiting') self.skipWaiting();
+  if (e.data === 'canReply') e.source?.postMessage({ t: 'canReply', value: CAN_REPLY });
 });
 
 self.addEventListener('fetch', (e) => {
@@ -68,8 +73,8 @@ self.addEventListener('push', (e) => {
         renotify: true,
         icon: '/icon-192.png',
         badge: '/icon-192.png',
-        data: { conversationId: d.conversationId, inbox: d.inbox, test: d.test },
-        actions: d.conversationId ? [{ action: 'open', title: 'Open' }] : [],
+        data: { conversationId: d.conversationId, inbox: d.inbox, test: d.test, replyTo: d.replyTo },
+        actions: d.conversationId ? [...(d.canReply && CAN_REPLY ? [{ action: 'reply', type: 'text', title: 'Reply', placeholder: 'Message' }] : []), { action: 'open', title: 'Open' }] : [],
       });
       // Always shown first: Safari revokes subscriptions that receive a push and show nothing.
       const clients = await self.clients.matchAll({ type: 'window' });
@@ -89,9 +94,36 @@ self.addEventListener('pushsubscriptionchange', (e) => {
   );
 });
 
+/**
+ * The hub's ordinary send, which decides whether this may go out at all. It takes this because a worker's fetch carries
+ * this origin, like the page's: there is no token in the push and no endpoint that trusts one.
+ */
+async function sendReply(n, conv, text, replyTo) {
+  let error = null;
+  try {
+    const res = await fetch(`/api/conversations/${conv}/send`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: text, replyTo }), signal: AbortSignal.timeout(60_000) });
+    if (!res.ok) error = (await res.json().catch(() => null))?.error ?? `The hub answered ${res.status}`;
+  } catch (err) {
+    error = err?.name === 'TimeoutError' ? 'The hub did not answer in time, so it may or may not have gone out' : 'Could not reach the hub';
+  }
+  if (!error) {
+    n.close();
+    for (const other of await self.registration.getNotifications({ tag: n.tag })) other.close();
+    return;
+  }
+  // Same tag: it takes the place of the one replied to. What was typed stays readable, since nothing else kept it.
+  await self.registration.showNotification('Reply not sent', { body: `${error}. You wrote: ${text}`.slice(0, 1000), tag: n.tag, renotify: true, requireInteraction: true, icon: '/icon-192.png', badge: '/icon-192.png', data: { conversationId: conv } });
+}
+
 self.addEventListener('notificationclick', (e) => {
+  const { conversationId: conv, inbox, replyTo } = e.notification.data ?? {};
+  // A platform that shows the action as a plain button gives no text: then it just opens, like any other click.
+  const text = e.action === 'reply' && typeof e.reply === 'string' ? e.reply.trim() : '';
+  if (conv && text) {
+    e.waitUntil(sendReply(e.notification, conv, text, replyTo));
+    return;
+  }
   e.notification.close();
-  const { conversationId: conv, inbox } = e.notification.data ?? {};
   const target = conv ? `/#/inbox/c/${conv}` : inbox ? '/#/inbox' : '/';
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (cs) => {
