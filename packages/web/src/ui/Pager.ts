@@ -7,7 +7,7 @@
 import { signal } from '@preact/signals';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import { clampDrag, commits, lockAxis, rubber, settleMs, velocity } from '../gesture.ts';
-import { haptic, phone, reducedMotion } from '../phone.ts';
+import { haptic, layerCount, phone, reducedMotion } from '../phone.ts';
 import { prefs, setPrefs } from '../state.ts';
 import { drag } from './dnd.tsx';
 
@@ -60,6 +60,8 @@ interface Gesture {
   y0: number;
   target: HTMLElement;
   mode: null | 'pager' | 'reply' | 'pull';
+  /** Layers open when the finger came down; one more means a long-press opened a sheet. */
+  layers: number;
   samples: { x: number; t: number }[];
   // pager
   from?: number;
@@ -186,12 +188,14 @@ export function usePager(app: { current: HTMLElement | null }, card: { current: 
       if (target.closest(OVERLAYS)) return;
       if (target === document.activeElement && target.matches('input, textarea')) return;
       const t = e.touches[0];
-      g = { x0: t.clientX, y0: t.clientY, target, mode: null, samples: [{ x: t.clientX, t: performance.now() }] };
+      g = { x0: t.clientX, y0: t.clientY, target, mode: null, layers: layerCount(), samples: [{ x: t.clientX, t: performance.now() }] };
     };
 
     const move = (e: TouchEvent) => {
       if (!g) return;
       if (e.touches.length !== 1) return cancel();
+      // A hold that became a drag in the list, or opened a sheet: the finger is theirs now.
+      if (!g.mode && (drag.value || layerCount() > g.layers)) return void (g = null);
       const t = e.touches[0];
       const dx = t.clientX - g.x0;
       const dy = t.clientY - g.y0;

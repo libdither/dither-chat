@@ -3738,6 +3738,15 @@ code {
   html.kb-open .composer {
     padding-bottom: 8px;
   }
+  /* Typing, the keyboard is the bottom of the screen: no tab bar above it. */
+  html.kb-open .app > .tabbar {
+    display: none;
+  }
+  html.kb-open .app.tabs > .rail,
+  html.kb-open .app.tabs > .sidebar,
+  html.kb-open .app.tab-root > .center {
+    bottom: 0;
+  }
   .board-scroll,
   .account-scroll,
   .settings-scroll {

@@ -253,6 +253,20 @@ try {
   s = await state();
   check('…and gives back its history entry', s.layer === undefined && s.hash === conv, s);
 
+  // A finger that long-pressed and then slides does not drag the page under the sheet.
+  const held = await at('.msg', `el => el.textContent.includes('fixed in')`);
+  await touch('touchStart', [held]);
+  await Bun.sleep(600);
+  for (let i = 1; i <= 10; i++) {
+    await touch('touchMove', [[held[0] + i * 20, held[1]]]);
+    await Bun.sleep(16);
+  }
+  await touch('touchEnd', []);
+  await Bun.sleep(400);
+  s = await state();
+  check('sliding after a long-press leaves the page where it is', (await has('.sheet-layer')) && s.hash === conv && s.transform === 'none', s);
+  await back();
+
   // Copy from the sheet raises a toast; a toast flicks away sideways.
   await press(await at('.msg', `el => el.textContent.includes('fixed in')`));
   await tap(await at('.message-sheet .sheet-action', `el => el.textContent.includes('Copy text')`));
@@ -407,6 +421,13 @@ try {
   await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
   check('a search finds messages', await page.until(`!!document.querySelector('.search-hit')`, 5000).then(() => true, () => false));
   await page.eval(`document.activeElement?.blur()`);
+  await page.eval(`document.querySelector('.search-main input').focus()`);
+  await page.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 520, deviceScaleFactor: 2, mobile: true });
+  await Bun.sleep(300);
+  check('typing on a tab, the tab bar gives way to the keyboard', await page.eval(`getComputedStyle(document.querySelector('.tabbar')).display === 'none'`));
+  await page.eval(`document.activeElement?.blur()`);
+  await page.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
+  await Bun.sleep(300);
   check('no sideways overflow: search results', !(await overflow()).length, await overflow());
   await shot('51-phone-search');
   await tap(await at('.tab', `el => el.textContent.includes('You')`));

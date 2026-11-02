@@ -56,8 +56,8 @@ notification). Installed iOS apps have no back gesture of their own; the swipe r
 **Keyboard.** The viewport asks Chromium to resize the layout for the keyboard
 (`interactive-widget=resizes-content`). Where only the visual viewport shrinks (iOS Safari), the app is
 sized and moved to it while a field has focus, so the composer sits just above the keyboard. Fields are 16px
-so iOS does not zoom into them. The notch and the home indicator are kept clear with the safe-area insets,
-and the bottom inset is dropped while the keyboard is up. On a touch keyboard Enter makes a new line (there
+so iOS does not zoom into them. The notch and the home indicator are kept clear with the safe-area insets;
+while the keyboard is up the bottom inset is dropped and the tab bar steps aside. On a touch keyboard Enter makes a new line (there
 is no Shift+Enter) and the send button sends; Ctrl+Enter also sends.
 
 ## Parity: everything the desktop does, on a 390x844 touch screen
@@ -134,7 +134,8 @@ bun scripts/verify-phone.ts http://127.0.0.1:8470 docs/screenshots
 
 It swipes the card back and forward and checks it follows the finger mid-swipe, that a short slow swipe
 springs back and a short fast flick commits; opens and closes the details panel by swipe, button and back;
-swipes a message to reply; long-presses for the sheet and checks what it carries; drags sheets and dialogs
+swipes a message to reply; long-presses for the sheet, checks what it carries, and that sliding the finger
+on afterwards does not drag the page under it; long-presses a reaction for who reacted; drags sheets and dialogs
 away and lets a short drag spring back; walks the back button through a sheet, then out of the conversation,
 then forward; pinches, double-taps and swipes away the image viewer; swipes back from a profile, an account
 and a scoped search; shrinks the layout (Android) and the visual viewport (iOS) under a focused composer;
