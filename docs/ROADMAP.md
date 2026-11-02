@@ -3,6 +3,15 @@
 Compared with Discord, Element and Signal, from reading this code in October 2026. Value and cost are rough: **H**igh, **M**edium, **L**ow.
 Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 
+## What is next, in order
+
+1. **Stop plain text going into encrypted Matrix rooms.** The adapter has no crypto store, and from reading the code a text message sent to an encrypted room goes out unencrypted. Files are already refused there. Small, and it should not wait for the next item.
+2. **Matrix E2EE.** The largest gap for replacing Element: encrypted rooms cannot be read, and most Matrix DMs are encrypted. Costly, because it needs a crypto store, device verification and key backup in the adapter.
+3. **Try it on a real phone.** Install, Web Push and notification clicks have only run in desktop Chromium. No code until something breaks, and everything about notifications depends on it.
+4. **Start a new DM.** Today a conversation has to exist before you can use it. Needs a new adapter command per network; Signal's cannot be tested without sending from a real account.
+5. **Login beyond tailnet membership.** Anyone on the tailnet can read everything, which matters as soon as another person or a shared device joins it.
+6. **Daily digest as one notification, and replying from a notification.** Both finish what quiet hours and Web Push started.
+
 ## Organising and finding
 
 | Feature | Value | Cost | Status | Notes |
@@ -36,12 +45,12 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 |---|---|---|---|---|
 | Edit and delete your own messages | H | L | done | Verified on the demo adapter, not yet on a live network |
 | Drafts per conversation | M | L | done | On each device, not synced |
-| Send attachments and images | H | M | next | Viewing works, sending has no path. Needs an upload route and an adapter command |
+| Send attachments and images | H | M | done | Paste, drop or pick. Sent live on Discord, against a local homeserver on Matrix, on the demo adapter. Signal's live send is unverified: only a fake signal-cli has seen it. Refused in encrypted Matrix rooms |
 | Mark all read | M | L | done | Everywhere, or per server, folder or person. A paced queue on the hub tells the networks and survives restarts |
 | Typing indicator, outgoing | L | L | later | Shown incoming, not sent |
 | Pinned messages, polls, stickers from the picker | M | M | later | |
 | Voice and video | M | H | blocked | Each network's media stack; out of scope for a text hub |
-| Matrix E2EE rooms | H | H | later | They show as encrypted today. Needs a crypto store in the adapter |
+| Matrix E2EE rooms | H | H | next | They show as encrypted today. Needs a crypto store in the adapter |
 | Discord server channels live while idle | H | ? | blocked | Discord pushes nothing for unopened channels, so they update when opened |
 
 ## Notifications
@@ -51,9 +60,9 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Web Push with VAPID, per-device opt-in, test button | H | M | done | Verified through Google's relay on Chromium. iOS and Android not tried on a device |
 | Unread badge on the app icon | M | L | done | Where the platform supports it |
 | ntfy, fully self-hosted | M | L | done | Off unless `DITHER_NTFY_URL` is set |
-| Reply from the notification | M | M | later | Android and desktop allow actions with input; iOS does not |
+| Reply from the notification | M | M | next | Android and desktop allow actions with input; iOS does not |
 | Quiet hours | M | L | done | Holds pushes on a daily schedule, optionally letting starred people through, with one summary when they end |
-| Daily digest delivered as one notification | M | M | later | The digest exists in the inbox only |
+| Daily digest delivered as one notification | M | M | next | The digest exists in the inbox only |
 
 ## Hosting
 
@@ -62,6 +71,6 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Installable PWA over HTTPS | H | M | done | [deploy.md](deploy.md). A private CA remains as the fallback without DNS-01 |
 | Updates reach installed apps | H | L | done | Reload bar, or automatic when the app is out of sight |
 | Public certificate through DNS-01 | M | L | done | Let's Encrypt wildcard through a Caddy on the hub's machine. No per-device step |
-| Login, beyond tailnet membership | M | M | later | Anyone on the tailnet can read everything today |
+| Login, beyond tailnet membership | M | M | next | Anyone on the tailnet can read everything today |
 | Offline reading of recent messages | M | M | later | The shell works offline; data does not |
 | Backups of `.data` | M | L | later | |

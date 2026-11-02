@@ -75,6 +75,9 @@ clients over Tailscale (bind is `0.0.0.0`; the server only answers loopback + ta
 | Search | done: FTS5, filters, snippets, jump to message, Ctrl+K switcher. Searches what the hub has stored, not the network |
 | Web Push | done: opt-in per device, verified through Google's relay. ntfy stays the self-hosted route |
 | Edit and delete | done in hub and PWA; verified on the demo adapter only |
+| Mark all read | done: everywhere, or per server, folder or person, through a paced queue on the hub. Verified on the demo adapter only |
+| Quiet hours | done: a daily schedule that holds pushes, with one summary when it ends. Verified on the demo adapter only |
+| Sending files | done: paste, drop or pick. Live on Discord, on a local homeserver for Matrix, not yet live on Signal. Refused in encrypted Matrix rooms |
 | Discord adapter (sandboxed real web client) | works on a live account: login through the live view, snapshot, history, send, reply, react. DMs and group DMs arrive live. Server channels do not: while the client sits idle, Discord pushes nothing for them, so they update when opened |
 
 What is missing and why: [docs/ROADMAP.md](docs/ROADMAP.md).
