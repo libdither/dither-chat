@@ -2680,7 +2680,7 @@ code {
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 10px;
 }
-.digest {
+.digest-grid .digest {
   text-align: left;
   border: 1px solid var(--border-soft);
   border-radius: 12px;
@@ -2690,7 +2690,7 @@ code {
   flex-direction: column;
   gap: 4px;
 }
-.digest:hover {
+.digest-grid .digest:hover {
   border-color: var(--border);
   background: var(--bg-hover);
 }
