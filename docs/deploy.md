@@ -116,7 +116,7 @@ Categories use keyword matching by default. Set `DITHER_CATEGORY_MODEL=<model>` 
 One Discord or Signal session must not run from two hubs at once.
 
 1. Stop the source hub: `systemctl --user stop dither-chat`, and leave it stopped.
-2. Copy `.data/` over an encrypted channel (`rsync -a` over Tailscale). It holds `accounts/<id>/secret.json`, Signal keys and Discord browser profiles.
+2. Copy `.data/` over an encrypted channel (`rsync -a` over Tailscale). It holds `accounts/<id>/secret.json`, Signal keys, Matrix crypto stores and Discord browser profiles. A Matrix device's `crypto.sqlite` must only ever run in one place: an old copy started later breaks its sessions.
 3. Start the destination and check every account on the Accounts page. Discord may ask for a captcha or re-login from a new
    machine; do that in the live view yourself. Signal linked devices move with their keys.
 4. Point Caddy at the new address. The app keeps its origin, so devices need nothing.

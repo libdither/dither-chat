@@ -5,7 +5,7 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 
 ## What is next, in order
 
-1. **Matrix E2EE.** The largest gap for replacing Element: encrypted rooms can be neither read nor written, and most Matrix DMs are encrypted. Costly, because it needs a crypto store, device verification and key backup in the adapter.
+1. **Matrix E2EE on a real account.** Built: reads and writes encrypted rooms, opt-in per account. It has only run against a local homeserver with test clients, never against Element or matrix.org.
 2. **Try it on a real phone.** Install, Web Push and notification clicks have only run in desktop Chromium. No code until something breaks, and everything about notifications depends on it.
 3. **Start a new DM.** Today a conversation has to exist before you can use it. Needs a new adapter command per network; Signal's cannot be tested without sending from a real account.
 4. **Login beyond tailnet membership.** Anyone on the tailnet can read everything, which matters as soon as another person or a shared device joins it.
@@ -44,12 +44,15 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 |---|---|---|---|---|
 | Edit and delete your own messages | H | L | done | Verified on the demo adapter, not yet on a live network |
 | Drafts per conversation | M | L | done | On each device, not synced |
-| Send attachments and images | H | M | done | Paste, drop or pick. Sent live on Discord, against a local homeserver on Matrix, on the demo adapter. Signal's live send is unverified: only a fake signal-cli has seen it. Refused in encrypted Matrix rooms |
+| Send attachments and images | H | M | done | Paste, drop or pick. Sent live on Discord, against a local homeserver on Matrix, on the demo adapter. Signal's live send is unverified: only a fake signal-cli has seen it. In encrypted Matrix rooms only once encryption is set up |
 | Mark all read | M | L | done | Everywhere, or per server, folder or person. A paced queue on the hub tells the networks and survives restarts |
 | Typing indicator, outgoing | L | L | later | Shown incoming, not sent |
 | Pinned messages, polls, stickers from the picker | M | M | later | |
 | Voice and video | M | H | blocked | Each network's media stack; out of scope for a text hub |
-| Matrix E2EE rooms | H | H | next | They show as encrypted today. Needs a crypto store in the adapter |
+| Matrix E2EE rooms: read, write, media, edits, reactions | H | H | done | Opt-in per account, with the Rust crypto library. Verified on a local homeserver only, against clients built on the same library and matrix-nio, not Element |
+| Matrix E2EE: old messages through the key backup | H | M | done | Recovery key, Secret Storage key or passphrase. Keys come per session when a message needs them |
+| Matrix E2EE: verifying this device | M | M | done | Emoji with another of your devices, or a Secret Storage key. No QR |
+| Matrix E2EE: verifying other people, sender warnings | M | M | later | Messages from unverified senders look like any other. A plaintext message in an encrypted room is flagged |
 | Discord server channels live while idle | H | ? | blocked | Discord pushes nothing for unopened channels, so they update when opened |
 
 ## Notifications

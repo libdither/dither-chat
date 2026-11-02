@@ -65,7 +65,8 @@ clients over Tailscale (bind is `0.0.0.0`; the server only answers loopback + ta
 | Piece | State |
 |---|---|
 | Hub, PWA, demo world | done |
-| Matrix adapter | done — verified end-to-end against a local homeserver (E2EE rooms show as encrypted for now) |
+| Matrix adapter | done — verified end-to-end against a local homeserver |
+| Matrix end-to-end encryption | done, opt-in per account: read, write, media, old messages through the key backup, emoji verification. Verified on a local homeserver only, never with Element or on matrix.org ([details](packages/adapter-matrix/README.md#end-to-end-encryption)) |
 | Signal adapter | done — QR device-link + messaging via signal-cli; a live link needs your phone |
 | Reactions across networks | done: custom emoji, Discord super reactions, Signal's one-per-person, Matrix image packs ([docs/reactions.md](docs/reactions.md)). Sending a super reaction is untested for lack of Nitro |
 | Installable PWA | done: HTTPS through Caddy with a Let's Encrypt wildcard, no per-device step ([docs/deploy.md](docs/deploy.md)), updates reach installed apps. Verified in headless Chromium, not yet on a phone |
@@ -77,7 +78,7 @@ clients over Tailscale (bind is `0.0.0.0`; the server only answers loopback + ta
 | Edit and delete | done in hub and PWA; verified on the demo adapter only |
 | Mark all read | done: everywhere, or per server, folder or person, through a paced queue on the hub. Verified on the demo adapter only |
 | Quiet hours | done: a daily schedule that holds pushes, with one summary when it ends. Verified on the demo adapter only |
-| Sending files | done: paste, drop or pick. Live on Discord, on a local homeserver for Matrix, not yet live on Signal. Refused in encrypted Matrix rooms |
+| Sending files | done: paste, drop or pick. Live on Discord, on a local homeserver for Matrix (encrypted rooms too, once encryption is set up), not yet live on Signal |
 | Discord adapter (sandboxed real web client) | works on a live account: login through the live view, snapshot, history, send, reply, react. DMs and group DMs arrive live. Server channels do not: while the client sits idle, Discord pushes nothing for them, so they update when opened |
 
 What is missing and why: [docs/ROADMAP.md](docs/ROADMAP.md).
