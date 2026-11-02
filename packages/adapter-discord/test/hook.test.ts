@@ -5,7 +5,7 @@
  * below has the same shape as Discord's minified code (rspack 1.7).
  */
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -109,6 +109,7 @@ const channelStore: any = store('ChannelStore', { getChannel: () => null });
 const userStoreGetUser: { value: (id: string) => unknown } = { value: () => null };
 const rest: Record<string, any> = { get() {}, post() {}, put() {}, patch() {}, del() {} };
 const messageActions = { sendMessage() {}, editMessage() {} };
+const privateChannels: any = { opened: 0, openPrivateChannel() { this.opened++; } };
 
 // rspack mangles export names: the stores sit under short keys, not `default`.
 const storeModule = (_m: any, e: any) => {
@@ -118,6 +119,7 @@ const storeModule = (_m: any, e: any) => {
   e.Cx = store('GuildStore', { getGuilds: () => ({}), getGuild: (id: string) => ({ id, name: `Guild ${id}` }) });
   e.Bo = rest;
   e.Dm = messageActions;
+  e.Pc = privateChannels;
 };
 
 // An i18n message bundle in the real client: answers every key with a function.
@@ -217,6 +219,54 @@ describe('hook.js with several rspack runtimes', () => {
     expect(calls[0][2]).toBe(false); // true or undefined hangs until the channel is on screen
     expect(calls[0][3]).toEqual({ nonce: 'n1', messageReference: { channel_id: '5', message_id: '4' } });
     expect(p.posted.find((m) => m.t === 'reply')).toMatchObject({ id: 's', ok: true, result: { nativeId: '77' } });
+  });
+
+  describe('opening a DM', () => {
+    const open = async (userId = '42') => {
+      handlers.clear();
+      const p = page();
+      p.runHook();
+      const web = runtime(p.win, 'web');
+      chunk(p.win, '700', { stores: storeModule });
+      web.T('stores');
+      p.tick();
+      p.win.message?.({ source: p.win, data: { __dither_bridge__: 'down', payload: { t: 'cmd', id: 'o', cmd: { kind: 'openDirect', userId } } } });
+      await Bun.sleep(0);
+      return p.posted.find((m) => m.t === 'reply');
+    };
+    afterEach(() => {
+      delete channelStore.getDMFromUserId;
+      delete privateChannels.ensurePrivateChannel;
+      channelStore.getChannel = () => null;
+      rest.post = () => {};
+    });
+
+    test('one the client already has costs no request', async () => {
+      let posted = 0;
+      rest.post = (() => void posted++) as any;
+      channelStore.getDMFromUserId = () => '9';
+      channelStore.getChannel = (id: string) => ({ id, type: 1, recipients: [{ id: '42', username: 'ann' }] });
+      expect(await open()).toMatchObject({ ok: true, result: { channelId: '9', existed: true, channel: { id: '9', recipients: [{ id: '42' }] } } });
+      expect(posted).toBe(0);
+    });
+
+    test("goes through the client's own action, and never its navigating one", async () => {
+      const seen: string[] = [];
+      privateChannels.ensurePrivateChannel = async (u: string) => (seen.push(u), '10');
+      channelStore.getChannel = (id: string) => ({ id, type: 1, recipients: [] });
+      expect(await open()).toMatchObject({ ok: true, result: { channelId: '10', existed: false } });
+      expect(seen).toEqual(['42']);
+      expect(privateChannels.opened).toBe(0);
+    });
+
+    test('falls back to the REST client, and passes a refusal on', async () => {
+      const bodies: any[] = [];
+      rest.post = ((o: any) => (bodies.push(o), Promise.resolve({ body: { id: '11', type: 1, recipients: [{ id: '42', username: 'ann' }] } }))) as any;
+      expect(await open()).toMatchObject({ ok: true, result: { channelId: '11', existed: false, channel: { recipients: [{ username: 'ann' }] } } });
+      expect(bodies[0]).toMatchObject({ url: '/users/@me/channels', body: { recipients: ['42'] } });
+      rest.post = (() => Promise.reject({ status: 400, body: { message: 'Cannot send messages to this user' } })) as any;
+      expect(await open()).toMatchObject({ ok: false, error: 'Cannot send messages to this user (400)' });
+    });
   });
 
   test('sends files the way the client does: upload URLs, PUT, then a message naming them', async () => {

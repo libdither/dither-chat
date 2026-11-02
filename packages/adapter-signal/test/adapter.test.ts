@@ -163,6 +163,21 @@ describe('signal adapter against a fake signal-cli', () => {
     expect(calls('send').at(-1).params).toEqual({ noteToSelf: true, message: 'note' });
   });
 
+  test('opening a new 1:1 sends nothing, and a number resolves to the same conversation an ACI gets', async () => {
+    const sends = calls('send').length;
+    const STRANGER = 'f00d0000-1111-4aaa-8bbb-000000000099';
+    const byNumber: any = await cmd({ t: 'openDirect', peer: '+15550199' });
+    expect(byNumber).toEqual({ conversation: `dm:${SELF}:${STRANGER}`, existed: false, startsAtFirstSend: true });
+    expect(calls('getUserStatus').at(-1).params).toEqual({ recipient: ['+15550199'] });
+    expect(of('identity').at(-1)!.identity).toMatchObject({ nativeId: STRANGER, handle: '+15550199' });
+    expect(await cmd({ t: 'openDirect', peer: STRANGER.toUpperCase() })).toEqual({ conversation: `dm:${SELF}:${STRANGER}`, existed: true, startsAtFirstSend: true });
+    expect(calls('send').length).toBe(sends);
+    await expect(cmd({ t: 'openDirect', peer: '+15550111' })).rejects.toThrow('is not on Signal');
+    await expect(cmd({ t: 'openDirect', peer: SELF })).rejects.toThrow('Note to Self');
+    await cmd({ t: 'send', conversation: byNumber.conversation, body: 'first' });
+    expect(calls('send').at(-1).params).toEqual({ recipient: [STRANGER], message: 'first' });
+  });
+
   test('files go by path, and our copy is what the echo points at', async () => {
     const src = join(dir, 'spool-file');
     writeFileSync(src, 'png bytes');

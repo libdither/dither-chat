@@ -243,6 +243,18 @@ export class Directory {
     return peers && peers.length === 1 ? peers[0] : undefined;
   }
 
+  /** Add a room to the inverted m.direct at once, before the server echoes the account data. */
+  addDirect(peer: string, roomId: string) {
+    this.direct.set(roomId, [peer]);
+    this.directPeers.add(peer);
+  }
+
+  /** The DM to reuse with this person: one you are in and they have not left, one they joined first. */
+  directRoomWith(peer: string): Room | undefined {
+    const rooms = this.joined().filter((r) => this.peerOf(r) === peer && !['leave', 'ban'].includes(r.membershipOf(peer) ?? ''));
+    return rooms.find((r) => r.membershipOf(peer) === 'join') ?? rooms[0];
+  }
+
   // ---------------------------------------------------------------- containment
 
   parentsOf(room: Room): SpaceRef[] {

@@ -3,7 +3,8 @@ import { createHmac } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, discordEmojiUrl, MAX_UPLOAD, NETWORK_META, NETWORKS } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, directTarget, discordEmojiUrl, MAX_UPLOAD, NETWORK_META, NETWORKS } from '@dither-chat/protocol';
+import { hubId } from '@dither-chat/protocol/ids';
 import type { Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
 import type { PushService } from './push.ts';
@@ -341,6 +342,23 @@ export class HubServer {
       const result = await this.sup.command(accountId, { t: 'send', conversation: conv.nativeId, body: b.body ?? '', replyTo, ...(files.length ? { attachments: files } : {}) }, files.length ? 180_000 : undefined);
       this.uploads.remove(ids);
       return ok({ ok: true, accountId, result });
+    }
+    if (path === '/api/directs' && method === 'POST') {
+      const b = await body<{ accountId?: string; peer?: string }>();
+      const acc = b.accountId ? s.account(b.accountId) : null;
+      if (!acc) return bad('no such account', 404);
+      const name = NETWORK_META[acc.network].name;
+      if (!(JSON.parse(acc.capabilities) as P.Capability[]).includes('openDirect')) return bad(`${acc.label} cannot start conversations on ${name}`, 409);
+      if (!this.sup.online(acc.id)) return bad(`${acc.label} is not connected`, 409);
+      const target = directTarget(acc.network, b.peer ?? '');
+      if ('error' in target) return bad(target.error);
+      if (acc.self_identity === hubId('idn', acc.network, target.peer)) return bad('That is this account');
+      const r = await this.sup.command<P.OpenDirectResult>(acc.id, { t: 'openDirect', peer: target.peer }, 60_000).catch((e: Error) => e);
+      if (r instanceof Error) return bad(r.message, 502);
+      const id = hubId('cnv', acc.network, r.conversation);
+      s.touchConversation(id);
+      this.flush();
+      return ok({ conversation: s.conversationView(id), existed: r.existed, startsAtFirstSend: !!r.startsAtFirstSend } satisfies P.OpenedDirect);
     }
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/read$/)) && method === 'POST') {
       const b = await body<{ upToTs?: number }>();

@@ -17,7 +17,7 @@ import { join, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 
 const REPO = resolve(import.meta.dir, '../../..');
-const tb = JSON.parse(readFileSync(join(REPO, '.data/matrix-testbed/testbed.json'), 'utf8'));
+const tb = JSON.parse(readFileSync(join(process.env.DITHER_TESTBED_DIR ?? join(REPO, '.data/matrix-testbed'), 'testbed.json'), 'utf8'));
 const R: Record<string, string> = tb.rooms;
 const token = crypto.randomUUID();
 const dir = mkdtempSync(join(tmpdir(), 'dither-matrix-itest-'));
@@ -228,6 +228,26 @@ try {
   const media = await command({ t: 'fetchMedia', url: image?.url });
   const bytes = Buffer.from(media.base64, 'base64');
   check(media.mime === 'image/png' && bytes.subarray(0, 4).toString('hex') === '89504e47' && bytes.length === image?.size, 'fetchMedia: authenticated download of the image', `${media.mime} ${bytes.length}B`);
+
+  // new DMs: carol has none with zyan in the seed (or one from an earlier run, which must be reused)
+  const carol = tb.users.carol.userId;
+  const accessToken = JSON.parse(readFileSync(join(dir, 'secret.json'), 'utf8')).accessToken;
+  const directData = async (): Promise<Record<string, string[]>> => (await fetch(`${tb.baseUrl}/_matrix/client/v3/user/${enc(tb.users.zyan.userId)}/account_data/m.direct`, { headers: { authorization: `Bearer ${accessToken}` } })).json() as any;
+  const directBefore: string[] = (await directData())[carol] ?? [];
+  const opened = await command({ t: 'openDirect', peer: carol });
+  check(opened.existed === directBefore.length > 0, 'openDirect: creates a room, or finds the one from an earlier run', opened);
+  const dmFact = lastConv(opened.conversation);
+  check(dmFact?.shape === 'direct' && !!dmFact.participants?.includes(carol), 'openDirect: announced as a direct conversation before the reply', dmFact);
+  check((await directData())[carol]?.includes(opened.conversation), 'openDirect: listed in m.direct on the server');
+  const again = await command({ t: 'openDirect', peer: carol });
+  check(again.existed === true && again.conversation === opened.conversation, 'openDirect again: the same room, nothing new', again);
+  check(((await directData())[carol] ?? []).length === Math.max(directBefore.length, 1), 'openDirect again: m.direct did not grow');
+  const dmSent = await command({ t: 'send', conversation: opened.conversation, body: `new dm ${Date.now()}` });
+  const dmEcho = await waitFor<Extract<P.AdapterEvent, { t: 'message' }>>((e) => e.t === 'message' && e.message.nativeId === dmSent.nativeId);
+  check(dmEcho.message.conversation === opened.conversation, 'openDirect: sending works and the echo lands in that conversation');
+  check(lastConv(opened.conversation)?.shape === 'direct', 'openDirect: still direct after sync echoed the room');
+  const nobody = await command({ t: 'openDirect', peer: `@nobody-${Date.now()}:${tb.serverName}` }).catch((e) => e.message);
+  check(typeof nobody === 'string' && nobody.includes('no Matrix user'), 'openDirect: an unknown user is refused', nobody);
 
   const st = await command({ t: 'action', action: 'status' });
   check(st.userId === tb.users.zyan.userId && st.rooms > 10, 'action status', st);

@@ -39,7 +39,7 @@ import { AdapterState } from './state.ts';
 import type { SigContact, SigGroup, SigReceive, SigSendResult } from './types.ts';
 
 export const ADAPTER_VERSION = '0.1.0';
-export const CAPABILITIES: P.Capability[] = ['send', 'react', 'edit', 'redact', 'markRead', 'typing', 'media', 'sendMedia'];
+export const CAPABILITIES: P.Capability[] = ['send', 'react', 'edit', 'redact', 'markRead', 'typing', 'media', 'sendMedia', 'openDirect'];
 export const LINK_MESSAGE = 'Scan this QR code in Signal → Settings → Linked devices';
 
 export interface AdapterHost {
@@ -629,6 +629,8 @@ export class SignalAdapter {
         return { count: 0, done: true };
       case 'send':
         return this.send(cmd.conversation, cmd.body, cmd.replyTo, cmd.attachments);
+      case 'openDirect':
+        return this.openDirect(cmd.peer);
       case 'edit':
         return this.edit(cmd.conversation, cmd.message, cmd.body);
       case 'react': {
@@ -718,6 +720,27 @@ export class SignalAdapter {
     const timer = this.timers.get(conversation);
     if (timer) this.trackExpiry({ nativeId, conversation, ts }, timer, Date.now());
     return { nativeId };
+  }
+
+  /** Signal has no "create": this only names the conversation, and nothing reaches the network until the first send. */
+  private async openDirect(peer: string): Promise<P.OpenDirectResult> {
+    const self = this.self;
+    const aci = peer.startsWith('+') ? await this.aciOfNumber(peer) : peer.toLowerCase();
+    if (aci === self) throw new Error('that is this account: use Note to Self');
+    const existed = this.state.dms.has(aci);
+    const fact = directConversation(self, aci);
+    if (peer.startsWith('+')) this.apply(emptyResult({ t: 'identity', identity: { nativeId: aci, handle: peer } }));
+    this.apply(emptyResult({ t: 'conversation', conversation: fact }));
+    return { conversation: fact.nativeId, existed, startsAtFirstSend: true };
+  }
+
+  /** Conversations are keyed by ACI, so a number has to become one or the echo would land in a second conversation. */
+  private async aciOfNumber(number: string): Promise<string> {
+    const known = this.byNumber.get(number);
+    if (known) return known;
+    const [status] = await this.call<{ uuid?: string | null; isRegistered?: boolean }[]>('getUserStatus', { recipient: [number] });
+    if (!status?.isRegistered || !status.uuid) throw new Error(`${number} is not on Signal`);
+    return status.uuid.toLowerCase();
   }
 
   private async edit(conversation: string, message: string, body: string) {

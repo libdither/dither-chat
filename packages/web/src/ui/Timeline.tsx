@@ -843,6 +843,12 @@ function ForumView({ c }: { c: P.ConversationView }) {
   );
 }
 
+/** Signal's conversations exist only from the first message on, which is worth saying while there is none. */
+function NotStartedNote({ c }: { c: P.ConversationView }) {
+  if (c.network !== 'signal' || c.shape !== 'direct' || c.lastMessage) return null;
+  return <div class="voice-note"><Icon name="info" size={14} /> Nothing exists on Signal yet. {convTitle(c)} sees this conversation when you send the first message.</div>;
+}
+
 export function ConversationPane({ convId, onBack, focus }: { convId: string; onBack?: () => void; focus?: string }) {
   rev.value;
   const c = db.conversations.get(convId);
@@ -862,6 +868,7 @@ export function ConversationPane({ convId, onBack, focus }: { convId: string; on
       ) : (
         <>
           {voice && <div class="voice-note"><Icon name="voice" size={14} /> Voice isn't relayed. This shows the channel's text chat.</div>}
+          <NotStartedNote c={c} />
           <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} merged={false} onReply={setReply} firstUnreadTs={unreadAt} focus={focus} />
         </>
       )}
@@ -909,6 +916,7 @@ export function PersonPane({ personId, onBack }: { personId: string; onBack?: ()
   return (
     <section class="pane">
       <PersonHeader person={person} onBack={onBack} />
+      <NotStartedNote c={via} />
       <Timeline tkey={timelineKey('p', personId)} convIds={directs.map((d) => d.id)} merged={directs.length > 1} onReply={setReply} firstUnreadTs={unreadAt} />
       <Composer
         targets={{ convId: via.id }}

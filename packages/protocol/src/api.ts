@@ -273,6 +273,14 @@ export interface ProfileView {
   firstSeenTs: number | null;
 }
 
+/** POST /api/directs: a direct conversation, opened or found. */
+export interface OpenedDirect {
+  conversation: ConversationView | null;
+  existed: boolean;
+  /** Nothing exists on the network until the first message (Signal). */
+  startsAtFirstSend: boolean;
+}
+
 export interface SearchHit {
   message: MessageView;
   /** The matching text, with matches between \u0001 and \u0002. Plain text otherwise, not HTML. */

@@ -135,6 +135,11 @@ if (sub === 'daemon') {
         if (want) return all.filter((c: any) => want.includes(c.uuid) || want.includes(c.number));
         return params?.allRecipients ? all : all.filter((c: any) => c.uuid !== SELF);
       }
+      case 'getUserStatus':
+        return [].concat(params.recipient).map((r: string) => {
+          const c = contacts().find((x: any) => x.number === r);
+          return { recipient: r, number: r, uuid: c?.uuid ?? (r === '+15550199' ? 'f00d0000-1111-4aaa-8bbb-000000000099' : null), isRegistered: !!c || r === '+15550199' };
+        });
       case 'listGroups': {
         const ids: string[] | undefined = params?.groupId ? [].concat(params.groupId) : undefined;
         return groups().filter((g: any) => !ids || ids.includes(g.id));

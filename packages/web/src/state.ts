@@ -558,6 +558,15 @@ export async function send(conversationId: string, body: string, opts: { account
   }
 }
 
+/** The dialog for starting a direct conversation; open at a known identity when given one. */
+export const newMessage = signal<{ identityId?: string } | null>(null);
+
+export async function openDirect(accountId: string, peer: string): Promise<P.OpenedDirect> {
+  const r = await api<P.OpenedDirect>('/api/directs', { body: { accountId, peer } });
+  if (r.conversation) applyEvents([{ t: 'conversation', conversation: r.conversation }]);
+  return r;
+}
+
 /** Whoever this identity is, as far as the hub knows. */
 export function openProfile(identityId: string | null | undefined) {
   if (!identityId) return;

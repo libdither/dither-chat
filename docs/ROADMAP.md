@@ -7,9 +7,8 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 
 1. **Matrix E2EE.** The largest gap for replacing Element: encrypted rooms can be neither read nor written, and most Matrix DMs are encrypted. Costly, because it needs a crypto store, device verification and key backup in the adapter.
 2. **Try it on a real phone.** Install, Web Push and notification clicks have only run in desktop Chromium. No code until something breaks, and everything about notifications depends on it.
-3. **Start a new DM.** Today a conversation has to exist before you can use it. Needs a new adapter command per network; Signal's cannot be tested without sending from a real account.
-4. **Login beyond tailnet membership.** Anyone on the tailnet can read everything, which matters as soon as another person or a shared device joins it.
-5. **Daily digest as one notification, and replying from a notification.** Both finish what quiet hours and Web Push started.
+3. **Login beyond tailnet membership.** Anyone on the tailnet can read everything, which matters as soon as another person or a shared device joins it.
+4. **Daily digest as one notification, and replying from a notification.** Both finish what quiet hours and Web Push started.
 
 ## Organising and finding
 
@@ -32,7 +31,7 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 |---|---|---|---|---|
 | Profile page: identities, shared places, recent messages, note | H | M | done | Opens from any author, member or mention |
 | Merge and unmerge, with same-name hints | H | L | done | Hints never merge on their own |
-| Start a new DM from a profile | H | M | next | Needs a new adapter command per network; the profile says so for now |
+| Start a new DM, from a profile or a "New message" dialog | H | M | done | Pick someone known, or type a Matrix ID or Signal number; choose which account when several can. Verified against a local homeserver and the demo adapter. Discord's is only unit-tested against a replica of the client, and Signal's only against a fake signal-cli. New Matrix rooms are unencrypted until E2EE lands |
 | Discord bio, roles, mutual servers | M | M | later | A new adapter command, testable only on a live account |
 | Matrix and Signal extended profiles | L | L | blocked | The protocols hold little more than name and avatar |
 | Presence (online, idle) | M | M | later | Discord and Matrix report it; Signal does not |

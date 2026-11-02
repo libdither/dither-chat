@@ -486,6 +486,12 @@ export class Store {
     this.dirty.conversations.add(id);
   }
 
+  /** A conversation you just opened sorts as recent, though it has no message yet. */
+  touchConversation(id: string, now = Date.now()) {
+    this.db.query('UPDATE conversation SET last_message_at = COALESCE(last_message_at, ?) WHERE id = ?').run(now, id);
+    this.dirty.conversations.add(id);
+  }
+
   private selfNative(acc: AccountRow): string | null {
     if (!acc.self_identity) return null;
     return ((this.db.query('SELECT native_id FROM identity WHERE id = ?').get(acc.self_identity) as Row) ?? {}).native_id ?? null;

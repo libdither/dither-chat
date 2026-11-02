@@ -2,8 +2,9 @@
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { ago, fullTime } from '../format.ts';
+import { openers } from '../direct.ts';
 import { communitiesOf, convLabel, convTitle, directsOf, identityName, kindLabel, netName, plainBody, rootCommunity } from '../model.ts';
-import { api, db, go, openMessage, rev, setRule, toast } from '../state.ts';
+import { api, db, go, newMessage, openMessage, rev, setRule, toast } from '../state.ts';
 import { Avatar, Empty, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { openConv } from './Sidebar.tsx';
@@ -65,6 +66,9 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const isSelf = !!person?.isSelf;
   const directs = person ? directsOf(person.id) : [];
   const nets = [...new Set(ids.map((i) => i.network))];
+  const accounts = [...db.accounts.values()];
+  // One way in per network they are on and you have no DM on. A network whose adapter cannot do it shows nothing.
+  const startable = isSelf ? [] : nets.filter((n) => !directs.some((d) => d.network === n)).map((n) => ids.find((i) => i.network === n)!).filter((i) => openers(accounts, i.network).length > 0);
   const rule = person ? db.rules.find((x) => x.scope === 'person' && x.target === person.id) : undefined;
 
   /** Person actions need a Person; someone seen only in a channel gets one the first time you act. */
@@ -136,6 +140,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
                 <Icon name="send" size={13} /> Message on {netName(d.network)}
               </button>
             ))}
+            {startable.map((i) => (
+              <button class="btn small" onClick={() => (newMessage.value = { identityId: i.id })}>
+                <Icon name="send" size={13} /> Message on {netName(i.network)}
+              </button>
+            ))}
             {directs.length > 1 && person && (
               <button class="btn ghost small" onClick={() => go({ view: 'people', person: person.id })}>
                 <Icon name="merge" size={13} /> Merged thread
@@ -146,8 +155,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
             </button>
           </div>
         )}
-        {!isSelf && !directs.length && (
-          <p class="set-help">No direct chat yet. dither-chat cannot start one because no adapter can open a new DM, so start it in the network's own app. It appears here once it exists.</p>
+        {!isSelf && !directs.length && !startable.length && (
+          <p class="set-help">No direct chat yet, and no connected account can start one on {nets.map(netName).join(' or ')}. Start it in the network's own app, or reconnect the account. It appears here once it exists.</p>
         )}
 
         <section class="set-block">

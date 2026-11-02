@@ -174,6 +174,8 @@
     Rest: (m) => ['get', 'post', 'put', 'patch', 'del'].every((k) => typeof m[k] === 'function'),
     // Message actions: sendMessage / editMessage / fetchMessages.
     MessageActions: (m) => typeof m.sendMessage === 'function' && typeof m.editMessage === 'function',
+    // Opening DMs: the module the client's own "Message" button uses.
+    PrivateChannelActions: (m) => typeof m.openPrivateChannel === 'function',
   };
   // Nothing works without these; the others only degrade features.
   const CORE = ['Dispatcher', 'UserStore', 'ChannelStore', 'GuildStore'];
@@ -531,6 +533,8 @@
     switch (cmd.kind) {
       case 'send':
         return sendMessage(cmd);
+      case 'openDirect':
+        return openDirect(cmd.userId);
       case 'history':
         return history(cmd);
       case 'markRead':
@@ -641,6 +645,23 @@
     if (cmd.replyTo) body.message_reference = { channel_id: cmd.channelId, message_id: cmd.replyTo };
     const res = await rest('post', `/channels/${cmd.channelId}/messages`, undefined, body);
     return { nativeId: res && res.body ? res.body.id : null, nonce: cmd.nonce };
+  }
+
+  // Never openPrivateChannel itself: that also navigates the sandbox's page to the DM.
+  async function openDirect(userId) {
+    const describe = (channelId, existed, raw) => ({ channelId, existed, channel: pickChannel(raw || mod.ChannelStore.getChannel(channelId)) || null });
+    const known = mod.ChannelStore.getDMFromUserId && mod.ChannelStore.getDMFromUserId(userId);
+    if (known) return describe(known, true);
+    const actions = mod.PrivateChannelActions;
+    const ensure = actions && (actions.getOrEnsurePrivateChannel || actions.ensurePrivateChannel);
+    if (ensure) {
+      const r = await ensure.call(actions, userId);
+      const id = typeof r === 'string' ? r : r && ((r.body && r.body.id) || r.id);
+      if (!id) throw new Error('the Discord client did not say which channel it opened');
+      return describe(id, false, r && r.body);
+    }
+    const res = await rest('post', '/users/@me/channels', undefined, { recipients: [userId] });
+    return describe(res.body.id, false, res.body);
   }
 
   async function history(cmd) {

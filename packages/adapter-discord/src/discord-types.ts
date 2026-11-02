@@ -215,6 +215,7 @@ export type BridgeDown =
 
 export type HookCommand =
   | { kind: 'send'; channelId: string; content: string; replyTo?: string; nonce: string; files?: { name: string; mime: string; size: number; base64: string }[] }
+  | { kind: 'openDirect'; userId: string }
   | { kind: 'history'; channelId: string; limit: number; beforeId?: string }
   | { kind: 'markRead'; channelId: string; messageId: string }
   | { kind: 'react'; channelId: string; messageId: string; emoji: string; remove?: boolean; burst?: boolean }
