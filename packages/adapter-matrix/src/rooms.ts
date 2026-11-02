@@ -25,6 +25,8 @@ export interface MxEvent {
   unsigned?: Record<string, any>;
   redacts?: string;
   room_id?: string;
+  /** Ours, not the wire's: this content was decrypted. */
+  e2ee?: boolean;
 }
 
 export interface Summary {
@@ -87,6 +89,8 @@ export class Room {
     const prev = this.state.get(k);
     if (prev && ev.event_id.startsWith('~') && !prev.event_id.startsWith('~')) return false;
     if (prev && prev.event_id === ev.event_id && JSON.stringify(prev.content) === JSON.stringify(ev.content)) return false;
+    // Encryption cannot be turned off. An event that seems to (a redaction, a new state event) must not make us write in plaintext.
+    if (ev.type === 'm.room.encryption' && prev?.content?.algorithm && !ev.content?.algorithm) return false;
     this.state.set(k, ev);
     return true;
   }

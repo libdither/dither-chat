@@ -16,7 +16,7 @@
  *   bun packages/adapter-matrix/testbed/testbed.ts tail <room> [n]     last messages as zyan sees them
  *   bun packages/adapter-matrix/testbed/testbed.ts reset --yes          stop and delete all testbed data
  *
- * Environment: CONTINUWUITY_BIN (homeserver binary), DITHER_TESTBED_DIR (data dir).
+ * Environment: CONTINUWUITY_BIN (homeserver binary), DITHER_TESTBED_DIR (data dir), DITHER_TESTBED_PORT.
  */
 
 import { spawn } from 'node:child_process';
@@ -33,7 +33,7 @@ const DB_DIR = join(DIR, 'db');
 const LOG_FILE = join(DIR, 'server.log');
 const PID_FILE = join(DIR, 'server.pid');
 const HOST = '127.0.0.1';
-const PORT = 6167;
+const PORT = Number(process.env.DITHER_TESTBED_PORT ?? 6167);
 const SERVER_NAME = 'dither.test';
 const BASE = `http://${HOST}:${PORT}`;
 

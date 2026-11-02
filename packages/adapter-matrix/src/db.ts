@@ -79,6 +79,14 @@ CREATE TABLE IF NOT EXISTS thread (
   done       INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS thread_room ON thread(room);
+
+-- Encrypted events waiting for a key, by the Megolm session that would open them.
+CREATE TABLE IF NOT EXISTS utd (
+  id      TEXT PRIMARY KEY,
+  room    TEXT NOT NULL,
+  session TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS utd_session ON utd(session);
 `;
 
 export interface EventRow {
@@ -120,11 +128,17 @@ export interface ThreadRow {
   done: number;
 }
 
+export interface UtdRow {
+  id: string;
+  room: string;
+  session: string;
+}
+
 export class AdapterDb {
   readonly db: Database;
 
   constructor(path: string) {
-    // Message content lives here: owner-only (SQLite gives the -wal/-shm files the same mode).
+    // Message content lives here, decrypted content too: owner-only (SQLite gives the -wal/-shm files the same mode).
     if (!existsSync(path)) writeFileSync(path, '', { mode: 0o600 });
     this.db = new Database(path, { create: true, strict: true });
     this.db.exec(SCHEMA);
@@ -192,11 +206,11 @@ export class AdapterDb {
   // ---------------------------------------------------------------- events
 
   putEvent(ev: MxEvent, room: string, conv: string, keepJson: boolean) {
-    const json = keepJson ? JSON.stringify({ type: ev.type, event_id: ev.event_id, sender: ev.sender, origin_server_ts: ev.origin_server_ts, content: ev.content }) : null;
+    const json = keepJson ? JSON.stringify({ type: ev.type, event_id: ev.event_id, sender: ev.sender, origin_server_ts: ev.origin_server_ts, content: ev.content, e2ee: ev.e2ee }) : null;
     this.db
       .query(
         `INSERT INTO event (id, room, conv, type, sender, ts, json) VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (id) DO UPDATE SET conv = excluded.conv, json = COALESCE(excluded.json, json)`,
+         ON CONFLICT (id) DO UPDATE SET conv = excluded.conv, type = excluded.type, json = COALESCE(excluded.json, json)`,
       )
       .run(ev.event_id, room, conv, ev.type, ev.sender, ev.origin_server_ts, json);
   }
@@ -224,8 +238,40 @@ export class AdapterDb {
       this.db.query('DELETE FROM reaction WHERE target IN (SELECT id FROM event WHERE ts < ?)').run(cutoff);
       this.db.query('DELETE FROM edit WHERE target IN (SELECT id FROM event WHERE ts < ?)').run(cutoff);
       this.db.query('DELETE FROM event WHERE ts < ?').run(cutoff);
+      this.db.query('DELETE FROM utd WHERE id NOT IN (SELECT id FROM event)').run();
     });
     return n - keep;
+  }
+
+  // ---------------------------------------------------------------- events without a key
+
+  putUtd(u: UtdRow) {
+    this.db.query('INSERT OR REPLACE INTO utd (id, room, session) VALUES (?, ?, ?)').run(u.id, u.room, u.session);
+  }
+  dropUtd(id: string) {
+    this.db.query('DELETE FROM utd WHERE id = ?').run(id);
+  }
+  utdOfSession(session: string): UtdRow[] {
+    return this.db.query('SELECT * FROM utd WHERE session = ?').all(session) as UtdRow[];
+  }
+  utdAll(): UtdRow[] {
+    return this.db.query('SELECT * FROM utd').all() as UtdRow[];
+  }
+  utdCount(): number {
+    return (this.db.query('SELECT COUNT(*) AS n FROM utd').get() as { n: number }).n;
+  }
+  /** Encrypted events stored while encryption was off. */
+  utdFromEvents() {
+    const rows = this.db.query(`SELECT id, room, json FROM event WHERE type = 'm.room.encrypted' AND json IS NOT NULL AND redacted = 0 AND id NOT IN (SELECT id FROM utd)`).all() as { id: string; room: string; json: string }[];
+    this.tx(() => {
+      for (const r of rows) {
+        const session = JSON.parse(r.json).content?.session_id;
+        if (typeof session === 'string') this.putUtd({ id: r.id, room: r.room, session });
+      }
+    });
+  }
+  encryptedWithoutJson(): string[] {
+    return (this.db.query(`SELECT id FROM event WHERE type = 'm.room.encrypted' AND json IS NULL AND redacted = 0`).all() as { id: string }[]).map((r) => r.id);
   }
 
   // ---------------------------------------------------------------- edits

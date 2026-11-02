@@ -37,7 +37,9 @@ export type Capability =
   | 'media'
   /** Sending files, not just showing them. */
   | 'sendMedia'
-  | 'liveView';
+  | 'liveView'
+  /** Reads and writes end-to-end encrypted conversations. */
+  | 'e2ee';
 
 // ---------------------------------------------------------------- facts
 

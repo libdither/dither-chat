@@ -7,7 +7,8 @@
  * Runs the real adapter (src/main.ts) as a fresh device of @zyan with a temporary
  * account dir, plays the hub's side of the /adapter WebSocket, checks the initial
  * facts, then drives every command (send, edit, react, redact, history, markRead,
- * fetchMedia, actions). Test messages go to "Notes to self". The device logs out at the end.
+ * fetchMedia, actions). Test messages go to "Notes to self". Then the encryption half, in
+ * integration-e2ee.ts. The devices log out at the end.
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -15,6 +16,7 @@ import { enc, MatrixClient } from '../src/http.ts';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
+import { runE2ee } from './integration-e2ee.ts';
 
 const REPO = resolve(import.meta.dir, '../../..');
 const tb = JSON.parse(readFileSync(join(REPO, '.data/matrix-testbed/testbed.json'), 'utf8'));
@@ -30,6 +32,7 @@ const waiters: { pred: (e: P.AdapterEvent) => boolean; resolve: (e: P.AdapterEve
 type Data = Record<string, never>;
 const conn: { ws: import('bun').ServerWebSocket<Data> | null } = { ws: null };
 
+const logLines: string[] = [];
 const server = Bun.serve<Data, never>({
   port: 0,
   hostname: '127.0.0.1',
@@ -45,6 +48,7 @@ const server = Bun.serve<Data, never>({
     message(_ws, raw) {
       const ev = JSON.parse(String(raw)) as P.AdapterEvent;
       events.push(ev);
+      if (ev.t === 'log') logLines.push(`${ev.msg} ${JSON.stringify(ev.data ?? '')}`);
       for (const w of [...waiters]) if (w.pred(ev)) waiters.splice(waiters.indexOf(w), 1) && w.resolve(ev);
     },
     close() {
@@ -83,19 +87,33 @@ const facts = <T extends P.AdapterEvent['t']>(t: T) => events.filter((e) => e.t 
 const lastConv = (id: string) => facts('conversation').filter((e) => e.conversation.nativeId === id).at(-1)?.conversation;
 const lastMsg = (id: string) => facts('message').filter((e) => e.message.nativeId === id).at(-1);
 
-const proc = Bun.spawn(['bun', join(REPO, 'packages/adapter-matrix/src/main.ts')], {
-  cwd: REPO,
-  env: {
-    ...process.env,
-    DITHER_HUB_URL: `ws://127.0.0.1:${server.port}/adapter`,
-    DITHER_ACCOUNT_ID: 'acc_itest',
-    DITHER_ADAPTER_TOKEN: token,
-    DITHER_ACCOUNT_DIR: dir,
-    DITHER_ACCOUNT_CONFIG: JSON.stringify({ homeserver: tb.baseUrl }),
-  },
-  stdout: 'inherit',
-  stderr: 'inherit',
-});
+const startAdapter = (accountDir: string) =>
+  Bun.spawn(['bun', join(REPO, 'packages/adapter-matrix/src/main.ts')], {
+    cwd: REPO,
+    env: {
+      ...process.env,
+      DITHER_HUB_URL: `ws://127.0.0.1:${server.port}/adapter`,
+      DITHER_ACCOUNT_ID: 'acc_itest',
+      DITHER_ADAPTER_TOKEN: token,
+      DITHER_ACCOUNT_DIR: accountDir,
+      DITHER_ACCOUNT_CONFIG: JSON.stringify({ homeserver: tb.baseUrl }),
+    },
+    stdout: 'inherit',
+    stderr: 'inherit',
+  });
+let proc = startAdapter(dir);
+
+/** Stop the adapter, optionally change things while it is down, start it in `accountDir`, wait for it to sync. */
+async function restart(accountDir: string, between?: () => void) {
+  conn.ws?.send(JSON.stringify({ t: 'shutdown' }));
+  await Promise.race([proc.exited, Bun.sleep(5000)]);
+  proc.kill();
+  await proc.exited;
+  between?.();
+  const online = waitFor((e) => e.t === 'status' && e.status === 'online', 60_000, false);
+  proc = startAdapter(accountDir);
+  await online;
+}
 
 let failed = false;
 try {
@@ -235,6 +253,8 @@ try {
   const rs = await command({ t: 'action', action: 'resync' });
   const resent = events.slice(mark).filter((e) => e.t === 'message') as Extract<P.AdapterEvent, { t: 'message' }>[];
   check(rs.ok === true && resent.length > 20 && resent.every((e) => !e.live), 'action resync: full sync re-sent as backfill', `${rs.rooms} rooms, ${resent.length} messages`);
+
+  await runE2ee({ tb, dir, events, check, command, waitFor, restart, logs: () => logLines.join('\n') });
 } catch (e) {
   failed = true;
   console.log(`FAIL  ${(e as Error).message}`);

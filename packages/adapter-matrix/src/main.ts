@@ -4,7 +4,7 @@
  * with DITHER_* in the environment (see packages/protocol/src/adapter.ts).
  *
  * Config (DITHER_ACCOUNT_CONFIG): { "homeserver": "https://matrix.org", "userId"?: "@u:server" }
- * Secret ($DITHER_ACCOUNT_DIR/secret.json): { password?, accessToken?, deviceId?, userId? }
+ * Secret ($DITHER_ACCOUNT_DIR/secret.json): { password?, accessToken?, deviceId?, userId?, e2ee? }
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';

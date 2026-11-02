@@ -9,16 +9,21 @@
  *
  * Initial sync emits facts with live=false (backfill, no notifications);
  * incremental syncs emit live=true.
+ *
+ * End-to-end encryption is opt-in per account (see e2ee.ts). Whatever its state, an encrypted
+ * room gets encrypted writes or none: every event goes out through sendEvent, every upload
+ * through uploadFile, and both refuse when the crypto layer is not running.
  */
 
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { canonicalReactionKey } from '@dither-chat/protocol';
 import type { HubLink } from '@dither-chat/protocol/client';
-import { AdapterDb, type ThreadRow } from './db.ts';
+import { AdapterDb, type ThreadRow, type UtdRow } from './db.ts';
+import type { E2ee, VerificationState } from './e2ee.ts';
 import { markdownToMatrix, snippet } from './format.ts';
 import { enc, MatrixClient, MatrixError } from './http.ts';
-import { isRedacted, mentionsUser, MESSAGE_TYPES, plainTextOf, relationOf, renderContent, replyTarget, type Relation } from './messages.ts';
+import { encryptedFileOf, isRedacted, mentionsUser, MESSAGE_TYPES, plainTextOf, relationOf, renderContent, replyTarget, type Relation } from './messages.ts';
 import { Directory, Room, STRUCTURAL, type MxEvent } from './rooms.ts';
 
 export const VERSION = '0.1.0';
@@ -73,6 +78,13 @@ interface Secret {
   accessToken?: string;
   deviceId?: string;
   userId?: string;
+  /** Set by the setupEncryption action only: creating the crypto store publishes a new device's keys. */
+  e2ee?: {
+    on: boolean;
+    /** 32 random bytes, base64. Encrypts the values in crypto.sqlite. */
+    storeKey: string;
+    recoveryKey?: string;
+  };
 }
 
 type Mode = 'sync' | 'gap' | 'history' | 'fetch';
@@ -85,6 +97,7 @@ interface Ctx {
 
 class NeedsLogin extends Error {}
 class Restart extends Error {}
+class DeviceMismatch extends Error {}
 
 const describe = (e: unknown) => (e instanceof MatrixError ? `${e.errcode}: ${e.error}` : String((e as any)?.message ?? e));
 const threadId = (roomId: string, root: string) => `${roomId}|${root}`;
@@ -116,6 +129,16 @@ export class MatrixAdapter {
   private resyncWaiters: ((rooms: number) => void)[] = [];
   private online = false;
   private stopped = false;
+  private e2ee: E2ee | null = null;
+  /** Encryption is switched on for this account but the crypto layer could not start. */
+  private e2eeError: string | null = null;
+  private verification: VerificationState | null = null;
+  private recoveryError: string | null = null;
+  /** Sessions whose key just arrived, waiting for their events to be retried. */
+  private keysArrived = new Set<string>();
+  private retrying = false;
+  /** Who a room's key goes to, per room. Dropped when a membership changes. */
+  private encryptionMembers = new Map<string, string[]>();
 
   // ================================================================ lifecycle
 
@@ -133,7 +156,7 @@ export class MatrixAdapter {
 
   /** Every (re)connect to the hub: hello, status, and a snapshot of the structure. */
   onConnect() {
-    this.hub.emit({ t: 'hello', network: 'matrix', version: VERSION, capabilities: CAPABILITIES });
+    this.emitHello();
     this.emitStatus();
     if (!this.selfId) return;
     this.emitted.clear();
@@ -146,8 +169,16 @@ export class MatrixAdapter {
     this.syncAbort?.abort();
     this.wakeUp?.();
     try {
+      this.e2ee?.close();
+      this.e2ee = null;
+    } catch {}
+    try {
       this.db?.close();
     } catch {}
+  }
+
+  private emitHello() {
+    this.hub.emit({ t: 'hello', network: 'matrix', version: VERSION, capabilities: this.e2ee ? [...CAPABILITIES, 'e2ee'] : CAPABILITIES });
   }
 
   private log(level: 'debug' | 'info' | 'warn' | 'error', msg: string, data?: unknown) {
@@ -265,10 +296,11 @@ export class MatrixAdapter {
     this.self = { nativeId: this.selfId, handle: this.selfId, isSelf: true };
     if (profile.displayname) this.self.displayName = profile.displayname;
     if (typeof profile.avatar_url === 'string' && profile.avatar_url.startsWith('mxc://')) this.self.avatarUrl = profile.avatar_url;
-    this.attention = null;
+    this.attention = this.e2eeAttention();
     this.status = this.online ? 'online' : 'connecting';
     this.emitStatus();
     this.log('info', `session ready: ${this.selfId} device ${this.deviceId} on ${client.baseUrl}`);
+    if (this.hub.secret<Secret>().e2ee?.on) await this.startE2ee();
   }
 
   private async login(client: MatrixClient, secret: Secret, user: string | undefined) {
@@ -304,7 +336,7 @@ export class MatrixAdapter {
     if (prev && prev !== userId) {
       this.log('warn', `account changed from ${prev} to ${userId}; dropping local sync state`);
       this.db.tx(() => {
-        for (const t of ['kv', 'room', 'state', 'event', 'edit', 'reaction', 'thread']) this.db.db.query(`DELETE FROM ${t}`).run();
+        for (const t of ['kv', 'room', 'state', 'event', 'edit', 'reaction', 'thread', 'utd']) this.db.db.query(`DELETE FROM ${t}`).run();
       });
       this.dir.rooms.clear();
       this.dir.setDirect({});
@@ -394,7 +426,7 @@ export class MatrixAdapter {
       }
       if (!this.online || this.status !== 'online') {
         this.online = true;
-        this.setStatus('online', null);
+        this.setStatus('online', this.e2eeAttention());
       }
     }
   }
@@ -402,6 +434,9 @@ export class MatrixAdapter {
   // ================================================================ sync processing
 
   private async processSync(res: any, initial: boolean) {
+    // First, so a room key that arrives with its message decrypts it. If this throws, the since token
+    // stays where it was and the same to-device messages come again: they are not on the server after that.
+    await this.e2ee?.receiveSync(res);
     const ctx: Ctx = { live: !initial, mode: 'sync', count: 0 };
     let structural = initial;
 
@@ -505,8 +540,9 @@ export class MatrixAdapter {
           for (const root of res.chunk ?? []) {
             if (!root?.event_id || typeof root.type !== 'string' || this.db.thread(threadId(room.id, root.event_id))) continue;
             const ctx: Ctx = { live: false, mode: 'fetch', count: 0 };
-            await this.ensureThread(room, root.event_id, ctx, root);
-            await this.processEvent(room, root, ctx);
+            const clear = await this.decrypted(room, root);
+            await this.ensureThread(room, root.event_id, ctx, clear);
+            await this.processEvent(room, clear, ctx);
           }
         } catch (e) {
           // An unknown endpoint (old server) turns discovery off; other errors only skip the room.
@@ -523,6 +559,7 @@ export class MatrixAdapter {
     if (!ev || typeof ev.type !== 'string' || typeof ev.state_key !== 'string' || !ev.event_id) return false;
     if (!room.setState(ev)) return false;
     this.db.saveState(room.id, ev);
+    if (ev.type === 'm.room.member') this.encryptionMembers.delete(room.id);
     if (ev.type === 'm.room.member' && ev.state_key !== this.selfId) {
       const m = ev.content?.membership;
       if (m === 'join' || m === 'invite') this.pendingIdentities.set(ev.state_key, this.dir.identity(room, ev.state_key));
@@ -671,6 +708,7 @@ export class MatrixAdapter {
       return;
     }
     if (isRedacted(ev)) return this.redactedEvent(room, ev, ctx);
+    ev = await this.decrypted(room, ev);
     switch (ev.type) {
       case 'm.reaction':
         return this.reactionEvent(room, ev);
@@ -691,8 +729,13 @@ export class MatrixAdapter {
   private async messageEvent(room: Room, ev: MxEvent, ctx: Ctx) {
     const rel = relationOf(ev.content);
     if (rel.relType === 'm.replace' && rel.eventId) {
-      if (ev.type === 'm.room.encrypted') this.db.putEvent(ev, room.id, room.id, false);
+      if (ev.type === 'm.room.encrypted') this.db.putEvent(ev, room.id, room.id, true);
       else await this.editEvent(room, ev, rel, ctx);
+      return;
+    }
+    // An encrypted reaction we cannot read yet is no message, so it gets no "encrypted message" bubble.
+    if (ev.type === 'm.room.encrypted' && rel.relType === 'm.annotation') {
+      this.db.putEvent(ev, room.id, room.id, true);
       return;
     }
     const conv = await this.conversationOf(room, ev, rel, ctx);
@@ -713,7 +756,8 @@ export class MatrixAdapter {
     let best = row && row.sender === ev.sender ? { content: JSON.parse(row.content), ts: row.ts, id: row.id } : null;
     const bundled = ev.unsigned?.['m.relations']?.['m.replace'];
     const nc = bundled?.content?.['m.new_content'];
-    if (bundled && bundled.sender === ev.sender && nc && typeof nc === 'object' && typeof bundled.event_id === 'string') {
+    const plainOverEncrypted = (ev.e2ee || ev.type === 'm.room.encrypted') && !bundled?.e2ee;
+    if (bundled && !plainOverEncrypted && bundled.sender === ev.sender && nc && typeof nc === 'object' && typeof bundled.event_id === 'string') {
       const ts = Number(bundled.origin_server_ts) || 0;
       if (!best || ts > best.ts) {
         best = { content: nc, ts, id: bundled.event_id };
@@ -735,7 +779,9 @@ export class MatrixAdapter {
   private buildMessage(room: Room, ev: MxEvent, conv: string, ctx: Ctx): P.MessageFact | null {
     const rel = relationOf(ev.content);
     const edit = this.latestEdit(ev);
-    const rendered = renderContent(ev.type, edit ? edit.content : ev.content, edit ? false : !!rel.inReplyTo);
+    // An edit can decrypt before the message it edits does, and then it is all we can show.
+    const type = edit && ev.type === 'm.room.encrypted' ? 'm.room.message' : ev.type;
+    const rendered = renderContent(type, edit ? edit.content : ev.content, edit ? false : !!rel.inReplyTo, ev.event_id);
     if (!rendered) return null;
     const f: P.MessageFact = { nativeId: ev.event_id, conversation: conv, author: ev.sender, ts: ev.origin_server_ts, kind: rendered.kind, body: rendered.body };
     if (edit) f.editedTs = edit.ts;
@@ -743,6 +789,8 @@ export class MatrixAdapter {
     if (reply) f.replyTo = reply;
     if (rendered.attachments?.length) f.attachments = rendered.attachments;
     if (rendered.extra) f.extra = rendered.extra;
+    // A server can write plaintext events in anyone's name, so in an encrypted room they do not pass as normal.
+    if (room.encrypted && ev.type === 'm.room.message' && !ev.e2ee) f.extra = { ...f.extra, encryptionWarning: 'Not encrypted, in an encrypted room. The server could have written this.' };
     if (ev.sender !== this.selfId && (mentionsUser(ev.content, this.selfId) || (edit && mentionsUser(edit.content, this.selfId)))) f.mentionsSelf = true;
     const thread = threadId(room.id, ev.event_id);
     if (conv === room.id && this.db.thread(thread)) f.threadRoot = thread;
@@ -791,8 +839,10 @@ export class MatrixAdapter {
   private async fetchEvent(roomId: string, eventId: string): Promise<MxEvent | null> {
     try {
       const ev = await this.api().request<MxEvent>('GET', `/_matrix/client/v3/rooms/${enc(roomId)}/event/${enc(eventId)}`, { retries: 1 });
-      if (ev?.event_id) this.noteTs(ev);
-      return ev?.event_id ? ev : null;
+      if (!ev?.event_id) return null;
+      this.noteTs(ev);
+      const room = this.dir.rooms.get(roomId);
+      return room ? this.decrypted(room, ev) : ev;
     } catch (e) {
       this.log('debug', `could not fetch ${eventId} in ${roomId}: ${describe(e)}`);
       return null;
@@ -806,6 +856,9 @@ export class MatrixAdapter {
     if (!nc || typeof nc !== 'object') return;
     const row = this.db.event(target);
     if (row && row.sender !== ev.sender) return; // only the author can edit
+    // A server can write plaintext events in anyone's name, but it cannot rewrite what someone encrypted.
+    const before = row?.json ? (JSON.parse(row.json) as MxEvent) : null;
+    if (before && (before.e2ee || before.type === 'm.room.encrypted') && !ev.e2ee) return;
     if (!this.db.putEdit({ target, id: ev.event_id, sender: ev.sender, ts: ev.origin_server_ts, content: JSON.stringify(nc) })) return;
     if (row?.redacted) return;
     if (row?.json) {
@@ -1038,21 +1091,57 @@ export class MatrixAdapter {
     return room;
   }
 
-  /** There is no crypto store yet, so anything sent to an encrypted room would be readable by the server. */
-  private plaintextRoom(roomId: string): Room {
+  /** Without a running crypto layer, anything written to an encrypted room would be readable by the server. Never fall back to that. */
+  private writableRoom(roomId: string): Room {
     const room = this.joinedRoom(roomId);
-    if (room.encrypted) throw new Error('this room is end-to-end encrypted, and sending to encrypted rooms is not supported yet');
+    if (room.encrypted && !this.e2ee) {
+      throw new Error(this.e2eeError ? `this room is end-to-end encrypted and encryption is not working: ${this.e2eeError}` : 'this room is end-to-end encrypted. Set up encryption on the account page to write here');
+    }
     return room;
   }
 
+  /** Everyone whose devices get the room key: members, and invitees if the room lets them read from their invite on. */
+  private async membersFor(room: Room): Promise<string[]> {
+    const known = this.encryptionMembers.get(room.id);
+    if (known) return known;
+    const res = await this.api().request('GET', `/_matrix/client/v3/rooms/${enc(room.id)}/members`, { query: { not_membership: 'leave' } });
+    const invitedToo = room.get('m.room.history_visibility')?.content?.history_visibility !== 'joined';
+    const members: string[] = [];
+    for (const ev of res.chunk ?? []) {
+      const m = ev?.content?.membership;
+      if (typeof ev?.state_key === 'string' && (m === 'join' || (m === 'invite' && invitedToo))) members.push(ev.state_key);
+    }
+    this.encryptionMembers.set(room.id, members);
+    return members;
+  }
+
+  /** Every event this adapter writes goes through here. */
   private async sendEvent(roomId: string, type: string, content: unknown): Promise<string> {
-    const res = await this.api().request('PUT', `/_matrix/client/v3/rooms/${enc(roomId)}/send/${enc(type)}/${enc(this.api().txnId())}`, { body: content });
+    const room = this.writableRoom(roomId);
+    let wireType = type;
+    let wire = content;
+    if (room.encrypted) {
+      const e2ee = this.e2ee!;
+      const members = await this.membersFor(room);
+      wire = await e2ee.encrypt(roomId, members, { settings: room.get('m.room.encryption')?.content ?? {}, historyVisibility: room.get('m.room.history_visibility')?.content?.history_visibility }, type, content);
+      wireType = 'm.room.encrypted';
+    }
+    const res = await this.api().request('PUT', `/_matrix/client/v3/rooms/${enc(roomId)}/send/${enc(wireType)}/${enc(this.api().txnId())}`, { body: wire });
     return res.event_id;
+  }
+
+  /** Every file this adapter uploads goes through here. In an encrypted room the server gets ciphertext, without a name or type. */
+  private async uploadFile(room: Room, f: P.OutgoingAttachment): Promise<Record<string, unknown>> {
+    this.writableRoom(room.id);
+    const upload = (query: Record<string, string> | undefined, body: unknown, contentType: string) => this.api().request<{ content_uri: string }>('POST', '/_matrix/media/v3/upload', { query, body, contentType, timeoutMs: 120_000 });
+    if (!room.encrypted) return { url: (await upload({ filename: f.name }, Bun.file(f.path), f.mime)).content_uri };
+    const { data, file } = this.e2ee!.encryptAttachment(new Uint8Array(await Bun.file(f.path).arrayBuffer()));
+    return { file: { ...file, url: (await upload(undefined, data, 'application/octet-stream')).content_uri } };
   }
 
   private async send(conversation: string, body: string, replyTo?: string) {
     const { roomId, root } = splitConversation(conversation);
-    this.plaintextRoom(roomId);
+    this.writableRoom(roomId);
     const out = markdownToMatrix(body, this.names(roomId));
     const content: Record<string, any> = { msgtype: 'm.text', body: out.body };
     if (out.formatted) {
@@ -1077,7 +1166,7 @@ export class MatrixAdapter {
   /** Matrix has one file per event, and clients vary on captions, so any text goes first as its own message. */
   private async sendFiles(conversation: string, body: string, files: P.OutgoingAttachment[], replyTo?: string) {
     const { roomId, root } = splitConversation(conversation);
-    this.plaintextRoom(roomId);
+    const room = this.writableRoom(roomId);
     let first: string | undefined;
     let reply = replyTo;
     if (body.trim()) {
@@ -1085,8 +1174,8 @@ export class MatrixAdapter {
       reply = undefined;
     }
     for (const f of files) {
-      const up = await this.api().request<{ content_uri: string }>('POST', '/_matrix/media/v3/upload', { query: { filename: f.name }, body: Bun.file(f.path), contentType: f.mime, timeoutMs: 120_000 });
-      const content: Record<string, any> = { msgtype: `m.${f.kind}`, body: f.name, filename: f.name, url: up.content_uri, info: { mimetype: f.mime, size: f.size } };
+      const where = await this.uploadFile(room, f);
+      const content: Record<string, any> = { msgtype: `m.${f.kind}`, body: f.name, filename: f.name, ...where, info: { mimetype: f.mime, size: f.size } };
       if (root) {
         const latest = this.db.thread(threadId(roomId, root))?.latest ?? root;
         content['m.relates_to'] = { rel_type: 'm.thread', event_id: root, is_falling_back: !reply, 'm.in_reply_to': { event_id: reply ?? latest } };
@@ -1102,7 +1191,7 @@ export class MatrixAdapter {
 
   private async edit(conversation: string, message: string, body: string) {
     const { roomId } = splitConversation(conversation);
-    this.plaintextRoom(roomId);
+    this.writableRoom(roomId);
     const orig = this.db.event(message);
     if (orig && orig.sender !== this.selfId) throw new Error('only your own messages can be edited');
     const out = markdownToMatrix(body, this.names(roomId));
@@ -1144,8 +1233,8 @@ export class MatrixAdapter {
 
   private async react(conversation: string, message: string, key: string, remove: boolean, emoji?: P.CustomEmojiFact) {
     const { roomId } = splitConversation(conversation);
-    if (remove) this.joinedRoom(roomId);
-    else this.plaintextRoom(roomId);
+    // Taking one back is a redaction, which carries nothing that would need encrypting.
+    const room = remove ? this.joinedRoom(roomId) : this.writableRoom(roomId);
     let mine = this.myReactions(message, key);
     if (!remove) {
       if (mine.length) return { nativeId: mine[0].id };
@@ -1159,8 +1248,10 @@ export class MatrixAdapter {
     if (!mine.length) {
       // Reacted before our window (or from another client): ask the server.
       try {
-        const res = await this.api().request('GET', `/_matrix/client/v1/rooms/${enc(roomId)}/relations/${enc(message)}/m.annotation/m.reaction`, { query: { limit: 100 } });
-        for (const ev of res.chunk ?? []) {
+        // In an encrypted room the server knows a reaction only as m.room.encrypted.
+        const res = await this.api().request('GET', `/_matrix/client/v1/rooms/${enc(roomId)}/relations/${enc(message)}/m.annotation${room.encrypted ? '' : '/m.reaction'}`, { query: { limit: 100 } });
+        for (const raw of res.chunk ?? []) {
+          const ev = await this.decrypted(room, raw);
           const rel = relationOf(ev.content);
           if (ev.sender === this.selfId && rel.key && canonicalReactionKey(rel.key) === canonicalReactionKey(key)) this.db.putReaction({ id: ev.event_id, room: roomId, target: message, key: rel.key, sender: this.selfId, ts: ev.origin_server_ts });
         }
@@ -1177,7 +1268,7 @@ export class MatrixAdapter {
   private async reactionContext(conversation: string): Promise<P.ReactionContext> {
     const { roomId } = splitConversation(conversation);
     const room = this.joinedRoom(roomId);
-    if (room.encrypted) return { canReact: false, reason: 'Reacting in encrypted rooms is not supported yet.', custom: [] };
+    if (room.encrypted && !this.e2ee) return { canReact: false, reason: 'Set up encryption on the account page to react in encrypted rooms.', custom: [] };
     const canReact = room.powerLevel(this.selfId) >= room.requiredLevel('m.reaction', false);
     return { canReact, ...(canReact ? {} : { reason: 'This room does not let you react.' }), custom: canReact ? await this.imagePacks(roomId) : [] };
   }
@@ -1257,9 +1348,31 @@ export class MatrixAdapter {
     return { count: ctx.count, done: !!t.done };
   }
 
+  /** The key to an encrypted attachment lives in the decrypted event that the attachment URL names. Only that event can say how to read it. */
+  private async encryptedAttachment(eventId: string, mxc: string): Promise<{ file: Record<string, unknown>; mime: unknown } | null> {
+    let ev = this.db.eventJson(eventId);
+    if (!ev || ev.type === 'm.room.encrypted') {
+      const room = this.db.event(eventId)?.room;
+      if (room) ev = await this.fetchEvent(room, eventId);
+    }
+    const edited = this.db.edit(eventId);
+    for (const content of [edited ? JSON.parse(edited.content) : null, ev?.content]) {
+      const found = encryptedFileOf(content);
+      if (found?.url === mxc) return { file: found, mime: content.info?.mimetype };
+    }
+    return null;
+  }
+
   private async fetchMedia(url: string): Promise<{ mime: string; base64: string }> {
     const m = url.match(/^mxc:\/\/([^/]+)\/([^/?#]+)/);
     if (!m) throw new Error(`not an mxc:// URL: ${url}`);
+    const fragment = url.indexOf('#');
+    let encrypted: Awaited<ReturnType<typeof this.encryptedAttachment>> = null;
+    if (fragment >= 0) {
+      if (!this.e2ee) throw new Error('this file is end-to-end encrypted and encryption is not set up');
+      encrypted = await this.encryptedAttachment(url.slice(fragment + 1), url.slice(0, fragment));
+      if (!encrypted) throw new Error('no key for this encrypted file');
+    }
     const c = this.api();
     const path = `${enc(m[1])}/${enc(m[2])}`;
     let res = await c.raw('GET', `/_matrix/client/v1/media/download/${path}`, { timeoutMs: 60_000 });
@@ -1271,6 +1384,10 @@ export class MatrixAdapter {
     if (Number(res.headers.get('content-length') ?? 0) > MAX_MEDIA) throw new Error('media too large to proxy');
     const bytes = new Uint8Array(await res.arrayBuffer());
     if (bytes.length > MAX_MEDIA) throw new Error('media too large to proxy');
+    if (encrypted) {
+      const clear = this.e2ee!.decryptAttachment(bytes, encrypted.file);
+      return { mime: this.e2ee!.safeMediaType(encrypted.mime), base64: Buffer.from(clear).toString('base64') };
+    }
     const mime = (res.headers.get('content-type') ?? 'application/octet-stream').split(';')[0].trim() || 'application/octet-stream';
     return { mime, base64: Buffer.from(bytes).toString('base64') };
   }
@@ -1282,6 +1399,14 @@ export class MatrixAdapter {
         return this.resync();
       case 'relogin':
         return this.relogin(args);
+      case 'setupEncryption':
+        return this.setupEncryption(args);
+      case 'encryptionStatus':
+        return this.encryptionStatus();
+      case 'addRecoveryKey':
+        return this.addRecoveryKey(args);
+      case 'verifyDevice':
+        return this.verifyDevice(args);
       case 'status':
         return {
           userId: this.selfId || null,
@@ -1294,7 +1419,7 @@ export class MatrixAdapter {
           threads: this.db.threads().length,
         };
       default:
-        throw new Error(`unknown action "${action}" (matrix supports resync, relogin, status)`);
+        throw new Error(`unknown action "${action}" (matrix supports resync, relogin, status, setupEncryption, encryptionStatus, addRecoveryKey, verifyDevice)`);
     }
   }
 
@@ -1319,5 +1444,259 @@ export class MatrixAdapter {
     this.syncAbort?.abort();
     this.wakeUp?.();
     return { ok: true };
+  }
+
+  // ================================================================ end-to-end encryption
+
+  private e2eeAttention(): Omit<P.Attention, 'since'> | null {
+    if (this.e2eeError) return { kind: 'unknown', message: `Encryption is not working: ${this.e2eeError}` };
+    const v = this.verification;
+    if (!v) return null;
+    const message =
+      v.phase === 'requested'
+        ? `Device ${v.otherDevice ?? 'of yours'} asks to verify this one.`
+        : v.phase === 'compare'
+          ? 'Compare these emoji with the other device.'
+          : v.phase === 'confirmed'
+            ? 'Waiting for the other device to confirm.'
+            : 'Verifying with another device…';
+    return { kind: 'verify', message, detail: { verification: v } };
+  }
+
+  private refreshAttention() {
+    if (this.status !== 'attention') this.setStatus(this.status, this.e2eeAttention());
+  }
+
+  /**
+   * Start the crypto layer if this account has it on. A failure that is about the crypto state
+   * (a store that does not match the published device) leaves the account running without it:
+   * encrypted rooms stay unreadable and refuse writes, everything else works.
+   */
+  private async startE2ee(): Promise<void> {
+    const secret = this.hub.secret<Secret>();
+    const opts = secret.e2ee;
+    if (!opts?.on || this.e2ee?.deviceId === this.deviceId) return;
+    if (!this.deviceId) throw new Error('the homeserver did not say which device this is');
+    // A login that came back as another device: that one has a store of its own.
+    this.e2ee?.close();
+    this.e2ee = null;
+    const notWorking = (message: string) => {
+      this.e2eeError = message;
+      this.log('error', `encryption is off: ${message}`);
+      this.refreshAttention();
+    };
+    let e2ee: E2ee;
+    try {
+      const { E2ee } = await import('./e2ee.ts');
+      e2ee = await E2ee.open({
+        dir: this.hub.accountDir,
+        userId: this.selfId,
+        deviceId: this.deviceId,
+        storeKey: opts.storeKey,
+        client: () => this.api(),
+        log: (level, msg) => this.log(level, msg),
+        onRoomKeys: (keys) => {
+          for (const k of keys) this.keysArrived.add(k.sessionId);
+          this.retryArrived().catch((e) => this.log('warn', `retrying events failed: ${describe(e)}`));
+        },
+        onVerification: (v) => {
+          this.verification = v;
+          this.refreshAttention();
+        },
+      });
+    } catch (e) {
+      return notWorking(`the crypto store did not open (${describe(e)})`);
+    }
+    try {
+      await this.checkPublishedDevice(e2ee);
+    } catch (e) {
+      e2ee.close();
+      if (e instanceof DeviceMismatch) return notWorking(e.message);
+      throw e; // the homeserver is unreachable: the session retries, this included
+    }
+    this.e2ee = e2ee;
+    this.e2eeError = null;
+    this.emitHello();
+    this.refreshAttention();
+    this.log('info', `encryption is on: device ${this.deviceId}`);
+    await e2ee.flush().catch((e) => this.log('warn', `could not reach the homeserver for crypto requests: ${describe(e)}`));
+    await e2ee.resumeBackup().catch((e) => this.log('warn', `could not check the room key backup: ${describe(e)}`));
+    if (opts.recoveryKey && !(await e2ee.status()).backup) await this.applyRecoveryKey(opts.recoveryKey);
+    this.retryEverything();
+  }
+
+  /** The server's copy of this device must be the one in our store. Otherwise other people's keys go to a device that is not us, and nothing decrypts. */
+  private async checkPublishedDevice(e2ee: E2ee) {
+    const res = await this.api().request('POST', '/_matrix/client/v3/keys/query', { body: { device_keys: { [this.selfId]: [this.deviceId] } } });
+    const published = res.device_keys?.[this.selfId]?.[this.deviceId]?.keys?.[`ed25519:${this.deviceId}`];
+    if (typeof published === 'string' && published.replace(/=+$/, '') !== e2ee.identity.ed25519.replace(/=+$/, '')) {
+      throw new DeviceMismatch(`device ${this.deviceId} already has other keys on the homeserver, so crypto.sqlite does not belong to it. Log this account in again as a new device`);
+    }
+  }
+
+  private async setupEncryption(args: unknown) {
+    this.api();
+    const recoveryKey = typeof (args as any)?.recoveryKey === 'string' ? (args as any).recoveryKey.trim() : '';
+    const before = this.hub.secret<Secret>();
+    const storeKey = before.e2ee?.storeKey ?? Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64');
+    this.hub.saveSecret({ ...before, e2ee: { ...before.e2ee, on: true, storeKey } });
+    this.e2eeError = null;
+    try {
+      await this.startE2ee();
+      if (!this.e2ee) throw new Error(this.e2eeError ?? 'encryption did not start');
+      await this.e2ee.flush(); // the keys are published, or this fails
+    } catch (e) {
+      // Keep the store key: the store may hold a device identity by now, and a second try has to reuse it.
+      this.hub.saveSecret({ ...this.hub.secret<Secret>(), e2ee: { on: false, storeKey } });
+      this.e2ee?.close();
+      this.e2ee = null;
+      this.e2eeError = null;
+      this.emitHello();
+      this.refreshAttention();
+      throw e;
+    }
+    if (recoveryKey) await this.addRecoveryKey({ recoveryKey }).catch(() => {}); // reported through encryptionStatus
+    return this.encryptionStatus();
+  }
+
+  private async encryptionStatus() {
+    const secret = this.hub.secret<Secret>();
+    const base = { on: !!secret.e2ee?.on, error: this.e2eeError, recoveryKeySaved: !!secret.e2ee?.recoveryKey, recoveryError: this.recoveryError, undecrypted: this.db.utdCount() };
+    return this.e2ee ? { ...base, ...(await this.e2ee.status()) } : { ...base, active: false, deviceId: this.deviceId || null };
+  }
+
+  /** Saved only once it has proved to open something, so a typo is not kept as a secret. */
+  private async addRecoveryKey(args: unknown) {
+    if (!this.e2ee) throw new Error('set up encryption first');
+    const key = typeof (args as any)?.recoveryKey === 'string' ? (args as any).recoveryKey.trim() : '';
+    if (!key) throw new Error('addRecoveryKey needs args {"recoveryKey": "..."}');
+    if (!(await this.applyRecoveryKey(key))) throw new Error(this.recoveryError ?? 'that key opened nothing');
+    const secret = this.hub.secret<Secret>();
+    this.hub.saveSecret({ ...secret, e2ee: { ...secret.e2ee!, recoveryKey: key } });
+    return this.encryptionStatus();
+  }
+
+  private async applyRecoveryKey(key: string): Promise<boolean> {
+    try {
+      const got = await this.e2ee!.applyRecoveryKey(key);
+      this.recoveryError = got.backup || got.crossSigned ? null : 'that key is right, but this account has no room key backup or cross-signing keys stored under it';
+      this.log('info', `recovery key accepted (room key backup: ${got.backup}, device signed: ${got.crossSigned})`);
+      this.retryEverything();
+      return got.backup || got.crossSigned;
+    } catch (e) {
+      this.recoveryError = describe(e);
+      this.log('warn', `recovery key not accepted: ${this.recoveryError}`);
+      return false;
+    }
+  }
+
+  private async verifyDevice(args: unknown) {
+    if (!this.e2ee) throw new Error('set up encryption first');
+    await this.e2ee.verifyAction(String((args as any)?.step ?? ''));
+    return this.encryptionStatus();
+  }
+
+  /**
+   * The cleartext form of an encrypted event, or the event as it came if there is no key for it yet
+   * (it is then kept for a retry). Plain events pass through, with any encrypted edit bundled in them decrypted.
+   */
+  private async decrypted(room: Room, ev: MxEvent): Promise<MxEvent> {
+    const e2ee = this.e2ee;
+    if (!e2ee || isRedacted(ev)) return ev;
+    const bundled = ev.unsigned?.['m.relations']?.['m.replace'];
+    if (bundled?.type === 'm.room.encrypted') {
+      const d = await e2ee.decrypt(bundled, room.id);
+      ev = { ...ev, unsigned: { ...ev.unsigned, 'm.relations': { ...ev.unsigned!['m.relations'], 'm.replace': d ? { ...bundled, type: d.type, content: d.content, e2ee: true } : undefined } } };
+    }
+    if (ev.type !== 'm.room.encrypted') return ev;
+    // Seen and decrypted before: the same answer, whatever has happened to the keys since.
+    const known = this.db.eventJson(ev.event_id);
+    if (known && known.type !== 'm.room.encrypted') return { ...ev, type: known.type, content: known.content, e2ee: true };
+    const d = await e2ee.decrypt(ev, room.id);
+    const session = ev.content?.session_id;
+    if (!d) {
+      if (typeof session === 'string') {
+        this.db.putUtd({ id: ev.event_id, room: room.id, session });
+        e2ee.wantSession(room.id, session);
+      }
+      return ev;
+    }
+    this.db.dropUtd(ev.event_id);
+    return { ...ev, type: d.type, content: d.content, e2ee: true };
+  }
+
+  /** Keys arrived: decrypt what was waiting for them, and update what the hub shows. */
+  private async retryArrived() {
+    if (this.retrying) return;
+    this.retrying = true;
+    try {
+      while (this.keysArrived.size && !this.stopped) {
+        const sessions = [...this.keysArrived];
+        this.keysArrived.clear();
+        for (const session of sessions) for (const row of this.db.utdOfSession(session)) await this.retryOne(row);
+      }
+    } finally {
+      this.retrying = false;
+    }
+  }
+
+  private async retryOne(row: UtdRow) {
+    const room = this.dir.rooms.get(row.room);
+    const stored = this.db.event(row.id);
+    const ev = this.db.eventJson(row.id);
+    if (!room || !this.e2ee || !ev || !stored || stored.redacted) {
+      this.db.dropUtd(row.id);
+      return;
+    }
+    try {
+      const clear = await this.decrypted(room, ev);
+      if (clear.type === 'm.room.encrypted') return;
+      const ctx: Ctx = { live: false, mode: 'fetch', count: 0 };
+      await this.processEvent(room, clear, ctx);
+      // It turned out to be no message (a reaction, an edit, a call event). Take back the "encrypted message" bubble, if it ever had one.
+      if (!ctx.count && !this.isEditOf(clear)) this.hub.emit({ t: 'delete', conversation: stored.conv, nativeId: row.id });
+      const t = this.db.thread(threadId(room.id, row.id));
+      if (t) {
+        const name = this.threadName(room, clear);
+        if (name !== t.name) {
+          this.db.putThread({ ...t, name });
+          this.emitThreadFact({ ...t, name });
+        }
+      }
+    } catch (e) {
+      this.log('warn', `could not retry ${row.id}: ${describe(e)}`);
+    }
+  }
+
+  private isEditOf(ev: MxEvent): boolean {
+    return relationOf(ev.content).relType === 'm.replace';
+  }
+
+  /**
+   * Everything the adapter holds without a key: on startup, after a recovery key, and
+   * once after setup for what was stored while encryption was off.
+   */
+  private retryEverything() {
+    this.retryWaiting().catch((e) => this.log('warn', `retrying events failed: ${describe(e)}`));
+  }
+
+  private async retryWaiting() {
+    if (!this.e2ee) return;
+    // Encrypted edits used to be stored without their content.
+    for (const id of this.db.encryptedWithoutJson()) {
+      if (this.stopped || !this.e2ee) return;
+      const row = this.db.event(id);
+      const ev = row && (await this.fetchEvent(row.room, id));
+      const room = row && this.dir.rooms.get(row.room);
+      if (ev && row && room) {
+        this.db.putEvent(ev, row.room, row.conv, true);
+        if (ev.type !== 'm.room.encrypted') await this.processEvent(room, ev, { live: false, mode: 'fetch', count: 0 });
+      }
+    }
+    this.db.utdFromEvents();
+    for (const row of this.db.utdAll()) {
+      if (this.stopped || !this.e2ee) return;
+      await this.retryOne(row);
+    }
   }
 }

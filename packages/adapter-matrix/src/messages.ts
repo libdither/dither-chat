@@ -64,9 +64,18 @@ export function mentionsUser(content: any, userId: string): boolean {
 
 const ATTACHMENT: Record<string, AttachmentKind> = { 'm.image': 'image', 'm.video': 'video', 'm.audio': 'audio', 'm.file': 'file' };
 
-export function attachmentOf(content: any, kind: AttachmentKind): AttachmentFact | null {
-  // Unencrypted media has `url`; media in an encrypted event has `file.url` (ciphertext; see README).
-  const url = typeof content?.url === 'string' ? content.url : typeof content?.file?.url === 'string' ? content.file.url : null;
+/** The `file` of an event with encrypted media: ciphertext at `url`, and the key to it. */
+export function encryptedFileOf(content: any): (Record<string, unknown> & { url: string }) | null {
+  return typeof content?.file?.url === 'string' ? content.file : null;
+}
+
+/**
+ * Encrypted media gets the URL mxc://server/id#<event id>. The fragment tells the adapter's fetchMedia
+ * that this needs decrypting and which event holds the key. The key itself does not leave the adapter.
+ */
+export function attachmentOf(content: any, kind: AttachmentKind, eventId?: string): AttachmentFact | null {
+  const file = encryptedFileOf(content);
+  const url = typeof content?.url === 'string' ? content.url : file ? `${file.url}#${eventId ?? ''}` : null;
   if (!url) return null;
   const info = content.info ?? {};
   const a: AttachmentFact = { kind, url };
@@ -120,12 +129,12 @@ export interface Rendered {
 }
 
 /** Content of a message-like event -> kind, body, attachments. null: not shown (e.g. verification requests). */
-export function renderContent(type: string, content: any, isReply: boolean): Rendered | null {
+export function renderContent(type: string, content: any, isReply: boolean, eventId?: string): Rendered | null {
   switch (type) {
     case 'm.room.encrypted':
       return { kind: 'encrypted', body: '' };
     case 'm.sticker': {
-      const att = attachmentOf(content, 'image');
+      const att = attachmentOf(content, 'image', eventId);
       return { kind: 'sticker', body: typeof content?.body === 'string' ? content.body : '', attachments: att ? [att] : [] };
     }
     case 'm.poll.start':
@@ -135,7 +144,7 @@ export function renderContent(type: string, content: any, isReply: boolean): Ren
   const msgtype = typeof content?.msgtype === 'string' ? content.msgtype : 'm.text';
   const attKind = ATTACHMENT[msgtype];
   if (attKind) {
-    const att = attachmentOf(content, attKind);
+    const att = attachmentOf(content, attKind, eventId);
     const hasCaption = typeof content.filename === 'string' && content.filename && typeof content.body === 'string' && content.body !== content.filename;
     const body = hasCaption ? textOf(content, isReply) : typeof content.body === 'string' ? content.body : '';
     return { kind: 'media', body, attachments: att ? [att] : [] };
