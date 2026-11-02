@@ -37,7 +37,7 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Edit and delete your own messages | H | L | done | Verified on the demo adapter, not yet on a live network |
 | Drafts per conversation | M | L | done | On each device, not synced |
 | Send attachments and images | H | M | next | Viewing works, sending has no path. Needs an upload route and an adapter command |
-| Mark all read | M | L | next | Must pace itself: each read goes to the network, and Discord rate-limits |
+| Mark all read | M | L | done | Everywhere, or per server, folder or person. A paced queue on the hub tells the networks and survives restarts |
 | Typing indicator, outgoing | L | L | later | Shown incoming, not sent |
 | Pinned messages, polls, stickers from the picker | M | M | later | |
 | Voice and video | M | H | blocked | Each network's media stack; out of scope for a text hub |

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { sumUnread, visibleConv } from '../model.ts';
-import { connected, db, go, loaded, prefs, rev, route, toasts, type Route } from '../state.ts';
+import { api, connected, db, go, loaded, prefs, readProgress, rev, route, toasts, type Route } from '../state.ts';
 import { AccountPane, AccountsSidebar, AddAccount } from './Accounts.tsx';
 import { ConversationDetails, PersonDetails } from './Details.tsx';
 import { DirectoryPane } from './Directory.tsx';
@@ -156,6 +156,10 @@ export function App() {
   useEffect(() => {
     if ('setAppBadge' in navigator) (badge ? navigator.setAppBadge(badge) : navigator.clearAppBadge()).catch(() => {});
   }, [badge]);
+  // A mark-all-read can outlive the page that started it.
+  useEffect(() => {
+    api<{ pending: number }>('/api/read-all').then((p) => (readProgress.value = { pending: p.pending, failed: 0 })).catch(() => {});
+  }, []);
   const backRoute: Route =
     r.view === 'space'
       ? { view: 'space', space: r.space }
@@ -196,6 +200,13 @@ export function App() {
         <button class="update-bar" onClick={applyUpdate}>
           <Icon name="refresh" size={14} /> A new version is ready. Tap to reload.
         </button>
+      )}
+      {(readProgress.value.pending > 0 || readProgress.value.failed > 0) && (
+        <div class="read-progress" role="status">
+          <Icon name="check" size={13} />
+          {readProgress.value.pending > 0 ? ` Telling the networks: ${readProgress.value.pending} left` : ' Read everywhere it could be'}
+          {readProgress.value.failed > 0 && `, ${readProgress.value.failed} would not go through`}
+        </div>
       )}
       <Rail />
       <aside class="sidebar">{sidebarFor(r, () => setAdding(true))}</aside>

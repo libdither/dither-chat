@@ -7,6 +7,7 @@ import { discordEmojiUrl, NETWORK_META, NETWORKS } from '@dither-chat/protocol';
 import type { Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
 import type { PushService } from './push.ts';
+import type { ReadQueue } from './readqueue.ts';
 import type { Triage } from './triage.ts';
 
 const ACCOUNT_COLORS = ['#F2A541', '#E86A92', '#B794F6', '#FF8C61', '#9BE15D', '#5CC8FF', '#F7D154', '#FF6B6B'];
@@ -25,6 +26,7 @@ export interface ServerOpts {
   tls?: { cert: string; key: string; ca?: string };
   plainPort?: number;
   push?: PushService;
+  readQueue?: ReadQueue;
   /** Rescore categories after they change. */
   onCategoriesChanged?: (force?: boolean) => void;
   onDemoReset?: () => Promise<void>;
@@ -327,6 +329,18 @@ export class HubServer {
       }
       this.flush();
       return ok();
+    }
+    if (path === '/api/read-all') {
+      const q = this.opts.readQueue;
+      if (!q) return bad('not available', 404);
+      if (method === 'POST') {
+        const b = await body<{ conversations?: string[] }>();
+        if (!Array.isArray(b.conversations)) return bad('which conversations?');
+        const marked = q.add(b.conversations);
+        this.flush();
+        return ok({ marked, pending: q.pending() });
+      }
+      return ok({ pending: q.pending() });
     }
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/history$/)) && method === 'POST') {
       const b = await body<{ beforeTs?: number; limit?: number }>();

@@ -1,7 +1,7 @@
 import type * as P from '@dither-chat/protocol';
 import { ago } from '../format.ts';
 import { authorName, communitiesOf, convLabel, convTitle, inboxSections, placeConv, resolveTokens, rootCommunity, unreadOf, visibleConv } from '../model.ts';
-import { db, feedback, go, inbox, rev } from '../state.ts';
+import { db, feedback, go, inbox, markAllRead, rev } from '../state.ts';
 import { Avatar, Count, SourceChip } from './bits.tsx';
 import { Icon } from './icons.tsx';
 
@@ -106,6 +106,9 @@ export function InboxBoard() {
           <h2>Triage</h2>
           <p>Every message from every account goes through the same rules. Here is what got through, and why.</p>
         </div>
+        <button class="btn ghost small" title="Mark every conversation read, here and on the networks" onClick={() => markAllRead([...db.conversations.values()].filter(visibleConv), 'all your accounts')}>
+          <Icon name="check" size={14} /> Mark all read
+        </button>
         <div class="board-stats">
           <span>
             <b>{pings.length}</b> pinged

@@ -358,4 +358,6 @@ export type ClientEvent =
   | { t: 'placePrefs'; prefs: PlacePrefView[] }
   | { t: 'categories'; categories: CategoryView[]; placeCategories: PlaceCategoryView[] }
   | { t: 'rules'; rules: RuleView[] }
+  /** Mark-all-read still telling the networks: how many reads are left, how many were given up on. */
+  | { t: 'readProgress'; pending: number; failed: number }
   | { t: 'resync' };

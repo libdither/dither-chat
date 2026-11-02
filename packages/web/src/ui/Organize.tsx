@@ -2,8 +2,8 @@
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { applyDrop, moveStep, type DropTarget, type Layout } from '../layout.ts';
-import { convTitle, placePref, railEntries } from '../model.ts';
-import { db, go, patchPlaces, route, saveFolders } from '../state.ts';
+import { convsUnder, convTitle, directsOf, folderConvs, placePref, railEntries } from '../model.ts';
+import { db, go, markAllRead, patchPlaces, route, saveFolders } from '../state.ts';
 import { Icon } from './icons.tsx';
 
 const randomId = () => 'fld_' + Math.random().toString(36).slice(2, 12);
@@ -86,6 +86,7 @@ export function PlaceMenu() {
     <div class="place-menu-back" onClick={close} onContextMenu={(e) => (e.preventDefault(), close())}>
       <div class="menu place-menu" style={{ left: `${Math.max(8, x)}px`, top: `${Math.max(8, y)}px` }} role="menu" onClick={(e) => e.stopPropagation()}>
         <div class="menu-label">{m.label}</div>
+        {item('check', 'Mark as read', () => markAllRead(placeConvs(kind, id), m.label))}
         {folder && item('folder', pref?.open ? 'Close in sidebar' : 'Open in sidebar', () => patchPlaces([{ kind: 'folder', id, open: !pref?.open }]))}
         {folder && item('at', 'Rename folder', () => {
           const name = prompt('Folder name', folder.name)?.trim();
@@ -113,6 +114,17 @@ export function PlaceMenu() {
       </div>
     </div>
   );
+}
+
+function placeConvs(kind: string, id: string): P.ConversationView[] {
+  if (kind === 'folder') {
+    const f = db.folders.find((f) => f.id === id);
+    return f ? folderConvs(f) : [];
+  }
+  if (kind === 'space') return convsUnder(id);
+  if (kind === 'person') return directsOf(id);
+  const c = db.conversations.get(id);
+  return c ? [c] : [];
 }
 
 export function placeLabel(key: string): string {

@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import { Categorizer, KeywordProvider, OllamaProvider, type CategoryProvider } from './categorize.ts';
 import { applyDemoOverlay, createDemoAccounts, demoFactory } from './demo.ts';
 import { PushService } from './push.ts';
+import { ReadQueue } from './readqueue.ts';
 import { HubServer, mediaSigner } from './server.ts';
 import { Store } from './store.ts';
 import { Supervisor } from './supervisor.ts';
@@ -90,6 +91,9 @@ const sup = new Supervisor(store, {
   onFresh: triageLater,
 });
 
+const readQueue = new ReadQueue(store, sup);
+readQueue.start();
+
 const server = new HubServer(store, sup, triage, {
   port,
   hostname,
@@ -99,6 +103,7 @@ const server = new HubServer(store, sup, triage, {
   tls,
   plainPort,
   push,
+  readQueue,
   onCategoriesChanged: (force) => void categorizer.refresh(force),
   onDemoReset: async () => {
     for (const a of store.accounts().filter((a) => a.demo)) {

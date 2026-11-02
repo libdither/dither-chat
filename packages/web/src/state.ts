@@ -334,6 +334,9 @@ export function applyEvents(events: P.ClientEvent[]) {
         if (t && !t.detached && c.lastMessage && !t.messages.some((m) => m.id === c.lastMessage!.id) && !t.loading) refreshTimeline(t.key);
         break;
       }
+      case 'readProgress':
+        readProgress.value = ev;
+        break;
       case 'conversation.removed':
         db.conversations.delete(ev.id);
         threadsDirty = true;
@@ -572,6 +575,18 @@ export const editMessage = (m: P.MessageView, body: string) =>
 export function deleteMessage(m: P.MessageView) {
   if (!confirm('Delete this message for everyone? This goes to the network and cannot be undone.')) return;
   api(`/api/messages/${m.id}/delete`, { body: {} }).catch((e) => toast({ kind: 'error', title: 'Could not delete', body: e.message }));
+}
+
+export const readProgress = signal<{ pending: number; failed: number }>({ pending: 0, failed: 0 });
+
+/** Clears here at once; the hub tells the networks at a pace they accept (readqueue.ts). */
+export function markAllRead(convs: P.ConversationView[], where: string) {
+  const ids = convs.filter((c) => c.vantages.some((v) => v.unread || v.mentions)).map((c) => c.id);
+  if (!ids.length) return toast({ kind: 'info', title: 'Nothing unread', body: where });
+  if (!confirm(`Mark ${ids.length} conversation${ids.length === 1 ? '' : 's'} read in ${where}? This also goes to the networks, and read state cannot be taken back.`)) return;
+  api<{ marked: number; pending: number }>('/api/read-all', { body: { conversations: ids } })
+    .then((r) => (readProgress.value = { pending: r.pending, failed: 0 }))
+    .catch((e) => toast({ kind: 'error', title: 'Could not mark read', body: e.message }));
 }
 
 const readTimers = new Map<string, ReturnType<typeof setTimeout>>();
