@@ -1,10 +1,11 @@
+import { useSignal } from '@preact/signals';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, REACTION_RULES } from '@dither-chat/protocol';
-import { loadEmoji, searchEmoji, SKIN_TONES, skinOf, type EmojiCategory } from '../emoji.ts';
+import { emojiNow, loadEmoji, searchEmoji, SKIN_TONES, skinOf } from '../emoji.ts';
 import { fullTime } from '../format.ts';
 import { authorName, convTitle, netName, plainBody } from '../model.ts';
-import { hasMine, pickerFor, quickReactions, reactionContext, reactionScope, reactorsFor, reactorsLabel, toggleReaction, type Picked } from '../reactions.ts';
+import { hasMine, knownReactionContext, pickerFor, quickReactions, reactionContext, reactionScope, reactorsFor, reactorsLabel, replacing, toggleReaction, type Picked } from '../reactions.ts';
 import { canDelete, canEdit, deleteMessage, startEditing, api, db, feedback, isSelfIdentity, openProfile, prefs, rev, setPrefs, toast } from '../state.ts';
 import { haptic, useLayer } from '../phone.ts';
 import { Avatar } from './bits.tsx';
@@ -81,7 +82,7 @@ function Pill({ m, r }: { m: P.MessageView; r: P.ReactionView }) {
       ref={ref}
       class={`reaction ${mine ? 'mine' : ''} ${r.style === 'super' ? 'super' : ''}`}
       style={superStyle as any}
-      title={`${reactorsLabel(r, authorName)}${r.style === 'super' ? ' · super reaction' : ''}`}
+      title={`${reactorsLabel(r, authorName)}${r.style === 'super' ? ' · super reaction' : ''}${!mine && replacing(m) ? ` · joining replaces your ${keyText(replacing(m)!)}` : ''}`}
       aria-pressed={mine}
       onClick={() => {
         const el = ref.current;
@@ -101,6 +102,18 @@ function Pill({ m, r }: { m: P.MessageView; r: P.ReactionView }) {
   );
 }
 
+/** A reaction as words, for a title: the emoji itself, or a custom one's :name:. */
+const keyText = (r: { key: string; emoji?: P.CustomEmojiView }) => (r.emoji ? `:${r.emoji.name}:` : r.key);
+
+/**
+ * The add button's face. Where a network keeps one reaction per person (Signal, WhatsApp) and you already have one,
+ * a pick replaces it rather than adding another, and the button says so: arrows where the plus was.
+ */
+export function addLook(m: P.MessageView): { icon: string; title: string } {
+  const r = replacing(m);
+  return r ? { icon: 'smileSwap', title: `Change your reaction (${keyText(r)}): ${NETWORK_META[m.network].name} keeps one per person` } : { icon: 'smilePlus', title: 'Add reaction' };
+}
+
 const compact = (n: number) => (n < 1000 ? String(n) : n < 10_000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k` : `${Math.round(n / 1000)}k`);
 
 export function ReactionBar({ m }: { m: P.MessageView }) {
@@ -110,11 +123,7 @@ export function ReactionBar({ m }: { m: P.MessageView }) {
       {m.reactions.map((r) => (
         <Pill key={`${r.style}|${r.key}`} m={m} r={r} />
       ))}
-      {reactionScope(m.conversationId) === 'all' && (
-        <button class="reaction add" title="Add reaction" aria-label="Add reaction" onClick={(e) => (pickerFor.value = { message: m, anchor: (e.currentTarget as HTMLElement).getBoundingClientRect() })}>
-          <Icon name="smilePlus" size={15} />
-        </button>
-      )}
+      {reactionScope(m.conversationId) === 'all' && <AddButton m={m} class="reaction add" />}
     </div>
   );
 }
@@ -122,17 +131,32 @@ export function ReactionBar({ m }: { m: P.MessageView }) {
 /** The row that appears over a message on hover. */
 export function HoverReactions({ m }: { m: P.MessageView }) {
   if (reactionScope(m.conversationId) !== 'all') return null;
+  const swap = replacing(m);
   return (
     <>
       {quickReactions(m.network, 3).map((k) => (
-        <button class="icon-btn small emoji" title={`React ${k}`} onClick={() => toggleReaction(m, { key: k })}>
+        <button class={`icon-btn small emoji ${swap?.key === k ? 'on' : ''}`} title={!swap ? `React ${k}` : swap.key === k ? `Take back your ${k}` : `Replace your ${keyText(swap)} with ${k}`} onClick={() => toggleReaction(m, { key: k })}>
           {k}
         </button>
       ))}
-      <button class="icon-btn small" title="More reactions" aria-label="More reactions" onClick={(e) => (pickerFor.value = { message: m, anchor: (e.currentTarget as HTMLElement).getBoundingClientRect() })}>
-        <Icon name="smilePlus" size={15} />
-      </button>
+      <AddButton m={m} class="icon-btn small" label="More reactions" />
     </>
+  );
+}
+
+function AddButton({ m, class: cls, label }: { m: P.MessageView; class: string; label?: string }) {
+  const look = addLook(m);
+  return (
+    <button
+      class={`${cls} ${look.icon === 'smileSwap' ? 'swap' : ''}`}
+      title={look.title}
+      aria-label={label ?? look.title}
+      // The catalog loads while the pointer is on its way, so the picker opens whole.
+      onPointerEnter={() => void loadEmoji()}
+      onClick={(e) => (pickerFor.value = { message: m, anchor: (e.currentTarget as HTMLElement).getBoundingClientRect() })}
+    >
+      <Icon name={look.icon} size={15} />
+    </button>
   );
 }
 
@@ -174,27 +198,69 @@ function burst(from: Element, r: { key: string; emoji?: P.CustomEmojiView; color
 
 // ------------------------------------------------------------------ the picker
 
-function EmojiButton({ k, emoji, label, onPick }: { k: string; emoji?: P.CustomEmojiView; label: string; onPick: (p: Picked, el: HTMLElement) => void }) {
-  return (
-    <button class="ep-emoji" title={label} aria-label={label} onClick={(e) => onPick({ key: k, emoji }, e.currentTarget as HTMLElement)}>
-      <Glyph k={k} emoji={emoji} size={26} />
-    </button>
-  );
+/** One emoji the picker offers. */
+interface Item {
+  key: string;
+  emoji?: P.CustomEmojiView;
+  /** :shortcode: */
+  name: string;
+  /** The source of a custom emoji, a server or a pack. */
+  from?: string;
 }
 
+interface Section {
+  id: string;
+  title: string;
+  kind: 'here' | 'custom' | 'unicode';
+  icon?: string;
+  img?: string | null;
+  items: Item[];
+}
+
+const CATEGORY_ICON: Record<string, string> = { people: 'smile', nature: 'leaf', foods: 'apple', activity: 'gamepad', places: 'car', objects: 'bulb', symbols: 'heart', flags: 'flag' };
+
+const isCustomKey = (key: string) => /^mxc:|^\S+:\d+$/.test(key);
+const initials = (name: string) =>
+  name
+    .split(/\s+/)
+    .map((w) => w[0])
+    .join('')
+    .slice(0, 3);
+
+/** The cells of a grid. Each one's index into `flat` is how a click or hover over the grid finds its emoji. */
+function cells(items: Item[], flat: Item[], mine: Set<string>) {
+  return items.map((it) => (
+    <button class={`ep-emoji ${mine.has(it.key) ? 'mine' : ''}`} data-i={flat.push(it) - 1} aria-label={it.name} aria-pressed={mine.has(it.key)}>
+      <Glyph k={it.key} emoji={it.emoji} size={32} />
+    </button>
+  ));
+}
+
+/**
+ * Discord's emoji picker: search with skin tones across the top, a rail of categories (your frequent ones, each
+ * server's or pack's custom emoji, then Unicode's) down the side, and the emoji under the pointer named along the
+ * bottom. On a network that keeps one reaction per person, that bottom line also says which of yours a pick replaces.
+ */
 function Picker({ m, anchor, onClose }: { m: P.MessageView; anchor: DOMRect | null; onClose: () => void }) {
   const rules = REACTION_RULES[m.network];
   const net = NETWORK_META[m.network].name;
   const sheet = isSheet();
   const [q, setQ] = useState('');
-  const [catalog, setCatalog] = useState<EmojiCategory[] | null>(null);
-  const [ctx, setCtx] = useState<P.ReactionContextView | null>(null);
+  // Both are usually known already, so the picker draws whole in its first frame instead of filling in.
+  const [catalog, setCatalog] = useState(emojiNow);
+  const [ctx, setCtx] = useState(() => knownReactionContext(m.conversationId));
   const [superOn, setSuperOn] = useState(false);
+  const [tonesOpen, setTonesOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const [active, setActive] = useState<string | null>(null);
+  const hovered = useSignal<Item | null>(null);
   const tone = prefs.value.skinTone ?? 0;
   const search = useRef<HTMLInputElement>(null);
   const box = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const flat = useRef<Item[]>([]);
   useEffect(() => {
-    loadEmoji().then(setCatalog);
+    if (!catalog) loadEmoji().then(setCatalog);
     reactionContext(m.conversationId).then(setCtx);
     if (!sheet) search.current?.focus();
   }, [m.id]);
@@ -206,29 +272,109 @@ function Picker({ m, anchor, onClose }: { m: P.MessageView; anchor: DOMRect | nu
     const { width: w, height: h } = el.getBoundingClientRect();
     const room = anchor.top - 8 >= h;
     el.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, anchor.right - w))}px`;
-    el.style.top = `${room ? anchor.top - h - 6 : Math.min(innerHeight - h - 8, anchor.bottom + 6)}px`;
-  });
+    el.style.top = `${room ? anchor.top - h - 6 : Math.max(8, Math.min(innerHeight - h - 8, anchor.bottom + 6))}px`;
+  }, [anchor]);
 
+  const style: P.ReactionStyle = superOn ? 'super' : 'normal';
   const onMessage = m.reactions.filter((r, i, all) => all.findIndex((x) => x.key === r.key) === i);
   const distinctFull = rules.maxDistinct !== undefined && onMessage.length >= rules.maxDistinct;
   const existingOnly = !!ctx?.existingOnly || distinctFull;
-  const customKeys = useMemo(() => new Map(ctx?.custom.flatMap((g) => g.emoji.map((e) => [e.key, e] as const)) ?? []), [ctx]);
-  const usable = (key: string) => !key.match(/^mxc:|^\S+:\d+$/) || customKeys.has(key);
-  // Your usage is counted per network; here one emoji is one button, and only what works on this network shows.
-  const frequent = db.reactionUsage.filter((u, i, all) => (u.network === m.network || !u.emoji) && usable(u.key) && all.findIndex((x) => x.key === u.key) === i).slice(0, 16);
-  const mine = rules.exclusive ? m.reactions.find(hasMine) : undefined;
+  const swap = replacing(m);
+  const mine = useMemo(() => new Set(m.reactions.filter((r) => r.style === style && hasMine(r)).map((r) => r.key)), [m.reactions, style]);
+
+  const { sections, customs, names } = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const c of catalog ?? []) for (const e of c.emoji) for (const s of e.skins) names.set(s, `:${e.id}:`);
+    const customs = new Map(ctx?.custom.flatMap((g) => g.emoji.map((e) => [e.key, { e, from: g.name }] as const)) ?? []);
+    const item = (key: string, emoji?: P.CustomEmojiView): Item => {
+      const c = customs.get(key);
+      const e = emoji ?? c?.e;
+      return { key, emoji: e, name: e ? `:${e.name}:` : names.get(key) ?? key, from: c?.from };
+    };
+    const sections: Section[] = [];
+    if (onMessage.length) sections.push({ id: 'here', title: 'On this message', kind: 'here', items: onMessage.map((r) => item(r.key, r.emoji)) });
+    if (!existingOnly) {
+      // Your usage is counted per network; here one emoji is one button, and only what works on this network shows.
+      const frequent = db.reactionUsage.filter((u, i, all) => (u.network === m.network || !u.emoji) && (!isCustomKey(u.key) || customs.has(u.key)) && all.findIndex((x) => x.key === u.key) === i).slice(0, 18);
+      if (frequent.length) sections.push({ id: 'frequent', title: 'Frequently used', kind: 'custom', icon: 'clock', items: frequent.map((u) => item(u.key, u.emoji)) });
+      ctx?.custom.forEach((g) => sections.push({ id: `custom:${g.id}`, title: g.name, kind: 'custom', img: g.icon, items: g.emoji.map((e) => item(e.key, e)) }));
+      for (const c of catalog ?? []) sections.push({ id: c.id, title: c.name, kind: 'unicode', icon: CATEGORY_ICON[c.id] ?? 'smile', items: c.emoji.map((e) => ({ key: skinOf(e, tone), name: `:${e.id}:` })) });
+    }
+    return { sections, customs, names };
+  }, [catalog, ctx, tone, existingOnly]);
+
+  const query = q.trim().toLowerCase();
+  const hits = useMemo((): Item[] => {
+    if (!query) return [];
+    const custom = [...customs.values()].filter(({ e }) => e.name.toLowerCase().includes(query)).slice(0, 36);
+    const unicode = catalog ? searchEmoji(catalog, query) : [];
+    return [...custom.map(({ e, from }) => ({ key: e.key, emoji: e, name: `:${e.name}:`, from })), ...unicode.map((e) => ({ key: skinOf(e, tone), name: `:${e.id}:` }))];
+  }, [query, customs, catalog, tone]);
+
+  // Built once per change of what is shown: hovering and scrolling re-render the picker, not its 1,900 buttons.
+  const grid = useMemo(() => {
+    const items: Item[] = [];
+    flat.current = items;
+    if (query) return hits.length ? <div class="ep-grid">{cells(hits, items, mine)}</div> : null;
+    return sections.map((s) => (
+      <section class={`ep-section ${collapsed.has(s.id) ? 'collapsed' : ''}`} data-sec={s.id} key={s.id}>
+        <h4>
+          <button
+            aria-expanded={!collapsed.has(s.id)}
+            onClick={() => {
+              const next = new Set(collapsed);
+              next.has(s.id) ? next.delete(s.id) : next.add(s.id);
+              setCollapsed(next);
+            }}
+          >
+            {s.img ? <img src={s.img} alt="" /> : s.icon && <Icon name={s.icon} size={13} />}
+            <span>{s.title}</span>
+            <Icon name="chevronDown" size={13} class="ep-chevron" />
+          </button>
+        </h4>
+        {!collapsed.has(s.id) && <div class="ep-grid">{cells(s.items, items, mine)}</div>}
+      </section>
+    ));
+  }, [query, hits, sections, collapsed, mine]);
 
   const pick = (p: Picked, el: HTMLElement) => {
-    const style = superOn ? 'super' : 'normal';
     if (style === 'super') burst(el, { key: p.key, emoji: p.emoji });
     toggleReaction(m, p, style);
     onClose();
   };
+  const first = hits[0] ?? (rules.freeText && q.trim() ? { key: q.trim(), name: q.trim() } : null);
+  const at = (e: Event) => {
+    const el = (e.target as Element).closest?.('.ep-emoji') as HTMLElement | null;
+    const it = el ? flat.current[Number(el.dataset.i)] : undefined;
+    return el && it ? { el, it } : null;
+  };
 
-  const query = q.trim().toLowerCase();
-  const customHits = query ? [...customKeys.values()].filter((e) => e.name.toLowerCase().includes(query)).slice(0, 32) : [];
-  const unicodeHits = query && catalog ? searchEmoji(catalog, query) : [];
-  const first = customHits[0] ? { key: customHits[0].key, emoji: customHits[0] } : unicodeHits[0] ? { key: skinOf(unicodeHits[0], tone) } : rules.freeText && q.trim() ? { key: q.trim() } : null;
+  // The rail follows the scroll, and jumps it.
+  const frame = useRef(0);
+  const spy = () => {
+    cancelAnimationFrame(frame.current);
+    frame.current = requestAnimationFrame(() => {
+      const el = scroller.current;
+      if (!el) return;
+      let cur: string | null = null;
+      for (const s of el.querySelectorAll<HTMLElement>('.ep-section')) {
+        if (s.offsetTop - 2 > el.scrollTop) break;
+        cur = s.dataset.sec ?? null;
+      }
+      setActive(cur);
+    });
+  };
+  const jump = (id: string) => {
+    const el = scroller.current;
+    const s = el?.querySelector<HTMLElement>(`[data-sec="${CSS.escape(id)}"]`);
+    if (!el || !s) return;
+    el.scrollTop = s.offsetTop;
+    setActive(id);
+  };
+  useEffect(spy, [sections]);
+  // The rail scrolls too when there are many servers: keep the marked category in sight.
+  const railBox = useRef<HTMLElement>(null);
+  useEffect(() => railBox.current?.querySelector('.ep-rail-btn.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }), [active]);
 
   if (ctx && !ctx.canReact) {
     return (
@@ -241,27 +387,70 @@ function Picker({ m, anchor, onClose }: { m: P.MessageView; anchor: DOMRect | nu
     );
   }
 
+  const note = superOn
+    ? 'Super reaction: plays an effect for everyone looking at this message.'
+    : distinctFull
+      ? `${net} allows ${rules.maxDistinct} different reactions on a message, and this one is full. You can still add to these.`
+      : ctx?.existingOnly
+        ? 'You can only add to reactions already on this message here.'
+        : rules.exclusive
+          ? swap
+            ? <>{net} keeps one reaction per person: a pick replaces your <Glyph k={swap.key} emoji={swap.emoji} size={16} />.</>
+            : `${net} keeps one reaction per person.`
+          : null;
+  const rail = !query && sections.filter((s) => s.kind !== 'here');
+
   return (
     <Shell sheet={sheet} box={box} onClose={onClose}>
       <div class="ep-head">
-        {!existingOnly && (
+        {existingOnly ? (
+          <span class="ep-head-title">Add to a reaction on this message</span>
+        ) : (
           <label class="ep-search">
-            <Icon name="search" size={15} />
             <input
               ref={search}
               value={q}
-              placeholder={rules.freeText ? 'Search, or type any text' : 'Search emoji'}
-              onInput={(e) => setQ((e.target as HTMLInputElement).value)}
+              placeholder={rules.freeText ? 'Find an emoji, or type any text' : 'Find the perfect emoji'}
+              onInput={(e) => {
+                setQ((e.target as HTMLInputElement).value);
+                scroller.current?.scrollTo(0, 0);
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && first) pick(first, e.currentTarget as HTMLElement);
               }}
             />
+            {q ? (
+              <button class="ep-clear" aria-label="Clear search" onClick={() => setQ('')}>
+                <Icon name="x" size={14} />
+              </button>
+            ) : (
+              <Icon name="search" size={16} />
+            )}
           </label>
         )}
         {!existingOnly && (
-          <button class="ep-tool" title="Skin tone" aria-label="Skin tone" onClick={() => setPrefs({ skinTone: (tone + 1) % SKIN_TONES.length })}>
-            {SKIN_TONES[tone]}
-          </button>
+          <div class="ep-tones-wrap">
+            <button class="ep-tool" title="Skin tone" aria-label="Skin tone" aria-expanded={tonesOpen} onClick={() => setTonesOpen(!tonesOpen)}>
+              {SKIN_TONES[tone]}
+            </button>
+            {tonesOpen && (
+              <div class="ep-tones" role="listbox" aria-label="Skin tone">
+                {SKIN_TONES.map((h, i) => (
+                  <button
+                    role="option"
+                    aria-selected={i === tone}
+                    class={i === tone ? 'on' : ''}
+                    onClick={() => {
+                      setPrefs({ skinTone: i });
+                      setTonesOpen(false);
+                    }}
+                  >
+                    {h}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         )}
         {ctx?.super?.available && (
           <button class={`ep-tool ep-super ${superOn ? 'on' : ''}`} title="Super reaction" aria-pressed={superOn} onClick={() => setSuperOn(!superOn)}>
@@ -271,95 +460,83 @@ function Picker({ m, anchor, onClose }: { m: P.MessageView; anchor: DOMRect | nu
         )}
       </div>
 
-      <div class="ep-scroll">
-        {query ? (
-          <>
-            {rules.freeText && (
-              <button class="ep-free" onClick={(e) => pick({ key: q.trim() }, e.currentTarget as HTMLElement)}>
-                React with <b>{q.trim()}</b>
-              </button>
-            )}
-            {customHits.length + unicodeHits.length > 0 ? (
-              <div class="ep-grid">
-                {customHits.map((e) => (
-                  <EmojiButton k={e.key} emoji={e} label={`:${e.name}:`} onPick={pick} />
-                ))}
-                {unicodeHits.map((e) => (
-                  <EmojiButton k={skinOf(e, tone)} label={e.name} onPick={pick} />
-                ))}
-              </div>
-            ) : (
-              !rules.freeText && <div class="ep-none">{catalog ? 'Nothing matches that.' : 'Loading…'}</div>
-            )}
-          </>
-        ) : (
-          <>
-            {onMessage.length > 0 && (
-              <Section title="On this message">
-                {onMessage.map((r) => (
-                  <EmojiButton k={r.key} emoji={r.emoji} label={r.emoji ? `:${r.emoji.name}:` : r.key} onPick={pick} />
-                ))}
-              </Section>
-            )}
-            {!existingOnly && (
+      <div class="ep-body">
+        {rail && rail.length > 1 && (
+          <nav class="ep-rail" aria-label="Categories" ref={railBox}>
+            {rail.map((s, i) => (
               <>
-                {frequent.length > 0 && (
-                  <Section title="Frequently used">
-                    {frequent.map((u) => (
-                      <EmojiButton k={u.key} emoji={u.emoji ?? customKeys.get(u.key)} label={u.emoji ? `:${u.emoji.name}:` : u.key} onPick={pick} />
-                    ))}
-                  </Section>
-                )}
-                {ctx?.custom.map((g) => (
-                  <Section title={g.name} icon={g.icon}>
-                    {g.emoji.map((e) => (
-                      <EmojiButton k={e.key} emoji={e} label={`:${e.name}:`} onPick={pick} />
-                    ))}
-                  </Section>
-                ))}
-                {catalog ? (
-                  catalog.map((c) => (
-                    <Section title={c.name}>
-                      {c.emoji.map((e) => (
-                        <EmojiButton k={skinOf(e, tone)} label={e.name} onPick={pick} />
-                      ))}
-                    </Section>
-                  ))
-                ) : (
-                  <div class="ep-none">Loading…</div>
-                )}
+                {i > 0 && rail[i - 1].kind !== s.kind && <hr />}
+                <button class={`ep-rail-btn ${active === s.id ? 'on' : ''} ${s.img ? 'img' : ''}`} title={s.title} aria-label={s.title} onClick={() => jump(s.id)}>
+                  {s.img ? <img src={s.img} alt="" /> : s.icon ? <Icon name={s.icon} size={20} /> : <span>{initials(s.title)}</span>}
+                </button>
               </>
-            )}
-          </>
+            ))}
+          </nav>
         )}
+        <div
+          class="ep-scroll"
+          ref={scroller}
+          onScroll={spy}
+          onClick={(e) => {
+            const hit = at(e);
+            if (hit) pick(hit.it, hit.el);
+          }}
+          onMouseOver={(e) => {
+            const hit = at(e);
+            if (hit && hovered.peek() !== hit.it) hovered.value = hit.it;
+          }}
+          onFocusIn={(e) => {
+            const hit = at(e);
+            if (hit) hovered.value = hit.it;
+          }}
+        >
+          {!!query && rules.freeText && (
+            <button class="ep-free" onClick={(e) => pick({ key: q.trim() }, e.currentTarget as HTMLElement)}>
+              React with <b>{q.trim()}</b>
+            </button>
+          )}
+          {grid}
+          {!!query && !hits.length && !rules.freeText && <div class="ep-none">{catalog ? 'Nothing matches that.' : 'Loading…'}</div>}
+          {!query && !catalog && !existingOnly && <div class="ep-none">Loading…</div>}
+        </div>
       </div>
 
-      {(rules.exclusive || existingOnly || superOn) && (
-        <div class="ep-note">
-          {superOn
-            ? 'Super reaction: plays an effect for everyone looking at this message.'
-            : distinctFull
-              ? `${net} allows ${rules.maxDistinct} different reactions on a message, and this one is full. You can still add to these.`
-              : ctx?.existingOnly
-                ? 'You can only add to reactions already on this message here.'
-                : mine
-                  ? <>{net} keeps one reaction per person, so this replaces your <Glyph k={mine.key} emoji={mine.emoji} size={14} />.</>
-                  : `${net} keeps one reaction per person.`}
-        </div>
-      )}
+      <Inspector hovered={hovered} fallback={sheet ? null : (sections.find((s) => s.kind !== 'here') ?? sections[0])?.items[0] ?? null} note={note} mine={mine} swap={swap} superOn={superOn} names={names} />
     </Shell>
   );
 }
 
-function Section({ title, icon, children }: { title: string; icon?: string | null; children: any }) {
+/** The line along the bottom: the emoji under the pointer, by name, and what picking it does here. */
+function Inspector({ hovered, fallback, note, mine, swap, superOn, names }: { hovered: { value: Item | null }; fallback: Item | null; note: any; mine: Set<string>; swap?: P.ReactionView; superOn: boolean; names: Map<string, string> }) {
+  const it = hovered.value ?? (note ? null : fallback);
+  if (!it)
+    return note ? (
+      <div class="ep-foot note">
+        <span>{note}</span>
+      </div>
+    ) : null;
+  const yours = mine.has(it.key);
   return (
-    <section class="ep-section">
-      <h4>
-        {icon && <img src={icon} alt="" />}
-        {title}
-      </h4>
-      <div class="ep-grid">{children}</div>
-    </section>
+    <div class="ep-foot">
+      <span class="ep-foot-glyph">
+        <Glyph k={it.key} emoji={it.emoji} size={30} />
+      </span>
+      <span class="ep-foot-name">
+        <b>{it.name}</b>
+        {it.from && <small>from {it.from}</small>}
+      </span>
+      {yours ? (
+        <span class="ep-foot-act">Picking it takes yours back</span>
+      ) : swap ? (
+        <span class="ep-foot-act swap" title={`Replaces your ${names.get(swap.key) ?? (swap.emoji ? `:${swap.emoji.name}:` : swap.key)}`}>
+          <Icon name="smileSwap" size={15} /> replaces <Glyph k={swap.key} emoji={swap.emoji} size={16} />
+        </span>
+      ) : superOn ? (
+        <span class="ep-foot-act">
+          <Icon name="zap" size={13} /> super
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -456,6 +633,11 @@ function Reactors({ m, reactionKey, style, anchor, onClose }: { m: P.MessageView
 /** Mounted once at the app root. */
 export function ReactionLayer() {
   rev.value;
+  // The catalog loads once the app is idle, so even the first picker opens whole rather than filling in.
+  useEffect(() => {
+    const t = setTimeout(() => void loadEmoji(), 4000);
+    return () => clearTimeout(t);
+  }, []);
   const p = pickerFor.value;
   const w = reactorsFor.value;
   return (

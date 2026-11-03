@@ -56,9 +56,14 @@ export function reactionContext(conversationId: string): Promise<P.ReactionConte
   return value;
 }
 
+/** The context if it is already known: a picker that has it draws its custom emoji in its first frame. */
+export function knownReactionContext(conversationId: string): P.ReactionContextView | null {
+  return contexts.get(`${conversationId}|${actingAccount(conversationId)?.id ?? ''}`)?.known ?? null;
+}
+
 /** What the row over a message may offer: everything, only reactions already there, or nothing. Until we know, assume everything. */
 export function reactionScope(conversationId: string): 'all' | 'existing' | 'none' {
-  const ctx = contexts.get(`${conversationId}|${actingAccount(conversationId)?.id ?? ''}`)?.known;
+  const ctx = knownReactionContext(conversationId);
   if (!ctx) return 'all';
   return !ctx.canReact ? 'none' : ctx.existingOnly ? 'existing' : 'all';
 }
@@ -128,6 +133,11 @@ export async function toggleReaction(m: P.MessageView, picked: Picked, style: P.
 }
 
 export const hasMine = (r: P.ReactionView) => r.identityIds.some(isSelfIdentity);
+
+/** On a network that keeps one reaction per person (Signal, WhatsApp), yours that a new one would replace. */
+export function replacing(m: P.MessageView): P.ReactionView | undefined {
+  return REACTION_RULES[m.network].exclusive ? m.reactions.find(hasMine) : undefined;
+}
 
 /** "You, Alice and 3 others" */
 export function reactorsLabel(r: P.ReactionView, nameOf: (id: string) => string): string {

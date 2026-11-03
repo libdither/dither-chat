@@ -53,7 +53,23 @@ not advertised when they are not.
 - **Hover** (desktop): your three most-used emoji, plus the picker.
 - **Long-press** (phone): six most-used emoji, the picker as a bottom sheet, and the rest of the message's actions ([phone.md](phone.md)).
 - **A pill**: tap to join or leave. Right-click or long-press to see who reacted; the hub asks the network only if it has not named everyone yet.
-- **Picker**: reactions on this message, your frequent ones, custom emoji by source, then all of Unicode with search and skin tones. Enter picks the first result. On Matrix, any text works.
+- **Picker**: laid out like Discord's. Search and skin tones across the top; a rail of categories down the side
+  (your frequent emoji, each server's or pack's custom ones, then Unicode's), which follows the scroll and jumps it;
+  sections that fold; and along the bottom the emoji under the pointer by name (and its server), with what picking
+  it does here. Reactions already on the message come first, and yours are marked. Enter picks the first search
+  result. On Matrix, any text works. On a phone it is a bottom sheet with the rail along the bottom.
+
+**Replacing, not adding.** On Signal and WhatsApp a person keeps one reaction per message, so once you have one,
+another replaces it. The add button shows it: arrows where the plus was (`smileSwap`), with the title "Change your
+reaction". Your reaction is marked in the hover row and the long-press row, the message menu says "Change Reaction",
+and the picker's bottom line says "replaces 👍" for whatever is under the pointer. On Discord and Matrix the button
+keeps its plus.
+
+**Drawn whole, without flicker.** Colour emoji fonts draw a glyph about 1.17em tall, so nothing that holds an emoji
+clips it vertically (`.emoji-text` clips only sideways, for long Matrix text). The picker lays out every section at
+once (sections drawn only as they scrolled in made emoji flash in late), builds its 1,900 buttons once per change of
+what it shows, so hovering and scrolling touch only the bottom line and the rail, and the catalog loads when the app
+is idle and again as the pointer nears an add button, so even the first picker opens whole.
 
 Reactions show immediately and are rolled back with the network's own error if refused ("Missing
 Permissions", "User cannot use burst reactions"). Tapping a super pill you can't match adds a normal
@@ -61,3 +77,5 @@ reaction instead. Frequent emoji come from what your accounts actually reacted w
 
 Discord pushes nothing for server channels that are not open in the client, so the adapter reports
 your own reactions itself, and other people's show up when the channel is opened and refetched.
+
+`scripts/verify-reactions.ts` checks the picker, the drawing and the replacing in headless Chromium against a fresh demo hub.

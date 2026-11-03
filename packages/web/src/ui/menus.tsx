@@ -7,12 +7,13 @@ import { NETWORK_META } from '@dither-chat/protocol';
 import { fullTime } from '../format.ts';
 import { LEVEL_LABEL, authorName, convTitle, deepLink, directsOf, effectiveLevel, netName, plainBody, sumUnread, unreadOf } from '../model.ts';
 import { deviceRule, myDevice, setDeviceRule } from '../devices.ts';
-import { pickerFor, quickReactions, reactionScope, reactorsFor, toggleReaction } from '../reactions.ts';
+import { pickerFor, quickReactions, reactionScope, reactorsFor, replacing, toggleReaction } from '../reactions.ts';
 import { api, canDelete, canEdit, db, deleteMessage, feedback, go, href, isSelfIdentity, markAllRead, markRead, newMessage, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
 import { Avatar } from './bits.tsx';
 import { copy, groups, menuPoint, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { DEVICE_LEVELS } from './DeviceRules.tsx';
 import { forwarding } from './Forward.tsx';
+import { addLook } from './Reactions.tsx';
 import { Icon } from './icons.tsx';
 import { arrangeEntries, folderEntries, placeConvs } from './Organize.tsx';
 import { openConv } from './Sidebar.tsx';
@@ -37,10 +38,11 @@ function QuickReactions({ m, close, sheet }: { m: P.MessageView; close: () => vo
     close();
     void toggleReaction(m, { key: k });
   };
+  const swap = replacing(m);
   return (
     <div class={sheet ? 'sheet-quick' : 'cm-quick'}>
       {quickReactions(m.network, sheet ? 6 : 4).map((k) => (
-        <button aria-label={`React ${k}`} title={`React ${k}`} onClick={pick(k)}>
+        <button class={swap?.key === k ? 'on' : ''} aria-label={`React ${k}`} title={swap ? (swap.key === k ? `Take back your ${k}` : `Replace your reaction with ${k}`) : `React ${k}`} onClick={pick(k)}>
           {k}
         </button>
       ))}
@@ -53,7 +55,7 @@ function QuickReactions({ m, close, sheet }: { m: P.MessageView; close: () => vo
             pickerFor.value = { message: m, anchor: null };
           }}
         >
-          <Icon name="smilePlus" size={22} />
+          <Icon name={addLook(m).icon} size={22} />
         </button>
       )}
     </div>
@@ -128,8 +130,8 @@ function messageEntries(m: P.MessageView, onReply?: () => void): MenuEntry[] {
       live && scope === 'all' && { kind: 'row', render: (close, sheet) => <QuickReactions m={m} close={close} sheet={sheet} /> },
       live &&
         scope === 'all' && {
-          label: 'Add Reaction',
-          icon: 'smilePlus',
+          label: replacing(m) ? 'Change Reaction' : 'Add Reaction',
+          icon: addLook(m).icon,
           sub: [
             ...quickReactions(m.network, 6).map((k): MenuEntry => ({ label: k, run: () => void toggleReaction(m, { key: k }) })),
             { kind: 'sep' },

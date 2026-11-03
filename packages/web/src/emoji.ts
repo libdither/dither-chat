@@ -34,6 +34,10 @@ const NAMES: Record<string, string> = {
 };
 
 let catalog: Promise<EmojiCategory[]> | null = null;
+let loaded: EmojiCategory[] | null = null;
+
+/** The catalog if it has loaded, so a picker opened a second time draws in its first frame. */
+export const emojiNow = () => loaded;
 
 export function loadEmoji(): Promise<EmojiCategory[]> {
   catalog ??= import('@emoji-mart/data/sets/15/native.json').then(({ default: data }: any) => {
@@ -47,7 +51,7 @@ export function loadEmoji(): Promise<EmojiCategory[]> {
         return { id, codes: [id, ...(aliases.get(id) ?? [])], name: e.name, words: [id, e.name, ...e.keywords, ...(e.emoticons ?? [])].map((w: string) => w.toLowerCase()), skins: e.skins.map((s: any) => canonicalReactionKey(s.native)) };
       }),
     }));
-  });
+  }).then((c: EmojiCategory[]) => (loaded = c));
   return catalog;
 }
 

@@ -1640,10 +1640,13 @@ code {
   height: 22px;
   vertical-align: -5px;
 }
+/* Colour emoji fonts draw a glyph taller than its line (Noto: about 1.17em), so clipping vertically cuts off halos and
+   ears. Long free-text reactions (Matrix) still end in an ellipsis sideways. */
 .emoji-text {
   display: inline-block;
   max-width: 14em;
-  overflow: hidden;
+  overflow-x: clip;
+  overflow-y: visible;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1679,8 +1682,10 @@ code {
   position: fixed;
   left: 0;
   top: 0;
-  width: 348px;
-  height: 420px;
+  width: 460px;
+  max-width: calc(100vw - 16px);
+  height: 440px;
+  max-height: calc(100vh - 16px);
   display: flex;
   flex-direction: column;
   background: var(--bg-sidebar);
@@ -1710,11 +1715,22 @@ code {
   background: var(--border);
 }
 .ep-head {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 10px;
+  padding: 10px 10px 10px 12px;
   border-bottom: 1px solid var(--border-soft);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.12);
+  position: relative;
+  z-index: 3;
+}
+.ep-head-title {
+  flex: 1;
+  padding: 7px 2px;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 600;
 }
 .ep-search {
   flex: 1;
@@ -1722,10 +1738,46 @@ code {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 6px 9px;
-  border-radius: 8px;
+  height: 32px;
+  padding: 0 8px 0 10px;
+  border-radius: 6px;
   background: var(--bg-input);
   color: var(--text-faint);
+}
+.ep-clear {
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+}
+.ep-clear:hover {
+  color: var(--text);
+}
+.ep-tones-wrap {
+  position: relative;
+}
+.ep-tones {
+  position: absolute;
+  top: -4px;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 3px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+  font-family: 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Twemoji Mozilla', var(--font);
+}
+.ep-tones button {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  font-size: 18px;
+  line-height: 1.25;
+}
+.ep-tones button:hover,
+.ep-tones button.on {
+  background: var(--bg-hover);
 }
 .ep-search input {
   flex: 1;
@@ -1760,53 +1812,183 @@ code {
   color: #fff;
   background: linear-gradient(120deg, #ff7ad9, #7c5cff);
 }
-.ep-scroll {
+.ep-body {
   flex: 1;
-  overflow-y: auto;
-  padding: 2px 8px 10px;
-  overscroll-behavior: contain;
-}
-.ep-section {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 160px;
-}
-.ep-section h4 {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+  min-height: 0;
   display: flex;
+}
+/* Categories down the side: your frequent ones, each server or pack, then Unicode. */
+.ep-rail {
+  flex: none;
+  width: 48px;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  margin: 0;
-  padding: 8px 3px 5px;
-  background: var(--bg-sidebar);
+  gap: 1px;
+  padding: 6px 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  background: color-mix(in oklab, var(--bg-sidebar) 70%, black);
+}
+.ep-rail hr {
+  flex: none;
+  width: 22px;
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.ep-rail-btn {
+  flex: none;
+  width: 32px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
   color: var(--text-faint);
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.03em;
+}
+.ep-rail-btn:hover {
+  color: var(--text-dim);
+  background: var(--bg-hover);
+}
+.ep-rail-btn.on {
+  color: var(--text);
+  background: var(--bg-active, var(--bg-hover));
+}
+.ep-rail-btn img {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.ep-rail-btn.img.on img {
+  border-radius: 8px;
+}
+.ep-scroll {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 0 6px 8px 8px;
+  overscroll-behavior: contain;
+}
+/* Every section is laid out from the start: drawing them only as they scroll in (content-visibility) made emoji
+   flash in late and the scrollbar jump. */
+.ep-section h4 {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0;
+  background: var(--bg-sidebar);
+}
+.ep-section h4 button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 3px 6px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
   text-transform: uppercase;
+  text-align: left;
+}
+.ep-section h4 button:hover {
+  color: var(--text-dim);
 }
 .ep-section h4 img {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 4px;
+}
+.ep-chevron {
+  margin-left: auto;
+  transition: transform 0.15s;
+}
+.ep-section.collapsed .ep-chevron {
+  transform: rotate(-90deg);
 }
 .ep-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(42px, 1fr));
 }
 .ep-emoji {
   aspect-ratio: 1;
   display: grid;
   place-items: center;
   padding: 0;
-  border-radius: 8px;
-  font-size: 23px;
-  line-height: 1;
+  border-radius: 6px;
+  font-size: 30px;
+  line-height: 1.25;
+}
+.ep-emoji .emoji-text {
+  max-width: none;
 }
 .ep-emoji:hover,
 .ep-emoji:focus-visible {
   background: var(--bg-hover);
+}
+.ep-emoji.mine {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+/* The emoji under the pointer, by name, and what picking it does here. */
+.ep-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border-soft);
+  background: color-mix(in oklab, var(--bg-sidebar) 85%, black);
+}
+.ep-foot-glyph {
+  flex: none;
+  width: 32px;
+  display: grid;
+  place-items: center;
+  font-size: 26px;
+  line-height: 1.25;
+  font-family: 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Twemoji Mozilla', var(--font);
+}
+.ep-foot-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ep-foot-name b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 14px;
+}
+.ep-foot-name small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.ep-foot-act {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.ep-foot-act.swap {
+  color: var(--accent);
+}
+.ep-foot.note {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.4;
 }
 .ep-free {
   width: 100%;
@@ -1977,6 +2159,18 @@ code {
 }
 .icon-btn.emoji {
   font-size: 16px;
+  line-height: 1.25;
+}
+/* Your reaction, on a network where picking another one replaces it. */
+.icon-btn.emoji.on,
+.sheet-quick button.on,
+.cm-quick button.on {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.icon-btn.swap,
+.reaction.add.swap {
+  color: var(--accent);
 }
 .icon-btn {
   width: 32px;
@@ -4193,6 +4387,28 @@ code {
   border: none;
   border-radius: 16px 16px 0 0;
   box-shadow: 0 -8px 40px rgb(0 0 0 / 0.35);
+}
+/* On a phone the categories run along the bottom, under the thumb. */
+.sheet.emoji-picker {
+  max-width: none;
+}
+.sheet.emoji-picker .ep-body {
+  flex-direction: column-reverse;
+}
+.sheet.emoji-picker .ep-rail {
+  width: auto;
+  flex-direction: row;
+  padding: 4px 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-top: 1px solid var(--border-soft);
+}
+.sheet.emoji-picker .ep-rail hr {
+  width: 0;
+  height: 22px;
+  margin: 0 4px;
+  border-top: 0;
+  border-left: 1px solid var(--border);
 }
 .sheet.emoji-picker:has(.ep-blocked) {
   height: auto;
