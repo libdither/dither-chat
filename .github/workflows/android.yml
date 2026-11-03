@@ -1,0 +1,72 @@
+# The Android app (apps/android). Every push that touches it is built as a check; a tag `android-v<version>`
+# publishes a signed APK as a GitHub release, which is what Obtainium and similar updaters follow.
+name: Android
+
+on:
+  push:
+    branches: [main]
+    paths: ['apps/android/**', '.github/workflows/android.yml']
+    tags: ['android-v*']
+  pull_request:
+    paths: ['apps/android/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gradle/actions/wrapper-validation@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-36.1 build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/android-v* ]]; then v="${GITHUB_REF#refs/tags/android-v}"; else v="0.0.0-dev.${GITHUB_RUN_NUMBER}"; fi
+          echo "DITHER_VERSION_NAME=$v" >> "$GITHUB_ENV"
+          # Above any local build's code, and rising with every run.
+          echo "DITHER_VERSION_CODE=$((100 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+
+      - name: Release key
+        if: startsWith(github.ref, 'refs/tags/android-v')
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          test -n "$KEYSTORE_B64" || { echo "ANDROID_KEYSTORE_B64 is not set: a release must be signed with the release key"; exit 1; }
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "DITHER_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: Build
+        env:
+          DITHER_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          DITHER_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          DITHER_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          ./gradlew --no-daemon assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/dither-chat-$DITHER_VERSION_NAME.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dither-chat-${{ env.DITHER_VERSION_NAME }}
+          path: ${{ runner.temp }}/dither-chat-${{ env.DITHER_VERSION_NAME }}.apk
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/android-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP/dither-chat-$DITHER_VERSION_NAME.apk" \
+            --title "Android $DITHER_VERSION_NAME" \
+            --notes "The dither-chat Android app. Install the APK, open it and enter your hub's https address. See docs/android.md."
