@@ -429,6 +429,29 @@ export interface RuleView {
   createdAt: number;
 }
 
+/**
+ * Where a device wants notifications, on top of the rules every device shares (docs/devices.md). Only lowers:
+ * `hub` follows the shared rules, `mentions` keeps only mentions and replies to you, `none` shows nothing here.
+ */
+export type DeviceLevel = 'hub' | 'mentions' | 'none';
+export type DeviceScope = 'network' | 'account' | 'space' | 'conversation';
+
+export interface DeviceRuleView {
+  scope: DeviceScope;
+  target: string;
+  level: DeviceLevel;
+}
+
+/** A device that has said hello, or a push registration no open page has claimed yet. */
+export interface DeviceView {
+  id: string;
+  label: string;
+  lastSeenAt: number | null;
+  /** Its push registrations (PushDeviceView ids). */
+  pushIds: string[];
+  rules: DeviceRuleView[];
+}
+
 export interface Bootstrap {
   selfPersonId: string | null;
   accounts: AccountView[];
@@ -443,6 +466,8 @@ export interface Bootstrap {
   placeCategories: PlaceCategoryView[];
   categoryProvider: string;
   rules: RuleView[];
+  /** Absent from hubs that predate per-device rules. */
+  devices?: DeviceView[];
   reactionUsage: ReactionUsage[];
   /** The inbox's ranking (docs/inbox.md). Absent from hubs that predate it. */
   attention?: AttentionView[];
@@ -499,7 +524,7 @@ export type ClientEvent =
   | { t: 'message'; message: MessageView; identities: IdentityView[]; live: boolean }
   | { t: 'message.deleted'; id: string; conversationId: string }
   /** No conversation: it is about the inbox as a whole (the daily digest). */
-  | { t: 'notify'; messageId?: string; conversationId?: string; title: string; body: string; reasons: string[]; /** The notification's id in the activity log (docs/activity.md). */ nid?: string }
+  | { t: 'notify'; messageId?: string; conversationId?: string; title: string; body: string; reasons: string[]; /** The notification's id in the activity log (docs/activity.md). */ nid?: string; /** Devices whose own rules keep this quiet (docs/devices.md). */ quiet?: string[]; /** The sender's (or the place's) picture, a hub media path. */ icon?: string; network?: Network }
   /**
    * Someone started typing (it lasts `ttl` ms unless another start comes) or `stop`ped. Of the moment: not journaled,
    * and a client that reconnects simply does not see it. `name` only when the hub knows no name for the identity.
@@ -509,6 +534,7 @@ export type ClientEvent =
   | { t: 'placePrefs'; prefs: PlacePrefView[] }
   | { t: 'categories'; categories: CategoryView[]; placeCategories: PlaceCategoryView[] }
   | { t: 'rules'; rules: RuleView[] }
+  | { t: 'devices'; devices: DeviceView[] }
   /** New or changed inbox scores, and conversations the inbox no longer lists. `replace`: these are all of them. */
   | { t: 'attention'; items: AttentionView[]; removed: string[]; replace?: true }
   /** Mark-all-read still telling the networks: how many reads are left, how many were given up on. */

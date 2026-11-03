@@ -3,6 +3,7 @@ import { render } from 'preact';
 import { App } from './ui/App.tsx';
 import { reportContent, reportFresh, startAndroid } from './android.ts';
 import { startActivity } from './activity.ts';
+import { startDevices } from './devices.ts';
 import { trackViewport } from './phone.ts';
 import { registerServiceWorker } from './pwa.ts';
 import { dropSnapshot, readSnapshot, restore } from './snapshot.ts';
@@ -15,6 +16,7 @@ connect();
 trackViewport();
 startAndroid();
 startActivity();
+startDevices();
 
 let source = 'hub';
 let readMs = -1;

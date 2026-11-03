@@ -99,7 +99,8 @@ Verified end to end on the emulator against a demo hub (2026-11-02), with ntfy a
   before this change (which only shows the hub's error text) works with it too.
 
 ntfy accepts the hub's VAPID-signed, aes128gcm Web Push as-is. Tapping a notification opens its conversation, and
-Reply sends through the hub.
+Reply sends through the hub. A message notification has the network's mark as its small icon and the sender's picture,
+with the network's badge, as its large icon; which devices get it at all is up to each device's rules ([devices.md](devices.md)).
 
 ### Which servers the hub sends to
 

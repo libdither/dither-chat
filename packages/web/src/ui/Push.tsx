@@ -7,6 +7,7 @@ import type * as P from '@dither-chat/protocol';
 import { signal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
 import { android } from '../android.ts';
+import { sayHello, thisDeviceLabel } from '../devices.ts';
 import { ago } from '../format.ts';
 import { serviceWorkerSupported } from '../pwa.ts';
 import { setPrefs, toast } from '../state.ts';
@@ -41,13 +42,6 @@ async function fingerprint(endpoint: string): Promise<string> {
 }
 
 const host = (origin: string) => origin.replace(/^https:\/\//, '');
-
-function guessLabel(): string {
-  const ua = navigator.userAgent;
-  const os = /iPhone|iPad/.test(ua) ? 'iPhone or iPad' : /Android/.test(ua) ? 'Android' : /Mac/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : 'Device';
-  const app = /Firefox/.test(ua) ? 'Firefox' : /Edg/.test(ua) ? 'Edge' : /Chrome|Chromium/.test(ua) ? 'Chrome' : /Safari/.test(ua) ? 'Safari' : 'browser';
-  return `${os}, ${app}`;
-}
 
 const key = (b64: string) => Uint8Array.from(atob(b64.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(b64.length / 4) * 4, '=')), (c) => c.charCodeAt(0));
 
@@ -217,7 +211,7 @@ function WebPushSettings() {
     ? 'If nothing shows: allow notifications for this browser in Android Settings → Apps, and turn off battery restrictions for it. Firefox and Chrome on Android receive push through Google Play services; on a phone without them, use the dither Android app with ntfy instead.'
     : 'If nothing shows, check that notifications are allowed for this browser in the system settings, and that Do Not Disturb is off.';
   const register = async (sub: PushSubscription) => {
-    const r = await call<{ id: string; server?: string; http?: boolean }>('/api/push/subscribe', { subscription: sub.toJSON(), label: guessLabel() });
+    const r = await call<{ id: string; server?: string; http?: boolean }>('/api/push/subscribe', { subscription: sub.toJSON(), label: thisDeviceLabel() });
     if (r.status === 403 && r.data.server) {
       setRefused({ origin: r.data.server, http: r.data.http });
       return null;
@@ -249,6 +243,7 @@ function WebPushSettings() {
     const id = await register(sub);
     if (!id) return;
     setPrefs({ pushEnabled: true });
+    void sayHello();
     await reload();
     await test.run(id, { acks: true, where: relay(), hint });
   });
@@ -262,6 +257,7 @@ function WebPushSettings() {
     setRefused(null);
     mineId.value = null;
     setPrefs({ pushEnabled: false });
+    void sayHello();
   });
   const registered = !!mine && !!info.value?.devices.some((d) => d.id === mineId.value);
   return (

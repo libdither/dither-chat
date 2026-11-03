@@ -163,3 +163,22 @@ test('what became of a push goes to the activity log, by its id and the device, 
   expect(quiet.fetched).toEqual([]);
   expect(quiet.opened).toEqual(['/#/inbox/c/cnv_1']);
 });
+
+test('the network badges in sw.js are the app’s own glyphs and colours', async () => {
+  const { GLYPH } = await import('../src/brand.ts');
+  const { NETWORK_META } = await import('@dither-chat/protocol');
+  const nets = new Function(`${src.match(/const NETWORKS = \{[\s\S]*?\n\};/)![0]}; return NETWORKS;`)();
+  for (const [n, glyph] of Object.entries(GLYPH)) expect(nets[n]).toEqual({ color: (NETWORK_META as any)[n].color, glyph });
+});
+
+test('a page without push hands its notification to the worker; without a canvas it keeps the app icon', async () => {
+  const listeners: Record<string, (e: any) => void> = {};
+  const shown: any[] = [];
+  const self: any = { registration: { showNotification: async (title: string, o: any) => void shown.push({ title, o }) }, addEventListener: (t: string, fn: any) => (listeners[t] = fn), clients: { matchAll: async () => [] } };
+  new Function('self', 'fetch', 'NotificationEvent', 'caches', src)(self, async () => Response.json({}), function () {}, {});
+  let done: Promise<unknown> = Promise.resolve();
+  listeners.message({ data: { t: 'notify', d: { title: 'Ana · Signal', body: 'hi', conversationId: 'cnv_1', network: 'signal', icon: '/media/x/y', nid: 'n1' } }, waitUntil: (p: Promise<unknown>) => (done = p) });
+  await done;
+  expect(shown[0].title).toBe('Ana · Signal');
+  expect(shown[0].o).toMatchObject({ tag: 'cnv_1', icon: '/icon-192.png', badge: '/icon-192.png', data: { nid: 'n1' } });
+});

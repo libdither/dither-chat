@@ -99,6 +99,7 @@ function SettingsNav() {
           ['Default notifications', 'bell', 'set-defaults'],
           ['Smart triage', 'sparkles', 'set-triage'],
           ['Push and quiet hours', 'bellOff', 'push'],
+          ['Each device', 'phone', 'set-devices'],
           ['Keywords', 'at', 'set-keywords'],
           ['Per-place overrides', 'layers', 'set-overrides'],
           ['Privacy', 'lock', 'set-privacy'],

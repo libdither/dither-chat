@@ -22,6 +22,8 @@ export function emptyDb() {
     placeCategories: new Map<string, P.PlaceCategoryView[]>(),
     categoryProvider: 'keyword',
     rules: [] as P.RuleView[],
+    /** Devices and their own notification rules (docs/devices.md). */
+    devices: [] as P.DeviceView[],
     /** parentId -> child edges */
     children: new Map<string, P.SpaceEdgeView[]>(),
     /** child space or conversation id -> parent edges */
@@ -113,6 +115,7 @@ export function applyBootstrapTo(db: Db, b: P.Bootstrap) {
   setCategories(db, b.categories ?? [], b.placeCategories ?? []);
   db.categoryProvider = b.categoryProvider ?? 'keyword';
   db.rules = b.rules;
+  db.devices = b.devices ?? [];
   db.attention = new Map((b.attention ?? []).map((a) => [a.id, a]));
   db.sync = b.sync ?? null;
   indexEdges(db, b.edges);
@@ -177,6 +180,9 @@ export function applyEventTo(db: Db, ev: P.ClientEvent): boolean {
       return false;
     case 'rules':
       db.rules = ev.rules;
+      return false;
+    case 'devices':
+      db.devices = ev.devices;
       return false;
     case 'attention':
       if (ev.replace) db.attention.clear();

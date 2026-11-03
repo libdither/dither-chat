@@ -56,5 +56,20 @@ object Hub {
         }
     }
 
+    /** A GET from the hub as bytes (a notification's picture), or null. `path` is a hub path like /media/... */
+    fun bytes(c: Context, path: String, timeoutMs: Int = 15_000): ByteArray? {
+        val origin = origin(c) ?: return null
+        if (!path.startsWith("/")) return null
+        val conn = URL("$origin$path").openConnection() as HttpURLConnection
+        try {
+            conn.connectTimeout = timeoutMs
+            conn.readTimeout = timeoutMs
+            if (conn.responseCode !in 200..299) return null
+            return conn.inputStream.use { it.readBytes() }
+        } finally {
+            conn.disconnect()
+        }
+    }
+
     fun errorOf(text: String): String = runCatching { JSONObject(text).optString("error") }.getOrNull()?.takeIf { it.isNotEmpty() } ?: text.take(200)
 }

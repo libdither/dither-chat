@@ -4,6 +4,7 @@ import { Categorizer, KeywordProvider, OllamaProvider, type CategoryProvider } f
 import { ActivityStore } from './activity.ts';
 import { Attention } from './attention.ts';
 import { applyDemoOverlay, createDemoAccounts, demoFactory } from './demo.ts';
+import { Devices } from './devices.ts';
 import { PushService } from './push.ts';
 import { ReadQueue } from './readqueue.ts';
 import { HubServer, mediaSigner } from './server.ts';
@@ -46,6 +47,8 @@ const activity = new ActivityStore(store, { featuresInTriage: args.includes('--a
 activity.prune(Date.now(), true);
 const triage = new Triage(store, model, activity);
 const attention = new Attention(store, triage);
+// Per-device notification rules (docs/devices.md).
+const devices = new Devices(store, triage);
 attention.activity = activity;
 
 // Triage runs serially so notifications keep message order.
@@ -70,9 +73,12 @@ function triageLater(ids: string[]) {
 /** Each one gets an id the devices see (`nid`), so what they say happened to it lands in the activity log. */
 function deliver(title: string, body: string, conversationId: string, messageId: string, reasons: string[], pushExtra: Record<string, unknown> = {}, kind: 'message' | 'held' = 'held') {
   const nid = activity.notification({ kind, messageId, conversationId });
-  server.notify({ t: 'notify', messageId, conversationId, title, body, reasons, ...(nid ? { nid } : {}) });
+  // Devices whose own rules keep this off them: their push is not sent, and their open pages show no toast.
+  const quiet = devices.quietOn(conversationId, kind === 'message' && devices.addressed(messageId));
+  const look = store.notifyLook(conversationId, kind === 'message' ? messageId : undefined);
+  server.notify({ t: 'notify', messageId, conversationId, title, body, reasons, ...look, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}) });
   push
-    .notify(title, body, conversationId, nid ? { ...pushExtra, nid } : pushExtra)
+    .notify(title, body, conversationId, { ...pushExtra, ...look, ...(nid ? { nid } : {}) }, quiet)
     .then((r) => nid && activity.sent(nid, r))
     .catch((e) => console.error('push failed', e));
 }
@@ -134,6 +140,7 @@ const server = new HubServer(store, sup, triage, {
   onCategoriesChanged: (force) => void categorizer.refresh(force),
   attention,
   activity,
+  devices,
   turn: process.env.DITHER_TURN_URLS && process.env.DITHER_TURN_SECRET ? { urls: process.env.DITHER_TURN_URLS.split(',').map((u) => u.trim()), secret: process.env.DITHER_TURN_SECRET } : undefined,
   onDemoReset: !demo ? undefined : async () => {
     for (const a of store.accounts().filter((a) => a.demo)) {

@@ -103,6 +103,7 @@ export function currentBootstrap(): P.Bootstrap {
     placeCategories: [...db.placeCategories.values()].flat(),
     categoryProvider: db.categoryProvider,
     rules: db.rules,
+    devices: db.devices,
     reactionUsage: db.reactionUsage,
     attention: [...db.attention.values()],
     now: Date.now(),

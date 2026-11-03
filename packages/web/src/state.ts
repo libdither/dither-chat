@@ -57,6 +57,9 @@ export interface Toast {
   conversationId?: string;
   reasons?: string[];
   kind?: 'notify' | 'error' | 'info';
+  /** A notification's sender picture (a hub media path) and network. */
+  icon?: string;
+  network?: P.Network;
 }
 export const toasts = signal<Toast[]>([]);
 let toastSeq = 0;
@@ -338,14 +341,27 @@ export function isSelfIdentity(id: string | null | undefined): boolean {
 
 // ------------------------------------------------------------------ notifications
 
+/** Kept off this device by its own rules (docs/devices.md). The id is activity.ts's deviceId(), read here without importing it. */
+export function quietHere(ev: { quiet?: string[] }): boolean {
+  if (!ev.quiet?.length) return false;
+  try {
+    return ev.quiet.includes(localStorage.getItem('dither-chat:device') ?? '');
+  } catch {
+    return false;
+  }
+}
+
 function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
+  if (quietHere(ev)) return;
   const r = route.value;
   const viewing = !!ev.conversationId && 'conv' in r && r.conv === ev.conversationId && document.visibilityState === 'visible';
   if (viewing) return;
-  toast({ kind: 'notify', title: ev.title, body: ev.body, conversationId: ev.conversationId, reasons: ev.reasons }, 8000);
+  toast({ kind: 'notify', title: ev.title, body: ev.body, conversationId: ev.conversationId, reasons: ev.reasons, icon: ev.icon, network: ev.network }, 8000);
   if (!prefs.value.pushEnabled && prefs.value.notifications && 'Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
     const show = (reg?: ServiceWorkerRegistration) => {
-      const opts = { body: ev.body, tag: ev.conversationId ?? 'dither-digest', data: { conversationId: ev.conversationId, inbox: !ev.conversationId } };
+      // The worker draws the sender's picture and the network's badge, as it does for a push (sw.js).
+      if (reg?.active) return reg.active.postMessage({ t: 'notify', d: { title: ev.title, body: ev.body, conversationId: ev.conversationId, inbox: !ev.conversationId, icon: ev.icon, network: ev.network, nid: ev.nid } });
+      const opts = { body: ev.body, tag: ev.conversationId ?? 'dither-digest', icon: ev.icon, data: { conversationId: ev.conversationId, inbox: !ev.conversationId } };
       if (reg) reg.showNotification(ev.title, opts);
       else new Notification(ev.title, opts).onclick = () => go({ view: 'inbox', conv: ev.conversationId });
     };

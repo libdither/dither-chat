@@ -11,6 +11,7 @@ import type { Attention } from './attention.ts';
 import type { ChangeRow } from './journal.ts';
 import type { Store } from './store.ts';
 import type { UsageStore } from './usage.ts';
+import type { Devices } from './devices.ts';
 
 type Row = Record<string, any>;
 
@@ -25,6 +26,7 @@ export interface SyncContext {
   store: Store;
   attention?: Attention;
   usage: UsageStore;
+  devices?: Devices;
   boot: string;
 }
 
@@ -111,6 +113,7 @@ function changedSince(ctx: SyncContext, rows: ChangeRow[]): P.ClientEvent[] {
   if (list('placePrefs')) out.push({ t: 'placePrefs', prefs: store.placePrefs() });
   if (list('categories')) out.push({ t: 'categories', categories: store.categories(), placeCategories: store.placeCategories() });
   if (list('rules')) out.push({ t: 'rules', rules: store.rules() });
+  if (list('devices') && ctx.devices) out.push({ t: 'devices', devices: ctx.devices.list() });
 
   if (attention && list('attention')) {
     const xs = of('attention');

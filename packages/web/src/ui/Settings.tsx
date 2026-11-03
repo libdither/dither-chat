@@ -5,6 +5,7 @@ import { api, db, go, prefs, rev, setPrefs, setRule, toast } from '../state.ts';
 import { STATUS, addingAccount } from './Accounts.tsx';
 import { AccountChip, NetBadge, NetGlyph, levelIcon } from './bits.tsx';
 import { Icon } from './icons.tsx';
+import { DeviceRules } from './DeviceRules.tsx';
 import { PushSettings } from './Push.tsx';
 import { PrivacySettings } from './Privacy.tsx';
 import { phone } from '../phone.ts';
@@ -248,6 +249,8 @@ export function SettingsPane() {
         </section>
 
         <PushSettings />
+
+        <DeviceRules />
 
         <QuietHoursSettings />
 

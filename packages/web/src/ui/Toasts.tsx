@@ -2,6 +2,7 @@ import { useRef } from 'preact/hooks';
 import { lockAxis, velocity } from '../gesture.ts';
 import { reducedMotion } from '../phone.ts';
 import { go, toasts, type Toast } from '../state.ts';
+import { Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';
 
 const dismiss = (id: number) => (toasts.value = toasts.value.filter((x) => x.id !== id));
@@ -69,9 +70,14 @@ function ToastItem({ t }: { t: Toast }) {
         dismiss(t.id);
       }}
     >
-      <span class="toast-icon">
-        <Icon name={t.kind === 'error' ? 'alert' : t.kind === 'notify' ? 'bell' : 'info'} size={16} />
-      </span>
+      {t.kind === 'notify' && t.network ? (
+        // The sender, with the network it came through, as the system notification shows them.
+        <Avatar id={t.conversationId ?? t.title} name={t.title.replace(/ · [^·]+$/, '')} url={t.icon} network={t.network} size={34} />
+      ) : (
+        <span class="toast-icon">
+          <Icon name={t.kind === 'error' ? 'alert' : t.kind === 'notify' ? 'bell' : 'info'} size={16} />
+        </span>
+      )}
       <span class="toast-text">
         <b>{t.title}</b>
         <span>{t.body}</span>

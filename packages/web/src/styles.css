@@ -6479,3 +6479,37 @@ html[data-theme='light'] .acc-dot {
   border-bottom: 1px solid var(--border-soft);
 }
 /* ================================================================== end activity log */
+
+/* Settings → Each device (DeviceRules.tsx) */
+.device-block {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin-top: 10px;
+}
+.device-block.busy {
+  opacity: 0.7;
+}
+.device-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 4px;
+}
+.device-head > span {
+  flex: 1;
+  min-width: 0;
+}
+.device-head small {
+  display: block;
+  color: var(--text-dim);
+}
+.set-rule.sub {
+  padding-left: 18px;
+}
+.chip-btn.inherited {
+  opacity: 0.65;
+}
+.toast > .avatar {
+  flex-shrink: 0;
+}

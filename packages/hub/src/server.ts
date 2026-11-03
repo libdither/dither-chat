@@ -17,6 +17,7 @@ import { forwardMessage } from './forward.ts';
 import { UsageStore } from './usage.ts';
 import type { Attention } from './attention.ts';
 import type { ActivityStore } from './activity.ts';
+import { Devices } from './devices.ts';
 import { changesOf } from './journal.ts';
 import { syncResponse } from './sync.ts';
 import { TypingGate } from './typing.ts';
@@ -47,6 +48,8 @@ export interface ServerOpts {
   attention?: Attention;
   /** The activity log (activity.ts, docs/activity.md). */
   activity?: ActivityStore;
+  /** Per-device notification rules (devices.ts, docs/devices.md). */
+  devices?: Devices;
 }
 
 // ------------------------------------------------------------------ access
@@ -359,12 +362,12 @@ export class HubServer {
     if (path === '/api/bootstrap') {
       // Everything changed so far is in the journal, so the position below covers what this reads.
       this.flush();
-      return ok({ ...s.bootstrap(), attention: this.opts.attention?.list(), sync: s.journal.position() } satisfies P.Bootstrap);
+      return ok({ ...s.bootstrap(), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), sync: s.journal.position() } satisfies P.Bootstrap);
     }
     if (path === '/api/sync' && method === 'POST') {
       const b = await body<P.SyncRequest>();
       this.flush();
-      return ok(syncResponse({ store: s, attention: this.opts.attention, usage: this.usage, boot: this.boot }, b));
+      return ok(syncResponse({ store: s, attention: this.opts.attention, usage: this.usage, devices: this.opts.devices, boot: this.boot }, b));
     }
     // The inbox's ranking (attention.ts, docs/inbox.md).
     if (path.startsWith('/api/attention')) {
@@ -655,7 +658,10 @@ export class HubServer {
         const sub = b.subscription;
         if (!sub?.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) return bad('that is not a push subscription');
         const id = push.subscribe({ endpoint: sub.endpoint, p256dh: sub.keys.p256dh, auth: sub.keys.auth }, b.label);
-        if (id) return ok({ id });
+        if (id) {
+          this.opts.devices?.touch();
+          return ok({ id });
+        }
         // Held for a while: allowing the server from the app (below) registers it without asking the device again.
         const p = push.pendingFor(sub.endpoint);
         if (!p) return bad('the hub cannot send to that push endpoint');
@@ -683,6 +689,7 @@ export class HubServer {
       if (path === '/api/push/unsubscribe' && method === 'POST') {
         const b = await body<{ id?: string; endpoint?: string }>();
         push.remove(b);
+        this.opts.devices?.touch();
         return ok();
       }
       if (path === '/api/push/test' && method === 'POST') {
@@ -749,6 +756,30 @@ export class HubServer {
         this.triage.setDailyDigest({ enabled: !!b.enabled, time: b.time, timezone: b.timezone });
       }
       return ok({ dailyDigest: s.dailyDigest() });
+    }
+    // Per-device notification rules (docs/devices.md).
+    if (path.startsWith('/api/devices')) {
+      const d = this.opts.devices;
+      if (!d) return bad('per-device rules are not available', 404);
+      if (path === '/api/devices' && method === 'GET') return ok({ devices: d.list() });
+      if (path === '/api/devices/hello' && method === 'POST') {
+        const b = await body<{ id?: string; label?: string; endpoint?: string | null }>();
+        if (!Devices.validId(b.id)) return bad('which device?');
+        d.hello(b.id, typeof b.label === 'string' ? b.label : '', typeof b.endpoint === 'string' ? b.endpoint : null);
+        return ok();
+      }
+      if (path === '/api/devices/rules' && method === 'PUT') {
+        const b = await body<{ device?: string; scope?: P.DeviceScope; target?: string; level?: P.DeviceLevel | null }>();
+        if (!Devices.validId(b.device) || typeof b.target !== 'string' || !b.target) return bad('which device and place?');
+        const err = d.setRule(b.device, b.scope as P.DeviceScope, b.target, b.level ?? null);
+        return err ? bad(err) : ok();
+      }
+      if (path === '/api/devices' && method === 'DELETE') {
+        const b = await body<{ id?: string }>();
+        if (!Devices.validId(b.id)) return bad('which device?');
+        d.forget(b.id);
+        return ok();
+      }
     }
     if (path === '/api/rules' && method === 'PUT') {
       const b = await body<{ scope: P.NotifyScope; target: string | null; level: P.NotifyLevel | null }>();

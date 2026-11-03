@@ -8,6 +8,16 @@ import android.app.RemoteInput
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.BitmapShader
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.Shader
+import android.graphics.drawable.Icon
+import android.util.Base64
 import org.json.JSONObject
 
 /** Message notifications, from the hub's push payload (webpush.ts pushPayload), as the web app's sw.js shows them. */
@@ -44,8 +54,14 @@ object Notifications {
         // The push's id rides in the hash, so the page can say which visit the tap led to (docs/activity.md).
         val n = if (nid != null) "?n=$nid" else ""
         val hash = if (conv != null) "/inbox/c/$conv$n" else if (inbox) "/inbox$n" else null
-        post(c, tag, d.optString("title", "dither-chat"), d.optString("body"), hash, if (conv != null && d.optBoolean("canReply")) d.optString("replyTo").ifEmpty { null } else null, conv != null && d.optBoolean("canReply"), nid = nid, device = device)
-        outcome(c, nid, device, "shown")
+        val title = d.optString("title", "dither-chat")
+        val app = c.applicationContext
+        // The sender's picture comes from the hub: off the thread the push arrived on.
+        Thread {
+            val look = Looks.of(app, d.optString("network"), d.optString("icon").ifEmpty { null }, title)
+            post(app, tag, title, d.optString("body"), hash, if (conv != null && d.optBoolean("canReply")) d.optString("replyTo").ifEmpty { null } else null, conv != null && d.optBoolean("canReply"), nid = nid, device = device, look = look)
+            outcome(app, nid, device, "shown")
+        }.start()
     }
 
     /**
@@ -59,16 +75,17 @@ object Notifications {
         Thread { runCatching { Hub.request(app, "POST", "/api/activity/notifications", JSONObject().put("events", org.json.JSONArray().put(e))) } }.start()
     }
 
-    fun post(c: Context, tag: String, title: String, body: String, hash: String?, replyTo: String?, canReply: Boolean, sticky: Boolean = false, nid: String? = null, device: String? = null) {
+    fun post(c: Context, tag: String, title: String, body: String, hash: String?, replyTo: String?, canReply: Boolean, sticky: Boolean = false, nid: String? = null, device: String? = null, look: Looks.Look? = null) {
         val b = Notification.Builder(c, MESSAGES)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setColor(c.getColor(R.color.accent))
+            .setSmallIcon(look?.small ?: R.drawable.ic_notification)
+            .setColor(look?.color ?: c.getColor(R.color.accent))
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(Notification.BigTextStyle().bigText(body))
             .setCategory(Notification.CATEGORY_MESSAGE)
             .setContentIntent(open(c, hash, tag.hashCode()))
             .setAutoCancel(!sticky)
+        look?.large?.let { b.setLargeIcon(Icon.createWithBitmap(it)) }
         if (nid != null) {
             val gone = Intent(c, DismissReceiver::class.java).putExtra("nid", nid).putExtra("device", device)
             b.setDeleteIntent(PendingIntent.getBroadcast(c, tag.hashCode(), gone, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
@@ -83,6 +100,74 @@ object Notifications {
     }
 
     fun clear(c: Context, tag: String) = nm(c).cancel(tag, ID)
+}
+
+/**
+ * How a message notification looks: the network's mark as the small icon (status bar and header, in the network's
+ * colour), and the sender's picture, round, with the network's badge in a corner as the large icon. sw.js draws the
+ * same for browsers. Without a picture, the title's first letter on a plain disc.
+ */
+object Looks {
+    class Look(val small: Int, val color: Int, val large: Bitmap?)
+
+    private val NETWORKS = mapOf(
+        "discord" to (R.drawable.ic_net_discord to 0xFF5865F2.toInt()),
+        "signal" to (R.drawable.ic_net_signal to 0xFF3A91F5.toInt()),
+        "matrix" to (R.drawable.ic_net_matrix to 0xFF0DBD8B.toInt()),
+        "whatsapp" to (R.drawable.ic_net_whatsapp to 0xFF1DAA61.toInt()),
+    )
+    private const val SIZE = 192
+
+    fun of(c: Context, network: String, icon: String?, title: String): Look? {
+        val (glyph, color) = NETWORKS[network] ?: return null
+        val pic = icon?.let { runCatching { picture(c, it) }.getOrNull() }
+        val large = runCatching { draw(c, pic, glyph, color, title) }.getOrNull()
+        return Look(glyph, color, large)
+    }
+
+    private fun picture(c: Context, src: String): Bitmap? {
+        val bytes = if (src.startsWith("data:")) Base64.decode(src.substringAfter(","), Base64.DEFAULT) else Hub.bytes(c, src, 4_000) ?: return null
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    }
+
+    private fun draw(c: Context, pic: Bitmap?, glyph: Int, color: Int, title: String): Bitmap {
+        val out = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
+        val g = Canvas(out)
+        val r = SIZE / 2f
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        if (pic != null) {
+            // Cover: the shorter side fills the circle.
+            val k = SIZE.toFloat() / minOf(pic.width, pic.height)
+            p.shader = BitmapShader(pic, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
+                setLocalMatrix(Matrix().apply { setScale(k, k); postTranslate((SIZE - pic.width * k) / 2, (SIZE - pic.height * k) / 2) })
+            }
+            g.drawCircle(r, r, r, p)
+            p.shader = null
+        } else {
+            p.color = 0xFF5C6370.toInt()
+            g.drawCircle(r, r, r, p)
+            p.color = Color.WHITE
+            p.textSize = SIZE * 0.45f
+            p.textAlign = Paint.Align.CENTER
+            p.isFakeBoldText = true
+            val letter = title.trim().firstOrNull()?.uppercase() ?: "?"
+            g.drawText(letter, r, r - (p.descent() + p.ascent()) / 2, p)
+        }
+        // The badge: the network's colour behind its white mark, ringed so it stands off any picture.
+        val b = SIZE * 0.2f
+        val x = SIZE - b
+        p.color = Color.WHITE
+        g.drawCircle(x, x, b + SIZE * 0.025f, p)
+        p.color = color
+        g.drawCircle(x, x, b, p)
+        val half = (b * 0.6f).toInt()
+        c.getDrawable(glyph)?.mutate()?.apply {
+            setTint(Color.WHITE)
+            setBounds((x - half).toInt(), (x - half).toInt(), (x + half).toInt(), (x + half).toInt())
+            draw(g)
+        }
+        return out
+    }
 }
 
 /**

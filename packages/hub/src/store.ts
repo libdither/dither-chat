@@ -1711,6 +1711,22 @@ export class Store {
     return r ? { network: r.network, nativeId: r.native_id } : null;
   }
 
+  /**
+   * The picture a notification shows: the sender's (their person's, else the identity's), else the place's, as a
+   * signed media path; and the network, for its badge.
+   */
+  notifyLook(conversationId: string | undefined, messageId: string | undefined): { icon?: string; network?: P.Network } {
+    const c = conversationId ? this.one<Row>('SELECT id, network, shape, avatar_url FROM conversation WHERE id = ?', conversationId) : null;
+    if (!c) return {};
+    const via = this.vantageAccounts('conversation', c.id)[0] ?? null;
+    const sender = messageId
+      ? this.one<Row>('SELECT i.avatar_url, i.seen_via, p.avatar_url AS person_avatar FROM message m JOIN identity i ON i.id = m.author_id LEFT JOIN person p ON p.id = i.person_id WHERE m.id = ?', messageId)
+      : null;
+    const icon = sender?.avatar_url ? this.media(sender.avatar_url, sender.seen_via ?? via) : sender?.person_avatar ? this.media(sender.person_avatar, null) : this.media(c.avatar_url, via);
+    // A push carries at most about 4 KB, so an inline picture only goes when it is small.
+    return { network: c.network, ...(icon && (!icon.startsWith('data:') || icon.length < 1500) ? { icon } : {}) };
+  }
+
   vantageAccounts(kind: 'space' | 'conversation', id: string): string[] {
     return (this.db.query('SELECT account_id FROM vantage WHERE target_kind = ? AND target_id = ?').all(kind, id) as Row[]).map((r) => r.account_id);
   }

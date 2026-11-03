@@ -6,10 +6,12 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { fullTime } from '../format.ts';
 import { LEVEL_LABEL, authorName, convTitle, deepLink, directsOf, effectiveLevel, netName, plainBody, sumUnread, unreadOf } from '../model.ts';
+import { deviceRule, myDevice, setDeviceRule } from '../devices.ts';
 import { pickerFor, quickReactions, reactionScope, reactorsFor, toggleReaction } from '../reactions.ts';
 import { api, canDelete, canEdit, db, deleteMessage, feedback, go, href, isSelfIdentity, markAllRead, markRead, newMessage, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
 import { Avatar } from './bits.tsx';
 import { copy, groups, menuPoint, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
+import { DEVICE_LEVELS } from './DeviceRules.tsx';
 import { forwarding } from './Forward.tsx';
 import { Icon } from './icons.tsx';
 import { arrangeEntries, folderEntries, placeConvs } from './Organize.tsx';
@@ -245,6 +247,23 @@ function notifyEntries(scope: 'conversation' | 'space', id: string, current: P.N
   ];
 }
 
+/** This device's own say over a place (docs/devices.md): only lowers what the shared rules let through. */
+function deviceEntries(scope: 'conversation' | 'space', id: string): MenuEntry | null {
+  const me = myDevice();
+  if (!me) return null;
+  const current = deviceRule(me, scope, id);
+  const set = (l: P.DeviceLevel | null) => () => void setDeviceRule(me.id, scope, id, l).catch((e) => toast({ kind: 'error', title: 'Device rules', body: String(e?.message ?? e) }));
+  return {
+    label: 'On This Device',
+    icon: 'phone',
+    sub: [
+      { label: 'Same as Everywhere', radio: true, checked: current === null, run: set(null) },
+      { kind: 'sep' },
+      ...DEVICE_LEVELS.map((l): MenuEntry => ({ label: { hub: 'Notify', mentions: 'Only @mentions', none: 'Off' }[l], radio: true, checked: current === l, run: set(l) })),
+    ],
+  };
+}
+
 const ruleOf = (scope: P.NotifyScope, id: string) => db.rules.find((r) => r.scope === scope && r.target === id)?.level ?? null;
 
 // ------------------------------------------------------------------ conversations
@@ -287,6 +306,7 @@ export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpe
       [
         { label: muted ? `Unmute ${noun}` : `Mute ${noun}`, icon: muted ? 'bell' : 'bellOff', run: () => setRule('conversation', c.id, muted ? null : 'none') },
         { label: 'Notification Settings', icon: 'bell', sub: notifyEntries('conversation', c.id, own, inherited) },
+        deviceEntries('conversation', c.id),
       ],
       c.shape !== 'thread' ? arrangeEntries(placeKey) : [],
       [
@@ -314,6 +334,7 @@ export function spaceMenu(s: P.SpaceView): MenuSpec {
       [
         { label: muted ? `Unmute ${noun}` : `Mute ${noun}`, icon: muted ? 'bell' : 'bellOff', run: () => setRule('space', s.id, muted ? null : 'none') },
         { label: 'Notification Settings', icon: 'bell', sub: notifyEntries('space', s.id, own, own ? 'from above' : 'your default') },
+        deviceEntries('space', s.id),
       ],
       section ? [] : arrangeEntries(`space:${s.id}`),
       [
