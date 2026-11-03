@@ -3,7 +3,8 @@
  *
  * This is what makes a notification reach a device with no open connection. It goes through the browser
  * vendor's relay (Google, Apple, Mozilla, Microsoft): the payload is encrypted end to end, but the relay sees
- * when a push happens and to which device. So it is opt-in per device. ntfy stays the fully self-hosted route.
+ * when a push happens and to which device. So it is opt-in per device. A UnifiedPush server (ntfy) takes the same
+ * pushes for the Android app; a self-hosted one keeps that metadata on your own machines.
  */
 import { createCipheriv, createECDH, createHash, createPrivateKey, hkdfSync, randomBytes, sign } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -77,10 +78,17 @@ export type PushOutcome = 'ok' | 'gone' | 'failed';
 const RELAYS = [/^fcm\.googleapis\.com$/, /^android\.googleapis\.com$/, /^jmt\d+\.google\.com$/, /\.push\.services\.mozilla\.com$/, /^updates\.push\.services\.mozilla\.com$/, /(^|\.)push\.apple\.com$/, /\.notify\.windows\.com$/];
 
 /**
+ * UnifiedPush servers allowed without asking. ntfy.sh is the ntfy app's default server, so the Android app works out of
+ * the box with it. The hub's pushes are encrypted for the device (RFC 8291) before they leave, so ntfy.sh sees what a
+ * browser vendor's relay sees: when a push happens, its size, and a random topic. The owner can turn it off in Settings.
+ */
+export const DEFAULT_SERVERS = ['https://ntfy.sh'];
+
+/**
  * Push servers the operator named in DITHER_PUSH_RELAYS, as exact origins: `https://ntfy.example.net`. The Android
  * app gets its endpoint from a UnifiedPush distributor (the ntfy app, say), which speaks the same RFC 8291 Web Push
- * as the browser relays, on whatever server the distributor uses. Nothing is allowed by default, and a listed origin
- * allows only itself: no other port, no subdomain, and plain http only if it was written that way.
+ * as the browser relays, on whatever server the distributor uses. A listed origin allows only itself: no other port,
+ * no subdomain, and plain http only if it was written that way. Settings → Notifications does the same from the app.
  */
 export function extraRelays(env = process.env.DITHER_PUSH_RELAYS): string[] {
   const out: string[] = [];
@@ -96,18 +104,73 @@ export function extraRelays(env = process.env.DITHER_PUSH_RELAYS): string[] {
   return out;
 }
 
-export function isPushRelay(endpoint: string, extra: string[] = []): boolean {
+/** A browser vendor's relay: always allowed, never listed. */
+export function isBrowserRelay(endpoint: string): boolean {
   try {
     const u = new URL(endpoint);
-    if (u.username || u.password) return false;
-    if (extra.includes(u.origin)) return true;
-    return u.protocol === 'https:' && RELAYS.some((r) => r.test(u.hostname));
+    return u.protocol === 'https:' && !u.username && !u.password && RELAYS.some((r) => r.test(u.hostname));
   } catch {
     return false;
   }
 }
 
-export async function sendPush(target: PushTarget, payload: unknown, keys: VapidKeys, subject: string, opts: { ttl?: number; fetch?: typeof fetch } = {}): Promise<{ outcome: PushOutcome; status: number }> {
+export function isPushRelay(endpoint: string, extra: string[] = []): boolean {
+  try {
+    const u = new URL(endpoint);
+    if (u.username || u.password) return false;
+    if (extra.includes(u.origin)) return true;
+    return isBrowserRelay(endpoint);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A push server's origin from what someone typed in Settings, or from a device's endpoint. Typed text without a
+ * scheme means https; plain http only when it was typed out, since it is for a server on your own network.
+ */
+export function serverOrigin(input: string, typed = false): { origin: string } | { error: string } {
+  let s = input.trim();
+  if (typed && s && !/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = `https://${s}`;
+  let u: URL;
+  try {
+    u = new URL(s);
+  } catch {
+    return { error: `${input.trim() || 'That'} is not an address like https://ntfy.example.net` };
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return { error: 'A push server is an https:// address' };
+  if (u.username || u.password) return { error: 'A push server address has no user name or password in it' };
+  if (typed && (u.pathname !== '/' || u.search || u.hash)) return { error: `Only the server, without a path: ${u.origin}` };
+  return { origin: u.origin };
+}
+
+/** Loopback, private, link-local, carrier-grade NAT (Tailscale's 100.64/10), unique-local: not the public internet. */
+export function isPrivateAddress(ip: string): boolean {
+  const a = ip.toLowerCase().replace(/^\[|\]$/g, '');
+  const v4 = a.match(/^(?:::ffff:)?(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (v4) {
+    const [x, y] = [+v4[1], +v4[2]];
+    return x === 0 || x === 10 || x === 127 || (x === 169 && y === 254) || (x === 172 && y >= 16 && y <= 31) || (x === 192 && y === 168) || (x === 100 && y >= 64 && y <= 127) || x >= 224;
+  }
+  if (!a.includes(':')) return false;
+  return a === '::' || a === '::1' || /^f[cd]/.test(a) || /^fe[89ab]/.test(a) || a.startsWith('64:ff9b:');
+}
+
+/** Where a host name points, and whether any of it is not the public internet. Names that do not resolve count as private. */
+export async function resolvesPrivate(hostname: string, lookup: (h: string) => Promise<string[]> = defaultLookup): Promise<{ private: boolean; addresses: string[] }> {
+  const h = hostname.replace(/^\[|\]$/g, '');
+  if (/^[\d.]+$/.test(h) || h.includes(':')) return { private: isPrivateAddress(h), addresses: [h] };
+  if (h === 'localhost' || h.endsWith('.localhost')) return { private: true, addresses: ['127.0.0.1'] };
+  const addresses = await lookup(h).catch(() => [] as string[]);
+  return { private: !addresses.length || addresses.some(isPrivateAddress), addresses };
+}
+
+async function defaultLookup(h: string): Promise<string[]> {
+  const { lookup } = await import('node:dns/promises');
+  return (await lookup(h, { all: true })).map((r) => r.address);
+}
+
+export async function sendPush(target: PushTarget, payload: unknown, keys: VapidKeys, subject: string, opts: { ttl?: number; fetch?: typeof fetch } = {}): Promise<{ outcome: PushOutcome; status: number; detail?: string }> {
   const res = await (opts.fetch ?? fetch)(target.endpoint, {
     method: 'POST',
     headers: {
@@ -122,7 +185,8 @@ export async function sendPush(target: PushTarget, payload: unknown, keys: Vapid
   });
   // 404 and 410 mean the subscription is dead. Anything else may pass.
   if (res.status === 404 || res.status === 410) return { outcome: 'gone', status: res.status };
-  return { outcome: res.ok ? 'ok' : 'failed', status: res.status };
+  if (res.ok) return { outcome: 'ok', status: res.status };
+  return { outcome: 'failed', status: res.status, detail: await res.text().catch(() => '') };
 }
 
 /** Fits inside the 4 KB relays accept, with room for encryption overhead. */

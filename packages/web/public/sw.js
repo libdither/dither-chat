@@ -70,8 +70,11 @@ self.addEventListener('push', (e) => {
   try {
     d = e.data ? e.data.json() : {};
   } catch {}
+  // A test asks the device to say it arrived, so Settings can tell "the relay took it" from "it got here".
+  const arrived = d.test && d.device ? fetch('/api/push/arrived', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: d.device }) }).catch(() => {}) : null;
   e.waitUntil(
     (async () => {
+      await arrived;
       const tag = d.conversationId ?? (d.inbox ? 'dither-digest' : 'dither');
       await self.registration.showNotification(d.title ?? 'dither-chat', {
         body: d.body ?? '',

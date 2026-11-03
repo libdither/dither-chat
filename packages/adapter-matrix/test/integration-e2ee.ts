@@ -378,7 +378,8 @@ export async function runE2ee(h: Harness) {
   check(afterYes.verified === true && afterYes.lastVerification === 'verified', 'verification: started from the hub, and verified', afterYes.lastVerification);
 
   const wrong = await command({ t: 'action', action: 'addRecoveryKey', args: { recoveryKey: encodeRecoveryKey(new Uint8Array(32).fill(9)) } }).then(() => null, (e) => String(e));
-  check(!!wrong && /does not open/.test(wrong), 'recovery key: a wrong one is refused', wrong);
+  // The testbed account may still have secret storage from an earlier run, so either refusal is right here.
+  check(!!wrong && /does not (open|unlock)/.test(wrong), 'recovery key: a wrong one is refused', wrong);
   check(JSON.parse(readFileSync(join(dev2.d, 'secret.json'), 'utf8')).e2ee.recoveryKey === rk, 'recovery key: the good one stays saved, the wrong one is not');
   check(!h.logs().includes(rk.replace(/ /g, '')) && !h.logs().includes(rk) && !h.logs().includes(JSON.parse(readFileSync(join(dev2.d, 'secret.json'), 'utf8')).e2ee.storeKey), 'nothing secret in the adapter log');
   await logout(dev2.d);
@@ -412,6 +413,16 @@ export async function runE2ee(h: Harness) {
   check(!!seenFromOther?.isCrossSigningTrusted(), 'secret storage: the other device sees it as verified too');
   const dev3Old = await msg((m) => m.nativeId === nth && m.kind !== 'encrypted', 5000);
   check(dev3Old.message.body === 'old message 60', 'secret storage: history decrypts');
+  check(!dev3st.recoveryError && dev3st.recovery?.problems?.length === 0, 'secret storage: and nothing is reported missing', dev3st.recovery);
+
+  // What a failed recovery key says: exactly what was wrong.
+  const refusal = (recoveryKey: string) => command({ t: 'action', action: 'addRecoveryKey', args: { recoveryKey } }).then(() => 'accepted', (e) => String(e));
+  const good = encodeRecoveryKey(ssss).replace(/ /g, '');
+  const typo = good.slice(0, 12) + (good[12] === 'a' ? 'b' : 'a') + good.slice(13);
+  const said = { typo: await refusal(typo), wrong: await refusal(encodeRecoveryKey(new Uint8Array(32).fill(5))), phrase: await refusal('correct horse battery staple') };
+  check(/typo/.test(said.typo), 'recovery key: a typo is called a typo', said.typo);
+  check(/does not unlock this account's secret storage/.test(said.wrong), 'recovery key: a wrong key says it does not unlock secret storage', said.wrong);
+  check(/no security phrase/.test(said.phrase), 'recovery key: a phrase, where secret storage has none, says so', said.phrase);
   await logout(dev3.d);
   rmSync(dev2.d, { recursive: true, force: true });
   rmSync(dev3.d, { recursive: true, force: true });

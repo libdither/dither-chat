@@ -29,10 +29,29 @@ export interface NativePush {
   auth: string;
 }
 
+/** A UnifiedPush distributor app on the phone, as the app sees it. Older builds of the app report package names only. */
+export interface Distributor {
+  pkg: string;
+  label: string;
+  /** Android does not restrict its battery use, so it can hold its connection. Unknown on older builds. */
+  batteryOk?: boolean;
+}
+
+export interface AppInfo {
+  version: string;
+  distributors: Distributor[];
+  /** The distributor this app registered with, if any. */
+  current: string | null;
+  /** This app may post notifications. Unknown on older builds. */
+  notifications?: boolean;
+  /** What this build of the app can open for the page: 'app' (another app), 'appInfo', 'notifications'. */
+  opens: string[];
+}
+
 export const android = port
   ? {
-      /** What the app reported about itself: version, and whether a UnifiedPush distributor is installed. */
-      info: signal<{ version: string; distributors: string[] } | null>(null),
+      /** What the app reported about itself: version, UnifiedPush distributors, notification permission. */
+      info: signal<AppInfo | null>(null),
       audio: signal<{ routes: AudioRoute[]; current: number | null } | null>(null),
       /** This app's push registration, once known. */
       push: signal<NativePush | null | undefined>(undefined),
@@ -45,7 +64,7 @@ export const android = port
           const timer = setTimeout(() => (waiters.delete(t), reject(new Error('The app did not answer.'))), ms);
           waiters.set(t, (d) => {
             clearTimeout(timer);
-            if (d.error) reject(new Error(d.error));
+            if (d.error) reject(Object.assign(new Error(d.error), { data: d }));
             else resolve(d as T);
           });
           android!.send(msg);
@@ -56,6 +75,10 @@ export const android = port
       },
       changeHub() {
         android!.send({ t: 'hub.change' });
+      },
+      /** Another app, its App info page (battery use lives there), or this app's notification settings. */
+      open(what: 'app' | 'appInfo' | 'notifications', pkg?: string) {
+        android!.send({ t: 'open', what, pkg });
       },
     }
   : null;
@@ -68,11 +91,17 @@ function receive(d: any) {
   const w = waiters.get(base);
   if (w) {
     waiters.delete(base);
-    w(t.endsWith('.error') ? { error: d.error ?? 'Failed' } : d);
+    w(t.endsWith('.error') ? { ...d, error: d.error ?? 'Failed' } : d);
   }
   switch (t) {
     case 'info':
-      android!.info.value = { version: d.version, distributors: d.distributors ?? [] };
+      android!.info.value = {
+        version: d.version,
+        distributors: (d.distributors ?? []).map((x: string | Distributor) => (typeof x === 'string' ? { pkg: x, label: x === 'io.heckel.ntfy' ? 'ntfy' : x } : x)),
+        current: d.current ?? null,
+        notifications: d.notifications,
+        opens: d.opens ?? [],
+      };
       break;
     case 'audio':
       android!.audio.value = { routes: d.routes ?? [], current: d.current ?? null };

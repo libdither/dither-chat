@@ -7,7 +7,7 @@ The phone app is the installed PWA: the same Preact components as on a desktop, 
 
 ## How it is laid out
 
-Discord's app is the model. The rail (Inbox, People, Groups, then your servers, spaces and folders) and the
+Discord's app is the model. The rail (Inbox, People, then your servers, spaces and folders) and the
 list beside it sit underneath. The page you open, a conversation, a profile, an account, is a card that
 slides in over them. A tab bar along the bottom shows whenever the lists do:
 
@@ -67,11 +67,11 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 
 | Desktop capability | How on a desktop | Before, on a phone | Now, on a phone |
 |---|---|---|---|
-| Inbox list: needs you, pinged, unread, recent | Sidebar | Inbox tab | Home, Inbox in the rail |
+| Inbox: one ranked list of DMs, groups, rooms outside a space and notes ([inbox.md](inbox.md)) | Sidebar | Inbox tab | Home, Inbox in the rail |
 | Triage board: pings with thumbs up/down, digest cards, stats | Center pane with nothing open | **Unreachable**: the inbox tab showed the list | Triage tab |
 | Mark all read, everywhere | Board button | **Unreachable** | Triage tab; per place in its arrange sheet |
 | People, merged DM timeline, one network's chat | Rail, sidebar, header chips | People tab; chips wrapped | Rail; the chips scroll sideways, and the details panel lists each chat |
-| Groups, spaces with channel trees and threads, folders | Rail and sidebar | Groups and Spaces tabs, no rail | The rail and its list, as in Discord |
+| Group chats (now in the inbox), spaces with channel trees and threads, folders | Rail and sidebar | Groups and Spaces tabs, no rail | The inbox, and the rail and its list, as in Discord |
 | Open a folder in the rail; open it as a list | Click; arrange menu | Spaces tab | Tap in the rail; arrange sheet |
 | Arrange: drag to reorder, folders, pin, hide, move up/down, rename, delete folder, add a group to the sidebar | Drag; right-click menu | Hold and drag; popup menu sized for a mouse | Hold and drag; the menu is a bottom sheet |
 | All communities: seven orderings, network filter, hidden places, manual order by drag | Rail grid button | Spaces tab | Rail grid button; chip rows scroll sideways |

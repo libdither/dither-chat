@@ -297,7 +297,11 @@ CREATE TABLE IF NOT EXISTS push_subscription (
   created_at INTEGER NOT NULL,
   last_ok_at INTEGER,
   last_error TEXT,
-  failures   INTEGER NOT NULL DEFAULT 0
+  failures   INTEGER NOT NULL DEFAULT 0,
+  -- added later, so push.ts also adds them to older databases
+  last_error_at   INTEGER,
+  last_test_at    INTEGER,
+  last_arrived_at INTEGER                    -- the device said a test push reached it
 );
 
 -- Most specific scope wins: conversation > thread parent > section > community
@@ -359,3 +363,42 @@ CREATE TABLE IF NOT EXISTS arrange_setting (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- ------------------------------------------------------------------ the inbox's attention score (attention.ts, docs/inbox.md)
+-- What each conversation's message metadata says about you there, folded in message order up to a cursor
+-- (ts, rowid). Authors, times, replies, mentions and triage decisions only: never what was said.
+-- `state` is JSON (attention.ts ConvState); its decayed sums share one reference time.
+CREATE TABLE IF NOT EXISTS conv_feature (
+  conversation_id TEXT PRIMARY KEY,
+  cursor_ts       INTEGER NOT NULL DEFAULT 0,
+  cursor_rid      INTEGER NOT NULL DEFAULT 0,
+  stale_at        INTEGER,                    -- an older message arrived at this time: fold again from the start once quiet
+  state           TEXT NOT NULL
+);
+-- The same, per author you were addressed by in that conversation (a person, else an identity), so a reply rate
+-- can be had per person across all their conversations by summing.
+CREATE TABLE IF NOT EXISTS conv_author_feature (
+  conversation_id TEXT NOT NULL,
+  author_key      TEXT NOT NULL,
+  tally           TEXT NOT NULL,              -- JSON Tally
+  PRIMARY KEY (conversation_id, author_key)
+);
+CREATE INDEX IF NOT EXISTS conv_author_feature_author ON conv_author_feature(author_key);
+
+-- ------------------------------------------------------------------ the change journal (journal.ts, docs/sync.md)
+-- What changed, by object, at which position, so a client that comes back asks only for that. Compacted: one row
+-- per object, at its latest change. Holds ids only; what an object is now is read from its own table at sync time.
+-- `conv` is a message's conversation, so timelines can find their changes. Old rows are dropped (journal.ts); a
+-- client from before the oldest kept position starts over with /api/bootstrap.
+CREATE TABLE IF NOT EXISTS sync_change (
+  kind    TEXT NOT NULL,                       -- account, identity, person, space, conversation, message, attention, usage, or a list: folders, rules...
+  id      TEXT NOT NULL,                       -- '*' for a list kept whole
+  seq     INTEGER NOT NULL,
+  conv    TEXT,
+  removed INTEGER NOT NULL DEFAULT 0,
+  at      INTEGER NOT NULL,
+  PRIMARY KEY (kind, id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS sync_change_seq ON sync_change(seq);
+CREATE INDEX IF NOT EXISTS sync_change_kind ON sync_change(kind, seq);
+CREATE INDEX IF NOT EXISTS sync_change_conv ON sync_change(conv, seq) WHERE conv IS NOT NULL;

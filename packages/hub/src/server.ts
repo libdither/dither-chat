@@ -15,6 +15,9 @@ import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } fro
 import { compress } from './compress.ts';
 import { forwardMessage } from './forward.ts';
 import { UsageStore } from './usage.ts';
+import type { Attention } from './attention.ts';
+import { changesOf } from './journal.ts';
+import { syncResponse } from './sync.ts';
 
 const ACCOUNT_COLORS = ['#F2A541', '#E86A92', '#B794F6', '#FF8C61', '#9BE15D', '#5CC8FF', '#F7D154', '#FF6B6B'];
 
@@ -38,6 +41,8 @@ export interface ServerOpts {
   onDemoReset?: () => Promise<void>;
   /** TURN relay for direct-mode calls, so their media leaves from this machine. */
   turn?: TurnConfig;
+  /** The inbox's ranking (attention.ts, docs/inbox.md). */
+  attention?: Attention;
 }
 
 // ------------------------------------------------------------------ access
@@ -84,9 +89,14 @@ export class HubServer {
   private plain?: Server<WsData>;
   private clients = new Set<ServerWebSocket<ClientData>>();
   private flushTimer?: Timer;
+  private pruneTimer?: Timer;
   private uploads: Uploads;
-  private usage?: UsageStore;
+  private usage: UsageStore;
   readonly calls: Calls;
+  /** This process. A client that sees it change knows the hub restarted, and may have a new web build. */
+  readonly boot = Buffer.from(crypto.getRandomValues(new Uint8Array(6))).toString('base64url');
+  /** Sends by the client's id for them, so one retried after a lost answer goes out once (state.ts queues sends). */
+  private sends = new Map<string, { at: number; done: Promise<Response> }>();
 
   constructor(
     private store: Store,
@@ -97,6 +107,9 @@ export class HubServer {
     this.uploads = new Uploads(join(opts.dataDir, 'uploads'));
     this.calls = new Calls(store, sup, { turn: opts.turn, pickAccount: (c, a) => this.pickAccount(c, a) });
     sup.calls = this.calls;
+    this.usage = new UsageStore(store.db, (changed, removed, all) =>
+      this.broadcast([{ t: 'usage', places: this.usage.get(changed), removed, ...(all ? { replace: true as const } : {}) }]),
+    );
   }
 
   start() {
@@ -123,7 +136,10 @@ export class HubServer {
         },
         message(ws, msg) {
           const d = ws.data;
-          if (d.kind === 'adapter') self.sup.receive(ws as ServerWebSocket<AdapterSocketData>, msg);
+          if (d.kind === 'client') {
+            // The client's heartbeat: after a phone wakes, a dead socket shows in seconds rather than at a TCP timeout.
+            if (msg === 'ping') ws.send('pong');
+          } else if (d.kind === 'adapter') self.sup.receive(ws as ServerWebSocket<AdapterSocketData>, msg);
           else if (d.kind === 'call') self.calls.message(ws as ServerWebSocket<CallSocketData>, msg);
           else if (d.kind === 'voice') self.calls.voiceMessage(ws as ServerWebSocket<VoiceSocketData>, msg);
           else if (d.kind === 'liveview') {
@@ -159,22 +175,42 @@ export class HubServer {
       });
     }
     this.flushTimer = setInterval(() => this.flush(), 80);
+    this.store.journal.prune();
+    this.pruneTimer = setInterval(() => this.store.journal.prune(), 3_600_000);
     return this.server;
   }
 
   stop() {
     clearInterval(this.flushTimer);
+    clearInterval(this.pruneTimer);
+    this.flush();
     this.server?.stop(true);
     this.plain?.stop(true);
   }
 
   flush() {
-    this.broadcast(this.store.flush());
+    const events = this.store.flush();
+    const a = this.opts.attention;
+    if (a) {
+      const changed: string[] = [];
+      const removed: string[] = [];
+      let rules = false;
+      for (const e of events) {
+        if (e.t === 'conversation') changed.push(e.conversation.id);
+        else if (e.t === 'conversation.removed') removed.push(e.id);
+        else if (e.t === 'rules') rules = true;
+      }
+      events.push(...(rules ? a.rescoreAll() : a.sync(changed, removed)));
+    }
+    this.broadcast(events);
   }
 
+  /** To every client, and into the journal: a frame that changed something ends with its position (docs/sync.md). */
   broadcast(events: P.ClientEvent[]) {
     if (!events.length) return;
-    const frame = JSON.stringify(events);
+    if (events.some((e) => e.t === 'resync')) this.store.journal.restart();
+    const seq = this.store.journal.record(changesOf(events));
+    const frame = JSON.stringify(seq === null ? events : [...events, { t: 'sync', seq } satisfies P.ClientEvent]);
     for (const c of this.clients) c.send(frame);
   }
 
@@ -315,7 +351,32 @@ export class HubServer {
       this.broadcast([{ t: 'resync' }]);
       return ok();
     }
-    if (path === '/api/bootstrap') return ok(s.bootstrap());
+    if (path === '/api/bootstrap') {
+      // Everything changed so far is in the journal, so the position below covers what this reads.
+      this.flush();
+      return ok({ ...s.bootstrap(), attention: this.opts.attention?.list(), sync: s.journal.position() } satisfies P.Bootstrap);
+    }
+    if (path === '/api/sync' && method === 'POST') {
+      const b = await body<P.SyncRequest>();
+      this.flush();
+      return ok(syncResponse({ store: s, attention: this.opts.attention, usage: this.usage, boot: this.boot }, b));
+    }
+    // The inbox's ranking (attention.ts, docs/inbox.md).
+    if (path.startsWith('/api/attention')) {
+      const a = this.opts.attention;
+      if (!a) return bad('attention is off', 404);
+      if (path === '/api/attention' && method === 'GET') return ok({ now: Date.now(), items: a.list() });
+      if ((m = path.match(/^\/api\/attention\/([\w-]+)$/)) && method === 'GET') {
+        const x = a.explain(m[1]);
+        return x ? ok(x) : bad('not in the inbox', 404);
+      }
+      // After importing history some other way than the ingest: fold these conversations (or all) again.
+      if (path === '/api/attention/rebuild' && method === 'POST') {
+        const b = await body<{ conversations?: string[] }>();
+        a.invalidate(Array.isArray(b.conversations) ? b.conversations.filter((x) => typeof x === 'string') : undefined);
+        return ok();
+      }
+    }
     if (path === '/api/inbox') return ok(s.inbox(num('since') ?? Date.now() - 7 * 86_400_000));
     if (path === '/api/search') return ok(s.search(url.searchParams.get('q') ?? '', Math.min(num('limit') ?? 40, 100), url.searchParams.get('cursor')));
 
@@ -354,29 +415,23 @@ export class HubServer {
       return ok(this.uploads.put(bytes, cleanFileName(req.headers.get('x-file-name')), req.headers.get('content-type') ?? ''));
     }
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/send$/)) && method === 'POST') {
-      const b = await body<{ body?: string; accountId?: string; replyTo?: string; attachments?: string[] }>();
-      const ids = b.attachments ?? [];
-      if (!b.body?.trim() && !ids.length) return bad('empty message');
-      const conv = s.nativeOf('conversation', m[1]);
-      if (!conv) return bad('no such conversation', 404);
-      const accountId = this.pickAccount(m[1], b.accountId);
-      if (!accountId) return bad('no connected account can send here', 409);
-      const refused = this.sendRefusal(m[1], accountId);
-      if (refused) return bad(refused, 409);
-      const replyTo = b.replyTo ? s.nativeOf('message', b.replyTo)?.nativeId : undefined;
-      const files = this.uploads.get(ids);
-      if (!files) return bad('that upload has expired, attach the file again', 410);
-      if (files.length) {
-        const acc = s.account(accountId)!;
-        const limit = ATTACHMENT_LIMITS[conv.network];
-        const name = NETWORK_META[conv.network].name;
-        if (!(JSON.parse(acc.capabilities) as P.Capability[]).includes('sendMedia')) return bad(`${acc.label} cannot send files on ${name}`, 409);
-        if (files.length > limit.files) return bad(`${name} takes ${limit.files} files at a time`, 413);
-        if (files.some((f) => f.size > limit.bytes)) return bad(`${name} takes files up to ${limit.bytes / 1024 / 1024} MB`, 413);
+      const b = await body<{ body?: string; accountId?: string; replyTo?: string; attachments?: string[]; clientId?: string }>();
+      // A send retried after its answer was lost goes out once: the retry gets the first one's answer.
+      const key = typeof b.clientId === 'string' && b.clientId ? `${m[1]}|${b.clientId.slice(0, 64)}` : null;
+      const now = Date.now();
+      for (const [k, v] of this.sends) if (now - v.at > 15 * 60_000) this.sends.delete(k);
+      const earlier = key ? this.sends.get(key) : undefined;
+      if (earlier) return (await earlier.done).clone();
+      const done = this.sendNow(m[1], b);
+      if (key) this.sends.set(key, { at: now, done });
+      try {
+        const res = await done;
+        if (key && !res.ok) this.sends.delete(key);
+        return res.clone();
+      } catch (e) {
+        if (key) this.sends.delete(key);
+        throw e;
       }
-      const result = await this.sup.command(accountId, { t: 'send', conversation: conv.nativeId, body: b.body ?? '', replyTo, ...(files.length ? { attachments: files } : {}) }, files.length ? 180_000 : undefined);
-      this.uploads.remove(ids);
-      return ok({ ok: true, accountId, result });
     }
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/forward$/)) && method === 'POST') {
       const b = await body<P.ForwardRequest>();
@@ -529,8 +584,12 @@ export class HubServer {
     }
     // Usage and automatic order (usage.ts, docs/organize.md).
     if (path === '/api/usage' || path === '/api/arrange') {
-      const u = (this.usage ??= new UsageStore(s.db));
-      if (path === '/api/arrange' && method === 'PATCH') return ok(u.patchArrange(await body()));
+      const u = this.usage;
+      if (path === '/api/arrange' && method === 'PATCH') {
+        const arrange = u.patchArrange(await body());
+        this.broadcast([{ t: 'arrange', arrange }]);
+        return ok(arrange);
+      }
       if (method === 'GET') return ok(u.state());
       if (method === 'POST') {
         const b = await body<{ batch?: string; deltas?: Partial<P.UsageDelta>[] }>();
@@ -545,13 +604,36 @@ export class HubServer {
     if (path.startsWith('/api/push')) {
       const push = this.opts.push;
       if (!push) return bad('push is not available', 404);
-      if (path === '/api/push' && method === 'GET') return ok({ publicKey: push.publicKey, devices: push.devices(), ntfy: !!process.env.DITHER_NTFY_URL });
+      if (path === '/api/push' && method === 'GET') return ok({ publicKey: push.publicKey, devices: push.devices(), servers: push.servers(), pending: push.pendingList(), topic: push.topicView() } satisfies P.PushInfo);
       if (path === '/api/push/subscribe' && method === 'POST') {
         const b = await body<{ subscription: { endpoint?: string; keys?: { p256dh?: string; auth?: string } }; label?: string }>();
         const sub = b.subscription;
         if (!sub?.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) return bad('that is not a push subscription');
         const id = push.subscribe({ endpoint: sub.endpoint, p256dh: sub.keys.p256dh, auth: sub.keys.auth }, b.label);
-        return id ? ok({ id }) : bad('the hub does not send to that push service: it takes the browser relays, and others only when listed in DITHER_PUSH_RELAYS (docs/android.md)');
+        if (id) return ok({ id });
+        // Held for a while: allowing the server from the app (below) registers it without asking the device again.
+        const p = push.pendingFor(sub.endpoint);
+        if (!p) return bad('the hub cannot send to that push endpoint');
+        const how = p.http ? `type ${p.origin} under Settings → Notifications → Push servers` : `open Settings → Notifications and tap Allow`;
+        return Response.json({ error: `the hub does not send through ${p.origin} yet: ${how}`, server: p.origin, http: p.http }, { status: 403 });
+      }
+      // Which push servers the hub may POST to. Only the app itself changes this: a same-origin page, never a bare request.
+      if (path === '/api/push/servers' && (method === 'POST' || method === 'DELETE')) {
+        if (!req.headers.get('origin') || !sameOrigin(req)) return bad('push servers are allowed from the app itself', 403);
+        const b = await body<{ origin?: string; typed?: boolean; allowPrivate?: boolean; dismiss?: boolean }>();
+        if (typeof b.origin !== 'string' || !b.origin) return bad('which server?');
+        if (method === 'DELETE' && b.dismiss) return (push.dismiss(b.origin), ok());
+        if (method === 'DELETE') {
+          const r = push.revoke(b.origin);
+          return r.ok ? ok(r) : bad(r.error!);
+        }
+        const r = await push.approve(b.origin, { typed: !!b.typed, allowPrivate: !!b.allowPrivate });
+        return r.ok ? ok(r) : Response.json(r, { status: r.confirm ? 409 : 400 });
+      }
+      if (path === '/api/push/arrived' && method === 'POST') {
+        const b = await body<{ id?: string }>();
+        if (typeof b.id === 'string') push.arrived(b.id);
+        return ok();
       }
       if (path === '/api/push/unsubscribe' && method === 'POST') {
         const b = await body<{ id?: string; endpoint?: string }>();
@@ -668,6 +750,34 @@ export class HubServer {
       return new Response(text.slice(-20_000), { headers: { 'content-type': 'text/plain; charset=utf-8' } });
     }
     return bad('not found', 404);
+  }
+
+  private async sendNow(conversationId: string, b: { body?: string; accountId?: string; replyTo?: string; attachments?: string[] }): Promise<Response> {
+    const s = this.store;
+    const ok = (x: unknown) => Response.json(x);
+    const bad = (msg: string, status = 400) => Response.json({ error: msg }, { status });
+    const ids = b.attachments ?? [];
+    if (!b.body?.trim() && !ids.length) return bad('empty message');
+    const conv = s.nativeOf('conversation', conversationId);
+    if (!conv) return bad('no such conversation', 404);
+    const accountId = this.pickAccount(conversationId, b.accountId);
+    if (!accountId) return bad('no connected account can send here', 409);
+    const refused = this.sendRefusal(conversationId, accountId);
+    if (refused) return bad(refused, 409);
+    const replyTo = b.replyTo ? s.nativeOf('message', b.replyTo)?.nativeId : undefined;
+    const files = this.uploads.get(ids);
+    if (!files) return bad('that upload has expired, attach the file again', 410);
+    if (files.length) {
+      const acc = s.account(accountId)!;
+      const limit = ATTACHMENT_LIMITS[conv.network];
+      const name = NETWORK_META[conv.network].name;
+      if (!(JSON.parse(acc.capabilities) as P.Capability[]).includes('sendMedia')) return bad(`${acc.label} cannot send files on ${name}`, 409);
+      if (files.length > limit.files) return bad(`${name} takes ${limit.files} files at a time`, 413);
+      if (files.some((f) => f.size > limit.bytes)) return bad(`${name} takes files up to ${limit.bytes / 1024 / 1024} MB`, 413);
+    }
+    const result = await this.sup.command(accountId, { t: 'send', conversation: conv.nativeId, body: b.body ?? '', replyTo, ...(files.length ? { attachments: files } : {}) }, files.length ? 180_000 : undefined);
+    this.uploads.remove(ids);
+    return ok({ ok: true, accountId, result });
   }
 
   private sendRefusal(conversationId: string, accountId: string | null): string | null {

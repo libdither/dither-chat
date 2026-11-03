@@ -97,14 +97,23 @@ to mint a full WebAPK for a site on a private CA. Keep `.data/tls/ca.key` on the
 
 ## Notifications
 
-Settings → *Push on this device* opts one device in. Web Push passes through the browser vendor's relay (Google, Apple, Mozilla or
-Microsoft). The payload is encrypted end to end, but the relay sees when a push happens and for which device. For no third party at all, set
-`DITHER_NTFY_URL` (and `DITHER_NTFY_TOKEN`, `DITHER_PUBLIC_URL`) to a topic on your own ntfy server. `DITHER_PUSH_SUBJECT` sets the VAPID
-contact, a `mailto:` or `https:` URL. The keys live in `.data/vapid.json` (0600); replacing them invalidates every subscription.
+Push needs nothing on the hub. Each device opts in from Settings → *Push on this device*, which registers it, sends a
+test, and shows whether the device confirmed it arrived.
+
+- Browsers use Web Push through their vendor's relay (Google, Apple, Mozilla or Microsoft). The payload is encrypted
+  end to end, but the relay sees when a push happens and for which device. Firefox and Chrome on Android get theirs
+  through Google Play services, so on a phone without them use the Android app.
+- The Android app (`apps/android`) registers through a UnifiedPush distributor, normally the ntfy app, and the hub
+  sends the same encrypted Web Push to ntfy's server. ntfy.sh is allowed by default; any other server is allowed with
+  one tap when a phone first registers through it, or typed under Settings → *Push servers*. See
+  [android.md](android.md#push) for the steps and what the allowlist protects.
+
+`DITHER_PUSH_SUBJECT` sets the VAPID contact, a `mailto:` or `https:` URL. The keys live in `.data/vapid.json` (0600);
+replacing them invalidates every subscription. `DITHER_PUSH_RELAYS` (comma-separated origins) still adds push servers
+from the environment, and `DITHER_NTFY_URL` (with `DITHER_NTFY_TOKEN`, `DITHER_PUBLIC_URL` for the click link) still
+posts every push as plain text to one ntfy topic; neither is needed any more.
 
 A subscription belongs to the origin it was made on, so changing the hub's address means opting in again on each device.
-
-The Android app (`apps/android`) has no Web Push. It registers through a UnifiedPush distributor such as ntfy, and the hub sends to that server only when `DITHER_PUSH_RELAYS` lists its origin. See [android.md](android.md#push).
 
 On a demo hub (`--demo`), simulated messages are real pushes to any device that opted in.
 

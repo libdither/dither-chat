@@ -114,9 +114,9 @@ export function kindLabel(c: P.ConversationView): string {
   const variant = { text: '', announcement: 'announcement ', forum: 'forum ', voice: 'voice ', stage: 'stage ', media: 'media ', rules: 'rules ' }[c.variant] ?? '';
   switch (c.shape) {
     case 'direct':
-      return c.network === 'signal' ? 'Signal chat' : `${n} DM`;
+      return c.network === 'signal' || c.network === 'whatsapp' ? `${n} chat` : `${n} DM`;
     case 'group':
-      return c.network === 'discord' ? 'Discord group DM' : c.network === 'signal' ? 'Signal group' : 'Matrix room (private)';
+      return c.network === 'discord' ? 'Discord group DM' : c.network === 'signal' || c.network === 'whatsapp' ? `${n} group` : 'Matrix room (private)';
     case 'self':
       return `${n} notes to self`;
     case 'thread': {
@@ -484,19 +484,6 @@ export function people(): { person: P.PersonView; directs: P.ConversationView[];
   );
 }
 
-export function groupsLists() {
-  return memo('groups', () => {
-    const all = [...db.conversations.values()].filter(visibleConv);
-    const byRecent = (a: P.ConversationView, b: P.ConversationView) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0);
-    const listed = all.filter((c) => !placePref('conversation', c.id).hidden);
-    return {
-      groups: listed.filter((c) => c.shape === 'group').sort(byRecent),
-      rooms: listed.filter((c) => c.shape === 'channel' && !c.spaceIds.length).sort(byRecent),
-      notes: all.filter((c) => c.shape === 'self').sort(byRecent),
-    };
-  });
-}
-
 export function accountsOf(network: P.Network): P.AccountView[] {
   return [...db.accounts.values()].filter((a) => a.network === network && visibleAccount(a.id));
 }
@@ -508,38 +495,60 @@ export function annotateAccounts(network: P.Network): boolean {
 
 // ------------------------------------------------------------------ inbox
 
-export interface InboxSections {
-  attention: P.AccountView[];
-  priority: P.ConversationView[];
-  unread: P.ConversationView[];
-  recent: P.ConversationView[];
+/** One row of the inbox: a conversation and what the hub says about how much it needs you (docs/inbox.md). */
+export interface InboxRow {
+  conv: P.ConversationView;
+  score: number;
+  /** Above the "caught up" line. */
+  needs: boolean;
+  reasons: string[];
+  owedSince: number | null;
 }
 
-export function inboxSections(): InboxSections {
-  return memo('inbox', () => {
+/** DMs, group chats, notes to self and rooms outside a space are always in the inbox; anything else only while the hub lists it. */
+export const inboxShape = (c: P.ConversationView) => c.shape === 'direct' || c.shape === 'group' || c.shape === 'self' || (c.shape === 'channel' && !c.spaceIds.length);
+
+/**
+ * Before the hub has scored a conversation (a fresh one, or a hub that predates scores): unread first, then the
+ * latest, much as the inbox used to be.
+ */
+function unscored(c: P.ConversationView): InboxRow {
+  const u = unreadOf(c);
+  const needs = !u.muted && u.badge > 0;
+  const age = Math.max(0, Date.now() - (c.lastMessageAt ?? 0));
+  return { conv: c, score: (needs ? 30 : 0) + 10 * 2 ** (-age / 86_400_000) - (u.muted ? 50 : 0), needs, reasons: [], owedSince: null };
+}
+
+/** Every inbox row, in no particular order: arrange it with inbox.ts. A hidden group only shows while it needs you. */
+export function inboxRows(): InboxRow[] {
+  return memo('inboxRows', () => {
+    const out: InboxRow[] = [];
+    for (const c of db.conversations.values()) {
+      const a = db.attention.get(c.id);
+      if ((!a && !inboxShape(c)) || !visibleConv(c)) continue;
+      const row = a ? { conv: c, score: a.score, needs: a.needs, reasons: a.reasons, owedSince: a.owedSince } : unscored(c);
+      if (!row.needs && c.shape !== 'self' && placePref('conversation', c.id).hidden) continue;
+      out.push(row);
+    }
+    return out;
+  });
+}
+
+/** Accounts that need you to act (a QR to scan, a login): the rows above the conversations. */
+export function accountsNeedingYou(): P.AccountView[] {
+  return memo('accountsNeedingYou', () => [...db.accounts.values()].filter((a) => a.attention && visibleAccount(a.id)));
+}
+
+/** Conversations where triage pushed something you have not read yet: the inbox button's count. */
+export function pingedCount(): number {
+  return memo('pinged', () => {
     const lastRead = (c: P.ConversationView) => Math.min(...c.vantages.map((v) => v.lastReadTs ?? 0));
     const pushed = new Set<string>();
     for (const m of inbox.value) {
       const c = db.conversations.get(m.conversationId);
-      if (c && m.triage?.decision === 'push' && m.ts > lastRead(c) && unreadOf(c).unread > 0) pushed.add(c.id);
+      if (c && visibleConv(c) && m.triage?.decision === 'push' && m.ts > lastRead(c) && unreadOf(c).unread > 0) pushed.add(c.id);
     }
-    const all = [...db.conversations.values()].filter(visibleConv);
-    const byRecent = (a: P.ConversationView, b: P.ConversationView) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0);
-    const priority = all.filter((c) => pushed.has(c.id)).sort(byRecent);
-    const unread = all
-      .filter((c) => !pushed.has(c.id))
-      .filter((c) => {
-        const u = unreadOf(c);
-        if (!u.unread) return false;
-        const lvl = effectiveLevel(c).level;
-        if (lvl === 'none' || lvl === 'digest') return false;
-        return c.shape === 'direct' || c.shape === 'group' || c.shape === 'self' || u.mentions > 0 || lvl === 'all';
-      })
-      .sort(byRecent);
-    const shown = new Set([...priority, ...unread].map((c) => c.id));
-    const recent = all.filter((c) => !shown.has(c.id) && (c.shape === 'direct' || c.shape === 'group' || c.shape === 'self')).sort(byRecent);
-    const attention = [...db.accounts.values()].filter((a) => a.attention && visibleAccount(a.id));
-    return { attention, priority, unread, recent };
+    return pushed.size;
   });
 }
 

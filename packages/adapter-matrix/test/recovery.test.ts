@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { base58Encode, checkSecretKey, decodeRecoveryKey, decryptSecret, encodeRecoveryKey, encryptSecret, keyFromPassphrase, secretKeyInfo } from '../src/recovery.ts';
+import { base58Encode, checkSecretKey, decodeRecoveryKey, decryptSecret, encodeRecoveryKey, encryptSecret, keyFromPassphrase, recoveryKeyProblem, secretKeyInfo } from '../src/recovery.ts';
 
 describe('recovery key format', () => {
   test('base58 alphabet against a known vector', () => {
@@ -21,6 +21,23 @@ describe('recovery key format', () => {
     expect(decodeRecoveryKey(s.slice(0, -2))).toBeNull();
     expect(decodeRecoveryKey('correct horse battery staple')).toBeNull();
     expect(decodeRecoveryKey('')).toBeNull();
+  });
+});
+
+describe('what is wrong with a pasted key', () => {
+  const good = encodeRecoveryKey(new Uint8Array(32).fill(7));
+  test('a good key, or something that is not a key at all, has no problem to report', () => {
+    expect(recoveryKeyProblem(good)).toBeNull();
+    expect(recoveryKeyProblem(good.replace(/ /g, ''))).toBeNull();
+    expect(recoveryKeyProblem('correct horse battery staple')).toBeNull();
+    expect(recoveryKeyProblem('')).toBeNull();
+  });
+  test('a typo is called a typo', () => {
+    const compact = good.replace(/ /g, '');
+    const flipped = compact.slice(0, 10) + (compact[10] === 'a' ? 'b' : 'a') + compact.slice(11);
+    expect(recoveryKeyProblem(flipped)).toMatch(/typo/);
+    expect(recoveryKeyProblem(compact.slice(0, 20) + '0' + compact.slice(21))).toMatch(/"0"/);
+    expect(recoveryKeyProblem(compact.slice(0, -1))).toMatch(/48 characters/);
   });
 });
 

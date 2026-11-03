@@ -54,6 +54,21 @@ export function decodeRecoveryKey(input: string): Uint8Array | null {
   return bytes.slice(PREFIX.length, PREFIX.length + KEY_BYTES);
 }
 
+/**
+ * Why something that looks like a recovery key is not one (a typo), so the user hears that rather than
+ * "wrong key". null: it is a valid key, or it does not look like one at all (a security phrase, say).
+ */
+export function recoveryKeyProblem(input: string): string | null {
+  const compact = input.replace(/\s+/g, '');
+  const grouped = /^\S{1,4}(\s+\S{1,4})*$/.test(input.trim());
+  if (!/^[0-9A-Za-z]{44,52}$/.test(compact) || !(grouped || !/\s/.test(input.trim()))) return null;
+  if (decodeRecoveryKey(compact)) return null;
+  const stray = [...new Set(compact.split('').filter((ch) => !BASE58.includes(ch)))];
+  if (stray.length) return `that recovery key contains ${stray.map((c) => `"${c}"`).join(', ')}, which never appear in one (it has no 0, O, I or l); check for a mistyped character`;
+  if (compact.length !== 48) return `a recovery key has 48 characters; that one has ${compact.length}`;
+  return 'that recovery key has a typo: its checksum does not match. Check it character by character';
+}
+
 export function encodeRecoveryKey(key: Uint8Array): string {
   const bytes = new Uint8Array(PREFIX.length + KEY_BYTES + 1);
   bytes.set(PREFIX);

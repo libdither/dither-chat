@@ -1,7 +1,7 @@
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { useRef, useState } from 'preact/hooks';
-import { ago } from '../format.ts';
+import { ago, since } from '../format.ts';
 import {
   authorName,
   communitiesOf,
@@ -14,8 +14,7 @@ import {
   folderConvs,
   placePref,
   railEntries,
-  groupsLists,
-  inboxSections,
+  accountsNeedingYou,
   kindLabel,
   netName,
   people,
@@ -30,7 +29,7 @@ import {
   visibleConv,
   type RailEntry,
 } from '../model.ts';
-import { db, go, newMessage, prefs, rev, route, setPrefs, type Route } from '../state.ts';
+import { db, go, newMessage, prefs, rev, route, setPrefs, type InboxFilter, type Route } from '../state.ts';
 import { AccountChip, AccountDots, Avatar, Count, NetBadge, NetGlyph, SourceChip, levelIcon, variantIcon } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
@@ -38,8 +37,10 @@ import { phone } from '../phone.ts';
 import { dropPlace, openPlaceMenu, placeLabel } from './Organize.tsx';
 import { Menuable, onMenu, useMenu } from './ContextMenu.tsx';
 import { accountMenu, conversationMenu, folderMenuSpec, personMenu, spaceMenu } from './menus.tsx';
-import { arrangeDrop, arrangedConvs, arrangedFolderItems, arrangedPeople, arrangedRail, snapshot } from '../arrange.ts';
+import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapshot } from '../arrange.ts';
+import { inboxSnap, shownInbox } from '../inbox.ts';
 import { SortButton, useFlip } from './Reorganize.tsx';
+import { Fragment } from 'preact';
 
 // ------------------------------------------------------------------ navigation helpers
 
@@ -49,7 +50,6 @@ export function openConv(c: P.ConversationView, ctx: Route = route.value) {
   if (ctx.view === 'inbox') return go({ view: 'inbox', conv: c.id });
   if (ctx.view === 'search') return go({ view: 'search', q: ctx.q, conv: c.id });
   if (ctx.view === 'space' && convsUnder(ctx.space).some((x) => x.id === c.id)) return go({ view: 'space', space: ctx.space, conv: c.id });
-  if (ctx.view === 'groups' && (c.shape === 'group' || c.shape === 'self' || !placeConv(c).spaceIds.length)) return go({ view: 'groups', conv: c.id });
   return go(homeRoute(c));
 }
 
@@ -60,7 +60,8 @@ export function homeRoute(c: P.ConversationView): Route {
     const root = rootCommunity(base.spaceIds[0]);
     if (root) return { view: 'space', space: root.id, conv: c.id };
   }
-  return { view: 'groups', conv: c.id };
+  // Group chats, rooms outside a space and notes to self live in the inbox.
+  return { view: 'inbox', conv: c.id };
 }
 
 /** Only there if some connected account can actually start a conversation. */
@@ -94,18 +95,24 @@ function placeLine(c: P.ConversationView): string {
 
 // ------------------------------------------------------------------ rows
 
-export function ConvRow({ c, active, onClick, showPlace = true, reason, menu }: { c: P.ConversationView; active: boolean; onClick: () => void; showPlace?: boolean; reason?: string; menu?: boolean }) {
+/**
+ * `why` is the inbox's reasons, shown on hover and at the top of the row's menu; `owedSince` marks a message you
+ * have not answered, for a row that needs you without anything unread.
+ */
+export function ConvRow({ c, active, onClick, showPlace = true, why, owedSince }: { c: P.ConversationView; active: boolean; onClick: () => void; showPlace?: boolean; why?: string[]; owedSince?: number | null }) {
   const u = unreadOf(c);
   const lvl = effectiveLevel(c);
   const place = showPlace ? placeLine(c) : '';
   const isChannel = c.shape === 'channel' || c.shape === 'thread';
   const com = communitiesOf(c)[0];
-  const ctx = useMenu(() => conversationMenu(c));
+  const ctx = useMenu(() => conversationMenu(c, why));
   return (
     <button
       class={`row conv-row ${active ? 'active' : ''} ${u.unread ? 'unread' : ''} ${u.muted ? 'muted' : ''}`}
       onClick={onClick}
-      {...(menu ? dragProps({ key: `conversation:${c.id}`, label: convTitle(c), group: 'none', onMenu: (x, y) => openPlaceMenu(`conversation:${c.id}`, convTitle(c), x, y) }) : ctx)}
+      title={why?.length ? why.join('\n') : undefined}
+      data-row={c.id}
+      {...ctx}
     >
       {isChannel && com ? (
         <span class="row-avatar">
@@ -136,7 +143,13 @@ export function ConvRow({ c, active, onClick, showPlace = true, reason, menu }: 
         </span>
         {place && <span class="row-place">{place}</span>}
         <span class="row-bottom">
-          <span class="row-preview">{reason ? <span class="row-reason">{reason}</span> : preview(c)}</span>
+          <span class="row-preview">{preview(c)}</span>
+          {owedSince && !u.unread ? (
+            <span class="row-owed" aria-label={`Unanswered for ${since(owedSince)}`}>
+              <Icon name="reply" size={11} />
+              {since(owedSince)}
+            </span>
+          ) : null}
           {u.muted && <Icon name={levelIcon(lvl.level)} size={12} class="row-muted" />}
           {u.badge ? <Count n={u.badge} /> : u.unread && !u.muted ? <span class="unread-dot" /> : null}
         </span>
@@ -162,10 +175,26 @@ const isCollapsed = (id: string) => !!prefs.value.collapsed[id];
 
 // ------------------------------------------------------------------ inbox
 
+const FILTERS: { id: InboxFilter; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'people', label: 'People' },
+  { id: 'groups', label: 'Groups' },
+  { id: 'unread', label: 'Unread' },
+];
+
+/**
+ * One list: DMs, group chats, rooms outside a space and notes to self, plus anything else while it has something
+ * for you, ranked by how much each needs you (docs/inbox.md). A line marks where that ends.
+ */
 export function InboxSidebar({ activeConv }: { activeConv?: string }) {
   rev.value;
-  const s = inboxSections();
+  const snap = inboxSnap.value;
+  const accounts = accountsNeedingYou();
+  const filter = FILTERS.some((f) => f.id === prefs.value.inboxFilter) ? prefs.value.inboxFilter : 'all';
+  const { rows, divider } = shownInbox(filter);
   const [q, setQ] = useState('');
+  const scroll = useRef<HTMLDivElement>(null);
+  useFlip(scroll, snap.v, '[data-row]');
   return (
     <div class="sidebar-inner">
       <header class="side-head">
@@ -182,12 +211,19 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
         <Icon name="search" size={15} />
         <input placeholder={phone.value ? 'Search all messages' : 'Search all messages (Ctrl+K to jump)'} enterkeyhint="search" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} />
       </form>
-      <div class="side-scroll">
-        {s.attention.length > 0 && (
+      <div class="inbox-chips" role="radiogroup" aria-label="Show">
+        {FILTERS.map((f) => (
+          <button class={`chip-btn ${filter === f.id ? 'on' : ''}`} role="radio" aria-checked={filter === f.id} onClick={() => setPrefs({ inboxFilter: f.id })}>
+            {f.label}
+          </button>
+        ))}
+      </div>
+      <div class="side-scroll" ref={scroll}>
+        {accounts.length > 0 && (
           <>
-            <SectionHead id="inbox-att" label="Needs you" count={s.attention.length} />
+            <SectionHead id="inbox-att" label="Needs you" count={accounts.length} />
             {!isCollapsed('inbox-att') &&
-              s.attention.map((a) => (
+              accounts.map((a) => (
                 <button class="row attention-row" onClick={() => go({ view: 'accounts', account: a.id })} onContextMenu={onMenu(() => accountMenu(a))}>
                   <span class="row-avatar">
                     <span class="attention-icon">
@@ -208,20 +244,17 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
               ))}
           </>
         )}
-        {s.priority.length > 0 && (
-          <>
-            <SectionHead id="inbox-pri" label="Pinged you" count={s.priority.length} />
-            {!isCollapsed('inbox-pri') && s.priority.map((c) => <ConvRow c={c} active={c.id === activeConv} onClick={() => go({ view: 'inbox', conv: c.id })} />)}
-          </>
-        )}
-        {s.unread.length > 0 && (
-          <>
-            <SectionHead id="inbox-unread" label="Unread" count={s.unread.length} />
-            {!isCollapsed('inbox-unread') && s.unread.map((c) => <ConvRow c={c} active={c.id === activeConv} onClick={() => go({ view: 'inbox', conv: c.id })} />)}
-          </>
-        )}
-        <SectionHead id="inbox-recent" label="Recent chats" />
-        {!isCollapsed('inbox-recent') && s.recent.map((c) => <ConvRow c={c} active={c.id === activeConv} onClick={() => go({ view: 'inbox', conv: c.id })} />)}
+        {rows.map((r, i) => (
+          <Fragment key={r.conv.id}>
+            {i === divider && (
+              <div class="caught-up" role="separator">
+                <span>{i === 0 ? 'Nothing needs you' : 'Caught up'}</span>
+              </div>
+            )}
+            <ConvRow c={r.conv} active={r.conv.id === activeConv} onClick={() => go({ view: 'inbox', conv: r.conv.id })} why={r.reasons} owedSince={i < divider ? r.owedSince : null} />
+          </Fragment>
+        ))}
+        {!rows.length && <p class="inbox-empty">{filter === 'unread' ? 'Nothing unread.' : filter === 'all' ? 'No conversations yet.' : 'None here.'}</p>}
       </div>
     </div>
   );
@@ -284,30 +317,6 @@ export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
         {!isCollapsed('people-star') && starred.map(({ person }) => <PersonRow person={person} active={person.id === activePerson} onClick={() => go({ view: 'people', person: person.id })} />)}
         <SectionHead id="people-all" label="Direct messages" count={rest.length} />
         {!isCollapsed('people-all') && rest.map(({ person }) => <PersonRow person={person} active={person.id === activePerson} onClick={() => go({ view: 'people', person: person.id })} />)}
-      </div>
-    </div>
-  );
-}
-
-// ------------------------------------------------------------------ groups
-
-export function GroupsSidebar({ activeConv }: { activeConv?: string }) {
-  rev.value;
-  const g = groupsLists();
-  const open = (c: P.ConversationView) => go({ view: 'groups', conv: c.id });
-  return (
-    <div class="sidebar-inner">
-      <header class="side-head">
-        <h1>Groups<SortButton scope="groups" class="side-sort" /></h1>
-        <span class="side-sub">Group chats that don't belong to a server or space</span>
-      </header>
-      <div class="side-scroll">
-        <SectionHead id="groups-g" label="Group chats" count={g.groups.length} />
-        {!isCollapsed('groups-g') && arrangedConvs('groups:g', g.groups).map((c) => <ConvRow c={c} active={c.id === activeConv} onClick={() => open(c)} showPlace={false} menu />)}
-        {g.rooms.length > 0 && <SectionHead id="groups-r" label="Rooms outside a space" count={g.rooms.length} />}
-        {!isCollapsed('groups-r') && arrangedConvs('groups:r', g.rooms).map((c) => <ConvRow c={c} active={c.id === activeConv} onClick={() => open(c)} showPlace={false} menu />)}
-        {g.notes.length > 0 && <SectionHead id="groups-n" label="Notes to self" count={g.notes.length} />}
-        {!isCollapsed('groups-n') && g.notes.map((c) => <ConvRow c={c} active={c.id === activeConv} onClick={() => open(c)} showPlace={false} />)}
       </div>
     </div>
   );
@@ -540,7 +549,7 @@ function SpacesEntry({ entry: e, hidden }: { entry: RailEntry; hidden?: boolean 
     <button
       class={`row conv-row place-row ${dropClass(e.key)}`}
       {...props}
-      onClick={() => (folderId ? go({ view: 'folder', folder: folderId }) : e.kind === 'space' ? go({ view: 'space', space: e.space.id }) : e.kind === 'conversation' ? go({ view: 'groups', conv: e.conv.id }) : undefined)}
+      onClick={() => (folderId ? go({ view: 'folder', folder: folderId }) : e.kind === 'space' ? go({ view: 'space', space: e.space.id }) : e.kind === 'conversation' ? go({ view: 'inbox', conv: e.conv.id }) : undefined)}
     >
       <span class="row-avatar">{icon}</span>
       <span class="row-main">

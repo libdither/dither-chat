@@ -9,15 +9,32 @@ import { addDecayed, cleanDelta, decayed, DEFAULT_ARRANGE, USAGE_HALF_LIFE } fro
 
 type Row = Record<string, any>;
 const SORT_MODES: P.SortMode[] = ['manual', 'smart', 'recent', 'az'];
-const SCOPES: P.SortScope[] = ['rail', 'people', 'groups'];
+/** The Groups list had a scope of its own until it joined the inbox; a stored one is ignored. */
+const SCOPES: P.SortScope[] = ['rail', 'people'];
 /** A place you have not touched in this long, and whose score has decayed to nothing, is forgotten. */
 const FORGET_MS = 90 * 86_400_000;
 
+type Place = { kind: P.UsageKind; id: string };
+
 export class UsageStore {
-  constructor(private db: Database) {}
+  /** `changed` places were added to, `removed` ones forgotten; `all` when everything was. For the live socket and the journal. */
+  constructor(
+    private db: Database,
+    private onChange?: (changed: Place[], removed: Place[], all?: boolean) => void,
+  ) {}
 
   list(): P.UsageView[] {
-    return (this.db.query('SELECT * FROM place_usage').all() as Row[]).map((r) => ({
+    return this.views(this.db.query('SELECT * FROM place_usage').all() as Row[]);
+  }
+
+  /** These places, those that are still kept. */
+  get(places: Place[]): P.UsageView[] {
+    if (!places.length) return [];
+    return this.views(this.db.query(`SELECT u.* FROM place_usage u JOIN json_each(?) j ON u.kind = j.value ->> 'kind' AND u.id = j.value ->> 'id'`).all(JSON.stringify(places)) as Row[]);
+  }
+
+  private views(rows: Row[]): P.UsageView[] {
+    return rows.map((r) => ({
       kind: r.kind,
       id: r.id,
       score: r.score,
@@ -36,6 +53,8 @@ export class UsageStore {
   /** Adds one device's batch. A batch id seen before is ignored, so resending after a lost answer is safe. */
   apply(batch: string | undefined, deltas: Partial<P.UsageDelta>[], now = Date.now()): number {
     let n = 0;
+    const changed: Place[] = [];
+    let removed: Place[] = [];
     this.db.transaction(() => {
       if (batch) {
         if (this.db.query('SELECT 1 FROM usage_batch WHERE id = ?').get(batch)) return;
@@ -54,24 +73,32 @@ export class UsageStore {
                seconds = seconds + excluded.seconds, visits = visits + excluded.visits, last_visit = excluded.last_visit`,
           )
           .run(d.kind, d.id, next.score, next.visitScore, next.at, d.seconds, d.visits, lastVisit);
+        changed.push({ kind: d.kind, id: d.id });
         n++;
       }
-      this.prune(now);
+      removed = this.prune(now);
     })();
+    if (changed.length || removed.length) this.onChange?.(changed, removed);
     return n;
   }
 
-  private prune(now: number) {
+  private prune(now: number): Place[] {
+    const gone: Place[] = [];
     this.db.query('DELETE FROM usage_batch WHERE at < ?').run(now - 7 * 86_400_000);
     for (const r of this.db.query('SELECT kind, id, score, visit_score, score_at FROM place_usage WHERE COALESCE(last_visit, score_at) < ?').all(now - FORGET_MS) as Row[]) {
-      if (decayed(r.score, r.score_at, now) < 1 && decayed(r.visit_score, r.score_at, now) < 0.01) this.db.query('DELETE FROM place_usage WHERE kind = ? AND id = ?').run(r.kind, r.id);
+      if (decayed(r.score, r.score_at, now) < 1 && decayed(r.visit_score, r.score_at, now) < 0.01) {
+        this.db.query('DELETE FROM place_usage WHERE kind = ? AND id = ?').run(r.kind, r.id);
+        gone.push({ kind: r.kind, id: r.id });
+      }
     }
+    return gone;
   }
 
   /** Everything, or one place. */
   reset(place?: { kind: string; id: string }) {
     if (place) this.db.query('DELETE FROM place_usage WHERE kind = ? AND id = ?').run(place.kind, place.id);
     else this.db.exec('DELETE FROM place_usage; DELETE FROM usage_batch;');
+    this.onChange?.([], place ? [place as Place] : [], !place);
   }
 
   arrange(): P.ArrangeSettings {
@@ -83,7 +110,10 @@ export class UsageStore {
         return null;
       }
     };
-    return { sort: { ...DEFAULT_ARRANGE.sort, ...(get('sort') ?? {}) }, dismissed: get('dismissed') ?? {} };
+    const stored: Record<string, P.SortMode> = get('sort') ?? {};
+    const sort = { ...DEFAULT_ARRANGE.sort };
+    for (const scope of SCOPES) if (SORT_MODES.includes(stored[scope])) sort[scope] = stored[scope];
+    return { sort, dismissed: get('dismissed') ?? {} };
   }
 
   /** Only what is given changes: a sort mode per scope, and dismissals per category (null brings one back). */
@@ -97,7 +127,6 @@ export class UsageStore {
       }
       // Manual only means something where you can arrange by hand: the rail.
       if (sort.people === 'manual') sort.people = 'recent';
-      if (sort.groups === 'manual') sort.groups = 'recent';
       put('sort', sort);
     }
     if (p.dismissed) {

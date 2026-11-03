@@ -14,11 +14,13 @@ const WHAT_NETWORKS_SHARE: Record<P.Network, string> = {
   discord: 'Name, handle and avatar. Bio, roles and mutual servers are not fetched: no adapter command does that yet.',
   signal: 'Profile name and avatar from your contacts. Signal has no public profile or directory to ask.',
   matrix: 'Display name and avatar, which is all a Matrix profile holds.',
+  whatsapp: 'The name in your phone’s address book, else the name they chose, their number and profile picture. About and status are not fetched.',
 };
 
 function externalProfile(i: P.IdentityView): string | null {
   if (i.network === 'discord') return /^\d+$/.test(i.nativeId) ? `https://discord.com/users/${i.nativeId}` : null;
   if (i.network === 'matrix') return `https://matrix.to/#/${encodeURIComponent(i.nativeId)}`;
+  if (i.network === 'whatsapp') return /^\+\d{6,}$/.test(i.handle ?? '') ? `https://wa.me/${i.handle!.slice(1)}` : null;
   return null;
 }
 

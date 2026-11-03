@@ -60,7 +60,7 @@ const SORTS: { id: DirectorySort; label: string }[] = [
 function open(p: Place) {
   if (p.kind === 'folder') go({ view: 'folder', folder: p.id });
   else if (p.kind === 'space') go({ view: 'space', space: p.id });
-  else go({ view: 'groups', conv: p.id });
+  else go({ view: 'inbox', conv: p.id });
 }
 
 function Card({ place: p, week, drag, onCategories }: { place: Place; week: number; drag: boolean; onCategories: (p: Place) => void }) {

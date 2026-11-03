@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
 import { canonicalReactionKey, parseSearch, REACTION_RULES } from '@dither-chat/protocol';
+import { Journal } from './journal.ts';
 
 type Row = Record<string, any>;
 
@@ -93,6 +94,10 @@ function markSnippet(body: string, terms: string[]): string {
 export class Store {
   readonly db: Database;
   readonly dirty = new Dirty();
+  /** Conversation -> the oldest new message stored since attention.ts last looked, so it can tell appends from backfill. */
+  readonly ingested = new Map<string, number>();
+  /** What changed at which position, for clients that come back (journal.ts, docs/sync.md). */
+  readonly journal: Journal;
   private selfIdentities = new Set<string>();
 
   constructor(path: string, private media: MediaSigner) {
@@ -101,6 +106,7 @@ export class Store {
     const reactionsBefore = this.oldReactions();
     this.db.exec(schema);
     this.adoptOldReactions(reactionsBefore);
+    this.journal = new Journal(this.db);
     // Messages from before full-text search existed.
     if (!this.db.query(`SELECT 1 FROM meta WHERE key = 'fts_backfilled'`).get()) {
       this.db.exec(`INSERT INTO message_fts (message_fts) VALUES ('rebuild'); INSERT INTO meta (key, value) VALUES ('fts_backfilled', '1');`);
@@ -160,6 +166,8 @@ export class Store {
 
   /** Remove an account and everything that only it could see. */
   deleteAccount(id: string) {
+    // Places another account still sees lose this one's vantage: they change rather than go.
+    const seen = this.db.query('SELECT target_kind, target_id FROM vantage WHERE account_id = ?').all(id) as Row[];
     const tx = this.db.transaction(() => {
       this.db.query('DELETE FROM account WHERE id = ?').run(id);
       const orphanConvs = this.db
@@ -185,6 +193,7 @@ export class Store {
                   AND (EXISTS (SELECT 1 FROM participant pa WHERE pa.identity_id = i.id) OR EXISTS (SELECT 1 FROM message m WHERE m.author_id = i.id)))`)
         .all() as Row[];
       for (const p of orphanPersons) {
+        for (const i of this.db.query('SELECT id FROM identity WHERE person_id = ?').all(p.id) as Row[]) this.dirty.identities.add(i.id);
         this.db.query('UPDATE identity SET person_id = NULL WHERE person_id = ?').run(p.id);
         this.db.query('DELETE FROM person WHERE id = ?').run(p.id);
         this.db.query('DELETE FROM folder_item WHERE item_kind = ? AND item_id = ?').run('person', p.id);
@@ -193,6 +202,11 @@ export class Store {
     });
     tx();
     this.refreshSelf();
+    for (const v of seen) {
+      const exists = this.db.query(`SELECT 1 FROM ${v.target_kind === 'space' ? 'space' : 'conversation'} WHERE id = ?`).get(v.target_id);
+      if (exists) (v.target_kind === 'space' ? this.dirty.spaces : this.dirty.conversations).add(v.target_id);
+    }
+    for (const i of this.dirty.identities) if (!this.db.query('SELECT 1 FROM identity WHERE id = ?').get(i)) this.dirty.identities.delete(i);
     this.dirty.removed.push({ t: 'account.removed', id });
   }
 
@@ -328,9 +342,11 @@ export class Store {
 
   ensureIdentity(acc: AccountRow, nativeId: string): string {
     const id = hubId('idn', acc.network, nativeId);
-    this.db
+    const added = this.db
       .query('INSERT OR IGNORE INTO identity (id, network, native_id, seen_via, updated_at) VALUES (?, ?, ?, ?, ?)')
-      .run(id, acc.network, nativeId, acc.id, Date.now());
+      .run(id, acc.network, nativeId, acc.id, Date.now()).changes;
+    // Someone new, by id only so far: clients learn of them like any other identity.
+    if (added) this.dirty.identities.add(id);
     return id;
   }
 
@@ -393,6 +409,8 @@ export class Store {
     this.db.query('UPDATE identity SET person_id = ? WHERE id = ?').run(pid, identityId);
     this.dirty.persons.add(pid);
     this.dirty.identities.add(identityId);
+    // A direct conversation shows who it is with by person.
+    this.touchDirectsOf(pid);
     return pid;
   }
 
@@ -407,8 +425,25 @@ export class Store {
     this.dirty.persons.add(pid);
   }
 
+  /**
+   * How a space or conversation looks to clients, with its edges: adapters announce every place again on each
+   * (re)connect, and only a real change is news (the live socket and the journal, docs/sync.md).
+   */
+  private placeSig(kind: 'space' | 'conversation', id: string): string {
+    const edges = this.db.query('SELECT parent_id, position FROM space_edge WHERE child_kind = ? AND child_id = ? ORDER BY parent_id').all(kind, id);
+    if (kind === 'conversation') return JSON.stringify([this.conversationView(id), edges]);
+    const r = this.db.query('SELECT * FROM space WHERE id = ?').get(id) as Row | null;
+    return JSON.stringify([r && this.spaceView(r), edges]);
+  }
+
+  private parentsOf(kind: 'space' | 'conversation', id: string): string[] {
+    return (this.db.query('SELECT parent_id FROM space_edge WHERE child_kind = ? AND child_id = ?').all(kind, id) as Row[]).map((r) => r.parent_id);
+  }
+
   private space(acc: AccountRow, f: P.SpaceFact) {
     const id = hubId('spc', acc.network, f.nativeId);
+    const before = this.placeSig('space', id);
+    const parentsBefore = this.parentsOf('space', id);
     this.db
       .query(
         `INSERT INTO space (id, network, native_id, kind, name, topic, icon_url, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -422,10 +457,12 @@ export class Store {
       for (const p of f.parents) {
         const pid = hubId('spc', acc.network, p.nativeId);
         this.db.query(`INSERT OR REPLACE INTO space_edge (parent_id, child_kind, child_id, position) VALUES (?, 'space', ?, ?)`).run(pid, id, p.position ?? null);
-        this.dirty.spaces.add(pid);
       }
     }
+    if (this.placeSig('space', id) === before) return;
     this.dirty.spaces.add(id);
+    // Its parents list it among their children.
+    for (const pid of new Set([...parentsBefore, ...this.parentsOf('space', id)])) this.dirty.spaces.add(pid);
   }
 
   private ensureConversation(acc: AccountRow, nativeId: string): string {
@@ -440,6 +477,8 @@ export class Store {
   private conversation(acc: AccountRow, f: P.ConversationFact) {
     const id = hubId('cnv', acc.network, f.nativeId);
     const parent = f.parentConversation ? hubId('cnv', acc.network, f.parentConversation) : null;
+    const before = this.placeSig('conversation', id);
+    const spacesBefore = this.parentsOf('conversation', id);
     this.db
       .query(
         `INSERT INTO conversation (id, network, native_id, shape, variant, parent_id, name, topic, avatar_url, encrypted, archived, last_message_at, updated_at)
@@ -448,7 +487,7 @@ export class Store {
            shape = excluded.shape, variant = excluded.variant, parent_id = COALESCE(excluded.parent_id, parent_id),
            name = COALESCE(excluded.name, name), topic = COALESCE(excluded.topic, topic),
            avatar_url = COALESCE(excluded.avatar_url, avatar_url), encrypted = excluded.encrypted, archived = excluded.archived,
-           last_message_at = MAX(COALESCE(last_message_at, 0), COALESCE(excluded.last_message_at, 0)),
+           last_message_at = CASE WHEN excluded.last_message_at IS NULL THEN last_message_at ELSE MAX(COALESCE(last_message_at, 0), excluded.last_message_at) END,
            updated_at = excluded.updated_at`,
       )
       .run(
@@ -472,20 +511,24 @@ export class Store {
       for (const s of f.spaces) {
         const sid = hubId('spc', acc.network, s.nativeId);
         this.db.query(`INSERT OR REPLACE INTO space_edge (parent_id, child_kind, child_id, position) VALUES (?, 'conversation', ?, ?)`).run(sid, id, s.position ?? null);
-        this.dirty.spaces.add(sid);
       }
     }
     if (f.participants) {
+      const members = new Set((this.db.query('SELECT identity_id FROM participant WHERE conversation_id = ?').all(id) as Row[]).map((r) => r.identity_id as string));
       this.db.query('DELETE FROM participant WHERE conversation_id = ?').run(id);
       for (const n of f.participants) {
         const iid = this.ensureIdentity(acc, n);
         this.db.query('INSERT OR IGNORE INTO participant (conversation_id, identity_id) VALUES (?, ?)').run(id, iid);
+        // Clients know a conversation's members by identity.
+        if (!members.has(iid)) this.dirty.identities.add(iid);
         // People you DM are people, not strangers.
         if (f.shape === 'direct' && !this.isSelf(iid) && n !== this.selfNative(acc)) this.ensurePerson(iid);
       }
     }
-    if (parent) this.dirty.conversations.add(parent);
+    if (this.placeSig('conversation', id) === before) return;
     this.dirty.conversations.add(id);
+    // The spaces it is in carry its edge, with its position.
+    for (const sid of new Set([...spacesBefore, ...this.parentsOf('conversation', id)])) this.dirty.spaces.add(sid);
   }
 
   /** A conversation you just opened sorts as recent, though it has no message yet. */
@@ -523,7 +566,11 @@ export class Store {
     const cid = this.ensureConversation(acc, f.conversation);
     const id = hubId('msg', acc.network, f.nativeId);
     const author = this.ensureIdentity(acc, f.author);
-    const existed = !!this.db.query('SELECT 1 FROM message WHERE id = ?').get(id);
+    const old = this.db.query('SELECT * FROM message WHERE id = ?').get(id) as Row | null;
+    const existed = !!old;
+    // Backfill sends what is stored again and again: only a real change is news.
+    const before = old ? JSON.stringify(this.messageViews([old])) : null;
+    const convBefore = old ? this.placeSig('conversation', cid) : null;
     const replyTo = f.replyTo ? hubId('msg', acc.network, f.replyTo) : null;
     const thread = f.threadRoot ? hubId('cnv', acc.network, f.threadRoot) : null;
     this.db
@@ -559,11 +606,14 @@ export class Store {
       });
     }
     if (f.reactions) this.reactionSnapshot(acc, id, f.reactions);
+    if (!existed) this.ingested.set(cid, Math.min(this.ingested.get(cid) ?? Infinity, f.ts));
     const newForAccount = this.db.query('INSERT OR IGNORE INTO message_seen (message_id, account_id) VALUES (?, ?)').run(id, acc.id).changes > 0;
 
-    const conv = this.db.query('SELECT last_message_at FROM conversation WHERE id = ?').get(cid) as Row;
+    const conv = this.db.query('SELECT last_message_at, last_message_id FROM conversation WHERE id = ?').get(cid) as Row;
     if (conv.last_message_at == null || f.ts >= conv.last_message_at) {
       this.db.query('UPDATE conversation SET last_message_id = ?, last_message_at = ? WHERE id = ?').run(id, f.ts, cid);
+      // The list shows who wrote the last message; a live one brings its author along anyway.
+      if (!live && conv.last_message_id !== id) this.dirty.identities.add(author);
     }
     const fromSelf = author === acc.self_identity || this.isSelf(author);
     if (newForAccount && !fromSelf) {
@@ -580,8 +630,9 @@ export class Store {
         .query(`UPDATE vantage SET last_read_ts = MAX(COALESCE(last_read_ts, 0), ?), unread = 0, mentions = 0 WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`)
         .run(f.ts, acc.id, cid);
     }
-    this.dirty.conversations.add(cid);
-    if (live || existed) this.dirty.messages.set(id, live);
+    const changed = before === null || JSON.stringify(this.messageViews([this.db.query('SELECT * FROM message WHERE id = ?').get(id) as Row])) !== before;
+    if (changed || this.placeSig('conversation', cid) !== convBefore) this.dirty.conversations.add(cid);
+    if (live || (existed && changed)) this.dirty.messages.set(id, live);
     return !existed && live && !fromSelf ? id : null;
   }
 
@@ -875,6 +926,29 @@ export class Store {
     return this.assembleConversation(r, spaceIds, parts, vs, last, this.peerOf(r, parts));
   }
 
+  /** Many conversations at once, as bootstrap() reads them: a handful of queries rather than five per conversation. */
+  conversationViews(ids: string[]): P.ConversationView[] {
+    if (!ids.length) return [];
+    const list = JSON.stringify(ids);
+    const q = <T = Row>(sql: string) => this.db.query(sql).all(list) as T[];
+    const rows = q(`SELECT * FROM conversation WHERE id IN (SELECT value FROM json_each(?))`);
+    const group = (xs: Row[], key: string) => {
+      const m = new Map<string, Row[]>();
+      for (const x of xs) (m.get(x[key]) ?? m.set(x[key], []).get(x[key])!).push(x);
+      return m;
+    };
+    const edges = group(q(`SELECT parent_id, child_id FROM space_edge WHERE child_kind = 'conversation' AND child_id IN (SELECT value FROM json_each(?))`), 'child_id');
+    const parts = group(q(`SELECT conversation_id, identity_id FROM participant WHERE conversation_id IN (SELECT value FROM json_each(?))`), 'conversation_id');
+    const vants = group(q(`SELECT * FROM vantage WHERE target_kind = 'conversation' AND target_id IN (SELECT value FROM json_each(?))`), 'target_id');
+    const lasts = new Map(
+      q(`SELECT m.* FROM message m WHERE m.id IN (SELECT last_message_id FROM conversation WHERE id IN (SELECT value FROM json_each(?)))`).map((m) => [m.id as string, m]),
+    );
+    return rows.map((r) => {
+      const ps = (parts.get(r.id) ?? []).map((p) => p.identity_id as string);
+      return this.assembleConversation(r, (edges.get(r.id) ?? []).map((e) => e.parent_id), ps, vants.get(r.id) ?? [], lasts.get(r.last_message_id) ?? null, this.peerOf(r, ps));
+    });
+  }
+
   private peerOf(r: Row, parts: string[]): string | null {
     if (r.shape !== 'direct') return null;
     const peer = parts.find((p) => !this.isSelf(p));
@@ -1033,7 +1107,7 @@ export class Store {
     this.markReacted(messageId);
   }
 
-  private reactionUsage(): P.ReactionUsage[] {
+  reactionUsage(): P.ReactionUsage[] {
     const rows = this.db
       .query(
         `SELECT r.key, i.network, COUNT(*) AS n, e.key AS emoji_key, e.name, e.url, e.animated
@@ -1057,7 +1131,7 @@ export class Store {
     return (this.db.query('SELECT id FROM account WHERE network = ? AND demo = 0 LIMIT 1').get(network) as Row | null)?.id ?? null;
   }
 
-  private messageViews(rows: Row[]): P.MessageView[] {
+  messageViews(rows: Row[]): P.MessageView[] {
     if (!rows.length) return [];
     const ids = rows.map((r) => r.id);
     const ph = ids.map(() => '?').join(',');
@@ -1207,7 +1281,7 @@ export class Store {
     return r ? this.messageViews([r])[0] : null;
   }
 
-  private identitiesOf(msgs: P.MessageView[]): P.IdentityView[] {
+  identitiesOf(msgs: P.MessageView[]): P.IdentityView[] {
     const ids = new Set<string>();
     for (const m of msgs) {
       if (m.authorId) ids.add(m.authorId);

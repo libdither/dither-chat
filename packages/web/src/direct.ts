@@ -9,6 +9,7 @@ export function openers(accounts: Iterable<P.AccountView>, network: P.Network): 
 /** What opening does on this network, said before it happens. */
 export function directNote(network: P.Network, name: string): string {
   if (network === 'signal') return `Signal has no step for starting a conversation. This opens one here, and ${name} sees nothing until you send your first message.`;
+  if (network === 'whatsapp') return `WhatsApp has no step for starting a chat either. This checks that the number is on WhatsApp and opens the chat here; ${name} sees nothing until you send your first message.`;
   if (network === 'matrix') return `This creates a room and invites ${name} now, or reuses a DM you already have. New rooms are not end-to-end encrypted, because dither-chat cannot encrypt on Matrix yet.`;
   return `This opens a DM with ${name} through the Discord client, or finds the one you have. Nothing is sent until you write something.`;
 }

@@ -1,7 +1,9 @@
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
+import { SYNC_VERSION } from '@dither-chat/protocol';
 import { leaveLayerEntry, takeOverLayers } from './phone.ts';
 import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
+import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, emptyDb, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
 
 // ------------------------------------------------------------------ data
 
@@ -10,29 +12,8 @@ export const rev = signal(0);
 export const connected = signal(false);
 export const loaded = signal(false);
 
-export const db = {
-  selfPersonId: null as string | null,
-  accounts: new Map<string, P.AccountView>(),
-  persons: new Map<string, P.PersonView>(),
-  identities: new Map<string, P.IdentityView>(),
-  spaces: new Map<string, P.SpaceView>(),
-  conversations: new Map<string, P.ConversationView>(),
-  folders: [] as P.FolderView[],
-  placePrefs: new Map<string, P.PlacePrefView>(),
-  categories: [] as P.CategoryView[],
-  /** `${kind}:${id}` -> what each category says about that place */
-  placeCategories: new Map<string, P.PlaceCategoryView[]>(),
-  categoryProvider: 'keyword',
-  rules: [] as P.RuleView[],
-  /** parentId -> child edges */
-  children: new Map<string, P.SpaceEdgeView[]>(),
-  /** child space or conversation id -> parent edges */
-  parents: new Map<string, P.SpaceEdgeView[]>(),
-  /** conversation id -> its threads */
-  threads: new Map<string, string[]>(),
-  identityByNative: new Map<string, string>(),
-  reactionUsage: [] as P.ReactionUsage[],
-};
+/** The hub's state as this client knows it; syncmodel.ts says how bootstraps and events change it. */
+export const db = emptyDb();
 
 export interface Timeline {
   key: string;
@@ -43,8 +24,10 @@ export interface Timeline {
   conversationIds?: string[];
   /** Jumped to an old message: this window does not reach the latest ones. */
   detached?: boolean;
-  /** When its first page was asked of the hub. A reconnect refreshes the ones asked before the socket opened. */
+  /** When its first page was asked of the hub. A reconnect catches up the ones that have it. */
   fetchedAt?: number;
+  /** A copy kept on this device: the journal position it is current to, until the hub has caught it up. */
+  from?: P.SyncPosition;
 }
 export const timelines = new Map<string, Timeline>();
 /** Messages referenced by replies that are outside the loaded page. */
@@ -59,6 +42,8 @@ export interface PendingSend {
   accountId?: string;
   failed?: string;
   files?: string[];
+  /** Waiting for the hub to be reachable again; it goes out then, by itself. */
+  queued?: boolean;
 }
 export const pending = signal<PendingSend[]>([]);
 export const typing = signal<Record<string, { identityId: string; until: number }[]>>({});
@@ -100,9 +85,12 @@ export interface Prefs {
   pushEnabled: boolean;
   /** How this device carries calls: through the account's own client (bridge), or by itself (direct). */
   callMode: 'bridge' | 'direct';
+  /** The inbox's filter chip. */
+  inboxFilter: InboxFilter;
 }
+export type InboxFilter = 'all' | 'people' | 'groups' | 'unread';
 const PREFS_KEY = 'dither-chat:prefs';
-const defaults: Prefs = { theme: 'dither-dark', themeDark: 'dither-dark', themeLight: 'dither-light', details: false, collapsed: {}, sendAs: {}, via: {}, notifications: false, skinTone: 0, directorySort: 'recency', pushEnabled: false, callMode: 'bridge' };
+const defaults: Prefs = { theme: 'dither-dark', themeDark: 'dither-dark', themeLight: 'dither-light', details: false, collapsed: {}, sendAs: {}, via: {}, notifications: false, skinTone: 0, directorySort: 'recency', pushEnabled: false, callMode: 'bridge', inboxFilter: 'all' };
 export const prefs = signal<Prefs>({ ...defaults, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') });
 export function setPrefs(p: Partial<Prefs>) {
   prefs.value = { ...prefs.value, ...p };
@@ -117,7 +105,6 @@ export type Route =
   | { view: 'triage' }
   | { view: 'people'; person?: string }
   | { view: 'profile'; person?: string; identity?: string }
-  | { view: 'groups'; conv?: string }
   | { view: 'spaces' }
   | { view: 'space'; space: string; conv?: string }
   | { view: 'folder'; folder: string; conv?: string; person?: string }
@@ -137,8 +124,9 @@ export function parseHash(h = location.hash): Route {
       return { view: 'profile', person: p[1] };
     case 'i':
       return { view: 'profile', identity: p[1] };
+    // The Groups list joined the inbox; its links still open the same conversation there.
     case 'groups':
-      return { view: 'groups', conv: p[1] === 'c' ? p[2] : undefined };
+      return { view: 'inbox', conv: p[1] === 'c' ? p[2] : undefined };
     case 'spaces':
       return { view: 'spaces' };
     case 's':
@@ -171,8 +159,6 @@ export function href(r: Route): string {
       return r.person ? `#/people/${e(r.person)}` : '#/people';
     case 'profile':
       return r.person ? `#/p/${e(r.person)}` : `#/i/${e(r.identity ?? '')}`;
-    case 'groups':
-      return r.conv ? `#/groups/c/${e(r.conv)}` : '#/groups';
     case 'spaces':
       return '#/spaces';
     case 'space':
@@ -193,7 +179,16 @@ export function href(r: Route): string {
 }
 
 export const route = signal<Route>(parseHash());
-window.addEventListener('hashchange', () => (route.value = parseHash()));
+/** An old link (`#/groups/…`) shows its new address, in place. */
+function canonicalHash() {
+  const h = href(route.value);
+  if (location.hash.startsWith('#/groups') && h !== location.hash) history.replaceState(history.state, '', h);
+}
+canonicalHash();
+window.addEventListener('hashchange', () => {
+  route.value = parseHash();
+  canonicalHash();
+});
 /**
  * Each entry remembers the one before it, so a back button can tell going back from opening the list fresh.
  * Navigating closes any open sheet or panel, and takes over its history entry rather than stacking on it.
@@ -238,81 +233,12 @@ export async function api<T = any>(path: string, init?: { method?: string; body?
 
 // ------------------------------------------------------------------ applying hub data
 
-function indexEdges(edges: P.SpaceEdgeView[]) {
-  db.children.clear();
-  db.parents.clear();
-  for (const e of edges) addEdge(e);
-}
-function addEdge(e: P.SpaceEdgeView) {
-  const c = db.children.get(e.parentId) ?? [];
-  if (!c.some((x) => x.childId === e.childId && x.childKind === e.childKind)) c.push(e);
-  else c.splice(c.findIndex((x) => x.childId === e.childId && x.childKind === e.childKind), 1, e);
-  db.children.set(e.parentId, c);
-  const p = db.parents.get(e.childId) ?? [];
-  const i = p.findIndex((x) => x.parentId === e.parentId);
-  if (i >= 0) p[i] = e;
-  else p.push(e);
-  db.parents.set(e.childId, p);
-}
-function removeEdge(parentId: string, childId: string) {
-  db.children.set(parentId, (db.children.get(parentId) ?? []).filter((e) => e.childId !== childId));
-  db.parents.set(childId, (db.parents.get(childId) ?? []).filter((e) => e.parentId !== parentId));
-}
-function indexThreads() {
-  db.threads.clear();
-  for (const c of db.conversations.values()) {
-    if (c.parentId) db.threads.set(c.parentId, [...(db.threads.get(c.parentId) ?? []), c.id]);
-  }
-}
-function putIdentity(i: P.IdentityView) {
-  db.identities.set(i.id, i);
-  db.identityByNative.set(`${i.network}:${i.nativeId}`, i.id);
-}
-
-const prefKey = (kind: P.PlaceKind, id: string) => `${kind}:${id}`;
-function setPlacePrefs(prefs: P.PlacePrefView[]) {
-  db.placePrefs = new Map(prefs.map((x) => [prefKey(x.kind, x.id), x]));
-}
-
-function setCategories(cats: P.CategoryView[], place: P.PlaceCategoryView[]) {
-  db.categories = cats;
-  db.placeCategories = new Map();
-  for (const x of place) {
-    const k = `${x.kind}:${x.id}`;
-    db.placeCategories.set(k, [...(db.placeCategories.get(k) ?? []), x]);
-  }
-}
+const putIdentity = (i: P.IdentityView) => put(db, i);
 
 export function applyBootstrap(b: P.Bootstrap) {
-  db.selfPersonId = b.selfPersonId;
-  db.reactionUsage = b.reactionUsage ?? [];
-  db.accounts = new Map(b.accounts.map((a) => [a.id, a]));
-  db.persons = new Map(b.persons.map((p) => [p.id, p]));
-  db.identities.clear();
-  db.identityByNative.clear();
-  b.identities.forEach(putIdentity);
-  db.spaces = new Map(b.spaces.map((s) => [s.id, s]));
-  db.conversations = new Map(b.conversations.map((c) => [c.id, c]));
-  db.folders = b.folders;
-  setPlacePrefs(b.placePrefs ?? []);
-  setCategories(b.categories ?? [], b.placeCategories ?? []);
-  db.categoryProvider = b.categoryProvider ?? 'keyword';
-  db.rules = b.rules;
-  indexEdges(b.edges);
-  indexThreads();
+  applyBootstrapTo(db, b);
   loaded.value = true;
   rev.value++;
-}
-
-function upsertInto(list: P.MessageView[], m: P.MessageView) {
-  const i = list.findIndex((x) => x.id === m.id);
-  if (i >= 0) {
-    list[i] = m;
-    return;
-  }
-  let j = list.length;
-  while (j > 0 && list[j - 1].ts > m.ts) j--;
-  list.splice(j, 0, m);
 }
 
 /** Change every copy of a message the client holds. */
@@ -326,57 +252,33 @@ export function patchMessage(id: string, patch: (m: P.MessageView) => P.MessageV
   rev.value++;
 }
 
+/** Others react to events too (usage.ts: time spent in places, sort settings), without state.ts knowing them. */
+export const eventHooks = new Set<(ev: P.ClientEvent) => void>();
+
 export function applyEvents(events: P.ClientEvent[]) {
   let threadsDirty = false;
+  const behind = new Set<string>();
+  const regrouped = new Set<string>();
   for (const ev of events) {
+    threadsDirty = applyEventTo(db, ev) || threadsDirty;
     switch (ev.t) {
-      case 'account':
-        db.accounts.set(ev.account.id, ev.account);
-        break;
-      case 'account.removed':
-        db.accounts.delete(ev.id);
-        break;
-      case 'identity':
-        putIdentity(ev.identity);
-        break;
       case 'person':
-        db.persons.set(ev.person.id, ev.person);
-        break;
-      case 'person.removed':
-        db.persons.delete(ev.id);
-        break;
-      case 'space': {
-        db.spaces.set(ev.space.id, ev.space);
-        for (const e of [...(db.children.get(ev.space.id) ?? [])]) if (e.childKind === 'space') removeEdge(ev.space.id, e.childId);
-        for (const e of [...(db.parents.get(ev.space.id) ?? [])]) removeEdge(e.parentId, ev.space.id);
-        ev.edges.forEach(addEdge);
+      case 'person.removed': {
+        // People merged or split: a person timeline may now span other conversations.
+        const key = 'p:' + (ev.t === 'person' ? ev.person.id : ev.id);
+        if (timelines.has(key)) regrouped.add(key);
         break;
       }
-      case 'space.removed':
-        db.spaces.delete(ev.id);
-        break;
       case 'conversation': {
-        const c = ev.conversation;
-        const prev = db.conversations.get(c.id);
-        db.conversations.set(c.id, c);
-        if (prev?.parentId !== c.parentId || !prev) threadsDirty = true;
-        for (const e of [...(db.parents.get(c.id) ?? [])]) if (!c.spaceIds.includes(e.parentId)) removeEdge(e.parentId, c.id);
-        for (const sid of c.spaceIds)
-          if (!(db.parents.get(c.id) ?? []).some((e) => e.parentId === sid)) addEdge({ parentId: sid, childKind: 'conversation', childId: c.id, position: null });
-        // A newer message we have not seen: refresh open timelines for it.
-        const t = timelines.get('c:' + c.id);
-        if (t && !t.detached && c.lastMessage && !t.messages.some((m) => m.id === c.lastMessage!.id) && !t.loading) refreshTimeline(t.key);
+        // A newer message this timeline has not seen: once the frame is applied, it may still be missing.
+        const t = timelines.get('c:' + ev.conversation.id);
+        if (t && !t.detached && ev.conversation.lastMessage) behind.add(t.key);
         break;
       }
       case 'readProgress':
         readProgress.value = ev;
         break;
-      case 'conversation.removed':
-        db.conversations.delete(ev.id);
-        threadsDirty = true;
-        break;
       case 'message': {
-        ev.identities.forEach(putIdentity);
         const m = ev.message;
         const t = timelines.get('c:' + m.conversationId);
         // A detached window only takes updates to what it holds: a new message would leave a silent gap.
@@ -387,19 +289,14 @@ export function applyEvents(events: P.ClientEvent[]) {
           if (pt) upsertInto(pt.messages, m);
         }
         if (quoted.has(m.id)) quoted.set(m.id, m);
-        if (m.triage && m.triage.decision !== 'silent') {
-          const list = inbox.value.filter((x) => x.id !== m.id);
-          inbox.value = [m, ...list].sort((a, b) => b.ts - a.ts).slice(0, 300);
-        }
+        if (m.triage && m.triage.decision !== 'silent') mergeInbox([m]);
         // An echo of something we sent: drop the optimistic copy.
         if (pending.value.length) {
           const mine = isSelfIdentity(m.authorId);
-          if (mine) pending.value = pending.value.filter((p) => !(p.conversationId === m.conversationId && (p.files?.length ? m.attachments.length > 0 : p.body.trim() === m.body.trim())));
+          if (mine) pending.value = pending.value.filter((p) => !(p.conversationId === m.conversationId && !p.queued && (p.files?.length ? m.attachments.length > 0 : p.body.trim() === m.body.trim())));
         }
         break;
       }
-      case 'message.deleted':
-        break;
       case 'notify':
         onNotify(ev);
         break;
@@ -411,25 +308,24 @@ export function applyEvents(events: P.ClientEvent[]) {
         };
         break;
       }
-      case 'folders':
-        db.folders = ev.folders;
-        break;
-      case 'placePrefs':
-        setPlacePrefs(ev.prefs);
-        break;
-      case 'categories':
-        setCategories(ev.categories, ev.placeCategories);
-        break;
-      case 'rules':
-        db.rules = ev.rules;
-        break;
       case 'resync':
-        bootstrap();
+        void bootstrap();
         break;
     }
+    if (eventHooks.size) for (const h of eventHooks) h(ev);
   }
-  if (threadsDirty) indexThreads();
+  if (threadsDirty) indexThreads(db);
+  for (const key of behind) {
+    const t = timelines.get(key);
+    const last = db.conversations.get(key.slice(2))?.lastMessage;
+    if (t && last && !t.loading && !t.messages.some((m) => m.id === last.id)) void catchUp(key);
+  }
+  for (const key of regrouped) if (!timelines.get(key)?.loading) void catchUp(key);
   rev.value++;
+}
+
+function mergeInbox(ms: P.MessageView[]) {
+  if (ms.length) inbox.value = merged(inbox.value, ms);
 }
 
 export function isSelfIdentity(id: string | null | undefined): boolean {
@@ -470,10 +366,10 @@ export async function loadTimeline(key: string, older = false): Promise<void> {
   if (t && !older) return;
   let stale: Set<string> | null = null;
   if (!t) {
-    // What this device kept from last time shows at once; the hub's page replaces it.
+    // What this device kept from last time shows at once; the hub brings it up to date.
     const c = cachedTimeline(key);
     stale = c ? new Set(c.messages.map((m) => m.id)) : null;
-    t = { key, messages: c?.messages ?? [], hasMore: true, loading: false, conversationIds: c?.conversationIds };
+    t = { key, messages: c?.messages ?? [], hasMore: true, loading: false, conversationIds: c?.conversationIds, from: c?.sync };
     timelines.set(key, t);
     touchTimeline(key);
   }
@@ -489,29 +385,42 @@ export async function loadTimeline(key: string, older = false): Promise<void> {
       await socketOpen();
       t.fetchedAt = Date.now();
     }
-    const page = await api<P.MessagePage & { quoted?: P.MessageView[]; conversationIds?: string[] }>(`${url}?limit=60${before ? `&before=${before}` : ''}`);
-    page.identities.forEach(putIdentity);
-    page.quoted?.forEach((m) => quoted.set(m.id, m));
-    if (stale) {
-      // Kept messages the hub no longer has in this range were deleted meanwhile.
-      const got = new Set(page.messages.map((m) => m.id));
-      const from = page.hasMore ? (page.messages[0]?.ts ?? Infinity) : -Infinity;
-      t.messages = t.messages.filter((m) => !stale!.has(m.id) || got.has(m.id) || m.ts < from);
+    // A kept copy needs only what changed since it was kept: messages after its newest, and edits inside it.
+    const from = t.from;
+    const caught = !older && !!from && t.messages.length > 0 ? await syncTimelines([t], () => from) : 'refused';
+    // No network: what is shown stays, and the sync after the next connection brings it up to date.
+    if (caught === 'failed') return;
+    if (!older) t.from = undefined;
+    let got = t.messages.length;
+    if (caught === 'refused') {
+      const page = await api<P.MessagePage & { quoted?: P.MessageView[]; conversationIds?: string[] }>(`${url}?limit=60${before ? `&before=${before}` : ''}`);
+      page.identities.forEach(putIdentity);
+      page.quoted?.forEach((m) => quoted.set(m.id, m));
+      if (stale) {
+        // Kept messages the hub no longer has in this range were deleted meanwhile.
+        const got = new Set(page.messages.map((m) => m.id));
+        const from = page.hasMore ? (page.messages[0]?.ts ?? Infinity) : -Infinity;
+        t.messages = t.messages.filter((m) => !stale!.has(m.id) || got.has(m.id) || m.ts < from);
+      }
+      for (const m of page.messages) upsertInto(t.messages, m);
+      t.hasMore = page.hasMore;
+      got = page.messages.length;
+      if (page.conversationIds) t.conversationIds = page.conversationIds;
     }
-    for (const m of page.messages) upsertInto(t.messages, m);
-    t.hasMore = page.hasMore;
-    if (page.conversationIds) t.conversationIds = page.conversationIds;
     if (kind === 'c' && older) {
       // Stored messages ran out, which is not the start of the conversation: Discord and Matrix can backfill.
-      if (!page.hasMore) t.hasMore = await fromNetwork(t, id, t.messages[0]?.ts);
+      if (!t.hasMore) t.hasMore = await fromNetwork(t, id, t.messages[0]?.ts);
     } else if (kind === 'c') {
       // Large Discord servers push live messages only for channels open in the client, so what is stored may be
       // stale: ask for the latest on open. Show what we have meanwhile, unless that is nothing.
-      if (page.messages.length) {
+      if (got) {
         t.hasMore = true;
         void fromNetwork(t, id).then(() => rev.value++);
       } else t.hasMore = await fromNetwork(t, id);
     }
+  } catch (e) {
+    // The page did not come (the network, most likely): the timeline keeps what it shows and catches up later.
+    console.warn('timeline not loaded', key, e);
   } finally {
     t.loading = false;
     rev.value++;
@@ -569,15 +478,76 @@ export function openMessage(conversationId: string, messageId: string) {
   go(r.view === 'search' ? { view: 'search', q: r.q, conv: conversationId, msg: messageId } : { view: 'inbox', conv: conversationId, msg: messageId });
 }
 
-function refreshTimeline(key: string) {
+/** Load a timeline's newest page again, keeping what it held. */
+function reload(key: string) {
   const t = timelines.get(key);
-  if (!t) return;
+  if (!t) return Promise.resolve();
   timelines.delete(key);
-  loadTimeline(key).then(() => {
+  return loadTimeline(key).then(() => {
     const fresh = timelines.get(key);
     if (fresh) for (const m of t.messages) if (!fresh.messages.some((x) => x.id === m.id)) upsertInto(fresh.messages, m);
     rev.value++;
   });
+}
+
+const catching = new Set<string>();
+/** A timeline missed something (a message stored without a live event): ask for what is newer than it holds. */
+async function catchUp(key: string) {
+  const t = timelines.get(key);
+  const pos = db.sync;
+  if (!t || catching.has(key)) return;
+  catching.add(key);
+  try {
+    if (!pos || (await syncTimelines([t], () => pos)) === 'refused') await reload(key);
+  } finally {
+    catching.delete(key);
+    rev.value++;
+  }
+}
+
+function timelineRequest(t: Timeline, seq: number): P.SyncTimelineRequest {
+  return {
+    key: t.key,
+    seq,
+    newest: t.messages[t.messages.length - 1]?.ts ?? 0,
+    oldest: t.messages[0]?.ts ?? 0,
+    ...(t.detached ? { newer: false } : {}),
+    ...(t.key.startsWith('p:') ? { conversationIds: t.conversationIds ?? [] } : {}),
+  };
+}
+
+/** What a sync answer says about timelines: new and changed messages, or a fresh page where the held one was too far behind. */
+function applyTimelines(r: Extract<P.SyncResponse, { sync: unknown }>) {
+  r.identities.forEach(putIdentity);
+  r.quoted.forEach((m) => quoted.set(m.id, m));
+  for (const tl of r.timelines) {
+    const t = timelines.get(tl.key);
+    if (t) applyTimelineDelta(t, tl);
+  }
+}
+
+/**
+ * Bring timelines up to date from the journal position each is current to. 'refused' when the hub cannot say
+ * (another epoch, too old, an old hub): the caller loads them afresh. 'failed' when there was no answer.
+ */
+async function syncTimelines(list: Timeline[], posOf: (t: Timeline) => P.SyncPosition): Promise<'ok' | 'refused' | 'failed'> {
+  const byEpoch = new Map<string, Timeline[]>();
+  for (const t of list) {
+    const p = posOf(t);
+    if (p.v !== SYNC_VERSION) return 'refused';
+    (byEpoch.get(p.epoch) ?? byEpoch.set(p.epoch, []).get(p.epoch)!).push(t);
+  }
+  for (const [epoch, ts] of byEpoch) {
+    let r: P.SyncResponse;
+    try {
+      r = await api<P.SyncResponse>('/api/sync', { body: { v: SYNC_VERSION, epoch, timelines: ts.map((t) => timelineRequest(t, posOf(t).seq)) } satisfies P.SyncRequest });
+    } catch (e) {
+      return e instanceof TypeError ? 'failed' : 'refused';
+    }
+    if (r.full) return 'refused';
+    applyTimelines(r);
+  }
+  return 'ok';
 }
 
 export async function loadInbox() {
@@ -597,17 +567,49 @@ async function upload(file: File): Promise<P.UploadView> {
   return data;
 }
 
-export async function send(conversationId: string, body: string, opts: { accountId?: string; replyTo?: string; files?: File[] } = {}) {
+type SendOpts = { accountId?: string; replyTo?: string; files?: File[] };
+/** Sends not yet through, by tempId: what they need to go out again. */
+const outgoing = new Map<string, { conversationId: string; body: string; opts: SendOpts; attachments?: string[] }>();
+const setPending = (tempId: string, patch: Partial<PendingSend>) => (pending.value = pending.value.map((x) => (x.tempId === tempId ? { ...x, ...patch } : x)));
+
+/** Shown at once as pending. Without the hub it waits, and goes out when the hub is back (flushOutgoing). */
+export async function send(conversationId: string, body: string, opts: SendOpts = {}) {
   const tempId = 'tmp-' + Math.random().toString(36).slice(2);
   const p: PendingSend = { tempId, conversationId, body, ts: Date.now(), accountId: opts.accountId, files: opts.files?.map((f) => f.name) };
   pending.value = [...pending.value, p];
+  outgoing.set(tempId, { conversationId, body, opts });
+  if (!connected.value) {
+    setPending(tempId, { queued: true });
+    probe();
+    return;
+  }
+  await deliver(tempId);
+}
+
+async function deliver(tempId: string) {
+  const o = outgoing.get(tempId);
+  if (!o) return;
+  setPending(tempId, { queued: false, failed: undefined });
   try {
-    const attachments = opts.files?.length ? (await Promise.all(opts.files.map(upload))).map((u) => u.id) : undefined;
-    await api(`/api/conversations/${conversationId}/send`, { body: { body, accountId: opts.accountId, replyTo: opts.replyTo, attachments } });
+    o.attachments ??= o.opts.files?.length ? (await Promise.all(o.opts.files.map(upload))).map((u) => u.id) : undefined;
+    // clientId: a retry after a lost answer goes out once (server.ts).
+    await api(`/api/conversations/${o.conversationId}/send`, { body: { body: o.body, accountId: o.opts.accountId, replyTo: o.opts.replyTo, attachments: o.attachments, clientId: tempId } });
+    outgoing.delete(tempId);
     setTimeout(() => (pending.value = pending.value.filter((x) => x.tempId !== tempId)), 30_000);
   } catch (e: any) {
-    pending.value = pending.value.map((x) => (x.tempId === tempId ? { ...x, failed: e.message } : x));
+    // No answer at all is the network, not a refusal: wait for the hub.
+    if (e instanceof TypeError || !connected.value) {
+      setPending(tempId, { queued: true });
+      probe();
+    } else {
+      outgoing.delete(tempId);
+      setPending(tempId, { failed: e.message });
+    }
   }
+}
+
+function flushOutgoing() {
+  for (const p of pending.value) if (p.queued) void deliver(p.tempId);
 }
 
 /** The dialog for starting a direct conversation; open at a known identity when given one. */
@@ -695,35 +697,171 @@ function placeFailed(e: Error) {
 }
 
 // ------------------------------------------------------------------ live connection
+//
+// One socket for live events. Coming back (a new socket after a drop, or a cold start from the snapshot) asks the hub
+// for what changed since this copy's journal position (POST /api/sync) instead of loading everything again; only when
+// the hub cannot say (another epoch, too old) does it take a full bootstrap. Short drops are not shown at all: the
+// app keeps showing what it has, and a small notice appears only after the hub has been out of reach for a while, or
+// when a send is waiting for it. docs/sync.md.
+
+/** The hub has been out of reach for a while: a small notice, never a screen in the way. */
+export const unreachable = signal(false);
+/** How long a drop goes unmentioned. */
+const NOTICE_AFTER = 4000;
+/** The heartbeat: a ping this often while in sight, and a socket that does not answer within PONG_WAIT is dead. */
+const PING_EVERY = 25_000;
+const PONG_WAIT = 3000;
 
 let ws: WebSocket | null = null;
 let backoff = 500;
 let retry: ReturnType<typeof setTimeout> | undefined;
+let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+let pongTimer: ReturnType<typeof setTimeout> | undefined;
+let lastPong = 0;
+/** This socket's events are applied on top of a synced copy: each frame's position is ours. */
+let synced = false;
+/** Which socket a sync was for: one that finishes after its socket was replaced does not vouch for the new one. */
+let socketGen = 0;
+/**
+ * Frames that came while a sync was in flight, applied after its answer, in order, so the answer cannot undo them.
+ * Each carries whole objects, so one the answer already covers only sets the same thing again.
+ */
+let held: P.ClientEvent[][] | null = null;
+/** The hub process last synced with; a new one may serve a new build (pwa.ts). */
+let hubBoot: string | null = null;
+/** Waited for before the first sync: the snapshot read, so a cold start resumes from it rather than from nothing. */
+export const beforeSync = { wait: Promise.resolve() as Promise<unknown> };
+
+/** Since when the hub has not answered; null while it does. A start counts as not answering yet. */
+let downSince: number | null = Date.now();
+
+/** `since`: when the hub was last known to answer. Going down again while down keeps the first time. */
+function setConnected(v: boolean, since = Date.now()) {
+  connected.value = v;
+  if (v) {
+    downSince = null;
+    clearTimeout(noticeTimer);
+    noticeTimer = undefined;
+    unreachable.value = false;
+    return;
+  }
+  downSince ??= since;
+  if (!noticeTimer && !unreachable.value) noticeTimer = setTimeout(() => (unreachable.value = true), Math.max(0, NOTICE_AFTER - (Date.now() - downSince)));
+}
 
 /** Pull to refresh: reconnect now if the socket is down, else load everything again. */
 export async function refresh() {
   if (!ws || ws.readyState === WebSocket.CLOSED) {
-    clearTimeout(retry);
-    backoff = 500;
-    connect();
+    reconnectNow();
     return;
   }
   await bootstrap();
 }
 
-async function bootstrap() {
-  const since = openedAt;
-  // As text too: the snapshot keeps the hub's answer as it came, without serializing it again.
-  const res = await fetch('/api/bootstrap');
-  const text = await res.text();
-  if (!res.ok) throw new Error(text.slice(0, 200) || `${res.status}`);
-  applyBootstrap(JSON.parse(text) as P.Bootstrap);
-  freshFromHub();
-  performance.mark('dither:fresh');
-  loadInbox().catch(() => {});
-  // Re-fetch open timelines that may have missed events while the socket was down.
-  for (const [key, t] of [...timelines]) if (!t.fetchedAt || t.fetchedAt < since) refreshTimeline(key);
-  persistSoon(text);
+/** One sync at a time, in order. */
+let chain: Promise<unknown> = Promise.resolve();
+function serial(fn: () => Promise<void>): Promise<void> {
+  const p = chain.then(fn, fn);
+  chain = p.catch(() => {});
+  return p;
+}
+
+const frameSeq = (f: P.ClientEvent[]) => {
+  const last = f[f.length - 1];
+  return last?.t === 'sync' ? last.seq : null;
+};
+
+function applyFrame(f: P.ClientEvent[]) {
+  applyEvents(f);
+  const seq = frameSeq(f);
+  if (seq !== null && synced && db.sync && seq > db.sync.seq) db.sync = { ...db.sync, seq };
+}
+
+function release() {
+  const h = held ?? [];
+  held = null;
+  for (const f of h) applyFrame(f);
+}
+
+function bootstrap() {
+  return serial(async () => {
+    held ??= [];
+    const since = openedAt;
+    const gen = socketGen;
+    try {
+      // As text too: the snapshot keeps the hub's answer as it came, without serializing it again.
+      const res = await fetch('/api/bootstrap');
+      const text = await res.text();
+      if (!res.ok) throw new Error(text.slice(0, 200) || `${res.status}`);
+      const b = JSON.parse(text) as P.Bootstrap & { boot?: string };
+      applyBootstrap(b);
+      synced = !!b.sync && ws?.readyState === WebSocket.OPEN && gen === socketGen;
+      sawHub(b.boot);
+      freshFromHub();
+      performance.mark('dither:fresh');
+      loadInbox().catch(() => {});
+      // Timelines asked for before this socket may have missed anything: their newest pages again.
+      for (const [key, t] of [...timelines]) if (!t.fetchedAt || t.fetchedAt < since) void reload(key);
+      persistSoon(text);
+      flushOutgoing();
+    } catch (e: any) {
+      toast({ kind: 'error', title: 'Could not load', body: String(e.message) });
+    } finally {
+      release();
+    }
+  });
+}
+
+/** Catch up from this copy's position; a full bootstrap where that cannot be done. */
+function resync() {
+  return serial(async () => {
+    held ??= [];
+    const gen = socketGen;
+    // A cold start resumes from the snapshot, once it is read; IndexedDB can be slow, but not this slow.
+    await Promise.race([beforeSync.wait, new Promise((r) => setTimeout(r, 1500))]);
+    const pos = db.sync;
+    if (!loaded.value || !pos || pos.v !== SYNC_VERSION) return void (release(), bootstrap());
+    // Timelines in memory are as current as `db`, or as their kept copy when it has not been caught up yet. One
+    // kept under another epoch loads afresh; those loading now catch up on their own.
+    const mine = [...timelines.values()].filter((t) => !t.loading && (t.fetchedAt || t.from));
+    const tls = mine.filter((t) => !t.from || (t.from.v === pos.v && t.from.epoch === pos.epoch));
+    let r: P.SyncResponse;
+    try {
+      r = await api<P.SyncResponse>('/api/sync', { body: { v: pos.v, epoch: pos.epoch, since: pos.seq, timelines: tls.map((t) => timelineRequest(t, t.from?.seq ?? pos.seq)) } satisfies P.SyncRequest });
+    } catch (e) {
+      release();
+      // No answer: the socket is likely gone too, and the next one tries again. An answer that is an error (a hub
+      // without /api/sync) means starting over.
+      if (e instanceof TypeError) probe();
+      else void bootstrap();
+      return;
+    }
+    if (r.full) {
+      release();
+      void bootstrap();
+      return;
+    }
+    applyTimelines(r);
+    for (const t of tls) t.from = undefined;
+    for (const t of mine) if (!tls.includes(t)) void reload(t.key);
+    applySyncTo(db, { ...r, events: [] });
+    applyEvents(r.events);
+    if (r.inbox) mergeInbox(r.inbox);
+    synced = ws?.readyState === WebSocket.OPEN && gen === socketGen;
+    sawHub(r.boot);
+    freshFromHub();
+    performance.mark('dither:fresh');
+    release();
+    persistSoon();
+    flushOutgoing();
+  });
+}
+
+function sawHub(boot: string | undefined) {
+  if (!boot) return;
+  // A new hub process may have brought a new build: pwa.ts checks.
+  if (hubBoot && boot !== hubBoot) window.dispatchEvent(new Event('dither:reconnected'));
+  hubBoot = boot;
 }
 
 let openedAt = 0;
@@ -735,42 +873,105 @@ function socketOpen(): Promise<void> {
   return (opened ??= new Promise((r) => (markOpen = r)));
 }
 
+/** A promise that settles once the hub has been caught up with (or a few seconds have passed). For usage.ts. */
+export function afterSync(): Promise<void> {
+  const settle = new Promise<void>((r) => setTimeout(r, 4000));
+  return Promise.race([settle, socketOpen().then(() => chain).then(() => {})]);
+}
+
 export function connect() {
+  clearTimeout(retry);
+  if (!connected.value) setConnected(false);
   const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live`;
-  ws = new WebSocket(url);
-  // The socket gets its own connection; this one opens the HTTP connection the bootstrap will use, at the same time.
+  const sock = new WebSocket(url);
+  ws = sock;
+  synced = false;
+  socketGen++;
+  // The socket gets its own connection; this one opens the HTTP connection the sync will use, at the same time.
   fetch('/api/health', { cache: 'no-store' }).catch(() => {});
-  ws.onopen = () => {
-    connected.value = true;
+  sock.onopen = () => {
+    if (ws !== sock) return;
+    setConnected(true);
     backoff = 500;
-    // A reconnect may follow a hub restart, which may have brought a new build: pwa.ts checks.
-    if (openedAt) window.dispatchEvent(new Event('dither:reconnected'));
-    openedAt = Date.now();
+    openedAt = lastPong = Date.now();
     markOpen?.();
     opened = markOpen = null;
-    bootstrap().catch((e) => toast({ kind: 'error', title: 'Could not load', body: String(e.message) }));
+    held ??= [];
+    void resync();
   };
-  ws.onmessage = (e) => {
+  sock.onmessage = (e) => {
+    if (ws !== sock) return;
+    if (e.data === 'pong') {
+      lastPong = Date.now();
+      clearTimeout(pongTimer);
+      return;
+    }
     try {
-      applyEvents(JSON.parse(String(e.data)));
+      const f = JSON.parse(String(e.data)) as P.ClientEvent[];
+      if (held) held.push(f);
+      else applyFrame(f);
     } catch (err) {
       console.error(err);
     }
   };
-  ws.onclose = () => {
-    connected.value = false;
-    retry = setTimeout(connect, (backoff = Math.min(backoff * 2, 15_000)));
+  sock.onclose = () => {
+    if (ws === sock) dropped();
   };
+}
+
+/** The socket is gone, or as good as: forget it now rather than wait for its close to time out. */
+function dropped(since = Date.now()) {
+  const old = ws;
+  ws = null;
+  synced = false;
+  clearTimeout(pongTimer);
+  if (old) {
+    old.onopen = old.onmessage = old.onclose = null;
+    try {
+      old.close();
+    } catch {}
+  }
+  setConnected(false, since);
+  clearTimeout(retry);
+  retry = setTimeout(connect, (backoff = Math.min(backoff * 2, 15_000)));
 }
 
 /** Back on the network or back in front of the user while disconnected: try now rather than at the end of the backoff. */
 function reconnectNow() {
-  if (connected.value || !ws || ws.readyState === WebSocket.CONNECTING) return;
+  if (ws && ws.readyState !== WebSocket.CLOSED) return;
   clearTimeout(retry);
   backoff = 500;
   connect();
 }
+
+/**
+ * Is the socket alive? A phone that slept or switched networks can hold one that looks open and is not: without an
+ * answer within PONG_WAIT it is dropped and a new one opens at once.
+ */
+function probe() {
+  if (!ws || ws.readyState === WebSocket.CLOSED) return reconnectNow();
+  if (ws.readyState !== WebSocket.OPEN) return;
+  const sock = ws;
+  const sent = Date.now();
+  try {
+    sock.send('ping');
+  } catch {
+    return dropped();
+  }
+  clearTimeout(pongTimer);
+  pongTimer = setTimeout(() => {
+    if (ws === sock && lastPong < sent) {
+      dropped(sent);
+      reconnectNow();
+    }
+  }, PONG_WAIT);
+}
+
 if (typeof window !== 'undefined') {
-  window.addEventListener('online', reconnectNow);
-  document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && reconnectNow());
+  const wake = () => document.visibilityState === 'visible' && probe();
+  window.addEventListener('online', wake);
+  window.addEventListener('focus', wake);
+  window.addEventListener('pageshow', wake);
+  document.addEventListener('visibilitychange', wake);
+  setInterval(() => document.visibilityState === 'visible' && probe(), PING_EVERY);
 }

@@ -419,6 +419,21 @@ class MainActivity : Activity() {
         }
     }
 
+    /** What the push settings can send the user to: the distributor, its App info (battery use), or this app's notifications. */
+    fun openForPage(what: String, pkg: String?) {
+        val i = when (what) {
+            "app" -> pkg?.let { packageManager.getLaunchIntentForPackage(it) }
+            "appInfo" -> pkg?.let { Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$it")) }
+            "notifications" -> Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName)
+            else -> null
+        } ?: return
+        try {
+            startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: ActivityNotFoundException) {
+            Log.w(TAG, "cannot open $what for $pkg", e)
+        }
+    }
+
     fun appLabel(pkg: String): String =
         runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString() }.getOrDefault(pkg)
 

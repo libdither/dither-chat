@@ -127,12 +127,15 @@ describe('the table', () => {
   });
 
   test('sort settings: Manual by default for the rail, per scope, and only known values', () => {
-    expect(usage.arrange().sort).toEqual({ rail: 'manual', people: 'recent', groups: 'recent' });
-    usage.patchArrange({ sort: { rail: 'smart', people: 'manual', groups: 'nonsense', other: 'az' } as any });
-    expect(usage.arrange().sort).toEqual({ rail: 'smart', people: 'recent', groups: 'recent' });
+    expect(usage.arrange().sort).toEqual({ rail: 'manual', people: 'recent' });
+    usage.patchArrange({ sort: { rail: 'smart', people: 'manual', other: 'az' } as any });
+    expect(usage.arrange().sort).toEqual({ rail: 'smart', people: 'recent' });
     usage.patchArrange({ dismissed: { cat1: ['space:a', 'space:b'] } });
-    usage.patchArrange({ sort: { groups: 'az' } });
-    expect(usage.arrange()).toEqual({ sort: { rail: 'smart', people: 'recent', groups: 'az' }, dismissed: { cat1: ['space:a', 'space:b'] } });
+    usage.patchArrange({ sort: { people: 'az' } });
+    expect(usage.arrange()).toEqual({ sort: { rail: 'smart', people: 'az' }, dismissed: { cat1: ['space:a', 'space:b'] } });
+    // The Groups list's scope from before it joined the inbox: kept on disk by older hubs, never shown.
+    store.db.query(`UPDATE arrange_setting SET value = ? WHERE key = 'sort'`).run(JSON.stringify({ rail: 'az', people: 'smart', groups: 'smart' }));
+    expect(usage.arrange().sort).toEqual({ rail: 'az', people: 'smart' });
     usage.patchArrange({ dismissed: { cat1: null } });
     expect(usage.arrange().dismissed).toEqual({});
   });

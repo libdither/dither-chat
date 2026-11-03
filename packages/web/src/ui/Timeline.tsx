@@ -663,7 +663,7 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
         {t && !t.loading && msgs.length === 0 && <Empty icon="groups" title="No messages yet" />}
         {items}
         {mine.map((p) => (
-          <div class={`msg pending ${p.failed ? 'failed' : ''}`}>
+          <div class={`msg pending ${p.failed ? 'failed' : ''} ${p.queued ? 'queued' : ''}`}>
             <div class="msg-gutter" />
             <div class="msg-main">
               <div class="msg-body">{p.body}</div>
@@ -672,7 +672,7 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
                   <Icon name="paperclip" size={12} /> {name}
                 </div>
               ))}
-              <span class="pending-note">{p.failed ? `Failed: ${p.failed}` : 'Sending…'}</span>
+              <span class="pending-note">{p.failed ? `Failed: ${p.failed}` : p.queued ? 'Waiting for the hub, sends when it is back' : 'Sending…'}</span>
             </div>
           </div>
         ))}

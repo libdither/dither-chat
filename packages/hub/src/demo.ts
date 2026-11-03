@@ -1,5 +1,5 @@
 /**
- * Demo world: four in-process adapters (two Discord accounts, Signal, Matrix)
+ * Demo world: five in-process adapters (two Discord accounts, Signal, Matrix, WhatsApp)
  * that emit the same facts real adapters do, so the whole pipeline (dedupe,
  * person merging, triage, folders) runs on realistic data.
  *
@@ -15,13 +15,14 @@ import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
 import type { InprocAdapter } from './supervisor.ts';
 
-type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx';
+type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa';
 
 export const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label: string; color: string }[] = [
   { key: 'dmain', id: 'acc_demo-discord-main', network: 'discord', label: 'main', color: '#F2A541' },
   { key: 'dalt', id: 'acc_demo-discord-alt', network: 'discord', label: 'alt', color: '#E86A92' },
   { key: 'sig', id: 'acc_demo-signal', network: 'signal', label: 'personal', color: '#B794F6' },
   { key: 'mx', id: 'acc_demo-matrix', network: 'matrix', label: 'matrix.org', color: '#FF8C61' },
+  { key: 'wa', id: 'acc_demo-whatsapp', network: 'whatsapp', label: 'personal', color: '#7FD1AE' },
 ];
 
 // ------------------------------------------------------------------ id shapes
@@ -72,6 +73,16 @@ const S = {
   quinn: sid('quinn', '+1 555 0190', 'Quinn'),
   lev: sid('lev', '+1 555 0118', 'Lev'),
 };
+const wid = (phone: string, displayName: string, contact = true): P.IdentityFact => ({ nativeId: `${phone}@s.whatsapp.net`, handle: `+${phone}`, displayName, contact });
+const W = {
+  self: wid('15550100', 'zyan', false),
+  alice: wid('15550137', 'Alice Chen'),
+  nana: wid('442071830042', 'Nana'),
+  marco: wid('393471112233', 'Marco'),
+  ines: wid('34611222333', 'Inês'),
+  hoa: wid('15550188', 'Hoa (garden swap)', false),
+};
+const wgroup = (k: string) => `120363${BigInt('0x' + h('w' + k).toString('hex').slice(0, 12)).toString().padStart(12, '0').slice(0, 12)}@g.us`;
 const mid = (user: string, displayName: string, x: Partial<P.IdentityFact> = {}): P.IdentityFact => ({ nativeId: user, handle: user, displayName, ...x });
 const M = {
   self: mid('@zyansheep:matrix.org', 'zyan'),
@@ -221,6 +232,8 @@ const SPACES: DemoSpace[] = [
   { acc: ['mx'], fact: { nativeId: room('nixos', 'nixos.org'), kind: 'community', name: 'NixOS', topic: 'The NixOS community space' } },
   { acc: ['mx'], fact: { nativeId: room('nix-eco', 'nixos.org'), kind: 'community', name: 'Nix Ecosystems', parents: [{ nativeId: room('nixos', 'nixos.org'), position: pos(9) }] } },
   { acc: ['mx'], fact: { nativeId: room('rust-space', 'matrix.org'), kind: 'community', name: 'Rust Community', topic: 'Rust rooms on Matrix' } },
+  // WhatsApp: a community is its parent group; its groups are channels in it.
+  { acc: ['wa'], fact: { nativeId: wgroup('nbh'), kind: 'community', name: 'Maple Street', topic: 'Neighbours on Maple Street' } },
 ];
 
 const dch = (acc: AccKey[], k: string, name: string, section: string, i: number, x: Partial<P.ConversationFact> = {}): P.ConversationFact & { _acc?: AccKey[] } => ({
@@ -546,6 +559,59 @@ const CONVS: DemoConv[] = [
     unread: 1,
   },
 
+  // ---------------- WhatsApp: DMs, a group, and a community with its announcements channel
+  {
+    acc: ['wa'],
+    fact: { nativeId: W.nana.nativeId, shape: 'direct', participants: [W.self.nativeId, W.nana.nativeId], encrypted: true },
+    msgs: [
+      [2 * DAY, W.nana, 'Did you eat today? 🍲'],
+      [2 * DAY - 30, W.self, 'yes nana, promise'],
+      [3 * H, W.nana, 'Here is the recipe you asked for', { att: [img(ART.garden, 'recipe.jpg', 640, 420)] }],
+      [3 * H - 1, W.nana, 'Call me on Sunday ❤️'],
+    ],
+    unread: 2,
+  },
+  {
+    acc: ['wa'],
+    fact: { nativeId: W.marco.nativeId, shape: 'direct', participants: [W.self.nativeId, W.marco.nativeId], encrypted: true },
+    msgs: [
+      [DAY + 40, W.marco, 'ciao! still up for the trip in march?'],
+      [DAY + 35, W.self, '*yes*, booking the train this week'],
+      [DAY + 30, W.marco, '🔥', { react: { '👍': [W.self] } }],
+    ],
+  },
+  {
+    acc: ['wa'],
+    fact: { nativeId: W.alice.nativeId, shape: 'direct', participants: [W.self.nativeId, W.alice.nativeId], encrypted: true },
+    msgs: [[6 * H, W.alice, 'sent you the bouldering video on whatsapp, signal kept compressing it']],
+    unread: 1,
+  },
+  {
+    acc: ['wa'],
+    fact: { nativeId: wgroup('books'), shape: 'group', name: 'Book club 📚', participants: [W.self.nativeId, W.ines.nativeId, W.marco.nativeId, W.alice.nativeId], encrypted: true },
+    msgs: [
+      [3 * DAY, W.ines, 'next pick: The Dispossessed?'],
+      [3 * DAY - 10, W.marco, 'yes!!', { react: { '❤️': [W.ines, W.alice] } }],
+      [40, W.ines, 'reminder we meet thursday, chapters 1-5'],
+    ],
+    unread: 1,
+  },
+  {
+    acc: ['wa'],
+    fact: { nativeId: wgroup('nbh-ann'), shape: 'channel', variant: 'announcement', name: 'Maple Street neighbours', spaces: [{ nativeId: wgroup('nbh'), position: '0' }], encrypted: true },
+    msgs: [[DAY + 300, W.hoa, 'Street party moved to Saturday the 14th because of the rain forecast.']],
+  },
+  {
+    acc: ['wa'],
+    fact: { nativeId: wgroup('nbh-swap'), shape: 'channel', name: 'Garden swap', spaces: [{ nativeId: wgroup('nbh'), position: '1' }], participants: [W.self.nativeId, W.hoa.nativeId, W.nana.nativeId], encrypted: true },
+    msgs: [
+      [DAY + 100, W.hoa, 'Anyone want rhubarb? I have way too much'],
+      [DAY + 90, W.self, 'me! can pick up tomorrow'],
+      [2 * H, W.hoa, 'Left it by the gate 🌿', { reply: 1 }],
+    ],
+    unread: 1,
+  },
+
   // ---------------- Matrix
   {
     acc: ['mx'],
@@ -691,6 +757,7 @@ const CHATTER: [AccKey, string, P.IdentityFact, string][] = [
   ['mx', room('house', 'matrix.org'), M.ben, "I'll be home tomorrow morning for the internet guy"],
   ['dmain', ch('rust-offtopic'), D.owl, 'what is everyone listening to while coding'],
   ['sig', sgroup('family', '', []).nativeId, S.mom, 'Mei is bringing dessert! 🍰'],
+  ['wa', wgroup('books'), W.ines, 'I am only on chapter 3, no spoilers 🙈'],
   ['dalt', ch('hk-routes'), D.shade, 'found an even faster skip, video soon'],
   ['mx', room('nix-dev', 'nixos.org'), M.kai, 'anyone benchmarked the new evaluator on darwin?'],
 ];
@@ -700,6 +767,7 @@ const REPLIES: Record<string, string[]> = {
   [D.alice.nativeId]: ['lol', 'ok ok', 'sending it on signal'],
   [M.alice.nativeId]: ['let me know what you think of section 3'],
   [S.mom.nativeId]: ['Ok sweetie', 'Love you! See you Sunday', '❤️'],
+  [W.nana.nativeId]: ['❤️', 'Good. Eat vegetables too'],
   [S.theo.nativeId]: ["I'll leave it at the gym desk"],
   [D.ravi.nativeId]: ['bet', 'ok see you at 8', 'healer secured'],
   [D.jordan.nativeId]: ['gl on the run!', 'lmk your time'],
@@ -732,7 +800,7 @@ class DemoAdapter implements InprocAdapter {
     private dir: string,
   ) {
     this.network = acc.network;
-    this.self = key === 'dmain' ? D.zyan : key === 'dalt' ? D.zyn : key === 'sig' ? S.self : M.self;
+    this.self = key === 'dmain' ? D.zyan : key === 'dalt' ? D.zyn : key === 'sig' ? S.self : key === 'wa' ? W.self : M.self;
   }
 
   /** The demo plays a Nitro account on Discord, and a room image pack on Matrix, so every path can be tried. */
@@ -763,7 +831,7 @@ class DemoAdapter implements InprocAdapter {
     const caps: P.Capability[] = ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect'];
     emit({ t: 'hello', network: this.network, version: 'demo', capabilities: this.network === 'discord' ? [...caps, 'forward'] : caps });
     emit({ t: 'status', status: 'online', self: { ...this.self, isSelf: true } });
-    const pool = this.network === 'discord' ? D : this.network === 'signal' ? S : M;
+    const pool = this.network === 'discord' ? D : this.network === 'signal' ? S : this.network === 'whatsapp' ? W : M;
     for (const i of Object.values(pool)) if (i !== this.self && !(this.network === 'discord' && (i === D.zyan || i === D.zyn))) emit({ t: 'identity', identity: i });
     if (this.key === 'dmain') emit({ t: 'identity', identity: D.zyn });
     if (this.key === 'dalt') emit({ t: 'identity', identity: D.zyan });
@@ -824,6 +892,7 @@ class DemoAdapter implements InprocAdapter {
   /** The same answers real adapters give, with the Signal rule that nothing exists until the first send. */
   private openDirect(peer: string): P.OpenDirectResult {
     const signal = this.network === 'signal';
+    if (this.network === 'whatsapp') return this.openWhatsApp(peer);
     const pool = Object.values(this.network === 'discord' ? D : signal ? S : M);
     const known = pool.find((i) => i.nativeId === peer || i.handle === peer);
     if (signal && peer.startsWith('+') && !known && peer.endsWith('00')) throw new Error(`${peer} is not on Signal`);
@@ -836,6 +905,19 @@ class DemoAdapter implements InprocAdapter {
     if (!known) this.emit({ t: 'identity', identity: { nativeId, handle: peer } });
     this.emit({ t: 'conversation', conversation: { nativeId: conversation, shape: 'direct', participants: [this.self.nativeId, nativeId], ...(signal ? { encrypted: true } : {}) } });
     return { conversation, existed, ...(signal ? { startsAtFirstSend: true } : {}) };
+  }
+
+  /** WhatsApp: a phone number or JID is the chat; nothing exists until the first send. */
+  private openWhatsApp(peer: string): P.OpenDirectResult {
+    const jid = peer.includes('@') ? peer : `${peer.replace(/\D/g, '')}@s.whatsapp.net`;
+    if (jid.startsWith('1555000')) throw new Error(`${peer} is not on WhatsApp`);
+    const existed = CONVS.some((c) => c.acc.includes(this.key) && c.fact.nativeId === jid) || this.opened.has(jid);
+    if (!existed) {
+      this.opened.set(jid, jid);
+      if (!Object.values(W).some((i) => i.nativeId === jid)) this.emit({ t: 'identity', identity: { nativeId: jid, handle: `+${jid.split('@')[0]}` } });
+      this.emit({ t: 'conversation', conversation: { nativeId: jid, shape: 'direct', participants: [this.self.nativeId, jid], encrypted: true } });
+    }
+    return { conversation: jid, existed, startsAtFirstSend: !existed };
   }
 
   /** A live message from someone else. */
@@ -974,7 +1056,7 @@ export function applyDemoOverlay(store: Store) {
     store.updatePerson(first, { name, starred });
     return first;
   };
-  const alice = merge('Alice Chen', true, ['signal', S.alice], ['discord', D.alice], ['matrix', M.alice]);
+  const alice = merge('Alice Chen', true, ['signal', S.alice], ['discord', D.alice], ['matrix', M.alice], ['whatsapp', W.alice]);
   const sam = merge('Sam Rivera', false, ['signal', S.sam], ['matrix', M.sam]);
   merge('Theo', false, ['signal', S.theo], ['discord', D.theo]);
   merge('Quinn', false, ['discord', D.quinn], ['signal', S.quinn]);

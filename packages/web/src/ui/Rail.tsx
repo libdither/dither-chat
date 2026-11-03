@@ -1,6 +1,6 @@
 import type * as P from '@dither-chat/protocol';
 import { Fragment } from 'preact';
-import { convTitle, directsOf, folderConvs, inboxSections, people, placePref, railEntries, spaceUnread, sumUnread, groupsLists, netName, unreadOf, visibleConv, type RailEntry } from '../model.ts';
+import { accountsNeedingYou, convTitle, directsOf, folderConvs, people, pingedCount, placePref, railEntries, spaceUnread, sumUnread, netName, unreadOf, visibleConv, type RailEntry } from '../model.ts';
 import { db, go, markAllRead, patchPlaces, rev, route, type Route } from '../state.ts';
 import { AccountDots, Avatar, Count, NetBadge } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
@@ -11,6 +11,7 @@ import { accountsMenu } from './menus.tsx';
 import { useEffect, useRef } from 'preact/hooks';
 import { arrangeDrop, arrangedFolderItems, arrangedRail, snapshot, sortOf, SORT_LABELS } from '../arrange.ts';
 import { OrganizeView, SortIcon, sortEntries, startOrganize, useFlip } from './Reorganize.tsx';
+import { startInbox } from '../inbox.ts';
 import { openMenu } from './ContextMenu.tsx';
 
 function RailItem({ active, unread, badge, title, onClick, children, dnd, menu, class: cls }: { active: boolean; unread?: boolean; badge?: number; title: string; onClick: () => void; children: any; dnd?: Record<string, unknown>; menu?: () => MenuSpec | null; class?: string }) {
@@ -108,7 +109,7 @@ function RailConv({ conv: c, route: r, folder }: { conv: P.ConversationView; rou
       unread={u.unread > 0}
       badge={u.badge}
       title={`${convTitle(c)} · ${netName(c.network)}`}
-      onClick={() => go(folder ? { view: 'folder', folder, conv: c.id } : { view: 'groups', conv: c.id })}
+      onClick={() => go(folder ? { view: 'folder', folder, conv: c.id } : { view: 'inbox', conv: c.id })}
       dnd={dnd(key, folder, !folder)}
       class={dropClass(key, folder)}
     >
@@ -180,15 +181,15 @@ function inboxMenu(): MenuSpec {
 export function Rail() {
   rev.value;
   const r = route.value;
-  const inb = inboxSections();
-  const priorityCount = inb.priority.length + inb.attention.length;
+  const priorityCount = pingedCount() + accountsNeedingYou().length;
   const peopleBadge = sumUnread(people().flatMap((p) => p.directs)).badge;
-  const g = groupsLists();
-  const groupsBadge = sumUnread([...g.groups, ...g.rooms]).badge;
   const attention = [...db.accounts.values()].some((a) => a.attention);
   const is = (pred: (r: Route) => boolean) => pred(r);
   const scroll = useRef<HTMLDivElement>(null);
-  useEffect(startOrganize, []);
+  useEffect(() => {
+    startOrganize();
+    startInbox();
+  }, []);
   useFlip(scroll, snapshot.value.v);
 
   return (
@@ -200,9 +201,6 @@ export function Rail() {
       </RailItem>
       <RailItem active={is((r) => r.view === 'people')} title="People: every DM, merged per person" badge={peopleBadge} onClick={() => go({ view: 'people' })}>
         <Icon name="users" size={22} />
-      </RailItem>
-      <RailItem active={is((r) => r.view === 'groups')} title="Groups: group chats and rooms outside a community" badge={groupsBadge} onClick={() => go({ view: 'groups' })}>
-        <Icon name="groups" size={22} />
       </RailItem>
       <div class="rail-sep" />
       <div class="rail-scroll" ref={scroll}>

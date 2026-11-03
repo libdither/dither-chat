@@ -54,9 +54,10 @@ Per scope, shared by your devices (`arrange_setting` table):
 |---|---|---|
 | Rail (and the phone's Spaces list, the same arrangement; folder contents too) | Manual, Smart, Recent activity, A–Z | **Manual**: today's order, unchanged for existing users |
 | People list | Recent, Smart, A–Z | Recent (today's) |
-| Groups lists | Recent, Smart, A–Z | Recent (today's) |
 
-People and groups have no manual order to keep, so "Manual" there is not offered.
+People have no manual order to keep, so "Manual" there is not offered. Group chats used to have a list and a
+scope of their own; they are in the inbox now, which has one order, by how much each conversation needs you
+([inbox.md](inbox.md)). A `groups` scope an older hub stored is ignored.
 
 In every mode **pinned places stay first, in your manual order** (starred people in the People list).
 A **folder sorts as one unit by its best member** (highest score, latest message), and its contents sort
@@ -110,8 +111,10 @@ one. They retry every 1.5 s until that ends (`shouldResort` in `ordering.ts` is 
 
 Between snapshots, places keep their snapshot position; a new place goes after them; a removed one
 just goes (`stabilize`). Moves animate: each row slides from its old position (`useFlip`, Web
-Animations, skipped with reduced motion). Smart order in the People and Groups lists is snapshotted the
-same way; Recent there stays live, as in any chat app, and A–Z only changes on a rename.
+Animations, skipped with reduced motion). Smart order in the People list is snapshotted the same way;
+Recent there stays live, as in any chat app, and A–Z only changes on a rename. The inbox uses the same rule
+with one more reason to take a new order, `activity`: any change in its ranking, still waiting for nothing
+to be in use ([inbox.md](inbox.md)).
 
 ### Freezing
 
@@ -145,7 +148,7 @@ section at the end, each with its network, folder, categories, and usage ("1 h 2
 | `GET /api/usage` | `{ now, halfLife, places: UsageView[], arrange }` |
 | `POST /api/usage` | `{ batch, deltas: [{ kind, id, seconds, visits, at, lastVisit }] }` → `{ applied }` |
 | `DELETE /api/usage` | everything, or `{ kind, id }` |
-| `PATCH /api/arrange` | `{ sort?: { rail?, people?, groups? }, dismissed?: { [categoryId]: string[] \| null } }` |
+| `PATCH /api/arrange` | `{ sort?: { rail?, people? }, dismissed?: { [categoryId]: string[] \| null } }` |
 
 Tables `place_usage`, `usage_batch`, `arrange_setting` are created by `schema.sql` like every other
 table, so an existing hub gets them on start with nothing to migrate.

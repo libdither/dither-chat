@@ -1,6 +1,6 @@
 import type * as P from '@dither-chat/protocol';
 import { ago } from '../format.ts';
-import { authorName, communitiesOf, convLabel, convTitle, inboxSections, placeConv, resolveTokens, rootCommunity, unreadOf, visibleConv } from '../model.ts';
+import { accountsNeedingYou, authorName, communitiesOf, convLabel, convTitle, placeConv, resolveTokens, rootCommunity, unreadOf, visibleConv } from '../model.ts';
 import { db, feedback, go, inbox, markAllRead, rev } from '../state.ts';
 import { Avatar, Count, SourceChip } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -100,7 +100,7 @@ export function InboxBoard() {
     g.places.add(convLabel(c));
     for (const r of m.triage?.reasons ?? []) g.reasons.add(r.replace(/^(Digest only|Mentions only|Smart): ?/, (x) => x));
   }
-  const s = inboxSections();
+  const s = { attention: accountsNeedingYou() };
   const digestGroups = [...groups.values()].sort((a, b) => b.messages[0].ts - a.messages[0].ts);
   return (
     <section class="pane board">

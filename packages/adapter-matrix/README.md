@@ -37,7 +37,7 @@ or by editing `secret.json` (re-read every 15 s while waiting). The device id is
 
 Actions: `resync` (drop the since token, full initial sync, everything re-sent as backfill),
 `relogin {password}`, `status`, and for encryption `setupEncryption {recoveryKey?}`, `encryptionStatus`,
-`addRecoveryKey {recoveryKey}`, `verifyDevice {step: start|accept|confirm|mismatch|cancel}`.
+`addRecoveryKey {recoveryKey}`, `verifyDevice {step: start|accept|sas|confirm|mismatch|cancel|dismiss}`.
 
 ## How Matrix maps onto the ontology
 
@@ -112,9 +112,27 @@ huge and most of it would never be read. So everything the hub has stored, and e
 Room keys this device receives are uploaded to the same backup.
 
 **Verification.** With a Secret Storage key, the adapter imports the cross-signing keys and signs its own device,
-so it shows verified everywhere. Otherwise, emoji verification (SAS) with another of your devices, started from
-either side, shows through the account's attention card without taking the account offline. After it, the other device
-sends over the backup key and cross-signing keys if it has them.
+so it shows verified everywhere. This is the route the account page offers first: it needs no second app. A key that
+does not work says why: a typo (checksum), a key or phrase that does not unlock secret storage, an account without
+secret storage or backup, cross-signing keys that no longer match the account.
+
+Otherwise, emoji verification (SAS) with another of your devices, started from either side, shows through the account's
+attention card without taking the account offline, with the other device's name and the time left. After it, the other
+device sends over the backup key and cross-signing keys if it has them. The library's limits shape it: a request lives
+10 minutes; the emoji step 5 minutes, and it is cancelled when nothing arrives from the other device for 60 s, a check
+that runs at each sync before that sync's messages are read. So:
+
+- Messages the library hands back rather than queues (request, ready, start, accept, MAC, cancel) go through an outbox
+  that retries them in order until they go out or their flow is over; queued crypto requests that fail are retried on a
+  timer, not at the next sync. Both retry at once when a sync gets through.
+- While a flow runs, /sync long-polls for 5 s and gives up on a silent connection after 20 s (instead of 30 s and 60 s),
+  and a failed sync is retried within 2 s.
+- When the other device asked, the adapter waits for it to start the emoji step rather than starting it itself a few
+  seconds later: that would start the 60 s clock while the other app may be in the background. "Show emoji" starts it.
+- A second request while one is open makes the library cancel both. A newer request from your devices (an app killed in
+  the background and asking again) cancels the older one first, so the newer one goes ahead.
+- A flow that ends without verifying stays on the card with the reason and "Start again" until dismissed.
+- The flow lives in the adapter process: restarting the adapter mid-flow ends it.
 
 Not done:
 
@@ -126,7 +144,12 @@ Not done:
 
 Verified: `bun test`, and `test/integration.ts` against continuwuity with two other clients built on the same library,
 both directions, in full: text, replies, edits, reactions, threads, late keys, media, restart, backup, Secret Storage, SAS.
-`scripts/verify-e2ee.ts` runs setup, composer, image and search through the real hub and PWA in headless Chromium.
+`scripts/verify-e2ee.ts` runs setup, composer, image and search through the real hub and PWA in headless Chromium, then
+the recovery key (a typo, then the key: verified, backup, an old message decrypted) and emoji verification through a
+page reload and 15 s without the homeserver, a repeated request, a timeout and "Start again".
+`test/verify-resilience.ts` runs emoji verification behind a proxy that drops or stalls the adapter's homeserver
+connection: sends that fail, a silent connection while comparing, a refused connection, a repeated request, the other
+app in the background for 75 s, a timeout.
 Once by hand, not in the repository: matrix-nio 0.26 (Python, its own attachment crypto, vodozemac for Olm) exchanged text, an edit, a reaction
 and files both ways with the adapter through a real hub. **Never run:** Element, or matrix.org or any other real homeserver. continuwuity
 lacked nothing this needs. A room key request answered by another device was not exercised.
@@ -180,6 +203,7 @@ bun packages/adapter-matrix/testbed/testbed.ts status     # prints the matching 
 ```sh
 bun test packages/adapter-matrix                      # format, crypto store, recovery keys, never-plaintext
 bun packages/adapter-matrix/test/integration.ts       # needs the testbed: real adapter + fake hub, every command, encryption
+bun packages/adapter-matrix/test/verify-resilience.ts # needs the testbed: verification over a connection that drops
 bun scripts/verify-e2ee.ts                            # needs the testbed: encryption through a real hub and the PWA in Chromium
 bunx tsc -p packages/adapter-matrix --noEmit
 ```

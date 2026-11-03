@@ -31,6 +31,8 @@ export interface CachedTimeline {
   key: string;
   messages: P.MessageView[];
   conversationIds?: string[];
+  /** The journal position these messages are current to: opening it again asks only for what changed since (docs/sync.md). */
+  sync?: P.SyncPosition;
 }
 
 /** Everything but the bootstrap. */
@@ -53,13 +55,13 @@ export interface Snapshot {
 
 // ------------------------------------------------------------------ building (pure, tested)
 
-export function buildRest(input: { inbox: P.MessageView[]; timelines: Timeline[]; identities: Map<string, P.IdentityView>; quoted: Map<string, P.MessageView> }): string {
+export function buildRest(input: { inbox: P.MessageView[]; timelines: (Timeline & { sync?: P.SyncPosition })[]; identities: Map<string, P.IdentityView>; quoted: Map<string, P.MessageView> }): string {
   const out: SnapshotRest = { inbox: input.inbox.slice(0, MAX_INBOX), timelines: [], identities: [], quoted: [] };
   let size = JSON.stringify(out.inbox).length;
   for (const t of input.timelines.slice(0, MAX_TIMELINES)) {
     // A window around an old message is not the end anyone reopens at.
     if (t.detached || !t.messages.length) continue;
-    const c: CachedTimeline = { key: t.key, messages: t.messages.slice(-MAX_MESSAGES), conversationIds: t.conversationIds };
+    const c: CachedTimeline = { key: t.key, messages: t.messages.slice(-MAX_MESSAGES), conversationIds: t.conversationIds, ...(t.sync ? { sync: t.sync } : {}) };
     const n = JSON.stringify(c).length;
     if (size + n > MAX_REST_CHARS) break;
     size += n;
@@ -102,7 +104,9 @@ export function currentBootstrap(): P.Bootstrap {
     categoryProvider: db.categoryProvider,
     rules: db.rules,
     reactionUsage: db.reactionUsage,
+    attention: [...db.attention.values()],
     now: Date.now(),
+    ...(db.sync ? { sync: db.sync } : {}),
   };
 }
 
@@ -227,7 +231,15 @@ export async function persistNow() {
     savedRev = rev.value;
     text = JSON.stringify(currentBootstrap());
   }
-  const live = recent.map((k) => timelines.get(k) ?? (cached.has(k) ? ({ ...cached.get(k)!, hasMore: true, loading: false } as Timeline) : undefined)).filter((t): t is Timeline => !!t);
+  // What a timeline is current to: a kept copy not yet caught up, its own position; one loaded here, the client's.
+  const live = recent
+    .map((k) => {
+      const t = timelines.get(k);
+      if (t) return { ...t, sync: t.from ?? (t.fetchedAt && !t.loading ? (db.sync ?? undefined) : undefined) };
+      const c = cached.get(k);
+      return c ? { ...c, hasMore: true, loading: false } : undefined;
+    })
+    .filter((t): t is Timeline & { sync?: P.SyncPosition } => !!t);
   const rest = buildRest({ inbox: inbox.value, timelines: live, identities: db.identities, quoted });
   if (text === null) return void (await patchRest(rest));
   if (text.length > MAX_BOOTSTRAP_CHARS) {

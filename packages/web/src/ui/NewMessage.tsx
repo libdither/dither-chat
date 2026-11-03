@@ -1,6 +1,6 @@
 /** Start a direct conversation: with someone known, or an address typed in. */
 import type * as P from '@dither-chat/protocol';
-import { directTarget, guessDirectNetwork } from '@dither-chat/protocol';
+import { directTarget, guessDirectNetwork, guessDirectNetworks } from '@dither-chat/protocol';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { directNote, openers } from '../direct.ts';
 import { directsOf, identityName, netName } from '../model.ts';
@@ -56,7 +56,8 @@ function NewMessageBox({ identityId }: { identityId?: string }) {
   const needle = q.trim();
   const accounts = [...db.accounts.values()];
   const canStart = (n: P.Network) => openers(accounts, n).length > 0;
-  const typed = guessDirectNetwork(needle);
+  // A phone number fits Signal and WhatsApp: offer the one an account here can start.
+  const typed = guessDirectNetworks(needle).find(canStart) ?? guessDirectNetwork(needle);
   const rows = knownPeople()
     .filter((r) => r.identities.some((i) => canStart(i.network)))
     .map((r) => ({ r, s: fuzzyScore(`${r.name} ${r.identities.map((i) => i.handle ?? '').join(' ')}`, needle) }))
@@ -161,7 +162,7 @@ function NewMessageBox({ identityId }: { identityId?: string }) {
                     ))}
                   </div>
                 ))}
-                {!typed && !rows.length && <p class="set-help">Nobody by that name. On Matrix, type their ID. On Signal, their phone number with its country code. On Discord, they have to be someone your account has seen.</p>}
+                {!typed && !rows.length && <p class="set-help">Nobody by that name. On Matrix, type their ID. On Signal or WhatsApp, their phone number with its country code. On Discord, they have to be someone your account has seen.</p>}
               </div>
             </>
           )}

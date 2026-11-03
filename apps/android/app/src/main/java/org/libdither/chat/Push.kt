@@ -1,6 +1,7 @@
 package org.libdither.chat
 
 import android.content.Context
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -58,11 +59,15 @@ object Push {
         val old = p.getString("push.endpoint", null)
         Thread {
             val sub = JSONObject().put("endpoint", e.url).put("keys", JSONObject().put("p256dh", keys.pubKey).put("auth", keys.auth))
-            val (code, text) = runCatching { Hub.request(c, "POST", "/api/push/subscribe", JSONObject().put("subscription", sub).put("label", "Android app")) }
+            val (code, text) = runCatching { Hub.request(c, "POST", "/api/push/subscribe", JSONObject().put("subscription", sub).put("label", "Android app, ${Build.MODEL}")) }
                 .getOrElse { 0 to (it.message ?: "network error") }
             if (code !in 200..299) {
                 Log.w(TAG, "the hub refused the endpoint: $code")
-                return@Thread toPage(error("The hub did not take this device's endpoint: ${Hub.errorOf(text)}"))
+                // The hub names the push server it does not send to yet; the page offers to allow it.
+                val refusal = runCatching { JSONObject(text) }.getOrNull()
+                val o = error("The hub did not take this device's endpoint: ${Hub.errorOf(text)}")
+                refusal?.optString("server")?.takeIf { it.isNotEmpty() }?.let { o.put("server", it).put("http", refusal.optBoolean("http")) }
+                return@Thread toPage(o)
             }
             p.edit().putString("push.endpoint", e.url).putString("push.p256dh", keys.pubKey).putString("push.auth", keys.auth).apply()
             if (old != null && old != e.url) runCatching { Hub.request(c, "POST", "/api/push/unsubscribe", JSONObject().put("endpoint", old)) }
@@ -76,7 +81,10 @@ object Push {
             FailedReason.ACTION_REQUIRED -> "The distributor needs something from you first: open it."
             FailedReason.VAPID_REQUIRED -> "The distributor wants a VAPID key, and the hub sent none."
             else -> "The distributor refused ($reason)."
-        }))
+        }).also { o ->
+            val pkg = UnifiedPush.getAckDistributor(c) ?: UnifiedPush.getSavedDistributor(c)
+            if (reason == FailedReason.ACTION_REQUIRED && pkg != null) o.put("action", "open").put("pkg", pkg)
+        })
     }
 
     fun onUnregistered(c: Context) {
@@ -96,6 +104,12 @@ class PushReceiver : PushService() {
         }
         val d = runCatching { JSONObject(String(message.content)) }.getOrNull() ?: return
         Notifications.show(this, d)
+        // A test asks to be confirmed, so Settings can tell "ntfy took it" from "it reached the phone".
+        val device = d.optString("device")
+        if (d.optBoolean("test") && device.isNotEmpty()) {
+            val app = applicationContext
+            Thread { runCatching { Hub.request(app, "POST", "/api/push/arrived", JSONObject().put("id", device)) } }.start()
+        }
     }
 
     override fun onRegistrationFailed(reason: FailedReason, instance: String) = Push.onFailed(this, reason)

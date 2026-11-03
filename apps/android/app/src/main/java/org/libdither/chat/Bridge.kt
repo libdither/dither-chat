@@ -1,6 +1,8 @@
 package org.libdither.chat
 
+import android.app.NotificationManager
 import android.net.Uri
+import android.os.PowerManager
 import android.webkit.WebView
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.WebMessageCompat
@@ -43,6 +45,7 @@ class Bridge(private val activity: MainActivity, private val origin: Uri) : WebV
             "push.status" -> send(Push.status(activity))
             "theme" -> activity.onTheme(m.optString("bg"))
             "hub.change" -> activity.changeHub()
+            "open" -> activity.openForPage(m.optString("what"), m.optString("pkg").ifEmpty { null })
         }
     }
 
@@ -51,10 +54,21 @@ class Bridge(private val activity: MainActivity, private val origin: Uri) : WebV
         if (proxy != null) send(info())
     }
 
-    private fun info() = JSONObject()
-        .put("t", "info")
-        .put("version", activity.packageManager.getPackageInfo(activity.packageName, 0).versionName)
-        .put("distributors", JSONArray(UnifiedPush.getDistributors(activity)))
+    /** Version, the UnifiedPush distributors and whether Android lets them run in the background, and what can be opened. */
+    private fun info(): JSONObject {
+        val power = activity.getSystemService(PowerManager::class.java)
+        val distributors = JSONArray()
+        for (pkg in UnifiedPush.getDistributors(activity)) {
+            distributors.put(JSONObject().put("pkg", pkg).put("label", activity.appLabel(pkg)).put("batteryOk", power.isIgnoringBatteryOptimizations(pkg)))
+        }
+        return JSONObject()
+            .put("t", "info")
+            .put("version", activity.packageManager.getPackageInfo(activity.packageName, 0).versionName)
+            .put("distributors", distributors)
+            .put("current", UnifiedPush.getAckDistributor(activity) ?: UnifiedPush.getSavedDistributor(activity) ?: JSONObject.NULL)
+            .put("notifications", activity.getSystemService(NotificationManager::class.java).areNotificationsEnabled())
+            .put("opens", JSONArray(listOf("app", "appInfo", "notifications")))
+    }
 
     /** To the page, or held until it says hello. */
     fun send(o: JSONObject) {

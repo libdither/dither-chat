@@ -39,15 +39,15 @@ export interface UsageDelta {
 }
 
 export type SortMode = 'manual' | 'smart' | 'recent' | 'az';
-/** The rail (and the phone's Spaces list, which is the same arrangement), and two sidebar lists. */
-export type SortScope = 'rail' | 'people' | 'groups';
+/** The rail (and the phone's Spaces list, which is the same arrangement), and the People list. The inbox has its own order (docs/inbox.md). */
+export type SortScope = 'rail' | 'people';
 
 export interface ArrangeSettings {
   sort: Record<SortScope, SortMode>;
   /** Folder suggestions you dismissed: category id -> the places it suggested then. New places bring it back. */
   dismissed: Record<string, string[]>;
 }
-export const DEFAULT_ARRANGE: ArrangeSettings = { sort: { rail: 'manual', people: 'recent', groups: 'recent' }, dismissed: {} };
+export const DEFAULT_ARRANGE: ArrangeSettings = { sort: { rail: 'manual', people: 'recent' }, dismissed: {} };
 
 export interface UsageState {
   now: number;

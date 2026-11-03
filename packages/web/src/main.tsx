@@ -5,7 +5,7 @@ import { reportContent, reportFresh, startAndroid } from './android.ts';
 import { trackViewport } from './phone.ts';
 import { registerServiceWorker } from './pwa.ts';
 import { dropSnapshot, readSnapshot, restore } from './snapshot.ts';
-import { applyBootstrap, applyEvents, connect, loaded } from './state.ts';
+import { applyBootstrap, applyEvents, beforeSync, connect, loaded } from './state.ts';
 import './styles.css';
 
 const scriptAt = performance.now();
@@ -22,6 +22,8 @@ const restored = readSnapshot()
     if (s && restore(s, applyBootstrap, (ids) => applyEvents(ids.map((identity) => ({ t: 'identity', identity }))))) source = 'snapshot';
   })
   .catch((e) => console.warn('snapshot not restored', e));
+// The socket may open first: the sync waits for the snapshot, to resume from its position (docs/sync.md).
+beforeSync.wait = restored;
 // Painting the loading screen first would only flash it: the snapshot is a few tens of milliseconds away.
 await Promise.race([restored, new Promise((r) => setTimeout(r, 400))]);
 

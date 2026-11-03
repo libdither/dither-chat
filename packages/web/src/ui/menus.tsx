@@ -249,7 +249,20 @@ const ruleOf = (scope: P.NotifyScope, id: string) => db.rules.find((r) => r.scop
 
 // ------------------------------------------------------------------ conversations
 
-export function conversationMenu(c: P.ConversationView): MenuSpec {
+/** Why a conversation sits where it does in the inbox: not an action, so the keys pass over it. */
+function WhyHere({ reasons }: { reasons: string[] }) {
+  return (
+    <div class="cm-why">
+      <span class="cm-why-head">Why it's here</span>
+      {reasons.map((r) => (
+        <span class="cm-why-line">{r}</span>
+      ))}
+    </div>
+  );
+}
+
+/** `why`: the inbox's reasons for where this row sits (docs/inbox.md), shown first. */
+export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpec {
   const eff = effectiveLevel(c);
   const own = ruleOf('conversation', c.id);
   const muted = own === 'none';
@@ -263,6 +276,7 @@ export function conversationMenu(c: P.ConversationView): MenuSpec {
     label: `${convTitle(c)} actions`,
     head: <div class="cm-sheet-title">{convTitle(c)}</div>,
     items: groups(
+      why?.length ? [{ kind: 'row', render: () => <WhyHere reasons={why} /> }] : [],
       [{ label: 'Mark As Read', icon: 'check', disabled: !unreadOf(c).unread, run: () => markRead(c.id) }],
       [
         person && { label: 'Profile', icon: 'user', run: () => go({ view: 'profile', person: person.id }) },

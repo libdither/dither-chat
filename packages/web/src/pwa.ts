@@ -23,10 +23,10 @@ export function applyUpdate() {
   registration?.waiting?.postMessage('skipWaiting');
 }
 
-/** Reloading now would lose something: a half-typed message or note, or a call. */
+/** Reloading now would lose something: a half-typed message, note or key, a call, or a device verification on screen. */
 function busy(): boolean {
-  if (document.querySelector('[data-call-phase]')) return true;
-  return [...document.querySelectorAll<HTMLTextAreaElement | HTMLInputElement>('textarea, input[type=text], input:not([type])')].some((el) => el.value.trim() !== '' && !el.readOnly);
+  if (document.querySelector('[data-call-phase], .verify-device')) return true;
+  return [...document.querySelectorAll<HTMLTextAreaElement | HTMLInputElement>('textarea, input[type=text], input[type=password], input[type=search], input:not([type])')].some((el) => el.value.trim() !== '' && !el.readOnly);
 }
 
 function watch(reg: ServiceWorkerRegistration) {
@@ -63,14 +63,19 @@ export function registerServiceWorker() {
     .then((reg) => {
       registration = reg;
       watch(reg);
-      const check = () => {
-        if (navigator.onLine) reg.update().catch(() => {});
+      // Each check downloads sw.js. A deploy restarts the hub, which the sync notices (dither:reconnected): coming
+      // back to the app only checks when the last check is a while ago.
+      let last = 0;
+      const check = (force: boolean) => {
+        if (!navigator.onLine || (!force && Date.now() - last < 10 * 60_000)) return;
+        last = Date.now();
+        reg.update().catch(() => {});
       };
-      document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && check());
-      window.addEventListener('dither:reconnected', check);
-      setInterval(check, 3_600_000);
+      document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && check(false));
+      window.addEventListener('dither:reconnected', () => check(true));
+      setInterval(() => check(true), 3_600_000);
       // Off the startup path: the first paint should not share the link with sw.js.
-      setTimeout(check, 3000);
+      setTimeout(() => check(true), 3000);
     })
     .catch((e) => console.warn('service worker registration failed', e));
 }

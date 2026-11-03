@@ -18,6 +18,7 @@ import type {
   TriageDecision,
   Variant,
 } from './ontology.ts';
+import type { ArrangeSettings, UsageKind, UsageView } from './usage.ts';
 
 export interface AccountView {
   id: string;
@@ -349,11 +350,56 @@ export interface MessageContext extends MessagePage {
 export interface PushDeviceView {
   id: string;
   label: string;
-  /** Which relay carries it: Google, Apple, Mozilla, Microsoft. */
+  /** Which relay carries it: Google, Apple, Mozilla, Microsoft, or a UnifiedPush server's host name. */
   relay: string;
+  /** The UnifiedPush server's origin (ntfy), or null for a browser vendor's relay. */
+  server: string | null;
   createdAt: number;
+  /** The push server last took a push for it. */
   lastOkAt: number | null;
   lastError: string | null;
+  lastErrorAt: number | null;
+  lastTestAt: number | null;
+  /** The device itself said a test push arrived (its service worker, or the Android app). */
+  lastArrivedAt: number | null;
+}
+
+/** A UnifiedPush server the hub may send to, besides the browser vendors' relays (which are always allowed). */
+export interface PushServerView {
+  origin: string;
+  /** default: allowed until turned off (ntfy.sh); environment: DITHER_PUSH_RELAYS; approved: allowed from the app. */
+  source: 'default' | 'environment' | 'approved';
+  /** Allowed although it is on a private address, such as a tailnet ntfy. */
+  private: boolean;
+  addedAt: number | null;
+  /** A default the owner turned off. */
+  off: boolean;
+  devices: number;
+}
+
+/** Devices that tried to register through a server the hub does not send to yet, waiting for the owner to allow it. */
+export interface PushPendingView {
+  origin: string;
+  labels: string[];
+  at: number;
+  /** Plain http: only allowed by typing it out. */
+  http: boolean;
+}
+
+/** The older plain-text ntfy topic, DITHER_NTFY_URL. */
+export interface PushTopicView {
+  server: string;
+  lastOkAt: number | null;
+  lastError: string | null;
+}
+
+/** GET /api/push */
+export interface PushInfo {
+  publicKey: string;
+  devices: PushDeviceView[];
+  servers: PushServerView[];
+  pending: PushPendingView[];
+  topic: PushTopicView | null;
 }
 
 /** A daily window with no pushes. Times are in `timezone`, the zone of the device that set them. */
@@ -398,7 +444,30 @@ export interface Bootstrap {
   categoryProvider: string;
   rules: RuleView[];
   reactionUsage: ReactionUsage[];
+  /** The inbox's ranking (docs/inbox.md). Absent from hubs that predate it. */
+  attention?: AttentionView[];
   now: number;
+  /** Where in the hub's change journal this bootstrap stands, so the next reconnect asks only for what changed since (docs/sync.md). */
+  sync?: SyncPosition;
+}
+
+/**
+ * How much a conversation needs you, from its metadata only (docs/inbox.md). The hub sends one for every
+ * conversation the inbox lists: direct, group, notes to self, rooms outside a space, and anything else while it
+ * has an unread mention or pinged you.
+ */
+export interface AttentionView {
+  id: string;
+  /** Higher needs you more. Roughly 0..100; muted places sit below 0. */
+  score: number;
+  /** Above the inbox's "caught up" line. */
+  needs: boolean;
+  /** Why, most important first, as sentences. */
+  reasons: string[];
+  /** The first message addressed to you that you have not answered, if any. */
+  owedSince: number | null;
+  /** When the hub computed it. */
+  at: number;
 }
 
 export interface MessagePage {
@@ -436,6 +505,79 @@ export type ClientEvent =
   | { t: 'placePrefs'; prefs: PlacePrefView[] }
   | { t: 'categories'; categories: CategoryView[]; placeCategories: PlaceCategoryView[] }
   | { t: 'rules'; rules: RuleView[] }
+  /** New or changed inbox scores, and conversations the inbox no longer lists. `replace`: these are all of them. */
+  | { t: 'attention'; items: AttentionView[]; removed: string[]; replace?: true }
   /** Mark-all-read still telling the networks: how many reads are left, how many were given up on. */
   | { t: 'readProgress'; pending: number; failed: number }
+  /** Time spent in places changed (usage.ts, docs/organize.md). `replace`: these are all of them. */
+  | { t: 'usage'; places: UsageView[]; removed: { kind: UsageKind; id: string }[]; replace?: true }
+  | { t: 'arrange'; arrange: ArrangeSettings }
+  /** Ends a frame whose changes went into the journal: a client holding everything up to here can resume from `seq`. */
+  | { t: 'sync'; seq: number }
   | { t: 'resync' };
+
+// ------------------------------------------------------------------ delta sync (docs/sync.md)
+
+/** Bumped when a journal from an older hub cannot be read the same way: a client from another version starts over. */
+export const SYNC_VERSION = 1;
+
+/** A place in the hub's change journal. `epoch` changes when the journal starts over, which makes every older position void. */
+export interface SyncPosition {
+  v: number;
+  epoch: string;
+  seq: number;
+}
+
+export interface SyncTimelineRequest {
+  /** `c:<conversation>` or `p:<person>`, as the client keys its timelines. */
+  key: string;
+  /** The journal position this copy of the timeline is current to. */
+  seq: number;
+  /** The newest and oldest message held. */
+  newest: number;
+  oldest: number;
+  /** False for a window around an old message: only changes inside it, nothing newer. */
+  newer?: boolean;
+  /** A person timeline: the conversations it merged. Another set now (people merged or split) means a fresh page. */
+  conversationIds?: string[];
+}
+
+export interface SyncRequest {
+  v: number;
+  epoch: string;
+  /** Everything but messages, changed after this. Absent: only the timelines. */
+  since?: number;
+  timelines?: SyncTimelineRequest[];
+}
+
+export interface SyncTimeline {
+  key: string;
+  /** New messages after `newest`, and changed ones (edited, deleted, reacted to) inside the held range. */
+  messages: MessageView[];
+  /** The held copy is past saving (too many new messages, or older than the journal): `messages` is the newest page instead. */
+  replace: boolean;
+  /** With `replace`: whether there are older messages than the page. */
+  hasMore?: boolean;
+  conversationIds?: string[];
+}
+
+export type SyncResponse =
+  | { full: true; reason: string }
+  | {
+      full?: false;
+      sync: SyncPosition;
+      /** Changes since the hub process started; a new one may have brought a new web build. */
+      boot: string;
+      /** The same events the live socket sends, current as of `sync.seq`. Empty when only timelines were asked for. */
+      events: ClientEvent[];
+      selfPersonId?: string | null;
+      categoryProvider?: string;
+      reactionUsage?: ReactionUsage[];
+      /** Messages the inbox lists that arrived or changed since. */
+      inbox?: MessageView[];
+      timelines: SyncTimeline[];
+      /** Authors, reactors and mentions in the messages above. */
+      identities: IdentityView[];
+      /** Messages replies above quote, when not among them. */
+      quoted: MessageView[];
+    };

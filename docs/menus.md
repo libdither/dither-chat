@@ -55,6 +55,9 @@ Notification Settings › (Use Default, All Messages, Smart, Only @mentions, Dig
 · Pin to Top, Add to Sidebar, Move Up/Down, Move to Folder › (with New Folder…), Take Out of folder, Hide ·
 Copy Channel ID, Copy dither-chat ID.
 
+In the inbox the menu starts with **Why it's here**: the hub's reasons for the row's place, the same ones its
+tooltip shows ([inbox.md](inbox.md)). They are text, not items, so the arrow keys pass over them.
+
 Muting sets the level to Nothing; Discord's timed mutes have no counterpart in the hub's rules, so there is
 no "for 1 hour" submenu.
 

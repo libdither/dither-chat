@@ -72,22 +72,76 @@ what it says.
 
 ### Setting it up
 
-1. Run or pick an ntfy server. A self-hosted one on the tailnet keeps everything on your machines.
-2. Allow it on the hub, by exact origin: `DITHER_PUSH_RELAYS=https://ntfy.example.net` (comma-separated, an `http://`
-   origin only if written as one). By default the hub sends only to the browser vendors' relays, so it cannot be
-   aimed at arbitrary hosts. A listed origin allows only itself: no other port, no subdomain.
-3. On the phone, install ntfy, set its default server to yours (Settings → Default server), open it once, and turn
-   off battery optimisation for it when it asks. On Android 14+ ntfy cannot start its listener from the background
-   until it has been opened.
-4. In dither: Settings → *Push on this device* → *Turn on*. Pick the distributor if there are several, and allow
-   notifications.
+Everything happens on the phone; the hub needs no setting.
 
-Verified end to end on the emulator against a demo hub: hub → ntfy 2.28 server → ntfy app 1.25.2 → the connector
-decrypts → the notification. ntfy accepts the hub's VAPID-signed, aes128gcm Web Push as-is. Tapping a notification
-opened its conversation, and Reply sent through the hub.
+1. Install [ntfy](https://f-droid.org/packages/io.heckel.ntfy/) (F-Droid or Google Play). If you run your own ntfy
+   server, set it first in ntfy → Settings → Default server. Otherwise ntfy uses ntfy.sh.
+2. Open ntfy once. On Android 14 and later it cannot start its connection from the background until it has been
+   opened. When it asks, let it run in the background (or: App info → App battery usage → Allow background usage →
+   Unrestricted). dither's Settings shows whether Android restricts ntfy, with a button to that screen.
+3. In dither: Settings → *Push on this device* → *Turn on for this device*. Allow notifications, and pick the
+   distributor if there are several. The app registers, sends a test, and waits for the phone to confirm it arrived:
+   "It arrived. Push works on this device."
+4. If your ntfy server is one the hub does not know yet, step 3 stops with "This device's push server is
+   https://ntfy.example.net" and a button, *Allow notifications through ntfy.example.net*. One tap allows it and
+   registers the phone; no second registration is needed. A server on a private address (a tailnet ntfy at 100.x)
+   asks once more. A plain-http server is never allowed by one tap: type it under *Push servers*.
 
-The older `DITHER_NTFY_URL` route still works. It is plain ntfy messages, readable by the ntfy server, that open in
-a browser.
+Changing ntfy's default server later does not move existing registrations: turn push off and on again in dither.
+
+Verified end to end on the emulator against a demo hub (2026-11-02), with ntfy app 1.25.2:
+
+- through ntfy.sh, allowed by default: one tap, test arrived and confirmed;
+- through ntfy.sh after turning it off under *Push servers*: refused, *Allow notifications through ntfy.sh*, test
+  arrived;
+- through a local ntfy 2.28 server at `http://127.0.0.1:2586`: refused, typed under *Push servers*, confirmed as a
+  private address, and the waiting registration went through without the phone asking again. The app build from
+  before this change (which only shows the hub's error text) works with it too.
+
+ntfy accepts the hub's VAPID-signed, aes128gcm Web Push as-is. Tapping a notification opens its conversation, and
+Reply sends through the hub.
+
+### Which servers the hub sends to
+
+The hub only POSTs to push servers it allows, so nobody on the tailnet can point it at another host (a router's
+admin page, a cloud metadata address). It allows:
+
+- the browser vendors' relays (Google, Mozilla, Apple, Microsoft), always;
+- **ntfy.sh, by default.** It is the ntfy app's own server, so the common case needs no step. The hub encrypts every
+  push for the device (RFC 8291) before it leaves, so ntfy.sh learns what a browser vendor's relay learns: when a push
+  happens, its size, and a random topic, never the text. Turn it off under Settings → *Push servers* to use only your
+  own server; that also removes the devices registered through it;
+- servers allowed from the app: one tap on a refused device's server, or typed under *Push servers*. Only https,
+  except plain http typed out (a tailnet server). An address that is not on the public internet (loopback,
+  RFC 1918, link-local, 100.64/10, fd00::/8, or a name that resolves to one) needs a second confirmation. Allowing and
+  removing is accepted only from the app's own page (a same-origin request with an Origin header), not from curl or
+  another site. They are kept in the hub's database (`meta.push_servers`);
+- origins in `DITHER_PUSH_RELAYS`, comma-separated, still read at start. The app lists them but cannot remove them.
+
+A name that was public when allowed but resolves to a private address later is refused at send time, with the reason
+on the device in Settings.
+
+### When it does not arrive
+
+Settings → *Devices with push* shows each device: which server carries it, when that server last took a push, when
+a test last arrived on the device, or the last error. Each has *Send a test* and *Remove*.
+
+- *ntfy has no phone listening on this topic yet* (ntfy's 507, code 50701): ntfy refuses UnifiedPush messages for a
+  topic no phone is connected to. Right after registering this lasts a second or two, and the app's first test
+  retries for that. If it stays, ntfy is not running: open it, and set its battery use to Unrestricted.
+- *took the test, but the device has not said it arrived*: the server has it but ntfy did not deliver it. Same fix.
+- *ntfy did not answer*: ntfy has never been opened. The app shows *Open ntfy*.
+
+The older `DITHER_NTFY_URL` topic still works for anyone who set it: the hub also posts every push there as plain
+text that the ntfy server can read, and Settings lists it with a test. It is no longer part of setting up push.
+
+### Coming back to the app
+
+Switching away and back, or a network blip, no longer reloads anything: the app resumes from its place in the hub's
+change journal with one small request (about a kilobyte when little changed, against about 800 KB before), checks a
+socket that may have died while the phone slept with a heartbeat, and says nothing unless the hub stays out of reach
+for a few seconds. Why the app does not keep a socket open in the background instead, and the measurements:
+[sync.md](sync.md).
 
 ### Why not a socket of our own
 
@@ -112,8 +166,9 @@ These live in the web app, so the PWA gets them too.
 2. **A snapshot of the last screen** (`src/snapshot.ts`), in IndexedDB. It holds the bootstrap (every sidebar list,
    unread counts and last messages), the inbox, and the newest 40 messages of the 12 most recently opened
    conversations, with their authors, reactors and quoted messages. It is read before the network and painted at
-   once. The hub's bootstrap then replaces all of it, and open conversations fetch their page as before. Messages
-   kept here but gone at the hub are dropped. It is saved when the bootstrap arrives (the hub's own text, without
+   once. It also keeps its place in the hub's change journal, so the app then asks only for what changed since
+   ([sync.md](sync.md)); a full bootstrap replaces it only when the hub cannot say. A kept conversation catches up
+   the same way when opened. It is saved when the bootstrap arrives (the hub's own text, without
    serializing it again) and again whenever the app goes out of sight. Caps: 12 MB of bootstrap (above that it is
    not kept, because reading it back would cost about what the network does) and 1.5 MB for the rest. Only a build
    with the same `packages/protocol` reads it back (the vite config hashes the protocol into

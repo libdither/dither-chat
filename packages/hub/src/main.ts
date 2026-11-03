@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Categorizer, KeywordProvider, OllamaProvider, type CategoryProvider } from './categorize.ts';
+import { Attention } from './attention.ts';
 import { applyDemoOverlay, createDemoAccounts, demoFactory } from './demo.ts';
 import { PushService } from './push.ts';
 import { ReadQueue } from './readqueue.ts';
@@ -40,6 +41,7 @@ const model = process.env.DITHER_TRIAGE_MODEL
   ? { url: process.env.DITHER_OLLAMA_URL ?? 'http://127.0.0.1:11434', name: process.env.DITHER_TRIAGE_MODEL }
   : undefined;
 const triage = new Triage(store, model);
+const attention = new Attention(store, triage);
 
 // Triage runs serially so notifications keep message order.
 let queue = Promise.resolve();
@@ -50,6 +52,7 @@ function triageLater(ids: string[]) {
       if (!d) continue;
       store.setTriage(id, d);
       store.dirty.messages.set(id, true);
+      attention.triaged(id, d);
       if (d.decision === 'push') {
         const conversationId = store.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', id)!.conversation_id;
         deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id));
@@ -60,14 +63,12 @@ function triageLater(ids: string[]) {
 
 function deliver(title: string, body: string, conversationId: string, messageId: string, reasons: string[], pushExtra: Record<string, unknown> = {}) {
   server.notify({ t: 'notify', messageId, conversationId, title, body, reasons });
-  ntfy(title, body, conversationId).catch(() => {});
   push.notify(title, body, conversationId, pushExtra).catch((e) => console.error('push failed', e));
 }
 
 /** About the inbox, not a conversation: a click opens the inbox. */
 function deliverDigest(title: string, body: string) {
   server.notify({ t: 'notify', title, body, reasons: ['Your daily digest'] });
-  ntfy(title, body).catch(() => {});
   push.notify(title, body, undefined, { inbox: true }).catch((e) => console.error('push failed', e));
 }
 
@@ -78,16 +79,6 @@ setInterval(() => {
   const held = triage.takeHeldSummary();
   if (held) deliver(held.title, held.body, held.conversationId, held.messageId, ['Quiet hours ended']);
 }, 60_000);
-
-/** Optional phone push through a self-hosted ntfy topic (off unless DITHER_NTFY_URL is set). */
-async function ntfy(title: string, body: string, conversationId?: string) {
-  const url = process.env.DITHER_NTFY_URL;
-  if (!url) return;
-  const headers: Record<string, string> = { Title: title, Tags: 'speech_balloon' };
-  if (process.env.DITHER_NTFY_TOKEN) headers.Authorization = `Bearer ${process.env.DITHER_NTFY_TOKEN}`;
-  if (process.env.DITHER_PUBLIC_URL) headers.Click = `${process.env.DITHER_PUBLIC_URL}/#/inbox${conversationId ? `/c/${conversationId}` : ''}`;
-  await fetch(url, { method: 'POST', body, headers, signal: AbortSignal.timeout(5000) });
-}
 
 const push = new PushService(store, loadVapidKeys(dataDir), process.env.DITHER_PUSH_SUBJECT ?? process.env.DITHER_PUBLIC_URL ?? 'https://github.com/libdither/dither-chat');
 
@@ -126,6 +117,7 @@ const server = new HubServer(store, sup, triage, {
   push,
   readQueue,
   onCategoriesChanged: (force) => void categorizer.refresh(force),
+  attention,
   turn: process.env.DITHER_TURN_URLS && process.env.DITHER_TURN_SECRET ? { urls: process.env.DITHER_TURN_URLS.split(',').map((u) => u.trim()), secret: process.env.DITHER_TURN_SECRET } : undefined,
   onDemoReset: !demo ? undefined : async () => {
     for (const a of store.accounts().filter((a) => a.demo)) {
@@ -155,14 +147,22 @@ if (demo && !store.accounts().some((a) => a.demo)) createDemoAccounts(store);
 sup.startAll();
 if (store.accounts().some((a) => a.demo)) applyDemoOverlay(store);
 server.start();
+attention.start((events) => server.broadcast(events));
+// Scores live in memory and were worked out afresh: a client resuming from before this start takes the whole list.
+server.broadcast([{ t: 'attention', items: attention.list(), removed: [], replace: true }]);
+if (store.journal.started === 'unclean') console.log('sync: the hub did not stop cleanly last time; clients start over with a full bootstrap');
 // New servers and renamed channels turn up whenever an adapter says so; unchanged places cost a hash.
 void categorizer.refresh();
 setInterval(() => void categorizer.refresh(), 5 * 60_000);
 console.log(`dither-chat hub on ${tls ? 'https' : 'http'}://${hostname}:${port}${tls ? ` (plain http on ${plainPort}: adapters, CA download)` : ''}  data=${dataDir}`);
 
 const shutdown = async () => {
+  attention.stop();
   server.stop();
   await sup.stopAll();
+  // What stopping changed is in the journal too; then the next start can trust it (journal.ts).
+  server.flush();
+  store.journal.close();
   process.exit(0);
 };
 process.on('SIGINT', shutdown);

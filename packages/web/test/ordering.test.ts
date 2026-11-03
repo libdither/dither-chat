@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { RESORT_EVERY, sameSnapshot, shouldResort, sortKeys, stabilize, type Sortable } from '../src/ordering.ts';
+import { inboxChanged, inboxSnapshot, inboxView, rank, RESORT_EVERY, sameSnapshot, shouldResort, sortKeys, stabilize, type Ranked, type Sortable } from '../src/ordering.ts';
 import { IDLE_AFTER, Tracker, VISIT_AFTER } from '../src/tracker.ts';
 
 const p = (key: string, o: Partial<Sortable> = {}): Sortable => ({ key, name: key.split(':')[1], pinned: false, position: null, last: 0, score: 0, ...o });
@@ -56,6 +56,10 @@ describe('no reshuffle under the pointer', () => {
     expect(shouldResort({ reason: 'start', now: at, last: null, interacting: true })).toBe(false);
     expect(shouldResort({ reason: 'foreground', now: at, last: at, interacting: true })).toBe(false);
   });
+  test('a change in the inbox ranking waits for a quiet moment, but not for the timer', () => {
+    expect(shouldResort({ reason: 'activity', now: at + 1000, last: at, interacting: false })).toBe(true);
+    expect(shouldResort({ reason: 'activity', now: at + 1000, last: at, interacting: true })).toBe(false);
+  });
   test('what you ask for happens at once', () => {
     expect(shouldResort({ reason: 'mode', now: at, last: at, interacting: true })).toBe(true);
     expect(shouldResort({ reason: 'asked', now: at, last: at, interacting: true })).toBe(true);
@@ -109,5 +113,41 @@ describe('measuring', () => {
     t.update(4 * 3_600_000, ['space:a'], true);
     t.update(4 * 3_600_000 + 5000, ['space:a'], true);
     expect(t.take()[0].visits).toBe(2);
+  });
+});
+
+describe('the inbox', () => {
+  const r = (key: string, score: number, needs = score >= 20): Ranked => ({ key, score, needs });
+
+  test('what needs you comes first, then by score; ties never flicker', () => {
+    expect(rank([r('a', 5), r('b', 30), r('c', 18, true), r('d', 5)])).toEqual(['b', 'c', 'a', 'd']);
+  });
+
+  test('the "caught up" line goes after what needs you', () => {
+    expect(inboxView(null, [r('a', 5), r('b', 30), r('c', 40)])).toEqual({ keys: ['c', 'b', 'a'], divider: 2 });
+    expect(inboxView(null, [r('a', 5)]).divider).toBe(0);
+    expect(inboxView(null, [r('a', 50)]).divider).toBe(1);
+  });
+
+  test('between snapshots nothing moves: new scores wait, new rows go at the end, the line stays put', () => {
+    const snap = inboxSnapshot([{ ...r('a', 50), unread: true }, { ...r('b', 30), unread: false }, { ...r('c', 5), unread: false }]);
+    expect(snap).toEqual({ keys: ['a', 'b', 'c'], needs: 2, unread: ['a'] });
+    // a was read and sank, c got a message and rose, d is new and needs you.
+    const fresh = [r('a', 3), r('b', 30), r('c', 60), r('d', 70)];
+    expect(inboxView(snap, fresh)).toEqual({ keys: ['a', 'b', 'c', 'd'], divider: 2 });
+    expect(inboxChanged(snap, fresh)).toBe(true);
+    // A row that went away takes nothing else with it.
+    expect(inboxView(snap, [r('b', 30), r('c', 5)])).toEqual({ keys: ['b', 'c'], divider: 1 });
+    // The next snapshot takes the fresh order.
+    const next = inboxSnapshot(fresh.map((x) => ({ ...x, unread: false })));
+    expect(inboxView(next, fresh)).toEqual({ keys: ['d', 'c', 'b', 'a'], divider: 3 });
+    expect(inboxChanged(next, fresh)).toBe(false);
+  });
+
+  test('a filter hides rows without moving the others or the line', () => {
+    const snap = inboxSnapshot([r('dm1', 50), r('g1', 40), r('dm2', 10), r('g2', 5)].map((x) => ({ ...x, unread: false })));
+    const fresh = [r('dm1', 50), r('g1', 40), r('dm2', 10), r('g2', 5)];
+    expect(inboxView(snap, fresh, (k) => k.startsWith('g'))).toEqual({ keys: ['g1', 'g2'], divider: 1 });
+    expect(inboxView(snap, fresh, (k) => k.startsWith('dm'))).toEqual({ keys: ['dm1', 'dm2'], divider: 1 });
   });
 });

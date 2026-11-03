@@ -7,7 +7,7 @@ import { effect, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { DEFAULT_ARRANGE, smartScore, type ArrangeSettings, type SortMode, type SortScope, type UsageKind } from '@dither-chat/protocol';
 import type { DropTarget } from './layout.ts';
-import { activityOfSpace, convTitle, directsOf, folderConvs, groupsLists, people, placePref, railEntries, spaceUnread, sumUnread, unreadOf, type RailEntry } from './model.ts';
+import { activityOfSpace, convTitle, directsOf, folderConvs, people, placePref, railEntries, spaceUnread, sumUnread, unreadOf, type RailEntry } from './model.ts';
 import { sameSnapshot, shouldResort, sortKeys, stabilize, type ResortReason, type Sortable } from './ordering.ts';
 import { api, db, loaded, patchPlaces, rev, saveFolders, toast } from './state.ts';
 import { fetchUsage, onForeground, startUsage, usageLoaded, usageOf, usageState } from './usage.ts';
@@ -77,8 +77,8 @@ function itemSortable(it: P.FolderView['items'][number]): Sortable | null {
   return c ? convSortable(c) : null;
 }
 
-function convSortable(c: P.ConversationView, pinned = false): Sortable {
-  return { key: `conversation:${c.id}`, name: convTitle(c), pinned, position: null, last: c.lastMessageAt ?? 0, score: score('conversation', c.id, unreadOf(c).badge) };
+function convSortable(c: P.ConversationView): Sortable {
+  return { key: `conversation:${c.id}`, name: convTitle(c), pinned: false, position: null, last: c.lastMessageAt ?? 0, score: score('conversation', c.id, unreadOf(c).badge) };
 }
 
 function entrySortable(e: RailEntry): Sortable {
@@ -102,8 +102,8 @@ function shown(list: string, items: Sortable[], mode: SortMode, live: boolean): 
 }
 
 /**
- * Only Smart waits for a quiet moment in the people and group lists: Recent there stays live, as in any chat
- * app, and A–Z only changes when something is renamed or added. The rail keeps a snapshot in every
+ * Only Smart waits for a quiet moment in the People list: Recent there stays live, as in any chat app, and A–Z
+ * only changes when something is renamed or added. The rail keeps a snapshot in every
  * automatic mode, since a server jumping under the pointer is what it must never do.
  */
 const isLive = (scope: SortScope, mode: SortMode) => mode === 'manual' || (scope !== 'rail' && mode !== 'smart');
@@ -130,7 +130,6 @@ export function arrangedFolderItems(f: P.FolderView): P.FolderView['items'] {
 
 type PersonEntry = { person: P.PersonView; directs: P.ConversationView[]; last: number };
 const personSortable = (x: PersonEntry): Sortable => ({ key: `person:${x.person.id}`, name: x.person.name, pinned: x.person.starred, position: null, last: x.last, score: score('person', x.person.id, sumUnread(x.directs).badge) });
-const groupSortable = (c: P.ConversationView) => convSortable(c, placePref('conversation', c.id).pinned);
 
 /** The People list; starred people stay first, like pinned places. */
 export function arrangedPeople(list: PersonEntry[]): PersonEntry[] {
@@ -140,14 +139,6 @@ export function arrangedPeople(list: PersonEntry[]): PersonEntry[] {
   return shown('people', list.map(personSortable), mode, isLive('people', mode)).map((k) => byKey.get(k)!);
 }
 
-/** A list of group chats or rooms (`groups:g`, `groups:r`); pinned ones first. */
-export function arrangedConvs(list: string, convs: P.ConversationView[]): P.ConversationView[] {
-  const mode = sortOf('groups');
-  if (mode === 'recent' && !convs.some((c) => placePref('conversation', c.id).pinned)) return convs;
-  const byKey = new Map(convs.map((c) => [`conversation:${c.id}`, c]));
-  return shown(list, convs.map(groupSortable), mode, isLive('groups', mode)).map((k) => byKey.get(k)!);
-}
-
 // ------------------------------------------------------------------ taking a new snapshot
 
 let interactingCheck: () => boolean = () => false;
@@ -155,13 +146,15 @@ let interactingCheck: () => boolean = () => false;
 export function setInteracting(fn: () => boolean) {
   interactingCheck = fn;
 }
+/** Some list is in use: no automatic order may move now. The inbox asks too (inbox.ts). */
+export const isInteracting = () => organizing.value || interactingCheck();
 
 let waiting: ReturnType<typeof setTimeout> | undefined;
 /** Take a new snapshot of every automatic order, if now is a good moment; otherwise as soon as it is. */
 export function resort(reason: ResortReason) {
   clearTimeout(waiting);
   const now = Date.now();
-  if (!shouldResort({ reason, now, last: snapshot.value.at, interacting: organizing.value || interactingCheck() })) {
+  if (!shouldResort({ reason, now, last: snapshot.value.at, interacting: isInteracting() })) {
     // Retry soon, but as a timer: a start or a return to the front that had to wait still happens.
     if (reason !== 'timer') waiting = setTimeout(() => resort(reason), 1500);
     return;
@@ -174,11 +167,6 @@ export function resort(reason: ResortReason) {
     for (const f of db.folders) lists[`folder:${f.id}`] = unpinned(f.items.map(itemSortable).filter((x): x is Sortable => !!x), rail);
   }
   if (sortOf('people') === 'smart') lists.people = unpinned(people().map(personSortable), 'smart');
-  if (sortOf('groups') === 'smart') {
-    const g = groupsLists();
-    lists['groups:g'] = unpinned(g.groups.map(groupSortable), 'smart');
-    lists['groups:r'] = unpinned(g.rooms.map(groupSortable), 'smart');
-  }
   const prev = snapshot.value;
   const same = sameSnapshot(prev.lists, lists);
   snapshot.value = { v: same ? prev.v : prev.v + 1, at: now, lists };
@@ -234,6 +222,6 @@ export function startArrange() {
   onForeground.add(() => resort('foreground'));
   setInterval(() => {
     if (document.visibilityState !== 'visible') return;
-    fetchUsage().then(() => resort('timer'));
+    (usageState.value ? Promise.resolve() : fetchUsage()).then(() => resort('timer'));
   }, 60_000);
 }

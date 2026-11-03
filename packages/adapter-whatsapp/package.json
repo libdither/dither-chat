@@ -1,0 +1,12 @@
+{
+  "name": "@dither-chat/adapter-whatsapp",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/main.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@dither-chat/protocol": "workspace:*"
+  }
+}

@@ -17,6 +17,8 @@ export interface ClearEvent extends MxEvent {
 
 export class Peer {
   readonly seen: ClearEvent[] = [];
+  /** An app in the background: no /sync, so nothing arrives and nothing queued goes out. */
+  paused = false;
   private since: string | undefined;
   private running = true;
   private waiters: { pred: (e: ClearEvent) => boolean; res: (e: ClearEvent) => void }[] = [];
@@ -55,6 +57,10 @@ export class Peer {
   private async run() {
     let synced = false;
     while (this.running) {
+      if (this.paused) {
+        await Bun.sleep(100);
+        continue;
+      }
       try {
         const res: any = await this.client.request('GET', '/_matrix/client/v3/sync', { query: { since: this.since, timeout: 500, set_presence: 'offline' }, timeoutMs: 30_000, retries: 0 });
         this.since = res.next_batch;

@@ -70,7 +70,8 @@ export function stabilize(snapshot: readonly string[] | undefined, fresh: readon
   return [...snapshot.filter((k) => present.has(k)), ...fresh.filter((k) => !known.has(k))];
 }
 
-export type ResortReason = 'start' | 'foreground' | 'timer' | 'mode' | 'asked';
+/** 'activity': the inbox's ranking changed (docs/inbox.md); it waits for a quiet moment like a start, but not for the timer. */
+export type ResortReason = 'start' | 'foreground' | 'timer' | 'mode' | 'asked' | 'activity';
 /** At most this often on a timer, and only while nobody is using the list. */
 export const RESORT_EVERY = 5 * 60_000;
 
@@ -81,7 +82,7 @@ export const RESORT_EVERY = 5 * 60_000;
 export function shouldResort(o: { reason: ResortReason; now: number; last: number | null; interacting: boolean }): boolean {
   if (o.reason === 'mode' || o.reason === 'asked') return true;
   if (o.interacting) return false;
-  if (o.last === null || o.reason === 'start' || o.reason === 'foreground') return true;
+  if (o.last === null || o.reason === 'start' || o.reason === 'foreground' || o.reason === 'activity') return true;
   return o.now - o.last >= RESORT_EVERY;
 }
 
@@ -90,4 +91,50 @@ export function sameSnapshot(a: Record<string, string[]>, b: Record<string, stri
   const ks = new Set([...Object.keys(a), ...Object.keys(b)]);
   for (const k of ks) if ((a[k] ?? []).join('\n') !== (b[k] ?? []).join('\n')) return false;
   return true;
+}
+
+// ------------------------------------------------------------------ the inbox (docs/inbox.md)
+
+/** One inbox row as the ranking sees it: the hub's score, and whether it is above the "caught up" line. */
+export interface Ranked {
+  key: string;
+  score: number;
+  needs: boolean;
+}
+
+/** What needs you first, then by score; equal scores by key, so the order never flickers. */
+export function rank(items: readonly Ranked[]): string[] {
+  return [...items].sort((a, b) => Number(b.needs) - Number(a.needs) || b.score - a.score || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)).map((x) => x.key);
+}
+
+/** The inbox's order as last taken: the keys, how many of the first ones needed you, and which were unread then. */
+export interface InboxSnapshot {
+  keys: string[];
+  needs: number;
+  unread: string[];
+}
+
+export function inboxSnapshot(items: readonly (Ranked & { unread: boolean })[]): InboxSnapshot {
+  return { keys: rank(items), needs: items.filter((x) => x.needs).length, unread: items.filter((x) => x.unread).map((x) => x.key) };
+}
+
+/** Whether a fresh ranking would show anything different from the snapshot: an order or the line. */
+export function inboxChanged(snap: InboxSnapshot | null, fresh: readonly Ranked[]): boolean {
+  if (!snap) return true;
+  const now = inboxSnapshot(fresh.map((x) => ({ ...x, unread: false })));
+  return now.needs !== snap.needs || now.keys.join('\n') !== snap.keys.join('\n');
+}
+
+/**
+ * The inbox on screen: the snapshot's order for what it knows and anything new after it (as `stabilize`), and
+ * where the "caught up" line goes: after the snapshot's needs-you rows still there. `keep` is a filter chip; it
+ * hides rows without moving any.
+ */
+export function inboxView(snap: InboxSnapshot | null, fresh: readonly Ranked[], keep: (key: string) => boolean = () => true): { keys: string[]; divider: number } {
+  const order = rank(fresh);
+  const need = snap ? new Set(snap.keys.slice(0, snap.needs)) : new Set(fresh.filter((x) => x.needs).map((x) => x.key));
+  const keys = (snap ? stabilize(snap.keys, order) : order).filter(keep);
+  let divider = 0;
+  while (divider < keys.length && need.has(keys[divider])) divider++;
+  return { keys, divider };
 }

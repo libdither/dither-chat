@@ -28,8 +28,6 @@ function placeTitle(r: Route): { title: string; icon: string } {
     case 'people':
     case 'profile':
       return { title: 'People', icon: 'users' };
-    case 'groups':
-      return { title: 'Groups', icon: 'groups' };
     case 'spaces':
     case 'directory':
       return { title: 'All communities', icon: 'grid' };

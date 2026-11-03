@@ -1,5 +1,5 @@
 /**
- * The dither-chat ontology: one vocabulary for Discord, Signal and Matrix.
+ * The dither-chat ontology: one vocabulary for Discord, Signal, Matrix and WhatsApp.
  *
  * Three independent axes describe every conversation:
  *   - where it sits socially    -> Shape   (direct, group, channel, thread, self)
@@ -15,8 +15,8 @@
  * (persons, folders, notification rules, triage) are never written back.
  */
 
-export type Network = 'discord' | 'signal' | 'matrix';
-export const NETWORKS: readonly Network[] = ['discord', 'signal', 'matrix'];
+export type Network = 'discord' | 'signal' | 'matrix' | 'whatsapp';
+export const NETWORKS: readonly Network[] = ['discord', 'signal', 'matrix', 'whatsapp'];
 
 /** Where a conversation sits in the social structure, independent of network. */
 export type Shape =
@@ -43,7 +43,7 @@ export type AttentionKind =
   | 'login' //           not logged in; open the live view and log in
   | 'captcha' //         a captcha is on screen in the sandbox
   | 'verify' //          email / phone / "suspicious activity" challenge
-  | 'link_device' //     Signal: scan the QR code with your phone
+  | 'link_device' //     Signal, WhatsApp: scan the QR code with your phone
   | 'selector_broken' // the client changed and a hook no longer resolves
   | 'rate_limited'
   | 'unknown';
@@ -98,6 +98,7 @@ export const REACTION_RULES: Record<Network, ReactionRules> = {
   discord: { exclusive: false, freeText: false, maxDistinct: 20 },
   signal: { exclusive: true, freeText: false },
   matrix: { exclusive: false, freeText: true },
+  whatsapp: { exclusive: true, freeText: false },
 };
 
 export function discordEmojiUrl(id: string, animated?: boolean): string {
@@ -134,6 +135,7 @@ export const ATTACHMENT_LIMITS: Record<Network, { bytes: number; files: number }
   discord: { bytes: 10 * 1024 * 1024, files: 10 },
   signal: { bytes: MAX_UPLOAD, files: 10 },
   matrix: { bytes: MAX_UPLOAD - 1024 * 1024, files: 10 },
+  whatsapp: { bytes: MAX_UPLOAD, files: 10 },
 };
 
 /** Brand colours used to annotate the source of every object in the UI. */
@@ -141,4 +143,5 @@ export const NETWORK_META: Record<Network, { name: string; color: string; spaceN
   discord: { name: 'Discord', color: '#5865F2', spaceNoun: 'server', sectionNoun: 'category' },
   signal: { name: 'Signal', color: '#3A91F5', spaceNoun: 'group', sectionNoun: 'section' },
   matrix: { name: 'Matrix', color: '#0DBD8B', spaceNoun: 'space', sectionNoun: 'subspace' },
+  whatsapp: { name: 'WhatsApp', color: '#1DAA61', spaceNoun: 'community', sectionNoun: 'section' },
 };

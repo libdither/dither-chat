@@ -126,29 +126,36 @@ code {
     transform: rotate(360deg);
   }
 }
+/* The hub out of reach for a while: small, and never in the way of what is under it. */
 .reconnect {
   position: fixed;
   top: 10px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 50;
-  background: var(--warn);
-  color: var(--on-warn);
-  padding: 5px 14px;
+  pointer-events: none;
+  max-width: calc(100vw - 32px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  border: 1px solid var(--border-soft);
+  padding: 4px 12px;
   border-radius: 20px;
-  font-size: 12.5px;
-  font-weight: 600;
+  font-size: 12px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   box-shadow: var(--shadow);
 }
 .reconnect .dot {
-  width: 8px;
-  height: 8px;
-  background: var(--on-warn);
+  flex: none;
+  width: 7px;
+  height: 7px;
+  background: var(--warn);
   border-radius: 50%;
-  animation: pulse 1s infinite;
+  animation: pulse 2s infinite;
 }
 @keyframes pulse {
   50% {
@@ -482,9 +489,73 @@ code {
 .row.unread .row-title {
   color: var(--unread);
 }
-.row-reason {
+/* The inbox (docs/inbox.md): filter chips, the line where what needs you ends, and an unanswered message. */
+/* They wrap rather than scroll: beside a peeking card on a phone the list is narrow. */
+.inbox-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px 2px;
+}
+.inbox-chips .chip-btn {
+  position: relative;
+  flex: none;
+  border-radius: 999px;
+}
+@media (pointer: coarse) {
+  /* A finger-sized target without a taller row of chips. */
+  .inbox-chips .chip-btn::after {
+    content: '';
+    position: absolute;
+    inset: -9px -3px;
+  }
+}
+.caught-up {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 6px 6px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.caught-up::before,
+.caught-up::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-soft);
+}
+.row-owed {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
   color: var(--accent);
-  font-style: italic;
+}
+.inbox-empty {
+  padding: 16px 10px;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+.cm-why {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px 4px;
+  max-width: 300px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.cm-why-head {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
 }
 .row-nets {
   display: flex;
@@ -1151,6 +1222,38 @@ code {
 }
 .verify-device {
   margin-top: 12px;
+}
+.verify-meta {
+  margin: 0 0 10px;
+  color: var(--text-dim);
+}
+.verify-clock.urgent {
+  color: var(--danger);
+  font-weight: 600;
+}
+.verify-why {
+  margin: 0 0 8px;
+  color: var(--text);
+}
+.verify-sending {
+  color: var(--warn);
+}
+.recovery-box {
+  margin: 14px 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.recovery-box .btn-row {
+  margin-top: 2px;
+}
+.form-error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--danger);
+}
+.recovery-problems {
+  padding-left: 18px;
 }
 .sas-emoji {
   list-style: none;
@@ -1877,6 +1980,9 @@ code {
 }
 .pending.failed .pending-note {
   color: var(--danger);
+}
+.pending.queued .msg-body {
+  opacity: 0.7;
 }
 .typing {
   padding: 4px 20px 8px 56px;
@@ -2905,6 +3011,19 @@ code {
   margin: 0;
   font-size: 12.5px;
   color: var(--text-dim);
+}
+.qr-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-width: 280px;
+}
+.qr-pair-code {
+  margin: 0;
+  font: 600 28px/1.2 var(--font-mono, ui-monospace, monospace);
+  letter-spacing: 0.12em;
+  user-select: all;
 }
 .qr-full {
   position: fixed;
@@ -4878,13 +4997,75 @@ body.dragging * {
   flex: 0 0 auto;
 }
 
-.push-devices {
-  margin: 12px 0 4px;
-  color: var(--text-dim);
-  font-size: 13px;
-}
 .set-rule-label small {
   color: var(--text-faint);
+}
+.push-device .set-rule-label > span,
+.push-pending .set-rule-label > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.push-note {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.push-this {
+  color: var(--accent);
+  font-style: normal;
+  font-size: 12px;
+}
+.push-state.ok {
+  color: var(--text-dim);
+}
+.push-state.warn,
+.push-status.warn,
+.push-status.error {
+  color: var(--danger);
+}
+.push-status.ok {
+  color: var(--accent);
+}
+.push-steps {
+  list-style: none;
+  margin: 10px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.push-steps li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  line-height: 1.5;
+}
+.push-steps li > span {
+  flex: 1;
+  min-width: 200px;
+}
+.push-steps li.done > svg {
+  color: var(--accent);
+}
+.push-steps li.todo > svg {
+  color: var(--danger);
+}
+.push-refused,
+.push-confirm {
+  margin-top: 8px;
+}
+.push-add {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.push-add .input {
+  flex: 1;
+  min-width: 0;
 }
 
 @media (max-width: 820px) {

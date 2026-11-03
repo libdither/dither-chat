@@ -40,16 +40,16 @@ export function startOrganize() {
   setInteracting(() => !!drag.value || !!contextMenu.value || pointerOnList || Date.now() - touchedAt < 4000 || keyboardIn());
 }
 
-/** Moves animate: each row slides from where it was when the order last changed. */
-export function useFlip(ref: { current: HTMLElement | null }, version: number) {
+/** Moves animate: each row slides from where it was when the order last changed. Rows are `sel`, keyed by their data. */
+export function useFlip(ref: { current: HTMLElement | null }, version: number, sel = '[data-dnd-key]') {
   const last = useRef(new Map<string, number>());
   const seen = useRef(version);
   useLayoutEffect(() => {
     const box = ref.current;
     if (!box) return;
     const origin = box.getBoundingClientRect().top - box.scrollTop;
-    const rows = [...box.querySelectorAll<HTMLElement>('[data-dnd-key]')];
-    const id = (x: HTMLElement) => `${x.dataset.dndKey}|${x.dataset.dndFolder ?? ''}`;
+    const rows = [...box.querySelectorAll<HTMLElement>(sel)];
+    const id = (x: HTMLElement) => `${x.dataset.dndKey ?? x.dataset.row}|${x.dataset.dndFolder ?? ''}`;
     const now = new Map(rows.map((x) => [id(x), x.getBoundingClientRect().top - origin]));
     if (seen.current !== version && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
       for (const x of rows) {
@@ -66,7 +66,7 @@ export function useFlip(ref: { current: HTMLElement | null }, version: number) {
 
 // ------------------------------------------------------------------ the sort menu
 
-const MODES: Record<SortScope, SortMode[]> = { rail: ['manual', 'smart', 'recent', 'az'], people: ['recent', 'smart', 'az'], groups: ['recent', 'smart', 'az'] };
+const MODES: Record<SortScope, SortMode[]> = { rail: ['manual', 'smart', 'recent', 'az'], people: ['recent', 'smart', 'az'] };
 const HELP: Record<SortMode, string> = {
   manual: 'Your order',
   smart: 'Time you spend',

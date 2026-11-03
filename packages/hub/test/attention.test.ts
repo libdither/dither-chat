@@ -1,0 +1,360 @@
+/**
+ * The inbox's attention score (attention.ts, docs/inbox.md): the formula's parts, and keeping features up to date
+ * one message at a time, in batches, and after older messages turn up.
+ */
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type * as P from '@dither-chat/protocol';
+import {
+  Attention,
+  emptyTally,
+  foldMessage,
+  freshState,
+  medianLatency,
+  owedCurve,
+  record,
+  scoreConversation,
+  WEIGHTS,
+  type ConvState,
+  type FoldMessage,
+  type ScoreInput,
+  type Tally,
+} from '../src/attention.ts';
+import { Store, type AccountRow } from '../src/store.ts';
+import { Triage } from '../src/triage.ts';
+
+const MIN = 60_000;
+const HOUR = 60 * MIN;
+const DAY = 24 * HOUR;
+const T0 = Date.UTC(2026, 9, 1, 9);
+
+// ------------------------------------------------------------------ the formula
+
+describe('an unanswered message', () => {
+  test('rises over the first hours, holds through the first day, then fades over a few days', () => {
+    const at = (h: number) => owedCurve(h * HOUR, null);
+    expect(at(0)).toBe(0);
+    expect(at(0.25)).toBeLessThan(at(1));
+    expect(at(1)).toBeLessThan(at(5));
+    expect(at(24)).toBeGreaterThan(0.99);
+    // Halves every two days after the first.
+    expect(at(72)).toBeCloseTo(at(24) / 2, 2);
+    expect(at(24 * 7)).toBeCloseTo(0.125, 2);
+    expect(at(24 * 12)).toBeLessThan(0.05);
+  });
+
+  test('rises faster for someone you usually answer within minutes', () => {
+    expect(owedCurve(30 * MIN, 5 * MIN)).toBeGreaterThan(owedCurve(30 * MIN, 4 * HOUR));
+    // Never instantly, never slower than a working day.
+    expect(owedCurve(5 * MIN, 1)).toBeLessThan(0.3);
+    expect(owedCurve(24 * HOUR, 3 * DAY)).toBeGreaterThan(0.9);
+  });
+});
+
+/** A DM where Sam wrote `ageH` hours ago and you have not answered. */
+function owedDm(ageH: number, now: number, author: Tally | null = null): ScoreInput {
+  const s = freshState();
+  foldMessage(s, () => emptyTally(), msg({ ts: now - ageH * HOUR, author: 'sam', authorKey: 'p_sam' }), { shape: 'direct', members: 2 });
+  return { now, shape: 'direct', members: 2, lastMessageAt: now - ageH * HOUR, state: s, author, authorName: 'Sam', unread: 0, mentions: 0, pinged: null, muted: null, usage: null };
+}
+
+function msg(m: Partial<FoldMessage> & { ts: number }): FoldMessage {
+  return { id: `m${m.ts}`, author: 'x', authorKey: 'x', mine: false, bot: false, mentionsMe: false, repliesToMe: false, question: false, pushed: false, ignore: false, ...m };
+}
+
+/** Your answers to someone: `answered` of `of` turns, each after `latency`. */
+function habit(answered: number, of: number, latency: number, now: number): Tally {
+  const t = emptyTally();
+  for (let i = 0; i < of; i++) record(t, now - (i + 1) * DAY, i < answered ? latency : null);
+  return t;
+}
+
+describe('owed reply', () => {
+  const now = T0 + 40 * DAY;
+
+  test('weighs by how often you answer that person', () => {
+    const often = scoreConversation(owedDm(5, now, habit(9, 10, 30 * MIN, now)));
+    const seldom = scoreConversation(owedDm(5, now, habit(1, 10, 30 * MIN, now)));
+    const unknown = scoreConversation(owedDm(5, now));
+    expect(often.parts.owed).toBeGreaterThan(unknown.parts.owed);
+    expect(unknown.parts.owed).toBeGreaterThan(seldom.parts.owed);
+    expect(often.parts.owed).toBeGreaterThan(3 * seldom.parts.owed);
+    expect(often.needs).toBe(true);
+    expect(seldom.needs).toBe(false);
+  });
+
+  test('says why in your terms', () => {
+    const r = scoreConversation(owedDm(5, now, habit(9, 10, 40 * MIN, now)));
+    expect(r.reasons[0]).toBe('You usually reply to Sam within an hour; unanswered for 5 hours');
+    expect(r.owedSince).toBe(now - 5 * HOUR);
+    expect(medianLatency(habit(9, 10, 40 * MIN, now))).toBe(HOUR);
+    expect(scoreConversation(owedDm(3, now)).reasons[0]).toBe('Sam wrote to you 3 hours ago; not answered yet');
+  });
+
+  test('a week-old one no longer needs you', () => {
+    const fresh = scoreConversation(owedDm(6, now, habit(9, 10, 30 * MIN, now)));
+    const old = scoreConversation(owedDm(24 * 8, now, habit(9, 10, 30 * MIN, now)));
+    expect(old.parts.owed).toBeLessThan(fresh.parts.owed / 5);
+    expect(old.needs).toBe(false);
+  });
+});
+
+describe('noise', () => {
+  const now = T0 + 60 * DAY;
+  /** A group with `perDay` messages from others and `mine` from you, every day for two months. */
+  function busy(perDay: number, mine: number): ScoreInput {
+    const s = freshState();
+    for (let d = 60; d >= 1; d--) {
+      for (let i = 0; i < perDay; i++) foldMessage(s, () => emptyTally(), msg({ ts: now - d * DAY + i * MIN }), { shape: 'group', members: 30 });
+      for (let i = 0; i < mine; i++) foldMessage(s, () => emptyTally(), msg({ ts: now - d * DAY + HOUR + i * MIN, mine: true }), { shape: 'group', members: 30 });
+    }
+    return { now, shape: 'group', members: 30, lastMessageAt: now - DAY + HOUR, state: s, author: null, authorName: null, unread: 0, mentions: 0, pinged: null, muted: null, usage: null };
+  }
+
+  test('high volume and no engagement sinks; rare but engaged rises', () => {
+    const loud = scoreConversation(busy(200, 0));
+    const quiet = scoreConversation(busy(1, 1));
+    // Two months of a 30-day half-life is not yet steady state, so a little under 200.
+    expect(loud.noise.receivedPerDay).toBeGreaterThan(120);
+    expect(loud.noise.fit).toBeLessThan(-0.6);
+    expect(loud.parts.noise).toBeLessThan(-10);
+    expect(quiet.noise.fit).toBeGreaterThan(0);
+    expect(quiet.parts.noise).toBeGreaterThan(0);
+    expect(quiet.score).toBeGreaterThan(loud.score);
+    expect(loud.reasons.some((r) => r.startsWith('Busy'))).toBe(true);
+  });
+
+  test('the same volume you take part in is not noise', () => {
+    expect(scoreConversation(busy(200, 60)).noise.fit).toBeGreaterThan(scoreConversation(busy(200, 0)).noise.fit + 0.4);
+  });
+
+  test('an unread busy group you never read stays below the line; a mention lifts it', () => {
+    const x = busy(200, 0);
+    expect(scoreConversation({ ...x, unread: 50 }).needs).toBe(false);
+    expect(scoreConversation({ ...x, unread: 50, mentions: 2 }).needs).toBe(true);
+  });
+});
+
+describe('muted places', () => {
+  test('sit below everything else, whatever is in them', () => {
+    const now = T0 + 40 * DAY;
+    const loud = { ...owedDm(5, now, habit(10, 10, 5 * MIN, now)), unread: 3, pinged: 'Mentions you' };
+    const muted = scoreConversation({ ...loud, muted: 'muted in Discord' });
+    const idle = scoreConversation({ ...owedDm(1, now), state: freshState(), lastMessageAt: now - 30 * DAY });
+    expect(muted.needs).toBe(false);
+    expect(muted.score).toBeLessThan(idle.score);
+    expect(muted.score).toBeLessThan(WEIGHTS.mutedFloor + WEIGHTS.recency + 0.01);
+    expect(muted.reasons[0]).toBe('Muted: muted in Discord');
+  });
+});
+
+describe('unread', () => {
+  test('a DM message counts more than a group message; mentions count like DMs', () => {
+    const now = T0;
+    const base = { now, members: 0, lastMessageAt: now - HOUR, state: freshState(), author: null, authorName: null, mentions: 0, pinged: null, muted: null, usage: null };
+    const dm = scoreConversation({ ...base, shape: 'direct', unread: 2 });
+    const group = scoreConversation({ ...base, shape: 'group', unread: 2 });
+    const mentioned = scoreConversation({ ...base, shape: 'group', unread: 2, mentions: 2 });
+    expect(dm.parts.unread).toBeGreaterThan(group.parts.unread);
+    expect(mentioned.parts.unread).toBe(dm.parts.unread);
+    expect(dm.needs).toBe(true);
+    expect(dm.reasons).toContain('2 unread messages');
+  });
+});
+
+// ------------------------------------------------------------------ the fold
+
+describe('turns', () => {
+  const fold = (s: ConvState, authors: Map<string, Tally>, m: Partial<FoldMessage> & { ts: number }, shape: P.Shape = 'direct', members = 2) =>
+    foldMessage(s, (k) => authors.get(k) ?? authors.set(k, emptyTally()).get(k)!, msg(m), { shape, members });
+
+  test('your answer settles what you owed, with how long it took', () => {
+    const s = freshState();
+    const a = new Map<string, Tally>();
+    fold(s, a, { ts: T0, authorKey: 'sam' });
+    fold(s, a, { ts: T0 + MIN, authorKey: 'sam' });
+    expect(s.turn?.addressed).toBe(T0);
+    fold(s, a, { ts: T0 + 20 * MIN, mine: true });
+    expect(s.turn).toBeNull();
+    expect(s.tally.addressed).toBeCloseTo(1);
+    expect(s.tally.replied).toBeCloseTo(1);
+    expect(medianLatency({ ...s.tally, latency: s.tally.latency.map((x) => x * 2) })).toBe(30 * MIN);
+    expect(a.get('sam')!.replied).toBeCloseTo(1);
+  });
+
+  test('an answer after the window counts as unanswered; a new message after it starts the clock again', () => {
+    const s = freshState();
+    const a = new Map<string, Tally>();
+    fold(s, a, { ts: T0, authorKey: 'sam' });
+    fold(s, a, { ts: T0 + 4 * DAY, authorKey: 'sam' });
+    expect(s.turn?.addressed).toBe(T0 + 4 * DAY);
+    expect(s.tally.addressed).toBeCloseTo(1, 1);
+    expect(s.tally.replied).toBe(0);
+    fold(s, a, { ts: T0 + 8 * DAY, mine: true });
+    expect(s.tally.replied).toBe(0);
+  });
+
+  test('in a group, only what is addressed to you: a mention, a reply, a quick answer in a small group', () => {
+    const big = (m: Partial<FoldMessage> & { ts: number }) => {
+      const s = freshState();
+      fold(s, new Map(), { ts: m.ts - 10 * MIN, mine: true }, 'group', 40);
+      fold(s, new Map(), m, 'group', 40);
+      return s.turn?.kind ?? null;
+    };
+    expect(big({ ts: T0 })).toBeNull();
+    expect(big({ ts: T0, mentionsMe: true })).toBe('mention');
+    expect(big({ ts: T0, repliesToMe: true })).toBe('reply');
+    const small = freshState();
+    fold(small, new Map(), { ts: T0, mine: true }, 'group', 4);
+    fold(small, new Map(), { ts: T0 + 10 * MIN }, 'group', 4);
+    expect(small.turn?.kind).toBe('answer');
+    const late = freshState();
+    fold(late, new Map(), { ts: T0, mine: true }, 'group', 4);
+    fold(late, new Map(), { ts: T0 + 3 * HOUR }, 'group', 4);
+    expect(late.turn?.addressed).toBeNull();
+    fold(late, new Map(), { ts: T0 + 4 * HOUR, question: true }, 'group', 4);
+    expect(late.turn?.kind).toBe('question');
+  });
+
+  test('bots, system lines and deleted messages owe you nothing', () => {
+    const s = freshState();
+    fold(s, new Map(), { ts: T0, bot: true });
+    fold(s, new Map(), { ts: T0 + 1, ignore: true });
+    expect(s.turn?.addressed ?? null).toBeNull();
+    expect(s.totalReceived).toBe(1);
+  });
+});
+
+// ------------------------------------------------------------------ kept up to date
+
+describe('incremental features in the hub', () => {
+  let dir: string;
+  let store: Store;
+  let att: Attention;
+  let acc: AccountRow;
+  let clock = T0;
+  let n = 0;
+  const say = (conversation: string, author: string, ts: number, x: Partial<P.MessageFact> = {}) => {
+    const nativeId = `m${++n}`;
+    store.ingest(acc, { t: 'message', message: { nativeId, conversation, author, ts, body: '', ...x }, live: true });
+    return nativeId;
+  };
+  const cid = (native: string) => store.one<{ id: string }>('SELECT id FROM conversation WHERE native_id = ?', native)!.id;
+  const state = (native: string) => JSON.parse(store.one<{ state: string }>('SELECT state FROM conv_feature WHERE conversation_id = ?', cid(native))!.state) as ConvState;
+  const flush = () => {
+    const evs = store.flush();
+    return att.sync(evs.flatMap((e) => (e.t === 'conversation' ? [e.conversation.id] : [])));
+  };
+  /** The same conversation's features folded from nothing, in one go. */
+  function fromScratch(native: string): ConvState {
+    store.db.query('DELETE FROM conv_feature WHERE conversation_id = ?').run(cid(native));
+    store.db.query('DELETE FROM conv_author_feature WHERE conversation_id = ?').run(cid(native));
+    att.fold(cid(native), 100_000);
+    return state(native);
+  }
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dither-attention-'));
+    store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
+    acc = store.createAccount({ network: 'matrix', label: 'a', color: '#000', adapter: 'matrix' });
+    store.ingest(acc, { t: 'status', status: 'online', self: { nativeId: 'me', displayName: 'Me' } });
+    acc = store.account(acc.id)!;
+    for (const who of ['sam', 'kim', 'lee']) store.ingest(acc, { t: 'identity', identity: { nativeId: who, displayName: who[0].toUpperCase() + who.slice(1), contact: true } });
+    store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'dm', shape: 'direct', participants: ['me', 'sam'] } });
+    store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'trio', shape: 'group', name: 'Trio', participants: ['me', 'kim', 'lee'] } });
+    store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'chan', shape: 'channel', name: 'general', spaces: [{ nativeId: 'srv' }] } });
+    att = new Attention(store, new Triage(store), () => clock);
+    att.rescoreAll(T0);
+    store.flush();
+  });
+  afterAll(() => {
+    store.db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('a new message is folded and scored at the next flush', () => {
+    clock = T0 + HOUR;
+    say('dm', 'sam', T0);
+    const evs = flush();
+    const item = (evs[0] as Extract<P.ClientEvent, { t: 'attention' }>).items.find((i) => i.id === cid('dm'))!;
+    expect(item.owedSince).toBe(T0);
+    expect(item.needs).toBe(true);
+    expect(state('dm').totalReceived).toBe(1);
+  });
+
+  test('message by message gives the same features as folding everything at once', () => {
+    for (let i = 0; i < 30; i++) {
+      say('trio', i % 3 === 0 ? 'me' : i % 3 === 1 ? 'kim' : 'lee', T0 + 2 * HOUR + i * 7 * MIN, { mentionsSelf: i % 5 === 0 });
+      if (i % 4 === 0) flush();
+      clock += MIN;
+    }
+    flush();
+    const live = state('trio');
+    expect(live.totalReceived + live.totalSent).toBe(30);
+    expect(fromScratch('trio')).toEqual(live);
+  });
+
+  test('in batches of any size, the same again; and re-sending the same messages changes nothing', () => {
+    const whole = state('trio');
+    store.db.query('DELETE FROM conv_feature').run();
+    store.db.query('DELETE FROM conv_author_feature').run();
+    while (att.pump(7) > 0);
+    expect(state('trio')).toEqual(whole);
+    const authors = store.raw('SELECT * FROM conv_author_feature ORDER BY conversation_id, author_key');
+    // The ingest is idempotent, so is the fold: the same message again is not new.
+    n -= 3;
+    say('trio', 'kim', T0 + 2 * HOUR + 28 * 7 * MIN);
+    flush();
+    expect(state('trio')).toEqual(whole);
+    expect(store.raw('SELECT * FROM conv_author_feature ORDER BY conversation_id, author_key')).toEqual(authors);
+    n += 2;
+  });
+
+  test('an older message (backfill, imported history) makes it fold again from the start, once quiet', () => {
+    const before = state('trio');
+    clock += MIN;
+    say('trio', 'me', T0 + 2 * HOUR + 3 * MIN);
+    flush();
+    expect(store.one<{ stale_at: number }>('SELECT stale_at FROM conv_feature WHERE conversation_id = ?', cid('trio'))!.stale_at).toBe(clock);
+    // Still arriving: nothing starts over yet, and appends wait too.
+    att.pump();
+    expect(state('trio')).toEqual(before);
+    clock += 10_000;
+    while (att.pump() > 0);
+    const after = state('trio');
+    expect(after.totalSent).toBe(before.totalSent + 1);
+    expect(fromScratch('trio')).toEqual(after);
+  });
+
+  test('triage deciding after the fold still counts: a push, and a question in a small group', () => {
+    clock = T0 + 2 * DAY;
+    say('trio', 'me', clock - 10 * HOUR);
+    const q = say('trio', 'kim', clock - 5 * HOUR);
+    flush();
+    expect(state('trio').turn?.addressed ?? null).toBeNull();
+    const id = store.one<{ id: string }>('SELECT id FROM message WHERE native_id = ?', q)!.id;
+    const d = { decision: 'push' as const, score: 0.7, reasons: ['Smart: asks a question, small group (3)'], decidedBy: 'rules' as const };
+    store.setTriage(id, d);
+    att.triaged(id, d);
+    const s = state('trio');
+    expect(s.turn?.kind).toBe('question');
+    expect(s.lastPush?.id).toBe(id);
+    // Folding again from the start reads the stored decision and agrees.
+    expect(fromScratch('trio')).toEqual(s);
+  });
+
+  test('a server channel is listed only while it has something for you', () => {
+    clock += HOUR;
+    say('chan', 'lee', clock - MIN);
+    let evs = flush();
+    expect(att.list().some((v) => v.id === cid('chan'))).toBe(false);
+    say('chan', 'lee', clock, { mentionsSelf: true });
+    evs = flush();
+    expect(att.list().find((v) => v.id === cid('chan'))?.reasons).toContain('1 unread mention, 1 more unread');
+    store.markRead(cid('chan'), clock);
+    evs = flush();
+    expect((evs[0] as Extract<P.ClientEvent, { t: 'attention' }>).removed).toContain(cid('chan'));
+  });
+});

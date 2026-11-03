@@ -72,6 +72,10 @@ const coarsePointer = typeof matchMedia === 'function' && matchMedia('(pointer: 
 function LinkCode({ account, at }: { account: P.AccountView; at: P.Attention }) {
   const [full, setFull] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [phoneNo, setPhoneNo] = useState('');
+  const wa = account.network === 'whatsapp';
+  const app = netName(account.network);
+  const pairCode = (at.detail as { pairCode?: string } | undefined)?.pairCode;
   const [now, setNow] = useState(Date.now());
   const svg = useMemo(() => (at.qr ? qrSvg(at.qr) : null), [at.qr]);
   useEffect(() => {
@@ -101,23 +105,46 @@ function LinkCode({ account, at }: { account: P.AccountView; at: P.Attention }) 
       setBusy(false);
     }
   };
+  const pair = async () => {
+    setBusy(true);
+    try {
+      await api(`/api/accounts/${account.id}/action`, { body: { action: 'pairPhone', args: { phone: phoneNo } } });
+    } catch (e: any) {
+      toast({ kind: 'error', title: 'No pairing code', body: e.message });
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <div class="attention-qr">
-      {svg && <button class="qr" title="Show full screen" aria-label="Show the code full screen" onClick={() => setFull(true)} dangerouslySetInnerHTML={{ __html: svg }} />}
+      {svg && !pairCode && <button class="qr" title="Show full screen" aria-label="Show the code full screen" onClick={() => setFull(true)} dangerouslySetInnerHTML={{ __html: svg }} />}
       <div class="qr-side">
-        <ol>
-          <li>Open Signal on your phone.</li>
-          <li>Settings → Linked devices → Link new device.</li>
-          <li>Point the camera at this code. Tap it to fill the screen.</li>
-        </ol>
-        {timer && <p class="qr-timer">{timer}</p>}
-        {coarsePointer && <p class="qr-note">A phone can't scan its own screen. If this is the phone you're linking, open this page on a computer.</p>}
+        {pairCode ? (
+          <p class="qr-pair-code">{pairCode}</p>
+        ) : (
+          <ol>
+            <li>Open {app} on your phone.</li>
+            <li>{wa ? 'Settings → Linked devices → Link a device.' : 'Settings → Linked devices → Link new device.'}</li>
+            <li>Point the camera at this code. Tap it to fill the screen.</li>
+          </ol>
+        )}
+        {timer && !pairCode && <p class="qr-timer">{timer}</p>}
+        {coarsePointer && !wa && <p class="qr-note">A phone can't scan its own screen. If this is the phone you're linking, open this page on a computer.</p>}
+        {wa && !pairCode && (
+          <div class="qr-pair">
+            <p class="qr-note">{coarsePointer ? "A phone can't scan its own screen. " : ''}Or link with your phone number: WhatsApp then asks you to type a code instead.</p>
+            <input class="input" type="tel" placeholder="+15551234567" value={phoneNo} onInput={(e) => setPhoneNo((e.target as HTMLInputElement).value)} />
+            <button class="btn ghost" disabled={busy || phoneNo.replace(/\D/g, '').length < 7} onClick={pair}>
+              Get a pairing code
+            </button>
+          </div>
+        )}
         <button class="btn ghost" disabled={busy} onClick={fresh}>
           <Icon name="refresh" size={15} /> New code
         </button>
       </div>
       {full && svg && (
-        <div class="qr-full" role="dialog" aria-label="Signal link code" onClick={() => setFull(false)}>
+        <div class="qr-full" role="dialog" aria-label={`${app} link code`} onClick={() => setFull(false)}>
           <div class="qr-full-code" dangerouslySetInnerHTML={{ __html: svg }} />
           <p>{timer} Tap anywhere to close.</p>
         </div>
@@ -273,24 +300,96 @@ export function LiveView({ account, onClose }: { account: P.AccountView; onClose
   );
 }
 
+/** A clock for countdowns, ticking once a second while `on`. */
+function useNow(on: boolean): number {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!on) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [on]);
+  return now;
+}
+
+const timeLeft = (ms: number) => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s >= 120 ? `${Math.round(s / 60)} min` : `${s} s`;
+};
+
+function deviceLabel(v: any): string | null {
+  if (v.otherDeviceName && v.otherDevice) return `${v.otherDeviceName} (${v.otherDevice})`;
+  return v.otherDevice ? `device ${v.otherDevice}` : null;
+}
+
+function endedText(v: any): string {
+  const device = deviceLabel(v) ?? 'the other device';
+  if (v.outcome === 'mismatch') return 'You said the emoji did not match, so nothing was verified. If they really differed, do not verify: something may be in the way.';
+  if (v.outcome === 'timeout') {
+    return `${v.cancelledBy === 'them' ? `${device[0].toUpperCase()}${device.slice(1)} gave up waiting` : `Nothing came from ${device} in time`}. After the emoji appear, both sides have to confirm within about a minute, and switching between apps can take longer than that. Nothing was verified.`;
+  }
+  return `${v.cancelledBy === 'them' ? `Cancelled on ${device}` : 'Cancelled'}: ${v.reason ?? 'no reason given'}. Nothing was verified.`;
+}
+
 /** The other side of "verify this device" in another client: accept, compare the emoji, say whether they match. */
-function VerifyDevice({ account, verification }: { account: P.AccountView; verification: any }) {
-  const [busy, setBusy] = useState(false);
+function VerifyDevice({ account, verification: v }: { account: P.AccountView; verification: any }) {
+  const [busy, setBusy] = useState('');
+  const now = useNow(!!v.expiresAt && v.phase !== 'ended');
   const step = async (name: string) => {
-    setBusy(true);
+    setBusy(name);
     try {
       await api(`/api/accounts/${account.id}/action`, { body: { action: 'verifyDevice', args: { step: name } } });
     } catch (e: any) {
       toast({ kind: 'error', title: 'Verification failed', body: e.message });
     } finally {
-      setBusy(false);
+      setBusy('');
     }
   };
+  const device = deviceLabel(v);
+  if (v.phase === 'ended') {
+    return (
+      <div class="verify-device ended">
+        <p class="verify-why">{endedText(v)}</p>
+        <p class="det-note">The recovery key on this page verifies this device without a second app.</p>
+        <div class="btn-row">
+          <button class="btn primary" disabled={!!busy} onClick={() => step('start')}>
+            {busy === 'start' ? 'Asking…' : 'Start again'}
+          </button>
+          <button class="btn ghost" disabled={!!busy} onClick={() => step('dismiss')}>
+            Dismiss
+          </button>
+        </div>
+      </div>
+    );
+  }
+  const remaining = v.expiresAt ? v.expiresAt - now : null;
+  const sasStep = v.phase === 'compare' || v.phase === 'confirmed';
+  const hint =
+    v.phase === 'requested'
+      ? 'Accept here, then go back to the other app: the emoji show up on both.'
+      : v.phase === 'ready'
+        ? 'Open the other app: it starts the emoji check. If no emoji appear there, tap “Show emoji”.'
+        : v.phase === 'compare'
+          ? 'If they are the same, tap “They match” here and in the other app, within a minute of each other.'
+          : v.phase === 'confirmed'
+            ? 'Now confirm in the other app.'
+            : !v.otherDevice
+              ? 'Open Element (or another app signed in to this account) and accept the request there.'
+              : 'Waiting for the other app…';
   return (
     <div class="verify-device">
-      {verification.phase === 'compare' && (
+      <p class="verify-meta">
+        {device && (
+          <>
+            With <b>{device}</b>.{' '}
+          </>
+        )}
+        {remaining !== null && (
+          <span class={`verify-clock${sasStep && remaining < 20_000 ? ' urgent' : ''}`}>{remaining <= 0 ? 'Time is up.' : sasStep ? `${timeLeft(remaining)} left.` : `Expires in ${timeLeft(remaining)}.`}</span>
+        )}
+      </p>
+      {v.phase === 'compare' && (
         <ol class="sas-emoji" aria-label="Emoji to compare">
-          {(verification.emoji ?? []).map((e: { symbol: string; description: string }) => (
+          {(v.emoji ?? []).map((e: { symbol: string; description: string }) => (
             <li>
               <span class="sas-symbol">{e.symbol}</span>
               <span class="sas-name">{e.description}</span>
@@ -298,23 +397,30 @@ function VerifyDevice({ account, verification }: { account: P.AccountView; verif
           ))}
         </ol>
       )}
+      <p class="det-note">{hint}</p>
+      {v.sending > 0 && <p class="det-note verify-sending">The connection to the homeserver dropped; sending again until it goes through…</p>}
       <div class="btn-row">
-        {verification.phase === 'requested' && (
-          <button class="btn primary" disabled={busy} onClick={() => step('accept')}>
+        {v.phase === 'requested' && (
+          <button class="btn primary" disabled={!!busy} onClick={() => step('accept')}>
             Accept
           </button>
         )}
-        {verification.phase === 'compare' && (
-          <button class="btn primary" disabled={busy} onClick={() => step('confirm')}>
+        {v.phase === 'ready' && (
+          <button class="btn ghost" disabled={!!busy} onClick={() => step('sas')}>
+            Show emoji
+          </button>
+        )}
+        {v.phase === 'compare' && (
+          <button class="btn primary" disabled={!!busy} onClick={() => step('confirm')}>
             They match
           </button>
         )}
-        {verification.phase === 'compare' ? (
-          <button class="btn danger" disabled={busy} onClick={() => step('mismatch')}>
+        {v.phase === 'compare' ? (
+          <button class="btn danger" disabled={!!busy} onClick={() => step('mismatch')}>
             They don't match
           </button>
         ) : (
-          <button class="btn ghost" disabled={busy} onClick={() => step('cancel')}>
+          <button class="btn ghost" disabled={!!busy} onClick={() => step('cancel')}>
             Cancel
           </button>
         )}
@@ -329,9 +435,11 @@ function AttentionBlock({ a }: { a: P.AccountView }) {
   const verification = (at.detail as any)?.verification;
   const heading =
     verification
-      ? 'Verify this device'
+      ? verification.phase === 'ended'
+        ? 'Verification did not finish'
+        : 'Verify this device'
       : at.kind === 'link_device'
-      ? 'Link this hub as a Signal device'
+      ? `Link this hub as a ${netName(a.network)} device`
       : at.kind === 'login'
         ? 'Sign in'
         : at.kind === 'captcha'
@@ -369,6 +477,7 @@ function EncryptionSection({ a }: { a: P.AccountView }) {
   const [st, setSt] = useState<any>(null);
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState('');
+  const [keyError, setKeyError] = useState('');
   const call = (action: string, args?: unknown) => api<{ result: any }>(`/api/accounts/${a.id}/action`, { body: { action, ...(args ? { args } : {}) } }).then((r) => r.result);
   useEffect(() => {
     let dead = false;
@@ -382,22 +491,29 @@ function EncryptionSection({ a }: { a: P.AccountView }) {
   }, [a.id]);
   const act = async (label: string, action: string, args?: unknown) => {
     setBusy(label);
+    setKeyError('');
     try {
       setSt(await call(action, args));
       setKey('');
     } catch (e: any) {
-      toast({ kind: 'error', title: 'Encryption', body: e.message });
+      // A recovery key that did not work: say why next to the field, where the user is looking.
+      if (label === 'key') setKeyError(String(e.message).replace(/^action failed: /, ''));
+      else toast({ kind: 'error', title: 'Encryption', body: e.message });
     } finally {
       setBusy('');
     }
   };
-  const keyField = (
-    <div class="add-form">
-      <label class="field-label">
-        Recovery key <span class="muted-label">— from your other Matrix client; unlocks old messages. Optional, kept with this account's other secrets on the hub</span>
-      </label>
-      <input class="input" type={'password' as 'text'} autocomplete="off" placeholder="EsT… or your security phrase" value={key} onInput={(e) => setKey((e.target as HTMLInputElement).value)} />
-    </div>
+  const keyInput = (
+    <input
+      class="input"
+      type={'password' as 'text'}
+      autocomplete="off"
+      spellcheck={false}
+      placeholder="EsT… or your security phrase"
+      value={key}
+      onInput={(e) => setKey((e.target as HTMLInputElement).value)}
+      onKeyDown={(e) => e.key === 'Enter' && key.trim() && st?.active && act('key', 'addRecoveryKey', { recoveryKey: key.trim() })}
+    />
   );
   if (!st) return null;
   if (!st.on || (!st.active && !st.error)) {
@@ -405,7 +521,12 @@ function EncryptionSection({ a }: { a: P.AccountView }) {
       <section class="det-section">
         <h3>Encryption</h3>
         <p class="det-note">Encrypted rooms and DMs stay unreadable and read-only until you set this up. Setting up adds this hub to your account as a new device, publishes its keys, and your other clients will show it as unverified until you verify it.</p>
-        {keyField}
+        <div class="add-form">
+          <label class="field-label">
+            Recovery key <span class="muted-label">— optional: from Element (“security key”) or your security phrase. It verifies this device and unlocks old messages. Kept with this account's other secrets on the hub</span>
+          </label>
+          {keyInput}
+        </div>
         <div class="btn-row">
           <button class="btn primary" disabled={!!busy} onClick={() => act('setup', 'setupEncryption', key.trim() ? { recoveryKey: key.trim() } : {})}>
             <Icon name="lock" size={14} /> {busy === 'setup' ? 'Setting up…' : 'Set up encryption'}
@@ -422,6 +543,8 @@ function EncryptionSection({ a }: { a: P.AccountView }) {
       </section>
     );
   }
+  const flowOn = st.verification && st.verification.phase !== 'ended';
+  const problems: string[] = st.recovery?.problems ?? [];
   return (
     <section class="det-section">
       <h3>Encryption</h3>
@@ -441,21 +564,35 @@ function EncryptionSection({ a }: { a: P.AccountView }) {
           {st.roomKeys} here, {st.undecrypted} {st.undecrypted === 1 ? 'message waits' : 'messages wait'} for a key
         </dd>
       </dl>
-      {st.recoveryError && <p class="det-note">{st.recoveryError}</p>}
-      {st.lastVerification && st.lastVerification !== 'verified' && <p class="det-note">Last verification did not finish: {st.lastVerification}</p>}
-      {!st.backup && keyField}
-      <div class="btn-row">
-        {!st.backup && (
-          <button class="btn ghost" disabled={!!busy || !key.trim()} onClick={() => act('key', 'addRecoveryKey', { recoveryKey: key.trim() })}>
-            {busy === 'key' ? 'Checking…' : 'Use recovery key'}
+      {(!st.verified || !st.backup) && (
+        <div class="recovery-box">
+          <label class="field-label">
+            Unlock with your recovery key <span class="muted-label">— the security key Element showed when you set up recovery (48 letters and digits), or your security phrase. It verifies this device and connects the key backup, with no second app needed</span>
+          </label>
+          {keyInput}
+          {(keyError || st.recoveryError) && <p class="form-error">{keyError || st.recoveryError}</p>}
+          <div class="btn-row">
+            <button class="btn primary" disabled={!!busy || !key.trim()} onClick={() => act('key', 'addRecoveryKey', { recoveryKey: key.trim() })}>
+              <Icon name="lock" size={14} /> {busy === 'key' ? 'Checking…' : 'Unlock'}
+            </button>
+          </div>
+        </div>
+      )}
+      {problems.length > 0 && !st.recoveryError && (
+        <ul class="det-note recovery-problems">
+          {problems.map((p) => (
+            <li>{p}</li>
+          ))}
+        </ul>
+      )}
+      {!st.verified && !flowOn && (
+        <div class="btn-row">
+          <button class="btn ghost" disabled={!!busy || st.hasIdentity === false} title={st.hasIdentity === false ? 'This account has no cross-signing identity yet; set up encryption in Element first' : undefined} onClick={() => act('verify', 'verifyDevice', { step: 'start' })}>
+            {busy === 'verify' ? 'Asking…' : 'Or verify with another device'}
           </button>
-        )}
-        {!st.verified && !st.verification && (
-          <button class="btn ghost" disabled={!!busy} onClick={() => act('verify', 'verifyDevice', { step: 'start' })}>
-            {busy === 'verify' ? 'Asking…' : 'Verify with another client'}
-          </button>
-        )}
-      </div>
+        </div>
+      )}
+      {st.lastVerification && st.lastVerification !== 'verified' && !st.verification && <p class="det-note">Last verification did not finish: {st.lastVerification}</p>}
     </section>
   );
 }
@@ -604,6 +741,11 @@ const NET_HELP: Record<P.Network, { adapter: string; blurb: string; fields: { ke
     ],
     config: ['homeserver'],
   },
+  whatsapp: {
+    adapter: 'whatsapp',
+    blurb: 'Links this hub as another WhatsApp device, like WhatsApp Web. After you add it, scan the QR code with your phone, or ask for a pairing code. Your phone stays in charge; open WhatsApp on it at least every two weeks or the link lapses.',
+    fields: [],
+  },
 };
 
 export function AddAccount({ onClose }: { onClose: () => void }) {
@@ -652,7 +794,7 @@ export function AddAccount({ onClose }: { onClose: () => void }) {
         <label class="field-label">
           Label <span class="muted-label">— how you tell two accounts on {netName(network)} apart</span>
         </label>
-        <input class="input" placeholder={network === 'discord' ? 'main / alt' : network === 'signal' ? 'personal' : 'matrix.org'} value={label} onInput={(e) => setLabel((e.target as HTMLInputElement).value)} />
+        <input class="input" placeholder={network === 'discord' ? 'main / alt' : network === 'signal' || network === 'whatsapp' ? 'personal' : 'matrix.org'} value={label} onInput={(e) => setLabel((e.target as HTMLInputElement).value)} />
         {network === 'matrix' && (
           <>
             <label class="field-label">Homeserver</label>

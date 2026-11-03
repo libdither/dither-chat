@@ -31,6 +31,13 @@ export const VERSION = '0.1.0';
 const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'threads', 'media', 'sendMedia', 'openDirect', 'forward'];
 
 const SYNC_TIMEOUT = 30_000;
+/**
+ * While a device verification runs: the library cancels its emoji step when nothing arrives for 60 s,
+ * checked at each sync before the sync's messages are read. A connection that died without a reset
+ * would hold a 30 s long poll for a minute, so poll briefly and give up on a silent one sooner.
+ */
+const VERIFY_SYNC_TIMEOUT = 5_000;
+const VERIFY_SYNC_GIVE_UP = 20_000;
 const TIMELINE_LIMIT = 50;
 const GAP_PAGES = 4;
 const MAX_MEDIA = 24 * 1024 * 1024;
@@ -135,6 +142,8 @@ export class MatrixAdapter {
   private e2eeError: string | null = null;
   private verification: VerificationState | null = null;
   private recoveryError: string | null = null;
+  /** What the last recovery key that opened something did, and what it could not. */
+  private recovery: { backup: boolean; crossSigned: boolean; problems: string[] } | null = null;
   /** Sessions whose key just arrived, waiting for their events to be retried. */
   private keysArrived = new Set<string>();
   private retrying = false;
@@ -382,11 +391,12 @@ export class MatrixAdapter {
       this.syncAbort = ac;
       let res: any;
       const t0 = Date.now();
+      const verifying = !initial && !!this.e2ee?.verifying;
       try {
         res = await this.api().request('GET', '/_matrix/client/v3/sync', {
           // The first sync of a session returns at once, so the account shows online without waiting out a long poll.
-          query: { filter, since: since ?? undefined, timeout: initial || !this.online ? 0 : SYNC_TIMEOUT, set_presence: 'offline' },
-          timeoutMs: initial ? 300_000 : SYNC_TIMEOUT + 30_000,
+          query: { filter, since: since ?? undefined, timeout: initial || !this.online ? 0 : verifying ? VERIFY_SYNC_TIMEOUT : SYNC_TIMEOUT, set_presence: 'offline' },
+          timeoutMs: initial ? 300_000 : verifying ? VERIFY_SYNC_GIVE_UP : SYNC_TIMEOUT + 30_000,
           signal: ac.signal,
           retries: 0,
         });
@@ -407,7 +417,8 @@ export class MatrixAdapter {
           }
         }
         failures++;
-        const delay = BACKOFF[Math.min(failures - 1, BACKOFF.length - 1)];
+        // A verification in progress cannot wait out a long backoff; see VERIFY_SYNC_TIMEOUT.
+        const delay = Math.min(BACKOFF[Math.min(failures - 1, BACKOFF.length - 1)], this.e2ee?.verifying ? 2 : Infinity);
         this.log('warn', `sync failed (${describe(e)}); retrying in ${delay}s`);
         if (failures >= 4) this.setStatus('error', { kind: 'unknown', message: `Sync keeps failing: ${describe(e)}` });
         else if (!this.online) this.setStatus('connecting', null);
@@ -1499,14 +1510,21 @@ export class MatrixAdapter {
     if (this.e2eeError) return { kind: 'unknown', message: `Encryption is not working: ${this.e2eeError}` };
     const v = this.verification;
     if (!v) return null;
+    const device = v.otherDeviceName ? `${v.otherDeviceName} (${v.otherDevice})` : v.otherDevice ? `Device ${v.otherDevice}` : 'Another device';
     const message =
       v.phase === 'requested'
-        ? `Device ${v.otherDevice ?? 'of yours'} asks to verify this one.`
-        : v.phase === 'compare'
-          ? 'Compare these emoji with the other device.'
-          : v.phase === 'confirmed'
-            ? 'Waiting for the other device to confirm.'
-            : 'Verifying with another device…';
+        ? `${device} asks to verify this one.`
+        : v.phase === 'ready'
+          ? `Waiting for ${device} to show the emoji.`
+          : v.phase === 'compare'
+            ? `Compare these emoji with ${device}.`
+            : v.phase === 'confirmed'
+              ? `Waiting for ${device} to confirm.`
+              : v.phase === 'ended'
+                ? `Verification ${v.outcome === 'timeout' ? 'timed out' : v.outcome === 'mismatch' ? 'stopped: the emoji did not match' : 'was cancelled'}: ${v.reason ?? ''}`.trim()
+                : v.otherDevice
+                  ? `Verifying with ${device}…`
+                  : 'Asked your other devices to verify this one…';
     return { kind: 'verify', message, detail: { verification: v } };
   }
 
@@ -1547,7 +1565,10 @@ export class MatrixAdapter {
           this.retryArrived().catch((e) => this.log('warn', `retrying events failed: ${describe(e)}`));
         },
         onVerification: (v) => {
+          const was = !!this.verification && this.verification.phase !== 'ended';
           this.verification = v;
+          // A flow just began: end the long poll now, so the next sync already runs the short way.
+          if (!was && v && v.phase !== 'ended') this.syncAbort?.abort();
           this.refreshAttention();
         },
       });
@@ -1568,7 +1589,10 @@ export class MatrixAdapter {
     this.log('info', `encryption is on: device ${this.deviceId}`);
     await e2ee.flush().catch((e) => this.log('warn', `could not reach the homeserver for crypto requests: ${describe(e)}`));
     await e2ee.resumeBackup().catch((e) => this.log('warn', `could not check the room key backup: ${describe(e)}`));
-    if (opts.recoveryKey && !(await e2ee.status()).backup) await this.applyRecoveryKey(opts.recoveryKey);
+    if (opts.recoveryKey) {
+      const st = await e2ee.status();
+      if (!st.backup || !st.verified) await this.applyRecoveryKey(opts.recoveryKey);
+    }
     this.retryEverything();
   }
 
@@ -1608,7 +1632,7 @@ export class MatrixAdapter {
 
   private async encryptionStatus() {
     const secret = this.hub.secret<Secret>();
-    const base = { on: !!secret.e2ee?.on, error: this.e2eeError, recoveryKeySaved: !!secret.e2ee?.recoveryKey, recoveryError: this.recoveryError, undecrypted: this.db.utdCount() };
+    const base = { on: !!secret.e2ee?.on, error: this.e2eeError, recoveryKeySaved: !!secret.e2ee?.recoveryKey, recoveryError: this.recoveryError, recovery: this.recovery, undecrypted: this.db.utdCount() };
     return this.e2ee ? { ...base, ...(await this.e2ee.status()) } : { ...base, active: false, deviceId: this.deviceId || null };
   }
 
@@ -1626,10 +1650,12 @@ export class MatrixAdapter {
   private async applyRecoveryKey(key: string): Promise<boolean> {
     try {
       const got = await this.e2ee!.applyRecoveryKey(key);
-      this.recoveryError = got.backup || got.crossSigned ? null : 'that key is right, but this account has no room key backup or cross-signing keys stored under it';
-      this.log('info', `recovery key accepted (room key backup: ${got.backup}, device signed: ${got.crossSigned})`);
+      const worked = got.backup || got.crossSigned;
+      this.recovery = { backup: got.backup, crossSigned: got.crossSigned, problems: got.problems };
+      this.recoveryError = worked ? null : `the key is right, but ${got.problems.join('; ') || 'it unlocks nothing this device can use'}`;
+      this.log(worked ? 'info' : 'warn', `recovery key ${worked ? 'accepted' : 'opened nothing usable'} (room key backup: ${got.backup}, device signed: ${got.crossSigned})${got.problems.length ? `: ${got.problems.join('; ')}` : ''}`);
       this.retryEverything();
-      return got.backup || got.crossSigned;
+      return worked;
     } catch (e) {
       this.recoveryError = describe(e);
       this.log('warn', `recovery key not accepted: ${this.recoveryError}`);

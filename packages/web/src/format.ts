@@ -12,6 +12,14 @@ export function ago(ts: number | null | undefined, now = Date.now()): string {
   if (d < 6 * DAY) return (weekdayFmt ??= new Intl.DateTimeFormat(undefined, { weekday: 'short' })).format(ts);
   return (dayFmt ??= new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })).format(ts);
 }
+/** How long, compactly: "now", "20m", "5h", "3d". */
+export function since(ts: number, now = Date.now()): string {
+  const d = Math.max(0, now - ts);
+  if (d < MIN) return 'now';
+  if (d < HOUR) return `${Math.floor(d / MIN)}m`;
+  if (d < DAY) return `${Math.floor(d / HOUR)}h`;
+  return `${Math.floor(d / DAY)}d`;
+}
 // Made once: toLocaleDateString builds a formatter per call, which a long list pays hundreds of times per render.
 let weekdayFmt: Intl.DateTimeFormat | undefined;
 let dayFmt: Intl.DateTimeFormat | undefined;

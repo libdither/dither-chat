@@ -7,7 +7,8 @@ import { effect, signal } from '@preact/signals';
 import { addDecayed, type UsageDelta, type UsageKind, type UsageState, type UsageView } from '@dither-chat/protocol';
 import { IDLE_AFTER, NEW_VISIT_AFTER, Tracker, type Acc } from './tracker.ts';
 import { placeConv, rootCommunity } from './model.ts';
-import { api, db, route, type Route } from './state.ts';
+import { afterSync, api, db, eventHooks, route, type Route } from './state.ts';
+import { applyUsageEvent } from './syncmodel.ts';
 
 /** The usage keys a conversation counts for: the person for a DM; else the conversation and its community. */
 export function keysOfConv(convId: string): string[] {
@@ -34,9 +35,14 @@ export function keysOfRoute(r: Route): string[] {
 const OUTBOX_KEY = 'dither-chat:usage-outbox';
 const PENDING_KEY = 'dither-chat:usage-pending';
 
-/** The hub's totals, fetched at start and when the app comes back to the front. */
+/** The hub's totals: fetched at start, then kept current by the hub's events (and the sync after a drop, docs/sync.md). */
 export const usageState = signal<UsageState | null>(null);
 export const usageLoaded = signal(false);
+
+eventHooks.add((ev) => {
+  const s = usageState.value;
+  if (s && (ev.t === 'usage' || ev.t === 'arrange')) usageState.value = applyUsageEvent(s, ev);
+});
 
 type Batch = { batch: string; deltas: UsageDelta[] };
 const read = <T>(k: string, d: T): T => {
@@ -167,7 +173,8 @@ export function startUsage() {
     if (hiddenAt && Date.now() - hiddenAt > NEW_VISIT_AFTER) tracker?.newStay();
     hiddenAt = null;
     tick();
-    fetchUsage().then(() => onForeground.forEach((f) => f()));
+    // The totals come with the sync that follows coming back; only a device that never got them asks again.
+    (usageState.value ? afterSync() : fetchUsage()).then(() => onForeground.forEach((f) => f()));
   });
   window.addEventListener('pagehide', () => flush(true));
   setInterval(tick, 5000);

@@ -12,7 +12,8 @@ import * as M from '@matrix-org/matrix-sdk-crypto-wasm';
 import { join } from 'node:path';
 import { CryptoStore } from './cryptostore.ts';
 import { enc, MatrixError, type MatrixClient } from './http.ts';
-import { checkSecretKey, decodeRecoveryKey, decryptSecret, keyFromPassphrase, type SecretKeyInfo, type SecretPayload } from './recovery.ts';
+import { checkSecretKey, decodeRecoveryKey, decryptSecret, keyFromPassphrase, recoveryKeyProblem, type SecretKeyInfo, type SecretPayload } from './recovery.ts';
+import { Backoff, Outbox } from './retry.ts';
 import type { MxEvent } from './rooms.ts';
 
 export const MEGOLM = 'm.megolm.v1.aes-sha2';
@@ -21,8 +22,20 @@ const BACKUP_SECRET = 'm.megolm_backup.v1';
 /** How long a session the backup did not have is left alone. Another client may upload it later. */
 const BACKUP_RETRY_MS = 60 * 60 * 1000;
 const BACKUP_WORKERS = 4;
-/** When someone else asked for the verification, they normally start the emoji step. After this, we do. */
-const START_SAS_AFTER_MS = 3000;
+/**
+ * The library's limits on a verification (matrix-sdk-crypto, verification/requests.rs and sas/sas_state.rs):
+ * a request lives 10 minutes; the emoji step 5 minutes in all, and is cancelled if nothing comes from
+ * the other device for 60 s. That check runs at the start of each sync, before the sync's own messages
+ * are read, so a late sync can end a flow whose next message is already waiting on the server.
+ */
+const SAS_MAX_AGE_MS = 5 * 60_000;
+const SAS_EVENT_TIMEOUT_MS = 60_000;
+/** A message of a flow that is over is still retried this long when it is the cancel, so the other side stops too. */
+const CANCEL_RETRY_FOR_MS = 2 * 60_000;
+/** Any other verification message is given up after this; no flow outlives it. */
+const VERIFICATION_RETRY_FOR_MS = 10 * 60_000;
+/** A flow that ended without verifying stays on screen this long, or until dismissed. */
+const ENDED_SHOWN_MS = 30 * 60_000;
 
 export interface E2eeOptions {
   dir: string;
@@ -33,6 +46,8 @@ export interface E2eeOptions {
   /** Asked each time: a relogin replaces the client. */
   client: () => MatrixClient;
   log: (level: 'debug' | 'info' | 'warn' | 'error', msg: string) => void;
+  /** Delays between retries of failed crypto requests (tests make them short). */
+  retryMs?: number[];
   /** Keys for these sessions just arrived (a to-device message, the backup, another device). */
   onRoomKeys: (keys: { roomId: string; sessionId: string }[]) => void;
   onVerification: (v: VerificationState | null) => void;
@@ -40,12 +55,29 @@ export interface E2eeOptions {
 
 export interface VerificationState {
   flowId: string;
-  /** requested: they asked, waiting for you. waiting: for them. compare: emoji on screen. confirmed: you said yes, waiting for them. */
-  phase: 'requested' | 'waiting' | 'compare' | 'confirmed';
+  /**
+   * requested: they asked, waiting for you to accept. waiting: for the other device. ready: both said yes,
+   * waiting for them to start the emoji step (or for you to). compare: emoji on screen. confirmed: you said
+   * they match, waiting for the other device. ended: it stopped without verifying; `reason` says why.
+   */
+  phase: 'requested' | 'waiting' | 'ready' | 'compare' | 'confirmed' | 'ended';
   otherDevice: string | null;
+  /** The name the other device gave itself, if its keys are known. */
+  otherDeviceName?: string | null;
+  weStarted?: boolean;
+  /** When the library gives up on the current step unless the other device answers first (ms since the epoch). */
+  expiresAt?: number;
   emoji?: { symbol: string; description: string }[];
   decimals?: number[];
+  /** Messages of ours that wait for the homeserver connection, and are being retried. */
+  sending?: number;
+  /** ended: timeout, cancelled (by the other device), mismatch (you said they differ), replaced, or error. */
+  outcome?: 'timeout' | 'cancelled' | 'mismatch' | 'error';
+  reason?: string;
+  cancelledBy?: 'us' | 'them';
+  endedAt?: number;
 }
+
 
 export interface Decrypted {
   type: string;
@@ -99,10 +131,19 @@ export class E2ee {
   private backupTried = new Map<string, number>();
   private backupQueue: { roomId: string; sessionId: string }[] = [];
   private backupWorkers = 0;
-  private flow: { id: string; startSasAt: number | null } | null = null;
+  private flow: { id: string; sasSince: number | null } | null = null;
   private verification: VerificationState | null = null;
   private verificationResult: string | null = null;
-  private verificationTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The last flow that ended without verifying, shown until dismissed. */
+  private ended: VerificationState | null = null;
+  /** Flows we cancelled because a newer request replaced them: not worth an "ended" notice. */
+  private replaced = new Set<string>();
+  /** When the last m.key.verification.* message of each flow arrived: the library's 60 s clock. */
+  private lastIncoming = new Map<string, number>();
+  private verifyLock: Promise<unknown> = Promise.resolve();
+  private outbox: Outbox<any>;
+  private flushBackoff: Backoff;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
   private lastFlushError: string | null = null;
 
@@ -112,6 +153,14 @@ export class E2ee {
     private readonly store: CryptoStore,
   ) {
     this.deviceId = opts.deviceId;
+    this.flushBackoff = new Backoff(opts.retryMs);
+    this.outbox = new Outbox<any>({
+      send: (req) => this.sendRequest(req, { retries: 0, timeoutMs: 15_000 }),
+      wanted: (item) => this.stillWanted(item),
+      backoff: new Backoff(opts.retryMs),
+      onChange: () => this.publish(),
+      log: (level, msg) => this.opts.log(level, `verification: ${msg}`),
+    });
     const k = machine.identityKeys;
     this.identity = { ed25519: k.ed25519.toBase64(), curve25519: k.curve25519.toBase64() };
   }
@@ -147,16 +196,17 @@ export class E2ee {
 
   close() {
     this.stopped = true;
-    if (this.verificationTimer) clearTimeout(this.verificationTimer);
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.outbox.stop();
     this.machine.close();
     this.store.close();
   }
 
   // ---------------------------------------------------------------- requests the machine wants made
 
-  private async sendRequest(req: any) {
+  private async sendRequest(req: any, opts: { retries?: number; timeoutMs?: number } = {}) {
     const c = this.opts.client();
-    const json = { contentType: 'application/json', body: req.body };
+    const json = { contentType: 'application/json', body: req.body, ...opts };
     let res: unknown;
     switch (req.type) {
       case M.RequestType.KeysUpload:
@@ -186,7 +236,11 @@ export class E2ee {
     if (req.id) await this.machine.markRequestAsSent(req.id, req.type, JSON.stringify(res));
   }
 
-  /** Make every request the machine has queued. One flush at a time; a call during one runs another round after it. */
+  /**
+   * Make every request the machine has queued. One flush at a time; a call during one runs another round after it.
+   * What fails stays queued in the machine, and another flush is scheduled with backoff, so a dropped
+   * connection does not leave a key upload or a verification message waiting for the next sync.
+   */
   flush(): Promise<void> {
     if (this.flushing) {
       this.flushAgain = true;
@@ -197,14 +251,65 @@ export class E2ee {
       do {
         this.flushAgain = false;
         const reqs = await this.machine.outgoingRequests();
-        const results = await Promise.allSettled(reqs.map((r) => this.sendRequest(r)));
+        const results = await Promise.allSettled(reqs.map((r) => this.sendRequest(r, { retries: 1 })));
         for (const r of results) if (r.status === 'rejected') firstError ??= r.reason;
         await this.uploadToBackup().catch((e: unknown) => (firstError ??= e));
       } while (this.flushAgain && !this.stopped);
       this.lastFlushError = firstError ? String((firstError as Error).message ?? firstError) : null;
-      if (firstError) throw firstError;
+      if (firstError) {
+        this.scheduleFlush(this.lastFlushError!);
+        throw firstError;
+      }
+      if (this.flushBackoff.failures) this.opts.log('info', `crypto requests went through after ${this.flushBackoff.failures} failed ${this.flushBackoff.failures === 1 ? 'try' : 'tries'}`);
+      this.flushBackoff.reset();
     })().finally(() => (this.flushing = null));
     return this.flushing;
+  }
+
+  private scheduleFlush(error: string) {
+    const delay = this.flushBackoff.fail();
+    if (this.flushBackoff.failures === 1) this.opts.log('warn', `crypto requests failed (${error}); retrying with backoff`);
+    else this.opts.log('debug', `crypto requests failed again (${error}); next try in ${delay / 1000}s`);
+    if (this.flushTimer || this.stopped) return;
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      if (!this.stopped) this.flush().catch(() => {});
+    }, delay);
+  }
+
+  /** The homeserver answered something just now: whatever waits for a retry can go at once. */
+  private connectionWorks() {
+    this.outbox.wake();
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+      this.flush().catch(() => {});
+    }
+  }
+
+  // ---------------------------------------------------------------- verification messages
+
+  /**
+   * Deliver verification messages the library returns rather than queues (start, accept, ready, the MAC,
+   * cancel). Sent once, they were lost on a network error, and the other device waited until it timed out.
+   * In order, one at a time, each retried with backoff until it goes out or its flow is over. A to-device
+   * send has a transaction id, so a retry of one that did arrive is not delivered twice.
+   */
+  private deliver(req: any, flowId: string, cancel = false): Promise<boolean> {
+    return req ? this.outbox.push(req, flowId, cancel) : Promise.resolve(true);
+  }
+
+  private stillWanted({ key: flowId, cancel, age }: { key: string; cancel: boolean; age: number }): boolean {
+    if (this.stopped) return false;
+    if (cancel) return age < CANCEL_RETRY_FOR_MS;
+    if (age >= VERIFICATION_RETRY_FOR_MS) return false;
+    const req = this.machine.getVerificationRequest(new M.UserId(this.opts.userId), flowId);
+    // Done still delivers: the last MAC or done message is what lets the other side finish.
+    return !req?.isCancelled();
+  }
+
+  private pendingFor(flowId: string): number {
+    return this.outbox.pending(flowId);
   }
 
   /** Room keys this device holds that the backup does not, so another client can read what only we received. */
@@ -235,9 +340,41 @@ export class E2ee {
     const left = (res.device_lists?.left ?? []).flatMap(toUserId);
     const counts = new Map<string, number>(Object.entries(res.device_one_time_keys_count ?? {}));
     const fallback = Array.isArray(res.device_unused_fallback_key_types) ? new Set<string>(res.device_unused_fallback_key_types) : undefined;
+    this.connectionWorks();
+    await this.locked(() => this.beforeVerificationMessages(toDevice));
     await this.machine.receiveSyncChanges(JSON.stringify(toDevice), new M.DeviceLists(changed, left), counts, fallback, new M.DecryptionSettings(M.TrustRequirement.Untrusted));
-    await this.flush().catch((e) => this.opts.log('warn', `crypto requests failed, retrying after the next sync: ${e.message}`));
+    await this.flush().catch(() => {}); // logged and retried by flush itself
     await this.tickVerification().catch((e) => this.opts.log('warn', `verification: ${e.message}`));
+  }
+
+  /**
+   * Verification messages in this batch, before the library reads them. Notes when each flow last heard
+   * from the other device, and makes way for a newer request: the library cancels both the old and the
+   * new one when a second request arrives while one is open, so the old one is cancelled here first.
+   */
+  private async beforeVerificationMessages(toDevice: any[]) {
+    const user = new M.UserId(this.opts.userId);
+    const now = Date.now();
+    for (const ev of toDevice) {
+      if (typeof ev?.type !== 'string' || !ev.type.startsWith('m.key.verification.') || ev.sender !== this.opts.userId) continue;
+      const flowId = ev.content?.transaction_id;
+      if (typeof flowId !== 'string') continue;
+      this.lastIncoming.set(flowId, now);
+      if (ev.type !== 'm.key.verification.request' || this.machine.getVerificationRequest(user, flowId)) continue;
+      for (const old of this.machine.getVerificationRequests(user)) {
+        if (old.flowId === flowId || old.isDone() || old.isCancelled()) continue;
+        this.opts.log('info', `verification: device ${ev.content?.from_device ?? '?'} asked again; cancelling the older request so the new one can go ahead`);
+        await this.cancelFlow(old, true);
+      }
+    }
+  }
+
+  /** Cancel a flow, and deliver the cancel. `replaced`: a newer one takes over, so this is no news for the user. */
+  private async cancelFlow(req: M.VerificationRequest, replaced: boolean, code?: string) {
+    if (replaced) this.replaced.add(req.flowId);
+    const sas = req.getVerification();
+    const out = sas instanceof M.Sas ? (code ? sas.cancelWithCode(code) : sas.cancel()) : req.cancel();
+    await this.deliver(out, req.flowId, true);
   }
 
   private async track(users: string[]) {
@@ -327,8 +464,8 @@ export class E2ee {
     }
   }
 
-  private async useBackupKey(base64: string): Promise<boolean> {
-    const info = await this.backupInfo();
+  private async useBackupKey(base64: string, known?: { version: string; publicKey: string } | null): Promise<boolean> {
+    const info = known ?? (await this.backupInfo());
     if (!info) return false;
     const key = M.BackupDecryptionKey.fromBase64(base64);
     const publicKey = key.megolmV1PublicKey.publicKeyBase64.replace(/=+$/, '');
@@ -366,48 +503,111 @@ export class E2ee {
   /**
    * Whatever the user pasted: a backup key, a Secret Storage key, or a Secret Storage passphrase.
    * With Secret Storage this also imports the cross-signing keys and signs this device with them,
-   * which is what verifying with a recovery key means. Throws if the input opens nothing.
+   * which is what verifying with a recovery key means. Throws, saying what was wrong, if the input
+   * opens nothing; `problems` lists what it could not do when it opened something.
    */
-  async applyRecoveryKey(input: string): Promise<{ backup: boolean; crossSigned: boolean }> {
-    await this.flush().catch(() => {}); // our own identity, needed before cross-signing keys can be checked against it
+  async applyRecoveryKey(input: string): Promise<{ backup: boolean; crossSigned: boolean; problems: string[] }> {
+    const user = new M.UserId(this.opts.userId);
     const defaultKey = await this.accountData<{ key?: string }>('m.secret_storage.default_key');
     const keyId = typeof defaultKey?.key === 'string' ? defaultKey.key : null;
     const keyInfo = keyId ? await this.accountData<SecretKeyInfo>(`m.secret_storage.key.${keyId}`) : null;
-    let key = decodeRecoveryKey(input);
-    if (!key && keyInfo) key = await keyFromPassphrase(input.trim(), keyInfo);
-    if (!key) throw new Error('that is not a recovery key (expected something like "EsT… …", 48 letters and digits)');
-
-    const secret = async (name: string): Promise<string | null> => {
-      const payload = (await this.accountData<{ encrypted?: Record<string, SecretPayload> }>(name))?.encrypted?.[keyId!];
-      return payload ? decryptSecret(key!, name, payload) : null;
-    };
-    if (keyInfo && (await checkSecretKey(key, keyInfo))) {
-      const backupSecret = await secret(BACKUP_SECRET);
-      const backup = backupSecret ? await this.useBackupKey(backupSecret.trim()) : false;
-      const crossSigned = await this.importCrossSigning(secret).catch((e) => {
-        this.opts.log('warn', `could not import the cross-signing keys: ${e.message}`);
-        return false;
-      });
-      return { backup, crossSigned };
+    const typed = input.trim();
+    let key = decodeRecoveryKey(typed);
+    const looksLikeKey = recoveryKeyProblem(typed);
+    if (!key && looksLikeKey) throw new Error(looksLikeKey);
+    const asPassphrase = !key;
+    if (!key && keyInfo) {
+      key = await keyFromPassphrase(typed, keyInfo);
+      if (!key) throw new Error("that is not a recovery key, and this account's secret storage has no security phrase to try it as. Paste the recovery key itself (48 letters and digits, starting with \"Es\")");
     }
-    if (await this.useBackupKey(Buffer.from(key).toString('base64').replace(/=+$/, ''))) return { backup: true, crossSigned: false };
-    throw new Error('that key does not open the room key backup or Secret Storage of this account');
+    if (!key) {
+      throw new Error(keyId ? 'that is not a recovery key (48 letters and digits, starting with "Es")' : 'that is not a recovery key, and this account has no secret storage that a security phrase could open');
+    }
+
+    if (keyInfo && (await checkSecretKey(key, keyInfo))) return this.openSecretStorage(key, keyId!, user);
+    // An old-style key: the key of the room key backup itself.
+    const backupInfo = await this.backupInfo();
+    if (backupInfo && (await this.useBackupKey(Buffer.from(key).toString('base64').replace(/=+$/, ''), backupInfo))) {
+      return { backup: true, crossSigned: false, problems: ['it is the key of the room key backup only, so it cannot verify this device; verify with another device for that'] };
+    }
+    if (keyInfo) {
+      throw new Error(
+        asPassphrase
+          ? "that security phrase does not unlock this account's secret storage"
+          : "that key does not unlock this account's secret storage. If the recovery key was reset in another client, only the newest one works",
+      );
+    }
+    if (!keyId) {
+      throw new Error(
+        backupInfo
+          ? 'that key does not open the room key backup, and this account has no secret storage. Verify with another device instead'
+          : 'this account has no secret storage and no room key backup, so there is nothing a recovery key could unlock. Verify with another device instead, or set up recovery in Element first',
+      );
+    }
+    throw new Error(`this account names secret storage key ${keyId}, but its description is missing from the account; set up recovery again in Element`);
   }
 
-  private async importCrossSigning(secret: (name: string) => Promise<string | null>): Promise<boolean> {
+  private async openSecretStorage(key: Uint8Array, keyId: string, user: M.UserId): Promise<{ backup: boolean; crossSigned: boolean; problems: string[] }> {
+    const problems: string[] = [];
+    const secret = async (name: string): Promise<string | null> => {
+      const payload = (await this.accountData<{ encrypted?: Record<string, SecretPayload> }>(name))?.encrypted?.[keyId];
+      return payload ? decryptSecret(key, name, payload) : null;
+    };
+
+    let backup = false;
+    const backupInfo = await this.backupInfo();
+    const backupSecret = await secret(BACKUP_SECRET);
+    if (!backupInfo) problems.push('this account has no room key backup on the server, so old messages cannot be restored from one');
+    else if (!backupSecret) problems.push('secret storage does not hold the key of the room key backup');
+    else if (!(backup = await this.useBackupKey(backupSecret.trim(), backupInfo))) problems.push(`the backup key in secret storage is for an older backup, not the current one (version ${backupInfo.version})`);
+
+    let crossSigned = false;
     const [master, selfSigning, userSigning] = await Promise.all([secret('m.cross_signing.master'), secret('m.cross_signing.self_signing'), secret('m.cross_signing.user_signing')]);
-    if (!selfSigning) return false;
-    await this.machine.importCrossSigningKeys(master, selfSigning, userSigning);
-    return this.signOurDevice();
+    if (!selfSigning) problems.push('secret storage does not hold the cross-signing keys, so this device cannot sign itself');
+    else {
+      // Our own published identity, fresh: the keys from secret storage are checked against it.
+      await this.sendWithRetry(this.machine.queryKeysForUsers([new M.UserId(this.opts.userId)]), "asking the homeserver for this account's keys");
+      if (!(await this.machine.getIdentity(user))) problems.push('the homeserver has no cross-signing identity for this account');
+      else {
+        const status = await this.machine.importCrossSigningKeys(master, selfSigning, userSigning).catch((e: Error) => {
+          this.opts.log('warn', `the cross-signing keys from secret storage were not accepted: ${e.message}`);
+          return null;
+        });
+        if (!status?.hasSelfSigning) problems.push("the cross-signing keys in secret storage do not match this account's identity (it was probably reset since); set up recovery again in Element");
+        else crossSigned = await this.signOurDevice();
+      }
+    }
+    if (crossSigned) {
+      this.ended = null;
+      this.publish();
+    }
+    return { backup, crossSigned, problems };
   }
 
   private async signOurDevice(): Promise<boolean> {
     const status = await this.machine.crossSigningStatus();
     if (!status.hasSelfSigning) return false;
-    const device = await this.machine.getDevice(new M.UserId(this.opts.userId), new M.DeviceId(this.opts.deviceId));
+    const user = new M.UserId(this.opts.userId);
+    const device = await this.machine.getDevice(user, new M.DeviceId(this.opts.deviceId));
     if (!device) return false;
-    await this.sendRequest(await device.verify());
+    await this.sendWithRetry(await device.verify(), 'uploading the signature of this device');
+    // See our own device as the server now has it, signature included.
+    // (queryKeysForUsers takes ownership of the ids it is given, hence a new one.)
+    await this.sendWithRetry(this.machine.queryKeysForUsers([new M.UserId(this.opts.userId)]), "asking the homeserver for this account's keys");
     return true;
+  }
+
+  /** For a step the user waits on: a few tries over about 15 s, then the error. */
+  private async sendWithRetry(req: any, what: string) {
+    const backoff = new Backoff([1000, 2000, 4000, 8000]);
+    for (;;) {
+      try {
+        return await this.sendRequest(req, { retries: 0, timeoutMs: 20_000 });
+      } catch (e: any) {
+        if (backoff.failures >= 4 || (e instanceof MatrixError && e.status < 500 && !e.isRateLimit)) throw new Error(`${what} failed: ${e?.message ?? e}`);
+        await backoff.sleep(backoff.fail());
+      }
+    }
   }
 
   /** A session we have no key for: ask the backup for just that one. Fetching a whole backup can be gigabytes, and most of it is never read. */
@@ -444,8 +644,20 @@ export class E2ee {
 
   // ---------------------------------------------------------------- verification with another of your devices
 
+  /** One verification step at a time: a sync, a timer and a tap must not interleave (two of them could both start SAS). */
+  private locked<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.verifyLock.then(fn, fn);
+    this.verifyLock = run.catch(() => {});
+    return run;
+  }
+
   private currentRequest(): M.VerificationRequest | undefined {
     return this.flow ? this.machine.getVerificationRequest(new M.UserId(this.opts.userId), this.flow.id) : undefined;
+  }
+
+  /** A flow is going on (not one that ended): the adapter syncs more eagerly meanwhile. */
+  get verifying(): boolean {
+    return this.flow !== null;
   }
 
   private setVerification(v: VerificationState | null) {
@@ -454,54 +666,130 @@ export class E2ee {
     this.opts.onVerification(v);
   }
 
-  /** Drive the flow from what the machine says now. Runs after each sync and each action. */
-  private async tickVerification(): Promise<void> {
+  /** Show the state again, e.g. after the outbox changed. */
+  private publish() {
+    if (!this.stopped) this.tickVerification().catch((e) => this.opts.log('warn', `verification: ${e.message}`));
+  }
+
+  /** Drive the flow from what the machine says now. Runs after each sync, each action, and when a send fails or recovers. */
+  private tickVerification(): Promise<void> {
+    return this.locked(() => this.tick());
+  }
+
+  private async tick(): Promise<void> {
     const user = new M.UserId(this.opts.userId);
-    if (!this.flow) {
-      const open = this.machine.getVerificationRequests(user).find((r) => !r.isDone() && !r.isCancelled() && !r.timedOut() && !r.isPassive());
-      if (!open) return;
-      this.flow = { id: open.flowId, startSasAt: null };
-      this.verificationResult = null;
+    // Every request lives 10 minutes, so the one with the most time left is the newest.
+    const live = this.machine
+      .getVerificationRequests(user)
+      .filter((r) => !r.isDone() && !r.isCancelled() && !r.timedOut() && !r.isPassive())
+      .sort((a, b) => b.timeRemainingMillis() - a.timeRemainingMillis());
+    let req = this.currentRequest();
+    if (this.flow && (!req || req.isDone() || req.isCancelled() || req.timedOut())) {
+      await this.endFlow(req);
+      req = undefined;
     }
-    const req = this.currentRequest();
-    if (!req || req.isDone() || req.isCancelled() || req.timedOut()) {
-      const verified = !!req?.isDone();
-      this.verificationResult = verified ? 'verified' : (req?.cancelInfo?.reason() ?? 'cancelled');
+    const newest = live[0];
+    if (this.flow && req && newest && newest.flowId !== req.flowId && newest.timeRemainingMillis() > req.timeRemainingMillis()) {
+      this.opts.log('info', 'verification: a newer request replaces the one in progress');
+      await this.cancelFlow(req, true);
       this.flow = null;
-      this.setVerification(null);
-      if (verified) await this.afterVerified();
-      return this.tickVerification(); // there may be another
     }
-    const base = { flowId: req.flowId, otherDevice: req.otherDeviceId?.toString() ?? null };
+    if (!this.flow) {
+      if (!newest) return this.setVerification(this.endedShown());
+      for (const stale of live.slice(1)) await this.cancelFlow(stale, true);
+      this.flow = { id: newest.flowId, sasSince: null };
+      this.ended = null;
+      this.verificationResult = null;
+      req = newest;
+    }
+    req = req ?? this.currentRequest()!;
+    const flow = this.flow!;
+    const otherDevice = req.otherDeviceId?.toString() ?? null;
+    const base: VerificationState = {
+      flowId: req.flowId,
+      phase: 'waiting',
+      otherDevice,
+      otherDeviceName: otherDevice ? await this.deviceName(otherDevice) : null,
+      weStarted: req.weStarted(),
+      expiresAt: Date.now() + req.timeRemainingMillis(),
+      ...(this.pendingFor(req.flowId) ? { sending: this.pendingFor(req.flowId) } : {}),
+    };
+    // Stable between ticks, so an unchanged state is not sent again every sync.
+    base.expiresAt = Math.round(base.expiresAt! / 1000) * 1000;
     const phase = req.phase();
     if (phase === M.VerificationRequestPhase.Requested || phase === M.VerificationRequestPhase.Created) {
       return this.setVerification({ ...base, phase: !req.weStarted() && phase === M.VerificationRequestPhase.Requested ? 'requested' : 'waiting' });
     }
     if (phase === M.VerificationRequestPhase.Ready) {
-      // Whoever goes first wins; if both do the library settles it the way the spec says.
-      if (req.weStarted() || (this.flow.startSasAt !== null && Date.now() >= this.flow.startSasAt)) {
+      // We asked and they said yes: they are looking at their screen now, so start at once. When they asked,
+      // they start. Starting for them would start the emoji step's one-minute clock while their app may be
+      // in the background; the user can still tap "Show emoji" here.
+      if (req.weStarted()) {
         const started = await req.startSas();
-        if (started) await this.sendRequest(started[1]);
-        return this.tickVerification();
+        if (started) {
+          flow.sasSince = Date.now();
+          await this.deliver(started[1], req.flowId);
+          return this.tick();
+        }
       }
-      if (this.flow.startSasAt === null) {
-        this.flow.startSasAt = Date.now() + START_SAS_AFTER_MS;
-        this.verificationTimer = setTimeout(() => void this.tickVerification().catch((e: Error) => this.opts.log('warn', `verification: ${e.message}`)), START_SAS_AFTER_MS + 50);
-      }
-      return this.setVerification({ ...base, phase: 'waiting' });
+      return this.setVerification({ ...base, phase: 'ready' });
     }
     const sas = req.getVerification();
-    if (!(sas instanceof M.Sas)) return this.setVerification({ ...base, phase: 'waiting' });
-    if (!sas.weStarted() && !sas.hasBeenAccepted()) {
-      const out = sas.accept();
-      if (out) await this.sendRequest(out);
-    }
-    await this.flush().catch(() => {});
-    if (sas.haveWeConfirmed()) return this.setVerification({ ...base, phase: 'confirmed' });
+    if (!(sas instanceof M.Sas)) return this.setVerification(base);
+    flow.sasSince ??= Date.now();
+    if (!sas.weStarted() && !sas.hasBeenAccepted()) await this.deliver(sas.accept(), req.flowId);
+    const heard = Math.max(this.lastIncoming.get(req.flowId) ?? 0, flow.sasSince);
+    const sasBase = { ...base, expiresAt: Math.min(base.expiresAt!, flow.sasSince + SAS_MAX_AGE_MS, heard + SAS_EVENT_TIMEOUT_MS) };
+    if (sas.haveWeConfirmed()) return this.setVerification({ ...sasBase, phase: 'confirmed' });
     const emoji = sas.emoji();
-    if (!sas.canBePresented() || !emoji) return this.setVerification({ ...base, phase: 'waiting' });
-    this.setVerification({ ...base, phase: 'compare', emoji: emoji.map((e) => ({ symbol: e.symbol, description: e.description })), decimals: Array.from(sas.decimals() ?? []) });
+    if (!sas.canBePresented() || !emoji) return this.setVerification(sasBase);
+    this.setVerification({ ...sasBase, phase: 'compare', emoji: emoji.map((e) => ({ symbol: e.symbol, description: e.description })), decimals: Array.from(sas.decimals() ?? []) });
   }
+
+  private async deviceName(deviceId: string): Promise<string | null> {
+    const d = await this.machine.getDevice(new M.UserId(this.opts.userId), new M.DeviceId(deviceId)).catch(() => undefined);
+    return d?.displayName ?? null;
+  }
+
+  private endedShown(): VerificationState | null {
+    if (this.ended && Date.now() - (this.ended.endedAt ?? 0) > ENDED_SHOWN_MS) this.ended = null;
+    return this.ended;
+  }
+
+  /** The flow in `this.flow` is over: verified, or say why not. */
+  private async endFlow(req: M.VerificationRequest | undefined) {
+    const flowId = this.flow!.id;
+    this.flow = null;
+    this.lastIncoming.delete(flowId);
+    if (req?.isDone()) {
+      this.verificationResult = 'verified';
+      this.ended = null;
+      await this.afterVerified();
+      return;
+    }
+    const sas = req?.getVerification();
+    const info = req?.cancelInfo ?? (sas instanceof M.Sas ? sas.cancelInfo() : undefined);
+    const code = info?.cancelCode() ?? (req?.timedOut() ? 'm.timeout' : '');
+    const byUs = info ? info.cancelledbyUs() : true;
+    const reason = info?.reason() ?? (req?.timedOut() ? 'The verification process timed out.' : 'The verification was dropped.');
+    this.verificationResult = reason;
+    const otherDevice = req?.otherDeviceId?.toString() ?? this.verification?.otherDevice ?? null;
+    this.opts.log('info', `verification with ${otherDevice ?? 'another device'} ended without verifying: ${reason} (${code || 'no code'}, ${byUs ? 'by this device' : 'by the other device'})`);
+    if (this.replaced.delete(flowId) || this.userCancelled.delete(flowId)) return;
+    const outcome: VerificationState['outcome'] = code === 'm.timeout' ? 'timeout' : code === 'm.mismatched_sas' && byUs ? 'mismatch' : 'cancelled';
+    this.ended = {
+      flowId,
+      phase: 'ended',
+      otherDevice,
+      otherDeviceName: otherDevice ? await this.deviceName(otherDevice) : null,
+      outcome,
+      reason,
+      cancelledBy: byUs ? 'us' : 'them',
+      endedAt: Date.now(),
+    };
+  }
+
+  private userCancelled = new Set<string>();
 
   private async afterVerified() {
     this.opts.log('info', 'verification with another device finished');
@@ -510,42 +798,64 @@ export class E2ee {
     await this.flush().catch(() => {});
   }
 
-  async verifyAction(op: string) {
-    const user = new M.UserId(this.opts.userId);
-    if (op === 'start') {
-      const own: any = await this.machine.getIdentity(user);
-      if (!own?.requestVerification) throw new Error('this account has no cross-signing identity to verify against; set one up in another client first');
-      const [req, out] = await own.requestVerification([M.VerificationMethod.SasV1]);
-      await this.sendRequest(out);
-      this.flow = { id: req.flowId, startSasAt: null };
-      this.verificationResult = null;
-      return this.tickVerification();
-    }
-    const req = this.currentRequest();
-    if (!req) throw new Error('no verification is in progress');
-    const sas = req.getVerification();
-    let outgoing: any[] = [];
-    switch (op) {
-      case 'accept':
-        outgoing = [req.acceptWithMethods([M.VerificationMethod.SasV1])];
-        break;
-      case 'confirm':
-        if (!(sas instanceof M.Sas) || !sas.emoji()) throw new Error('there are no emoji to confirm yet');
-        outgoing = await sas.confirm();
-        break;
-      case 'mismatch':
-        if (sas instanceof M.Sas) outgoing = [sas.cancelWithCode('m.mismatched_sas')];
-        else outgoing = [req.cancel()];
-        break;
-      case 'cancel':
-        outgoing = [sas instanceof M.Sas ? sas.cancel() : req.cancel()];
-        break;
-      default:
-        throw new Error(`unknown verification step "${op}"`);
-    }
-    for (const out of outgoing) if (out) await this.sendRequest(out);
-    await this.flush().catch(() => {});
-    await this.tickVerification();
+  /**
+   * A tap in the UI. Messages go out through the outbox: a network error does not fail the step, it is
+   * retried, and the state shows it as "sending".
+   */
+  verifyAction(op: string): Promise<void> {
+    return this.locked(async () => {
+      const user = new M.UserId(this.opts.userId);
+      if (op === 'start') {
+        const own: any = await this.machine.getIdentity(user);
+        if (!own?.requestVerification) throw new Error('this account has no cross-signing identity to verify against; set one up in another client first, or use the recovery key');
+        // One flow at a time: the library would cancel the new request too if an old one were still open.
+        for (const r of this.machine.getVerificationRequests(user)) if (!r.isDone() && !r.isCancelled()) await this.cancelFlow(r, true);
+        if (this.flow) await this.endFlow(this.currentRequest());
+        const [req, out] = await own.requestVerification([M.VerificationMethod.SasV1]);
+        this.flow = { id: req.flowId, sasSince: null };
+        this.ended = null;
+        this.verificationResult = null;
+        await this.deliver(out, req.flowId);
+        return this.tick();
+      }
+      if (op === 'dismiss') {
+        this.ended = null;
+        return this.tick();
+      }
+      const req = this.currentRequest();
+      if (!req) throw new Error(this.ended ? 'that verification is over; start again' : 'no verification is in progress');
+      const sas = req.getVerification();
+      switch (op) {
+        case 'accept':
+          await this.deliver(req.acceptWithMethods([M.VerificationMethod.SasV1]), req.flowId);
+          break;
+        case 'sas': {
+          if (req.phase() !== M.VerificationRequestPhase.Ready) break; // started already, by either side
+          const started = await req.startSas();
+          if (started) {
+            this.flow!.sasSince = Date.now();
+            await this.deliver(started[1], req.flowId);
+          }
+          break;
+        }
+        case 'confirm': {
+          if (!(sas instanceof M.Sas) || !sas.emoji()) throw new Error('there are no emoji to confirm yet');
+          const outs = (await sas.confirm()).filter(Boolean);
+          await Promise.all(outs.map((o) => this.deliver(o, req.flowId)));
+          break;
+        }
+        case 'mismatch':
+          await this.cancelFlow(req, false, 'm.mismatched_sas');
+          break;
+        case 'cancel':
+          this.userCancelled.add(req.flowId);
+          await this.cancelFlow(req, false);
+          break;
+        default:
+          throw new Error(`unknown verification step "${op}"`);
+      }
+      return this.tick();
+    });
   }
 
   // ---------------------------------------------------------------- status
@@ -568,6 +878,7 @@ export class E2ee {
       verification: this.verification,
       lastVerification: this.verificationResult,
       lastError: this.lastFlushError,
+      hasIdentity: !!(await this.machine.getIdentity(user).catch(() => undefined)),
     };
   }
 }

@@ -1,5 +1,5 @@
 {
-  description = "dither-chat: self-hosted Discord + Signal + Matrix aggregator";
+  description = "dither-chat: self-hosted Discord + Signal + Matrix + WhatsApp aggregator";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
@@ -18,9 +18,12 @@
         matrix-continuwuity # local Matrix homeserver for the adapter testbed
         sqlite
       ];
+      waBridge = pkgs: pkgs.callPackage ./packages/adapter-whatsapp/bridge/package.nix { };
     in {
       packages = forAll (pkgs: {
-        runtime = pkgs.buildEnv { name = "dither-chat-runtime"; paths = runtimeTools pkgs; };
+        runtime = pkgs.buildEnv { name = "dither-chat-runtime"; paths = runtimeTools pkgs ++ [ (waBridge pkgs) ]; };
+        # WhatsApp adapter: whatsmeow as a linked device. The adapter builds this itself when it is not on PATH.
+        wa-bridge = waBridge pkgs;
       });
       devShells = forAll (pkgs: {
         default = pkgs.mkShell { packages = runtimeTools pkgs ++ [ pkgs.typescript ]; };

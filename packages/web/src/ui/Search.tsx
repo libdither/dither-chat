@@ -1,5 +1,5 @@
 import type * as P from '@dither-chat/protocol';
-import { parseSearch, searchOp, setSearchOp } from '@dither-chat/protocol';
+import { NETWORKS, parseSearch, searchOp, setSearchOp } from '@dither-chat/protocol';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { clock, dayLabel } from '../format.ts';
 import { allCommunities, authorName, communitiesOf, convLabel, convTitle, netName, people, resolveTokens, visibleConv } from '../model.ts';
@@ -52,7 +52,7 @@ function Filters({ q, set }: { q: string; set: (q: string) => void }) {
   return (
     <div class="search-filters">
       <div class="level-picker">
-        {(['discord', 'signal', 'matrix'] as const).map((n) => (
+        {NETWORKS.map((n) => (
           <button class={`chip-btn ${on('network', n) ? 'on' : ''}`} onClick={() => toggle('network', n)}>
             <NetBadge network={n} size={14} /> {netName(n)}
           </button>

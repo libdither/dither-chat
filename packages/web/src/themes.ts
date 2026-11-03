@@ -586,7 +586,7 @@ export function themeById(id: string | undefined): Theme {
 export const surfacesOf = (c: Palette) => [c.center, c.sidebar, c.raised];
 
 /** Network colours (protocol's NETWORK_META), which show as text on chips and crumbs. */
-export const NETWORK_COLORS = ['#5865F2', '#3A91F5', '#0DBD8B'];
+export const NETWORK_COLORS = ['#5865F2', '#3A91F5', '#0DBD8B', '#1DAA61'];
 
 /** A chip's background: the network colour at 14% over the surface (styles.css .source-chip). */
 const tint = (net: string, surface: string, p: number) => mix(net, surface, p);

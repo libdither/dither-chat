@@ -1,7 +1,7 @@
 import { searchOp } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
-import { inboxSections, sumUnread, visibleConv } from '../model.ts';
-import { api, back, connected, db, go, loaded, prefs, previousRoute, readProgress, refresh, rev, route, type Route } from '../state.ts';
+import { accountsNeedingYou, pingedCount, sumUnread, visibleConv } from '../model.ts';
+import { api, back, connected, db, go, loaded, pending, prefs, previousRoute, readProgress, refresh, rev, route, unreachable, type Route } from '../state.ts';
 import { dropLayer, phone, pushLayer } from '../phone.ts';
 import { AccountPane, AccountsSidebar, AddAccount, addingAccount } from './Accounts.tsx';
 import { ConversationDetails, PersonDetails } from './Details.tsx';
@@ -18,7 +18,7 @@ import { Rail } from './Rail.tsx';
 import { TitleBar } from './TitleBar.tsx';
 import { SearchPane } from './Search.tsx';
 import { SettingsPane } from './Settings.tsx';
-import { FolderSidebar, GroupsSidebar, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar } from './Sidebar.tsx';
+import { FolderSidebar, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar } from './Sidebar.tsx';
 import { ConversationPane, PersonPane } from './Timeline.tsx';
 import { Switcher } from './Switcher.tsx';
 import { Toasts } from './Toasts.tsx';
@@ -39,8 +39,6 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       return r.person ? { pane: <PersonPane personId={r.person} onBack={back} />, detail: { kind: 'person', id: r.person } } : { pane: <WelcomePane view="people" /> };
     case 'profile':
       return { pane: <ProfilePane personId={r.person} identityId={r.identity} onBack={back} /> };
-    case 'groups':
-      return r.conv ? { pane: <ConversationPane convId={r.conv} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <WelcomePane view="groups" /> };
     case 'space':
       return r.conv ? { pane: <ConversationPane convId={r.conv} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <WelcomePane view="space" /> };
     case 'folder':
@@ -72,8 +70,6 @@ function sidebarFor(r: Route, onAdd: () => void) {
       return <PeopleSidebar activePerson={r.person} />;
     case 'profile':
       return <PeopleSidebar activePerson={r.person} />;
-    case 'groups':
-      return <GroupsSidebar activeConv={r.conv} />;
     case 'space':
       return <SpaceSidebar spaceId={r.space} activeConv={r.conv} />;
     case 'spaces':
@@ -122,12 +118,11 @@ function SettingsNav() {
 function WelcomePane({ view }: { view: string }) {
   const titles: Record<string, { h: string; p: string; icon: string }> = {
     people: { h: 'People', p: 'Pick a person to see every DM you have with them — Signal, Discord and Matrix in one thread.', icon: 'users' },
-    groups: { h: 'Groups', p: 'Group chats and rooms that live on their own, outside a server or space.', icon: 'groups' },
     space: { h: 'Communities', p: 'Pick a channel from the server or space on the left.', icon: 'hash' },
     folder: { h: 'Folder', p: 'A custom grouping that spans networks. Pick anything on the left.', icon: 'folder' },
     accounts: { h: 'Accounts', p: 'Pick an account to check its status, or add a new one.', icon: 'power' },
   };
-  const t = titles[view] ?? titles.groups;
+  const t = titles[view] ?? titles.space;
   return (
     <section class="pane welcome">
       <div class="welcome-inner">
@@ -148,7 +143,6 @@ function isDetail(r: Route): boolean {
       // Searching one conversation is a page of that conversation, with the way back to it.
       return !!r.conv || !!searchOp(r.q, 'in');
     case 'inbox':
-    case 'groups':
     case 'space':
       return !!r.conv;
     case 'people':
@@ -201,12 +195,11 @@ let lastHome: Route = { view: 'inbox' };
 
 function TabBar({ r }: { r: Route }) {
   const tab = tabOf(r);
-  const inb = inboxSections();
   const all = sumUnread([...db.conversations.values()].filter(visibleConv)).badge;
   const attention = [...db.accounts.values()].some((a) => a.attention);
   const tabs: { id: Tab; label: string; icon: string; to: () => Route; badge?: number; dot?: boolean }[] = [
     { id: 'home', label: 'Home', icon: 'home', to: () => lastHome, badge: all },
-    { id: 'triage', label: 'Triage', icon: 'bell', to: () => ({ view: 'triage' }), badge: inb.priority.length + inb.attention.length },
+    { id: 'triage', label: 'Triage', icon: 'bell', to: () => ({ view: 'triage' }), badge: pingedCount() + accountsNeedingYou().length },
     { id: 'search', label: 'Search', icon: 'search', to: () => ({ view: 'search', q: '' }) },
     { id: 'you', label: 'You', icon: 'user', to: () => ({ view: 'settings' }), dot: attention },
   ];
@@ -300,9 +293,10 @@ export function App() {
       class={`app ${p ? `phone rest-${rest}` : ''} ${!p && details ? 'with-details' : ''} ${full ? 'full' : ''} ${tabs ? 'tabs' : ''} ${tabRoot ? 'tab-root' : ''} ${narrow ? 'narrow' : ''}`}
       style={{ '--peek': `${PEEK}px` } as any}
     >
-      {!connected.value && (
-        <div class="reconnect">
-          <span class="dot" /> Reconnecting to the hub…
+      {/* Short drops go unmentioned: the app shows what it has and catches up when the hub is back (docs/sync.md). */}
+      {(unreachable.value || (!connected.value && pending.value.some((x) => x.queued))) && (
+        <div class="reconnect" role="status">
+          <span class="dot" /> Can't reach the hub · showing what this device has
         </div>
       )}
       {updateReady.value && (

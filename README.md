@@ -1,6 +1,6 @@
 # dither-chat
 
-One self-hosted hub that aggregates **Discord, Signal and Matrix** into a single
+One self-hosted hub that aggregates **Discord, Signal, Matrix and WhatsApp** into a single
 ontology — people, groups and communities — and serves every device as a PWA
 over Tailscale. No bridge, no hosted middleman: the clients run on your own
 machine and relay normalized facts to a local hub.
@@ -17,7 +17,7 @@ from every device. Everything runs on hardware you control.
 
 ```
 adapter (1 per account) ──native-id facts over WS──▶ hub ──▶ PWA / MCP / ntfy
-   discord | signal | matrix                    dedupe, store,
+   discord | signal | matrix | whatsapp         dedupe, store,
                                                  social graph, triage
 ```
 
@@ -25,10 +25,10 @@ adapter (1 per account) ──native-id facts over WS──▶ hub ──▶ PWA
 - **`packages/hub`** — Bun + SQLite. Idempotent ingest, cross-account dedup,
   person-merge, notification triage, media proxy, live WebSocket, HTTP API,
   adapter supervisor. Entry: `packages/hub/src/main.ts`.
-- **`packages/web`** — Preact PWA. Inbox triage board, per-person merged DM
+- **`packages/web`** — Preact PWA. One ranked inbox, triage board, per-person merged DM
   timelines, Discord/Matrix space trees with threads, folders, notification
   rules, sandbox live-view (noVNC), and a phone layout with Discord's panels and gestures.
-- **`packages/adapter-{discord,signal,matrix}`** — one adapter per network.
+- **`packages/adapter-{discord,signal,matrix,whatsapp}`** — one adapter per network.
 
 The ontology has three independent axes — **Shape** (direct / group / channel /
 thread / self), **Variant** (text / announcement / forum / voice / …) and
@@ -53,6 +53,7 @@ Then add real accounts from the **Accounts** page, or with the CLI:
 bun packages/hub/src/cli.ts add matrix --label main \
   --config '{"homeserver":"https://matrix.org"}' --secret '{"userId":"@you:matrix.org","password":"…"}'
 bun packages/hub/src/cli.ts add signal  --label personal     # then scan the QR on its page
+bun packages/hub/src/cli.ts add whatsapp --label personal    # then scan the QR, or ask for a pairing code
 bun packages/hub/src/cli.ts add discord --label alt          # then sign in via the live view
 ```
 
@@ -68,16 +69,19 @@ clients over Tailscale (bind is `0.0.0.0`; the server only answers loopback + ta
 | Matrix adapter | done — verified end-to-end against a local homeserver |
 | Matrix end-to-end encryption | done, opt-in per account: read, write, media, old messages through the key backup, emoji verification. Verified on a local homeserver only, never with Element or on matrix.org ([details](packages/adapter-matrix/README.md#end-to-end-encryption)) |
 | Signal adapter | done — QR device-link + messaging via signal-cli; a live link needs your phone |
+| WhatsApp adapter | built, not yet linked to a real account: a linked device through whatsmeow, the library Beeper uses (why not the web client in a sandbox: [docs/whatsapp.md](docs/whatsapp.md)). QR or pairing-code linking, history sync, DMs, groups, communities as spaces, media, reactions, replies, edits, deletes, read state, native forwards. Verified against fixtures, a fake bridge, and the real bridge up to a fresh link code |
 | Reactions across networks | done: custom emoji, Discord super reactions, Signal's one-per-person, Matrix image packs ([docs/reactions.md](docs/reactions.md)). Sending a super reaction is untested for lack of Nitro |
 | Installable PWA | done: HTTPS through Caddy with a Let's Encrypt wildcard, no per-device step ([docs/deploy.md](docs/deploy.md)), updates reach installed apps. Verified in headless Chromium, not yet on a phone |
 | On a phone | done: the same app, laid out like Discord's: swipe between the lists, the page and its details, swipe to reply, long-press for everything a hover offers, sheets that drag away, back that closes them first, an image viewer, the keyboard and the notch handled. Everything the desktop does is reachable ([docs/phone.md](docs/phone.md)). Verified with touch input in headless Chromium, not yet on a real phone |
 | Themes and the title bar | done: 16 themes (Dither, Discord, AMOLED, Nord, Dracula, Catppuccin, Gruvbox, Rosé Pine, Tokyo Night, Solarized, high contrast), all checked at WCAG AA by a test, with live preview and a follow-the-system pair; the installed app can draw its own title bar (window controls overlay) ([docs/desktop.md](docs/desktop.md)). The overlay is untested in a real installed window |
+| One ranked inbox | done: DMs, group chats, rooms outside a space and notes to self in one list with filter chips, ranked on the hub by how much each needs you (an unanswered message weighted by how often you answer that person, how much you talk there, noise against engagement), with the reasons on hover and a "caught up" line ([docs/inbox.md](docs/inbox.md)). Metadata only, never message text. Verified on the demo world and the score distribution on a copy of a real hub |
 | Arranging the sidebar | done: drag by mouse or touch, folders, pin, hide, stored on the hub |
 | All communities | done: full-screen list with seven orderings, categories by yes/no question (keywords, or a local Ollama model) |
 | Profiles | done: merged identities, shared places, recent messages. Bio and roles are not fetched, and starting a new DM needs an adapter command |
 | Search | done: FTS5, filters, snippets, jump to message, Ctrl+K switcher. Searches what the hub has stored, not the network |
-| Web Push | done: opt-in per device, verified through Google's relay. ntfy stays the self-hosted route |
+| Web Push | done: opt-in per device, verified through Google's and Mozilla's relays and, for the Android app, through ntfy (ntfy.sh or your own server, allowed from the app) |
 | Android app | done: a 250 KB WebView shell with native permissions, calls that survive the screen going off, and push through UnifiedPush ([docs/android.md](docs/android.md)). The web app now starts from a local snapshot and a cached shell: about 1 s to content instead of 4.5 s on a big hub. Verified on the emulator, not yet on a phone |
+| Coming back to the app | done: a reconnect asks the hub only for what changed since (a change journal; about a kilobyte when little did, 60-140 KB after hours away, against 800 KB before), with no banner for short drops and sends that wait for the hub ([docs/sync.md](docs/sync.md)). Verified in headless Chromium and against a copy of a real database, not yet on a phone |
 | Edit and delete | done in hub and PWA; verified on the demo adapter only |
 | Right-click menus and forwarding | done: Discord's menus on messages, channels, servers, folders, people, accounts, files and links, as sheets on a phone; forwarding to several places at once, natively on Discord (verified on the throwaway account) and as a copy across networks ([docs/menus.md](docs/menus.md)) |
 | Mark all read | done: everywhere, or per server, folder or person, through a paced queue on the hub. Verified on the demo adapter only |
