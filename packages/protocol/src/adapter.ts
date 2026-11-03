@@ -127,6 +127,8 @@ export interface MessageFact {
   /** This message is the root of that thread conversation. */
   threadRoot?: string;
   mentionsSelf?: boolean;
+  /** With mentionsSelf: the mention was @everyone or @here, not you by name. It notifies, but is not addressed to you. */
+  mentionsAll?: boolean;
   attachments?: AttachmentFact[];
   /** Full reaction snapshot (backfill). Live changes use the `reaction` event. */
   reactions?: ReactionFact[];

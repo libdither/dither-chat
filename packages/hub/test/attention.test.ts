@@ -33,23 +33,27 @@ const T0 = Date.UTC(2026, 9, 1, 9);
 // ------------------------------------------------------------------ the formula
 
 describe('an unanswered message', () => {
-  test('rises over the first hours, holds through the first day, then fades over a few days', () => {
-    const at = (h: number) => owedCurve(h * HOUR, null);
-    expect(at(0)).toBe(0);
-    expect(at(0.25)).toBeLessThan(at(1));
-    expect(at(1)).toBeLessThan(at(5));
-    expect(at(24)).toBeGreaterThan(0.99);
+  test('counts in full from the moment it arrives, through the first day, then fades over a few days', () => {
+    const at = (h: number) => owedCurve(h * HOUR);
+    expect(at(0)).toBe(1);
+    expect(at(0.1)).toBe(1);
+    expect(at(24)).toBe(1);
     // Halves every two days after the first.
     expect(at(72)).toBeCloseTo(at(24) / 2, 2);
     expect(at(24 * 7)).toBeCloseTo(0.125, 2);
     expect(at(24 * 12)).toBeLessThan(0.05);
   });
 
-  test('rises faster for someone you usually answer within minutes', () => {
-    expect(owedCurve(30 * MIN, 5 * MIN)).toBeGreaterThan(owedCurve(30 * MIN, 4 * HOUR));
-    // Never instantly, never slower than a working day.
-    expect(owedCurve(5 * MIN, 1)).toBeLessThan(0.3);
-    expect(owedCurve(24 * HOUR, 3 * DAY)).toBeGreaterThan(0.9);
+  test('reading a message you will answer leaves it where it was; reading one you would not lets it go', () => {
+    const now = T0 + 40 * DAY;
+    const unread = (x: ScoreInput, n: number): ScoreInput => ({ ...x, unread: n, pinged: n ? 'Direct message' : null });
+    const often = owedDm(0.05, now, habit(9, 10, 30 * MIN, now));
+    expect(scoreConversation(often).score).toBeCloseTo(scoreConversation(unread(often, 1)).score, 0);
+    expect(scoreConversation(often).needs).toBe(true);
+    const seldom = owedDm(0.05, now, habit(0, 10, 0, now));
+    expect(scoreConversation(seldom).score).toBeLessThan(scoreConversation(unread(seldom, 1)).score - 15);
+    // Not counted twice while it is unread either.
+    expect(scoreConversation(unread(often, 1)).parts.overlap).toBeLessThan(0);
   });
 });
 
@@ -218,6 +222,25 @@ describe('turns', () => {
     expect(late.turn?.kind).toBe('question');
   });
 
+  test('a reaction of yours answers what was owed up to the message, and counts toward how often, not how fast', () => {
+    const s = freshState();
+    const a = new Map<string, Tally>();
+    fold(s, a, { ts: T0, authorKey: 'sam' });
+    fold(s, a, { ts: T0 + MIN, authorKey: 'sam', reactedByMe: true });
+    expect(s.turn).toBeNull();
+    expect(s.tally.replied).toBeCloseTo(1);
+    expect(s.tally.latency.reduce((x, y) => x + y, 0)).toBe(0);
+    expect(a.get('sam')!.replied).toBeCloseTo(1);
+    // What they write after it is owed afresh.
+    fold(s, a, { ts: T0 + 2 * MIN, authorKey: 'sam' });
+    expect(s.turn?.addressed).toBe(T0 + 2 * MIN);
+    // In a group, reacting to chatter after a mention answers the mention.
+    const g = freshState();
+    fold(g, new Map(), { ts: T0, mentionsMe: true }, 'group', 40);
+    fold(g, new Map(), { ts: T0 + MIN, reactedByMe: true }, 'group', 40);
+    expect(g.turn).toBeNull();
+  });
+
   test('bots, system lines and deleted messages owe you nothing', () => {
     const s = freshState();
     fold(s, new Map(), { ts: T0, bot: true });
@@ -356,5 +379,40 @@ describe('incremental features in the hub', () => {
     store.markRead(cid('chan'), clock);
     evs = flush();
     expect((evs[0] as Extract<P.ClientEvent, { t: 'attention' }>).removed).toContain(cid('chan'));
+  });
+
+  test('@everyone notifies like a mention but owes no answer', () => {
+    clock += HOUR;
+    store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'news', shape: 'channel', name: 'announcements', spaces: [{ nativeId: 'srv' }] } });
+    say('news', 'lee', clock, { mentionsSelf: true, mentionsAll: true });
+    flush();
+    expect(state('news').turn?.addressed ?? null).toBeNull();
+    expect(store.one<{ mentions: number }>('SELECT mentions FROM vantage WHERE target_id = ?', cid('news'))!.mentions).toBe(1);
+    // Read, it is gone from the inbox: nothing was owed.
+    store.markRead(cid('news'), clock);
+    flush();
+    expect(att.list().some((v) => v.id === cid('news'))).toBe(false);
+  });
+
+  test('reacting to what they wrote answers it: the conversation folds again, and owes nothing', () => {
+    clock += HOUR;
+    say('dm', 'me', clock - 2 * MIN);
+    const m = say('dm', 'sam', clock - MIN);
+    flush();
+    const owed = clock - MIN;
+    expect(state('dm').turn?.addressed).toBe(owed);
+    store.ingest(acc, { t: 'reaction', conversation: 'dm', message: m, author: 'me', key: '👍' });
+    flush();
+    clock += 10_000;
+    while (att.pump() > 0);
+    flush();
+    expect(state('dm').turn).toBeNull();
+    expect(att.list().find((v) => v.id === cid('dm'))?.owedSince ?? null).toBeNull();
+    // Taking the reaction back owes it again.
+    store.ingest(acc, { t: 'reaction', conversation: 'dm', message: m, author: 'me', key: '👍', remove: true });
+    flush();
+    clock += 10_000;
+    while (att.pump() > 0);
+    expect(state('dm').turn?.addressed).toBe(owed);
   });
 });

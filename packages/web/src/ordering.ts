@@ -114,14 +114,37 @@ export interface InboxSnapshot {
   unread: string[];
 }
 
-export function inboxSnapshot(items: readonly (Ranked & { unread: boolean })[]): InboxSnapshot {
-  return { keys: rank(items), needs: items.filter((x) => x.needs).length, unread: items.filter((x) => x.unread).map((x) => x.key) };
+/** The open conversation and the snapshot it was shown in: it keeps that place until you leave it. */
+export interface Hold {
+  key: string;
+  prev: InboxSnapshot | null;
+}
+
+/**
+ * The order to show now. `hold` keeps the conversation you have open where it was, on the same side of the line:
+ * reading it or answering it changes its score, and it should not jump away while you are in it. It settles at the
+ * first snapshot after you leave.
+ */
+export function inboxSnapshot(items: readonly (Ranked & { unread: boolean })[], hold?: Hold): InboxSnapshot {
+  let keys = rank(items);
+  let needs = items.filter((x) => x.needs).length;
+  const was = hold?.prev ? hold.prev.keys.indexOf(hold.key) : -1;
+  const item = hold && items.find((x) => x.key === hold.key);
+  if (hold?.prev && item && was >= 0) {
+    const above = was < hold.prev.needs;
+    const rest = keys.filter((k) => k !== hold.key);
+    const restNeeds = needs - Number(item.needs);
+    rest.splice(Math.min(rest.length, above ? Math.min(was, restNeeds) : Math.max(was, restNeeds)), 0, hold.key);
+    keys = rest;
+    needs = restNeeds + Number(above);
+  }
+  return { keys, needs, unread: items.filter((x) => x.unread).map((x) => x.key) };
 }
 
 /** Whether a fresh ranking would show anything different from the snapshot: an order or the line. */
-export function inboxChanged(snap: InboxSnapshot | null, fresh: readonly Ranked[]): boolean {
+export function inboxChanged(snap: InboxSnapshot | null, fresh: readonly Ranked[], hold?: Hold): boolean {
   if (!snap) return true;
-  const now = inboxSnapshot(fresh.map((x) => ({ ...x, unread: false })));
+  const now = inboxSnapshot(fresh.map((x) => ({ ...x, unread: false })), hold);
   return now.needs !== snap.needs || now.keys.join('\n') !== snap.keys.join('\n');
 }
 

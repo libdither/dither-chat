@@ -97,6 +97,8 @@ export class Store {
   readonly dirty = new Dirty();
   /** Conversation -> the oldest new message stored since attention.ts last looked, so it can tell appends from backfill. */
   readonly ingested = new Map<string, number>();
+  /** Conversations where your own reactions changed since attention.ts last looked: a reaction answers what you owed. */
+  readonly selfReacted = new Set<string>();
   /** What changed at which position, for clients that come back (journal.ts, docs/sync.md). */
   readonly journal: Journal;
   private selfIdentities = new Set<string>();
@@ -107,7 +109,9 @@ export class Store {
     this.db = new Database(path, { create: true, strict: true });
     const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
     const reactionsBefore = this.oldReactions();
+    const broadcastsUnknown = this.addMentionsAll();
     this.db.exec(schema);
+    if (broadcastsUnknown) this.markBroadcasts();
     this.adoptOldReactions(reactionsBefore);
     this.journal = new Journal(this.db);
     // Messages from before full-text search existed.
@@ -117,6 +121,27 @@ export class Store {
     for (const r of this.db.query('SELECT self_identity FROM account WHERE self_identity IS NOT NULL').all() as Row[]) {
       this.selfIdentities.add(r.self_identity);
     }
+  }
+
+  /** Message tables from before @everyone was told apart from a mention by name get the column. */
+  private addMentionsAll(): boolean {
+    const cols = (this.db.query('PRAGMA table_info(message)').all() as Row[]).map((c) => c.name);
+    if (!cols.length || cols.includes('mentions_all')) return false;
+    this.db.exec('ALTER TABLE message ADD COLUMN mentions_all INTEGER NOT NULL DEFAULT 0');
+    return true;
+  }
+
+  /**
+   * Discord messages stored before then counted @everyone and @here as mentions of you. Told apart once, by the
+   * text: a mention that says @everyone or @here and does not name any of your accounts.
+   */
+  private markBroadcasts() {
+    const selves = (this.db.query(`SELECT i.native_id FROM account a JOIN identity i ON i.id = a.self_identity WHERE a.network = 'discord'`).all() as Row[]).map((r) => `%<@${r.native_id}>%`);
+    this.db
+      .query(
+        `UPDATE message SET mentions_all = 1 WHERE network = 'discord' AND mentions_self = 1 AND (body LIKE '%@everyone%' OR body LIKE '%@here%')${selves.map(() => ' AND body NOT LIKE ?').join('')}`,
+      )
+      .run(...selves);
   }
 
   /** Reaction rows from before styles and tallies existed; drops the old table so the schema can rebuild it. */
@@ -600,12 +625,13 @@ export class Store {
     const thread = f.threadRoot ? hubId('cnv', acc.network, f.threadRoot) : null;
     this.db
       .query(
-        `INSERT INTO message (id, conversation_id, network, native_id, author_id, ts, edited_ts, kind, body, reply_to_id, thread_id, mentions_self, extra)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO message (id, conversation_id, network, native_id, author_id, ts, edited_ts, kind, body, reply_to_id, thread_id, mentions_self, mentions_all, extra)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (network, native_id) DO UPDATE SET
            edited_ts = COALESCE(excluded.edited_ts, edited_ts), kind = excluded.kind, body = excluded.body,
            reply_to_id = COALESCE(excluded.reply_to_id, reply_to_id), thread_id = COALESCE(excluded.thread_id, thread_id),
-           mentions_self = MAX(mentions_self, excluded.mentions_self), extra = COALESCE(excluded.extra, extra)`,
+           mentions_self = MAX(mentions_self, excluded.mentions_self),
+           mentions_all = CASE WHEN excluded.mentions_self = 1 THEN excluded.mentions_all ELSE mentions_all END, extra = COALESCE(excluded.extra, extra)`,
       )
       .run(
         id,
@@ -620,6 +646,7 @@ export class Store {
         replyTo,
         thread,
         f.mentionsSelf ? 1 : 0,
+        f.mentionsSelf && f.mentionsAll ? 1 : 0,
         f.extra || f.forward ? JSON.stringify({ ...f.extra, ...(f.forward ? { forward: f.forward } : {}) }) : null,
       );
     if (f.attachments) {
@@ -630,7 +657,7 @@ export class Store {
           .run(hubId('att', acc.network, `${f.nativeId}#${a.nativeId ?? i}`), id, a.kind, a.mime ?? null, a.name ?? null, a.size ?? null, a.width ?? null, a.height ?? null, a.url, i);
       });
     }
-    if (f.reactions) this.reactionSnapshot(acc, id, f.reactions);
+    if (f.reactions) this.reactionSnapshot(acc, id, f.reactions, existed);
     if (!existed) this.ingested.set(cid, Math.min(this.ingested.get(cid) ?? Infinity, f.ts));
     const newForAccount = this.db.query('INSERT OR IGNORE INTO message_seen (message_id, account_id) VALUES (?, ?)').run(id, acc.id).changes > 0;
 
@@ -1021,9 +1048,31 @@ export class Store {
       .run(network, e.key, e.name, e.url, e.animated ? 1 : 0);
   }
 
+  /** Your reactions on a message, as a string: when it changes, what you owe there changes. */
+  private selfReactions(mid: string): string {
+    return (this.db.query('SELECT identity_id, key, style FROM reaction WHERE message_id = ? ORDER BY identity_id, key, style').all(mid) as Row[])
+      .filter((r) => this.isSelf(r.identity_id))
+      .map((r) => `${r.key}|${r.style}`)
+      .join('\n');
+  }
+
+  private noteSelfReactions(mid: string, before: string) {
+    if (this.selfReactions(mid) === before) return;
+    const m = this.db.query('SELECT conversation_id FROM message WHERE id = ?').get(mid) as Row | null;
+    if (m) this.selfReacted.add(m.conversation_id);
+  }
+
   /** One person added or took back one reaction. */
   private applyReaction(acc: AccountRow, mid: string, ev: Extract<P.AdapterEvent, { t: 'reaction' }>) {
     const iid = this.ensureIdentity(acc, ev.author);
+    if (this.isSelf(iid)) {
+      const before = this.selfReactions(mid);
+      this.applyReactionAs(acc, mid, ev, iid);
+      this.noteSelfReactions(mid, before);
+    } else this.applyReactionAs(acc, mid, ev, iid);
+  }
+
+  private applyReactionAs(acc: AccountRow, mid: string, ev: Extract<P.AdapterEvent, { t: 'reaction' }>, iid: string) {
     const key = canonicalReactionKey(ev.key);
     const style = ev.style ?? 'normal';
     if (ev.emoji) this.putEmoji(acc.network, ev.emoji);
@@ -1059,7 +1108,15 @@ export class Store {
   }
 
   /** The whole reaction state of a message, as one account's network reports it. */
-  private reactionSnapshot(acc: AccountRow, mid: string, facts: P.ReactionFact[]) {
+  private reactionSnapshot(acc: AccountRow, mid: string, facts: P.ReactionFact[], existed = true) {
+    // A message new to the hub is folded with its reactions anyway.
+    if (!existed) return this.applySnapshot(acc, mid, facts);
+    const before = this.selfReactions(mid);
+    this.applySnapshot(acc, mid, facts);
+    this.noteSelfReactions(mid, before);
+  }
+
+  private applySnapshot(acc: AccountRow, mid: string, facts: P.ReactionFact[]) {
     const present = new Set(facts.map((r) => `${r.style ?? 'normal'}|${canonicalReactionKey(r.key)}`));
     for (const t of this.db.query('SELECT key, style FROM reaction_tally WHERE message_id = ?').all(mid) as Row[]) {
       if (present.has(`${t.style}|${t.key}`)) continue;

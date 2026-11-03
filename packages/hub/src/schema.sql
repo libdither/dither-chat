@@ -149,6 +149,8 @@ CREATE TABLE IF NOT EXISTS message (
   reply_to_id     TEXT,                       -- hub id; may point at a message not fetched yet
   thread_id       TEXT,                       -- conversation this message is the root of
   mentions_self   INTEGER NOT NULL DEFAULT 0,
+  -- The mention of you was @everyone or @here: it notifies like one, but is not addressed to you.
+  mentions_all    INTEGER NOT NULL DEFAULT 0,
   deleted         INTEGER NOT NULL DEFAULT 0,
   extra           TEXT,
   UNIQUE (network, native_id)

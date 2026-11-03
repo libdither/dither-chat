@@ -144,6 +144,21 @@ describe('the inbox', () => {
     expect(inboxChanged(next, fresh)).toBe(false);
   });
 
+  test('the open conversation keeps its place, on its side of the line, until you leave it', () => {
+    const u = (x: Ranked) => ({ ...x, unread: false });
+    const prev = inboxSnapshot([r('a', 60), r('b', 50), r('c', 40), r('d', 5)].map(u));
+    // You opened b and answered it: it no longer needs you and would sink below the line.
+    const fresh = [r('a', 60), r('b', 12), r('c', 40), r('d', 5), r('e', 70)];
+    const held = inboxSnapshot(fresh.map(u), { key: 'b', prev });
+    expect(held).toEqual({ keys: ['e', 'b', 'a', 'c', 'd'], needs: 4, unread: [] });
+    expect(inboxChanged(held, fresh, { key: 'b', prev: held })).toBe(false);
+    // A row below the line stays below it, however high it scores now.
+    const low = inboxSnapshot([r('a', 60), r('b', 50), r('d', 5)].map(u));
+    expect(inboxSnapshot([r('a', 60), r('b', 50), r('d', 90)].map(u), { key: 'd', prev: low })).toMatchObject({ keys: ['a', 'b', 'd'], needs: 2 });
+    // Once you leave it, it goes where it belongs.
+    expect(inboxSnapshot(fresh.map(u)).keys).toEqual(['e', 'a', 'c', 'b', 'd']);
+  });
+
   test('a filter hides rows without moving the others or the line', () => {
     const snap = inboxSnapshot([r('dm1', 50), r('g1', 40), r('dm2', 10), r('g2', 5)].map((x) => ({ ...x, unread: false })));
     const fresh = [r('dm1', 50), r('g1', 40), r('dm2', 10), r('g2', 5)];

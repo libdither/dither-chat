@@ -266,6 +266,10 @@ describe('messages', () => {
     expect(mapMessage({ ...base, content: `hey <@!${SELF}>` }, SELF).body).toBe(`hey <@${SELF}>`);
     expect(mapMessage({ ...base, content: `hey <@!${SELF}>` }, SELF).mentionsSelf).toBe(true);
     expect(mapMessage({ ...base, content: 'all hands', mention_everyone: true }, SELF).mentionsSelf).toBe(true);
+    // @everyone notifies like a mention, but is marked as not addressed to you by name.
+    expect(mapMessage({ ...base, content: 'all hands', mention_everyone: true }, SELF).mentionsAll).toBe(true);
+    expect(mapMessage({ ...base, content: `all hands, esp <@${SELF}>`, mention_everyone: true, mentions: [self] }, SELF).mentionsAll).toBeUndefined();
+    expect(mapMessage({ ...base, content: `hey <@${SELF}>`, mentions: [self] }, SELF).mentionsAll).toBeUndefined();
     expect(mapMessage({ ...base, content: 'no ping', mentions: [alice] }, SELF).mentionsSelf).toBeUndefined();
   });
 

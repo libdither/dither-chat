@@ -20,7 +20,7 @@ Code: `packages/hub/src/attention.ts` (features and score), `packages/web/src/in
 In points, roughly 0 to 100. A conversation **needs you** at 20 or more.
 
 ```
-score = owed + unread + pinged + relationship + noise + recency       (muted: −50 + recency)
+score = max(owed, unread + pinged) + relationship + noise + recency   (muted: −50 + recency)
 
 owed         = 60 × p × curve(age)
 unread       = 8 + 12 × min(addressed, 3) + 3 × min(other, 3)         when anything is unread
@@ -29,6 +29,12 @@ relationship = 25 × strength                                           strength
 noise        = 20 × fit if fit < 0, else 8 × fit                       fit −1..1
 recency      = 10 × 2^(−since last message / 1 day)
 ```
+
+Something to **answer** (owed) and something to **read** (unread, pinged) are one need, not two, so the larger counts
+(`parts.overlap` takes off the smaller). Reading clears what there was to read; only answering, or time, clears what
+you owe. So reading a message from someone you answer leaves the conversation where it was, and reading one you would
+not answer lets it go. Before, the two added up, and reading a fresh message took its points away while the owed part
+was still near zero: the conversation you were in sank below chats you had finished with.
 
 ### Owed reply
 
@@ -41,21 +47,27 @@ that is:
 - in a small group (6 or fewer, you included): a question (triage said "asks a question"), or the first message
   within an hour after yours.
 
-Bots never address you. Your next message **settles** the turn: answered, with how long it took, if within
+Bots never address you, and neither does @everyone or @here (`mentions_all`): those notify like a mention and count as
+one while unread, but owe no answer. Your next message **settles** the turn: answered, with how long it took, if within
 3 days (`REPLY_WINDOW`), otherwise unanswered. A turn that runs past 3 days counts as unanswered, and the next
 addressed message starts the clock again.
 
+A **reaction** of yours settles it too: a 👍 is often the whole reply. Reactions carry no time, so it counts where the
+message you reacted to is: what was owed up to there is answered, and what they wrote after it is owed afresh. It
+counts toward how often you answer, not how fast. Adding or taking back a reaction folds the conversation again from
+the start (`Store.selfReacted`), a few seconds later.
+
 While a turn is open, `age` is the time since its first addressed message, and
 
-- `curve(age)` rises as `1 − e^(−age/τ)`, where τ is how long you usually take to answer this person (at least
-  20 minutes, at most 8 hours, 2 hours when unknown). It holds at its peak through the first day, then halves
-  every 2 days. After 3 days it is 0.5 of the peak, after a week 0.125.
+- `curve(age)` is 1 from the moment the message arrives through the first day, then halves every 2 days. After
+  3 days it is 0.5, after a week 0.125. (It used to rise over the time you usually take to answer, which made a
+  just-read message weigh almost nothing.)
 - `p` is your reply rate: answered turns over addressed ones, decayed (half-life 30 days). It is pooled per
   person over all your conversations with them, pulled toward ½ while there are few, and then used as the prior
   for this conversation's own rate: `p = (answered_here + 2·p_person) / (addressed_here + 2)`.
 
-So someone you answer 9 times in 10 within the hour reaches about 50 points after a few hours and needs you.
-Someone you answer 1 time in 10 stays near 10 and does not.
+So someone you answer 9 times in 10 is worth about 50 points as soon as they write, and needs you. Someone you answer
+1 time in 10 stays near 10 and does not.
 
 ### Unread and pinged
 
@@ -139,7 +151,8 @@ tally (`conv_author_feature`), so a person's reply rate is a sum over a few rows
 
 Measured on a copy of a real hub (93,439 messages, 5,234 conversations, 403 listed): folding everything took
 1.9 s in 59 steps of at most 35 ms; scoring all 403 takes about 55 ms; the features take 384 KB. That is about
-20 µs a message, so a million imported messages fold in about 20 s of background steps.
+20 µs a message, so a million imported messages fold in about 20 s of background steps. Since the fold also looks
+for your reactions (version 2), it is slower: 129,600 messages in 5.7 s on a later copy, about 44 µs a message.
 
 Not followed: a message deleted or edited after it was folded (its mention or reply target) keeps counting
 until the conversation folds again. Merging two people leaves their old author rows under the old person until
@@ -154,6 +167,10 @@ the ranking (a new score, a new conversation, one gone). None of these happen wh
 pointer over a list, a touch on one in the last 4 seconds, an open menu, a drag, or keyboard focus in a list.
 They retry every 1.5 s until that ends. So the inbox is as current as a chat app's while you are not touching
 it, and never moves under your pointer or finger.
+
+The conversation you have open keeps its place across snapshots, on the same side of the line, until you leave it
+(`inboxSnapshot`'s `hold`): reading or answering it changes its score, and it should not jump away while you are in
+it. Leaving it asks for a snapshot, so it settles where it now belongs once nothing is in use.
 
 Between snapshots rows keep their places, and the line stays after the rows that needed you then. A new
 conversation goes at the end until the next one. Rows that are no longer listed go. Rows slide to their new

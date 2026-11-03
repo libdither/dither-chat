@@ -33,7 +33,7 @@ export const SMALL_GROUP = 6;
 /** Reply latency histogram: bucket i counts replies within LATENCY_EDGES[i] and after the edge before it. */
 export const LATENCY_EDGES = [5 * MIN, 15 * MIN, 30 * MIN, HOUR, 2 * HOUR, 4 * HOUR, 8 * HOUR, 16 * HOUR, DAY, 2 * DAY, REPLY_WINDOW];
 /** Bumped when the fold changes meaning: every conversation folds again, in the background. */
-export const FEATURE_VERSION = 1;
+export const FEATURE_VERSION = 2;
 /** A conversation that got older messages folds again once none have arrived for this long. */
 const QUIET = 5_000;
 /** Scores move with time (an unanswered message ages, recency fades): all are recomputed this often. */
@@ -112,6 +112,8 @@ export interface FoldMessage {
   pushed: boolean;
   /** Deleted, or a system line: moves the cursor, counts for nothing. */
   ignore: boolean;
+  /** You reacted to it: an answer, as far as what you owe goes. */
+  reactedByMe?: boolean;
 }
 
 export interface Place {
@@ -138,8 +140,11 @@ const bucketOf = (latency: number) => {
   return i < 0 ? LATENCY_EDGES.length - 1 : i;
 };
 
-/** Count one addressed turn, answered after `latency` or (null) not at all. Order-independent, like usage.ts. */
-export function record(t: Tally, when: number, latency: number | null) {
+/**
+ * Count one addressed turn, answered after `latency` or (null) not at all. Order-independent, like usage.ts. An
+ * answer of unknown speed (a reaction, which carries no time) counts as answered but not in the latency histogram.
+ */
+export function record(t: Tally, when: number, latency: number | null, timed = true) {
   let w = 1;
   if (when >= t.at) {
     const f = toward(t.at, when);
@@ -151,7 +156,7 @@ export function record(t: Tally, when: number, latency: number | null) {
   t.addressed += w;
   if (latency !== null && latency <= REPLY_WINDOW) {
     t.replied += w;
-    t.latency[bucketOf(Math.max(0, latency))] += w;
+    if (timed) t.latency[bucketOf(Math.max(0, latency))] += w;
   }
 }
 
@@ -167,14 +172,14 @@ function addressedKind(m: FoldMessage, place: Place, s: ConvState): OwedKind | n
   return null;
 }
 
-/** The open turn is over: answered at `answeredAt`, or (null) it ran out. */
-function settle(s: ConvState, tallyOf: (key: string) => Tally, answeredAt: number | null) {
+/** The open turn is over: answered at `answeredAt`, or (null) it ran out. `timed`: whether that is when you answered. */
+function settle(s: ConvState, tallyOf: (key: string) => Tally, answeredAt: number | null, timed = true) {
   const t = s.turn;
   if (!t || t.addressed === null) return;
   const latency = answeredAt === null ? null : answeredAt - t.addressed;
   const when = answeredAt ?? t.addressed + REPLY_WINDOW;
-  record(s.tally, when, latency);
-  if (t.authorKey) record(tallyOf(t.authorKey), when, latency);
+  record(s.tally, when, latency, timed);
+  if (t.authorKey) record(tallyOf(t.authorKey), when, latency, timed);
 }
 
 /** Add one message, in (ts, rowid) order. `tallyOf` gives this conversation's tally for an author, to update. */
@@ -201,13 +206,25 @@ export function foldMessage(s: ConvState, tallyOf: (key: string) => Tally, m: Fo
   s.lastWasMine = false;
   s.turn ??= { since: m.ts, count: 0, addressed: null, kind: null, author: null, authorKey: null };
   s.turn.count++;
-  if (!kind) return;
+  if (!kind) return acknowledge(s, tallyOf, m);
   // Unanswered for so long it ran out: that turn is over, and this one starts the clock again.
   if (s.turn.addressed !== null && m.ts - s.turn.addressed > REPLY_WINDOW) {
     settle(s, tallyOf, null);
     s.turn = { since: m.ts, count: 1, addressed: null, kind: null, author: null, authorKey: null };
   }
   if (s.turn.addressed === null) Object.assign(s.turn, { addressed: m.ts, kind, author: m.author, authorKey: m.authorKey });
+  acknowledge(s, tallyOf, m);
+}
+
+/**
+ * A reaction of yours to a message from someone else answers what was owed up to it: a 👍 is often the whole reply.
+ * It counts where the message is, since reactions carry no time, so what they wrote after it is owed afresh. It
+ * counts toward how often you answer, not how fast.
+ */
+function acknowledge(s: ConvState, tallyOf: (key: string) => Tally, m: FoldMessage) {
+  if (!m.reactedByMe || s.turn?.addressed == null) return;
+  settle(s, tallyOf, m.ts, false);
+  s.turn = null;
 }
 
 /** Triage decided after the message was folded: a push counts, and a question in a small group opens what you owe. */
@@ -262,16 +279,13 @@ export function medianLatency(t: Tally | null): number | null {
 }
 
 /**
- * How much an unanswered message weighs as it ages: rises toward 1 over about the time you usually take
- * (at least 20 minutes, at most 8 hours, 2 hours when unknown), stays there through the first day, then halves
- * every two days.
+ * How much an unanswered message weighs as it ages: all of it from the moment it arrives, through the first day,
+ * then half every two days. It used to rise over the time you usually take to answer, so a message just read
+ * weighed almost nothing and sank below chats you had finished with (docs/inbox.md).
  */
-export function owedCurve(age: number, usual: number | null): number {
-  if (age <= 0) return 0;
-  const tau = Math.min(Math.max(usual ?? 2 * HOUR, 20 * MIN), 8 * HOUR);
-  const rise = 1 - Math.exp(-age / tau);
-  const fall = age <= DAY ? 1 : 2 ** (-(age - DAY) / (2 * DAY));
-  return rise * fall;
+export function owedCurve(age: number): number {
+  if (age < 0) return 0;
+  return age <= DAY ? 1 : 2 ** (-(age - DAY) / (2 * DAY));
 }
 
 /** A decayed sum with half-life `h`, as a steady rate per day. */
@@ -428,7 +442,7 @@ export function scoreConversation(x: ScoreInput): Scored {
     if (x.judged) p = (p + x.judged.needsReply) / 2;
     const personUsual = medianLatency(person);
     const usual = personUsual ?? medianLatency(conv);
-    parts.owed = W.owed * p * owedCurve(owedAge, usual);
+    parts.owed = W.owed * p * owedCurve(owedAge);
     const who = x.authorName ?? (x.shape === 'direct' ? 'They' : 'Someone');
     const since = duration(owedAge);
     let text: string;
@@ -455,6 +469,11 @@ export function scoreConversation(x: ScoreInput): Scored {
     parts.pinged = W.pinged;
     reasons.push({ w: parts.pinged, text: `Pinged you: ${x.pinged.length > 70 ? x.pinged.slice(0, 69) + '…' : x.pinged}` });
   }
+
+  // Something to read and something to answer are one need, not two: the larger counts. So reading a message you
+  // will answer leaves it where it was, and reading one you would not answer lets it go.
+  const toRead = (parts.unread ?? 0) + (parts.pinged ?? 0);
+  if (parts.owed && toRead) parts.overlap = -Math.min(parts.owed, toRead);
 
   parts.relationship = W.relationship * rel.strength;
   if (rel.strength >= 0.3) {
@@ -509,8 +528,10 @@ export interface AttentionJudge {
 // ------------------------------------------------------------------ kept in the database
 
 const FOLD_SQL = `
-  SELECT m.id, m.rowid AS rid, m.ts, m.author_id, m.mentions_self, m.kind, m.deleted, i.is_bot, i.person_id,
-         r.author_id AS reply_author, t.decision = 'push' AS pushed, t.reasons LIKE '%asks a question%' AS question
+  SELECT m.id, m.rowid AS rid, m.ts, m.author_id, m.mentions_self, m.mentions_all, m.kind, m.deleted, i.is_bot, i.person_id,
+         r.author_id AS reply_author,
+         EXISTS (SELECT 1 FROM reaction x JOIN identity xi ON xi.id = x.identity_id LEFT JOIN person xp ON xp.id = xi.person_id
+                 WHERE x.message_id = m.id AND (xp.is_self = 1 OR xi.id IN (SELECT self_identity FROM account))) AS reacted, t.decision = 'push' AS pushed, t.reasons LIKE '%asks a question%' AS question
   FROM message m
   LEFT JOIN identity i ON i.id = m.author_id
   LEFT JOIN message r ON r.id = m.reply_to_id
@@ -602,11 +623,13 @@ export class Attention {
           authorKey: r.person_id ?? r.author_id,
           mine: this.mine(r.author_id, r.person_id),
           bot: !!r.is_bot,
-          mentionsMe: !!r.mentions_self,
+          // @everyone is not addressed to you: it notifies, but owes no answer.
+          mentionsMe: !!r.mentions_self && !r.mentions_all,
           repliesToMe: this.mine(r.reply_author),
           question: !!r.question,
           pushed: !!r.pushed,
           ignore: !!r.deleted || r.kind === 'system',
+          reactedByMe: !!r.reacted,
         },
         place,
       );
@@ -644,6 +667,12 @@ export class Attention {
 
   /** Messages the store took in since last time: appends fold now, anything older than a cursor means starting over. */
   private noteIngested() {
+    // Your reactions answer what you owed where they are, so those conversations fold again from the start.
+    if (this.store.selfReacted.size) {
+      this.invalidate([...this.store.selfReacted]);
+      for (const cid of this.store.selfReacted) this.pending.add(cid);
+      this.store.selfReacted.clear();
+    }
     const ing = this.store.ingested;
     if (!ing.size) return;
     const now = this.now();

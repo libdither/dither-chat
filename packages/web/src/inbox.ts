@@ -7,8 +7,8 @@
 import { effect, signal } from '@preact/signals';
 import { isInteracting } from './arrange.ts';
 import { inboxRows, unreadOf, type InboxRow } from './model.ts';
-import { inboxChanged, inboxSnapshot, inboxView, shouldResort, type InboxSnapshot, type Ranked, type ResortReason } from './ordering.ts';
-import { loaded, rev, type InboxFilter } from './state.ts';
+import { inboxChanged, inboxSnapshot, inboxView, shouldResort, type Hold, type InboxSnapshot, type Ranked, type ResortReason } from './ordering.ts';
+import { loaded, rev, route, type InboxFilter } from './state.ts';
 import { onForeground } from './usage.ts';
 
 const KEY = 'dither-chat:inbox-snapshot';
@@ -24,6 +24,13 @@ function stored(): InboxSnapshot | null {
 /** The order last taken; this device's last one until the first of this session. Bumping `v` animates the change. */
 export const inboxSnap = signal<{ v: number; at: number | null; snap: InboxSnapshot | null }>({ v: 0, at: null, snap: stored() });
 
+/** The conversation open in the inbox keeps its place while it is open. */
+const openHere = () => (route.value.view === 'inbox' ? route.value.conv : undefined);
+const hold = (): Hold | undefined => {
+  const key = openHere();
+  return key ? { key, prev: inboxSnap.value.snap } : undefined;
+};
+
 const ranked = (rows: InboxRow[]): Ranked[] => rows.map((r) => ({ key: r.conv.id, score: r.score, needs: r.needs }));
 
 let waiting: ReturnType<typeof setTimeout> | undefined;
@@ -36,7 +43,10 @@ export function resortInbox(reason: ResortReason) {
     return;
   }
   const rows = inboxRows();
-  const snap = inboxSnapshot(rows.map((r) => ({ key: r.conv.id, score: r.score, needs: r.needs, unread: unreadOf(r.conv).unread > 0 })));
+  const snap = inboxSnapshot(
+    rows.map((r) => ({ key: r.conv.id, score: r.score, needs: r.needs, unread: unreadOf(r.conv).unread > 0 })),
+    hold(),
+  );
   const prev = inboxSnap.value;
   const same = !!prev.snap && prev.snap.needs === snap.needs && prev.snap.keys.join('\n') === snap.keys.join('\n');
   inboxSnap.value = { v: same ? prev.v : prev.v + 1, at: now, snap };
@@ -76,7 +86,15 @@ export function startInbox() {
     rev.value;
     if (!loaded.value) return;
     clearTimeout(soon);
-    soon = setTimeout(() => inboxChanged(inboxSnap.value.snap, ranked(inboxRows())) && resortInbox('activity'), 600);
+    soon = setTimeout(() => inboxChanged(inboxSnap.value.snap, ranked(inboxRows()), hold()) && resortInbox('activity'), 600);
+  });
+  // Leaving a conversation lets it settle where it now belongs, once nothing is in use.
+  let open = openHere();
+  effect(() => {
+    const now = openHere();
+    if (now === open) return;
+    open = now;
+    if (loaded.value) resortInbox('activity');
   });
   setInterval(() => document.visibilityState === 'visible' && resortInbox('timer'), 60_000);
 }

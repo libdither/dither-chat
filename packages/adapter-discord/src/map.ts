@@ -398,8 +398,8 @@ function bodyFallback(m: RawMessage): string {
 export function mapMessage(m: RawMessage, selfId: string): MessageFact {
   const system = systemMessageText(m);
   const body = system !== null ? system : normalizeMentions(m.content || bodyFallback(m));
-  const mentionsSelf =
-    !!m.mention_everyone || (m.mentions?.some((u) => u.id === selfId) ?? false) || body.includes(`<@${selfId}>`);
+  const byName = (m.mentions?.some((u) => u.id === selfId) ?? false) || body.includes(`<@${selfId}>`);
+  const mentionsSelf = byName || !!m.mention_everyone;
   const extra = embedExtra(m);
   const forward = forwardFact(m);
   const replyTo = m.type !== 21 && !forward ? m.message_reference?.message_id : undefined;
@@ -415,6 +415,7 @@ export function mapMessage(m: RawMessage, selfId: string): MessageFact {
     // A message carrying a `thread` object is the root of that thread conversation.
     threadRoot: m.thread?.id,
     mentionsSelf: mentionsSelf || undefined,
+    mentionsAll: (mentionsSelf && !byName) || undefined,
     attachments: allAttachments(m).length ? allAttachments(m).map(mapAttachment) : undefined,
     reactions: m.reactions?.length ? reactionFacts(m, selfId) : undefined,
     ...(forward ? { forward } : {}),
