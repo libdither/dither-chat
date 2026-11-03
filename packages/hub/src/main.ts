@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Categorizer, KeywordProvider, OllamaProvider, type CategoryProvider } from './categorize.ts';
+import { ActivityStore } from './activity.ts';
 import { Attention } from './attention.ts';
 import { applyDemoOverlay, createDemoAccounts, demoFactory } from './demo.ts';
 import { PushService } from './push.ts';
@@ -40,8 +41,12 @@ const store = new Store(join(dataDir, 'hub.sqlite'), mediaSigner(secret));
 const model = process.env.DITHER_TRIAGE_MODEL
   ? { url: process.env.DITHER_OLLAMA_URL ?? 'http://127.0.0.1:11434', name: process.env.DITHER_TRIAGE_MODEL }
   : undefined;
-const triage = new Triage(store, model);
+// The activity log (docs/activity.md). DITHER_ACTIVITY_FEATURES=1 lets triage see what it says, as reasons only.
+const activity = new ActivityStore(store, { featuresInTriage: args.includes('--activity-features') || process.env.DITHER_ACTIVITY_FEATURES === '1' });
+activity.prune(Date.now(), true);
+const triage = new Triage(store, model, activity);
 const attention = new Attention(store, triage);
+attention.activity = activity;
 
 // Triage runs serially so notifications keep message order.
 let queue = Promise.resolve();
@@ -51,25 +56,35 @@ function triageLater(ids: string[]) {
       const d = await triage.decide(id).catch((e) => (console.error('triage failed', e), null));
       if (!d) continue;
       store.setTriage(id, d);
+      if (d.features) activity.keepInputs(id, d.features);
       store.dirty.messages.set(id, true);
       attention.triaged(id, d);
       if (d.decision === 'push') {
         const conversationId = store.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', id)!.conversation_id;
-        deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id));
+        deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message');
       }
     }
   });
 }
 
-function deliver(title: string, body: string, conversationId: string, messageId: string, reasons: string[], pushExtra: Record<string, unknown> = {}) {
-  server.notify({ t: 'notify', messageId, conversationId, title, body, reasons });
-  push.notify(title, body, conversationId, pushExtra).catch((e) => console.error('push failed', e));
+/** Each one gets an id the devices see (`nid`), so what they say happened to it lands in the activity log. */
+function deliver(title: string, body: string, conversationId: string, messageId: string, reasons: string[], pushExtra: Record<string, unknown> = {}, kind: 'message' | 'held' = 'held') {
+  const nid = activity.notification({ kind, messageId, conversationId });
+  server.notify({ t: 'notify', messageId, conversationId, title, body, reasons, ...(nid ? { nid } : {}) });
+  push
+    .notify(title, body, conversationId, nid ? { ...pushExtra, nid } : pushExtra)
+    .then((r) => nid && activity.sent(nid, r))
+    .catch((e) => console.error('push failed', e));
 }
 
 /** About the inbox, not a conversation: a click opens the inbox. */
 function deliverDigest(title: string, body: string) {
-  server.notify({ t: 'notify', title, body, reasons: ['Your daily digest'] });
-  push.notify(title, body, undefined, { inbox: true }).catch((e) => console.error('push failed', e));
+  const nid = activity.notification({ kind: 'digest' });
+  server.notify({ t: 'notify', title, body, reasons: ['Your daily digest'], ...(nid ? { nid } : {}) });
+  push
+    .notify(title, body, undefined, nid ? { inbox: true, nid } : { inbox: true })
+    .then((r) => nid && activity.sent(nid, r))
+    .catch((e) => console.error('push failed', e));
 }
 
 setInterval(() => {
@@ -118,6 +133,7 @@ const server = new HubServer(store, sup, triage, {
   readQueue,
   onCategoriesChanged: (force) => void categorizer.refresh(force),
   attention,
+  activity,
   turn: process.env.DITHER_TURN_URLS && process.env.DITHER_TURN_SECRET ? { urls: process.env.DITHER_TURN_URLS.split(',').map((u) => u.trim()), secret: process.env.DITHER_TURN_SECRET } : undefined,
   onDemoReset: !demo ? undefined : async () => {
     for (const a of store.accounts().filter((a) => a.demo)) {

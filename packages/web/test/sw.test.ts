@@ -29,7 +29,8 @@ function worker(opts: { canReply?: boolean; fetch?: (url: string, init: any) => 
   };
   const push = (d: unknown) => run('push', { data: { json: () => d } });
   const click = (data: unknown, action = '', reply: string | null | undefined = null) => run('notificationclick', { action, reply, notification: { tag: 'cnv_1', data, close: () => closed.push('it') } });
-  return { shown, closed, fetched, opened, push, click };
+  const dismiss = (data: unknown) => run('notificationclose', { notification: { data } });
+  return { shown, closed, fetched, opened, push, click, dismiss };
 }
 
 const actions = (w: ReturnType<typeof worker>) => w.shown.at(-1)!.o.actions.map((a: any) => a.action);
@@ -134,4 +135,31 @@ test("the hub's own pages are never the app", async () => {
   const s = shell({ '/index.html': 'cached shell' });
   for (const p of ['/api/bootstrap', '/media/x/y', '/ca.crt', '/voice/dave/0123456789abcdef/libdave.mjs']) expect(await s.get(p)).toBeNull();
   expect(await s.get('/api/live', 'cors')).toBeNull();
+});
+
+test('what became of a push goes to the activity log, by its id and the device, and only when it has an id', async () => {
+  const w = worker();
+  await w.push({ title: 't', conversationId: 'cnv_1', nid: 'n1', device: 'sub1' });
+  const events = () => w.fetched.filter((f) => f.url === '/api/activity/notifications').map((f) => f.body.events[0]);
+  expect(events().map((e) => [e.id, e.device, e.event])).toEqual([
+    ['n1', 'sub1', 'delivered'],
+    ['n1', 'sub1', 'shown'],
+  ]);
+  expect(w.shown[0].o.data).toMatchObject({ nid: 'n1', device: 'sub1' });
+  // The tap opens the conversation with the push's id in the hash, so the page can link the visit.
+  await w.click(w.shown[0].o.data);
+  expect(w.opened).toEqual(['/#/inbox/c/cnv_1?n=n1']);
+  expect(events().at(-1)).toMatchObject({ id: 'n1', event: 'tapped' });
+  await w.dismiss(w.shown[0].o.data);
+  expect(events().at(-1)).toMatchObject({ id: 'n1', event: 'dismissed' });
+
+  // A reply from the notification is an outcome too.
+  await w.click(w.shown[0].o.data, 'reply', 'ok');
+  expect(events().at(-1)).toMatchObject({ id: 'n1', event: 'replied' });
+
+  const quiet = worker();
+  await quiet.push({ title: 't', conversationId: 'cnv_1' });
+  await quiet.click({ conversationId: 'cnv_1' });
+  expect(quiet.fetched).toEqual([]);
+  expect(quiet.opened).toEqual(['/#/inbox/c/cnv_1']);
 });

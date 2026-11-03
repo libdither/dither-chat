@@ -53,5 +53,8 @@
         <receiver
             android:name=".ReplyReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".DismissReceiver"
+            android:exported="false" />
     </application>
 </manifest>

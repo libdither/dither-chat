@@ -47,25 +47,37 @@ export function renderMarkdown(src: string, ctx: MdContext): string {
     .replace(/(^|[^\w])_([^_\n]+)_(?!\w)/g, '$1<em>$2</em>')
     .replace(/~~([\s\S]+?)~~/g, '<s>$1</s>');
 
-  // Block quotes: consecutive "> " lines.
+  // Block quotes: consecutive "> " lines. Lists: consecutive "- " or "* " lines, as Discord renders them.
   const lines = s.split('\n');
   const out: string[] = [];
   let quote: string[] = [];
+  let items: string[] = [];
   const flush = () => {
     if (quote.length) out.push(`<blockquote>${quote.join('<br>')}</blockquote>`);
+    if (items.length) out.push(`<ul>${items.map((i) => `<li>${i}</li>`).join('')}</ul>`);
     quote = [];
+    items = [];
   };
   for (const line of lines) {
     const m = line.match(/^&gt;\s?(.*)$/);
-    if (m) quote.push(m[1]);
-    else {
+    const li = !m && line.match(/^\s{0,3}[-*] (.+)$/);
+    if (m) {
+      if (items.length) flush();
+      quote.push(m[1]);
+    } else if (li) {
+      if (quote.length) flush();
+      items.push(li[1]);
+    } else {
       flush();
       // Discord's line-level headings and small print.
       out.push(line.replace(/^#{1,3} (.+)$/, '<strong>$1</strong>').replace(/^-# (.+)$/, '<small>$1</small>'));
     }
   }
   flush();
-  s = out.join('\n').replace(/\n(?!<\/?blockquote)/g, '<br>').replace(/<br>(<blockquote>)/g, '$1').replace(/(<\/blockquote>)<br>/g, '$1');
+  // Quotes and lists break the line themselves; a line of text needs a <br> only before more text, and an empty
+  // line keeps its own so a blank line between blocks still shows.
+  const isBlock = (l: string | undefined) => !!l && /^<(blockquote|ul)>/.test(l);
+  s = out.map((l, i) => (isBlock(l) || i === out.length - 1 || (l !== '' && isBlock(out[i + 1])) ? l : l + '<br>')).join('');
 
   return s.replace(/\u0000(\d+)\u0000/g, (_, i) => slots[+i]);
 }

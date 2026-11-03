@@ -65,6 +65,16 @@ self.addEventListener('fetch', (e) => {
   );
 });
 
+/**
+ * What became of a notification, for the activity log (docs/activity.md). Only pushes that carry an id (`nid`) are
+ * reported, and only with the id of this push registration (`device`), never anything about their content.
+ */
+function outcome(data, event) {
+  if (!data?.nid) return Promise.resolve();
+  const body = JSON.stringify({ events: [{ id: data.nid, device: data.device, event, at: Date.now() }] });
+  return fetch('/api/activity/notifications', { method: 'POST', headers: { 'content-type': 'application/json' }, body }).catch(() => {});
+}
+
 self.addEventListener('push', (e) => {
   let d = {};
   try {
@@ -82,13 +92,15 @@ self.addEventListener('push', (e) => {
         renotify: true,
         icon: '/icon-192.png',
         badge: '/icon-192.png',
-        data: { conversationId: d.conversationId, inbox: d.inbox, test: d.test, replyTo: d.replyTo },
+        data: { conversationId: d.conversationId, inbox: d.inbox, test: d.test, replyTo: d.replyTo, nid: d.nid, device: d.device },
         actions: d.conversationId ? [...(d.canReply && CAN_REPLY ? [{ action: 'reply', type: 'text', title: 'Reply', placeholder: 'Message' }] : []), { action: 'open', title: 'Open' }] : [],
       });
       // Always shown first: Safari revokes subscriptions that receive a push and show nothing.
       const clients = await self.clients.matchAll({ type: 'window' });
       const looking = clients.some((c) => c.focused && c.visibilityState === 'visible');
       if (looking && !d.test) (await self.registration.getNotifications({ tag })).forEach((n) => n.close());
+      await outcome(d, 'delivered');
+      await outcome(d, looking ? 'suppressed' : 'shown');
     })(),
   );
 });
@@ -116,6 +128,7 @@ async function sendReply(n, conv, text, replyTo) {
     error = err?.name === 'TimeoutError' ? 'The hub did not answer in time, so it may or may not have gone out' : 'Could not reach the hub';
   }
   if (!error) {
+    await outcome(n.data, 'replied');
     n.close();
     for (const other of await self.registration.getNotifications({ tag: n.tag })) other.close();
     return;
@@ -133,9 +146,12 @@ self.addEventListener('notificationclick', (e) => {
     return;
   }
   e.notification.close();
-  const target = conv ? `/#/inbox/c/${conv}` : inbox ? '/#/inbox' : '/';
+  // The push's id rides in the hash, so the page can say which visit the tap led to (activity.ts).
+  const nid = e.notification.data?.nid;
+  const target = (conv ? `/#/inbox/c/${conv}` : inbox ? '/#/inbox' : '/') + (nid && (conv || inbox) ? `?n=${encodeURIComponent(nid)}` : '');
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (cs) => {
+      await outcome(e.notification.data, 'tapped');
       for (const c of cs) {
         await c.focus().catch(() => {});
         // navigate() refuses a window this worker does not control yet; the page listens for this too.
@@ -145,4 +161,10 @@ self.addEventListener('notificationclick', (e) => {
       await self.clients.openWindow(target);
     }),
   );
+});
+
+// Swiped away. Browsers fire this only for some user dismissals (Chrome does on desktop and Android, Firefox on some
+// systems, Safari not at all), and never for "clear all" everywhere: a missing dismissal means nothing.
+self.addEventListener('notificationclose', (e) => {
+  e.waitUntil(outcome(e.notification.data, 'dismissed'));
 });

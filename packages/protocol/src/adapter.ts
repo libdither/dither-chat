@@ -245,7 +245,13 @@ export type AdapterEvent =
   | { t: 'reactionsCleared'; conversation: string; message: string; key?: string }
   /** Read state as the network reports it. Counts override the hub's own tally when given. */
   | { t: 'read'; conversation: string; upToTs: number; unread?: number; mentions?: number }
-  | { t: 'typing'; conversation: string; author: string }
+  /**
+   * Someone is typing, or (`stop`) stopped. Of the moment: the hub relays it and keeps nothing (typing.ts).
+   * `ttl`: how long a start lasts without another, in ms (default TYPING_TTL); a network whose clients refresh less
+   * often than Discord's says how long its own clients wait. `name`: what to call a typer the hub may never have
+   * heard of (a stranger in a big channel), so it need not store an identity for them.
+   */
+  | { t: 'typing'; conversation: string; author: string; stop?: boolean; ttl?: number; name?: string }
   /** A call this hub started: bridge signalling for the device, the call's state, or its end. */
   | { t: 'call'; call: string; signal?: unknown; state?: CallState; ended?: string }
   | { t: 'reply'; id: string; ok: true; result?: unknown }
@@ -273,6 +279,8 @@ export type AdapterCommand =
   /** Backfill older messages as message facts with live=false; reply.result: { count, done } */
   | { t: 'history'; id: string; conversation: string; beforeTs?: number; limit: number }
   | { t: 'markRead'; id: string; conversation: string; upTo: string }
+  /** You are typing here, or (`stop`) no longer: say so on the network, the way its own client would. Best effort. */
+  | { t: 'typing'; id: string; conversation: string; stop?: boolean }
   | { t: 'react'; id: string; conversation: string; message: string; key: string; remove?: boolean; style?: ReactionStyle; emoji?: CustomEmojiFact }
   /** reply.result: ReactionContext */
   | { t: 'reactionContext'; id: string; conversation: string; message?: string }

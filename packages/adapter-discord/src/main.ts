@@ -281,6 +281,9 @@ async function onCommand(cmd: P.AdapterCommand): Promise<unknown> {
     }
     case 'markRead':
       return pace.run('markRead', () => bridge.request({ kind: 'markRead', channelId: cmd.conversation, messageId: cmd.upTo }, 20_000));
+    case 'typing':
+      // Not paced: it must not wait behind reads, and the client throttles it itself.
+      return bridge.request({ kind: 'typing', channelId: cmd.conversation, ...(cmd.stop ? { stop: true } : {}) }, 10_000);
     case 'react': {
       const burst = cmd.style === 'super';
       await pace.run('react', () => bridge.request({ kind: 'react', channelId: cmd.conversation, messageId: cmd.message, emoji: cmd.key, remove: cmd.remove, burst }, 20_000));

@@ -2,6 +2,7 @@ import { effect } from '@preact/signals';
 import { render } from 'preact';
 import { App } from './ui/App.tsx';
 import { reportContent, reportFresh, startAndroid } from './android.ts';
+import { startActivity } from './activity.ts';
 import { trackViewport } from './phone.ts';
 import { registerServiceWorker } from './pwa.ts';
 import { dropSnapshot, readSnapshot, restore } from './snapshot.ts';
@@ -13,6 +14,7 @@ const scriptAt = performance.now();
 connect();
 trackViewport();
 startAndroid();
+startActivity();
 
 let source = 'hub';
 let readMs = -1;

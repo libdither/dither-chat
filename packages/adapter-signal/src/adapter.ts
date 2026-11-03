@@ -653,6 +653,8 @@ export class SignalAdapter {
       }
       case 'markRead':
         return this.markRead(cmd.conversation, cmd.upTo);
+      case 'typing':
+        return this.sendTyping(cmd.conversation, !!cmd.stop);
       case 'fetchMedia':
         return this.fetchMedia(cmd.url);
       case 'action':
@@ -660,6 +662,14 @@ export class SignalAdapter {
       case 'shutdown':
         return undefined;
     }
+  }
+
+  /** signal-cli's sendTyping: STARTED, or STOPPED with `stop`. Not in notes to self, which nobody else sees. */
+  private async sendTyping(conversation: string, stop: boolean) {
+    const t = parseConversation(conversation, this.self);
+    if (!t || t.kind === 'self') return { ok: false };
+    await this.call('sendTyping', { ...(t.kind === 'group' ? { groupId: t.groupId } : { recipient: [t.peer] }), ...(stop ? { stop: true } : {}) });
+    return { ok: true };
   }
 
   /** Signal has no custom emoji or super reactions. The one thing that stops you is having left the group. */
@@ -824,12 +834,8 @@ export class SignalAdapter {
         await this.snapshot();
         this.scheduleSnapshot(30_000);
         return { ok: true };
-      case 'typing': {
-        const t = parseConversation(String(args?.conversation ?? ''), this.self);
-        if (!t || t.kind === 'self') return { ok: false };
-        await this.call('sendTyping', { ...(t.kind === 'group' ? { groupId: t.groupId } : { recipient: [t.peer] }), ...(args?.stop ? { stop: true } : {}) });
-        return { ok: true };
-      }
+      case 'typing':
+        return this.sendTyping(String(args?.conversation ?? ''), !!args?.stop);
       case 'status':
         return {
           phase: this.phase,

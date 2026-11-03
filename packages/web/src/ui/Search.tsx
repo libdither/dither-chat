@@ -2,7 +2,7 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORKS, parseSearch, searchOp, setSearchOp } from '@dither-chat/protocol';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { clock, dayLabel } from '../format.ts';
-import { allCommunities, authorName, communitiesOf, convLabel, convTitle, netName, people, resolveTokens, visibleConv } from '../model.ts';
+import { allCommunities, authorName, communitiesOf, convLabel, convTitle, netName, people, plainMarkdown, resolveTokens, visibleConv } from '../model.ts';
 import { api, back, db, go, openMessage, openProfile, rev, route } from '../state.ts';
 import { Avatar, Empty, NetBadge, NetGlyph, Skeleton } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -14,7 +14,7 @@ import { conversationMenu, identityMenu, messageMenu, personMenu, spaceMenu } fr
 function Snippet({ text, network }: { text: string; network: P.Network }) {
   return (
     <>
-      {resolveTokens(text, network)
+      {plainMarkdown(resolveTokens(text, network))
         .split(/(\u0001[^\u0002]*\u0002)/)
         .map((part) => (part.startsWith('\u0001') ? <mark>{part.slice(1, -1)}</mark> : part))}
     </>
@@ -37,10 +37,10 @@ function scopeOf(q: string): P.ConversationView | null {
 function Filters({ q, set }: { q: string; set: (q: string) => void }) {
   const on = (op: string, val: string) => searchOp(q, op)?.toLowerCase() === val;
   const toggle = (op: string, val: string) => set(setSearchOp(q, op, on(op, val) ? null : val));
-  const field = (op: string, label: string, list?: string) => (
+  const field = (op: string, label: string, list?: string, placeholder?: string) => (
     <label class="search-field">
       <span>{label}</span>
-      <input class="input" list={list} value={searchOp(q, op) ?? ''} onChange={(e) => set(setSearchOp(q, op, (e.target as HTMLInputElement).value.trim() || null))} />
+      <input class="input" list={list} placeholder={placeholder} value={searchOp(q, op) ?? ''} onChange={(e) => set(setSearchOp(q, op, (e.target as HTMLInputElement).value.trim() || null))} />
     </label>
   );
   const date = (op: string, label: string) => (
@@ -70,8 +70,8 @@ function Filters({ q, set }: { q: string; set: (q: string) => void }) {
         </button>
       </div>
       <div class="search-fields">
-        {field('from', 'From', 'search-people')}
-        {!scopeOf(q) && field('in', 'In', 'search-places')}
+        {field('from', 'From', 'search-people', 'Anyone')}
+        {!scopeOf(q) && field('in', 'In', 'search-places', 'Anywhere')}
         {date('after', 'After')}
         {date('before', 'Before')}
       </div>

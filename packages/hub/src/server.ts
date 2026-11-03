@@ -16,8 +16,10 @@ import { compress } from './compress.ts';
 import { forwardMessage } from './forward.ts';
 import { UsageStore } from './usage.ts';
 import type { Attention } from './attention.ts';
+import type { ActivityStore } from './activity.ts';
 import { changesOf } from './journal.ts';
 import { syncResponse } from './sync.ts';
+import { TypingGate } from './typing.ts';
 
 const ACCOUNT_COLORS = ['#F2A541', '#E86A92', '#B794F6', '#FF8C61', '#9BE15D', '#5CC8FF', '#F7D154', '#FF6B6B'];
 
@@ -43,6 +45,8 @@ export interface ServerOpts {
   turn?: TurnConfig;
   /** The inbox's ranking (attention.ts, docs/inbox.md). */
   attention?: Attention;
+  /** The activity log (activity.ts, docs/activity.md). */
+  activity?: ActivityStore;
 }
 
 // ------------------------------------------------------------------ access
@@ -91,6 +95,7 @@ export class HubServer {
   private flushTimer?: Timer;
   private pruneTimer?: Timer;
   private uploads: Uploads;
+  private typingGate = new TypingGate();
   private usage: UsageStore;
   readonly calls: Calls;
   /** This process. A client that sees it change knows the hub restarted, and may have a new web build. */
@@ -582,6 +587,46 @@ export class HubServer {
       s.patchPlacePrefs(b.items ?? []);
       return ok();
     }
+    // The activity log (activity.ts, docs/activity.md). Hub-only: never journaled or sent to other clients.
+    if (path.startsWith('/api/activity')) {
+      const a = this.opts.activity;
+      if (!a) return bad('the activity log is not available', 404);
+      if (path === '/api/activity' && method === 'GET') return ok(a.info());
+      if (path === '/api/activity' && method === 'DELETE') return (a.clear(), ok(a.info()));
+      if (path === '/api/activity/settings' && method === 'PUT') return ok({ settings: a.setSettings(await body<Partial<P.ActivitySettings>>()) });
+      if (path === '/api/activity/visits' && method === 'POST') {
+        const b = await body<{ visits?: Partial<P.VisitRecord>[] }>();
+        return ok({ applied: a.visits(Array.isArray(b.visits) ? b.visits : []), enabled: a.enabled });
+      }
+      if (path === '/api/activity/notifications' && method === 'POST') {
+        const b = await body<{ events?: Partial<P.NotificationEvent>[] }>();
+        return ok({ applied: a.events(Array.isArray(b.events) ? b.events : []), enabled: a.enabled });
+      }
+      if (path === '/api/activity/features' && method === 'GET') {
+        const cid = url.searchParams.get('conversation');
+        return ok(cid ? a.features(cid) : { places: a.top(Number(url.searchParams.get('limit')) || 10) });
+      }
+      const lines = path === '/api/activity/export' ? a.exportLog() : path === '/api/activity/examples' ? a.examples() : null;
+      if (lines && method === 'GET') {
+        const name = path.endsWith('examples') ? 'dither-triage-examples' : 'dither-activity';
+        const enc = new TextEncoder();
+        const stream = new ReadableStream({
+          pull(c) {
+            let chunk = '';
+            for (let i = 0; i < 500; i++) {
+              const n = lines.next();
+              if (n.done) {
+                if (chunk) c.enqueue(enc.encode(chunk));
+                return c.close();
+              }
+              chunk += n.value + '\n';
+            }
+            c.enqueue(enc.encode(chunk));
+          },
+        });
+        return new Response(stream, { headers: { 'content-type': 'application/x-ndjson', 'content-disposition': `attachment; filename="${name}-${new Date().toISOString().slice(0, 10)}.jsonl"` } });
+      }
+    }
     // Usage and automatic order (usage.ts, docs/organize.md).
     if (path === '/api/usage' || path === '/api/arrange') {
       const u = this.usage;
@@ -676,6 +721,18 @@ export class HubServer {
         this.opts.onCategoriesChanged?.();
         return ok();
       }
+    }
+    if (path === '/api/privacy') {
+      if (method === 'PUT') {
+        const b = await body<Partial<P.PrivacySettings>>();
+        if (typeof b.shareTyping !== 'boolean') return bad('shareTyping: true or false');
+        s.setPrivacy({ shareTyping: b.shareTyping });
+      }
+      return ok(s.privacy());
+    }
+    if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/typing$/)) && method === 'POST') {
+      const b = await body<{ accountId?: string; stop?: boolean }>();
+      return ok(this.typing(m[1], b.accountId, !!b.stop));
     }
     if (path === '/api/quiet-hours') {
       if (method === 'PUT') {
@@ -778,6 +835,23 @@ export class HubServer {
     const result = await this.sup.command(accountId, { t: 'send', conversation: conv.nativeId, body: b.body ?? '', replyTo, ...(files.length ? { attachments: files } : {}) }, files.length ? 180_000 : undefined);
     this.uploads.remove(ids);
     return ok({ ok: true, accountId, result });
+  }
+
+  /**
+   * You are typing in a conversation, or stopped: tell its network through the account that would send (docs/typing.md).
+   * Best effort and never waited for. Nothing goes out when you chose not to share it; a stop always may.
+   */
+  typing(conversationId: string, requested: string | undefined, stop: boolean): { sent: boolean; accountId?: string; why?: string } {
+    if (!stop && !this.store.privacy().shareTyping) return { sent: false, why: 'off' };
+    const conv = this.store.nativeOf('conversation', conversationId);
+    const accountId = conv && this.pickAccount(conversationId, requested);
+    if (!conv || !accountId || !this.sup.online(accountId)) return { sent: false, why: 'no connected account' };
+    const acc = this.store.account(accountId)!;
+    if (!(JSON.parse(acc.capabilities) as P.Capability[]).includes('typing')) return { sent: false, why: 'not on this network' };
+    if (this.sendRefusal(conversationId, accountId)) return { sent: false, why: 'cannot write here' };
+    if (!this.typingGate.allow(accountId, conversationId, stop)) return { sent: false, why: 'throttled' };
+    this.sup.command(accountId, { t: 'typing', conversation: conv.nativeId, ...(stop ? { stop: true } : {}) }, 15_000).catch(() => {});
+    return { sent: true, accountId };
   }
 
   private sendRefusal(conversationId: string, accountId: string | null): string | null {

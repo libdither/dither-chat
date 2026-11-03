@@ -6,7 +6,8 @@
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, sendBlocker } from '@dither-chat/protocol';
-import { useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { phone } from '../phone.ts';
 import { fullTime } from '../format.ts';
 import { renderMarkdown } from '../markdown.ts';
 import { authorName, communitiesOf, convLabel, convTitle, identityName, kindLabel, netName, plainBody, visibleConv } from '../model.ts';
@@ -45,6 +46,8 @@ function ForwardDialog({ m, onClose }: { m: P.MessageView; onClose: () => void }
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const search = useRef<HTMLInputElement>(null);
+  // Preact leaves autofocus to the browser, which honours it only while a page loads. On a phone, no keyboard unasked.
+  useEffect(() => void (!phone.value && search.current?.focus()), []);
   const all = useMemo(
     () =>
       [...db.conversations.values()]
@@ -83,7 +86,7 @@ function ForwardDialog({ m, onClose }: { m: P.MessageView; onClose: () => void }
         <p class="fwd-sub">Pick up to {MAX} places, on any account and any network.</p>
         <label class="search fwd-search">
           <Icon name="search" size={15} />
-          <input ref={search} autoFocus placeholder="Search conversations" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} />
+          <input ref={search} placeholder="Search conversations" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} />
         </label>
         {picked.length > 0 && (
           <div class="fwd-chips">

@@ -110,6 +110,8 @@ const userStoreGetUser: { value: (id: string) => unknown } = { value: () => null
 const rest: Record<string, any> = { get() {}, post() {}, put() {}, patch() {}, del() {} };
 const messageActions = { sendMessage() {}, editMessage() {} };
 const privateChannels: any = { opened: 0, openPrivateChannel() { this.opened++; } };
+const typingCalls: string[] = [];
+const typingModule: { value: any } = { value: { startTyping: (c: string) => typingCalls.push(`start ${c}`), stopTyping: (c: string) => typingCalls.push(`stop ${c}`) } };
 
 // rspack mangles export names: the stores sit under short keys, not `default`.
 const storeModule = (_m: any, e: any) => {
@@ -120,6 +122,7 @@ const storeModule = (_m: any, e: any) => {
   e.Bo = rest;
   e.Dm = messageActions;
   e.Pc = privateChannels;
+  Object.defineProperty(e, 'Ty', { enumerable: true, get: () => typingModule.value });
 };
 
 // An i18n message bundle in the real client: answers every key with a function.
@@ -148,6 +151,60 @@ describe('hook.js with several rspack runtimes', () => {
       expect(rt.T.m.m240406).toBeDefined();
       expect(rt.T.m.m533077).toBeDefined();
     }
+  });
+
+  describe('typing', () => {
+    const typingPage = () => {
+      handlers.clear();
+      const p = page();
+      p.runHook();
+      const web = runtime(p.win, 'web');
+      chunk(p.win, '700', { stores: storeModule });
+      web.T('stores');
+      p.tick();
+      return p;
+    };
+    const cmd = async (p: ReturnType<typeof page>, id: string, c: unknown) => {
+      p.win.message?.({ source: p.win, data: { __dither_bridge__: 'down', payload: { t: 'cmd', id, cmd: c } } });
+      await Bun.sleep(0);
+      return p.posted.find((m) => m.t === 'reply' && m.id === id);
+    };
+
+    test("goes through the client's own typing action, never a request of ours", async () => {
+      const p = typingPage();
+      typingCalls.length = 0;
+      const requests: string[] = [];
+      for (const k of ['get', 'post', 'put', 'patch', 'del']) rest[k] = (...a: any[]) => void requests.push(k + JSON.stringify(a));
+      expect(await cmd(p, 't1', { kind: 'typing', channelId: '42' })).toMatchObject({ ok: true, result: { via: 'actions' } });
+      expect(await cmd(p, 't2', { kind: 'typing', channelId: '42', stop: true })).toMatchObject({ ok: true });
+      expect(typingCalls).toEqual(['start 42', 'stop 42']);
+      expect(requests).toEqual([]);
+    });
+
+    test('without that module, the action it would dispatch', async () => {
+      const saved = typingModule.value;
+      typingModule.value = null;
+      const dispatched: any[] = [];
+      const before = dispatcher.dispatch;
+      dispatcher.dispatch = ((a: any) => void dispatched.push(a)) as any;
+      try {
+        const p = typingPage();
+        expect(await cmd(p, 't3', { kind: 'typing', channelId: '42' })).toMatchObject({ ok: true, result: { via: 'dispatch' } });
+        await cmd(p, 't4', { kind: 'typing', channelId: '42', stop: true });
+        expect(dispatched).toEqual([{ type: 'TYPING_START_LOCAL', channelId: '42' }, { type: 'TYPING_STOP_LOCAL', channelId: '42' }]);
+      } finally {
+        typingModule.value = saved;
+        dispatcher.dispatch = before;
+      }
+    });
+
+    test('someone typing comes with a name to show', () => {
+      const p = typingPage();
+      userStoreGetUser.value = (id: string) => ({ id, username: `user${id}`, globalName: 'Five' });
+      emit('TYPING_START', { channelId: 'c', userId: '5' });
+      const d = p.posted.find((x) => x.t === 'dispatch' && x.event === 'TYPING_START');
+      expect(d.data).toEqual({ channelId: 'c', userId: '5', user: expect.objectContaining({ id: '5', username: 'user5', global_name: 'Five' }), nick: null });
+    });
   });
 
   test('finds the stores under mangled export names and subscribes', () => {

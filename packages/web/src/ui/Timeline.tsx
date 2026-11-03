@@ -47,7 +47,6 @@ import {
   toLatest,
   timelineKey,
   timelines,
-  typing,
 } from '../state.ts';
 import { reactionContext } from '../reactions.ts';
 import { AccountChip, AccountDots, Avatar, Empty, Menu, NetBadge, NetGlyph, Skeleton, levelIcon, variantIcon } from './bits.tsx';
@@ -58,6 +57,8 @@ import { openConv } from './Sidebar.tsx';
 import { viewer, type ViewerImage } from './Viewer.tsx';
 import { JoinCallButton } from './Call.tsx';
 import { EmojiComplete } from './EmojiComplete.tsx';
+import { TypingBar } from './Typing.tsx';
+import { composerDone, composerTyped } from '../typing.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { ForwardCard, forwarding } from './Forward.tsx';
 import { attachmentMenu, conversationMenu, identityMenu, imageMenu, linkMenu, messageMenu, personMenu } from './menus.tsx';
@@ -542,7 +543,7 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
           <button class="thread-chip" onClick={() => openConv(thread)}>
             <Icon name="thread" size={13} />
             <b>{convTitle(thread)}</b>
-            <span>{thread.lastMessage ? `${authorName(thread.lastMessage.authorId)}: ${thread.lastMessage.text}` : 'Open thread'}</span>
+            <span>{thread.lastMessage ? `${authorName(thread.lastMessage.authorId)}: ${plainBody(thread.lastMessage.text, thread.network)}` : 'Open thread'}</span>
           </button>
         )}
       </div>
@@ -622,7 +623,6 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
   });
 
   const mine = pending.value.filter((p) => convIds.includes(p.conversationId));
-  const typers = convIds.flatMap((c) => (typing.value[c] ?? []).filter((x) => x.until > Date.now()));
   const msgs = t?.messages ?? [];
   const items: any[] = [];
   let prev: P.MessageView | null = null;
@@ -676,7 +676,6 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
             </div>
           </div>
         ))}
-        {typers.length > 0 && <div class="typing">{[...new Set(typers.map((x) => authorName(x.identityId)))].join(', ')} typing…</div>}
       </div>
     </div>
   );
@@ -727,6 +726,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   useEffect(() => {
     setText(localStorage.getItem(draftKey) ?? '');
     editing.value = null;
+    return composerDone;
   }, [draftKey]);
   useEffect(() => {
     if (edit) {
@@ -762,6 +762,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       return;
     }
     send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id, files: files.map((f) => f.file) });
+    composerDone();
     type('');
     clearFiles();
     clearReply();
@@ -866,7 +867,13 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           value={text}
           placeholder={disabledReason ?? placeholder}
           disabled={!!disabledReason}
-          onInput={(e) => type((e.target as HTMLTextAreaElement).value)}
+          onInput={(e) => {
+            const v = (e.target as HTMLTextAreaElement).value;
+            type(v);
+            // Editing a sent message is not typing a new one.
+            if (!edit) composerTyped({ conversationId: targets.convId, accountId: sender?.id }, v);
+          }}
+          onBlur={composerDone}
           onPaste={(e) => {
             const pasted = [...(e.clipboardData?.files ?? [])];
             if (!pasted.length) return;
@@ -913,7 +920,7 @@ function ForumView({ c }: { c: P.ConversationView }) {
       {posts.map((t) => (
         <button class="forum-post" onClick={() => openConv(t)}>
           <b>{convTitle(t)}</b>
-          <span>{t.lastMessage ? `${authorName(t.lastMessage.authorId)}: ${t.lastMessage.text}` : ''}</span>
+          <span>{t.lastMessage ? `${authorName(t.lastMessage.authorId)}: ${plainBody(t.lastMessage.text, t.network)}` : ''}</span>
         </button>
       ))}
     </div>
@@ -949,6 +956,7 @@ export function ConversationPane({ convId, onBack, focus }: { convId: string; on
           <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} merged={false} onReply={setReply} firstUnreadTs={unreadAt} focus={focus} />
         </>
       )}
+      <TypingBar convIds={[c.id]} />
       <Composer
         targets={{ convId: c.id, accountId: sendAsValue }}
         placeholder={`Message ${c.shape === 'direct' ? convTitle(c) : convLabel(c)}`}
@@ -995,6 +1003,7 @@ export function PersonPane({ personId, onBack }: { personId: string; onBack?: ()
       <PersonHeader person={person} onBack={onBack} />
       <NotStartedNote c={via} />
       <Timeline tkey={timelineKey('p', personId)} convIds={directs.map((d) => d.id)} merged={directs.length > 1} onReply={setReply} firstUnreadTs={unreadAt} />
+      <TypingBar convIds={directs.map((d) => d.id)} />
       <Composer
         targets={{ convId: via.id }}
         placeholder={`Message ${person.name} on ${netName(via.network)}`}

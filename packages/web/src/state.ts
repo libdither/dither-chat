@@ -4,6 +4,7 @@ import { SYNC_VERSION } from '@dither-chat/protocol';
 import { leaveLayerEntry, takeOverLayers } from './phone.ts';
 import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
 import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, emptyDb, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
+import { applyTyping, type TypingState } from './typers.ts';
 
 // ------------------------------------------------------------------ data
 
@@ -46,7 +47,8 @@ export interface PendingSend {
   queued?: boolean;
 }
 export const pending = signal<PendingSend[]>([]);
-export const typing = signal<Record<string, { identityId: string; until: number }[]>>({});
+/** Who is typing where, live only (typing.ts). */
+export const typing = signal<TypingState>({});
 
 export interface Toast {
   id: number;
@@ -217,7 +219,11 @@ export const previousRoute = (): Route | null => (history.state?.prev ? parseHas
 
 // ------------------------------------------------------------------ http
 
+/** Told of every call before it goes out: the activity log counts sends, reactions and reads from these (activity.ts). */
+export const apiHooks = new Set<(path: string, init?: { method?: string; body?: unknown }) => void>();
+
 export async function api<T = any>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  for (const h of apiHooks) h(path, init);
   const res = await fetch(path, {
     method: init?.method ?? (init?.body !== undefined ? 'POST' : 'GET'),
     body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
@@ -300,14 +306,9 @@ export function applyEvents(events: P.ClientEvent[]) {
       case 'notify':
         onNotify(ev);
         break;
-      case 'typing': {
-        const cur = typing.value[ev.conversationId] ?? [];
-        typing.value = {
-          ...typing.value,
-          [ev.conversationId]: [...cur.filter((x) => x.identityId !== ev.identityId && x.until > Date.now()), { identityId: ev.identityId, until: Date.now() + 6000 }],
-        };
+      case 'typing':
+        typing.value = applyTyping(typing.value, ev, Date.now(), isSelfIdentity);
         break;
-      }
       case 'resync':
         void bootstrap();
         break;

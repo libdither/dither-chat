@@ -206,7 +206,7 @@ test('leaving a group, being typed at, a picture change', async () => {
   const h = await harness();
   await h.ctl({ result: { op: 'group', value: FIX.get('group').group } });
   await h.emit(fx('reply_mention'));
-  expect(ofType(await h.emit({ t: 'chat_presence', chat: GROUP, sender: BOB_LID, fromMe: false, state: 'composing' }), 'typing')).toEqual([{ t: 'typing', conversation: GROUP, author: BOB }]);
+  expect(ofType(await h.emit({ t: 'chat_presence', chat: GROUP, sender: BOB_LID, fromMe: false, state: 'composing' }), 'typing')).toEqual([{ t: 'typing', conversation: GROUP, author: BOB, ttl: 25_000 }]);
   const pic = await h.emit({ t: 'picture', jid: BOB, id: '123', remove: false });
   expect(ofType(pic, 'identity')[0]?.identity.avatarUrl ?? `wa-avatar:${BOB}?123`).toBe(`wa-avatar:${BOB}?123`);
   const left = await h.emit({ t: 'group_change', jid: GROUP, join: [], leave: [ME], ts: 1 });
@@ -429,4 +429,23 @@ test('commands before linking say so', async () => {
   const h = await harness({ loggedIn: false });
   await h.waitFor(() => h.status()?.attention?.qr);
   await expect(h.adapter.command({ t: 'send', id: '1', conversation: ALICE, body: 'hi' })).rejects.toThrow('not linked');
+});
+
+test('typing: chat states both ways, never a presence', async () => {
+  const h = await harness();
+  await h.ctl({ result: { op: 'group', value: FIX.get('group').group } });
+  await h.emit(fx('reply_mention'));
+  const typing = async (name: string) => ofType(await h.emit(fx(name)), 'typing');
+  expect(await typing('typing_dm')).toEqual([{ t: 'typing', conversation: ALICE, author: ALICE, ttl: 25_000 }]);
+  // The sender's LID is the phone-number identity the group already pinned.
+  expect(await typing('typing_group')).toEqual([{ t: 'typing', conversation: GROUP, author: BOB, ttl: 25_000 }]);
+  expect(await typing('recording_group')).toEqual([{ t: 'typing', conversation: GROUP, author: BOB, ttl: 25_000 }]);
+  expect(await typing('paused_group')).toEqual([{ t: 'typing', conversation: GROUP, author: BOB, stop: true }]);
+  expect(await typing('typing_own')).toEqual([]);
+
+  await h.adapter.command({ t: 'typing', id: '1', conversation: GROUP });
+  await h.adapter.command({ t: 'typing', id: '2', conversation: GROUP, stop: true });
+  expect(h.cmd('chatPresence', 0)).toMatchObject({ chat: GROUP, state: 'composing' });
+  expect(h.cmd('chatPresence', 1)).toMatchObject({ chat: GROUP, state: 'paused' });
+  expect(h.cmds.filter((c) => c.op === 'presence')).toEqual([]);
 });

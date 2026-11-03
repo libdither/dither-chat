@@ -152,4 +152,19 @@ func printFixtures() {
 		JID: types.NewJID("120363000000000010", types.GroupServer), GroupName: types.GroupName{Name: "Neighbourhood"}, GroupAnnounce: types.GroupAnnounce{IsAnnounce: true},
 		GroupLinkedParent: types.GroupLinkedParent{LinkedParentJID: types.NewJID("120363000000000009", types.GroupServer)}, GroupIsDefaultSub: types.GroupIsDefaultSub{IsDefaultSubGroup: true},
 	})})
+	presence := []struct {
+		name string
+		evt  *events.ChatPresence
+	}{
+		{"typing_dm", &events.ChatPresence{MessageSource: types.MessageSource{Chat: alice, Sender: alice}, State: types.ChatPresenceComposing}},
+		{"typing_group", &events.ChatPresence{MessageSource: types.MessageSource{Chat: group, Sender: bobLID, IsGroup: true}, State: types.ChatPresenceComposing}},
+		{"recording_group", &events.ChatPresence{MessageSource: types.MessageSource{Chat: group, Sender: bobLID, IsGroup: true}, State: types.ChatPresenceComposing, Media: types.ChatPresenceMediaAudio}},
+		{"paused_group", &events.ChatPresence{MessageSource: types.MessageSource{Chat: group, Sender: bobLID, IsGroup: true}, State: types.ChatPresencePaused}},
+		{"typing_own", &events.ChatPresence{MessageSource: types.MessageSource{Chat: alice, Sender: me, IsFromMe: true}, State: types.ChatPresenceComposing}},
+	}
+	for _, p := range presence {
+		o := chatPresenceOf(p.evt)
+		o["t"], o["fixture"] = "chat_presence", p.name
+		_ = enc.Encode(o)
+	}
 }

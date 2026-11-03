@@ -326,6 +326,11 @@ func groupOf(g *types.GroupInfo) groupJSON {
 
 // ------------------------------------------------------------------ events
 
+// Someone typing ("composing", with media "audio" when recording a voice note) or stopping ("paused").
+func chatPresenceOf(evt *events.ChatPresence) obj {
+	return obj{"chat": jidStr(evt.Chat), "sender": jidStr(evt.Sender), "fromMe": evt.IsFromMe, "state": string(evt.State), "media": string(evt.Media)}
+}
+
 func (b *bridge) onEvent(raw any) {
 	switch evt := raw.(type) {
 	case *events.Message:
@@ -340,7 +345,7 @@ func (b *bridge) onEvent(raw any) {
 			"ids": evt.MessageIDs, "ts": evt.Timestamp.UnixMilli(), "type": string(evt.Type), "messageSender": jidStr(evt.MessageSender),
 		})
 	case *events.ChatPresence:
-		emit("chat_presence", obj{"chat": jidStr(evt.Chat), "sender": jidStr(evt.Sender), "fromMe": evt.IsFromMe, "state": string(evt.State), "media": string(evt.Media)})
+		emit("chat_presence", chatPresenceOf(evt))
 	case *events.PushName:
 		emit("push_name", obj{"jid": jidStr(evt.JID), "alt": jidStr(evt.JIDAlt), "name": evt.NewPushName})
 	case *events.BusinessName:

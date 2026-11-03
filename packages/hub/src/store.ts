@@ -4,6 +4,7 @@ import { hubId, randomId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
 import { canonicalReactionKey, parseSearch, REACTION_RULES } from '@dither-chat/protocol';
 import { Journal } from './journal.ts';
+import { TypingRelay, typingTtl } from './typing.ts';
 
 type Row = Record<string, any>;
 
@@ -99,6 +100,8 @@ export class Store {
   /** What changed at which position, for clients that come back (journal.ts, docs/sync.md). */
   readonly journal: Journal;
   private selfIdentities = new Set<string>();
+  /** Who is typing where: in memory only (typing.ts). */
+  readonly typers = new TypingRelay();
 
   constructor(path: string, private media: MediaSigner) {
     this.db = new Database(path, { create: true, strict: true });
@@ -264,6 +267,8 @@ export class Store {
         case 'message': {
           const id = this.message(acc, ev.message, !!ev.live);
           if (id) fresh.push(id);
+          // Their message ends their typing, as in Discord's client, whether or not the network says so.
+          if (ev.live) this.typingStopped(hubId('cnv', acc.network, ev.message.conversation), hubId('idn', acc.network, ev.message.author));
           break;
         }
         case 'delete': {
@@ -308,7 +313,17 @@ export class Store {
         }
         case 'typing': {
           const cid = hubId('cnv', acc.network, ev.conversation);
-          this.dirty.extra.push({ t: 'typing', conversationId: cid, identityId: hubId('idn', acc.network, ev.author) });
+          const iid = hubId('idn', acc.network, ev.author);
+          // You, typing on another of your accounts or devices, are not news.
+          if (this.isYou(iid)) break;
+          if (ev.stop) {
+            this.typingStopped(cid, iid);
+            break;
+          }
+          const ttl = typingTtl(ev.ttl);
+          this.typers.start(cid, iid, ttl);
+          const name = ev.name && !(this.db.query('SELECT display_name FROM identity WHERE id = ?').get(iid) as Row | null)?.display_name ? ev.name : undefined;
+          this.dirty.extra.push({ t: 'typing', conversationId: cid, identityId: iid, ttl, ...(name ? { name } : {}) });
           break;
         }
         case 'reply':
@@ -338,6 +353,16 @@ export class Store {
          ON CONFLICT (account_id, target_kind, target_id) DO UPDATE SET native_mute = COALESCE(excluded.native_mute, native_mute)`,
       )
       .run(accountId, kind, id, nativeMute ? JSON.stringify(nativeMute) : null);
+  }
+
+  private typingStopped(conversationId: string, identityId: string) {
+    if (this.typers.stop(conversationId, identityId)) this.dirty.extra.push({ t: 'typing', conversationId, identityId, stop: true });
+  }
+
+  /** One of your own accounts, or an identity merged into you. */
+  private isYou(identityId: string): boolean {
+    if (this.selfIdentities.has(identityId)) return true;
+    return !!this.db.query('SELECT 1 FROM identity i JOIN person p ON p.id = i.person_id WHERE i.id = ? AND p.is_self = 1').get(identityId);
   }
 
   ensureIdentity(acc: AccountRow, nativeId: string): string {
@@ -1532,6 +1557,8 @@ export class Store {
   }
 
   quietHours = () => this.metaJson<P.QuietHours>('quiet_hours');
+  privacy = (): P.PrivacySettings => ({ shareTyping: this.metaJson<P.PrivacySettings>('privacy')?.shareTyping ?? true });
+  setPrivacy = (p: P.PrivacySettings) => this.setMetaJson('privacy', p);
   setQuietHours = (q: P.QuietHours) => this.setMetaJson('quiet_hours', q);
   quietHeld = () => this.metaJson<{ count: number; conversationId: string; messageId: string }>('quiet_held');
   setQuietHeld = (held: { count: number; conversationId: string; messageId: string } | null) => this.setMetaJson('quiet_held', held);

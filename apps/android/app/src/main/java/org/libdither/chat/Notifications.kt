@@ -34,14 +34,32 @@ object Notifications {
         val conv = d.optString("conversationId").ifEmpty { null }
         val inbox = d.optBoolean("inbox")
         val test = d.optBoolean("test")
+        val nid = d.optString("nid").ifEmpty { null }
+        val device = d.optString("device")
+        outcome(c, nid, device, "delivered")
         // The page is on screen and raises its own toast from the live socket.
-        if (!test && MainActivity.resumed != null) return
+        if (!test && MainActivity.resumed != null) return outcome(c, nid, device, "suppressed")
+        if (!nm(c).areNotificationsEnabled()) return outcome(c, nid, device, "blocked")
         val tag = conv ?: if (inbox) "dither-digest" else "dither"
-        val hash = if (conv != null) "/inbox/c/$conv" else if (inbox) "/inbox" else null
-        post(c, tag, d.optString("title", "dither-chat"), d.optString("body"), hash, if (conv != null && d.optBoolean("canReply")) d.optString("replyTo").ifEmpty { null } else null, conv != null && d.optBoolean("canReply"))
+        // The push's id rides in the hash, so the page can say which visit the tap led to (docs/activity.md).
+        val n = if (nid != null) "?n=$nid" else ""
+        val hash = if (conv != null) "/inbox/c/$conv$n" else if (inbox) "/inbox$n" else null
+        post(c, tag, d.optString("title", "dither-chat"), d.optString("body"), hash, if (conv != null && d.optBoolean("canReply")) d.optString("replyTo").ifEmpty { null } else null, conv != null && d.optBoolean("canReply"), nid = nid, device = device)
+        outcome(c, nid, device, "shown")
     }
 
-    fun post(c: Context, tag: String, title: String, body: String, hash: String?, replyTo: String?, canReply: Boolean, sticky: Boolean = false) {
+    /**
+     * What became of a notification, for the hub's activity log: its id and this push registration, never its content.
+     * Android says when one is swiped away (the delete intent), which browsers mostly do not.
+     */
+    fun outcome(c: Context, nid: String?, device: String?, event: String) {
+        if (nid == null) return
+        val app = c.applicationContext
+        val e = JSONObject().put("id", nid).put("device", device ?: "").put("event", event).put("at", System.currentTimeMillis())
+        Thread { runCatching { Hub.request(app, "POST", "/api/activity/notifications", JSONObject().put("events", org.json.JSONArray().put(e))) } }.start()
+    }
+
+    fun post(c: Context, tag: String, title: String, body: String, hash: String?, replyTo: String?, canReply: Boolean, sticky: Boolean = false, nid: String? = null, device: String? = null) {
         val b = Notification.Builder(c, MESSAGES)
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(c.getColor(R.color.accent))
@@ -51,8 +69,12 @@ object Notifications {
             .setCategory(Notification.CATEGORY_MESSAGE)
             .setContentIntent(open(c, hash, tag.hashCode()))
             .setAutoCancel(!sticky)
+        if (nid != null) {
+            val gone = Intent(c, DismissReceiver::class.java).putExtra("nid", nid).putExtra("device", device)
+            b.setDeleteIntent(PendingIntent.getBroadcast(c, tag.hashCode(), gone, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+        }
         if (canReply) {
-            val intent = Intent(c, ReplyReceiver::class.java).putExtra("conversation", tag).putExtra("replyTo", replyTo)
+            val intent = Intent(c, ReplyReceiver::class.java).putExtra("conversation", tag).putExtra("replyTo", replyTo).putExtra("nid", nid).putExtra("device", device)
             // Mutable: the system writes the typed text into it.
             val pi = PendingIntent.getBroadcast(c, tag.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
             b.addAction(Notification.Action.Builder(null, "Reply", pi).addRemoteInput(RemoteInput.Builder(REPLY).setLabel("Message").build()).build())
@@ -79,8 +101,10 @@ class ReplyReceiver : BroadcastReceiver() {
                 val body = JSONObject().put("body", text)
                 if (replyTo != null) body.put("replyTo", replyTo)
                 val (code, res) = runCatching { Hub.request(c, "POST", "/api/conversations/$conv/send", body, 60_000) }.getOrElse { 0 to "" }
-                if (code in 200..299) Notifications.clear(c, conv)
-                else {
+                if (code in 200..299) {
+                    Notifications.outcome(c, intent.getStringExtra("nid"), intent.getStringExtra("device"), "replied")
+                    Notifications.clear(c, conv)
+                } else {
                     val why = if (code == 0) "Could not reach the hub" else Hub.errorOf(res).ifEmpty { "The hub answered $code" }
                     Notifications.post(c, conv, "Reply not sent", "$why. You wrote: $text".take(1000), "/inbox/c/$conv", null, false, sticky = true)
                 }
@@ -88,5 +112,12 @@ class ReplyReceiver : BroadcastReceiver() {
                 done.finish()
             }
         }.start()
+    }
+}
+
+/** A notification swiped away. Tapping one does not come here: auto-cancel on a tap is not a dismissal. */
+class DismissReceiver : BroadcastReceiver() {
+    override fun onReceive(c: Context, intent: Intent) {
+        Notifications.outcome(c, intent.getStringExtra("nid"), intent.getStringExtra("device"), "dismissed")
     }
 }

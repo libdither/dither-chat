@@ -612,6 +612,9 @@ export function tokens(t: Theme): Record<string, string> {
   const dark = t.scheme === 'dark';
   const fill = c.accentFill ?? c.accent;
   const bar = c.titlebar ?? c.rail;
+  // A rail far darker than the list (Dither light's) gets buttons and ink of its own; otherwise it shares the list's.
+  const ownRail = contrast(c.textDim, c.rail) < 4.5;
+  const railInk = ownRail ? readableOn(c.rail, ['#b5bac8', '#535a6d']) : c.textDim;
   return {
     '--bg': c.bg,
     '--bg-rail': c.rail,
@@ -647,6 +650,10 @@ export function tokens(t: Theme): Record<string, string> {
     '--scrollbar': c.scrollbar ?? c.border,
     '--scrollbar-hover': c.scrollbarHover ?? c.textFaint,
     '--unread': c.unread ?? c.text,
+    '--rail-btn': ownRail ? mix(railInk, c.rail, 0.12) : c.sidebar,
+    '--rail-ink': railInk,
+    '--rail-active': ownRail ? fill : c.accentSoft,
+    '--rail-active-ink': ownRail ? (c.onAccent ?? readableOn(fill)) : c.text,
     '--titlebar': bar,
     '--titlebar-text': contrast(c.text, bar) >= 4.5 ? c.text : readableOn(bar, ['#e7e9ef', '#1a1d26']),
     '--shadow': c.shadow ?? (dark ? '0 10px 40px -8px rgba(0, 0, 0, 0.6)' : '0 10px 40px -10px rgba(20, 24, 40, 0.22)'),

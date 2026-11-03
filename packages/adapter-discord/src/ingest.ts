@@ -11,7 +11,7 @@
 
 import type * as P from '@dither-chat/protocol';
 import type { DispatchName, RawChannel, RawGuild, RawGuildSettings, RawMessage, RawSnapshot, RawUser } from './discord-types.ts';
-import { CHANNEL_TYPE, channelMute, customEmoji, isThread, mapCategory, mapGuild, mapGuildChannel, mapMessage, mapMute, mapPrivateChannel, mapReadState, mapThread, mapUser, reactionKey, snowflakeToMs } from './map.ts';
+import { CHANNEL_TYPE, channelMute, customEmoji, isThread, mapCategory, mapGuild, mapGuildChannel, mapMessage, mapMute, mapPrivateChannel, mapReadState, mapThread, mapUser, reactionKey, userDisplayName, snowflakeToMs } from './map.ts';
 
 export interface AdapterState {
   selfId: string;
@@ -181,8 +181,12 @@ export function translateDispatch(event: DispatchName, a: any, st: AdapterState)
       return a.channelId && a.messageId
         ? [{ t: 'read', conversation: a.channelId, upToTs: snowflakeToMs(a.messageId), mentions: a.mentionCount ?? 0, unread: a.mentionCount ?? 0 }]
         : [];
-    case 'TYPING_START':
-      return a.channelId && a.userId && a.userId !== selfId ? [{ t: 'typing', conversation: a.channelId, author: a.userId }] : [];
+    case 'TYPING_START': {
+      if (!a.channelId || !a.userId || a.userId === selfId) return [];
+      // A name for the hub to show if it has never heard of them; no identity is stored for typing alone.
+      const name = a.nick || (a.user?.username ? userDisplayName(a.user) : undefined);
+      return [{ t: 'typing', conversation: a.channelId, author: a.userId, ...(name ? { name } : {}) }];
+    }
     default:
       return [];
   }

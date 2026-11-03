@@ -499,8 +499,12 @@ export type ClientEvent =
   | { t: 'message'; message: MessageView; identities: IdentityView[]; live: boolean }
   | { t: 'message.deleted'; id: string; conversationId: string }
   /** No conversation: it is about the inbox as a whole (the daily digest). */
-  | { t: 'notify'; messageId?: string; conversationId?: string; title: string; body: string; reasons: string[] }
-  | { t: 'typing'; conversationId: string; identityId: string }
+  | { t: 'notify'; messageId?: string; conversationId?: string; title: string; body: string; reasons: string[]; /** The notification's id in the activity log (docs/activity.md). */ nid?: string }
+  /**
+   * Someone started typing (it lasts `ttl` ms unless another start comes) or `stop`ped. Of the moment: not journaled,
+   * and a client that reconnects simply does not see it. `name` only when the hub knows no name for the identity.
+   */
+  | { t: 'typing'; conversationId: string; identityId: string; ttl?: number; stop?: true; name?: string }
   | { t: 'folders'; folders: FolderView[] }
   | { t: 'placePrefs'; prefs: PlacePrefView[] }
   | { t: 'categories'; categories: CategoryView[]; placeCategories: PlaceCategoryView[] }

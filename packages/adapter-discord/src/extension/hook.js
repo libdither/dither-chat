@@ -176,6 +176,8 @@
     MessageActions: (m) => typeof m.sendMessage === 'function' && typeof m.editMessage === 'function',
     // Opening DMs: the module the client's own "Message" button uses.
     PrivateChannelActions: (m) => typeof m.openPrivateChannel === 'function',
+    // Typing: what the client's own composer calls on a keystroke (it sends and throttles POST /typing itself).
+    TypingActions: (m) => typeof m.startTyping === 'function' && typeof m.stopTyping === 'function',
     // Calls: what the client's own voice channel buttons call, and the stores its call panel reads.
     VoiceActions: (m) => typeof m.selectVoiceChannel === 'function' && typeof m.disconnect === 'function',
     AudioActions: (m) => typeof m.toggleSelfMute === 'function' && typeof m.toggleSelfDeaf === 'function',
@@ -318,6 +320,29 @@
       })
       .filter(Boolean);
   }
+  function nickOf(guildId, userId) {
+    try {
+      return (guildId && mod.GuildMemberStore && mod.GuildMemberStore.getNick(guildId, userId)) || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * You are typing, or stopped: the client's own typing action, as its composer calls it on a keystroke, so the request,
+   * its throttle and its local state are the client's. Without that module, the action it dispatches.
+   */
+  function typing(channelId, stop) {
+    const t = mod.TypingActions;
+    if (t) {
+      if (stop) t.stopTyping(channelId);
+      else t.startTyping(channelId);
+      return { ok: true, via: 'actions' };
+    }
+    mod.Dispatcher.dispatch({ type: stop ? 'TYPING_STOP_LOCAL' : 'TYPING_START_LOCAL', channelId });
+    return { ok: true, via: 'dispatch' };
+  }
+
   function resolveUser(id) {
     try {
       return pickUser(mod.UserStore.getUser(id));
@@ -539,7 +564,7 @@
       case 'MESSAGE_ACK':
         return { channelId: a.channelId, messageId: a.messageId, mentionCount: a.mentionCount };
       case 'TYPING_START':
-        return { channelId: a.channelId, userId: a.userId };
+        return { channelId: a.channelId, userId: a.userId, user: resolveUser(a.userId), nick: nickOf(a.guildId, a.userId) };
       default:
         return {};
     }
@@ -561,6 +586,8 @@
         return history(cmd);
       case 'markRead':
         return rest('post', `/channels/${cmd.channelId}/messages/${cmd.messageId}/ack`, undefined, { token: null });
+      case 'typing':
+        return typing(cmd.channelId, !!cmd.stop);
       case 'react': {
         const url = `/channels/${cmd.channelId}/messages/${cmd.messageId}/reactions/${encodeURIComponent(cmd.emoji)}`;
         const type = cmd.burst ? 1 : 0;

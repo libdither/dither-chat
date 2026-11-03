@@ -237,10 +237,10 @@ describe('sync messages (your other devices)', () => {
 });
 
 describe('typing', () => {
-  test('started in a 1:1 and a group; stopped is ignored', () => {
-    expect(of(map('typing-dm').events, 'typing')).toEqual([{ t: 'typing', conversation: DM_ALICE, author: ALICE }]);
-    expect(of(map('typing-group').events, 'typing')).toEqual([{ t: 'typing', conversation: GROUP, author: SAM }]);
-    expect(of(map('typing-group-stopped').events, 'typing')).toHaveLength(0);
+  test('started in a 1:1 and a group, lasting as long as on Signal; stopped says so', () => {
+    expect(of(map('typing-dm').events, 'typing')).toEqual([{ t: 'typing', conversation: DM_ALICE, author: ALICE, ttl: 15_000 }]);
+    expect(of(map('typing-group').events, 'typing')).toEqual([{ t: 'typing', conversation: GROUP, author: SAM, ttl: 15_000 }]);
+    expect(of(map('typing-group-stopped').events, 'typing')).toEqual([{ t: 'typing', conversation: GROUP, author: SAM, stop: true }]);
   });
 });
 

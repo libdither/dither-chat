@@ -6,6 +6,7 @@ import { STATUS, addingAccount } from './Accounts.tsx';
 import { AccountChip, NetBadge, NetGlyph, levelIcon } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { PushSettings } from './Push.tsx';
+import { PrivacySettings } from './Privacy.tsx';
 import { phone } from '../phone.ts';
 import { Sheet } from './Sheet.tsx';
 import { chosenTheme, followsSystem, Swatch, ThemeList } from './Themes.tsx';
@@ -305,6 +306,8 @@ export function SettingsPane() {
           </section>
         )}
 
+        <PrivacySettings />
+
         <section class="set-block" id="set-appearance">
           <h3>Appearance</h3>
           <AppearanceTheme />
@@ -337,7 +340,7 @@ export function SettingsPane() {
         <section class="set-block">
           <h3>About</h3>
           <p class="set-help">
-            dither-chat runs entirely on your hub and is served to your devices over Tailscale. It aggregates Discord, Signal and Matrix into one ontology: people, groups, and
+            dither-chat runs entirely on your hub and is served to your devices over Tailscale. It aggregates Discord, Signal, Matrix and WhatsApp into one ontology: people, groups, and
             communities with channels and threads, each annotated with the account it came through.
           </p>
           <div class="btn-row">

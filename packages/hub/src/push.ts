@@ -307,9 +307,11 @@ export class PushService {
     return { ok: false, error };
   }
 
-  async notify(title: string, body: string, conversationId: string | undefined, extra: Record<string, unknown>) {
+  /** Each device's payload names the device, so what it reports back about the push (activity.ts) says where it happened. */
+  async notify(title: string, body: string, conversationId: string | undefined, extra: Record<string, unknown>): Promise<{ devices: number; accepted: number }> {
     const rows = this.store.db.query('SELECT * FROM push_subscription').all() as Row[];
-    await Promise.all([...rows.map((r) => this.deliver(r, pushPayload(title, body, conversationId, extra))), this.toTopic(title, body, conversationId)]);
+    const [results] = await Promise.all([Promise.all(rows.map((r) => this.deliver(r, pushPayload(title, body, conversationId, { ...extra, device: r.id })))), this.toTopic(title, body, conversationId)]);
+    return { devices: rows.length, accepted: results.filter((r) => r.ok).length };
   }
 
   async test(ref: { id?: string; endpoint?: string }) {

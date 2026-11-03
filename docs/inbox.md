@@ -201,3 +201,8 @@ Ollama at `DITHER_OLLAMA_URL`, a few recent messages as context, a short timeout
 few-shot examples. Those would come from triage's thumbs up/down and, once added, a "doesn't need me" action on
 an inbox row. Run it off the ingest path, on a timer or after a sync, for a handful of conversations at a time.
 This is the only part that would read message text, and only in the local model.
+
+What you actually did with notifications and chats, as labelled data for this model and for triage's, is in the
+activity log ([activity.md](activity.md)): open rate after a push, time to open, dwell, replies after opening, and
+how often you open a place nobody pushed you about. `GET /api/attention/:id` includes those features; the score does
+not use them yet.

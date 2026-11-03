@@ -8,6 +8,7 @@
  * offers it, and it applies when the app goes out of sight.
  */
 import { signal } from '@preact/signals';
+import { noteOpen } from './activity.ts';
 import { go, parseHash } from './state.ts';
 
 export const updateReady = signal(false);
@@ -56,7 +57,10 @@ export function registerServiceWorker() {
     location.reload();
   });
   navigator.serviceWorker.addEventListener('message', (e) => {
-    if (e.data?.t === 'open') go(parseHash(e.data.hash), false);
+    if (e.data?.t === 'open') {
+      noteOpen(e.data.hash);
+      go(parseHash(e.data.hash), false);
+    }
   });
   navigator.serviceWorker
     .register('/sw.js', { updateViaCache: 'none' })

@@ -110,6 +110,23 @@ class DeviceMismatch extends Error {}
 const describe = (e: unknown) => (e instanceof MatrixError ? `${e.errcode}: ${e.error}` : String((e as any)?.message ?? e));
 const threadId = (roomId: string, root: string) => `${roomId}|${root}`;
 
+/** How long a start we send lasts on the server without another (ours come every 8 s while you type). */
+export const MATRIX_TYPING_TIMEOUT = 15_000;
+/** A typer the server keeps listing: Element refreshes its 30 s timeout while its user types. */
+export const MATRIX_TYPING_TTL = 30_000;
+
+/** One m.typing list against the one before it: starts for everyone on it, stops for everyone who left it. */
+export function typingEvents(room: string, before: Set<string> | undefined, userIds: unknown[], self: string, name: (u: string) => string | undefined): { events: P.AdapterEvent[]; now: Set<string> } {
+  const now = new Set(userIds.filter((u): u is string => typeof u === 'string' && u !== self));
+  const events: P.AdapterEvent[] = [];
+  for (const u of now) {
+    const n = name(u);
+    events.push({ t: 'typing', conversation: room, author: u, ttl: MATRIX_TYPING_TTL, ...(n ? { name: n } : {}) });
+  }
+  for (const u of before ?? []) if (!now.has(u)) events.push({ t: 'typing', conversation: room, author: u, stop: true });
+  return { events, now };
+}
+
 export function splitConversation(id: string): { roomId: string; root?: string } {
   const i = id.indexOf('|');
   return i < 0 ? { roomId: id } : { roomId: id.slice(0, i), root: id.slice(i + 1) };
@@ -149,6 +166,9 @@ export class MatrixAdapter {
   private retrying = false;
   /** Who a room's key goes to, per room. Dropped when a membership changes. */
   private encryptionMembers = new Map<string, string[]>();
+  /** Who each room's last m.typing listed, and a timer saying so again while the list stands (the server only sends changes). */
+  private typers = new Map<string, { users: Set<string>; at: number }>();
+  private typingTimer: ReturnType<typeof setInterval> | undefined;
 
   // ================================================================ lifecycle
 
@@ -176,6 +196,7 @@ export class MatrixAdapter {
 
   async shutdown() {
     this.stopped = true;
+    clearInterval(this.typingTimer);
     this.syncAbort?.abort();
     this.wakeUp?.();
     try {
@@ -1044,11 +1065,40 @@ export class MatrixAdapter {
     }
   }
 
+  /** m.typing carries the room's whole list each time it changes: who is new or still there typed, who left it stopped. */
   private typing(room: Room, jr: any) {
     for (const ev of jr.ephemeral?.events ?? []) {
       if (ev?.type !== 'm.typing' || !Array.isArray(ev.content?.user_ids)) continue;
-      for (const u of ev.content.user_ids) if (typeof u === 'string' && u !== this.selfId) this.hub.emit({ t: 'typing', conversation: room.id, author: u });
+      const { events, now } = typingEvents(room.id, this.typers.get(room.id)?.users, ev.content.user_ids, this.selfId, (u) => room.memberName(u));
+      if (now.size) this.typers.set(room.id, { users: now, at: Date.now() });
+      else this.typers.delete(room.id);
+      for (const e of events) this.hub.emit(e);
     }
+    if (this.typers.size && !this.typingTimer) {
+      this.typingTimer = setInterval(() => {
+        for (const [roomId, { users, at }] of this.typers) {
+          // A list unchanged for two minutes is more likely a sync that stopped than someone still typing.
+          if (Date.now() - at > 120_000) {
+            this.typers.delete(roomId);
+            continue;
+          }
+          const r = this.dir.rooms.get(roomId);
+          for (const e of typingEvents(roomId, undefined, [...users], this.selfId, (u) => r?.memberName(u)).events) this.hub.emit(e);
+        }
+      }, MATRIX_TYPING_TTL - 10_000);
+      this.typingTimer.unref?.();
+    } else if (!this.typers.size && this.typingTimer) {
+      clearInterval(this.typingTimer);
+      this.typingTimer = undefined;
+    }
+  }
+
+  /** PUT /typing, with a timeout so a lost stop lapses on its own. The typing notice is never encrypted, in any room. */
+  private async sendTyping(conversation: string, stop: boolean) {
+    const { roomId } = splitConversation(conversation);
+    this.joinedRoom(roomId);
+    await this.api().request('PUT', `/_matrix/client/v3/rooms/${enc(roomId)}/typing/${enc(this.selfId)}`, { body: stop ? { typing: false } : { typing: true, timeout: MATRIX_TYPING_TIMEOUT } });
+    return { ok: true };
   }
 
   // ================================================================ commands
@@ -1065,6 +1115,8 @@ export class MatrixAdapter {
         return this.history(cmd.conversation, cmd.limit);
       case 'markRead':
         return this.markRead(cmd.conversation, cmd.upTo);
+      case 'typing':
+        return this.sendTyping(cmd.conversation, !!cmd.stop);
       case 'react':
         return this.react(cmd.conversation, cmd.message, cmd.key, !!cmd.remove, cmd.emoji);
       case 'reactionContext':

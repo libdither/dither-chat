@@ -1,6 +1,6 @@
 import type * as P from '@dither-chat/protocol';
 import { ago } from '../format.ts';
-import { accountsNeedingYou, authorName, communitiesOf, convLabel, convTitle, placeConv, resolveTokens, rootCommunity, unreadOf, visibleConv } from '../model.ts';
+import { accountsNeedingYou, authorName, communitiesOf, convLabel, convTitle, placeConv, plainBody, rootCommunity, unreadOf, visibleConv } from '../model.ts';
 import { db, feedback, go, inbox, markAllRead, rev } from '../state.ts';
 import { Avatar, Count, SourceChip } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -35,7 +35,7 @@ function PingCard({ m }: { m: P.MessageView }) {
             </span>
             <span class="ping-time">{ago(m.ts)}</span>
           </span>
-          <span class="ping-body">{resolveTokens(m.body, m.network).slice(0, 220) || (m.attachments.length ? 'Sent an attachment' : '')}</span>
+          <span class="ping-body">{plainBody(m.body, m.network).slice(0, 220) || (m.attachments.length ? 'Sent an attachment' : '')}</span>
           <span class="ping-reasons">
             {t.reasons.map((r) => (
               <span class="reason">{r}</span>
@@ -165,7 +165,7 @@ export function InboxBoard() {
                 <span class="digest-places">{[...g.places].slice(0, 4).join(', ')}</span>
                 {g.messages.slice(0, 3).map((m) => (
                   <span class="digest-line">
-                    <b>{authorName(m.authorId)}</b> {resolveTokens(m.body, m.network).replace(/```[\s\S]*?```/g, '[code]').slice(0, 90)}
+                    <b>{authorName(m.authorId)}</b> {plainBody(m.body, m.network).slice(0, 90)}
                   </span>
                 ))}
                 <span class="digest-why">{[...g.reasons][0]}</span>

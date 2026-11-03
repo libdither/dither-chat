@@ -69,7 +69,6 @@ function FolderIcon({ folder }: { folder: P.FolderView }) {
           ),
         )}
       </span>
-      {folder.icon && <span class="folder-emoji">{folder.icon}</span>}
     </span>
   );
 }
@@ -139,10 +138,12 @@ function RailEntryView({ entry: e, route: r }: { entry: RailEntry; route: Route 
   const f = e.folder;
   const u = sumUnread(folderConvs(f));
   const open = placePref('folder', f.id).open;
+  // A closed folder stands in for what is open inside it, as Discord's does.
+  const inside = (r.view === 'folder' && r.folder === f.id) || f.items.some((it) => (it.kind === 'space' ? r.view === 'space' && r.space === it.id : it.kind === 'conversation' && 'conv' in r && r.conv === it.id));
   return (
     <div class={`rail-folder ${open ? 'open' : ''}`} style={{ '--folder': f.color ?? '#8b93a7' } as any}>
       <RailItem
-        active={r.view === 'folder' && r.folder === f.id && !open}
+        active={inside && !open}
         unread={!open && u.unread > 0}
         badge={open ? 0 : u.badge}
         title={`Folder: ${f.name}. Click to ${open ? 'close' : 'open'}, right-click or hold for more.`}
@@ -151,9 +152,7 @@ function RailEntryView({ entry: e, route: r }: { entry: RailEntry; route: Route 
         class={dropClass(e.key)}
       >
         {open ? (
-          <span class="folder-open-icon">
-            <Icon name="folder" size={20} />
-          </span>
+          <span class="folder-open-icon">{f.icon ? <span class="folder-open-emoji">{f.icon}</span> : <Icon name="folder" size={20} />}</span>
         ) : (
           <FolderIcon folder={f} />
         )}

@@ -19,6 +19,7 @@ import {
   netName,
   people,
   placeConv,
+  plainBody,
   resolveTokens,
   rootCommunity,
   spaceChildren,
@@ -30,6 +31,7 @@ import {
   type RailEntry,
 } from '../model.ts';
 import { db, go, newMessage, prefs, rev, route, setPrefs, type InboxFilter, type Route } from '../state.ts';
+import { RowTyping } from './Typing.tsx';
 import { AccountChip, AccountDots, Avatar, Count, NetBadge, NetGlyph, SourceChip, levelIcon, variantIcon } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
@@ -79,7 +81,7 @@ function preview(c: P.ConversationView): string {
   if (!m) return c.topic ?? kindLabel(c);
   const who = m.authorId ? authorName(m.authorId) : '';
   const showWho = c.shape !== 'direct' || who === 'You';
-  return `${showWho && who ? who + ': ' : ''}${resolveTokens(m.text, c.network) || (m.kind === 'media' ? 'Attachment' : '')}`;
+  return `${showWho && who ? who + ': ' : ''}${plainBody(m.text, c.network) || (m.kind === 'media' ? 'Attachment' : '')}`;
 }
 
 /** Where a conversation lives, for rows in mixed lists. */
@@ -130,6 +132,7 @@ export function ConvRow({ c, active, onClick, showPlace = true, why, owedSince }
             accountIds={c.vantages.map((v) => v.accountId)}
             icon={c.shape === 'self' ? '✎' : undefined}
           />
+          {(c.shape === 'direct' || c.shape === 'group') && <RowTyping convIds={[c.id]} />}
         </span>
       )}
       <span class="row-main">
@@ -272,6 +275,7 @@ export function PersonRow({ person, active, onClick }: { person: P.PersonView; a
     <button class={`row conv-row ${active ? 'active' : ''} ${u.unread ? 'unread' : ''}`} onClick={onClick} {...ctx}>
       <span class="row-avatar">
         <Avatar id={person.id} name={person.name} url={person.avatar} size={36} />
+        <RowTyping convIds={directs.map((d) => d.id)} />
       </span>
       <span class="row-main">
         <span class="row-top">
@@ -310,7 +314,7 @@ export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
     <div class="sidebar-inner">
       <header class="side-head">
         <h1>People<NewMessageButton /><SortButton scope="people" class="side-sort" /></h1>
-        <span class="side-sub">One thread per person, across Signal, Discord and Matrix</span>
+        <span class="side-sub">One thread per person, across every network</span>
       </header>
       <div class="side-scroll">
         {starred.length > 0 && <SectionHead id="people-star" label="Starred" count={starred.length} />}
@@ -324,7 +328,7 @@ export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
 
 // ------------------------------------------------------------------ space tree
 
-function ChannelRow({ c, active, depth, onOpen, alsoIn }: { c: P.ConversationView; active?: string; depth: number; onOpen: (c: P.ConversationView) => void; alsoIn?: string[] }) {
+function ChannelRow({ c, active, depth, onOpen, alsoIn, dots = true }: { c: P.ConversationView; active?: string; depth: number; onOpen: (c: P.ConversationView) => void; alsoIn?: string[]; dots?: boolean }) {
   const u = unreadOf(c);
   const threads = threadsOf(c.id).filter((t) => t.id === active || unreadOf(t).unread > 0 || (t.lastMessageAt ?? 0) > Date.now() - 3 * 86_400_000);
   const forum = c.variant === 'forum';
@@ -348,7 +352,7 @@ function ChannelRow({ c, active, depth, onOpen, alsoIn }: { c: P.ConversationVie
           </span>
         )}
         {u.muted && <Icon name={levelIcon(lvl.level)} size={12} class="chan-muted" />}
-        <AccountDots network={c.network} accountIds={c.vantages.map((v) => v.accountId)} size={6} />
+        {dots && <AccountDots network={c.network} accountIds={c.vantages.map((v) => v.accountId)} size={6} />}
         <Count n={u.badge} />
       </button>
       {shownThreads.map((t) => {
@@ -375,17 +379,19 @@ function ChannelRow({ c, active, depth, onOpen, alsoIn }: { c: P.ConversationVie
   );
 }
 
-export function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<string>() }: { spaceId: string; active?: string; onOpen: (c: P.ConversationView) => void; depth?: number; seen?: Set<string> }) {
+export function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<string>(), dots }: { spaceId: string; active?: string; onOpen: (c: P.ConversationView) => void; depth?: number; seen?: Set<string>; dots?: boolean }) {
   if (seen.has(spaceId)) return null;
   const nextSeen = new Set(seen).add(spaceId);
   const kids = spaceChildren(spaceId);
+  // Seen through one account, the header's "via" already says which; a dot on every channel would repeat it.
+  dots ??= (db.spaces.get(spaceId)?.accountIds.length ?? 0) > 1;
   return (
     <>
       {kids.map((k) => {
         if (k.kind === 'conversation') {
           const c = db.conversations.get(k.id)!;
           const also = c.spaceIds.filter((s) => s !== spaceId).map((s) => communityOfSpace(s)?.name ?? db.spaces.get(s)?.name ?? '');
-          return <ChannelRow c={c} active={active} depth={depth} onOpen={onOpen} alsoIn={also.filter(Boolean)} />;
+          return <ChannelRow c={c} active={active} depth={depth} onOpen={onOpen} alsoIn={also.filter(Boolean)} dots={dots} />;
         }
         const s = db.spaces.get(k.id)!;
         if (k.kind === 'section' && !spaceChildren(s.id).length) return null; // a category whose channels this account can't see
@@ -405,7 +411,7 @@ export function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<s
             </button>
               )}
             </Menuable>
-            {!collapsed && <SpaceTree spaceId={s.id} active={active} onOpen={onOpen} depth={k.kind === 'subspace' ? depth + 1 : depth} seen={nextSeen} />}
+            {!collapsed && <SpaceTree spaceId={s.id} active={active} onOpen={onOpen} depth={k.kind === 'subspace' ? depth + 1 : depth} seen={nextSeen} dots={dots} />}
           </div>
         );
       })}

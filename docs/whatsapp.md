@@ -40,7 +40,8 @@ It has no groups and does not give you your existing chats, so it cannot serve a
 The adapter only does what a person using WhatsApp Web would cause:
 
 - **It never marks itself online.** WhatsApp then keeps sending notifications to your phone. The cost is that typing
-  indicators from others mostly do not arrive.
+  indicators from others mostly do not arrive. Your own typing goes out as a chat state, which is not a presence
+  ([typing.md](typing.md#whatsapp-and-why-typing-does-not-mark-you-online)).
 - **It never looks up phone numbers on its own.** A number is checked only when you start a chat with it.
 - **It fetches profile pictures only when one is shown**, and only for contacts, chats and groups, not for every
   stranger in a big group.
@@ -136,7 +137,8 @@ Then restart the account. Old builds stay cached by source hash, so nothing else
 - Calls (whatsmeow has no calls).
 - Status updates and channels (newsletters).
 - Voting in polls. Polls show as text; vote on the phone.
-- Typing indicators from others. They need the device marked online, which stops your phone's notifications.
+- Typing indicators from others, mostly. WhatsApp sends them to devices marked online, and that stops your phone's
+  notifications. The few that arrive are shown ([typing.md](typing.md)).
 - Profile "about" texts, and the per-person "seen" receipts on your messages.
 - A real link. Everything above is verified against fixtures, a fake bridge, and the real bridge up to a fresh QR code
   from WhatsApp, not against a linked account.

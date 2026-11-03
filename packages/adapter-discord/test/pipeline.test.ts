@@ -197,6 +197,17 @@ describe('hub ingest of adapter facts', () => {
     expect(msg.identities.find((i) => i.nativeId === base.userId)?.displayName).toBe('Zed');
   });
 
+  test('someone typing: a nickname or display name to show, never you', () => {
+    const st = newState();
+    st.selfId = SELF;
+    expect(translateDispatch('TYPING_START', { channelId: CH_BEGINNERS, userId: '400000000000000060', user: { id: '400000000000000060', username: 'zed', global_name: 'Zed' }, nick: 'Zeddy' }, st)).toEqual([
+      { t: 'typing', conversation: CH_BEGINNERS, author: '400000000000000060', name: 'Zeddy' },
+    ]);
+    expect(translateDispatch('TYPING_START', { channelId: DM, userId: ALICE, user: { id: ALICE, username: 'alice.chen', global_name: 'Alice' }, nick: null }, st)).toEqual([{ t: 'typing', conversation: DM, author: ALICE, name: 'Alice' }]);
+    expect(translateDispatch('TYPING_START', { channelId: DM, userId: ALICE }, st)).toEqual([{ t: 'typing', conversation: DM, author: ALICE }]);
+    expect(translateDispatch('TYPING_START', { channelId: DM, userId: SELF }, st)).toEqual([]);
+  });
+
   test('a fetched message with no reactions has none left', () => {
     const st = newState();
     st.selfId = SELF;

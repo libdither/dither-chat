@@ -100,12 +100,14 @@ describe('the service', () => {
     expect(r.headers.get('content-encoding')).toBe('aes128gcm');
     expect(r.headers.get('authorization')).toStartWith('vapid t=');
     expect(Number(r.headers.get('ttl'))).toBeGreaterThan(0);
-    expect(JSON.parse(decrypt(r.body, d.ua, d.auth))).toEqual({ title: 'Alice', body: 'hello there', conversationId: 'cnv_1', canReply: true, replyTo: 'msg_1' });
+    // Each device's payload names its registration, so what it reports back says where it happened (docs/activity.md).
+    const id = svc.devices()[0].id;
+    expect(JSON.parse(decrypt(r.body, d.ua, d.auth))).toEqual({ title: 'Alice', body: 'hello there', conversationId: 'cnv_1', canReply: true, replyTo: 'msg_1', device: id });
     expect(Buffer.from(r.body).includes('hello')).toBe(false);
     expect(() => decrypt(r.body, other.ua, other.auth)).toThrow();
     expect(svc.devices()[0]).toMatchObject({ label: 'Phone', lastError: null });
-    await svc.notify('Daily digest: 2 messages', 'Kitchen (2).', undefined, { inbox: true });
-    expect(JSON.parse(decrypt(received.at(-1)!.body, d.ua, d.auth))).toEqual({ title: 'Daily digest: 2 messages', body: 'Kitchen (2).', inbox: true });
+    expect(await svc.notify('Daily digest: 2 messages', 'Kitchen (2).', undefined, { inbox: true, nid: 'n1' })).toEqual({ devices: 1, accepted: 1 });
+    expect(JSON.parse(decrypt(received.at(-1)!.body, d.ua, d.auth))).toEqual({ title: 'Daily digest: 2 messages', body: 'Kitchen (2).', inbox: true, nid: 'n1', device: id });
     expect(svc.devices()[0].lastOkAt).not.toBeNull();
     svc.remove({ endpoint: ep('a') });
   });

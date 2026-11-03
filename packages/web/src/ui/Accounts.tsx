@@ -663,7 +663,7 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
             <dd>{STATUS[a.status]}</dd>
             <dt>Carries</dt>
             <dd>
-              {seen.spaces} spaces · {seen.convs} conversations
+              {seen.spaces} {seen.spaces === 1 ? 'space' : 'spaces'} · {seen.convs} {seen.convs === 1 ? 'conversation' : 'conversations'}
             </dd>
             <dt>Can</dt>
             <dd class="caps">

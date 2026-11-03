@@ -221,8 +221,8 @@ code {
   height: 48px;
   padding: 0;
   border-radius: 26px;
-  background: var(--bg-sidebar);
-  color: var(--text-dim);
+  background: var(--rail-btn);
+  color: var(--rail-ink);
   display: grid;
   place-items: center;
   transition: border-radius 0.18s, background 0.18s, color 0.18s;
@@ -231,8 +231,8 @@ code {
 .rail-item.active .rail-btn,
 .rail-btn:hover {
   border-radius: 16px;
-  background: var(--accent-soft);
-  color: var(--text);
+  background: var(--rail-active);
+  color: var(--rail-active-ink);
 }
 .rail-logo {
   color: var(--accent);
@@ -243,10 +243,18 @@ code {
   right: 10px;
   pointer-events: none;
 }
+/* A ring of the rail's colour, as Discord cuts its badges out of the icon. */
+.rail-count .count {
+  box-shadow: 0 0 0 3px var(--bg-rail);
+}
+/* The count sits where the network badge is; while there is one, the badge would only peek out from behind it. */
+.rail-item:has(.rail-count) .space-net {
+  visibility: hidden;
+}
 .rail-sep {
   width: 32px;
   height: 2px;
-  background: var(--border);
+  background: color-mix(in oklab, var(--rail-ink) 30%, transparent);
   border-radius: 2px;
   margin: 4px 0;
   flex: none;
@@ -274,13 +282,17 @@ code {
   left: -2px;
   bottom: -2px;
 }
+.rail-folder {
+  width: 100%;
+}
 .folder-grid {
   width: 44px;
   height: 44px;
   border-radius: 15px;
-  background: var(--bg-sidebar);
+  background: var(--rail-btn);
   display: grid;
   grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
   gap: 2px;
   padding: 4px;
   overflow: hidden;
@@ -293,12 +305,11 @@ code {
 .folder-mini {
   border-radius: 5px;
   overflow: hidden;
-  background: var(--bg-raised);
+  background: color-mix(in oklab, var(--rail-ink) 10%, transparent);
 }
-.folder-emoji {
-  position: absolute;
-  font-size: 15px;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+.folder-open-emoji {
+  font-size: 20px;
+  line-height: 1;
 }
 .rail-acc {
   position: relative;
@@ -311,7 +322,7 @@ code {
   height: 10px;
   background: var(--warn);
   border-radius: 50%;
-  border: 2px solid var(--bg-sidebar);
+  border: 2px solid var(--rail-btn);
 }
 
 /* ---------------------------------------------------------------- sidebar */
@@ -965,6 +976,9 @@ code {
   color: var(--text-faint);
   margin-top: 1px;
 }
+.conv-head-sub .status-pill {
+  margin-left: 0;
+}
 .via {
   display: flex;
   align-items: center;
@@ -1008,15 +1022,46 @@ code {
   display: flex;
   align-items: center;
   gap: 5px;
-  flex-wrap: wrap;
   min-width: 0;
+  overflow-x: clip;
 }
+.conv-head-sub:has(> .crumbs) {
+  flex-wrap: nowrap;
+}
+.conv-head-sub > .via {
+  flex: none;
+}
+/* One line: the places in between give way first (ellipsis), the network and the conversation itself last. */
 .crumb {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  padding: 0;
   color: var(--text-faint);
   white-space: nowrap;
+  min-width: 0;
+  overflow-x: clip;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+}
+/* Plain text, so its ellipsis shows (a flex box would only clip). */
+.crumb:not(.net) {
+  display: inline-block;
+}
+/* Never shrunk to nothing: a few letters and the ellipsis still say where. */
+.crumb.link {
+  min-width: 3em;
+}
+.crumb.net,
+.crumb-sep {
+  flex: none;
+}
+/* The server's name gives way first; a category's is short, and the conversation's own matters most. */
+.crumb:where(:not(.link, .last, .net)) {
+  flex-shrink: 0;
+}
+.crumb.last {
+  flex-shrink: 0.2;
 }
 .crumb.net {
   color: color-mix(in oklab, var(--net) var(--net-ink, 100%), var(--text));
@@ -1203,6 +1248,12 @@ code {
   font-size: 10px;
   color: var(--text-faint);
 }
+/* Each paragraph takes its direction from its own first letter, so Hebrew or Arabic reads right to left, as in Discord. */
+.msg-body,
+.row-preview,
+.ping-body {
+  unicode-bidi: plaintext;
+}
 .msg-body {
   color: var(--text);
   overflow-wrap: anywhere;
@@ -1327,6 +1378,11 @@ code {
   margin: 2px 0;
   padding: 0 0 0 10px;
   color: var(--text-dim);
+}
+.msg-body ul {
+  margin: 2px 0;
+  padding-left: 22px;
+  white-space: normal;
 }
 .msg-body .spoiler {
   background: var(--text-faint);
@@ -1984,13 +2040,6 @@ code {
 .pending.queued .msg-body {
   opacity: 0.7;
 }
-.typing {
-  padding: 4px 20px 8px 56px;
-  color: var(--text-faint);
-  font-size: 12px;
-  font-style: italic;
-}
-
 /* ---------------------------------------------------------------- composer */
 
 .composer {
@@ -2098,6 +2147,20 @@ code {
   font-size: 12px;
   color: var(--text-dim);
   white-space: nowrap;
+}
+/* On a phone the names would squeeze the message field into a column: the network's mark and the account's dot say
+   the same, and the menu it opens spells them out. */
+@media (max-width: 820px) {
+  .send-as .via-opt,
+  .send-as .via-opt .acc-chip {
+    font-size: 0;
+    gap: 3px;
+  }
+  .send-as .via-opt .acc-chip {
+    padding: 0;
+    background: none;
+    border: none;
+  }
 }
 .send-btn {
   width: 36px;
@@ -2618,6 +2681,10 @@ code {
 .board-head h2 {
   font-size: 20px;
 }
+.board-head > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
 .board-head p {
   margin: 3px 0 0;
   color: var(--text-faint);
@@ -2868,7 +2935,11 @@ code {
   flex: 1;
   overflow-y: auto;
   padding: 18px 24px 40px;
-  max-width: 760px;
+}
+/* The column of text keeps a readable width; the scrolling box stays full width, so its scrollbar is at the window's edge. */
+.account-scroll > *,
+.settings-scroll > * {
+  max-width: 712px;
 }
 .caps {
   gap: 4px !important;
@@ -2884,6 +2955,7 @@ code {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  white-space: nowrap;
   padding: 8px 14px;
   border-radius: 9px;
   font-weight: 600;
@@ -3717,6 +3789,10 @@ code {
   .conv-head .crumbs,
   .conv-head .ident-chips {
     flex-wrap: nowrap;
+  }
+  /* A phone's header fades out at its edge instead. */
+  .conv-head .crumb {
+    flex-shrink: 0;
   }
   /* A person's networks scroll sideways: each opens that one chat. */
   .conv-head .ident-chips {
@@ -5888,8 +5964,9 @@ html[data-theme='light'] .acc-dot {
   color: var(--text);
   font-size: 12.5px;
 }
+/* A fixed height: the dialog stays put while the search narrows the list. */
 .fwd-list {
-  max-height: min(46vh, 380px);
+  height: min(46vh, 380px);
   overflow-y: auto;
   margin: 0 -6px;
 }
@@ -6018,13 +6095,13 @@ html[data-theme='light'] .acc-dot {
 /* ================================================================== organize and automatic order (Reorganize.tsx, docs/organize.md) */
 .rail-sort .rail-btn {
   background: transparent;
-  color: var(--text-faint);
+  color: var(--rail-ink);
   width: 40px;
   height: 32px;
 }
 .rail-sort .rail-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text);
+  background: var(--rail-btn);
+  color: var(--rail-active-ink);
 }
 /* Touch: a full-size target, like the rest of the rail. */
 @media (pointer: coarse) {
@@ -6263,3 +6340,142 @@ html[data-theme='light'] .acc-dot {
   }
 }
 /* ================================================================== end organize */
+
+/* ================================================================== typing (ui/Typing.tsx, docs/typing.md) */
+/* The line above the composer is always there, so someone starting to type never moves the timeline. It takes the
+   bottom of the timeline's own padding, as Discord's sits in space its composer keeps for it. */
+.typing-bar {
+  flex: none;
+  position: relative;
+  height: 20px;
+  margin-top: -6px;
+  padding: 0 16px 0 22px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  line-height: 20px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  pointer-events: none;
+}
+.typing-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.typing-text b {
+  font-weight: 700;
+  color: var(--text);
+}
+.typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+.typing-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.3;
+  animation: typing-dot 1.4s ease-in-out infinite;
+}
+.typing-dots i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.typing-dots i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes typing-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+/* On a DM or group row: a small pill over the avatar's corner, where Discord puts it. */
+.row-typing {
+  position: absolute;
+  right: -5px;
+  bottom: -4px;
+  z-index: 1;
+  display: inline-flex;
+  padding: 3px 4px;
+  border-radius: 999px;
+  background: var(--bg-raised);
+  box-shadow: 0 0 0 2px var(--bg-sidebar);
+  color: var(--text-dim);
+  line-height: 0;
+}
+.row-typing .typing-dots {
+  gap: 2px;
+}
+.row-typing .typing-dots i {
+  width: 4px;
+  height: 4px;
+}
+@media (max-width: 820px) {
+  .typing-bar {
+    padding: 0 10px 0 16px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .typing-dots i {
+    animation: none;
+    opacity: 0.7;
+  }
+}
+/* ================================================================== end typing */
+
+/* ================================================================== activity log (ui/ActivityLog.tsx, docs/activity.md) */
+.activity-log {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+}
+.activity-log .btn-row {
+  flex-wrap: wrap;
+}
+.activity-learned {
+  margin-top: 12px;
+}
+.activity-learned summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.activity-table-wrap {
+  overflow-x: auto;
+  margin-top: 8px;
+}
+.activity-table {
+  border-collapse: collapse;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.activity-table th,
+.activity-table td {
+  padding: 4px 10px 4px 0;
+  text-align: right;
+  white-space: nowrap;
+}
+.activity-table th:first-child,
+.activity-table td:first-child {
+  text-align: left;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.activity-table th {
+  color: var(--text-dim);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border-soft);
+}
+/* ================================================================== end activity log */

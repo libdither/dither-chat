@@ -20,6 +20,7 @@
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { previewText, type Store } from './store.ts';
+import { describeActivity, type ActivityStore, type Features } from './activity.ts';
 
 type Row = Record<string, any>;
 
@@ -32,6 +33,8 @@ export interface Decision {
   body: string;
   /** From a starred person or one set to always notify: may get through quiet hours. */
   starred?: boolean;
+  /** What the activity log said about this place when deciding (DITHER_ACTIVITY_FEATURES), kept for training. */
+  features?: Features;
 }
 
 export const DEFAULT_LEVEL: Record<P.Shape, P.NotifyLevel> = {
@@ -98,6 +101,7 @@ export class Triage {
   constructor(
     private store: Store,
     private model?: { url: string; name: string },
+    private activity?: ActivityStore,
   ) {}
 
   /** Human-readable name of where a conversation lives, for titles and reasons. */
@@ -212,6 +216,7 @@ export class Triage {
 
   async decide(messageId: string, now = Date.now()): Promise<Decision | null> {
     const d = await this.decideByRules(messageId);
+    if (d) this.withActivity(d, messageId, now);
     if (d?.decision !== 'push') return d;
     const q = this.store.quietHours();
     if (!inQuietHours(q, now) || (q!.allowStarred && d.starred)) return d;
@@ -221,6 +226,22 @@ export class Triage {
     const conversationId = this.store.one<Row>('SELECT conversation_id FROM message WHERE id = ?', messageId)!.conversation_id;
     this.store.setQuietHeld({ count: (held?.count ?? 0) + 1, conversationId, messageId });
     return d;
+  }
+
+  /**
+   * Behind DITHER_ACTIVITY_FEATURES: what the activity log says about this place becomes a reason, and the features
+   * go with the decision so the model's training sees what was known then (docs/activity.md). The decision itself
+   * does not change yet.
+   */
+  private withActivity(d: Decision, messageId: string, now: number) {
+    const a = this.activity;
+    if (!a?.featuresInTriage || !a.enabled) return;
+    const cid = this.store.one<Row>('SELECT conversation_id FROM message WHERE id = ?', messageId)?.conversation_id;
+    const f = cid ? a.features(cid, now) : null;
+    if (!f) return;
+    d.features = f;
+    const said = describeActivity(f.person ?? f.conversation);
+    if (said) d.reasons.push(said);
   }
 
   /** Quiet hours are over and something was held: what to say about it, once. */

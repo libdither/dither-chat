@@ -138,7 +138,8 @@ let hiddenAt: number | null = null;
 /** Called when the app comes back to the front, after the hub's totals are fresh. */
 export const onForeground = new Set<() => void>();
 
-const inUse = () => document.visibilityState === 'visible' && document.hasFocus() && Date.now() - lastInput < IDLE_AFTER;
+/** Visible, focused, and input in the last IDLE_AFTER: the rule for counting time, here and in the activity log. */
+export const inUse = () => document.visibilityState === 'visible' && document.hasFocus() && Date.now() - lastInput < IDLE_AFTER;
 const tick = () => {
   tracker?.update(Date.now(), keysOfRoute(route.value), inUse());
   save();

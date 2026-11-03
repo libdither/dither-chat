@@ -48,6 +48,9 @@ function pairs(id: string): [string, string, string][] {
   out.push(['text on input', c.text, c.input]);
   out.push(['textFaint on input (placeholder)', c.textFaint, c.input]);
   out.push(['text on titlebar', v['--titlebar-text'], v['--titlebar']]);
+  out.push(['rail icons on their buttons', v['--rail-ink'], v['--rail-btn']]);
+  out.push(['rail icons on the rail (sort button)', v['--rail-ink'], c.rail]);
+  out.push(['a hovered or selected rail icon', v['--rail-active-ink'], v['--rail-active']]);
   return out;
 }
 

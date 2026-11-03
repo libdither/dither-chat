@@ -11,13 +11,14 @@
 import { useEffect } from 'preact/hooks';
 import { convTitle } from '../model.ts';
 import { db, route, type Route } from '../state.ts';
+import { variantIcon } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { switcherOpen } from './Switcher.tsx';
 import { ThemeButton } from './Themes.tsx';
 
 function placeTitle(r: Route): { title: string; icon: string } {
   const conv = 'conv' in r && r.conv ? db.conversations.get(r.conv) : undefined;
-  if (conv) return { title: convTitle(conv), icon: conv.shape === 'direct' ? 'user' : conv.shape === 'group' ? 'groups' : 'hash' };
+  if (conv) return { title: convTitle(conv), icon: conv.shape === 'direct' ? 'user' : conv.shape === 'group' ? 'groups' : variantIcon(conv.variant, conv.shape) };
   const person = 'person' in r && r.person ? db.persons.get(r.person) : undefined;
   if (person) return { title: person.name, icon: 'user' };
   switch (r.view) {
@@ -32,7 +33,7 @@ function placeTitle(r: Route): { title: string; icon: string } {
     case 'directory':
       return { title: 'All communities', icon: 'grid' };
     case 'accounts':
-      return { title: 'Accounts', icon: 'user' };
+      return { title: 'Accounts', icon: 'power' };
     case 'settings':
       return { title: 'Settings', icon: 'settings' };
     case 'search':

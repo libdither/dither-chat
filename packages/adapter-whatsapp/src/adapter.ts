@@ -26,6 +26,9 @@ import { Aliases, avatarUrl, bare, contextOf, ignoredChat, isGroup, isPhoneJid, 
 import { State, type StoredMsg } from './state.ts';
 import type { BridgeEvent, WaContact, WaGroup, WaMessage, WaSelf } from './types.ts';
 
+/** How long WhatsApp's own clients show "typing…" without another chat state. */
+export const WHATSAPP_TYPING_TTL = 25_000;
+
 export const ADAPTER_VERSION = '0.1.0';
 export const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'typing', 'media', 'sendMedia', 'e2ee', 'openDirect', 'forward'];
 export const LINK_MESSAGE = 'Scan this QR code in WhatsApp → Settings → Linked devices → Link a device';
@@ -270,8 +273,11 @@ export class WhatsAppAdapter {
       case 'receipt':
         return this.receipt(ev);
       case 'chat_presence': {
-        if (ev.fromMe || ev.state !== 'composing' || ignoredChat(bare(ev.chat))) return;
-        this.host.emit({ t: 'typing', conversation: this.mapper.convId(ev.chat), author: this.mapper.who(ev.sender) });
+        // Rarely arrives: WhatsApp sends it to companions that are online, and this one never says it is (docs/whatsapp.md).
+        if (ev.fromMe || (ev.state !== 'composing' && ev.state !== 'paused') || ignoredChat(bare(ev.chat))) return;
+        const conversation = this.mapper.convId(ev.chat);
+        const author = this.mapper.who(ev.sender);
+        this.host.emit(ev.state === 'composing' ? { t: 'typing', conversation, author, ttl: WHATSAPP_TYPING_TTL } : { t: 'typing', conversation, author, stop: true });
         return;
       }
       case 'push_name':
@@ -661,6 +667,8 @@ export class WhatsAppAdapter {
         return this.fetchHistory(cmd.conversation, cmd.beforeTs, cmd.limit);
       case 'markRead':
         return this.markRead(cmd.conversation, cmd.upTo);
+      case 'typing':
+        return this.sendTyping(cmd.conversation, !!cmd.stop);
       case 'react':
         return this.react(cmd.conversation, cmd.message, cmd.key, !!cmd.remove);
       case 'reactionContext':
@@ -684,6 +692,16 @@ export class WhatsAppAdapter {
       case 'shutdown':
         return undefined;
     }
+  }
+
+  /**
+   * A chat state ("composing", then "paused"), as mautrix-whatsapp sends by default. It is not a presence: the device
+   * stays unavailable, so the phone keeps its notifications. Never `presence available` from here.
+   */
+  private async sendTyping(conversation: string, stop: boolean) {
+    if (!this.self.loggedIn) throw new Error('WhatsApp is not linked');
+    await this.rpc.call('chatPresence', { chat: this.chatJid(conversation), state: stop ? 'paused' : 'composing' });
+    return {};
   }
 
   /** JID to send to for a conversation. */
@@ -964,11 +982,8 @@ export class WhatsAppAdapter {
       case 'resync':
         await this.snapshot(true);
         return { chats: this.state.chats().length };
-      case 'typing': {
-        const conv = String(args?.conversation ?? '');
-        await this.rpc.call('chatPresence', { chat: this.chatJid(conv), state: args?.stop ? 'paused' : 'composing' });
-        return {};
-      }
+      case 'typing':
+        return this.sendTyping(String(args?.conversation ?? ''), !!args?.stop);
       case 'status': {
         const b = this.bridge?.alive ? await this.rpc.call('status').catch(() => null) : null;
         return { phase: this.phase, bridge: b, chats: this.state.chats().length, messages: this.state.countMsgs() };

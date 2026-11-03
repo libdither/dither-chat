@@ -23,3 +23,8 @@
 {"fixture":"group","group":{"jid":"120363000000000001@g.us","name":"Climbing crew","topic":"Tuesdays","linkedParent":"120363000000000009@g.us","count":2,"participants":[{"jid":"200000000000003@lid","pn":"15550000003@s.whatsapp.net","lid":"200000000000003@lid","admin":true},{"jid":"15550000001@s.whatsapp.net","pn":"15550000001@s.whatsapp.net"}]},"t":"group"}
 {"fixture":"community","group":{"jid":"120363000000000009@g.us","name":"Neighbourhood","isParent":true,"participants":[]},"t":"group"}
 {"fixture":"announcements","group":{"jid":"120363000000000010@g.us","name":"Neighbourhood","linkedParent":"120363000000000009@g.us","isDefaultSub":true,"isAnnounce":true,"participants":[]},"t":"group"}
+{"chat":"15550000002@s.whatsapp.net","fixture":"typing_dm","fromMe":false,"media":"","sender":"15550000002@s.whatsapp.net","state":"composing","t":"chat_presence"}
+{"chat":"120363000000000001@g.us","fixture":"typing_group","fromMe":false,"media":"","sender":"200000000000003@lid","state":"composing","t":"chat_presence"}
+{"chat":"120363000000000001@g.us","fixture":"recording_group","fromMe":false,"media":"audio","sender":"200000000000003@lid","state":"composing","t":"chat_presence"}
+{"chat":"120363000000000001@g.us","fixture":"paused_group","fromMe":false,"media":"","sender":"200000000000003@lid","state":"paused","t":"chat_presence"}
+{"chat":"15550000002@s.whatsapp.net","fixture":"typing_own","fromMe":true,"media":"","sender":"15550000001@s.whatsapp.net","state":"composing","t":"chat_presence"}

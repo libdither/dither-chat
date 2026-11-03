@@ -40,13 +40,13 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
     case 'profile':
       return { pane: <ProfilePane personId={r.person} identityId={r.identity} onBack={back} /> };
     case 'space':
-      return r.conv ? { pane: <ConversationPane convId={r.conv} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <WelcomePane view="space" /> };
+      return r.conv ? { pane: <ConversationPane convId={r.conv} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <WelcomePane view="space" id={r.space} /> };
     case 'folder':
       return r.conv
         ? { pane: <ConversationPane convId={r.conv} onBack={back} />, detail: { kind: 'conv', id: r.conv } }
         : r.person
           ? { pane: <PersonPane personId={r.person} onBack={back} />, detail: { kind: 'person', id: r.person } }
-          : { pane: <WelcomePane view="folder" /> };
+          : { pane: <WelcomePane view="folder" id={r.folder} /> };
     case 'spaces':
       return { pane: <WelcomePane view="space" /> };
     case 'accounts':
@@ -101,6 +101,7 @@ function SettingsNav() {
           ['Push and quiet hours', 'bellOff', 'push'],
           ['Keywords', 'at', 'set-keywords'],
           ['Per-place overrides', 'layers', 'set-overrides'],
+          ['Privacy', 'lock', 'set-privacy'],
           ['Appearance', 'eye', 'set-appearance'],
         ].map(([t, i, id]) => (
           <button class="settings-nav-item" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
@@ -115,11 +116,15 @@ function SettingsNav() {
   );
 }
 
-function WelcomePane({ view }: { view: string }) {
+function WelcomePane({ view, id }: { view: string; id?: string }) {
+  const space = view === 'space' && id ? db.spaces.get(id) : undefined;
+  const folder = view === 'folder' && id ? db.folders.find((f) => f.id === id) : undefined;
   const titles: Record<string, { h: string; p: string; icon: string }> = {
-    people: { h: 'People', p: 'Pick a person to see every DM you have with them — Signal, Discord and Matrix in one thread.', icon: 'users' },
-    space: { h: 'Communities', p: 'Pick a channel from the server or space on the left.', icon: 'hash' },
-    folder: { h: 'Folder', p: 'A custom grouping that spans networks. Pick anything on the left.', icon: 'folder' },
+    people: db.persons.size > 1
+      ? { h: 'People', p: 'Pick a person to see every DM you have with them, on every network, in one thread.', icon: 'users' }
+      : { h: 'No one here yet', p: 'People show up once an account has a direct message with them.', icon: 'users' },
+    space: { h: space?.name ?? 'Communities', p: space ? 'Pick a channel on the left.' : 'Pick a server or space, then a channel.', icon: 'hash' },
+    folder: { h: folder?.name ?? 'Folder', p: 'A custom grouping that spans networks. Pick anything on the left.', icon: 'folder' },
     accounts: { h: 'Accounts', p: 'Pick an account to check its status, or add a new one.', icon: 'power' },
   };
   const t = titles[view] ?? titles.space;

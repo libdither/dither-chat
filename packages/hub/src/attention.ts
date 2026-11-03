@@ -14,6 +14,7 @@ import type * as P from '@dither-chat/protocol';
 import { decayed, USAGE_HALF_LIFE } from '@dither-chat/protocol';
 import type { Store } from './store.ts';
 import type { Triage } from './triage.ts';
+import type { ActivityStore } from './activity.ts';
 
 type Row = Record<string, any>;
 
@@ -533,6 +534,8 @@ export class Attention {
   private timers: ReturnType<typeof setInterval>[] = [];
   /** Answers from an AttentionJudge, by conversation (follow-up). */
   readonly judged = new Map<string, Judged>();
+  /** The activity log's per-place features (docs/activity.md): shown by `explain`, not scored yet. */
+  activity?: Pick<ActivityStore, 'features'>;
 
   constructor(
     private store: Store,
@@ -775,6 +778,7 @@ export class Attention {
         usualReply: medianLatency(tallyAt(f.tally, now)),
         owedKind: f.turn?.kind ?? null,
       },
+      activity: this.activity?.features(cid, now) ?? null,
     };
   }
 

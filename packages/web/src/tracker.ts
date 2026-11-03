@@ -9,7 +9,7 @@ export const VISIT_AFTER = 3;
 /** No input for this long and the app stops counting, as if it were in the background. */
 export const IDLE_AFTER = 5 * 60_000;
 /** One tick never counts for more than this: a laptop that slept is not a laptop in use. */
-const MAX_TICK = 30_000;
+export const MAX_TICK = 30_000;
 /** Back after this long away, the place you left counts as visited again. */
 export const NEW_VISIT_AFTER = 30 * 60_000;
 

@@ -251,7 +251,7 @@ export function DirectoryPane() {
         </button>
         <div>
           <h2>All communities and groups</h2>
-          <p>{shown.length} places across your accounts</p>
+          <p>{shown.length} {shown.length === 1 ? 'place' : 'places'} across your accounts</p>
         </div>
       </header>
       <div class="dir-controls">
@@ -282,7 +282,7 @@ export function DirectoryPane() {
       </div>
       <div class="dir-scroll">
         {manual && <p class="set-help dir-note">Your sidebar, in order. Drag to rearrange, or hold on a phone. Add a group to it from its arrange menu.</p>}
-        {!shown.length && <Empty icon="grid" title="Nothing matches" />}
+        {!shown.length && (base.length ? <Empty icon="grid" title="Nothing matches" /> : <Empty icon="grid" title="Nothing here yet">Servers, spaces and groups show up once an account has synced them.</Empty>)}
         {sections.map((s) => (
           <section>
             {s.title && (

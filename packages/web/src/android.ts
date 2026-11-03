@@ -7,6 +7,7 @@
  */
 import { effect, signal } from '@preact/signals';
 import { activeCall, leaveCall, setMuted } from './call.ts';
+import { noteOpen } from './activity.ts';
 import { db, go, parseHash, prefs } from './state.ts';
 
 interface Port {
@@ -110,6 +111,7 @@ function receive(d: any) {
       android!.push.value = d.endpoint ? { endpoint: d.endpoint, p256dh: d.p256dh, auth: d.auth } : null;
       break;
     case 'open':
+      noteOpen(d.hash);
       go(parseHash(d.hash), false);
       break;
     case 'call.hangup':

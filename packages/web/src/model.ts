@@ -49,13 +49,18 @@ export function resolveTokens(text: string, network: P.Network): string {
     .replace(/<a?:(\w+):\d+>/g, ':$1:');
 }
 
-/** A message body as one plain line, for quotes. */
+/** A message body as one plain line, for quotes and previews. */
 export function plainBody(body: string, network: P.Network): string {
-  return resolveTokens(body, network)
-    .replace(/```[\s\S]*?```/g, '[code]')
-    .replace(/\|\|[\s\S]*?\|\|/g, '[spoiler]')
-    .replace(/^\s*(>|-#|#{1,3})\s/gm, '')
-    .replace(/\*\*|__|~~|[*`]/g, '')
+  return plainMarkdown(resolveTokens(body, network).replace(/```[\s\S]*?```/g, '[code]').replace(/\|\|[\s\S]*?\|\|/g, '[spoiler]'));
+}
+
+/** Markdown's marks taken out of text that is shown as one plain line: quotes, headings, lists, emphasis, links. */
+export function plainMarkdown(text: string): string {
+  return text
+    .replace(/```\w*/g, '')
+    .replace(/^\s*(?:>|-#|#{1,3}|[-*])\s+/gm, '')
+    .replace(/\[([^\]\n]+)\]\((https?:[^)\s]+)\)/g, '$1')
+    .replace(/\*\*|__|~~|\|\||[*`]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 }

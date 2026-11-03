@@ -15,6 +15,9 @@ import type { AdapterEvent, AttachmentFact, AttachmentKind, ConversationFact, Id
 import { fromSignal, plainText } from './markdown.ts';
 import type { SigAttachment, SigContact, SigDataMessage, SigEnvelope, SigGroup, SigReceive, SigSentMessage } from './types.ts';
 
+/** How long Signal's own clients show a start without another. */
+export const SIGNAL_TYPING_TTL = 15_000;
+
 export const LONG_TEXT_MIME = 'text/x-signal-plain';
 
 export const msgId = (author: string, ts: number) => `${author}:${ts}`;
@@ -258,10 +261,12 @@ export function mapReceive(rcv: SigReceive, ctx: MapContext): MapResult {
     emitMessage(b, dm, { author: source, conversation: conv, ts: env.editMessage.targetSentTimestamp, editedTs: dm.timestamp });
   }
   if (env.syncMessage) sync(b, env);
-  if (env.typingMessage && !fromSelf && env.typingMessage.action === 'STARTED') {
+  if (env.typingMessage && !fromSelf && (env.typingMessage.action === 'STARTED' || env.typingMessage.action === 'STOPPED')) {
     const g = env.typingMessage.groupId;
-    // No conversation fact here: someone typing is not yet a conversation.
-    out.events.push({ t: 'typing', conversation: g ? groupConvId(g) : dmId(ctx.self, source), author: source });
+    const conversation = g ? groupConvId(g) : dmId(ctx.self, source);
+    // No conversation fact here: someone typing is not yet a conversation. Signal's clients send a start every 10 s
+    // while typing and let one lapse after 15 s.
+    out.events.push(env.typingMessage.action === 'STARTED' ? { t: 'typing', conversation, author: source, ttl: SIGNAL_TYPING_TTL } : { t: 'typing', conversation, author: source, stop: true });
   }
   if (env.callMessage?.offerMessage && !fromSelf) {
     const video = env.callMessage.offerMessage.type === 'VIDEO_CALL';

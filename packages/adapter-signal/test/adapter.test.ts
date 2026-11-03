@@ -240,6 +240,10 @@ describe('signal adapter against a fake signal-cli', () => {
     await expect(cmd({ t: 'fetchMedia', url: 'https://example.org/a.png' })).rejects.toThrow();
     await cmd({ t: 'action', action: 'typing', args: { conversation: GROUP } });
     expect(calls('sendTyping').at(-1).params).toEqual({ groupId: GID });
+    await cmd({ t: 'typing', conversation: DM_ALICE });
+    expect(calls('sendTyping').at(-1).params).toEqual({ recipient: [ALICE] });
+    await cmd({ t: 'typing', conversation: GROUP, stop: true });
+    expect(calls('sendTyping').at(-1).params).toEqual({ groupId: GID, stop: true });
     const lists = calls('listGroups').length;
     expect(await cmd({ t: 'action', action: 'resync' })).toEqual({ ok: true });
     expect(calls('sendSyncRequest')).toHaveLength(1);

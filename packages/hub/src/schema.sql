@@ -402,3 +402,76 @@ CREATE TABLE IF NOT EXISTS sync_change (
 CREATE INDEX IF NOT EXISTS sync_change_seq ON sync_change(seq);
 CREATE INDEX IF NOT EXISTS sync_change_kind ON sync_change(kind, seq);
 CREATE INDEX IF NOT EXISTS sync_change_conv ON sync_change(conv, seq) WHERE conv IS NOT NULL;
+
+-- ------------------------------------------------------------------ the activity log (activity.ts, docs/activity.md)
+-- Labelled data for triage: where you stayed, how you got there, and what each notification led to. Ids, times and
+-- counts only: never what was said or searched. Bounded by the retention setting and a row cap; deletable from Settings.
+
+-- One stay on a screen or place. The device sends it again while it lasts, with the same id: the latest wins.
+CREATE TABLE IF NOT EXISTS visit (
+  id              TEXT PRIMARY KEY,
+  device          TEXT NOT NULL,
+  device_label    TEXT,
+  view            TEXT NOT NULL,             -- VisitView: inbox, conversation, space, person, search, settings...
+  conversation_id TEXT,
+  space_id        TEXT,
+  person_id       TEXT,
+  start_at        INTEGER NOT NULL,
+  end_at          INTEGER NOT NULL,
+  active          REAL NOT NULL DEFAULT 0,   -- seconds visible, focused and in use
+  source          TEXT NOT NULL,             -- VisitSource: notification, inbox, rail, search, link, back...
+  push_id         TEXT,                      -- the notification tapped
+  rank            INTEGER,                   -- inbox row position, attention score and "needs you", when from the inbox
+  score           REAL,
+  needs           INTEGER,
+  read_to_id      TEXT,
+  read_to_ts      INTEGER,
+  sent            INTEGER NOT NULL DEFAULT 0,
+  reactions       INTEGER NOT NULL DEFAULT 0,
+  history         INTEGER NOT NULL DEFAULT 0,   -- older pages loaded
+  threads         INTEGER NOT NULL DEFAULT 0,
+  attachments     INTEGER NOT NULL DEFAULT 0,
+  next_view       TEXT,
+  closed          INTEGER NOT NULL DEFAULT 0,
+  updated_at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS visit_start ON visit(start_at);
+CREATE INDEX IF NOT EXISTS visit_conv ON visit(conversation_id, start_at) WHERE conversation_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS visit_person ON visit(person_id, start_at) WHERE person_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS visit_push ON visit(push_id) WHERE push_id IS NOT NULL;
+
+-- Every push and digest the hub sends, by the id the device sees (`nid` in the payload), and what came of it.
+-- The *_at columns are the first time any device said so; notification_event has each device's word.
+CREATE TABLE IF NOT EXISTS notification (
+  id              TEXT PRIMARY KEY,
+  kind            TEXT NOT NULL,             -- message, held (quiet hours summary), digest
+  message_id      TEXT,
+  conversation_id TEXT,
+  sent_at         INTEGER NOT NULL,
+  devices         INTEGER,                   -- push registrations it went to
+  accepted        INTEGER,                   -- of those, how many push servers took it
+  delivered_at    INTEGER,
+  shown_at        INTEGER,
+  suppressed_at   INTEGER,
+  tapped_at       INTEGER,
+  dismissed_at    INTEGER,
+  replied_at      INTEGER,
+  visit_id        TEXT                       -- the visit the tap led to
+);
+CREATE INDEX IF NOT EXISTS notification_sent ON notification(sent_at);
+CREATE INDEX IF NOT EXISTS notification_conv ON notification(conversation_id, sent_at);
+CREATE INDEX IF NOT EXISTS notification_message ON notification(message_id) WHERE message_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS notification_event (
+  notification_id TEXT NOT NULL,
+  device          TEXT NOT NULL DEFAULT '',  -- push registration id, or the page's device id
+  event           TEXT NOT NULL,
+  at              INTEGER NOT NULL,
+  PRIMARY KEY (notification_id, device, event)
+) WITHOUT ROWID;
+
+-- What triage knew from the log when it decided (DITHER_ACTIVITY_FEATURES), so training sees no later outcomes.
+CREATE TABLE IF NOT EXISTS triage_input (
+  message_id TEXT PRIMARY KEY,
+  features   TEXT NOT NULL,                  -- JSON { conversation, person } of PlaceActivity
+  at         INTEGER NOT NULL
+);

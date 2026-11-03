@@ -782,7 +782,7 @@ function scheduleChatter() {
   if (chatterTimer) return;
   const tick = () => {
     const line = CHATTER[chatterIdx++ % CHATTER.length];
-    running.get(line[0])?.say(line[1], line[2], line[3]);
+    running.get(line[0])?.typeThenSay(line[1], line[2], line[3]);
     chatterTimer = setTimeout(tick, 90_000 + Math.random() * 90_000);
   };
   chatterTimer = setTimeout(tick, 45_000);
@@ -791,6 +791,7 @@ function scheduleChatter() {
 class DemoAdapter implements InprocAdapter {
   private emit!: (ev: P.AdapterEvent) => void;
   private timers = new Set<Timer>();
+  private typingLog: { conversation: string; stop: boolean; at: number }[] = [];
   private self: P.IdentityFact;
   private network: P.Network;
 
@@ -828,7 +829,7 @@ class DemoAdapter implements InprocAdapter {
     const ago = (min: number) => epoch - min * 60_000;
 
     // Discord's demo accounts forward natively, as the real adapter does; the others leave it to the hub.
-    const caps: P.Capability[] = ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect'];
+    const caps: P.Capability[] = ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect', 'typing'];
     emit({ t: 'hello', network: this.network, version: 'demo', capabilities: this.network === 'discord' ? [...caps, 'forward'] : caps });
     emit({ t: 'status', status: 'online', self: { ...this.self, isSelf: true } });
     const pool = this.network === 'discord' ? D : this.network === 'signal' ? S : this.network === 'whatsapp' ? W : M;
@@ -920,6 +921,12 @@ class DemoAdapter implements InprocAdapter {
     return { conversation: jid, existed, startsAtFirstSend: !existed };
   }
 
+  /** Someone types for a few seconds, then says it. */
+  typeThenSay(conversation: string, author: P.IdentityFact, body: string) {
+    this.emit({ t: 'typing', conversation, author: author.nativeId });
+    this.later(4000, () => this.say(conversation, author, body));
+  }
+
   /** A live message from someone else. */
   say(conversation: string, author: P.IdentityFact, body: string) {
     this.emit({
@@ -960,10 +967,18 @@ class DemoAdapter implements InprocAdapter {
         if ((peer || conv?.fact.shape === 'direct') && others[0]) {
           const lines = REPLIES[others[0]] ?? ['👀', 'got it', 'nice'];
           const author = Object.values({ ...D, ...S, ...M }).find((i) => i.nativeId === others[0]) ?? { nativeId: others[0] };
+          // They type first, the way an answer arrives on the real networks; their message ends it.
+          this.later(1200, () => this.emit({ t: 'typing', conversation: cmd.conversation, author: author.nativeId }));
           this.later(3500 + Math.random() * 3000, () => this.say(cmd.conversation, author, lines[Math.floor(Math.random() * lines.length)]));
         } else if (others.length) {
           const who = others[Math.floor(Math.random() * others.length)];
           this.later(2500, () => this.emit({ t: 'reaction', conversation: cmd.conversation, message: nativeId, author: who, key: '👍' }));
+          // A group stirs: a few people start typing, then think better of it.
+          const typers = [...others].sort(() => Math.random() - 0.5).slice(0, Math.min(4, others.length));
+          typers.forEach((who, i) => {
+            this.later(900 + i * 500, () => this.emit({ t: 'typing', conversation: cmd.conversation, author: who }));
+            this.later(6500 + i * 700, () => this.emit({ t: 'typing', conversation: cmd.conversation, author: who, stop: true }));
+          });
         }
         break;
       }
@@ -1012,11 +1027,17 @@ class DemoAdapter implements InprocAdapter {
       case 'markRead':
         reply();
         break;
+      case 'typing':
+        // Kept for verify scripts (action typingLog): what the hub told this account to say about your typing.
+        this.typingLog.push({ conversation: cmd.conversation, stop: !!cmd.stop, at: Date.now() });
+        if (this.typingLog.length > 50) this.typingLog.shift();
+        reply();
+        break;
       case 'fetchMedia':
         this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'demo media is inline' });
         break;
       case 'action':
-        reply({ note: 'demo adapters have no actions' });
+        reply(cmd.action === 'typingLog' ? { typing: this.typingLog } : { note: 'demo adapters have no actions' });
         break;
       default:
         if ('id' in cmd) reply();

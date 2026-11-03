@@ -6,3 +6,5 @@ export * from './direct.ts';
 export * from './send.ts';
 export * from './call.ts';
 export * from './usage.ts';
+export * from './typing.ts';
+export * from './activity.ts';

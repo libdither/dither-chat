@@ -225,6 +225,7 @@ export type HookCommand =
   | { kind: 'openDirect'; userId: string }
   | { kind: 'history'; channelId: string; limit: number; beforeId?: string }
   | { kind: 'markRead'; channelId: string; messageId: string }
+  | { kind: 'typing'; channelId: string; stop?: boolean }
   | { kind: 'react'; channelId: string; messageId: string; emoji: string; remove?: boolean; burst?: boolean }
   | { kind: 'reactors'; channelId: string; messageId: string; emoji: string; burst?: boolean }
   | { kind: 'reactionContext'; channelId: string }
