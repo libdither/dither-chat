@@ -1,6 +1,6 @@
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import { ago } from '../format.ts';
 import {
   authorName,
@@ -36,6 +36,10 @@ import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
 import { phone } from '../phone.ts';
 import { dropPlace, openPlaceMenu, placeLabel } from './Organize.tsx';
+import { Menuable, onMenu, useMenu } from './ContextMenu.tsx';
+import { accountMenu, conversationMenu, folderMenuSpec, personMenu, spaceMenu } from './menus.tsx';
+import { arrangeDrop, arrangedConvs, arrangedFolderItems, arrangedPeople, arrangedRail, snapshot } from '../arrange.ts';
+import { SortButton, useFlip } from './Reorganize.tsx';
 
 // ------------------------------------------------------------------ navigation helpers
 
@@ -96,11 +100,12 @@ export function ConvRow({ c, active, onClick, showPlace = true, reason, menu }: 
   const place = showPlace ? placeLine(c) : '';
   const isChannel = c.shape === 'channel' || c.shape === 'thread';
   const com = communitiesOf(c)[0];
+  const ctx = useMenu(() => conversationMenu(c));
   return (
     <button
       class={`row conv-row ${active ? 'active' : ''} ${u.unread ? 'unread' : ''} ${u.muted ? 'muted' : ''}`}
       onClick={onClick}
-      {...(menu ? dragProps({ key: `conversation:${c.id}`, label: convTitle(c), group: 'none', onMenu: (x, y) => openPlaceMenu(`conversation:${c.id}`, convTitle(c), x, y) }) : {})}
+      {...(menu ? dragProps({ key: `conversation:${c.id}`, label: convTitle(c), group: 'none', onMenu: (x, y) => openPlaceMenu(`conversation:${c.id}`, convTitle(c), x, y) }) : ctx)}
     >
       {isChannel && com ? (
         <span class="row-avatar">
@@ -183,7 +188,7 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
             <SectionHead id="inbox-att" label="Needs you" count={s.attention.length} />
             {!isCollapsed('inbox-att') &&
               s.attention.map((a) => (
-                <button class="row attention-row" onClick={() => go({ view: 'accounts', account: a.id })}>
+                <button class="row attention-row" onClick={() => go({ view: 'accounts', account: a.id })} onContextMenu={onMenu(() => accountMenu(a))}>
                   <span class="row-avatar">
                     <span class="attention-icon">
                       <Icon name={a.attention?.kind === 'link_device' ? 'qr' : a.attention?.liveView ? 'monitor' : 'alert'} size={18} />
@@ -229,8 +234,9 @@ export function PersonRow({ person, active, onClick }: { person: P.PersonView; a
   const last = directs.reduce<P.ConversationView | null>((a, c) => (!a || (c.lastMessageAt ?? 0) > (a.lastMessageAt ?? 0) ? c : a), null);
   const u = sumUnread(directs);
   const nets = [...new Set(directs.map((d) => d.network))];
+  const ctx = useMenu(() => personMenu(person));
   return (
-    <button class={`row conv-row ${active ? 'active' : ''} ${u.unread ? 'unread' : ''}`} onClick={onClick}>
+    <button class={`row conv-row ${active ? 'active' : ''} ${u.unread ? 'unread' : ''}`} onClick={onClick} {...ctx}>
       <span class="row-avatar">
         <Avatar id={person.id} name={person.name} url={person.avatar} size={36} />
       </span>
@@ -264,13 +270,13 @@ export function PersonRow({ person, active, onClick }: { person: P.PersonView; a
 
 export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
   rev.value;
-  const list = people();
+  const list = arrangedPeople(people());
   const starred = list.filter((x) => x.person.starred);
   const rest = list.filter((x) => !x.person.starred);
   return (
     <div class="sidebar-inner">
       <header class="side-head">
-        <h1>People<NewMessageButton /></h1>
+        <h1>People<NewMessageButton /><SortButton scope="people" class="side-sort" /></h1>
         <span class="side-sub">One thread per person, across Signal, Discord and Matrix</span>
       </header>
       <div class="side-scroll">
@@ -292,14 +298,14 @@ export function GroupsSidebar({ activeConv }: { activeConv?: string }) {
   return (
     <div class="sidebar-inner">
       <header class="side-head">
-        <h1>Groups</h1>
+        <h1>Groups<SortButton scope="groups" class="side-sort" /></h1>
         <span class="side-sub">Group chats that don't belong to a server or space</span>
       </header>
       <div class="side-scroll">
         <SectionHead id="groups-g" label="Group chats" count={g.groups.length} />
-        {!isCollapsed('groups-g') && g.groups.map((c) => <ConvRow c={c} active={c.id === activeConv} onClick={() => open(c)} showPlace={false} menu />)}
+        {!isCollapsed('groups-g') && arrangedConvs('groups:g', g.groups).map((c) => <ConvRow c={c} active={c.id === activeConv} onClick={() => open(c)} showPlace={false} menu />)}
         {g.rooms.length > 0 && <SectionHead id="groups-r" label="Rooms outside a space" count={g.rooms.length} />}
-        {!isCollapsed('groups-r') && g.rooms.map((c) => <ConvRow c={c} active={c.id === activeConv} onClick={() => open(c)} showPlace={false} menu />)}
+        {!isCollapsed('groups-r') && arrangedConvs('groups:r', g.rooms).map((c) => <ConvRow c={c} active={c.id === activeConv} onClick={() => open(c)} showPlace={false} menu />)}
         {g.notes.length > 0 && <SectionHead id="groups-n" label="Notes to self" count={g.notes.length} />}
         {!isCollapsed('groups-n') && g.notes.map((c) => <ConvRow c={c} active={c.id === activeConv} onClick={() => open(c)} showPlace={false} />)}
       </div>
@@ -315,6 +321,7 @@ function ChannelRow({ c, active, depth, onOpen, alsoIn }: { c: P.ConversationVie
   const forum = c.variant === 'forum';
   const shownThreads = forum ? threadsOf(c.id).slice(0, 6) : threads;
   const lvl = effectiveLevel(c);
+  const ctx = useMenu(() => conversationMenu(c));
   return (
     <>
       <button
@@ -322,6 +329,7 @@ function ChannelRow({ c, active, depth, onOpen, alsoIn }: { c: P.ConversationVie
         style={{ paddingLeft: `${10 + depth * 12}px` }}
         onClick={() => onOpen(c)}
         title={kindLabel(c)}
+        {...ctx}
       >
         <Icon name={variantIcon(c.variant)} size={16} class="chan-icon" />
         <span class="chan-name">{convTitle(c)}</span>
@@ -337,16 +345,21 @@ function ChannelRow({ c, active, depth, onOpen, alsoIn }: { c: P.ConversationVie
       {shownThreads.map((t) => {
         const tu = unreadOf(t);
         return (
-          <button
-            class={`chan thread ${t.id === active ? 'active' : ''} ${tu.unread && !tu.muted ? 'unread' : ''}`}
-            style={{ paddingLeft: `${26 + depth * 12}px` }}
-            onClick={() => onOpen(t)}
-            title={kindLabel(t)}
-          >
-            <span class="thread-elbow" />
-            <span class="chan-name">{convTitle(t)}</span>
-            <Count n={tu.badge} />
-          </button>
+          <Menuable build={() => conversationMenu(t)}>
+            {(ctx) => (
+              <button
+                class={`chan thread ${t.id === active ? 'active' : ''} ${tu.unread && !tu.muted ? 'unread' : ''}`}
+                style={{ paddingLeft: `${26 + depth * 12}px` }}
+                onClick={() => onOpen(t)}
+                title={kindLabel(t)}
+                {...ctx}
+              >
+                <span class="thread-elbow" />
+                <span class="chan-name">{convTitle(t)}</span>
+                <Count n={tu.badge} />
+              </button>
+            )}
+          </Menuable>
         );
       })}
     </>
@@ -372,13 +385,17 @@ export function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<s
         const u = spaceUnread(s.id);
         return (
           <div class={`tree-group ${k.kind}`}>
-            <button class="tree-head" style={{ paddingLeft: `${6 + depth * 12}px` }} onClick={() => setPrefs({ collapsed: { ...prefs.value.collapsed, [key]: !collapsed } })}>
+            <Menuable build={() => spaceMenu(s)}>
+              {(ctx) => (
+            <button class="tree-head" style={{ paddingLeft: `${6 + depth * 12}px` }} onClick={() => setPrefs({ collapsed: { ...prefs.value.collapsed, [key]: !collapsed } })} {...ctx}>
               <Icon name={collapsed ? 'chevronRight' : 'chevronDown'} size={11} />
               {k.kind === 'subspace' && <NetGlyph network={s.network} size={11} />}
               <span>{k.kind === 'section' ? s.name.toUpperCase() : s.name}</span>
               {k.kind === 'subspace' && <span class="tree-tag">subspace</span>}
               {collapsed && <Count n={u.badge} />}
             </button>
+              )}
+            </Menuable>
             {!collapsed && <SpaceTree spaceId={s.id} active={active} onOpen={onOpen} depth={k.kind === 'subspace' ? depth + 1 : depth} seen={nextSeen} />}
           </div>
         );
@@ -390,8 +407,9 @@ export function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<s
 function SpaceHeader({ space }: { space: P.SpaceView }) {
   const accounts = space.accountIds.map((id) => db.accounts.get(id)).filter((a): a is P.AccountView => !!a);
   const noun = NETWORK_META[space.network].spaceNoun;
+  const ctx = useMenu(() => spaceMenu(space));
   return (
-    <header class="space-head" style={{ '--net': NETWORK_META[space.network].color } as any}>
+    <header class="space-head" style={{ '--net': NETWORK_META[space.network].color } as any} {...ctx}>
       <div class="space-head-top">
         <Avatar id={space.id} name={space.name} url={space.icon} size={40} square />
         <div class="space-head-text">
@@ -444,7 +462,7 @@ export function FolderSidebar({ folderId, activeConv, activePerson }: { folderId
   const open = (c: P.ConversationView) => go({ view: 'folder', folder: f.id, conv: c.id });
   return (
     <div class="sidebar-inner">
-      <header class="side-head folder-head" style={{ '--folder': f.color ?? '#8b93a7' } as any}>
+      <header class="side-head folder-head" style={{ '--folder': f.color ?? '#8b93a7' } as any} onContextMenu={onMenu(() => folderMenuSpec(f.id))}>
         <h1>
           <span class="folder-head-icon">{f.icon ?? <Icon name="folder" />}</span>
           {f.name}
@@ -454,7 +472,7 @@ export function FolderSidebar({ folderId, activeConv, activePerson }: { folderId
         </span>
       </header>
       <div class="side-scroll tree">
-        {f.items.map((it) => {
+        {arrangedFolderItems(f).map((it) => {
           if (it.kind === 'space') {
             const s = db.spaces.get(it.id);
             if (!s) return null;
@@ -463,7 +481,7 @@ export function FolderSidebar({ folderId, activeConv, activePerson }: { folderId
             const u = spaceUnread(s.id);
             return (
               <div class="folder-space">
-                <button class="folder-space-head" onClick={() => setPrefs({ collapsed: { ...prefs.value.collapsed, [key]: !collapsed } })}>
+                <button class="folder-space-head" onClick={() => setPrefs({ collapsed: { ...prefs.value.collapsed, [key]: !collapsed } })} onContextMenu={onMenu(() => spaceMenu(s))}>
                   <Icon name={collapsed ? 'chevronRight' : 'chevronDown'} size={12} />
                   <Avatar id={s.id} name={s.name} url={s.icon} size={22} square network={s.network} />
                   <span class="folder-space-name">{s.name}</span>
@@ -488,6 +506,7 @@ export function FolderSidebar({ folderId, activeConv, activePerson }: { folderId
 
 // ------------------------------------------------------------------ all communities (mobile tab)
 
+const spacesDrop = arrangeDrop(dropPlace);
 function SpacesEntry({ entry: e, hidden }: { entry: RailEntry; hidden?: boolean }) {
   const label = placeLabel(e.key);
   const folderId = e.kind === 'folder' ? e.folder.id : undefined;
@@ -496,7 +515,7 @@ function SpacesEntry({ entry: e, hidden }: { entry: RailEntry; hidden?: boolean 
     label,
     group: 'spaces',
     accepts: !hidden,
-    onDrop: hidden ? undefined : dropPlace,
+    onDrop: hidden ? undefined : spacesDrop,
     onMenu: (x, y) => openPlaceMenu(e.key, label, x, y),
   });
   const pinned = placePref(e.kind, e.key.slice(e.key.indexOf(':') + 1)).pinned;
@@ -543,13 +562,15 @@ function SpacesEntry({ entry: e, hidden }: { entry: RailEntry; hidden?: boolean 
 export function SpacesSidebar() {
   rev.value;
   const hidden = railEntries('hidden');
+  const scroll = useRef<HTMLDivElement>(null);
+  useFlip(scroll, snapshot.value.v);
   return (
     <div class="sidebar-inner">
       <header class="side-head">
-        <h1>Spaces</h1>
+        <h1>Spaces<SortButton scope="rail" class="side-sort" /></h1>
         <span class="side-sub">Hold and drag to arrange, tap and hold for more</span>
       </header>
-      <div class="side-scroll">
+      <div class="side-scroll" ref={scroll}>
         <button class="row conv-row" onClick={() => go({ view: 'directory' })}>
           <span class="row-avatar">
             <span class="folder-row-icon">
@@ -565,7 +586,7 @@ export function SpacesSidebar() {
             </span>
           </span>
         </button>
-        {railEntries().map((e) => (
+        {arrangedRail().map((e) => (
           <SpacesEntry entry={e} />
         ))}
         {hidden.length > 0 && <SectionHead id="spaces-h" label="Hidden" count={hidden.length} />}

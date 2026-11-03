@@ -8,18 +8,21 @@ import { ConversationDetails, PersonDetails } from './Details.tsx';
 import { DirectoryPane } from './Directory.tsx';
 import { DragLayer } from './dnd.tsx';
 import { Icon } from './icons.tsx';
-import { PlaceMenu } from './Organize.tsx';
+import { ContextMenuLayer } from './ContextMenu.tsx';
+import { ForwardLayer } from './Forward.tsx';
 import { InboxBoard } from './Inbox.tsx';
 import { NewMessage } from './NewMessage.tsx';
 import { ReactionLayer } from './Reactions.tsx';
 import { ProfilePane } from './Profile.tsx';
 import { Rail } from './Rail.tsx';
+import { TitleBar } from './TitleBar.tsx';
 import { SearchPane } from './Search.tsx';
 import { SettingsPane } from './Settings.tsx';
 import { FolderSidebar, GroupsSidebar, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar } from './Sidebar.tsx';
 import { ConversationPane, PersonPane } from './Timeline.tsx';
 import { Switcher } from './Switcher.tsx';
 import { Toasts } from './Toasts.tsx';
+import { CallDock } from './Call.tsx';
 import { Viewer } from './Viewer.tsx';
 import { PEEK, panel, usePager, type Rest } from './Pager.ts';
 import { Skeleton } from './bits.tsx';
@@ -223,27 +226,10 @@ function TabBar({ r }: { r: Route }) {
   );
 }
 
-function useTheme() {
-  const theme = prefs.value.theme;
-  useEffect(() => {
-    const sys = window.matchMedia('(prefers-color-scheme: light)');
-    const apply = () => {
-      const t = theme === 'system' ? (sys.matches ? 'light' : 'dark') : theme;
-      document.documentElement.dataset.theme = t;
-    };
-    apply();
-    if (theme === 'system') {
-      sys.addEventListener('change', apply);
-      return () => sys.removeEventListener('change', apply);
-    }
-  }, [theme]);
-}
-
 export function App() {
   rev.value;
   const r = route.value;
   const p = phone.value;
-  useTheme();
   // The installed app's icon shows what wants you, where the platform has badges.
   const badge = loaded.value ? sumUnread([...db.conversations.values()].filter(visibleConv)).badge : 0;
   useEffect(() => {
@@ -333,6 +319,7 @@ export function App() {
           </span>
         </div>
       )}
+      {!p && <TitleBar />}
       <Rail />
       <aside class="sidebar">{sidebarFor(r, () => (addingAccount.value = true))}</aside>
       <main class="center" ref={card} inert={rest === 'away'}>
@@ -353,10 +340,12 @@ export function App() {
         </div>
       )}
       {addingAccount.value && <AddAccount onClose={() => (addingAccount.value = false)} />}
+      <CallDock />
       <ReactionLayer />
       <Toasts />
       <DragLayer />
-      <PlaceMenu />
+      <ContextMenuLayer />
+      <ForwardLayer />
       <Switcher />
       <NewMessage />
       <Viewer />

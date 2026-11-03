@@ -164,6 +164,8 @@ interface MsgOpts {
   kind?: P.MessageKind;
   att?: P.AttachmentFact[];
   thread?: string;
+  /** A forward, as Discord marks one. */
+  fwd?: P.ForwardFact;
 }
 type Msg = [minutesAgo: number, author: P.IdentityFact, body: string, opts?: MsgOpts];
 interface DemoConv {
@@ -403,6 +405,7 @@ const CONVS: DemoConv[] = [
       [DAY + 120, D.lev, 'CI is red on main, the hashdb bump broke a doctest'],
       [DAY + 118, D.ci, '❌ `main` · build #482 failed · `hashdb`: doctest `insert_get`'],
       [DAY + 40, D.lev, 'fixed in #211'],
+      [DAY + 35, D.lev, '**dither-sim v0.4** is out: 10k-node simulations in the browser. https://github.com/libdither/dither-sim', { fwd: { conversation: ch('dither-ann'), message: `${ch('dither-ann')}~0`, space: g.dither } }],
       [DAY + 30, D.ci, '✅ `main` · build #483 passed'],
       [3 * H, D.quinn, 'starting a thread for the bootstrap refactor', { thread: T.ditherBoot }],
       [58, D.quinn, `${at(D.zyan)} can you review the bootstrap PR before Friday? it touches the handshake`],
@@ -756,7 +759,9 @@ class DemoAdapter implements InprocAdapter {
     const firstRun = !existsSync(marker);
     const ago = (min: number) => epoch - min * 60_000;
 
-    emit({ t: 'hello', network: this.network, version: 'demo', capabilities: ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect'] });
+    // Discord's demo accounts forward natively, as the real adapter does; the others leave it to the hub.
+    const caps: P.Capability[] = ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect'];
+    emit({ t: 'hello', network: this.network, version: 'demo', capabilities: this.network === 'discord' ? [...caps, 'forward'] : caps });
     emit({ t: 'status', status: 'online', self: { ...this.self, isSelf: true } });
     const pool = this.network === 'discord' ? D : this.network === 'signal' ? S : M;
     for (const i of Object.values(pool)) if (i !== this.self && !(this.network === 'discord' && (i === D.zyan || i === D.zyn))) emit({ t: 'identity', identity: i });
@@ -788,6 +793,7 @@ class DemoAdapter implements InprocAdapter {
             threadRoot: o.thread,
             mentionsSelf: body.includes(`<@${this.self.nativeId}>`),
             attachments: o.att,
+            ...(o.fwd ? { forward: o.fwd } : {}),
             reactions: o.react || o.fancy ? [...(o.fancy ?? []), ...Object.entries(o.react ?? {}).map(([key, who]) => ({ key, authors: who.map((w) => w.nativeId) }))] : undefined,
           },
         });
@@ -797,6 +803,19 @@ class DemoAdapter implements InprocAdapter {
     }
     if (firstRun) writeFileSync(marker, String(Date.now()));
     scheduleChatter();
+  }
+
+  /** What this adapter sent since it started, for forwarding it. */
+  private sent = new Map<string, { body: string; att?: P.AttachmentFact[] }>();
+
+  /** A message's content by native id: seeded ones by position, sent ones from memory. */
+  private contentOf(nativeId: string): { body: string; att?: P.AttachmentFact[] } | null {
+    const mine = this.sent.get(nativeId);
+    if (mine) return mine;
+    const at = nativeId.lastIndexOf('~');
+    const conv = CONVS.find((c) => c.fact.nativeId === nativeId.slice(0, at) && c.acc.includes(this.key));
+    const m = conv?.msgs[Number(nativeId.slice(at + 1))];
+    return m ? { body: m[2], att: m[3]?.att } : null;
   }
 
   /** Conversations opened since this adapter started: conversation id -> the peer. */
@@ -851,6 +870,7 @@ class DemoAdapter implements InprocAdapter {
         // The file leaves the spool once this returns, and a demo has nowhere else to keep it.
         const attachments = cmd.attachments?.map((f) => ({ kind: f.kind, mime: f.mime, name: f.name, size: f.size, url: `data:${f.mime};base64,${readFileSync(f.path).toString('base64')}` }));
         this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), body: cmd.body, replyTo: cmd.replyTo, kind: attachments?.length && !cmd.body ? 'media' : 'text', attachments } });
+        this.sent.set(nativeId, { body: cmd.body, att: attachments });
         reply({ nativeId });
         const conv = CONVS.find((c) => c.fact.nativeId === cmd.conversation);
         const peer = this.opened.get(cmd.conversation);
@@ -863,6 +883,20 @@ class DemoAdapter implements InprocAdapter {
           const who = others[Math.floor(Math.random() * others.length)];
           this.later(2500, () => this.emit({ t: 'reaction', conversation: cmd.conversation, message: nativeId, author: who, key: '👍' }));
         }
+        break;
+      }
+      case 'forward': {
+        const src = this.contentOf(cmd.source.message);
+        if (!src) {
+          reply({ fallback: 'this demo account does not have that message' });
+          break;
+        }
+        const nativeId = `${cmd.conversation}~fwd-${Date.now()}`;
+        const forward = { conversation: cmd.source.conversation, message: cmd.source.message };
+        this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), body: src.body, kind: src.att?.length && !src.body ? 'media' : 'text', attachments: src.att, forward } });
+        if (cmd.note) this.emit({ t: 'message', live: true, message: { nativeId: `${nativeId}-note`, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now() + 1, body: cmd.note } });
+        this.sent.set(nativeId, src);
+        reply({ nativeId });
         break;
       }
       case 'openDirect':

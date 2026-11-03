@@ -176,6 +176,14 @@
     MessageActions: (m) => typeof m.sendMessage === 'function' && typeof m.editMessage === 'function',
     // Opening DMs: the module the client's own "Message" button uses.
     PrivateChannelActions: (m) => typeof m.openPrivateChannel === 'function',
+    // Calls: what the client's own voice channel buttons call, and the stores its call panel reads.
+    VoiceActions: (m) => typeof m.selectVoiceChannel === 'function' && typeof m.disconnect === 'function',
+    AudioActions: (m) => typeof m.toggleSelfMute === 'function' && typeof m.toggleSelfDeaf === 'function',
+    VoiceStateStore: isStore('VoiceStateStore'),
+    SpeakingStore: isStore('SpeakingStore'),
+    MediaEngineStore: isStore('MediaEngineStore'),
+    SelectedChannelStore: isStore('SelectedChannelStore'),
+    AuthenticationStore: isStore('AuthenticationStore'),
   };
   // Nothing works without these; the others only degrade features.
   const CORE = ['Dispatcher', 'UserStore', 'ChannelStore', 'GuildStore'];
@@ -291,14 +299,24 @@
       reactions: Array.isArray(m.reactions)
         ? m.reactions.map((r) => ({ emoji: pickEmoji(r.emoji), count: r.count, count_details: r.count_details, burst_count: r.burst_count, me: !!r.me, me_burst: !!r.me_burst, burst_colors: r.burst_colors }))
         : undefined,
-      message_reference: m.message_reference ?? (m.messageReference ? { message_id: m.messageReference.messageId ?? m.messageReference.message_id, channel_id: m.messageReference.channelId } : undefined),
+      message_reference: m.message_reference ?? (m.messageReference ? { message_id: m.messageReference.messageId ?? m.messageReference.message_id, channel_id: m.messageReference.channelId ?? m.messageReference.channel_id, guild_id: m.messageReference.guildId ?? m.messageReference.guild_id, type: m.messageReference.type } : undefined),
       thread: m.thread ? pickChannel(m.thread) : undefined,
-      message_snapshots: Array.isArray(m.message_snapshots)
-        ? m.message_snapshots.map((s) => s.message && { content: s.message.content ?? '', attachments: (s.message.attachments ?? []).map(pickAttachment), embeds: (s.message.embeds ?? []).map(pickEmbed) }).filter(Boolean)
-        : undefined,
+      message_snapshots: pickSnapshots(m.message_snapshots ?? m.messageSnapshots),
       sticker_items: Array.isArray(m.sticker_items) ? m.sticker_items.map((s) => ({ name: s.name })) : undefined,
       poll: m.poll && m.poll.question ? { question: m.poll.question.text, answers: (m.poll.answers ?? []).map((a) => a.poll_media && a.poll_media.text).filter(Boolean) } : undefined,
     };
+  }
+  // A forward's content. Records in the client's stores use camelCase and Date timestamps.
+  function pickSnapshots(list) {
+    if (!Array.isArray(list)) return undefined;
+    return list
+      .map((s) => {
+        const x = s && s.message;
+        if (!x) return null;
+        const ts = x.timestamp && x.timestamp.toISOString ? x.timestamp.toISOString() : typeof x.timestamp === 'string' ? x.timestamp : undefined;
+        return { content: x.content ?? '', timestamp: ts, attachments: (x.attachments ?? []).map(pickAttachment), embeds: (x.embeds ?? []).map(pickEmbed) };
+      })
+      .filter(Boolean);
   }
   function resolveUser(id) {
     try {
@@ -528,11 +546,15 @@
   }
 
   // --------------------------------------------------------------- commands
+  /** Set only in lab sandboxes (src/lab/lab.js, appended at the marker below). */
+  let labCommand = null;
   async function runCommand(cmd) {
     if (!coreReady) throw new Error('the Discord client has not finished loading');
     switch (cmd.kind) {
       case 'send':
         return sendMessage(cmd);
+      case 'forward':
+        return forwardMessage(cmd);
       case 'openDirect':
         return openDirect(cmd.userId);
       case 'history':
@@ -556,12 +578,361 @@
       case 'edit':
         if (mod.MessageActions && mod.MessageActions.editMessage) return mod.MessageActions.editMessage(cmd.channelId, cmd.messageId, { content: cmd.content }), { ok: true };
         return rest('patch', `/channels/${cmd.channelId}/messages/${cmd.messageId}`, undefined, { content: cmd.content });
+      case 'call':
+        return callCommand(cmd);
+      case 'lab':
+        if (!labCommand) throw new Error('not a lab sandbox');
+        return labCommand(cmd);
       case 'redact':
         if (mod.MessageActions && mod.MessageActions.deleteMessage) return mod.MessageActions.deleteMessage(cmd.channelId, cmd.messageId), { ok: true };
         return rest('del', `/channels/${cmd.channelId}/messages/${cmd.messageId}`);
       default:
         throw new Error('unknown command ' + cmd.kind);
     }
+  }
+
+
+  // ------------------------------------------------------------------ calls
+  // Bridge mode: the client joins the call itself, exactly as its own button would, and handles
+  // the call's media and encryption. Its remote audio is mixed and sent to the device over a
+  // second peer connection, and the device's microphone comes back over it and is what the
+  // client gets from getUserMedia. Patches exist only while a bridge call does.
+  const call = { id: null, mode: null, channelId: null, pc: null, ctx: null, mix: null, mic: null, mixMeter: null, micMeter: null, micSrc: null, unpatch: null, unsub: null, timer: null, joinedAt: 0 };
+  const ourPCs = new WeakSet();
+  const tapped = new WeakSet();
+
+  function callUp(extra) {
+    up({ t: 'call', call: call.id, ...extra });
+  }
+
+  async function callCommand(cmd) {
+    if (cmd.op === 'join') return callJoin(cmd);
+    if (cmd.call !== call.id) return { stale: true };
+    if (cmd.op === 'leave') return callLeave(false);
+    if (cmd.op === 'mute') return callMute(cmd.muted, cmd.deafened);
+    if (cmd.op === 'signal') return bridgeSignal(cmd.data);
+    return { ok: true };
+  }
+
+  async function callJoin(cmd) {
+    if (call.id) await callLeave(false);
+    if (!mod.VoiceActions) throw new Error('the client has no voice module (Discord changed?)');
+    const channel = mod.ChannelStore.getChannel(cmd.channelId);
+    if (!channel) throw new Error('unknown channel');
+    if (cmd.mode === 'direct') return directJoin(cmd, channel);
+    if (cmd.mode !== 'bridge') throw new Error('unknown call mode');
+    Object.assign(call, { id: cmd.call, mode: cmd.mode, channelId: cmd.channelId, joinedAt: Date.now() });
+    // The audio graph runs only to feed the bridge; nothing plays in the sandbox.
+    call.ctx = new AudioContext({ latencyHint: 'interactive' });
+    call.mix = call.ctx.createMediaStreamDestination();
+    call.mic = call.ctx.createMediaStreamDestination();
+    call.mixMeter = call.ctx.createAnalyser();
+    call.micMeter = call.ctx.createAnalyser();
+    call.unpatch = patchMedia();
+    call.unsub = watchCall();
+    mod.VoiceActions.selectVoiceChannel(cmd.channelId);
+    if (cmd.muted || cmd.deafened) setTimeout(() => callMute(!!cmd.muted, !!cmd.deafened), 500);
+    return {};
+  }
+
+  async function callLeave(fromClient) {
+    if (!call.id) return { ok: true };
+    const id = call.id;
+    const wasDirect = call.mode === 'direct';
+    try {
+      if (!fromClient && mod.SelectedChannelStore && mod.SelectedChannelStore.getVoiceChannelId() === call.channelId) mod.VoiceActions.disconnect();
+    } catch (e) {
+      log('warn', 'disconnect failed', String(e));
+    }
+    try {
+      call.pc && call.pc.close();
+    } catch (e) {}
+    try {
+      call.ctx && call.ctx.close();
+    } catch (e) {}
+    try {
+      call.unpatch && call.unpatch();
+      call.unsub && call.unsub();
+    } catch (e) {}
+    clearInterval(call.timer);
+    // Any voice server handed out from here on is the page's again.
+    if (wasDirect) setTimeout(() => (external.active = false), 3000);
+    if (fromClient) up({ t: 'call', call: id, ended: fromClient });
+    Object.assign(call, { id: null, mode: null, channelId: null, pc: null, ctx: null, mix: null, mic: null, mixMeter: null, micMeter: null, micSrc: null, unpatch: null, unsub: null, timer: null });
+    return { ok: true };
+  }
+
+  function callMute(muted, deafened) {
+    const me = mod.MediaEngineStore;
+    const act = mod.AudioActions;
+    if (!me || !act) throw new Error('the client has no audio settings module');
+    if (!!me.isSelfDeaf() !== !!deafened) act.toggleSelfDeaf();
+    // Undeafening restores the previous mute, so read it again.
+    if (!!me.isSelfMute() !== !!muted) act.toggleSelfMute();
+    return { ok: true };
+  }
+
+  /** Participants from the client's own stores, pushed whenever they change (at most every 150 ms). */
+  function watchCall() {
+    let queued = false;
+    let last = '';
+    const push = () => {
+      queued = false;
+      if (!call.id) return;
+      const users = [];
+      const participants = [];
+      let states = {};
+      try {
+        states = mod.VoiceStateStore.getVoiceStatesForChannel(call.channelId) || {};
+      } catch (e) {}
+      for (const v of Object.values(states)) {
+        const id = v.userId || v.user_id;
+        if (!id) continue;
+        let speaking = false;
+        try {
+          speaking = !!(mod.SpeakingStore && mod.SpeakingStore.isSpeaking(id));
+        } catch (e) {}
+        participants.push({ id, muted: !!(v.selfMute || v.mute), deafened: !!(v.selfDeaf || v.deaf), speaking, video: !!v.selfVideo });
+        users.push(resolveUser(id));
+      }
+      const key = JSON.stringify(participants);
+      if (key === last) return;
+      last = key;
+      callUp({ state: { channelId: call.channelId, participants }, users: users.filter((u) => u && u.username) });
+    };
+    const onChange = () => {
+      if (!queued) {
+        queued = true;
+        setTimeout(push, 150);
+      }
+      // The call ended from the client's side: kicked, moved, or the channel went away.
+      try {
+        const now = mod.SelectedChannelStore && mod.SelectedChannelStore.getVoiceChannelId();
+        if (call.id && Date.now() - call.joinedAt > 5000 && now !== call.channelId) void callLeave(now ? 'moved to another channel' : 'disconnected');
+      } catch (e) {}
+    };
+    const stores = [mod.VoiceStateStore, mod.SpeakingStore, mod.SelectedChannelStore].filter(Boolean);
+    for (const st of stores) st.addChangeListener(onChange);
+    onChange();
+    // What the client's own voice connection is doing, for the adapter log (and comparing the modes).
+    call.timer = setInterval(() => void logRtc(), 10_000);
+    return () => stores.forEach((st) => st.removeChangeListener(onChange));
+  }
+
+
+  // Direct mode: the device speaks the voice protocol itself. The page joins the channel exactly as
+  // its own button would (so the gateway's voice state, mute flags and the participant list stay the
+  // client's), but the voice server Discord hands out goes to the device, and the page never sees
+  // it: one Dispatcher interceptor swallows VOICE_SERVER_UPDATE, so the page's own connection waits
+  // for an endpoint that never comes. The voice token is scoped to this one connection; the account's
+  // login token stays here.
+  const external = { active: false, channelId: null, guildId: null, waiter: null };
+  let interceptor = false;
+  function installInterceptor() {
+    if (interceptor) return true;
+    const d = mod.Dispatcher;
+    if (!d || typeof d.addInterceptor !== 'function') return false;
+    d.addInterceptor((action) => {
+      try {
+        if (!external.active || !action || action.type !== 'VOICE_SERVER_UPDATE') return false;
+        const ours = external.guildId ? action.guildId === external.guildId : !action.guildId && (!action.channelId || action.channelId === external.channelId);
+        if (!ours) return false;
+        // A null endpoint means the server is still being allocated; another update follows.
+        if (action.endpoint) voiceServer(action.endpoint, action.token);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    });
+    interceptor = true;
+    return true;
+  }
+
+  function voiceServer(endpoint, token) {
+    if (external.waiter) {
+      const w = external.waiter;
+      external.waiter = null;
+      w({ endpoint, token });
+    } else if (call.id && call.mode === 'direct') {
+      // The voice server moved: the device reconnects to the new one.
+      callUp({ signal: { kind: 'voice-server', endpoint, token } });
+    }
+  }
+
+  async function directJoin(cmd, channel) {
+    if (!installInterceptor()) throw new Error('the client has no dispatcher interceptor (Discord changed?)');
+    const me = currentUser();
+    let sessionId = null;
+    try {
+      sessionId = mod.AuthenticationStore && mod.AuthenticationStore.getSessionId();
+    } catch (e) {}
+    if (!me || !sessionId) throw new Error('the client has no gateway session yet');
+    const guildId = channel.guild_id || (channel.getGuildId && channel.getGuildId()) || null;
+    Object.assign(external, { active: true, channelId: cmd.channelId, guildId });
+    Object.assign(call, { id: cmd.call, mode: 'direct', channelId: cmd.channelId, joinedAt: Date.now() });
+    call.unsub = watchCall();
+    let server;
+    try {
+      server = await new Promise((resolve, reject) => {
+        external.waiter = resolve;
+        setTimeout(() => reject(new Error('Discord gave no voice server within 20 s')), 20_000);
+        mod.VoiceActions.selectVoiceChannel(cmd.channelId);
+      });
+    } catch (e) {
+      external.waiter = null;
+      await callLeave(false);
+      throw e;
+    }
+    if (cmd.muted || cmd.deafened) setTimeout(() => callMute(!!cmd.muted, !!cmd.deafened), 200);
+    return { direct: { network: 'discord', endpoint: server.endpoint, token: server.token, serverId: guildId || cmd.channelId, channelId: cmd.channelId, userId: me.id, sessionId } };
+  }
+
+  /** While a bridge call runs: the client's microphone is the device's, and its peer connections are tapped for remote audio. */
+  function patchMedia() {
+    const md = navigator.mediaDevices;
+    const gum = md.getUserMedia;
+    const enumerate = md.enumerateDevices;
+    const srd = RTCPeerConnection.prototype.setRemoteDescription;
+    md.getUserMedia = function (constraints) {
+      if (!call.id || !constraints || !constraints.audio || constraints.video) return gum.apply(this, arguments);
+      log('debug', 'the client asked for the microphone; it gets the device\'s');
+      return Promise.resolve(new MediaStream([call.mic.stream.getAudioTracks()[0].clone()]));
+    };
+    // With no sound card the list is empty, and the client then refuses to join with a microphone.
+    md.enumerateDevices = function () {
+      return enumerate.apply(this, arguments).then((list) =>
+        list.some((d) => d.kind === 'audioinput')
+          ? list
+          : [...list, { deviceId: 'default', groupId: 'dither', kind: 'audioinput', label: 'Default', toJSON() { return { deviceId: 'default', groupId: 'dither', kind: 'audioinput', label: 'Default' }; } }],
+      );
+    };
+    RTCPeerConnection.prototype.setRemoteDescription = function () {
+      if (!ourPCs.has(this)) tapPC(this);
+      return srd.apply(this, arguments);
+    };
+    return () => {
+      md.getUserMedia = gum;
+      md.enumerateDevices = enumerate;
+      RTCPeerConnection.prototype.setRemoteDescription = srd;
+    };
+  }
+
+  const discordPCs = new Set();
+  function tapPC(pc) {
+    if (tapped.has(pc)) return;
+    tapped.add(pc);
+    discordPCs.add(pc);
+    pc.addEventListener('track', (e) => mixIn(e.track));
+    for (const r of pc.getReceivers()) if (r.track) mixIn(r.track);
+  }
+
+  async function logRtc() {
+    const out = [];
+    for (const pc of discordPCs) {
+      if (pc.connectionState === 'closed') {
+        discordPCs.delete(pc);
+        continue;
+      }
+      let sent = 0;
+      let received = 0;
+      let level = null;
+      let rtp = 0;
+      try {
+        (await pc.getStats()).forEach((r) => {
+          if (r.type === 'transport') {
+            sent += r.bytesSent || 0;
+            received += r.bytesReceived || 0;
+          }
+          if (r.type === 'media-source' && r.kind === 'audio') level = r.audioLevel;
+          if (r.type === 'outbound-rtp' && r.kind === 'audio') rtp += r.bytesSent || 0;
+        });
+      } catch (e) {}
+      let senders = [];
+      try {
+        senders = pc.getTransceivers().map((t) => ({ dir: t.currentDirection, kind: t.sender.track && t.sender.track.kind, en: t.sender.track && t.sender.track.enabled, rs: t.sender.track && t.sender.track.readyState, act: (t.sender.getParameters().encodings || []).map((e) => e.active), tf: t.sender.transform ? t.sender.transform.constructor.name : null, codecs: (t.sender.getParameters().codecs || []).map((c) => c.mimeType).slice(0, 3) }));
+        senders.push({ api: { ces: typeof RTCRtpSender.prototype.createEncodedStreams, rst: typeof window.RTCRtpScriptTransform, cfg: JSON.stringify(pc.getConfiguration()).slice(0, 300) } });
+      } catch (e) {}
+      out.push({ state: pc.connectionState, sent, received, rtp, level, senders });
+    }
+    const me = currentUser();
+    let self = {};
+    try {
+      const m = mod.MediaEngineStore;
+      self = { mute: m.isSelfMute(), deaf: m.isSelfDeaf(), mode: m.getMode && m.getMode(), speaking: !!(me && mod.SpeakingStore.isSpeaking(me.id)) };
+    } catch (e) {}
+    log('info', 'call rtc', { self, discord: out, bridge: call.pc ? call.pc.connectionState : null, ctx: call.ctx && call.ctx.state, mic: rms(call.micMeter), mix: rms(call.mixMeter) });
+  }
+
+  function rms(an) {
+    if (!an) return null;
+    const buf = new Float32Array(an.fftSize);
+    an.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (const v of buf) sum += v * v;
+    return Math.round(Math.sqrt(sum / buf.length) * 1000) / 1000;
+  }
+
+  // Chrome only feeds a remote track into Web Audio while a media element also plays it.
+  const sinks = new WeakMap();
+  function mixIn(track) {
+    if (!call.ctx || track.kind !== 'audio' || sinks.has(track)) return;
+    const stream = new MediaStream([track]);
+    const el = new Audio();
+    el.muted = true;
+    el.srcObject = stream;
+    el.play().catch(() => {});
+    const src = call.ctx.createMediaStreamSource(stream);
+    src.connect(call.mix);
+    src.connect(call.mixMeter);
+    sinks.set(track, { el, src });
+    track.addEventListener('ended', () => {
+      try {
+        src.disconnect();
+      } catch (e) {}
+      el.srcObject = null;
+    });
+  }
+
+  /** The device offers; the sandbox answers with the mix and takes the device's microphone. */
+  async function bridgeSignal(data) {
+    if (call.mode !== 'bridge') return { ignored: true };
+    if (data && data.sdp && data.type === 'offer') {
+      if (call.pc) call.pc.close();
+      const pc = new RTCPeerConnection({ iceServers: data.iceServers || [] });
+      ourPCs.add(pc);
+      call.pc = pc;
+      pc.onicecandidate = (e) => callUp({ signal: { candidate: e.candidate ? e.candidate.toJSON() : null } });
+      pc.ontrack = (e) => {
+        if (e.track.kind !== 'audio') return;
+        const stream = new MediaStream([e.track]);
+        const el = new Audio();
+        el.muted = true;
+        el.srcObject = stream;
+        el.play().catch(() => {});
+        try {
+          call.micSrc && call.micSrc.disconnect();
+        } catch (err) {}
+        call.micSrc = call.ctx.createMediaStreamSource(stream);
+        call.micSrc.connect(call.mic);
+        call.micSrc.connect(call.micMeter);
+      };
+      pc.onconnectionstatechange = () => log('info', 'bridge ' + pc.connectionState);
+      await pc.setRemoteDescription({ type: 'offer', sdp: data.sdp });
+      const t = pc.getTransceivers().find((x) => x.receiver.track && x.receiver.track.kind === 'audio');
+      const mixTrack = call.mix.stream.getAudioTracks()[0];
+      if (t) {
+        t.direction = 'sendrecv';
+        await t.sender.replaceTrack(mixTrack);
+      } else pc.addTrack(mixTrack, call.mix.stream);
+      await pc.setLocalDescription(await pc.createAnswer());
+      callUp({ signal: { type: 'answer', sdp: pc.localDescription.sdp } });
+      return { ok: true };
+    }
+    if (data && 'candidate' in data && call.pc) {
+      if (data.candidate) await call.pc.addIceCandidate(data.candidate).catch((e) => log('debug', 'candidate refused', String(e)));
+      return { ok: true };
+    }
+    return { ignored: true };
   }
 
   // ---------------------------------------------------------------- reacting
@@ -646,6 +1017,30 @@
     const res = await rest('post', `/channels/${cmd.channelId}/messages`, undefined, body);
     return { nativeId: res && res.body ? res.body.id : null, nonce: cmd.nonce };
   }
+
+  // Forwarding, as the client's Forward dialog does it: a message with no content whose message_reference has
+  // type FORWARD, which the client's own send turns into a forward (MessageActions._sendMessage checks for it),
+  // then the note as an ordinary message. The dialog itself is a lazily loaded chunk; its send ends in the same call.
+  const REFERENCE_FORWARD = 1;
+  async function forwardMessage(cmd) {
+    const source = mod.ChannelStore.getChannel(cmd.source.channelId);
+    const reference = { guild_id: (source && (source.guild_id ?? source.guildId)) || undefined, channel_id: cmd.source.channelId, message_id: cmd.source.messageId, type: REFERENCE_FORWARD };
+    const ma = mod.MessageActions;
+    let res;
+    if (ma && ma.sendMessage) res = await ma.sendMessage(cmd.channelId, { content: '', tts: false, invalidEmojis: [], validNonShortcutEmojis: [] }, false, { nonce: cmd.nonce, messageReference: reference });
+    else res = await rest('post', `/channels/${cmd.channelId}/messages`, undefined, { content: '', nonce: cmd.nonce, tts: false, message_reference: reference });
+    const id = res && res.body ? res.body.id : null;
+    if (cmd.note && cmd.note.trim()) await sendMessage({ channelId: cmd.channelId, content: cmd.note, nonce: nextNonce(cmd.nonce) });
+    return { nativeId: id };
+  }
+  // A snowflake-shaped nonce just after another, for the note that follows a forward.
+  const nextNonce = (n) => {
+    try {
+      return String(BigInt(n) + 1n);
+    } catch (e) {
+      return String(Date.now());
+    }
+  };
 
   // Never openPrivateChannel itself: that also navigates the sandbox's page to the DM.
   async function openDirect(userId) {
@@ -787,6 +1182,7 @@
     }
   });
 
+  /*@dither-lab@*/
   installWebpackHook();
   setTimeout(resolveTick, 500);
 

@@ -39,9 +39,16 @@ type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; time
 
 const BACKOFF = [1, 2, 5, 10, 30, 60];
 
+export interface CallSink {
+  onAdapterEvent(accountId: string, ev: Extract<P.AdapterEvent, { t: 'call' }>): void;
+  onAdapterGone(accountId: string): void;
+}
+
 export class Supervisor {
   private running = new Map<string, Running>();
   private pending = new Map<string, Pending>();
+  /** Where call events go (the server's Calls). */
+  calls?: CallSink;
 
   constructor(
     private store: Store,
@@ -202,6 +209,7 @@ export class Supervisor {
   detach(ws: ServerWebSocket<AdapterSocketData>) {
     const r = this.running.get(ws.data.accountId);
     if (r?.ws === ws) r.ws = undefined;
+    this.calls?.onAdapterGone(ws.data.accountId);
     const acc = this.store.account(ws.data.accountId);
     if (acc && acc.status !== 'attention' && acc.status !== 'error') this.store.updateAccount(acc.id, { status: 'offline' });
   }
@@ -230,6 +238,10 @@ export class Supervisor {
       const line = `[${ev.level}] ${ev.msg}${ev.data !== undefined ? ' ' + JSON.stringify(ev.data) : ''}\n`;
       appendFileSync(join(this.accountDir(accountId), 'adapter.log'), line);
       if (ev.level === 'warn' || ev.level === 'error') console.warn(`[${accountId}] ${line.trim()}`);
+      return;
+    }
+    if (ev.t === 'call') {
+      this.calls?.onAdapterEvent(accountId, ev);
       return;
     }
     const acc = this.store.account(accountId);

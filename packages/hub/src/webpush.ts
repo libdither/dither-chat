@@ -76,9 +76,31 @@ export type PushOutcome = 'ok' | 'gone' | 'failed';
 /** The relays browsers actually use. Anything else is refused, so the hub cannot be aimed at arbitrary hosts. */
 const RELAYS = [/^fcm\.googleapis\.com$/, /^android\.googleapis\.com$/, /^jmt\d+\.google\.com$/, /\.push\.services\.mozilla\.com$/, /^updates\.push\.services\.mozilla\.com$/, /(^|\.)push\.apple\.com$/, /\.notify\.windows\.com$/];
 
-export function isPushRelay(endpoint: string): boolean {
+/**
+ * Push servers the operator named in DITHER_PUSH_RELAYS, as exact origins: `https://ntfy.example.net`. The Android
+ * app gets its endpoint from a UnifiedPush distributor (the ntfy app, say), which speaks the same RFC 8291 Web Push
+ * as the browser relays, on whatever server the distributor uses. Nothing is allowed by default, and a listed origin
+ * allows only itself: no other port, no subdomain, and plain http only if it was written that way.
+ */
+export function extraRelays(env = process.env.DITHER_PUSH_RELAYS): string[] {
+  const out: string[] = [];
+  for (const s of (env ?? '').split(',').map((x) => x.trim()).filter(Boolean)) {
+    try {
+      const u = new URL(s);
+      if ((u.protocol === 'https:' || u.protocol === 'http:') && u.pathname === '/' && !u.search && !u.username) out.push(u.origin);
+      else console.error(`DITHER_PUSH_RELAYS: ${s} is not an origin like https://ntfy.example.net, ignored`);
+    } catch {
+      console.error(`DITHER_PUSH_RELAYS: ${s} is not a URL, ignored`);
+    }
+  }
+  return out;
+}
+
+export function isPushRelay(endpoint: string, extra: string[] = []): boolean {
   try {
     const u = new URL(endpoint);
+    if (u.username || u.password) return false;
+    if (extra.includes(u.origin)) return true;
     return u.protocol === 'https:' && RELAYS.some((r) => r.test(u.hostname));
   } catch {
     return false;

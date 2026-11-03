@@ -4,6 +4,8 @@ import { authorName, communitiesOf, convLabel, convTitle, inboxSections, placeCo
 import { db, feedback, go, inbox, markAllRead, rev } from '../state.ts';
 import { Avatar, Count, SourceChip } from './bits.tsx';
 import { Icon } from './icons.tsx';
+import { useMenu } from './ContextMenu.tsx';
+import { messageMenu } from './menus.tsx';
 
 function placeOf(c: P.ConversationView) {
   const base = placeConv(c);
@@ -12,6 +14,7 @@ function placeOf(c: P.ConversationView) {
 }
 
 function PingCard({ m }: { m: P.MessageView }) {
+  const ctx = useMenu(() => messageMenu(m));
   const c = db.conversations.get(m.conversationId);
   if (!c) return null;
   const com = communitiesOf(c)[0];
@@ -20,7 +23,7 @@ function PingCard({ m }: { m: P.MessageView }) {
   const t = m.triage!;
   const unread = (c.vantages.some((v) => (v.lastReadTs ?? 0) < m.ts) && unreadOf(c).unread > 0) || false;
   return (
-    <div class={`ping ${unread ? 'unread' : ''}`}>
+    <div class={`ping ${unread ? 'unread' : ''}`} {...ctx}>
       <button class="ping-main" onClick={() => go({ view: 'inbox', conv: c.id })}>
         <Avatar id={person?.id ?? m.authorId ?? m.id} name={authorName(m.authorId)} url={person?.avatar ?? author?.avatar} size={34} network={c.network} accountIds={m.seenVia} />
         <span class="ping-text">

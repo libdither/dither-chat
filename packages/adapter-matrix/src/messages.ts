@@ -128,6 +128,36 @@ export interface Rendered {
   extra?: Record<string, unknown>;
 }
 
+/**
+ * Where a forwarded event came from. Matrix has no forward of its own: clients send the content again. This
+ * adapter adds what MSC2723 proposes for that (the original's room, event, sender and time), under its own key
+ * until a stable one exists, and reads it back from anyone who sets it.
+ */
+export const FORWARD_KEY = 'dev.dither.forwarded';
+
+export function forwardOf(content: any): { conversation?: string; message?: string; author?: string; ts?: number } | undefined {
+  const f = content?.[FORWARD_KEY];
+  if (!f || typeof f !== 'object') return undefined;
+  const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
+  const out = { conversation: str(f.room_id), message: str(f.event_id), author: str(f.sender), ts: typeof f.origin_server_ts === 'number' ? f.origin_server_ts : undefined };
+  return out.message || out.conversation ? out : undefined;
+}
+
+/** A message's content made ready to send again elsewhere: no relations, no reply fallback, nobody mentioned. */
+export function forwardableContent(content: any): Record<string, any> {
+  const c: Record<string, any> = { ...content };
+  const wasReply = !!c['m.relates_to']?.['m.in_reply_to'];
+  delete c['m.relates_to'];
+  delete c['m.new_content'];
+  delete c[FORWARD_KEY];
+  if (wasReply) {
+    if (typeof c.body === 'string') c.body = c.body.replace(/^(> .*\n)+\n/, '');
+    if (typeof c.formatted_body === 'string') c.formatted_body = c.formatted_body.replace(/<mx-reply>[\s\S]*?<\/mx-reply>/, '');
+  }
+  c['m.mentions'] = {};
+  return c;
+}
+
 /** Content of a message-like event -> kind, body, attachments. null: not shown (e.g. verification requests). */
 export function renderContent(type: string, content: any, isReply: boolean, eventId?: string): Rendered | null {
   switch (type) {

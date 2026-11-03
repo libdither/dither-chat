@@ -19,11 +19,11 @@ function memo<T>(key: string, fn: () => T): T {
 export const netName = (n: P.Network) => NETWORK_META[n].name;
 export const netColor = (n: P.Network) => NETWORK_META[n].color;
 
-// ------------------------------------------------------------------ visibility (demo toggle)
+// ------------------------------------------------------------------ visibility
 
+/** A hub is either a demo world or a real one (never both), so every account it knows is shown. */
 export function visibleAccount(id: string) {
-  const a = db.accounts.get(id);
-  return !!a && (prefs.value.showDemo || !a.demo);
+  return db.accounts.has(id);
 }
 export function visibleConv(c: P.ConversationView) {
   return c.vantages.some((v) => visibleAccount(v.accountId));
@@ -347,7 +347,7 @@ export interface Effective {
 
 export function effectiveLevel(c: P.ConversationView): Effective {
   return memo('lvl:' + c.id, () => {
-    const rules = new Map(db.rules.map((r) => [`${r.scope}:${r.target ?? ''}`, r.level]));
+    const rules = memo('rules', () => new Map(db.rules.map((r) => [`${r.scope}:${r.target ?? ''}`, r.level])));
     const hit = (scope: string, target: string | null) => rules.get(`${scope}:${target ?? ''}`);
     let l: P.NotifyLevel | undefined;
     if ((l = hit('conversation', c.id))) return { level: l, source: 'this conversation', explicit: true, scope: 'conversation' };
@@ -451,10 +451,24 @@ export function folderConvs(f: P.FolderView): P.ConversationView[] {
 
 // ------------------------------------------------------------------ people, groups
 
+/** One pass over the conversations, not one per person: `people()` asks for every person on each `rev`. */
+function directsByPerson(): Map<string, P.ConversationView[]> {
+  return memo('directsByPerson', () => {
+    const m = new Map<string, P.ConversationView[]>();
+    for (const c of db.conversations.values()) {
+      if (c.shape !== 'direct' || !c.peerPersonId || !visibleConv(c)) continue;
+      const l = m.get(c.peerPersonId);
+      if (l) l.push(c);
+      else m.set(c.peerPersonId, [c]);
+    }
+    for (const l of m.values()) l.sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0));
+    return m;
+  });
+}
+
+const none: P.ConversationView[] = [];
 export function directsOf(personId: string): P.ConversationView[] {
-  return memo('directs:' + personId, () =>
-    [...db.conversations.values()].filter((c) => c.shape === 'direct' && c.peerPersonId === personId && visibleConv(c)).sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0)),
-  );
+  return directsByPerson().get(personId) ?? none;
 }
 
 export function people(): { person: P.PersonView; directs: P.ConversationView[]; last: number }[] {

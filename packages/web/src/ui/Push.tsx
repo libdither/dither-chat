@@ -1,6 +1,7 @@
 /** Opting one device in to Web Push. */
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
+import { android } from '../android.ts';
 import { ago } from '../format.ts';
 import { serviceWorkerSupported } from '../pwa.ts';
 import { api, setPrefs, toast } from '../state.ts';
@@ -31,6 +32,10 @@ function blocker(): string | null {
 }
 
 export function PushSettings() {
+  return android ? <AndroidPushSettings /> : <WebPushSettings />;
+}
+
+function WebPushSettings() {
   const [info, setInfo] = useState<PushInfo | null>(null);
   const [mine, setMine] = useState<PushSubscription | null>(null);
   const [busy, setBusy] = useState(false);
@@ -108,24 +113,104 @@ export function PushSettings() {
           Rooms the hub cannot send to, like encrypted Matrix rooms, never offer it.
         </p>
       )}
-      {!!info?.devices.length && (
-        <>
-          <h4 class="push-devices">Devices with push</h4>
-          {info.devices.map((d) => (
-            <div class="set-rule">
-              <span class="set-rule-label">
-                <Icon name="monitor" size={15} /> {d.label} <small>via {d.relay}{d.lastOkAt ? `, last sent ${ago(d.lastOkAt)}` : ''}{d.lastError ? `, failing: ${d.lastError}` : ''}</small>
-              </span>
-              <button class="icon-btn small" title="Remove" onClick={() => api('/api/push/unsubscribe', { body: { id: d.id } }).then(reload)}>
-                <Icon name="x" size={13} />
-              </button>
-            </div>
-          ))}
-        </>
-      )}
+      <Devices info={info} reload={reload} />
       <p class="set-help">
         Fully self-hosted alternative: <b>{info?.ntfy ? 'ntfy is on for this hub' : 'ntfy is off'}</b>. Set <code>DITHER_NTFY_URL</code> on the hub to a topic on your own ntfy server, and use the ntfy app. No vendor relay is involved if the phone polls your server.
       </p>
+    </section>
+  );
+}
+
+function Devices({ info, reload }: { info: PushInfo | null; reload: () => void }) {
+  if (!info?.devices.length) return null;
+  return (
+    <>
+      <h4 class="push-devices">Devices with push</h4>
+      {info.devices.map((d) => (
+        <div class="set-rule">
+          <span class="set-rule-label">
+            <Icon name="monitor" size={15} /> {d.label} <small>via {d.relay}{d.lastOkAt ? `, last sent ${ago(d.lastOkAt)}` : ''}{d.lastError ? `, failing: ${d.lastError}` : ''}</small>
+          </span>
+          <button class="icon-btn small" title="Remove" onClick={() => api('/api/push/unsubscribe', { body: { id: d.id } }).then(reload)}>
+            <Icon name="x" size={13} />
+          </button>
+        </div>
+      ))}
+    </>
+  );
+}
+
+/**
+ * The Android app has no Web Push (a WebView has no PushManager). It registers with a UnifiedPush distributor
+ * instead, such as the ntfy app, whose endpoint takes the same encrypted Web Push the hub sends to browsers.
+ */
+function AndroidPushSettings() {
+  const app = android!;
+  const [info, setInfo] = useState<PushInfo | null>(null);
+  const [busy, setBusy] = useState(false);
+  const mine = app.push.value;
+  const distributors = app.info.value?.distributors ?? [];
+  const reload = () => api<PushInfo>('/api/push').then(setInfo).catch(() => {});
+  useEffect(() => {
+    reload();
+    app.send({ t: 'push.status' });
+  }, []);
+  const run = (fn: () => Promise<void>) => async () => {
+    setBusy(true);
+    try {
+      await fn();
+    } catch (e: any) {
+      toast({ kind: 'error', title: 'Push', body: String(e?.message ?? e) });
+    } finally {
+      setBusy(false);
+      reload();
+    }
+  };
+  const enable = run(async () => {
+    // The app asks for the notification permission, picks the distributor, and registers its endpoint with the hub
+    // itself (so a rotated endpoint reaches the hub even with the page closed). This waits for the outcome.
+    await app.ask({ t: 'push.register', vapid: info!.publicKey }, 'push', 120_000);
+    setPrefs({ pushEnabled: true });
+  });
+  const disable = run(async () => {
+    app.send({ t: 'push.unregister' });
+    app.push.value = null;
+    setPrefs({ pushEnabled: false });
+  });
+  const test = run(async () => {
+    const r = await api<{ ok: boolean; error?: string }>('/api/push/test', { body: { endpoint: mine?.endpoint } });
+    if (!r.ok) throw new Error(r.error ?? 'It did not go through.');
+    toast({ kind: 'info', title: 'Sent', body: 'It should appear in a few seconds.' });
+  });
+  const registered = !!mine && !!info?.devices.length;
+  return (
+    <section class="set-block" id="push">
+      <h3>Push on this device</h3>
+      <p class="set-help">
+        This app gets push through UnifiedPush: a distributor app on the phone, such as ntfy, holds one connection for every app that uses it and wakes this one. The hub sends it the same end-to-end encrypted Web Push it sends browsers, so the
+        distributor's server sees when a push arrives but not what it says. The hub only sends to servers its operator listed in <code>DITHER_PUSH_RELAYS</code>.
+      </p>
+      {!distributors.length ? (
+        <p class="set-help">
+          <Icon name="alert" size={13} /> No UnifiedPush distributor is installed. Install one, for example <a href="https://f-droid.org/packages/io.heckel.ntfy/" target="_blank" rel="noreferrer">ntfy</a>, then come back here.
+        </p>
+      ) : (
+        <div class="btn-row">
+          {mine ? (
+            <>
+              <button class="btn ghost small" disabled={busy} onClick={test}><Icon name="send" size={13} /> Send a test notification</button>
+              <button class="btn ghost small" disabled={busy} onClick={disable}><Icon name="bellOff" size={13} /> Turn off on this device</button>
+            </>
+          ) : (
+            <button class="btn small" disabled={busy || !info} onClick={enable}><Icon name="bell" size={13} /> Turn on for this device</button>
+          )}
+        </div>
+      )}
+      {mine && !registered && info && <p class="set-help"><Icon name="alert" size={13} /> This device has an endpoint but the hub has no device: turn it off and on again.</p>}
+      <Devices info={info} reload={reload} />
+      <div class="btn-row">
+        <button class="btn ghost small" onClick={() => app.changeHub()}><Icon name="monitor" size={13} /> Use another hub</button>
+      </div>
     </section>
   );
 }

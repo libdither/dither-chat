@@ -24,7 +24,7 @@ export const STATUS: Record<P.AccountStatus, string> = {
 
 export function AccountsSidebar({ active, onAdd }: { active?: string; onAdd: () => void }) {
   rev.value;
-  const accounts = [...db.accounts.values()].filter((a) => prefs.value.showDemo || !a.demo);
+  const accounts = [...db.accounts.values()];
   return (
     <div class="sidebar-inner">
       <header class="side-head">

@@ -1,7 +1,7 @@
 /** Which devices get Web Push, and keeping that list honest. */
 import type * as P from '@dither-chat/protocol';
 import type { Store } from './store.ts';
-import { fingerprint, isPushRelay, pushPayload, sendPush, type PushTarget, type VapidKeys } from './webpush.ts';
+import { extraRelays, fingerprint, isPushRelay, pushPayload, sendPush, type PushTarget, type VapidKeys } from './webpush.ts';
 
 type Row = Record<string, any>;
 
@@ -18,8 +18,9 @@ function relayName(endpoint: string): string {
 }
 
 export class PushService {
+  private relays = extraRelays();
   /** Tests swap these for a local endpoint; real use never does. */
-  allow: (endpoint: string) => boolean = isPushRelay;
+  allow: (endpoint: string) => boolean = (e) => isPushRelay(e, this.relays);
   transport: typeof fetch = fetch;
 
   constructor(private store: Store, private keys: VapidKeys, private subject: string) {}

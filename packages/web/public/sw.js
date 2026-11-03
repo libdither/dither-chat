@@ -1,5 +1,7 @@
-// Offline shell, updates and push. The app is live-data first: only the shell and static files
-// are cached, and each build gets its own cache. The build fills in the two placeholders (vite.config.ts).
+// Offline shell, updates and push. The shell is served from this build's own cache, so starting the app
+// never waits on the network; live data is the page's business (its snapshot, then the hub). Each build gets
+// its own cache, and a new build reaches the page through the update flow in pwa.ts. The build fills in the
+// two placeholders (vite.config.ts).
 const BUILD = '__BUILD__';
 const PRECACHE = '__PRECACHE__';
 const CACHE = `dither-shell-${BUILD}`;
@@ -26,14 +28,18 @@ self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
   if (url.origin !== location.origin) return;
+  const p = url.pathname;
+  const hubOwn = p.startsWith('/api/') || p.startsWith('/media/') || p.startsWith('/emoji/') || p.startsWith('/voice/') || p === '/sw.js' || p === '/ca.crt';
   if (e.request.mode === 'navigate') {
+    if (hubOwn) return;
+    // Every other path is the app (routes live in the hash). Cache first: the cached index.html names exactly the
+    // files this build precached. Network only when the cache lost it.
     e.respondWith(
-      fetch(e.request).catch(async () => (await caches.open(CACHE)).match('/index.html')),
+      caches.open(CACHE).then(async (c) => (await c.match('/index.html')) ?? fetch(e.request)),
     );
     return;
   }
-  const p = url.pathname;
-  if (p.startsWith('/api/') || p.startsWith('/media/') || p.startsWith('/emoji/') || p === '/sw.js' || p === '/ca.crt') return;
+  if (hubOwn) return;
   // Hashed files never change, so the cache is right whenever it has them. Anything else: network first.
   if (p.startsWith('/assets/')) {
     e.respondWith(

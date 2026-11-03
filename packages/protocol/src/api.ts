@@ -205,6 +205,46 @@ export interface MessageView {
   reactions: ReactionView[];
   seenVia: string[];
   triage: TriageView | null;
+  /** This message forwards another: body and attachments are what was forwarded. */
+  forward?: ForwardView;
+}
+
+/** A forward, shown as a card with where it came from. */
+export interface ForwardView {
+  /** The original, when this hub has it. */
+  messageId: string | null;
+  conversationId: string | null;
+  authorId: string | null;
+  /** Who wrote the original, in words, when no identity is known. */
+  authorName: string | null;
+  network: Network | null;
+  /** Where the original was: "#general · Some server". */
+  source: string | null;
+  ts: number | null;
+  /** The forwarded text, when the message's own body also carries a note and a line saying where it came from. */
+  text?: string;
+  /** What was written with it, when the network carried both as one message (a forward this hub sent across networks). */
+  note?: string;
+  /** How it went out, for forwards this hub sent: the network's own forward, the content again, or into another network. */
+  sentAs?: ForwardMode;
+}
+
+export type ForwardMode = 'native' | 'resend' | 'cross';
+
+/** POST /api/messages/:id/forward */
+export interface ForwardRequest {
+  targets: { conversationId: string; accountId?: string }[];
+  note?: string;
+}
+
+export interface ForwardResult {
+  conversationId: string;
+  ok: boolean;
+  mode?: ForwardMode;
+  accountId?: string;
+  error?: string;
+  /** Attachments that could not go along (too large for the destination, or gone). */
+  skipped?: string[];
 }
 
 export interface FolderView {

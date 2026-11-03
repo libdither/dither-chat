@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Plain http is allowed because a hub on the tailnet is often http://100.x.y.z:8460, and WireGuard already
+  encrypts that hop. Calls, the offline shell and push need https all the same (a WebView only gives
+  microphones and service workers to secure contexts), so docs/android.md recommends it.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

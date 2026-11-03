@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, interactive-widget=resizes-content" />
-    <meta name="theme-color" content="#14151b" />
+    <meta name="theme-color" content="#0a0b0f" />
     <meta name="description" content="dither-chat: Discord, Signal and Matrix in one hub" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
@@ -13,6 +13,17 @@
     <meta name="apple-mobile-web-app-title" content="dither" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>dither-chat</title>
+    <script>
+      // The last theme (ui/Themes.tsx keeps it here), before the app's script loads, so nothing flashes.
+      try {
+        var t = JSON.parse(localStorage.getItem('dither-chat:theme-vars') || 'null');
+        if (t) {
+          document.documentElement.style.cssText = t.css;
+          document.documentElement.dataset.theme = t.scheme;
+          document.querySelector('meta[name="theme-color"]').content = getComputedStyle(document.documentElement).getPropertyValue('--titlebar').trim() || '#0a0b0f';
+        }
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="app"></div>

@@ -91,6 +91,8 @@ export interface RawMessageReference {
   message_id?: string;
   channel_id?: string;
   guild_id?: string;
+  /** 0 a reply (the default), 1 a forward. */
+  type?: number;
 }
 
 export interface RawMessage {
@@ -113,7 +115,7 @@ export interface RawMessage {
   /** present on the message that started a thread */
   thread?: RawChannel;
   /** a forward: the content lives here, and the message's own fields are empty */
-  message_snapshots?: { content?: string; attachments?: RawAttachment[]; embeds?: RawEmbed[] }[];
+  message_snapshots?: { content?: string; timestamp?: string; attachments?: RawAttachment[]; embeds?: RawEmbed[] }[];
   sticker_items?: { name: string }[];
   poll?: { question?: string; answers?: string[] };
   nonce?: string | number;
@@ -182,6 +184,8 @@ export type BridgeUp =
   | { t: 'dispatch'; event: DispatchName; data: any }
   /** A sign-in request Discord refused, from the client's own log. */
   | { t: 'loginIssue'; route: string; status: number; captcha?: string; message?: string; code?: number }
+  /** A call's bridge signalling, its participants (with their users, so they have names), or its end. */
+  | { t: 'call'; call: string; signal?: unknown; state?: { channelId: string; participants: { id: string; muted: boolean; deafened: boolean; speaking: boolean; video?: boolean }[] }; users?: RawUser[]; ended?: string }
   | { t: 'reply'; id: string; ok: true; result?: unknown }
   | { t: 'reply'; id: string; ok: false; error: string; retryAfter?: number }
   | { t: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; msg: string; data?: unknown };
@@ -214,7 +218,10 @@ export type BridgeDown =
   | { t: 'ping' };
 
 export type HookCommand =
+  | { kind: 'lab'; op: string; [k: string]: unknown }
   | { kind: 'send'; channelId: string; content: string; replyTo?: string; nonce: string; files?: { name: string; mime: string; size: number; base64: string }[] }
+  /** reply { nativeId } of the forward; the note follows it as its own message, as the client's forward does. */
+  | { kind: 'forward'; channelId: string; source: { channelId: string; messageId: string }; note?: string; nonce: string }
   | { kind: 'openDirect'; userId: string }
   | { kind: 'history'; channelId: string; limit: number; beforeId?: string }
   | { kind: 'markRead'; channelId: string; messageId: string }
@@ -223,4 +230,9 @@ export type HookCommand =
   | { kind: 'reactionContext'; channelId: string }
   | { kind: 'edit'; channelId: string; messageId: string; content: string }
   | { kind: 'redact'; channelId: string; messageId: string }
-  | { kind: 'fetchMedia'; url: string };
+  | { kind: 'fetchMedia'; url: string }
+  /** join: reply { direct?: DirectVoiceSession }. */
+  | { kind: 'call'; call: string; op: 'join'; channelId: string; mode: 'bridge' | 'direct'; muted?: boolean; deafened?: boolean }
+  | { kind: 'call'; call: string; op: 'leave' }
+  | { kind: 'call'; call: string; op: 'mute'; muted: boolean; deafened: boolean }
+  | { kind: 'call'; call: string; op: 'signal' | 'note'; data: unknown };

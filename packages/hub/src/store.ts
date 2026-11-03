@@ -548,7 +548,7 @@ export class Store {
         replyTo,
         thread,
         f.mentionsSelf ? 1 : 0,
-        f.extra ? JSON.stringify(f.extra) : null,
+        f.extra || f.forward ? JSON.stringify({ ...f.extra, ...(f.forward ? { forward: f.forward } : {}) }) : null,
       );
     if (f.attachments) {
       this.db.query('DELETE FROM attachment WHERE message_id = ?').run(id);
@@ -1069,6 +1069,7 @@ export class Store {
     );
     const seen = this.db.query(`SELECT * FROM message_seen WHERE message_id IN (${ph})`).all(...ids) as Row[];
     const tri = this.db.query(`SELECT * FROM triage WHERE message_id IN (${ph})`).all(...ids) as Row[];
+    const sentForwards = new Map((this.db.query(`SELECT * FROM forward_sent WHERE message_id IN (${ph})`).all(...ids) as Row[]).map((f) => [f.message_id, json<P.ForwardView | null>(f.data, null)]));
     const by = <T extends Row>(xs: T[]) => {
       const m = new Map<string, T[]>();
       for (const x of xs) (m.get(x.message_id) ?? m.set(x.message_id, []).get(x.message_id)!).push(x);
@@ -1081,9 +1082,12 @@ export class Store {
       const rx = new Map<string, string[]>();
       for (const x of R.get(r.id) ?? []) (rx.get(`${x.style}|${x.key}`) ?? rx.set(`${x.style}|${x.key}`, []).get(`${x.style}|${x.key}`)!).push(x.identity_id);
       const t = T.get(r.id);
-      const encryptionWarning = json<{ encryptionWarning?: string }>(r.extra, {}).encryptionWarning;
+      const extra = json<{ encryptionWarning?: string; forward?: P.ForwardFact }>(r.extra, {});
+      const encryptionWarning = extra.encryptionWarning;
+      const forward = sentForwards.get(r.id) ?? (extra.forward ? this.forwardView(r.network, extra.forward) : null);
       return {
         ...(encryptionWarning ? { encryptionWarning } : {}),
+        ...(forward ? { forward } : {}),
         id: r.id,
         conversationId: r.conversation_id,
         network: r.network,
@@ -1120,6 +1124,82 @@ export class Store {
         triage: t ? { decision: t.decision, score: t.score, reasons: json(t.reasons, []), decidedBy: t.decided_by, feedback: t.feedback } : null,
       };
     });
+  }
+
+  // ------------------------------------------------------------ forwards
+
+  /** A forward as the network marked it, with whatever this hub knows about where it came from. */
+  private forwardView(network: P.Network, f: P.ForwardFact): P.ForwardView {
+    const known = (table: string, id: string) => !!this.db.query(`SELECT 1 FROM ${table} WHERE id = ?`).get(id);
+    const messageId = f.message && known('message', hubId('msg', network, f.message)) ? hubId('msg', network, f.message) : null;
+    const original = messageId ? (this.db.query('SELECT conversation_id, author_id, ts FROM message WHERE id = ?').get(messageId) as Row) : null;
+    const conversationId = original?.conversation_id ?? (f.conversation && known('conversation', hubId('cnv', network, f.conversation)) ? hubId('cnv', network, f.conversation) : null);
+    const authorId = original?.author_id ?? (f.author && known('identity', hubId('idn', network, f.author)) ? hubId('idn', network, f.author) : null);
+    const space = !conversationId && f.space ? (this.db.query('SELECT name FROM space WHERE id = ?').get(hubId('spc', network, f.space)) as Row | null)?.name : null;
+    return {
+      messageId,
+      conversationId,
+      authorId,
+      authorName: f.authorName ?? null,
+      network,
+      source: conversationId ? this.placeLabel(conversationId) : (space ?? null),
+      ts: f.ts ?? original?.ts ?? null,
+    };
+  }
+
+  /** Where a conversation is, in words: "#general · Server", a group's name, or the person a DM is with. */
+  placeLabel(conversationId: string): string | null {
+    const c = this.conversationView(conversationId);
+    if (!c) return null;
+    if (c.shape === 'direct') {
+      const peer = c.participantIds.find((p) => !this.isSelf(p));
+      const r = peer ? (this.db.query('SELECT display_name, handle FROM identity WHERE id = ?').get(peer) as Row | null) : null;
+      const person = c.peerPersonId ? (this.db.query('SELECT name FROM person WHERE id = ?').get(c.peerPersonId) as Row | null) : null;
+      return person?.name ?? r?.display_name ?? r?.handle ?? 'a direct message';
+    }
+    if (c.shape === 'self') return 'Notes to self';
+    const name = c.name ?? 'a conversation';
+    const top = this.communityName(c.spaceIds[0] ?? (c.parentId ? this.conversationView(c.parentId)?.spaceIds[0] : undefined));
+    const label = c.shape === 'channel' || c.shape === 'thread' ? `#${name}` : name;
+    return top ? `${label} · ${top}` : label;
+  }
+
+  private communityName(spaceId: string | undefined, depth = 0): string | null {
+    if (!spaceId || depth > 6) return null;
+    const s = this.db.query('SELECT name, kind FROM space WHERE id = ?').get(spaceId) as Row | null;
+    if (!s) return null;
+    if (s.kind !== 'section') return s.name;
+    const up = this.db.query(`SELECT parent_id FROM space_edge WHERE child_kind = 'space' AND child_id = ? LIMIT 1`).get(spaceId) as Row | null;
+    return this.communityName(up?.parent_id, depth + 1) ?? s.name;
+  }
+
+  /** Remember that this hub sent a message as a forward. Shown as one at once if the message is already here. */
+  recordForward(messageId: string, view: P.ForwardView, now = Date.now()) {
+    this.db.query('INSERT OR REPLACE INTO forward_sent (message_id, data, created_at) VALUES (?, ?, ?)').run(messageId, JSON.stringify(view), now);
+    if (this.db.query('SELECT 1 FROM message WHERE id = ?').get(messageId)) this.dirty.messages.set(messageId, false);
+  }
+
+  /** What a forward of this message carries: the content, its files as the adapter gave them, and who could read it. */
+  forwardSource(messageId: string): {
+    view: P.MessageView;
+    conversationNative: string;
+    authorName: string | null;
+    files: { url: string; name: string | null; mime: string | null; kind: P.AttachmentKind; size: number | null }[];
+  } | null {
+    const r = this.db.query('SELECT * FROM message WHERE id = ?').get(messageId) as Row | null;
+    if (!r || r.deleted) return null;
+    const view = this.messageViews([r])[0];
+    const conv = this.nativeOf('conversation', r.conversation_id);
+    if (!conv) return null;
+    const files = (this.db.query('SELECT url, name, mime, kind, size FROM attachment WHERE message_id = ? ORDER BY position').all(messageId) as Row[]).map((a) => ({ url: a.url, name: a.name, mime: a.mime, kind: a.kind, size: a.size }));
+    return { view, conversationNative: conv.nativeId, authorName: this.identityLabel(r.author_id), files };
+  }
+
+  /** A person's name for an identity: the merged person, else what the network calls them. */
+  identityLabel(identityId: string | null): string | null {
+    if (!identityId) return null;
+    const r = this.db.query('SELECT i.display_name, i.handle, p.name AS person FROM identity i LEFT JOIN person p ON p.id = i.person_id WHERE i.id = ?').get(identityId) as Row | null;
+    return r ? (r.person ?? r.display_name ?? r.handle ?? null) : null;
   }
 
   messageView(id: string): P.MessageView | null {

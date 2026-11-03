@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- packages/web/public/icon.svg, scaled into the adaptive icon's safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#b79bff" android:pathData="M32,26.5h5.5v5.5h-5.5zM43,26.5h5.5v5.5h-5.5zM54,26.5h5.5v5.5h-5.5zM65,26.5h5.5v5.5h-5.5zM26.5,32h5.5v5.5h-5.5zM37.5,32h5.5v5.5h-5.5zM48.5,32h5.5v5.5h-5.5zM32,37.5h5.5v5.5h-5.5zM43,37.5h5.5v5.5h-5.5zM54,37.5h5.5v5.5h-5.5zM65,37.5h5.5v5.5h-5.5zM76,37.5h5.5v5.5h-5.5zM37.5,43h5.5v5.5h-5.5zM48.5,43h5.5v5.5h-5.5zM59.5,43h5.5v5.5h-5.5zM21,48.5h5.5v5.5h-5.5zM32,48.5h5.5v5.5h-5.5zM43,48.5h5.5v5.5h-5.5zM54,48.5h5.5v5.5h-5.5zM65,48.5h5.5v5.5h-5.5zM76,48.5h5.5v5.5h-5.5zM26.5,54h5.5v5.5h-5.5zM37.5,54h5.5v5.5h-5.5zM48.5,54h5.5v5.5h-5.5zM59.5,54h5.5v5.5h-5.5zM21,59.5h5.5v5.5h-5.5zM32,59.5h5.5v5.5h-5.5zM43,59.5h5.5v5.5h-5.5zM54,59.5h5.5v5.5h-5.5zM65,59.5h5.5v5.5h-5.5zM37.5,65h5.5v5.5h-5.5zM32,70.5h5.5v5.5h-5.5zM43,70.5h5.5v5.5h-5.5zM54,70.5h5.5v5.5h-5.5zM43,81.5h5.5v5.5h-5.5z"/>
+</vector>

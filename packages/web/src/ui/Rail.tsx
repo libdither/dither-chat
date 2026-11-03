@@ -1,16 +1,24 @@
 import type * as P from '@dither-chat/protocol';
-import { convTitle, directsOf, folderConvs, inboxSections, people, placePref, railEntries, spaceUnread, sumUnread, groupsLists, netName, unreadOf, type RailEntry } from '../model.ts';
-import { db, go, patchPlaces, rev, route, type Route } from '../state.ts';
+import { Fragment } from 'preact';
+import { convTitle, directsOf, folderConvs, inboxSections, people, placePref, railEntries, spaceUnread, sumUnread, groupsLists, netName, unreadOf, visibleConv, type RailEntry } from '../model.ts';
+import { db, go, markAllRead, patchPlaces, rev, route, type Route } from '../state.ts';
 import { AccountDots, Avatar, Count, NetBadge } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { DitherMark, Icon } from './icons.tsx';
 import { dropPlace, openPlaceMenu, placeLabel } from './Organize.tsx';
+import { groups, useMenu, type MenuSpec } from './ContextMenu.tsx';
+import { accountsMenu } from './menus.tsx';
+import { useEffect, useRef } from 'preact/hooks';
+import { arrangeDrop, arrangedFolderItems, arrangedRail, snapshot, sortOf, SORT_LABELS } from '../arrange.ts';
+import { OrganizeView, SortIcon, sortEntries, startOrganize, useFlip } from './Reorganize.tsx';
+import { openMenu } from './ContextMenu.tsx';
 
-function RailItem({ active, unread, badge, title, onClick, children, dnd, class: cls }: { active: boolean; unread?: boolean; badge?: number; title: string; onClick: () => void; children: any; dnd?: Record<string, unknown>; class?: string }) {
+function RailItem({ active, unread, badge, title, onClick, children, dnd, menu, class: cls }: { active: boolean; unread?: boolean; badge?: number; title: string; onClick: () => void; children: any; dnd?: Record<string, unknown>; menu?: () => MenuSpec | null; class?: string }) {
+  const ctx = useMenu(menu ?? (() => null));
   return (
     <div class={`rail-item ${active ? 'active' : ''} ${cls ?? ''}`} {...dnd}>
       <span class={`rail-pill ${active ? 'active' : unread ? 'unread' : ''}`} />
-      <button class="rail-btn" title={title} aria-label={title} onClick={onClick}>
+      <button class="rail-btn" title={title} aria-label={title} onClick={onClick} {...(menu ? ctx : {})}>
         {children}
       </button>
       {!!badge && (
@@ -67,8 +75,9 @@ function FolderIcon({ folder }: { folder: P.FolderView }) {
 
 const entryId = (e: RailEntry) => e.key.slice(e.key.indexOf(':') + 1);
 
+const railDrop = arrangeDrop(dropPlace);
 function dnd(key: string, folder?: string, accepts = false) {
-  return { ...dragProps({ key, label: placeLabel(key), group: 'rail', folder, accepts, onDrop: dropPlace, onMenu: (x, y) => openPlaceMenu(key, placeLabel(key), x, y, folder) }) };
+  return { ...dragProps({ key, label: placeLabel(key), group: 'rail', folder, accepts, onDrop: railDrop, onMenu: (x, y) => openPlaceMenu(key, placeLabel(key), x, y, folder) }) };
 }
 
 function RailSpace({ space: s, route: r, folder }: { space: P.SpaceView; route: Route; folder?: string }) {
@@ -149,7 +158,7 @@ function RailEntryView({ entry: e, route: r }: { entry: RailEntry; route: Route 
         )}
       </RailItem>
       {open &&
-        f.items.map((it) => {
+        arrangedFolderItems(f).map((it) => {
           if (it.kind === 'person') return <RailPerson id={it.id} route={r} folder={f.id} />;
           if (it.kind === 'space') {
             const s = db.spaces.get(it.id);
@@ -162,6 +171,12 @@ function RailEntryView({ entry: e, route: r }: { entry: RailEntry; route: Route 
   );
 }
 
+/** Discord's home button has no menu; this inbox spans every account, so reading all of it is worth one. */
+function inboxMenu(): MenuSpec {
+  const all = [...db.conversations.values()].filter(visibleConv);
+  return { label: 'Inbox', items: groups([{ label: 'Mark Everything As Read', icon: 'check', disabled: !sumUnread(all).unread, run: () => markAllRead(all, 'all your accounts') }]) };
+}
+
 export function Rail() {
   rev.value;
   const r = route.value;
@@ -172,10 +187,13 @@ export function Rail() {
   const groupsBadge = sumUnread([...g.groups, ...g.rooms]).badge;
   const attention = [...db.accounts.values()].some((a) => a.attention);
   const is = (pred: (r: Route) => boolean) => pred(r);
+  const scroll = useRef<HTMLDivElement>(null);
+  useEffect(startOrganize, []);
+  useFlip(scroll, snapshot.value.v);
 
   return (
     <nav class="rail" aria-label="Places">
-      <RailItem active={is((r) => r.view === 'inbox' || r.view === 'triage')} title="Inbox" badge={priorityCount} onClick={() => go({ view: 'inbox' })}>
+      <RailItem active={is((r) => r.view === 'inbox' || r.view === 'triage')} title="Inbox" badge={priorityCount} onClick={() => go({ view: 'inbox' })} menu={inboxMenu}>
         <span class="rail-logo">
           <DitherMark size={26} />
         </span>
@@ -187,19 +205,31 @@ export function Rail() {
         <Icon name="groups" size={22} />
       </RailItem>
       <div class="rail-sep" />
-      <div class="rail-scroll">
-        {railEntries().map((e, i, all) => (
-          <>
+      <div class="rail-scroll" ref={scroll}>
+        {arrangedRail().map((e, i, all) => (
+          <Fragment key={e.key}>
             <RailEntryView entry={e} route={r} />
             {placePref(e.kind, entryId(e)).pinned && !placePref(all[i + 1]?.kind ?? 'space', all[i + 1] ? entryId(all[i + 1]) : '').pinned && <div class="rail-sep small" />}
-          </>
+          </Fragment>
         ))}
         <RailItem active={r.view === 'directory'} title="All communities and groups" onClick={() => go({ view: 'directory' })}>
           <Icon name="grid" size={20} />
         </RailItem>
+        <RailItem
+          class="rail-sort"
+          active={false}
+          title={`Order: ${SORT_LABELS[sortOf('rail')]}. Change the order, or organize servers`}
+          onClick={() => {
+            const b = scroll.current?.querySelector('.rail-sort')?.getBoundingClientRect();
+            openMenu({ x: (b?.right ?? 72) + 4, y: b?.top ?? 0 }, { items: sortEntries('rail'), label: 'Order servers', head: <div class="cm-sheet-title">Order servers</div> });
+          }}
+        >
+          <SortIcon size={18} />
+        </RailItem>
       </div>
+      <OrganizeView />
       <div class="rail-sep rail-foot" />
-      <RailItem class="rail-foot" active={is((r) => r.view === 'accounts')} title="Accounts and connections" onClick={() => go({ view: 'accounts' })}>
+      <RailItem class="rail-foot" active={is((r) => r.view === 'accounts')} title="Accounts and connections" onClick={() => go({ view: 'accounts' })} menu={accountsMenu}>
         <span class="rail-acc">
           <Icon name="power" size={20} />
           {attention && <span class="rail-alert" />}

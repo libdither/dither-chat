@@ -4,3 +4,5 @@ export * from './api.ts';
 export * from './search.ts';
 export * from './direct.ts';
 export * from './send.ts';
+export * from './call.ts';
+export * from './usage.ts';

@@ -58,6 +58,8 @@ export function dragProps(o: DragOpts) {
     'data-dnd-accepts': o.accepts ? '1' : undefined,
     'data-dnd-axis': o.axis,
     onContextMenu: (e: MouseEvent) => {
+      // Shift+right-click is the browser's own menu, as in Discord.
+      if (e.shiftKey && (e as PointerEvent).pointerType !== 'touch') return;
       e.preventDefault();
       // Android fires this for the long press the hold timer already handles.
       if ((e as PointerEvent).pointerType !== 'touch' && o.onMenu) o.onMenu(e.clientX, e.clientY);

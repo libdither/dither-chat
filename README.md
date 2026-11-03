@@ -71,12 +71,15 @@ clients over Tailscale (bind is `0.0.0.0`; the server only answers loopback + ta
 | Reactions across networks | done: custom emoji, Discord super reactions, Signal's one-per-person, Matrix image packs ([docs/reactions.md](docs/reactions.md)). Sending a super reaction is untested for lack of Nitro |
 | Installable PWA | done: HTTPS through Caddy with a Let's Encrypt wildcard, no per-device step ([docs/deploy.md](docs/deploy.md)), updates reach installed apps. Verified in headless Chromium, not yet on a phone |
 | On a phone | done: the same app, laid out like Discord's: swipe between the lists, the page and its details, swipe to reply, long-press for everything a hover offers, sheets that drag away, back that closes them first, an image viewer, the keyboard and the notch handled. Everything the desktop does is reachable ([docs/phone.md](docs/phone.md)). Verified with touch input in headless Chromium, not yet on a real phone |
+| Themes and the title bar | done: 16 themes (Dither, Discord, AMOLED, Nord, Dracula, Catppuccin, Gruvbox, Rosé Pine, Tokyo Night, Solarized, high contrast), all checked at WCAG AA by a test, with live preview and a follow-the-system pair; the installed app can draw its own title bar (window controls overlay) ([docs/desktop.md](docs/desktop.md)). The overlay is untested in a real installed window |
 | Arranging the sidebar | done: drag by mouse or touch, folders, pin, hide, stored on the hub |
 | All communities | done: full-screen list with seven orderings, categories by yes/no question (keywords, or a local Ollama model) |
 | Profiles | done: merged identities, shared places, recent messages. Bio and roles are not fetched, and starting a new DM needs an adapter command |
 | Search | done: FTS5, filters, snippets, jump to message, Ctrl+K switcher. Searches what the hub has stored, not the network |
 | Web Push | done: opt-in per device, verified through Google's relay. ntfy stays the self-hosted route |
+| Android app | done: a 250 KB WebView shell with native permissions, calls that survive the screen going off, and push through UnifiedPush ([docs/android.md](docs/android.md)). The web app now starts from a local snapshot and a cached shell: about 1 s to content instead of 4.5 s on a big hub. Verified on the emulator, not yet on a phone |
 | Edit and delete | done in hub and PWA; verified on the demo adapter only |
+| Right-click menus and forwarding | done: Discord's menus on messages, channels, servers, folders, people, accounts, files and links, as sheets on a phone; forwarding to several places at once, natively on Discord (verified on the throwaway account) and as a copy across networks ([docs/menus.md](docs/menus.md)) |
 | Mark all read | done: everywhere, or per server, folder or person, through a paced queue on the hub. Verified on the demo adapter only |
 | Quiet hours | done: a daily schedule that holds pushes, with one summary when it ends. Verified on the demo adapter only |
 | Sending files | done: paste, drop or pick. Live on Discord, on a local homeserver for Matrix (encrypted rooms too, once encryption is set up), not yet live on Signal |

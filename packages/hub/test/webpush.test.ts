@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PushService } from '../src/push.ts';
 import { Store } from '../src/store.ts';
-import { encryptPayload, generateVapidKeys, isPushRelay, loadVapidKeys, pushPayload, vapidHeader } from '../src/webpush.ts';
+import { encryptPayload, extraRelays, generateVapidKeys, isPushRelay, loadVapidKeys, pushPayload, vapidHeader } from '../src/webpush.ts';
 
 const u = (s: string) => Buffer.from(s, 'base64url');
 
@@ -155,6 +155,16 @@ describe('the service', () => {
     expect(real.subscribe({ endpoint: 'http://169.254.169.254/latest', p256dh: d.p256dh, auth: d.auth64 })).toBeNull();
     for (const e of ['https://fcm.googleapis.com/fcm/send/x', 'https://updates.push.services.mozilla.com/wpush/v2/x', 'https://web.push.apple.com/x', 'https://wns2-par02p.notify.windows.com/w/?token=x', 'https://jmt17.google.com/fcm/send/x']) expect(isPushRelay(e)).toBe(true);
     for (const e of ['http://fcm.googleapis.com/x', 'https://evil.example/fcm.googleapis.com', 'https://fcm.googleapis.com.evil.example/x', 'nonsense']) expect(isPushRelay(e)).toBe(false);
+  });
+
+  test('a UnifiedPush server is allowed only as the exact origin the operator listed', () => {
+    const extra = extraRelays(' https://ntfy.example.net , http://127.0.0.1:2586, https://bad.example/path, ftp://x.example, nonsense');
+    expect(extra).toEqual(['https://ntfy.example.net', 'http://127.0.0.1:2586']);
+    expect(extraRelays(undefined)).toEqual([]);
+    expect(isPushRelay('https://ntfy.example.net/upAbC?up=1', extra)).toBe(true);
+    expect(isPushRelay('http://127.0.0.1:2586/upAbC?up=1', extra)).toBe(true);
+    for (const e of ['https://ntfy.example.net/upAbC?up=1', 'http://127.0.0.1:2586/up']) expect(isPushRelay(e)).toBe(false);
+    for (const e of ['http://ntfy.example.net/up', 'https://ntfy.example.net:8443/up', 'https://x.ntfy.example.net/up', 'https://user@ntfy.example.net/up', 'http://127.0.0.1:2587/up', 'https://127.0.0.1:2586/up']) expect(isPushRelay(e, extra)).toBe(false);
   });
 
   test('VAPID keys persist, privately', () => {

@@ -169,6 +169,14 @@ CREATE TRIGGER IF NOT EXISTS message_fts_update AFTER UPDATE OF body ON message 
   INSERT INTO message_fts (rowid, body) VALUES (new.rowid, new.body);
 END;
 
+-- Forwards this hub sent, by the message they became, so they show as forwards even where the network has no
+-- such thing. Keyed by hub message id; the message itself may arrive before or after this row.
+CREATE TABLE IF NOT EXISTS forward_sent (
+  message_id TEXT PRIMARY KEY,
+  data       TEXT NOT NULL,                  -- JSON ForwardView
+  created_at INTEGER NOT NULL
+);
+
 -- The same message arriving through several accounts is stored once.
 CREATE TABLE IF NOT EXISTS message_seen (
   message_id TEXT NOT NULL REFERENCES message(id) ON DELETE CASCADE,
@@ -326,4 +334,28 @@ CREATE TABLE IF NOT EXISTS read_queue (
   next_at         INTEGER NOT NULL DEFAULT 0,
   created_at      INTEGER NOT NULL,
   PRIMARY KEY (account_id, conversation_id)
+);
+
+-- ------------------------------------------------------------------ usage and automatic order (usage.ts, docs/organize.md)
+-- How much you use each place: decayed seconds and visits (half-life a week), as of score_at. Ids and times only.
+CREATE TABLE IF NOT EXISTS place_usage (
+  kind        TEXT NOT NULL CHECK (kind IN ('space', 'conversation', 'person')),
+  id          TEXT NOT NULL,
+  score       REAL NOT NULL DEFAULT 0,
+  visit_score REAL NOT NULL DEFAULT 0,
+  score_at    INTEGER NOT NULL,
+  seconds     REAL NOT NULL DEFAULT 0,     -- all time, not decayed
+  visits      INTEGER NOT NULL DEFAULT 0,
+  last_visit  INTEGER,
+  PRIMARY KEY (kind, id)
+);
+-- Batches already counted, so a device that resends one (its answer was lost) does not count it twice.
+CREATE TABLE IF NOT EXISTS usage_batch (
+  id TEXT PRIMARY KEY,
+  at INTEGER NOT NULL
+);
+-- Sort modes and dismissed folder suggestions, shared by your devices. JSON values.
+CREATE TABLE IF NOT EXISTS arrange_setting (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 );

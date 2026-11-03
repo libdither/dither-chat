@@ -8,6 +8,8 @@ import { db } from '../state.ts';
 import { phone, slideAway, useLayer, useSheetDrag } from '../phone.ts';
 import { Icon } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
+import { onMenu } from './ContextMenu.tsx';
+import { accountMenu } from './menus.tsx';
 
 export function NetGlyph({ network, size = 14, color }: { network: P.Network; size?: number; color?: string }) {
   return (
@@ -42,7 +44,7 @@ export function AccountDots({ network, accountIds, size = 8, force }: { network:
 
 export function AccountChip({ account, small }: { account: P.AccountView; small?: boolean }) {
   return (
-    <span class={`acc-chip ${small ? 'small' : ''}`} title={`${netName(account.network)} account “${account.label}”`}>
+    <span class={`acc-chip ${small ? 'small' : ''}`} title={`${netName(account.network)} account “${account.label}”`} onContextMenu={onMenu(() => accountMenu(account))}>
       <span class="acc-dot" style={{ background: account.color }} />
       {account.label}
     </span>

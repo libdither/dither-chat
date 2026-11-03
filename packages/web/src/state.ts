@@ -1,6 +1,7 @@
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { leaveLayerEntry, takeOverLayers } from './phone.ts';
+import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
 
 // ------------------------------------------------------------------ data
 
@@ -42,6 +43,8 @@ export interface Timeline {
   conversationIds?: string[];
   /** Jumped to an old message: this window does not reach the latest ones. */
   detached?: boolean;
+  /** When its first page was asked of the hub. A reconnect refreshes the ones asked before the socket opened. */
+  fetchedAt?: number;
 }
 export const timelines = new Map<string, Timeline>();
 /** Messages referenced by replies that are outside the loaded page. */
@@ -81,9 +84,11 @@ export function toast(t: Omit<Toast, 'id'>, ms = 6000) {
 export type DirectorySort = 'recency' | 'activity' | 'unread' | 'name' | 'network' | 'manual' | 'category';
 
 export interface Prefs {
-  theme: 'dark' | 'light' | 'system';
+  /** A theme id from themes.ts, or 'system' to follow the device with themeDark and themeLight. ('dark' and 'light' are older names for the Dither ones.) */
+  theme: string;
+  themeDark: string;
+  themeLight: string;
   details: boolean;
-  showDemo: boolean;
   collapsed: Record<string, boolean>;
   sendAs: Record<string, string>;
   via: Record<string, string>;
@@ -93,9 +98,11 @@ export interface Prefs {
   directorySort: DirectorySort;
   /** This device gets Web Push, so the live socket need not raise its own notification. */
   pushEnabled: boolean;
+  /** How this device carries calls: through the account's own client (bridge), or by itself (direct). */
+  callMode: 'bridge' | 'direct';
 }
 const PREFS_KEY = 'dither-chat:prefs';
-const defaults: Prefs = { theme: 'dark', details: false, showDemo: true, collapsed: {}, sendAs: {}, via: {}, notifications: false, skinTone: 0, directorySort: 'recency', pushEnabled: false };
+const defaults: Prefs = { theme: 'dither-dark', themeDark: 'dither-dark', themeLight: 'dither-light', details: false, collapsed: {}, sendAs: {}, via: {}, notifications: false, skinTone: 0, directorySort: 'recency', pushEnabled: false, callMode: 'bridge' };
 export const prefs = signal<Prefs>({ ...defaults, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') });
 export function setPrefs(p: Partial<Prefs>) {
   prefs.value = { ...prefs.value, ...p };
@@ -461,9 +468,14 @@ export async function loadTimeline(key: string, older = false): Promise<void> {
   let t = timelines.get(key);
   if (t?.loading) return;
   if (t && !older) return;
+  let stale: Set<string> | null = null;
   if (!t) {
-    t = { key, messages: [], hasMore: true, loading: false };
+    // What this device kept from last time shows at once; the hub's page replaces it.
+    const c = cachedTimeline(key);
+    stale = c ? new Set(c.messages.map((m) => m.id)) : null;
+    t = { key, messages: c?.messages ?? [], hasMore: true, loading: false, conversationIds: c?.conversationIds };
     timelines.set(key, t);
+    touchTimeline(key);
   }
   if (older && !t.hasMore) return;
   t.loading = true;
@@ -472,9 +484,20 @@ export async function loadTimeline(key: string, older = false): Promise<void> {
   const before = older && t.messages.length ? t.messages[0].ts : undefined;
   const url = kind === 'c' ? `/api/conversations/${id}/messages` : `/api/persons/${id}/timeline`;
   try {
+    // After the socket, so nothing can fall between this page and the live events.
+    if (!older) {
+      await socketOpen();
+      t.fetchedAt = Date.now();
+    }
     const page = await api<P.MessagePage & { quoted?: P.MessageView[]; conversationIds?: string[] }>(`${url}?limit=60${before ? `&before=${before}` : ''}`);
     page.identities.forEach(putIdentity);
     page.quoted?.forEach((m) => quoted.set(m.id, m));
+    if (stale) {
+      // Kept messages the hub no longer has in this range were deleted meanwhile.
+      const got = new Set(page.messages.map((m) => m.id));
+      const from = page.hasMore ? (page.messages[0]?.ts ?? Infinity) : -Infinity;
+      t.messages = t.messages.filter((m) => !stale!.has(m.id) || got.has(m.id) || m.ts < from);
+    }
     for (const m of page.messages) upsertInto(t.messages, m);
     t.hasMore = page.hasMore;
     if (page.conversationIds) t.conversationIds = page.conversationIds;
@@ -492,6 +515,7 @@ export async function loadTimeline(key: string, older = false): Promise<void> {
   } finally {
     t.loading = false;
     rev.value++;
+    persistSoon();
   }
 }
 
@@ -688,19 +712,42 @@ export async function refresh() {
 }
 
 async function bootstrap() {
-  const b = await api<P.Bootstrap>('/api/bootstrap');
-  applyBootstrap(b);
+  const since = openedAt;
+  // As text too: the snapshot keeps the hub's answer as it came, without serializing it again.
+  const res = await fetch('/api/bootstrap');
+  const text = await res.text();
+  if (!res.ok) throw new Error(text.slice(0, 200) || `${res.status}`);
+  applyBootstrap(JSON.parse(text) as P.Bootstrap);
+  freshFromHub();
+  performance.mark('dither:fresh');
   loadInbox().catch(() => {});
-  // Re-fetch open timelines after a reconnect.
-  for (const key of [...timelines.keys()]) refreshTimeline(key);
+  // Re-fetch open timelines that may have missed events while the socket was down.
+  for (const [key, t] of [...timelines]) if (!t.fetchedAt || t.fetchedAt < since) refreshTimeline(key);
+  persistSoon(text);
+}
+
+let openedAt = 0;
+let opened: Promise<void> | null = null;
+let markOpen: (() => void) | null = null;
+/** Resolves once the live socket is open. */
+function socketOpen(): Promise<void> {
+  if (ws?.readyState === WebSocket.OPEN) return Promise.resolve();
+  return (opened ??= new Promise((r) => (markOpen = r)));
 }
 
 export function connect() {
   const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live`;
   ws = new WebSocket(url);
+  // The socket gets its own connection; this one opens the HTTP connection the bootstrap will use, at the same time.
+  fetch('/api/health', { cache: 'no-store' }).catch(() => {});
   ws.onopen = () => {
     connected.value = true;
     backoff = 500;
+    // A reconnect may follow a hub restart, which may have brought a new build: pwa.ts checks.
+    if (openedAt) window.dispatchEvent(new Event('dither:reconnected'));
+    openedAt = Date.now();
+    markOpen?.();
+    opened = markOpen = null;
     bootstrap().catch((e) => toast({ kind: 'error', title: 'Could not load', body: String(e.message) }));
   };
   ws.onmessage = (e) => {
@@ -714,4 +761,16 @@ export function connect() {
     connected.value = false;
     retry = setTimeout(connect, (backoff = Math.min(backoff * 2, 15_000)));
   };
+}
+
+/** Back on the network or back in front of the user while disconnected: try now rather than at the end of the backoff. */
+function reconnectNow() {
+  if (connected.value || !ws || ws.readyState === WebSocket.CONNECTING) return;
+  clearTimeout(retry);
+  backoff = 500;
+  connect();
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', reconnectNow);
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && reconnectNow());
 }

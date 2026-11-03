@@ -1,0 +1,429 @@
+/**
+ * What each thing's right-click menu (or long-press sheet) holds, in Discord's names and order where Discord has
+ * the same action. The reasoning per surface is in docs/menus.md.
+ */
+import type * as P from '@dither-chat/protocol';
+import { NETWORK_META } from '@dither-chat/protocol';
+import { fullTime } from '../format.ts';
+import { LEVEL_LABEL, authorName, convTitle, deepLink, directsOf, effectiveLevel, netName, plainBody, sumUnread, unreadOf } from '../model.ts';
+import { pickerFor, quickReactions, reactionScope, reactorsFor, toggleReaction } from '../reactions.ts';
+import { api, canDelete, canEdit, db, deleteMessage, feedback, go, href, isSelfIdentity, markAllRead, markRead, newMessage, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
+import { Avatar } from './bits.tsx';
+import { copy, groups, menuPoint, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
+import { forwarding } from './Forward.tsx';
+import { Icon } from './icons.tsx';
+import { arrangeEntries, folderEntries, placeConvs } from './Organize.tsx';
+import { openConv } from './Sidebar.tsx';
+import { viewer, type ViewerImage } from './Viewer.tsx';
+
+const appLink = (r: Parameters<typeof href>[0]) => `${location.origin}${location.pathname}${href(r)}`;
+
+// ------------------------------------------------------------------ messages
+
+/** A link to a message the network's own apps open; this app's own link where the network has none (Signal). */
+export function messageLink(m: P.MessageView): string {
+  const c = db.conversations.get(m.conversationId);
+  if (c?.network === 'discord') return `${deepLink(c)}/${m.nativeId}`;
+  if (c?.network === 'matrix') return `https://matrix.to/#/${encodeURIComponent(c.nativeId.split('|')[0])}/${encodeURIComponent(m.nativeId)}`;
+  return appLink({ view: 'inbox', conv: m.conversationId, msg: m.id });
+}
+
+const forwardable = (m: P.MessageView) => !m.deleted && m.kind !== 'system' && m.kind !== 'encrypted' && (!!m.body.trim() || m.attachments.length > 0);
+
+function QuickReactions({ m, close, sheet }: { m: P.MessageView; close: () => void; sheet: boolean }) {
+  const pick = (k: string) => () => {
+    close();
+    void toggleReaction(m, { key: k });
+  };
+  return (
+    <div class={sheet ? 'sheet-quick' : 'cm-quick'}>
+      {quickReactions(m.network, sheet ? 6 : 4).map((k) => (
+        <button aria-label={`React ${k}`} title={`React ${k}`} onClick={pick(k)}>
+          {k}
+        </button>
+      ))}
+      {sheet && (
+        <button
+          class="more"
+          aria-label="More reactions"
+          onClick={() => {
+            close();
+            pickerFor.value = { message: m, anchor: null };
+          }}
+        >
+          <Icon name="smilePlus" size={22} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function MessageHead({ m }: { m: P.MessageView }) {
+  const self = isSelfIdentity(m.authorId);
+  const name = self ? 'You' : authorName(m.authorId);
+  const author = m.authorId ? db.identities.get(m.authorId) : null;
+  const person = author?.personId ? db.persons.get(author.personId) : null;
+  const via = m.seenVia.map((id) => db.accounts.get(id)).filter((a): a is P.AccountView => !!a);
+  return (
+    <>
+      <div class="msg-sheet-head">
+        <Avatar id={person?.id ?? m.authorId ?? m.id} name={name} url={person?.avatar ?? author?.avatar} size={36} />
+        <span>
+          <b>{name}</b>
+          <small>
+            {fullTime(m.ts)}
+            {m.editedTs ? ' · edited' : ''} · {netName(m.network)}
+            {via.length ? ` via ${via.map((a) => a.label).join(', ')}` : ''}
+          </small>
+        </span>
+      </div>
+      {m.encryptionWarning && (
+        <div class="ep-note">
+          <Icon name="alert" size={13} /> {m.encryptionWarning}
+        </div>
+      )}
+      {reactionScope(m.conversationId) === 'existing' && <div class="ep-note">You can only add to reactions already on a message here. Tap one to join in.</div>}
+    </>
+  );
+}
+
+/** Why it notified, on the phone, where there is no pill to hover. */
+function TriageFoot({ m }: { m: P.MessageView }) {
+  const t = m.triage;
+  if (!t) return null;
+  return (
+    <div class="sheet-triage">
+      <h4>
+        <Icon name={t.decision === 'push' ? 'bell' : t.decision === 'digest' ? 'layers' : 'bellOff'} size={14} />
+        {t.decision === 'push' ? 'This pinged you because' : t.decision === 'digest' ? 'This went to the digest because' : 'This was silent because'}
+      </h4>
+      <ul>
+        {t.reasons.map((r) => (
+          <li>{r}</li>
+        ))}
+      </ul>
+      <div class="triage-fb">
+        <button class={`chip-btn ${t.feedback === 'should_push' ? 'on' : ''}`} onClick={() => feedback(m.id, 'should_push')}>
+          <Icon name="thumbsUp" size={14} /> {t.decision === 'push' ? 'Right call' : 'Should have pinged'}
+        </button>
+        <button class={`chip-btn ${t.feedback === 'should_not_push' ? 'on' : ''}`} onClick={() => feedback(m.id, 'should_not_push')}>
+          <Icon name="thumbsDown" size={14} /> {t.decision === 'push' ? "Shouldn't have pinged" : 'Right call'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function messageEntries(m: P.MessageView, onReply?: () => void): MenuEntry[] {
+  const scope = reactionScope(m.conversationId);
+  const self = isSelfIdentity(m.authorId);
+  const thread = m.threadId ? db.conversations.get(m.threadId) : null;
+  const original = m.forward?.messageId && m.forward.conversationId ? m.forward : null;
+  const text = m.forward?.text ?? m.body;
+  const live = !m.deleted && m.kind !== 'system';
+  return groups(
+    [
+      live && scope === 'all' && { kind: 'row', render: (close, sheet) => <QuickReactions m={m} close={close} sheet={sheet} /> },
+      live &&
+        scope === 'all' && {
+          label: 'Add Reaction',
+          icon: 'smilePlus',
+          sub: [
+            ...quickReactions(m.network, 6).map((k): MenuEntry => ({ label: k, run: () => void toggleReaction(m, { key: k }) })),
+            { kind: 'sep' },
+            { label: 'Other Reactions…', icon: 'smilePlus', run: () => (pickerFor.value = { message: m, anchor: menuPoint() }) },
+          ],
+        },
+      m.reactions.length > 0 && {
+        label: 'View Reactions',
+        icon: 'smile',
+        sub: m.reactions.map((r): MenuEntry => ({ label: `${r.emoji ? `:${r.emoji.name}:` : r.key.match(/^(.+):\d+$/) ? `:${r.key.split(':')[0]}:` : r.key}  ${r.count}${r.style === 'super' ? ' ⚡' : ''}`, run: () => (reactorsFor.value = { message: m, key: r.key, style: r.style, anchor: menuPoint() }) })),
+      },
+    ],
+    [
+      canEdit(m) && { label: 'Edit Message', icon: 'pencil', hint: 'E', run: () => startEditing(m) },
+      live && onReply && { label: 'Reply', icon: 'reply', hint: 'R', run: onReply },
+      forwardable(m) && { label: 'Forward', icon: 'forward', hint: 'F', run: () => (forwarding.value = m) },
+      thread && { label: 'Open Thread', icon: 'thread', run: () => openConv(thread) },
+      !!text.trim() && !m.deleted && m.kind !== 'encrypted' && { label: 'Copy Text', icon: 'copy', hint: 'C', run: () => copy(plainBody(text, m.network), 'Text copied') },
+      { label: 'Copy Message Link', icon: 'link', run: () => copy(messageLink(m), 'Link copied') },
+    ],
+    [
+      m.replyToId && { label: 'Go to Replied Message', icon: 'chevronUp', run: () => document.getElementById(`m-${m.replyToId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }) },
+      original && { label: 'Go to Original Message', icon: 'external', run: () => go({ view: 'inbox', conv: original.conversationId!, msg: original.messageId! }) },
+      m.authorId && { label: self ? 'Your Profile' : 'Profile', icon: 'user', run: () => openProfile(m.authorId) },
+    ],
+    [canDelete(m) && { label: 'Delete Message', icon: 'trash', hint: 'Del', danger: true, run: () => deleteMessage(m) }],
+    [
+      { label: 'Copy Message ID', icon: 'idBadge', run: () => copy(m.nativeId, 'Message ID copied') },
+      { label: 'Copy dither-chat ID', icon: 'idBadge', run: () => copy(m.id, 'ID copied') },
+    ],
+  );
+}
+
+export function messageMenu(m: P.MessageView, onReply?: () => void): MenuSpec {
+  return { label: 'Message actions', items: messageEntries(m, onReply), head: <MessageHead m={m} />, foot: <TriageFoot m={m} /> };
+}
+
+// ------------------------------------------------------------------ attachments and links
+
+/** Copy an image as an image. Browsers take PNG, so anything else is drawn into a canvas first. */
+async function copyImage(url: string) {
+  try {
+    const blob = await (await fetch(url)).blob();
+    let png = blob;
+    if (blob.type !== 'image/png') {
+      const bmp = await createImageBitmap(blob);
+      const canvas = document.createElement('canvas');
+      canvas.width = bmp.width;
+      canvas.height = bmp.height;
+      canvas.getContext('2d')!.drawImage(bmp, 0, 0);
+      png = await new Promise<Blob>((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('no image'))), 'image/png'));
+    }
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+    toast({ kind: 'info', title: 'Image copied', body: '' }, 1500);
+  } catch {
+    toast({ kind: 'error', title: 'Could not copy the image', body: 'The browser refused. Save it instead.' });
+  }
+}
+
+function save(url: string, name?: string | null) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name ?? '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+const absolute = (url: string) => new URL(url, location.href).href;
+
+export function attachmentMenu(a: P.AttachmentView, m: P.MessageView | null, images: ViewerImage[] = [], onReply?: () => void): MenuSpec {
+  const image = a.kind === 'image';
+  const noun = image ? 'Image' : a.kind === 'video' ? 'Video' : a.kind === 'audio' ? 'Audio' : 'File';
+  const items = groups(
+    [
+      image && { label: 'Open Image', icon: 'image', run: () => (viewer.value = { images: images.length ? images : [{ url: a.url, name: a.name }], index: Math.max(0, images.findIndex((x) => x.url === a.url)) }) },
+      { label: image ? 'Open Original' : `Open ${noun}`, icon: 'external', run: () => window.open(a.url, '_blank', 'noopener') },
+      image && { label: 'Copy Image', icon: 'copy', run: () => void copyImage(a.url) },
+      { label: `Save ${noun}`, icon: 'download', run: () => save(a.url, a.name) },
+      { label: 'Copy Link', icon: 'link', run: () => copy(absolute(a.url), 'Link copied') },
+    ],
+    m ? messageEntries(m, onReply) : [],
+  );
+  return { label: `${noun} actions`, items, head: m ? <MessageHead m={m} /> : undefined };
+}
+
+export function imageMenu(url: string, name: string | null | undefined, m: P.MessageView | null, onReply?: () => void): MenuSpec {
+  return attachmentMenu({ id: url, kind: 'image', url, name: name ?? null, mime: null, size: null, width: null, height: null }, m, [{ url, name }], onReply);
+}
+
+export function linkMenu(url: string, m: P.MessageView | null, onReply?: () => void): MenuSpec {
+  return {
+    label: 'Link actions',
+    items: groups(
+      [
+        { label: 'Open Link', icon: 'external', run: () => window.open(url, '_blank', 'noopener,noreferrer') },
+        { label: 'Copy Link', icon: 'link', run: () => copy(url, 'Link copied') },
+      ],
+      m ? messageEntries(m, onReply) : [],
+    ),
+    head: <div class="cm-sheet-title">{url}</div>,
+  };
+}
+
+// ------------------------------------------------------------------ notification settings
+
+const LEVELS: P.NotifyLevel[] = ['all', 'smart', 'mentions', 'digest', 'none'];
+const LEVEL_MENU: Record<P.NotifyLevel, string> = { all: 'All Messages', smart: 'Smart', mentions: 'Only @mentions', digest: 'Digest', none: 'Nothing' };
+
+function notifyEntries(scope: 'conversation' | 'space', id: string, current: P.NotifyLevel | null, inherited: string): MenuEntry[] {
+  return [
+    { label: `Use Default (${inherited})`, radio: true, checked: current === null, run: () => setRule(scope, id, null) },
+    { kind: 'sep' },
+    ...LEVELS.map((l): MenuEntry => ({ label: LEVEL_MENU[l], radio: true, checked: current === l, run: () => setRule(scope, id, l) })),
+  ];
+}
+
+const ruleOf = (scope: P.NotifyScope, id: string) => db.rules.find((r) => r.scope === scope && r.target === id)?.level ?? null;
+
+// ------------------------------------------------------------------ conversations
+
+export function conversationMenu(c: P.ConversationView): MenuSpec {
+  const eff = effectiveLevel(c);
+  const own = ruleOf('conversation', c.id);
+  const muted = own === 'none';
+  const person = c.shape === 'direct' && c.peerPersonId ? db.persons.get(c.peerPersonId) : null;
+  const link = deepLink(c);
+  const channel = c.shape === 'channel' || c.shape === 'thread';
+  const noun = channel ? 'Channel' : 'Conversation';
+  const inherited = own ? 'from above' : LEVEL_LABEL[eff.level];
+  const placeKey = `conversation:${c.id}`;
+  return {
+    label: `${convTitle(c)} actions`,
+    head: <div class="cm-sheet-title">{convTitle(c)}</div>,
+    items: groups(
+      [{ label: 'Mark As Read', icon: 'check', disabled: !unreadOf(c).unread, run: () => markRead(c.id) }],
+      [
+        person && { label: 'Profile', icon: 'user', run: () => go({ view: 'profile', person: person.id }) },
+        person && directsOf(person.id).length > 1 && { label: 'All Chats with Them', icon: 'users', run: () => go({ view: 'people', person: person.id }) },
+        { label: `Search in ${noun}`, icon: 'search', run: () => go({ view: 'search', q: `in:${c.id}` }) },
+        { label: 'Copy Link', icon: 'link', run: () => copy(link ?? appLink({ view: 'inbox', conv: c.id }), 'Link copied') },
+      ],
+      [
+        { label: muted ? `Unmute ${noun}` : `Mute ${noun}`, icon: muted ? 'bell' : 'bellOff', run: () => setRule('conversation', c.id, muted ? null : 'none') },
+        { label: 'Notification Settings', icon: 'bell', sub: notifyEntries('conversation', c.id, own, inherited) },
+      ],
+      c.shape !== 'thread' ? arrangeEntries(placeKey) : [],
+      [
+        { label: `Copy ${channel ? 'Channel' : 'Chat'} ID`, icon: 'idBadge', run: () => copy(c.nativeId, 'ID copied') },
+        { label: 'Copy dither-chat ID', icon: 'idBadge', run: () => copy(c.id, 'ID copied') },
+      ],
+    ),
+  };
+}
+
+// ------------------------------------------------------------------ spaces, folders, places
+
+export function spaceMenu(s: P.SpaceView): MenuSpec {
+  const own = ruleOf('space', s.id);
+  const muted = own === 'none';
+  const section = s.kind === 'section';
+  const noun = section ? 'Category' : s.network === 'discord' ? 'Server' : NETWORK_META[s.network].spaceNoun.replace(/^./, (x) => x.toUpperCase());
+  const convs = placeConvs('space', s.id);
+  const link = s.network === 'discord' ? `https://discord.com/channels/${s.nativeId}` : s.network === 'matrix' ? `https://matrix.to/#/${encodeURIComponent(s.nativeId)}` : null;
+  return {
+    label: `${s.name} actions`,
+    head: <div class="cm-sheet-title">{s.name}</div>,
+    items: groups(
+      [{ label: 'Mark As Read', icon: 'check', disabled: !sumUnread(convs).unread, run: () => markAllRead(convs, s.name) }],
+      [
+        { label: muted ? `Unmute ${noun}` : `Mute ${noun}`, icon: muted ? 'bell' : 'bellOff', run: () => setRule('space', s.id, muted ? null : 'none') },
+        { label: 'Notification Settings', icon: 'bell', sub: notifyEntries('space', s.id, own, own ? 'from above' : 'your default') },
+      ],
+      section ? [] : arrangeEntries(`space:${s.id}`),
+      [
+        link && !section && { label: 'Copy Link', icon: 'link', run: () => copy(link, 'Link copied') },
+        { label: `Copy ${noun} ID`, icon: 'idBadge', run: () => copy(s.nativeId, 'ID copied') },
+        { label: 'Copy dither-chat ID', icon: 'idBadge', run: () => copy(s.id, 'ID copied') },
+      ],
+    ),
+  };
+}
+
+/** Whatever sits in the sidebar or the directory, by its place key ("space:…", "conversation:…", "folder:…", "person:…"). */
+export function placeMenu(key: string, _folder?: string): MenuSpec | null {
+  rev.value;
+  const i = key.indexOf(':');
+  const kind = key.slice(0, i);
+  const id = key.slice(i + 1);
+  if (kind === 'space') {
+    const s = db.spaces.get(id);
+    return s ? spaceMenu(s) : null;
+  }
+  if (kind === 'conversation') {
+    const c = db.conversations.get(id);
+    return c ? conversationMenu(c) : null;
+  }
+  if (kind === 'person') {
+    const p = db.persons.get(id);
+    return p ? personMenu(p, key) : null;
+  }
+  if (kind === 'folder') return folderMenuSpec(id);
+  return null;
+}
+
+export function folderMenuSpec(id: string): MenuSpec | null {
+  const f = db.folders.find((x) => x.id === id);
+  return f ? { label: `${f.name} actions`, head: <div class="cm-sheet-title">{f.name}</div>, items: groups(...folderEntries(id)) } : null;
+}
+
+// ------------------------------------------------------------------ people
+
+function canStartDirect(network?: P.Network) {
+  return [...db.accounts.values()].some((a) => a.status === 'online' && a.capabilities.includes('openDirect') && (!network || a.network === network));
+}
+
+export function personMenu(p: P.PersonView, placeKey?: string): MenuSpec {
+  const directs = directsOf(p.id);
+  const idents = p.identityIds.map((id) => db.identities.get(id)).filter((x): x is P.IdentityView => !!x);
+  return {
+    label: `${p.name} actions`,
+    head: <div class="cm-sheet-title">{p.name}</div>,
+    items: groups(
+      [
+        { label: 'Profile', icon: 'user', run: () => go({ view: 'profile', person: p.id }) },
+        !p.isSelf && directs.length > 0 && { label: 'Message', icon: 'groups', run: () => go({ view: 'people', person: p.id }) },
+        !p.isSelf && !directs.length && idents[0] && canStartDirect() && { label: 'Message', icon: 'groups', run: () => (newMessage.value = { identityId: idents[0].id }) },
+        !p.isSelf && { label: p.starred ? 'Unstar' : 'Star', icon: 'star', run: () => api(`/api/persons/${p.id}`, { method: 'PATCH', body: { starred: !p.starred } }).catch((e) => toast({ kind: 'error', title: 'Could not save that', body: e.message })) },
+      ],
+      [directs.length > 0 && { label: 'Mark As Read', icon: 'check', disabled: !sumUnread(directs).unread, run: () => markAllRead(directs, p.name) }],
+      placeKey ? arrangeEntries(placeKey) : [],
+      identityCopies(idents),
+    ),
+  };
+}
+
+/** Copy a handle or an id, per network when someone is on several. */
+function identityCopies(idents: P.IdentityView[]): MenuEntry[] {
+  const one = (i: P.IdentityView, suffix = ''): MenuEntry[] => [
+    i.handle ? { label: `Copy Username${suffix}`, icon: 'at', run: () => copy(i.handle!, 'Username copied') } : null,
+    { label: `Copy User ID${suffix}`, icon: 'idBadge', run: () => copy(i.nativeId, 'ID copied') },
+  ].filter(Boolean) as MenuEntry[];
+  if (idents.length === 1) return one(idents[0]);
+  return idents.map((i): MenuEntry => ({ label: `Copy from ${netName(i.network)}`, icon: 'copy', sub: one(i) }));
+}
+
+/** An author, an avatar or a mention: the person behind it if the hub merged one, else just this identity. */
+export function identityMenu(identityId: string | null | undefined): MenuSpec | null {
+  if (!identityId) return null;
+  const ident = db.identities.get(identityId);
+  const person = ident?.personId ? db.persons.get(ident.personId) : null;
+  if (person) return personMenu(person);
+  if (!ident) return null;
+  const name = isSelfIdentity(identityId) ? 'You' : authorName(identityId);
+  return {
+    label: `${name} actions`,
+    head: <div class="cm-sheet-title">{name}</div>,
+    items: groups(
+      [
+        { label: 'Profile', icon: 'user', run: () => openProfile(identityId) },
+        !isSelfIdentity(identityId) && canStartDirect(ident.network) && { label: 'Message', icon: 'groups', run: () => (newMessage.value = { identityId }) },
+      ],
+      identityCopies([ident]),
+    ),
+  };
+}
+
+// ------------------------------------------------------------------ accounts
+
+function accountEntries(a: P.AccountView): MenuEntry[] {
+  const disabled = a.status === 'disabled';
+  const fail = (e: Error) => toast({ kind: 'error', title: 'That did not work', body: e.message });
+  return groups(
+    [
+      { label: 'Open Account Page', icon: 'settings', run: () => go({ view: 'accounts', account: a.id }) },
+      !disabled && { label: 'Reconnect', icon: 'refresh', run: () => api(`/api/accounts/${a.id}/action`, { body: { action: 'restart' } }).catch(fail) },
+      { label: disabled ? 'Enable' : 'Disable', icon: 'power', run: () => api(`/api/accounts/${a.id}`, { method: 'PATCH', body: { enabled: disabled } }).catch(fail) },
+    ],
+    [{ label: 'Copy Account ID', icon: 'idBadge', run: () => copy(a.id, 'ID copied') }],
+  );
+}
+
+export function accountMenu(a: P.AccountView): MenuSpec {
+  return { label: `${a.label} actions`, head: <div class="cm-sheet-title">{netName(a.network)} · {a.label}</div>, items: accountEntries(a) };
+}
+
+/** The accounts button in the rail: every account, each with its own actions. */
+export function accountsMenu(): MenuSpec {
+  const accs = [...db.accounts.values()];
+  return {
+    label: 'Accounts',
+    head: <div class="cm-sheet-title">Accounts</div>,
+    items: groups(
+      accs.map((a): MenuEntry => ({ label: `${netName(a.network)} · ${a.label}${a.status === 'online' ? '' : ` (${a.status})`}`, icon: 'user', sub: accountEntries(a) })),
+      [{ label: 'Accounts and Connections', icon: 'power', run: () => go({ view: 'accounts' }) }],
+    ),
+  };
+}
+

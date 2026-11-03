@@ -18,7 +18,9 @@ const opt = (n: string, d: string) => {
 };
 
 const repoRoot = resolve(import.meta.dir, '../../..');
-const dataDir = resolve(opt('data', join(repoRoot, '.data')));
+// A demo world is its own hub with its own data dir (.data-demo unless told otherwise), never mixed into a real one.
+const demo = flag('demo');
+const dataDir = resolve(opt('data', join(repoRoot, demo ? '.data-demo' : '.data')));
 const port = Number(opt('port', '8460'));
 const hostname = opt('host', '0.0.0.0');
 const webDist = resolve(opt('web', join(repoRoot, 'packages/web/dist')));
@@ -124,7 +126,8 @@ const server = new HubServer(store, sup, triage, {
   push,
   readQueue,
   onCategoriesChanged: (force) => void categorizer.refresh(force),
-  onDemoReset: async () => {
+  turn: process.env.DITHER_TURN_URLS && process.env.DITHER_TURN_SECRET ? { urls: process.env.DITHER_TURN_URLS.split(',').map((u) => u.trim()), secret: process.env.DITHER_TURN_SECRET } : undefined,
+  onDemoReset: !demo ? undefined : async () => {
     for (const a of store.accounts().filter((a) => a.demo)) {
       await sup.stop(a.id);
       store.deleteAccount(a.id);
@@ -135,7 +138,20 @@ const server = new HubServer(store, sup, triage, {
   },
 });
 
-if (flag('demo') && !store.accounts().some((a) => a.demo)) createDemoAccounts(store);
+const realAccounts = store.accounts().filter((a) => !a.demo);
+if (demo && realAccounts.length) {
+  console.error(`--demo: ${dataDir} holds real accounts. A demo world needs its own data dir: pass --data <dir> (default .data-demo).`);
+  process.exit(1);
+}
+if (!demo && realAccounts.length) {
+  // A real hub carries no demo world. Older hubs mixed them; removing the accounts also drops what only they saw.
+  for (const a of store.accounts().filter((a) => a.demo)) {
+    store.deleteAccount(a.id);
+    console.log(`removed demo account ${a.id}: demo worlds now run as their own hub (--demo)`);
+  }
+  store.db.query(`DELETE FROM meta WHERE key = 'demo_overlay'`).run();
+}
+if (demo && !store.accounts().some((a) => a.demo)) createDemoAccounts(store);
 sup.startAll();
 if (store.accounts().some((a) => a.demo)) applyDemoOverlay(store);
 server.start();

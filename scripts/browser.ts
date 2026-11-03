@@ -20,7 +20,8 @@ export interface Page {
   evalWorker<T = any>(url: string, expr: string): Promise<T>;
 }
 
-export async function launch(opts: { caCert?: string; host?: string } = {}) {
+/** args: extra Chromium flags, e.g. a fake microphone for call tests. */
+export async function launch(opts: { caCert?: string; host?: string; args?: string[] } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'dither-browser-'));
   if (opts.caCert) {
     const nss = join(home, '.pki/nssdb');
@@ -31,7 +32,7 @@ export async function launch(opts: { caCert?: string; host?: string } = {}) {
     if (r.exitCode !== 0) throw new Error('certutil failed: ' + r.stderr.toString());
   }
   const port = 9300 + Math.floor(Math.random() * 500);
-  const proc = Bun.spawn(['chromium', '--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${join(home, 'profile')}`, '--no-first-run', '--no-sandbox', '--disable-gpu', 'about:blank'], {
+  const proc = Bun.spawn(['chromium', '--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${join(home, 'profile')}`, '--no-first-run', '--no-sandbox', '--disable-gpu', ...(opts.args ?? []), 'about:blank'], {
     env: { ...process.env, HOME: home },
     stdout: 'ignore',
     stderr: 'ignore',
@@ -119,6 +120,8 @@ export async function launch(opts: { caCert?: string; host?: string } = {}) {
   await page.send('Log.enable');
   return {
     page,
+    /** The browser's own directory: every one of its processes has it on the command line. */
+    profileDir: home,
     async close() {
       ws.close();
       proc.kill();

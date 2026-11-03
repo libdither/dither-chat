@@ -7,6 +7,8 @@ import { AccountChip, Avatar, NetBadge, NetGlyph, levelIcon } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { showDetails } from './Pager.ts';
 import { openConv } from './Sidebar.tsx';
+import { Menuable } from './ContextMenu.tsx';
+import { identityMenu } from './menus.tsx';
 
 function Section({ title, children }: { title: string; children: any }) {
   return (
@@ -169,7 +171,7 @@ export function ConversationDetails({ convId }: { convId: string }) {
                 const p = i.personId ? db.persons.get(i.personId) : null;
                 const self = isSelfIdentity(i.id);
                 return (
-                  <button class="member" onClick={() => openProfile(i.id)}>
+                  <Menuable build={() => identityMenu(i.id)}>{(ctx) => <button class="member" onClick={() => openProfile(i.id)} {...ctx}>
                     <Avatar id={p?.id ?? i.id} name={p?.name ?? identityName(i.id)} url={p?.avatar ?? i.avatar} size={28} />
                     <span>
                       <b>{self ? 'You' : (p?.name ?? identityName(i.id))}</b>
@@ -182,7 +184,7 @@ export function ConversationDetails({ convId }: { convId: string }) {
                         ))}
                       </span>
                     )}
-                  </button>
+                  </button>}</Menuable>
                 );
               })}
             </div>

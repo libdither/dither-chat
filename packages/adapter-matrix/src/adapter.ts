@@ -24,11 +24,11 @@ import type { E2ee, VerificationState } from './e2ee.ts';
 import { markdownToMatrix, snippet } from './format.ts';
 import { openDirect, type DirectHost } from './direct.ts';
 import { enc, MatrixClient, MatrixError } from './http.ts';
-import { encryptedFileOf, isRedacted, mentionsUser, MESSAGE_TYPES, plainTextOf, relationOf, renderContent, replyTarget, type Relation } from './messages.ts';
+import { encryptedFileOf, FORWARD_KEY, forwardableContent, forwardOf, isRedacted, mentionsUser, MESSAGE_TYPES, plainTextOf, relationOf, renderContent, replyTarget, type Relation } from './messages.ts';
 import { Directory, Room, STRUCTURAL, type MxEvent } from './rooms.ts';
 
 export const VERSION = '0.1.0';
-const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'threads', 'media', 'sendMedia', 'openDirect'];
+const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'threads', 'media', 'sendMedia', 'openDirect', 'forward'];
 
 const SYNC_TIMEOUT = 30_000;
 const TIMELINE_LIMIT = 50;
@@ -790,6 +790,8 @@ export class MatrixAdapter {
     if (reply) f.replyTo = reply;
     if (rendered.attachments?.length) f.attachments = rendered.attachments;
     if (rendered.extra) f.extra = rendered.extra;
+    const forwarded = forwardOf(ev.content);
+    if (forwarded) f.forward = forwarded;
     // A server can write plaintext events in anyone's name, so in an encrypted room they do not pass as normal.
     if (room.encrypted && ev.type === 'm.room.message' && !ev.e2ee) f.extra = { ...f.extra, encryptionWarning: 'Not encrypted, in an encrypted room. The server could have written this.' };
     if (ev.sender !== this.selfId && (mentionsUser(ev.content, this.selfId) || (edit && mentionsUser(edit.content, this.selfId)))) f.mentionsSelf = true;
@@ -1044,6 +1046,8 @@ export class MatrixAdapter {
     switch (cmd.t) {
       case 'send':
         return cmd.attachments?.length ? this.sendFiles(cmd.conversation, cmd.body, cmd.attachments, cmd.replyTo) : this.send(cmd.conversation, cmd.body, cmd.replyTo);
+      case 'forward':
+        return this.forward(cmd.conversation, cmd.source, cmd.note);
       case 'openDirect':
         return openDirect(this.directHost(), cmd.peer);
       case 'history':
@@ -1178,6 +1182,32 @@ export class MatrixAdapter {
       content['m.relates_to'] = { 'm.in_reply_to': { event_id: replyTo } };
     }
     return { nativeId: await this.sendEvent(roomId, 'm.room.message', content) };
+  }
+
+  /**
+   * Forward the way Matrix clients do: the original's content again, as it is, files by their existing mxc: URI
+   * so nothing is uploaded twice, plus where it came from (FORWARD_KEY). A file encrypted for one room is not
+   * handed to an unencrypted one, nor the other way round: the hub then sends it again through sendFiles.
+   */
+  private async forward(conversation: string, source: { conversation: string; message: string }, note?: string) {
+    const { roomId, root } = splitConversation(conversation);
+    const room = this.writableRoom(roomId);
+    const srcRoom = splitConversation(source.conversation).roomId;
+    let ev = this.db.eventJson(source.message);
+    if (!ev || ev.type === 'm.room.encrypted') ev = await this.fetchEvent(srcRoom, source.message);
+    if (!ev || (ev.type !== 'm.room.message' && ev.type !== 'm.sticker') || isRedacted(ev)) return { fallback: 'the original cannot be read here' };
+    const content = forwardableContent(this.latestEdit(ev)?.content ?? ev.content);
+    const encryptedFile = !!content.file;
+    const plainFile = typeof content.url === 'string';
+    if ((encryptedFile && !room.encrypted) || (plainFile && room.encrypted)) return { fallback: 'the file is encrypted for one room and not the other' };
+    content[FORWARD_KEY] = { room_id: srcRoom, event_id: ev.event_id, sender: ev.sender, origin_server_ts: ev.origin_server_ts };
+    if (root) {
+      const latest = this.db.thread(threadId(roomId, root))?.latest ?? root;
+      content['m.relates_to'] = { rel_type: 'm.thread', event_id: root, is_falling_back: true, 'm.in_reply_to': { event_id: latest } };
+    }
+    const nativeId = await this.sendEvent(roomId, ev.type, content);
+    if (note?.trim()) await this.send(conversation, note);
+    return { nativeId };
   }
 
   /** Matrix has one file per event, and clients vary on captions, so any text goes first as its own message. */

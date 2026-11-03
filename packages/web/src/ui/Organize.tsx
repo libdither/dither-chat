@@ -1,12 +1,11 @@
-/** Arranging the sidebar: what a drop saves, and the menu for everything that is not a drag. */
-import { signal } from '@preact/signals';
+/** Arranging the sidebar: what a drop saves, and the menu entries for everything that is not a drag. */
 import type * as P from '@dither-chat/protocol';
 import { applyDrop, moveStep, type DropTarget, type Layout } from '../layout.ts';
-import { convsUnder, convTitle, directsOf, folderConvs, placePref, railEntries } from '../model.ts';
+import { convsUnder, convTitle, directsOf, folderConvs, placePref, railEntries, sumUnread } from '../model.ts';
 import { db, go, markAllRead, patchPlaces, route, saveFolders } from '../state.ts';
-import { Icon } from './icons.tsx';
-import { phone, useLayer } from '../phone.ts';
-import { Sheet } from './Sheet.tsx';
+import { openMenu, type MenuEntry } from './ContextMenu.tsx';
+import { placeMenu } from './menus.tsx';
+import { arrangedRail, freezeOrder, organizing, sortOf } from '../arrange.ts';
 
 const randomId = () => 'fld_' + Math.random().toString(36).slice(2, 12);
 const splitKey = (key: string) => {
@@ -51,8 +50,8 @@ export function dropPlace(key: string, target: DropTarget) {
   save(next, pinned);
 }
 
-export const placeMenu = signal<{ key: string; label: string; folder?: string; x: number; y: number } | null>(null);
-export const openPlaceMenu = (key: string, label: string, x: number, y: number, folder?: string) => (placeMenu.value = { key, label, folder, x, y });
+/** Opens what a right-click or a held finger opens on a place: dnd.tsx calls this. */
+export const openPlaceMenu = (key: string, _label: string, x: number, y: number, folder?: string) => openMenu({ x, y }, placeMenu(key, folder));
 
 function moveToFolder(key: string, folderId: string | null) {
   const l = currentLayout();
@@ -61,82 +60,85 @@ function moveToFolder(key: string, folderId: string | null) {
   save({ order: l.order.filter((k) => !folderId || k !== key), folders });
 }
 
-export function PlaceMenu() {
-  const m = placeMenu.value;
-  if (!m) return null;
-  const { kind, id } = splitKey(m.key);
-  const close = () => (placeMenu.value = null);
-  const act = (fn: () => void) => () => {
-    close();
-    fn();
-  };
+export function newFolderWith(key: string) {
+  const { kind, id } = splitKey(key);
+  const name = prompt('Folder name', 'New folder')?.trim();
+  if (!name) return;
+  saveFolders([...db.folders, { id: randomId(), name, icon: null, color: null, items: [{ kind: kind as 'space' | 'conversation' | 'person', id }] }]);
+}
+
+/** Where a place sits in the sidebar: pin, order, folders, hide. Every place's menu ends with these. */
+export function arrangeEntries(key: string): MenuEntry[] {
+  const { kind, id } = splitKey(key);
   const placeKind = kind as P.PlaceKind;
   const pref = kind === 'person' ? null : placePref(placeKind, id);
-  const inFolder = db.folders.find((f) => f.items.some((i) => toKey(i) === m.key));
-  const folder = kind === 'folder' ? db.folders.find((f) => f.id === id) : null;
-  const order = currentLayout().order;
-  const pos = order.indexOf(m.key);
-  const step = (d: -1 | 1) => save({ ...currentLayout(), order: moveStep(order, m.key, d) });
-  const item = (icon: string, label: string, fn: () => void, disabled = false) => (
-    <button class="menu-item" disabled={disabled} onClick={act(fn)}>
-      <Icon name={icon} size={14} /> {label}
-    </button>
-  );
-  const x = Math.min(m.x, window.innerWidth - 240);
-  const y = Math.min(m.y, window.innerHeight - 380);
-  const items = (
-    <>
-      <div class="menu-label">{m.label}</div>
-      {item('check', 'Mark as read', () => markAllRead(placeConvs(kind, id), m.label))}
-      {folder && item('folder', pref?.open ? 'Close in sidebar' : 'Open in sidebar', () => patchPlaces([{ kind: 'folder', id, open: !pref?.open }]))}
-      {folder && item('at', 'Rename folder', () => {
-        const name = prompt('Folder name', folder.name)?.trim();
-        if (name) saveFolders(db.folders.map((f) => (f.id === id ? { ...f, name } : f)));
-      })}
-      {folder && item('groups', 'Open as list', () => go({ view: 'folder', folder: id }))}
-      {pref && pos >= 0 && item('star', pref.pinned ? 'Unpin' : 'Pin to top', () => patchPlaces([{ kind: placeKind, id, pinned: !pref.pinned }]))}
-      {kind === 'conversation' && !inFolder && item('plus', pref?.railed ? 'Remove from sidebar' : 'Add to sidebar', () => patchPlaces([{ kind: 'conversation', id, railed: !pref?.railed }]))}
-      {pos >= 0 && item('chevronUp', 'Move up', () => step(-1), pos === 0)}
-      {pos >= 0 && item('chevronDown', 'Move down', () => step(1), pos === order.length - 1)}
-      {kind !== 'folder' && db.folders.filter((f) => f.id !== inFolder?.id).map((f) => item('folder', `Move to ${f.name}`, () => moveToFolder(m.key, f.id)))}
-      {kind !== 'folder' && !inFolder && item('plus', 'New folder with this', () => {
-        const name = prompt('Folder name', 'New folder')?.trim();
-        if (!name) return;
-        const fid = randomId();
-        saveFolders([...db.folders, { id: fid, name, icon: null, color: null, items: [{ kind: kind as 'space' | 'conversation', id }] }]);
-      })}
-      {inFolder && item('unlink', `Take out of ${inFolder.name}`, () => moveToFolder(m.key, null))}
-      {folder && item('trash', 'Delete folder, keep contents', () => {
-        saveFolders(db.folders.filter((f) => f.id !== id));
-        const r = route.value;
-        if (r.view === 'folder' && r.folder === id) go({ view: 'inbox' });
-      })}
-      {pref && kind !== 'folder' && item('eye', pref.hidden ? 'Show again' : 'Hide', () => patchPlaces([{ kind: placeKind, id, hidden: !pref.hidden }]))}
-    </>
-  );
-  if (phone.value)
-    return (
-      <Sheet onClose={close} label={`Arrange ${m.label}`}>
-        <div class="sheet-menu" role="menu">
-          {items}
-        </div>
-      </Sheet>
-    );
-  return <DesktopMenu x={x} y={y} close={close}>{items}</DesktopMenu>;
+  const inFolder = db.folders.find((f) => f.items.some((i) => toKey(i) === key));
+  // In an automatic order, moving by hand first makes the order on screen yours (arrange.ts).
+  const auto = sortOf('rail') !== 'manual' && !inFolder;
+  const order = auto ? arrangedRail().map((e) => e.key) : currentLayout().order;
+  const pos = order.indexOf(key);
+  const step = (d: -1 | 1) => {
+    if (auto) freezeOrder(true);
+    save({ ...currentLayout(), order: moveStep(currentLayout().order, key, d) });
+  };
+  const others = db.folders.filter((f) => f.id !== inFolder?.id);
+  return [
+    pref && pos >= 0 && { label: pref.pinned ? 'Unpin' : 'Pin to Top', icon: 'star', run: () => patchPlaces([{ kind: placeKind, id, pinned: !pref.pinned }]) },
+    kind === 'conversation' && !inFolder && { label: pref?.railed ? 'Remove from Sidebar' : 'Add to Sidebar', icon: 'plus', run: () => patchPlaces([{ kind: 'conversation', id, railed: !pref?.railed }]) },
+    pos >= 0 && { label: 'Move Up', icon: 'chevronUp', disabled: pos === 0, run: () => step(-1) },
+    pos >= 0 && { label: 'Move Down', icon: 'chevronDown', disabled: pos === order.length - 1, run: () => step(1) },
+    kind !== 'folder' && {
+      label: 'Move to Folder',
+      icon: 'folder',
+      sub: [
+        ...others.map((f): MenuEntry => ({ label: f.name, icon: 'folder', run: () => moveToFolder(key, f.id) })),
+        ...(others.length ? [{ kind: 'sep' } as MenuEntry] : []),
+        { label: 'New Folder…', icon: 'plus', run: () => newFolderWith(key) },
+      ],
+    },
+    inFolder && { label: `Take Out of ${inFolder.name}`, icon: 'unlink', run: () => moveToFolder(key, null) },
+    pref && kind !== 'folder' && { label: pref.hidden ? 'Show in Sidebar' : 'Hide', icon: 'eye', run: () => patchPlaces([{ kind: placeKind, id, hidden: !pref.hidden }]) },
+    { label: 'Organize Servers…', icon: 'layers', run: () => (organizing.value = true) },
+  ].filter(Boolean) as MenuEntry[];
 }
 
-function DesktopMenu({ x, y, close, children }: { x: number; y: number; close: () => void; children: any }) {
-  useLayer(close);
-  return (
-    <div class="place-menu-back" onClick={close} onContextMenu={(e) => (e.preventDefault(), close())}>
-      <div class="menu place-menu" style={{ left: `${Math.max(8, x)}px`, top: `${Math.max(8, y)}px` }} role="menu" onClick={(e) => e.stopPropagation()}>
-        {children}
-      </div>
-    </div>
-  );
+/** A folder's own menu: read, open, rename, delete. */
+export function folderEntries(id: string): MenuEntry[][] {
+  const folder = db.folders.find((f) => f.id === id);
+  if (!folder) return [];
+  const open = placePref('folder', id).open;
+  return [
+    [{ label: 'Mark Folder As Read', icon: 'check', disabled: !sumUnread(folderConvs(folder)).unread, run: () => markAllRead(folderConvs(folder), folder.name) }],
+    [
+      { label: open ? 'Close in Sidebar' : 'Open in Sidebar', icon: 'folder', run: () => patchPlaces([{ kind: 'folder', id, open: !open }]) },
+      { label: 'Open as List', icon: 'groups', run: () => go({ view: 'folder', folder: id }) },
+      {
+        label: 'Rename Folder…',
+        icon: 'pencil',
+        run: () => {
+          const name = prompt('Folder name', folder.name)?.trim();
+          if (name) saveFolders(db.folders.map((f) => (f.id === id ? { ...f, name } : f)));
+        },
+      },
+    ],
+    arrangeEntries(`folder:${id}`),
+    [
+      {
+        label: 'Delete Folder',
+        icon: 'trash',
+        danger: true,
+        run: () => {
+          if (!confirm(`Delete the folder "${folder.name}"? What is in it stays in the sidebar.`)) return;
+          saveFolders(db.folders.filter((f) => f.id !== id));
+          const r = route.value;
+          if (r.view === 'folder' && r.folder === id) go({ view: 'inbox' });
+        },
+      },
+    ],
+  ];
 }
 
-function placeConvs(kind: string, id: string): P.ConversationView[] {
+export function placeConvs(kind: string, id: string): P.ConversationView[] {
   if (kind === 'folder') {
     const f = db.folders.find((f) => f.id === id);
     return f ? folderConvs(f) : [];

@@ -49,13 +49,18 @@ import {
   timelines,
   typing,
 } from '../state.ts';
-import { reactionContext, sheetFor } from '../reactions.ts';
+import { reactionContext } from '../reactions.ts';
 import { AccountChip, AccountDots, Avatar, Empty, Menu, NetBadge, NetGlyph, Skeleton, levelIcon, variantIcon } from './bits.tsx';
 import { HoverReactions, ReactionBar, useLongPress } from './Reactions.tsx';
 import { Icon } from './icons.tsx';
 import { detailsShown, showDetails, swipeReply } from './Pager.ts';
 import { openConv } from './Sidebar.tsx';
 import { viewer, type ViewerImage } from './Viewer.tsx';
+import { JoinCallButton } from './Call.tsx';
+import { EmojiComplete } from './EmojiComplete.tsx';
+import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
+import { ForwardCard, forwarding } from './Forward.tsx';
+import { attachmentMenu, conversationMenu, identityMenu, imageMenu, linkMenu, messageMenu, personMenu } from './menus.tsx';
 
 
 // ------------------------------------------------------------------ header
@@ -173,7 +178,7 @@ function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void 
   const isDirect = c.shape === 'direct';
   const person = c.peerPersonId ? db.persons.get(c.peerPersonId) : null;
   return (
-    <header class="conv-head">
+    <header class="conv-head" onContextMenu={onMenu(() => conversationMenu(c))}>
       {onBack && (
         <button class="icon-btn back" onClick={onBack} aria-label="Back">
           <Icon name="back" />
@@ -221,6 +226,7 @@ function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void 
             </button>
           </>
         )}
+        <JoinCallButton c={c} />
         <button class="hdr-btn" title="Search in this conversation" aria-label="Search in this conversation" onClick={() => go({ view: 'search', q: `in:${c.id}` })}>
           <Icon name="search" size={16} />
         </button>
@@ -236,7 +242,7 @@ function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void 
 function PersonHeader({ person, onBack }: { person: P.PersonView; onBack?: () => void }) {
   const directs = directsOf(person.id);
   return (
-    <header class="conv-head">
+    <header class="conv-head" onContextMenu={onMenu(() => personMenu(person))}>
       {onBack && (
         <button class="icon-btn back" onClick={onBack} aria-label="Back">
           <Icon name="back" />
@@ -322,21 +328,21 @@ function Attachments({ m }: { m: P.MessageView }) {
   const images = m.attachments.filter((a) => a.kind === 'image');
   return (
     <div class="atts">
-      {m.attachments.map((a) => {
+      {m.attachments.map((a, i) => {
         if (a.kind === 'image') {
           const w = a.width ?? 400;
           const h = a.height ?? 300;
           const scale = Math.min(1, 400 / w, 300 / h);
           return (
-            <a class="att-img" href={a.url} target="_blank" rel="noreferrer" onClick={(e) => openViewer(e, images, images.indexOf(a))} style={{ width: `${Math.round(w * scale)}px`, aspectRatio: `${w} / ${h}` }}>
+            <a class="att-img" data-att={i} href={a.url} target="_blank" rel="noreferrer" onClick={(e) => openViewer(e, images, images.indexOf(a))} style={{ width: `${Math.round(w * scale)}px`, aspectRatio: `${w} / ${h}` }}>
               <img src={a.url} alt={a.name ?? ''} loading="lazy" />
             </a>
           );
         }
-        if (a.kind === 'video') return <video class="att-video" src={a.url} controls preload="metadata" />;
-        if (a.kind === 'audio') return <audio class="att-audio" src={a.url} controls preload="metadata" />;
+        if (a.kind === 'video') return <video class="att-video" data-att={i} src={a.url} controls preload="metadata" />;
+        if (a.kind === 'audio') return <audio class="att-audio" data-att={i} src={a.url} controls preload="metadata" />;
         return (
-          <a class="att-file" href={a.url} target="_blank" rel="noreferrer">
+          <a class="att-file" data-att={i} href={a.url} target="_blank" rel="noreferrer">
             <Icon name="file" size={22} />
             <span>
               <b>{a.name ?? 'file'}</b>
@@ -435,11 +441,33 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
   const target = m.replyToId ? (timelines.get(timelineKey('c', m.conversationId))?.messages.find((x) => x.id === m.replyToId) ?? quoted.get(m.replyToId)) : null;
   const thread = m.threadId ? db.conversations.get(m.threadId) : null;
   const seenVia = m.seenVia.map((id) => db.accounts.get(id)).filter((a): a is P.AccountView => !!a);
-  const press = useLongPress(() => (sheetFor.value = { message: m, onReply: () => onReply(m) }));
+  const reply = () => onReply(m);
+  // Right-click or hold: the innermost thing that has a menu of its own (a file, a link, a person), else the message.
+  const menuAt = (target: EventTarget | null): MenuSpec | null => {
+    const el = target as HTMLElement | null;
+    const att = el?.closest<HTMLElement>('[data-att]');
+    if (att) {
+      const a = m.attachments[Number(att.dataset.att)];
+      if (a) return attachmentMenu(a, m, m.attachments.filter((x) => x.kind === 'image').map((x) => ({ url: x.url, name: x.name, width: x.width, height: x.height })), reply);
+    }
+    const img = el?.closest<HTMLImageElement>('img.embed-image');
+    if (img) return imageMenu(img.src, null, m, reply);
+    const user = el?.closest<HTMLElement>('[data-user], [data-identity]');
+    if (user) {
+      const id = user.dataset.identity ?? db.identityByNative.get(`${m.network}:${user.dataset.user}`);
+      const spec = identityMenu(id);
+      if (spec) return spec;
+    }
+    const link = el?.closest<HTMLAnchorElement>('a[href]');
+    if (link && /^https?:/i.test(link.href)) return linkMenu(link.href, m, reply);
+    return messageMenu(m, reply);
+  };
+  const press = useLongPress((e) => openMenu({ x: e.clientX, y: e.clientY }, menuAt(e.target)));
+  const menuProps = { ...press, onContextMenu: (e: MouseEvent) => onMenu(() => menuAt(e.target))(e) };
 
   if (m.kind === 'system')
     return (
-      <div class="msg system" id={`m-${m.id}`} {...press}>
+      <div class="msg system" id={`m-${m.id}`} {...menuProps}>
         <Icon name="chevronRight" size={12} /> <Body m={m} /> <span class="msg-time">{clock(m.ts)}</span>
         <ReactionBar m={m} />
       </div>
@@ -450,7 +478,7 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
       class={`msg ${grouped ? 'grouped' : ''} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''}`}
       id={`m-${m.id}`}
       ref={(el) => void (el && swipeReply.set(el, () => onReply(m)))}
-      {...press}
+      {...menuProps}
     >
       <div class="msg-gutter">
         {grouped ? (
@@ -458,7 +486,7 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
             {clock(m.ts)}
           </span>
         ) : (
-          <button class="avatar-btn" onClick={() => openProfile(m.authorId)} aria-label={`Profile of ${name}`}>
+          <button class="avatar-btn" data-identity={m.authorId ?? undefined} onClick={() => openProfile(m.authorId)} aria-label={`Profile of ${name}`}>
             <Avatar id={person?.id ?? m.authorId ?? m.id} name={name} url={person?.avatar ?? author?.avatar} size={36} />
           </button>
         )}
@@ -473,7 +501,7 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
         )}
         {!grouped && (
           <div class="msg-head">
-            <span class={`msg-author ${self ? 'self' : ''}`} role="link" tabindex={0} onClick={() => openProfile(m.authorId)} onKeyDown={(e) => e.key === 'Enter' && openProfile(m.authorId)} title={author ? `${author.displayName ?? ''} ${author.handle ? '· ' + author.handle : ''} on ${netName(author.network)}` : ''}>
+            <span class={`msg-author ${self ? 'self' : ''}`} data-identity={m.authorId ?? undefined} role="link" tabindex={0} onClick={() => openProfile(m.authorId)} onKeyDown={(e) => e.key === 'Enter' && openProfile(m.authorId)} title={author ? `${author.displayName ?? ''} ${author.handle ? '· ' + author.handle : ''} on ${netName(author.network)}` : ''}>
               {name}
             </span>
             {author?.isBot && <span class="bot-tag">BOT</span>}
@@ -495,10 +523,20 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
             <TriageNote m={m} />
           </div>
         )}
-        <Body m={m} />
+        {m.forward && !m.deleted ? (
+          <ForwardCard m={m}>
+            <Body m={m.forward.text !== undefined ? { ...m, body: m.forward.text } : m} />
+            <Attachments m={m} />
+            <Embeds m={m} />
+          </ForwardCard>
+        ) : (
+          <>
+            <Body m={m} />
+            <Attachments m={m} />
+            <Embeds m={m} />
+          </>
+        )}
         {grouped && m.editedTs && <span class="msg-edited">(edited)</span>}
-        <Attachments m={m} />
-        <Embeds m={m} />
         <ReactionBar m={m} />
         {thread && (
           <button class="thread-chip" onClick={() => openConv(thread)}>
@@ -522,6 +560,22 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
         )}
         <button class="icon-btn small" title="Reply" onClick={() => onReply(m)}>
           <Icon name="reply" size={15} />
+        </button>
+        {!m.deleted && m.kind !== 'encrypted' && (
+          <button class="icon-btn small" title="Forward" aria-label="Forward" onClick={() => (forwarding.value = m)}>
+            <Icon name="forward" size={15} />
+          </button>
+        )}
+        <button
+          class="icon-btn small"
+          title="More"
+          aria-label="More"
+          onClick={(e) => {
+            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            openMenu({ x: r.left, y: r.bottom + 4 }, messageMenu(m, reply));
+          }}
+        >
+          <Icon name="more" size={15} />
         </button>
         {grouped && <TriageNote m={m} />}
       </div>
@@ -758,6 +812,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           ))}
         </div>
       )}
+      <EmojiComplete ta={ta} convId={targets.convId} network={conv?.network} />
       <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
         {canAttach && !edit && !disabledReason && (
           <>

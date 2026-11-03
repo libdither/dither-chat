@@ -14,6 +14,7 @@ import type {
   AttachmentFact,
   ConversationFact,
   CustomEmojiFact,
+  ForwardFact,
   IdentityFact,
   MessageFact,
   MessageKind,
@@ -372,10 +373,23 @@ function embedExtra(m: RawMessage) {
   return { embeds };
 }
 
+/** Discord's message_reference.type for a forward. */
+export const REFERENCE_FORWARD = 1;
+const isForward = (m: RawMessage) => m.message_reference?.type === REFERENCE_FORWARD || (!!m.message_snapshots?.length && !m.content);
+
+/** Where a forward came from. Discord says the channel, message and server, never the author. */
+function forwardFact(m: RawMessage): ForwardFact | undefined {
+  if (!isForward(m)) return undefined;
+  const ref = m.message_reference;
+  const ts = m.message_snapshots?.[0]?.timestamp ? isoToMs(m.message_snapshots[0].timestamp!) : undefined;
+  return { conversation: ref?.channel_id, message: ref?.message_id, space: ref?.guild_id ?? undefined, ...(ts ? { ts } : {}) };
+}
+
 /** What a message says when its content is empty: a forward, a sticker or a poll. */
 function bodyFallback(m: RawMessage): string {
   const forwarded = m.message_snapshots?.map((s) => s.content).filter(Boolean).join('\n');
-  if (forwarded) return forwarded.replace(/^/gm, '> ');
+  // A forward is shown as a card around this, so it is not quoted here.
+  if (forwarded) return isForward(m) ? forwarded : forwarded.replace(/^/gm, '> ');
   if (m.sticker_items?.length) return m.sticker_items.map((s) => `[sticker: ${s.name}]`).join(' ');
   if (m.poll?.question) return [`**${m.poll.question}**`, ...(m.poll.answers ?? []).map((a) => `- ${a}`)].join('\n');
   return '';
@@ -387,7 +401,8 @@ export function mapMessage(m: RawMessage, selfId: string): MessageFact {
   const mentionsSelf =
     !!m.mention_everyone || (m.mentions?.some((u) => u.id === selfId) ?? false) || body.includes(`<@${selfId}>`);
   const extra = embedExtra(m);
-  const replyTo = m.type !== 21 ? m.message_reference?.message_id : undefined;
+  const forward = forwardFact(m);
+  const replyTo = m.type !== 21 && !forward ? m.message_reference?.message_id : undefined;
   return {
     nativeId: m.id,
     conversation: m.channel_id,
@@ -402,6 +417,7 @@ export function mapMessage(m: RawMessage, selfId: string): MessageFact {
     mentionsSelf: mentionsSelf || undefined,
     attachments: allAttachments(m).length ? allAttachments(m).map(mapAttachment) : undefined,
     reactions: m.reactions?.length ? reactionFacts(m, selfId) : undefined,
+    ...(forward ? { forward } : {}),
     extra,
   };
 }

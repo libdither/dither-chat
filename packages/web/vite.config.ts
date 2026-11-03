@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import preact from '@preact/preset-vite';
 import { defineConfig, type Plugin } from 'vite';
@@ -24,8 +24,17 @@ function serviceWorkerBuild(): Plugin {
   };
 }
 
+/** Changes whenever the wire types do, so a snapshot (src/snapshot.ts) is only read back by code that expects its shape. */
+function protocolHash() {
+  const dir = join(import.meta.dirname, '../protocol/src');
+  const hash = createHash('sha256');
+  for (const f of readdirSync(dir).filter((f) => f.endsWith('.ts')).sort()) hash.update(f).update(readFileSync(join(dir, f)));
+  return hash.digest('hex').slice(0, 12);
+}
+
 export default defineConfig({
   plugins: [preact(), serviceWorkerBuild()],
+  define: { __SNAPSHOT_SCHEMA__: JSON.stringify(protocolHash()) },
   server: {
     port: 5319,
     proxy: {

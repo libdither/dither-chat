@@ -7,6 +7,8 @@ import { api, back, db, go, openMessage, openProfile, rev, route } from '../stat
 import { Avatar, Empty, NetBadge, NetGlyph, Skeleton } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { homeRoute } from './Sidebar.tsx';
+import { Menuable } from './ContextMenu.tsx';
+import { conversationMenu, identityMenu, messageMenu, personMenu, spaceMenu } from './menus.tsx';
 
 /** Split a snippet into text and matches. It is plain text, so it stays out of innerHTML. */
 function Snippet({ text, network }: { text: string; network: P.Network }) {
@@ -94,19 +96,19 @@ function Places({ text }: { text: string }) {
   return (
     <div class="search-places">
       {persons.map((p) => (
-        <button class="search-place" onClick={() => go({ view: 'profile', person: p.id })}>
+        <Menuable build={() => personMenu(p)}>{(ctx) => <button class="search-place" onClick={() => go({ view: 'profile', person: p.id })} {...ctx}>
           <Avatar id={p.id} name={p.name} url={p.avatar} size={24} /> {p.name} <small>Person</small>
-        </button>
+        </button>}</Menuable>
       ))}
       {spaces.map((s) => (
-        <button class="search-place" onClick={() => go({ view: 'space', space: s.id })}>
+        <Menuable build={() => spaceMenu(s)}>{(ctx) => <button class="search-place" onClick={() => go({ view: 'space', space: s.id })} {...ctx}>
           <Avatar id={s.id} name={s.name} url={s.icon} size={24} square network={s.network} /> {s.name} <small>{netName(s.network)} community</small>
-        </button>
+        </button>}</Menuable>
       ))}
       {convs.map((c) => (
-        <button class="search-place" onClick={() => go(homeRoute(c))}>
+        <Menuable build={() => conversationMenu(c)}>{(ctx) => <button class="search-place" onClick={() => go(homeRoute(c))} {...ctx}>
           <NetGlyph network={c.network} size={14} /> {convLabel(c)} <small>{communitiesOf(c)[0]?.name ?? netName(c.network)}</small>
-        </button>
+        </button>}</Menuable>
       ))}
     </div>
   );
@@ -196,9 +198,9 @@ export function SearchPane({ q }: { q: string }) {
         {strangers.length > 0 && (
           <div class="search-places">
             {strangers.map((id) => (
-              <button class="search-place" onClick={() => openProfile(id)}>
+              <Menuable build={() => identityMenu(id)}>{(ctx) => <button class="search-place" onClick={() => openProfile(id)} {...ctx}>
                 <Avatar id={id} name={authorName(id)} url={db.identities.get(id)?.avatar} size={24} network={db.identities.get(id)?.network} /> {authorName(id)} <small>Seen in chats</small>
-              </button>
+              </button>}</Menuable>
             ))}
           </div>
         )}
@@ -209,7 +211,7 @@ export function SearchPane({ q }: { q: string }) {
           const c = db.conversations.get(m.conversationId)!;
           const com = communitiesOf(c)[0];
           return (
-            <button class="search-hit" onClick={() => openMessage(c.id, m.id)}>
+            <Menuable build={() => messageMenu(m)}>{(ctx) => <button class="search-hit" onClick={() => openMessage(c.id, m.id)} {...ctx}>
               <Avatar id={m.authorId ?? m.id} name={authorName(m.authorId)} url={db.identities.get(m.authorId ?? '')?.avatar} size={30} network={m.network} />
               <span class="search-hit-main">
                 <span class="search-hit-top">
@@ -225,7 +227,7 @@ export function SearchPane({ q }: { q: string }) {
                   {m.attachments.length > 0 && <span class="search-att"> <Icon name="file" size={11} /> {m.attachments.length}</span>}
                 </span>
               </span>
-            </button>
+            </button>}</Menuable>
           );
         })}
         {page?.next && (

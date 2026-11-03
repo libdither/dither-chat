@@ -237,11 +237,23 @@ describe('messages', () => {
     expect(f.replyTo).toBe('700000000000000000');
   });
 
+  test('a forward says where it came from, and is not a reply', () => {
+    const f = mapMessage(
+      { ...base, content: '', message_reference: { type: 1, channel_id: '500', message_id: '600', guild_id: '400' }, message_snapshots: [{ content: 'hello', timestamp: '2026-11-03T00:24:36.258000+00:00' }] },
+      SELF,
+    );
+    expect(f.forward).toEqual({ conversation: '500', message: '600', space: '400', ts: Date.parse('2026-11-03T00:24:36.258Z') });
+    expect(f.replyTo).toBeUndefined();
+    expect(f.body).toBe('hello');
+    expect(mapMessage({ ...base, message_reference: { message_id: '600', channel_id: base.channel_id } }, SELF).forward).toBeUndefined();
+  });
+
   test('a forward, a sticker and a poll say something despite empty content', () => {
     const empty = { ...base, content: '' };
     const att = { id: '9', filename: 'a.png', url: 'https://cdn.discordapp.com/a.png' };
     const forward = mapMessage({ ...empty, message_snapshots: [{ content: 'line one\nline two', attachments: [att], embeds: [{ title: 'card' }] }] }, SELF);
-    expect(forward.body).toBe('> line one\n> line two');
+    // Shown as a card around the content, so not quoted.
+    expect(forward.body).toBe('line one\nline two');
     expect(forward.attachments?.map((a) => a.nativeId)).toEqual(['9']);
     expect((forward.extra as any).embeds[0].title).toBe('card');
     expect(mapMessage({ ...empty, sticker_items: [{ name: 'wave' }] }, SELF).body).toBe('[sticker: wave]');

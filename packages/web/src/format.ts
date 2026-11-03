@@ -9,9 +9,12 @@ export function ago(ts: number | null | undefined, now = Date.now()): string {
   if (d < MIN) return 'now';
   if (d < HOUR) return `${Math.floor(d / MIN)}m`;
   if (d < DAY && new Date(ts).getDate() === new Date(now).getDate()) return `${Math.floor(d / HOUR)}h`;
-  if (d < 6 * DAY) return new Date(ts).toLocaleDateString(undefined, { weekday: 'short' });
-  return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  if (d < 6 * DAY) return (weekdayFmt ??= new Intl.DateTimeFormat(undefined, { weekday: 'short' })).format(ts);
+  return (dayFmt ??= new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })).format(ts);
 }
+// Made once: toLocaleDateString builds a formatter per call, which a long list pays hundreds of times per render.
+let weekdayFmt: Intl.DateTimeFormat | undefined;
+let dayFmt: Intl.DateTimeFormat | undefined;
 
 export function clock(ts: number): string {
   return new Date(ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
@@ -45,12 +48,16 @@ export function bytes(n: number | null | undefined): string {
   return `${(n / 1024 ** 2).toFixed(1)} MB`;
 }
 
+/** Lightness and chroma of avatars without images: even across hues, and white initials read on all of them (test/themes.test.ts). */
+export const AVATAR_L = 0.5;
+export const AVATAR_C = 0.1;
+
 /** Stable pleasant colour for avatars without images. */
 export function hueOf(id: string): string {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
   const hue = Math.abs(h) % 360;
-  return `hsl(${hue} 42% 42%)`;
+  return `oklch(${AVATAR_L * 100}% ${AVATAR_C} ${hue})`;
 }
 
 export function initials(name: string): string {

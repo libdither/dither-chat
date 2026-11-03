@@ -11,12 +11,16 @@ import type { PushService } from './push.ts';
 import type { ReadQueue } from './readqueue.ts';
 import { validDailyDigest, validQuietHours, type Triage } from './triage.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
+import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } from './calls.ts';
+import { compress } from './compress.ts';
+import { forwardMessage } from './forward.ts';
+import { UsageStore } from './usage.ts';
 
 const ACCOUNT_COLORS = ['#F2A541', '#E86A92', '#B794F6', '#FF8C61', '#9BE15D', '#5CC8FF', '#F7D154', '#FF6B6B'];
 
 type ClientData = { kind: 'client' };
 type LiveViewData = { kind: 'liveview'; accountId: string; port: number; tcp?: Socket<unknown>; queue: Uint8Array[] };
-type WsData = ClientData | LiveViewData | AdapterSocketData;
+type WsData = ClientData | LiveViewData | AdapterSocketData | CallSocketData | VoiceSocketData;
 
 export interface ServerOpts {
   port: number;
@@ -32,6 +36,8 @@ export interface ServerOpts {
   /** Rescore categories after they change. */
   onCategoriesChanged?: (force?: boolean) => void;
   onDemoReset?: () => Promise<void>;
+  /** TURN relay for direct-mode calls, so their media leaves from this machine. */
+  turn?: TurnConfig;
 }
 
 // ------------------------------------------------------------------ access
@@ -79,6 +85,8 @@ export class HubServer {
   private clients = new Set<ServerWebSocket<ClientData>>();
   private flushTimer?: Timer;
   private uploads: Uploads;
+  private usage?: UsageStore;
+  readonly calls: Calls;
 
   constructor(
     private store: Store,
@@ -87,6 +95,8 @@ export class HubServer {
     private opts: ServerOpts,
   ) {
     this.uploads = new Uploads(join(opts.dataDir, 'uploads'));
+    this.calls = new Calls(store, sup, { turn: opts.turn, pickAccount: (c, a) => this.pickAccount(c, a) });
+    sup.calls = this.calls;
   }
 
   start() {
@@ -94,7 +104,7 @@ export class HubServer {
     const guarded = (handler: (req: Request, server: Server<WsData>) => Promise<Response | undefined> | Response | undefined) =>
       async (req: Request, server: Server<WsData>) => {
         try {
-          return await handler(req, server);
+          return await compress(req, await handler(req, server));
         } catch (e: any) {
           console.error('request failed', req.method, new URL(req.url).pathname, e);
           return Response.json({ error: String(e?.message ?? e) }, { status: 500 });
@@ -107,11 +117,15 @@ export class HubServer {
           const d = ws.data;
           if (d.kind === 'client') self.clients.add(ws as ServerWebSocket<ClientData>);
           else if (d.kind === 'adapter') self.sup.attach(ws as ServerWebSocket<AdapterSocketData>);
+          else if (d.kind === 'call') return;
+          else if (d.kind === 'voice') self.calls.voiceOpen(ws as ServerWebSocket<VoiceSocketData>);
           else self.openLiveView(ws as ServerWebSocket<LiveViewData>);
         },
         message(ws, msg) {
           const d = ws.data;
           if (d.kind === 'adapter') self.sup.receive(ws as ServerWebSocket<AdapterSocketData>, msg);
+          else if (d.kind === 'call') self.calls.message(ws as ServerWebSocket<CallSocketData>, msg);
+          else if (d.kind === 'voice') self.calls.voiceMessage(ws as ServerWebSocket<VoiceSocketData>, msg);
           else if (d.kind === 'liveview') {
             const buf = typeof msg === 'string' ? new TextEncoder().encode(msg) : new Uint8Array(msg);
             if (d.tcp) d.tcp.write(buf);
@@ -122,6 +136,8 @@ export class HubServer {
           const d = ws.data;
           if (d.kind === 'client') self.clients.delete(ws as ServerWebSocket<ClientData>);
           else if (d.kind === 'adapter') self.sup.detach(ws as ServerWebSocket<AdapterSocketData>);
+          else if (d.kind === 'call') self.calls.close(ws as ServerWebSocket<CallSocketData>);
+          else if (d.kind === 'voice') self.calls.voiceClose(ws as ServerWebSocket<VoiceSocketData>);
           else d.tcp?.end();
         },
     };
@@ -241,14 +257,29 @@ export class HubServer {
     if (!isLoopback(ip) && !isTailnet(ip)) return new Response('tailnet only', { status: 403 });
 
     if (path.startsWith('/api/') && req.method !== 'GET' && !sameOrigin(req)) return new Response('cross-site request refused', { status: 403 });
-    if ((path === '/api/live' || path.startsWith('/api/liveview/')) && !sameOrigin(req)) return new Response('cross-site socket refused', { status: 403 });
+    if ((path === '/api/live' || path.startsWith('/api/liveview/') || path.startsWith('/api/call')) && !sameOrigin(req)) return new Response('cross-site socket refused', { status: 403 });
     if (path === '/ca.crt') return this.caCert();
 
     if (path === '/api/live') {
       if (server.upgrade(req, { data: { kind: 'client' } satisfies ClientData })) return undefined;
       return new Response('upgrade failed', { status: 400 });
     }
+    if (path === '/api/call') {
+      if (server.upgrade(req, { data: { kind: 'call' } satisfies CallSocketData })) return undefined;
+      return new Response('upgrade failed', { status: 400 });
+    }
+    if (path === '/api/calls') return Response.json(this.calls.stats());
     let m: RegExpMatchArray | null;
+    // Call lab (scripts/call-lab.ts): only on a hub started with DITHER_LAB=1, from loopback, never from a browser.
+    if (process.env.DITHER_LAB === '1' && req.method === 'POST' && !req.headers.get('origin') && /^(127\.|::1$|::ffff:127\.)/.test(server.requestIP(req)?.address ?? '') && (m = path.match(/^\/api\/lab\/([\w-]+)$/))) {
+      const b = (await req.json()) as { op: string; timeout?: number };
+      try {
+        return Response.json({ ok: true, result: await this.sup.command(m[1], { t: 'lab', lab: b, timeout: b.timeout }, (b.timeout ?? 30_000) + 5000) });
+      } catch (e: any) {
+        return Response.json({ ok: false, error: String(e?.message ?? e) });
+      }
+    }
+    if ((m = path.match(/^\/api\/call\/([\w-]+)\/voice$/))) return this.calls.upgradeVoice(req, server, m[1], url);
     if ((m = path.match(/^\/api\/liveview\/([\w-]+)$/))) {
       const acc = this.store.account(m[1]);
       const lv = acc?.live_view ? (JSON.parse(acc.live_view) as { vncPort: number }) : null;
@@ -258,6 +289,8 @@ export class HubServer {
       if (server.upgrade(req, { data: { kind: 'liveview', accountId: m[1], port: lv.vncPort, queue: [] } satisfies LiveViewData, headers })) return undefined;
       return new Response('upgrade failed', { status: 400 });
     }
+    if (path === '/api/voice/dave') return this.daveCurrent();
+    if ((m = path.match(/^\/voice\/dave\/([0-9a-f]{16})\/(libdave\.mjs|libdave\.wasm)$/))) return this.daveFile(m[1], m[2]);
     if ((m = path.match(/^\/media\/([\w-]+)\/([\w-]+)$/))) return this.media(m[1], m[2], url.searchParams.get('a'));
     // Custom emoji inside message bodies: the id is all a body has, and it can only reach Discord's CDN.
     if ((m = path.match(/^\/emoji\/discord\/(\d+)(\.animated)?$/))) return this.fetchMedia(discordEmojiUrl(m[1], !!m[2]), null);
@@ -344,6 +377,24 @@ export class HubServer {
       const result = await this.sup.command(accountId, { t: 'send', conversation: conv.nativeId, body: b.body ?? '', replyTo, ...(files.length ? { attachments: files } : {}) }, files.length ? 180_000 : undefined);
       this.uploads.remove(ids);
       return ok({ ok: true, accountId, result });
+    }
+    if ((m = path.match(/^\/api\/messages\/([\w-]+)\/forward$/)) && method === 'POST') {
+      const b = await body<P.ForwardRequest>();
+      const r = await forwardMessage(
+        {
+          store: s,
+          uploads: this.uploads,
+          online: (a) => this.sup.online(a),
+          command: (a, c, t) => this.sup.command(a, c, t),
+          pickAccount: (c, a) => this.pickAccount(c, a),
+          sendRefusal: (c, a) => this.sendRefusal(c, a),
+          media: (raw, a) => this.mediaBytes(raw, a),
+        },
+        m[1],
+        { targets: Array.isArray(b.targets) ? b.targets : [], note: b.note },
+      );
+      this.flush();
+      return 'error' in r ? bad(r.error, r.status) : ok({ results: r });
     }
     if (path === '/api/directs' && method === 'POST') {
       const b = await body<{ accountId?: string; peer?: string }>();
@@ -476,6 +527,21 @@ export class HubServer {
       s.patchPlacePrefs(b.items ?? []);
       return ok();
     }
+    // Usage and automatic order (usage.ts, docs/organize.md).
+    if (path === '/api/usage' || path === '/api/arrange') {
+      const u = (this.usage ??= new UsageStore(s.db));
+      if (path === '/api/arrange' && method === 'PATCH') return ok(u.patchArrange(await body()));
+      if (method === 'GET') return ok(u.state());
+      if (method === 'POST') {
+        const b = await body<{ batch?: string; deltas?: Partial<P.UsageDelta>[] }>();
+        return ok({ applied: u.apply(typeof b.batch === 'string' ? b.batch.slice(0, 64) : undefined, Array.isArray(b.deltas) ? b.deltas : []) });
+      }
+      if (method === 'DELETE') {
+        const b = await body<{ kind?: string; id?: string }>();
+        u.reset(b.kind && b.id ? { kind: b.kind, id: b.id } : undefined);
+        return ok();
+      }
+    }
     if (path.startsWith('/api/push')) {
       const push = this.opts.push;
       if (!push) return bad('push is not available', 404);
@@ -485,7 +551,7 @@ export class HubServer {
         const sub = b.subscription;
         if (!sub?.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) return bad('that is not a push subscription');
         const id = push.subscribe({ endpoint: sub.endpoint, p256dh: sub.keys.p256dh, auth: sub.keys.auth }, b.label);
-        return id ? ok({ id }) : bad('that push service is not one browsers use');
+        return id ? ok({ id }) : bad('the hub does not send to that push service: it takes the browser relays, and others only when listed in DITHER_PUSH_RELAYS (docs/android.md)');
       }
       if (path === '/api/push/unsubscribe' && method === 'POST') {
         const b = await body<{ id?: string; endpoint?: string }>();
@@ -556,6 +622,7 @@ export class HubServer {
     if (path === '/api/accounts' && method === 'POST') {
       const b = await body<{ network: P.Network; label?: string; color?: string; adapter?: string; config?: unknown; secret?: unknown }>();
       if (!NETWORKS.includes(b.network)) return bad('unknown network');
+      if (s.accounts().some((a) => a.demo)) return bad('This is a demo hub. Real accounts go on a hub with its own data dir, started without --demo.');
       const used = new Set(s.accounts().map((a) => a.color));
       const color = b.color ?? ACCOUNT_COLORS.find((c) => !used.has(c)) ?? ACCOUNT_COLORS[0];
       const acc = s.createAccount({ network: b.network, label: b.label?.trim() || NETWORK_META[b.network].name, color, adapter: b.adapter ?? b.network, config: b.config });
@@ -631,6 +698,37 @@ export class HubServer {
     return vs.find((a) => this.sup.online(a)) ?? vs[0] ?? null;
   }
 
+  // ---------------------------------------------------------------- voice crypto
+
+  /**
+   * Discord's DAVE library for direct-mode calls, as scripts/dave/update.ts extracted, tested and promoted
+   * it. Never part of this repo: it lives in DITHER_DAVE_DIR. The device loads it into an opaque-origin
+   * worker, hence the open CORS header; it is public code and holds nothing of the user's.
+   */
+  private daveRoot(): string {
+    return process.env.DITHER_DAVE_DIR ?? join(this.opts.dataDir, 'dave');
+  }
+
+  private daveCurrent(): Response {
+    const file = join(this.daveRoot(), 'current.json');
+    if (!existsSync(file)) return Response.json({ error: 'No DAVE library yet. Run: bun scripts/dave/update.ts --root ' + this.daveRoot() }, { status: 404 });
+    const cur = JSON.parse(readFileSync(file, 'utf8')) as { dir: string; build?: string; maxProtocolVersion?: number };
+    const id = cur.dir.split('/').filter(Boolean).pop()!;
+    return Response.json({ id, build: cur.build ?? null, maxProtocolVersion: cur.maxProtocolVersion ?? null, module: `/voice/dave/${id}/libdave.mjs` }, { headers: { 'cache-control': 'no-cache' } });
+  }
+
+  private daveFile(id: string, name: string): Response {
+    const file = join(this.daveRoot(), id, name);
+    if (!existsSync(file)) return new Response('not found', { status: 404 });
+    return new Response(Bun.file(file), {
+      headers: {
+        'content-type': name.endsWith('.wasm') ? 'application/wasm' : 'text/javascript; charset=utf-8',
+        'access-control-allow-origin': '*',
+        'cache-control': 'public, max-age=31536000, immutable',
+      },
+    });
+  }
+
   // ---------------------------------------------------------------- media
 
   private async media(sig: string, b64: string, accountId: string | null): Promise<Response> {
@@ -638,6 +736,15 @@ export class HubServer {
     const expect = createHmac('sha256', this.opts.secret).update(`${raw}|${accountId ?? ''}`).digest('base64url').slice(0, 16);
     if (sig !== expect) return new Response('bad signature', { status: 403 });
     return this.fetchMedia(raw, accountId);
+  }
+
+  /** The bytes behind a stored media URL, for sending them on. */
+  private async mediaBytes(raw: string, accountId: string | null): Promise<{ bytes: Uint8Array; mime: string } | null> {
+    const data = raw.match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
+    if (data) return { mime: data[1] ?? 'application/octet-stream', bytes: data[2] ? Buffer.from(data[3], 'base64') : new TextEncoder().encode(decodeURIComponent(data[3])) };
+    const res = await this.fetchMedia(raw, accountId);
+    if (!res.ok) return null;
+    return { bytes: new Uint8Array(await res.arrayBuffer()), mime: res.headers.get('content-type') ?? 'application/octet-stream' };
   }
 
   private async fetchMedia(raw: string, accountId: string | null): Promise<Response> {

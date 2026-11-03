@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The web app's dark background (index.html theme-color), so the launch is one colour from tap to content. -->
+    <color name="app_bg">#14151b</color>
+    <color name="accent">#b79bff</color>
+</resources>

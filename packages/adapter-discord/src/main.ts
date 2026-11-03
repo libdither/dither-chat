@@ -19,7 +19,7 @@ import { customEmoji, DISCORD_EPOCH, guildIconUrl, mapUser } from './map.ts';
 import { BridgeServer, PaceQueue } from './server.ts';
 import { Sandbox, pickDisplay } from './sandbox.ts';
 
-const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'typing', 'threads', 'media', 'liveView', 'sendMedia', 'openDirect'];
+const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'typing', 'threads', 'media', 'liveView', 'sendMedia', 'openDirect', 'calls', 'forward'];
 const WIDTH = 1280;
 const HEIGHT = 800;
 
@@ -101,6 +101,7 @@ async function boot() {
     token: bridgeToken,
     startUrl,
     noSandbox: !!hub.config.noSandbox || process.env.DITHER_CHROMIUM_NO_SANDBOX === '1',
+    lab: hub.config.lab === true && process.env.DITHER_LAB === '1',
     log,
   });
 
@@ -166,6 +167,16 @@ function handleBridge(msg: BridgeUp) {
       break;
     case 'loginIssue':
       onLoginIssue(msg);
+      break;
+    case 'call':
+      for (const u of msg.users ?? []) hub.emit({ t: 'identity', identity: mapUser(u, { contact: st.friends.has(u.id) }) });
+      hub.emit({
+        t: 'call',
+        call: msg.call,
+        ...(msg.signal !== undefined ? { signal: msg.signal } : {}),
+        ...(msg.state ? { state: { conversation: msg.state.channelId, participants: msg.state.participants } } : {}),
+        ...(msg.ended ? { ended: msg.ended } : {}),
+      });
       break;
   }
 }
@@ -250,6 +261,11 @@ async function onCommand(cmd: P.AdapterCommand): Promise<unknown> {
       const r = await pace.run('send', () => bridge.request<{ nativeId: string | null }>(hc, files?.length ? 170_000 : 30_000));
       return { nativeId: r?.nativeId ?? null };
     }
+    case 'forward': {
+      const hc: HookCommand = { kind: 'forward', channelId: cmd.conversation, source: { channelId: cmd.source.conversation, messageId: cmd.source.message }, note: cmd.note, nonce: randomNonce() };
+      const r = await pace.run('send', () => bridge.request<{ nativeId: string | null }>(hc, 30_000));
+      return { nativeId: r?.nativeId ?? null };
+    }
     case 'openDirect': {
       if (cmd.peer === st.selfId) throw new Error('that is this account');
       const r = await pace.run('openDirect', () => bridge.request<{ channelId: string; existed: boolean; channel?: RawChannel | null }>({ kind: 'openDirect', userId: cmd.peer }, 30_000));
@@ -293,6 +309,14 @@ async function onCommand(cmd: P.AdapterCommand): Promise<unknown> {
       return pace.run('redact', () => bridge.request({ kind: 'redact', channelId: cmd.conversation, messageId: cmd.message }, 20_000));
     case 'fetchMedia':
       return fetchMedia(cmd.url);
+    case 'call': {
+      const { t: _t, id: _id, conversation, ...rest } = cmd as P.AdapterCommand & { t: 'call'; conversation?: string };
+      const hc = { kind: 'call', ...rest, ...(conversation ? { channelId: conversation } : {}) } as HookCommand;
+      return bridge.request(hc, cmd.op === 'join' ? 40_000 : 15_000);
+    }
+    case 'lab':
+      if (process.env.DITHER_LAB !== '1') throw new Error('not a lab hub');
+      return bridge.request({ ...cmd.lab, kind: 'lab' } as HookCommand, cmd.timeout ?? 30_000);
     case 'action':
       return handleAction(cmd.action);
     default:

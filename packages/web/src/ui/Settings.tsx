@@ -6,6 +6,10 @@ import { STATUS, addingAccount } from './Accounts.tsx';
 import { AccountChip, NetBadge, NetGlyph, levelIcon } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { PushSettings } from './Push.tsx';
+import { phone } from '../phone.ts';
+import { Sheet } from './Sheet.tsx';
+import { chosenTheme, followsSystem, Swatch, ThemeList } from './Themes.tsx';
+import { themeById } from '../themes.ts';
 
 const LEVELS: P.NotifyLevel[] = ['all', 'smart', 'mentions', 'digest', 'none'];
 
@@ -137,7 +141,7 @@ function DailyDigestSettings() {
 
 /** A phone has no rail with an accounts button: they head its settings, the way Discord's "You" tab does. */
 function AccountsBlock() {
-  const accounts = [...db.accounts.values()].filter((a) => prefs.value.showDemo || !a.demo);
+  const accounts = [...db.accounts.values()];
   return (
     <section class="set-block phone-only" id="set-accounts">
       <h3>Accounts</h3>
@@ -303,23 +307,31 @@ export function SettingsPane() {
 
         <section class="set-block" id="set-appearance">
           <h3>Appearance</h3>
+          <AppearanceTheme />
+        </section>
+
+        <section class="set-block" id="set-calls">
+          <h3>Calls</h3>
           <div class="set-rule">
-            <span class="set-rule-label">Theme</span>
+            <span class="set-rule-label">Connect through</span>
             <div class="level-picker">
-              {(['dark', 'light', 'system'] as const).map((t) => (
-                <button class={`chip-btn ${p.theme === t ? 'on' : ''}`} onClick={() => setPrefs({ theme: t })}>
-                  {t[0].toUpperCase() + t.slice(1)}
+              {(
+                [
+                  ['bridge', 'The account'],
+                  ['direct', 'This device'],
+                ] as const
+              ).map(([m, label]) => (
+                <button class={`chip-btn ${p.callMode === m ? 'on' : ''}`} onClick={() => setPrefs({ callMode: m })}>
+                  {label}
                 </button>
               ))}
             </div>
           </div>
-          <label class="toggle-row">
-            <input type="checkbox" checked={p.showDemo} onChange={(e) => setPrefs({ showDemo: (e.target as HTMLInputElement).checked })} />
-            <span>
-              <b>Show demo accounts</b>
-              <small>The four sample accounts (two Discord, Signal, Matrix) that ship with this preview. Turn off to see only real accounts you've added.</small>
-            </span>
-          </label>
+          <p class="set-help">
+            {p.callMode === 'bridge'
+              ? "The account's own client on the hub joins the call, and its audio is passed to this device. Works the way the network's app does, at the cost of the hub's CPU."
+              : 'This device joins the call itself, with a one-call token from the account. Its connection still goes through the hub. Lighter on the hub, a little more work for the device.'}
+          </p>
         </section>
 
         <section class="set-block">
@@ -332,17 +344,46 @@ export function SettingsPane() {
             <a class="btn ghost small" href="https://github.com/libdither/dither-chat" target="_blank" rel="noreferrer">
               <Icon name="external" size={13} /> Source
             </a>
-            <button
-              class="btn ghost small"
-              onClick={() => {
-                if (confirm('Reset the demo world to its starting state?')) api('/api/demo/reset', { body: {} }).then(() => toast({ kind: 'info', title: 'Demo reset', body: 'Fresh demo data loaded.' }));
-              }}
-            >
-              <Icon name="refresh" size={13} /> Reset demo data
-            </button>
+            {/* Only a demo hub (started with --demo, its own data dir) has demo accounts. */}
+            {[...db.accounts.values()].some((a) => a.demo) && (
+              <button
+                class="btn ghost small"
+                onClick={() => {
+                  if (confirm('Reset the demo world to its starting state?')) api('/api/demo/reset', { body: {} }).then(() => toast({ kind: 'info', title: 'Demo reset', body: 'Fresh demo data loaded.' }));
+                }}
+              >
+                <Icon name="refresh" size={13} /> Reset demo data
+              </button>
+            )}
           </div>
         </section>
       </div>
     </section>
+  );
+}
+
+/** The theme: every theme in a list on a desktop; on a phone, a row that opens them in a sheet. */
+function AppearanceTheme() {
+  const [open, setOpen] = useState(false);
+  const p = prefs.value;
+  const t = chosenTheme();
+  if (!phone.value) return <ThemeList />;
+  const label = followsSystem() ? `${themeById(p.themeDark).name} / ${themeById(p.themeLight).name}` : t.name;
+  return (
+    <>
+      <button class="set-rule theme-row" onClick={() => setOpen(true)}>
+        <span class="set-rule-label">Theme</span>
+        <span class="theme-row-value">
+          <Swatch t={t} />
+          {label}
+          <Icon name="chevronRight" size={15} />
+        </span>
+      </button>
+      {open && (
+        <Sheet onClose={() => setOpen(false)} label="Theme" tall>
+          <ThemeList />
+        </Sheet>
+      )}
+    </>
   );
 }

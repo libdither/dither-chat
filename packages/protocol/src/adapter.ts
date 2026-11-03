@@ -23,6 +23,7 @@
  * native ID on the adapter's own network.
  */
 
+import type { CallMode, CallState } from './call.ts';
 import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, ReactionStyle, Shape, SpaceKind, Variant } from './ontology.ts';
 
 export type Capability =
@@ -41,7 +42,11 @@ export type Capability =
   | 'e2ee'
   /** Starting a direct conversation with someone you have none with. */
   | 'openDirect'
-  | 'liveView';
+  | 'liveView'
+  /** Voice calls (see call.ts). */
+  | 'calls'
+  /** Forwarding a message it can read into another conversation, the network's own way (the `forward` command). */
+  | 'forward';
 
 // ---------------------------------------------------------------- facts
 
@@ -125,7 +130,23 @@ export interface MessageFact {
   attachments?: AttachmentFact[];
   /** Full reaction snapshot (backfill). Live changes use the `reaction` event. */
   reactions?: ReactionFact[];
+  /** This message forwards another, as the network marks it. body and attachments are the forwarded content. */
+  forward?: ForwardFact;
   extra?: Record<string, unknown>;
+}
+
+/**
+ * Where a forwarded message came from, as far as the network says. Discord names the channel, message and
+ * server but not the author; a Matrix forward from dither-chat names all of it.
+ */
+export interface ForwardFact {
+  conversation?: string;
+  message?: string;
+  /** The original's community, when the conversation alone does not say (a Discord guild id). */
+  space?: string;
+  author?: string;
+  authorName?: string;
+  ts?: number;
 }
 
 /** A custom emoji. Reactions refer to it by key; the hub keeps a catalog per network. */
@@ -225,6 +246,8 @@ export type AdapterEvent =
   /** Read state as the network reports it. Counts override the hub's own tally when given. */
   | { t: 'read'; conversation: string; upToTs: number; unread?: number; mentions?: number }
   | { t: 'typing'; conversation: string; author: string }
+  /** A call this hub started: bridge signalling for the device, the call's state, or its end. */
+  | { t: 'call'; call: string; signal?: unknown; state?: CallState; ended?: string }
   | { t: 'reply'; id: string; ok: true; result?: unknown }
   | { t: 'reply'; id: string; ok: false; error: string }
   | { t: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; msg: string; data?: unknown };
@@ -232,8 +255,16 @@ export type AdapterEvent =
 // ---------------------------------------------------------------- hub -> adapter
 
 export type AdapterCommand =
+  /** Call lab only (scripts/call-lab.ts, DITHER_LAB=1): a command for the lab probe in the sandbox. */
+  | { t: 'lab'; id: string; lab: { op: string; [k: string]: unknown }; timeout?: number }
   /** reply.result: { nativeId } of the sent message if known (the echo still arrives as a message fact). */
   | { t: 'send'; id: string; conversation: string; body: string; replyTo?: string; attachments?: OutgoingAttachment[] }
+  /**
+   * Forward a message this account can read, the network's own way (capability 'forward'). `note` goes with it,
+   * as the network's own client would send one. reply.result: { nativeId } of the forward, or { fallback: reason }
+   * when this pair of conversations has no native forward (the hub then sends the content again itself).
+   */
+  | { t: 'forward'; id: string; conversation: string; source: { conversation: string; message: string }; note?: string }
   /**
    * Open or find the direct conversation with this person, without sending anything.
    * peer: Discord user id | Matrix @user:server | Signal ACI or +phone. reply.result: OpenDirectResult
@@ -251,6 +282,11 @@ export type AdapterCommand =
   | { t: 'redact'; id: string; conversation: string; message: string }
   /** reply.result: { mime: string, base64: string } */
   | { t: 'fetchMedia'; id: string; url: MediaUrl }
+  /** reply.result for join: { direct?: DirectVoiceSession }. One call per account at a time. */
+  | { t: 'call'; id: string; call: string; op: 'join'; conversation: string; mode: CallMode; muted?: boolean; deafened?: boolean }
+  | { t: 'call'; id: string; call: string; op: 'leave' }
+  | { t: 'call'; id: string; call: string; op: 'mute'; muted: boolean; deafened: boolean }
+  | { t: 'call'; id: string; call: string; op: 'signal' | 'note'; data: unknown }
   /** Account-specific actions, e.g. 'relogin', 'startLink', 'resync'. */
   | { t: 'action'; id: string; action: string; args?: unknown }
   | { t: 'shutdown' };

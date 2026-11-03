@@ -14,7 +14,6 @@ export interface Picked {
 
 /** The floating UI: one of each, mounted once, so a timeline's scroll box can never clip it. */
 export const pickerFor = signal<{ message: P.MessageView; anchor: DOMRect | null } | null>(null);
-export const sheetFor = signal<{ message: P.MessageView; onReply: () => void } | null>(null);
 export const reactorsFor = signal<{ message: P.MessageView; key: string; style: P.ReactionStyle; anchor: DOMRect } | null>(null);
 
 const FALLBACK_QUICK = ['👍', '❤️', '😂', '🎉', '😮', '🙏'];

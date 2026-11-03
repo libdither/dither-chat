@@ -4,7 +4,7 @@ import { NETWORK_META, REACTION_RULES } from '@dither-chat/protocol';
 import { loadEmoji, searchEmoji, SKIN_TONES, skinOf, type EmojiCategory } from '../emoji.ts';
 import { fullTime } from '../format.ts';
 import { authorName, convTitle, netName, plainBody } from '../model.ts';
-import { hasMine, pickerFor, quickReactions, reactionContext, reactionScope, reactorsFor, reactorsLabel, sheetFor, toggleReaction, type Picked } from '../reactions.ts';
+import { hasMine, pickerFor, quickReactions, reactionContext, reactionScope, reactorsFor, reactorsLabel, toggleReaction, type Picked } from '../reactions.ts';
 import { canDelete, canEdit, deleteMessage, startEditing, api, db, feedback, isSelfIdentity, openProfile, prefs, rev, setPrefs, toast } from '../state.ts';
 import { haptic, useLayer } from '../phone.ts';
 import { Avatar } from './bits.tsx';
@@ -453,112 +453,15 @@ function Reactors({ m, reactionKey, style, anchor, onClose }: { m: P.MessageView
   );
 }
 
-// ------------------------------------------------------------------ long-press sheet
-
-/**
- * Long-press on a message: everything its hover bar, its tooltips and its pills offer on a desktop, in one
- * sheet. The header carries what a hover would have shown: the exact time, the network, the account it came through.
- */
-function MessageSheet({ m, onReply, onClose }: { m: P.MessageView; onReply: () => void; onClose: () => void }) {
-  const scope = reactionScope(m.conversationId);
-  const self = isSelfIdentity(m.authorId);
-  const name = self ? 'You' : authorName(m.authorId);
-  const author = m.authorId ? db.identities.get(m.authorId) : null;
-  const person = author?.personId ? db.persons.get(author.personId) : null;
-  const via = m.seenVia.map((id) => db.accounts.get(id)).filter((a): a is P.AccountView => !!a);
-  const thread = m.threadId ? db.conversations.get(m.threadId) : null;
-  const t = m.triage;
-  const act = (fn: () => void) => () => {
-    onClose();
-    fn();
-  };
-  const action = (icon: string, label: string, fn: () => void, cls = '') => (
-    <button class={`sheet-action ${cls}`} onClick={act(fn)}>
-      <Icon name={icon} size={20} /> {label}
-    </button>
-  );
-  return (
-    <Sheet onClose={onClose} label="Message actions" class="message-sheet">
-      <div class="msg-sheet-head">
-        <Avatar id={person?.id ?? m.authorId ?? m.id} name={name} url={person?.avatar ?? author?.avatar} size={36} />
-        <span>
-          <b>{name}</b>
-          <small>
-            {fullTime(m.ts)}
-            {m.editedTs ? ' · edited' : ''} · {netName(m.network)}
-            {via.length ? ` via ${via.map((a) => a.label).join(', ')}` : ''}
-          </small>
-        </span>
-      </div>
-      {m.encryptionWarning && (
-        <div class="ep-note">
-          <Icon name="alert" size={13} /> {m.encryptionWarning}
-        </div>
-      )}
-      {scope === 'all' && (
-        <div class="sheet-quick">
-          {quickReactions(m.network, 6).map((k) => (
-            <button aria-label={`React ${k}`} onClick={act(() => toggleReaction(m, { key: k }))}>
-              {k}
-            </button>
-          ))}
-          <button class="more" aria-label="More reactions" onClick={act(() => (pickerFor.value = { message: m, anchor: null }))}>
-            <Icon name="smilePlus" size={22} />
-          </button>
-        </div>
-      )}
-      {scope === 'existing' && <div class="ep-note">You can only add to reactions already on a message here. Tap one to join in.</div>}
-      <div class="sheet-actions">
-        {m.kind !== 'system' && action('reply', 'Reply', onReply)}
-        {canEdit(m) && action('pencil', 'Edit', () => startEditing(m))}
-        {m.body && !m.deleted &&
-          action('copy', 'Copy text', () =>
-            navigator.clipboard?.writeText(plainBody(m.body, m.network)).then(
-              () => toast({ kind: 'info', title: 'Copied', body: '' }, 1500),
-              () => toast({ kind: 'error', title: 'Could not copy', body: 'The browser refused.' }),
-            ),
-          )}
-        {m.replyToId && action('chevronUp', 'Go to the message it replies to', () => document.getElementById(`m-${m.replyToId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }))}
-        {thread && action('thread', `Open thread: ${convTitle(thread)}`, () => openConv(thread))}
-        {m.authorId && action('user', self ? 'Your profile' : `Profile of ${name}`, () => openProfile(m.authorId))}
-        {canDelete(m) && action('trash', 'Delete', () => deleteMessage(m), 'danger')}
-      </div>
-      {t && (
-        <div class="sheet-triage">
-          <h4>
-            <Icon name={t.decision === 'push' ? 'bell' : t.decision === 'digest' ? 'layers' : 'bellOff'} size={14} />
-            {t.decision === 'push' ? 'This pinged you because' : t.decision === 'digest' ? 'This went to the digest because' : 'This was silent because'}
-          </h4>
-          <ul>
-            {t.reasons.map((r) => (
-              <li>{r}</li>
-            ))}
-          </ul>
-          <div class="triage-fb">
-            <button class={`chip-btn ${t.feedback === 'should_push' ? 'on' : ''}`} onClick={act(() => feedback(m.id, 'should_push'))}>
-              <Icon name="thumbsUp" size={14} /> {t.decision === 'push' ? 'Right call' : 'Should have pinged'}
-            </button>
-            <button class={`chip-btn ${t.feedback === 'should_not_push' ? 'on' : ''}`} onClick={act(() => feedback(m.id, 'should_not_push'))}>
-              <Icon name="thumbsDown" size={14} /> {t.decision === 'push' ? "Shouldn't have pinged" : 'Right call'}
-            </button>
-          </div>
-        </div>
-      )}
-    </Sheet>
-  );
-}
-
 /** Mounted once at the app root. */
 export function ReactionLayer() {
   rev.value;
   const p = pickerFor.value;
   const w = reactorsFor.value;
-  const s = sheetFor.value;
   return (
     <>
       {p && <Picker key={p.message.id} m={p.message} anchor={p.anchor} onClose={() => (pickerFor.value = null)} />}
       {w && <Reactors m={w.message} reactionKey={w.key} style={w.style} anchor={w.anchor} onClose={() => (reactorsFor.value = null)} />}
-      {s && <MessageSheet m={s.message} onReply={s.onReply} onClose={() => (sheetFor.value = null)} />}
     </>
   );
 }

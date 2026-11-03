@@ -5,6 +5,10 @@
 import { canonicalReactionKey } from '@dither-chat/protocol';
 
 export interface EmojiItem {
+  /** The shortcode, as in :joy:. */
+  id: string;
+  /** The shortcode and its aliases (:thumbsup: for :+1:). */
+  codes: string[];
   name: string;
   /** Lowercase words a search can match. */
   words: string[];
@@ -32,16 +36,18 @@ const NAMES: Record<string, string> = {
 let catalog: Promise<EmojiCategory[]> | null = null;
 
 export function loadEmoji(): Promise<EmojiCategory[]> {
-  catalog ??= import('@emoji-mart/data/sets/15/native.json').then(({ default: data }: any) =>
-    data.categories.map((c: any) => ({
+  catalog ??= import('@emoji-mart/data/sets/15/native.json').then(({ default: data }: any) => {
+    const aliases = new Map<string, string[]>();
+    for (const [alias, id] of Object.entries<string>(data.aliases ?? {})) aliases.set(id, [...(aliases.get(id) ?? []), alias]);
+    return data.categories.map((c: any) => ({
       id: c.id,
       name: NAMES[c.id] ?? c.id,
       emoji: c.emojis.map((id: string): EmojiItem => {
         const e = data.emojis[id];
-        return { name: e.name, words: [id, e.name, ...e.keywords, ...(e.emoticons ?? [])].map((w: string) => w.toLowerCase()), skins: e.skins.map((s: any) => canonicalReactionKey(s.native)) };
+        return { id, codes: [id, ...(aliases.get(id) ?? [])], name: e.name, words: [id, e.name, ...e.keywords, ...(e.emoticons ?? [])].map((w: string) => w.toLowerCase()), skins: e.skins.map((s: any) => canonicalReactionKey(s.native)) };
       }),
-    })),
-  );
+    }));
+  });
   return catalog;
 }
 

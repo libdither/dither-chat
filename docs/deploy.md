@@ -104,7 +104,9 @@ contact, a `mailto:` or `https:` URL. The keys live in `.data/vapid.json` (0600)
 
 A subscription belongs to the origin it was made on, so changing the hub's address means opting in again on each device.
 
-On a hub started with `--demo`, simulated messages are real pushes to any device that opted in.
+The Android app (`apps/android`) has no Web Push. It registers through a UnifiedPush distributor such as ntfy, and the hub sends to that server only when `DITHER_PUSH_RELAYS` lists its origin. See [android.md](android.md#push).
+
+On a demo hub (`--demo`), simulated messages are real pushes to any device that opted in.
 
 ## Categories and local models
 
@@ -121,3 +123,14 @@ One Discord or Signal session must not run from two hubs at once.
    machine; do that in the live view yourself. Signal linked devices move with their keys.
 4. Point Caddy at the new address. The app keeps its origin, so devices need nothing.
 5. Delete `.data` from the source only after the destination has run cleanly for a while.
+
+## Demo and test hubs
+
+A hub is either real or a demo world, never both. `--demo` seeds four simulated accounts and uses its own data
+dir (`.data-demo` unless `--data` says otherwise); it refuses to start on a data dir that holds real accounts,
+and a demo hub refuses to add real ones. A real hub started without `--demo` removes any demo accounts left
+from older versions, with everything only they saw. So never put `--demo` in the service that serves your
+devices.
+
+Screenshots, `scripts/verify-*.ts` and the call lab (`scripts/call-lab.ts`, see docs/calls.md) each run their
+own hub on another port with its own data dir.

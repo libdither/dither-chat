@@ -21,6 +21,7 @@ import type { Subprocess } from 'bun';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const EXTENSION_SRC = join(HERE, 'extension');
+const LAB_SRC = join(HERE, 'lab');
 
 export interface SandboxOptions {
   accountDir: string;
@@ -32,6 +33,7 @@ export interface SandboxOptions {
   token: string; //      per-account WebSocket token
   startUrl: string; //   e.g. https://discord.com/app
   noSandbox?: boolean; // set if the chromium suid sandbox is unavailable
+  lab?: boolean; //       call lab only: the lab probe and commands go into the hook (scripts/call-lab.ts)
   log: (level: 'debug' | 'info' | 'warn' | 'error', msg: string, data?: unknown) => void;
 }
 
@@ -104,6 +106,12 @@ export class Sandbox {
       JSON.stringify({ wsUrl: this.opts.wsUrl, token: this.opts.token }, null, 2),
       { mode: 0o600 },
     );
+    // Call lab sandboxes only (scripts/call-lab.ts): the probe and the lab commands go inside the hook.
+    if (this.opts.lab) {
+      const hook = join(this.extensionDir, 'hook.js');
+      const lab = ['probe.js', 'lab.js'].map((f) => readFileSync(join(LAB_SRC, f), 'utf8')).join('\n');
+      writeFileSync(hook, readFileSync(hook, 'utf8').replace('/*@dither-lab@*/', () => lab));
+    }
   }
 
   /** Chromium must not offer to keep a password typed into the live view: this profile runs on --password-store=basic. */
@@ -172,6 +180,8 @@ export class Sandbox {
       '--disable-infobars',
       `--window-size=${width},${height}`,
       '--window-position=0,0',
+      // Calls: the client's audio feeds the bridge without anyone clicking first.
+      '--autoplay-policy=no-user-gesture-required',
     ];
     flags.push(...gpuFlags());
     if (this.opts.noSandbox) flags.push('--no-sandbox');

@@ -242,9 +242,9 @@ try {
 
   // Long-press: the action sheet carries what the hover bar and tooltips do.
   await press(await at('.msg', `el => el.textContent.includes('fixed in')`));
-  check('long-press opens the message sheet', await has('.sheet-layer .message-sheet'));
-  const actions = await page.eval<string>(`[...document.querySelectorAll('.message-sheet .sheet-action, .message-sheet .sheet-quick button')].map(b => b.getAttribute('aria-label') || b.textContent.trim()).join(' | ')`);
-  check('the sheet has reply, react, copy, profile and the time', ['Reply', 'Copy text', 'Profile of', 'More reactions'].every((w) => actions.includes(w)) && (await page.eval(`/\\d{4}/.test(document.querySelector('.msg-sheet-head small').textContent)`)), actions);
+  check('long-press opens the message sheet', await has('.sheet-layer .cm-sheet'));
+  const actions = await page.eval<string>(`[...document.querySelectorAll('.cm-sheet .sheet-action, .cm-sheet .sheet-quick button')].map(b => b.getAttribute('aria-label') || b.textContent.trim()).join(' | ')`);
+  check('the sheet has reply, react, copy, profile and the time', ['Reply', 'Copy Text', 'Profile', 'Add Reaction'].every((w) => actions.includes(w)) && (await page.eval(`/\\d{4}/.test(document.querySelector('.msg-sheet-head small').textContent)`)), actions);
   check('the sheet is a layer the back button closes', (await state()).layer !== undefined);
   await shot('42-phone-message-sheet');
   const grip = await page.eval<Pt>(`(() => { const b = document.querySelector('.sheet .sheet-grip').getBoundingClientRect(); return [b.x + b.width / 2, b.y + 4]; })()`);
@@ -269,7 +269,7 @@ try {
 
   // Copy from the sheet raises a toast; a toast flicks away sideways.
   await press(await at('.msg', `el => el.textContent.includes('fixed in')`));
-  await tap(await at('.message-sheet .sheet-action', `el => el.textContent.includes('Copy text')`));
+  await tap(await at('.cm-sheet .sheet-action', `el => el.textContent.includes('Copy Text')`));
   await page.until(`!!document.querySelector('.toast')`, 3000).catch(() => {});
   check('copying a message says so in a toast at the top', await page.eval(`(() => { const t = document.querySelector('.toast'); return !!t && t.getBoundingClientRect().top < 120; })()`));
   if (await has('.toast')) {
@@ -401,7 +401,7 @@ try {
   await page.goto(`${base}/#/inbox`);
   await Bun.sleep(500);
   await press(await at('.rail-scroll .rail-item[data-dnd-key^="space:"] .rail-btn'), 700);
-  check('holding a rail entry opens its arrange sheet', await has('.sheet-layer .sheet-menu[role=menu]'));
+  check('holding a rail entry opens its arrange sheet', await has('.sheet-layer .cm-sheet'));
   await shot('48-phone-place-menu');
   await back();
   check('back closes it', !(await has('.sheet-layer')));

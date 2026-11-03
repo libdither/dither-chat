@@ -99,3 +99,39 @@ test('a click elsewhere never sends', async () => {
   expect(w.fetched).toEqual([]);
   expect(w.opened).toEqual(['/#/inbox/c/cnv_1']);
 });
+
+/** The fetch handler alone, against a cache that holds one build's shell. */
+function shell(cached: Record<string, string>, net: (url: string) => Promise<Response> = async () => new Response('network')) {
+  let onFetch: (e: any) => void = () => {};
+  const self: any = { addEventListener: (t: string, fn: (e: any) => void) => t === 'fetch' && (onFetch = fn), location: { origin: 'https://hub.example' } };
+  const fetched: string[] = [];
+  const cache = { match: async (r: any) => (cached[typeof r === 'string' ? r : new URL(r.url).pathname] !== undefined ? new Response(cached[typeof r === 'string' ? r : new URL(r.url).pathname]) : undefined), put: async () => {} };
+  const fetchStub = async (r: any) => (fetched.push(typeof r === 'string' ? r : r.url), net(typeof r === 'string' ? r : r.url));
+  new Function('self', 'fetch', 'NotificationEvent', 'caches', 'location', src)(self, fetchStub, function () {}, { open: async () => cache }, self.location);
+  return {
+    fetched,
+    async get(path: string, mode = 'navigate'): Promise<string | null> {
+      let res: Promise<Response> | null = null;
+      onFetch({ request: { method: 'GET', url: 'https://hub.example' + path, mode }, respondWith: (p: Promise<Response>) => (res = p) });
+      return res ? (await res as Response).text() : null;
+    },
+  };
+}
+
+test('opening the app never waits on the network: navigations get the cached shell', async () => {
+  const s = shell({ '/index.html': 'cached shell' });
+  expect(await s.get('/')).toBe('cached shell');
+  expect(await s.get('/?source=pwa')).toBe('cached shell');
+  expect(s.fetched).toEqual([]);
+});
+
+test('without a cached shell, the network', async () => {
+  const s = shell({});
+  expect(await s.get('/')).toBe('network');
+});
+
+test("the hub's own pages are never the app", async () => {
+  const s = shell({ '/index.html': 'cached shell' });
+  for (const p of ['/api/bootstrap', '/media/x/y', '/ca.crt', '/voice/dave/0123456789abcdef/libdave.mjs']) expect(await s.get(p)).toBeNull();
+  expect(await s.get('/api/live', 'cors')).toBeNull();
+});
