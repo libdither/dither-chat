@@ -11,6 +11,7 @@ import (
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/proto/waHistorySync"
+	"go.mau.fi/whatsmeow/proto/waVnameCert"
 	"go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -165,6 +166,12 @@ func printFixtures() {
 			{JID: meLID, PhoneNumber: me, LID: meLID, IsAdmin: true},
 			{JID: aliceLID, PhoneNumber: alice, LID: aliceLID},
 		},
+	})})
+	// What userInfo answers: someone's About and picture id, and for a business its verified name.
+	_ = enc.Encode(obj{"t": "result", "fixture": "user_info", "result": userInfoOf(types.UserInfo{Status: "Out climbing", PictureID: "1700000001", LID: aliceLID})})
+	_ = enc.Encode(obj{"t": "result", "fixture": "user_info_business", "result": userInfoOf(types.UserInfo{
+		Status: "Fresh bread daily", PictureID: "1700000002", LID: types.NewJID("200000000000005", types.HiddenUserServer),
+		VerifiedName: &types.VerifiedName{Details: &waVnameCert.VerifiedNameCertificate_Details{VerifiedName: proto.String("Corner Bakery")}, VerifiedLevel: "high"},
 	})})
 	presence := []struct {
 		name string

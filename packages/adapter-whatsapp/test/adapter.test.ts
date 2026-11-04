@@ -635,3 +635,128 @@ test('a new invite link replaces the old one; what WhatsApp cannot do is refused
   await Bun.sleep(50);
   expect(h.cmds.slice(before)).toEqual([]);
 });
+
+// ---------------------------------------------------------------- profiles
+
+const profile = (h: H, who: string) => h.adapter.command({ t: 'profile', id: 'p', who }) as Promise<P.PersonAbout>;
+/** Ops that must never come from opening a profile. */
+const NEVER = ['isOnWhatsApp', 'presence', 'send'];
+
+test('a contact’s profile: their About and picture from one query for them, name, number and contact from the store', async () => {
+  const h = await harness();
+  expect(ofType(h.events, 'hello')[0].capabilities).toContain('profile');
+  await h.emit({ t: 'contact', jid: ALICE, alt: ALICE_LID, fullName: 'Alice Chen', firstName: 'Alice' });
+  await h.ctl({ result: { op: 'userInfo', value: FIX.get('user_info').result } });
+  const before = h.cmds.length;
+  const n = h.events.length;
+  expect(await profile(h, ALICE)).toEqual({
+    displayName: 'Alice Chen',
+    handle: '+15550000002',
+    avatar: `wa-avatar:${ALICE}?1700000001`,
+    bio: 'Out climbing',
+    links: [{ label: 'Phone', value: '+15550000002', url: 'https://wa.me/15550000002' }],
+    relationship: 'contact',
+  });
+  // One query, for this person only; field names that cannot collide with the command id.
+  expect(h.cmds.slice(before).map((c) => c.op)).toEqual(['userInfo', 'blocked']);
+  expect(h.cmd('userInfo')).toEqual({ id: expect.any(String), op: 'userInfo', jid: ALICE });
+  expect(h.cmd('blocked')).toEqual({ id: expect.any(String), op: 'blocked', jids: [ALICE, ALICE_LID] });
+  // The identity, with the new picture, goes first.
+  expect(ofType(h.events.slice(n), 'identity').at(-1)!.identity).toMatchObject({ nativeId: ALICE, displayName: 'Alice Chen', contact: true, avatarUrl: `wa-avatar:${ALICE}?1700000001` });
+  // Opened again soon after (or by her LID): no second query.
+  expect((await profile(h, ALICE_LID)).bio).toBe('Out climbing');
+  expect(count(h, 'userInfo')).toBe(1);
+  expect(h.cmds.filter((c) => NEVER.includes(c.op))).toEqual([]);
+});
+
+test('a business you have not saved, and someone you blocked', async () => {
+  const h = await harness();
+  const SHOP = '15550000005@s.whatsapp.net';
+  await h.ctl({ result: { op: 'userInfo', value: FIX.get('user_info_business').result } });
+  expect(await profile(h, SHOP)).toEqual({
+    displayName: 'Corner Bakery',
+    handle: '+15550000005',
+    avatar: `wa-avatar:${SHOP}?1700000002`,
+    bio: 'Fresh bread daily',
+    facts: [{ label: 'Verified business', value: 'Corner Bakery' }],
+    links: [{ label: 'Phone', value: '+15550000005', url: 'https://wa.me/15550000005' }],
+    relationship: 'stranger',
+  });
+  // The LID WhatsApp answered with is the same person from now on.
+  expect(h.adapter.aliases.peek('200000000000005@lid')).toBe(SHOP);
+
+  await h.emit({ t: 'push_name', jid: BOB_LID, alt: BOB, name: 'Bob' });
+  await h.ctl({ result: { op: 'userInfo', value: {} } });
+  await h.ctl({ result: { op: 'blocked', value: { blocked: true } } });
+  const bob = await profile(h, BOB);
+  expect(bob).toMatchObject({ displayName: 'Bob', relationship: 'blocked' });
+  // No picture id in the answer: none, or hidden from you.
+  expect(bob.avatar).toBeUndefined();
+  expect(bob.bio).toBeUndefined();
+  expect(h.cmd('blocked', 1).jids.sort()).toEqual([BOB, BOB_LID].sort());
+});
+
+test('your own profile: your About, and your contacts on WhatsApp as friends, their identities first', async () => {
+  const h = await harness();
+  await h.ctl({
+    result: {
+      op: 'contacts',
+      value: [
+        { jid: ALICE, alt: ALICE_LID, firstName: 'Alice', fullName: 'Alice Chen', pushName: 'ali' },
+        { jid: ALICE_LID, fullName: 'Alice Chen' },
+        { jid: BOB, pushName: 'Bob' },
+        { jid: '15550000006@s.whatsapp.net', fullName: 'Dana Ruiz' },
+      ],
+    },
+  });
+  await h.ctl({ result: { op: 'userInfo', value: { status: 'Busy', pictureId: '1700000009' } } });
+  const n = h.events.length;
+  const me = await profile(h, ME);
+  expect(me).toEqual({
+    displayName: 'Me',
+    handle: '+15550000001',
+    avatar: `wa-avatar:${ME}?1700000009`,
+    bio: 'Busy',
+    links: [{ label: 'Phone', value: '+15550000001', url: 'https://wa.me/15550000001' }],
+    friends: [ALICE, '15550000006@s.whatsapp.net'],
+  });
+  expect(h.cmd('userInfo')).toMatchObject({ jid: ME });
+  expect(h.cmd('blocked')).toBeUndefined();
+  const named = ofType(h.events.slice(n), 'identity').map((e) => e.identity.nativeId);
+  expect(named).toEqual(expect.arrayContaining([ALICE, '15550000006@s.whatsapp.net', ME]));
+  expect(named).not.toContain(BOB);
+  // Your LID is you too.
+  expect((await profile(h, '200000000000001@lid')).friends).toHaveLength(2);
+  expect(count(h, 'userInfo')).toBe(1);
+});
+
+test('profiles ask WhatsApp nothing once the session is replaced, and answer from the store', async () => {
+  const h = await harness();
+  await h.emit({ t: 'contact', jid: ALICE, alt: ALICE_LID, fullName: 'Alice Chen' });
+  await h.emit({ t: 'stream_replaced' });
+  const before = h.cmds.length;
+  expect(await profile(h, ALICE)).toEqual({
+    displayName: 'Alice Chen',
+    handle: '+15550000002',
+    avatar: `wa-avatar:${ALICE}`,
+    links: [{ label: 'Phone', value: '+15550000002', url: 'https://wa.me/15550000002' }],
+    relationship: 'contact',
+  });
+  await Bun.sleep(50);
+  expect(h.cmds.slice(before)).toEqual([]);
+});
+
+test('a failed query still answers; a burst of profiles is capped; groups are not people', async () => {
+  const h = await harness();
+  await h.ctl({ error: { op: 'userInfo', message: 'rate-overlimit' } });
+  expect(await profile(h, ALICE)).toMatchObject({ displayName: '+15550000002', relationship: 'stranger' });
+  // A failure is not remembered as an answer.
+  await h.ctl({ result: { op: 'userInfo', value: { status: 'hi' } } });
+  await h.ctl({ error: { op: 'userInfo', message: '' } });
+  expect((await profile(h, ALICE)).bio).toBe('hi');
+  expect(count(h, 'userInfo')).toBe(2);
+  for (let i = 0; i < 12; i++) await profile(h, `155500001${String(i).padStart(2, '0')}@s.whatsapp.net`);
+  expect(count(h, 'userInfo')).toBe(10);
+  await expect(profile(h, GROUP)).rejects.toThrow('not a WhatsApp user');
+  expect(h.cmds.filter((c) => NEVER.includes(c.op))).toEqual([]);
+});

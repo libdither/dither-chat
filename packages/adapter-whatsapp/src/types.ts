@@ -182,6 +182,17 @@ export interface WaContact {
   businessName?: string;
 }
 
+/** What userInfo answers for one person (whatsmeow GetUserInfo): their About, picture id and business name. */
+export interface WaUserInfo {
+  status?: string;
+  pictureId?: string;
+  lid?: string;
+  /** The verified name of a business account. */
+  businessName?: string;
+  /** 'high' for a verified business. */
+  verifiedLevel?: string;
+}
+
 export interface WaSelf {
   loggedIn: boolean;
   jid?: string;

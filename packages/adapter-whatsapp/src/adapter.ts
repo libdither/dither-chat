@@ -13,8 +13,8 @@
  *
  * Nothing here talks to WhatsApp except through the bridge. To look like WhatsApp Web, the
  * adapter only does what a person in WhatsApp Web would cause: it never marks itself online
- * (that also keeps the phone getting notifications), never looks up numbers on its own and
- * fetches profile pictures only when one is shown.
+ * (that also keeps the phone getting notifications), never looks up numbers on its own,
+ * fetches profile pictures only when one is shown and someone's About only when you open their profile.
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
@@ -25,13 +25,13 @@ import { Bridge, type Logger } from './bridge.ts';
 import { toWhatsApp } from './format.ts';
 import { Aliases, avatarUrl, bare, contextOf, ignoredChat, isGroup, isPhoneJid, isUser, Mapper, type MapOut, mediaOf, msgId, phoneOf } from './mapping.ts';
 import { State, type StoredMsg } from './state.ts';
-import type { BridgeEvent, WaContact, WaGroup, WaMessage, WaSelf } from './types.ts';
+import type { BridgeEvent, WaContact, WaGroup, WaMessage, WaSelf, WaUserInfo } from './types.ts';
 
 /** How long WhatsApp's own clients show "typing…" without another chat state. */
 export const WHATSAPP_TYPING_TTL = 25_000;
 
 export const ADAPTER_VERSION = '0.1.0';
-export const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'typing', 'media', 'sendMedia', 'e2ee', 'openDirect', 'forward', 'about', 'configure'];
+export const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'typing', 'media', 'sendMedia', 'e2ee', 'openDirect', 'forward', 'about', 'configure', 'profile'];
 export const LINK_MESSAGE = 'Scan this QR code in WhatsApp → Settings → Linked devices → Link a device';
 /** WhatsApp lets you edit for 15 minutes. */
 export const EDIT_WINDOW_MS = 15 * 60_000;
@@ -43,6 +43,10 @@ const COMMUNITY_INFO = 'Only community admins can change this.';
 const NO_PICTURE = 'Changing the picture is not supported yet.';
 const ALWAYS_E2EE = 'Always on in WhatsApp.';
 const INVITE_ADMINS = 'Only admins can see and change the invite link.';
+/** A profile opened again this soon is answered without asking WhatsApp again. */
+const PROFILE_FRESH_MS = 5 * 60_000;
+/** At most this many profile queries a minute, whatever the hub asks: never anything that looks like a bulk lookup. */
+const PROFILE_QUERIES_PER_MINUTE = 10;
 
 export interface AdapterHost {
   emit(ev: P.AdapterEvent): void;
@@ -97,6 +101,9 @@ export class WhatsAppAdapter {
   private pendingReads = new Map<string, { unread: number; lastTs: number }>();
   private lastSnapshot = 0;
   private noAvatar = new Map<string, number>();
+  /** The last profile query per person (undefined: it failed or was not made). */
+  private userInfo = new Map<string, { u: Promise<WaUserInfo | undefined>; at: number }>();
+  private profileQueries: number[] = [];
 
   constructor(
     private host: AdapterHost,
@@ -412,12 +419,12 @@ export class WhatsAppAdapter {
     return this.identity(this.selfIds().id);
   }
 
-  /** Emit an identity if it is new to this run or changed. */
-  private publish(id: string) {
+  /** Emit an identity if it is new to this run or changed, or always with force. */
+  private publish(id: string, force = false) {
     if (!id || id === 'self') return;
     const f = this.identity(id);
     const key = JSON.stringify(f);
-    if (this.published.get(id) === key) return;
+    if (!force && this.published.get(id) === key) return;
     this.published.set(id, key);
     this.host.emit({ t: 'identity', identity: f });
   }
@@ -704,6 +711,8 @@ export class WhatsAppAdapter {
         return this.about(cmd.target);
       case 'configure':
         return this.configure(cmd.target, cmd.change);
+      case 'profile':
+        return this.profile(cmd.who);
       case 'call':
         throw new Error('WhatsApp calls are not supported');
       case 'lab':
@@ -1180,6 +1189,92 @@ export class WhatsAppAdapter {
     const now = Date.now();
     this.apply(this.mapper.message({ info: { id: `timer-${now}`, chat: chat.jid, sender: this.ownJid(), fromMe: true, isGroup: false, ts: now }, message: { protocolMessage: { type: 'EPHEMERAL_SETTING', ephemeralExpiration: change.value } } }));
     return this.aboutDirect(id);
+  }
+
+  // ---------------------------------------------------------------- profiles
+
+  /**
+   * What WhatsApp shows when you open someone's info. Names, number and whether they are in your address book come
+   * from the local store. Their About, picture and business name come from one usync query for this person, the one
+   * the app makes then; whether you blocked them from the blocklist as last read. Nothing about anyone else, no
+   * number lookups, and nothing at all while not online.
+   */
+  private async profile(who: string): Promise<P.PersonAbout> {
+    this.requireLinked();
+    const jid = bare(who);
+    if (!isUser(jid)) throw new Error(`${who} is not a WhatsApp user`);
+    const self = this.mapper.isSelf(jid);
+    const id = self ? this.selfIds().id : (this.aliases.peek(jid) ?? jid);
+    const jids = self ? this.selfIds().jids : this.aliases.jids(id).filter(isUser);
+    const u = await this.lookUp(id, jids[0]);
+    if (u?.lid) this.aliases.link(jids[0], u.lid);
+    if (u?.businessName || u?.pictureId) this.state.putPerson({ id, businessName: u.businessName, avatar: u.pictureId ? avatarUrl(jids[0], u.pictureId) : undefined });
+    const friends = self ? await this.friends() : undefined;
+    const blocked = !self && (await this.blocked([...new Set([...jids, bare(u?.lid)].filter(Boolean))]));
+    this.publish(id, true);
+
+    const p = this.state.person(id);
+    const phone = p?.phone ?? jids.map(phoneOf).find(Boolean);
+    const out: P.PersonAbout = { displayName: this.nameOf(id) };
+    if (phone) out.handle = phone;
+    // Asked and no picture id: none, or hidden from you. Not asked: the one last seen, fetched only when shown.
+    const avatar = u ? (u.pictureId ? avatarUrl(jids[0], u.pictureId) : undefined) : (p?.avatar ?? avatarUrl(jids[0]));
+    if (avatar) out.avatar = avatar;
+    if (u?.status) out.bio = u.status;
+    const business = u?.businessName || p?.businessName;
+    if (business) out.facts = [{ label: u?.verifiedLevel === 'high' ? 'Verified business' : 'Business account', value: business }];
+    if (phone) out.links = [{ label: 'Phone', value: phone, url: `https://wa.me/${phone.replace(/\D/g, '')}` }];
+    if (friends) out.friends = friends;
+    else out.relationship = blocked ? 'blocked' : p?.fullName ? 'contact' : 'stranger';
+    return out;
+  }
+
+  /** One usync query for one person: at most every few minutes each, a few a minute in all, and only while online. */
+  private lookUp(id: string, jid: string): Promise<WaUserInfo | undefined> {
+    const c = this.userInfo.get(id);
+    if (c && Date.now() - c.at < PROFILE_FRESH_MS) return c.u;
+    if (this.phase !== 'online' || !this.bridge?.alive) return Promise.resolve(undefined);
+    const now = Date.now();
+    this.profileQueries = this.profileQueries.filter((t) => now - t < 60_000);
+    if (this.profileQueries.length >= PROFILE_QUERIES_PER_MINUTE) {
+      this.host.log('warn', 'many profiles opened this minute: answering from what is known, without asking WhatsApp');
+      return Promise.resolve(undefined);
+    }
+    this.profileQueries.push(now);
+    const u = this.rpc.call<WaUserInfo | null>('userInfo', { jid }).then(
+      (r) => r ?? {},
+      (e) => {
+        this.host.log('warn', `profile ${jid}: ${e?.message ?? e}`);
+        this.userInfo.delete(id);
+        return undefined;
+      },
+    );
+    this.userInfo.set(id, { u, at: now });
+    return u;
+  }
+
+  /** Whether you blocked them, from the bridge's copy of the blocklist (read once per connection, when first needed). */
+  private async blocked(jids: string[]): Promise<boolean> {
+    if (!jids.length || this.phase !== 'online' || !this.bridge?.alive) return false;
+    try {
+      return !!(await this.rpc.call<{ blocked: boolean } | null>('blocked', { jids }))?.blocked;
+    } catch (e: any) {
+      this.host.log('warn', `blocklist: ${e?.message ?? e}`);
+      return false;
+    }
+  }
+
+  /** Your address-book contacts on WhatsApp, from the local store, their identities published first. */
+  private async friends(): Promise<string[]> {
+    if (this.bridge?.alive) await this.loadContacts().catch((e) => this.host.log('warn', `contacts: ${e.message}`));
+    const me = this.selfIds().id;
+    const ids = this.state
+      .people()
+      .filter((p) => p.fullName && p.id !== me && isUser(p.id))
+      .map((p) => p.id)
+      .sort((a, b) => this.nameOf(a).localeCompare(this.nameOf(b)));
+    for (const f of ids) this.publish(f);
+    return ids;
   }
 
   private async action(action: string, args: any): Promise<unknown> {
