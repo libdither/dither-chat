@@ -123,6 +123,12 @@ describe('the inbox', () => {
     expect(rank([r('a', 5), r('b', 30), r('c', 18, true), r('d', 5)])).toEqual(['b', 'c', 'a', 'd']);
   });
 
+  test('below the line, the latest message first, muted places last', () => {
+    const at = (key: string, score: number, last: number, muted = false): Ranked => ({ key, score, needs: score >= 20, last, muted });
+    // b scores higher, but a has the newer message; m is newest of all but muted.
+    expect(rank([at('n', 40, 1), at('b', 15, 2), at('a', 4, 9), at('m', -45, 10, true), at('z', 2, 2)])).toEqual(['n', 'a', 'b', 'z', 'm']);
+  });
+
   test('the "caught up" line goes after what needs you', () => {
     expect(inboxView(null, [r('a', 5), r('b', 30), r('c', 40)])).toEqual({ keys: ['c', 'b', 'a'], divider: 2 });
     expect(inboxView(null, [r('a', 5)]).divider).toBe(0);

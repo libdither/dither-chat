@@ -57,6 +57,38 @@ describe('an unanswered message', () => {
   });
 });
 
+describe('a conversation going on', () => {
+  const now = T0 + 40 * DAY;
+  /** Sam wrote, you answered `mineAgo` ago; Sam's message came `gap` before yours. */
+  function answered(mineAgo: number, gap = 2 * MIN): ScoreInput {
+    const s = freshState();
+    const tally = () => emptyTally();
+    foldMessage(s, tally, msg({ ts: now - mineAgo - gap, author: 'sam', authorKey: 'p_sam' }), { shape: 'direct', members: 2 });
+    foldMessage(s, tally, msg({ ts: now - mineAgo, mine: true, author: 'me', authorKey: 'me' }), { shape: 'direct', members: 2 });
+    return { now, shape: 'direct', members: 2, lastMessageAt: now - mineAgo, state: s, author: null, authorName: 'Sam', unread: 0, mentions: 0, pinged: null, muted: null, usage: null };
+  }
+
+  test('the chat you just answered stays above the line for a while, then lets go', () => {
+    const just = scoreConversation(answered(MIN));
+    expect(just.needs).toBe(true);
+    expect(just.reasons[0]).toBe("You're in a conversation here: you wrote a minute ago");
+    expect(scoreConversation(answered(30 * MIN)).parts.live).toBeCloseTo(WEIGHTS.live / 2, 0);
+    expect(scoreConversation(answered(3 * HOUR)).needs).toBe(false);
+  });
+
+  test('a message of yours into silence is not a conversation', () => {
+    expect(scoreConversation(answered(MIN, 3 * DAY)).parts.live).toBeUndefined();
+  });
+
+  test('counts once with an answer they are owed', () => {
+    const x = answered(10 * MIN);
+    foldMessage(x.state, () => emptyTally(), msg({ ts: now - MIN, author: 'sam', authorKey: 'p_sam' }), { shape: 'direct', members: 2 });
+    const r = scoreConversation({ ...x, lastMessageAt: now - MIN });
+    expect(r.parts.owed).toBeGreaterThan(0);
+    expect(r.parts.overlap).toBeCloseTo(-Math.min(r.parts.owed, r.parts.live), 0);
+  });
+});
+
 /** A DM where Sam wrote `ageH` hours ago and you have not answered. */
 function owedDm(ageH: number, now: number, author: Tally | null = null): ScoreInput {
   const s = freshState();

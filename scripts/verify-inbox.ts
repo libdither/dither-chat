@@ -81,8 +81,9 @@ try {
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
   await Bun.sleep(300);
 
-  // Answering a group that needs you drops it; not while the pointer is on the list. (A group: in a demo DM the other
-  // side answers back a few seconds later, which rightly puts it back on top.)
+  // Answering a group that needs you turns what you owed into a conversation going on: it stays above the line, at
+  // its new score, but not while the pointer is on the list. (A group: in a demo DM the other side answers back a few
+  // seconds later, which would open a new turn.)
   const groupsAbove = above.filter((k) => shapeOf.get(k) === 'group');
   await mouse('mouseMoved', ...(await center('.sidebar .conv-row', `el => !${JSON.stringify(groupsAbove)}.includes(el.dataset.row)`)));
   const before = await shown();
@@ -97,12 +98,13 @@ try {
   }
   check(target, 'answered a group that needs you');
   const was = scores.get(target)?.score;
+  const live = (x: any) => x?.reasons?.[0]?.startsWith("You're in a conversation here");
   let now: any = null;
-  for (let i = 0; i < 30 && !(now && now.score < was - 5); i++) {
+  for (let i = 0; i < 30 && !live(now); i++) {
     await Bun.sleep(200);
     now = ((await fetch(`${hub}/api/attention`).then((r) => r.json())) as any).items.find((x: any) => x.id === target);
   }
-  check(now && now.score < was - 5, 'the hub scores it lower', { was, now: now?.score, needs: now?.needs });
+  check(live(now) && now.needs, 'the hub now counts it as a conversation going on, still above the line', { was, now: now?.score, reasons: now?.reasons });
   await Bun.sleep(2500);
   s = await shown();
   check(s.keys.join() === before.keys.join() && s.divider === before.divider, 'nothing moves while the pointer is on the list');
@@ -110,8 +112,14 @@ try {
   await Bun.sleep(3000);
   s = await shown();
   const at = s.keys.indexOf(target);
-  check(at > before.keys.indexOf(target) && (now.needs || at >= s.divider), 'once it leaves, the list takes the new order', { from: before.keys.indexOf(target), to: at, divider: s.divider });
+  const fresh = new Map(((await fetch(`${hub}/api/attention`).then((r) => r.json())) as any).items.map((x: any) => [x.id, x.score]));
+  const aboveNow = s.keys.slice(0, s.divider);
+  check(at < s.divider && aboveNow.every((k, i) => i === 0 || (fresh.get(aboveNow[i - 1]) as number) >= (fresh.get(k) as number)), 'once it leaves, the list takes the new order', { from: before.keys.indexOf(target), to: at, divider: s.divider });
   await shot('inbox-03-after-answer');
+  const lastAt = new Map(((await fetch(`${hub}/api/bootstrap`).then((r) => r.json())) as any).conversations.map((c: any) => [c.id, c.lastMessageAt ?? 0]));
+  // Muted places sit at −50 and go last.
+  const below = s.keys.slice(s.divider).filter((k) => (fresh.get(k) as number) > -30);
+  check(below.length > 1 && below.every((k, i) => i === 0 || (lastAt.get(below[i - 1]) as number) >= (lastAt.get(k) as number)), 'below the line, the latest message first', below.slice(0, 4).map((k) => lastAt.get(k)));
 
   // Filters.
   const chip = async (label: string) => {

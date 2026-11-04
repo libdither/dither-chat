@@ -31,7 +31,9 @@ const hold = (): Hold | undefined => {
   return key ? { key, prev: inboxSnap.value.snap } : undefined;
 };
 
-const ranked = (rows: InboxRow[]): Ranked[] => rows.map((r) => ({ key: r.conv.id, score: r.score, needs: r.needs }));
+/** Notes to self notify nobody, which is not the same as muted: they keep their place by date. */
+const ranked = (rows: InboxRow[]): Ranked[] =>
+  rows.map((r) => ({ key: r.conv.id, score: r.score, needs: r.needs, last: r.conv.lastMessageAt ?? 0, muted: r.conv.shape !== 'self' && unreadOf(r.conv).muted }));
 
 let waiting: ReturnType<typeof setTimeout> | undefined;
 /** Take a new snapshot if now is a good moment; otherwise as soon as it is. */
@@ -44,7 +46,7 @@ export function resortInbox(reason: ResortReason) {
   }
   const rows = inboxRows();
   const snap = inboxSnapshot(
-    rows.map((r) => ({ key: r.conv.id, score: r.score, needs: r.needs, unread: unreadOf(r.conv).unread > 0 })),
+    ranked(rows).map((x, i) => ({ ...x, unread: unreadOf(rows[i].conv).unread > 0 })),
     hold(),
   );
   const prev = inboxSnap.value;

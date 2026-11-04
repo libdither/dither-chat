@@ -305,6 +305,11 @@ export const WEIGHTS = {
   unreadAny: 8,
   /** Triage pushed something you have not read. */
   pinged: 15,
+  /** A conversation going on now (you wrote, they wrote around then), halving each `liveHalfLife` after your last message. */
+  live: 30,
+  liveHalfLife: 30 * MIN,
+  /** Their message and yours this close together make it a conversation rather than a one-off. */
+  liveGap: HOUR,
   /** Relationship strength 0..1 times this. */
   relationship: 25,
   /** Noise fit -1..1: drowning sinks this much, quiet-but-engaged rises `quiet`. */
@@ -470,13 +475,24 @@ export function scoreConversation(x: ScoreInput): Scored {
     reasons.push({ w: parts.pinged, text: `Pinged you: ${x.pinged.length > 70 ? x.pinged.slice(0, 69) + '…' : x.pinged}` });
   }
 
-  // Something to read and something to answer are one need, not two: the larger counts. So reading a message you
-  // will answer leaves it where it was, and reading one you would not answer lets it go.
+  // A conversation going on right now keeps its place above the line while the back-and-forth lasts, so the chat you
+  // just answered is easy to find again, and lets go as it fades.
+  if (x.shape !== 'self' && s.lastSent && s.lastReceived && Math.abs(s.lastReceived - s.lastSent) <= W.liveGap) {
+    const since = Math.max(0, now - s.lastSent);
+    parts.live = W.live * 2 ** (-since / W.liveHalfLife);
+    reasons.push({ w: parts.live, text: `You're in a conversation here: you wrote ${duration(since)} ago` });
+  }
+
+  // Something to read, something to answer and a conversation going on are one need, not three: the largest counts.
+  // So reading a message you will answer leaves it where it was, and reading one you would not answer lets it go.
   const toRead = (parts.unread ?? 0) + (parts.pinged ?? 0);
-  if (parts.owed && toRead) parts.overlap = -Math.min(parts.owed, toRead);
+  const need = [parts.owed ?? 0, toRead, parts.live ?? 0];
+  const sum = need.reduce((a, b) => a + b, 0);
+  if (sum > Math.max(...need)) parts.overlap = Math.max(...need) - sum;
 
   parts.relationship = W.relationship * rel.strength;
-  if (rel.strength >= 0.3) {
+  // "You wrote here a moment ago" says nothing a conversation going on has not.
+  if (rel.strength >= 0.3 && !(parts.live && rel.top === 'recent')) {
     const sentPerWeek = perDay(decayed(s.sent, s.at, now, FEATURE_HALF_LIFE), FEATURE_HALF_LIFE) * 7;
     const minutes = x.usage ? decayed(x.usage.score, x.usage.at, now) / 60 : 0;
     const with_ = x.shape === 'direct' && x.authorName ? ` with ${x.authorName}` : ' here';

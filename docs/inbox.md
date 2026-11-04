@@ -4,7 +4,8 @@ The inbox used to be fixed sections (Needs you, Pinged you, Unread, Recent chats
 Groups view. It is now one list: DMs, group chats, rooms outside a space and notes to self, plus any other
 channel or thread while it has an unread mention or pinged you. Accounts that need you (a QR to scan, a login)
 stay on top. The hub ranks every conversation by how much it needs you; a line, **Caught up**, marks where that
-ends. Unread rows keep their bold title and badge wherever they land.
+ends. Above the line, rows go by score; below it, by the latest message, as a chat app's list would, with muted
+places last. Unread rows keep their bold title and badge wherever they land.
 
 Filter chips: **All**, **People** (DMs), **Groups** (everything else), **Unread**. The choice is kept per device.
 
@@ -20,18 +21,19 @@ Code: `packages/hub/src/attention.ts` (features and score), `packages/web/src/in
 In points, roughly 0 to 100. A conversation **needs you** at 20 or more.
 
 ```
-score = max(owed, unread + pinged) + relationship + noise + recency   (muted: −50 + recency)
+score = max(owed, unread + pinged, live) + relationship + noise + recency   (muted: −50 + recency)
 
 owed         = 60 × p × curve(age)
 unread       = 8 + 12 × min(addressed, 3) + 3 × min(other, 3)         when anything is unread
 pinged       = 15                                                      triage pushed something still unread
+live         = 30 × 2^(−since your last message / 30 min)              you and they wrote within an hour of each other
 relationship = 25 × strength                                           strength 0..1
 noise        = 20 × fit if fit < 0, else 8 × fit                       fit −1..1
 recency      = 10 × 2^(−since last message / 1 day)
 ```
 
-Something to **answer** (owed) and something to **read** (unread, pinged) are one need, not two, so the larger counts
-(`parts.overlap` takes off the smaller). Reading clears what there was to read; only answering, or time, clears what
+Something to **answer** (owed), something to **read** (unread, pinged) and a **conversation going on** (live) are one
+need, not three, so the largest counts (`parts.overlap` takes off the rest). Reading clears what there was to read; only answering, or time, clears what
 you owe. So reading a message from someone you answer leaves the conversation where it was, and reading one you would
 not answer lets it go. Before, the two added up, and reading a fresh message took its points away while the owed part
 was still near zero: the conversation you were in sank below chats you had finished with.
@@ -74,6 +76,15 @@ So someone you answer 9 times in 10 is worth about 50 points as soon as they wri
 DM messages and mentions count 12 each (up to 3). Other unread messages count 3 each (up to 3). Anything unread
 adds 8. An unread busy group you never take part in therefore stays below the line, and a mention in it lifts
 it. Pinged adds 15 when triage pushed a message you have not read.
+
+### A conversation going on
+
+Answering clears what you owed, so before this term the chat you had just answered fell below the line, among chats
+you had finished with days ago. `live` keeps it above the line while the back-and-forth lasts: when your last message
+and their last one are within an hour of each other, it starts at 30 and halves every 30 minutes after your last
+message. With an ordinary relationship and recency it stays above the line for about 45 minutes, and longer if
+they keep answering. A message of yours into a silent place is not a conversation and gets nothing. Once it lets go,
+it is the newest row below the line, which goes by the latest message, so it is still the first place to look.
 
 ### Relationship strength
 

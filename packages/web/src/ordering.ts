@@ -100,11 +100,22 @@ export interface Ranked {
   key: string;
   score: number;
   needs: boolean;
+  /** The latest message, anyone's: below the line this is the order. */
+  last?: number;
+  /** Muted here or on its network: below everything else. */
+  muted?: boolean;
 }
 
-/** What needs you first, then by score; equal scores by key, so the order never flickers. */
+/**
+ * Two orders, one each side of the line. Above it, by how much each needs you; below it, by the latest message, as
+ * a chat app would, so the chat you just answered is the first one under the line. Muted places sink to the end.
+ * Ties go by key, so the order never flickers.
+ */
 export function rank(items: readonly Ranked[]): string[] {
-  return [...items].sort((a, b) => Number(b.needs) - Number(a.needs) || b.score - a.score || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)).map((x) => x.key);
+  const below = (a: Ranked, b: Ranked) => Number(!!a.muted) - Number(!!b.muted) || (b.last ?? 0) - (a.last ?? 0);
+  return [...items]
+    .sort((a, b) => Number(b.needs) - Number(a.needs) || (a.needs ? 0 : below(a, b)) || b.score - a.score || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    .map((x) => x.key);
 }
 
 /** The inbox's order as last taken: the keys, how many of the first ones needed you, and which were unread then. */
