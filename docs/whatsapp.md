@@ -96,6 +96,10 @@ account's `relink` action.
 | View-once media | a line saying to open it on the phone. Nothing is kept that could open or forward it |
 | Poll, location, contact card, event, call log | readable text (vote on the phone) |
 | Read on your phone, chat marked read or unread | `read` |
+| Delivered, read, played (a voice note, a video) on your messages | `receipt`, per reader (in groups, per member), each step once: every device of a reader sends its own. Only for messages this account knows it sent |
+| Pin and unpin for everyone | `pin`, with who did it. A pin lapses after the time the pinner chose (24 hours, 7 days, 30 days) and WhatsApp sends nothing then, so the adapter sends the unpin itself. From history too |
+| Made or no longer admin | `role` "Admin" on the group (a community's own parent group: the community), from live group notifications and history, with a line in the chat like the one history sync carries |
+| A contact's About changed | `customStatus`, as WhatsApp pushes it (for your contacts). Passed on for people in your contacts or with a chat, never asked for |
 | Mute, archive | conversation `mute`, `archived` |
 | Status updates, channels (newsletters), broadcast lists' own chats | not shown |
 
@@ -155,6 +159,5 @@ Then restart the account. Old builds stay cached by source hash, so nothing else
 - Voting in polls. Polls show as text; vote on the phone.
 - Typing indicators from others, mostly. WhatsApp sends them to devices marked online, and that stops your phone's
   notifications. The few that arrive are shown ([typing.md](typing.md)).
-- The per-person "seen" receipts on your messages.
 - A real link. Everything above is verified against fixtures, a fake bridge, and the real bridge up to a fresh QR code
   from WhatsApp, not against a linked account.

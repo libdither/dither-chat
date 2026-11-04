@@ -16,7 +16,7 @@ import type * as P from '@dither-chat/protocol';
 import { attachmentKind } from '@dither-chat/protocol';
 import { fromWhatsApp } from './format.ts';
 import type { StoredMsg, State } from './state.ts';
-import type { WaContextInfo, WaGroup, WaHistoryConversation, WaInfo, WaMedia, WaMessage, WaWebInfo } from './types.ts';
+import type { WaContextInfo, WaGroup, WaHistoryConversation, WaInfo, WaMedia, WaMessage, WaPin, WaWebInfo } from './types.ts';
 
 // ---------------------------------------------------------------- JIDs
 
@@ -140,6 +140,12 @@ function vcardLine(vcard: string | undefined): string | undefined {
   const tel = vcard.match(/TEL[^:\n]*:([^\n]+)/);
   return tel?.[1].trim();
 }
+
+/** How long a pin lasts when the message does not say: WhatsApp's own default, 7 days. */
+export const PIN_DEFAULT_SECS = 7 * 86_400;
+
+/** History-sync stubs that make someone an admin (true) or take it away (false). */
+const ROLE_STUBS: Record<string, boolean> = { GROUP_PARTICIPANT_PROMOTE: true, GROUP_PARTICIPANT_DEMOTE: false };
 
 const osm = (lat?: number, lng?: number) => (lat === undefined || lng === undefined ? '' : `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=16/${lat}/${lng}`);
 
@@ -285,10 +291,16 @@ export class Mapper {
     o.touched.push({ id: conv, jid: chat, ts: info.ts, group: isGroup(chat) });
 
     if (ev.web?.messageStubType) {
-      const body = this.stub(ev.web, author);
+      const web = ev.web;
+      if (web.pinInChat) return this.pin(o, conv, web.pinInChat, author, info.ts, web.pinInChat.messageAddOnContextInfo?.messageAddOnDurationInSecs);
+      const body = this.stub(web, author);
       if (body) {
         const fact: P.MessageFact = { nativeId: msgId(conv, info.id), conversation: conv, author, ts: info.ts, kind: 'system', body };
         o.events.push({ t: 'message', message: fact, live: false });
+      }
+      const given = ROLE_STUBS[web.messageStubType ?? ''];
+      if (given !== undefined && isGroup(chat)) {
+        for (const member of this.stubPeople(web)) o.events.push({ t: 'role', target: { kind: 'conversation', nativeId: conv }, member, role: 'Admin', given, ...(author ? { by: author } : {}), ts: info.ts });
       }
       return o;
     }
@@ -307,6 +319,8 @@ export class Mapper {
       }
       return o;
     }
+
+    if (m.pinInChatMessage) return this.pin(o, conv, m.pinInChatMessage, author, info.ts, m.messageContextInfo?.messageAddOnDurationInSecs);
 
     const pm = m.protocolMessage;
     if (pm) {
@@ -359,6 +373,19 @@ export class Mapper {
     return o;
   }
 
+  /**
+   * A message pinned or unpinned for everyone. A pin lapses after the time the pinner chose and WhatsApp sends
+   * nothing then, so the state remembers when; the adapter's sweep unpins it.
+   */
+  private pin(o: MapOut, conv: string, p: WaPin, by: string, ts: number, secs: number | undefined): MapOut {
+    if (!p.key?.ID || (p.type !== 'PIN_FOR_ALL' && p.type !== 'UNPIN_FOR_ALL')) return o;
+    const message = msgId(conv, p.key.ID);
+    const pinned = p.type === 'PIN_FOR_ALL';
+    o.events.push({ t: 'pin', conversation: conv, message, pinned, ...(by ? { by } : {}), ts });
+    this.st.putPin(message, conv, ts, pinned ? ts + (secs || PIN_DEFAULT_SECS) * 1000 : null);
+    return o;
+  }
+
   /** Replies, forwards and mentions of you, from a message's contextInfo. */
   private decorate(fact: P.MessageFact, ctx: WaContextInfo | undefined, conv: string) {
     if (!ctx) return;
@@ -404,10 +431,9 @@ export class Mapper {
     return [...by].map(([key, authors]) => ({ key, authors }));
   }
 
-  /** History-sync system messages ("stubs"). undefined: not worth a line. */
-  private stub(web: WaWebInfo, author: string): string | undefined {
-    const who = author === this.self().id ? 'You' : this.nameOf(author);
-    const people = (web.messageStubParameters ?? []).map((p) => {
+  /** The people a stub is about (added, removed, made admin), as native ids. */
+  private stubPeople(web: WaWebInfo): string[] {
+    return (web.messageStubParameters ?? []).map((p) => {
       let jid = p;
       if (p.startsWith('{')) {
         try {
@@ -415,9 +441,14 @@ export class Mapper {
           jid = j.id ?? j.jid ?? j.phone_number ?? p;
         } catch {}
       }
-      const id = this.who(jid);
-      return id === this.self().id ? 'you' : this.nameOf(id);
+      return this.who(jid);
     });
+  }
+
+  /** History-sync system messages ("stubs"). undefined: not worth a line. */
+  private stub(web: WaWebInfo, author: string): string | undefined {
+    const who = author === this.self().id ? 'You' : this.nameOf(author);
+    const people = this.stubPeople(web).map((id) => (id === this.self().id ? 'you' : this.nameOf(id)));
     const p0 = web.messageStubParameters?.[0];
     switch (web.messageStubType) {
       case 'GROUP_CREATE':

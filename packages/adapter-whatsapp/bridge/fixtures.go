@@ -84,8 +84,21 @@ func printFixtures() {
 		{"group_from_me", grp("G3", me, types.EmptyJID, &waE2E.Message{Conversation: proto.String("on my way")})},
 		{"video", grp("G4", bobLID, bob, &waE2E.Message{VideoMessage: &waE2E.VideoMessage{Mimetype: proto.String("video/mp4"), Caption: proto.String("clip"), DirectPath: dp, MediaKey: key, FileLength: proto.Uint64(2_000_000), Seconds: proto.Uint32(12), Width: proto.Uint32(720), Height: proto.Uint32(1280)}})},
 		{"ephemeral", dm("A15", false, &waE2E.Message{EphemeralMessage: &waE2E.FutureProofMessage{Message: &waE2E.Message{Conversation: proto.String("this disappears")}}})},
+		// Pins: the pin-in-chat protocol message, with the duration the pinner chose in messageContextInfo.
+		{"pin", dm("A16", false, &waE2E.Message{
+			PinInChatMessage:   &waE2E.PinInChatMessage{Key: &waCommon.MessageKey{RemoteJID: proto.String(alice.String()), FromMe: proto.Bool(true), ID: proto.String("A2")}, Type: waE2E.PinInChatMessage_PIN_FOR_ALL.Enum(), SenderTimestampMS: proto.Int64(ts.UnixMilli())},
+			MessageContextInfo: &waE2E.MessageContextInfo{MessageAddOnDurationInSecs: proto.Uint32(7 * 86400)},
+		})},
+		{"unpin", dm("A17", false, &waE2E.Message{PinInChatMessage: &waE2E.PinInChatMessage{Key: &waCommon.MessageKey{RemoteJID: proto.String(alice.String()), FromMe: proto.Bool(true), ID: proto.String("A2")}, Type: waE2E.PinInChatMessage_UNPIN_FOR_ALL.Enum()}})},
+		{"pin_group", grp("G5", bobLID, bob, &waE2E.Message{
+			PinInChatMessage:   &waE2E.PinInChatMessage{Key: &waCommon.MessageKey{RemoteJID: proto.String(group.String()), FromMe: proto.Bool(false), ID: proto.String("G1"), Participant: proto.String(bobLID.String())}, Type: waE2E.PinInChatMessage_PIN_FOR_ALL.Enum()},
+			MessageContextInfo: &waE2E.MessageContextInfo{MessageAddOnDurationInSecs: proto.Uint32(86400)},
+		})},
 	}
 	for _, m := range msgs {
+		if m.evt.RawMessage.PinInChatMessage != nil {
+			m.evt.Info.Edit = types.EditAttributePinInChat
+		}
 		m.evt.UnwrapRaw()
 		o := b.messageEvent(m.evt, false, nil)
 		o["t"], o["fixture"] = "message", m.name
@@ -106,10 +119,27 @@ func printFixtures() {
 		MessageStubType:       waWeb.WebMessageInfo_GROUP_PARTICIPANT_ADD.Enum(),
 		MessageStubParameters: []string{aliceLID.String()},
 	}
+	// Bob pinned H1 for everyone (24 hours) and made Alice an admin, as the phone's history has them.
+	pinStub := &waWeb.WebMessageInfo{
+		Key:              &waCommon.MessageKey{RemoteJID: proto.String(group.String()), FromMe: proto.Bool(false), ID: proto.String("H3"), Participant: proto.String(bobLID.String())},
+		MessageTimestamp: proto.Uint64(uint64(ts.Add(-23 * time.Hour).Unix())),
+		MessageStubType:  waWeb.WebMessageInfo_PINNED_MESSAGE_IN_CHAT.Enum(),
+		PinInChat: &waWeb.PinInChat{
+			Type: waWeb.PinInChat_PIN_FOR_ALL.Enum(), Key: &waCommon.MessageKey{RemoteJID: proto.String(group.String()), FromMe: proto.Bool(false), ID: proto.String("H1"), Participant: proto.String(bobLID.String())},
+			SenderTimestampMS: proto.Int64(ts.Add(-23 * time.Hour).UnixMilli()), ServerTimestampMS: proto.Int64(ts.Add(-23 * time.Hour).UnixMilli()),
+			MessageAddOnContextInfo: &waWeb.MessageAddOnContextInfo{MessageAddOnDurationInSecs: proto.Uint32(86400)},
+		},
+	}
+	promoteStub := &waWeb.WebMessageInfo{
+		Key:                   &waCommon.MessageKey{RemoteJID: proto.String(group.String()), FromMe: proto.Bool(false), ID: proto.String("H4"), Participant: proto.String(bobLID.String())},
+		MessageTimestamp:      proto.Uint64(uint64(ts.Add(-47 * time.Hour).Unix())),
+		MessageStubType:       waWeb.WebMessageInfo_GROUP_PARTICIPANT_PROMOTE.Enum(),
+		MessageStubParameters: []string{aliceLID.String()},
+	}
 	conv := &waHistorySync.Conversation{
 		ID: proto.String(group.String()), Name: proto.String("Climbing crew"), UnreadCount: proto.Uint32(3), Archived: proto.Bool(false),
 		MuteEndTime: proto.Uint64(uint64(ts.Add(72 * time.Hour).Unix())), LastMsgTimestamp: proto.Uint64(uint64(ts.Unix())), Pinned: proto.Uint32(1),
-		Messages: []*waHistorySync.HistorySyncMsg{{Message: web, MsgOrderID: proto.Uint64(2)}, {Message: stub, MsgOrderID: proto.Uint64(1)}},
+		Messages: []*waHistorySync.HistorySyncMsg{{Message: web, MsgOrderID: proto.Uint64(2)}, {Message: stub, MsgOrderID: proto.Uint64(1)}, {Message: pinStub, MsgOrderID: proto.Uint64(3)}, {Message: promoteStub, MsgOrderID: proto.Uint64(4)}},
 	}
 	dmConv := &waHistorySync.Conversation{ID: proto.String(aliceLID.String()), PnJID: proto.String(alice.String()), UnreadCount: proto.Uint32(0), LastMsgTimestamp: proto.Uint64(uint64(ts.Unix())), Archived: proto.Bool(true)}
 	hs := &waHistorySync.HistorySync{
@@ -129,7 +159,7 @@ func printFixtures() {
 	}
 	_ = enc.Encode(obj{"t": "history", "fixture": "history", "syncType": hs.GetSyncType().String(), "conversations": convs,
 		"pushnames": []obj{{"jid": bob.String(), "name": "Bob"}}, "lidMappings": []obj{{"pn": alice.String(), "lid": aliceLID.String()}, {"pn": bob.String(), "lid": bobLID.String()}}})
-	for i, wm := range []*waWeb.WebMessageInfo{web, stub} {
+	for i, wm := range []*waWeb.WebMessageInfo{web, stub, pinStub, promoteStub} {
 		evt := &events.Message{Info: types.MessageInfo{ID: wm.GetKey().GetID(), Timestamp: time.Unix(int64(wm.GetMessageTimestamp()), 0), MessageSource: types.MessageSource{Chat: group, Sender: bobLID, IsGroup: true}}, RawMessage: wm.GetMessage()}
 		if evt.RawMessage == nil {
 			evt.RawMessage = &waE2E.Message{}
@@ -138,7 +168,7 @@ func printFixtures() {
 		w := proto.Clone(wm)
 		w.ProtoReflect().Clear(w.ProtoReflect().Descriptor().Fields().ByName("message"))
 		o := b.messageEvent(evt, true, w)
-		o["t"], o["fixture"] = "message", []string{"history_text", "history_stub"}[i]
+		o["t"], o["fixture"] = "message", []string{"history_text", "history_stub", "history_pin", "history_promote"}[i]
 		_ = enc.Encode(o)
 	}
 	_ = enc.Encode(obj{"t": "group", "fixture": "group", "group": groupOf(&types.GroupInfo{
@@ -188,4 +218,39 @@ func printFixtures() {
 		o["t"], o["fixture"] = "chat_presence", p.name
 		_ = enc.Encode(o)
 	}
+	// Receipts on your messages: per device of the reader (the device part is dropped), and in groups per participant.
+	aliceDevice := types.JID{User: alice.User, Device: 3, Server: types.DefaultUserServer}
+	rts := ts.Add(time.Hour)
+	receipts := []struct {
+		name string
+		evt  *events.Receipt
+	}{
+		{"receipt_delivered", &events.Receipt{MessageSource: types.MessageSource{Chat: alice, Sender: aliceDevice}, MessageIDs: []string{"A2"}, Timestamp: rts, Type: types.ReceiptTypeDelivered}},
+		{"receipt_read", &events.Receipt{MessageSource: types.MessageSource{Chat: alice, Sender: alice}, MessageIDs: []string{"A2", "SENT1"}, Timestamp: rts.Add(time.Minute), Type: types.ReceiptTypeRead}},
+		{"receipt_group_read", &events.Receipt{MessageSource: types.MessageSource{Chat: group, Sender: bobLID, SenderAlt: bob, IsGroup: true, AddressingMode: types.AddressingModeLID}, MessageIDs: []string{"G3"}, Timestamp: rts.Add(2 * time.Minute), Type: types.ReceiptTypeRead}},
+		{"receipt_played", &events.Receipt{MessageSource: types.MessageSource{Chat: alice, Sender: alice}, MessageIDs: []string{"A2"}, Timestamp: rts.Add(3 * time.Minute), Type: types.ReceiptTypePlayed}},
+		{"receipt_own_device", &events.Receipt{MessageSource: types.MessageSource{Chat: alice, Sender: types.JID{User: me.User, Device: 2, Server: types.DefaultUserServer}, IsFromMe: true}, MessageIDs: []string{"A2"}, Timestamp: rts, Type: types.ReceiptTypeSender}},
+	}
+	for _, r := range receipts {
+		o := b.receiptOf(r.evt)
+		o["t"], o["fixture"] = "receipt", r.name
+		_ = enc.Encode(o)
+	}
+	// Bob makes Alice an admin, then takes it back.
+	bobCopy, bobPN := bobLID, bob
+	for _, g := range []struct {
+		name string
+		evt  *events.GroupInfo
+	}{
+		{"group_promote", &events.GroupInfo{JID: group, Sender: &bobCopy, SenderPN: &bobPN, Timestamp: rts.Add(4 * time.Minute), Promote: []types.JID{aliceLID}}},
+		{"group_demote", &events.GroupInfo{JID: group, Sender: &bobCopy, SenderPN: &bobPN, Timestamp: rts.Add(5 * time.Minute), Demote: []types.JID{aliceLID}}},
+	} {
+		o := b.groupChangeOf(g.evt)
+		o["t"], o["fixture"] = "group_change", g.name
+		_ = enc.Encode(o)
+	}
+	// A contact changed their About; WhatsApp pushes it.
+	o := b.userAboutOf(&events.UserAbout{JID: alice, Status: "At the crag", Timestamp: rts.Add(6 * time.Minute)})
+	o["t"], o["fixture"] = "user_about", "user_about"
+	_ = enc.Encode(o)
 }

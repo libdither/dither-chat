@@ -96,11 +96,18 @@ export interface WaMessage {
   interactiveMessage?: { body?: { text?: string }; contextInfo?: WaContextInfo };
   buttonsResponseMessage?: { selectedDisplayText?: string; contextInfo?: WaContextInfo };
   listResponseMessage?: { title?: string; contextInfo?: WaContextInfo };
-  pinInChatMessage?: unknown;
+  /** Pin or unpin a message for everyone. The duration the pinner chose rides in messageContextInfo. */
+  pinInChatMessage?: WaPin;
   keepInChatMessage?: unknown;
   senderKeyDistributionMessage?: unknown;
-  messageContextInfo?: unknown;
+  messageContextInfo?: { messageAddOnDurationInSecs?: number; [k: string]: unknown };
   [k: string]: unknown;
+}
+
+export interface WaPin {
+  key?: WaKey;
+  type?: 'PIN_FOR_ALL' | 'UNPIN_FOR_ALL' | 'UNKNOWN_TYPE' | string;
+  senderTimestampMS?: string;
 }
 
 export interface WaPoll {
@@ -118,6 +125,8 @@ export interface WaWebInfo {
   messageStubType?: string;
   messageStubParameters?: string[];
   reactions?: { key?: WaKey; text?: string; senderTimestampMS?: string }[];
+  /** On a PINNED_MESSAGE_IN_CHAT stub: the pin, with its duration. */
+  pinInChat?: WaPin & { serverTimestampMS?: string; messageAddOnContextInfo?: { messageAddOnDurationInSecs?: number } };
   starred?: boolean;
   [k: string]: unknown;
 }
@@ -222,7 +231,8 @@ export type BridgeEvent =
   | { t: 'undecryptable'; info: WaInfo; unavailable: boolean; unavailableType?: string }
   | { t: 'history'; syncType: string; chunkOrder?: number; progress?: number; conversations: WaHistoryConversation[]; pushnames: { jid: string; name: string }[]; lidMappings: { pn: string; lid: string }[] }
   | { t: 'history_done'; syncType: string; chunkOrder?: number; count: number }
-  | { t: 'receipt'; chat: string; sender: string; fromMe: boolean; isGroup: boolean; ids: string[]; ts: number; type: string; messageSender?: string }
+  /** type: '' delivered, 'read', 'played' from others; 'read-self', 'read' (fromMe) from your own devices; 'sender', 'retry', … */
+  | { t: 'receipt'; chat: string; sender: string; senderAlt?: string; fromMe: boolean; isGroup: boolean; ids: string[]; ts: number; type: string; messageSender?: string }
   | { t: 'chat_presence'; chat: string; sender: string; fromMe: boolean; state: string; media?: string }
   | { t: 'push_name'; jid: string; alt?: string; name: string }
   | { t: 'business_name'; jid: string; name: string }
@@ -236,7 +246,10 @@ export type BridgeEvent =
   | { t: 'delete_for_me'; chat: string; sender?: string; fromMe: boolean; id: string }
   | { t: 'picture'; jid: string; id?: string; remove: boolean }
   | { t: 'group'; group: WaGroup }
-  | { t: 'group_change'; jid: string; join: string[]; leave: string[]; name?: string; topic?: string; deleted?: boolean; sender?: string; ts: number }
+  /** alts: a member's other address (phone number <-> LID), where the bridge knows it. */
+  | { t: 'group_change'; jid: string; join: string[]; leave: string[]; promote?: string[]; demote?: string[]; alts?: Record<string, string>; name?: string; topic?: string; deleted?: boolean; sender?: string; senderPn?: string; ts: number }
+  /** A contact's About changed (WhatsApp pushes it; never asked for). */
+  | { t: 'user_about'; jid: string; alt?: string; status: string; ts?: number }
   | { t: 'app_state_synced'; name: string }
   | { t: 'offline_sync'; total: number; done: boolean };
 
