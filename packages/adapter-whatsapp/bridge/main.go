@@ -181,6 +181,10 @@ type bridge struct {
 
 	retryMu sync.Mutex
 	retries map[string]chan *events.MediaRetry
+
+	// Who you blocked: read when a profile is first opened, dropped when WhatsApp says it changed or on a reconnect.
+	blockMu   sync.Mutex
+	blocklist *types.Blocklist
 }
 
 // alt finds the other address (phone number <-> LID) of a user, if the store knows it.
@@ -337,6 +341,24 @@ func groupOf(g *types.GroupInfo) groupJSON {
 	return j
 }
 
+// What WhatsApp's own apps show when you open someone's info: their About, picture id and business name.
+type userInfoJSON struct {
+	Status        string `json:"status,omitempty"`
+	PictureID     string `json:"pictureId,omitempty"`
+	LID           string `json:"lid,omitempty"`
+	BusinessName  string `json:"businessName,omitempty"`
+	VerifiedLevel string `json:"verifiedLevel,omitempty"`
+}
+
+func userInfoOf(u types.UserInfo) userInfoJSON {
+	j := userInfoJSON{Status: u.Status, PictureID: u.PictureID, LID: jidStr(u.LID)}
+	if u.VerifiedName != nil && u.VerifiedName.Details != nil {
+		j.BusinessName = u.VerifiedName.Details.GetVerifiedName()
+		j.VerifiedLevel = u.VerifiedName.VerifiedLevel
+	}
+	return j
+}
+
 // ------------------------------------------------------------------ events
 
 // Someone typing ("composing", with media "audio" when recording a voice note) or stopping ("paused").
@@ -414,7 +436,10 @@ func (b *bridge) onEvent(raw any) {
 		emit("offline_sync", obj{"total": evt.Total, "done": false})
 	case *events.OfflineSyncCompleted:
 		emit("offline_sync", obj{"total": evt.Count, "done": true})
+	case *events.Blocklist:
+		b.dropBlocklist()
 	case *events.Connected:
+		b.dropBlocklist()
 		emit("connected", b.self())
 	case *events.Disconnected:
 		emit("disconnected", nil)
@@ -810,6 +835,47 @@ func (b *bridge) run(op string, raw json.RawMessage) (any, error) {
 			list = append(list, obj{"query": r.Query, "jid": jidStr(r.JID), "isIn": r.IsIn, "alt": b.alt(r.JID)})
 		}
 		return list, nil
+	case "userInfo":
+		// One person, when you open their profile: the usync query WhatsApp's own apps make then. Never a list.
+		var a struct{ JID string }
+		_ = json.Unmarshal(raw, &a)
+		j, err := parseJID(a.JID)
+		if err != nil {
+			return nil, err
+		}
+		j = j.ToNonAD()
+		if j.Server != types.DefaultUserServer && j.Server != types.HiddenUserServer {
+			return nil, fmt.Errorf("%s is not a person", j)
+		}
+		res, err := b.cli.GetUserInfo(ctx, []types.JID{j})
+		if err != nil {
+			return nil, err
+		}
+		u, ok := res[j]
+		if !ok { // answered under their other address
+			for _, v := range res {
+				u, ok = v, true
+				break
+			}
+		}
+		if !ok {
+			return nil, nil
+		}
+		return userInfoOf(u), nil
+	case "blocked":
+		// Whether any of one person's addresses is on your blocklist.
+		var a struct{ JIDs []string }
+		_ = json.Unmarshal(raw, &a)
+		bl, err := b.getBlocklist(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, s := range a.JIDs {
+			if j, err := types.ParseJID(s); err == nil && bl.IsBlocked(j.ToNonAD()) {
+				return obj{"blocked": true}, nil
+			}
+		}
+		return obj{"blocked": false}, nil
 	case "avatar":
 		var a struct {
 			JID       string
@@ -833,6 +899,30 @@ func (b *bridge) run(op string, raw json.RawMessage) (any, error) {
 		return obj{"url": p.URL, "id": p.ID}, nil
 	}
 	return nil, fmt.Errorf("unknown op %q", op)
+}
+
+// getBlocklist is the blocklist as last read, or read now (one query, as WhatsApp's own apps make on start).
+func (b *bridge) getBlocklist(ctx context.Context) (*types.Blocklist, error) {
+	b.blockMu.Lock()
+	defer b.blockMu.Unlock()
+	if b.blocklist != nil {
+		return b.blocklist, nil
+	}
+	bl, err := b.cli.GetBlocklist(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	if bl == nil {
+		bl = &types.Blocklist{}
+	}
+	b.blocklist = bl
+	return bl, nil
+}
+
+func (b *bridge) dropBlocklist() {
+	b.blockMu.Lock()
+	b.blocklist = nil
+	b.blockMu.Unlock()
 }
 
 // The disappearing timers WhatsApp's own apps offer. In groups the server refuses others; in 1:1 chats the apps
