@@ -51,7 +51,9 @@ export type Capability =
   /** Reads a conversation's or space's settings, members and permissions (the `about` command, about.ts). */
   | 'about'
   /** Changes them (the `configure` command), where the About says this account may. */
-  | 'configure';
+  | 'configure'
+  /** Reads what the network says about one person: bio, mutual spaces and friends (the `profile` command, about.ts PersonAbout). */
+  | 'profile';
 
 // ---------------------------------------------------------------- facts
 
@@ -305,6 +307,12 @@ export type AdapterCommand =
    * reply.result: the About as it now stands.
    */
   | { t: 'configure'; id: string; target: AboutTarget; change: AboutChange }
+  /**
+   * What the network says about one person (capability 'profile'): `who` is their native identity id (not `id`, the
+   * request's). Asked only when someone opens their profile. Identity facts for anyone it names first, then
+   * reply.result: PersonAbout
+   */
+  | { t: 'profile'; id: string; who: string }
   /** reply.result for join: { direct?: DirectVoiceSession }. One call per account at a time. */
   | { t: 'call'; id: string; call: string; op: 'join'; conversation: string; mode: CallMode; muted?: boolean; deafened?: boolean }
   | { t: 'call'; id: string; call: string; op: 'leave' }

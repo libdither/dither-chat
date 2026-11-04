@@ -280,3 +280,51 @@ export function aboutChangeProblem(network: Network, kind: AboutTarget['kind'], 
       return typeof v === 'boolean' ? null : 'on or off';
   }
 }
+
+// ---------------------------------------------------------------- people
+
+/**
+ * What a network says about one person (the `profile` command, docs/profile.md), in native ids. Only what the
+ * network's own client shows when you open someone's profile, asked only when you open theirs.
+ */
+export interface PersonAbout {
+  /** As the network has them now. The adapter also emits an identity fact with these. */
+  displayName?: string;
+  handle?: string;
+  avatar?: MediaUrl;
+  /** A banner picture (Discord). */
+  banner?: MediaUrl;
+  /** A CSS colour for the banner when there is no picture (Discord's accent colour). */
+  accent?: string;
+  /** Bio or About text, as the network has it (Discord markdown, WhatsApp About, Signal About). */
+  bio?: string;
+  /** A short status line with an emoji (Discord custom status, Signal's About emoji). */
+  status?: { text?: string; emoji?: string };
+  pronouns?: string;
+  /** ms epoch: when their account was made (Discord, from the id). */
+  createdAt?: number;
+  /** Your standing with them on this network. */
+  relationship?: PersonRelationship;
+  /** Spaces you share, native ids, with their name and roles there. All of them, not only where they posted. */
+  mutualSpaces?: { id: string; nick?: string; roles?: { name: string; color?: string }[]; joinedAt?: number }[];
+  /** Friends you share: native identity ids (identity facts for them are emitted first). */
+  mutualFriends?: string[];
+  /** When the person is you: your friends or contacts on this network, native identity ids. */
+  friends?: string[];
+  /** Connected accounts, websites, a phone number. */
+  links?: { label: string; value: string; url?: string; verified?: boolean }[];
+  /** Anything else worth a line: "Business account", "Local time". */
+  facts?: { label: string; value: string }[];
+}
+
+/** friend: accepted; requested: you asked them; requesting: they asked you; contact: in your address book. */
+export type PersonRelationship = 'friend' | 'requested' | 'requesting' | 'blocked' | 'contact' | 'stranger';
+
+export const RELATIONSHIP_LABEL: Record<PersonRelationship, string> = {
+  friend: 'Friend',
+  requested: 'Friend request sent',
+  requesting: 'Wants to be friends',
+  blocked: 'Blocked',
+  contact: 'In your contacts',
+  stranger: 'Not a contact',
+};
