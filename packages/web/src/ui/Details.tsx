@@ -9,6 +9,7 @@ import { showDetails } from './Pager.ts';
 import { openConv } from './Sidebar.tsx';
 import { Menuable } from './ContextMenu.tsx';
 import { identityMenu } from './menus.tsx';
+import { openAbout } from './About.tsx';
 
 function Section({ title, children }: { title: string; children: any }) {
   return (
@@ -64,6 +65,9 @@ export function ConversationDetails({ convId }: { convId: string }) {
         </button>
       </header>
       <div class="det-scroll">
+        <button class="btn ghost small det-about" onClick={() => openAbout('conversation', c.id)}>
+          <Icon name="info" size={13} /> About and settings
+        </button>
         {c.shape === 'direct' && c.peerPersonId && (
           <div class="btn-row phone-only">
             <button class="btn ghost small" onClick={() => go({ view: 'profile', person: c.peerPersonId! })}>

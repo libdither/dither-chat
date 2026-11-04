@@ -481,3 +481,13 @@ CREATE TABLE IF NOT EXISTS triage_input (
   features   TEXT NOT NULL,                  -- JSON { conversation, person } of PlaceActivity
   at         INTEGER NOT NULL
 );
+
+-- The last About an adapter gave for a conversation or space, per account (about.ts, docs/group-settings.md).
+-- Shown, read-only, while that account is offline. Native ids inside, as the adapter sent it.
+CREATE TABLE IF NOT EXISTS about (
+  target_id  TEXT NOT NULL,                  -- cnv_… or spc_…
+  account_id TEXT NOT NULL,
+  data       TEXT NOT NULL,                  -- JSON About
+  fetched_at INTEGER NOT NULL,
+  PRIMARY KEY (target_id, account_id)
+) WITHOUT ROWID;

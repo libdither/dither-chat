@@ -23,6 +23,7 @@
  * native ID on the adapter's own network.
  */
 
+import type { AboutChange, AboutTarget } from './about.ts';
 import type { CallMode, CallState } from './call.ts';
 import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, ReactionStyle, Shape, SpaceKind, Variant } from './ontology.ts';
 
@@ -46,7 +47,11 @@ export type Capability =
   /** Voice calls (see call.ts). */
   | 'calls'
   /** Forwarding a message it can read into another conversation, the network's own way (the `forward` command). */
-  | 'forward';
+  | 'forward'
+  /** Reads a conversation's or space's settings, members and permissions (the `about` command, about.ts). */
+  | 'about'
+  /** Changes them (the `configure` command), where the About says this account may. */
+  | 'configure';
 
 // ---------------------------------------------------------------- facts
 
@@ -292,6 +297,14 @@ export type AdapterCommand =
   | { t: 'redact'; id: string; conversation: string; message: string }
   /** reply.result: { mime: string, base64: string } */
   | { t: 'fetchMedia'; id: string; url: MediaUrl }
+  /** Settings, members and permissions of a conversation or space. Identity facts for members first, then reply.result: About */
+  | { t: 'about'; id: string; target: AboutTarget }
+  /**
+   * Change one setting (capability 'configure'). The hub has checked the change against ABOUT_RULES and a fresh
+   * About's canEdit. The adapter emits the conversation or space fact again if its name or topic changed.
+   * reply.result: the About as it now stands.
+   */
+  | { t: 'configure'; id: string; target: AboutTarget; change: AboutChange }
   /** reply.result for join: { direct?: DirectVoiceSession }. One call per account at a time. */
   | { t: 'call'; id: string; call: string; op: 'join'; conversation: string; mode: CallMode; muted?: boolean; deafened?: boolean }
   | { t: 'call'; id: string; call: string; op: 'leave' }

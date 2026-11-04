@@ -20,6 +20,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
+import { ABOUT_LABEL, ABOUT_RULES, durationLabel } from '@dither-chat/protocol';
 import { Bridge, type Logger } from './bridge.ts';
 import { toWhatsApp } from './format.ts';
 import { Aliases, avatarUrl, bare, contextOf, ignoredChat, isGroup, isPhoneJid, isUser, Mapper, type MapOut, mediaOf, msgId, phoneOf } from './mapping.ts';
@@ -30,10 +31,18 @@ import type { BridgeEvent, WaContact, WaGroup, WaMessage, WaSelf } from './types
 export const WHATSAPP_TYPING_TTL = 25_000;
 
 export const ADAPTER_VERSION = '0.1.0';
-export const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'typing', 'media', 'sendMedia', 'e2ee', 'openDirect', 'forward'];
+export const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'typing', 'media', 'sendMedia', 'e2ee', 'openDirect', 'forward', 'about', 'configure'];
 export const LINK_MESSAGE = 'Scan this QR code in WhatsApp → Settings → Linked devices → Link a device';
 /** WhatsApp lets you edit for 15 minutes. */
 export const EDIT_WINDOW_MS = 15 * 60_000;
+/** A group read this recently (the hub asks `about` just before `configure`) answers for a change. */
+const GROUP_FRESH_MS = 60_000;
+const ONLY_ADMINS = 'Only admins can change this.';
+const LOCKED_INFO = 'Only admins can edit this group’s info.';
+const COMMUNITY_INFO = 'Only community admins can change this.';
+const NO_PICTURE = 'Changing the picture is not supported yet.';
+const ALWAYS_E2EE = 'Always on in WhatsApp.';
+const INVITE_ADMINS = 'Only admins can see and change the invite link.';
 
 export interface AdapterHost {
   emit(ev: P.AdapterEvent): void;
@@ -79,6 +88,10 @@ export class WhatsAppAdapter {
   private self: WaSelf = { loggedIn: false };
   private published = new Map<string, string>();
   private groupFetch = new Map<string, Promise<void>>();
+  /** The last read of each group, for the About panel. */
+  private groups = new Map<string, { g: WaGroup; at: number }>();
+  /** Invite links read for the About panel (admins only). */
+  private inviteLinks = new Map<string, string | null>();
   private historyWaiters = new Map<string, (count: number) => void>();
   private historyCounts = new Map<string, number>();
   private pendingReads = new Map<string, { unread: number; lastTs: number }>();
@@ -488,6 +501,7 @@ export class WhatsAppAdapter {
   }
 
   private putGroup(g: WaGroup) {
+    this.groups.set(g.jid, { g, at: Date.now() });
     if (g.addressing) this.state.set(`addr:${g.jid}`, g.addressing);
     if (g.ephemeral) this.state.set(`timer:${g.jid}`, String(g.ephemeral));
     else this.state.set(`timer:${g.jid}`, null);
@@ -686,6 +700,10 @@ export class WhatsAppAdapter {
         return this.fetchMedia(cmd.url);
       case 'action':
         return this.action(cmd.action, cmd.args);
+      case 'about':
+        return this.about(cmd.target);
+      case 'configure':
+        return this.configure(cmd.target, cmd.change);
       case 'call':
         throw new Error('WhatsApp calls are not supported');
       case 'lab':
@@ -947,6 +965,221 @@ export class WhatsAppAdapter {
       return { mime: res.headers.get('content-type') ?? 'image/jpeg', base64: Buffer.from(await res.arrayBuffer()).toString('base64') };
     }
     throw new Error(`WhatsApp cannot fetch ${url.split(':')[0]} URLs`);
+  }
+
+  // ---------------------------------------------------------------- about and settings (docs/group-settings.md)
+
+  /** A group or community as WhatsApp has it now, or as read in the last minute when fresh is false. */
+  private async loadGroup(jid: string, fresh: boolean): Promise<WaGroup> {
+    const c = this.groups.get(jid);
+    if (!fresh && c && Date.now() - c.at < GROUP_FRESH_MS) return c.g;
+    const g = await this.rpc.call<WaGroup>('group', { jid });
+    this.putGroup(g);
+    return g;
+  }
+
+  /**
+   * Where you stand in a group. Your own entry may be under your LID or your phone number. A community and its
+   * announcement group only let admins edit, locked or not; other groups let everyone unless locked.
+   */
+  private standing(g: WaGroup) {
+    const me = g.participants.find((p) => [p.jid, p.pn, p.lid].some((j) => this.mapper.isSelf(j)));
+    const announcements = !!(g.linkedParent && g.isDefaultSub);
+    const admin = !!(me?.admin || me?.superAdmin);
+    return { admin, owner: !!me?.superAdmin, announcements, info: admin || (!g.isLocked && !g.isParent && !announcements) };
+  }
+
+  private async about(target: P.AboutTarget): Promise<P.About> {
+    this.requireLinked();
+    if (target.kind === 'conversation' && !isGroup(target.nativeId)) return this.aboutDirect(target.nativeId);
+    return this.aboutGroup(target.kind, await this.loadGroup(target.nativeId, true), true);
+  }
+
+  /** readLink: ask WhatsApp for the invite link (admins only), else use the one read last. */
+  private async aboutGroup(kind: P.AboutTarget['kind'], g: WaGroup, readLink: boolean): Promise<P.About> {
+    const space = kind === 'space';
+    const { admin, owner, announcements, info } = this.standing(g);
+    const noun = space ? 'Community' : 'Group';
+    const lockedInfo = space ? COMMUNITY_INFO : LOCKED_INFO;
+    const fields: P.AboutFields = {};
+    const set = <K extends P.AboutKey>(k: K, value: P.AboutValues[K] | null, canEdit: boolean, reason?: string) => {
+      if (ABOUT_RULES.whatsapp[kind].includes(k)) (fields as Record<string, P.AboutSetting>)[k] = { value, canEdit, ...(reason && !canEdit ? { reason } : {}) };
+    };
+    const addMode = g.memberAddMode === 'all_member_add' ? 'everyone' : g.memberAddMode === 'admin_add' ? 'admins' : null;
+    set('name', g.name, info, lockedInfo);
+    set('topic', g.topic ?? '', info, lockedInfo);
+    set('avatar', (this.state.chat(g.jid)?.fact.avatarUrl as string | undefined) ?? avatarUrl(g.jid), false, info ? NO_PICTURE : lockedInfo);
+    set('disappearing', g.ephemeral ?? 0, info, lockedInfo);
+    set('announceOnly', !!g.isAnnounce, admin && !announcements, announcements ? 'A community’s announcement group is always admins only.' : ONLY_ADMINS);
+    set('editInfo', g.isLocked ? 'admins' : 'everyone', admin, ONLY_ADMINS);
+    set('addMembers', addMode, admin, space ? COMMUNITY_INFO : ONLY_ADMINS);
+    set('joinApproval', !!g.joinApproval, admin, space ? COMMUNITY_INFO : ONLY_ADMINS);
+    set('encrypted', true, false, ALWAYS_E2EE);
+
+    const ownerRole = `${noun} owner`;
+    const list: P.AboutMember[] = [];
+    for (const p of g.participants) {
+      const id = this.mapper.who(p.jid);
+      this.publish(id);
+      const top = !!p.superAdmin || (!!p.admin && [p.jid, p.pn, p.lid].some((j) => !!j && (j === g.ownerJid || j === g.ownerPn)));
+      list.push(top ? { id, role: ownerRole, rank: 110 } : p.admin ? { id, role: 'Admin', rank: 100 } : { id, role: 'Member', rank: 0 });
+    }
+    const count = (rank: number) => list.filter((m) => m.rank === rank).length;
+    const admins = space ? 'Community admins' : 'Only admins';
+    const who = (everyone: boolean) => (everyone ? 'All members' : admins);
+    const rules: P.AboutRule[] = space
+      ? [
+          { what: 'Edit name and description', who: admins, you: info },
+          { what: 'Add members', who: addMode ? who(addMode === 'everyone') : admins, you: admin || addMode === 'everyone' },
+          { what: 'Change these settings and the invite link', who: admins, you: admin },
+        ]
+      : [
+          { what: 'Edit name, description and disappearing messages', who: who(!g.isLocked && !announcements), you: info },
+          { what: 'Add members', who: addMode ? who(addMode === 'everyone') : admins, you: admin || addMode === 'everyone' },
+          { what: 'Send messages', who: who(!g.isAnnounce), you: admin || !g.isAnnounce },
+          { what: 'Change these settings and the invite link', who: admins, you: admin },
+        ];
+
+    let invite: P.AboutInvite = { link: null, canCreate: false, reason: INVITE_ADMINS };
+    if (admin) {
+      // WhatsApp has no "turn the link off", only a new link in place of the old one: no canRevoke.
+      invite = { link: this.inviteLinks.get(g.jid) ?? null, canCreate: true };
+      if (readLink || !this.inviteLinks.has(g.jid)) {
+        try {
+          invite.link = (await this.rpc.call<{ link: string } | null>('groupInviteLink', { jid: g.jid, reset: false }))?.link ?? null;
+          this.inviteLinks.set(g.jid, invite.link);
+        } catch (e: any) {
+          invite.reason = `Could not read the link: ${e?.message ?? e}`;
+        }
+      }
+    }
+    const total = Math.max(g.count ?? 0, list.length);
+    return {
+      noun,
+      fields,
+      members: { list, total, complete: list.length >= total },
+      roles: [
+        { id: 'superadmin', name: ownerRole, rank: 110, count: count(110) },
+        { id: 'admin', name: 'Admin', rank: 100, count: count(100) },
+        { id: 'member', name: 'Member', rank: 0, count: count(0) },
+      ],
+      rules,
+      you: owner ? { role: ownerRole, rank: 110 } : admin ? { role: 'Admin', rank: 100 } : { role: 'Member', rank: 0 },
+      invite,
+      ...(g.created ? { facts: [{ label: 'Created', value: new Date(g.created).toISOString().slice(0, 10) }] } : {}),
+    };
+  }
+
+  /** A 1:1 chat: its disappearing timer (either of you may set it) and its two people. */
+  private aboutDirect(id: string): P.About {
+    if (!this.state.chat(id)) throw new Error('This chat is not in this WhatsApp account');
+    const me = this.selfIds().id;
+    const self = id === me;
+    this.publish(me);
+    this.publish(id);
+    return {
+      noun: 'Chat',
+      fields: {
+        disappearing: { value: Number(this.state.get(`timer:${id}`) ?? 0), canEdit: true },
+        encrypted: { value: true, canEdit: false, reason: ALWAYS_E2EE },
+      },
+      members: { list: self ? [{ id: me }] : [{ id: me }, { id }], complete: true },
+      rules: [{ what: 'Change disappearing messages', who: self ? 'You' : 'Either of you', you: true }],
+    };
+  }
+
+  /**
+   * One change, one bridge call, then the group read again so the hub hears the new name or topic. Settings only:
+   * nothing here adds or removes people.
+   */
+  private async configure(target: P.AboutTarget, change: P.AboutChange): Promise<P.About> {
+    this.requireLinked();
+    if (change.key === 'pin') throw new Error('WhatsApp keeps no list of pinned messages to read, so pins are not offered here');
+    if (change.key === 'avatar') throw new Error(NO_PICTURE);
+    if (change.key !== 'invite' && !ABOUT_RULES.whatsapp[target.kind].includes(change.key)) throw new Error(`${ABOUT_LABEL[change.key] ?? change.key} is not a WhatsApp setting here`);
+    if (change.key === 'disappearing' && !ABOUT_RULES.whatsapp.disappearing!.includes(change.value)) throw new Error(`WhatsApp offers disappearing messages of 24 hours, 7 days or 90 days, not ${durationLabel(change.value)}`);
+    if (target.kind === 'conversation' && !isGroup(target.nativeId)) return this.configureDirect(target.nativeId, change);
+
+    const jid = target.nativeId;
+    const g = await this.loadGroup(jid, false);
+    const { admin, announcements, info } = this.standing(g);
+    const lockedInfo = target.kind === 'space' ? COMMUNITY_INFO : LOCKED_INFO;
+    const need = (ok: boolean, why: string) => {
+      if (!ok) throw new Error(why);
+    };
+    // What was written, laid over the next read in case that read lags behind the write.
+    let patch: Partial<WaGroup> = {};
+    let readLink = false;
+    switch (change.key) {
+      case 'name': {
+        need(info, lockedInfo);
+        const name = change.value.trim();
+        await this.rpc.call('setGroupName', { jid, name });
+        patch = { name };
+        break;
+      }
+      case 'topic':
+        need(info, lockedInfo);
+        await this.rpc.call('setGroupTopic', { jid, previousId: g.topicId ?? '', topic: change.value });
+        patch = { topic: change.value };
+        break;
+      case 'disappearing':
+        need(info, lockedInfo);
+        await this.rpc.call('setDisappearing', { jid, seconds: change.value });
+        patch = { ephemeral: change.value };
+        break;
+      case 'announceOnly':
+        need(!announcements, 'A community’s announcement group is always admins only.');
+        need(admin, ONLY_ADMINS);
+        await this.rpc.call('setGroupAnnounce', { jid, on: change.value });
+        patch = { isAnnounce: change.value };
+        break;
+      case 'editInfo':
+        need(admin, ONLY_ADMINS);
+        await this.rpc.call('setGroupLocked', { jid, on: change.value === 'admins' });
+        patch = { isLocked: change.value === 'admins' };
+        break;
+      case 'addMembers': {
+        need(admin, ONLY_ADMINS);
+        const mode = change.value === 'everyone' ? 'all_member_add' : 'admin_add';
+        await this.rpc.call('setGroupMemberAddMode', { jid, mode });
+        patch = { memberAddMode: mode };
+        break;
+      }
+      case 'joinApproval':
+        need(admin, ONLY_ADMINS);
+        await this.rpc.call('setGroupJoinApproval', { jid, on: change.value });
+        patch = { joinApproval: change.value };
+        break;
+      case 'invite': {
+        if (change.op !== 'create') throw new Error('WhatsApp cannot turn an invite link off, only replace it with a new one');
+        need(admin, INVITE_ADMINS);
+        const r = await this.rpc.call<{ link: string }>('groupInviteLink', { jid, reset: true });
+        this.inviteLinks.set(jid, r?.link ?? null);
+        if (!r?.link) readLink = true;
+        break;
+      }
+      default:
+        throw new Error(`${ABOUT_LABEL[change.key] ?? change.key} cannot be changed on WhatsApp from here`);
+    }
+    const fresh = await this.rpc.call<WaGroup>('group', { jid }).catch((e) => {
+      this.host.log('warn', `group ${jid} after a settings change: ${e.message}`);
+      return g;
+    });
+    const next = { ...fresh, ...patch };
+    this.putGroup(next);
+    return this.aboutGroup(target.kind, next, readLink);
+  }
+
+  private async configureDirect(id: string, change: P.AboutChange): Promise<P.About> {
+    if (change.key !== 'disappearing') throw new Error(`${change.key === 'invite' || change.key === 'pin' ? 'That' : ABOUT_LABEL[change.key]} is not a setting of a 1:1 chat`);
+    const chat = this.state.chat(id);
+    if (!chat) throw new Error('This chat is not in this WhatsApp account');
+    await this.rpc.call('setDisappearing', { jid: chat.jid, seconds: change.value });
+    // WhatsApp does not echo what this device sends: the line the phone would show, and the timer for what is sent next.
+    const now = Date.now();
+    this.apply(this.mapper.message({ info: { id: `timer-${now}`, chat: chat.jid, sender: this.ownJid(), fromMe: true, isGroup: false, ts: now }, message: { protocolMessage: { type: 'EPHEMERAL_SETTING', ephemeralExpiration: change.value } } }));
+    return this.aboutDirect(id);
   }
 
   private async action(action: string, args: any): Promise<unknown> {

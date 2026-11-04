@@ -8,3 +8,4 @@ export * from './call.ts';
 export * from './usage.ts';
 export * from './typing.ts';
 export * from './activity.ts';
+export * from './about.ts';

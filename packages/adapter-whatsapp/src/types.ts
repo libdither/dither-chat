@@ -163,6 +163,14 @@ export interface WaGroup {
   count?: number;
   suspended?: boolean;
   participants: { jid: string; pn?: string; lid?: string; admin?: boolean; superAdmin?: boolean; displayName?: string }[];
+  ownerJid?: string;
+  ownerPn?: string;
+  /** Who may add people: 'admin_add' or 'all_member_add'. */
+  memberAddMode?: string;
+  /** Joining by link needs an admin's approval. */
+  joinApproval?: boolean;
+  /** The current description's id, which SetGroupTopic wants as the previous one. */
+  topicId?: string;
 }
 
 export interface WaContact {

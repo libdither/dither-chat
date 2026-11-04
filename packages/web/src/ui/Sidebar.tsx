@@ -39,6 +39,7 @@ import { phone } from '../phone.ts';
 import { dropPlace, openPlaceMenu, placeLabel } from './Organize.tsx';
 import { Menuable, onMenu, useMenu } from './ContextMenu.tsx';
 import { accountMenu, conversationMenu, folderMenuSpec, personMenu, spaceMenu } from './menus.tsx';
+import { openAbout } from './About.tsx';
 import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapshot } from '../arrange.ts';
 import { inboxSnap, shownInbox } from '../inbox.ts';
 import { SortButton, useFlip } from './Reorganize.tsx';
@@ -433,6 +434,9 @@ function SpaceHeader({ space }: { space: P.SpaceView }) {
             <NetGlyph network={space.network} size={12} /> {netName(space.network)} {noun}
           </span>
         </div>
+        <button class="icon-btn small space-about" title={`About this ${noun}`} aria-label={`About this ${noun}`} onClick={() => openAbout('space', space.id)}>
+          <Icon name="info" size={15} />
+        </button>
       </div>
       {space.topic && <p class="space-topic">{space.topic}</p>}
       {accounts.length > 0 && (

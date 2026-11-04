@@ -301,6 +301,12 @@ describe('contacts and groups', () => {
     expect(describeGroupChange(group, { ...group, name: 'Crew' }, SELF, SELF, names)).toBe('You renamed the group to “Crew”.');
     expect(describeGroupChange(group, { ...group, messageExpirationTime: 86400 }, ALICE, SELF, names)).toBe('Alice set disappearing messages to 1 day.');
     expect(describeGroupChange(undefined, group, ALICE, SELF, names)).toBe('Alice updated the group.');
+    expect(describeGroupChange({ ...group, permissionEditDetails: 'EVERY_MEMBER' }, { ...group, permissionEditDetails: 'ONLY_ADMINS' }, SELF, SELF, names)).toBe('You changed who can edit group info to “Only admins”.');
+    expect(describeGroupChange({ ...group, permissionAddMember: 'ONLY_ADMINS' }, { ...group, permissionAddMember: 'EVERY_MEMBER' }, ALICE, SELF, names)).toBe('Alice changed who can add members to “All members”.');
+    const linked = { ...group, groupInviteLink: 'https://signal.group/#a' };
+    expect(describeGroupChange({ ...group, groupInviteLink: null }, linked, SELF, SELF, names)).toBe('You turned on the group link.');
+    expect(describeGroupChange(linked, { ...group, groupInviteLink: 'https://signal.group/#b' }, SELF, SELF, names)).toBe('You reset the group link.');
+    expect(describeGroupChange(linked, { ...group, groupInviteLink: null }, SELF, SELF, names)).toBe('You turned off the group link.');
   });
 });
 

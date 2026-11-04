@@ -16,6 +16,9 @@
  *       exit with the code inside; DIR/fake-hang holding this daemon's pid makes it
  *       stop answering (socket stays open). If data/accounts.json marks the account
  *       unregistered it fails like the real one ("User X is not registered.").
+ *       updateGroup and updateContact change the groups and contacts it lists
+ *       (kept in DIR/fake-groups.json and DIR/fake-contacts.json); updateGroup
+ *       without a groupId makes a new group, as the real one does.
  *
  * Knobs (env): FAKE_NUMBER, FAKE_ACI, FAKE_LINK_TIMEOUT_MS, FAKE_PROFILE_NAME.
  */
@@ -123,7 +126,86 @@ if (sub === 'daemon') {
         groupInviteLink: null,
         isTerminated: false,
       },
+      {
+        // Locked down by Alice: only admins edit, add or send, and the link is on.
+        id: 'L0ckedGr0up+AdminsOnly0000000000000000000000=',
+        name: 'Announcements',
+        description: 'read only',
+        isMember: true,
+        isBlocked: false,
+        messageExpirationTime: 604800,
+        members: [
+          { number: NUMBER, uuid: SELF, isAdmin: false },
+          { number: '+15550137', uuid: 'a11ce000-2222-4ccc-9ddd-000000000002', isAdmin: true },
+          { number: null, uuid: '5a3e0000-3333-4eee-afff-000000000003', isAdmin: false },
+        ],
+        pendingMembers: [{ number: null, uuid: 'f00d0000-1111-4aaa-8bbb-000000000099' }],
+        requestingMembers: [],
+        admins: [{ number: '+15550137', uuid: 'a11ce000-2222-4ccc-9ddd-000000000002' }],
+        banned: [],
+        permissionAddMember: 'ONLY_ADMINS',
+        permissionEditDetails: 'ONLY_ADMINS',
+        permissionSendMessage: 'ONLY_ADMINS',
+        groupInviteLink: 'https://signal.group/#CjQKIFakeLockedGroupLink',
+        isTerminated: false,
+      },
+      {
+        // Alice invited us; we have not joined.
+        id: 'Inv1tedGr0up+NotJoined000000000000000000000=',
+        name: 'Surprise party',
+        description: '',
+        isMember: false,
+        isBlocked: false,
+        messageExpirationTime: 0,
+        members: [{ number: '+15550137', uuid: 'a11ce000-2222-4ccc-9ddd-000000000002', isAdmin: true }],
+        pendingMembers: [{ number: NUMBER, uuid: SELF }],
+        requestingMembers: [],
+        admins: [{ number: '+15550137', uuid: 'a11ce000-2222-4ccc-9ddd-000000000002' }],
+        banned: [],
+        permissionAddMember: 'EVERY_MEMBER',
+        permissionEditDetails: 'EVERY_MEMBER',
+        permissionSendMessage: 'EVERY_MEMBER',
+        groupInviteLink: null,
+        isTerminated: false,
+      },
     ];
+  };
+  // Changes persist in the fake-*.json files, so a re-read (and a restarted daemon) sees them.
+  const save = (name: string, list: unknown) => writeFileSync(join(config, name), JSON.stringify(list));
+  const fail = (message: string, code = -1) => Object.assign(new Error(message), { code });
+  const updateGroup = (params: any) => {
+    const all = groups();
+    if (!params?.groupId) {
+      // As the real one: no group id makes a new group.
+      const g = { ...all[0], id: `NewGr0up${all.length}=`, name: params?.name ?? '', description: '', members: [{ number: NUMBER, uuid: SELF, isAdmin: true }], groupInviteLink: null };
+      save('fake-groups.json', [...all, g]);
+      return { groupId: g.id, timestamp: nextTs(), results: [] };
+    }
+    const g = all.find((x: any) => x.id === params.groupId);
+    if (!g) throw fail('Invalid group id');
+    const admin = g.members.some((m: any) => m.uuid === SELF && m.isAdmin);
+    const perm = (p: string) => (p === 'only-admins' ? 'ONLY_ADMINS' : 'EVERY_MEMBER');
+    const adminOnly = ['setPermissionSendMessages', 'setPermissionEditDetails', 'setPermissionAddMember', 'link', 'resetLink'].some((k) => k in params);
+    if ((adminOnly || g.permissionEditDetails === 'ONLY_ADMINS') && !admin) throw fail('Not a group admin');
+    g.isMember = true; // an update on an invitation accepts it
+    if ('name' in params) g.name = params.name;
+    if ('description' in params) g.description = params.description;
+    if ('expiration' in params) g.messageExpirationTime = params.expiration;
+    if ('setPermissionSendMessages' in params) g.permissionSendMessage = perm(params.setPermissionSendMessages);
+    if ('setPermissionEditDetails' in params) g.permissionEditDetails = perm(params.setPermissionEditDetails);
+    if ('setPermissionAddMember' in params) g.permissionAddMember = perm(params.setPermissionAddMember);
+    if (params.link === 'disabled') g.groupInviteLink = null;
+    else if (params.link || params.resetLink) g.groupInviteLink = `https://signal.group/#CjQKIFake${nextTs().toString(36)}`;
+    save('fake-groups.json', all);
+    return { groupId: g.id, timestamp: nextTs(), results: [] };
+  };
+  const updateContact = (params: any) => {
+    const all = contacts();
+    const c = all.find((x: any) => x.uuid === params?.recipient || x.number === params?.recipient);
+    if (!c) throw fail('Unknown recipient');
+    if ('expiration' in params) c.messageExpirationTime = params.expiration;
+    save('fake-contacts.json', all);
+    return {};
   };
   let ts = Date.now();
   const nextTs = () => (ts = Math.max(ts + 1, Date.now()));
@@ -152,6 +234,10 @@ if (sub === 'daemon') {
         if (params?.message === 'FAIL') throw Object.assign(new Error('Failed to send message'), { code: -1 });
         return { timestamp: nextTs(), results: [{ recipientAddress: { uuid: 'a11ce000-2222-4ccc-9ddd-000000000002', number: '+15550137' }, type: 'SUCCESS' }] };
       }
+      case 'updateGroup':
+        return updateGroup(params);
+      case 'updateContact':
+        return updateContact(params);
       case 'sendSyncRequest':
         return {};
       case 'version':

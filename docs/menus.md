@@ -50,7 +50,8 @@ button that opens this menu.
 
 ### A conversation or channel (sidebar rows, the channel tree, the header)
 
-Mark As Read · Profile and All Chats with Them (DMs) · Search in Channel · Copy Link · Mute Channel and
+Mark As Read · Profile and All Chats with Them (DMs) · About This Channel (or Group, Chat: its settings, members
+and who may change what, [group-settings.md](group-settings.md)) · Search in Channel · Copy Link · Mute Channel and
 Notification Settings › (Use Default, All Messages, Smart, Only @mentions, Digest, Nothing: the hub's own levels)
 · Pin to Top, Add to Sidebar, Move Up/Down, Move to Folder › (with New Folder…), Take Out of folder, Hide ·
 Copy Channel ID, Copy dither-chat ID.
@@ -63,10 +64,11 @@ no "for 1 hour" submenu.
 
 ### A server or space (rail, Spaces list, directory, the sidebar header, categories in the tree)
 
-Mark As Read · Mute Server and Notification Settings › · the arrangement items above · Copy Link, Copy Server
-ID, Copy dither-chat ID. Discord's names are used for Discord ("Server"), the network's own noun otherwise
-("Space"); a category says "Category" and has no arrangement or link. Left out: Invite, Server Settings,
-Privacy Settings, Leave Server.
+Mark As Read · About This Server (where Discord has Server Settings: [group-settings.md](group-settings.md)) ·
+Mute Server and Notification Settings › · the arrangement items above · Copy Link, Copy Server ID, Copy
+dither-chat ID. Discord's names are used for Discord ("Server"), the network's own noun otherwise ("Space"); a
+category says "Category" and has no arrangement or link. Left out: Invite (the About panel shows the link where
+the network has one), Privacy Settings, Leave Server.
 
 ### A folder
 

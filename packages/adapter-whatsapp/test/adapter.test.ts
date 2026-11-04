@@ -449,3 +449,189 @@ test('typing: chat states both ways, never a presence', async () => {
   expect(h.cmd('chatPresence', 1)).toMatchObject({ chat: GROUP, state: 'paused' });
   expect(h.cmds.filter((c) => c.op === 'presence')).toEqual([]);
 });
+
+// ---------------------------------------------------------------- about and settings
+
+const BOOKS = '120363000000000002@g.us';
+const COMMUNITY = '120363000000000009@g.us';
+const ALICE_LID = '200000000000002@lid';
+const about = (h: H, nativeId: string, kind: P.AboutTarget['kind'] = 'conversation') => h.adapter.command({ t: 'about', id: 'a', target: { kind, nativeId } }) as Promise<P.About>;
+const configure = (h: H, nativeId: string, change: P.AboutChange, kind: P.AboutTarget['kind'] = 'conversation') => h.adapter.command({ t: 'configure', id: 'c', target: { kind, nativeId }, change }) as Promise<P.About>;
+const count = (h: H, op: string) => h.cmds.filter((c) => c.op === op).length;
+
+test('hello offers about and configure', async () => {
+  const h = await harness();
+  expect(ofType(h.events, 'hello')[0].capabilities).toEqual(expect.arrayContaining(['about', 'configure']));
+});
+
+test('about a group where you are an admin under your LID: everything editable, the owner, the invite link', async () => {
+  const h = await harness();
+  await h.ctl({ result: { op: 'group', value: FIX.get('group_admin').group } });
+  await h.ctl({ result: { op: 'groupInviteLink', value: { link: 'https://chat.whatsapp.com/FAKECODE1' } } });
+  const a = await about(h, BOOKS);
+  expect(h.cmd('group')).toMatchObject({ jid: BOOKS });
+  expect(h.cmd('groupInviteLink')).toMatchObject({ jid: BOOKS, reset: false });
+  expect(a.noun).toBe('Group');
+  expect(a.fields).toEqual({
+    name: { value: 'Book club', canEdit: true },
+    topic: { value: 'One book a month', canEdit: true },
+    avatar: { value: `wa-avatar:${BOOKS}`, canEdit: false, reason: 'Changing the picture is not supported yet.' },
+    disappearing: { value: 7 * 86_400, canEdit: true },
+    announceOnly: { value: false, canEdit: true },
+    editInfo: { value: 'admins', canEdit: true },
+    addMembers: { value: 'everyone', canEdit: true },
+    joinApproval: { value: true, canEdit: true },
+    encrypted: { value: true, canEdit: false, reason: 'Always on in WhatsApp.' },
+  });
+  const bob = h.adapter.mapper.who(BOB_LID);
+  const alice = h.adapter.mapper.who(ALICE_LID);
+  expect(a.members).toEqual({
+    list: [
+      { id: bob, role: 'Group owner', rank: 110 },
+      { id: ME, role: 'Admin', rank: 100 },
+      { id: alice, role: 'Member', rank: 0 },
+    ],
+    total: 3,
+    complete: true,
+  });
+  // The hub hears of every member before the answer.
+  const ids = ofType(h.events, 'identity').map((e) => e.identity.nativeId);
+  expect(ids).toEqual(expect.arrayContaining([bob, ME, alice]));
+  expect(a.roles).toEqual([
+    { id: 'superadmin', name: 'Group owner', rank: 110, count: 1 },
+    { id: 'admin', name: 'Admin', rank: 100, count: 1 },
+    { id: 'member', name: 'Member', rank: 0, count: 1 },
+  ]);
+  expect(a.you).toEqual({ role: 'Admin', rank: 100 });
+  expect(a.invite).toEqual({ link: 'https://chat.whatsapp.com/FAKECODE1', canCreate: true });
+  expect(a.facts).toEqual([{ label: 'Created', value: '2024-03-02' }]);
+  expect(a.rules!.every((r) => r.you)).toBe(true);
+});
+
+test('about a locked group where you are a member: nothing editable, and why; no invite link asked for', async () => {
+  const h = await harness();
+  await h.ctl({ result: { op: 'group', value: { ...FIX.get('group').group, isLocked: true } } });
+  const a = await about(h, GROUP);
+  expect(a.fields.name).toEqual({ value: 'Climbing crew', canEdit: false, reason: 'Only admins can edit this group’s info.' });
+  expect(a.fields.topic).toMatchObject({ canEdit: false, reason: 'Only admins can edit this group’s info.' });
+  expect(a.fields.avatar).toMatchObject({ canEdit: false, reason: 'Only admins can edit this group’s info.' });
+  expect(a.fields.disappearing).toEqual({ value: 0, canEdit: false, reason: 'Only admins can edit this group’s info.' });
+  expect(a.fields.editInfo).toEqual({ value: 'admins', canEdit: false, reason: 'Only admins can change this.' });
+  for (const k of ['announceOnly', 'addMembers', 'joinApproval'] as const) expect(a.fields[k]).toMatchObject({ canEdit: false, reason: 'Only admins can change this.' });
+  // The bridge did not say who may add people.
+  expect(a.fields.addMembers!.value).toBeNull();
+  expect(a.members!.list.find((m) => m.id === ME)).toEqual({ id: ME, role: 'Member', rank: 0 });
+  expect(a.members!.list.find((m) => m.id !== ME)).toMatchObject({ role: 'Admin', rank: 100 });
+  expect(a.you).toEqual({ role: 'Member', rank: 0 });
+  expect(a.invite).toEqual({ link: null, canCreate: false, reason: 'Only admins can see and change the invite link.' });
+  expect(h.cmd('groupInviteLink')).toBeUndefined();
+  expect(a.rules!.find((r) => r.what.startsWith('Edit name'))).toEqual({ what: 'Edit name, description and disappearing messages', who: 'Only admins', you: false });
+
+  // Unlocked, a member may edit the info but still not the admin settings.
+  await h.ctl({ result: { op: 'group', value: FIX.get('group').group } });
+  const b = await about(h, GROUP);
+  expect(b.fields.name).toEqual({ value: 'Climbing crew', canEdit: true });
+  expect(b.fields.editInfo).toMatchObject({ value: 'everyone', canEdit: false });
+  await expect(configure(h, GROUP, { key: 'announceOnly', value: true })).rejects.toThrow('Only admins can change this.');
+  expect(h.cmd('setGroupAnnounce')).toBeUndefined();
+});
+
+test('about a community: its own settings, gated to community admins', async () => {
+  const h = await harness();
+  const parent = { ...FIX.get('community').group, memberAddMode: 'admin_add', count: 40, participants: [{ jid: '200000000000001@lid', pn: ME, lid: '200000000000001@lid', admin: true, superAdmin: true }] };
+  await h.ctl({ result: { op: 'group', value: parent } });
+  const a = await about(h, COMMUNITY, 'space');
+  expect(a.noun).toBe('Community');
+  expect(Object.keys(a.fields)).toEqual(['name', 'topic', 'avatar', 'addMembers', 'joinApproval']);
+  expect(a.fields.name).toEqual({ value: 'Neighbourhood', canEdit: true });
+  expect(a.fields.addMembers).toEqual({ value: 'admins', canEdit: true });
+  expect(a.you).toEqual({ role: 'Community owner', rank: 110 });
+  expect(a.members).toMatchObject({ total: 40, complete: false });
+  await expect(configure(h, COMMUNITY, { key: 'disappearing', value: 86_400 }, 'space')).rejects.toThrow('not a WhatsApp setting');
+});
+
+test('a 1:1 chat: its disappearing timer, set with the chat JID and kept up to date', async () => {
+  const h = await harness();
+  await h.emit(fx('text'));
+  const a = await about(h, ALICE);
+  expect(a).toEqual({
+    noun: 'Chat',
+    fields: { disappearing: { value: 0, canEdit: true }, encrypted: { value: true, canEdit: false, reason: 'Always on in WhatsApp.' } },
+    members: { list: [{ id: ME }, { id: ALICE }], complete: true },
+    rules: [{ what: 'Change disappearing messages', who: 'Either of you', you: true }],
+  });
+  const n = h.events.length;
+  const b = await configure(h, ALICE, { key: 'disappearing', value: 86_400 });
+  expect(h.cmd('setDisappearing')).toMatchObject({ jid: ALICE, seconds: 86_400 });
+  expect(b.fields.disappearing).toEqual({ value: 86_400, canEdit: true });
+  expect(ofType(h.events.slice(n), 'message')[0].message).toMatchObject({ conversation: ALICE, author: ME, kind: 'system', body: 'You turned on disappearing messages: 1 day.' });
+  // What is sent next disappears too.
+  await h.adapter.command({ t: 'send', id: 's', conversation: ALICE, body: 'hi' });
+  expect(h.cmd('send').message).toMatchObject({ extendedTextMessage: { contextInfo: { expiration: 86_400 } } });
+  // Alice turns it off from her phone.
+  await h.emit({ t: 'message', info: { id: 'EPH1', chat: ALICE, sender: ALICE, fromMe: false, isGroup: false, ts: 1_770_000_100_000 }, message: { protocolMessage: { type: 'EPHEMERAL_SETTING', ephemeralExpiration: 0 } } });
+  expect((await about(h, ALICE)).fields.disappearing!.value).toBe(0);
+  await expect(configure(h, ALICE, { key: 'disappearing', value: 3600 })).rejects.toThrow('24 hours, 7 days or 90 days');
+  await expect(configure(h, ALICE, { key: 'name', value: 'Alice' })).rejects.toThrow('not a setting of a 1:1 chat');
+  expect(count(h, 'setDisappearing')).toBe(1);
+});
+
+test('configure the name: setGroupName, the group read again, the conversation fact and the About updated', async () => {
+  const h = await harness();
+  await h.ctl({ result: { op: 'group', value: FIX.get('group_admin').group } });
+  await about(h, BOOKS);
+  const reads = count(h, 'group');
+  const n = h.events.length;
+  // The fake still answers the old name: what was written stands until WhatsApp's read catches up.
+  const a = await configure(h, BOOKS, { key: 'name', value: '  Reading club ' });
+  expect(h.cmd('setGroupName')).toEqual({ id: expect.any(String), op: 'setGroupName', jid: BOOKS, name: 'Reading club' });
+  await h.waitFor(() => count(h, 'group') === reads + 1);
+  expect(h.cmds.map((c) => c.op).slice(-2)).toEqual(['setGroupName', 'group']);
+  expect(a.fields.name).toEqual({ value: 'Reading club', canEdit: true });
+  expect(ofType(h.events.slice(n), 'conversation').at(-1)!.conversation).toMatchObject({ nativeId: BOOKS, name: 'Reading club' });
+});
+
+test('configure each group setting: the right bridge op and arguments', async () => {
+  const h = await harness();
+  await h.ctl({ result: { op: 'group', value: FIX.get('group_admin').group } });
+  await about(h, BOOKS);
+  const cases: [P.AboutChange, string, Record<string, unknown>][] = [
+    [{ key: 'topic', value: 'Two books a month' }, 'setGroupTopic', { jid: BOOKS, previousId: 'TOPIC1', topic: 'Two books a month' }],
+    [{ key: 'announceOnly', value: true }, 'setGroupAnnounce', { jid: BOOKS, on: true }],
+    [{ key: 'editInfo', value: 'everyone' }, 'setGroupLocked', { jid: BOOKS, on: false }],
+    [{ key: 'addMembers', value: 'admins' }, 'setGroupMemberAddMode', { jid: BOOKS, mode: 'admin_add' }],
+    [{ key: 'joinApproval', value: false }, 'setGroupJoinApproval', { jid: BOOKS, on: false }],
+    [{ key: 'disappearing', value: 90 * 86_400 }, 'setDisappearing', { jid: BOOKS, seconds: 90 * 86_400 }],
+  ];
+  for (const [change, op, args] of cases) {
+    const a = await configure(h, BOOKS, change);
+    expect(h.cmd(op)).toMatchObject(args);
+    expect(a.fields[change.key as P.AboutKey]!.value).toEqual((change as { value: string | number | boolean }).value);
+  }
+  expect(count(h, 'groupInviteLink')).toBe(1);
+  // The timer (set last: the fake answers the same group every time) is what the next message carries.
+  await h.adapter.command({ t: 'send', id: 's', conversation: BOOKS, body: 'hi' });
+  expect(h.cmd('send').message).toMatchObject({ extendedTextMessage: { contextInfo: { expiration: 90 * 86_400 } } });
+});
+
+test('a new invite link replaces the old one; what WhatsApp cannot do is refused before any write', async () => {
+  const h = await harness();
+  await h.ctl({ result: { op: 'group', value: FIX.get('group_admin').group } });
+  await h.ctl({ result: { op: 'groupInviteLink', value: { link: 'https://chat.whatsapp.com/FAKECODE1' } } });
+  await about(h, BOOKS);
+  await h.ctl({ result: { op: 'groupInviteLink', value: { link: 'https://chat.whatsapp.com/FAKECODE2' } } });
+  const a = await configure(h, BOOKS, { key: 'invite', op: 'create' });
+  expect(h.cmd('groupInviteLink', 1)).toMatchObject({ jid: BOOKS, reset: true });
+  expect(count(h, 'groupInviteLink')).toBe(2);
+  expect(a.invite).toEqual({ link: 'https://chat.whatsapp.com/FAKECODE2', canCreate: true });
+
+  const before = h.cmds.length;
+  await expect(configure(h, BOOKS, { key: 'invite', op: 'revoke' })).rejects.toThrow('cannot turn an invite link off');
+  await expect(configure(h, BOOKS, { key: 'pin', message: `${BOOKS}/M1` })).rejects.toThrow('pinned');
+  await expect(configure(h, BOOKS, { key: 'avatar', value: 'data:image/jpeg;base64,AAAA' })).rejects.toThrow('not supported yet');
+  await expect(configure(h, BOOKS, { key: 'slowMode', value: 10 })).rejects.toThrow('not a WhatsApp setting');
+  await expect(configure(h, BOOKS, { key: 'encrypted', value: true })).rejects.toThrow('cannot be changed');
+  await expect(configure(h, BOOKS, { key: 'disappearing', value: 3600 })).rejects.toThrow('24 hours, 7 days or 90 days');
+  await Bun.sleep(50);
+  expect(h.cmds.slice(before)).toEqual([]);
+});

@@ -217,6 +217,11 @@ export function describeGroupChange(before: SigGroup | undefined, after: SigGrou
   if (before.permissionSendMessage !== after.permissionSendMessage && after.permissionSendMessage) {
     parts.push(after.permissionSendMessage === 'ONLY_ADMINS' ? 'allowed only admins to send messages' : 'allowed all members to send messages');
   }
+  const whom = (p: string) => (p === 'ONLY_ADMINS' ? '“Only admins”' : '“All members”');
+  if (before.permissionEditDetails !== after.permissionEditDetails && after.permissionEditDetails) parts.push(`changed who can edit group info to ${whom(after.permissionEditDetails)}`);
+  if (before.permissionAddMember !== after.permissionAddMember && after.permissionAddMember) parts.push(`changed who can add members to ${whom(after.permissionAddMember)}`);
+  const link = (g: SigGroup) => g.groupInviteLink || null;
+  if (link(before) !== link(after)) parts.push(!link(after) ? 'turned off the group link' : link(before) ? 'reset the group link' : 'turned on the group link');
   if (!parts.length) return `${who} updated the group.`;
   return `${who} ${parts.join(', ')}.`;
 }

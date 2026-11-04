@@ -8,6 +8,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { configurePlan, mapAbout, UNSURE } from '../src/about.ts';
 
 const HOOK = readFileSync(process.env.HOOK_PATH ?? join(import.meta.dir, '../src/extension/hook.js'), 'utf8');
 
@@ -105,6 +106,7 @@ const dispatcher = {
 const emit = (ev: string, action: any = {}) => (handlers.get(ev) ?? []).forEach((fn) => fn(action));
 
 let me: { id: string; username: string } | null = null;
+const guildRecords = new Map<string, any>();
 const channelStore: any = store('ChannelStore', { getChannel: () => null });
 const userStoreGetUser: { value: (id: string) => unknown } = { value: () => null };
 const rest: Record<string, any> = { get() {}, post() {}, put() {}, patch() {}, del() {} };
@@ -118,7 +120,8 @@ const storeModule = (_m: any, e: any) => {
   Object.defineProperty(e, 'A', { enumerable: true, get: () => dispatcher });
   Object.defineProperty(e, 'Ay', { enumerable: true, get: () => store('UserStore', { getCurrentUser: () => me, getUser: (id: string) => userStoreGetUser.value(id) }) });
   e.Bk = channelStore;
-  e.Cx = store('GuildStore', { getGuilds: () => ({}), getGuild: (id: string) => ({ id, name: `Guild ${id}` }) });
+  // With guild records set (the about tests), only those exist, as in the real store.
+  e.Cx = store('GuildStore', { getGuilds: () => ({}), getGuild: (id: string) => (guildRecords.size ? guildRecords.get(id) : { id, name: `Guild ${id}` }) });
   e.Bo = rest;
   e.Dm = messageActions;
   e.Pc = privateChannels;
@@ -460,6 +463,220 @@ describe('hook.js with several rspack runtimes', () => {
       emit('MESSAGE_REACTION_ADD', { channelId: 'c', messageId: 'm', userId: '5', emoji: { id: '7', name: 'party', animated: true }, reactionType: 1, colors: ['#f00'] });
       const d = p.posted.find((x) => x.t === 'dispatch' && x.event === 'MESSAGE_REACTION_ADD');
       expect(d.data).toMatchObject({ reactionType: 1, colors: ['#f00'], emoji: { id: '7', name: 'party', animated: true }, user: { id: '5', username: 'user5' } });
+    });
+  });
+
+  describe('about and settings', () => {
+    const MANAGE_CHANNELS = 1n << 4n;
+    const MANAGE_GUILD = 1n << 5n;
+    const SEND = 1n << 11n;
+    const guild = { id: '100', name: 'Test server', ownerId: '2', verificationLevel: 1, nsfwLevel: 0, features: new Set(['COMMUNITY']), description: 'About it', icon: null };
+    // Unsorted, and in both colour forms the client has used.
+    const roles = {
+      '100': { id: '100', name: '@everyone', position: 0, color: 0 },
+      '201': { id: '201', name: 'Helper', position: 1, color: 0x5c7cfa, hoist: false },
+      '202': { id: '202', name: 'Mod', position: 2, colorString: '#e86a92', hoist: true },
+    };
+    const members = [
+      { userId: '3', roles: ['201'], colorString: null, nick: 'never sent' },
+      { userId: '2', roles: ['202'], colorString: '#e86a92' },
+      { userId: '9', roles: [] }, // not in the user store: dropped
+      { userId: '1', roles: [] },
+    ];
+    const channels: Record<string, any> = {
+      '300': { id: '300', type: 0, guild_id: '100', parent_id: '400', name: 'general', topic: 'hello', nsfw: false, rateLimitPerUser: 10, permissionOverwrites: { '100': { id: '100', type: 0, allow: 0n, deny: SEND } } },
+      '301': { id: '301', type: 0, guild_id: '100', parent_id: '400', name: 'open', topic: null, nsfw: true, rateLimitPerUser: 0, permissionOverwrites: {} },
+      '400': { id: '400', type: 4, guild_id: '100', name: 'Text' },
+      '500': { id: '500', type: 11, guild_id: '100', parent_id: '300', name: 'a thread', ownerId: '1', rateLimitPerUser: 0 },
+      '600': { id: '600', type: 3, recipients: ['2', '3'], ownerId: '2', name: null },
+      '700': { id: '700', type: 1, recipients: ['2'] },
+    };
+    /** Grants by subject id; 'absent' leaves the PermissionStore out, 'throws' makes its check throw. */
+    let grants: Record<string, bigint[]> | 'absent' | 'throws' = {};
+
+    function aboutPage() {
+      handlers.clear();
+      me = { id: '1', username: 'someone' };
+      userStoreGetUser.value = (id: string) => (id === '9' ? undefined : { id, username: `user${id}`, email: 'never@forward.this' });
+      guildRecords.clear();
+      guildRecords.set('100', guild);
+      channelStore.getChannel = (id: string) => channels[id];
+      const p = page();
+      p.runHook();
+      const web = runtime(p.win, 'web');
+      chunk(p.win, '700', {
+        stores: storeModule,
+        about: (_m: any, e: any) => {
+          e.r = store('GuildRoleStore', { getRoles: () => roles });
+          e.m = store('GuildMemberStore', { getMembers: () => members, getNick: () => null });
+          e.n = store('GuildMemberCountStore', { getMemberCount: () => 1200 });
+          if (grants !== 'absent')
+            e.p = store('PermissionStore', {
+              can: (bit: bigint, subject: any) => {
+                if (grants === 'throws') throw new Error('not ready');
+                return ((grants as Record<string, bigint[]>)[subject.id] ?? []).includes(bit);
+              },
+            });
+        },
+      });
+      web.T('stores');
+      web.T('about');
+      p.tick();
+      return p;
+    }
+    let n = 0;
+    async function ask(p: ReturnType<typeof page>, c: unknown) {
+      const id = `a${n++}`;
+      p.win.message?.({ source: p.win, data: { __dither_bridge__: 'down', payload: { t: 'cmd', id, cmd: c } } });
+      await Bun.sleep(0);
+      const r = p.posted.find((m) => m.t === 'reply' && m.id === id);
+      // It crosses the window and a WebSocket: no BigInt, no Set, nothing that does not survive JSON.
+      if (r?.ok) expect(JSON.parse(JSON.stringify(r.result))).toEqual(r.result);
+      return r;
+    }
+    const aboutOf = async (target: 'conversation' | 'space', id: string) => {
+      const r = await ask(aboutPage(), { kind: 'about', target, id });
+      expect(r.ok).toBe(true);
+      return { raw: r.result, about: mapAbout(r.result) };
+    };
+    afterEach(() => {
+      grants = {};
+      guildRecords.clear();
+      channelStore.getChannel = () => null;
+      userStoreGetUser.value = () => null;
+      me = null;
+    });
+
+    test('a channel, with Manage Channels', async () => {
+      grants = { '300': [MANAGE_CHANNELS, SEND] };
+      const { raw, about } = await aboutOf('conversation', '300');
+      expect(raw.channel).toMatchObject({ rate_limit_per_user: 10, nsfw: false, everyone_denies_send: true });
+      expect(JSON.stringify(raw)).not.toContain('never');
+      expect(about.noun).toBe('Channel');
+      expect(about.fields).toMatchObject({
+        name: { value: 'general', canEdit: true },
+        topic: { value: 'hello', canEdit: true },
+        slowMode: { value: 10, canEdit: true },
+        nsfw: { value: false, canEdit: true },
+        announceOnly: { value: true, canEdit: false, reason: "Change who can send in the channel's permissions, in Discord." },
+      });
+      expect(about.fields.avatar).toBeUndefined();
+      expect(about.rules).toContainEqual({ what: 'Change the server', who: 'Manage Server', you: false });
+      expect(about.rules).toContainEqual({ what: 'Send messages', who: 'Send Messages', you: true });
+    });
+
+    test('roles by position, members with their top role and colour, this account kept', async () => {
+      const { about } = await aboutOf('conversation', '301');
+      expect(about.roles).toEqual([
+        { id: '202', name: 'Mod', rank: 2, color: '#e86a92' },
+        { id: '201', name: 'Helper', rank: 1, color: '#5c7cfa' },
+        { id: '100', name: '@everyone', rank: 0 },
+      ]);
+      expect(about.members).toEqual({
+        list: [
+          { id: '2', role: 'Mod', rank: 2, color: '#e86a92' },
+          { id: '3', role: 'Helper', rank: 1, color: '#5c7cfa' },
+          { id: '1', rank: 0 },
+        ],
+        total: 1200,
+        complete: false,
+      });
+      expect(about.you).toEqual({ role: 'Member', rank: 0 });
+      expect(about.fields.announceOnly).toMatchObject({ value: false });
+    });
+
+    test('fails closed: a refusal, no store, or a check that throws', async () => {
+      grants = {};
+      expect((await aboutOf('conversation', '300')).about.fields.name).toEqual({ value: 'general', canEdit: false, reason: 'You need the Manage Channels permission.' });
+      grants = 'absent';
+      const absent = (await aboutOf('conversation', '300')).about;
+      expect(absent.fields.name).toEqual({ value: 'general', canEdit: false, reason: UNSURE });
+      expect(absent.fields.announceOnly).toMatchObject({ canEdit: false, reason: UNSURE });
+      expect(absent.rules!.every((r) => !r.you)).toBe(true);
+      grants = 'throws';
+      expect((await aboutOf('conversation', '300')).about.fields.slowMode).toEqual({ value: 10, canEdit: false, reason: UNSURE });
+    });
+
+    test('a thread its owner may rename, sending by its parent', async () => {
+      const { about } = await aboutOf('conversation', '500');
+      expect(about.noun).toBe('Thread');
+      expect(about.fields.name).toEqual({ value: 'a thread', canEdit: true });
+      expect(about.fields.topic).toBeUndefined();
+      expect(about.fields.nsfw).toBeUndefined();
+      expect(about.fields.announceOnly).toMatchObject({ value: true, canEdit: false });
+    });
+
+    test('a group DM: anyone renames, the owner removes', async () => {
+      grants = 'absent';
+      const { about } = await aboutOf('conversation', '600');
+      expect(about.noun).toBe('Group');
+      expect(about.fields.name).toEqual({ value: 'user2, user3', canEdit: true });
+      expect(about.fields.avatar).toEqual({ value: null, canEdit: false, reason: 'Changing the picture is not supported yet.' });
+      expect(about.members).toEqual({ list: [{ id: '1', rank: 0 }, { id: '2', role: 'Group owner', rank: 100 }, { id: '3', rank: 0 }], complete: true });
+      expect(about.rules).toEqual([
+        { what: 'Rename, change the icon, add people', who: 'Everyone in the group', you: true },
+        { what: 'Remove people', who: 'The group owner', you: false },
+      ]);
+      expect(about.facts).toContainEqual({ label: 'Owner', value: 'user2' });
+    });
+
+    test('a DM has nothing to change', async () => {
+      grants = { '700': [MANAGE_CHANNELS] };
+      const { about } = await aboutOf('conversation', '700');
+      expect(about.noun).toBe('Direct message');
+      expect(about.fields).toEqual({});
+      expect(about.members).toEqual({ list: [{ id: '1', rank: 0 }, { id: '2', rank: 0 }], complete: true });
+    });
+
+    test('a server and a category', async () => {
+      grants = { '100': [MANAGE_GUILD] };
+      const server = (await aboutOf('space', '100')).about;
+      expect(server.noun).toBe('Server');
+      expect(server.fields).toMatchObject({
+        name: { value: 'Test server', canEdit: true },
+        topic: { value: 'About it', canEdit: false, reason: 'Change the server description in Discord.' },
+        avatar: { value: null, canEdit: false },
+        nsfw: { value: false, canEdit: false },
+      });
+      expect(server.facts).toEqual([
+        { label: 'Verification level', value: 'Low: a verified email' },
+        { label: 'Owner', value: 'user2' },
+        { label: 'Created', value: '2015-01-01' },
+      ]);
+      const category = (await aboutOf('space', '400')).about;
+      expect(category.noun).toBe('Category');
+      expect(category.fields).toEqual({ name: { value: 'Text', canEdit: false, reason: 'You need the Manage Channels permission.' } });
+      expect((await ask(aboutPage(), { kind: 'about', target: 'space', id: '300' })).ok).toBe(false);
+    });
+
+    test("configure sends one PATCH through the client's REST module, with only settings fields", async () => {
+      const p = aboutPage();
+      const calls: any[] = [];
+      const realPatch = rest.patch;
+      rest.patch = (req: any) => (calls.push(req), Promise.resolve({ body: req.url.startsWith('/guilds') ? { id: '100', name: req.body.name, owner_id: '2' } : { id: '300', type: 0, name: 'renamed', guild_id: '100', permission_overwrites: [] } }));
+      try {
+        const ch = await ask(p, { kind: 'configure', channelId: '300', patch: { name: 'renamed', rate_limit_per_user: 30, permission_overwrites: [], type: 5 } });
+        expect(ch).toMatchObject({ ok: true, result: { channel: { id: '300', name: 'renamed', guild_id: '100' } } });
+        const g = await ask(p, { kind: 'configure', guildId: '100', patch: { name: 'New name', description: 'not offered' } });
+        expect(g).toMatchObject({ ok: true, result: { guild: { id: '100', name: 'New name' } } });
+        expect((await ask(p, { kind: 'configure', channelId: '../users/@me', patch: { name: 'x' } })).ok).toBe(false);
+        expect((await ask(p, { kind: 'configure', channelId: '300', patch: { icon: 'data:' } })).ok).toBe(false);
+      } finally {
+        rest.patch = realPatch;
+      }
+      expect(calls).toEqual([
+        { url: '/channels/300', query: undefined, body: { name: 'renamed', rate_limit_per_user: 30 } },
+        { url: '/guilds/100', query: undefined, body: { name: 'New name' } },
+      ]);
+    });
+
+    test('the adapter plans that PATCH from the same read', async () => {
+      grants = { '300': [MANAGE_CHANNELS] };
+      const { raw } = await aboutOf('conversation', '300');
+      expect(configurePlan(raw, { key: 'slowMode', value: 30 })).toEqual({ channelId: '300', patch: { rate_limit_per_user: 30 } });
+      grants = {};
+      const locked = (await aboutOf('conversation', '300')).raw;
+      expect(() => configurePlan(locked, { key: 'name', value: 'x' })).toThrow('You need the Manage Channels permission.');
     });
   });
 

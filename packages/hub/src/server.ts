@@ -22,6 +22,7 @@ import { Devices } from './devices.ts';
 import { changesOf } from './journal.ts';
 import { syncResponse } from './sync.ts';
 import { TypingGate } from './typing.ts';
+import { AboutError, Abouts } from './about.ts';
 
 const ACCOUNT_COLORS = ['#F2A541', '#E86A92', '#B794F6', '#FF8C61', '#9BE15D', '#5CC8FF', '#F7D154', '#FF6B6B'];
 
@@ -104,6 +105,7 @@ export class HubServer {
   private typingGate = new TypingGate();
   private usage: UsageStore;
   readonly calls: Calls;
+  readonly abouts: Abouts;
   /** This process. A client that sees it change knows the hub restarted, and may have a new web build. */
   readonly boot = Buffer.from(crypto.getRandomValues(new Uint8Array(6))).toString('base64url');
   /** Sends by the client's id for them, so one retried after a lost answer goes out once (state.ts queues sends). */
@@ -117,6 +119,12 @@ export class HubServer {
   ) {
     this.uploads = new Uploads(join(opts.dataDir, 'uploads'));
     this.calls = new Calls(store, sup, { turn: opts.turn, pickAccount: (c, a) => this.pickAccount(c, a) });
+    this.abouts = new Abouts({
+      store,
+      online: (a) => sup.online(a),
+      command: (a, c, t) => sup.command(a, c, t),
+      pickAccount: (c, a) => this.pickAccount(c, a),
+    });
     sup.calls = this.calls;
     this.usage = new UsageStore(store.db, (changed, removed, all) =>
       this.broadcast([{ t: 'usage', places: this.usage.get(changed), removed, ...(all ? { replace: true as const } : {}) }]),
@@ -409,6 +417,24 @@ export class HubServer {
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/timeline$/))) return ok(s.personTimeline(m[1], num('before'), Math.min(num('limit') ?? 60, 200)));
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/notify$/))) return ok(this.triage.effectiveLevel(m[1]));
+    // About and settings (about.ts, docs/group-settings.md). GET reads, POST changes one thing.
+    if ((m = path.match(/^\/api\/(conversations|spaces)\/([\w-]+)\/about$/))) {
+      const kind = m[1] === 'spaces' ? 'space' : 'conversation';
+      try {
+        if (method === 'POST') {
+          const b = await body<{ change?: P.AboutChange; accountId?: string }>();
+          const v = await this.abouts.configure(kind, m[2], b.change as P.AboutChange, b.accountId);
+          this.flush();
+          return ok(v);
+        }
+        const v = await this.abouts.get(kind, m[2], url.searchParams.get('account') ?? undefined);
+        this.flush();
+        return ok(v);
+      } catch (e) {
+        if (e instanceof AboutError) return bad(e.message, e.status);
+        throw e;
+      }
+    }
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/reaction-context$/))) {
       const conv = s.nativeOf('conversation', m[1]);
       if (!conv) return bad('no such conversation', 404);

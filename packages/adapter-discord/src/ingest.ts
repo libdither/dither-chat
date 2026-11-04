@@ -112,6 +112,17 @@ export function userFacts(users: (RawUser | null | undefined)[], st: AdapterStat
   return events;
 }
 
+/** A channel or server as a PATCH answered it: the facts a gateway update would give, mutes kept. */
+export function changedFacts(r: { channel?: RawChannel | null; guild?: RawGuild | null }, st: AdapterState): P.AdapterEvent[] {
+  if (r.channel?.type === CHANNEL_TYPE.CATEGORY) return [{ t: 'space', space: mapCategory(r.channel, channelMute(st.guildSettings.get(r.channel.guild_id ?? ''), r.channel.id)) }];
+  if (r.channel) return routeChannel(r.channel, st);
+  if (!r.guild) return [];
+  const guild = { ...st.guilds.get(r.guild.id), ...r.guild };
+  st.guilds.set(guild.id, guild);
+  const gs = st.guildSettings.get(guild.id);
+  return [{ t: 'space', space: mapGuild(guild, gs ? mapMute(gs) : undefined) }];
+}
+
 function guildChannelEvents(c: RawChannel, st: AdapterState): P.AdapterEvent[] {
   st.known.add(c.id);
   const guild = c.guild_id ? st.guilds.get(c.guild_id) : undefined;

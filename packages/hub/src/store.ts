@@ -221,6 +221,7 @@ export class Store {
     const seen = this.db.query('SELECT target_kind, target_id FROM vantage WHERE account_id = ?').all(id) as Row[];
     const tx = this.db.transaction(() => {
       this.db.query('DELETE FROM account WHERE id = ?').run(id);
+      this.db.query('DELETE FROM about WHERE account_id = ?').run(id);
       const orphanConvs = this.db
         .query(`SELECT id FROM conversation c WHERE NOT EXISTS (SELECT 1 FROM vantage v WHERE v.target_kind = 'conversation' AND v.target_id = c.id)`)
         .all() as Row[];
@@ -1184,6 +1185,11 @@ export class Store {
   customEmoji(network: P.Network, key: string): P.CustomEmojiFact | undefined {
     const r = this.db.query('SELECT * FROM custom_emoji WHERE network = ? AND key = ?').get(network, key) as Row | null;
     return r ? { key: r.key, name: r.name, url: r.url, animated: !!r.animated } : undefined;
+  }
+
+  /** A media URL as clients fetch it (signed, or inline). */
+  mediaUrl(raw: string | null | undefined, accountId: string | null | undefined): string | null {
+    return this.media(raw, accountId);
   }
 
   /** Remember what an adapter offered, so reactions made from the picker can be described later. */

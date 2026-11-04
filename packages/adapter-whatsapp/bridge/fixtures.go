@@ -152,6 +152,20 @@ func printFixtures() {
 		JID: types.NewJID("120363000000000010", types.GroupServer), GroupName: types.GroupName{Name: "Neighbourhood"}, GroupAnnounce: types.GroupAnnounce{IsAnnounce: true},
 		GroupLinkedParent: types.GroupLinkedParent{LinkedParentJID: types.NewJID("120363000000000009", types.GroupServer)}, GroupIsDefaultSub: types.GroupIsDefaultSub{IsDefaultSubGroup: true},
 	})})
+	// A LID-addressed group where you are an admin under your LID, with every setting the About panel reads.
+	meLID := types.NewJID("200000000000001", types.HiddenUserServer)
+	_ = enc.Encode(obj{"t": "group", "fixture": "group_admin", "group": groupOf(&types.GroupInfo{
+		JID: types.NewJID("120363000000000002", types.GroupServer), OwnerJID: bobLID, OwnerPN: bob,
+		GroupName: types.GroupName{Name: "Book club"}, GroupTopic: types.GroupTopic{Topic: "One book a month", TopicID: "TOPIC1"},
+		GroupLocked: types.GroupLocked{IsLocked: true}, GroupEphemeral: types.GroupEphemeral{IsEphemeral: true, DisappearingTimer: 7 * 86400},
+		GroupMembershipApprovalMode: types.GroupMembershipApprovalMode{IsJoinApprovalRequired: true}, MemberAddMode: types.GroupMemberAddModeAllMember,
+		AddressingMode: types.AddressingModeLID, GroupCreated: time.UnixMilli(1_709_337_600_000).UTC(),
+		Participants: []types.GroupParticipant{
+			{JID: bobLID, PhoneNumber: bob, LID: bobLID, IsAdmin: true, IsSuperAdmin: true},
+			{JID: meLID, PhoneNumber: me, LID: meLID, IsAdmin: true},
+			{JID: aliceLID, PhoneNumber: alice, LID: aliceLID},
+		},
+	})})
 	presence := []struct {
 		name string
 		evt  *events.ChatPresence

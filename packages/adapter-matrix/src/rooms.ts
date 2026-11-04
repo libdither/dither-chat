@@ -52,6 +52,13 @@ export const STRUCTURAL = new Set([
 ]);
 
 const BIG_ROOM = 20;
+
+/** A room version as a number to compare: "11" is 11, the v12 prototype "org.matrix.hydra.11" is 12, anything else NaN. */
+export function roomVersionNumber(v: string): number {
+  if (/^\d+$/.test(v)) return Number(v);
+  return v === 'org.matrix.hydra.11' ? 12 : NaN;
+}
+
 const key = (type: string, stateKey: string) => `${type}\u0000${stateKey}`;
 
 export class Room {
@@ -157,14 +164,13 @@ export class Room {
 
   // ---------------------------------------------------------------- power levels
 
-  private get roomVersion(): string {
+  get roomVersion(): string {
     return String(this.get('m.room.create')?.content?.room_version ?? '1');
   }
 
   /** Room v12 creators have unlimited power. */
-  private isPrivilegedCreator(user: string): boolean {
-    const v = this.roomVersion;
-    if (v !== '12' && v !== 'org.matrix.hydra.11') return false;
+  isPrivilegedCreator(user: string): boolean {
+    if (!(roomVersionNumber(this.roomVersion) >= 12)) return false;
     const create = this.get('m.room.create');
     if (!create) return false;
     const extra = Array.isArray(create.content?.additional_creators) ? create.content.additional_creators : [];

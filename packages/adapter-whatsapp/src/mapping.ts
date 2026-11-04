@@ -319,6 +319,8 @@ export class Mapper {
       if (pm.type === 'MESSAGE_EDIT' && pm.editedMessage) return this.edit(o, conv, chat, target, pm.editedMessage, info, author, live);
       if (pm.type === 'EPHEMERAL_SETTING') {
         const s = pm.ephemeralExpiration ?? 0;
+        // The chat's timer, for what is sent next and for the About panel. Not from history: that may be an old one.
+        if (live) this.st.set(`timer:${conv}`, s ? String(s) : null);
         const who = info.fromMe ? 'You' : this.nameOf(author);
         const body = s ? `${who} turned on disappearing messages: ${describeTimer(s)}.` : `${who} turned off disappearing messages.`;
         o.events.push({ t: 'message', message: { nativeId: msgId(conv, info.id), conversation: conv, author, ts: info.ts, kind: 'system', body }, live });

@@ -24,6 +24,7 @@ import { Switcher } from './Switcher.tsx';
 import { Toasts } from './Toasts.tsx';
 import { CallDock } from './Call.tsx';
 import { Viewer } from './Viewer.tsx';
+import { AboutLayer } from './About.tsx';
 import { PEEK, panel, usePager, type Rest } from './Pager.ts';
 import { Skeleton } from './bits.tsx';
 import { applyUpdate, updateReady } from '../pwa.ts';
@@ -346,6 +347,7 @@ export function App() {
       <DragLayer />
       <ContextMenuLayer />
       <ForwardLayer />
+      <AboutLayer />
       <Switcher />
       <NewMessage />
       <Viewer />
