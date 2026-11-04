@@ -27,6 +27,9 @@ import type { AboutChange, AboutTarget } from './about.ts';
 import type { CallMode, CallState } from './call.ts';
 import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, ReactionStyle, Shape, SpaceKind, Variant } from './ontology.ts';
 
+/** How far a message got with someone: their device has it, they read it, they played it (a voice note, a video). */
+export type ReceiptState = 'delivered' | 'read' | 'played';
+
 export type Capability =
   | 'send'
   | 'history'
@@ -255,6 +258,21 @@ export type AdapterEvent =
   | { t: 'reactionsCleared'; conversation: string; message: string; key?: string }
   /** Read state as the network reports it. Counts override the hub's own tally when given. */
   | { t: 'read'; conversation: string; upToTs: number; unread?: number; mentions?: number }
+  /**
+   * History the hub keeps (docs/history.md). `by` is who did it and `ts` when, where the network says; else the hub
+   * uses the time it heard.
+   *
+   * A message pinned or unpinned. */
+  | { t: 'pin'; conversation: string; message: string; pinned: boolean; by?: string; ts?: number }
+  /** Someone given a role or losing one: a Discord role by name, a Matrix power level ("Admin", "Moderator"), admin on Signal or WhatsApp. */
+  | { t: 'role'; target: AboutTarget; member: string; role: string; given: boolean; color?: string; by?: string; ts?: number }
+  /**
+   * Someone's custom status or About as it is now (no text and no emoji: cleared). Only for people the account follows
+   * (friends, contacts, people it has a DM with), never everyone in a big server.
+   */
+  | { t: 'customStatus'; who: string; text?: string; emoji?: string; ts?: number }
+  /** Someone else got, read or played (a voice note, a video) these messages. Matrix: read up to the last of them. */
+  | { t: 'receipt'; conversation: string; messages: string[]; who: string; state: ReceiptState; ts: number }
   /**
    * Someone is typing, or (`stop`) stopped. Of the moment: the hub relays it and keeps nothing (typing.ts).
    * `ttl`: how long a start lasts without another, in ms (default TYPING_TTL); a network whose clients refresh less

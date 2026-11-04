@@ -4,7 +4,7 @@
  */
 
 import type { About, AboutFields, PersonAbout } from './about.ts';
-import type { Capability, NativeMute } from './adapter.ts';
+import type { Capability, NativeMute, ReceiptState } from './adapter.ts';
 import type {
   AccountStatus,
   AttachmentKind,
@@ -45,6 +45,8 @@ export interface IdentityView {
   avatar: string | null;
   isBot: boolean;
   personId: string | null;
+  /** Their custom status or About as last heard (docs/history.md). */
+  status?: { text?: string; emoji?: string; at: number };
 }
 
 export interface PersonView {
@@ -272,8 +274,14 @@ export interface MessageView {
    */
   deleted: boolean;
   gone?: { how: 'deleted' | 'disappeared'; at: number; kept: boolean };
-  /** Earlier versions the hub kept, oldest first: GET /api/messages/:id/history. */
+  /** Earlier versions the hub kept: GET /api/messages/:id/history. */
   edits?: number;
+  /** Other things that happened to it the hub kept: reactions taken back, pins (docs/history.md). */
+  events?: number;
+  /** Pinned, as the last pin or unpin the hub saw says. */
+  pinned?: boolean;
+  /** Your own messages: how many people it reached, read and played, and the latest of those. */
+  receipts?: { delivered: number; read: number; played: number; latest: { identityId: string; state: ReceiptState; at: number } };
   /** Something is wrong with this message's encryption, e.g. it came in the clear in an encrypted room. */
   encryptionWarning?: string;
   attachments: AttachmentView[];
@@ -717,10 +725,14 @@ export interface KeepSettings {
   deleted: boolean;
   disappearing: boolean;
   edits: boolean;
+  /** Reactions taken back: who took back what. */
+  reactions: boolean;
+  /** Who got, read and played your messages, and when. */
+  receipts: boolean;
 }
 
 export interface RetentionSettings extends KeepSettings {
-  /** Names, descriptions, pictures, settings, members and profiles, as they change. */
+  /** Names, descriptions, pictures, settings, members, roles, pins, and people's profiles and statuses, as they change. */
   changes: boolean;
   /** Kept deleted and disappeared messages: a collapsed row in the timeline, or not shown at all. */
   show: 'collapsed' | 'hidden';
@@ -728,17 +740,42 @@ export interface RetentionSettings extends KeepSettings {
   sources: Record<string, Partial<KeepSettings>>;
 }
 
-export const DEFAULT_RETENTION: RetentionSettings = { deleted: true, disappearing: true, edits: true, changes: true, show: 'collapsed', sources: {} };
+export const DEFAULT_RETENTION: RetentionSettings = { deleted: true, disappearing: true, edits: true, reactions: true, receipts: true, changes: true, show: 'collapsed', sources: {} };
 
-/** One thing that changed. Values are what the network said, as text (a picture is its media path). */
+/**
+ * One thing that changed about a place or a person. `old` and `new` are the values themselves: text for names and
+ * descriptions, a media path for pictures, a setting's own type (seconds, true or false, "admins"), `{ text, emoji }`
+ * for a status, an identity id for a member, `{ identityId, role, color }` for a role. null: nothing.
+ */
 export interface ChangeView {
   id: number;
-  target: { kind: 'conversation' | 'space' | 'identity' | 'message'; id: string };
-  /** name, topic, avatar, displayName, handle, bio, status, pronouns, banner, a setting key, member, body. */
+  target: { kind: 'conversation' | 'space' | 'identity'; id: string };
+  /** name, topic, avatar, displayName, handle, bio, status, pronouns, banner, a setting key, member, role. */
   field: string;
-  old: string | null;
-  new: string | null;
+  old: unknown;
+  new: unknown;
   at: number;
-  /** For `member`: who joined (new) or left (old). */
+  /** Who made the change, where the network says. */
+  actorId?: string;
+  /** For member and role changes: whose. */
   identityId?: string;
+}
+
+/** Something that happened to one message, besides its text changing. */
+export interface MessageEventView {
+  kind: 'edit' | 'unreact' | 'pin' | 'unpin';
+  /** edit: the text it had before; unreact: { key, style }. */
+  data: unknown;
+  actorId?: string;
+  at: number;
+}
+
+/** GET /api/messages/:id/history */
+export interface MessageHistoryView {
+  /** Every version, oldest first, the last as it reads now. */
+  versions: { body: string; at: number | null }[];
+  events: MessageEventView[];
+  /** Your message: who got it, read it, played it, and when. */
+  receipts: { identityId: string; state: ReceiptState; at: number }[];
+  identities: IdentityView[];
 }
