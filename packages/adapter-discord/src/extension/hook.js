@@ -577,7 +577,7 @@
   let peeking = false;
   function installPeek() {
     const d = mod.Dispatcher;
-    if (peeking || typeof d.addInterceptor !== 'function') return;
+    if (peeking || !d || typeof d.addInterceptor !== 'function') return;
     d.addInterceptor((action) => {
       try {
         const peek = action && PEEK[action.type];
