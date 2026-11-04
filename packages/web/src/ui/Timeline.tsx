@@ -49,6 +49,7 @@ import {
   timelines,
 } from '../state.ts';
 import { reactionContext } from '../reactions.ts';
+import { openAbout } from './About.tsx';
 import { AccountChip, AccountDots, Avatar, Empty, Menu, NetBadge, NetGlyph, Skeleton, levelIcon, variantIcon } from './bits.tsx';
 import { HoverReactions, ReactionBar, useLongPress } from './Reactions.tsx';
 import { Icon } from './icons.tsx';
@@ -228,6 +229,11 @@ function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void 
           </>
         )}
         <JoinCallButton c={c} />
+        {!isDirect && (
+          <button class="hdr-btn" title="About and settings" aria-label="About and settings" onClick={() => openAbout('conversation', c.id)}>
+            <Icon name="info" size={16} />
+          </button>
+        )}
         <button class="hdr-btn" title="Search in this conversation" aria-label="Search in this conversation" onClick={() => go({ view: 'search', q: `in:${c.id}` })}>
           <Icon name="search" size={16} />
         </button>

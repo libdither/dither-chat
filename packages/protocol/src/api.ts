@@ -188,6 +188,8 @@ export interface AboutView extends Omit<About, 'members' | 'pinned' | 'fields'> 
     total?: number;
     complete: boolean;
   };
+  /** The members' identities, since strangers in a big place are not in the bootstrap. */
+  identities: IdentityView[];
   pinned?: {
     /** Pinned messages the hub has, newest pin first. */
     messages: MessageView[];

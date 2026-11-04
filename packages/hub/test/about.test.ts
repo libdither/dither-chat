@@ -115,6 +115,8 @@ describe('reading', () => {
     expect(main.roles?.map((r) => r.name)).toEqual(['Maintainer', 'Contributor', '@everyone']);
     // The member list loads lazily on Discord.
     expect(main.members?.complete).toBe(false);
+    // Strangers are not in the bootstrap, so their identities come with the answer.
+    expect(main.identities.map((i) => i.id).sort()).toEqual(main.members!.list.map((m) => m.identityId).sort());
   });
 
   test('pinned messages come back as the messages the hub has', async () => {

@@ -16,27 +16,29 @@ it but do not yet, **w** the network allows the change but we do not offer it, *
 
 | Setting | Discord | Signal | Matrix | WhatsApp |
 |---|---|---|---|---|
-| Name | R W (channels, group DMs, servers) | R W (groups) | R W | R W (groups, communities) |
-| Description / topic | R W (channels; server description is read-only) | R W | R W | R W |
+| Name | R W (channels, threads, group DMs, categories, servers) | R W (groups) | R W (rooms, spaces) | R W (groups, communities) |
+| Description / topic | R W (channels); server description R | R W | R W | R W |
 | Picture | R w | R w | R w | R w |
-| Members | R: who the client has loaded, with their top role and its colour; group DM recipients | R, with admin | R (joined), with power level | R, with admin / superadmin |
-| Roles | R (server roles: name, colour, position) | admin / member | power levels, named Admin / Moderator / custom | superadmin / admin / member |
-| Who may do what | R (from the client's own permission check) | R W (`editInfo`, `addMembers`) | R (from `m.room.power_levels`) | R W (`editInfo` = locked, `addMembers` = add mode) |
-| Invite link | r w (`/channels/{id}/invites`, needs Manage Channels to list) | R W (on / off; Signal cannot tell us whether approval is on) | R (built: matrix.to alias, or room id with `via`) | R W (admins only; make a new one) |
-| Disappearing messages | — | R W (groups and 1:1, any seconds) | — (MSC2228 abandoned) | R W (24 h / 7 d / 90 d) |
+| Members | R: the ones the client has loaded (up to 200), with their top role and its colour; group DM recipients | R, with admin | R (`joined_members`, up to 500), with power level | R, with admin / owner |
+| Roles | R (server roles by position) | admin / member | Owner (room v12 creators) / Admin / Moderator / Level N | owner / admin / member |
+| Who may do what | R (the client's own permission check, failing closed) | R W (`editInfo`, `addMembers`) | R (power levels) | R W (`editInfo` = locked, `addMembers` = add mode) |
+| Invite link | r w | R W (make, reset, turn off) | R (matrix.to: the alias, else the room id with `via`) | R W (admins: see it, make a new one; WhatsApp has no "off") |
+| Disappearing messages | — | R W (groups, 1:1, Note to Self) | — (MSC2228 abandoned) | R W (groups and 1:1: 24 h / 7 d / 90 d) |
 | Slow mode | R W | — | — | — |
-| Age-restricted | R W (channel NSFW); server NSFW level is read-only | — | — | — |
-| Only admins send | R (from Send Messages for @everyone; changing means editing overwrites, not offered) | R W | R W (`events_default` vs `users_default`) | R W |
-| Join approval | r (verification level, screening) | w (`link: enabled-with-approval`, unreadable) | R W (`join_rule: knock`) | R W |
-| Join rule | — | — | R W (public / invite / knock / restricted) | — |
+| Age-restricted | R W (channel NSFW) | — | — | — |
+| Only admins send | R | R W | R W (`events_default` against `users_default`) | R W |
+| Join approval | r | R: unknown (signal-cli does not say) | as `joinRule: ask` | R W |
+| Join rule | — | — | R W (open / invite / ask / space) | — |
 | History visibility | — | — | R W | — |
 | Encryption | — | R (always on) | R W (on only) | R (always on) |
-| Pinned messages | r w (`GET /channels/{id}/pins`) | r w (events only: no list) | R W (`m.room.pinned_events`) | r w (events only: no list) |
+| Pinned messages | r w | r w (events only: no list) | R W (`m.room.pinned_events`) | r w (events only: no list) |
 
-"r" rows are kept out of the first version on purpose: Discord's REST reads go through the paced queue and are
-not free, Signal and WhatsApp keep no pin list to read (one would have to be built from pin events), and the
-avatar upload paths differ per network (JPEG only on WhatsApp, a file path on Signal, a data URI on Discord, an
-upload then a state event on Matrix) and could only be checked against fakes.
+"r" and "w" are left out on purpose: Discord's pins and invites need REST calls (a paced read each time the
+panel opens, and writes nobody has tried on a live account yet); Signal and WhatsApp keep no list of pins to read
+(one would have to be built from pin events); and pictures upload differently on every network (JPEG only on
+WhatsApp, a file path on Signal, a data URI on Discord, an upload then a state event on Matrix), so they could
+only be checked against fakes. Adding people, removing them, changing roles and banning are not offered
+anywhere: on WhatsApp, adding people is the kind of thing its enforcement looks for.
 
 ## Discord
 
@@ -216,16 +218,28 @@ whose view it is.
 
 ## What was checked, and what needs a live check
 
-Checked: the protocol (`packages/protocol/test/about.test.ts`), the hub (`packages/hub/test/about.test.ts`), each
-adapter against its fake (`adapter-signal`, `adapter-whatsapp`) or its unit tests (`adapter-matrix` room state,
-`adapter-discord` mapping), and the panel end to end on a demo hub (`scripts/verify-about.ts`).
+Checked:
 
-Not checked against a real network:
+- The protocol's rules (`aboutChangeProblem`) and the hub (`packages/hub/test/about.test.ts`, against the demo
+  world's adapters run in process): what each account may change and why not, refusals before anything reaches a
+  network, the last answer while an account is offline, the read-only panel for adapters without `about`.
+- Each adapter: Signal against its fake signal-cli (`updateGroup` always one field with a group id; a test proves
+  the guard), WhatsApp against its fake bridge (the Go side builds and passes `go vet`), Matrix with unit tests
+  and once against the local testbed homeserver (every state write accepted on a room v12, a member refused by the
+  server as the panel predicts), Discord against the fake page in `hook.test.ts`.
+- The panel, end to end on a demo hub: `scripts/verify-about.ts` (opening it from the header, the menu and a
+  space; renaming; changing a timer; a member's locked view with reasons; two accounts' views of one server;
+  pins; strangers named; the phone sheet).
 
-- **Discord**: the hook's store field names (`rateLimitPerUser`, `nsfw`, roles) against the current client build,
-  and any change. A live check belongs on the throwaway account, in its own test server, only.
-- **Signal**: `updateGroup` and `updateContact` against a real signal-cli; never on the real account.
-- **Matrix**: the state writes against the local testbed homeserver are the next step (`packages/adapter-matrix/testbed`).
-- **WhatsApp**: the new bridge calls (`SetGroupName`, `SetGroupTopic`, `SetGroupAnnounce`, `SetGroupLocked`,
-  `SetGroupMemberAddMode`, `SetGroupJoinApprovalMode`, `SetDisappearingTimer`, `GetGroupInviteLink`) compile and
-  answer the fake bridge; none has run against WhatsApp.
+Not checked against a real network, and worth a look before relying on it:
+
+- **Discord**: the store field names the hook reads (`rateLimitPerUser`, `nsfw`, `permissionOverwrites`, the role
+  and member-count stores) against the current client build, and any change. Only on the throwaway account, in
+  its own test server: rename a channel, set slow mode, flip NSFW, rename the server.
+- **Signal**: `updateGroup` and `updateContact` against a real signal-cli, on a test number only; whether
+  `updateContact` with your own ACI sets Note to Self's timer; what a non-admin's refused change says.
+- **Matrix**: a full hub plus adapter run on the testbed (the renamed room reaching the hub, the sync echo
+  changing nothing).
+- **WhatsApp**: every new bridge call (`SetGroupName`, `SetGroupTopic`, `SetGroupAnnounce`, `SetGroupLocked`,
+  `SetGroupMemberAddMode`, `SetGroupJoinApprovalMode`, `SetDisappearingTimer`, `GetGroupInviteLink`); whether a
+  community's parent group lists you with your admin status; that `SetGroupTopic` takes the topic id we pass.

@@ -949,15 +949,13 @@ class DemoAdapter implements InprocAdapter {
       for (const c of conv ? [conv] : CONVS.filter((c) => c.acc.includes(this.key) && c.fact.spaces?.some((sp) => sp.nativeId === target.nativeId || SPACES.some((x) => x.fact.nativeId === sp.nativeId && x.fact.parents?.some((pp) => pp.nativeId === target.nativeId)))))
         for (const m of c.msgs) ids.add(m[1].nativeId);
     }
-    const selfIds = net === 'discord' ? [D.zyan.nativeId, D.zyn.nativeId] : [this.self.nativeId];
     const pic = 'Changing the picture is not supported yet.';
     let noun = 'Group';
     if (net === 'discord') {
       const guild = space?.fact.kind === 'community' ? space.fact.nativeId : where;
       const roles = guild ? DISCORD_ROLES[guild] ?? [] : [];
       for (const id of ids) {
-        const self = selfIds.includes(id);
-        const staff = self ? (admin ? 'role-maint' : null) : DISCORD_STAFF[id];
+        const staff = id === this.self.nativeId ? (admin ? 'role-maint' : null) : DISCORD_STAFF[id];
         const role = roles.find((r) => r.id === snow(staff ?? '')) ?? roles.find((r) => r.rank === 0);
         members.push({ id, ...(role ? { role: role.name, rank: role.rank } : {}), ...(role?.color ? { color: role.color } : {}) });
       }
@@ -1029,7 +1027,7 @@ class DemoAdapter implements InprocAdapter {
       set('addMembers', admin, onlyAdmins);
       set('joinApproval', admin, onlyAdmins);
       set('encrypted', false, `Always on in ${NETWORK_META_NAME[net]}.`);
-      if (!wa && fields.joinApproval) fields.joinApproval = { ...fields.joinApproval, value: null, reason: 'Signal does not say whether approval is on.' };
+      if (!wa && fields.joinApproval) fields.joinApproval = { value: null, canEdit: false, reason: 'Signal does not say whether approval is on.' };
       const who = (w: P.Who | undefined) => (w === 'everyone' ? 'All members' : 'Only admins');
       rules.push(
         { what: 'Edit name, description and disappearing messages', who: who(v.editInfo), you: info },

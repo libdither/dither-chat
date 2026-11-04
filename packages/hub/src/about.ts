@@ -160,6 +160,7 @@ export class Abouts {
       ...about,
       fields,
       members,
+      identities: s.identitiesByIds(members?.list.map((m) => m.identityId) ?? []),
       pinned,
       target: { kind, id },
       network,
