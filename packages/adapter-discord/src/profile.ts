@@ -60,7 +60,7 @@ export function bannerUrl(userId: string, hash: string | null | undefined): stri
 }
 
 /** The emoji of a custom status: a Unicode one as itself, a server's own by its name. */
-function statusEmoji(e: RawEmoji | null | undefined): string | undefined {
+export function statusEmoji(e: RawEmoji | null | undefined): string | undefined {
   if (!e?.name) return undefined;
   return e.id ? `:${e.name}:` : e.name;
 }

@@ -17,6 +17,7 @@ import type { BridgeUp, HookCommand, PageState, RawAbout, RawChannel, RawEmoji, 
 import { aboutUsers, configurePlan, mapAbout, withChange } from './about.ts';
 import { mapProfile, profileUsers } from './profile.ts';
 import { changedFacts, messageEvents, newState, openedDirect, translateDispatch, translateSnapshot, userFacts } from './ingest.ts';
+import { duePins, PIN_HOLD_MS } from './changes.ts';
 import { customEmoji, DISCORD_EPOCH, guildIconUrl, mapUser } from './map.ts';
 import { BridgeServer, PaceQueue } from './server.ts';
 import { Sandbox, pickDisplay } from './sandbox.ts';
@@ -166,6 +167,7 @@ function handleBridge(msg: BridgeUp) {
       break;
     case 'dispatch':
       for (const ev of translateDispatch(msg.event, msg.data, st)) hub.emit(ev);
+      tellHeldPins();
       break;
     case 'loginIssue':
       onLoginIssue(msg);
@@ -181,6 +183,18 @@ function handleBridge(msg: BridgeUp) {
       });
       break;
   }
+}
+
+let pinTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** A pin waits a moment for the message saying who pinned it; told without that once the wait is over. */
+function tellHeldPins() {
+  if (pinTimer || !st.changes.held.size) return;
+  pinTimer = setTimeout(() => {
+    pinTimer = null;
+    for (const ev of duePins(st.changes, Date.now())) hub.emit(ev);
+    tellHeldPins();
+  }, PIN_HOLD_MS + 100);
 }
 
 /** Why the last sign-in failed, in words, for the account card. The page itself just starts over. */
