@@ -4,7 +4,8 @@
  * `{account, envelope}`, assembled from its Json* records: JsonMessageEnvelope,
  * JsonDataMessage, JsonSyncDataMessage with the data message unwrapped into
  * it, JsonQuote, JsonMention, JsonTextStyle, JsonAttachment, JsonReaction,
- * JsonEditMessage, JsonSyncReadMessage, JsonTypingMessage, JsonCallMessage).
+ * JsonEditMessage, JsonSyncReadMessage, JsonTypingMessage, JsonCallMessage, JsonReceiptMessage, JsonPinMessage,
+ * JsonUnpinMessage).
  *
  * People: self 5f2c7a8e-…-0001 (+15550100), Alice a11ce000-…-0002 (+15550137),
  * Sam 5a3e0000-…-0003 (+15550161); group Pmpi+EfPW…MwI= ("Climbing crew 🧗").
@@ -15,6 +16,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AdapterEvent, MessageFact } from '@dither-chat/protocol';
 import {
+  adminChanges,
   contactIdentity,
   describeGroupChange,
   directConversation,
@@ -189,6 +191,37 @@ describe('incoming data messages', () => {
     expect(message(map('poll').events)).toMatchObject({ kind: 'text', body: '📊 **Thursday or Friday?**\n• Thursday\n• Friday' });
   });
 
+  test('pin and unpin: a pin event for the target message, by whoever did it; a pin with a duration ends then', () => {
+    const pinned = map('pin');
+    expect(of(pinned.events, 'pin')).toEqual([{ t: 'pin', conversation: GROUP, message: `${SAM}:${T + 14000}`, pinned: true, by: ALICE, ts: T + 25000 }]);
+    expect(pinned.pinTimers).toEqual([]); // -1: for good
+    const unpinned = map('unpin');
+    expect(message(unpinned.events)).toMatchObject({ kind: 'system', body: 'Alice Chen unpinned a message.', replyTo: `${SAM}:${T + 14000}` });
+    expect(of(unpinned.events, 'pin')).toEqual([{ t: 'pin', conversation: GROUP, message: `${SAM}:${T + 14000}`, pinned: false, by: ALICE, ts: T + 26000 }]);
+    expect(unpinned.pinTimers).toEqual([]);
+
+    const day = fixture('pin');
+    day.envelope!.dataMessage!.pinMessage!.pinDurationSeconds = 86400;
+    expect(mapReceive(day, ctx()).pinTimers).toEqual([{ conversation: GROUP, message: `${SAM}:${T + 14000}`, until: T + 25000 + 86_400_000 }]);
+
+    // A target named by number only resolves like a quote's author; one that does not resolve gets no pin event.
+    const byNumber = fixture('pin');
+    byNumber.envelope!.dataMessage!.pinMessage!.targetAuthorUuid = null;
+    expect(of(mapReceive(byNumber, ctx({ aciOfNumber: (n) => (n === '+15550161' ? SAM : undefined) })).events, 'pin')[0]?.message).toBe(`${SAM}:${T + 14000}`);
+    const unresolved = mapReceive(byNumber, ctx());
+    expect(of(unresolved.events, 'pin')).toEqual([]);
+    expect(message(unresolved.events).replyTo).toBeUndefined();
+  });
+
+  test('a pin you made on your phone is by you', () => {
+    const rcv = fixture('sync-sent-group');
+    const sent = rcv.envelope!.syncMessage!.sentMessage!;
+    delete sent.message;
+    delete sent.quote;
+    sent.pinMessage = { targetAuthorUuid: ALICE, targetSentTimestamp: T + 1000, pinDurationSeconds: -1 };
+    expect(of(mapReceive(rcv, ctx()).events, 'pin')).toEqual([{ t: 'pin', conversation: GROUP, message: `${ALICE}:${T + 1000}`, pinned: true, by: SELF, ts: sent.timestamp! }]);
+  });
+
   test('housekeeping and failures produce no messages', () => {
     expect(of(map('profile-key-update').events, 'message')).toHaveLength(0);
     const r = map('decrypt-error');
@@ -234,6 +267,59 @@ describe('sync messages (your other devices)', () => {
 
   test('contacts sync asks for a resync', () => {
     expect(map('contacts-sync').resync).toBe(true);
+  });
+});
+
+describe('receipts (for messages you sent)', () => {
+  // Your messages: "on my way" to Alice (T+9000) and "see you all" in the group (T+10000); T+18000 is an edit of the first.
+  const yours = new Map<string, string>([
+    [`${SELF}:${T + 9000}`, DM_ALICE],
+    [`${SELF}:${T + 10000}`, GROUP],
+    [`${SELF}:${T + 18000}`, DM_ALICE],
+    [`${SELF}:${T + 11000}`, `dm:${SELF}:${SAM}`],
+    [`${SELF}:${T + 12000}`, `dm:${SELF}:${SELF}`],
+  ]);
+  const rctx = (over: Partial<MapContext> = {}) => ctx({ conversationOf: (id) => yours.get(id), originalOf: (id) => (id === `${SELF}:${T + 18000}` ? `${SELF}:${T + 9000}` : undefined), ...over });
+  const receipts = (rcv: SigReceive, over?: Partial<MapContext>) => of(mapReceive(rcv, rctx(over)).events, 'receipt');
+
+  test('a read receipt: per conversation, your message ids, who read them and when', () => {
+    expect(receipts(fixture('receipt-read'))).toEqual([
+      { t: 'receipt', conversation: DM_ALICE, messages: [`${SELF}:${T + 9000}`], who: ALICE, state: 'read', ts: T + 19000 },
+      { t: 'receipt', conversation: GROUP, messages: [`${SELF}:${T + 10000}`], who: ALICE, state: 'read', ts: T + 19000 },
+    ]);
+    // Nothing else: a receipt is no message and no read state of yours.
+    expect(mapReceive(fixture('receipt-read'), rctx()).events.map((e) => e.t)).toEqual(['identity', 'receipt', 'receipt']);
+  });
+
+  test('delivered, and viewed (a voice note or video played)', () => {
+    expect(receipts(fixture('receipt-delivery'))).toEqual([{ t: 'receipt', conversation: GROUP, messages: [`${SELF}:${T + 10000}`], who: SAM, state: 'delivered', ts: T + 10500 }]);
+    const viewed = fixture('receipt-read');
+    Object.assign(viewed.envelope!.receiptMessage!, { isRead: false, isViewed: true, timestamps: [T + 9000] });
+    expect(receipts(viewed)).toEqual([{ t: 'receipt', conversation: DM_ALICE, messages: [`${SELF}:${T + 9000}`], who: ALICE, state: 'played', ts: T + 19000 }]);
+    const neither = fixture('receipt-read');
+    Object.assign(neither.envelope!.receiptMessage!, { isRead: false });
+    expect(receipts(neither)).toEqual([]);
+  });
+
+  test('a receipt for an edit counts for the message it edits, once', () => {
+    const rcv = fixture('receipt-read');
+    rcv.envelope!.receiptMessage!.timestamps = [T + 9000, T + 18000];
+    expect(receipts(rcv)).toEqual([{ t: 'receipt', conversation: DM_ALICE, messages: [`${SELF}:${T + 9000}`], who: ALICE, state: 'read', ts: T + 19000 }]);
+  });
+
+  test("messages this device has not seen, someone else's 1:1 and Note to Self are skipped", () => {
+    const rcv = fixture('receipt-read');
+    rcv.envelope!.receiptMessage!.timestamps = [T + 1, T + 11000, T + 12000];
+    const r = mapReceive(rcv, rctx());
+    expect(of(r.events, 'receipt')).toEqual([]);
+    expect(r.logs).toEqual([{ level: 'debug', msg: 'read receipt for 3 message(s) we have not seen', data: { from: ALICE } }]);
+  });
+
+  test('receipts from your own devices are not receipts; your reads arrive as read syncs', () => {
+    const rcv = fixture('receipt-read');
+    Object.assign(rcv.envelope!, { sourceUuid: SELF, sourceNumber: '+15550100', sourceName: null });
+    expect(receipts(rcv)).toEqual([]);
+    expect(of(map('sync-read').events, 'receipt')).toEqual([]);
   });
 });
 
@@ -308,6 +394,33 @@ describe('contacts and groups', () => {
     expect(describeGroupChange({ ...group, groupInviteLink: null }, linked, SELF, SELF, names)).toBe('You turned on the group link.');
     expect(describeGroupChange(linked, { ...group, groupInviteLink: 'https://signal.group/#b' }, SELF, SELF, names)).toBe('You reset the group link.');
     expect(describeGroupChange(linked, { ...group, groupInviteLink: null }, SELF, SELF, names)).toBe('You turned off the group link.');
+  });
+
+  test('admins made and unmade, in words and as a diff of the members kept', () => {
+    const names = (a: string) => (a === ALICE ? 'Alice' : a === SAM ? 'Sam' : a);
+    const crew: SigGroup = {
+      ...group,
+      members: [
+        { number: '+15550100', uuid: SELF, isAdmin: false },
+        { number: '+15550137', uuid: ALICE, isAdmin: true },
+        { number: '+15550161', uuid: SAM, isAdmin: false },
+      ],
+    };
+    const admin = (g: SigGroup, who: string, isAdmin: boolean): SigGroup => ({ ...g, members: g.members!.map((m) => (m.uuid === who ? { ...m, isAdmin } : m)) });
+    expect(adminChanges(crew, admin(crew, SAM, true))).toEqual({ given: [SAM], taken: [] });
+    expect(describeGroupChange(crew, admin(crew, SAM, true), ALICE, SELF, names)).toBe('Alice made Sam an admin.');
+    expect(describeGroupChange(crew, admin(crew, SELF, true), ALICE, SELF, names)).toBe('Alice made you an admin.');
+    expect(describeGroupChange(crew, admin(admin(crew, SELF, true), SAM, true), ALICE, SELF, names)).toBe('Alice made you, Sam admins.');
+    expect(adminChanges(crew, admin(crew, ALICE, false))).toEqual({ given: [], taken: [ALICE] });
+    expect(describeGroupChange(admin(crew, SAM, true), crew, ALICE, SELF, names)).toBe('Alice revoked admin privileges from Sam.');
+    expect(describeGroupChange(admin(crew, SELF, true), crew, ALICE, SELF, names)).toBe('Alice revoked your admin privileges.');
+    // Joining or leaving is not a role change, even for an admin.
+    const noSam = { ...crew, members: crew.members!.filter((m) => m.uuid !== SAM) };
+    expect(adminChanges(noSam, admin(crew, SAM, true))).toEqual({ given: [], taken: [] });
+    expect(adminChanges(crew, { ...crew, members: crew.members!.filter((m) => m.uuid !== ALICE) })).toEqual({ given: [], taken: [] });
+    // A signal-cli that does not mark members lists the admins instead.
+    const unmarked = (admins: string[]): SigGroup => ({ ...group, members: crew.members!.map(({ isAdmin: _a, ...m }) => m), admins: admins.map((uuid) => ({ uuid })) });
+    expect(adminChanges(unmarked([ALICE]), unmarked([ALICE, SAM]))).toEqual({ given: [SAM], taken: [] });
   });
 });
 

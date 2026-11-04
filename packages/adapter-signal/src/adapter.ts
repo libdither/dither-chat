@@ -18,6 +18,7 @@ import { ChildRegistry, type Logger } from './cli.ts';
 import { Daemon, type DaemonExit } from './daemon.ts';
 import { LinkFlow } from './link.ts';
 import {
+  adminChanges,
   contactIdentity,
   describeGroupChange,
   describeTimer,
@@ -26,6 +27,7 @@ import {
   dmId,
   fileUrl,
   groupConversation,
+  groupConvId,
   type MapContext,
   type MapResult,
   mapReceive,
@@ -404,6 +406,7 @@ export class SignalAdapter {
         if (id === self || !relevant.has(id)) continue;
         const f = contactIdentity(c, { contact: contactIds.has(id) && !c.isHidden, avatarUrl: this.avatarOf(id, c.number) });
         if (f) this.emitFact({ t: 'identity', identity: f });
+        this.noteAbout(c, contactIds.has(id));
       }
       const me = all.get(self);
       if (me) {
@@ -434,24 +437,33 @@ export class SignalAdapter {
     this.debouncedSnapshot = setTimeout(() => void this.snapshot(), delay);
   }
 
-  /** Emit a group's conversation fact. Groups you left or were removed from keep their history (no `leave`). */
-  private applyGroup(g: SigGroup) {
+  /**
+   * Emit a group's conversation fact. Groups you left or were removed from keep their history (no `leave`).
+   * Admins made or unmade since the last read become role events, by whoever's group update `cause` was.
+   */
+  private applyGroup(g: SigGroup, cause?: GroupCause) {
     if (g.isMember === false && !this.knownGroups.has(g.id)) return; // pending invitations, groups left long ago
+    const before = this.state.groups.get(g.id);
     this.emitFact({ t: 'conversation', conversation: groupConversation(g, { avatarUrl: this.groupAvatar(g.id) }) });
     this.knownGroups.add(g.id);
     this.state.groups.set(g.id, g);
     this.timers.set(`group:${g.id}`, g.messageExpirationTime ?? 0);
+    if (!before) return;
+    const target: P.AboutTarget = { kind: 'conversation', nativeId: groupConvId(g.id) };
+    const { given, taken } = adminChanges(before, g);
+    for (const member of given) this.host.emit({ t: 'role', target, member, role: 'Admin', given: true, ...cause });
+    for (const member of taken) this.host.emit({ t: 'role', target, member, role: 'Admin', given: false, ...cause });
   }
 
-  /** Re-read one group from signal-cli, and tell the hub if its name, topic or members changed. */
-  private async readGroup(groupId: string): Promise<SigGroup | undefined> {
+  /** Re-read one group from signal-cli, and tell the hub if its name, topic, members or admins changed. */
+  private async readGroup(groupId: string, cause?: GroupCause): Promise<SigGroup | undefined> {
     const [g] = (await this.rpc.call<SigGroup[]>('listGroups', { groupId: [groupId] }, 60_000)) ?? [];
     if (!g) return undefined;
     for (const m of g.members ?? []) {
       const id = lc(m.uuid);
       if (id && m.number && !this.byNumber.has(m.number)) this.byNumber.set(m.number, id);
     }
-    this.applyGroup(g);
+    this.applyGroup(g, cause);
     this.state.save();
     return g;
   }
@@ -461,7 +473,8 @@ export class SignalAdapter {
     this.groupRefreshing.add(groupId);
     try {
       const before = this.state.groups.get(groupId);
-      const g = await this.readGroup(groupId);
+      const update = this.pendingGroupUpdates.get(groupId);
+      const g = await this.readGroup(groupId, update && { by: update.author, ts: update.ts });
       if (!g) return;
       const pend = this.pendingGroupUpdates.get(groupId);
       if (pend) {
@@ -488,6 +501,7 @@ export class SignalAdapter {
       selfNumber: this.account?.number,
       signalDir: this.signalDir,
       conversationOf: (id) => this.state.conversationOf(id),
+      originalOf: (id) => this.state.originalOf(id),
       aciOfNumber: (n) => this.byNumber.get(n),
       knownGroup: (g) => this.knownGroups.has(g),
       sticker: (packId, stickerId) => this.stickerInfo(packId, stickerId),
@@ -553,6 +567,7 @@ export class SignalAdapter {
       } else {
         this.host.emit(ev);
         if (ev.t === 'delete') this.purge(ev.nativeId);
+        if (ev.t === 'pin') this.dropPinTimer(ev.message);
         if (ev.t === 'read') {
           this.state.takeUnread(ev.conversation, ev.upToTs);
           this.acked.set(ev.conversation, Math.max(this.acked.get(ev.conversation) ?? 0, ev.upToTs));
@@ -562,12 +577,17 @@ export class SignalAdapter {
     }
     for (const m of r.messages) {
       this.state.remember(m.nativeId, m.conversation, m.text, m.replyTo, m.files);
-      if (m.author !== self && !m.edited && m.kind !== 'system' && m.kind !== 'call' && m.ts > (this.acked.get(m.conversation) ?? 0)) {
+      if (m.author !== self && !m.editedTs && m.kind !== 'system' && m.kind !== 'call' && m.ts > (this.acked.get(m.conversation) ?? 0)) {
         this.state.addUnread(m.conversation, m.author, m.ts);
       }
+      if (m.author === self && m.editedTs) this.state.alias(msgId(self, m.editedTs), m.nativeId, m.conversation);
       if (m.timer !== undefined) this.timers.set(m.conversation, m.timer);
       if (m.expiresInSeconds) this.trackExpiry(m, m.expiresInSeconds, m.author === self ? Date.now() : undefined);
       if (m.groupUpdate) this.pendingGroupUpdates.set(m.groupUpdate, m);
+    }
+    if (r.pinTimers.length) {
+      this.state.pins.push(...r.pinTimers);
+      this.state.save();
     }
     for (const g of r.refreshGroups) setTimeout(() => void this.refreshGroup(g), 500);
     if (r.resync) this.scheduleSnapshot(5000);
@@ -603,8 +623,24 @@ export class SignalAdapter {
     }
   }
 
-  /** Delete disappearing messages whose timer ran out, including their downloaded files. Public for tests. */
+  private dropPinTimer(message: string) {
+    const left = this.state.pins.filter((p) => p.message !== message);
+    if (left.length === this.state.pins.length) return;
+    this.state.pins = left;
+    this.state.save();
+  }
+
+  /**
+   * Delete disappearing messages whose timer ran out, including their downloaded files, and unpin pins whose time is
+   * up (Signal's clients do so on their own; nobody sends anything). Public for tests.
+   */
   sweepExpired(now = Date.now()) {
+    const ended = this.state.pins.filter((p) => p.until <= now);
+    if (ended.length) {
+      this.state.pins = this.state.pins.filter((p) => p.until > now);
+      for (const p of ended) this.host.emit({ t: 'pin', conversation: p.conversation, message: p.message, pinned: false, ts: p.until });
+      this.state.save();
+    }
     const keep: typeof this.state.expiring = [];
     for (const e of this.state.expiring) {
       if (e.started && e.started + e.ttl * 1000 <= now) {
@@ -790,6 +826,7 @@ export class SignalAdapter {
     }
     const res = await this.call('send', params);
     this.logPartialFailure('edit', res);
+    this.state.alias(msgId(self, res.timestamp), message, conversation);
     this.host.emit({
       t: 'message',
       live: true,
@@ -943,6 +980,7 @@ export class SignalAdapter {
       if (c && peer) {
         const f = contactIdentity(c, { contact: false, avatarUrl: this.avatarOf(peer, c.number) });
         if (f) this.emitFact({ t: 'identity', identity: f });
+        this.noteAbout(c, false);
       }
     } catch (e: any) {
       this.host.log('debug', `contact read failed: ${e?.message ?? e}`);
@@ -993,8 +1031,9 @@ export class SignalAdapter {
   // ---------------------------------------------------------------- profiles
 
   /**
-   * What signal-cli already knows about someone, read from its own store: listContacts by ACI never looks anything
-   * up (a number or username would). Contacts first, then everyone it knows, so the second read says "not a contact".
+   * What signal-cli already knows about someone, read from its own store: listContacts by ACI never looks anyone
+   * up (a number or username would), though it does fetch that person's profile again. Contacts first, then everyone
+   * it knows, so the second read says "not a contact".
    */
   private async profile(who: string): Promise<P.PersonAbout> {
     if (!ACI.test(who)) throw new Error('not a Signal person id');
@@ -1009,6 +1048,7 @@ export class SignalAdapter {
       const avatarUrl = this.avatarOf(id, c.number);
       const f = contactIdentity(c, { contact: inContacts, avatarUrl });
       if (f) this.emitFact({ t: 'identity', identity: f });
+      this.noteAbout(c, inContacts);
       return personAbout(c, { inContacts, avatarUrl });
     } catch (e: any) {
       this.host.log('debug', `profile read failed: ${e?.message ?? e}`);
@@ -1044,12 +1084,35 @@ export class SignalAdapter {
         if (!id || id === self || c.isBlocked || c.isHidden || c.unregistered || !displayNameOf(c)) continue;
         const f = contactIdentity(c, { contact: true, avatarUrl: this.avatarOf(id, c.number) });
         if (f) this.emitFact({ t: 'identity', identity: f });
+        this.noteAbout(c, true);
         friends.add(id);
       }
       p.friends = [...friends];
     }
     this.emitFact({ t: 'identity', identity: { nativeId: self, handle: number, ...(name ? { displayName: name } : {}), ...(avatarUrl ? { avatarUrl } : {}), isSelf: true } });
     return p;
+  }
+
+  /**
+   * Someone's About and its emoji as signal-cli last fetched them, and a customStatus when they differ from what was
+   * last seen. Signal pushes no profile changes: signal-cli fetches a profile when listContacts names someone, or lists
+   * everyone and theirs is over 6 hours old (or their profile key changed), so this runs wherever the adapter already
+   * reads contacts. Only contacts and people with a 1:1, not every group member; never yourself.
+   */
+  private noteAbout(c: SigContact, inContacts: boolean) {
+    const id = lc(c.uuid);
+    const p = c.profile;
+    // Never fetched (or no profile at all): nothing known, which is not the same as nothing set.
+    if (!id || id === this.self || !p?.lastUpdateTimestamp) return;
+    if (c.isBlocked || !(inContacts || this.state.dms.has(id))) return;
+    const text = p.about?.trim() || undefined;
+    const emoji = p.aboutEmoji?.trim() || undefined;
+    const prev = this.state.abouts.get(id);
+    if (prev && prev.t === text && prev.e === emoji) return;
+    this.state.abouts.set(id, { ...(text ? { t: text } : {}), ...(emoji ? { e: emoji } : {}) });
+    this.state.save();
+    if (!prev && !text && !emoji) return; // first seen, and nothing set
+    this.host.emit({ t: 'customStatus', who: id, ...(text ? { text } : {}), ...(emoji ? { emoji } : {}), ts: p.lastUpdateTimestamp });
   }
 
   /** What Signal's own clients show for a change you made. Nothing comes back to this device for it. */
@@ -1132,8 +1195,11 @@ export class SignalAdapter {
 
 // ------------------------------------------------------------------ helpers
 
+/** The group update that led to a re-read: who sent it, and when. */
+type GroupCause = { by: string; ts: number };
+
 function emptyResult(ev: P.AdapterEvent): MapResult {
-  return { events: [ev], messages: [], refreshGroups: [], resync: false, logs: [] };
+  return { events: [ev], messages: [], refreshGroups: [], resync: false, pinTimers: [], logs: [] };
 }
 
 /**
