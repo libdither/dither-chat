@@ -1,7 +1,9 @@
 # Importing old Discord history
 
-Status: research and design, nothing implemented. A sibling note covers Signal (`docs/import-signal.md`). The hub
-side of both should be one shared path (see "Hub side").
+Status: research and design. The shared pipeline (sources, readers, plan, conflicts, apply) is `docs/import.md`;
+Signal's specifics are `docs/import-signal.md`. Both exports below are now sources on the hub
+(`<data>/imports/sources/discord-{main,alt}-dce-html-2026-05/`, copied with their home-relative paths), so a media
+link `file:///home/<user>/Pictures/…` resolves to `raw/Pictures/…` there.
 
 All numbers below come from `scripts/import/discord-export-census.py`. It reads structure only: it counts markup and
 snowflakes and never prints message text, names or ids.
@@ -140,8 +142,9 @@ those paths as attachment URLs. Only referenced attachments, avatars and emoji a
 missing files and the expired CDN links (about 7k) become attachments with their original URL. A later pass could
 refresh them through the logged-in client (Discord's `attachments/refresh-urls`), but that is optional.
 
-The real hub runs on another machine. The exports are about 8.4 GB with media and must be copied to it over an
-encrypted channel, the same way `docs/deploy.md` moves `.data`.
+The exports (about 8.4 GB with media) were copied to the hub's machine over ssh as sources. Since they now sit inside
+the data dir, apply hardlinks referenced files into `<data>/imports/media/` (content-addressed), so deleting a
+source never breaks an imported attachment.
 
 ## Plan
 

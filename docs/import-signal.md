@@ -2,8 +2,10 @@
 
 signal-cli is a linked device, so the hub only has Signal messages from the day it was linked. The rest of the
 history is on the phone, in Molly, and the only way to get it off the phone is a backup. This is the design for
-reading one and merging it into the hub. So far it is research plus a probe that reads a backup's structure and
-counts (`scripts/signal-backup-probe.ts`). Nothing has been imported yet.
+reading one and merging it into the hub; the shared pipeline (sources, readers, plan, conflicts, apply) is
+`docs/import.md`. Built so far: uploading a backup from the Signal account's History section, and a census that reads
+its structure and counts (`packages/hub/src/imports/signal-backup.ts`, also `scripts/signal-backup-probe.ts`). Nothing
+has been imported yet.
 
 ## Sources
 
@@ -190,23 +192,21 @@ for text only).
 ## Recommended pipeline
 
 ```
-phone: Molly → Settings → Backups → On-device (legacy) backup → copy the .backup to the hub machine (USB/adb, never cloud)
-hub machine, as the hub user, on tmpfs:
-  1. bun scripts/signal-backup-probe.ts legacy x.backup                   header: is it legacy, which version
-  2. SIGNAL_BACKUP_PASSPHRASE_FILE=… probe …                              counts, date range, keepmsg rows, schema
-  3. decode → scratch SQLite (in-process replay of statements, or signalbackup-tools --output)
-  4. dither-import-signal --account <hub account id> --dry-run            per-conversation counts: new / already present / skipped
-  5. same without --dry-run, while the hub is running                     facts go through the hub, fill-only
-  6. shred the scratch DB and passphrase file
+phone: Molly → make an on-device (legacy) backup
+phone: dither-chat → Accounts → Signal → History → Upload (resumable; the file goes to <data>/imports/sources/)
+hub, in a worker:
+  1. header check: is it a legacy backup, which version                 done on upload
+  2. passphrase → census: counts, date range, keepmsg rows, schema       done; a wrong passphrase is forgotten
+  3. read → facts (replay statements into in-memory SQLite, map rows)   cached by (backup sha256, reader@version)
+  4. plan: new / same / fill / conflict / skip, per conversation         dry run, shown in the History section
+  5. apply, fill-only, inside the hub                                    conflicts wait for review (docs/import.md)
 ```
 
-How step 5 reaches the hub: **a hub-side import endpoint**, not a direct write to SQLite and not a second
-adapter connection. An authenticated `POST /api/import/signal` (admin only) streams NDJSON `MessageFact` /
-`ConversationFact` / `IdentityFact` batches. The hub applies each batch through `Store` in fill-only mode, inside
-the hub process. Then FTS triggers, the journal, attention staleness and the dirty sets all stay consistent. The
-importer itself is a CLI that decodes locally and reuses `adapter-signal/src/mapping.ts` helpers (`msgId`,
-`dmId`, `groupConvId`, `fromSignal`, `attachmentKind`), so the ids can't drift from live sync. Writing the
-database directly while the hub runs would bypass all of that and race the WAL.
+Everything runs **inside the hub process**: the reader in a worker, apply through `Store` in fill-only mode. Then FTS
+triggers, the journal, attention staleness and the dirty sets all stay consistent. Writing the database from outside
+while the hub runs would bypass all of that and race the WAL. The reader reuses `adapter-signal/src/mapping.ts`
+(`msgId`, `dmId`, `groupConvId`, `attachmentKind`) and `markdown.ts` (`fromSignal`), so ids and Markdown can't drift
+from live sync.
 
 ### Prototype plan
 
