@@ -82,7 +82,7 @@ function Filters({ q, set }: { q: string; set: (q: string) => void }) {
         <button class={`chip-btn ${on('mentions', 'me') ? 'on' : ''}`} onClick={() => toggle('mentions', 'me')}>
           <Icon name="at" size={13} /> Mentions me
         </button>
-        {IS.filter(([v]) => v !== 'deleted' || retention.value.show !== 'hidden').map(([v, label]) => (
+        {IS.filter(([v]) => v !== 'deleted' || (retention.value.adversarial && retention.value.show !== 'hidden')).map(([v, label]) => (
           <button class={`chip-btn ${is.includes(v) ? 'on' : ''}`} onClick={() => set(toggleSearchOp(q, 'is', v))}>
             {label}
           </button>

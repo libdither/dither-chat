@@ -34,7 +34,7 @@ operator is plain text (`http://x`, `foo:bar`).
 | `has:` | `link`, `image`, `video`, `audio` (or `sound`), `file`, `attachment`, `embed`, `sticker`, `reaction` |
 | `is:pinned` (or `pinned:true`) | pinned now, as the last pin or unpin the hub saw says |
 | `is:edited` | edited |
-| `is:deleted` | deleted and disappeared messages the hub kept (docs/history.md); nothing when Settings → Message history hides them |
+| `is:deleted` | deleted and disappeared messages the hub kept (docs/history.md); nothing unless Settings → Adversarial features are shown, or when they hide kept messages |
 | `network:signal` | from that network; repeat it for either of two |
 | `account:main` | reached the hub through that account (by label or id) |
 | `before:`, `after:`, `during:` | a day `2026-01-15`, a month `2026-01`, `today` or `yesterday`; `after:` a day means from the next day |

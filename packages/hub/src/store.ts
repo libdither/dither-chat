@@ -1897,8 +1897,8 @@ export class Store {
   private searchOnce(input: string, limit: number, cursor: string | null): P.SearchPage {
     const q = parseSearch(input);
     const is = new Set(q.is);
-    // Kept deleted and disappeared messages only when asked for, and not when they are set to stay out of sight.
-    const gone = is.has('deleted') ? (this.retention().show === 'hidden' ? '0' : `m.deleted = 1 AND m.gone_how IS NOT NULL AND (m.body != '' OR EXISTS (SELECT 1 FROM attachment a WHERE a.message_id = m.id))`) : 'm.deleted = 0';
+    // Kept deleted and disappeared messages only when asked for, with adversarial features shown, and not when they are set to stay out of sight.
+    const gone = is.has('deleted') ? (!this.retention().adversarial || this.retention().show === 'hidden' ? '0' : `m.deleted = 1 AND m.gone_how IS NOT NULL AND (m.body != '' OR EXISTS (SELECT 1 FROM attachment a WHERE a.message_id = m.id))`) : 'm.deleted = 0';
     const where: string[] = [gone];
     const args: any[] = [];
     const within = (col: string, ids: string[]) => {

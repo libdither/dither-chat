@@ -243,7 +243,8 @@ describe('more like Discord', () => {
     expect(find('frobnicate account:s')).toEqual([]);
     expect(find('cafe account:S')).toEqual(['m4']);
   });
-  test('kept deleted messages only when asked for, and not when set to stay hidden', () => {
+  test('kept deleted messages only when asked for, with adversarial features shown, and not when set to stay hidden', () => {
+    store.setRetention({ ...store.retention(), adversarial: true, deleted: true });
     say(d, 'del1', 'off', 'bob', 55_000, 'regrettable platypus');
     store.ingest(d, { t: 'delete', conversation: 'off', nativeId: 'del1' });
     expect(find('platypus')).toEqual([]);
@@ -251,7 +252,9 @@ describe('more like Discord', () => {
     expect(find('is:deleted')).toContain('del1');
     store.setRetention({ ...store.retention(), show: 'hidden' });
     expect(find('platypus is:deleted')).toEqual([]);
-    store.setRetention({ ...store.retention(), show: 'collapsed' });
+    store.setRetention({ ...store.retention(), show: 'collapsed', adversarial: false });
+    expect(find('platypus is:deleted')).toEqual([]);
+    store.setRetention({ ...store.retention(), adversarial: true });
   });
   test('context around each hit', () => {
     for (let i = 0; i < 5; i++) say(s, `cx${i}`, 'grp', '+1', 60_000 + i, i === 2 ? 'the kettle is on' : `chatter ${i}`);

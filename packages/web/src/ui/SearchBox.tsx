@@ -90,7 +90,7 @@ function valuesFor(op: string, typed: string): Suggestion[] {
     case 'has':
       return plain(SEARCH_HAS);
     case 'is':
-      return plain(SEARCH_IS.filter((v) => v !== 'deleted' || retention.value.show !== 'hidden'), (v) => (v === 'deleted' ? 'kept deleted and disappeared messages' : ''));
+      return plain(SEARCH_IS.filter((v) => v !== 'deleted' || (retention.value.adversarial && retention.value.show !== 'hidden')), (v) => (v === 'deleted' ? 'kept deleted and disappeared messages' : ''));
     case 'network':
       return NETWORKS.filter((n) => has(n, typed) || has(netName(n), typed)).map((n) => ({ key: n, icon: <NetBadge network={n} size={16} />, label: netName(n), insert: n }));
     case 'account':
