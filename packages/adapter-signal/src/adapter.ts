@@ -20,8 +20,10 @@ import { LinkFlow } from './link.ts';
 import {
   contactIdentity,
   describeGroupChange,
+  describeTimer,
   directConversation,
   displayNameOf,
+  dmId,
   fileUrl,
   groupConversation,
   type MapContext,
@@ -39,7 +41,7 @@ import { AdapterState } from './state.ts';
 import type { SigContact, SigGroup, SigReceive, SigSendResult } from './types.ts';
 
 export const ADAPTER_VERSION = '0.1.0';
-export const CAPABILITIES: P.Capability[] = ['send', 'react', 'edit', 'redact', 'markRead', 'typing', 'media', 'sendMedia', 'openDirect'];
+export const CAPABILITIES: P.Capability[] = ['send', 'react', 'edit', 'redact', 'markRead', 'typing', 'media', 'sendMedia', 'openDirect', 'about', 'configure'];
 export const LINK_MESSAGE = 'Scan this QR code in Signal → Settings → Linked devices';
 
 export interface AdapterHost {
@@ -439,18 +441,26 @@ export class SignalAdapter {
     this.timers.set(`group:${g.id}`, g.messageExpirationTime ?? 0);
   }
 
+  /** Re-read one group from signal-cli, and tell the hub if its name, topic or members changed. */
+  private async readGroup(groupId: string): Promise<SigGroup | undefined> {
+    const [g] = (await this.rpc.call<SigGroup[]>('listGroups', { groupId: [groupId] }, 60_000)) ?? [];
+    if (!g) return undefined;
+    for (const m of g.members ?? []) {
+      const id = lc(m.uuid);
+      if (id && m.number && !this.byNumber.has(m.number)) this.byNumber.set(m.number, id);
+    }
+    this.applyGroup(g);
+    this.state.save();
+    return g;
+  }
+
   private async refreshGroup(groupId: string) {
     if (this.groupRefreshing.has(groupId)) return;
     this.groupRefreshing.add(groupId);
     try {
-      const [g] = (await this.rpc.call<SigGroup[]>('listGroups', { groupId: [groupId] }, 60_000)) ?? [];
-      if (!g) return;
       const before = this.state.groups.get(groupId);
-      for (const m of g.members ?? []) {
-        const id = lc(m.uuid);
-        if (id && m.number && !this.byNumber.has(m.number)) this.byNumber.set(m.number, id);
-      }
-      this.applyGroup(g);
+      const g = await this.readGroup(groupId);
+      if (!g) return;
       const pend = this.pendingGroupUpdates.get(groupId);
       if (pend) {
         this.pendingGroupUpdates.delete(groupId);
@@ -659,6 +669,10 @@ export class SignalAdapter {
         return this.fetchMedia(cmd.url);
       case 'action':
         return this.action(cmd.action, cmd.args);
+      case 'about':
+        return this.about(cmd.target);
+      case 'configure':
+        return this.configure(cmd.target, cmd.change);
       case 'shutdown':
         return undefined;
     }
@@ -811,6 +825,174 @@ export class SignalAdapter {
     return { mime: sniffMime(bytes, p), base64: bytes.toString('base64') };
   }
 
+  // ---------------------------------------------------------------- about and settings
+
+  private aboutTarget(target: P.AboutTarget) {
+    if (target.kind !== 'conversation') throw new Error('Signal has no spaces');
+    const t = parseConversation(target.nativeId, this.self);
+    if (!t) throw new Error(`not a Signal conversation of this account: ${target.nativeId}`);
+    return t;
+  }
+
+  /** A group re-read so permissions are fresh (the cached copy if signal-cli cannot answer), or a 1:1. */
+  private async about(target: P.AboutTarget): Promise<P.About> {
+    const t = this.aboutTarget(target);
+    if (t.kind !== 'group') return this.directAbout(t.kind === 'dm' ? t.peer : null);
+    const g =
+      (await this.readGroup(t.groupId).catch((e) => {
+        this.host.log('debug', `group read failed: ${e?.message ?? e}`);
+        return undefined;
+      })) ?? this.state.groups.get(t.groupId);
+    if (!g) throw new Error('Signal does not know this group');
+    this.emitMembers(g);
+    return this.groupAbout(g);
+  }
+
+  /** Identity facts for a group's members, so the About's member list resolves. */
+  private emitMembers(g: SigGroup) {
+    for (const m of g.members ?? []) {
+      const id = lc(m.uuid);
+      if (!id || id === this.self) continue;
+      const name = this.names.get(id);
+      this.emitFact({ t: 'identity', identity: { nativeId: id, ...(m.number ? { handle: m.number } : {}), ...(name ? { displayName: name } : {}) } });
+    }
+  }
+
+  /** Why this account can change nothing in a group, or null when it can. */
+  private notIn(g: SigGroup): string | null {
+    if (g.isTerminated) return 'This group has been ended.';
+    if (g.isMember !== false) return null;
+    const invited = (g.pendingMembers ?? []).some((m) => lc(m.uuid) === this.self);
+    return invited ? 'You are invited to this group but have not joined.' : 'You are no longer in this group.';
+  }
+
+  /** A group's About, with the wording of Signal's own group settings. */
+  private groupAbout(g: SigGroup): P.About {
+    const self = this.self;
+    const members = (g.members ?? []).filter((m) => m.uuid);
+    const admin = members.some((m) => lc(m.uuid) === self && m.isAdmin);
+    const out = this.notIn(g);
+    const boss = !out && admin;
+    const info = !out && (admin || g.permissionEditDetails === 'EVERY_MEMBER');
+    const onlyAdmins = out ?? 'Only admins can change this.';
+    const lockedInfo = out ?? 'Only admins can edit this group’s details.';
+    const who = (p?: string): P.Who | null => (p === 'ONLY_ADMINS' ? 'admins' : p === 'EVERY_MEMBER' ? 'everyone' : null);
+    const whoLabel = (p?: string) => (p === 'EVERY_MEMBER' ? 'All members' : 'Only admins');
+    const announce = g.permissionSendMessage ? g.permissionSendMessage === 'ONLY_ADMINS' : null;
+    const set = <K extends P.AboutKey>(value: P.AboutValues[K] | null, canEdit: boolean, reason: string): P.AboutSetting<K> => ({ value, canEdit, ...(canEdit ? {} : { reason }) });
+    const list: P.AboutMember[] = [];
+    const seen = new Set<string>();
+    for (const m of members) {
+      const id = lc(m.uuid)!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      list.push({ id, role: m.isAdmin ? 'Admin' : 'Member', rank: m.isAdmin ? 100 : 0 });
+    }
+    const link = g.groupInviteLink || null;
+    const facts: { label: string; value: string }[] = [];
+    if (g.pendingMembers?.length) facts.push({ label: 'Invited, not joined yet', value: String(g.pendingMembers.length) });
+    if (g.requestingMembers?.length) facts.push({ label: 'Asking to join', value: String(g.requestingMembers.length) });
+    const isMember = seen.has(self) && !out;
+    return {
+      noun: 'Group',
+      fields: {
+        name: set<'name'>(g.name ?? '', info, lockedInfo),
+        topic: set<'topic'>(g.description ?? '', info, lockedInfo),
+        avatar: set<'avatar'>(this.groupAvatar(g.id) ?? null, false, info ? 'Changing the picture is not supported yet.' : lockedInfo),
+        disappearing: set<'disappearing'>(g.messageExpirationTime ?? 0, info, lockedInfo),
+        announceOnly: set<'announceOnly'>(announce, boss, onlyAdmins),
+        editInfo: set<'editInfo'>(who(g.permissionEditDetails), boss, onlyAdmins),
+        addMembers: set<'addMembers'>(who(g.permissionAddMember), boss, onlyAdmins),
+        // The link is there whether or not approval is on, and listGroups says nothing else about it.
+        joinApproval: set<'joinApproval'>(null, false, 'Signal does not say whether approval is on.'),
+        encrypted: set<'encrypted'>(true, false, 'Always on in Signal.'),
+      },
+      members: { list, complete: true },
+      roles: [
+        { id: 'admin', name: 'Admin', rank: 100, count: list.filter((m) => m.rank === 100).length },
+        { id: 'member', name: 'Member', rank: 0, count: list.filter((m) => m.rank === 0).length },
+      ],
+      rules: [
+        { what: 'Edit name, description and disappearing messages', who: whoLabel(g.permissionEditDetails), you: info },
+        { what: 'Add members', who: whoLabel(g.permissionAddMember), you: !out && (admin || g.permissionAddMember === 'EVERY_MEMBER') },
+        { what: 'Send messages', who: announce ? 'Only admins' : 'All members', you: !out && (admin || !announce) },
+        { what: 'Change these settings and the invite link', who: 'Only admins', you: boss },
+      ],
+      you: isMember ? { role: admin ? 'Admin' : 'Member', rank: admin ? 100 : 0 } : {},
+      invite: { link, canCreate: boss, canRevoke: boss && !!link, ...(boss ? {} : { reason: out ?? 'Only admins can change the invite link.' }) },
+      ...(facts.length ? { facts } : {}),
+    };
+  }
+
+  /** A 1:1 (peer) or Note to Self (null): only the disappearing timer, which either side may set. */
+  private async directAbout(peer: string | null): Promise<P.About> {
+    const self = this.self;
+    const conversation = dmId(self, peer ?? self);
+    let timer = this.timers.get(conversation) ?? 0;
+    try {
+      const list = (await this.rpc.call<SigContact[]>('listContacts', { recipient: [peer ?? self], allRecipients: true }, 30_000)) ?? [];
+      const c = list.find((x) => lc(x.uuid) === (peer ?? self));
+      if (c?.messageExpirationTime !== undefined) {
+        timer = c.messageExpirationTime;
+        this.timers.set(conversation, timer);
+      }
+      if (c && peer) {
+        const f = contactIdentity(c, { contact: false, avatarUrl: this.avatarOf(peer, c.number) });
+        if (f) this.emitFact({ t: 'identity', identity: f });
+      }
+    } catch (e: any) {
+      this.host.log('debug', `contact read failed: ${e?.message ?? e}`);
+    }
+    return {
+      noun: peer ? 'Chat' : 'Note to Self',
+      fields: {
+        disappearing: { value: timer, canEdit: true },
+        encrypted: { value: true, canEdit: false, reason: 'Always on in Signal.' },
+      },
+      members: { list: peer ? [{ id: self }, { id: peer }] : [{ id: self }], complete: true },
+      rules: [{ what: 'Change disappearing messages', who: peer ? 'Either of you' : 'You', you: true }],
+    };
+  }
+
+  /** One change, then a fresh read. Refuses what the About says this account may not do. */
+  private async configure(target: P.AboutTarget, change: P.AboutChange): Promise<P.About> {
+    const self = this.self;
+    const t = this.aboutTarget(target);
+    if (t.kind !== 'group') {
+      if (change.key !== 'disappearing') throw new Error(`Signal chats have no ${change.key} setting to change`);
+      const seconds = timerValue(change.value);
+      const peer = t.kind === 'dm' ? t.peer : self;
+      // Note to Self is the contact entry for your own ACI; signal-cli sends the update to your other devices.
+      await this.call('updateContact', { recipient: peer, expiration: seconds });
+      if (t.kind === 'dm') this.apply(emptyResult({ t: 'conversation', conversation: directConversation(self, peer) }));
+      this.timers.set(dmId(self, peer), seconds);
+      this.systemMessage(target.nativeId, Date.now(), seconds ? `You set disappearing messages to ${describeTimer(seconds)}.` : 'You turned off disappearing messages.');
+      return this.directAbout(t.kind === 'dm' ? peer : null);
+    }
+    const g = await this.readGroup(t.groupId);
+    if (!g) throw new Error('Signal does not know this group');
+    // An updateGroup on a group you are only invited to accepts the invitation.
+    const out = this.notIn(g);
+    if (out) throw new Error(out);
+    const params = groupChange(g, this.groupAbout(g), change);
+    if (params) {
+      const res = await this.call<Partial<SigSendResult>>('updateGroup', updateGroupParams(t.groupId, params));
+      const after = (await this.readGroup(t.groupId)) ?? g;
+      this.systemMessage(target.nativeId, res?.timestamp ?? Date.now(), describeGroupChange(g, after, self, self, this.nameOf));
+      this.emitMembers(after);
+      return this.groupAbout(after);
+    }
+    this.emitMembers(g);
+    return this.groupAbout(g);
+  }
+
+  /** What Signal's own clients show for a change you made. Nothing comes back to this device for it. */
+  private systemMessage(conversation: string, ts: number, body: string) {
+    const nativeId = msgId(this.self, ts);
+    this.host.emit({ t: 'message', live: true, message: { nativeId, conversation, author: this.self, ts, kind: 'system', body } });
+    this.state.remember(nativeId, conversation, body);
+  }
+
   private async action(action: string, args: any): Promise<unknown> {
     switch (action) {
       case 'relink':
@@ -886,6 +1068,69 @@ export class SignalAdapter {
 
 function emptyResult(ev: P.AdapterEvent): MapResult {
   return { events: [ev], messages: [], refreshGroups: [], resync: false, logs: [] };
+}
+
+/**
+ * updateGroup's params for one change. Without a group id signal-cli's updateGroup creates a new group, so that is
+ * refused here, as is more than one change: each is its own group change, and they are not applied together.
+ */
+export function updateGroupParams(groupId: string | null | undefined, change: Record<string, unknown>): Record<string, unknown> {
+  if (typeof groupId !== 'string' || !groupId.trim()) throw new Error('refusing updateGroup without a group id: signal-cli would create a new group');
+  if (Object.keys(change).length !== 1 || 'groupId' in change) throw new Error('one group change per updateGroup');
+  return { ...change, groupId };
+}
+
+const permission = (who: unknown) => {
+  if (who !== 'admins' && who !== 'everyone') throw new Error('everyone or admins');
+  return who === 'admins' ? 'only-admins' : 'every-member';
+};
+
+function timerValue(v: unknown): number {
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) throw new Error('a timer is a whole number of seconds');
+  return v;
+}
+
+/** The updateGroup params for a change, null when it is already so. Throws for anything this account may not do. */
+function groupChange(g: SigGroup, about: P.About, change: P.AboutChange): Record<string, unknown> | null {
+  if (change.key === 'invite') {
+    const inv = about.invite!;
+    const link = g.groupInviteLink || null;
+    if (change.op === 'create') {
+      if (!inv.canCreate) throw new Error(inv.reason ?? 'Only admins can change the invite link.');
+      return link ? { resetLink: true } : { link: 'enabled' };
+    }
+    if (change.op !== 'revoke') throw new Error('unknown invite operation');
+    if (!link) return null;
+    if (!inv.canRevoke) throw new Error(inv.reason ?? 'Only admins can change the invite link.');
+    return { link: 'disabled' };
+  }
+  if (change.key === 'pin') throw new Error('Signal keeps no list of pinned messages to change');
+  const field = (about.fields as Record<string, P.AboutSetting | undefined>)[change.key];
+  if (!field) throw new Error(`${String(change.key)} is not a Signal group setting`);
+  if (!field.canEdit) throw new Error(field.reason ?? `${change.key} cannot be changed here`);
+  if (field.value === change.value) return null;
+  const v: unknown = change.value;
+  switch (change.key) {
+    case 'name': {
+      const name = typeof v === 'string' ? v.trim() : '';
+      if (!name) throw new Error('a name cannot be empty');
+      return name === (g.name ?? '') ? null : { name };
+    }
+    case 'topic':
+      if (typeof v !== 'string') throw new Error('a description is text');
+      return { description: v };
+    case 'disappearing':
+      return { expiration: timerValue(v) };
+    case 'announceOnly':
+      if (typeof v !== 'boolean') throw new Error('on or off');
+      return { setPermissionSendMessages: v ? 'only-admins' : 'every-member' };
+    case 'editInfo':
+      return { setPermissionEditDetails: permission(v) };
+    case 'addMembers':
+      return { setPermissionAddMember: permission(v) };
+    default:
+      throw new Error(`${change.key} cannot be changed from here`);
+  }
 }
 
 function stableJson(o: Record<string, unknown>) {

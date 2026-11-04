@@ -232,8 +232,78 @@ export type HookCommand =
   | { kind: 'edit'; channelId: string; messageId: string; content: string }
   | { kind: 'redact'; channelId: string; messageId: string }
   | { kind: 'fetchMedia'; url: string }
+  /** reply RawAbout, from the client's stores only. */
+  | { kind: 'about'; target: 'conversation' | 'space'; id: string }
+  /** PATCH one channel or server; reply { channel } or { guild } as it now stands. */
+  | { kind: 'configure'; channelId?: string; guildId?: string; patch: RawAboutPatch }
   /** join: reply { direct?: DirectVoiceSession }. */
   | { kind: 'call'; call: string; op: 'join'; channelId: string; mode: 'bridge' | 'direct'; muted?: boolean; deafened?: boolean }
   | { kind: 'call'; call: string; op: 'leave' }
   | { kind: 'call'; call: string; op: 'mute'; muted: boolean; deafened: boolean }
   | { kind: 'call'; call: string; op: 'signal' | 'note'; data: unknown };
+
+// ------------------------------------------------------------ about and settings
+
+/** A server role, from the client's role store. */
+export interface RawRole {
+  id: string;
+  name: string;
+  /** CSS colour, or null for none. */
+  color?: string | null;
+  /** Higher is more senior; @everyone is 0. */
+  position: number;
+  /** Shown apart in the member list. */
+  hoist?: boolean;
+}
+
+/** A loaded server member: who, and their role ids. */
+export interface RawMember {
+  user: RawUser;
+  roles: string[];
+  /** The colour the client shows their name in. */
+  color?: string | null;
+}
+
+/** What this account may do where it is, by the client's own check. null: the client did not say. */
+export type RawCan = Partial<Record<'createInvite' | 'manageChannels' | 'manageGuild' | 'sendMessages' | 'manageMessages' | 'manageRoles' | 'manageThreads' | 'pinMessages', boolean | null>>;
+
+/** The settings fields of a channel the hook adds to RawChannel. */
+export interface RawAboutChannel extends RawChannel {
+  nsfw?: boolean;
+  rate_limit_per_user?: number;
+  /** The @everyone overwrite denies Send Messages (here, or on a thread's parent). */
+  everyone_denies_send?: boolean;
+}
+
+export interface RawAboutGuild extends RawGuild {
+  owner_id?: string | null;
+  owner?: RawUser | null;
+  verification_level?: number | null;
+  nsfw_level?: number | null;
+  community?: boolean;
+}
+
+/** The hook's answer to `about`, read from the client's stores alone. */
+export interface RawAbout {
+  selfId: string | null;
+  /** The conversation, or the category when the target is a section space. */
+  channel?: RawAboutChannel;
+  /** The server the target is, or is in. */
+  guild?: RawAboutGuild;
+  roles?: RawRole[];
+  /** Members the client has loaded, at most 200. */
+  members?: RawMember[];
+  memberCount?: number | null;
+  /** On the target itself (the channel, category or server). */
+  can: RawCan;
+  /** On the server, when the target is in one. */
+  guildCan?: RawCan;
+}
+
+/** The only fields `configure` may send. */
+export interface RawAboutPatch {
+  name?: string;
+  topic?: string;
+  rate_limit_per_user?: number;
+  nsfw?: boolean;
+}

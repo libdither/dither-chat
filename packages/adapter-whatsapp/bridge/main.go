@@ -289,6 +289,13 @@ type groupJSON struct {
 	Count        int        `json:"count,omitempty"`
 	Suspended    bool       `json:"suspended,omitempty"`
 	Participants []partJSON `json:"participants"`
+	// For the About panel: who made it, who may add people, whether joining by link needs an admin, and the
+	// current description's id (SetGroupTopic wants it as the previous one).
+	OwnerJID      string `json:"ownerJid,omitempty"`
+	OwnerPN       string `json:"ownerPn,omitempty"`
+	MemberAddMode string `json:"memberAddMode,omitempty"`
+	JoinApproval  bool   `json:"joinApproval,omitempty"`
+	TopicID       string `json:"topicId,omitempty"`
 }
 
 func groupOf(g *types.GroupInfo) groupJSON {
@@ -305,6 +312,12 @@ func groupOf(g *types.GroupInfo) groupJSON {
 		Count:        g.ParticipantCount,
 		Suspended:    g.Suspended,
 		Participants: []partJSON{},
+
+		OwnerJID:      jidStr(g.OwnerJID),
+		OwnerPN:       jidStr(g.OwnerPN),
+		MemberAddMode: string(g.MemberAddMode),
+		JoinApproval:  g.IsJoinApprovalRequired,
+		TopicID:       g.TopicID,
 	}
 	if g.IsEphemeral {
 		j.Ephemeral = g.DisappearingTimer
@@ -757,6 +770,8 @@ func (b *bridge) run(op string, raw json.RawMessage) (any, error) {
 			return nil, err
 		}
 		return groupOf(g), nil
+	case "setGroupName", "setGroupTopic", "setGroupAnnounce", "setGroupLocked", "setGroupMemberAddMode", "setGroupJoinApproval", "setDisappearing", "groupInviteLink":
+		return b.groupSetting(ctx, op, raw)
 	case "contacts":
 		all, err := b.cli.Store.Contacts.GetAllContacts(ctx)
 		if err != nil {
@@ -816,6 +831,77 @@ func (b *bridge) run(op string, raw json.RawMessage) (any, error) {
 			return nil, nil
 		}
 		return obj{"url": p.URL, "id": p.ID}, nil
+	}
+	return nil, fmt.Errorf("unknown op %q", op)
+}
+
+// The disappearing timers WhatsApp's own apps offer. In groups the server refuses others; in 1:1 chats the apps
+// ignore them.
+var disappearingTimers = map[int64]bool{0: true, 86400: true, 7 * 86400: true, 90 * 86400: true}
+
+// groupSetting changes one setting of a group or community, reads or resets its invite link, or sets a chat's
+// disappearing timer. Membership is never changed here: adding people is what WhatsApp's enforcement watches for.
+func (b *bridge) groupSetting(ctx context.Context, op string, raw json.RawMessage) (any, error) {
+	// Field names must not match "id" or "op" (Go's JSON matching ignores case).
+	var a struct {
+		JID        string
+		Name       string
+		Topic      string
+		PreviousID string `json:"previousId"`
+		On         bool
+		Mode       string
+		Seconds    int64
+		Reset      bool
+	}
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return nil, err
+	}
+	j, err := parseJID(a.JID)
+	if err != nil {
+		return nil, err
+	}
+	if op == "setDisappearing" {
+		if !disappearingTimers[a.Seconds] {
+			return nil, fmt.Errorf("WhatsApp offers disappearing messages of 24 hours, 7 days or 90 days, not %d seconds", a.Seconds)
+		}
+		if j.Server != types.GroupServer && j.Server != types.DefaultUserServer && j.Server != types.HiddenUserServer {
+			return nil, fmt.Errorf("cannot set disappearing messages in %s", j)
+		}
+		return nil, b.cli.SetDisappearingTimer(ctx, j.ToNonAD(), time.Duration(a.Seconds)*time.Second, time.Time{})
+	}
+	if j.Server != types.GroupServer {
+		return nil, fmt.Errorf("%s is not a group", j)
+	}
+	switch op {
+	case "setGroupName":
+		if strings.TrimSpace(a.Name) == "" {
+			return nil, errors.New("a group name cannot be empty")
+		}
+		return nil, b.cli.SetGroupName(ctx, j, a.Name)
+	case "setGroupTopic":
+		// Without the previous id whatsmeow fetches the group for it first.
+		return nil, b.cli.SetGroupTopic(ctx, j, a.PreviousID, "", a.Topic)
+	case "setGroupAnnounce":
+		return nil, b.cli.SetGroupAnnounce(ctx, j, a.On)
+	case "setGroupLocked":
+		return nil, b.cli.SetGroupLocked(ctx, j, a.On)
+	case "setGroupMemberAddMode":
+		mode := types.GroupMemberAddMode(a.Mode)
+		if mode != types.GroupMemberAddModeAdmin && mode != types.GroupMemberAddModeAllMember {
+			return nil, fmt.Errorf("unknown member add mode %q", a.Mode)
+		}
+		return nil, b.cli.SetGroupMemberAddMode(ctx, j, mode)
+	case "setGroupJoinApproval":
+		return nil, b.cli.SetGroupJoinApprovalMode(ctx, j, a.On)
+	case "groupInviteLink":
+		link, err := b.cli.GetGroupInviteLink(ctx, j, a.Reset)
+		if errors.Is(err, whatsmeow.ErrGroupInviteLinkUnauthorized) {
+			return nil, errors.New("only admins can see and change the invite link")
+		}
+		if err != nil {
+			return nil, err
+		}
+		return obj{"link": link}, nil
 	}
 	return nil, fmt.Errorf("unknown op %q", op)
 }

@@ -5,7 +5,7 @@
  *   /sync loop with a lazy-loading filter, resuming from the stored since token
  *   joined-room state -> SpaceFact / ConversationFact / IdentityFact
  *   timeline events -> MessageFact, reaction, delete, read, typing
- *   hub commands -> send, openDirect, history, markRead, react, edit, redact, fetchMedia, actions
+ *   hub commands -> send, openDirect, history, markRead, react, edit, redact, fetchMedia, about, configure, actions
  *
  * Initial sync emits facts with live=false (backfill, no notifications);
  * incremental syncs emit live=true.
@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { canonicalReactionKey } from '@dither-chat/protocol';
 import type { HubLink } from '@dither-chat/protocol/client';
+import { configureAbout, readAbout, type AboutHost } from './about.ts';
 import { AdapterDb, type ThreadRow, type UtdRow } from './db.ts';
 import type { E2ee, VerificationState } from './e2ee.ts';
 import { markdownToMatrix, snippet } from './format.ts';
@@ -28,7 +29,7 @@ import { encryptedFileOf, FORWARD_KEY, forwardableContent, forwardOf, isRedacted
 import { Directory, Room, STRUCTURAL, type MxEvent } from './rooms.ts';
 
 export const VERSION = '0.1.0';
-const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'threads', 'media', 'sendMedia', 'openDirect', 'forward'];
+const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'threads', 'media', 'sendMedia', 'openDirect', 'forward', 'about', 'configure'];
 
 const SYNC_TIMEOUT = 30_000;
 /**
@@ -1123,6 +1124,10 @@ export class MatrixAdapter {
         return this.reactionContext(cmd.conversation);
       case 'reactors':
         return { authors: [] }; // reaction events name their senders
+      case 'about':
+        return readAbout(this.aboutHost(), cmd.target);
+      case 'configure':
+        return configureAbout(this.aboutHost(), cmd.target, cmd.change);
       case 'edit':
         return this.edit(cmd.conversation, cmd.message, cmd.body);
       case 'redact':
@@ -1146,6 +1151,21 @@ export class MatrixAdapter {
       announce: (roomId) => {
         this.emitted.delete(`cnv:${roomId}`);
         this.emitStructure();
+      },
+    };
+  }
+
+  private aboutHost(): AboutHost {
+    return {
+      api: this.api(),
+      dir: this.dir,
+      e2ee: !!this.e2ee,
+      identity: (f) => this.emitIdentity(f, true),
+      applied: (room, ev) => {
+        // The same as the event coming back through sync: stored, and the hub told of a new name, topic or shape.
+        if (!this.applyState(room, ev)) return;
+        this.emitStructure();
+        this.emitThreads();
       },
     };
   }

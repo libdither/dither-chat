@@ -13,13 +13,14 @@
 import { readFileSync } from 'node:fs';
 import { linkHub } from '@dither-chat/protocol/client';
 import type * as P from '@dither-chat/protocol';
-import type { BridgeUp, HookCommand, PageState, RawChannel, RawEmoji, RawGuild, RawUser } from './discord-types.ts';
-import { messageEvents, newState, openedDirect, translateDispatch, translateSnapshot, userFacts } from './ingest.ts';
+import type { BridgeUp, HookCommand, PageState, RawAbout, RawChannel, RawEmoji, RawGuild, RawUser } from './discord-types.ts';
+import { aboutUsers, configurePlan, mapAbout, withChange } from './about.ts';
+import { changedFacts, messageEvents, newState, openedDirect, translateDispatch, translateSnapshot, userFacts } from './ingest.ts';
 import { customEmoji, DISCORD_EPOCH, guildIconUrl, mapUser } from './map.ts';
 import { BridgeServer, PaceQueue } from './server.ts';
 import { Sandbox, pickDisplay } from './sandbox.ts';
 
-const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'typing', 'threads', 'media', 'liveView', 'sendMedia', 'openDirect', 'calls', 'forward'];
+const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'typing', 'threads', 'media', 'liveView', 'sendMedia', 'openDirect', 'calls', 'forward', 'about', 'configure'];
 const WIDTH = 1280;
 const HEIGHT = 800;
 
@@ -306,6 +307,15 @@ async function onCommand(cmd: P.AdapterCommand): Promise<unknown> {
         super: r.nitro ? { available: true } : { available: false, reason: 'Super reactions need Discord Nitro.' },
       } satisfies P.ReactionContext;
     }
+    case 'about':
+      return mapAbout(await readAbout(cmd.target));
+    case 'configure': {
+      // Refused here, before any request, unless the client's stores say this account may.
+      const plan = configurePlan(await readAbout(cmd.target), cmd.change);
+      const r = await pace.run('configure', () => bridge.request<{ channel?: RawChannel | null; guild?: RawGuild | null }>({ kind: 'configure', ...plan }, 20_000));
+      for (const ev of changedFacts(r ?? {}, st)) hub.emit(ev);
+      return withChange(mapAbout(await readAbout(cmd.target)), cmd.change);
+    }
     case 'edit':
       return pace.run('edit', () => bridge.request({ kind: 'edit', channelId: cmd.conversation, messageId: cmd.message, content: cmd.body }, 20_000));
     case 'redact':
@@ -325,6 +335,13 @@ async function onCommand(cmd: P.AdapterCommand): Promise<unknown> {
     default:
       throw new Error(`unsupported command ${(cmd as any).t}`);
   }
+}
+
+/** Settings, members and permissions from the client's stores (no request), with identity facts for the people named first. */
+async function readAbout(target: P.AboutTarget): Promise<RawAbout> {
+  const raw = await bridge.request<RawAbout>({ kind: 'about', target: target.kind, id: target.nativeId }, 15_000);
+  for (const ev of userFacts(aboutUsers(raw), st)) hub.emit(ev);
+  return raw;
 }
 
 async function handleAction(action: string): Promise<unknown> {

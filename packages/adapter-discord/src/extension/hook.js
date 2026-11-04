@@ -160,6 +160,9 @@
     RelationshipStore: isStore('RelationshipStore'),
     UserGuildSettingsStore: isStore('UserGuildSettingsStore'),
     GuildMemberStore: isStore('GuildMemberStore'),
+    // Newer builds keep roles here rather than on the guild record; older ones have neither store.
+    GuildRoleStore: isStore('GuildRoleStore'),
+    GuildMemberCountStore: isStore('GuildMemberCountStore'),
     ThreadStore: isStore('ThreadsStore', 'ThreadStore', 'ActiveThreadsStore'),
     EmojiStore: isStore('EmojiStore'),
     PermissionStore: isStore('PermissionStore'),
@@ -602,6 +605,10 @@
       }
       case 'reactionContext':
         return reactionContext(cmd.channelId);
+      case 'about':
+        return about(cmd);
+      case 'configure':
+        return configure(cmd);
       case 'edit':
         if (mod.MessageActions && mod.MessageActions.editMessage) return mod.MessageActions.editMessage(cmd.channelId, cmd.messageId, { content: cmd.content }), { ok: true };
         return rest('patch', `/channels/${cmd.channelId}/messages/${cmd.messageId}`, undefined, { content: cmd.content });
@@ -1008,6 +1015,182 @@
       groups.push({ guild: pickGuild(guild) || { id, name: 'Server' }, here: id === guildId, emoji });
     }
     return groups;
+  }
+
+  // ------------------------------------------------------- about and settings
+  // Read from the client's stores alone, so it costs no request. Permissions fail closed: null when the client
+  // cannot say, and the adapter offers nothing it was not told yes to (reactionContext fails open on purpose).
+  const PERM = {
+    createInvite: 1n << 0n,
+    manageChannels: 1n << 4n,
+    manageGuild: 1n << 5n,
+    sendMessages: 1n << 11n,
+    manageMessages: 1n << 13n,
+    manageRoles: 1n << 28n,
+    manageThreads: 1n << 34n,
+    pinMessages: 1n << 51n,
+  };
+  const MEMBER_CAP = 200;
+  const CATEGORY = 4;
+  const ANNOUNCEMENT = 5;
+  const THREAD_TYPES = [10, 11, 12];
+
+  function canAll(subject) {
+    const out = {};
+    const ps = mod.PermissionStore;
+    for (const k of Object.keys(PERM)) {
+      let v = null;
+      try {
+        if (subject && ps && typeof ps.can === 'function') v = ps.can(PERM[k], subject) === true;
+      } catch (e) {
+        v = null;
+      }
+      out[k] = v;
+    }
+    return out;
+  }
+
+  /** Whether the @everyone overwrite (its id is the guild's) denies a permission. Store records keep a map, raw ones a list. */
+  function everyoneDenies(c, guildId, bit) {
+    const ow = c && (c.permissionOverwrites ?? c.permission_overwrites);
+    const list = Array.isArray(ow) ? ow : Object.values(ow || {});
+    const o = list.find((x) => x && x.id === guildId);
+    if (!o || o.deny == null) return false;
+    try {
+      return (BigInt(String(o.deny)) & bit) !== 0n;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function pickAboutChannel(c) {
+    const base = pickChannel(c);
+    const guildId = base.guild_id;
+    let nsfw = c.nsfw ?? c.nsfw_;
+    if (nsfw === undefined && typeof c.isNSFW === 'function') {
+      try {
+        nsfw = c.isNSFW();
+      } catch (e) {}
+    }
+    // A thread sends by its parent's overwrites.
+    const parent = THREAD_TYPES.includes(c.type) && base.parent_id ? mod.ChannelStore.getChannel(base.parent_id) : null;
+    return {
+      ...base,
+      nsfw: !!nsfw,
+      rate_limit_per_user: Number(c.rateLimitPerUser ?? c.rate_limit_per_user ?? 0) || 0,
+      everyone_denies_send: !!guildId && (c.type === ANNOUNCEMENT || everyoneDenies(parent || c, guildId, PERM.sendMessages)),
+    };
+  }
+  function pickAboutGuild(g) {
+    const ownerId = g.ownerId ?? g.owner_id ?? null;
+    const features = g.features;
+    const has = (f) => !!features && (typeof features.has === 'function' ? features.has(f) : Array.isArray(features) && features.includes(f));
+    return {
+      ...pickGuild(g),
+      owner_id: ownerId,
+      owner: ownerId ? resolveUser(ownerId) || null : null,
+      verification_level: g.verificationLevel ?? g.verification_level ?? null,
+      nsfw_level: g.nsfwLevel ?? g.nsfw_level ?? null,
+      community: has('COMMUNITY'),
+    };
+  }
+
+  const hexColor = (n) => (typeof n === 'number' && n > 0 ? '#' + n.toString(16).padStart(6, '0') : null);
+  const pickRole = (r) => ({ id: r.id, name: r.name, color: r.colorString || hexColor(r.color) || null, position: Number(r.position) || 0, hoist: !!r.hoist });
+
+  function guildRoles(g) {
+    let roles = null;
+    const rs = mod.GuildRoleStore;
+    for (const f of ['getSortedRoles', 'getRoles', 'getRolesSnapshot']) {
+      if (roles) break;
+      try {
+        if (rs && typeof rs[f] === 'function') roles = rs[f](g.id);
+      } catch (e) {}
+    }
+    try {
+      if (!roles && typeof mod.GuildStore.getRoles === 'function') roles = mod.GuildStore.getRoles(g.id);
+    } catch (e) {}
+    if (!roles) roles = g.roles;
+    const list = Array.isArray(roles) ? roles : Object.values(roles || {});
+    return list.filter((r) => r && r.id && typeof r.name === 'string').map(pickRole);
+  }
+
+  /** The members the client has loaded (it loads them lazily), this account first so the cap never drops it. */
+  function guildMembers(guildId, selfId) {
+    const gm = mod.GuildMemberStore;
+    if (!gm) return [];
+    let list = [];
+    try {
+      if (typeof gm.getMembers === 'function') list = gm.getMembers(guildId) || [];
+      else if (typeof gm.getMemberIds === 'function') list = (gm.getMemberIds(guildId) || []).map((id) => gm.getMember(guildId, id));
+    } catch (e) {
+      list = [];
+    }
+    list = Array.isArray(list) ? list : Object.values(list);
+    const memberId = (m) => m && (m.userId ?? (m.user && m.user.id));
+    const mine = list.find((m) => memberId(m) === selfId);
+    const ordered = mine ? [mine, ...list.filter((m) => m !== mine)] : list;
+    const out = [];
+    for (const m of ordered) {
+      if (out.length >= MEMBER_CAP) break;
+      const user = resolveUser(memberId(m));
+      if (!user || !user.username) continue;
+      out.push({ user, roles: Array.isArray(m.roles) ? m.roles.filter((r) => typeof r === 'string') : [], color: m.colorString || null });
+    }
+    return out;
+  }
+
+  function memberCount(g) {
+    try {
+      const n = mod.GuildMemberCountStore && mod.GuildMemberCountStore.getMemberCount(g.id);
+      if (typeof n === 'number') return n;
+    } catch (e) {}
+    return typeof g.memberCount === 'number' ? g.memberCount : null;
+  }
+
+  function aboutGuildParts(out, g, selfId) {
+    out.guild = pickAboutGuild(g);
+    out.roles = guildRoles(g);
+    out.members = guildMembers(g.id, selfId);
+    out.memberCount = memberCount(g);
+  }
+
+  function about(cmd) {
+    const me = currentUser();
+    const selfId = (me && me.id) || null;
+    const out = { selfId, can: {} };
+    if (cmd.target === 'space') {
+      const g = mod.GuildStore.getGuild(cmd.id);
+      if (g) {
+        aboutGuildParts(out, g, selfId);
+        out.can = canAll(g);
+        return out;
+      }
+    }
+    const c = mod.ChannelStore.getChannel(cmd.id);
+    if (!c || (cmd.target === 'space') !== (c.type === CATEGORY)) throw new Error(cmd.target === 'space' ? 'unknown server or category' : 'unknown channel');
+    out.channel = pickAboutChannel(c);
+    out.can = canAll(c);
+    const g = out.channel.guild_id ? mod.GuildStore.getGuild(out.channel.guild_id) : null;
+    if (g) {
+      aboutGuildParts(out, g, selfId);
+      out.guildCan = canAll(g);
+    }
+    return out;
+  }
+
+  // One PATCH through the client's REST module, with only the fields a setting can change.
+  const PATCHABLE = { channel: ['name', 'topic', 'rate_limit_per_user', 'nsfw'], guild: ['name'] };
+  async function configure(cmd) {
+    const which = cmd.guildId ? 'guild' : 'channel';
+    const id = cmd.guildId || cmd.channelId;
+    if (!/^\d+$/.test(String(id || ''))) throw new Error('which ' + which + '?');
+    const body = {};
+    for (const k of PATCHABLE[which]) if (cmd.patch && cmd.patch[k] !== undefined) body[k] = cmd.patch[k];
+    if (!Object.keys(body).length) throw new Error('nothing to change');
+    const res = await rest('patch', which === 'guild' ? `/guilds/${id}` : `/channels/${id}`, undefined, body);
+    const raw = res && res.body;
+    return which === 'guild' ? { guild: (raw && pickGuild(raw)) || null } : { channel: (raw && pickChannel(raw)) || null };
   }
 
   // How the client itself sends files: ask for upload URLs, PUT the bytes straight to storage, then post

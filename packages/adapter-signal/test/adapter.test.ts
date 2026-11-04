@@ -9,8 +9,8 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { AdapterEvent } from '@dither-chat/protocol';
-import { type AdapterHost, CAPABILITIES, LINK_MESSAGE, SignalAdapter, socketPathFor } from '../src/adapter.ts';
+import type { About, AdapterEvent } from '@dither-chat/protocol';
+import { type AdapterHost, CAPABILITIES, LINK_MESSAGE, SignalAdapter, socketPathFor, updateGroupParams } from '../src/adapter.ts';
 
 const FAKE = join(import.meta.dir, 'fake-signal-cli.ts');
 const SELF = '5f2c7a8e-1111-4aaa-8bbb-000000000001';
@@ -19,6 +19,8 @@ const SAM = '5a3e0000-3333-4eee-afff-000000000003';
 const GID = 'Pmpi+EfPWmsxiomLe9Nx2XF9HOE483p6iKiFj65iMwI=';
 const GROUP = `group:${GID}`;
 const DM_ALICE = `dm:${SELF}:${ALICE}`;
+const LOCKED = 'group:L0ckedGr0up+AdminsOnly0000000000000000000000=';
+const INVITED = 'group:Inv1tedGr0up+NotJoined000000000000000000000=';
 const T = 1793330000000;
 
 let dir: string;
@@ -55,6 +57,8 @@ const push = (fixture: string | object) => {
   require('node:fs').renameSync(tmp, join(signalDir, 'fake-push', `${String(pushes++).padStart(4, '0')}.json`));
 };
 const cmd = (c: any) => adapter.command({ id: String(Math.random()), ...c });
+const about = (nativeId: string) => cmd({ t: 'about', target: { kind: 'conversation', nativeId } }) as Promise<About>;
+const configure = (nativeId: string, change: any) => cmd({ t: 'configure', target: { kind: 'conversation', nativeId }, change }) as Promise<About>;
 
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), 'dither-sig-'));
@@ -285,6 +289,193 @@ describe('signal adapter against a fake signal-cli', () => {
     push(del);
     await until('delete', () => of('delete', mark).find((d) => d.nativeId === `${ALICE}:${T + 3000}`));
     expect(existsSync(file)).toBe(false);
+  });
+
+  test('hello advertises about and configure', () => {
+    expect(of('hello')[0].capabilities).toEqual(expect.arrayContaining(['about', 'configure']));
+  });
+
+  test('about: a group where you are an admin, re-read from signal-cli', async () => {
+    const lists = calls('listGroups').length;
+    const a = await about(GROUP);
+    expect(calls('listGroups').length).toBe(lists + 1);
+    expect(calls('listGroups').at(-1).params).toEqual({ groupId: [GID] });
+    expect(a.noun).toBe('Group');
+    expect(a.fields).toEqual({
+      name: { value: 'Climbing crew 🧗', canEdit: true },
+      topic: { value: 'thursday nights', canEdit: true },
+      avatar: { value: null, canEdit: false, reason: 'Changing the picture is not supported yet.' },
+      disappearing: { value: 0, canEdit: true },
+      announceOnly: { value: false, canEdit: true },
+      editInfo: { value: 'everyone', canEdit: true },
+      addMembers: { value: 'everyone', canEdit: true },
+      joinApproval: { value: null, canEdit: false, reason: 'Signal does not say whether approval is on.' },
+      encrypted: { value: true, canEdit: false, reason: 'Always on in Signal.' },
+    });
+    expect(a.members).toEqual({
+      list: [
+        { id: SELF, role: 'Admin', rank: 100 },
+        { id: ALICE, role: 'Member', rank: 0 },
+        { id: SAM, role: 'Member', rank: 0 },
+      ],
+      complete: true,
+    });
+    expect(a.roles).toEqual([
+      { id: 'admin', name: 'Admin', rank: 100, count: 1 },
+      { id: 'member', name: 'Member', rank: 0, count: 2 },
+    ]);
+    expect(a.you).toEqual({ role: 'Admin', rank: 100 });
+    expect(a.invite).toEqual({ link: null, canCreate: true, canRevoke: false });
+    expect(a.rules!.every((r) => r.you)).toBe(true);
+    expect(a.pinned).toBeUndefined();
+    expect(a.facts).toBeUndefined();
+  });
+
+  test('about: a locked group where you are not an admin says why at every setting', async () => {
+    const mark = events.length;
+    const a = await about(LOCKED);
+    const details = 'Only admins can edit this group’s details.';
+    const admins = 'Only admins can change this.';
+    expect(a.fields).toMatchObject({
+      name: { value: 'Announcements', canEdit: false, reason: details },
+      topic: { value: 'read only', canEdit: false, reason: details },
+      avatar: { canEdit: false, reason: details },
+      disappearing: { value: 604800, canEdit: false, reason: details },
+      announceOnly: { value: true, canEdit: false, reason: admins },
+      editInfo: { value: 'admins', canEdit: false, reason: admins },
+      addMembers: { value: 'admins', canEdit: false, reason: admins },
+    });
+    expect(a.members!.list).toEqual([
+      { id: SELF, role: 'Member', rank: 0 },
+      { id: ALICE, role: 'Admin', rank: 100 },
+      { id: SAM, role: 'Member', rank: 0 },
+    ]);
+    expect(a.you).toEqual({ role: 'Member', rank: 0 });
+    expect(a.invite).toEqual({ link: 'https://signal.group/#CjQKIFakeLockedGroupLink', canCreate: false, canRevoke: false, reason: 'Only admins can change the invite link.' });
+    expect(a.rules).toEqual([
+      { what: 'Edit name, description and disappearing messages', who: 'Only admins', you: false },
+      { what: 'Add members', who: 'Only admins', you: false },
+      { what: 'Send messages', who: 'Only admins', you: false },
+      { what: 'Change these settings and the invite link', who: 'Only admins', you: false },
+    ]);
+    expect(a.facts).toEqual([{ label: 'Invited, not joined yet', value: '1' }]);
+    expect(of('conversation', mark).find((c) => c.conversation.nativeId === LOCKED)).toBeUndefined(); // re-read, unchanged: not sent again
+    const n = calls('updateGroup').length;
+    await expect(configure(LOCKED, { key: 'name', value: 'Mine now' })).rejects.toThrow(details);
+    await expect(configure(LOCKED, { key: 'invite', op: 'revoke' })).rejects.toThrow('Only admins can change the invite link.');
+    await expect(configure(LOCKED, { key: 'announceOnly', value: false })).rejects.toThrow(admins);
+    expect(calls('updateGroup').length).toBe(n);
+  });
+
+  test('a group you are only invited to: nothing can change, and no updateGroup accepts the invitation', async () => {
+    const a = await about(INVITED);
+    expect(a.fields.name).toEqual({ value: 'Surprise party', canEdit: false, reason: 'You are invited to this group but have not joined.' });
+    expect(a.you).toEqual({});
+    expect(a.invite).toMatchObject({ canCreate: false, canRevoke: false });
+    expect(of('conversation').find((c) => c.conversation.nativeId === INVITED)).toBeUndefined();
+    const n = calls('updateGroup').length;
+    await expect(configure(INVITED, { key: 'name', value: 'Party' })).rejects.toThrow('have not joined');
+    await expect(configure(INVITED, { key: 'invite', op: 'create' })).rejects.toThrow('have not joined');
+    expect(calls('updateGroup').length).toBe(n);
+  });
+
+  test('1:1 and Note to Self: the disappearing timer, set with updateContact', async () => {
+    const sam = await about(`dm:${SELF}:${SAM}`);
+    expect(sam).toEqual({
+      noun: 'Chat',
+      fields: { disappearing: { value: 3600, canEdit: true }, encrypted: { value: true, canEdit: false, reason: 'Always on in Signal.' } },
+      members: { list: [{ id: SELF }, { id: SAM }], complete: true },
+      rules: [{ what: 'Change disappearing messages', who: 'Either of you', you: true }],
+    });
+    const mark = events.length;
+    const a = await configure(DM_ALICE, { key: 'disappearing', value: 86400 });
+    expect(calls('updateContact').at(-1).params).toEqual({ recipient: ALICE, expiration: 86400 });
+    expect(a.fields.disappearing).toEqual({ value: 86400, canEdit: true });
+    expect(of('message', mark).map((m) => [m.message.conversation, m.message.kind, m.message.body])).toEqual([[DM_ALICE, 'system', 'You set disappearing messages to 1 day.']]);
+
+    const NOTE = `dm:${SELF}:${SELF}`;
+    expect((await about(NOTE)).noun).toBe('Note to Self');
+    const n = await configure(NOTE, { key: 'disappearing', value: 300 });
+    expect(calls('updateContact').at(-1).params).toEqual({ recipient: SELF, expiration: 300 });
+    expect(n).toMatchObject({ noun: 'Note to Self', fields: { disappearing: { value: 300 } }, members: { list: [{ id: SELF }] }, rules: [{ who: 'You' }] });
+    await expect(configure(DM_ALICE, { key: 'name', value: 'Alice' })).rejects.toThrow(/no name setting/);
+  });
+
+  test('configure name: one updateGroup with the group id and the name, then a fresh About and the fact again', async () => {
+    const mark = events.length;
+    const a = await configure(GROUP, { key: 'name', value: '  Crag rats ' });
+    expect(calls('updateGroup').at(-1).params).toEqual({ groupId: GID, name: 'Crag rats' });
+    const rpcs = records().filter((r) => r.t === 'rpc');
+    expect(rpcs.at(-1)).toEqual({ t: 'rpc', method: 'listGroups', params: { groupId: [GID] } }); // re-read after the write
+    expect(a.fields.name).toEqual({ value: 'Crag rats', canEdit: true });
+    expect(of('conversation', mark).map((c) => c.conversation)).toEqual([expect.objectContaining({ nativeId: GROUP, name: 'Crag rats', topic: 'thursday nights' })]);
+    expect(of('message', mark).at(-1)!.message).toMatchObject({ conversation: GROUP, author: SELF, kind: 'system', body: 'You renamed the group to “Crag rats”.' });
+    // Already so: nothing to send.
+    const n = calls('updateGroup').length;
+    await configure(GROUP, { key: 'name', value: 'Crag rats' });
+    expect(calls('updateGroup').length).toBe(n);
+  });
+
+  test('configure topic, disappearing, announceOnly, editInfo, addMembers: one field per call', async () => {
+    const last = () => calls('updateGroup').at(-1).params;
+    let a = await configure(GROUP, { key: 'topic', value: 'tuesdays now' });
+    expect(last()).toEqual({ groupId: GID, description: 'tuesdays now' });
+    expect(a.fields.topic!.value).toBe('tuesdays now');
+    a = await configure(GROUP, { key: 'disappearing', value: 3600 });
+    expect(last()).toEqual({ groupId: GID, expiration: 3600 });
+    expect(a.fields.disappearing!.value).toBe(3600);
+    let mark = events.length;
+    a = await configure(GROUP, { key: 'announceOnly', value: true });
+    expect(last()).toEqual({ groupId: GID, setPermissionSendMessages: 'only-admins' });
+    expect(a.fields.announceOnly!.value).toBe(true);
+    expect(of('conversation', mark).at(-1)!.conversation.variant).toBe('announcement');
+    mark = events.length;
+    a = await configure(GROUP, { key: 'editInfo', value: 'admins' });
+    expect(last()).toEqual({ groupId: GID, setPermissionEditDetails: 'only-admins' });
+    expect(a.fields.editInfo!.value).toBe('admins');
+    expect(of('message', mark).at(-1)!.message.body).toBe('You changed who can edit group info to “Only admins”.');
+    a = await configure(GROUP, { key: 'addMembers', value: 'admins' });
+    expect(last()).toEqual({ groupId: GID, setPermissionAddMember: 'only-admins' });
+    expect(a.fields.addMembers!.value).toBe('admins');
+    expect(a.fields.name!.canEdit).toBe(true); // still an admin
+    a = await configure(GROUP, { key: 'announceOnly', value: false });
+    expect(last()).toEqual({ groupId: GID, setPermissionSendMessages: 'every-member' });
+  });
+
+  test('configure invite: turn the link on, reset it, turn it off', async () => {
+    const last = () => calls('updateGroup').at(-1).params;
+    let mark = events.length;
+    let a = await configure(GROUP, { key: 'invite', op: 'create' });
+    expect(last()).toEqual({ groupId: GID, link: 'enabled' });
+    const first = a.invite!.link;
+    expect(first).toStartWith('https://signal.group/#');
+    expect(a.invite).toMatchObject({ canCreate: true, canRevoke: true });
+    expect(of('message', mark).at(-1)!.message.body).toBe('You turned on the group link.');
+    a = await configure(GROUP, { key: 'invite', op: 'create' });
+    expect(last()).toEqual({ groupId: GID, resetLink: true });
+    expect(a.invite!.link).not.toBe(first);
+    mark = events.length;
+    a = await configure(GROUP, { key: 'invite', op: 'revoke' });
+    expect(last()).toEqual({ groupId: GID, link: 'disabled' });
+    expect(a.invite).toEqual({ link: null, canCreate: true, canRevoke: false });
+    expect(of('message', mark).at(-1)!.message.body).toBe('You turned off the group link.');
+  });
+
+  test('refuses what Signal cannot do, and never calls updateGroup without a group id', async () => {
+    const n = calls('updateGroup').length;
+    await expect(configure(GROUP, { key: 'avatar', value: 'file:///tmp/x.png' })).rejects.toThrow('Changing the picture is not supported yet.');
+    await expect(configure(GROUP, { key: 'joinApproval', value: true })).rejects.toThrow('Signal does not say whether approval is on.');
+    await expect(configure(GROUP, { key: 'encrypted', value: true })).rejects.toThrow('Always on in Signal.');
+    await expect(configure(GROUP, { key: 'pin', message: `${ALICE}:${T + 1000}` })).rejects.toThrow(/no list of pinned/);
+    await expect(configure(GROUP, { key: 'slowMode', value: 10 })).rejects.toThrow(/not a Signal group setting/);
+    await expect(cmd({ t: 'configure', target: { kind: 'space', nativeId: GID }, change: { key: 'name', value: 'x' } })).rejects.toThrow(/no spaces/);
+    await expect(configure('group:', { key: 'name', value: 'x' })).rejects.toThrow(/not a Signal conversation/);
+    expect(calls('updateGroup').length).toBe(n);
+    // The guard itself: signal-cli would make a new group out of any of these.
+    for (const id of ['', '  ', undefined, null]) expect(() => updateGroupParams(id, { name: 'x' })).toThrow(/create a new group/);
+    expect(() => updateGroupParams(GID, { name: 'x', description: 'y' })).toThrow(/one group change/);
+    expect(() => updateGroupParams(GID, { groupId: '' })).toThrow(/one group change/);
+    expect(updateGroupParams(GID, { name: 'x' })).toEqual({ groupId: GID, name: 'x' });
   });
 
   test('daemon crash: restarted with backoff, back online', async () => {
