@@ -366,6 +366,74 @@ func chatPresenceOf(evt *events.ChatPresence) obj {
 	return obj{"chat": jidStr(evt.Chat), "sender": jidStr(evt.Sender), "fromMe": evt.IsFromMe, "state": string(evt.State), "media": string(evt.Media)}
 }
 
+// A receipt: "" (delivered), "read" or "played" from someone else on your messages, per device and, in groups,
+// per participant; or your own devices' reads ("read-self", or "read" from you).
+func (b *bridge) receiptOf(evt *events.Receipt) obj {
+	o := obj{
+		"chat": jidStr(evt.Chat), "sender": jidStr(evt.Sender), "fromMe": evt.IsFromMe, "isGroup": evt.IsGroup,
+		"ids": evt.MessageIDs, "ts": evt.Timestamp.UnixMilli(), "type": string(evt.Type), "messageSender": jidStr(evt.MessageSender),
+	}
+	alt := jidStr(evt.SenderAlt)
+	if alt == "" && !evt.IsFromMe {
+		alt = b.alt(evt.Sender)
+	}
+	if alt != "" {
+		o["senderAlt"] = alt
+	}
+	return o
+}
+
+// A group notification: name, description, members in and out, admins made and unmade. alts maps each member
+// JID to their other address (phone number <-> LID) where the store knows it.
+func (b *bridge) groupChangeOf(evt *events.GroupInfo) obj {
+	o := obj{"jid": jidStr(evt.JID), "join": jidList(evt.Join), "leave": jidList(evt.Leave), "ts": evt.Timestamp.UnixMilli()}
+	if len(evt.Promote) > 0 {
+		o["promote"] = jidList(evt.Promote)
+	}
+	if len(evt.Demote) > 0 {
+		o["demote"] = jidList(evt.Demote)
+	}
+	if evt.Name != nil {
+		o["name"] = evt.Name.Name
+	}
+	if evt.Topic != nil {
+		o["topic"] = evt.Topic.Topic
+	}
+	if evt.Delete != nil {
+		o["deleted"] = true
+	}
+	if evt.Sender != nil {
+		o["sender"] = jidStr(*evt.Sender)
+	}
+	if evt.SenderPN != nil {
+		o["senderPn"] = jidStr(*evt.SenderPN)
+	}
+	alts := obj{}
+	for _, js := range [][]types.JID{evt.Join, evt.Leave, evt.Promote, evt.Demote} {
+		for _, j := range js {
+			if a := b.alt(j); a != "" {
+				alts[jidStr(j)] = a
+			}
+		}
+	}
+	if len(alts) > 0 {
+		o["alts"] = alts
+	}
+	return o
+}
+
+// Someone's About changed. WhatsApp pushes this on its own, for your contacts; nothing here asks for it.
+func (b *bridge) userAboutOf(evt *events.UserAbout) obj {
+	o := obj{"jid": jidStr(evt.JID), "status": evt.Status}
+	if a := b.alt(evt.JID); a != "" {
+		o["alt"] = a
+	}
+	if !evt.Timestamp.IsZero() {
+		o["ts"] = evt.Timestamp.UnixMilli()
+	}
+	return o
+}
+
 func (b *bridge) onEvent(raw any) {
 	switch evt := raw.(type) {
 	case *events.Message:
@@ -375,10 +443,7 @@ func (b *bridge) onEvent(raw any) {
 	case *events.HistorySync:
 		b.onHistory(evt)
 	case *events.Receipt:
-		emit("receipt", obj{
-			"chat": jidStr(evt.Chat), "sender": jidStr(evt.Sender), "fromMe": evt.IsFromMe, "isGroup": evt.IsGroup,
-			"ids": evt.MessageIDs, "ts": evt.Timestamp.UnixMilli(), "type": string(evt.Type), "messageSender": jidStr(evt.MessageSender),
-		})
+		emit("receipt", b.receiptOf(evt))
 	case *events.ChatPresence:
 		emit("chat_presence", chatPresenceOf(evt))
 	case *events.PushName:
@@ -406,20 +471,9 @@ func (b *bridge) onEvent(raw any) {
 	case *events.JoinedGroup:
 		emit("group", obj{"group": groupOf(&evt.GroupInfo)})
 	case *events.GroupInfo:
-		o := obj{"jid": jidStr(evt.JID), "join": jidList(evt.Join), "leave": jidList(evt.Leave), "ts": evt.Timestamp.UnixMilli()}
-		if evt.Name != nil {
-			o["name"] = evt.Name.Name
-		}
-		if evt.Topic != nil {
-			o["topic"] = evt.Topic.Topic
-		}
-		if evt.Delete != nil {
-			o["deleted"] = true
-		}
-		if evt.Sender != nil {
-			o["sender"] = jidStr(*evt.Sender)
-		}
-		emit("group_change", o)
+		emit("group_change", b.groupChangeOf(evt))
+	case *events.UserAbout:
+		emit("user_about", b.userAboutOf(evt))
 	case *events.MediaRetry:
 		b.retryMu.Lock()
 		ch := b.retries[evt.MessageID]

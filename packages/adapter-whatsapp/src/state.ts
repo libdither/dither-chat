@@ -9,6 +9,7 @@
  *            forward and download, and its content (protojson, thumbnails dropped)
  *   react    one reaction per person per message, so a removal knows what it removes
  *   person   names from the address book, push names and business names
+ *   pin      pinned messages and when each pin lapses: WhatsApp sends nothing when it does
  *   kv       odds and ends (own JIDs, sync markers)
  */
 
@@ -69,6 +70,8 @@ export class State {
       CREATE INDEX IF NOT EXISTS msg_expires ON msg (expires) WHERE expires IS NOT NULL;
       CREATE TABLE IF NOT EXISTS react (msg TEXT NOT NULL, author TEXT NOT NULL, key TEXT NOT NULL, PRIMARY KEY (msg, author));
       CREATE TABLE IF NOT EXISTS person (id TEXT PRIMARY KEY, full_name TEXT, first_name TEXT, push_name TEXT, business_name TEXT, phone TEXT, avatar TEXT);
+      CREATE TABLE IF NOT EXISTS pin (msg TEXT PRIMARY KEY, conversation TEXT NOT NULL, ts INTEGER NOT NULL, expires INTEGER);
+      CREATE INDEX IF NOT EXISTS pin_expires ON pin (expires) WHERE expires IS NOT NULL;
     `);
   }
 
@@ -137,6 +140,7 @@ export class State {
   dropMsg(id: string) {
     this.db.query('DELETE FROM msg WHERE id = ?').run(id);
     this.db.query('DELETE FROM react WHERE msg = ?').run(id);
+    this.db.query('DELETE FROM pin WHERE msg = ?').run(id);
   }
   /** Oldest message we know in a conversation, at or before a time. */
   oldest(conversation: string, beforeTs?: number): StoredMsg | undefined {
@@ -163,6 +167,22 @@ export class State {
   setReaction(msg: string, author: string, key: string | null) {
     if (key === null) this.db.query('DELETE FROM react WHERE msg = ? AND author = ?').run(msg, author);
     else this.db.query('INSERT INTO react (msg, author, key) VALUES (?, ?, ?) ON CONFLICT (msg, author) DO UPDATE SET key = excluded.key').run(msg, author, key);
+  }
+
+  // ------------------------------------------------------------ pins
+
+  /** A pin (expires: when it lapses) or an unpin (null), unless a later one is already known. */
+  putPin(msg: string, conversation: string, ts: number, expires: number | null) {
+    this.db
+      .query('INSERT INTO pin (msg, conversation, ts, expires) VALUES (?, ?, ?, ?) ON CONFLICT (msg) DO UPDATE SET ts = excluded.ts, expires = excluded.expires WHERE excluded.ts >= pin.ts')
+      .run(msg, conversation, ts, expires);
+  }
+  /** Pins whose time is up, now unpinned here. */
+  lapsedPins(now: number): { msg: string; conversation: string; expires: number }[] {
+    const rows = this.db.query('SELECT msg, conversation, expires FROM pin WHERE expires IS NOT NULL AND expires <= ? LIMIT 500').all(now) as { msg: string; conversation: string; expires: number }[];
+    // The lapse is the latest news about the pin: the same pin sent again (a history resync) does not revive it.
+    for (const r of rows) this.db.query('UPDATE pin SET ts = expires, expires = NULL WHERE msg = ?').run(r.msg);
+    return rows;
   }
 
   // ------------------------------------------------------------ people

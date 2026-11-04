@@ -47,6 +47,11 @@ const INVITE_ADMINS = 'Only admins can see and change the invite link.';
 const PROFILE_FRESH_MS = 5 * 60_000;
 /** At most this many profile queries a minute, whatever the hub asks: never anything that looks like a bulk lookup. */
 const PROFILE_QUERIES_PER_MINUTE = 10;
+/** Receipts from others, by whatsmeow's receipt type ('' is delivered), and how far along each is. */
+const RECEIPT_STATE: Record<string, P.ReceiptState> = { '': 'delivered', read: 'read', played: 'played' };
+const RECEIPT_RANK: Record<P.ReceiptState, number> = { delivered: 1, read: 2, played: 3 };
+/** How many (message, reader) pairs to remember receipts for. A repeat after that is harmless, only wasted. */
+const RECEIPTS_KEPT = 20_000;
 
 export interface AdapterHost {
   emit(ev: P.AdapterEvent): void;
@@ -104,6 +109,8 @@ export class WhatsAppAdapter {
   /** The last profile query per person (undefined: it failed or was not made). */
   private userInfo = new Map<string, { u: Promise<WaUserInfo | undefined>; at: number }>();
   private profileQueries: number[] = [];
+  /** "<message> <reader>" -> the furthest receipt passed on: each device of each reader sends its own. */
+  private receipts = new Map<string, number>();
 
   constructor(
     private host: AdapterHost,
@@ -342,6 +349,8 @@ export class WhatsAppAdapter {
         return this.putGroup(ev.group);
       case 'group_change':
         return this.groupChange(ev);
+      case 'user_about':
+        return this.userAbout(ev);
       case 'app_state_synced':
         if (ev.name === 'critical_unblock_low' || ev.name === 'regular_high') this.loadContacts().catch((e) => this.host.log('warn', `contacts: ${e.message}`));
         return;
@@ -528,6 +537,8 @@ export class WhatsAppAdapter {
 
   private groupChange(ev: Extract<BridgeEvent, { t: 'group_change' }>) {
     const jid = bare(ev.jid);
+    for (const [j, a] of Object.entries(ev.alts ?? {})) this.aliases.link(j, a);
+    this.aliases.link(ev.sender, ev.senderPn);
     if (ev.deleted || ev.leave.some((j) => this.mapper.isSelf(j))) {
       this.state.dropChat(jid);
       this.host.emit({ t: 'leave', kind: 'conversation', nativeId: jid });
@@ -541,8 +552,24 @@ export class WhatsAppAdapter {
     if (ev.topic !== undefined) lines.push(`${who} changed the group description.`);
     if (ev.join.length) lines.push(ev.join.length === 1 && this.mapper.who(ev.join[0]) === actor ? `${who} joined.` : `${who} added ${names(ev.join)}.`);
     if (ev.leave.length) lines.push(ev.leave.length === 1 && this.mapper.who(ev.leave[0]) === actor ? `${who} left.` : `${who} removed ${names(ev.leave)}.`);
+    const promote = ev.promote ?? [];
+    const demote = ev.demote ?? [];
+    if (promote.length) lines.push(`${who} made ${names(promote)} ${promote.length > 1 ? 'admins' : 'an admin'}.`);
+    if (demote.length) lines.push(`${who} removed ${names(demote)} as admin.`);
     if (lines.length && this.state.chat(jid)) {
       this.host.emit({ t: 'message', message: { nativeId: msgId(jid, `gc-${ev.ts}`), conversation: jid, author: actor || this.selfIds().id, ts: ev.ts, kind: 'system', body: lines.join(' ') }, live: true });
+    }
+    // Admins made and unmade: in a community's own parent group that is the community's admin.
+    const community = !!this.groups.get(jid)?.g.isParent;
+    if (community || this.state.chat(jid)) {
+      const target: P.AboutTarget = { kind: community ? 'space' : 'conversation', nativeId: jid };
+      for (const [js, given] of [[promote, true], [demote, false]] as const) {
+        for (const j of js) {
+          const member = this.mapper.who(j);
+          this.publish(member);
+          this.host.emit({ t: 'role', target, member, role: 'Admin', given, ...(actor ? { by: actor } : {}), ...(ev.ts > 0 ? { ts: ev.ts } : {}) });
+        }
+      }
     }
     this.groupFetch.delete(jid);
     this.fetchGroup(jid);
@@ -652,11 +679,11 @@ export class WhatsAppAdapter {
   }
 
   private receipt(ev: Extract<BridgeEvent, { t: 'receipt' }>) {
-    // Your phone (or another linked device) read these: that is read state. Others' receipts are not.
-    if (ev.type !== 'read-self' && !(ev.fromMe && ev.type === 'read')) return;
-    if (!ev.fromMe) return;
     const chat = bare(ev.chat);
     if (ignoredChat(chat)) return;
+    if (!ev.fromMe) return this.othersReceipt(ev, chat);
+    // Your phone (or another linked device) read these: that is read state.
+    if (ev.type !== 'read-self' && ev.type !== 'read') return;
     const conv = this.mapper.convId(chat);
     if (!this.state.chat(conv)) return;
     let upTo = 0;
@@ -667,11 +694,64 @@ export class WhatsAppAdapter {
     this.host.emit({ t: 'read', conversation: conv, upToTs: upTo });
   }
 
+  /**
+   * Someone else got, read or played messages you sent. Each of their devices says so, and in groups each member:
+   * one receipt per reader and message for each step further, for messages this account knows it sent.
+   */
+  private othersReceipt(ev: Extract<BridgeEvent, { t: 'receipt' }>, chat: string) {
+    const state = RECEIPT_STATE[ev.type];
+    if (!state) return;
+    this.aliases.link(ev.sender, ev.senderAlt);
+    // A DM is the reader's; one never seen is no chat of yours.
+    const conv = isGroup(chat) ? chat : this.aliases.peek(chat);
+    if (!conv || !this.state.chat(conv)) return;
+    const who = this.mapper.who(ev.sender);
+    if (!who || who === this.selfIds().id) return;
+    const rank = RECEIPT_RANK[state];
+    const messages: string[] = [];
+    for (const wid of ev.ids) {
+      const id = msgId(conv, wid);
+      if (!this.state.msg(id)?.fromMe) continue;
+      const k = `${id} ${who}`;
+      if ((this.receipts.get(k) ?? 0) >= rank) continue;
+      this.receipts.delete(k);
+      this.receipts.set(k, rank);
+      messages.push(id);
+    }
+    for (const k of this.receipts.keys()) {
+      if (this.receipts.size <= RECEIPTS_KEPT) break;
+      this.receipts.delete(k);
+    }
+    if (!messages.length) return;
+    this.publish(who);
+    this.host.emit({ t: 'receipt', conversation: conv, messages, who, state, ts: ev.ts > 0 ? ev.ts : Date.now() });
+  }
+
+  /**
+   * Someone's About changed. WhatsApp pushes this for your contacts; it is passed on only for people you know (in your
+   * contacts, or with a chat), never asked for.
+   */
+  private userAbout(ev: Extract<BridgeEvent, { t: 'user_about' }>) {
+    const self = this.mapper.isSelf(ev.jid) || (!!ev.alt && this.mapper.isSelf(ev.alt));
+    if (!self && !this.aliases.peek(ev.jid) && !(ev.alt && this.aliases.peek(ev.alt))) return;
+    this.aliases.link(ev.jid, ev.alt);
+    const who = self ? this.selfIds().id : this.mapper.who(ev.jid);
+    if (!self && !this.state.person(who)?.fullName && !this.state.chat(who)) return;
+    // A profile asked about recently shows the new About without asking again.
+    const asked = this.userInfo.get(who);
+    if (asked) this.userInfo.set(who, { at: asked.at, u: asked.u.then((u) => u && { ...u, status: ev.status }) });
+    this.publish(who);
+    this.host.emit({ t: 'customStatus', who, ...(ev.status ? { text: ev.status } : {}), ...(ev.ts && ev.ts > 0 ? { ts: ev.ts } : {}) });
+  }
+
   private sweepExpired() {
-    for (const m of this.state.expired(Date.now())) {
+    const now = Date.now();
+    for (const m of this.state.expired(now)) {
       this.state.dropMsg(m.id);
       this.host.emit({ t: 'delete', conversation: m.conversation, nativeId: m.id, reason: 'expired' });
     }
+    // Pins lapse after the time the pinner chose; WhatsApp sends nothing then.
+    for (const p of this.state.lapsedPins(now)) this.host.emit({ t: 'pin', conversation: p.conversation, message: p.msg, pinned: false, ts: p.expires });
   }
 
   // ---------------------------------------------------------------- commands

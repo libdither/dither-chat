@@ -173,6 +173,52 @@ test('history: backfill (no notifications), reactions snapshot, system lines', (
   expect(stub).toMatchObject({ kind: 'system', body: 'Bob added Alice.' });
 });
 
+test('a pin: who pinned which message, until the time the pinner chose; an unpin ends it', () => {
+  run(fx('own_text'));
+  const pin = fx('pin');
+  const o = run(pin);
+  expect(o.events).toEqual([{ t: 'pin', conversation: ALICE, message: msgId(ALICE, 'A2'), pinned: true, by: ALICE, ts: pin.info.ts }]);
+  // Nothing to show as a message, and nothing kept as one.
+  expect(o.remember).toEqual([]);
+  const week = pin.info.ts + 7 * 86_400_000;
+  expect(st.lapsedPins(week - 1)).toEqual([]);
+  expect(st.lapsedPins(week)).toEqual([{ msg: msgId(ALICE, 'A2'), conversation: ALICE, expires: week }]);
+  // Lapsed once is lapsed: the same pin sent again (a history resync) does not bring it back.
+  run(pin);
+  expect(st.lapsedPins(Number.MAX_SAFE_INTEGER)).toEqual([]);
+});
+
+test('an unpin before the time is up: nothing left to lapse', () => {
+  run(fx('own_text'));
+  run(fx('pin'));
+  const unpin = fx('unpin');
+  expect(run(unpin).events).toEqual([{ t: 'pin', conversation: ALICE, message: msgId(ALICE, 'A2'), pinned: false, by: ALICE, ts: unpin.info.ts }]);
+  expect(st.lapsedPins(Number.MAX_SAFE_INTEGER)).toEqual([]);
+});
+
+test('a pin in a group by someone addressed by LID, for 24 hours', () => {
+  const ev = fx('pin_group');
+  expect(run(ev).events).toEqual([{ t: 'pin', conversation: GROUP, message: msgId(GROUP, 'G1'), pinned: true, by: BOB, ts: ev.info.ts }]);
+  expect(st.lapsedPins(ev.info.ts + 86_400_000)).toHaveLength(1);
+});
+
+test('history: a pin and an admin made, from their stubs', () => {
+  al.link(ALICE, ALICE_LID);
+  al.link(BOB, BOB_LID);
+  const pin = fx('history_pin');
+  expect(run(pin).events).toEqual([{ t: 'pin', conversation: GROUP, message: msgId(GROUP, 'H1'), pinned: true, by: BOB, ts: pin.info.ts }]);
+  // Its day is long over: the sweep unpins it.
+  expect(st.lapsedPins(Date.now())).toEqual([{ msg: msgId(GROUP, 'H1'), conversation: GROUP, expires: pin.info.ts + 86_400_000 }]);
+
+  const promote = fx('history_promote');
+  const o = run(promote);
+  expect(facts(o)).toMatchObject([{ kind: 'system', body: 'Bob made Alice an admin.' }]);
+  expect(o.events.filter((e) => e.t === 'role')).toEqual([{ t: 'role', target: { kind: 'conversation', nativeId: GROUP }, member: ALICE, role: 'Admin', given: true, by: BOB, ts: promote.info.ts }]);
+  const demote = fx('history_promote');
+  demote.web.messageStubType = 'GROUP_PARTICIPANT_DEMOTE';
+  expect(run(demote).events.filter((e) => e.t === 'role')).toMatchObject([{ member: ALICE, given: false }]);
+});
+
 test('broadcast stories and channels are ignored', () => {
   const ev = fx('text');
   ev.info.chat = 'status@broadcast';

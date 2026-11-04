@@ -199,7 +199,97 @@ test('your phone reading a chat marks it read here', async () => {
   const evs = await h.emit({ t: 'receipt', chat: ALICE, sender: ME, fromMe: true, isGroup: false, ids: ['A1'], ts: 1_760_000_999_000, type: 'read-self' });
   expect(ofType(evs, 'read')).toEqual([{ t: 'read', conversation: ALICE, upToTs: FIX.get('text').info.ts }]);
   // someone else reading your message is not your read state
-  expect(await h.emit({ t: 'receipt', chat: ALICE, sender: ALICE, fromMe: false, isGroup: false, ids: ['A2'], ts: 1, type: 'read' })).toEqual([]);
+  expect(ofType(await h.emit({ t: 'receipt', chat: ALICE, sender: ALICE, fromMe: false, isGroup: false, ids: ['A1'], ts: 1, type: 'read' }), 'read')).toEqual([]);
+});
+
+test('receipts on your messages: delivered, read, played, once each per reader, in DMs and per member in groups', async () => {
+  const h = await harness();
+  await h.emit(fx('text'));
+  await h.emit(fx('own_text'));
+  await h.adapter.command({ t: 'send', id: '1', conversation: ALICE, body: 'see you' });
+  const A2 = msgId(ALICE, 'A2');
+  const SENT1 = msgId(ALICE, 'SENT1');
+
+  // One of her devices has it; the next device saying so is no news.
+  const delivered = fx('receipt_delivered');
+  expect(ofType(await h.emit(delivered), 'receipt')).toEqual([{ t: 'receipt', conversation: ALICE, messages: [A2], who: ALICE, state: 'delivered', ts: delivered.ts }]);
+  expect(await h.emit({ ...delivered, ts: delivered.ts + 1000 })).toEqual([]);
+  // Read: both of your messages it names, the sent one too.
+  const read = fx('receipt_read');
+  expect(ofType(await h.emit(read), 'receipt')).toEqual([{ t: 'receipt', conversation: ALICE, messages: [A2, SENT1], who: ALICE, state: 'read', ts: read.ts }]);
+  // A late delivery after the read is behind it.
+  expect(await h.emit(delivered)).toEqual([]);
+  const played = fx('receipt_played');
+  expect(ofType(await h.emit(played), 'receipt')).toEqual([{ t: 'receipt', conversation: ALICE, messages: [A2], who: ALICE, state: 'played', ts: played.ts }]);
+  // Your own devices getting it, and receipts on messages that are not yours, are not receipts from others.
+  expect(ofType(await h.emit(fx('receipt_own_device')), 'receipt')).toEqual([]);
+  expect(ofType(await h.emit({ ...read, ids: ['A1', 'UNKNOWN'] }), 'receipt')).toEqual([]);
+
+  // A group: per member, by LID, under the id the member already has.
+  await h.ctl({ result: { op: 'group', value: FIX.get('group').group } });
+  await h.emit(fx('reply_mention'));
+  await h.emit(fx('group_from_me'));
+  const gread = fx('receipt_group_read');
+  expect(ofType(await h.emit(gread), 'receipt')).toEqual([{ t: 'receipt', conversation: GROUP, messages: [msgId(GROUP, 'G3')], who: BOB, state: 'read', ts: gread.ts }]);
+
+  // A chat this account has never had is nobody's DM: nothing, and no new person for it.
+  expect(await h.emit({ ...read, chat: '200000000000099@lid', sender: '200000000000099@lid' })).toEqual([]);
+});
+
+test('admins made and unmade in a group: roles, and the line WhatsApp shows', async () => {
+  const h = await harness();
+  await h.ctl({ result: { op: 'group', value: FIX.get('group').group } });
+  await h.emit(fx('text')); // Alice, by number and LID
+  await h.emit(fx('reply_mention')); // Bob, and the group
+  const promote = fx('group_promote');
+  const evs = await h.emit(promote);
+  expect(ofType(evs, 'role')).toEqual([{ t: 'role', target: { kind: 'conversation', nativeId: GROUP }, member: ALICE, role: 'Admin', given: true, by: BOB, ts: promote.ts }]);
+  expect(ofType(evs, 'message')[0].message).toMatchObject({ conversation: GROUP, author: BOB, kind: 'system', body: 'Bob made Alice an admin.' });
+  const demote = fx('group_demote');
+  const evs2 = await h.emit(demote);
+  expect(ofType(evs2, 'role')).toEqual([{ t: 'role', target: { kind: 'conversation', nativeId: GROUP }, member: ALICE, role: 'Admin', given: false, by: BOB, ts: demote.ts }]);
+  expect(ofType(evs2, 'message')[0].message.body).toBe('Bob removed Alice as admin.');
+
+  // A community's own parent group: the community's admins.
+  const community = FIX.get('community').group;
+  await h.emit({ t: 'group', group: community });
+  expect(ofType(await h.emit({ ...promote, jid: community.jid }), 'role')).toMatchObject([{ target: { kind: 'space', nativeId: community.jid }, member: ALICE, given: true }]);
+  // A group this account is not in: nothing.
+  expect(ofType(await h.emit({ ...promote, jid: '120363000000000077@g.us' }), 'role')).toEqual([]);
+});
+
+test('a contact’s About as WhatsApp pushes it: passed on for people you know, and an open profile shows it', async () => {
+  const h = await harness();
+  const about = fx('user_about');
+  // Nobody this account knows yet.
+  expect(await h.emit(about)).toEqual([]);
+  // Someone you only share a group with is not followed.
+  await h.ctl({ result: { op: 'group', value: FIX.get('group').group } });
+  await h.emit(fx('reply_mention'));
+  expect(ofType(await h.emit({ ...about, jid: BOB_LID }), 'customStatus')).toEqual([]);
+
+  await h.emit({ t: 'contact', jid: ALICE, alt: ALICE_LID, fullName: 'Alice Chen', firstName: 'Alice' });
+  await h.ctl({ result: { op: 'userInfo', value: FIX.get('user_info').result } });
+  expect((await profile(h, ALICE)).bio).toBe('Out climbing');
+  expect(ofType(await h.emit(about), 'customStatus')).toEqual([{ t: 'customStatus', who: ALICE, text: 'At the crag', ts: about.ts }]);
+  // The profile, opened again soon, shows the new About without asking again.
+  expect((await profile(h, ALICE)).bio).toBe('At the crag');
+  expect(count(h, 'userInfo')).toBe(1);
+  // Cleared, by her LID.
+  expect(ofType(await h.emit({ t: 'user_about', jid: ALICE_LID, status: '' }), 'customStatus')).toEqual([{ t: 'customStatus', who: ALICE }]);
+  expect(h.cmds.filter((c) => NEVER.includes(c.op))).toEqual([]);
+});
+
+test('pins pass through, and a pin whose time is up is unpinned', async () => {
+  const h = await harness({ opts: { expirySweepMs: 50 } });
+  await h.emit(fx('own_text'));
+  const pin = fx('pin');
+  expect(ofType(await h.emit(pin), 'pin')[0]).toEqual({ t: 'pin', conversation: ALICE, message: msgId(ALICE, 'A2'), pinned: true, by: ALICE, ts: pin.info.ts });
+  // The fixture's week ended long ago.
+  const lapsed = await h.waitFor(() => ofType(h.events, 'pin').find((p) => !p.pinned));
+  expect(lapsed).toEqual({ t: 'pin', conversation: ALICE, message: msgId(ALICE, 'A2'), pinned: false, ts: pin.info.ts + 7 * 86_400_000 });
+  await Bun.sleep(150);
+  expect(ofType(h.events, 'pin')).toHaveLength(2);
 });
 
 test('leaving a group, being typed at, a picture change', async () => {
