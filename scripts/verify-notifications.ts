@@ -86,7 +86,7 @@ try {
   await p.goto(`${hub}/#/inbox/c/${conv}`);
   await p.until(`document.querySelectorAll('.msg').length > 0`, 15000);
   await Bun.sleep(400);
-  const pill = await p.eval<boolean>(`(() => { const b = [...document.querySelectorAll('.triage-pill')].at(-1); if (!b) return false; b.click(); return true; })()`);
+  const pill = await p.eval<boolean>(`(() => { const b = [...document.querySelectorAll('.msg-actions button[aria-label^="Notification"]')].at(-1); if (!b) return false; b.click(); return true; })()`);
   if (pill) {
     await Bun.sleep(300);
     const picker = await p.eval<string[]>(`[...document.querySelectorAll('.triage-pop .tier-picker button')].map((b) => b.textContent.trim())`);

@@ -455,34 +455,47 @@ function Embeds({ m }: { m: P.MessageView }) {
   );
 }
 
+/**
+ * Why this notified (or not), and the vote: a quiet button among the hover actions, opening as a floating menu so
+ * nothing clips it.
+ */
 function TriageNote({ m }: { m: P.MessageView }) {
   const t = m.triage;
   if (!t) return null;
   const now = t.feedback ?? t.decision;
-  const label = now === 'push' ? 'important' : now === 'quiet' ? 'active' : now;
+  const label = now === 'push' ? 'Important' : now === 'quiet' ? 'Active' : now === 'digest' ? 'Digest' : 'Silent';
+  const spec = (): MenuSpec => ({
+    label: 'Notification',
+    items: [
+      {
+        kind: 'row',
+        render: (close) => (
+          <div class="triage-pop">
+            <div class="menu-title">{triageHeading(t.decision)}</div>
+            <ul>
+              {t.reasons.map((r) => (
+                <li>{r}</li>
+              ))}
+            </ul>
+            {t.score !== null && <div class="triage-score">score {t.score.toFixed(2)} · decided by {t.decidedBy}</div>}
+            <TierPicker m={m} onDone={close} />
+          </div>
+        ),
+      },
+    ],
+  });
   return (
-    <Menu
-      align="right"
-      trigger={(toggle) => (
-        <button class={`triage-pill ${now}`} onClick={toggle} title="Why did this notify (or not)? Vote it up or down a level here">
-          <Icon name={now === 'push' ? 'bell' : now === 'digest' ? 'layers' : 'bellOff'} size={11} />
-          {label}
-        </button>
-      )}
+    <button
+      class="icon-btn small"
+      title={`${label}: why, and vote it up or down a level`}
+      aria-label={`Notification: ${label}`}
+      onClick={(e) => {
+        const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        openMenu({ x: r.right - 300, y: r.bottom + 4 }, spec());
+      }}
     >
-      {(close) => (
-        <div class="triage-pop">
-          <div class="menu-title">{triageHeading(t.decision)}</div>
-          <ul>
-            {t.reasons.map((r) => (
-              <li>{r}</li>
-            ))}
-          </ul>
-          {t.score !== null && <div class="triage-score">score {t.score.toFixed(2)} · decided by {t.decidedBy}</div>}
-          <TierPicker m={m} onDone={close} />
-        </div>
-      )}
-    </Menu>
+      <Icon name={now === 'push' ? 'bell' : now === 'digest' ? 'layers' : 'bellOff'} size={14} />
+    </button>
   );
 }
 
@@ -575,7 +588,6 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
                 <Icon name="alert" size={12} />
               </span>
             )}
-            <TriageNote m={m} />
           </div>
         )}
         {m.deleted && m.gone?.kept ? (
@@ -639,7 +651,7 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
         >
           <Icon name="more" size={15} />
         </button>
-        {grouped && <TriageNote m={m} />}
+        <TriageNote m={m} />
       </div>
     </div>
   );
