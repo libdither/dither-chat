@@ -3,6 +3,7 @@
  * Every id here is a hub id; native ids are included for display and deep links only.
  */
 
+import type { About, AboutFields } from './about.ts';
 import type { Capability, NativeMute } from './adapter.ts';
 import type {
   AccountStatus,
@@ -165,6 +166,36 @@ export interface ReactionView {
   identityIds: string[];
   emoji?: CustomEmojiView;
   colors?: string[];
+}
+
+/**
+ * A conversation's or space's About as the web app gets it (about.ts, docs/group-settings.md): the adapter's answer
+ * in hub ids, from the account that asked. When no account could ask, the last answer the hub kept, with `stale`.
+ */
+export interface AboutView extends Omit<About, 'members' | 'pinned' | 'fields'> {
+  target: { kind: 'conversation' | 'space'; id: string };
+  network: Network;
+  /** The account whose view this is. null: none could ask, and nothing was kept. */
+  accountId: string | null;
+  fetchedAt: number;
+  /** Why this is not fresh: the account is offline, or its adapter cannot read settings. */
+  stale?: string;
+  /** Some settings can be changed through this account. */
+  canConfigure: boolean;
+  fields: AboutFields;
+  members?: {
+    list: { identityId: string; role?: string; rank?: number; color?: string }[];
+    total?: number;
+    complete: boolean;
+  };
+  pinned?: {
+    /** Pinned messages the hub has, newest pin first. */
+    messages: MessageView[];
+    /** Pinned messages the hub has not stored. */
+    missing: number;
+    canEdit: boolean;
+    reason?: string;
+  };
 }
 
 /** What one of your accounts can react with in a conversation. */

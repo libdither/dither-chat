@@ -11,6 +11,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
+import { ABOUT_LABEL as P_ABOUT_LABEL, NETWORK_META } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
 import type { InprocAdapter } from './supervisor.ts';
@@ -774,6 +775,73 @@ const REPLIES: Record<string, string[]> = {
   [M.kai.nativeId]: ['nice, I owe you one', 'ahh that makes sense'],
 };
 
+// ------------------------------------------------------------------ about and settings (docs/group-settings.md)
+
+/**
+ * Where each demo account stands, so the panel can show both sides: an owner who may change everything, a member
+ * who may change nothing and is told why, and the networks' own in-between rules.
+ */
+const ADMIN_IN: Record<AccKey, string[]> = {
+  dmain: [g.dither, ...['dither-general', 'dither-ann', 'dither-dev', 'dither-routing', 'dither-hangout'].map(ch), T.ditherBoot],
+  dalt: [],
+  sig: [sgroup('climb', '', []).nativeId, sgroup('dithercore', '', []).nativeId],
+  mx: [room('house', 'matrix.org')],
+  wa: [wgroup('books')],
+};
+/** Matrix: your power level where it is not 100 or 0. */
+const MX_LEVEL: Record<string, number> = { [room('libdither-mx', 'matrix.org')]: 50 };
+/** Settings that differ from each network's defaults. */
+const DEMO_VALUES: Record<string, Partial<P.AboutValues>> = {
+  [ch('dither-dev')]: { slowMode: 0 },
+  [ch('rust-offtopic')]: { slowMode: 10 },
+  [ch('hk-general')]: { slowMode: 5 },
+  [sgroup('climb', '', []).nativeId]: { disappearing: 7 * 86_400, editInfo: 'everyone' },
+  [sgroup('family', '', []).nativeId]: { editInfo: 'admins', addMembers: 'admins' },
+  [sgroup('dithercore', '', []).nativeId]: { editInfo: 'admins', addMembers: 'admins', disappearing: 28 * 86_400 },
+  [wgroup('books')]: { disappearing: 7 * 86_400 },
+  [wgroup('nbh-swap')]: { editInfo: 'everyone' },
+  [wgroup('nbh-ann')]: { announceOnly: true, editInfo: 'admins' },
+  [room('nixos-main', 'nixos.org')]: { joinRule: 'open', history: 'world_readable' },
+  [room('nixos-help', 'nixos.org')]: { joinRule: 'open', history: 'world_readable' },
+  [room('libdither-mx', 'matrix.org')]: { joinRule: 'ask', history: 'shared' },
+};
+const DEMO_PINS: Record<string, string[]> = {
+  [ch('dither-general')]: [`${ch('dither-general')}~1`],
+  [ch('rust-beginners')]: [`${ch('rust-beginners')}~4`, `${ch('rust-beginners')}~1`],
+  [room('house', 'matrix.org')]: [],
+};
+const DISCORD_ROLES: Record<string, P.AboutRole[]> = {
+  [g.dither]: [
+    { id: snow('role-maint'), name: 'Maintainer', color: '#F2A541', rank: 100 },
+    { id: snow('role-contrib'), name: 'Contributor', color: '#7FD1AE', rank: 50 },
+    { id: g.dither, name: '@everyone', rank: 0 },
+  ],
+  [g.rust]: [
+    { id: snow('role-mod'), name: 'Moderator', color: '#E86A92', rank: 100 },
+    { id: snow('role-helper'), name: 'Helper', color: '#5C7CFA', rank: 50 },
+    { id: g.rust, name: '@everyone', rank: 0 },
+  ],
+  [g.hk]: [{ id: g.hk, name: '@everyone', rank: 0 }],
+};
+const DISCORD_STAFF: Record<string, string> = {
+  [D.zyan.nativeId]: 'role-maint',
+  [D.quinn.nativeId]: 'role-maint',
+  [D.lev.nativeId]: 'role-contrib',
+  [D.mara.nativeId]: 'role-mod',
+  [D.hannah.nativeId]: 'role-helper',
+};
+
+/** A demo place's settings, changed in memory by `configure` until the hub restarts. */
+interface DemoPlace {
+  values: Partial<P.AboutValues>;
+  pinned: string[];
+  invite: string | null;
+}
+const demoPlaces = new Map<string, DemoPlace>();
+
+const lc = (s: string) => s[0].toUpperCase() + s.slice(1);
+const NETWORK_META_NAME: Record<P.Network, string> = Object.fromEntries(Object.entries(NETWORK_META).map(([k, m]) => [k, m.name])) as Record<P.Network, string>;
+
 const running = new Map<AccKey, DemoAdapter>();
 let chatterTimer: Timer | undefined;
 let chatterIdx = 0;
@@ -820,6 +888,234 @@ class DemoAdapter implements InprocAdapter {
     return { canReact: true, custom: [] };
   }
 
+  private findConv(nativeId: string): DemoConv | undefined {
+    return CONVS.find((c) => c.fact.nativeId === nativeId && c.acc.includes(this.key));
+  }
+
+  private findSpace(nativeId: string): DemoSpace | undefined {
+    return SPACES.find((x) => x.fact.nativeId === nativeId && x.acc.includes(this.key));
+  }
+
+  /** The Discord server a channel is in, through its category. */
+  private guildOf(c: DemoConv): string | null {
+    const parent = c.fact.parentConversation ? this.findConv(c.fact.parentConversation) : null;
+    const sec = (parent ?? c).fact.spaces?.[0]?.nativeId;
+    const space = sec ? SPACES.find((x) => x.fact.nativeId === sec) : null;
+    return space?.fact.kind === 'section' ? (space.fact.parents?.[0]?.nativeId ?? null) : (space?.fact.nativeId ?? null);
+  }
+
+  private place(target: P.AboutTarget): { place: DemoPlace; conv?: DemoConv; space?: DemoSpace } {
+    const conv = target.kind === 'conversation' ? this.findConv(target.nativeId) : undefined;
+    const space = target.kind === 'space' ? this.findSpace(target.nativeId) : undefined;
+    if (!conv && !space) throw new Error(`this demo account is not in that ${target.kind}`);
+    let place = demoPlaces.get(target.nativeId);
+    if (!place) {
+      const f = conv?.fact ?? space!.fact;
+      const base: Partial<P.AboutValues> = { name: f.name ?? '', topic: f.topic ?? '' };
+      if (this.network === 'signal' || this.network === 'whatsapp') Object.assign(base, { disappearing: 0, announceOnly: conv?.fact.variant === 'announcement', editInfo: 'admins', addMembers: 'admins', joinApproval: false, encrypted: true });
+      if (this.network === 'matrix') Object.assign(base, { announceOnly: conv?.fact.variant === 'announcement', joinRule: space ? 'open' : conv?.fact.shape === 'channel' ? 'space' : 'invite', history: 'shared', encrypted: !!conv?.fact.encrypted });
+      if (this.network === 'discord' && conv) Object.assign(base, { slowMode: 0, nsfw: false, announceOnly: conv.fact.variant === 'announcement' });
+      const invite =
+        this.network === 'signal' && target.nativeId === sgroup('climb', '', []).nativeId
+          ? 'https://signal.group/#CjQKIDemoClimbingCrewLink'
+          : this.network === 'discord' && space?.fact.kind === 'community'
+            ? `https://discord.gg/demo${target.nativeId.slice(-6)}`
+            : null;
+      place = { values: { ...base, ...DEMO_VALUES[target.nativeId] }, pinned: [...(DEMO_PINS[target.nativeId] ?? [])], invite };
+      demoPlaces.set(target.nativeId, place);
+    }
+    return { place, conv, space };
+  }
+
+  /** The same answers real adapters give, by each network's own rules. */
+  private about(target: P.AboutTarget): P.About {
+    const { place, conv, space } = this.place(target);
+    const v = place.values;
+    const net = this.network;
+    const shape = conv?.fact.shape;
+    const where = conv && net === 'discord' && shape !== 'direct' && shape !== 'group' ? this.guildOf(conv) : null;
+    const admin = ADMIN_IN[this.key].includes(target.nativeId) || (!!where && ADMIN_IN[this.key].includes(where));
+    const level = net === 'matrix' ? (MX_LEVEL[target.nativeId] ?? (admin || shape === 'direct' || shape === 'self' ? 100 : 0)) : admin ? 100 : 0;
+    const fields: P.AboutFields = {};
+    const set = <K extends P.AboutKey>(k: K, canEdit: boolean, reason?: string) => {
+      if (k in v || k === 'avatar') (fields as Record<string, P.AboutSetting>)[k] = { value: (v[k] ?? null) as never, canEdit, ...(reason && !canEdit ? { reason } : {}) };
+    };
+    const rules: P.AboutRule[] = [];
+    const members: P.AboutMember[] = [];
+    const pool = Object.values(net === 'discord' ? D : net === 'signal' ? S : net === 'whatsapp' ? W : M);
+    const ids = new Set<string>(conv?.fact.participants ?? []);
+    if (!ids.size) {
+      ids.add(this.self.nativeId);
+      for (const c of conv ? [conv] : CONVS.filter((c) => c.acc.includes(this.key) && c.fact.spaces?.some((sp) => sp.nativeId === target.nativeId || SPACES.some((x) => x.fact.nativeId === sp.nativeId && x.fact.parents?.some((pp) => pp.nativeId === target.nativeId)))))
+        for (const m of c.msgs) ids.add(m[1].nativeId);
+    }
+    const selfIds = net === 'discord' ? [D.zyan.nativeId, D.zyn.nativeId] : [this.self.nativeId];
+    const pic = 'Changing the picture is not supported yet.';
+    let noun = 'Group';
+    if (net === 'discord') {
+      const guild = space?.fact.kind === 'community' ? space.fact.nativeId : where;
+      const roles = guild ? DISCORD_ROLES[guild] ?? [] : [];
+      for (const id of ids) {
+        const self = selfIds.includes(id);
+        const staff = self ? (admin ? 'role-maint' : null) : DISCORD_STAFF[id];
+        const role = roles.find((r) => r.id === snow(staff ?? '')) ?? roles.find((r) => r.rank === 0);
+        members.push({ id, ...(role ? { role: role.name, rank: role.rank } : {}), ...(role?.color ? { color: role.color } : {}) });
+      }
+      if (space?.fact.kind === 'section') {
+        noun = 'Category';
+        set('name', admin, 'You need the Manage Channels permission.');
+      } else if (space) {
+        noun = 'Server';
+        set('name', admin, 'You need the Manage Server permission.');
+        set('topic', false, 'Only Community servers have a description, set in Discord.');
+        set('avatar', false, pic);
+      } else if (shape === 'direct') {
+        noun = 'Direct message';
+      } else if (shape === 'group') {
+        set('name', true);
+        set('avatar', false, pic);
+        rules.push({ what: 'Rename, change the icon, add people', who: 'Everyone in the group', you: true }, { what: 'Remove people', who: 'The group owner', you: false });
+      } else {
+        noun = shape === 'thread' ? 'Thread' : 'Channel';
+        const need = 'You need the Manage Channels permission.';
+        set('name', admin, need);
+        if (shape !== 'thread') set('topic', admin, need);
+        set('slowMode', admin, need);
+        if (shape !== 'thread') set('nsfw', admin, need);
+        set('announceOnly', false, admin ? "Change who can send in the channel's permissions, in Discord." : need);
+      }
+      if (shape !== 'direct' && shape !== 'group') {
+        rules.push(
+          { what: 'Change the name, topic and slow mode', who: 'Manage Channels', you: admin },
+          { what: 'Change the server', who: 'Manage Server', you: admin },
+          { what: 'Pin messages', who: 'Pin Messages', you: admin },
+          { what: 'Create invites', who: 'Create Instant Invite', you: true },
+        );
+      }
+      return {
+        noun,
+        fields,
+        members: { list: members, total: space || where ? Math.max(members.length, 1200) : members.length, complete: !(space || where) },
+        ...(roles.length ? { roles } : {}),
+        rules,
+        you: { role: admin ? 'Maintainer' : 'Member', rank: admin ? 100 : 0 },
+        ...(space?.fact.kind === 'community' ? { invite: { link: place.invite, canCreate: true, canRevoke: admin && !!place.invite, ...(admin ? {} : { reason: 'Only people with Manage Server can turn invites off.' }) } } : {}),
+        ...(conv && shape !== 'thread' ? { pinned: { messages: place.pinned, canEdit: admin || shape === 'direct' || shape === 'group', reason: 'You need the Pin Messages permission.' } } : {}),
+        ...(space?.fact.kind === 'community' ? { facts: [{ label: 'Verification level', value: 'Low: a verified email' }] } : {}),
+      };
+    }
+    if (net === 'signal' || net === 'whatsapp') {
+      const wa = net === 'whatsapp';
+      noun = space ? 'Community' : shape === 'direct' ? 'Chat' : shape === 'self' ? 'Note to Self' : 'Group';
+      for (const id of ids) {
+        const isAdmin = id === this.self.nativeId ? admin : wa ? id === W.ines.nativeId || id === W.hoa.nativeId : id === S.priya.nativeId || id === S.mom.nativeId || id === S.quinn.nativeId;
+        const owner = wa && isAdmin && id !== this.self.nativeId;
+        members.push({ id, role: owner ? 'Group owner' : isAdmin ? 'Admin' : 'Member', rank: owner ? 110 : isAdmin ? 100 : 0 });
+      }
+      if (shape === 'direct' || shape === 'self') {
+        set('disappearing', true);
+        set('encrypted', false, `Always on in ${NETWORK_META_NAME[net]}.`);
+        return { noun, fields, members: { list: members, complete: true }, rules: [{ what: 'Change disappearing messages', who: shape === 'self' ? 'You' : 'Either of you', you: true }] };
+      }
+      const info = admin || v.editInfo === 'everyone';
+      const onlyAdmins = 'Only admins can change this.';
+      const lockedInfo = wa ? 'Only admins can edit this group’s info.' : 'Only admins can edit this group’s details.';
+      set('name', info, lockedInfo);
+      set('topic', info, lockedInfo);
+      set('avatar', false, info ? pic : lockedInfo);
+      set('disappearing', info, lockedInfo);
+      set('announceOnly', admin, onlyAdmins);
+      set('editInfo', admin, onlyAdmins);
+      set('addMembers', admin, onlyAdmins);
+      set('joinApproval', admin, onlyAdmins);
+      set('encrypted', false, `Always on in ${NETWORK_META_NAME[net]}.`);
+      if (!wa && fields.joinApproval) fields.joinApproval = { ...fields.joinApproval, value: null, reason: 'Signal does not say whether approval is on.' };
+      const who = (w: P.Who | undefined) => (w === 'everyone' ? 'All members' : 'Only admins');
+      rules.push(
+        { what: 'Edit name, description and disappearing messages', who: who(v.editInfo), you: info },
+        { what: 'Add members', who: who(v.addMembers), you: admin || v.addMembers === 'everyone' },
+        { what: 'Send messages', who: v.announceOnly ? 'Only admins' : 'All members', you: admin || !v.announceOnly },
+        { what: 'Change these settings and the invite link', who: 'Only admins', you: admin },
+      );
+      return {
+        noun,
+        fields,
+        members: { list: members, complete: true },
+        roles: [
+          ...(wa ? [{ id: 'superadmin', name: 'Group owner', rank: 110 }] : []),
+          { id: 'admin', name: 'Admin', rank: 100, count: members.filter((m) => (m.rank ?? 0) >= 100).length },
+          { id: 'member', name: 'Member', rank: 0, count: members.filter((m) => !m.rank).length },
+        ],
+        rules,
+        you: { role: admin ? 'Admin' : 'Member', rank: admin ? 100 : 0 },
+        invite: { link: admin ? place.invite : wa ? null : place.invite, canCreate: admin, canRevoke: admin && !!place.invite, ...(admin ? {} : { reason: 'Only admins can change the invite link.' }) },
+        ...(wa && conv ? { facts: [{ label: 'Created', value: '2024-03-02' }] } : []),
+      };
+    }
+    // Matrix: power levels.
+    noun = space ? 'Space' : 'Room';
+    const pl = (n: number) => level >= n;
+    const need = (n: number) => `Needs power level ${n}; yours is ${level}.`;
+    set('name', pl(50), need(50));
+    set('topic', pl(50), need(50));
+    set('avatar', false, pl(50) ? pic : need(50));
+    if (conv) set('announceOnly', pl(100), need(100));
+    set('joinRule', pl(100), need(100));
+    if (conv) set('history', pl(100), need(100));
+    if (conv) set('encrypted', !v.encrypted && pl(100), v.encrypted ? 'Encryption cannot be turned off once on.' : need(100));
+    for (const id of ids) {
+      const lvl = id === this.self.nativeId ? level : id === M.kai.nativeId || id === M.lina.nativeId || id === M.jules.nativeId ? 100 : id === M.nixbot.nativeId ? 50 : 0;
+      members.push({ id, rank: lvl, role: lvl >= 100 ? 'Admin' : lvl >= 50 ? 'Moderator' : 'Member' });
+    }
+    const alias = conv?.fact.name ? `#${conv.fact.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}:${target.nativeId.split(':')[1]}` : null;
+    rules.push(
+      { what: 'Change name, topic and picture', who: 'Moderators (50)', you: pl(50) },
+      { what: 'Change join rules, history and encryption', who: 'Admins (100)', you: pl(100) },
+      { what: 'Invite people', who: 'Everyone (0)', you: true },
+      { what: 'Remove or ban people', who: 'Moderators (50)', you: pl(50) },
+      { what: 'Pin messages', who: 'Moderators (50)', you: pl(50) },
+    );
+    return {
+      noun,
+      fields,
+      members: { list: members, complete: true },
+      roles: [
+        { id: '100', name: 'Admin', rank: 100 },
+        { id: '50', name: 'Moderator', rank: 50 },
+        { id: '0', name: 'Member', rank: 0 },
+      ],
+      rules,
+      you: { role: lc(level >= 100 ? 'admin' : level >= 50 ? 'moderator' : 'member'), rank: level },
+      invite: { link: `https://matrix.to/#/${encodeURIComponent(alias ?? target.nativeId)}`, canCreate: false, derived: true, reason: 'Matrix links are made from the room’s address, not issued.' },
+      ...(conv ? { pinned: { messages: place.pinned, canEdit: pl(50), reason: need(50) } } : {}),
+      facts: [{ label: 'Room version', value: '11' }],
+    };
+  }
+
+  /** Apply a change the hub has checked, and say so the way the network would. */
+  private configure(target: P.AboutTarget, change: P.AboutChange): P.About {
+    const { place, conv, space } = this.place(target);
+    if (change.key === 'invite') place.invite = change.op === 'create' ? `https://${this.network === 'signal' ? 'signal.group/#' : this.network === 'whatsapp' ? 'chat.whatsapp.com/' : 'discord.gg/'}demo${Date.now().toString(36)}` : null;
+    else if (change.key === 'pin') {
+      place.pinned = place.pinned.filter((m) => m !== change.message);
+      if (!change.remove) place.pinned.unshift(change.message);
+    } else (place.values as Record<string, unknown>)[change.key] = change.value;
+    if (change.key === 'name' || change.key === 'topic') {
+      if (conv) {
+        conv.fact = { ...conv.fact, [change.key]: change.value };
+        this.emit({ t: 'conversation', conversation: conv.fact });
+      } else if (space) {
+        space.fact = { ...space.fact, [change.key]: change.value };
+        this.emit({ t: 'space', space: space.fact });
+      }
+    }
+    if (conv && (this.network === 'signal' || this.network === 'whatsapp') && change.key !== 'pin') {
+      const what = change.key === 'invite' ? (change.op === 'create' ? 'reset the group link' : 'turned off the group link') : `changed ${P_ABOUT_LABEL[change.key].toLowerCase()}`;
+      this.emit({ t: 'message', live: false, message: { nativeId: `${target.nativeId}~cfg-${Date.now()}`, conversation: target.nativeId, author: this.self.nativeId, ts: Date.now(), kind: 'system', body: `You ${what}.` } });
+    }
+    return this.about(target);
+  }
+
   start(emit: (ev: P.AdapterEvent) => void) {
     this.emit = emit;
     running.set(this.key, this);
@@ -829,7 +1125,7 @@ class DemoAdapter implements InprocAdapter {
     const ago = (min: number) => epoch - min * 60_000;
 
     // Discord's demo accounts forward natively, as the real adapter does; the others leave it to the hub.
-    const caps: P.Capability[] = ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect', 'typing'];
+    const caps: P.Capability[] = ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect', 'typing', 'about', 'configure'];
     emit({ t: 'hello', network: this.network, version: 'demo', capabilities: this.network === 'discord' ? [...caps, 'forward'] : caps });
     emit({ t: 'status', status: 'online', self: { ...this.self, isSelf: true } });
     const pool = this.network === 'discord' ? D : this.network === 'signal' ? S : this.network === 'whatsapp' ? W : M;
@@ -1017,6 +1313,14 @@ class DemoAdapter implements InprocAdapter {
         break;
       case 'reactionContext':
         reply(this.reactionContext());
+        break;
+      case 'about':
+      case 'configure':
+        try {
+          reply(cmd.t === 'about' ? this.about(cmd.target) : this.configure(cmd.target, cmd.change));
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
         break;
       case 'reactors':
         reply({ authors: Object.values(D).filter((i) => i !== D.zyan && i !== D.zyn).slice(0, 5).map((i) => i.nativeId) });
