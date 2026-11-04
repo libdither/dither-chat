@@ -33,6 +33,7 @@ import {
   noteToSelf,
   parseConversation,
   parseMsgId,
+  personAbout,
   type SeenMessage,
 } from './mapping.ts';
 import { fromSignal, toSignal } from './markdown.ts';
@@ -41,7 +42,7 @@ import { AdapterState } from './state.ts';
 import type { SigContact, SigGroup, SigReceive, SigSendResult } from './types.ts';
 
 export const ADAPTER_VERSION = '0.1.0';
-export const CAPABILITIES: P.Capability[] = ['send', 'react', 'edit', 'redact', 'markRead', 'typing', 'media', 'sendMedia', 'openDirect', 'about', 'configure'];
+export const CAPABILITIES: P.Capability[] = ['send', 'react', 'edit', 'redact', 'markRead', 'typing', 'media', 'sendMedia', 'openDirect', 'about', 'configure', 'profile'];
 export const LINK_MESSAGE = 'Scan this QR code in Signal → Settings → Linked devices';
 
 export interface AdapterHost {
@@ -77,6 +78,7 @@ interface LinkedAccount {
 }
 
 const lc = (s: string | null | undefined) => (s ? s.toLowerCase() : null);
+const ACI = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export class SignalAdapter {
   readonly signalDir: string;
@@ -673,6 +675,8 @@ export class SignalAdapter {
         return this.about(cmd.target);
       case 'configure':
         return this.configure(cmd.target, cmd.change);
+      case 'profile':
+        return this.profile(cmd.who);
       case 'shutdown':
         return undefined;
     }
@@ -984,6 +988,68 @@ export class SignalAdapter {
     }
     this.emitMembers(g);
     return this.groupAbout(g);
+  }
+
+  // ---------------------------------------------------------------- profiles
+
+  /**
+   * What signal-cli already knows about someone, read from its own store: listContacts by ACI never looks anything
+   * up (a number or username would). Contacts first, then everyone it knows, so the second read says "not a contact".
+   */
+  private async profile(who: string): Promise<P.PersonAbout> {
+    if (!ACI.test(who)) throw new Error('not a Signal person id');
+    const id = who.toLowerCase();
+    if (id === this.self) return this.selfProfile();
+    const find = async (params: Record<string, unknown>) => ((await this.rpc.call<SigContact[]>('listContacts', { recipient: [id], ...params }, 30_000)) ?? []).find((c) => lc(c.uuid) === id);
+    try {
+      let c = await find({});
+      const inContacts = !!c;
+      c ??= await find({ allRecipients: true });
+      if (!c) return {};
+      const avatarUrl = this.avatarOf(id, c.number);
+      const f = contactIdentity(c, { contact: inContacts, avatarUrl });
+      if (f) this.emitFact({ t: 'identity', identity: f });
+      return personAbout(c, { inContacts, avatarUrl });
+    } catch (e: any) {
+      this.host.log('debug', `profile read failed: ${e?.message ?? e}`);
+      return {};
+    }
+  }
+
+  /** Your own profile, and your contacts as `friends`: not blocked, with a name. */
+  private async selfProfile(): Promise<P.PersonAbout> {
+    const self = this.self;
+    const number = this.account!.number;
+    const read = async (params: Record<string, unknown>, timeoutMs: number) => {
+      try {
+        return (await this.rpc.call<SigContact[]>('listContacts', params, timeoutMs)) ?? [];
+      } catch (e: any) {
+        this.host.log('debug', `profile read failed: ${e?.message ?? e}`);
+        return null;
+      }
+    };
+    const me = (await read({ recipient: [self], allRecipients: true }, 30_000))?.find((c) => lc(c.uuid) === self);
+    const contacts = await read({}, 120_000);
+    const avatarUrl = this.avatarOf(self, number);
+    const p: P.PersonAbout = me ? personAbout(me) : {};
+    const name = p.displayName ?? this.selfName;
+    if (name) p.displayName = this.selfName = name;
+    if (avatarUrl) p.avatar = avatarUrl;
+    p.handle = number;
+    p.links = [{ label: 'Phone', value: number, url: `tel:${number}` }];
+    if (contacts) {
+      const friends = new Set<string>();
+      for (const c of contacts) {
+        const id = lc(c.uuid);
+        if (!id || id === self || c.isBlocked || c.isHidden || c.unregistered || !displayNameOf(c)) continue;
+        const f = contactIdentity(c, { contact: true, avatarUrl: this.avatarOf(id, c.number) });
+        if (f) this.emitFact({ t: 'identity', identity: f });
+        friends.add(id);
+      }
+      p.friends = [...friends];
+    }
+    this.emitFact({ t: 'identity', identity: { nativeId: self, handle: number, ...(name ? { displayName: name } : {}), ...(avatarUrl ? { avatarUrl } : {}), isSelf: true } });
+    return p;
   }
 
   /** What Signal's own clients show for a change you made. Nothing comes back to this device for it. */

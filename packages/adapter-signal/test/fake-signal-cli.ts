@@ -16,6 +16,7 @@
  *       exit with the code inside; DIR/fake-hang holding this daemon's pid makes it
  *       stop answering (socket stays open). If data/accounts.json marks the account
  *       unregistered it fails like the real one ("User X is not registered.").
+ *       listContacts without allRecipients lists only contacts, also when asked for some.
  *       updateGroup and updateContact change the groups and contacts it lists
  *       (kept in DIR/fake-groups.json and DIR/fake-contacts.json); updateGroup
  *       without a groupId makes a new group, as the real one does.
@@ -96,8 +97,12 @@ if (sub === 'daemon') {
     if (existsSync(f)) return JSON.parse(readFileSync(f, 'utf8'));
     return [
       { number: NUMBER, uuid: SELF, username: null, name: '', givenName: null, familyName: null, nickName: null, nickGivenName: null, nickFamilyName: null, note: null, color: null, isArchived: false, isBlocked: false, isHidden: false, messageExpirationTime: 0, profileSharing: true, unregistered: false, profile: { lastUpdateTimestamp: 1, givenName: process.env.FAKE_PROFILE_NAME ?? 'Zyan', familyName: null, about: null, aboutEmoji: null, hasAvatar: false, mobileCoinAddress: null } },
-      { number: '+15550137', uuid: 'a11ce000-2222-4ccc-9ddd-000000000002', username: null, name: 'Alice Chen', givenName: 'Alice', familyName: 'Chen', nickName: null, nickGivenName: null, nickFamilyName: null, note: null, color: null, isArchived: false, isBlocked: false, isHidden: false, messageExpirationTime: 0, profileSharing: true, unregistered: false, profile: { lastUpdateTimestamp: 1, givenName: 'Alice', familyName: null, about: null, aboutEmoji: null, hasAvatar: false, mobileCoinAddress: null } },
+      { number: '+15550137', uuid: 'a11ce000-2222-4ccc-9ddd-000000000002', username: null, name: 'Alice Chen', givenName: 'Alice', familyName: 'Chen', nickName: null, nickGivenName: null, nickFamilyName: null, note: null, color: null, isArchived: false, isBlocked: false, isHidden: false, messageExpirationTime: 0, profileSharing: true, unregistered: false, profile: { lastUpdateTimestamp: 1, givenName: 'Alice', familyName: null, about: 'Belay on', aboutEmoji: '🧗', hasAvatar: true, mobileCoinAddress: null } },
       { number: '+15550161', uuid: '5a3e0000-3333-4eee-afff-000000000003', username: null, name: '', givenName: null, familyName: null, nickName: null, nickGivenName: null, nickFamilyName: null, note: null, color: null, isArchived: false, isBlocked: false, isHidden: false, messageExpirationTime: 3600, profileSharing: true, unregistered: false, profile: { lastUpdateTimestamp: 1, givenName: 'Sam', familyName: 'Rivera', about: null, aboutEmoji: null, hasAvatar: false, mobileCoinAddress: null } },
+      // Blocked, still a contact to signal-cli.
+      { number: '+15550142', uuid: 'b10c0000-5555-4ddd-9eee-000000000005', username: null, name: 'Blake', givenName: 'Blake', familyName: null, nickName: null, nickGivenName: null, nickFamilyName: null, note: null, color: null, isArchived: false, isBlocked: true, isHidden: false, messageExpirationTime: 0, profileSharing: false, unregistered: false, profile: null },
+      // Known from a group long gone, never a contact; number not shared. `_contact: false` keeps it out of the contacts listing.
+      { _contact: false, number: null, uuid: '0b5e7ae0-4444-4bbb-8ccc-000000000004', username: null, name: null, givenName: null, familyName: null, nickName: null, nickGivenName: null, nickFamilyName: null, note: null, color: null, isArchived: false, isBlocked: false, isHidden: false, messageExpirationTime: 0, profileSharing: false, unregistered: false, profile: { lastUpdateTimestamp: 1, givenName: 'Robin', familyName: null, about: 'Gone bouldering', aboutEmoji: null, hasAvatar: false, mobileCoinAddress: null } },
     ];
   };
   const groups = () => {
@@ -212,10 +217,10 @@ if (sub === 'daemon') {
   const handle = (method: string, params: any): unknown => {
     switch (method) {
       case 'listContacts': {
-        const all = contacts();
+        // As the real one: without allRecipients only contacts (not hidden, still registered), recipients or not.
+        const all = params?.allRecipients ? contacts() : contacts().filter((c: any) => c.uuid !== SELF && c._contact !== false && !c.isHidden && !c.unregistered);
         const want: string[] | undefined = params?.recipient ? [].concat(params.recipient) : undefined;
-        if (want) return all.filter((c: any) => want.includes(c.uuid) || want.includes(c.number));
-        return params?.allRecipients ? all : all.filter((c: any) => c.uuid !== SELF);
+        return all.filter((c: any) => !want || want.includes(c.uuid) || want.includes(c.number)).map(({ _contact, ...c }: any) => c);
       }
       case 'getUserStatus':
         return [].concat(params.recipient).map((r: string) => {

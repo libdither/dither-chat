@@ -11,7 +11,7 @@
 
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { AdapterEvent, AttachmentFact, AttachmentKind, ConversationFact, IdentityFact, MessageFact, MessageKind } from '@dither-chat/protocol';
+import type { AdapterEvent, AttachmentFact, AttachmentKind, ConversationFact, IdentityFact, MessageFact, MessageKind, PersonAbout } from '@dither-chat/protocol';
 import { fromSignal, plainText } from './markdown.ts';
 import type { SigAttachment, SigContact, SigDataMessage, SigEnvelope, SigGroup, SigReceive, SigSentMessage } from './types.ts';
 
@@ -125,11 +125,14 @@ export function displayNameOf(c: SigContact): string | undefined {
   );
 }
 
+/** Their number, else their username. */
+const handleOf = (c: SigContact) => c.number || (c.username ? `@${c.username}` : undefined);
+
 export function contactIdentity(c: SigContact, opts: { contact: boolean; avatarUrl?: string; self?: string }): IdentityFact | null {
   const id = lc(c.uuid);
   if (!id) return null;
   const f: IdentityFact = { nativeId: id };
-  const handle = c.number ?? (c.username ? `@${c.username}` : null);
+  const handle = handleOf(c);
   if (handle) f.handle = handle;
   const name = displayNameOf(c);
   if (name) f.displayName = name;
@@ -137,6 +140,34 @@ export function contactIdentity(c: SigContact, opts: { contact: boolean; avatarU
   if (opts.self && id === opts.self) f.isSelf = true;
   else if (opts.contact) f.contact = true;
   return f;
+}
+
+/**
+ * What Signal's own About sheet shows for someone, from their listContacts record. `inContacts`: listed without
+ * allRecipients (signal-cli's contacts: not hidden, still registered); leave it out for yourself.
+ */
+export function personAbout(c: SigContact, opts: { inContacts?: boolean; avatarUrl?: string } = {}): PersonAbout {
+  const p: PersonAbout = {};
+  const name = displayNameOf(c);
+  if (name) p.displayName = name;
+  const handle = handleOf(c);
+  if (handle) p.handle = handle;
+  if (opts.avatarUrl) p.avatar = opts.avatarUrl;
+  const bio = c.profile?.about?.trim();
+  if (bio) p.bio = bio;
+  const emoji = c.profile?.aboutEmoji?.trim();
+  if (emoji) p.status = { emoji };
+  if (opts.inContacts !== undefined) p.relationship = c.isBlocked ? 'blocked' : opts.inContacts ? 'contact' : 'stranger';
+  if (c.number) p.links = [{ label: 'Phone', value: c.number, url: `tel:${c.number}` }];
+  const facts: { label: string; value: string }[] = [];
+  // The name they gave themselves, when your nickname or address book shows another.
+  const own = joinName(c.profile?.givenName, c.profile?.familyName);
+  if (own && own !== name) facts.push({ label: 'Profile name', value: own });
+  const note = c.note?.trim();
+  if (note) facts.push({ label: 'Note', value: note });
+  if (c.unregistered) facts.push({ label: 'Account', value: 'No longer on Signal' });
+  if (facts.length) p.facts = facts;
+  return p;
 }
 
 export function groupConversation(g: SigGroup, opts: { avatarUrl?: string } = {}): ConversationFact {
