@@ -9,6 +9,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { configurePlan, mapAbout, UNSURE } from '../src/about.ts';
+import { mapProfile } from '../src/profile.ts';
 
 const HOOK = readFileSync(process.env.HOOK_PATH ?? join(import.meta.dir, '../src/extension/hook.js'), 'utf8');
 
@@ -677,6 +678,248 @@ describe('hook.js with several rspack runtimes', () => {
       grants = {};
       const locked = (await aboutOf('conversation', '300')).raw;
       expect(() => configurePlan(locked, { key: 'name', value: 'x' })).toThrow('You need the Manage Channels permission.');
+    });
+  });
+
+  describe('profiles', () => {
+    const WHO = '42';
+    const calls: string[] = [];
+    let fetchFails: unknown = null;
+    // The body the server answers a profile with (snake_case), as the client's fetch receives it.
+    const body = (id: string) => ({
+      user: { id, username: 'ann', global_name: 'Ann', avatar: 'aa', banner: null },
+      user_profile: { bio: 'hi there', pronouns: 'they/them', banner: 'bb', accent_color: 255 },
+      connected_accounts: [
+        { type: 'github', id: '1', name: 'ann-gh', verified: true, access_token: 'never forward this' },
+        { type: 'contacts', id: '2', name: 'hidden by the client' },
+      ],
+      mutual_guilds: [{ id: '100', nick: 'Annie' }],
+      mutual_friends: [{ id: '7', username: 'bo', global_name: null, email: 'never@forward.this' }],
+      mutual_friends_count: 1,
+      legacy_username: 'ann#0001',
+    });
+    // The client's profile store, filled by its fetch the way USER_PROFILE_FETCH_SUCCESS fills it.
+    const profiles = new Map<string, any>();
+    const supported = (t: string) => t !== 'contacts';
+    const land = (b: ReturnType<typeof body>) =>
+      profiles.set(b.user.id, {
+        bio: b.user_profile.bio,
+        pronouns: b.user_profile.pronouns,
+        banner: b.user_profile.banner,
+        accentColor: b.user_profile.accent_color,
+        connectedAccounts: b.connected_accounts.filter((a) => supported(a.type)),
+        legacyUsername: b.legacy_username,
+        guilds: b.mutual_guilds.map((g) => ({ guild: guildRecords.get(g.id), nick: g.nick })),
+        friends: b.mutual_friends.map((u) => ({ key: u.id, user: { ...u, globalName: u.global_name }, status: 'online' })),
+      });
+    const profileStore: any = store('UserProfileStore', {
+      isFetchingProfile: () => false,
+      getUserProfile: (id: string) => profiles.get(id),
+      getMutualGuilds: (id: string) => profiles.get(id)?.guilds,
+      getMutualFriends: (id: string) => profiles.get(id)?.friends,
+      getMutualFriendsCount: (id: string) => profiles.get(id)?.friends?.length,
+    });
+    const dispatchLocal = (_a: unknown) => {};
+    // As in the client: the fetch shares its module with the terms-of-service call, under mangled names.
+    const fetchModule: any = {
+      Q9() {
+        calls.push('ACCEPTED THE TERMS');
+      },
+      async eO(id: string, o: any = {}, onBody?: (b: unknown) => void) {
+        calls.push(`fetch ${id} ${JSON.stringify(o)}`);
+        dispatchLocal({ type: "USER_PROFILE_FETCH_START", userId: id });
+        if (fetchFails) throw fetchFails;
+        const query = { type: o.type, with_mutual_guilds: o.withMutualGuilds, with_mutual_friends: o.withMutualFriends };
+        void query;
+        const b = body(id);
+        onBody?.(b);
+        land(b);
+      },
+    };
+    // A click on someone runs this: it skips a profile fetched in the last minute, else it runs the fetch.
+    function maybeFetchProfile(id: string, avatar: unknown, o: any = {}) {
+      const { waitForRefetch = true, ...rest } = o;
+      void waitForRefetch;
+      if (profileStore.isFetchingProfile(id)) return Promise.resolve();
+      calls.push(`open ${id} ${avatar}`);
+      return fetchModule.eO(id, rest);
+    }
+    const platforms = {
+      github: { name: 'GitHub', getPlatformUserUrl: (a: { name: string }) => `https://github.com/${a.name}` },
+    };
+
+    function profilePage(has: { open?: boolean; store?: boolean; fetch?: boolean; platforms?: boolean }, late = false) {
+      handlers.clear();
+      calls.length = 0;
+      profiles.clear();
+      me = { id: '1', username: 'someone' };
+      const users: Record<string, any> = {
+        [WHO]: { id: WHO, username: 'ann', globalName: 'Ann', avatar: 'aa', email: 'never@forward.this' },
+        '7': { id: '7', username: 'bo' },
+        '8': { id: '8', username: 'cy' },
+      };
+      userStoreGetUser.value = (id: string) => users[id];
+      guildRecords.clear();
+      guildRecords.set('100', { id: '100', name: 'Test server' });
+      const p = page();
+      p.runHook();
+      const web = runtime(p.win, 'web');
+      chunk(p.win, '700', {
+        stores: storeModule,
+        people: (_m: any, e: any) => {
+          e.r = store('RelationshipStore', {
+            getRelationshipType: (id: string) => (id === WHO || id === '7' || id === '8' ? 1 : 0),
+            getSince: (id: string) => (id === WHO ? '2020-02-02T00:00:00.000Z' : undefined),
+            getFriendIDs: () => [WHO, '7', '8'],
+          });
+          e.s = store('PresenceStore', { getActivities: (id: string) => (id === WHO ? [{ type: 0, name: 'A game' }, { type: 4, name: 'Custom Status', state: 'busy', emoji: { name: '🔧' } }] : []) });
+          e.m = store('GuildMemberStore', {
+            getMember: (g: string, u: string) => (g === '100' && u === WHO ? { userId: WHO, nick: 'Annie', roles: ['201', '202'], joinedAt: '2023-04-05T06:07:08.000Z' } : null),
+            getNick: () => null,
+          });
+          e.g = store('GuildRoleStore', {
+            getRoles: () => ({
+              '100': { id: '100', name: '@everyone', position: 0, color: 0 },
+              '202': { id: '202', name: 'Mod', position: 2, colorString: '#e86a92' },
+              '201': { id: '201', name: 'Helper', position: 1, color: 0x5c7cfa },
+            }),
+          });
+        },
+      });
+      const profileChunk = () =>
+        chunk(p.win, '701', {
+          profile: (_m: any, e: any) => {
+            if (has.store) e.p = profileStore;
+            if (has.platforms) e.t = { get: (t: string) => (platforms as any)[t] ?? null, getByUrl() {}, isSupported: supported, map() {}, filter() {}, find() {} };
+          },
+          fetch: (_m: any, e: any) => {
+            if (has.fetch) Object.assign(e, fetchModule);
+          },
+          open: (_m: any, e: any) => {
+            if (has.open) e.A = maybeFetchProfile;
+          },
+        });
+      web.T('stores');
+      web.T('people');
+      const load = () => {
+        profileChunk();
+        web.T('profile');
+        web.T('fetch');
+        web.T('open');
+      };
+      if (!late) load();
+      p.tick();
+      if (late) load(); // after the finders have looked
+      return p;
+    }
+    let n = 0;
+    async function ask(p: ReturnType<typeof page>, c: unknown) {
+      const id = `p${n++}`;
+      p.win.message?.({ source: p.win, data: { __dither_bridge__: 'down', payload: { t: 'cmd', id, cmd: c } } });
+      for (let i = 0; i < 5; i++) await Bun.sleep(0);
+      const r = p.posted.find((m) => m.t === 'reply' && m.id === id);
+      if (r?.ok) expect(JSON.parse(JSON.stringify(r.result))).toEqual(r.result);
+      return r;
+    }
+    afterEach(() => {
+      fetchFails = null;
+      guildRecords.clear();
+      userStoreGetUser.value = () => null;
+      rest.get = () => {};
+      me = null;
+    });
+
+    test("opens it as a click does, then reads the client's stores", async () => {
+      const r = await ask(profilePage({ open: true, store: true, fetch: true, platforms: true }), { kind: 'profile', userId: WHO });
+      expect(r.ok).toBe(true);
+      expect(calls).toEqual(['open 42 undefined', 'fetch 42 {"type":"popout","withMutualGuilds":true,"withMutualFriends":true}']);
+      expect(r.result).toMatchObject({
+        selfId: '1',
+        user: { id: WHO, username: 'ann', global_name: 'Ann', avatar: 'aa' },
+        bio: 'hi there',
+        pronouns: 'they/them',
+        banner: 'bb',
+        accent_color: 255,
+        legacy_username: 'ann#0001',
+        relationship: 1,
+        friend_since: '2020-02-02T00:00:00.000Z',
+        custom_status: { text: 'busy', emoji: { id: null, name: '🔧', animated: false } },
+        mutual_friends_count: 1,
+      });
+      expect(r.result.connected_accounts).toEqual([{ type: 'github', id: '1', name: 'ann-gh', verified: true, label: 'GitHub', url: 'https://github.com/ann-gh' }]);
+      expect(r.result.mutual_guilds).toEqual([
+        {
+          id: '100',
+          name: 'Test server',
+          nick: 'Annie',
+          joined_at: '2023-04-05T06:07:08.000Z',
+          roles: [
+            { id: '201', name: 'Helper', color: '#5c7cfa', position: 1, hoist: false },
+            { id: '202', name: 'Mod', color: '#e86a92', position: 2, hoist: false },
+          ],
+        },
+      ]);
+      expect(r.result.mutual_friends).toEqual([expect.objectContaining({ id: '7', username: 'bo', global_name: null })]);
+      expect(r.result.friends).toBeUndefined();
+      expect(r.result.error).toBeUndefined();
+      expect(JSON.stringify(r.result)).not.toContain('never');
+
+      const about = mapProfile(r.result, WHO);
+      expect(about).toMatchObject({ displayName: 'Ann', banner: 'https://cdn.discordapp.com/banners/42/bb.webp?size=600', relationship: 'friend', status: { text: 'busy', emoji: '🔧' } });
+      expect(about.mutualSpaces).toEqual([{ id: '100', nick: 'Annie', roles: [{ name: 'Mod', color: '#e86a92' }, { name: 'Helper', color: '#5c7cfa' }], joinedAt: Date.UTC(2023, 3, 5, 6, 7, 8) }]);
+    });
+
+    test('without the open, the fetch itself, never its neighbour; its body when there is no store', async () => {
+      const r = await ask(profilePage({ fetch: true }), { kind: 'profile', userId: WHO });
+      expect(r.ok).toBe(true);
+      expect(calls).toEqual(['fetch 42 {"type":"popout","withMutualGuilds":true,"withMutualFriends":true}']);
+      expect(r.result).toMatchObject({ bio: 'hi there', banner: 'bb', accent_color: 255, mutual_friends_count: 1 });
+      expect(r.result.mutual_guilds).toMatchObject([{ id: '100', name: 'Test server', nick: 'Annie', roles: [{ name: 'Helper' }, { name: 'Mod' }] }]);
+      // No table to ask: the platform's name and link come from the adapter, and nothing marks them as the client's.
+      expect(r.result.connected_accounts).toEqual([
+        { type: 'github', id: '1', name: 'ann-gh', verified: true },
+        { type: 'contacts', id: '2', name: 'hidden by the client', verified: false },
+      ]);
+      expect(mapProfile(r.result, WHO).links).toEqual([{ label: 'GitHub', value: 'ann-gh', url: 'https://github.com/ann-gh', verified: true }]);
+      expect(JSON.stringify(r.result)).not.toContain('never');
+    });
+
+    test("without either, the same request through the client's REST module", async () => {
+      const seen: any[] = [];
+      rest.get = (req: any) => (seen.push(req), Promise.resolve({ body: body(WHO) }));
+      const r = await ask(profilePage({}), { kind: 'profile', userId: WHO });
+      expect(seen).toEqual([{ url: '/users/42/profile', query: { type: 'popout', with_mutual_guilds: true, with_mutual_friends: true }, body: undefined }]);
+      expect(r.result).toMatchObject({ bio: 'hi there', mutual_guilds: [{ id: '100', nick: 'Annie' }], mutual_friends: [{ id: '7' }] });
+    });
+
+    test('modules that load after the finders looked are still found', async () => {
+      const r = await ask(profilePage({ open: true, store: true, fetch: true }, true), { kind: 'profile', userId: WHO });
+      expect(calls[0]).toBe('open 42 undefined');
+      expect(r.result.bio).toBe('hi there');
+    });
+
+    test('a refused fetch answers with what the client has; a rate limit is passed on', async () => {
+      fetchFails = { status: 403, body: { message: 'Missing Access', code: 50001 } };
+      const r = await ask(profilePage({ fetch: true, store: true }), { kind: 'profile', userId: WHO });
+      expect(r.ok).toBe(true);
+      expect(r.result).toMatchObject({ error: 'Missing Access (403)', user: { id: WHO, username: 'ann' }, relationship: 1, mutual_guilds: null, mutual_friends: null });
+      expect(mapProfile(r.result, WHO)).toMatchObject({ displayName: 'Ann', relationship: 'friend' });
+
+      fetchFails = { status: 429, body: { message: 'You are being rate limited.', retry_after: 3 } };
+      expect(await ask(profilePage({ fetch: true, store: true }), { kind: 'profile', userId: WHO })).toMatchObject({ ok: false, error: 'You are being rate limited. (429)', retryAfter: 3 });
+    });
+
+    test('your own: no mutuals asked for, your friends listed', async () => {
+      const r = await ask(profilePage({ open: true, store: true, fetch: true }), { kind: 'profile', userId: '1' });
+      expect(calls).toEqual(['open 1 undefined', 'fetch 1 {"type":"popout","withMutualGuilds":false,"withMutualFriends":false}']);
+      expect(r.result.friends.map((u: any) => u.id)).toEqual([WHO, '7', '8']);
+      expect(mapProfile(r.result, '1').friends).toEqual([WHO, '7', '8']);
+    });
+
+    test('asks for nothing without a user id', async () => {
+      const r = await ask(profilePage({ open: true, store: true, fetch: true }), { kind: 'profile', userId: '../users/@me' });
+      expect(r).toMatchObject({ ok: false, error: 'whose profile?' });
+      expect(calls).toEqual([]);
     });
   });
 

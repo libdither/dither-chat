@@ -236,6 +236,8 @@ export type HookCommand =
   | { kind: 'about'; target: 'conversation' | 'space'; id: string }
   /** PATCH one channel or server; reply { channel } or { guild } as it now stands. */
   | { kind: 'configure'; channelId?: string; guildId?: string; patch: RawAboutPatch }
+  /** reply RawProfile: the client's own profile fetch, then its stores. */
+  | { kind: 'profile'; userId: string }
   /** join: reply { direct?: DirectVoiceSession }. */
   | { kind: 'call'; call: string; op: 'join'; channelId: string; mode: 'bridge' | 'direct'; muted?: boolean; deafened?: boolean }
   | { kind: 'call'; call: string; op: 'leave' }
@@ -306,4 +308,60 @@ export interface RawAboutPatch {
   topic?: string;
   rate_limit_per_user?: number;
   nsfw?: boolean;
+}
+
+// ------------------------------------------------------------------- profiles
+
+/** A connected account as the profile lists it. */
+export interface RawConnectedAccount {
+  /** "github", "steam", "twitter", ... */
+  type: string;
+  id?: string;
+  name: string;
+  verified?: boolean;
+  /** The platform's name from the client's own table ("GitHub", "X"). Absent: the hook could not ask it. */
+  label?: string;
+  /** The link the client builds for it, when it builds one. */
+  url?: string;
+}
+
+/** A server you share with them, and who they are there as far as the client has loaded them. */
+export interface RawMutualGuild {
+  id: string;
+  name?: string;
+  nick?: string | null;
+  /** Their roles there, when the client has them as a member. */
+  roles?: RawRole[];
+  joined_at?: string | null;
+}
+
+/**
+ * The hook's answer to `profile`: what the client's profile shows after its own fetch, from its stores, or from the
+ * REST body when it has no such stores. null: the client did not say (not asked, or the fetch failed).
+ */
+export interface RawProfile {
+  selfId: string | null;
+  user: RawUser | null;
+  bio?: string | null;
+  pronouns?: string | null;
+  /** Banner image hash. */
+  banner?: string | null;
+  /** The banner colour, as a number. */
+  accent_color?: number | null;
+  /** The custom status line. */
+  custom_status?: { text?: string | null; emoji?: RawEmoji | null } | null;
+  /** RelationshipStore type: 0 none, 1 friend, 2 blocked, 3 they asked you, 4 you asked them. */
+  relationship?: number | null;
+  /** When you became friends (ISO). */
+  friend_since?: string | null;
+  /** Their name before the new usernames ("name#1234"). */
+  legacy_username?: string | null;
+  connected_accounts?: RawConnectedAccount[];
+  mutual_guilds?: RawMutualGuild[] | null;
+  mutual_friends?: RawUser[] | null;
+  mutual_friends_count?: number | null;
+  /** When the person is you: your friends. */
+  friends?: RawUser[];
+  /** Why the profile fetch failed, when it did; the rest is what the stores still had. */
+  error?: string;
 }

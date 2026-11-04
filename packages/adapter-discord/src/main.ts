@@ -13,14 +13,15 @@
 import { readFileSync } from 'node:fs';
 import { linkHub } from '@dither-chat/protocol/client';
 import type * as P from '@dither-chat/protocol';
-import type { BridgeUp, HookCommand, PageState, RawAbout, RawChannel, RawEmoji, RawGuild, RawUser } from './discord-types.ts';
+import type { BridgeUp, HookCommand, PageState, RawAbout, RawChannel, RawEmoji, RawGuild, RawProfile, RawUser } from './discord-types.ts';
 import { aboutUsers, configurePlan, mapAbout, withChange } from './about.ts';
+import { mapProfile, profileUsers } from './profile.ts';
 import { changedFacts, messageEvents, newState, openedDirect, translateDispatch, translateSnapshot, userFacts } from './ingest.ts';
 import { customEmoji, DISCORD_EPOCH, guildIconUrl, mapUser } from './map.ts';
 import { BridgeServer, PaceQueue } from './server.ts';
 import { Sandbox, pickDisplay } from './sandbox.ts';
 
-const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'typing', 'threads', 'media', 'liveView', 'sendMedia', 'openDirect', 'calls', 'forward', 'about', 'configure'];
+const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'typing', 'threads', 'media', 'liveView', 'sendMedia', 'openDirect', 'calls', 'forward', 'about', 'configure', 'profile'];
 const WIDTH = 1280;
 const HEIGHT = 800;
 
@@ -315,6 +316,13 @@ async function onCommand(cmd: P.AdapterCommand): Promise<unknown> {
       const r = await pace.run('configure', () => bridge.request<{ channel?: RawChannel | null; guild?: RawGuild | null }>({ kind: 'configure', ...plan }, 20_000));
       for (const ev of changedFacts(r ?? {}, st)) hub.emit(ev);
       return withChange(mapAbout(await readAbout(cmd.target)), cmd.change);
+    }
+    case 'profile': {
+      // The client's own profile fetch, as a click on them runs it; identity facts for everyone it names first.
+      const raw = await historyPace.run('profile', () => bridge.request<RawProfile>({ kind: 'profile', userId: cmd.who }, 30_000));
+      if (raw.error) log('info', 'profile fetch failed; answering with what the client still had', { error: raw.error });
+      for (const ev of userFacts(profileUsers(raw), st)) hub.emit(ev);
+      return mapProfile(raw, cmd.who);
     }
     case 'edit':
       return pace.run('edit', () => bridge.request({ kind: 'edit', channelId: cmd.conversation, messageId: cmd.message, content: cmd.body }, 20_000));
