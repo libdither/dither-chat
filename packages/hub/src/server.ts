@@ -3,7 +3,7 @@ import { createHmac } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, directTarget, discordEmojiUrl, MAX_UPLOAD, NETWORK_META, NETWORKS, sendBlocker } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, directTarget, discordEmojiUrl, IMPORT_CHUNK, MAX_UPLOAD, NETWORK_META, NETWORKS, sendBlocker } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import type { Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
@@ -12,6 +12,7 @@ import type { ReadQueue } from './readqueue.ts';
 import { validDailyDigest, validQuietHours, type Triage } from './triage.ts';
 import type { TriageVotes, Vote } from './votes.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
+import { ImportSources } from './imports/sources.ts';
 import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } from './calls.ts';
 import { compress } from './compress.ts';
 import { forwardMessage } from './forward.ts';
@@ -122,6 +123,8 @@ export class HubServer {
   private flushTimer?: Timer;
   private pruneTimer?: Timer;
   private uploads: Uploads;
+  /** Raw history sources waiting to be imported (imports/sources.ts, docs/import.md). */
+  readonly imports: ImportSources;
   private typingGate = new TypingGate();
   private usage: UsageStore;
   readonly calls: Calls;
@@ -139,6 +142,7 @@ export class HubServer {
     private opts: ServerOpts,
   ) {
     this.uploads = new Uploads(join(opts.dataDir, 'uploads'));
+    this.imports = new ImportSources(opts.dataDir, (msg) => console.warn(msg));
     this.calls = new Calls(store, sup, { turn: opts.turn, pickAccount: (c, a) => this.pickAccount(c, a) });
     this.abouts = new Abouts({
       store,
@@ -225,6 +229,7 @@ export class HubServer {
       this.extra.push(...rest.map(plain));
     }
     this.flushTimer = setInterval(() => this.flush(), 80);
+    this.imports.resume();
     this.store.journal.prune();
     this.pruneTimer = setInterval(() => this.store.journal.prune(), 3_600_000);
     return this.server;
@@ -233,6 +238,7 @@ export class HubServer {
   stop() {
     clearInterval(this.flushTimer);
     clearInterval(this.pruneTimer);
+    this.imports.stop();
     this.flush();
     this.server?.stop(true);
     this.plain?.stop(true);
@@ -546,6 +552,40 @@ export class HubServer {
       if (!bytes.length) return bad('empty file');
       if (bytes.length > MAX_UPLOAD) return bad('that file is too large', 413);
       return ok(this.uploads.put(bytes, cleanFileName(req.headers.get('x-file-name')), req.headers.get('content-type') ?? ''));
+    }
+    // History sources (docs/import.md): uploaded in pieces at their offset, so a dropped connection resumes.
+    if (path.startsWith('/api/imports')) {
+      const fail = (e: any) => Response.json({ error: String(e?.message ?? e), ...(e?.received !== undefined ? { received: e.received } : {}) }, { status: e?.status ?? 400 });
+      try {
+        if (path === '/api/imports' && method === 'GET') return ok({ sources: this.imports.list() });
+        if (path === '/api/imports' && method === 'POST') {
+          const b = await body<{ accountId?: string; name?: string; size?: number; label?: string }>();
+          const acc = b.accountId ? s.account(b.accountId) : null;
+          if (!acc) return bad('no such account', 404);
+          return ok(this.imports.create({ network: acc.network as P.Network, accountId: acc.id, name: String(b.name ?? ''), size: Number(b.size), label: b.label }));
+        }
+        if ((m = path.match(/^\/api\/imports\/([\w.-]+)\/data$/)) && method === 'PUT') {
+          if (Number(req.headers.get('content-length') ?? 0) > IMPORT_CHUNK) return bad('piece too large', 413);
+          return ok(await this.imports.put(m[1], num('offset') ?? -1, req.body));
+        }
+        if ((m = path.match(/^\/api\/imports\/([\w.-]+)\/passphrase$/)) && method === 'POST') return ok(this.imports.setPassphrase(m[1], String((await body<{ passphrase?: string }>()).passphrase ?? '')));
+        if ((m = path.match(/^\/api\/imports\/([\w.-]+)\/check$/)) && method === 'POST') {
+          void this.imports.check(m[1]);
+          return ok(this.imports.view(m[1]));
+        }
+        if ((m = path.match(/^\/api\/imports\/([\w.-]+)$/))) {
+          if (method === 'GET') return this.imports.view(m[1]) ? ok(this.imports.view(m[1])) : bad('no such source', 404);
+          if (method === 'PATCH') {
+            const b = await body<{ label?: string; accountId?: string | null }>();
+            if (b.accountId && !s.account(b.accountId)) return bad('no such account', 404);
+            const net = b.accountId ? (s.account(b.accountId)!.network as P.Network) : undefined;
+            return ok(this.imports.patch(m[1], { label: b.label, accountId: b.accountId, network: net }));
+          }
+          if (method === 'DELETE') return (this.imports.remove(m[1]), ok());
+        }
+      } catch (e) {
+        return fail(e);
+      }
     }
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/send$/)) && method === 'POST') {
       const b = await body<{ body?: string; accountId?: string; replyTo?: string; attachments?: string[]; clientId?: string }>();

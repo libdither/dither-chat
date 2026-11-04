@@ -9,6 +9,7 @@ import { api, db, go, prefs, rev, toast } from '../state.ts';
 import { dropLayer, pushLayer, useLayer } from '../phone.ts';
 import { AccountChip, Modal, NetBadge } from './bits.tsx';
 import { Icon } from './icons.tsx';
+import { ImportsSection } from './Imports.tsx';
 
 /** The add-account dialog, opened from the accounts list or from settings. */
 export const addingAccount = signal(false);
@@ -674,6 +675,7 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
           </dl>
         </section>
         {a.network === 'matrix' && !a.demo && <EncryptionSection a={a} />}
+        <ImportsSection a={a} />
         <section class="det-section">
           <h3>Controls</h3>
           <div class="btn-row">
