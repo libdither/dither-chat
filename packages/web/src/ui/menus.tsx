@@ -9,6 +9,7 @@ import { LEVEL_LABEL, authorName, convTitle, deepLink, directsOf, effectiveLevel
 import { deviceRule, myDevice, setDeviceRule } from '../devices.ts';
 import { pickerFor, quickReactions, reactionScope, reactorsFor, replacing, toggleReaction } from '../reactions.ts';
 import { api, canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, newMessage, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
+import { hasHistory, historyOf } from './MessageHistory.tsx';
 import { TierPicker, triageHeading } from './TierVote.tsx';
 import { Avatar } from './bits.tsx';
 import { copy, groups, menuPoint, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
@@ -151,6 +152,7 @@ function messageEntries(m: P.MessageView, onReply?: () => void): MenuEntry[] {
       m.replyToId && { label: 'Go to Replied Message', icon: 'chevronUp', run: () => document.getElementById(`m-${m.replyToId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }) },
       original && { label: 'Go to Original Message', icon: 'external', run: () => go({ view: 'inbox', conv: original.conversationId!, msg: original.messageId! }) },
       m.authorId && { label: self ? 'Your Profile' : 'Profile', icon: 'user', run: () => openProfile(m.authorId) },
+      hasHistory(m) && { label: 'Message History', icon: 'clock', run: () => (historyOf.value = m) },
     ],
     [canDelete(m) && { label: 'Delete Message', icon: 'trash', hint: 'Del', danger: true, run: () => deleteMessage(m) }],
     [

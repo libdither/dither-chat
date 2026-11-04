@@ -7944,3 +7944,68 @@ button.msg-edited.link:hover {
   outline: 1.5px solid var(--accent);
 }
 .hist-none { color: var(--text-faint); }
+.msg-pin {
+  display: inline-flex;
+  color: var(--warn);
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.msg-ticks {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+  font-size: 10px;
+  color: var(--text-faint);
+  vertical-align: middle;
+}
+.msg-ticks.read,
+.msg-ticks.played {
+  color: var(--accent);
+}
+.msg-marks {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+}
+.msg-history {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 300px;
+}
+.msg-history h4 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+}
+.msg-history-event {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 13px;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border-soft);
+}
+.msg-history-event:first-of-type {
+  border-top: 0;
+}
+.msg-history-event b {
+  color: var(--text);
+}
+.msg-history-event time {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.edit-history .msg-history,
+.menu .msg-history {
+  padding: 8px 10px;
+  max-width: 420px;
+  max-height: 380px;
+  overflow-y: auto;
+}

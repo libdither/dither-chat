@@ -52,7 +52,7 @@ export function setSource(key: string, what: keyof P.KeepSettings, on: boolean |
   return saveRetention({ sources });
 }
 
-export async function eraseKept(what: 'deleted' | 'disappeared' | 'edits' | 'changes') {
+export async function eraseKept(what: 'deleted' | 'disappeared' | 'edits' | 'reactions' | 'receipts' | 'changes') {
   const r = await api<{ erased: number }>('/api/retention/erase', { body: { what } });
   toast({ kind: 'info', title: r.erased ? `Forgot ${r.erased}` : 'Nothing to forget', body: '' }, 2500);
 }

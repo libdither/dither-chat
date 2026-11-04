@@ -15,6 +15,8 @@ const KINDS: { key: keyof P.KeepSettings; label: string; short: string; help: st
   { key: 'deleted', label: 'Keep deleted messages', short: 'Deleted', help: 'When someone deletes a message, keep what it said. It shows as a collapsed line you can open. Messages you delete yourself are never kept.' },
   { key: 'disappearing', label: 'Keep disappearing messages', short: 'Disappearing', help: 'When a Signal or WhatsApp disappearing-message timer runs out, keep the message here instead of erasing it.' },
   { key: 'edits', label: 'Keep earlier versions of edited messages', short: 'Edits', help: 'Click "(edited)" on a message to see what it said before.' },
+  { key: 'reactions', label: 'Keep reactions taken back', short: 'Reactions', help: 'Who took back which reaction, and reactions a moderator cleared. Under Message History in a message\'s menu.' },
+  { key: 'receipts', label: 'Keep read receipts', short: 'Receipts', help: 'Who got, read and played your messages, and when (Signal, WhatsApp, Matrix; Discord has none). Ticks beside your messages.' },
 ];
 
 export function HistorySettings() {
@@ -23,10 +25,10 @@ export function HistorySettings() {
   const accounts = [...db.accounts.values()];
   const nets = [...new Set(accounts.map((a) => a.network))];
   const cell = (key: string, what: keyof P.KeepSettings, network: P.Network, accountId?: string) => {
-    // Only networks with disappearing messages have anything to keep there.
-    if (what === 'disappearing' && !ABOUT_RULES[network].disappearing)
+    // Only networks with disappearing messages, or receipts, have anything to keep there.
+    if ((what === 'disappearing' && !ABOUT_RULES[network].disappearing) || (what === 'receipts' && network === 'discord'))
       return (
-        <td class="hist-none" title={`${netName(network)} has no disappearing messages`}>
+        <td class="hist-none" title={`${netName(network)} has no ${what === 'receipts' ? 'read receipts' : 'disappearing messages'}`}>
           –
         </td>
       );
@@ -48,7 +50,7 @@ export function HistorySettings() {
       </td>
     );
   };
-  const forget = (what: 'deleted' | 'disappeared' | 'edits' | 'changes', label: string) => () => confirm(`Forget all ${label}? This cannot be undone.`) && void eraseKept(what);
+  const forget = (what: Parameters<typeof eraseKept>[0], label: string) => () => confirm(`Forget all ${label}? This cannot be undone.`) && void eraseKept(what);
 
   return (
     <section class="set-block" id="set-history">
@@ -66,7 +68,7 @@ export function HistorySettings() {
         <input type="checkbox" checked={r.changes} onChange={(e) => void saveRetention({ changes: (e.target as HTMLInputElement).checked })} />
         <span>
           <b>Log changes</b>
-          <small>Names, descriptions, pictures, settings and members of groups and servers, and people's names, pictures, bios and statuses, as they change. Shown under History on profile pages.</small>
+          <small>Names, descriptions, pictures, settings, members and roles of groups and servers; pins; and people's names, pictures, bios and statuses, as they change. Shown under History on profile pages.</small>
         </span>
       </label>
 
@@ -126,6 +128,12 @@ export function HistorySettings() {
         </button>
         <button class="btn ghost small danger" onClick={forget('edits', 'earlier versions of edited messages')}>
           Edit history
+        </button>
+        <button class="btn ghost small danger" onClick={forget('reactions', 'reactions taken back')}>
+          Reactions taken back
+        </button>
+        <button class="btn ghost small danger" onClick={forget('receipts', 'read receipts')}>
+          Read receipts
         </button>
         <button class="btn ghost small danger" onClick={forget('changes', 'logged changes')}>
           Change log

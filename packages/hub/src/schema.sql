@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS identity (
   is_bot       INTEGER NOT NULL DEFAULT 0,
   person_id    TEXT REFERENCES person(id) ON DELETE SET NULL,
   seen_via     TEXT,                           -- an account id that can fetch this identity's media
+  status       TEXT,                           -- JSON { text, emoji, at }: their custom status or About, as last heard
   updated_at   INTEGER NOT NULL,
   UNIQUE (network, native_id)
 );
@@ -495,16 +496,38 @@ CREATE TABLE IF NOT EXISTS about (
   PRIMARY KEY (target_id, account_id)
 ) WITHOUT ROWID;
 
--- What changed and when (docs/history.md): names, descriptions, pictures, settings, members, profiles, and earlier
--- versions of edited messages. old/new are text as the network said it.
+-- History (docs/history.md). What changed about places and people: old and new as JSON, who did it when the
+-- network says. Message-level history lives in message_event and receipt, which go with their message.
 CREATE TABLE IF NOT EXISTS change_log (
   id          INTEGER PRIMARY KEY,
-  target_kind TEXT NOT NULL CHECK (target_kind IN ('conversation', 'space', 'identity', 'message')),
+  target_kind TEXT NOT NULL CHECK (target_kind IN ('conversation', 'space', 'identity')),
   target_id   TEXT NOT NULL,
-  field       TEXT NOT NULL,
-  old         TEXT,
-  new         TEXT,
+  field       TEXT NOT NULL,              -- name, topic, avatar, displayName, …, a setting key, member, role
+  old         TEXT,                       -- JSON
+  new         TEXT,                       -- JSON
+  actor_id    TEXT,                       -- identity that made the change
   at          INTEGER NOT NULL,
-  account_id  TEXT
+  account_id  TEXT                        -- the account that saw it
 );
-CREATE INDEX IF NOT EXISTS change_log_target ON change_log(target_kind, target_id, at);
+CREATE INDEX IF NOT EXISTS change_log_target ON change_log(target_kind, target_id, field, at);
+
+-- What happened to a message besides being deleted: earlier versions, reactions taken back, pins.
+CREATE TABLE IF NOT EXISTS message_event (
+  id         INTEGER PRIMARY KEY,
+  message_id TEXT NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+  kind       TEXT NOT NULL CHECK (kind IN ('edit', 'unreact', 'pin', 'unpin')),
+  data       TEXT,                        -- JSON: edit { body } (the version before); unreact { key, style }
+  actor_id   TEXT,
+  at         INTEGER NOT NULL,
+  account_id TEXT
+);
+CREATE INDEX IF NOT EXISTS message_event_msg ON message_event(message_id, kind, at);
+
+-- Who got, read and played your messages. The first time of each counts.
+CREATE TABLE IF NOT EXISTS receipt (
+  message_id  TEXT NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+  identity_id TEXT NOT NULL,
+  state       TEXT NOT NULL CHECK (state IN ('delivered', 'read', 'played')),
+  at          INTEGER NOT NULL,
+  PRIMARY KEY (message_id, identity_id, state)
+) WITHOUT ROWID;

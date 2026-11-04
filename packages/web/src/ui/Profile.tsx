@@ -161,9 +161,23 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
 
   // ---- who they are
   // The richest first; a network's stock line ("Available") says nothing.
-  const bios = said.filter((a) => a.bio?.trim() && !STOCK_BIO.test(a.bio.trim())).sort((a, b) => b.bio!.length - a.bio!.length);
+  const bios = said
+    .map((a) => {
+      // A newer About heard since the profile was asked replaces its bio.
+      const st = (a.network === 'signal' || a.network === 'whatsapp') && db.identities.get(a.identityId)?.status;
+      return st && st.at > a.fetchedAt ? { ...a, bio: st.text ?? '' } : a;
+    })
+    .filter((a) => a.bio?.trim() && !STOCK_BIO.test(a.bio.trim()))
+    .sort((a, b) => b.bio!.length - a.bio!.length);
   const pronouns = said.find((a) => a.pronouns)?.pronouns;
-  const status = (said.find((a) => a.status?.text) ?? said.find((a) => a.status?.emoji))?.status;
+  // The newest heard: an adapter's live status on an identity, else what a profile said. On Signal and WhatsApp the
+  // live status is their About, which shows as the bio instead.
+  const live = ids
+    .filter((i) => i.network !== 'signal' && i.network !== 'whatsapp')
+    .map((i) => i.status)
+    .filter((x): x is NonNullable<P.IdentityView['status']> => !!(x?.text || x?.emoji))
+    .sort((a, b) => b.at - a.at)[0];
+  const status = live ?? (said.find((a) => a.status?.text) ?? said.find((a) => a.status?.emoji))?.status;
   // One number written two ways is one link.
   const seen = new Set<string>();
   const links = said

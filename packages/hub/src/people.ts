@@ -18,7 +18,11 @@ export interface PeopleDeps {
 
 const caps = (store: Store, accountId: string): P.Capability[] => JSON.parse(store.account(accountId)?.capabilities ?? '[]');
 
-const statusText = (st: P.PersonAbout['status']) => (st ? [st.emoji, st.text].filter(Boolean).join(' ') || undefined : undefined);
+/**
+ * Networks whose About is what their customStatus events carry (the text, and Signal's emoji): a profile's bio there
+ * is the person's status, not a separate field.
+ */
+const ABOUT_IS_STATUS = new Set<P.Network>(['signal', 'whatsapp']);
 
 /** A fresh answer this recent is not asked again. */
 const FRESH_MS = 10 * 60_000;
@@ -92,11 +96,16 @@ export class People {
         // What their profile said before, if it says something else now (docs/history.md).
         if (k && about)
           s.logChanges('identity', identityId, accountId, [
-            ['bio', k.about.bio, about.bio ?? ''],
-            ['status', statusText(k.about.status), statusText(about.status) ?? ''],
+            // On Signal and WhatsApp the About is the status, logged as one below.
+            ['bio', ABOUT_IS_STATUS.has(n.network) ? undefined : k.about.bio, ABOUT_IS_STATUS.has(n.network) ? undefined : (about.bio ?? '')],
             ['pronouns', k.about.pronouns, about.pronouns ?? ''],
             ['banner', k.about.banner, about.banner],
           ]);
+        // The status as of now, the same as an adapter's customStatus says it.
+        if (about) {
+          const st = ABOUT_IS_STATUS.has(n.network) ? { text: about.bio, emoji: about.status?.emoji } : 'status' in about ? (about.status ?? null) : undefined;
+          if (st !== undefined) s.setStatus(identityId, st, accountId);
+        }
         s.db
           .query('INSERT INTO about (target_id, account_id, data, fetched_at) VALUES (?, ?, ?, ?) ON CONFLICT (target_id, account_id) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at')
           .run(identityId, accountId, JSON.stringify(about ?? {}), Date.now());

@@ -55,6 +55,7 @@ import { AccountChip, AccountDots, Avatar, Empty, Menu, NetBadge, NetGlyph, Skel
 import { HoverReactions, ReactionBar, useLongPress } from './Reactions.tsx';
 import { Icon } from './icons.tsx';
 import { TierPicker, triageHeading } from './TierVote.tsx';
+import { MessageHistory, Ticks } from './MessageHistory.tsx';
 import { detailsShown, showDetails, swipeReply } from './Pager.ts';
 import { openConv } from './Sidebar.tsx';
 import { viewer, type ViewerImage } from './Viewer.tsx';
@@ -365,7 +366,7 @@ function Gone({ m }: { m: P.MessageView }) {
   );
 }
 
-/** "(edited)": with earlier versions kept, a click lists them, oldest first. */
+/** "(edited)": with earlier versions kept, a click shows them, with the rest of the message's history. */
 function Edited({ m }: { m: P.MessageView }) {
   if (!m.edits)
     return (
@@ -375,27 +376,22 @@ function Edited({ m }: { m: P.MessageView }) {
     );
   return (
     <Menu trigger={(open) => <button class="msg-edited link" onClick={open} title="See earlier versions">(edited)</button>}>
-      {() => <EditHistory m={m} />}
+      {() => <MessageHistory m={m} />}
     </Menu>
   );
 }
 
-function EditHistory({ m }: { m: P.MessageView }) {
-  const [versions, setVersions] = useState<{ body: string; at: number | null }[] | null>(null);
-  useEffect(() => {
-    api<{ versions: { body: string; at: number | null }[] }>(`/api/messages/${m.id}/history`).then((h) => setVersions(h.versions), () => setVersions([]));
-  }, [m.id, m.body]);
+/** Marks beside the time: pinned, and how far your message got. */
+function Marks({ m }: { m: P.MessageView }) {
   return (
-    <div class="edit-history">
-      <div class="menu-title">Versions</div>
-      {!versions && <p class="edit-loading">Loading…</p>}
-      {versions?.map((v, i) => (
-        <div class={`edit-version ${i === versions.length - 1 ? 'now' : ''}`}>
-          <span class="edit-when">{i === versions.length - 1 ? 'Now' : i === 0 ? 'First' : `Edit ${i}`}{v.at ? ` · ${fullTime(v.at)}` : ''}</span>
-          <span class="edit-body">{plainBody(v.body, m.network) || 'Empty'}</span>
-        </div>
-      ))}
-    </div>
+    <>
+      {m.pinned && (
+        <span class="msg-pin" title="Pinned">
+          <Icon name="pin" size={11} />
+        </span>
+      )}
+      <Ticks m={m} />
+    </>
   );
 }
 
@@ -573,6 +569,7 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
               {clock(m.ts)}
             </span>
             {(m.editedTs || m.edits) && <Edited m={m} />}
+            <Marks m={m} />
             {m.encryptionWarning && (
               <span class="msg-e2ee-warning" title={m.encryptionWarning} aria-label={m.encryptionWarning}>
                 <Icon name="alert" size={12} />
@@ -597,6 +594,11 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
           </>
         )}
         {grouped && (m.editedTs || m.edits) && <Edited m={m} />}
+        {grouped && (m.pinned || m.receipts) && (
+          <span class="msg-marks">
+            <Marks m={m} />
+          </span>
+        )}
         <ReactionBar m={m} />
         {thread && (
           <button class="thread-chip" onClick={() => openConv(thread)}>

@@ -145,3 +145,114 @@ describe('deleted and disappeared messages', () => {
     expect(store.messageHistory(hubId('msg', 'signal', 'e1'))!.versions.length).toBe(1);
   });
 });
+
+describe('pins, roles, statuses, receipts, reactions taken back', () => {
+  test('a pin and an unpin, by whom; the message says whether it is pinned now', () => {
+    const id = say(sig, 'g1', 'gym opens at 7');
+    store.ingest(sig, { t: 'pin', conversation: 'g1', message: `m${n}`, pinned: true, by: 'bob', ts: 5000 });
+    expect(msg(id).pinned).toBe(true);
+    expect(msg(id).events).toBe(1);
+    store.ingest(sig, { t: 'pin', conversation: 'g1', message: `m${n}`, pinned: false, by: 'ann', ts: 6000 });
+    expect(msg(id).pinned).toBeUndefined();
+    const h = store.messageHistory(id)!;
+    expect(h.events.map((e) => [e.kind, e.actorId])).toEqual([
+      ['pin', hubId('idn', 'signal', 'bob')],
+      ['unpin', hubId('idn', 'signal', 'ann')],
+    ]);
+    expect(h.identities.map((i) => i.displayName).sort()).toEqual(['ANN', 'BOB']);
+  });
+
+  test('a role given and taken, with whose it is', () => {
+    store.ingest(sig, { t: 'role', target: { kind: 'conversation', nativeId: 'g1' }, member: 'cy', role: 'Admin', given: true, by: 'ann' });
+    store.ingest(sig, { t: 'role', target: { kind: 'conversation', nativeId: 'g1' }, member: 'cy', role: 'Admin', given: false });
+    const r = changes('conversation', sig, 'g1').filter((c) => c.field === 'role');
+    const cy = hubId('idn', 'signal', 'cy');
+    expect(r.map((c) => [c.old, c.new, c.identityId])).toEqual([
+      [{ identityId: cy, role: 'Admin' }, null, cy],
+      [null, { identityId: cy, role: 'Admin' }, cy],
+    ]);
+    expect(r[1].actorId).toBe(hubId('idn', 'signal', 'ann'));
+  });
+
+  test('a status: the first is where history starts; each change after, typed', () => {
+    store.ingest(dc, { t: 'customStatus', who: 'ann', text: 'at the crag', emoji: '🧗' });
+    expect(changes('identity', dc, 'ann').filter((c) => c.field === 'status')).toEqual([]);
+    store.ingest(dc, { t: 'customStatus', who: 'ann', text: 'at the crag', emoji: '🧗' });
+    store.ingest(dc, { t: 'customStatus', who: 'ann' });
+    store.ingest(dc, { t: 'customStatus', who: 'ann', text: 'back' });
+    const s = changes('identity', dc, 'ann').filter((c) => c.field === 'status');
+    expect(s.map((c) => [c.old, c.new])).toEqual([
+      [null, { text: 'back' }],
+      [{ text: 'at the crag', emoji: '🧗' }, null],
+    ]);
+    expect(store.identitiesByIds([hubId('idn', 'discord', 'ann')])[0].status).toMatchObject({ text: 'back' });
+  });
+
+  test('receipts on your own messages; Matrix read up to counts the earlier ones', () => {
+    const mine = say(sig, 'g1', 'leaving now', 'me');
+    store.ingest(sig, { t: 'receipt', conversation: 'g1', messages: [`m${n}`], who: 'ann', state: 'delivered', ts: 100 });
+    store.ingest(sig, { t: 'receipt', conversation: 'g1', messages: [`m${n}`], who: 'ann', state: 'read', ts: 200 });
+    store.ingest(sig, { t: 'receipt', conversation: 'g1', messages: [`m${n}`], who: 'bob', state: 'read', ts: 300 });
+    expect(msg(mine).receipts).toEqual({ delivered: 1, read: 2, played: 0, latest: { identityId: hubId('idn', 'signal', 'bob'), state: 'read', at: 300 } });
+    // Theirs are not kept.
+    const theirs = say(sig, 'g1', 'ok');
+    store.ingest(sig, { t: 'receipt', conversation: 'g1', messages: [`m${n}`], who: 'bob', state: 'read', ts: 400 });
+    expect(msg(theirs).receipts).toBeUndefined();
+
+    const mx = store.createAccount({ network: 'matrix', label: 'm', color: '#222', adapter: 'matrix' });
+    store.ingest(mx, { t: 'status', status: 'online', self: { nativeId: '@me:x', displayName: 'Me', isSelf: true } });
+    const a = say(mx, '!r:x', 'one', '@me:x');
+    const b = say(mx, '!r:x', 'two', '@me:x');
+    store.ingest(mx, { t: 'receipt', conversation: '!r:x', messages: [`m${n}`], who: '@kai:x', state: 'read', ts: 900 });
+    expect([msg(a).receipts?.read, msg(b).receipts?.read]).toEqual([1, 1]);
+  });
+
+  test('a reaction taken back is kept, a moderator clearing them too; your own are not', () => {
+    const id = say(dc, 'c1', 'nice');
+    const react = (author: string, remove = false) => store.ingest(dc, { t: 'reaction', conversation: 'c1', message: `m${n}`, author, key: '👍', remove });
+    react('ann');
+    react('ann', true);
+    react('dme');
+    react('dme', true);
+    react('ann');
+    store.ingest(dc, { t: 'reactionsCleared', conversation: 'c1', message: `m${n}` });
+    const ev = store.messageHistory(id)!.events;
+    expect(ev.map((e) => [e.kind, e.data])).toEqual([
+      ['unreact', { key: '👍', style: 'normal' }],
+      ['unreact', { key: '👍', style: 'normal', cleared: true }],
+    ]);
+  });
+
+  test('a message gone from the hub takes its history with it', () => {
+    const id = say(sig, 'g9', 'x', 'me');
+    store.ingest(sig, { t: 'receipt', conversation: 'g9', messages: [`m${n}`], who: 'ann', state: 'read', ts: 1 });
+    store.ingest(sig, { t: 'pin', conversation: 'g9', message: `m${n}`, pinned: true });
+    store.ingest(sig, { t: 'leave', kind: 'conversation', nativeId: 'g9' });
+    expect(store.one<{ n: number }>('SELECT COUNT(*) AS n FROM receipt WHERE message_id = ?', id)!.n).toBe(0);
+    expect(store.one<{ n: number }>('SELECT COUNT(*) AS n FROM message_event WHERE message_id = ?', id)!.n).toBe(0);
+  });
+});
+
+test('the first change log comes across: values as JSON, edits into message events', () => {
+  const d2 = mkdtempSync(join(tmpdir(), 'dither-log-v1-'));
+  try {
+    const path = join(d2, 'hub.sqlite');
+    const s1 = new Store(path, (raw) => raw ?? null);
+    const acc = s1.createAccount({ network: 'signal', label: 's', color: '#000', adapter: 'signal' });
+    s1.ingest(acc, { t: 'message', message: { nativeId: 'x', conversation: 'g', author: 'a', ts: 1, body: 'now' } });
+    const mid = hubId('msg', 'signal', 'x');
+    s1.db.exec(`DROP TABLE change_log; DROP TABLE message_event; CREATE TABLE change_log (id INTEGER PRIMARY KEY,
+      target_kind TEXT NOT NULL CHECK (target_kind IN ('conversation', 'space', 'identity', 'message')), target_id TEXT NOT NULL,
+      field TEXT NOT NULL, old TEXT, new TEXT, at INTEGER NOT NULL, account_id TEXT);
+      CREATE INDEX change_log_target ON change_log(target_kind, target_id, at);`);
+    s1.db.query(`INSERT INTO change_log (target_kind, target_id, field, old, new, at) VALUES ('conversation', 'cnv_g', 'disappearing', '0', '604800', 5), ('message', ?, 'body', 'before', 'now', 6)`).run(mid);
+    s1.db.close();
+    const s2 = new Store(path, (raw) => raw ?? null);
+    expect(s2.changes([{ kind: 'conversation', id: 'cnv_g' }]).map((c) => [c.old, c.new])).toEqual([['0', '604800']]);
+    expect(s2.messageHistory(mid)!.versions.map((v) => v.body)).toEqual(['before', 'now']);
+    expect(s2.one(`SELECT name FROM sqlite_master WHERE name = 'change_log_v1'`)).toBeNull();
+    s2.db.close();
+  } finally {
+    rmSync(d2, { recursive: true, force: true });
+  }
+});

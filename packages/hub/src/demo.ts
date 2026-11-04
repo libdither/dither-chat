@@ -886,7 +886,7 @@ const DISCORD_PROFILES: Record<string, { bio?: string; pronouns?: string; status
   lev: { bio: 'p2p, routing, coffee', servers: ['dither', 'rust'], roles: { dither: [{ name: 'Maintainer', color: '#E91E63' }] } },
 };
 const SIGNAL_ABOUT: Record<string, { text: string; emoji: string }> = {
-  alice: { text: 'out climbing', emoji: '🧗' },
+  alice: { text: 'on the wall, back at 8', emoji: '🧗' },
   mom: { text: 'Call me!', emoji: '☎️' },
   sam: { text: 'Busy, text me', emoji: '📵' },
 };
@@ -1271,6 +1271,17 @@ class DemoAdapter implements InprocAdapter {
     emit({ t: 'delete', conversation: climb.nativeId, nativeId: `${climb.nativeId}~h-del` });
     msg(`${climb.nativeId}~h-gone`, S.alice, 60, 'door code for the gym is 4471');
     emit({ t: 'delete', conversation: climb.nativeId, nativeId: `${climb.nativeId}~h-gone`, reason: 'expired' });
+    // A pin, a reaction taken back, a role, a status, and your message read.
+    msg(`${climb.nativeId}~h-pin`, S.priya, 58, 'Mesa is open till 10 on Thursdays now');
+    emit({ t: 'pin', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, pinned: true, by: S.alice.nativeId, ts: ago(57) });
+    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, author: S.sam.nativeId, key: '😢' });
+    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, author: S.sam.nativeId, key: '😢', remove: true });
+    emit({ t: 'role', target: { kind: 'conversation', nativeId: climb.nativeId }, member: S.sam.nativeId, role: 'Admin', given: true, by: S.priya.nativeId, ts: ago(56) });
+    emit({ t: 'customStatus', who: S.alice.nativeId, text: 'out climbing', emoji: '🧗', ts: ago(200) });
+    emit({ t: 'customStatus', who: S.alice.nativeId, text: 'on the wall, back at 8', emoji: '🧗', ts: ago(55) });
+    msg(`${climb.nativeId}~h-mine`, S.self, 54, 'I can drive, leaving at 6');
+    for (const [who, state, min] of [[S.alice, 'delivered', 53], [S.alice, 'read', 52], [S.priya, 'delivered', 53], [S.priya, 'read', 50]] as const)
+      emit({ t: 'receipt', conversation: climb.nativeId, messages: [`${climb.nativeId}~h-mine`], who: who.nativeId, state, ts: ago(min) });
   }
 
   /** What this adapter sent since it started, for forwarding it. */

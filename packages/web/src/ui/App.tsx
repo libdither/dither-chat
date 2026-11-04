@@ -15,6 +15,7 @@ import { NewMessage } from './NewMessage.tsx';
 import { ReactionLayer } from './Reactions.tsx';
 import { ProfilePane } from './Profile.tsx';
 import { PlaceProfile } from './PlaceProfile.tsx';
+import { MessageHistoryLayer } from './MessageHistory.tsx';
 import { Rail } from './Rail.tsx';
 import { TitleBar } from './TitleBar.tsx';
 import { SearchPane } from './Search.tsx';
@@ -362,6 +363,7 @@ export function App() {
       {addingAccount.value && <AddAccount onClose={() => (addingAccount.value = false)} />}
       <CallDock />
       <ReactionLayer />
+      <MessageHistoryLayer />
       <Toasts />
       <DragLayer />
       <ContextMenuLayer />

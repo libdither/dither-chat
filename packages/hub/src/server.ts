@@ -416,13 +416,15 @@ export class HubServer {
     // and profile across their identities.
     if ((m = path.match(/^\/api\/(conversations|spaces|persons|identities)\/([\w-]+)\/changes$/))) {
       const limit = Math.min(num('limit') ?? 100, 500);
-      if (m[1] === 'persons') {
-        const ids = (s.db.query('SELECT id FROM identity WHERE person_id = ?').all(m[2]) as { id: string }[]).map((r) => ({ kind: 'identity' as const, id: r.id }));
-        return ok({ changes: s.changes(ids, limit), identities: [] });
-      }
       const kind = m[1] === 'conversations' ? 'conversation' : m[1] === 'spaces' ? 'space' : 'identity';
-      const changes = s.changes([{ kind, id: m[2] }], limit);
-      return ok({ changes, identities: s.identitiesByIds(changes.flatMap((c) => (c.identityId ? [c.identityId] : []))) });
+      const targets =
+        m[1] === 'persons'
+          ? (s.db.query('SELECT id FROM identity WHERE person_id = ?').all(m[2]) as { id: string }[]).map((r) => ({ kind: 'identity' as const, id: r.id }))
+          : [{ kind: kind as P.ChangeView['target']['kind'], id: m[2] }];
+      const changes = s.changes(targets, limit);
+      // Whoever they name, and whoever made them, for rendering.
+      const named = new Set(changes.flatMap((c) => [c.identityId, c.actorId, c.target.kind === 'identity' ? c.target.id : undefined].filter((x): x is string => !!x)));
+      return ok({ changes, identities: s.identitiesByIds(named) });
     }
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/history$/))) {
       const h = s.messageHistory(m[1]);
@@ -437,13 +439,15 @@ export class HubServer {
         for (const [k, v] of Object.entries(b.sources ?? cur.sources)) {
           if (!/^[\w-]{1,64}$/.test(k) || !v || typeof v !== 'object') continue;
           const o: Partial<P.KeepSettings> = {};
-          for (const f of ['deleted', 'disappearing', 'edits'] as const) if (typeof v[f] === 'boolean') o[f] = v[f];
+          for (const f of ['deleted', 'disappearing', 'edits', 'reactions', 'receipts'] as const) if (typeof v[f] === 'boolean') o[f] = v[f];
           if (Object.keys(o).length) sources[k] = o;
         }
         s.setRetention({
           deleted: bool(b.deleted, cur.deleted),
           disappearing: bool(b.disappearing, cur.disappearing),
           edits: bool(b.edits, cur.edits),
+          reactions: bool(b.reactions, cur.reactions),
+          receipts: bool(b.receipts, cur.receipts),
           changes: bool(b.changes, cur.changes),
           show: b.show === 'hidden' || b.show === 'collapsed' ? b.show : cur.show,
           sources,
@@ -454,8 +458,9 @@ export class HubServer {
     }
     if (path === '/api/retention/erase' && method === 'POST') {
       const b = await body<{ what?: string }>();
-      if (b.what !== 'deleted' && b.what !== 'disappeared' && b.what !== 'edits' && b.what !== 'changes') return bad('what: deleted, disappeared, edits or changes');
-      const n = s.eraseKept(b.what);
+      const kinds = ['deleted', 'disappeared', 'edits', 'reactions', 'receipts', 'changes'] as const;
+      if (!kinds.includes(b.what as (typeof kinds)[number])) return bad(`what: ${kinds.join(', ')}`);
+      const n = s.eraseKept(b.what as (typeof kinds)[number]);
       this.flush();
       return ok({ erased: n });
     }

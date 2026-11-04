@@ -114,9 +114,12 @@ export class Store {
     const reactionsBefore = this.oldReactions();
     const broadcastsUnknown = this.addMentionsAll();
     this.addColumns('message', { gone_how: 'TEXT', gone_at: 'INTEGER' });
+    this.addColumns('identity', { status: 'TEXT' });
     const oldTriage = this.setAsideTriage();
+    const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
     this.db.exec(schema);
     if (oldTriage) this.adoptOldTriage();
+    if (oldLog) this.adoptOldChangeLog();
     if (broadcastsUnknown) this.markBroadcasts();
     this.adoptOldReactions(reactionsBefore);
     this.journal = new Journal(this.db);
@@ -148,6 +151,28 @@ export class Store {
              CASE WHEN feedback IS NOT NULL THEN created_at END, created_at
       FROM triage_v1;
       DROP TABLE triage_v1;`);
+  }
+
+  /**
+   * A table whose CHECK or shape changed: renamed to <name>_v1 (with its indexes dropped, so the schema can make them
+   * again) when it lacks `marker`, for an adopt step to copy over after the schema runs.
+   */
+  private setAside(table: string, marker: string, indexes: string[]): boolean {
+    const t = this.db.query(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`).get(table) as Row | null;
+    if (!t || t.sql.includes(marker)) return false;
+    for (const i of indexes) this.db.exec(`DROP INDEX IF EXISTS ${i}`);
+    this.db.exec(`ALTER TABLE ${table} RENAME TO ${table}_v1`);
+    return true;
+  }
+
+  /** The first change log kept text and mixed edits in: values become JSON, edits move to message_event. */
+  private adoptOldChangeLog() {
+    this.db.exec(`INSERT INTO change_log (target_kind, target_id, field, old, new, at, account_id)
+      SELECT target_kind, target_id, field, json_quote(old), json_quote(new), at, account_id FROM change_log_v1 WHERE target_kind != 'message';
+      INSERT INTO message_event (message_id, kind, data, at, account_id)
+      SELECT target_id, 'edit', json_object('body', old), at, account_id FROM change_log_v1
+      WHERE target_kind = 'message' AND field = 'body' AND target_id IN (SELECT id FROM message);
+      DROP TABLE change_log_v1;`);
   }
 
   /** Columns added since a table was first made. Nothing to do for a new database: the schema has them. */
@@ -341,9 +366,33 @@ export class Store {
           this.markReacted(mid);
           break;
         }
+        case 'pin': {
+          const mid = hubId('msg', acc.network, ev.message);
+          if (!this.db.query('SELECT 1 FROM message WHERE id = ?').get(mid) || !this.retention().changes) break;
+          this.messageEvent(mid, ev.pinned ? 'pin' : 'unpin', null, ev.by ? this.ensureIdentity(acc, ev.by) : null, acc.id, ev.ts ?? Date.now());
+          break;
+        }
+        case 'role': {
+          const kind = ev.target.kind;
+          const tid = hubId(kind === 'space' ? 'spc' : 'cnv', acc.network, ev.target.nativeId);
+          const who = this.ensureIdentity(acc, ev.member);
+          const role = { identityId: who, role: ev.role, ...(ev.color ? { color: ev.color } : {}) };
+          this.logChange(kind, tid, 'role', ev.given ? null : role, ev.given ? role : null, acc.id, ev.ts ?? Date.now(), ev.by ? this.ensureIdentity(acc, ev.by) : null);
+          break;
+        }
+        case 'customStatus':
+          this.setStatus(this.ensureIdentity(acc, ev.who), ev.text || ev.emoji ? { text: ev.text, emoji: ev.emoji } : null, acc.id, ev.ts);
+          break;
+        case 'receipt':
+          this.receipt(acc, ev);
+          break;
         case 'reactionsCleared': {
           const mid = hubId('msg', acc.network, ev.message);
           const key = ev.key === undefined ? null : canonicalReactionKey(ev.key);
+          // A moderator clearing reactions: what was there, kept like any reaction taken back.
+          if (this.keeps('reactions', acc))
+            for (const r of this.db.query('SELECT identity_id, key, style FROM reaction WHERE message_id = ? AND (? IS NULL OR key = ?)').all(mid, key, key) as Row[])
+              this.messageEvent(mid, 'unreact', { key: r.key, style: r.style, cleared: true }, r.identity_id, acc.id);
           this.db.query('DELETE FROM reaction WHERE message_id = ? AND (? IS NULL OR key = ?)').run(mid, key, key);
           this.db.query('DELETE FROM reaction_tally WHERE message_id = ? AND (? IS NULL OR key = ?)').run(mid, key, key);
           this.markReacted(mid);
@@ -681,7 +730,7 @@ export class Store {
     const replyTo = f.replyTo ? hubId('msg', acc.network, f.replyTo) : null;
     const thread = f.threadRoot ? hubId('cnv', acc.network, f.threadRoot) : null;
     // An edit: the words it had before, if this source's edits are kept (docs/history.md).
-    if (old && !old.deleted && old.body && f.body !== old.body && this.keeps('edits', acc)) this.logChange('message', id, 'body', old.body, f.body, acc.id, f.editedTs ?? Date.now());
+    if (old && !old.deleted && old.body && f.body !== old.body && this.keeps('edits', acc)) this.messageEvent(id, 'edit', { body: old.body }, author, acc.id, f.editedTs ?? Date.now());
     this.db
       .query(
         `INSERT INTO message (id, conversation_id, network, native_id, author_id, ts, edited_ts, kind, body, reply_to_id, thread_id, mentions_self, mentions_all, extra)
@@ -968,23 +1017,30 @@ export class Store {
   }
 
   /**
-   * One change, when changes are kept. A change straight back within a day (a name that flips between a server
-   * nickname and the global one, say) cancels the first instead of adding a second.
+   * One change to a place or a person, when changes are kept. Values are stored as JSON. The same change seen by a
+   * second account within ten minutes is one change; a change straight back within a day (a name flipping between a
+   * server nickname and the global one) cancels the first. Statuses and strangers' names keep only the newest.
    */
-  logChange(kind: P.ChangeView['target']['kind'], id: string, field: string, old: string | null, now: string | null, accountId: string | null, at = Date.now()) {
-    if (kind !== 'message' && !this.retention().changes) return;
-    if (kind !== 'message') {
-      const back = this.db
-        .query('SELECT id FROM change_log WHERE target_kind = ? AND target_id = ? AND field = ? AND old IS ? AND new IS ? AND at > ? ORDER BY at DESC LIMIT 1')
-        .get(kind, id, field, now, old, at - 86_400_000) as Row | null;
-      if (back) return void this.db.query('DELETE FROM change_log WHERE id = ?').run(back.id);
-    }
-    this.db.query('INSERT INTO change_log (target_kind, target_id, field, old, new, at, account_id) VALUES (?, ?, ?, ?, ?, ?, ?)').run(kind, id, field, old, now, at, accountId);
+  logChange(kind: P.ChangeView['target']['kind'], id: string, field: string, old: unknown, now: unknown, accountId: string | null, at = Date.now(), actorId?: string | null) {
+    if (!this.retention().changes) return;
+    const o = old === undefined || old === null ? null : JSON.stringify(old);
+    const n = now === undefined || now === null ? null : JSON.stringify(now);
+    if (o === n) return;
+    const recent = (oo: string | null, nn: string | null, within: number) =>
+      this.db.query('SELECT id FROM change_log WHERE target_kind = ? AND target_id = ? AND field = ? AND old IS ? AND new IS ? AND at > ? ORDER BY at DESC LIMIT 1').get(kind, id, field, oo, nn, at - within) as Row | null;
+    if (recent(o, n, 10 * 60_000)) return;
+    const back = field === 'status' || field === 'member' || field === 'role' ? null : recent(n, o, 86_400_000);
+    if (back) return void this.db.query('DELETE FROM change_log WHERE id = ?').run(back.id);
+    this.db.query('INSERT INTO change_log (target_kind, target_id, field, old, new, actor_id, at, account_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(kind, id, field, o, n, actorId ?? null, at, accountId);
+    // Statuses change often; strangers in big servers rename often. Keep their newest, all of everyone else's.
+    let cap: number | null = null;
+    if (kind === 'identity') cap = field === 'status' ? 100 : (this.db.query('SELECT person_id FROM identity WHERE id = ?').get(id) as Row | null)?.person_id ? null : 20;
+    if (cap) this.db.query(`DELETE FROM change_log WHERE id IN (SELECT id FROM change_log WHERE target_kind = ? AND target_id = ? AND field = ? ORDER BY at DESC LIMIT -1 OFFSET ?)`).run(kind, id, field, cap);
   }
 
   /**
    * Fields that now say something else. Nothing said (undefined or null) is no change: networks often leave fields
-   * out. A description, bio, status or pronouns may be set where there were none, or cleared; a name or picture only
+   * out. A description, bio, status or pronouns may go from nothing to something and back; a name or picture is only
    * replaced.
    */
   logChanges(kind: P.ChangeView['target']['kind'], id: string, accountId: string, fields: [string, string | null | undefined, string | null | undefined][]) {
@@ -993,6 +1049,64 @@ export class Store {
       if (!SETTABLE.has(field) && (was == null || now === '')) continue;
       this.logChange(kind, id, field, was || null, now || null, accountId);
     }
+  }
+
+  /**
+   * Someone got, read or played your messages. Only your own are kept. Matrix says "read up to": your earlier messages
+   * in that conversation they had not read yet count as read then too.
+   */
+  private receipt(acc: AccountRow, ev: Extract<P.AdapterEvent, { t: 'receipt' }>) {
+    if (!this.keeps('receipts', acc)) return;
+    const who = this.ensureIdentity(acc, ev.who);
+    if (this.isSelf(who)) return;
+    const put = this.db.query('INSERT OR IGNORE INTO receipt (message_id, identity_id, state, at) VALUES (?, ?, ?, ?)');
+    for (const native of ev.messages) {
+      const id = hubId('msg', acc.network, native);
+      const m = this.db.query('SELECT conversation_id, author_id, ts FROM message WHERE id = ?').get(id) as Row | null;
+      if (!m) continue;
+      const mine = this.isSelf(m.author_id);
+      if (mine && put.run(id, who, ev.state, ev.ts).changes) this.dirty.messages.set(id, true);
+      if (acc.network === 'matrix' && ev.state === 'read') {
+        const earlier = this.db
+          .query(
+            `SELECT id FROM message WHERE conversation_id = ? AND ts <= ? AND id != ? AND author_id IN (SELECT self_identity FROM account WHERE self_identity IS NOT NULL)
+             AND NOT EXISTS (SELECT 1 FROM receipt r WHERE r.message_id = message.id AND r.identity_id = ? AND r.state = 'read') ORDER BY ts DESC LIMIT 50`,
+          )
+          .all(m.conversation_id, m.ts, id, who) as Row[];
+        for (const e of earlier) if (put.run(e.id, who, 'read', ev.ts).changes) this.dirty.messages.set(e.id, true);
+      }
+    }
+  }
+
+  /**
+   * Someone's custom status or About as heard now, from an adapter's event or a profile answer. The first heard is
+   * where history starts; each change after is logged. Cleared is stored as { at } alone (heard, empty); NULL is
+   * nothing heard yet.
+   */
+  setStatus(iid: string, status: { text?: string; emoji?: string } | null, accountId: string | null, ts?: number) {
+    const clean = (x: { text?: string; emoji?: string } | null | undefined) =>
+      x && (x.text || x.emoji) ? { ...(x.text ? { text: x.text } : {}), ...(x.emoji ? { emoji: x.emoji } : {}) } : null;
+    const now = clean(status);
+    const row = this.db.query('SELECT status FROM identity WHERE id = ?').get(iid) as Row | null;
+    if (!row) return;
+    const heard = row.status != null;
+    const was = clean(json<{ text?: string; emoji?: string } | null>(row.status, null));
+    if (heard && JSON.stringify(was) === JSON.stringify(now)) return;
+    const at = ts ?? Date.now();
+    this.db.query('UPDATE identity SET status = ? WHERE id = ?').run(JSON.stringify({ ...now, at }), iid);
+    this.dirty.identities.add(iid);
+    if (heard) this.logChange('identity', iid, 'status', was, now, accountId, at);
+  }
+
+  /** Something that happened to a message. The same from a second account within ten minutes is one. */
+  messageEvent(messageId: string, kind: P.MessageEventView['kind'], data: unknown, actorId: string | null, accountId: string | null, at = Date.now()) {
+    const d = data === undefined ? null : JSON.stringify(data);
+    const dup = this.db
+      .query('SELECT 1 FROM message_event WHERE message_id = ? AND kind = ? AND data IS ? AND actor_id IS ? AND at > ?')
+      .get(messageId, kind, d, actorId, at - 10 * 60_000);
+    if (dup) return;
+    this.db.query('INSERT INTO message_event (message_id, kind, data, actor_id, at, account_id) VALUES (?, ?, ?, ?, ?, ?)').run(messageId, kind, d, actorId, at, accountId);
+    this.dirty.messages.set(messageId, true);
   }
 
   /**
@@ -1017,32 +1131,60 @@ export class Store {
     if (!targets.length) return [];
     const where = targets.map(() => '(target_kind = ? AND target_id = ?)').join(' OR ');
     const rows = this.db.query(`SELECT * FROM change_log WHERE ${where} ORDER BY at DESC, id DESC LIMIT ?`).all(...targets.flatMap((t) => [t.kind, t.id]), limit) as Row[];
-    return rows.map((r) => ({
-      id: r.id,
-      target: { kind: r.target_kind, id: r.target_id },
-      field: r.field,
-      old: r.field === 'avatar' || r.field === 'banner' ? this.media(r.old, r.account_id) : r.old,
-      new: r.field === 'avatar' || r.field === 'banner' ? this.media(r.new, r.account_id) : r.new,
-      at: r.at,
-      ...(r.field === 'member' ? { identityId: r.new ?? r.old } : {}),
-    }));
+    const val = (r: Row, v: string | null): unknown => {
+      const x = json<unknown>(v, null);
+      return (r.field === 'avatar' || r.field === 'banner') && typeof x === 'string' ? this.media(x, r.account_id) : x;
+    };
+    return rows.map((r) => {
+      const o = val(r, r.old);
+      const n = val(r, r.new);
+      const whose = r.field === 'member' ? (n ?? o) : r.field === 'role' ? ((n ?? o) as { identityId?: string } | null)?.identityId : undefined;
+      return {
+        id: r.id,
+        target: { kind: r.target_kind, id: r.target_id },
+        field: r.field,
+        old: o,
+        new: n,
+        at: r.at,
+        ...(r.actor_id ? { actorId: r.actor_id } : {}),
+        ...(typeof whose === 'string' ? { identityId: whose } : {}),
+      };
+    });
   }
 
-  /** A message's earlier versions, oldest first, then how it reads now. */
-  messageHistory(id: string): { versions: { body: string; at: number | null }[] } | null {
+  /** A message's versions, oldest first, the last as it reads now; what else happened to it; who got and read it. */
+  messageHistory(id: string): P.MessageHistoryView | null {
     const m = this.db.query('SELECT body, ts, edited_ts FROM message WHERE id = ?').get(id) as Row | null;
     if (!m) return null;
-    const edits = this.db.query(`SELECT old, at FROM change_log WHERE target_kind = 'message' AND target_id = ? AND field = 'body' ORDER BY at, id`).all(id) as Row[];
-    const versions = edits.map((e, i) => ({ body: e.old as string, at: i === 0 ? m.ts : (edits[i - 1].at as number) }));
+    const evs = this.db.query('SELECT * FROM message_event WHERE message_id = ? ORDER BY at, id').all(id) as Row[];
+    const edits = evs.filter((e) => e.kind === 'edit');
+    const versions = edits.map((e, i) => ({ body: json<{ body?: string }>(e.data, {}).body ?? '', at: i === 0 ? (m.ts as number) : (edits[i - 1].at as number) }));
     versions.push({ body: m.body, at: edits.at(-1)?.at ?? m.edited_ts ?? m.ts });
-    return { versions };
+    const events = evs.filter((e) => e.kind !== 'edit').map((e): P.MessageEventView => ({ kind: e.kind, data: json(e.data, null), at: e.at, ...(e.actor_id ? { actorId: e.actor_id } : {}) }));
+    const receipts = (this.db.query('SELECT identity_id, state, at FROM receipt WHERE message_id = ? ORDER BY at').all(id) as Row[]).map((r) => ({ identityId: r.identity_id, state: r.state, at: r.at }));
+    const ids = [...new Set([...events.flatMap((e) => (e.actorId ? [e.actorId] : [])), ...receipts.map((r) => r.identityId)])];
+    return { versions, events, receipts, identities: this.identitiesByIds(ids) };
   }
 
-  /** Forget what was kept: deleted or disappeared messages' words and files, edit history, or the change log. */
-  eraseKept(what: 'deleted' | 'disappeared' | 'edits' | 'changes'): number {
-    if (what === 'edits') return this.db.query(`DELETE FROM change_log WHERE target_kind = 'message' AND field = 'body'`).run().changes;
-    if (what === 'changes') return this.db.query(`DELETE FROM change_log WHERE target_kind != 'message'`).run().changes;
-    const ids = (this.db.query(`SELECT id, conversation_id FROM message WHERE deleted = 1 AND gone_how = ? AND (body != '' OR EXISTS (SELECT 1 FROM attachment a WHERE a.message_id = message.id))`).all(what) as Row[]);
+  /** Forget what was kept: deleted or disappeared messages' words and files, edits, reactions taken back, receipts, or the change log. */
+  eraseKept(what: 'deleted' | 'disappeared' | 'edits' | 'reactions' | 'receipts' | 'changes'): number {
+    const touched = (sql: string) => (this.db.query(sql).all() as Row[]).forEach((r) => this.dirty.messages.set(r.message_id, true));
+    if (what === 'edits' || what === 'reactions') {
+      const kind = what === 'edits' ? 'edit' : 'unreact';
+      touched(`SELECT DISTINCT message_id FROM message_event WHERE kind = '${kind}'`);
+      return this.db.query('DELETE FROM message_event WHERE kind = ?').run(kind).changes;
+    }
+    if (what === 'receipts') {
+      touched('SELECT DISTINCT message_id FROM receipt');
+      return this.db.query('DELETE FROM receipt').run().changes;
+    }
+    if (what === 'changes') {
+      touched(`SELECT DISTINCT message_id FROM message_event WHERE kind IN ('pin', 'unpin')`);
+      const pins = this.db.query(`DELETE FROM message_event WHERE kind IN ('pin', 'unpin')`).run().changes;
+      this.db.query('UPDATE identity SET status = NULL WHERE status IS NOT NULL').run();
+      return pins + this.db.query('DELETE FROM change_log').run().changes;
+    }
+    const ids = this.db.query(`SELECT id FROM message WHERE deleted = 1 AND gone_how = ? AND (body != '' OR EXISTS (SELECT 1 FROM attachment a WHERE a.message_id = message.id))`).all(what) as Row[];
     for (const r of ids) {
       this.db.query(`UPDATE message SET body = '' WHERE id = ?`).run(r.id);
       this.db.query('DELETE FROM attachment WHERE message_id = ?').run(r.id);
@@ -1050,6 +1192,7 @@ export class Store {
     }
     return ids.length;
   }
+
 
   /** A decision, and what it was made from. A vote already given stays. */
   setTriage(messageId: string, t: Omit<P.TriageView, 'feedback'>, facts?: unknown) {
@@ -1099,6 +1242,7 @@ export class Store {
       avatar: this.media(r.avatar_url, r.seen_via),
       isBot: !!r.is_bot,
       personId: r.person_id,
+      ...(r.status ? { status: json<NonNullable<P.IdentityView['status']>>(r.status, { at: 0 }) } : {}),
     };
   }
 
@@ -1249,6 +1393,8 @@ export class Store {
     if (ev.emoji) this.putEmoji(acc.network, ev.emoji);
     if (ev.remove) {
       const known = this.db.query('DELETE FROM reaction WHERE message_id = ? AND identity_id = ? AND key = ? AND style = ?').run(mid, iid, key, style).changes > 0;
+      // Taken back (docs/history.md): only a reaction the hub saw them give, and not your own.
+      if (known && !this.isSelf(iid) && this.keeps('reactions', acc)) this.messageEvent(mid, 'unreact', { key, style }, iid, acc.id);
       // Totals include people we never knew by name, so they go down anyway. Your own reactions are
       // always known, so a second removal of yours is only an echo of the first.
       if (known || !this.isSelf(iid)) this.db.query('UPDATE reaction_tally SET count = count - 1 WHERE message_id = ? AND key = ? AND style = ? AND count IS NOT NULL').run(mid, key, style);
@@ -1408,7 +1554,26 @@ export class Store {
       return m;
     };
     const A = by(atts), R = by(reacts), S = by(seen), RT = by(tallies);
-    const E = new Map((this.db.query(`SELECT target_id, COUNT(*) AS n FROM change_log WHERE target_kind = 'message' AND field = 'body' AND target_id IN (${ph}) GROUP BY target_id`).all(...ids) as Row[]).map((e) => [e.target_id as string, e.n as number]));
+    // History kept per message (docs/history.md): edits, other events, the last pin or unpin, receipts of your own.
+    const evRows = this.db.query(`SELECT message_id, kind, COUNT(*) AS n, MAX(at) AS last FROM message_event WHERE message_id IN (${ph}) GROUP BY message_id, kind`).all(...ids) as Row[];
+    const E = new Map<string, number>();
+    const EV = new Map<string, number>();
+    const PIN = new Map<string, { at: number; pinned: boolean }>();
+    for (const e of evRows) {
+      if (e.kind === 'edit') E.set(e.message_id, e.n);
+      else EV.set(e.message_id, (EV.get(e.message_id) ?? 0) + e.n);
+      if (e.kind === 'pin' || e.kind === 'unpin') {
+        const cur = PIN.get(e.message_id);
+        if (!cur || e.last > cur.at) PIN.set(e.message_id, { at: e.last, pinned: e.kind === 'pin' });
+      }
+    }
+    const RC = new Map<string, NonNullable<P.MessageView['receipts']>>();
+    for (const r of this.db.query(`SELECT message_id, identity_id, state, at FROM receipt WHERE message_id IN (${ph}) ORDER BY at`).all(...ids) as Row[]) {
+      const cur = RC.get(r.message_id) ?? { delivered: 0, read: 0, played: 0, latest: { identityId: r.identity_id, state: r.state, at: r.at } };
+      cur[r.state as P.ReceiptState]++;
+      cur.latest = { identityId: r.identity_id, state: r.state, at: r.at };
+      RC.set(r.message_id, cur);
+    }
     const T = new Map(tri.map((t) => [t.message_id, t]));
     return rows.map((r) => {
       const seenVia = (S.get(r.id) ?? []).map((s) => s.account_id);
@@ -1436,6 +1601,9 @@ export class Store {
         deleted: !!r.deleted,
         ...(r.deleted && r.gone_how ? { gone: { how: r.gone_how, at: r.gone_at, kept: !!r.body || !!A.get(r.id)?.length } } : {}),
         ...(E.get(r.id) ? { edits: E.get(r.id) } : {}),
+        ...(EV.get(r.id) ? { events: EV.get(r.id) } : {}),
+        ...(PIN.get(r.id)?.pinned ? { pinned: true } : {}),
+        ...(RC.get(r.id) ? { receipts: RC.get(r.id) } : {}),
         attachments: (A.get(r.id) ?? []).map((a) => ({
           id: a.id,
           kind: a.kind,

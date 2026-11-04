@@ -1,7 +1,8 @@
 /**
  * Message history (docs/history.md), end to end against a demo hub in headless Chromium: a deleted and a disappeared
- * message kept as collapsed lines that open; an edited message's earlier versions; a group's History card with a
- * description change and a member joining; hiding kept messages completely from Settings; a network turned off; and
+ * message kept as collapsed lines that open; an edited message's earlier versions; a pinned message marked, a reaction
+ * taken back, read ticks and who read it; a group's History card with a description change, a member joining and a
+ * role given; a person's status changing; hiding kept messages completely from Settings; a network turned off; and
  * forgetting what was kept.
  *
  *   bun scripts/verify-history.ts http://127.0.0.1:8499 [/tmp/shots]
@@ -46,15 +47,41 @@ try {
   check(versions[0] === 'meet at 6' && versions.at(-1) === 'meet at 6:30, traffic', '(edited) lists the versions, oldest first', versions);
   if (shots) await p.shot(`${shots}/history-edits.png`);
 
+  // Pins, receipts and the message's whole history.
+  await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await p.eval(`document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`);
+  await Bun.sleep(200);
+  check(await p.eval<boolean>(`!!document.querySelector('.msg-pin')`), 'a pinned message is marked');
+  const ticks = await p.eval<{ cls: string; title: string } | null>(`(() => { const t = document.querySelector('.msg-ticks'); return t ? { cls: t.className, title: t.title } : null; })()`);
+  check(ticks?.cls.includes('read') && /Read by 2/.test(ticks.title), 'your message has read ticks: read by two', ticks);
+  await p.eval(`document.querySelector('.msg-ticks').click()`);
+  await p.until(`!!document.querySelector('.modal .msg-history section')`, 5000);
+  const hist = await p.eval<string>(`document.querySelector('.modal .msg-history').innerText`);
+  check(/READ BY 2/i.test(hist) && hist.includes('Alice') && hist.includes('Priya'), 'its history lists who read it', hist.split('\n').slice(0, 5));
+  await p.eval(`document.querySelector('.modal-backdrop')?.click()`);
+  await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await Bun.sleep(300);
+  const pinned = await p.eval<string>(`document.querySelector('.msg-pin')?.closest('.msg')?.id ?? ''`);
+  const evs = (await fetch(`${hub}/api/messages/${pinned.slice(2)}/history`).then((r) => r.json())) as any;
+  check(evs.events.map((e: any) => e.kind).join() === 'pin,unreact', 'the pinned one: pinned, and a reaction taken back', evs.events.map((e: any) => e.kind));
+
   // The group's History card.
   await p.goto(`${hub}/#/about/c/${climb}`);
   await p.until(`!!document.querySelector('.hist-list')`, 10000);
-  const hist = await p.eval<string>(`[...document.querySelectorAll('.pf-card')].find((c) => c.querySelector('h3')?.textContent.startsWith('History'))?.innerText ?? ''`);
-  check(hist.includes('Mei') && hist.includes('joined') && hist.includes('Description changed'), 'History: a member joined, the description changed', hist.split('\n').slice(0, 6));
+  const card = await p.eval<string>(`[...document.querySelectorAll('.pf-card')].find((c) => c.querySelector('h3')?.textContent.startsWith('History'))?.innerText ?? ''`);
+  check(card.includes('Mei') && card.includes('joined') && card.includes('Description changed'), 'History: a member joined, the description changed', card.split('\n').slice(0, 6));
+  check(/Sam Rivera\s*was given\s*Admin\s*by\s*(PR\s*)?Priya/.test(card.replace(/\n/g, ' ')), 'a role given, and by whom', card.split('\n').slice(0, 12));
   await p.eval(`[...document.querySelectorAll('.hist-line')].find((b) => b.textContent.includes('Description changed')).click()`);
   await Bun.sleep(150);
   check((await p.eval<string>(`document.querySelector('.hist-diff .was')?.textContent ?? ''`)) === 'Tuesdays at Mesa', 'a description change shows before and after');
   if (shots) await p.shot(`${shots}/history-card.png`);
+
+  // A person's History: their status changed.
+  const alice = boot.persons.find((x: any) => x.name === 'Alice Chen');
+  await p.goto(`${hub}/#/p/${alice.id}`);
+  await p.until(`!!document.querySelector('.hist-list')`, 10000);
+  const ah = await p.eval<string>(`[...document.querySelectorAll('.pf-card')].find((c) => c.querySelector('h3')?.textContent.startsWith('History'))?.innerText ?? ''`);
+  check(ah.includes('out climbing') && ah.includes('on the wall, back at 8') && !/→ 🧗\n/.test(ah), 'a person’s History shows their status changing, once', ah.split('\n').slice(0, 6));
 
   // Settings: hidden completely.
   await p.goto(`${hub}/#/settings`);

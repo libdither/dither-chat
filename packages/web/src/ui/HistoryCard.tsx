@@ -28,11 +28,33 @@ const FIELD: Record<string, string> = {
 const LONG = new Set(['topic', 'bio']);
 const PICTURE = new Set(['avatar', 'banner']);
 
-/** A setting's value, stored as text, back to what valueText reads. */
-function settingValue(key: P.AboutKey, v: string | null): string {
-  if (v === null) return 'nothing';
-  const parsed: unknown = v === 'true' ? true : v === 'false' ? false : /^\d+$/.test(v) ? Number(v) : v;
+/** A setting's value in words. Older entries kept it as text ("604800", "true"). */
+function settingValue(key: P.AboutKey, v: unknown): string {
+  if (v === null || v === undefined) return 'nothing';
+  const parsed: unknown = typeof v !== 'string' ? v : v === 'true' ? true : v === 'false' ? false : /^\d+$/.test(v) ? Number(v) : v;
   return valueText(key, parsed);
+}
+
+/** A status, as `{ text, emoji }` (older entries: text). */
+function statusText(v: unknown): string | null {
+  if (!v) return null;
+  if (typeof v === 'string') return v;
+  const s = v as { text?: string; emoji?: string };
+  return [s.emoji, s.text].filter(Boolean).join(' ') || null;
+}
+
+const asText = (v: unknown): string | null => (v === null || v === undefined ? null : typeof v === 'string' ? v : JSON.stringify(v));
+
+/** Who, as a name you can click. */
+function Who({ id }: { id: string }) {
+  const i = db.identities.get(id);
+  const p = i?.personId ? db.persons.get(i.personId) : null;
+  return (
+    <button class="hist-who" onClick={() => openProfile(id)}>
+      <Avatar id={p?.id ?? id} name={p?.name ?? identityName(id)} url={p?.avatar ?? i?.avatar} size={18} />
+      {p?.name ?? identityName(id)}
+    </button>
+  );
 }
 
 const SHOWN = 8;
@@ -76,23 +98,53 @@ function Change({ c, network }: { c: P.ChangeView; network?: P.Network }) {
     </time>
   );
 
+  const by = c.actorId ? (
+    <>
+      <span>by</span>
+      <Who id={c.actorId} />
+    </>
+  ) : null;
+
   if (c.field === 'member') {
-    const id = c.identityId!;
     const joined = c.new !== null;
-    const i = db.identities.get(id);
-    const p = i?.personId ? db.persons.get(i.personId) : null;
     return (
       <li class="hist-item">
         <Icon name={joined ? 'plus' : 'x'} size={12} />
-        <button class="hist-who" onClick={() => openProfile(id)}>
-          <Avatar id={p?.id ?? id} name={p?.name ?? identityName(id)} url={p?.avatar ?? i?.avatar} size={18} />
-          {p?.name ?? identityName(id)}
-        </button>
+        <Who id={c.identityId!} />
         <span>{joined ? 'joined' : 'left'}</span>
         {when}
       </li>
     );
   }
+
+  if (c.field === 'role') {
+    const r = (c.new ?? c.old) as { role: string; color?: string };
+    const given = c.new !== null;
+    return (
+      <li class="hist-item">
+        <Icon name={given ? 'plus' : 'x'} size={12} />
+        <Who id={c.identityId!} />
+        <span>{given ? 'was given' : 'lost'}</span>
+        <span class="pf-role" style={r.color ? { '--role': r.color } : undefined}>
+          {r.role}
+        </span>
+        {by}
+        {when}
+      </li>
+    );
+  }
+
+  if (c.field === 'status')
+    return (
+      <li class="hist-item">
+        <Icon name="smile" size={12} />
+        {where}
+        <span>
+          Status: {statusText(c.old) && <s>{statusText(c.old)}</s>} {statusText(c.old) && '→'} <b>{statusText(c.new) ?? 'cleared'}</b>
+        </span>
+        {when}
+      </li>
+    );
 
   if (PICTURE.has(c.field))
     return (
@@ -101,9 +153,9 @@ function Change({ c, network }: { c: P.ChangeView; network?: P.Network }) {
         {where}
         <span>{FIELD[c.field]} changed</span>
         <span class="hist-pics">
-          {c.old && <img src={c.old} alt="Before" loading="lazy" />}
+          {typeof c.old === 'string' && <img src={c.old} alt="Before" loading="lazy" />}
           <Icon name="chevronRight" size={11} />
-          {c.new && <img src={c.new} alt="After" loading="lazy" />}
+          {typeof c.new === 'string' && <img src={c.new} alt="After" loading="lazy" />}
         </span>
         {when}
       </li>
@@ -111,7 +163,7 @@ function Change({ c, network }: { c: P.ChangeView; network?: P.Network }) {
 
   const setting = (ABOUT_KEYS as readonly string[]).includes(c.field) && !FIELD[c.field];
   const label = setting ? ABOUT_LABEL[c.field as P.AboutKey] : (FIELD[c.field] ?? c.field);
-  const show = (v: string | null) => (setting ? settingValue(c.field as P.AboutKey, v) : v);
+  const show = (v: unknown) => (setting ? settingValue(c.field as P.AboutKey, v) : asText(v));
   if (LONG.has(c.field))
     return (
       <li class="hist-item long">
@@ -124,8 +176,8 @@ function Change({ c, network }: { c: P.ChangeView; network?: P.Network }) {
         </button>
         {open && (
           <div class="hist-diff">
-            {c.old && <p class="was">{c.old}</p>}
-            {c.new && <p class="now">{c.new}</p>}
+            {asText(c.old) && <p class="was">{asText(c.old)}</p>}
+            {asText(c.new) && <p class="now">{asText(c.new)}</p>}
           </div>
         )}
       </li>
@@ -137,6 +189,7 @@ function Change({ c, network }: { c: P.ChangeView; network?: P.Network }) {
       <span>
         {label}: {c.old !== null && <s>{show(c.old)}</s>} {c.old !== null && '→'} <b>{show(c.new) ?? 'cleared'}</b>
       </span>
+      {by}
       {when}
     </li>
   );

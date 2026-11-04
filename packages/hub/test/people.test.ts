@@ -85,14 +85,14 @@ test('asked through an account that shares a conversation with them, and once pe
   asked.length = 0;
   const a = await people.get(id);
   expect(a.accountId).toBe('acc_demo-signal');
-  expect(a.bio).toBe('out climbing');
+  expect(a.bio).toBe('on the wall, back at 8');
   expect(a.links).toEqual([{ label: 'Phone', value: '+1 555 0137', url: 'tel:+15550137' }]);
   await people.get(id);
   expect(asked.length).toBe(1);
   await people.get(id, true);
   expect(asked.length).toBe(2);
   // Kept, for the profile's first paint.
-  expect(people.kept([id]).map((k) => k.bio)).toEqual(['out climbing']);
+  expect(people.kept([id]).map((k) => k.bio)).toEqual(['on the wall, back at 8']);
 });
 
 test('your own: your friends; an offline account: what it said last, saying why', async () => {
@@ -104,7 +104,7 @@ test('your own: your friends; an offline account: what it said last, saying why'
   const id = identityOf('signal');
   const v = await people.get(id, true);
   expect(v.stale).toContain('is not connected');
-  expect(v.bio).toBe('out climbing');
+  expect(v.bio).toBe('on the wall, back at 8');
   offline.delete('acc_demo-signal');
 });
 
