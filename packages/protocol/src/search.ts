@@ -10,38 +10,77 @@ export interface SearchQuery {
   from: string[];
   in: string[];
   network: string[];
+  /** Accounts by label or id: what reached the hub through them. */
+  account: string[];
   has: string[];
+  /** pinned, edited, deleted (kept deleted or disappeared messages, docs/history.md). */
+  is: string[];
   mentionsMe: boolean;
+  /** People mentioned, by name. */
+  mentions: string[];
   after: number | null;
   before: number | null;
   relevance: boolean;
+  oldest: boolean;
 }
 
-export const SEARCH_HAS = ['attachment', 'image', 'video', 'audio', 'file', 'link', 'reaction'] as const;
+export const SEARCH_HAS = ['attachment', 'image', 'video', 'audio', 'file', 'link', 'embed', 'sticker', 'reaction'] as const;
+export const SEARCH_IS = ['pinned', 'edited', 'deleted'] as const;
+export const SEARCH_SORT = ['newest', 'oldest', 'relevance'] as const;
+/** Discord's names for the same things. */
+const HAS_ALIAS: Record<string, string> = { sound: 'audio', voice: 'audio', files: 'file', images: 'image', links: 'link', embeds: 'embed' };
 
-function day(s: string, end: boolean): number | null {
+/** The operators, in the order the box suggests them. */
+export const SEARCH_OPS: { op: string; hint: string }[] = [
+  { op: 'from', hint: 'a person' },
+  { op: 'mentions', hint: 'a person, or me' },
+  { op: 'in', hint: 'a chat or community' },
+  { op: 'has', hint: 'link, image, file, embed…' },
+  { op: 'is', hint: 'pinned, edited, deleted' },
+  { op: 'network', hint: 'discord, signal, matrix…' },
+  { op: 'account', hint: 'one of your accounts' },
+  { op: 'before', hint: 'a date' },
+  { op: 'during', hint: 'a day or a month' },
+  { op: 'after', hint: 'a date' },
+  { op: 'sort', hint: 'newest, oldest, relevance' },
+];
+
+/** A day (2026-01-15), a month (2026-01), today or yesterday: its start, or with `end` the start of the next. */
+export function searchDay(s: string, end: boolean, now = new Date()): number | null {
+  const rel = { today: 0, yesterday: -1 }[s.toLowerCase()];
+  if (rel !== undefined) return new Date(now.getFullYear(), now.getMonth(), now.getDate() + rel + (end ? 1 : 0)).getTime();
   if (!/^\d{4}-\d{2}(-\d{2})?$/.test(s)) return null;
   const [y, m, d] = s.split('-').map(Number);
   if (end) return d ? new Date(y, m - 1, d + 1).getTime() : new Date(y, m, 1).getTime();
   return new Date(y, m - 1, d ?? 1).getTime();
 }
 
-export function parseSearch(input: string): SearchQuery {
-  const q: SearchQuery = { terms: [], phrases: [], not: [], from: [], in: [], network: [], has: [], mentionsMe: false, after: null, before: null, relevance: false };
+export function parseSearch(input: string, now = new Date()): SearchQuery {
+  const q: SearchQuery = { terms: [], phrases: [], not: [], from: [], in: [], network: [], account: [], has: [], is: [], mentionsMe: false, mentions: [], after: null, before: null, relevance: false, oldest: false };
+  const day = (s: string, end: boolean) => searchDay(s, end, now);
   for (const m of input.matchAll(/(-?)(?:(\w+):)?(?:"([^"]*)"|(\S+))/g)) {
     const [whole, neg, op, quoted, bare] = m;
     const val = quoted ?? bare ?? '';
     if (!val) continue;
     const key = op?.toLowerCase();
+    const low = val.toLowerCase();
     if (!neg && key) {
       if (key === 'from') { q.from.push(val); continue; }
       if (key === 'in') { q.in.push(val); continue; }
-      if (key === 'network' || key === 'on') { q.network.push(val.toLowerCase()); continue; }
-      if (key === 'has' && (SEARCH_HAS as readonly string[]).includes(val.toLowerCase())) { q.has.push(val.toLowerCase()); continue; }
-      if (key === 'mentions' && val.toLowerCase() === 'me') { q.mentionsMe = true; continue; }
-      if (key === 'sort' && val.toLowerCase() === 'relevance') { q.relevance = true; continue; }
+      if (key === 'network' || key === 'on') { q.network.push(low); continue; }
+      if (key === 'account') { q.account.push(val); continue; }
+      const has = HAS_ALIAS[low] ?? low;
+      if (key === 'has' && (SEARCH_HAS as readonly string[]).includes(has)) { q.has.push(has); continue; }
+      if (key === 'is' && (SEARCH_IS as readonly string[]).includes(low)) { q.is.push(low); continue; }
+      if (key === 'pinned' && ['true', 'yes'].includes(low)) { q.is.push('pinned'); continue; }
+      if (key === 'mentions' && low === 'me') { q.mentionsMe = true; continue; }
+      if (key === 'mentions') { q.mentions.push(val); continue; }
+      if (key === 'sort' && low === 'relevance') { q.relevance = true; continue; }
+      if (key === 'sort' && low === 'oldest') { q.oldest = true; continue; }
+      if (key === 'sort' && low === 'newest') continue;
       if (key === 'after' && day(val, true) !== null) { q.after = day(val, true); continue; }
       if (key === 'before' && day(val, false) !== null) { q.before = day(val, false); continue; }
+      if (key === 'during' && day(val, false) !== null) { q.after = day(val, false); q.before = day(val, true); continue; }
     }
     const text = op ? whole.replace(/^-/, '').replace(/"/g, '') : val;
     if (neg) q.not.push(text);
@@ -56,11 +95,24 @@ export function setSearchOp(input: string, op: string, value: string | null): st
   const re = new RegExp(`(^|\\s)${op}:(?:"[^"]*"|\\S+)`, 'gi');
   const rest = input.replace(re, '').replace(/\s+/g, ' ').trim();
   if (value === null || value === '') return rest;
-  const v = /\s/.test(value) ? `"${value}"` : value;
-  return `${rest} ${op}:${v}`.trim();
+  return `${rest} ${op}:${searchValue(value)}`.trim();
 }
+
+/** A value as an operator takes it: quoted when it has spaces. */
+export const searchValue = (value: string) => (/\s/.test(value) ? `"${value}"` : value);
 
 export function searchOp(input: string, op: string): string | null {
   const m = input.match(new RegExp(`(?:^|\\s)${op}:(?:"([^"]*)"|(\\S+))`, 'i'));
   return m ? (m[1] ?? m[2]) : null;
+}
+
+/** Every value of one operator, for the ones that may repeat (has:, is:). */
+export function searchOps(input: string, op: string): string[] {
+  return [...input.matchAll(new RegExp(`(?:^|\\s)${op}:(?:"([^"]*)"|(\\S+))`, 'gi'))].map((m) => (m[1] ?? m[2]).toLowerCase());
+}
+
+/** Add or take away one value of an operator that may repeat. */
+export function toggleSearchOp(input: string, op: string, value: string): string {
+  const re = new RegExp(`(^|\\s)${op}:${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=\\s|$)`, 'gi');
+  return re.test(input) ? input.replace(re, '').replace(/\s+/g, ' ').trim() : `${input.trim()} ${op}:${searchValue(value)}`.trim();
 }

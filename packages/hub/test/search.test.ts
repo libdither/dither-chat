@@ -3,8 +3,8 @@ import { Database } from 'bun:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseSearch, setSearchOp } from '@dither-chat/protocol';
-import { Store, type AccountRow } from '../src/store.ts';
+import { parseSearch, searchOps, setSearchOp, toggleSearchOp } from '@dither-chat/protocol';
+import { editDistance, Store, type AccountRow } from '../src/store.ts';
 
 let dir: string;
 let store: Store;
@@ -191,5 +191,91 @@ describe('jumping to a message', () => {
     expect(c.hasMore).toBe(true);
     expect(c.hasNewer).toBe(true);
     expect(store.messagesAfter(c.messages[0].conversationId, 20_006, 10).messages.map((m) => m.nativeId)).toEqual(['j7', 'j8']);
+  });
+});
+
+describe('more like Discord', () => {
+  test('the new operators parse, and Discord spellings work', () => {
+    const q = parseSearch('pinned:true is:edited has:sound has:embed mentions:Bob account:main sort:oldest during:2026-01');
+    expect(q).toMatchObject({ is: ['pinned', 'edited'], has: ['audio', 'embed'], mentions: ['Bob'], account: ['main'], oldest: true, mentionsMe: false });
+    expect(q.after).toBe(new Date(2026, 0, 1).getTime());
+    expect(q.before).toBe(new Date(2026, 1, 1).getTime());
+    const now = new Date(2026, 4, 10, 15);
+    expect(parseSearch('during:yesterday', now)).toMatchObject({ after: new Date(2026, 4, 9).getTime(), before: new Date(2026, 4, 10).getTime() });
+    expect(parseSearch('is:nonsense').terms).toEqual(['is:nonsense']);
+  });
+  test('repeating operators toggle one value at a time', () => {
+    expect(toggleSearchOp('hi has:link', 'has', 'image')).toBe('hi has:link has:image');
+    expect(toggleSearchOp('hi has:link has:image', 'has', 'link')).toBe('hi has:image');
+    expect(searchOps('has:link x has:IMAGE', 'has')).toEqual(['link', 'image']);
+  });
+  test('during a day', () => expect(find('during:2026-01-15')).toEqual(['m4']));
+  test('oldest first, and paging that way', () => {
+    expect(find('borrow sort:oldest')).toEqual(['m1', 'm2', 'm3']);
+    const a = store.search('borrow sort:oldest', 2);
+    expect(store.search('borrow sort:oldest', 2, a.next).hits.map((h) => h.message.nativeId)).toEqual(['m3']);
+  });
+  test('mentions of someone by name', () => {
+    say(d, 'mn1', 'off', 'alice', 50_000, 'ping <@bob> about the release');
+    say(d, 'mn2', 'off', 'alice', 50_001, 'ping <@!bob> again');
+    say(d, 'mn3', 'off', 'alice', 50_002, 'bob is away');
+    expect(find('mentions:Bob')).toEqual(['mn2', 'mn1']);
+    expect(find('ping mentions:alice')).toEqual([]);
+  });
+  test('pinned, as the last pin or unpin says', () => {
+    say(d, 'pin1', 'off', 'bob', 51_000, 'rules of the house');
+    say(d, 'pin2', 'off', 'bob', 51_001, 'old rules');
+    store.ingest(d, { t: 'pin', conversation: 'off', message: 'pin1', pinned: true, ts: 52_000 });
+    store.ingest(d, { t: 'pin', conversation: 'off', message: 'pin2', pinned: true, ts: 52_000 });
+    store.ingest(d, { t: 'pin', conversation: 'off', message: 'pin2', pinned: false, ts: 53_000 });
+    expect(find('rules is:pinned')).toEqual(['pin1']);
+    expect(find('pinned:true')).toEqual(['pin1']);
+  });
+  test('edited, sticker, embed, account', () => {
+    say(d, 'ed1', 'off', 'bob', 54_000, 'frobnicate first');
+    say(d, 'ed1', 'off', 'bob', 54_000, 'frobnicate second', { editedTs: 54_500 });
+    say(d, 'st1', 'off', 'bob', 54_001, 'frobnicate', { kind: 'sticker' });
+    say(d, 'em1', 'off', 'bob', 54_002, 'frobnicate https://x.test', { extra: { embeds: [{ url: 'https://x.test', title: 'X' }] } });
+    expect(find('frobnicate is:edited')).toEqual(['ed1']);
+    expect(find('frobnicate has:sticker')).toEqual(['st1']);
+    expect(find('frobnicate has:embed')).toEqual(['em1']);
+    expect(find('frobnicate account:d').length).toBe(3);
+    expect(find('frobnicate account:s')).toEqual([]);
+    expect(find('cafe account:S')).toEqual(['m4']);
+  });
+  test('kept deleted messages only when asked for, and not when set to stay hidden', () => {
+    say(d, 'del1', 'off', 'bob', 55_000, 'regrettable platypus');
+    store.ingest(d, { t: 'delete', conversation: 'off', nativeId: 'del1' });
+    expect(find('platypus')).toEqual([]);
+    expect(find('platypus is:deleted')).toEqual(['del1']);
+    expect(find('is:deleted')).toContain('del1');
+    store.setRetention({ ...store.retention(), show: 'hidden' });
+    expect(find('platypus is:deleted')).toEqual([]);
+    store.setRetention({ ...store.retention(), show: 'collapsed' });
+  });
+  test('context around each hit', () => {
+    for (let i = 0; i < 5; i++) say(s, `cx${i}`, 'grp', '+1', 60_000 + i, i === 2 ? 'the kettle is on' : `chatter ${i}`);
+    const h = store.search('kettle', 10, null, 2).hits[0];
+    expect(h.before!.map((m) => m.nativeId)).toEqual(['cx0', 'cx1']);
+    expect(h.after!.map((m) => m.nativeId)).toEqual(['cx3', 'cx4']);
+    expect(store.search('kettle').hits[0].before).toBeUndefined();
+  });
+  test('a misspelt word is corrected when nothing matches as typed', () => {
+    say(d, 'ty1', 'off', 'bob', 56_000, 'the rhinoceros charged');
+    say(d, 'ty2', 'off', 'bob', 56_001, 'definitely tomorrow');
+    let r = store.search('rhinocerus charged');
+    expect(r.corrected).toBe('rhinoceros charged');
+    expect(r.hits.map((h) => h.message.nativeId)).toEqual(['ty1']);
+    r = store.search('defintely from:bob');
+    expect(r.corrected).toBe('definitely from:bob');
+    expect(store.search('rhinoceros').corrected).toBeUndefined();
+    // A word that is there but not with the others is no typo.
+    expect(store.search('rhinoceros tomorrow').corrected).toBeUndefined();
+    expect(store.search('xqzvw').hits).toEqual([]);
+  });
+  test('edit distance counts a swap as one', () => {
+    expect(editDistance('teh', 'the', 2)).toBe(1);
+    expect(editDistance('kitten', 'sitting', 3)).toBe(3);
+    expect(editDistance('abcdef', 'uvwxyz', 2)).toBe(3);
   });
 });

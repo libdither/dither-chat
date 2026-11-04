@@ -432,6 +432,9 @@ export interface SearchHit {
   message: MessageView;
   /** The matching text, with matches between \u0001 and \u0002. Plain text otherwise, not HTML. */
   snippet: string;
+  /** With &context=n: the messages just before and after it in its conversation, oldest first. */
+  before?: MessageView[];
+  after?: MessageView[];
 }
 
 export interface SearchPage {
@@ -443,6 +446,8 @@ export interface SearchPage {
   /** Pass as &cursor= for the next page; null at the end. */
   next: string | null;
   mode: 'fulltext' | 'substring' | 'filters';
+  /** Nothing matched as typed, so these hits are for this query instead, a misspelt word corrected. Page with it. */
+  corrected?: string;
 }
 
 /** A message with what surrounds it, for jumping to it. */

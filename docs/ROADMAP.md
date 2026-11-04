@@ -22,7 +22,8 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Categories as yes/no questions, with overrides | M | M | done | Keywords by default, local Ollama optional, no hosted provider |
 | Full-text search with filters, snippets, jump to message | H | M | done | FTS5 and a query language. Only searches what the hub has stored |
 | Quick switcher (Ctrl+K) | H | L | done | |
-| Search inside one conversation, from its header | M | L | done | A button in the header scopes search by conversation id |
+| Search inside one conversation, from its header | M | L | done | A button in the header, or Ctrl+F, scopes search by conversation id |
+| Discord-style search: suggestions as you type, recent searches, grouped results with context, sort, more operators | H | M | done | docs/search.md. Also typo correction and arrow keys through results |
 | Search Japanese and other unspaced text | H | L | done | Scans inside words, so unspaced text is found. Slower than the index on a large database; a trigram index would fix that |
 | Index attachment filenames and embed text | M | L | next | Only message bodies are searched today |
 | Search Discord itself, on an explicit click | M | M | next | The guild search route is documented and the hook's client REST can call it. One request per click, never as you type. Needs a live test |
