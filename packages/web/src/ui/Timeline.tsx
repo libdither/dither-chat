@@ -702,7 +702,7 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
   let dividerDone = false;
   const hideGone = retention.value.show === 'hidden';
   for (const m of msgs) {
-    // Settings → Message history: deleted and disappeared messages not shown at all.
+    // Settings → Adversarial features: deleted and disappeared messages not shown at all.
     if (hideGone && m.deleted) continue;
     if (!prev || !sameDay(prev.ts, m.ts)) items.push(<div class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
     if (merged && prev && prev.conversationId !== m.conversationId) {
@@ -800,8 +800,16 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   const edit = editing.value?.conversationId === targets.convId ? editing.value : null;
   // A half-written message waits for you in its own conversation.
   useEffect(() => {
-    setText(localStorage.getItem(draftKey) ?? '');
+    const draft = localStorage.getItem(draftKey) ?? '';
+    setText(draft);
     editing.value = null;
+    // Opening a chat puts you in its box, ready to type; not on a phone, where that throws up the keyboard.
+    const el = ta.current;
+    const busy = document.activeElement instanceof HTMLInputElement || (document.activeElement instanceof HTMLTextAreaElement && document.activeElement !== el);
+    if (el && !busy && !(typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches)) {
+      el.focus({ preventScroll: true });
+      el.setSelectionRange(draft.length, draft.length);
+    }
     return composerDone;
   }, [draftKey]);
   useEffect(() => {

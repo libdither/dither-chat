@@ -1,7 +1,8 @@
 /**
- * Settings → Message history (docs/history.md): what the hub keeps when a network takes a message back (deleted,
- * disappeared) or rewrites it (edited), and the log of names, descriptions and settings as they change. Each kind
- * may be turned off everywhere or for one network or account, and what was kept may be forgotten.
+ * Settings → Message history (docs/history.md): what the hub keeps when a network rewrites a message (edited) or
+ * takes back a reaction, read receipts, and the log of names, descriptions and settings as they change. Each kind may
+ * be turned off everywhere or for one network or account, and what was kept may be forgotten. Keeping deleted and
+ * disappeared messages and statuses over time are under Adversarial features (Adversarial.tsx).
  */
 import type * as P from '@dither-chat/protocol';
 import { ABOUT_RULES } from '@dither-chat/protocol';
@@ -11,16 +12,16 @@ import { netName } from '../model.ts';
 import { db } from '../state.ts';
 import { NetGlyph } from './bits.tsx';
 
-const KINDS: { key: keyof P.KeepSettings; label: string; short: string; help: string }[] = [
-  { key: 'deleted', label: 'Keep deleted messages', short: 'Deleted', help: 'When someone deletes a message, keep what it said. It shows as a collapsed line you can open. Messages you delete yourself are never kept.' },
-  { key: 'disappearing', label: 'Keep disappearing messages', short: 'Disappearing', help: 'When a Signal or WhatsApp disappearing-message timer runs out, keep the message here instead of erasing it.' },
+export type Kind = { key: keyof P.KeepSettings; label: string; short: string; help: string };
+
+const KINDS: Kind[] = [
   { key: 'edits', label: 'Keep earlier versions of edited messages', short: 'Edits', help: 'Click "(edited)" on a message to see what it said before.' },
   { key: 'reactions', label: 'Keep reactions taken back', short: 'Reactions', help: 'Who took back which reaction, and reactions a moderator cleared. Under Message History in a message\'s menu.' },
   { key: 'receipts', label: 'Keep read receipts', short: 'Receipts', help: 'Who got, read and played your messages, and when (Signal, WhatsApp, Matrix; Discord has none). Ticks beside your messages.' },
 ];
 
-export function HistorySettings() {
-  useEffect(() => void loadRetention(), []);
+/** Each kind for each network, and for each account where a network has several. */
+export function SourceTable({ kinds }: { kinds: Kind[] }) {
   const r = retention.value;
   const accounts = [...db.accounts.values()];
   const nets = [...new Set(accounts.map((a) => a.network))];
@@ -50,8 +51,47 @@ export function HistorySettings() {
       </td>
     );
   };
-  const forget = (what: Parameters<typeof eraseKept>[0], label: string) => () => confirm(`Forget all ${label}? This cannot be undone.`) && void eraseKept(what);
+  return (
+    <table class="hist-table">
+      <thead>
+        <tr>
+          <th />
+          {kinds.map((k) => (
+            <th>{k.short}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {nets.map((n) => {
+          const accs = accounts.filter((a) => a.network === n);
+          return (
+            <>
+              <tr class="hist-net">
+                <th>
+                  <NetGlyph network={n} size={13} /> {netName(n)}
+                </th>
+                {kinds.map((k) => cell(n, k.key, n))}
+              </tr>
+              {accs.length > 1 &&
+                accs.map((a) => (
+                  <tr class="hist-acc">
+                    <th>{a.label}</th>
+                    {kinds.map((k) => cell(a.id, k.key, n, a.id))}
+                  </tr>
+                ))}
+            </>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
 
+export const forget = (what: Parameters<typeof eraseKept>[0], label: string) => () => confirm(`Forget all ${label}? This cannot be undone.`) && void eraseKept(what);
+
+export function HistorySettings() {
+  useEffect(() => void loadRetention(), []);
+  const r = retention.value;
   return (
     <section class="set-block" id="set-history">
       <h3>Message history</h3>
@@ -68,55 +108,13 @@ export function HistorySettings() {
         <input type="checkbox" checked={r.changes} onChange={(e) => void saveRetention({ changes: (e.target as HTMLInputElement).checked })} />
         <span>
           <b>Log changes</b>
-          <small>Names, descriptions, pictures, settings, members and roles of groups and servers; pins; and people's names, pictures, bios and statuses, as they change. Shown under History on profile pages.</small>
+          <small>Names, descriptions, pictures, settings, members and roles of groups and servers; pins; and people's names, pictures and bios, as they change. Shown under History on profile pages.</small>
         </span>
       </label>
 
-      <div class="hist-show">
-        <b>Deleted and disappeared messages in chats</b>
-        <div class="seg" role="radiogroup">
-          {(['collapsed', 'hidden'] as const).map((v) => (
-            <button role="radio" aria-checked={r.show === v} class={`chip-btn ${r.show === v ? 'on' : ''}`} onClick={() => void saveRetention({ show: v })}>
-              {v === 'collapsed' ? 'Collapsed line' : 'Hidden completely'}
-            </button>
-          ))}
-        </div>
-      </div>
-
       <h4 class="hist-sub">By network and account</h4>
       <p class="set-help">Turn any of these off for one network or account. A box set at its own level is outlined; right-click it to follow the level above again.</p>
-      <table class="hist-table">
-        <thead>
-          <tr>
-            <th />
-            {KINDS.map((k) => (
-              <th>{k.short}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {nets.map((n) => {
-            const accs = accounts.filter((a) => a.network === n);
-            return (
-              <>
-                <tr class="hist-net">
-                  <th>
-                    <NetGlyph network={n} size={13} /> {netName(n)}
-                  </th>
-                  {KINDS.map((k) => cell(n, k.key, n))}
-                </tr>
-                {accs.length > 1 &&
-                  accs.map((a) => (
-                    <tr class="hist-acc">
-                      <th>{a.label}</th>
-                      {KINDS.map((k) => cell(a.id, k.key, n, a.id))}
-                    </tr>
-                  ))}
-              </>
-            );
-          })}
-        </tbody>
-      </table>
+      <SourceTable kinds={KINDS} />
 
       <h4 class="hist-sub">Forget what was kept</h4>
       <div class="btn-row">
@@ -137,6 +135,9 @@ export function HistorySettings() {
         </button>
         <button class="btn ghost small danger" onClick={forget('changes', 'logged changes')}>
           Change log
+        </button>
+        <button class="btn ghost small danger" onClick={forget('statuses', 'logged statuses')}>
+          Status history
         </button>
       </div>
     </section>

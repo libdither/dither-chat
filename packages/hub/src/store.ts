@@ -2,7 +2,7 @@ import { Database } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
-import { canonicalReactionKey, DEFAULT_RETENTION, parseSearch, REACTION_RULES } from '@dither-chat/protocol';
+import { ADVERSARIAL_KEEPS, canonicalReactionKey, DEFAULT_RETENTION, parseSearch, REACTION_RULES } from '@dither-chat/protocol';
 import { Journal } from './journal.ts';
 import { TypingRelay, typingTtl } from './typing.ts';
 
@@ -1010,9 +1010,13 @@ export class Store {
     this.retentionCache = null;
   }
 
-  /** Whether this account's deleted, disappeared or edited messages are kept: the account's say, its network's, then the default. */
+  /**
+   * Whether this account's deleted, disappeared or edited messages are kept: the account's say, its network's, then the
+   * default. Deleted and disappeared only with adversarial features shown.
+   */
   keeps(what: keyof P.KeepSettings, acc: { id: string; network: string }): boolean {
     const r = this.retention();
+    if ((ADVERSARIAL_KEEPS as readonly string[]).includes(what) && !r.adversarial) return false;
     return r.sources[acc.id]?.[what] ?? r.sources[acc.network]?.[what] ?? r[what];
   }
 
@@ -1095,7 +1099,9 @@ export class Store {
     const at = ts ?? Date.now();
     this.db.query('UPDATE identity SET status = ? WHERE id = ?').run(JSON.stringify({ ...now, at }), iid);
     this.dirty.identities.add(iid);
-    if (heard) this.logChange('identity', iid, 'status', was, now, accountId, at);
+    // Statuses over time are an adversarial feature: the current one is kept, its history only when asked for.
+    const r = this.retention();
+    if (heard && r.adversarial && r.statuses) this.logChange('identity', iid, 'status', was, now, accountId, at);
   }
 
   /** Something that happened to a message. The same from a second account within ten minutes is one. */
@@ -1130,7 +1136,9 @@ export class Store {
   changes(targets: { kind: P.ChangeView['target']['kind']; id: string }[], limit = 100): P.ChangeView[] {
     if (!targets.length) return [];
     const where = targets.map(() => '(target_kind = ? AND target_id = ?)').join(' OR ');
-    const rows = this.db.query(`SELECT * FROM change_log WHERE ${where} ORDER BY at DESC, id DESC LIMIT ?`).all(...targets.flatMap((t) => [t.kind, t.id]), limit) as Row[];
+    // Statuses over time only with adversarial features shown.
+    const statuses = this.retention().adversarial ? '' : ` AND NOT (target_kind = 'identity' AND field = 'status')`;
+    const rows = this.db.query(`SELECT * FROM change_log WHERE (${where})${statuses} ORDER BY at DESC, id DESC LIMIT ?`).all(...targets.flatMap((t) => [t.kind, t.id]), limit) as Row[];
     const val = (r: Row, v: string | null): unknown => {
       const x = json<unknown>(v, null);
       return (r.field === 'avatar' || r.field === 'banner') && typeof x === 'string' ? this.media(x, r.account_id) : x;
@@ -1167,7 +1175,8 @@ export class Store {
   }
 
   /** Forget what was kept: deleted or disappeared messages' words and files, edits, reactions taken back, receipts, or the change log. */
-  eraseKept(what: 'deleted' | 'disappeared' | 'edits' | 'reactions' | 'receipts' | 'changes'): number {
+  eraseKept(what: 'deleted' | 'disappeared' | 'edits' | 'reactions' | 'receipts' | 'changes' | 'statuses'): number {
+    if (what === 'statuses') return this.db.query(`DELETE FROM change_log WHERE target_kind = 'identity' AND field = 'status'`).run().changes;
     const touched = (sql: string) => (this.db.query(sql).all() as Row[]).forEach((r) => this.dirty.messages.set(r.message_id, true));
     if (what === 'edits' || what === 'reactions') {
       const kind = what === 'edits' ? 'edit' : 'unreact';
@@ -1575,7 +1584,10 @@ export class Store {
       RC.set(r.message_id, cur);
     }
     const T = new Map(tri.map((t) => [t.message_id, t]));
+    // What was kept of deleted and disappeared messages stays out of sight with adversarial features hidden.
+    const unseal = this.retention().adversarial;
     return rows.map((r) => {
+      const sealed = !!r.deleted && !unseal;
       const seenVia = (S.get(r.id) ?? []).map((s) => s.account_id);
       const rx = new Map<string, string[]>();
       for (const x of R.get(r.id) ?? []) (rx.get(`${x.style}|${x.key}`) ?? rx.set(`${x.style}|${x.key}`, []).get(`${x.style}|${x.key}`)!).push(x.identity_id);
@@ -1594,17 +1606,17 @@ export class Store {
         ts: r.ts,
         editedTs: r.edited_ts,
         kind: r.kind,
-        body: r.body,
+        body: sealed ? '' : r.body,
         replyToId: r.reply_to_id,
         threadId: r.thread_id,
         mentionsSelf: !!r.mentions_self,
         deleted: !!r.deleted,
-        ...(r.deleted && r.gone_how ? { gone: { how: r.gone_how, at: r.gone_at, kept: !!r.body || !!A.get(r.id)?.length } } : {}),
+        ...(r.deleted && r.gone_how ? { gone: { how: r.gone_how, at: r.gone_at, kept: !sealed && (!!r.body || !!A.get(r.id)?.length) } } : {}),
         ...(E.get(r.id) ? { edits: E.get(r.id) } : {}),
         ...(EV.get(r.id) ? { events: EV.get(r.id) } : {}),
         ...(PIN.get(r.id)?.pinned ? { pinned: true } : {}),
         ...(RC.get(r.id) ? { receipts: RC.get(r.id) } : {}),
-        attachments: (A.get(r.id) ?? []).map((a) => ({
+        attachments: (sealed ? [] : (A.get(r.id) ?? [])).map((a) => ({
           id: a.id,
           kind: a.kind,
           mime: a.mime,

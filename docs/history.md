@@ -1,16 +1,17 @@
 # Message history: what changes, and what the networks take back
 
-The hub keeps what the networks let go of or rewrite, each switchable in Settings → Message history, everywhere or
-per network or account:
+The hub keeps what the networks let go of or rewrite, each switchable in Settings → Message history (or, for the
+first two and statuses, Adversarial features), everywhere or per network or account:
 
 | | What is kept | Where it shows |
 |---|---|---|
-| **Deleted messages** | the words and files of a message someone deleted (not ones you delete yourself) | a collapsed line in the chat, "Deleted message · 3m · Show" |
-| **Disappearing messages** | a Signal or WhatsApp message whose timer ran out | the same, "Disappeared message" |
+| **Deleted messages** (adversarial) | the words and files of a message someone deleted (not ones you delete yourself) | a collapsed line in the chat, "Deleted message · 3m · Show" |
+| **Disappearing messages** (adversarial) | a Signal or WhatsApp message whose timer ran out | the same, "Disappeared message" |
 | **Edits** | each earlier version of an edited message | click "(edited)" on it |
 | **Reactions taken back** | who took back which reaction; reactions a moderator cleared | Message History in the message's menu |
 | **Read receipts** | who got, read and played your messages, and when (Signal, WhatsApp, Matrix) | ticks beside your messages; click for who |
-| **Changes** (one switch) | names, descriptions, pictures, settings, members and roles of conversations and spaces; pins; people's names, usernames, pictures, bios, statuses, pronouns and banners | History on the profile page (docs/profile.md); a pin mark on pinned messages |
+| **Changes** (one switch) | names, descriptions, pictures, settings, members and roles of conversations and spaces; pins; people's names, usernames, pictures, bios, pronouns and banners | History on the profile page (docs/profile.md); a pin mark on pinned messages |
+| **Statuses** (adversarial) | each change to people's custom statuses (the About on Signal and WhatsApp); the current one is kept either way | History on the profile page |
 
 "Deleted and disappeared messages in chats" picks a collapsed line or nothing at all (they are still kept, and come
 back with the setting). Forget what was kept erases each kind for good.
@@ -19,6 +20,19 @@ Code: `packages/hub/src/store.ts` (`gone`, `logChange`, `logChanges`, `messageEv
 `changes`, `messageHistory`, `eraseKept`), `about.ts` (settings), `people.ts` (profiles); adapters emit `pin`, `role`,
 `customStatus` and `receipt` (packages/protocol/src/adapter.ts); `packages/web/src/history.ts`,
 `ui/HistorySettings.tsx`, `ui/HistoryCard.tsx`, `ui/MessageHistory.tsx`, `ui/Timeline.tsx` (`Gone`, `Edited`, `Marks`).
+
+## Adversarial features
+
+Keeping what others deleted, keeping what a disappearing timer was meant to erase, and logging people's statuses
+over time all work against what the people on the other end expect. They are off by default (`adversarial: false`),
+and the hub does none of them, whatever their own switches or per-source overrides say, until Settings →
+Adversarial features → "Show adversarial features" has been through its warning: a popup saying why, whose "Yes, I
+really want to do this" stays greyed for 15 seconds, and ticking it shows the switches (each still off). "Hide
+adversarial features" turns them all off again. While hidden, what was kept stays in the database but out of sight:
+kept deleted messages are served empty, status history is left out of History. Message history → Forget erases it.
+
+`ui/Adversarial.tsx`; `ADVERSARIAL_KEEPS` in packages/protocol. A demo hub started with `--adversarial` shows them
+from the start (scripts/verify-history.ts); scripts/verify-adversarial.ts checks the gate.
 
 ## Storage
 

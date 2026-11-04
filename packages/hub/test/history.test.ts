@@ -24,6 +24,8 @@ const say = (acc: AccountRow, conversation: string, body: string, author = 'ann'
   return hubId('msg', acc.network, nativeId);
 };
 const changes = (kind: P.ChangeView['target']['kind'], acc: AccountRow, native: string) => store.changes([{ kind, id: hubId(kind === 'conversation' ? 'cnv' : kind === 'space' ? 'spc' : 'idn', acc.network, native) }]);
+/** Everything on, adversarial features too; the tests at the end check what the defaults leave out. */
+const ADV: P.RetentionSettings = { ...DEFAULT_RETENTION, adversarial: true, deleted: true, disappearing: true, statuses: true };
 const msg = (id: string) => store.messageViews([store.one<Record<string, any>>('SELECT * FROM message WHERE id = ?', id)!])[0];
 
 beforeAll(() => {
@@ -34,6 +36,7 @@ beforeAll(() => {
   store.ingest(dc, { t: 'status', status: 'online', self: { nativeId: 'dme', displayName: 'Me', isSelf: true } });
   for (const a of ['ann', 'bob', 'cy']) store.ingest(sig, { t: 'identity', identity: { nativeId: a, displayName: a.toUpperCase() } });
   store.ingest(dc, { t: 'identity', identity: { nativeId: 'ann', displayName: 'Ann' } });
+  store.setRetention(ADV);
 });
 afterAll(() => {
   store.db.close();
@@ -70,10 +73,10 @@ describe('changes', () => {
   });
 
   test('nothing when changes are not kept', () => {
-    store.setRetention({ ...DEFAULT_RETENTION, changes: false });
+    store.setRetention({ ...ADV, changes: false });
     conv(sig, { nativeId: 'g1', name: 'Crew' });
     expect(changes('conversation', sig, 'g1')[0].new).not.toBe('Crew');
-    store.setRetention(DEFAULT_RETENTION);
+    store.setRetention(ADV);
   });
 });
 
@@ -88,11 +91,11 @@ describe('edits', () => {
   });
 
   test('not kept where edits are off for the source', () => {
-    store.setRetention({ ...DEFAULT_RETENTION, sources: { signal: { edits: false } } });
+    store.setRetention({ ...ADV, sources: { signal: { edits: false } } });
     say(sig, 'g1', 'one', 'ann', 'e2');
     store.ingest(sig, { t: 'message', message: { nativeId: 'e2', conversation: 'g1', author: 'ann', ts: 1, editedTs: 2, body: 'two' } });
     expect(msg(hubId('msg', 'signal', 'e2')).edits).toBeUndefined();
-    store.setRetention(DEFAULT_RETENTION);
+    store.setRetention(ADV);
   });
 });
 
@@ -124,7 +127,7 @@ describe('deleted and disappeared messages', () => {
   });
 
   test('a source set not to keep them empties them, as before; an account overrides its network', () => {
-    store.setRetention({ ...DEFAULT_RETENTION, sources: { discord: { deleted: false }, [sig.id]: { disappearing: false } } });
+    store.setRetention({ ...ADV, sources: { discord: { deleted: false }, [sig.id]: { disappearing: false } } });
     const a = say(dc, 'c1', 'gone for good');
     store.ingest(dc, { t: 'delete', conversation: 'c1', nativeId: `m${n}` });
     expect(msg(a).body).toBe('');
@@ -134,7 +137,7 @@ describe('deleted and disappeared messages', () => {
     const c = say(sig, 'g1', 'still kept');
     store.ingest(sig, { t: 'delete', conversation: 'g1', nativeId: `m${n}` });
     expect(msg(c).body).toBe('still kept');
-    store.setRetention(DEFAULT_RETENTION);
+    store.setRetention(ADV);
   });
 
   test('forgetting what was kept', () => {
@@ -268,4 +271,35 @@ test('the first change log comes across: values as JSON, edits into message even
   } finally {
     rmSync(d2, { recursive: true, force: true });
   }
+});
+
+describe('adversarial features', () => {
+  test('off by default: deleted and disappeared messages are emptied, statuses not logged, whatever the switches say', () => {
+    store.setRetention({ ...DEFAULT_RETENTION, deleted: true, disappearing: true, statuses: true, sources: { signal: { deleted: true } } });
+    const a = say(sig, 'g1', 'deleted, not kept');
+    store.ingest(sig, { t: 'delete', conversation: 'g1', nativeId: `m${n}` });
+    expect(msg(a).body).toBe('');
+    const b = say(sig, 'g1', 'disappeared, not kept');
+    store.ingest(sig, { t: 'delete', conversation: 'g1', nativeId: `m${n}`, reason: 'expired' });
+    expect(msg(b).gone).toMatchObject({ how: 'disappeared', kept: false });
+    store.ingest(dc, { t: 'customStatus', who: 'ann', text: 'unlogged' });
+    expect(changes('identity', dc, 'ann').filter((c) => c.field === 'status')).toEqual([]);
+    // The current status is still known.
+    expect(store.identitiesByIds([hubId('idn', 'discord', 'ann')])[0].status).toMatchObject({ text: 'unlogged' });
+    store.setRetention(ADV);
+  });
+
+  test('hidden again, what was kept is out of sight until they are shown', () => {
+    const id = say(sig, 'g1', 'kept while shown');
+    store.ingest(sig, { t: 'delete', conversation: 'g1', nativeId: `m${n}` });
+    store.ingest(dc, { t: 'customStatus', who: 'ann', text: 'logged' });
+    expect(changes('identity', dc, 'ann').some((c) => c.field === 'status')).toBe(true);
+    store.setRetention({ ...ADV, adversarial: false });
+    expect(msg(id)).toMatchObject({ body: '', gone: { kept: false } });
+    expect(changes('identity', dc, 'ann').some((c) => c.field === 'status')).toBe(false);
+    store.setRetention(ADV);
+    expect(msg(id).body).toBe('kept while shown');
+    expect(store.eraseKept('statuses')).toBeGreaterThan(0);
+    expect(changes('identity', dc, 'ann').some((c) => c.field === 'status')).toBe(false);
+  });
 });

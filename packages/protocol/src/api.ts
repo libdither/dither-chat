@@ -732,15 +732,36 @@ export interface KeepSettings {
 }
 
 export interface RetentionSettings extends KeepSettings {
-  /** Names, descriptions, pictures, settings, members, roles, pins, and people's profiles and statuses, as they change. */
+  /** Names, descriptions, pictures, settings, members, roles, pins, and people's profiles, as they change. */
   changes: boolean;
+  /** People's statuses over time (an adversarial feature). */
+  statuses: boolean;
+  /**
+   * Adversarial features shown, after the warning (docs/history.md): keeping what others deleted or set to disappear,
+   * and logging statuses. Until then the hub does none of them, whatever their switches say.
+   */
+  adversarial: boolean;
   /** Kept deleted and disappeared messages: a collapsed row in the timeline, or not shown at all. */
   show: 'collapsed' | 'hidden';
   /** Overrides by network ("signal") or account id, the account's first. */
   sources: Record<string, Partial<KeepSettings>>;
 }
 
-export const DEFAULT_RETENTION: RetentionSettings = { deleted: true, disappearing: true, edits: true, reactions: true, receipts: true, changes: true, show: 'collapsed', sources: {} };
+export const DEFAULT_RETENTION: RetentionSettings = {
+  deleted: false,
+  disappearing: false,
+  edits: true,
+  reactions: true,
+  receipts: true,
+  changes: true,
+  statuses: false,
+  adversarial: false,
+  show: 'collapsed',
+  sources: {},
+};
+
+/** The kinds kept only with adversarial features shown. */
+export const ADVERSARIAL_KEEPS = ['deleted', 'disappearing'] as const satisfies readonly (keyof KeepSettings)[];
 
 /**
  * One thing that changed about a place or a person. `old` and `new` are the values themselves: text for names and

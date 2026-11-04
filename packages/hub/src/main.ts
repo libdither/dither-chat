@@ -177,6 +177,8 @@ if (!demo && realAccounts.length) {
   }
   store.db.query(`DELETE FROM meta WHERE key = 'demo_overlay'`).run();
 }
+// A demo world showing adversarial features from the start (scripts/verify-history.ts): before its history is seeded.
+if (demo && flag('adversarial') && !store.retention().adversarial) store.setRetention({ ...store.retention(), adversarial: true, deleted: true, disappearing: true, statuses: true });
 if (demo && !store.accounts().some((a) => a.demo)) createDemoAccounts(store);
 sup.startAll();
 if (store.accounts().some((a) => a.demo)) applyDemoOverlay(store);

@@ -449,6 +449,8 @@ export class HubServer {
           reactions: bool(b.reactions, cur.reactions),
           receipts: bool(b.receipts, cur.receipts),
           changes: bool(b.changes, cur.changes),
+          statuses: bool(b.statuses, cur.statuses),
+          adversarial: bool(b.adversarial, cur.adversarial),
           show: b.show === 'hidden' || b.show === 'collapsed' ? b.show : cur.show,
           sources,
         });
@@ -458,7 +460,7 @@ export class HubServer {
     }
     if (path === '/api/retention/erase' && method === 'POST') {
       const b = await body<{ what?: string }>();
-      const kinds = ['deleted', 'disappeared', 'edits', 'reactions', 'receipts', 'changes'] as const;
+      const kinds = ['deleted', 'disappeared', 'edits', 'reactions', 'receipts', 'changes', 'statuses'] as const;
       if (!kinds.includes(b.what as (typeof kinds)[number])) return bad(`what: ${kinds.join(', ')}`);
       const n = s.eraseKept(b.what as (typeof kinds)[number]);
       this.flush();

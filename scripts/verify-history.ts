@@ -6,7 +6,8 @@
  * forgetting what was kept.
  *
  *   bun scripts/verify-history.ts http://127.0.0.1:8499 [/tmp/shots]
- * The hub must be a fresh demo hub (--demo) with its own data dir: this changes settings and forgets things.
+ * The hub must be a fresh demo hub (--demo --adversarial) with its own data dir: this changes settings and forgets
+ * things. Without --adversarial nothing deleted or disappeared is kept, which scripts/verify-adversarial.ts checks.
  */
 import { mkdirSync } from 'node:fs';
 import { launch } from './browser.ts';
@@ -85,8 +86,8 @@ try {
 
   // Settings: hidden completely.
   await p.goto(`${hub}/#/settings`);
-  await p.until(`!!document.querySelector('#set-history')`, 10000);
-  await p.eval(`[...document.querySelectorAll('#set-history .seg .chip-btn')].find((b) => b.textContent.includes('Hidden')).click()`);
+  await p.until(`!!document.querySelector('#set-adversarial .adv-body')`, 10000);
+  await p.eval(`[...document.querySelectorAll('#set-adversarial .seg .chip-btn')].find((b) => b.textContent.includes('Hidden')).click()`);
   await Bun.sleep(400);
   check((await fetch(`${hub}/api/retention`).then((r) => r.json()) as any).show === 'hidden', 'Settings hides them completely');
   if (shots) await p.shot(`${shots}/history-settings.png`);
@@ -98,8 +99,8 @@ try {
   // A network turned off, through the table's checkbox.
   await put({ show: 'collapsed' });
   await p.goto(`${hub}/#/settings`);
-  await p.until(`!!document.querySelector('.hist-table')`, 10000);
-  await p.eval(`(() => { const row = [...document.querySelectorAll('.hist-table tr.hist-net')].find((r) => r.textContent.includes('Signal')); row.querySelector('td input').click(); })()`);
+  await p.until(`!!document.querySelector('#set-adversarial .hist-table')`, 10000);
+  await p.eval(`(() => { const row = [...document.querySelectorAll('#set-adversarial .hist-table tr.hist-net')].find((r) => r.textContent.includes('Signal')); row.querySelector('td input').click(); })()`);
   await Bun.sleep(400);
   const r = (await fetch(`${hub}/api/retention`).then((x) => x.json())) as any;
   check(r.sources.signal?.deleted === false, 'Signal’s deleted messages turned off on their own', r.sources);

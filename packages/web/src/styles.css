@@ -8009,3 +8009,60 @@ button.msg-edited.link:hover {
   max-height: 380px;
   overflow-y: auto;
 }
+
+/* Settings → Adversarial features */
+.adversarial.open {
+  border-left: 3px solid var(--danger);
+  padding-left: 14px;
+}
+.adv-body {
+  animation: adv-open 0.25s ease-out;
+}
+@keyframes adv-open {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .adv-body {
+    animation: none;
+  }
+}
+.adv-warning {
+  max-width: 560px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.adv-warning ul {
+  padding-left: 18px;
+  margin: 8px 0;
+}
+.adv-warning li {
+  margin: 6px 0;
+}
+.adv-confirm {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.adv-confirm input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--danger);
+}
+.adv-confirm.waiting {
+  cursor: not-allowed;
+  color: var(--text-faint);
+}
+.adv-timer {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: normal;
+}
