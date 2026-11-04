@@ -10,7 +10,8 @@
  */
 
 import type * as P from '@dither-chat/protocol';
-import type { DispatchName, RawChannel, RawGuild, RawGuildSettings, RawMessage, RawSnapshot, RawUser } from './discord-types.ts';
+import type { DispatchName, RawChannel, RawCustomStatus, RawGuild, RawGuildSettings, RawMessage, RawSnapshot, RawUser } from './discord-types.ts';
+import { type Changes, newChanges, pinSystemMessage, pinUpdate, pinsChanged, roleChanges, sawMessage, statusChanges } from './changes.ts';
 import { CHANNEL_TYPE, channelMute, customEmoji, isThread, mapCategory, mapGuild, mapGuildChannel, mapMessage, mapMute, mapPrivateChannel, mapReadState, mapThread, mapUser, reactionKey, userDisplayName, snowflakeToMs } from './map.ts';
 
 export interface AdapterState {
@@ -21,10 +22,12 @@ export interface AdapterState {
   friends: Set<string>;
   /** user id -> what we last told the hub about them */
   users: Map<string, string>;
+  /** pins, roles and custom statuses: what was there before, to tell only changes (changes.ts) */
+  changes: Changes;
 }
 
 export function newState(): AdapterState {
-  return { selfId: '', guilds: new Map(), guildSettings: new Map(), known: new Set(), friends: new Set(), users: new Map() };
+  return { selfId: '', guilds: new Map(), guildSettings: new Map(), known: new Set(), friends: new Set(), users: new Map(), changes: newChanges() };
 }
 
 export interface SnapshotResult {
@@ -68,6 +71,8 @@ export function translateSnapshot(data: RawSnapshot, st: AdapterState): Snapshot
   }
 
   for (const u of data.users ?? []) if (u.id !== selfId) events.push({ t: 'identity', identity: mapUser(u, { contact: st.friends.has(u.id) }) });
+  // Friends' custom statuses as they are now, so later changes have something to change from. Their identities are above.
+  events.push(...statusChanges(data.customStatuses ?? [], st.changes, selfId));
 
   for (const rs of data.readStates ?? []) {
     if (!st.known.has(rs.id)) continue;
@@ -94,6 +99,8 @@ export function openedDirect(peer: string, r: { channelId: string; channel?: Raw
 /** A message and the people it names. Guild members are not in the snapshot, so this is the only place the hub learns their names. */
 export function messageEvents(m: RawMessage, st: AdapterState, live: boolean): P.AdapterEvent[] {
   const message = mapMessage(m, st.selfId);
+  // Pinned already is where a change starts from, not a change.
+  if (!live) sawMessage(m, st.changes, false);
   // A message fetched over REST is the whole truth, so no reactions means none are left. A gateway update may just not say.
   if (!live) message.reactions ??= [];
   return [...userFacts([m.author, ...(m.mentions ?? [])], st), { t: 'message', live, message }];
@@ -130,15 +137,39 @@ function guildChannelEvents(c: RawChannel, st: AdapterState): P.AdapterEvent[] {
   return [{ t: 'conversation', conversation: mapGuildChannel(c, guild, mute) }];
 }
 
-/** One forwarded Flux action -> zero or more facts. */
-export function translateDispatch(event: DispatchName, a: any, st: AdapterState): P.AdapterEvent[] {
+/** Custom statuses that changed, each after its person's identity. */
+function statusEvents(list: RawCustomStatus[], st: AdapterState): P.AdapterEvent[] {
+  const changed = statusChanges(list, st.changes, st.selfId);
+  if (!changed.length) return [];
+  const who = new Set(changed.map((e) => (e.t === 'customStatus' ? e.who : '')));
+  return [...userFacts(list.map((s) => s.user).filter((u) => u && who.has(u.id)), st), ...changed];
+}
+
+/** One forwarded Flux action -> zero or more facts. `now` is when it was heard (pins pair signals by it). */
+export function translateDispatch(event: DispatchName, a: any, st: AdapterState, now = Date.now()): P.AdapterEvent[] {
   const selfId = st.selfId;
   switch (event) {
     case 'MESSAGE_CREATE':
       // An optimistic one is the client echoing a send in flight under a temporary id; the real one follows from the gateway.
-      return a.message && !a.optimistic ? messageEvents(a.message, st, true) : [];
-    case 'MESSAGE_UPDATE':
-      return a.message && a.message.author ? messageEvents(a.message, st, true) : [];
+      if (!a.message || a.optimistic) return [];
+      sawMessage(a.message, st.changes, true);
+      return [...messageEvents(a.message, st, true), ...pinSystemMessage(a.message, st.changes, now)];
+    case 'MESSAGE_UPDATE': {
+      if (!a.message) return [];
+      // A partial update without its author can still say it was pinned.
+      const pin = pinUpdate(a.message, a.wasPinned, st.changes, now);
+      return [...(a.message.author ? messageEvents(a.message, st, true) : []), ...pin];
+    }
+    case 'CHANNEL_PINS_UPDATE':
+      return a.channelId ? pinsChanged(a.channelId, a.lastPinTimestamp, st.changes, now) : [];
+    case 'GUILD_MEMBER_UPDATE': {
+      const roles = roleChanges(a, st.changes);
+      return roles.length ? [...userFacts([a.user], st), ...roles] : [];
+    }
+    case 'PRESENCE_UPDATE':
+    case 'PRESENCE_UPDATES':
+    case 'CONNECTION_OPEN_SUPPLEMENTAL':
+      return statusEvents(a.statuses ?? [], st);
     case 'MESSAGE_DELETE':
       return a.id && a.channelId ? [{ t: 'delete', conversation: a.channelId, nativeId: a.id }] : [];
     case 'MESSAGE_REACTION_ADD':

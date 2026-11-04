@@ -119,6 +119,8 @@ export interface RawMessage {
   sticker_items?: { name: string }[];
   poll?: { question?: string; answers?: string[] };
   nonce?: string | number;
+  /** Absent when the hook did not say (a partial update). */
+  pinned?: boolean;
 }
 
 /** Discord read state (ReadStateStore): one row per channel the user has seen. */
@@ -165,6 +167,29 @@ export interface RawSnapshot {
   users?: RawUser[];
   readStates?: RawReadState[];
   guildSettings?: RawGuildSettings[];
+  /** Friends' custom statuses, for those online (an offline one shows none, which is not the same as having none). */
+  customStatuses?: RawCustomStatus[];
+}
+
+/** Someone's custom status: Discord's type-4 activity. No text and no emoji: they have none. */
+export interface RawCustomStatus {
+  user: RawUser;
+  text?: string | null;
+  emoji?: RawEmoji | null;
+}
+
+/** GUILD_MEMBER_UPDATE as the hook forwards it: only when the roles changed, or it could not tell. */
+export interface RawMemberUpdate {
+  guildId: string;
+  user: RawUser;
+  roles: string[];
+  /**
+   * Their roles in the client's member store just before: null, it had not loaded them (no change is knowable);
+   * absent, the hook could not look (the adapter's own memory stands in).
+   */
+  before?: string[] | null;
+  /** Names and colours of the roles on either side. */
+  named?: Pick<RawRole, 'id' | 'name' | 'color'>[];
 }
 
 // --------------------------------------------------------------- bridge protocol
@@ -210,7 +235,12 @@ export type DispatchName =
   | 'THREAD_DELETE'
   | 'THREAD_LIST_SYNC'
   | 'MESSAGE_ACK'
-  | 'TYPING_START';
+  | 'TYPING_START'
+  | 'CHANNEL_PINS_UPDATE'
+  | 'GUILD_MEMBER_UPDATE'
+  | 'PRESENCE_UPDATE'
+  | 'PRESENCE_UPDATES'
+  | 'CONNECTION_OPEN_SUPPLEMENTAL';
 
 /** adapter -> service worker: a command for the hook to run through the client's own code. */
 export type BridgeDown =

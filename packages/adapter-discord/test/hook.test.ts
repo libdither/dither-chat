@@ -1048,3 +1048,159 @@ describe('hook.js with several rspack runtimes', () => {
     return pending;
   });
 });
+
+describe('pins, roles and custom statuses', () => {
+  // Discord's dispatcher runs interceptors, then the stores' handlers, then subscribers.
+  let interceptors: ((action: any) => boolean)[] = [];
+  const dispatch = (type: string, action: any, apply: () => void = () => {}) => {
+    const a = { type, ...action };
+    if (interceptors.some((fn) => fn(a))) return;
+    apply();
+    emit(type, a);
+  };
+  const members = new Map<string, { userId: string; roles: string[] }>();
+  const messages = new Map<string, { id: string; pinned: boolean }>();
+  const presences = new Map<string, { status: string; activities: any[] }>();
+
+  function changesPage(opts: { interceptors?: boolean } = {}) {
+    handlers.clear();
+    interceptors = [];
+    if (opts.interceptors !== false) (dispatcher as any).addInterceptor = (fn: (a: any) => boolean) => interceptors.push(fn);
+    me = { id: '1', username: 'someone' };
+    userStoreGetUser.value = (id: string) => ({ id, username: `user${id}` });
+    guildRecords.clear();
+    guildRecords.set('100', { id: '100', name: 'Test server' });
+    channelStore.getDMFromUserId = (id: string) => (id === '20' ? '620' : undefined);
+    const p = page();
+    p.runHook();
+    const web = runtime(p.win, 'web');
+    chunk(p.win, '700', {
+      stores: storeModule,
+      changes: (_m: any, e: any) => {
+        e.m = store('GuildMemberStore', { getMember: (g: string, u: string) => (g === '100' ? members.get(u) ?? null : null), getNick: () => null });
+        e.g = store('GuildRoleStore', {
+          getRoles: () => ({
+            '100': { id: '100', name: '@everyone', position: 0, color: 0 },
+            '201': { id: '201', name: 'Helper', position: 1, color: 0x5c7cfa },
+            '202': { id: '202', name: 'Mod', position: 2, colorString: '#e86a92' },
+            '203': { id: '203', name: 'Unrelated', position: 3 },
+          }),
+        });
+        e.s = store('MessageStore', { getMessage: (_c: string, id: string) => messages.get(id) });
+        e.r = store('RelationshipStore', { getRelationshipType: (id: string) => (id === '7' || id === '8' ? 1 : id === '9' ? 2 : 0), getFriendIDs: () => ['7', '8'] });
+        e.p = store('PresenceStore', { getStatus: (id: string) => presences.get(id)?.status ?? 'offline', getActivities: (id: string) => presences.get(id)?.activities ?? [] });
+      },
+    });
+    web.T('stores');
+    web.T('changes');
+    p.tick();
+    const sent = (event: string) => p.posted.filter((x) => x.t === 'dispatch' && x.event === event).map((x) => x.data);
+    return { p, sent };
+  }
+  afterEach(() => {
+    delete (dispatcher as any).addInterceptor;
+    delete channelStore.getDMFromUserId;
+    members.clear();
+    messages.clear();
+    presences.clear();
+    guildRecords.clear();
+    userStoreGetUser.value = () => null;
+    me = null;
+  });
+
+  test("a role change is read against the member as the client had them, before the store takes it in", () => {
+    const { sent } = changesPage();
+    members.set('5', { userId: '5', roles: ['201'] });
+    const update = { guildId: '100', user: { id: '5', username: 'user5' }, roles: ['201', '202'], nick: 'new nick' };
+    dispatch('GUILD_MEMBER_UPDATE', update, () => members.set('5', { userId: '5', roles: update.roles }));
+    expect(sent('GUILD_MEMBER_UPDATE')).toEqual([
+      {
+        guildId: '100',
+        user: expect.objectContaining({ id: '5', username: 'user5' }),
+        roles: ['201', '202'],
+        before: ['201'],
+        named: [
+          { id: '201', name: 'Helper', color: '#5c7cfa' },
+          { id: '202', name: 'Mod', color: '#e86a92' },
+        ],
+      },
+    ]);
+    expect(JSON.stringify(sent('GUILD_MEMBER_UPDATE'))).not.toContain('new nick');
+  });
+
+  test('a nickname change, or a member the client had not loaded, sends nothing', () => {
+    const { sent } = changesPage();
+    members.set('5', { userId: '5', roles: ['201'] });
+    dispatch('GUILD_MEMBER_UPDATE', { guildId: '100', user: { id: '5' }, roles: ['201'], nick: 'x' });
+    dispatch('GUILD_MEMBER_UPDATE', { guildId: '100', user: { id: '6' }, roles: ['202'] });
+    expect(sent('GUILD_MEMBER_UPDATE')).toEqual([]);
+  });
+
+  test('without interceptors, a member update goes to the adapter to compare with what it heard before', () => {
+    const { sent } = changesPage({ interceptors: false });
+    members.set('5', { userId: '5', roles: ['201'] });
+    dispatch('GUILD_MEMBER_UPDATE', { guildId: '100', user: { id: '5' }, roles: ['202'] });
+    const [d] = sent('GUILD_MEMBER_UPDATE');
+    expect(d.before).toBeUndefined();
+    expect(d.roles).toEqual(['202']);
+  });
+
+  test('MESSAGE_UPDATE says whether the client had the message pinned; CHANNEL_PINS_UPDATE is passed on', () => {
+    const { sent } = changesPage();
+    messages.set('41', { id: '41', pinned: false });
+    const msg = (id: string) => ({ id, channel_id: '300', author: { id: '5', username: 'user5' }, content: 'never forwarded twice', timestamp: '2024-06-01T12:00:00.000Z', pinned: true });
+    dispatch('MESSAGE_UPDATE', { message: msg('41') }, () => messages.set('41', { id: '41', pinned: true }));
+    dispatch('MESSAGE_UPDATE', { message: msg('42') });
+    dispatch('CHANNEL_PINS_UPDATE', { channelId: '300', lastPinTimestamp: '2024-06-02T00:00:00.000Z' });
+    const [known, unknown] = sent('MESSAGE_UPDATE');
+    expect(known).toMatchObject({ message: { id: '41', pinned: true }, wasPinned: false });
+    expect(unknown.message.pinned).toBe(true);
+    expect('wasPinned' in unknown).toBe(false);
+    expect(sent('CHANNEL_PINS_UPDATE')).toEqual([{ channelId: '300', lastPinTimestamp: '2024-06-02T00:00:00.000Z' }]);
+  });
+
+  test('custom statuses of friends and DM peers only, on change only, and offline is not cleared', () => {
+    const { sent } = changesPage();
+    const custom = (state: string | null, emoji?: any) => ({ type: 4, name: 'Custom Status', state, emoji });
+    const song = (track: string) => ({ type: 2, name: 'Spotify', details: track });
+    dispatch('PRESENCE_UPDATES', {
+      updates: [
+        { user: { id: '7' }, status: 'online', activities: [custom('coding', { id: '99', name: 'ferris', animated: false })] },
+        { user: { id: '30' }, guildId: '100', status: 'online', activities: [custom('a stranger in a big server')] },
+        { user: { id: '9' }, status: 'online', activities: [custom('blocked')] },
+        { user: { id: '20' }, status: 'idle', activities: [] },
+        { user: { id: '1' }, status: 'online', activities: [custom('me')] },
+      ],
+    });
+    // The same again, a song moving on, going offline and back: nothing to say.
+    dispatch('PRESENCE_UPDATES', { updates: [{ user: { id: '7' }, status: 'online', activities: [song('one'), custom('coding', { id: '99', name: 'ferris' })] }] });
+    dispatch('PRESENCE_UPDATE', { user: { id: '7' }, status: 'offline', activities: [] });
+    dispatch('PRESENCE_UPDATE', { user: { id: '7' }, status: 'dnd', activities: [custom('coding', { id: '99', name: 'ferris' }), song('two')] });
+    // Cleared.
+    dispatch('PRESENCE_UPDATE', { user: { id: '7' }, status: 'online', activities: [song('three')] });
+    expect([...sent('PRESENCE_UPDATES'), ...sent('PRESENCE_UPDATE')]).toEqual([
+      {
+        statuses: [
+          { user: expect.objectContaining({ id: '7' }), text: 'coding', emoji: { id: '99', name: 'ferris', animated: false } },
+          { user: expect.objectContaining({ id: '20' }), text: null, emoji: null },
+        ],
+      },
+      { statuses: [{ user: expect.objectContaining({ id: '7' }), text: null, emoji: null }] },
+    ]);
+  });
+
+  test("the snapshot and CONNECTION_OPEN_SUPPLEMENTAL carry online friends' custom statuses", () => {
+    const { p, sent } = changesPage();
+    p.poll();
+    expect(p.posted.find((m) => m.t === 'snapshot').data.customStatuses).toEqual([]); // presences come later
+    presences.set('7', { status: 'online', activities: [{ type: 4, state: 'on holiday', emoji: { name: '🌴' } }] });
+    presences.set('8', { status: 'offline', activities: [] });
+    dispatch('CONNECTION_OPEN_SUPPLEMENTAL', { presences: [] });
+    expect(sent('CONNECTION_OPEN_SUPPLEMENTAL')).toEqual([{ statuses: [{ user: expect.objectContaining({ id: '7' }), text: 'on holiday', emoji: { id: null, name: '🌴', animated: false } }] }]);
+    // What it said is the last said: the same presence again sends nothing.
+    dispatch('PRESENCE_UPDATE', { user: { id: '7' }, status: 'online', activities: [{ type: 4, state: 'on holiday', emoji: { name: '🌴' } }] });
+    expect(sent('PRESENCE_UPDATE')).toEqual([]);
+    emit('CONNECTION_OPEN');
+    expect(p.posted.filter((m) => m.t === 'snapshot').at(-1).data.customStatuses).toEqual([{ user: expect.objectContaining({ id: '7' }), text: 'on holiday', emoji: { id: null, name: '🌴', animated: false } }]);
+  });
+});

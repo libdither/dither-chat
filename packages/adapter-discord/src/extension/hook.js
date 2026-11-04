@@ -155,6 +155,8 @@
     UserStore: isStore('UserStore'),
     GuildStore: isStore('GuildStore'),
     ChannelStore: isStore('ChannelStore'),
+    // Messages of the channels the client has loaded: whether one was pinned before an update says so.
+    MessageStore: isStore('MessageStore'),
     GuildChannelStore: isStore('GuildChannelStore'),
     ReadStateStore: isStore('ReadStateStore'),
     RelationshipStore: isStore('RelationshipStore'),
@@ -317,6 +319,7 @@
       message_snapshots: pickSnapshots(m.message_snapshots ?? m.messageSnapshots),
       sticker_items: Array.isArray(m.sticker_items) ? m.sticker_items.map((s) => ({ name: s.name })) : undefined,
       poll: m.poll && m.poll.question ? { question: m.poll.question.text, answers: (m.poll.answers ?? []).map((a) => a.poll_media && a.poll_media.text).filter(Boolean) } : undefined,
+      pinned: typeof m.pinned === 'boolean' ? m.pinned : undefined,
     };
   }
   // A forward's content. Records in the client's stores use camelCase and Date timestamps.
@@ -410,6 +413,9 @@
     } catch (e) {}
     try {
       data.guildSettings = guildSettings();
+    } catch (e) {}
+    try {
+      data.customStatuses = friendStatuses();
     } catch (e) {}
     data.users = Array.from(users.values());
     return data;
@@ -517,13 +523,21 @@
     'THREAD_LIST_SYNC',
     'MESSAGE_ACK',
     'TYPING_START',
+    'CHANNEL_PINS_UPDATE',
+    'GUILD_MEMBER_UPDATE',
+    'PRESENCE_UPDATE',
+    'PRESENCE_UPDATES',
+    'CONNECTION_OPEN_SUPPLEMENTAL',
   ];
   function subscribeDispatch() {
     const d = mod.Dispatcher;
     if (!d) return;
+    installPeek();
     const handler = (event) => (action) => {
       try {
-        up({ t: 'dispatch', event, data: shrink(event, action) });
+        // null: nothing in it worth sending (a presence of someone not followed, roles that did not change).
+        const data = shrink(event, action);
+        if (data !== null) up({ t: 'dispatch', event, data });
       } catch (e) {
         /* ignore */
       }
@@ -541,12 +555,144 @@
     log('info', 'subscribed to ' + FORWARD.length + ' dispatch events');
   }
 
+  // ------------------------------------------------------- before an update
+  // A subscriber hears an action once the stores have taken it in, so what it replaced is gone by then. The
+  // dispatcher runs interceptors first: this one notes the little a change is told from, and never stops an action.
+  const before = new WeakMap();
+  const PEEK = {
+    GUILD_MEMBER_UPDATE: (a) => {
+      const gm = mod.GuildMemberStore;
+      const guildId = a.guildId ?? a.guild_id;
+      if (!gm || !guildId || !a.user) return {};
+      const m = gm.getMember(guildId, a.user.id);
+      // null: the client had not loaded them, and what changed is not knowable.
+      return { roles: m && Array.isArray(m.roles) ? m.roles.slice() : null };
+    },
+    MESSAGE_UPDATE: (a) => {
+      const msg = a.message;
+      const m = msg && mod.MessageStore ? mod.MessageStore.getMessage(msg.channel_id ?? msg.channelId, msg.id) : null;
+      return { pinned: m && typeof m.pinned === 'boolean' ? m.pinned : undefined };
+    },
+  };
+  let peeking = false;
+  function installPeek() {
+    const d = mod.Dispatcher;
+    if (peeking || typeof d.addInterceptor !== 'function') return;
+    d.addInterceptor((action) => {
+      try {
+        const peek = action && PEEK[action.type];
+        if (peek) before.set(action, peek(action));
+      } catch (e) {
+        /* a store that throws leaves it unknown */
+      }
+      return false;
+    });
+    peeking = true;
+  }
+
+  const sameIds = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
+
+  /** A role change as the adapter needs it: the roles on both sides, with names. null when nothing changed. */
+  function memberUpdate(a) {
+    const guildId = a.guildId ?? a.guild_id;
+    const roles = Array.isArray(a.roles) ? a.roles.filter((r) => typeof r === 'string') : null;
+    if (!guildId || !a.user || !a.user.id || !roles) return null;
+    const peek = before.get(a);
+    const was = peek ? peek.roles : undefined;
+    // Not loaded before, or a nickname or avatar change: no role changed that is knowable.
+    if (was === null || (was && sameIds(was, roles))) return null;
+    const ids = new Set([...roles, ...(was || [])]);
+    const g = guildOf(guildId);
+    const named = g ? guildRoles(g).filter((r) => ids.has(r.id)).map((r) => ({ id: r.id, name: r.name, color: r.color })) : [];
+    return { guildId, user: pickUser(a.user), roles, ...(was ? { before: was } : {}), named };
+  }
+
+  // ---------------------------------------------------------- custom statuses
+  // Only of friends and people with a DM open, never every member of a big server; and only when it changed, so a
+  // song or game moving on sends nothing. Offline, Discord shows no status at all, which is not having none.
+  const lastStatus = new Map();
+  const statusKey = (s) => JSON.stringify([s.text, s.emoji && s.emoji.id, s.emoji && s.emoji.name]);
+
+  function customOf(acts) {
+    const a = Array.isArray(acts) ? acts.find((x) => x && x.type === CUSTOM_STATUS) : null;
+    if (!a || (!a.state && !a.emoji)) return null;
+    return { text: textOf(a.state), emoji: a.emoji ? pickEmoji(a.emoji) : null };
+  }
+  const isAway = (status) => !status || status === 'offline' || status === 'invisible';
+  const statusOf = (status, acts) => (isAway(status) ? null : customOf(acts) || { text: null, emoji: null });
+
+  /** Who is followed: one lookup each, as presences in a big server come many at a time. */
+  function followedTest() {
+    const rs = mod.RelationshipStore;
+    const me = currentUser();
+    let types = null;
+    return (id) => {
+      if (!id || (me && me.id === id)) return false;
+      try {
+        if (rs && typeof rs.getRelationshipType === 'function') {
+          if (rs.getRelationshipType(id) === FRIEND) return true;
+        } else if (rs && (types || (types = relationshipTypes())).get(id) === FRIEND) return true;
+      } catch (e) {}
+      try {
+        return !!(mod.ChannelStore.getDMFromUserId && mod.ChannelStore.getDMFromUserId(id));
+      } catch (e) {
+        return false;
+      }
+    };
+  }
+
+  function presenceStatuses(a) {
+    const followed = followedTest();
+    const out = [];
+    for (const u of Array.isArray(a.updates) ? a.updates : [a]) {
+      const id = u && u.user && u.user.id;
+      if (!followed(id)) continue;
+      const s = statusOf(u.status, u.activities);
+      if (!s || lastStatus.get(id) === statusKey(s)) continue;
+      lastStatus.set(id, statusKey(s));
+      out.push({ user: resolveUser(id) || { id }, ...s });
+    }
+    return out.length ? { statuses: out } : null;
+  }
+
+  /** Every online friend's custom status as it is now (the adapter keeps only the ones that changed). */
+  function friendStatuses() {
+    const ps = mod.PresenceStore;
+    if (!ps || !mod.RelationshipStore) return [];
+    const out = [];
+    for (const user of friendList()) {
+      let s = null;
+      try {
+        s = statusOf(ps.getStatus(user.id), ps.getActivities(user.id));
+      } catch (e) {}
+      if (!s) continue;
+      lastStatus.set(user.id, statusKey(s));
+      out.push({ user, ...s });
+    }
+    return out;
+  }
+
   // Keep only the whitelisted shape of each forwarded action.
   function shrink(event, a) {
     switch (event) {
       case 'MESSAGE_CREATE':
-      case 'MESSAGE_UPDATE':
         return { message: pickMessage(a.message), optimistic: a.optimistic, channelId: a.channelId };
+      case 'MESSAGE_UPDATE': {
+        const peek = before.get(a);
+        return { message: pickMessage(a.message), optimistic: a.optimistic, channelId: a.channelId, ...(peek && peek.pinned !== undefined ? { wasPinned: peek.pinned } : {}) };
+      }
+      case 'CHANNEL_PINS_UPDATE':
+        return { channelId: a.channelId ?? a.channel_id, lastPinTimestamp: isoOf(a.lastPinTimestamp ?? a.last_pin_timestamp) };
+      case 'GUILD_MEMBER_UPDATE':
+        return memberUpdate(a);
+      case 'PRESENCE_UPDATE':
+      case 'PRESENCE_UPDATES':
+        return presenceStatuses(a);
+      case 'CONNECTION_OPEN_SUPPLEMENTAL': {
+        // Friends' presences come with this, not with CONNECTION_OPEN: the starting point the snapshot may have lacked.
+        const statuses = friendStatuses();
+        return statuses.length ? { statuses } : null;
+      }
       case 'MESSAGE_DELETE':
         return { id: a.id, channelId: a.channelId, guildId: a.guildId };
       case 'MESSAGE_REACTION_ADD':
@@ -1407,9 +1553,7 @@
     try {
       acts = mod.PresenceStore && mod.PresenceStore.getActivities(who);
     } catch (e) {}
-    const a = Array.isArray(acts) ? acts.find((x) => x && x.type === CUSTOM_STATUS) : null;
-    if (!a || (!a.state && !a.emoji)) return null;
-    return { text: textOf(a.state), emoji: a.emoji ? pickEmoji(a.emoji) : null };
+    return customOf(acts);
   }
 
   // How the client itself sends files: ask for upload URLs, PUT the bytes straight to storage, then post
