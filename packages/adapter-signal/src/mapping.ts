@@ -11,7 +11,7 @@
 
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { AdapterEvent, AttachmentFact, AttachmentKind, ConversationFact, IdentityFact, MessageFact, MessageKind, PersonAbout } from '@dither-chat/protocol';
+import type { AdapterEvent, AttachmentFact, AttachmentKind, ConversationFact, IdentityFact, MessageFact, MessageKind, PersonAbout, ReceiptState } from '@dither-chat/protocol';
 import { fromSignal, plainText } from './markdown.ts';
 import type { SigAttachment, SigContact, SigDataMessage, SigEnvelope, SigGroup, SigReceive, SigSentMessage } from './types.ts';
 
@@ -53,8 +53,10 @@ export interface MapContext {
   selfNumber?: string | null;
   /** Absolute signal-cli data dir (--config); attachments live in <dir>/attachments. */
   signalDir: string;
-  /** Conversation of a message we have seen, for read syncs (which carry no conversation). */
+  /** Conversation of a message we have seen, for read syncs and receipts (which carry no conversation). */
   conversationOf?: (messageNativeId: string) => string | undefined;
+  /** The message an edit's own id stands for: receipts name the newest version by its timestamp. */
+  originalOf?: (messageNativeId: string) => string | undefined;
   /** Resolve a phone number to an ACI (sync transcripts to number-only recipients). */
   aciOfNumber?: (number: string) => string | undefined;
   /** Whether a group's conversation fact is already known. Unknown groups get a stub and a refresh. */
@@ -84,8 +86,15 @@ export interface SeenMessage {
   groupUpdate?: string;
   /** The message it quotes (native id), kept so edits can carry the quote again. */
   replyTo?: string;
-  /** This is an edit of an earlier message. */
-  edited?: boolean;
+  /** This is an edit of an earlier message, sent at this time. */
+  editedTs?: number;
+}
+
+/** A pin with a duration: Signal's clients drop it then, and nothing is sent when they do. */
+export interface PinTimer {
+  conversation: string;
+  message: string;
+  until: number;
 }
 
 export interface MapResult {
@@ -95,6 +104,8 @@ export interface MapResult {
   refreshGroups: string[];
   /** Contacts/groups/blocked lists changed: re-read everything. */
   resync: boolean;
+  /** Pins that end by themselves. */
+  pinTimers: PinTimer[];
   logs: { level: 'debug' | 'info' | 'warn'; msg: string; data?: unknown }[];
 }
 
@@ -232,9 +243,8 @@ export function describeGroupChange(before: SigGroup | undefined, after: SigGrou
   const parts: string[] = [];
   if ((before.name ?? '') !== (after.name ?? '')) parts.push(after.name ? `renamed the group to “${after.name}”` : 'removed the group name');
   if ((before.description ?? '') !== (after.description ?? '')) parts.push('changed the group description');
-  const ids = (g: SigGroup) => new Set((g.members ?? []).map((m) => lc(m.uuid)).filter((x): x is string => !!x));
-  const was = ids(before);
-  const now = ids(after);
+  const was = memberIds(before);
+  const now = memberIds(after);
   const added = [...now].filter((x) => !was.has(x));
   const removed = [...was].filter((x) => !now.has(x));
   const list = (xs: string[]) => xs.map((x) => (x === self ? 'you' : nameOf(x))).join(', ');
@@ -242,6 +252,9 @@ export function describeGroupChange(before: SigGroup | undefined, after: SigGrou
   if (added.length === 1 && added[0] === actor && !removed.length) return `${who} joined the group.`;
   if (added.length) parts.push(`added ${list(added)}`);
   if (removed.length) parts.push(`removed ${list(removed)}`);
+  const { given, taken } = adminChanges(before, after);
+  if (given.length) parts.push(`made ${list(given)} ${given.length === 1 ? 'an admin' : 'admins'}`);
+  if (taken.length) parts.push(taken.length === 1 && taken[0] === self ? 'revoked your admin privileges' : `revoked admin privileges from ${list(taken)}`);
   if ((before.messageExpirationTime ?? 0) !== (after.messageExpirationTime ?? 0)) {
     parts.push(after.messageExpirationTime ? `set disappearing messages to ${describeTimer(after.messageExpirationTime)}` : 'turned off disappearing messages');
   }
@@ -257,6 +270,24 @@ export function describeGroupChange(before: SigGroup | undefined, after: SigGrou
   return `${who} ${parts.join(', ')}.`;
 }
 
+const memberIds = (g: SigGroup) => new Set((g.members ?? []).map((m) => lc(m.uuid)).filter((x): x is string => !!x));
+
+function adminIds(g: SigGroup): Set<string> {
+  const members = g.members ?? [];
+  // signal-cli 0.14 marks each member; older ones only list the admins.
+  const admins = members.some((m) => typeof m.isAdmin === 'boolean') ? members.filter((m) => m.isAdmin) : (g.admins ?? []);
+  return new Set(admins.map((m) => lc(m.uuid)).filter((x): x is string => !!x));
+}
+
+/** Who a group change made admin and who stopped being one, among the members it kept. */
+export function adminChanges(before: SigGroup, after: SigGroup): { given: string[]; taken: string[] } {
+  const was = memberIds(before);
+  const kept = [...memberIds(after)].filter((x) => was.has(x));
+  const a = adminIds(before);
+  const b = adminIds(after);
+  return { given: kept.filter((x) => !a.has(x) && b.has(x)), taken: kept.filter((x) => a.has(x) && !b.has(x)) };
+}
+
 // ------------------------------------------------------------------ envelopes
 
 interface Build {
@@ -265,7 +296,7 @@ interface Build {
 }
 
 export function mapReceive(rcv: SigReceive, ctx: MapContext): MapResult {
-  const out: MapResult = { events: [], messages: [], refreshGroups: [], resync: false, logs: [] };
+  const out: MapResult = { events: [], messages: [], refreshGroups: [], resync: false, pinTimers: [], logs: [] };
   const env = rcv.envelope;
   if (rcv.exception) {
     out.logs.push({
@@ -297,6 +328,7 @@ export function mapReceive(rcv: SigReceive, ctx: MapContext): MapResult {
     emitMessage(b, dm, { author: source, conversation: conv, ts: env.editMessage.targetSentTimestamp, editedTs: dm.timestamp });
   }
   if (env.syncMessage) sync(b, env);
+  if (env.receiptMessage && !fromSelf) receipts(b, env, source);
   if (env.typingMessage && !fromSelf && (env.typingMessage.action === 'STARTED' || env.typingMessage.action === 'STOPPED')) {
     const g = env.typingMessage.groupId;
     const conversation = g ? groupConvId(g) : dmId(ctx.self, source);
@@ -395,8 +427,15 @@ function dataCommon(b: Build, dm: Partial<SigDataMessage>, author: string, conve
   const who = actorName(b, author, authorName);
   if (dm.pinMessage || dm.unpinMessage) {
     const p = (dm.pinMessage ?? dm.unpinMessage)!;
-    const target = lc(p.targetAuthorUuid);
-    systemMessage(b, author, conversation, ts, `${who} ${dm.pinMessage ? 'pinned' : 'unpinned'} a message.`, target ? { replyTo: msgId(target, p.targetSentTimestamp) } : {});
+    const target = lc(p.targetAuthorUuid) ?? (p.targetAuthorNumber ? (ctx.aciOfNumber?.(p.targetAuthorNumber) ?? null) : null);
+    const message = target ? msgId(target, p.targetSentTimestamp) : undefined;
+    systemMessage(b, author, conversation, ts, `${who} ${dm.pinMessage ? 'pinned' : 'unpinned'} a message.`, message ? { replyTo: message } : {});
+    if (message) {
+      out.events.push({ t: 'pin', conversation, message, pinned: !!dm.pinMessage, by: author, ...(ts ? { ts } : {}) });
+      // Seconds; -1 is for good.
+      const secs = dm.pinMessage?.pinDurationSeconds ?? 0;
+      if (secs > 0 && ts) out.pinTimers.push({ conversation, message, until: ts + secs * 1000 });
+    }
     return;
   }
   if (dm.pollTerminate) {
@@ -505,11 +544,37 @@ function emitMessage(b: Build, dm: Partial<SigDataMessage>, o: { author: string;
     kind,
     text: plainText(dm.message, dm.mentions, ctx.nameOf) || body,
     ...(fact.replyTo ? { replyTo: fact.replyTo } : {}),
-    ...(o.editedTs ? { edited: true } : {}),
+    ...(o.editedTs ? { editedTs: o.editedTs } : {}),
     ...(dm.expiresInSeconds != null && !o.editedTs ? { timer: dm.expiresInSeconds } : {}),
     ...(dm.expiresInSeconds ? { expiresInSeconds: dm.expiresInSeconds } : {}),
     ...(attachments.some((a) => a.path) ? { files: attachments.map((a) => a.path).filter((p): p is string => !!p) } : {}),
   });
+}
+
+/**
+ * Someone's delivery, read or viewed receipt for messages you sent, one event per conversation. A receipt names
+ * messages by their timestamps only, so it counts for messages this device has seen; group receipts come per person.
+ */
+function receipts(b: Build, env: SigEnvelope, source: string) {
+  const { ctx, out } = b;
+  const r = env.receiptMessage!;
+  const state: ReceiptState | null = r.isViewed ? 'played' : r.isRead ? 'read' : r.isDelivery ? 'delivered' : null;
+  if (!state) return;
+  const byConversation = new Map<string, Set<string>>();
+  let unknown = 0;
+  for (const ts of r.timestamps ?? []) {
+    const id = msgId(ctx.self, ts);
+    const conversation = ctx.conversationOf?.(id);
+    const t = conversation ? parseConversation(conversation, ctx.self) : null;
+    // A 1:1's receipts come from its peer; nobody else sends any for Note to Self.
+    if (!conversation || !t || t.kind === 'self' || (t.kind === 'dm' && t.peer !== source)) {
+      unknown++;
+      continue;
+    }
+    (byConversation.get(conversation) ?? byConversation.set(conversation, new Set()).get(conversation)!).add(ctx.originalOf?.(id) ?? id);
+  }
+  if (unknown) out.logs.push({ level: 'debug', msg: `${state} receipt for ${unknown} message(s) we have not seen`, data: { from: source } });
+  for (const [conversation, ids] of byConversation) out.events.push({ t: 'receipt', conversation, messages: [...ids], who: source, state, ts: r.when || env.timestamp });
 }
 
 function sync(b: Build, env: SigEnvelope) {

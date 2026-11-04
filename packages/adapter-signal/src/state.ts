@@ -3,16 +3,20 @@
  *
  *   dms       peers we have a 1:1 with (Signal has no conversation list)
  *   index     recent message ids -> conversation, text, quoted message, files:
- *             read syncs carry no conversation, quotes and edits want the
- *             original, deletions remove the downloaded files
+ *             read syncs and receipts carry no conversation, quotes and edits
+ *             want the original, deletions remove the downloaded files; your
+ *             own edits' ids point at the message they edit (receipts name them)
  *   unread    incoming messages not yet acknowledged with a read receipt
  *   expiring  disappearing messages and when their timer started
- *   groups    last seen group details, to describe group updates
+ *   pins      pins that end by themselves, and when
+ *   groups    last seen group details, to describe group updates and admin changes
+ *   abouts    the About text and emoji last seen for each contact, to tell a change
  *
  * Writes are debounced and atomic (tmp + rename).
  */
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import type { PinTimer } from './mapping.ts';
 import type { SigGroup } from './types.ts';
 
 export interface Expiring {
@@ -30,7 +34,15 @@ interface StateFile {
   index: [id: string, entry: IndexEntry][];
   unread: Record<string, [author: string, ts: number][]>;
   expiring: Expiring[];
+  pins?: PinTimer[];
   groups: Record<string, SigGroup>;
+  abouts?: Record<string, About>;
+}
+
+/** Someone's About as last seen: text and emoji, each left out when not set. */
+export interface About {
+  t?: string;
+  e?: string;
 }
 
 interface IndexEntry {
@@ -38,6 +50,7 @@ interface IndexEntry {
   t: string; // plain text (truncated)
   r?: string; // quoted message id
   f?: string[]; // downloaded attachment files
+  o?: string; // the message this edit's id stands for
 }
 
 const INDEX_MAX = 5000;
@@ -50,7 +63,9 @@ export class AdapterState {
   private index = new Map<string, IndexEntry>();
   unread = new Map<string, [string, number][]>();
   expiring: Expiring[] = [];
+  pins: PinTimer[] = [];
   groups = new Map<string, SigGroup>();
+  abouts = new Map<string, About>();
   private timer?: Timer;
 
   constructor(private path: string) {
@@ -65,7 +80,9 @@ export class AdapterState {
       for (const [id, e] of s.index ?? []) if (e && typeof e === 'object') this.index.set(id, e);
       for (const [c, list] of Object.entries(s.unread ?? {})) this.unread.set(c, list);
       this.expiring = s.expiring ?? [];
+      this.pins = s.pins ?? [];
       for (const [id, g] of Object.entries(s.groups ?? {})) this.groups.set(id, g);
+      for (const [id, a] of Object.entries(s.abouts ?? {})) this.abouts.set(id, a);
     } catch (e) {
       console.error('[signal] state.json unreadable, starting fresh', e);
     }
@@ -76,7 +93,9 @@ export class AdapterState {
     this.index.clear();
     this.unread.clear();
     this.expiring = [];
+    this.pins = [];
     this.groups.clear();
+    this.abouts.clear();
     this.save();
   }
 
@@ -101,6 +120,19 @@ export class AdapterState {
 
   conversationOf(id: string) {
     return this.index.get(id)?.c;
+  }
+
+  /** An edit you sent, by its own id: receipts for it count for the message it edits. */
+  alias(editId: string, original: string, conversation: string) {
+    if (editId === original) return;
+    this.index.delete(editId);
+    this.index.set(editId, { c: conversation, t: '', o: this.originalOf(original) ?? original });
+    while (this.index.size > INDEX_MAX) this.index.delete(this.index.keys().next().value!);
+    this.save();
+  }
+
+  originalOf(id: string) {
+    return this.index.get(id)?.o;
   }
 
   textOf(id: string) {
@@ -144,7 +176,9 @@ export class AdapterState {
       index: [...this.index],
       unread: Object.fromEntries(this.unread),
       expiring: this.expiring,
+      pins: this.pins,
       groups: Object.fromEntries(this.groups),
+      abouts: Object.fromEntries(this.abouts),
     };
     try {
       const tmp = this.path + '.tmp';

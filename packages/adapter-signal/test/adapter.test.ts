@@ -59,6 +59,22 @@ const push = (fixture: string | object) => {
   writeFileSync(tmp, body);
   require('node:fs').renameSync(tmp, join(signalDir, 'fake-push', `${String(pushes++).padStart(4, '0')}.json`));
 };
+const fixture = (name: string) => JSON.parse(readFileSync(join(import.meta.dir, 'fixtures', `${name}.json`), 'utf8'));
+/** A receiptMessage envelope from `who` for your messages sent at `timestamps`. */
+const receipt = (who: { uuid: string; number: string; name: string }, kind: 'delivery' | 'read' | 'viewed', timestamps: number[], when: number) => ({
+  account: '+15550100',
+  envelope: {
+    source: who.number,
+    sourceNumber: who.number,
+    sourceUuid: who.uuid,
+    sourceName: who.name,
+    sourceDevice: 1,
+    timestamp: when,
+    serverReceivedTimestamp: when + 180,
+    serverDeliveredTimestamp: when + 240,
+    receiptMessage: { when, isDelivery: kind === 'delivery', isRead: kind === 'read', isViewed: kind === 'viewed', timestamps },
+  },
+});
 const cmd = (c: any) => adapter.command({ id: String(Math.random()), ...c });
 const about = (nativeId: string) => cmd({ t: 'about', target: { kind: 'conversation', nativeId } }) as Promise<About>;
 const configure = (nativeId: string, change: any) => cmd({ t: 'configure', target: { kind: 'conversation', nativeId }, change }) as Promise<About>;
@@ -142,6 +158,11 @@ describe('signal adapter against a fake signal-cli', () => {
     });
     expect(of('conversation').find((c) => c.conversation.nativeId === `dm:${SELF}:${SELF}`)!.conversation.shape).toBe('self');
     expect(calls('listContacts').length).toBeGreaterThanOrEqual(2);
+  });
+
+  test('the first read of contacts: the Abouts of contacts who set one, nobody else', () => {
+    // Sam has none, Blake is blocked, Robin is no contact and has no 1:1, and yours is not news.
+    expect(of('customStatus')).toEqual([{ t: 'customStatus', who: ALICE, text: 'Belay on', emoji: '🧗', ts: 1 }]);
   });
 
   test('incoming envelopes become live messages', async () => {
@@ -239,6 +260,45 @@ describe('signal adapter against a fake signal-cli', () => {
     expect(calls('send').at(-1).params).toMatchObject({ groupId: GID, message: 'agreed!!', editTimestamp: Number(sent.nativeId.split(':')[1]), quoteTimestamp: T + 1000, quoteAuthor: ALICE });
   });
 
+  test('receipts: for your messages, per person, and one for an edit counts for the message it edits', async () => {
+    const alice = { uuid: ALICE, number: '+15550137', name: 'Alice Chen' };
+    const sam = { uuid: SAM, number: '+15550161', name: 'Sam Rivera' };
+    const sent = (await cmd({ t: 'send', conversation: DM_ALICE, body: 'rope?' })) as { nativeId: string };
+    const ts = Number(sent.nativeId.split(':')[1]);
+    let mark = events.length;
+    push(receipt(alice, 'delivery', [ts - 999_999], ts + 50)); // not one this device knows: nothing
+    push(receipt(alice, 'delivery', [ts], ts + 100));
+    expect(await until('delivery receipt', () => of('receipt', mark)[0])).toEqual({ t: 'receipt', conversation: DM_ALICE, messages: [sent.nativeId], who: ALICE, state: 'delivered', ts: ts + 100 });
+    expect(of('receipt', mark)).toHaveLength(1);
+
+    mark = events.length;
+    await cmd({ t: 'edit', conversation: DM_ALICE, message: sent.nativeId, body: 'rope? the 60 m one' });
+    const editedTs = of('message', mark)[0].message.editedTs!;
+    push(receipt(alice, 'read', [editedTs], editedTs + 100));
+    expect(await until('read receipt', () => of('receipt', mark)[0])).toEqual({ t: 'receipt', conversation: DM_ALICE, messages: [sent.nativeId], who: ALICE, state: 'read', ts: editedTs + 100 });
+
+    // In a group, each person's own receipt; a 1:1 message's receipt from someone else in it is not theirs to give.
+    const inGroup = (await cmd({ t: 'send', conversation: GROUP, body: 'who drives?' })) as { nativeId: string };
+    const gts = Number(inGroup.nativeId.split(':')[1]);
+    const elsewhere = (await cmd({ t: 'send', conversation: `dm:${SELF}:f00d0000-1111-4aaa-8bbb-000000000099`, body: 'you drive?' })) as { nativeId: string };
+    mark = events.length;
+    push(receipt(alice, 'read', [Number(elsewhere.nativeId.split(':')[1])], gts + 50));
+    push(receipt(sam, 'read', [gts], gts + 100));
+    push(receipt(alice, 'viewed', [gts], gts + 200));
+    await until('two group receipts', () => of('receipt', mark).length >= 2);
+    expect(of('receipt', mark)).toEqual([
+      { t: 'receipt', conversation: GROUP, messages: [inGroup.nativeId], who: SAM, state: 'read', ts: gts + 100 },
+      { t: 'receipt', conversation: GROUP, messages: [inGroup.nativeId], who: ALICE, state: 'played', ts: gts + 200 },
+    ]);
+
+    // Sent and then edited on your phone: the edit's receipts count for the first version too.
+    push('sync-sent-dm');
+    push('sync-sent-edit');
+    mark = events.length;
+    push(receipt(alice, 'read', [T + 18000], T + 19000));
+    expect(await until('receipt for a phone edit', () => of('receipt', mark)[0])).toEqual({ t: 'receipt', conversation: DM_ALICE, messages: [`${SELF}:${T + 9000}`], who: ALICE, state: 'read', ts: T + 19000 });
+  });
+
   test('history, fetchMedia, typing action, bad input', async () => {
     expect(await cmd({ t: 'history', conversation: GROUP, limit: 50 })).toEqual({ count: 0, done: true });
     mkdirSync(join(signalDir, 'attachments'), { recursive: true });
@@ -293,6 +353,46 @@ describe('signal adapter against a fake signal-cli', () => {
     push(del);
     await until('delete', () => of('delete', mark).find((d) => d.nativeId === `${ALICE}:${T + 3000}`));
     expect(existsSync(file)).toBe(false);
+  });
+
+  test('pins: a pin event for the message; a pin for an hour ends on its own, unless it is unpinned first', async () => {
+    let mark = events.length;
+    push('pin');
+    expect(await until('pin', () => of('pin', mark)[0])).toEqual({ t: 'pin', conversation: GROUP, message: `${SAM}:${T + 14000}`, pinned: true, by: ALICE, ts: T + 25000 });
+    expect(of('message', mark).at(-1)!.message).toMatchObject({ kind: 'system', body: 'Alice Chen pinned a message.' });
+
+    const hour = (at: number) => {
+      const f = fixture('pin');
+      f.envelope.timestamp = f.envelope.dataMessage.timestamp = at;
+      Object.assign(f.envelope.dataMessage.pinMessage, { targetAuthor: '+15550137', targetAuthorNumber: '+15550137', targetAuthorUuid: ALICE, targetSentTimestamp: T + 1000, pinDurationSeconds: 3600 });
+      return f;
+    };
+    mark = events.length;
+    push(hour(T + 27000));
+    await until('timed pin', () => of('pin', mark)[0]);
+    const until1 = T + 27000 + 3_600_000;
+    adapter.sweepExpired(until1 - 1);
+    expect(of('pin', mark)).toHaveLength(1);
+    adapter.sweepExpired(until1);
+    // Only the timed one: Sam's message is pinned for good.
+    expect(of('pin', mark)).toEqual([
+      { t: 'pin', conversation: GROUP, message: `${ALICE}:${T + 1000}`, pinned: true, by: ALICE, ts: T + 27000 },
+      { t: 'pin', conversation: GROUP, message: `${ALICE}:${T + 1000}`, pinned: false, ts: until1 },
+    ]);
+    adapter.sweepExpired(until1 + 1);
+    expect(of('pin', mark)).toHaveLength(2);
+
+    mark = events.length;
+    push(hour(T + 28000));
+    const unpin = fixture('unpin');
+    Object.assign(unpin.envelope.dataMessage.unpinMessage, { targetAuthor: '+15550137', targetAuthorNumber: '+15550137', targetAuthorUuid: ALICE, targetSentTimestamp: T + 1000 });
+    push(unpin);
+    await until('unpin', () => of('pin', mark).length >= 2);
+    adapter.sweepExpired(T + 28000 + 3_600_000);
+    expect(of('pin', mark)).toEqual([
+      { t: 'pin', conversation: GROUP, message: `${ALICE}:${T + 1000}`, pinned: true, by: ALICE, ts: T + 28000 },
+      { t: 'pin', conversation: GROUP, message: `${ALICE}:${T + 1000}`, pinned: false, by: ALICE, ts: T + 26000 },
+    ]);
   });
 
   test('hello advertises about and configure', () => {
@@ -457,6 +557,44 @@ describe('signal adapter against a fake signal-cli', () => {
     await expect(configure(DM_ALICE, { key: 'name', value: 'Alice' })).rejects.toThrow(/no name setting/);
   });
 
+  test('customStatus: an About set, changed or cleared shows on the next read of contacts, once; strangers never', async () => {
+    const file = join(signalDir, 'fake-contacts.json'); // written by the updateContact above
+    const setAbout = (who: string, about: string | null, aboutEmoji: string | null, at: number) => {
+      const all = JSON.parse(readFileSync(file, 'utf8'));
+      const c = all.find((x: any) => x.uuid === who);
+      c.profile = { ...c.profile, about, aboutEmoji, lastUpdateTimestamp: at };
+      writeFileSync(file, JSON.stringify(all));
+    };
+    setAbout(ALICE, 'Off to Fontainebleau', '⛺', T + 30000);
+    setAbout(SAM, 'Rest day', null, T + 30001);
+    setAbout(ROBIN, 'New bio', '🪨', T + 30002);
+    let mark = events.length;
+    const n = records().length;
+    await adapter.snapshot();
+    expect(of('customStatus', mark)).toEqual([
+      { t: 'customStatus', who: ALICE, text: 'Off to Fontainebleau', emoji: '⛺', ts: T + 30000 },
+      { t: 'customStatus', who: SAM, text: 'Rest day', ts: T + 30001 },
+    ]);
+    // Nothing asked of signal-cli beyond what a snapshot always reads.
+    const asked = records().slice(n).filter((r) => r.t === 'rpc' && r.method !== 'version').map((r) => r.method);
+    expect(asked).toEqual(['listContacts', 'listContacts', 'listGroups']);
+
+    mark = events.length;
+    await adapter.snapshot();
+    expect(of('customStatus', mark)).toEqual([]);
+    setAbout(ALICE, '  ', null, T + 40000);
+    await adapter.snapshot();
+    expect(of('customStatus', mark)).toEqual([{ t: 'customStatus', who: ALICE, ts: T + 40000 }]);
+
+    // Opening a profile reads them too; a profile signal-cli has never fetched says nothing.
+    mark = events.length;
+    setAbout(SAM, 'Rest day', '😴', T + 50000);
+    await profile(SAM);
+    setAbout(ALICE, 'Back', null, 0);
+    await profile(ALICE);
+    expect(of('customStatus', mark)).toEqual([{ t: 'customStatus', who: SAM, text: 'Rest day', emoji: '😴', ts: T + 50000 }]);
+  });
+
   test('configure name: one updateGroup with the group id and the name, then a fresh About and the fact again', async () => {
     const mark = events.length;
     const a = await configure(GROUP, { key: 'name', value: '  Crag rats ' });
@@ -515,6 +653,40 @@ describe('signal adapter against a fake signal-cli', () => {
     expect(last()).toEqual({ groupId: GID, link: 'disabled' });
     expect(a.invite).toEqual({ link: null, canCreate: true, canRevoke: false });
     expect(of('message', mark).at(-1)!.message.body).toBe('You turned off the group link.');
+  });
+
+  test('roles: admins made or unmade by a group update are role events by its sender; a plain re-read finds the rest', async () => {
+    const file = join(signalDir, 'fake-groups.json'); // written by the updateGroups above
+    const setAdmin = (who: string, isAdmin: boolean) => {
+      const all = JSON.parse(readFileSync(file, 'utf8'));
+      const g = all.find((x: any) => x.id === GID);
+      for (const m of g.members) if (m.uuid === who) m.isAdmin = isAdmin;
+      g.admins = g.members.filter((m: any) => m.isAdmin).map(({ number, uuid }: any) => ({ number, uuid }));
+      writeFileSync(file, JSON.stringify(all));
+    };
+    const target = { kind: 'conversation' as const, nativeId: GROUP };
+    const described = (mark: number) => until('the update described', () => of('message', mark).find((m) => m.message.body.includes('admin')));
+
+    setAdmin(ALICE, true);
+    let mark = events.length;
+    push('group-update'); // from Sam
+    expect(await until('role', () => of('role', mark)[0])).toEqual({ t: 'role', target, member: ALICE, role: 'Admin', given: true, by: SAM, ts: T + 8000 });
+    expect((await described(mark)).message).toMatchObject({ nativeId: `${SAM}:${T + 8000}`, kind: 'system', body: 'Sam Rivera made Alice Chen an admin.' });
+
+    setAdmin(ALICE, false);
+    mark = events.length;
+    const upd = fixture('group-update');
+    upd.envelope.timestamp = upd.envelope.dataMessage.timestamp = T + 8500;
+    push(upd);
+    expect(await until('role taken', () => of('role', mark)[0])).toEqual({ t: 'role', target, member: ALICE, role: 'Admin', given: false, by: SAM, ts: T + 8500 });
+    expect((await described(mark)).message.body).toBe('Sam Rivera revoked admin privileges from Alice Chen.');
+
+    // Changed while nothing said so (or the update is long gone): found on the next read, by nobody in particular.
+    setAdmin(SAM, true);
+    mark = events.length;
+    expect((await about(GROUP)).members!.list).toContainEqual({ id: SAM, role: 'Admin', rank: 100 });
+    await about(GROUP);
+    expect(of('role', mark)).toEqual([{ t: 'role', target, member: SAM, role: 'Admin', given: true }]);
   });
 
   test('refuses what Signal cannot do, and never calls updateGroup without a group id', async () => {

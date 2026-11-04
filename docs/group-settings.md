@@ -102,6 +102,9 @@ Notes:
    change comes back as a generic error, so controls are gated up front.
 7. Blocking has side effects on your phone (a message-request response, a profile key rotation) and is not
    offered here.
+8. Someone made admin or unmade comes as a plain group update: the adapter compares `members[].isAdmin` with its
+   last read and sends `role` events, by the update's sender (by nobody when only a later read shows it). A pin with
+   a duration (`pinDurationSeconds`, -1 for good) ends on each client by itself, so the adapter unpins it then.
 
 ## Matrix
 
