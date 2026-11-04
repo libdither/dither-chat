@@ -25,6 +25,7 @@ import {
   noteToSelf,
   parseConversation,
   parseMsgId,
+  personAbout,
 } from '../src/mapping.ts';
 import type { SigContact, SigGroup, SigReceive } from '../src/types.ts';
 
@@ -307,6 +308,44 @@ describe('contacts and groups', () => {
     expect(describeGroupChange({ ...group, groupInviteLink: null }, linked, SELF, SELF, names)).toBe('You turned on the group link.');
     expect(describeGroupChange(linked, { ...group, groupInviteLink: 'https://signal.group/#b' }, SELF, SELF, names)).toBe('You reset the group link.');
     expect(describeGroupChange(linked, { ...group, groupInviteLink: null }, SELF, SELF, names)).toBe('You turned off the group link.');
+  });
+});
+
+describe('profiles', () => {
+  // listContacts output as signal-cli 0.14 writes it (JsonContact, profile null when it has none).
+  const listed: SigContact[] = JSON.parse(readFileSync(join(import.meta.dir, 'fixtures', 'list-contacts.json'), 'utf8'));
+  const [nicknamed, stranger, blocked, gone, blank] = listed;
+
+  test('a contact: your name for them, their About and its emoji, their number as a link, your note', () => {
+    expect(personAbout(nicknamed, { inContacts: true, avatarUrl: 'file:///x/avatars/profile-a' })).toEqual({
+      displayName: 'Al',
+      handle: '+15550137',
+      avatar: 'file:///x/avatars/profile-a',
+      bio: 'Belay on',
+      status: { emoji: '🧗' },
+      relationship: 'contact',
+      links: [{ label: 'Phone', value: '+15550137', url: 'tel:+15550137' }],
+      facts: [
+        { label: 'Profile name', value: 'Alice C.' },
+        { label: 'Note', value: 'Met at the crag' },
+      ],
+    });
+  });
+
+  test('someone signal-cli knows but you have not saved: a stranger, by username, no number to show', () => {
+    expect(personAbout(stranger, { inContacts: false })).toEqual({ displayName: 'Robin', handle: '@robin.42', bio: 'Gone bouldering', relationship: 'stranger' });
+  });
+
+  test('blocked wins over being a contact, and an empty profile adds nothing', () => {
+    expect(personAbout(blocked, { inContacts: true })).toEqual({
+      displayName: 'Blake',
+      handle: '+15550142',
+      relationship: 'blocked',
+      links: [{ label: 'Phone', value: '+15550142', url: 'tel:+15550142' }],
+    });
+    expect(personAbout(gone, { inContacts: false })).toMatchObject({ relationship: 'stranger', facts: [{ label: 'Account', value: 'No longer on Signal' }] });
+    expect(personAbout(blank, { inContacts: false })).toEqual({ relationship: 'stranger' });
+    expect(personAbout(blank)).toEqual({}); // yourself: no relationship
   });
 });
 

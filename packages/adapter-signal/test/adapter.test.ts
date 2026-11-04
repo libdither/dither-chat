@@ -9,13 +9,16 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { About, AdapterEvent } from '@dither-chat/protocol';
+import { pathToFileURL } from 'node:url';
+import type { About, AdapterEvent, PersonAbout } from '@dither-chat/protocol';
 import { type AdapterHost, CAPABILITIES, LINK_MESSAGE, SignalAdapter, socketPathFor, updateGroupParams } from '../src/adapter.ts';
 
 const FAKE = join(import.meta.dir, 'fake-signal-cli.ts');
 const SELF = '5f2c7a8e-1111-4aaa-8bbb-000000000001';
 const ALICE = 'a11ce000-2222-4ccc-9ddd-000000000002';
 const SAM = '5a3e0000-3333-4eee-afff-000000000003';
+const BLAKE = 'b10c0000-5555-4ddd-9eee-000000000005'; // blocked
+const ROBIN = '0b5e7ae0-4444-4bbb-8ccc-000000000004'; // known, not a contact
 const GID = 'Pmpi+EfPWmsxiomLe9Nx2XF9HOE483p6iKiFj65iMwI=';
 const GROUP = `group:${GID}`;
 const DM_ALICE = `dm:${SELF}:${ALICE}`;
@@ -59,6 +62,7 @@ const push = (fixture: string | object) => {
 const cmd = (c: any) => adapter.command({ id: String(Math.random()), ...c });
 const about = (nativeId: string) => cmd({ t: 'about', target: { kind: 'conversation', nativeId } }) as Promise<About>;
 const configure = (nativeId: string, change: any) => cmd({ t: 'configure', target: { kind: 'conversation', nativeId }, change }) as Promise<About>;
+const profile = (who: string) => cmd({ t: 'profile', who }) as Promise<PersonAbout>;
 
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), 'dither-sig-'));
@@ -293,6 +297,58 @@ describe('signal adapter against a fake signal-cli', () => {
 
   test('hello advertises about and configure', () => {
     expect(of('hello')[0].capabilities).toEqual(expect.arrayContaining(['about', 'configure']));
+  });
+
+  test('profile: a contact, read from signal-cli by ACI, their identity fact first', async () => {
+    expect(of('hello')[0].capabilities).toContain('profile');
+    mkdirSync(join(signalDir, 'avatars'), { recursive: true });
+    const avatar = join(signalDir, 'avatars', `profile-${ALICE}`);
+    writeFileSync(avatar, 'png');
+    const n = calls('listContacts').length;
+    const mark = events.length;
+    const p = await profile(ALICE.toUpperCase());
+    expect(calls('listContacts').slice(n).map((c) => c.params)).toEqual([{ recipient: [ALICE] }]);
+    expect(p).toEqual({
+      displayName: 'Alice Chen',
+      handle: '+15550137',
+      avatar: pathToFileURL(avatar).href,
+      bio: 'Belay on',
+      status: { emoji: '🧗' },
+      relationship: 'contact',
+      links: [{ label: 'Phone', value: '+15550137', url: 'tel:+15550137' }],
+      facts: [{ label: 'Profile name', value: 'Alice' }],
+    });
+    expect(of('identity', mark).map((e) => e.identity)).toEqual([{ nativeId: ALICE, handle: '+15550137', displayName: 'Alice Chen', avatarUrl: pathToFileURL(avatar).href, contact: true }]);
+  });
+
+  test('profile: blocked, a stranger (the second read, with allRecipients), and someone signal-cli does not know', async () => {
+    const lookups = calls('getUserStatus').length;
+    let n = calls('listContacts').length;
+    const reads = () => {
+      const r = calls('listContacts').slice(n).map((c) => c.params);
+      n += r.length;
+      return r;
+    };
+    expect(await profile(BLAKE)).toEqual({ displayName: 'Blake', handle: '+15550142', relationship: 'blocked', links: [{ label: 'Phone', value: '+15550142', url: 'tel:+15550142' }] });
+    expect(reads()).toEqual([{ recipient: [BLAKE] }]);
+    const mark = events.length;
+    expect(await profile(ROBIN)).toEqual({ displayName: 'Robin', bio: 'Gone bouldering', relationship: 'stranger' });
+    expect(reads()).toEqual([{ recipient: [ROBIN] }, { recipient: [ROBIN], allRecipients: true }]);
+    expect(of('identity', mark).map((e) => e.identity)).toEqual([{ nativeId: ROBIN, displayName: 'Robin' }]);
+    expect(await profile('e0000000-8888-4bbb-8ccc-000000000008')).toEqual({});
+    expect(reads()).toHaveLength(2);
+    // A number would make signal-cli look it up on the server: refused before any read.
+    await expect(profile('+15550137')).rejects.toThrow('not a Signal person id');
+    expect(reads()).toEqual([]);
+    expect(calls('getUserStatus').length).toBe(lookups);
+  });
+
+  test('profile of yourself: your number, and your contacts (not blocked, with a name) as friends', async () => {
+    const n = calls('listContacts').length;
+    const p = await profile(SELF);
+    expect(calls('listContacts').slice(n).map((c) => c.params)).toEqual([{ recipient: [SELF], allRecipients: true }, null]); // null: no params, all contacts
+    expect(p).toEqual({ displayName: 'Zyan', handle: '+15550100', links: [{ label: 'Phone', value: '+15550100', url: 'tel:+15550100' }], friends: [ALICE, SAM] });
+    for (const id of p.friends!) expect(of('identity').find((e) => e.identity.nativeId === id)?.identity).toMatchObject({ contact: true, displayName: expect.any(String) });
   });
 
   test('about: a group where you are an admin, re-read from signal-cli', async () => {
