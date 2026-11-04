@@ -162,6 +162,19 @@ describe('pins, roles, statuses, receipts, reactions taken back', () => {
     expect(h.identities.map((i) => i.displayName).sort()).toEqual(['ANN', 'BOB']);
   });
 
+  test('history sent again (a phone re-syncing) counts once', () => {
+    const id = say(sig, 'g1', 'repeat me');
+    const pin = () => store.ingest(sig, { t: 'pin', conversation: 'g1', message: `m${n}`, pinned: true, by: 'bob', ts: 777_000 });
+    pin();
+    pin();
+    expect(store.messageHistory(id)!.events.length).toBe(1);
+    const role = () => store.ingest(sig, { t: 'role', target: { kind: 'conversation', nativeId: 'g7' }, member: 'cy', role: 'Admin', given: true, ts: 888_000 });
+    conv(sig, { nativeId: 'g7', name: 'Seven' });
+    role();
+    role();
+    expect(changes('conversation', sig, 'g7').filter((c) => c.field === 'role').length).toBe(1);
+  });
+
   test('a role given and taken, with whose it is', () => {
     store.ingest(sig, { t: 'role', target: { kind: 'conversation', nativeId: 'g1' }, member: 'cy', role: 'Admin', given: true, by: 'ann' });
     store.ingest(sig, { t: 'role', target: { kind: 'conversation', nativeId: 'g1' }, member: 'cy', role: 'Admin', given: false });
