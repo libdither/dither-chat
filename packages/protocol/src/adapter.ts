@@ -248,7 +248,8 @@ export type AdapterEvent =
   | { t: 'leave'; kind: 'space' | 'conversation'; nativeId: string }
   /** Create or replace (edits re-send the whole message). live=false marks backfill: no notifications. */
   | { t: 'message'; message: MessageFact; live?: boolean }
-  | { t: 'delete'; conversation: string; nativeId: string }
+  /** A message is gone. `reason: 'expired'`: its disappearing timer ran out, rather than someone deleting it. */
+  | { t: 'delete'; conversation: string; nativeId: string; reason?: 'expired' }
   | { t: 'reaction'; conversation: string; message: string; author: string; key: string; remove?: boolean; style?: ReactionStyle; colors?: string[]; emoji?: CustomEmojiFact }
   /** A moderator removed every reaction on a message, or every one with this key. */
   | { t: 'reactionsCleared'; conversation: string; message: string; key?: string }

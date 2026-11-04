@@ -12,6 +12,7 @@ import { db, go, href, isSelfIdentity, markRead, openMessage, rev, setRule } fro
 import { AccountChip, Empty, variantIcon } from './bits.tsx';
 import { copy } from './ContextMenu.tsx';
 import { EditableText, InviteSection, MembersSection, PinnedSection, RulesList, SettingRow, settingKeys, useAbout, valueText, type AboutTarget } from './About.tsx';
+import { HistoryCard } from './HistoryCard.tsx';
 import { Icon } from './icons.tsx';
 import { conversationMenu, spaceMenu } from './menus.tsx';
 import { placeConvs } from './Organize.tsx';
@@ -152,6 +153,7 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
           <MembersSection m={view.members} />
         </div>
       )}
+      <HistoryCard path={`/api/${kind === 'space' ? 'spaces' : 'conversations'}/${id}/changes`} network={network} />
     </>
   );
 

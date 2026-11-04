@@ -412,6 +412,53 @@ export class HubServer {
       const p = s.profile(path.startsWith('/api/persons/') ? { personId: m[1] } : { identityId: m[1] });
       return p ? ok({ ...p, abouts: this.people.kept(p.identityIds) }) : bad('nobody by that id', 404);
     }
+    // What changed (docs/history.md): a place's name, description, settings and members; a person's names, pictures
+    // and profile across their identities.
+    if ((m = path.match(/^\/api\/(conversations|spaces|persons|identities)\/([\w-]+)\/changes$/))) {
+      const limit = Math.min(num('limit') ?? 100, 500);
+      if (m[1] === 'persons') {
+        const ids = (s.db.query('SELECT id FROM identity WHERE person_id = ?').all(m[2]) as { id: string }[]).map((r) => ({ kind: 'identity' as const, id: r.id }));
+        return ok({ changes: s.changes(ids, limit), identities: [] });
+      }
+      const kind = m[1] === 'conversations' ? 'conversation' : m[1] === 'spaces' ? 'space' : 'identity';
+      const changes = s.changes([{ kind, id: m[2] }], limit);
+      return ok({ changes, identities: s.identitiesByIds(changes.flatMap((c) => (c.identityId ? [c.identityId] : []))) });
+    }
+    if ((m = path.match(/^\/api\/messages\/([\w-]+)\/history$/))) {
+      const h = s.messageHistory(m[1]);
+      return h ? ok(h) : bad('no such message', 404);
+    }
+    if (path === '/api/retention') {
+      if (method === 'PUT') {
+        const b = await body<Partial<P.RetentionSettings>>();
+        const cur = s.retention();
+        const bool = (v: unknown, d: boolean) => (typeof v === 'boolean' ? v : d);
+        const sources: P.RetentionSettings['sources'] = {};
+        for (const [k, v] of Object.entries(b.sources ?? cur.sources)) {
+          if (!/^[\w-]{1,64}$/.test(k) || !v || typeof v !== 'object') continue;
+          const o: Partial<P.KeepSettings> = {};
+          for (const f of ['deleted', 'disappearing', 'edits'] as const) if (typeof v[f] === 'boolean') o[f] = v[f];
+          if (Object.keys(o).length) sources[k] = o;
+        }
+        s.setRetention({
+          deleted: bool(b.deleted, cur.deleted),
+          disappearing: bool(b.disappearing, cur.disappearing),
+          edits: bool(b.edits, cur.edits),
+          changes: bool(b.changes, cur.changes),
+          show: b.show === 'hidden' || b.show === 'collapsed' ? b.show : cur.show,
+          sources,
+        });
+        this.broadcast([{ t: 'retention', retention: s.retention() }]);
+      }
+      return ok(s.retention());
+    }
+    if (path === '/api/retention/erase' && method === 'POST') {
+      const b = await body<{ what?: string }>();
+      if (b.what !== 'deleted' && b.what !== 'disappeared' && b.what !== 'edits' && b.what !== 'changes') return bad('what: deleted, disappeared, edits or changes');
+      const n = s.eraseKept(b.what);
+      this.flush();
+      return ok({ erased: n });
+    }
     // What the network says about one identity (people.ts, docs/profile.md). ?fresh=1 asks even if a recent answer is kept.
     if ((m = path.match(/^\/api\/identities\/([\w-]+)\/about$/))) {
       if (!s.nativeOf('identity', m[1])) return bad('no such identity', 404);

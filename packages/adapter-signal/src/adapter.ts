@@ -608,7 +608,7 @@ export class SignalAdapter {
     const keep: typeof this.state.expiring = [];
     for (const e of this.state.expiring) {
       if (e.started && e.started + e.ttl * 1000 <= now) {
-        this.host.emit({ t: 'delete', conversation: e.conversation, nativeId: e.id });
+        this.host.emit({ t: 'delete', conversation: e.conversation, nativeId: e.id, reason: 'expired' });
         this.purge(e.id, e.files);
       } else keep.push(e);
     }

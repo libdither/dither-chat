@@ -7697,3 +7697,250 @@ a.pf-link:hover {
   background: var(--bg-center);
   color: var(--text-dim);
 }
+
+/* ------------------------------------------------------------------ message history (docs/history.md) */
+
+.msg-gone {
+  margin-top: 2px;
+}
+.msg-gone-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-faint);
+  padding: 2px 8px;
+  border-radius: 7px;
+  border: 1px dashed var(--border);
+}
+.msg-gone-line:hover {
+  color: var(--text-dim);
+  background: var(--bg-hover);
+}
+.msg-gone-when {
+  opacity: 0.8;
+}
+.msg-gone-toggle {
+  color: var(--link);
+  font-weight: 600;
+}
+.msg-gone-body {
+  margin-top: 4px;
+  padding: 4px 0 4px 10px;
+  border-left: 2px solid var(--border);
+  opacity: 0.75;
+}
+.msg-gone-body .msg-body {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklab, var(--text-faint) 60%, transparent);
+}
+button.msg-edited.link {
+  font-size: 10px;
+  color: var(--text-faint);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+button.msg-edited.link:hover {
+  color: var(--link);
+}
+.edit-history {
+  min-width: 260px;
+  max-width: 420px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.edit-loading {
+  margin: 4px 10px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.edit-version {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border-soft);
+}
+.edit-version:first-of-type {
+  border-top: 0;
+}
+.edit-when {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.edit-body {
+  font-size: 13px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.edit-version.now .edit-body {
+  color: var(--text);
+}
+
+/* History on profile pages */
+.hist-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.hist-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 5px 0;
+  border-top: 1px solid var(--border-soft);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.hist-item:first-child {
+  border-top: 0;
+}
+.hist-item > .icon {
+  color: var(--text-faint);
+  flex: none;
+}
+.hist-item s {
+  color: var(--text-faint);
+}
+.hist-item b {
+  color: var(--text);
+  font-weight: 600;
+}
+.hist-item.long {
+  flex-direction: column;
+  align-items: stretch;
+}
+.hist-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+.hist-more {
+  color: var(--link);
+  font-size: 12px;
+}
+.hist-when {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-faint);
+  flex: none;
+}
+.hist-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+  font-weight: 600;
+}
+.hist-pics {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.hist-pics img {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  object-fit: cover;
+}
+.hist-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0 2px 19px;
+}
+.hist-diff p {
+  margin: 0;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 6px 9px;
+  border-radius: 8px;
+}
+.hist-diff .was {
+  background: color-mix(in oklab, var(--danger) 10%, transparent);
+  color: var(--text-dim);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklab, var(--text-faint) 60%, transparent);
+}
+.hist-diff .now {
+  background: color-mix(in oklab, var(--good) 10%, transparent);
+  color: var(--text);
+}
+.hist-src {
+  display: inline-flex;
+}
+
+/* Settings → Message history */
+.hist-show {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 10px 0 4px;
+  font-size: 13px;
+}
+.hist-show .seg {
+  display: flex;
+  gap: 6px;
+}
+.hist-sub {
+  margin: 18px 0 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+}
+.hist-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  margin: 6px 0 4px;
+}
+.hist-table th,
+.hist-table td {
+  padding: 5px 12px 5px 0;
+  text-align: left;
+  font-weight: normal;
+}
+.hist-table thead th {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-align: center;
+}
+.hist-table td {
+  text-align: center;
+}
+.hist-net th {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.hist-acc th {
+  padding-left: 20px;
+  color: var(--text-dim);
+}
+.hist-cell {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+.hist-cell.own {
+  outline: 1.5px solid var(--accent);
+}
+.hist-none { color: var(--text-faint); }

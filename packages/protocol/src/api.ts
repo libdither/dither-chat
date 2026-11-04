@@ -266,7 +266,14 @@ export interface MessageView {
   replyToId: string | null;
   threadId: string | null;
   mentionsSelf: boolean;
+  /**
+   * Gone on the network. When the hub kept it (docs/history.md) `body` and the attachments are still here, and
+   * `gone` says how: deleted, or its disappearing timer ran out; else the body is empty.
+   */
   deleted: boolean;
+  gone?: { how: 'deleted' | 'disappeared'; at: number; kept: boolean };
+  /** Earlier versions the hub kept, oldest first: GET /api/messages/:id/history. */
+  edits?: number;
   /** Something is wrong with this message's encryption, e.g. it came in the clear in an encrypted room. */
   encryptionWarning?: string;
   attachments: AttachmentView[];
@@ -624,6 +631,8 @@ export type ClientEvent =
   | { t: 'categories'; categories: CategoryView[]; placeCategories: PlaceCategoryView[] }
   | { t: 'rules'; rules: RuleView[] }
   | { t: 'devices'; devices: DeviceView[] }
+  /** What the hub keeps of deleted, disappeared and edited messages changed (docs/history.md). */
+  | { t: 'retention'; retention: RetentionSettings }
   /** New or changed inbox scores, and conversations the inbox no longer lists. `replace`: these are all of them. */
   | { t: 'attention'; items: AttentionView[]; removed: string[]; replace?: true }
   /** Mark-all-read still telling the networks: how many reads are left, how many were given up on. */
@@ -700,3 +709,36 @@ export type SyncResponse =
       /** Messages replies above quote, when not among them. */
       quoted: MessageView[];
     };
+
+// ------------------------------------------------------------------ history (docs/history.md)
+
+/** What the hub keeps of what the networks take back, per source: deleted, disappeared, and edited messages. */
+export interface KeepSettings {
+  deleted: boolean;
+  disappearing: boolean;
+  edits: boolean;
+}
+
+export interface RetentionSettings extends KeepSettings {
+  /** Names, descriptions, pictures, settings, members and profiles, as they change. */
+  changes: boolean;
+  /** Kept deleted and disappeared messages: a collapsed row in the timeline, or not shown at all. */
+  show: 'collapsed' | 'hidden';
+  /** Overrides by network ("signal") or account id, the account's first. */
+  sources: Record<string, Partial<KeepSettings>>;
+}
+
+export const DEFAULT_RETENTION: RetentionSettings = { deleted: true, disappearing: true, edits: true, changes: true, show: 'collapsed', sources: {} };
+
+/** One thing that changed. Values are what the network said, as text (a picture is its media path). */
+export interface ChangeView {
+  id: number;
+  target: { kind: 'conversation' | 'space' | 'identity' | 'message'; id: string };
+  /** name, topic, avatar, displayName, handle, bio, status, pronouns, banner, a setting key, member, body. */
+  field: string;
+  old: string | null;
+  new: string | null;
+  at: number;
+  /** For `member`: who joined (new) or left (old). */
+  identityId?: string;
+}

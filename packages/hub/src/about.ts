@@ -94,6 +94,18 @@ export class Abouts {
   }
 
   private keep(targetId: string, accountId: string, about: P.About) {
+    // Settings that changed since this account last said (docs/history.md). Name, description and picture come with
+    // the conversation itself and are logged there.
+    const prev = this.kept(targetId, accountId);
+    if (prev && prev.accountId === accountId) {
+      const kind = this.d.store.one<{ n: number }>('SELECT 1 AS n FROM space WHERE id = ?', targetId) ? 'space' : 'conversation';
+      for (const [k, f] of Object.entries(about.fields) as [P.AboutKey, P.AboutSetting][]) {
+        if (k === 'name' || k === 'topic' || k === 'avatar' || f.value === null) continue;
+        const was = prev.about.fields[k]?.value;
+        if (was === undefined || was === null || JSON.stringify(was) === JSON.stringify(f.value)) continue;
+        this.d.store.logChange(kind, targetId, k, String(was), String(f.value), accountId);
+      }
+    }
     this.d.store.db
       .query('INSERT INTO about (target_id, account_id, data, fetched_at) VALUES (?, ?, ?, ?) ON CONFLICT (target_id, account_id) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at')
       .run(targetId, accountId, JSON.stringify(about), Date.now());

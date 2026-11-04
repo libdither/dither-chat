@@ -2,7 +2,7 @@ import { Database } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
-import { canonicalReactionKey, parseSearch, REACTION_RULES } from '@dither-chat/protocol';
+import { canonicalReactionKey, DEFAULT_RETENTION, parseSearch, REACTION_RULES } from '@dither-chat/protocol';
 import { Journal } from './journal.ts';
 import { TypingRelay, typingTtl } from './typing.ts';
 
@@ -92,6 +92,9 @@ function markSnippet(body: string, terms: string[]): string {
   return out;
 }
 
+/** Fields that may go from nothing to something and back (Store.logChanges). */
+const SETTABLE = new Set(['topic', 'bio', 'status', 'pronouns']);
+
 export class Store {
   readonly db: Database;
   readonly dirty = new Dirty();
@@ -110,6 +113,7 @@ export class Store {
     const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
     const reactionsBefore = this.oldReactions();
     const broadcastsUnknown = this.addMentionsAll();
+    this.addColumns('message', { gone_how: 'TEXT', gone_at: 'INTEGER' });
     const oldTriage = this.setAsideTriage();
     this.db.exec(schema);
     if (oldTriage) this.adoptOldTriage();
@@ -144,6 +148,13 @@ export class Store {
              CASE WHEN feedback IS NOT NULL THEN created_at END, created_at
       FROM triage_v1;
       DROP TABLE triage_v1;`);
+  }
+
+  /** Columns added since a table was first made. Nothing to do for a new database: the schema has them. */
+  private addColumns(table: string, cols: Record<string, string>) {
+    const have = (this.db.query(`PRAGMA table_info(${table})`).all() as Row[]).map((c) => c.name);
+    if (!have.length) return;
+    for (const [name, type] of Object.entries(cols)) if (!have.includes(name)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
   }
 
   /** Message tables from before @everyone was told apart from a mention by name get the column. */
@@ -320,16 +331,9 @@ export class Store {
           if (ev.live) this.typingStopped(hubId('cnv', acc.network, ev.message.conversation), hubId('idn', acc.network, ev.message.author));
           break;
         }
-        case 'delete': {
-          const id = hubId('msg', acc.network, ev.nativeId);
-          const r = this.db.query('UPDATE message SET deleted = 1, body = ? WHERE id = ? RETURNING conversation_id').get('', id) as Row | null;
-          if (r) {
-            this.db.query('DELETE FROM attachment WHERE message_id = ?').run(id);
-            this.dirty.messages.set(id, true);
-            this.dirty.conversations.add(r.conversation_id);
-          }
+        case 'delete':
+          this.gone(acc, hubId('msg', acc.network, ev.nativeId), ev.reason === 'expired' ? 'disappeared' : 'deleted');
           break;
-        }
         case 'reaction': {
           const mid = hubId('msg', acc.network, ev.message);
           if (!this.db.query('SELECT 1 FROM message WHERE id = ?').get(mid)) break;
@@ -427,6 +431,13 @@ export class Store {
   private identity(acc: AccountRow, f: P.IdentityFact): string {
     const id = hubId('idn', acc.network, f.nativeId);
     const before = this.db.query('SELECT handle, display_name, avatar_url, is_bot FROM identity WHERE id = ?').get(id) as Row | null;
+    // A stub (an id with nothing known yet) filling in is not a change.
+    if (before && (before.display_name || before.handle))
+      this.logChanges('identity', id, acc.id, [
+        ['displayName', before.display_name, f.displayName],
+        ['handle', before.handle, f.handle],
+        ['avatar', before.avatar_url, f.avatarUrl],
+      ]);
     this.db
       .query(
         `INSERT INTO identity (id, network, native_id, handle, display_name, avatar_url, is_bot, seen_via, updated_at)
@@ -518,6 +529,13 @@ export class Store {
     const id = hubId('spc', acc.network, f.nativeId);
     const before = this.placeSig('space', id);
     const parentsBefore = this.parentsOf('space', id);
+    const was = this.db.query('SELECT name, topic, icon_url FROM space WHERE id = ?').get(id) as Row | null;
+    if (was)
+      this.logChanges('space', id, acc.id, [
+        ['name', was.name, f.name],
+        ['topic', was.topic, f.topic],
+        ['avatar', was.icon_url, f.iconUrl],
+      ]);
     this.db
       .query(
         `INSERT INTO space (id, network, native_id, kind, name, topic, icon_url, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -553,6 +571,14 @@ export class Store {
     const parent = f.parentConversation ? hubId('cnv', acc.network, f.parentConversation) : null;
     const before = this.placeSig('conversation', id);
     const spacesBefore = this.parentsOf('conversation', id);
+    const was = this.db.query('SELECT name, topic, avatar_url, shape FROM conversation WHERE id = ?').get(id) as Row | null;
+    // A conversation first known only from a message (no name yet) filling in is not a change.
+    if (was && (was.name || was.shape === 'direct'))
+      this.logChanges('conversation', id, acc.id, [
+        ['name', was.name, f.name],
+        ['topic', was.topic, f.topic],
+        ['avatar', was.avatar_url, f.avatarUrl],
+      ]);
     this.db
       .query(
         `INSERT INTO conversation (id, network, native_id, shape, variant, parent_id, name, topic, avatar_url, encrypted, archived, last_message_at, updated_at)
@@ -590,13 +616,20 @@ export class Store {
     if (f.participants) {
       const members = new Set((this.db.query('SELECT identity_id FROM participant WHERE conversation_id = ?').all(id) as Row[]).map((r) => r.identity_id as string));
       this.db.query('DELETE FROM participant WHERE conversation_id = ?').run(id);
+      const now = new Set<string>();
       for (const n of f.participants) {
         const iid = this.ensureIdentity(acc, n);
+        now.add(iid);
         this.db.query('INSERT OR IGNORE INTO participant (conversation_id, identity_id) VALUES (?, ?)').run(id, iid);
         // Clients know a conversation's members by identity.
         if (!members.has(iid)) this.dirty.identities.add(iid);
         // People you DM are people, not strangers.
         if (f.shape === 'direct' && !this.isSelf(iid) && n !== this.selfNative(acc)) this.ensurePerson(iid);
+      }
+      // Who joined and who left a group, once its members were known.
+      if (members.size && f.shape === 'group' && this.retention().changes) {
+        for (const iid of now) if (!members.has(iid)) this.logChange('conversation', id, 'member', null, iid, acc.id);
+        for (const iid of members) if (!now.has(iid)) this.logChange('conversation', id, 'member', iid, null, acc.id);
       }
     }
     if (this.placeSig('conversation', id) === before) return;
@@ -647,12 +680,16 @@ export class Store {
     const convBefore = old ? this.placeSig('conversation', cid) : null;
     const replyTo = f.replyTo ? hubId('msg', acc.network, f.replyTo) : null;
     const thread = f.threadRoot ? hubId('cnv', acc.network, f.threadRoot) : null;
+    // An edit: the words it had before, if this source's edits are kept (docs/history.md).
+    if (old && !old.deleted && old.body && f.body !== old.body && this.keeps('edits', acc)) this.logChange('message', id, 'body', old.body, f.body, acc.id, f.editedTs ?? Date.now());
     this.db
       .query(
         `INSERT INTO message (id, conversation_id, network, native_id, author_id, ts, edited_ts, kind, body, reply_to_id, thread_id, mentions_self, mentions_all, extra)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (network, native_id) DO UPDATE SET
-           edited_ts = COALESCE(excluded.edited_ts, edited_ts), kind = excluded.kind, body = excluded.body,
+           edited_ts = COALESCE(excluded.edited_ts, edited_ts), kind = excluded.kind,
+           -- A kept deleted message the network sends again empty (a Matrix redaction) keeps what was kept.
+           body = CASE WHEN deleted = 1 AND excluded.body = '' THEN body ELSE excluded.body END,
            reply_to_id = COALESCE(excluded.reply_to_id, reply_to_id), thread_id = COALESCE(excluded.thread_id, thread_id),
            mentions_self = MAX(mentions_self, excluded.mentions_self),
            mentions_all = CASE WHEN excluded.mentions_self = 1 THEN excluded.mentions_all ELSE mentions_all END, extra = COALESCE(excluded.extra, extra)`,
@@ -673,7 +710,7 @@ export class Store {
         f.mentionsSelf && f.mentionsAll ? 1 : 0,
         f.extra || f.forward ? JSON.stringify({ ...f.extra, ...(f.forward ? { forward: f.forward } : {}) }) : null,
       );
-    if (f.attachments) {
+    if (f.attachments && !(old?.deleted && !f.attachments.length)) {
       this.db.query('DELETE FROM attachment WHERE message_id = ?').run(id);
       f.attachments.forEach((a, i) => {
         this.db
@@ -911,6 +948,107 @@ export class Store {
       this.db.query('INSERT INTO notify_rule (id, scope, target, level, created_at) VALUES (?, ?, ?, ?, ?)').run(randomId('rul'), scope, target, level, Date.now());
     }
     this.dirty.extra.push({ t: 'rules', rules: this.rules() });
+  }
+
+  // ------------------------------------------------------------ history (docs/history.md)
+
+  private retentionCache: P.RetentionSettings | null = null;
+  retention(): P.RetentionSettings {
+    return (this.retentionCache ??= { ...DEFAULT_RETENTION, ...(this.metaJson<Partial<P.RetentionSettings>>('retention') ?? {}) });
+  }
+  setRetention(r: P.RetentionSettings) {
+    this.setMetaJson('retention', r);
+    this.retentionCache = null;
+  }
+
+  /** Whether this account's deleted, disappeared or edited messages are kept: the account's say, its network's, then the default. */
+  keeps(what: keyof P.KeepSettings, acc: { id: string; network: string }): boolean {
+    const r = this.retention();
+    return r.sources[acc.id]?.[what] ?? r.sources[acc.network]?.[what] ?? r[what];
+  }
+
+  /**
+   * One change, when changes are kept. A change straight back within a day (a name that flips between a server
+   * nickname and the global one, say) cancels the first instead of adding a second.
+   */
+  logChange(kind: P.ChangeView['target']['kind'], id: string, field: string, old: string | null, now: string | null, accountId: string | null, at = Date.now()) {
+    if (kind !== 'message' && !this.retention().changes) return;
+    if (kind !== 'message') {
+      const back = this.db
+        .query('SELECT id FROM change_log WHERE target_kind = ? AND target_id = ? AND field = ? AND old IS ? AND new IS ? AND at > ? ORDER BY at DESC LIMIT 1')
+        .get(kind, id, field, now, old, at - 86_400_000) as Row | null;
+      if (back) return void this.db.query('DELETE FROM change_log WHERE id = ?').run(back.id);
+    }
+    this.db.query('INSERT INTO change_log (target_kind, target_id, field, old, new, at, account_id) VALUES (?, ?, ?, ?, ?, ?, ?)').run(kind, id, field, old, now, at, accountId);
+  }
+
+  /**
+   * Fields that now say something else. Nothing said (undefined or null) is no change: networks often leave fields
+   * out. A description, bio, status or pronouns may be set where there were none, or cleared; a name or picture only
+   * replaced.
+   */
+  logChanges(kind: P.ChangeView['target']['kind'], id: string, accountId: string, fields: [string, string | null | undefined, string | null | undefined][]) {
+    for (const [field, was, now] of fields) {
+      if (now == null || (was ?? '') === now) continue;
+      if (!SETTABLE.has(field) && (was == null || now === '')) continue;
+      this.logChange(kind, id, field, was || null, now || null, accountId);
+    }
+  }
+
+  /**
+   * A message the network took back. Kept, words and files, when this source's deleted (or disappeared) messages are,
+   * unless you deleted it yourself; else emptied as before.
+   */
+  private gone(acc: AccountRow, id: string, how: 'deleted' | 'disappeared') {
+    const m = this.db.query('SELECT conversation_id, author_id, deleted FROM message WHERE id = ?').get(id) as Row | null;
+    if (!m || m.deleted) return;
+    const keep = this.keeps(how === 'disappeared' ? 'disappearing' : 'deleted', acc) && !(how === 'deleted' && this.isSelf(m.author_id));
+    if (keep) this.db.query('UPDATE message SET deleted = 1, gone_how = ?, gone_at = ? WHERE id = ?').run(how, Date.now(), id);
+    else {
+      this.db.query(`UPDATE message SET deleted = 1, body = '', gone_how = ?, gone_at = ? WHERE id = ?`).run(how, Date.now(), id);
+      this.db.query('DELETE FROM attachment WHERE message_id = ?').run(id);
+    }
+    this.dirty.messages.set(id, true);
+    this.dirty.conversations.add(m.conversation_id);
+  }
+
+  /** What changed about these, newest first. */
+  changes(targets: { kind: P.ChangeView['target']['kind']; id: string }[], limit = 100): P.ChangeView[] {
+    if (!targets.length) return [];
+    const where = targets.map(() => '(target_kind = ? AND target_id = ?)').join(' OR ');
+    const rows = this.db.query(`SELECT * FROM change_log WHERE ${where} ORDER BY at DESC, id DESC LIMIT ?`).all(...targets.flatMap((t) => [t.kind, t.id]), limit) as Row[];
+    return rows.map((r) => ({
+      id: r.id,
+      target: { kind: r.target_kind, id: r.target_id },
+      field: r.field,
+      old: r.field === 'avatar' || r.field === 'banner' ? this.media(r.old, r.account_id) : r.old,
+      new: r.field === 'avatar' || r.field === 'banner' ? this.media(r.new, r.account_id) : r.new,
+      at: r.at,
+      ...(r.field === 'member' ? { identityId: r.new ?? r.old } : {}),
+    }));
+  }
+
+  /** A message's earlier versions, oldest first, then how it reads now. */
+  messageHistory(id: string): { versions: { body: string; at: number | null }[] } | null {
+    const m = this.db.query('SELECT body, ts, edited_ts FROM message WHERE id = ?').get(id) as Row | null;
+    if (!m) return null;
+    const edits = this.db.query(`SELECT old, at FROM change_log WHERE target_kind = 'message' AND target_id = ? AND field = 'body' ORDER BY at, id`).all(id) as Row[];
+    const versions = edits.map((e, i) => ({ body: e.old as string, at: i === 0 ? m.ts : (edits[i - 1].at as number) }));
+    versions.push({ body: m.body, at: edits.at(-1)?.at ?? m.edited_ts ?? m.ts });
+    return { versions };
+  }
+
+  /** Forget what was kept: deleted or disappeared messages' words and files, edit history, or the change log. */
+  eraseKept(what: 'deleted' | 'disappeared' | 'edits' | 'changes'): number {
+    if (what === 'edits') return this.db.query(`DELETE FROM change_log WHERE target_kind = 'message' AND field = 'body'`).run().changes;
+    if (what === 'changes') return this.db.query(`DELETE FROM change_log WHERE target_kind != 'message'`).run().changes;
+    const ids = (this.db.query(`SELECT id, conversation_id FROM message WHERE deleted = 1 AND gone_how = ? AND (body != '' OR EXISTS (SELECT 1 FROM attachment a WHERE a.message_id = message.id))`).all(what) as Row[]);
+    for (const r of ids) {
+      this.db.query(`UPDATE message SET body = '' WHERE id = ?`).run(r.id);
+      this.db.query('DELETE FROM attachment WHERE message_id = ?').run(r.id);
+      this.dirty.messages.set(r.id, true);
+    }
+    return ids.length;
   }
 
   /** A decision, and what it was made from. A vote already given stays. */
@@ -1270,6 +1408,7 @@ export class Store {
       return m;
     };
     const A = by(atts), R = by(reacts), S = by(seen), RT = by(tallies);
+    const E = new Map((this.db.query(`SELECT target_id, COUNT(*) AS n FROM change_log WHERE target_kind = 'message' AND field = 'body' AND target_id IN (${ph}) GROUP BY target_id`).all(...ids) as Row[]).map((e) => [e.target_id as string, e.n as number]));
     const T = new Map(tri.map((t) => [t.message_id, t]));
     return rows.map((r) => {
       const seenVia = (S.get(r.id) ?? []).map((s) => s.account_id);
@@ -1290,11 +1429,13 @@ export class Store {
         ts: r.ts,
         editedTs: r.edited_ts,
         kind: r.kind,
-        body: r.deleted ? '' : r.body,
+        body: r.body,
         replyToId: r.reply_to_id,
         threadId: r.thread_id,
         mentionsSelf: !!r.mentions_self,
         deleted: !!r.deleted,
+        ...(r.deleted && r.gone_how ? { gone: { how: r.gone_how, at: r.gone_at, kept: !!r.body || !!A.get(r.id)?.length } } : {}),
+        ...(E.get(r.id) ? { edits: E.get(r.id) } : {}),
         attachments: (A.get(r.id) ?? []).map((a) => ({
           id: a.id,
           kind: a.kind,

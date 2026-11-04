@@ -398,11 +398,11 @@
       log('warn', 'private channel snapshot failed', String(e));
     }
     try {
-      const rel = mod.RelationshipStore;
-      if (rel) {
-        const map = rel.getRelationships ? rel.getRelationships() : {};
-        data.relationships = Object.entries(map).map(([id, type]) => ({ id, type }));
-        for (const id of Object.keys(map)) addUser(resolveUser(id));
+      // getRelationships() is gone from current clients; relationshipTypes() reads whichever shape this build has.
+      if (mod.RelationshipStore) {
+        const types = relationshipTypes();
+        data.relationships = Array.from(types, ([id, type]) => ({ id, type }));
+        for (const id of types.keys()) addUser(resolveUser(id));
       }
     } catch (e) {}
     try {

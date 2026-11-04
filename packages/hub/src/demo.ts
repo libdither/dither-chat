@@ -1250,8 +1250,27 @@ class DemoAdapter implements InprocAdapter {
       const readUpTo = msgs.length - (c.unread ?? 0) - 1;
       if (readUpTo >= 0) emit({ t: 'read', conversation: c.fact.nativeId, upToTs: ago(msgs[readUpTo][0]) });
     }
+    if (firstRun) this.seedHistory(ago);
     if (firstRun) writeFileSync(marker, String(Date.now()));
     scheduleChatter();
+  }
+
+  /** Things that changed and things taken back, once, so history has something to show (docs/history.md). */
+  private seedHistory(ago: (min: number) => number) {
+    if (this.key !== 'sig') return;
+    const climb = CONVS.find((c) => c.fact.nativeId === sgroup('climb', '', []).nativeId)!.fact;
+    const emit = this.emit;
+    emit({ t: 'conversation', conversation: { ...climb, topic: 'Tuesdays at Mesa' } });
+    emit({ t: 'conversation', conversation: { ...climb, topic: 'Tuesdays and Thursdays at Mesa. Bring your own chalk.' } });
+    emit({ t: 'conversation', conversation: { ...climb, participants: [...climb.participants!, S.mei.nativeId] } });
+    const msg = (nativeId: string, author: P.IdentityFact, min: number, body: string, x: Partial<P.MessageFact> = {}) =>
+      emit({ t: 'message', live: false, message: { nativeId, conversation: climb.nativeId, author: author.nativeId, ts: ago(min), body, ...x } });
+    msg(`${climb.nativeId}~h-edit`, S.priya, 70, 'meet at 6');
+    msg(`${climb.nativeId}~h-edit`, S.priya, 70, 'meet at 6:30, traffic', { editedTs: ago(68) });
+    msg(`${climb.nativeId}~h-del`, S.sam, 65, 'wrong chat lol, ignore this');
+    emit({ t: 'delete', conversation: climb.nativeId, nativeId: `${climb.nativeId}~h-del` });
+    msg(`${climb.nativeId}~h-gone`, S.alice, 60, 'door code for the gym is 4471');
+    emit({ t: 'delete', conversation: climb.nativeId, nativeId: `${climb.nativeId}~h-gone`, reason: 'expired' });
   }
 
   /** What this adapter sent since it started, for forwarding it. */

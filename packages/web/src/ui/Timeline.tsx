@@ -1,7 +1,8 @@
 import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, NETWORK_META, sendBlocker } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { bytes, clock, dayLabel, fullTime, sameDay } from '../format.ts';
+import { ago, bytes, clock, dayLabel, fullTime, sameDay } from '../format.ts';
+import { retention } from '../history.ts';
 import { isJumbo, renderMarkdown } from '../markdown.ts';
 import {
   LEVEL_LABEL,
@@ -20,6 +21,7 @@ import {
   visibleAccount,
 } from '../model.ts';
 import {
+  api,
   db,
   go,
   isSelfIdentity,
@@ -314,7 +316,7 @@ function useMdContext(network: P.Network) {
 
 function Body({ m }: { m: P.MessageView }) {
   const html = useMemo(() => renderMarkdown(m.body, useMdContext(m.network)), [m.body, m.network, rev.value]);
-  if (m.deleted) return <div class="msg-body deleted">Message deleted</div>;
+  if (m.deleted) return <div class="msg-body deleted">{m.gone?.how === 'disappeared' ? 'Message disappeared' : 'Message deleted'}</div>;
   if (m.kind === 'encrypted')
     return (
       <div class="msg-body encrypted">
@@ -335,6 +337,66 @@ function openViewer(e: MouseEvent, images: ViewerImage[], index: number) {
   if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
   e.preventDefault();
   viewer.value = { images, index };
+}
+
+/**
+ * A deleted or disappeared message the hub kept (docs/history.md): one quiet line, opened on a click to show what it
+ * said and when it went.
+ */
+function Gone({ m }: { m: P.MessageView }) {
+  const [open, setOpen] = useState(false);
+  const how = m.gone!.how === 'disappeared' ? 'Disappeared' : 'Deleted';
+  const shown = { ...m, deleted: false };
+  return (
+    <div class={`msg-gone ${open ? 'open' : ''}`}>
+      <button class="msg-gone-line" onClick={() => setOpen(!open)} aria-expanded={open} title={`${how} ${fullTime(m.gone!.at)}`}>
+        <Icon name={m.gone!.how === 'disappeared' ? 'clock' : 'trash'} size={12} />
+        {how} message
+        <span class="msg-gone-when">· {ago(m.gone!.at)}</span>
+        <span class="msg-gone-toggle">{open ? 'Hide' : 'Show'}</span>
+      </button>
+      {open && (
+        <div class="msg-gone-body">
+          <Body m={shown} />
+          <Attachments m={shown} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** "(edited)": with earlier versions kept, a click lists them, oldest first. */
+function Edited({ m }: { m: P.MessageView }) {
+  if (!m.edits)
+    return (
+      <span class="msg-edited" title={m.editedTs ? `Edited ${fullTime(m.editedTs)}` : undefined}>
+        (edited)
+      </span>
+    );
+  return (
+    <Menu trigger={(open) => <button class="msg-edited link" onClick={open} title="See earlier versions">(edited)</button>}>
+      {() => <EditHistory m={m} />}
+    </Menu>
+  );
+}
+
+function EditHistory({ m }: { m: P.MessageView }) {
+  const [versions, setVersions] = useState<{ body: string; at: number | null }[] | null>(null);
+  useEffect(() => {
+    api<{ versions: { body: string; at: number | null }[] }>(`/api/messages/${m.id}/history`).then((h) => setVersions(h.versions), () => setVersions([]));
+  }, [m.id, m.body]);
+  return (
+    <div class="edit-history">
+      <div class="menu-title">Versions</div>
+      {!versions && <p class="edit-loading">Loading…</p>}
+      {versions?.map((v, i) => (
+        <div class={`edit-version ${i === versions.length - 1 ? 'now' : ''}`}>
+          <span class="edit-when">{i === versions.length - 1 ? 'Now' : i === 0 ? 'First' : `Edit ${i}`}{v.at ? ` · ${fullTime(v.at)}` : ''}</span>
+          <span class="edit-body">{plainBody(v.body, m.network) || 'Empty'}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function Attachments({ m }: { m: P.MessageView }) {
@@ -510,7 +572,7 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
             <span class="msg-time" title={fullTime(m.ts)}>
               {clock(m.ts)}
             </span>
-            {m.editedTs && <span class="msg-edited">(edited)</span>}
+            {(m.editedTs || m.edits) && <Edited m={m} />}
             {m.encryptionWarning && (
               <span class="msg-e2ee-warning" title={m.encryptionWarning} aria-label={m.encryptionWarning}>
                 <Icon name="alert" size={12} />
@@ -519,7 +581,9 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
             <TriageNote m={m} />
           </div>
         )}
-        {m.forward && !m.deleted ? (
+        {m.deleted && m.gone?.kept ? (
+          <Gone m={m} />
+        ) : m.forward && !m.deleted ? (
           <ForwardCard m={m}>
             <Body m={m.forward.text !== undefined ? { ...m, body: m.forward.text } : m} />
             <Attachments m={m} />
@@ -532,7 +596,7 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
             <Embeds m={m} />
           </>
         )}
-        {grouped && m.editedTs && <span class="msg-edited">(edited)</span>}
+        {grouped && (m.editedTs || m.edits) && <Edited m={m} />}
         <ReactionBar m={m} />
         {thread && (
           <button class="thread-chip" onClick={() => openConv(thread)}>
@@ -622,7 +686,10 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
   const items: any[] = [];
   let prev: P.MessageView | null = null;
   let dividerDone = false;
+  const hideGone = retention.value.show === 'hidden';
   for (const m of msgs) {
+    // Settings → Message history: deleted and disappeared messages not shown at all.
+    if (hideGone && m.deleted) continue;
     if (!prev || !sameDay(prev.ts, m.ts)) items.push(<div class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
     if (merged && prev && prev.conversationId !== m.conversationId) {
       const c = db.conversations.get(m.conversationId);

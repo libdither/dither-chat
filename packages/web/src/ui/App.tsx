@@ -110,6 +110,7 @@ function SettingsNav() {
           ['Keywords', 'at', 'set-keywords'],
           ['Per-place overrides', 'layers', 'set-overrides'],
           ['Privacy', 'lock', 'set-privacy'],
+          ['Message history', 'clock', 'set-history'],
           ['Appearance', 'eye', 'set-appearance'],
         ].map(([t, i, id]) => (
           <button class="settings-nav-item" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>

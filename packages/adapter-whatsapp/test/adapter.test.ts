@@ -219,7 +219,7 @@ test('disappearing messages go when their time is up', async () => {
   ev.message = { extendedTextMessage: { text: 'gone soon', contextInfo: { expiration: 1 } } };
   await h.emit(ev);
   const del = await h.waitFor(() => ofType(h.events, 'delete')[0]);
-  expect(del).toEqual({ t: 'delete', conversation: ALICE, nativeId: msgId(ALICE, 'A1') });
+  expect(del).toEqual({ t: 'delete', conversation: ALICE, nativeId: msgId(ALICE, 'A1'), reason: 'expired' });
 });
 
 // ---------------------------------------------------------------- commands

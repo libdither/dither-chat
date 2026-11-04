@@ -984,6 +984,31 @@ describe('hook.js with several rspack runtimes', () => {
     me = null;
   });
 
+  test('the snapshot lists friends from a client without getRelationships', () => {
+    handlers.clear();
+    me = { id: '1', username: 'someone' };
+    const p = page();
+    p.runHook();
+    const web = runtime(p.win, 'web');
+    chunk(p.win, '700', {
+      stores: storeModule,
+      rel: (_m: any, e: any) => {
+        // Current clients: a Map of records, no getRelationships().
+        e.r = store('RelationshipStore', { getMutableRelationships: () => new Map([['7', { type: 1 }], ['8', { type: 2 }]]), getFriendIDs: () => ['7'] });
+      },
+    });
+    web.T('stores');
+    web.T('rel');
+    p.tick();
+    p.poll();
+    const snap = p.posted.filter((m) => m.t === 'snapshot').at(-1);
+    expect(snap.data.relationships).toEqual([
+      { id: '7', type: 1 },
+      { id: '8', type: 2 },
+    ]);
+    me = null;
+  });
+
   test('sends the snapshot when CONNECTION_OPEN fired before the hook subscribed', () => {
     handlers.clear();
     me = { id: '1', username: 'someone' };

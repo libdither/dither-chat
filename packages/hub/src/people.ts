@@ -18,6 +18,8 @@ export interface PeopleDeps {
 
 const caps = (store: Store, accountId: string): P.Capability[] => JSON.parse(store.account(accountId)?.capabilities ?? '[]');
 
+const statusText = (st: P.PersonAbout['status']) => (st ? [st.emoji, st.text].filter(Boolean).join(' ') || undefined : undefined);
+
 /** A fresh answer this recent is not asked again. */
 const FRESH_MS = 10 * 60_000;
 
@@ -87,6 +89,14 @@ export class People {
     if (accountId && !why) {
       try {
         const about = await this.d.command<P.PersonAbout>(accountId, { t: 'profile', who: n.nativeId }, 20_000);
+        // What their profile said before, if it says something else now (docs/history.md).
+        if (k && about)
+          s.logChanges('identity', identityId, accountId, [
+            ['bio', k.about.bio, about.bio ?? ''],
+            ['status', statusText(k.about.status), statusText(about.status) ?? ''],
+            ['pronouns', k.about.pronouns, about.pronouns ?? ''],
+            ['banner', k.about.banner, about.banner],
+          ]);
         s.db
           .query('INSERT INTO about (target_id, account_id, data, fetched_at) VALUES (?, ?, ?, ?) ON CONFLICT (target_id, account_id) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at')
           .run(identityId, accountId, JSON.stringify(about ?? {}), Date.now());

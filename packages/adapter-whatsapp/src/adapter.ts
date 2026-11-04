@@ -670,7 +670,7 @@ export class WhatsAppAdapter {
   private sweepExpired() {
     for (const m of this.state.expired(Date.now())) {
       this.state.dropMsg(m.id);
-      this.host.emit({ t: 'delete', conversation: m.conversation, nativeId: m.id });
+      this.host.emit({ t: 'delete', conversation: m.conversation, nativeId: m.id, reason: 'expired' });
     }
   }
 

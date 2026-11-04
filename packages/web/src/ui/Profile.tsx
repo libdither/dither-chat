@@ -13,6 +13,7 @@ import { api, db, go, isSelfIdentity, newMessage, openMessage, openProfile, rev,
 import { Avatar, Empty, NetBadge, NetGlyph, Skeleton } from './bits.tsx';
 import { copy, groups, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
+import { HistoryCard } from './HistoryCard.tsx';
 import { identityMenu, personMenu } from './menus.tsx';
 import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, Tag } from './ProfileShell.tsx';
 import { openConv } from './Sidebar.tsx';
@@ -396,6 +397,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           })}
         </div>
       </Card>
+      <HistoryCard path={person ? `/api/persons/${person.id}/changes` : `/api/identities/${first.id}/changes`} />
     </>
   );
 

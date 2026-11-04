@@ -163,7 +163,8 @@ export function EditableText({
   max?: number;
   onSave: (v: string) => Promise<boolean>;
 }) {
-  const value = (setting?.value as string | null) ?? fallback;
+  // An empty answer where the hub knows one (a network that did not say) shows what the hub knows.
+  const value = (setting?.value as string | null) || fallback;
   const [draft, setDraft] = useState<string | null>(null);
   const save = async () => {
     if (draft === null) return;

@@ -276,7 +276,7 @@ describe('signal adapter against a fake signal-cli', () => {
     adapter.sweepExpired(Date.now() + 3599_000);
     expect(of('delete', mark)).toHaveLength(0);
     adapter.sweepExpired(Date.now() + 3601_000);
-    expect(of('delete', mark)).toEqual([{ t: 'delete', conversation: DM_ALICE, nativeId: id }]);
+    expect(of('delete', mark)).toEqual([{ t: 'delete', conversation: DM_ALICE, nativeId: id, reason: 'expired' }]);
     expect(existsSync(file)).toBe(false);
   });
 

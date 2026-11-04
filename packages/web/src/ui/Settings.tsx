@@ -8,6 +8,7 @@ import { Icon } from './icons.tsx';
 import { DeviceRules } from './DeviceRules.tsx';
 import { PushSettings } from './Push.tsx';
 import { PrivacySettings } from './Privacy.tsx';
+import { HistorySettings } from './HistorySettings.tsx';
 import { phone } from '../phone.ts';
 import { Sheet } from './Sheet.tsx';
 import { chosenTheme, followsSystem, Swatch, ThemeList } from './Themes.tsx';
@@ -310,6 +311,7 @@ export function SettingsPane() {
         )}
 
         <PrivacySettings />
+        <HistorySettings />
 
         <section class="set-block" id="set-appearance">
           <h3>Appearance</h3>

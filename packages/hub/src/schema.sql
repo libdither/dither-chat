@@ -152,6 +152,9 @@ CREATE TABLE IF NOT EXISTS message (
   -- The mention of you was @everyone or @here: it notifies like one, but is not addressed to you.
   mentions_all    INTEGER NOT NULL DEFAULT 0,
   deleted         INTEGER NOT NULL DEFAULT 0,
+  -- When gone, how and when (docs/history.md): 'deleted' or 'disappeared'; the body stays if the hub kept it.
+  gone_how        TEXT,
+  gone_at         INTEGER,
   extra           TEXT,
   UNIQUE (network, native_id)
 );
@@ -491,3 +494,17 @@ CREATE TABLE IF NOT EXISTS about (
   fetched_at INTEGER NOT NULL,
   PRIMARY KEY (target_id, account_id)
 ) WITHOUT ROWID;
+
+-- What changed and when (docs/history.md): names, descriptions, pictures, settings, members, profiles, and earlier
+-- versions of edited messages. old/new are text as the network said it.
+CREATE TABLE IF NOT EXISTS change_log (
+  id          INTEGER PRIMARY KEY,
+  target_kind TEXT NOT NULL CHECK (target_kind IN ('conversation', 'space', 'identity', 'message')),
+  target_id   TEXT NOT NULL,
+  field       TEXT NOT NULL,
+  old         TEXT,
+  new         TEXT,
+  at          INTEGER NOT NULL,
+  account_id  TEXT
+);
+CREATE INDEX IF NOT EXISTS change_log_target ON change_log(target_kind, target_id, at);
