@@ -1,31 +1,25 @@
 /**
  * About and settings for a conversation or a space (docs/group-settings.md): what it is, who is in it with what
  * role, who may do what, its invite link and pinned messages, and its settings, each editable only where the
- * network says your account may, with the reason where it may not. A dialog on the desktop, a sheet on a phone.
+ * network says your account may, with the reason where it may not. The pieces here make up a place's profile page
+ * (PlaceProfile.tsx, docs/profile.md).
  */
-import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { ABOUT_LABEL, ABOUT_RULES, durationLabel, HISTORY_LABEL, JOIN_RULE_LABEL, NETWORK_META, WHO_LABEL } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { fullTime } from '../format.ts';
 import { authorName, convTitle, identityName, netName, plainBody } from '../model.ts';
-import { api, db, isSelfIdentity, openMessage, openProfile, rev, toast } from '../state.ts';
-import { AccountChip, Avatar, Modal, NetGlyph } from './bits.tsx';
+import { api, db, go, isSelfIdentity, openProfile, toast } from '../state.ts';
+import { Avatar } from './bits.tsx';
 import { Menuable } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import { identityMenu } from './menus.tsx';
 
 export type AboutTarget = { kind: 'conversation' | 'space'; id: string };
 
-export const aboutOf = signal<AboutTarget | null>(null);
-
+/** About lives on the place's profile page now (PlaceProfile.tsx). */
 export function openAbout(kind: AboutTarget['kind'], id: string) {
-  aboutOf.value = { kind, id };
-}
-
-export function AboutLayer() {
-  const t = aboutOf.value;
-  return t ? <AboutDialog key={`${t.kind}:${t.id}`} target={t} onClose={() => (aboutOf.value = null)} /> : null;
+  go(kind === 'space' ? { view: 'profile', space: id } : { view: 'profile', conv: id });
 }
 
 const BOOL_ON: Partial<Record<P.AboutKey, string>> = { nsfw: 'Age-restricted', announceOnly: 'Only admins', joinApproval: 'Admins approve', encrypted: 'On' };
@@ -74,31 +68,31 @@ const NUMERIC: P.AboutKey[] = ['disappearing', 'slowMode'];
 const BOOLEAN: P.AboutKey[] = ['nsfw', 'announceOnly', 'joinApproval', 'encrypted'];
 const TOP: P.AboutKey[] = ['name', 'topic', 'avatar'];
 
-function AboutDialog({ target, onClose }: { target: AboutTarget; onClose: () => void }) {
-  rev.value;
-  const conv = target.kind === 'conversation' ? db.conversations.get(target.id) : undefined;
-  const space = target.kind === 'space' ? db.spaces.get(target.id) : undefined;
-  const network = (conv ?? space)?.network;
-  const accountIds = conv ? conv.vantages.map((v) => v.accountId) : (space?.accountIds ?? []);
+/**
+ * A place's About, as the network has it now through one of your accounts (`as` picks which), and a way to change
+ * one setting through it.
+ */
+export function useAbout(target: AboutTarget) {
   const [as, setAs] = useState<string | undefined>(undefined);
   const [view, setView] = useState<P.AboutView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const path = `/api/${target.kind === 'space' ? 'spaces' : 'conversations'}/${target.id}/about`;
 
+  const show = (v: P.AboutView) => {
+    for (const i of v.identities ?? []) db.identities.set(i.id, i);
+    setView(v);
+  };
   useEffect(() => {
     let live = true;
     setError(null);
+    setView(null);
     api<P.AboutView>(`${path}${as ? `?account=${encodeURIComponent(as)}` : ''}`)
       .then((v) => live && show(v))
       .catch((e: Error) => live && setError(e.message));
     return () => void (live = false);
   }, [path, as]);
 
-  const show = (v: P.AboutView) => {
-    for (const i of v.identities ?? []) db.identities.set(i.id, i);
-    setView(v);
-  };
   const change = async (c: P.AboutChange, what: string) => {
     if (busy) return false;
     setBusy(c.key);
@@ -114,125 +108,35 @@ function AboutDialog({ target, onClose }: { target: AboutTarget; onClose: () => 
       setBusy(null);
     }
   };
+  return { view, error, busy, as, setAs, change };
+}
 
-  if (!network) return null;
-  const title = conv ? convTitle(conv) : (space?.name ?? '');
-  const noun = view?.noun ?? (space ? (space.kind === 'section' ? NETWORK_META[network].sectionNoun : NETWORK_META[network].spaceNoun) : 'Conversation');
-  const f = view?.fields ?? {};
-  const keys = (ABOUT_RULES[network][target.kind] as P.AboutKey[]).filter((k) => !TOP.includes(k) && f[k]);
-  const picture = f.avatar?.value ?? conv?.avatar ?? space?.icon ?? null;
+/** The settings a network has here, beyond name, description and picture, that this About carries. */
+export function settingKeys(network: P.Network, kind: AboutTarget['kind'], f: P.AboutFields): P.AboutKey[] {
+  return (ABOUT_RULES[network][kind] as P.AboutKey[]).filter((k) => !TOP.includes(k) && f[k]);
+}
+
+/** "Who can do what", with a tick or a lock for you. */
+export function RulesList({ rules }: { rules: P.AboutRule[] }) {
   return (
-    <Modal title={`About ${noun.toLowerCase()}`} onClose={onClose}>
-      <div class="about" data-network={network}>
-        <div class="about-head">
-          <Avatar id={target.id} name={title} url={picture} size={56} square={conv?.shape !== 'direct'} network={network} />
-          <div class="about-head-text">
-            <EditableText setting={f.name} fallback={title} label="Name" busy={busy === 'name'} big onSave={(v) => change({ key: 'name', value: v }, 'Name changed')} max={ABOUT_RULES[network].nameMax} />
-            <span class="about-kind">
-              <NetGlyph network={network} size={12} /> {netName(network)} {noun.toLowerCase()}
+    <dl class="about-rules">
+      {rules.map((r) => (
+        <div class={`about-rule ${r.you ? 'you' : ''}`}>
+          <dt>{r.what}</dt>
+          <dd>
+            {r.who}
+            <span class="about-you" title={r.you ? 'You can' : 'You cannot'}>
+              <Icon name={r.you ? 'check' : 'lock'} size={12} />
             </span>
-          </div>
+          </dd>
         </div>
-        {(f.topic || (!view && (conv?.topic ?? space?.topic))) && (
-          <EditableText setting={f.topic} fallback={conv?.topic ?? space?.topic ?? ''} label="Description" multiline busy={busy === 'topic'} onSave={(v) => change({ key: 'topic', value: v }, 'Description changed')} max={ABOUT_RULES[network].topicMax} />
-        )}
-        {accountIds.length > 1 && (
-          <div class="about-as" role="radiogroup" aria-label="Whose view">
-            <span class="muted-label">As</span>
-            {accountIds.map((id) => {
-              const a = db.accounts.get(id);
-              return a ? (
-                <button class={`chip-btn ${(view?.accountId ?? as) === id ? 'on' : ''}`} role="radio" aria-checked={(view?.accountId ?? as) === id} onClick={() => setAs(id)}>
-                  <AccountChip account={a} small />
-                </button>
-              ) : null;
-            })}
-          </div>
-        )}
-        {error && <p class="about-error">{error}</p>}
-        {!view && !error && <p class="about-loading">Asking {netName(network)}…</p>}
-        {view?.stale && (
-          <p class="about-stale">
-            <Icon name="alert" size={13} /> {view.stale}
-          </p>
-        )}
-        {view && (
-          <>
-            {keys.length > 0 && (
-              <section class="about-section">
-                <h3>Settings</h3>
-                {keys.map((k) => (
-                  <SettingRow network={network} k={k} s={f[k]!} busy={busy === k} onChange={(v) => change({ key: k, value: v } as P.AboutChange, `${ABOUT_LABEL[k]}: ${valueText(k, v)}`)} />
-                ))}
-              </section>
-            )}
-            {view.invite && <InviteSection inv={view.invite} busy={busy === 'invite'} onChange={(op) => change({ key: 'invite', op }, op === 'create' ? 'New invite link made' : 'Invite link turned off')} />}
-            {view.pinned && (
-              <PinnedSection
-                p={view.pinned}
-                network={network}
-                onOpen={(m) => {
-                  onClose();
-                  openMessage(m.conversationId, m.id);
-                }}
-                onUnpin={(m) => change({ key: 'pin', message: m.nativeId, remove: true }, 'Unpinned')}
-              />
-            )}
-            {view.members && <MembersSection m={view.members} />}
-            {view.rules && view.rules.length > 0 && (
-              <section class="about-section">
-                <h3>Who can do what</h3>
-                <dl class="about-rules">
-                  {view.rules.map((r) => (
-                    <div class={`about-rule ${r.you ? 'you' : ''}`}>
-                      <dt>{r.what}</dt>
-                      <dd>
-                        {r.who}
-                        <span class="about-you" title={r.you ? 'You can' : 'You cannot'}>
-                          <Icon name={r.you ? 'check' : 'lock'} size={12} />
-                        </span>
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              </section>
-            )}
-            <section class="about-section">
-              <h3>Details</h3>
-              <dl class="kv">
-                {view.you?.role && (
-                  <>
-                    <dt>You are</dt>
-                    <dd>{view.you.role}</dd>
-                  </>
-                )}
-                {(view.facts ?? []).map((x) => (
-                  <>
-                    <dt>{x.label}</dt>
-                    <dd>{x.value}</dd>
-                  </>
-                ))}
-                {view.accountId && db.accounts.get(view.accountId) && (
-                  <>
-                    <dt>Seen as</dt>
-                    <dd>
-                      <AccountChip account={db.accounts.get(view.accountId)!} small />
-                    </dd>
-                  </>
-                )}
-                <dt>As of</dt>
-                <dd>{fullTime(view.fetchedAt)}</dd>
-              </dl>
-            </section>
-          </>
-        )}
-      </div>
-    </Modal>
+      ))}
+    </dl>
   );
 }
 
 /** Why a setting is locked, as a small line under it. */
-function Locked({ s }: { s?: P.AboutSetting }) {
+export function Locked({ s }: { s?: P.AboutSetting }) {
   return s && !s.canEdit && s.reason ? (
     <small class="about-reason">
       <Icon name="lock" size={11} /> {s.reason}
@@ -240,7 +144,7 @@ function Locked({ s }: { s?: P.AboutSetting }) {
   ) : null;
 }
 
-function EditableText({
+export function EditableText({
   setting,
   fallback,
   label,
@@ -311,7 +215,7 @@ function EditableText({
   );
 }
 
-function SettingRow({ network, k, s, busy, onChange }: { network: P.Network; k: P.AboutKey; s: P.AboutSetting; busy: boolean; onChange: (v: unknown) => void }) {
+export function SettingRow({ network, k, s, busy, onChange }: { network: P.Network; k: P.AboutKey; s: P.AboutSetting; busy: boolean; onChange: (v: unknown) => void }) {
   const id = `about-${k}`;
   let control;
   if (!s.canEdit) control = <span class="about-value">{valueText(k, s.value)}</span>;
@@ -367,7 +271,7 @@ function SettingRow({ network, k, s, busy, onChange }: { network: P.Network; k: 
   );
 }
 
-function InviteSection({ inv, busy, onChange }: { inv: P.AboutInvite; busy: boolean; onChange: (op: 'create' | 'revoke') => void }) {
+export function InviteSection({ inv, busy, onChange }: { inv: P.AboutInvite; busy: boolean; onChange: (op: 'create' | 'revoke') => void }) {
   const [copied, setCopied] = useState(false);
   return (
     <section class="about-section about-invite">
@@ -415,7 +319,7 @@ function InviteSection({ inv, busy, onChange }: { inv: P.AboutInvite; busy: bool
   );
 }
 
-function PinnedSection({ p, network, onOpen, onUnpin }: { p: NonNullable<P.AboutView['pinned']>; network: P.Network; onOpen: (m: P.MessageView) => void; onUnpin: (m: P.MessageView) => void }) {
+export function PinnedSection({ p, network, onOpen, onUnpin }: { p: NonNullable<P.AboutView['pinned']>; network: P.Network; onOpen: (m: P.MessageView) => void; onUnpin: (m: P.MessageView) => void }) {
   const total = p.messages.length + p.missing;
   return (
     <section class="about-section about-pinned">
@@ -442,7 +346,7 @@ function PinnedSection({ p, network, onOpen, onUnpin }: { p: NonNullable<P.About
 
 const SHOWN = 120;
 
-function MembersSection({ m }: { m: NonNullable<P.AboutView['members']> }) {
+export function MembersSection({ m }: { m: NonNullable<P.AboutView['members']> }) {
   const [all, setAll] = useState(false);
   // Grouped by role, highest first, as Discord's member list does.
   const sorted = [...m.list].sort((a, b) => (b.rank ?? 0) - (a.rank ?? 0) || identityName(a.identityId).localeCompare(identityName(b.identityId)));

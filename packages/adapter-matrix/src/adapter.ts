@@ -29,7 +29,7 @@ import { encryptedFileOf, FORWARD_KEY, forwardableContent, forwardOf, isRedacted
 import { Directory, Room, STRUCTURAL, type MxEvent } from './rooms.ts';
 
 export const VERSION = '0.1.0';
-const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'threads', 'media', 'sendMedia', 'openDirect', 'forward', 'about', 'configure'];
+const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'threads', 'media', 'sendMedia', 'openDirect', 'forward', 'about', 'configure', 'profile'];
 
 const SYNC_TIMEOUT = 30_000;
 /**
@@ -1128,6 +1128,8 @@ export class MatrixAdapter {
         return readAbout(this.aboutHost(), cmd.target);
       case 'configure':
         return configureAbout(this.aboutHost(), cmd.target, cmd.change);
+      case 'profile':
+        return this.profile(cmd.who);
       case 'edit':
         return this.edit(cmd.conversation, cmd.message, cmd.body);
       case 'redact':
@@ -1345,6 +1347,27 @@ export class MatrixAdapter {
       content.formatted_body = `* ${out.formatted}`;
     }
     return { nativeId: await this.sendEvent(roomId, 'm.room.message', content) };
+  }
+
+  /**
+   * A Matrix profile (docs/profile.md): display name and avatar, plus pronouns and time zone where the server keeps
+   * extended fields (MSC4133). Someone with a direct chat counts as a contact; for you, those are your friends.
+   */
+  private async profile(who: string): Promise<P.PersonAbout> {
+    const p = await this.api()
+      .request<Record<string, unknown>>('GET', `/_matrix/client/v3/profile/${encodeURIComponent(who)}`, { retries: 1 })
+      .catch((): Record<string, unknown> => ({}));
+    const direct = JSON.parse(this.db.get('m.direct') ?? '{}') as Record<string, string[]>;
+    const out: P.PersonAbout = { links: [{ label: 'Matrix', value: who, url: `https://matrix.to/#/${encodeURIComponent(who)}` }] };
+    if (typeof p.displayname === 'string') out.displayName = p.displayname;
+    if (typeof p.avatar_url === 'string') out.avatar = p.avatar_url;
+    const pronouns = (p['m.pronouns'] ?? p['io.fsky.nyx.pronouns']) as { summary?: string }[] | undefined;
+    if (Array.isArray(pronouns) && pronouns[0]?.summary) out.pronouns = String(pronouns[0].summary);
+    const tz = p['m.tz'] ?? p['us.cloke.msc4175.tz'];
+    if (typeof tz === 'string') out.facts = [{ label: 'Time zone', value: tz }];
+    if (who === this.selfId) out.friends = Object.keys(direct).filter((u) => u !== who);
+    else out.relationship = direct[who]?.length ? 'contact' : 'stranger';
+    return out;
   }
 
   private async redact(conversation: string, message: string, reason?: string) {

@@ -1,9 +1,9 @@
 /**
- * About and settings (docs/group-settings.md), end to end against a demo hub in headless Chromium: the panel opens
- * from a conversation's header, its menu and a space's header; a Signal group you administer lets you rename it and
+ * About and settings (docs/group-settings.md, docs/profile.md), end to end against a demo hub in headless Chromium:
+ * the place's profile page opens from a conversation's header, its name, its menu and a space's header; a Signal group you administer lets you rename it and
  * change its timer, and the change reaches the conversation; a group where only admins edit shows every setting
  * locked with the reason; one Discord server seen through two accounts shows each one's view; pinned messages and
- * members by role; and the same panel as a sheet on a phone.
+ * members by role; and the same page full width on a phone.
  *
  *   bun scripts/verify-about.ts http://127.0.0.1:8497 [/tmp/shots]
  * The hub must be a fresh demo hub (--demo) with its own data dir: this renames and changes things.
@@ -39,11 +39,9 @@ const click = async (sel: string) => {
   if (!r) throw new Error(`nothing matches ${sel}`);
   for (const type of ['mousePressed', 'mouseReleased']) await p.send('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', clickCount: 1 });
 };
-const opened = () => p.until(`!!document.querySelector('.about .about-section')`, 10000);
-const closeDialog = async () => {
-  await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
-  await p.until(`!document.querySelector('.about')`, 4000);
-};
+// The page is up and the network has answered: nothing says "Asking" any more.
+const opened = () => p.until(`!!document.querySelector('.profile-page .pf-hero') && !!document.querySelector('.profile-page .pf-card') && ![...document.querySelectorAll('.profile-page .pf-empty')].some((e) => e.textContent.startsWith('Asking'))`, 10000);
+const closeDialog = async () => {};
 const rows = () =>
   p.eval<{ key: string; editable: boolean; value: string; reason: string }[]>(
     `[...document.querySelectorAll('.about-row')].map((r) => ({ key: r.dataset.key, editable: r.classList.contains('editable'), value: (r.querySelector('select')?.value ?? r.querySelector('input')?.checked ?? r.querySelector('.about-value')?.textContent ?? '') + '', reason: r.querySelector('.about-reason')?.textContent?.trim() ?? '' }))`,
@@ -73,14 +71,19 @@ try {
   check((await about('conversations', climb)).fields.disappearing.value === 86400, 'the timer changed on the network: one day');
 
   // Rename it, from the pencil.
-  await click('.about-head .about-pencil');
-  await p.until(`!!document.querySelector('.about-head .about-input')`, 3000);
-  await p.eval(`(() => { const i = document.querySelector('.about-head .about-input'); i.value = 'Climbing crew'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await click('.pf-title .about-pencil');
+  await p.until(`!!document.querySelector('.pf-title .about-input')`, 3000);
+  await p.eval(`(() => { const i = document.querySelector('.pf-title .about-input'); i.value = 'Climbing crew'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await Bun.sleep(100);
-  await p.eval(`document.querySelector('.about-head .about-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
-  await p.until(`document.querySelector('.about-head h2')?.textContent === 'Climbing crew'`, 6000);
+  await p.eval(`document.querySelector('.pf-title .about-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
+  await p.until(`document.querySelector('.pf-title h2')?.textContent === 'Climbing crew'`, 6000);
+  await p.goto(`${hub}/#/c/${climb}`);
   await p.until(`document.querySelector('.conv-head h2')?.textContent.startsWith('Climbing crew') && !document.querySelector('.conv-head h2')?.textContent.includes('🧗')`, 6000).catch(() => {});
   check((await p.eval<string>(`document.querySelector('.conv-head h2')?.textContent ?? ''`)).trim() === 'Climbing crew', 'the new name reaches the conversation’s header', await p.eval(`document.querySelector('.conv-head h2')?.textContent`));
+  // Its name in the header opens the same page.
+  await click('.conv-head .conv-head-name');
+  await opened();
+  check(await p.eval(`location.hash.startsWith('#/about/c/')`), 'the name in a group’s header opens its page', await p.eval('location.hash'));
   await closeDialog();
 
   // A group where only admins edit, from the conversation's menu.
@@ -93,7 +96,7 @@ try {
   const r2 = await rows();
   check(r2.length > 0 && r2.every((r) => !r.editable), 'nothing is editable for a member', r2.map((r) => `${r.key}:${r.editable}`));
   check(r2.find((r) => r.key === 'disappearing')?.reason.includes('Only admins'), 'and each says why', r2.find((r) => r.key === 'disappearing')?.reason);
-  check(await p.eval(`!document.querySelector('.about-head .about-pencil') && !!document.querySelector('.about-head .about-lock')`), 'the name has a lock, not a pencil');
+  check(await p.eval(`!document.querySelector('.pf-title .about-pencil') && !!document.querySelector('.pf-title .about-lock')`), 'the name has a lock, not a pencil');
   if (shots) await p.shot(`${shots}/about-signal-member.png`);
   await closeDialog();
 
@@ -104,10 +107,10 @@ try {
   await opened();
   const as = await p.eval<number>(`document.querySelectorAll('.about-as .chip-btn').length`);
   check(as === 2, 'a chooser between the two accounts in it', as);
-  check(await p.eval(`!!document.querySelector('.about-head .about-pencil')`), 'as its owner the server’s name can change');
+  check(await p.eval(`!!document.querySelector('.pf-title .about-pencil')`), 'as its owner the server’s name can change');
   await p.eval(`[...document.querySelectorAll('.about-as .chip-btn')].find((b) => !b.classList.contains('on')).click()`);
-  await p.until(`!!document.querySelector('.about-head .about-lock')`, 6000);
-  const lock = await p.eval<string>(`document.querySelector('.about-head .about-lock')?.title ?? ''`);
+  await p.until(`!!document.querySelector('.pf-title .about-lock')`, 6000);
+  const lock = await p.eval<string>(`document.querySelector('.pf-title .about-lock')?.title ?? ''`);
   check(lock.includes('Manage Server'), 'as the other account it is locked: Manage Server', lock);
   const roleNames = await p.eval<string[]>(`[...document.querySelectorAll('.about-role h4')].map((h) => h.textContent)`);
   check(roleNames[0] === 'Maintainer', 'members under their top role', roleNames);
@@ -127,19 +130,19 @@ try {
   const slow = (await rows()).find((r) => r.key === 'slowMode');
   check(slow?.editable && slow.value === '0', 'slow mode, off, may be changed by the owner', slow);
   await click('.about-pin-open');
-  await p.until(`!document.querySelector('.about')`, 4000);
+  await p.until(`!document.querySelector('.profile-page')`, 4000);
   check(await p.until(`location.hash.includes('m=') && !!document.querySelector('.msg.flash')`, 4000).then(() => true, () => false), 'going to a pin opens the conversation at it', await p.eval('location.hash'));
 
-  // The same panel as a sheet on a phone.
+  // The same page, full width, on a phone.
   await p.size(390, 820, true);
   await p.goto(`${hub}/#/c/${climb}`);
   await p.until(`document.querySelectorAll('.msg').length > 1`, 15000);
   // A tap, not a mouse click: the phone layout takes touch.
   await p.eval(`document.querySelector('.conv-head .hdr-btn[aria-label="About and settings"]').click()`);
   await opened();
-  await Bun.sleep(700); // the sheet slides up
-  const box = await p.eval<{ w: number; bottom: number }>(`(() => { const b = document.querySelector('.modal').getBoundingClientRect(); return { w: Math.round(b.width), bottom: Math.round(innerHeight - b.bottom) }; })()`);
-  check(box.w >= 380 && Math.abs(box.bottom) <= 2, 'on a phone it is a sheet along the bottom, full width', box);
+  await Bun.sleep(700); // the page slides in
+  const box = await p.eval<{ w: number; back: boolean }>(`(() => { const b = document.querySelector('.profile-page').getBoundingClientRect(); return { w: Math.round(b.width), back: !!document.querySelector('.profile-page .profile-back')?.getBoundingClientRect().width }; })()`);
+  check(box.w >= 380 && box.back, 'on a phone it is a full-width page with a way back', box);
   if (shots) await p.shot(`${shots}/about-phone.png`);
 
   check(!p.errors.length, 'no page errors', p.errors);

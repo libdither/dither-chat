@@ -3,7 +3,7 @@
  * Every id here is a hub id; native ids are included for display and deep links only.
  */
 
-import type { About, AboutFields } from './about.ts';
+import type { About, AboutFields, PersonAbout } from './about.ts';
 import type { Capability, NativeMute } from './adapter.ts';
 import type {
   AccountStatus,
@@ -370,6 +370,25 @@ export interface PlaceStats {
 }
 
 /** Everything the hub has stored about someone. It only knows what crossed your accounts. */
+/** What one network says about one of a person's identities (docs/profile.md): PersonAbout in hub ids. */
+export interface PersonAboutView extends Omit<PersonAbout, 'avatar' | 'banner' | 'mutualSpaces' | 'mutualFriends' | 'friends'> {
+  identityId: string;
+  network: Network;
+  /** The account that asked. */
+  accountId: string | null;
+  fetchedAt: number;
+  /** Why this is not fresh: no account could ask, it is offline, or the network refused. */
+  stale?: string;
+  avatar?: string | null;
+  banner?: string | null;
+  /** Spaces you share; `spaceId` null for one the hub does not have. */
+  mutualSpaces?: { spaceId: string | null; nativeId: string; nick?: string; roles?: { name: string; color?: string }[]; joinedAt?: number }[];
+  mutualFriends?: string[];
+  friends?: string[];
+  /** Everyone those name, for rendering. */
+  identities: IdentityView[];
+}
+
 export interface ProfileView {
   personId: string | null;
   note: string | null;
@@ -382,6 +401,8 @@ export interface ProfileView {
   mentioned: IdentityView[];
   totalMessages: number;
   firstSeenTs: number | null;
+  /** What each network said last, kept by the hub; ask `GET /api/identities/:id/about` for a fresh one. */
+  abouts: PersonAboutView[];
 }
 
 /** POST /api/directs: a direct conversation, opened or found. */

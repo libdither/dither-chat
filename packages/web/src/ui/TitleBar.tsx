@@ -26,8 +26,11 @@ function placeTitle(r: Route): { title: string; icon: string } {
       return { title: db.spaces.get(r.space)?.name ?? 'Server', icon: 'layers' };
     case 'folder':
       return { title: db.folders.find((f) => f.id === r.folder)?.name ?? 'Folder', icon: 'folder' };
-    case 'people':
     case 'profile':
+      if (r.conv) return { title: convTitle(db.conversations.get(r.conv)), icon: 'info' };
+      if (r.space) return { title: db.spaces.get(r.space)?.name ?? 'Server', icon: 'info' };
+      return { title: 'People', icon: 'users' };
+    case 'people':
       return { title: 'People', icon: 'users' };
     case 'spaces':
     case 'directory':

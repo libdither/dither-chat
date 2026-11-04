@@ -1480,6 +1480,7 @@ export class Store {
       mentioned: this.identitiesOf(recent),
       totalMessages: span.n,
       firstSeenTs: span.first ?? null,
+      abouts: [],
     };
   }
 

@@ -68,7 +68,7 @@ export function placeOf(r: Route): Place {
     case 'people':
       return r.person ? { view: 'person', personId: r.person } : { view: 'people' };
     case 'profile':
-      return { view: 'profile', personId: r.person ?? null };
+      return r.conv ? convPlace(r.conv) : r.space ? { view: 'space', spaceId: rootCommunity(r.space)?.id ?? r.space } : { view: 'profile', personId: r.person ?? null };
     default:
       return { view: r.view };
   }

@@ -1,0 +1,228 @@
+/**
+ * A conversation's or a space's profile (docs/profile.md, docs/group-settings.md): the same frame as a person's
+ * (ProfileShell.tsx). What it is and its description, its settings, pins and members on the left; how you are there
+ * (whose view, notifications, the invite link, who may do what, the details) on the right. Everything editable only
+ * where the network says your account may, with the reason where it may not.
+ */
+import type * as P from '@dither-chat/protocol';
+import { ABOUT_LABEL, ABOUT_RULES, NETWORK_META } from '@dither-chat/protocol';
+import { fullTime } from '../format.ts';
+import { convTitle, deepLink, effectiveLevel, LEVEL_LABEL, netName, unreadOf } from '../model.ts';
+import { db, go, href, isSelfIdentity, markRead, openMessage, rev, setRule } from '../state.ts';
+import { AccountChip, Empty, variantIcon } from './bits.tsx';
+import { copy } from './ContextMenu.tsx';
+import { EditableText, InviteSection, MembersSection, PinnedSection, RulesList, SettingRow, settingKeys, useAbout, valueText, type AboutTarget } from './About.tsx';
+import { Icon } from './icons.tsx';
+import { conversationMenu, spaceMenu } from './menus.tsx';
+import { placeConvs } from './Organize.tsx';
+import { Action, Card, Columns, Facts, Hero, ProfilePage, Tag } from './ProfileShell.tsx';
+import { openConv } from './Sidebar.tsx';
+
+const LEVELS: P.NotifyLevel[] = ['all', 'smart', 'mentions', 'digest', 'none'];
+const LEVEL_HINT: Record<P.NotifyLevel, string> = {
+  all: 'Every message is Important.',
+  smart: 'Triage decides each one: Important, Active or Digest.',
+  mentions: 'Mentions and replies to you are Important; the rest goes to the digest.',
+  digest: 'Nothing notifies; it waits for the digest.',
+  none: 'Nothing at all, not even the digest.',
+};
+
+export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; id: string; onBack: () => void }) {
+  rev.value;
+  const conv = kind === 'conversation' ? db.conversations.get(id) : undefined;
+  const space = kind === 'space' ? db.spaces.get(id) : undefined;
+  const { view, error, busy, as, setAs, change } = useAbout({ kind, id });
+  const network = (conv ?? space)?.network;
+  if (!network)
+    return (
+      <ProfilePage title="About" label="About" onBack={onBack}>
+        <Empty icon="info" title="Nothing by that id" />
+      </ProfilePage>
+    );
+
+  const title = conv ? convTitle(conv) : space!.name;
+  const noun = view?.noun ?? (space ? (space.kind === 'section' ? NETWORK_META[network].sectionNoun : NETWORK_META[network].spaceNoun) : conv!.shape === 'direct' ? 'Chat' : 'Conversation');
+  const f = view?.fields ?? {};
+  const keys = settingKeys(network, kind, f);
+  const picture = (f.avatar?.value as string | null | undefined) ?? conv?.avatar ?? space?.icon ?? null;
+  const accountIds = conv ? conv.vantages.map((v) => v.accountId) : (space?.accountIds ?? []);
+  const members = view?.members ? (view.members.total ?? view.members.list.length) : (conv?.participantIds.length ?? 0);
+  const peer = conv?.shape === 'direct' && conv.peerPersonId ? db.persons.get(conv.peerPersonId) : null;
+  const children = space ? placeConvs('space', space.id) : [];
+  const link = conv ? (deepLink(conv) ?? `${location.origin}${location.pathname}${href({ view: 'inbox', conv: conv.id })}`) : space?.network === 'discord' ? `https://discord.com/channels/${space.nativeId}` : space?.network === 'matrix' ? `https://matrix.to/#/${encodeURIComponent(space.nativeId)}` : null;
+  const ruleOf = db.rules.find((r) => r.scope === kind && r.target === id)?.level ?? null;
+  const eff = conv ? effectiveLevel(conv) : null;
+  const unread = conv ? unreadOf(conv).unread : 0;
+
+  const hero = (
+    <Hero
+      id={id}
+      name={title}
+      picture={picture}
+      square={conv?.shape !== 'direct'}
+      network={network}
+      title={<EditableText setting={f.name} fallback={title} label="Name" busy={busy === 'name'} big onSave={(v) => change({ key: 'name', value: v }, 'Name changed')} max={ABOUT_RULES[network].nameMax} />}
+      sub={
+        <span class="pf-kind">
+          {netName(network)} {noun.toLowerCase()}
+          {members > 0 && ` · ${members.toLocaleString()} member${members === 1 ? '' : 's'}`}
+          {space && children.length > 0 && ` · ${children.length} channel${children.length === 1 ? '' : 's'}`}
+        </span>
+      }
+      tags={
+        <>
+          {(conv?.encrypted || f.encrypted?.value === true) && <Tag icon="lock">End-to-end encrypted</Tag>}
+          {f.nsfw?.value === true && <Tag tone="warn">Age-restricted</Tag>}
+          {f.announceOnly?.value === true && <Tag>Only admins send</Tag>}
+          {view?.you?.role && <Tag tone="accent">You: {view.you.role}</Tag>}
+          {ruleOf === 'none' && <Tag icon="bellOff" tone="muted">Muted</Tag>}
+        </>
+      }
+      actions={
+        <>
+          {conv && <Action primary icon="send" label={conv.shape === 'direct' ? 'Open chat' : 'Open'} onClick={() => openConv(conv)} />}
+          {space && <Action primary icon="layers" label={`Open ${noun.toLowerCase()}`} onClick={() => go({ view: 'space', space: space.id })} />}
+          {peer && <Action icon="user" label="Their profile" onClick={() => go({ view: 'profile', person: peer.id })} />}
+          {conv && unread > 0 && <Action icon="check" label="Mark read" onClick={() => markRead(conv.id)} />}
+          <Action icon={ruleOf === 'none' ? 'bell' : 'bellOff'} label={ruleOf === 'none' ? 'Unmute' : 'Mute'} onClick={() => setRule(kind, id, ruleOf === 'none' ? null : 'none')} />
+          {conv && <Action icon="search" label="Search" onClick={() => go({ view: 'search', q: `in:${conv.id}` })} />}
+          {link && <Action icon="link" label="Copy link" onClick={() => copy(link, 'Link copied')} />}
+          <Action icon="more" label="More" menu={() => (conv ? conversationMenu(conv) : spaceMenu(space!))} />
+        </>
+      }
+    />
+  );
+
+  const main = (
+    <>
+      <Card title="About" icon="info">
+        {f.topic || view === null ? (
+          <EditableText setting={f.topic} fallback={conv?.topic ?? space?.topic ?? ''} label="Description" multiline busy={busy === 'topic'} onSave={(v) => change({ key: 'topic', value: v }, 'Description changed')} max={ABOUT_RULES[network].topicMax} />
+        ) : (
+          <p class="pf-empty">{conv?.topic ?? space?.topic ?? `${netName(network)} keeps no description for this ${noun.toLowerCase()}.`}</p>
+        )}
+        {error && <p class="about-error">{error}</p>}
+        {!view && !error && <p class="pf-empty">Asking {netName(network)}…</p>}
+        {view?.stale && (
+          <p class="pf-stale">
+            <Icon name="alert" size={12} /> {view.stale}
+          </p>
+        )}
+        <Facts rows={(view?.facts ?? []).map((x): [string, string] => [x.label, x.value])} />
+      </Card>
+
+      {view && keys.length > 0 && (
+        <Card title="Settings" icon="settings" class="pf-settings">
+          {keys.map((k) => (
+            <SettingRow network={network} k={k} s={f[k]!} busy={busy === k} onChange={(v) => change({ key: k, value: v } as P.AboutChange, `${ABOUT_LABEL[k]}: ${valueText(k, v)}`)} />
+          ))}
+        </Card>
+      )}
+
+      {view?.pinned && (view.pinned.messages.length + view.pinned.missing > 0 || view.pinned.canEdit) && (
+        <div class="pf-card pf-embed">
+          <PinnedSection p={view.pinned} network={network} onOpen={(m) => openMessage(m.conversationId, m.id)} onUnpin={(m) => change({ key: 'pin', message: m.nativeId, remove: true }, 'Unpinned')} />
+        </div>
+      )}
+
+      {space && children.length > 0 && (
+        <Card title="Channels" icon="hash" count={children.length}>
+          <div class="pf-rows">
+            {children
+              .slice()
+              .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))
+              .slice(0, 12)
+              .map((c) => (
+                <button class="pf-row" onClick={() => openConv(c)}>
+                  <span class="pf-chan-icon">
+                    <Icon name={variantIcon(c.variant, c.shape)} size={16} />
+                  </span>
+                  <span class="pf-row-text">
+                    <b>{convTitle(c)}</b>
+                    {c.topic && <small>{c.topic}</small>}
+                  </span>
+                </button>
+              ))}
+          </div>
+        </Card>
+      )}
+
+      {view?.members && (
+        <div class="pf-card pf-embed">
+          <MembersSection m={view.members} />
+        </div>
+      )}
+    </>
+  );
+
+  const side = (
+    <>
+      {accountIds.length > 1 && (
+        <Card title="Seen as" icon="eye">
+          <div class="about-as" role="radiogroup" aria-label="Whose view">
+            {accountIds.map((aid) => {
+              const a = db.accounts.get(aid);
+              return a ? (
+                <button class={`chip-btn ${(view?.accountId ?? as) === aid ? 'on' : ''}`} role="radio" aria-checked={(view?.accountId ?? as) === aid} onClick={() => setAs(aid)}>
+                  <AccountChip account={a} small />
+                </button>
+              ) : null;
+            })}
+          </div>
+          <p class="pf-hint">Each account may see and change different things here.</p>
+        </Card>
+      )}
+
+      <Card title="Notifications" icon="bell">
+        <label class="pf-level">
+          <select class="select" value={ruleOf ?? ''} onChange={(e) => setRule(kind, id, ((e.target as HTMLSelectElement).value || null) as P.NotifyLevel | null)}>
+            <option value="">Default{eff && !eff.explicit ? ` (${LEVEL_LABEL[eff.level]})` : ''}</option>
+            {LEVELS.map((l) => (
+              <option value={l}>{LEVEL_LABEL[l]}</option>
+            ))}
+          </select>
+        </label>
+        <p class="pf-hint">{ruleOf ? LEVEL_HINT[ruleOf] : eff ? `${LEVEL_LABEL[eff.level]}, from ${eff.source}. ${LEVEL_HINT[eff.level]}` : 'As your defaults say.'}</p>
+      </Card>
+
+      {view?.invite && (
+        <div class="pf-card pf-embed">
+          <InviteSection inv={view.invite} busy={busy === 'invite'} onChange={(op) => change({ key: 'invite', op }, op === 'create' ? 'New invite link made' : 'Invite link turned off')} />
+        </div>
+      )}
+
+      {view?.rules && view.rules.length > 0 && (
+        <Card title="Who can do what" icon="lock">
+          <RulesList rules={view.rules} />
+        </Card>
+      )}
+
+      <Card title="Details" icon="idBadge">
+        <Facts
+          rows={[
+            !!view?.you?.role && ['You are', view.you.role],
+            !!view?.accountId && !!db.accounts.get(view.accountId) && ['Seen as', <AccountChip account={db.accounts.get(view.accountId)!} small />],
+            conv && conv.shape === 'direct' && peer && ['With', peer.name],
+            [
+              `${noun} ID`,
+              <button class="pf-copy" onClick={() => copy((conv ?? space)!.nativeId, 'ID copied')} title="Copy">
+                <code>{(conv ?? space)!.nativeId}</code>
+                <Icon name="copy" size={11} />
+              </button>,
+            ],
+            view && ['As of', fullTime(view.fetchedAt)],
+          ]}
+        />
+      </Card>
+    </>
+  );
+
+  // Your own messages make a self chat; nothing else here applies to it.
+  const selfChat = conv?.shape === 'self' || (conv?.shape === 'direct' && conv.participantIds.every(isSelfIdentity));
+  return (
+    <ProfilePage title={title} label={`About ${title}`} onBack={onBack}>
+      {hero}
+      <Columns main={main} side={selfChat ? null : side} />
+    </ProfilePage>
+  );
+}

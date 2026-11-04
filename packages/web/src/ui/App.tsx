@@ -1,6 +1,6 @@
 import { searchOp } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
-import { accountsNeedingYou, pingedCount, sumUnread, visibleConv } from '../model.ts';
+import { accountsNeedingYou, pingedCount, rootCommunity, sumUnread, visibleConv } from '../model.ts';
 import { api, back, connected, db, go, loaded, pending, prefs, previousRoute, readProgress, refresh, rev, route, unreachable, type Route } from '../state.ts';
 import { dropLayer, phone, pushLayer } from '../phone.ts';
 import { AccountPane, AccountsSidebar, AddAccount, addingAccount } from './Accounts.tsx';
@@ -14,6 +14,7 @@ import { InboxBoard } from './Inbox.tsx';
 import { NewMessage } from './NewMessage.tsx';
 import { ReactionLayer } from './Reactions.tsx';
 import { ProfilePane } from './Profile.tsx';
+import { PlaceProfile } from './PlaceProfile.tsx';
 import { Rail } from './Rail.tsx';
 import { TitleBar } from './TitleBar.tsx';
 import { SearchPane } from './Search.tsx';
@@ -24,7 +25,6 @@ import { Switcher } from './Switcher.tsx';
 import { Toasts } from './Toasts.tsx';
 import { CallDock } from './Call.tsx';
 import { Viewer } from './Viewer.tsx';
-import { AboutLayer } from './About.tsx';
 import { PEEK, panel, usePager, type Rest } from './Pager.ts';
 import { Skeleton } from './bits.tsx';
 import { applyUpdate, updateReady } from '../pwa.ts';
@@ -39,6 +39,7 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
     case 'people':
       return r.person ? { pane: <PersonPane personId={r.person} onBack={back} />, detail: { kind: 'person', id: r.person } } : { pane: <WelcomePane view="people" /> };
     case 'profile':
+      if (r.conv || r.space) return { pane: <PlaceProfile kind={r.conv ? 'conversation' : 'space'} id={(r.conv ?? r.space)!} onBack={back} /> };
       return { pane: <ProfilePane personId={r.person} identityId={r.identity} onBack={back} /> };
     case 'space':
       return r.conv ? { pane: <ConversationPane convId={r.conv} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <WelcomePane view="space" id={r.space} /> };
@@ -69,8 +70,13 @@ function sidebarFor(r: Route, onAdd: () => void) {
       return <InboxSidebar activeConv={r.conv} />;
     case 'people':
       return <PeopleSidebar activePerson={r.person} />;
-    case 'profile':
+    case 'profile': {
+      // A place's page keeps the list it lives in beside it.
+      const home = placeHome(r);
+      if (home?.view === 'space') return <SpaceSidebar spaceId={home.space} activeConv={r.conv} />;
+      if (home?.view === 'inbox') return <InboxSidebar activeConv={r.conv} />;
       return <PeopleSidebar activePerson={r.person} />;
+    }
     case 'space':
       return <SpaceSidebar spaceId={r.space} activeConv={r.conv} />;
     case 'spaces':
@@ -165,13 +171,25 @@ function isDetail(r: Route): boolean {
       return false;
   }
 }
+/** Where a place's profile page lives: the space it is in (or is), else the inbox. Null for a person's. */
+function placeHome(r: Extract<Route, { view: 'profile' }>): Route | null {
+  if (r.space) return { view: 'space', space: rootCommunity(r.space)?.id ?? r.space };
+  if (!r.conv) return null;
+  const c = db.conversations.get(r.conv);
+  const root = c?.spaceIds.length ? rootCommunity(c.spaceIds[0]) : null;
+  return root ? { view: 'space', space: root.id } : { view: 'inbox' };
+}
+
 /** A tab's own page: full screen, with the tab bar under it. */
 const isTabRoot = (r: Route) => r.view === 'triage' || r.view === 'settings' || (r.view === 'search' && !isDetail(r));
 /** The list a page belongs to. The list shows that page peeking at its edge. */
 function listOf(r: Route): string {
   if (r.view === 'space') return `space:${r.space}`;
   if (r.view === 'folder') return `folder:${r.folder}`;
-  if (r.view === 'profile') return 'people';
+  if (r.view === 'profile') {
+    const home = placeHome(r);
+    return home?.view === 'space' ? `space:${home.space}` : home ? 'inbox' : 'people';
+  }
   if (r.view === 'directory') return 'spaces';
   return r.view;
 }
@@ -185,7 +203,7 @@ function listRoute(r: Route): Route {
     case 'search':
       return { view: 'search', q: r.conv ? r.q : '' };
     case 'profile':
-      return { view: 'people' };
+      return placeHome(r) ?? { view: 'people' };
     case 'directory':
       return { view: 'spaces' };
     default:
@@ -347,7 +365,6 @@ export function App() {
       <DragLayer />
       <ContextMenuLayer />
       <ForwardLayer />
-      <AboutLayer />
       <Switcher />
       <NewMessage />
       <Viewer />

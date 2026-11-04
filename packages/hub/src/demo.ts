@@ -856,6 +856,46 @@ function scheduleChatter() {
   chatterTimer = setTimeout(tick, 45_000);
 }
 
+// ------------------------------------------------------------------ profiles (docs/profile.md)
+
+type GuildKey = keyof typeof g;
+const DISCORD_PROFILES: Record<string, { bio?: string; pronouns?: string; status?: { text?: string; emoji?: string }; accent?: string; servers?: GuildKey[]; nick?: Partial<Record<GuildKey, string>>; roles?: Partial<Record<GuildKey, { name: string; color?: string }[]>>; friends?: string[]; links?: P.PersonAbout['links'] }> = {
+  alice: {
+    bio: 'climbing, film photography, and too many browser tabs.\nbelay partner wanted on weekends 🧗',
+    pronouns: 'she/her',
+    status: { text: 'at the crag', emoji: '🧗' },
+    accent: '#C0504D',
+    servers: ['dither', 'hk'],
+    nick: { dither: 'alice (testing)' },
+    roles: { dither: [{ name: 'Testers', color: '#3BA55C' }] },
+    friends: ['ravi', 'jordan', 'theo'],
+    links: [{ label: 'GitHub', value: 'alicechen', url: 'https://github.com/alicechen', verified: true }],
+  },
+  quinn: {
+    bio: 'networking nerd. working on the handshake in libdither.',
+    pronouns: 'they/them',
+    accent: '#2F7D95',
+    servers: ['dither', 'rust'],
+    roles: { dither: [{ name: 'Core', color: '#E67E22' }, { name: 'Reviewers', color: '#9B59B6' }], rust: [{ name: 'Helper', color: '#1ABC9C' }] },
+    friends: ['alice', 'theo'],
+    links: [{ label: 'GitHub', value: 'quinn-dev', url: 'https://github.com/quinn-dev', verified: true }, { label: 'Website', value: 'quinn.example', url: 'https://quinn.example' }],
+  },
+  ravi: { bio: 'raid leader on tuesdays', accent: '#4B6CB7', servers: ['hk'], friends: ['alice'], status: { text: 'grinding', emoji: '⚔️' } },
+  jordan: { pronouns: 'he/him', servers: ['hk'], friends: ['alice'] },
+  theo: { bio: 'has your belay device', servers: ['dither'], friends: ['alice', 'quinn'] },
+  lev: { bio: 'p2p, routing, coffee', servers: ['dither', 'rust'], roles: { dither: [{ name: 'Maintainer', color: '#E91E63' }] } },
+};
+const SIGNAL_ABOUT: Record<string, { text: string; emoji: string }> = {
+  alice: { text: 'out climbing', emoji: '🧗' },
+  mom: { text: 'Call me!', emoji: '☎️' },
+  sam: { text: 'Busy, text me', emoji: '📵' },
+};
+const WHATSAPP_ABOUT: Record<string, string> = {
+  alice: 'Available',
+  nana: 'Grandchildren are the best ❤️',
+  marco: 'Ciao!',
+};
+
 class DemoAdapter implements InprocAdapter {
   private emit!: (ev: P.AdapterEvent) => void;
   private timers = new Set<Timer>();
@@ -928,6 +968,52 @@ class DemoAdapter implements InprocAdapter {
   }
 
   /** The same answers real adapters give, by each network's own rules. */
+  /** What each network's profile shows for someone (docs/profile.md), as its adapter would say it. */
+  private profile(who: string): P.PersonAbout {
+    const pool = this.network === 'discord' ? D : this.network === 'signal' ? S : this.network === 'whatsapp' ? W : M;
+    const key = (Object.entries(pool) as [string, P.IdentityFact][]).find(([, i]) => i.nativeId === who)?.[0];
+    const me = who === this.self.nativeId;
+    const contacts = Object.values(pool).filter((i) => i.contact && i !== this.self);
+    if (this.network === 'discord') {
+      const mine = SPACES.filter((x) => x.acc.includes(this.key) && x.fact.kind === 'community').map((x) => x.fact.nativeId);
+      const p = DISCORD_PROFILES[key ?? ''] ?? {};
+      for (const f of contacts) this.emit({ t: 'identity', identity: f });
+      return {
+        ...(p.bio ? { bio: p.bio } : {}),
+        ...(p.pronouns ? { pronouns: p.pronouns } : {}),
+        ...(p.status ? { status: p.status } : {}),
+        accent: p.accent ?? '#5865F2',
+        createdAt: Date.UTC(2017 + (who.length % 6), (who.charCodeAt(3) ?? 0) % 12, 9),
+        relationship: me ? undefined : pool[key as keyof typeof pool]?.contact ? 'friend' : 'stranger',
+        ...(me ? { friends: contacts.map((i) => i.nativeId) } : {
+          mutualSpaces: (p.servers ?? []).map((k) => ({ k, id: g[k] })).filter((x) => mine.includes(x.id)).map((x) => ({ id: x.id, ...(p.nick?.[x.k] ? { nick: p.nick[x.k] } : {}), roles: p.roles?.[x.k] ?? [] })),
+          mutualFriends: contacts.filter((i) => i.nativeId !== who && (p.friends ?? []).includes(Object.entries(D).find(([, x]) => x === i)?.[0] ?? '')).map((i) => i.nativeId),
+        }),
+        ...(p.links ? { links: p.links } : {}),
+      };
+    }
+    const me_ = pool[key as keyof typeof pool] as P.IdentityFact | undefined;
+    if (this.network === 'signal') {
+      const about = SIGNAL_ABOUT[key ?? ''];
+      return {
+        ...(about ? { bio: about.text, status: { emoji: about.emoji } } : {}),
+        relationship: me ? undefined : me_?.contact ? 'contact' : 'stranger',
+        ...(me_?.handle ? { links: [{ label: 'Phone', value: me_.handle, url: `tel:${me_.handle.replace(/\s/g, '')}` }] } : {}),
+        ...(me ? { friends: contacts.map((i) => i.nativeId) } : {}),
+      };
+    }
+    if (this.network === 'whatsapp') {
+      return {
+        bio: WHATSAPP_ABOUT[key ?? ''] ?? 'Hey there! I am using WhatsApp.',
+        relationship: me ? undefined : me_?.contact ? 'contact' : 'stranger',
+        ...(me_?.handle ? { links: [{ label: 'Phone', value: me_.handle, url: `https://wa.me/${me_.handle.replace(/\D/g, '')}` }] } : {}),
+        ...(key === 'hoa' ? { facts: [{ label: 'Business', value: 'Maple Street Garden Swap' }] } : {}),
+        ...(me ? { friends: contacts.map((i) => i.nativeId) } : {}),
+      };
+    }
+    return { ...(key === 'kai' ? { pronouns: 'they/them', facts: [{ label: 'Local time', value: 'Europe/Berlin' }] } : {}) };
+  }
+
   private about(target: P.AboutTarget): P.About {
     const { place, conv, space } = this.place(target);
     const v = place.values;
@@ -1123,7 +1209,7 @@ class DemoAdapter implements InprocAdapter {
     const ago = (min: number) => epoch - min * 60_000;
 
     // Discord's demo accounts forward natively, as the real adapter does; the others leave it to the hub.
-    const caps: P.Capability[] = ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect', 'typing', 'about', 'configure'];
+    const caps: P.Capability[] = ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect', 'typing', 'about', 'configure', 'profile'];
     emit({ t: 'hello', network: this.network, version: 'demo', capabilities: this.network === 'discord' ? [...caps, 'forward'] : caps });
     emit({ t: 'status', status: 'online', self: { ...this.self, isSelf: true } });
     const pool = this.network === 'discord' ? D : this.network === 'signal' ? S : this.network === 'whatsapp' ? W : M;
@@ -1311,6 +1397,9 @@ class DemoAdapter implements InprocAdapter {
         break;
       case 'reactionContext':
         reply(this.reactionContext());
+        break;
+      case 'profile':
+        reply(this.profile(cmd.who));
         break;
       case 'about':
       case 'configure':

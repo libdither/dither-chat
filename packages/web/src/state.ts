@@ -109,7 +109,8 @@ export type Route =
   /** The triage board. On a desktop it is the inbox with nothing open; a phone gives it a tab of its own. */
   | { view: 'triage' }
   | { view: 'people'; person?: string }
-  | { view: 'profile'; person?: string; identity?: string }
+  /** A profile page (docs/profile.md): a person, an identity not merged into one, or a conversation or space. */
+  | { view: 'profile'; person?: string; identity?: string; conv?: string; space?: string }
   | { view: 'spaces' }
   | { view: 'space'; space: string; conv?: string }
   | { view: 'folder'; folder: string; conv?: string; person?: string }
@@ -129,6 +130,8 @@ export function parseHash(h = location.hash): Route {
       return { view: 'profile', person: p[1] };
     case 'i':
       return { view: 'profile', identity: p[1] };
+    case 'about':
+      return p[1] === 's' ? { view: 'profile', space: p[2] } : { view: 'profile', conv: p[2] };
     // The Groups list joined the inbox; its links still open the same conversation there.
     case 'groups':
       return { view: 'inbox', conv: p[1] === 'c' ? p[2] : undefined };
@@ -163,6 +166,8 @@ export function href(r: Route): string {
     case 'people':
       return r.person ? `#/people/${e(r.person)}` : '#/people';
     case 'profile':
+      if (r.conv) return `#/about/c/${e(r.conv)}`;
+      if (r.space) return `#/about/s/${e(r.space)}`;
       return r.person ? `#/p/${e(r.person)}` : `#/i/${e(r.identity ?? '')}`;
     case 'spaces':
       return '#/spaces';

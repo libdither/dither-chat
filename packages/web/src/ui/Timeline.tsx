@@ -179,6 +179,8 @@ function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void 
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && visibleAccount(a.id));
   const isDirect = c.shape === 'direct';
   const person = c.peerPersonId ? db.persons.get(c.peerPersonId) : null;
+  const whoTitle = person && isDirect ? `${person.name}'s profile` : `About ${convTitle(c)}`;
+  const openWho = () => go(person && isDirect ? { view: 'profile', person: person.id } : { view: 'profile', conv: c.id });
   return (
     <header class="conv-head" onContextMenu={onMenu(() => conversationMenu(c))}>
       {onBack && (
@@ -186,7 +188,8 @@ function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void 
           <Icon name="back" />
         </button>
       )}
-      <span class="conv-head-icon">
+      {/* The picture and the name open its profile page: theirs for a DM, the place's otherwise. */}
+      <button class="conv-head-icon conv-head-who" tabIndex={-1} title={whoTitle} onClick={openWho}>
         {isDirect || c.shape === 'group' || c.shape === 'self' ? (
           <Avatar id={person?.id ?? c.id} name={convTitle(c)} url={person?.avatar ?? c.avatar} size={34} square={!isDirect} network={c.network} />
         ) : (
@@ -194,10 +197,12 @@ function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void 
             <Icon name={variantIcon(c.variant, c.shape)} size={20} />
           </span>
         )}
-      </span>
+      </button>
       <div class="conv-head-text">
         <h2>
-          {convTitle(c)}
+          <button class="conv-head-name" title={whoTitle} onClick={openWho}>
+            {convTitle(c)}
+          </button>
           {c.encrypted && (
             <span class="e2ee" title="End-to-end encrypted on the network">
               <Icon name="lock" size={12} />
@@ -255,12 +260,14 @@ function PersonHeader({ person, onBack }: { person: P.PersonView; onBack?: () =>
           <Icon name="back" />
         </button>
       )}
-      <span class="conv-head-icon">
+      <button class="conv-head-icon conv-head-who" tabIndex={-1} title={`${person.name}'s profile`} onClick={() => go({ view: 'profile', person: person.id })}>
         <Avatar id={person.id} name={person.name} url={person.avatar} size={34} />
-      </span>
+      </button>
       <div class="conv-head-text">
         <h2>
-          {person.name}
+          <button class="conv-head-name" title={`${person.name}'s profile`} onClick={() => go({ view: 'profile', person: person.id })}>
+            {person.name}
+          </button>
           {person.starred && <Icon name="star" size={13} class="row-star" />}
         </h2>
         <div class="conv-head-sub">

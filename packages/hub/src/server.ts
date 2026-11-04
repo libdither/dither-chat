@@ -23,6 +23,7 @@ import { changesOf } from './journal.ts';
 import { syncResponse } from './sync.ts';
 import { TypingGate } from './typing.ts';
 import { AboutError, Abouts } from './about.ts';
+import { People } from './people.ts';
 
 const ACCOUNT_COLORS = ['#F2A541', '#E86A92', '#B794F6', '#FF8C61', '#9BE15D', '#5CC8FF', '#F7D154', '#FF6B6B'];
 
@@ -106,6 +107,7 @@ export class HubServer {
   private usage: UsageStore;
   readonly calls: Calls;
   readonly abouts: Abouts;
+  readonly people: People;
   /** This process. A client that sees it change knows the hub restarted, and may have a new web build. */
   readonly boot = Buffer.from(crypto.getRandomValues(new Uint8Array(6))).toString('base64url');
   /** Sends by the client's id for them, so one retried after a lost answer goes out once (state.ts queues sends). */
@@ -125,6 +127,7 @@ export class HubServer {
       command: (a, c, t) => sup.command(a, c, t),
       pickAccount: (c, a) => this.pickAccount(c, a),
     });
+    this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     sup.calls = this.calls;
     this.usage = new UsageStore(store.db, (changed, removed, all) =>
       this.broadcast([{ t: 'usage', places: this.usage.get(changed), removed, ...(all ? { replace: true as const } : {}) }]),
@@ -407,7 +410,14 @@ export class HubServer {
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/messages$/))) return ok(s.messages(m[1], num('before'), Math.min(num('limit') ?? 60, 200)));
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/profile$/)) || (m = path.match(/^\/api\/identities\/([\w-]+)\/profile$/))) {
       const p = s.profile(path.startsWith('/api/persons/') ? { personId: m[1] } : { identityId: m[1] });
-      return p ? ok(p) : bad('nobody by that id', 404);
+      return p ? ok({ ...p, abouts: this.people.kept(p.identityIds) }) : bad('nobody by that id', 404);
+    }
+    // What the network says about one identity (people.ts, docs/profile.md). ?fresh=1 asks even if a recent answer is kept.
+    if ((m = path.match(/^\/api\/identities\/([\w-]+)\/about$/))) {
+      if (!s.nativeOf('identity', m[1])) return bad('no such identity', 404);
+      const v = await this.people.get(m[1], url.searchParams.get('fresh') === '1');
+      this.flush();
+      return ok(v);
     }
     if ((m = path.match(/^\/api\/identities\/([\w-]+)\/person$/)) && method === 'POST') {
       if (!s.nativeOf('identity', m[1])) return bad('no such identity', 404);
