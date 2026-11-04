@@ -189,6 +189,14 @@
     MediaEngineStore: isStore('MediaEngineStore'),
     SelectedChannelStore: isStore('SelectedChannelStore'),
     AuthenticationStore: isStore('AuthenticationStore'),
+    // Profiles: the store the client's profile reads, the fetch a click on someone runs (and, under it, the fetch
+    // itself, from a module that also accepts the terms of service: only the fetch is ever taken from it), the
+    // connected-account table, and presences for the custom status.
+    UserProfileStore: isStore('UserProfileStore'),
+    PresenceStore: isStore('PresenceStore'),
+    ProfileOpen: (m) => !!exportedFn(m, 2, isProfileOpen),
+    ProfileFetch: (m) => !!exportedFn(m, 12, isProfileFetch),
+    Platforms: (m) => typeof m.get === 'function' && typeof m.getByUrl === 'function' && typeof m.isSupported === 'function',
   };
   // Nothing works without these; the others only degrade features.
   const CORE = ['Dispatcher', 'UserStore', 'ChannelStore', 'GuildStore'];
@@ -609,6 +617,8 @@
         return about(cmd);
       case 'configure':
         return configure(cmd);
+      case 'profile':
+        return profile(cmd);
       case 'edit':
         if (mod.MessageActions && mod.MessageActions.editMessage) return mod.MessageActions.editMessage(cmd.channelId, cmd.messageId, { content: cmd.content }), { ok: true };
         return rest('patch', `/channels/${cmd.channelId}/messages/${cmd.messageId}`, undefined, { content: cmd.content });
@@ -1191,6 +1201,215 @@
     const res = await rest('patch', which === 'guild' ? `/guilds/${id}` : `/channels/${id}`, undefined, body);
     const raw = res && res.body;
     return which === 'guild' ? { guild: (raw && pickGuild(raw)) || null } : { channel: (raw && pickChannel(raw)) || null };
+  }
+
+  // ------------------------------------------------------------------ profiles
+  // What the client shows when you open someone's profile. Its own fetch, run as a click on them runs it (which
+  // skips one it made in the last minute), then its stores; without those, the same request through its REST client.
+  // Every part is optional: a store that is missing or throws leaves its part out.
+  const fnSource = (f) => {
+    try {
+      return Function.prototype.toString.call(f);
+    } catch (e) {
+      return '';
+    }
+  };
+  const isProfileFetch = (f) => {
+    const s = fnSource(f);
+    return s.includes('"USER_PROFILE_FETCH_START"') && s.includes('with_mutual_guilds');
+  };
+  const isProfileOpen = (f) => {
+    const s = fnSource(f);
+    return s.includes('waitForRefetch') && s.includes('isFetchingProfile');
+  };
+  /** The one function a module exports that passes `test`; export names are mangled, so it is found by its code. */
+  function exportedFn(m, max, test) {
+    try {
+      const v = Object.values(m);
+      return (v.length <= max && v.find((f) => typeof f === 'function' && test(f))) || null;
+    } catch (e) {
+      return null;
+    }
+  }
+  const CUSTOM_STATUS = 4;
+  const FRIEND = 1;
+  let profileRescanAt = 0;
+
+  async function profile(cmd) {
+    const who = String(cmd.userId || '');
+    if (!/^\d+$/.test(who)) throw new Error('whose profile?');
+    // The profile modules can come with a later chunk than the finders waited for.
+    if ((!mod.UserProfileStore || !(mod.ProfileOpen || mod.ProfileFetch)) && Date.now() - profileRescanAt > 60_000) {
+      profileRescanAt = Date.now();
+      resolveModules();
+    }
+    const me = currentUser();
+    const selfId = (me && me.id) || null;
+    const self = who === selfId;
+    let body = null;
+    let error;
+    try {
+      body = await fetchProfile(who, self);
+    } catch (e) {
+      // Rate limited: say so, rather than answer with a profile missing most of its parts.
+      if (e && (e.status === 429 || (e.body && e.body.retry_after))) throw e;
+      error = describeError(e);
+    }
+    const out = { selfId, ...profileParts(who, body), ...relationshipOf(who), custom_status: customStatus(who) };
+    if (self) out.friends = friendList();
+    if (error) out.error = error;
+    return out;
+  }
+
+  async function fetchProfile(who, self) {
+    const opts = { type: 'popout', withMutualGuilds: !self, withMutualFriends: !self };
+    const open = mod.UserProfileStore && mod.ProfileOpen && exportedFn(mod.ProfileOpen, 2, isProfileOpen);
+    if (open) {
+      await open(who, undefined, opts);
+      return null;
+    }
+    const run = mod.ProfileFetch && exportedFn(mod.ProfileFetch, 12, isProfileFetch);
+    let body = null;
+    if (run) {
+      await run(who, opts, (b) => {
+        body = b;
+      });
+      return body;
+    }
+    const res = await rest('get', `/users/${who}/profile`, { type: 'popout', with_mutual_guilds: !self, with_mutual_friends: !self });
+    return (res && res.body) || null;
+  }
+
+  const isoOf = (t) => (typeof t === 'string' ? t : t && typeof t.toISOString === 'function' ? t.toISOString() : null);
+  const numOf = (n) => (typeof n === 'number' ? n : null);
+  const textOf = (s) => (typeof s === 'string' ? s : null);
+
+  /** The profile proper: the store's copy (camelCase) or the REST body (snake_case), and the user record. */
+  function profileParts(who, body) {
+    const ps = mod.UserProfileStore;
+    const ask = (f, ...a) => {
+      try {
+        return ps && typeof ps[f] === 'function' ? ps[f](...a) : undefined;
+      } catch (e) {
+        return undefined;
+      }
+    };
+    const p = ask('getUserProfile', who) || {};
+    const b = body || {};
+    const bp = b.user_profile || {};
+    const bu = b.user || {};
+    let rec = null;
+    try {
+      rec = mod.UserStore.getUser(who) || null;
+    } catch (e) {}
+    const accounts = Array.isArray(p.connectedAccounts) ? p.connectedAccounts : Array.isArray(b.connected_accounts) ? b.connected_accounts : [];
+    let guilds = ask('getMutualGuilds', who);
+    if (!Array.isArray(guilds) && Array.isArray(b.mutual_guilds)) guilds = b.mutual_guilds.map((g) => g && { guild: guildOf(g.id) || { id: g.id }, nick: g.nick });
+    const friends = ask('getMutualFriends', who);
+    const out = {
+      user: pickUser(rec) || pickUser(b.user) || null,
+      bio: textOf(p.bio ?? bp.bio ?? bu.bio),
+      pronouns: textOf(p.pronouns ?? bp.pronouns),
+      banner: textOf(p.banner ?? bp.banner ?? bu.banner ?? (rec && rec.banner)),
+      accent_color: numOf(p.accentColor ?? bp.accent_color ?? bu.accent_color),
+      legacy_username: textOf(p.legacyUsername ?? b.legacy_username),
+      connected_accounts: accounts.map(pickConnection).filter(Boolean),
+      mutual_guilds: Array.isArray(guilds) ? guilds.map((x) => x && mutualGuild(x.guild, x.nick, who)).filter(Boolean) : null,
+      mutual_friends: Array.isArray(friends) ? friends.map((f) => pickUser(f && f.user)).filter(Boolean) : Array.isArray(b.mutual_friends) ? b.mutual_friends.map(pickUser).filter(Boolean) : null,
+      mutual_friends_count: numOf(ask('getMutualFriendsCount', who) ?? b.mutual_friends_count),
+    };
+    // The store keeps why its last fetch failed, also when the client skipped this one for it.
+    if (p.fetchError) out.error = describeError(p.fetchError);
+    return out;
+  }
+
+  function guildOf(id) {
+    try {
+      return mod.GuildStore.getGuild(id) || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /** A shared server: its name, their nickname, and their roles and join date when the client has them as a member. */
+  function mutualGuild(g, nick, who) {
+    if (!g || !g.id) return null;
+    let member = null;
+    try {
+      member = (mod.GuildMemberStore && mod.GuildMemberStore.getMember(g.id, who)) || null;
+    } catch (e) {}
+    const out = { id: g.id, name: textOf(g.name) ?? undefined, nick: nick ?? (member && member.nick) ?? null, joined_at: member ? isoOf(member.joinedAt ?? member.joined_at) : null };
+    if (member && Array.isArray(member.roles)) {
+      const byId = new Map(guildRoles(g).map((r) => [r.id, r]));
+      out.roles = member.roles.map((id) => byId.get(id)).filter(Boolean);
+    }
+    return out;
+  }
+
+  /** A connected account, with the name and link the client's own table gives its platform. Ones it does not show are left out. */
+  function pickConnection(a) {
+    if (!a || typeof a.type !== 'string' || typeof a.name !== 'string') return null;
+    const table = mod.Platforms;
+    let platform = null;
+    try {
+      if (table && !table.isSupported(a.type)) return null;
+      platform = table ? table.get(a.type) : null;
+    } catch (e) {}
+    let url = null;
+    try {
+      if (platform && typeof platform.getPlatformUserUrl === 'function') url = platform.getPlatformUserUrl({ type: a.type, id: a.id, name: a.name });
+    } catch (e) {}
+    return {
+      type: a.type,
+      id: a.id != null ? String(a.id) : undefined,
+      name: a.name,
+      verified: !!a.verified,
+      label: platform && typeof platform.name === 'string' ? platform.name : undefined,
+      url: typeof url === 'string' && url.startsWith('https://') ? url : undefined,
+    };
+  }
+
+  function relationshipOf(who) {
+    const rs = mod.RelationshipStore;
+    if (!rs) return { relationship: null, friend_since: null };
+    let type = null;
+    try {
+      if (typeof rs.getRelationshipType === 'function') type = rs.getRelationshipType(who);
+      else type = relationshipTypes().get(who) ?? 0;
+    } catch (e) {}
+    let since = null;
+    try {
+      if (typeof rs.getSince === 'function') since = isoOf(rs.getSince(who));
+    } catch (e) {}
+    return { relationship: numOf(type), friend_since: since };
+  }
+
+  /** Every relationship's type by user id, whichever shape this build keeps them in. */
+  function relationshipTypes() {
+    const rs = mod.RelationshipStore;
+    const all = typeof rs.getMutableRelationships === 'function' ? rs.getMutableRelationships() : typeof rs.getRelationships === 'function' ? rs.getRelationships() : null;
+    const entries = all instanceof Map ? Array.from(all.entries()) : Object.entries(all || {});
+    return new Map(entries.map(([id, r]) => [id, typeof r === 'number' ? r : r && r.type]));
+  }
+
+  function friendList() {
+    const rs = mod.RelationshipStore;
+    let ids = [];
+    try {
+      if (typeof rs.getFriendIDs === 'function') ids = rs.getFriendIDs() || [];
+      else ids = Array.from(relationshipTypes()).filter(([, t]) => t === FRIEND).map(([id]) => id);
+    } catch (e) {}
+    return Array.from(ids).map((id) => resolveUser(id) || { id });
+  }
+
+  function customStatus(who) {
+    let acts = null;
+    try {
+      acts = mod.PresenceStore && mod.PresenceStore.getActivities(who);
+    } catch (e) {}
+    const a = Array.isArray(acts) ? acts.find((x) => x && x.type === CUSTOM_STATUS) : null;
+    if (!a || (!a.state && !a.emoji)) return null;
+    return { text: textOf(a.state), emoji: a.emoji ? pickEmoji(a.emoji) : null };
   }
 
   // How the client itself sends files: ask for upload URLs, PUT the bytes straight to storage, then post
