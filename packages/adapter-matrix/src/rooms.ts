@@ -247,6 +247,11 @@ export class Directory {
     return this.directPeers.has(user);
   }
 
+  /** Everyone m.direct names, sorted. */
+  contacts(): string[] {
+    return [...this.directPeers].sort();
+  }
+
   /** The DM peer, if m.direct names exactly one for this room. */
   peerOf(room: Room): string | undefined {
     const peers = this.direct.get(room.id);

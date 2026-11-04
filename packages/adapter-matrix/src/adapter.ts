@@ -24,6 +24,7 @@ import { AdapterDb, type ThreadRow, type UtdRow } from './db.ts';
 import type { E2ee, VerificationState } from './e2ee.ts';
 import { markdownToMatrix, snippet } from './format.ts';
 import { openDirect, type DirectHost } from './direct.ts';
+import { pinChanges, receiptEvents, roleChanges, statusOf } from './history.ts';
 import { enc, MatrixClient, MatrixError } from './http.ts';
 import { encryptedFileOf, FORWARD_KEY, forwardableContent, forwardOf, isRedacted, mentionsUser, MESSAGE_TYPES, plainTextOf, relationOf, renderContent, replyTarget, type Relation } from './messages.ts';
 import { Directory, Room, STRUCTURAL, type MxEvent } from './rooms.ts';
@@ -45,16 +46,19 @@ const MAX_MEDIA = 24 * 1024 * 1024;
 const KEEP_EVENTS = 200_000;
 const BACKOFF = [1, 2, 5, 10, 30, 60];
 
-const FILTER = {
-  room: {
-    state: { lazy_load_members: true },
-    timeline: { limit: TIMELINE_LIMIT, lazy_load_members: true, unread_thread_notifications: true },
-    ephemeral: { types: ['m.receipt', 'm.typing'] },
-    account_data: { types: ['m.fully_read'] },
-  },
-  presence: { not_types: ['*'] },
-  account_data: { types: ['m.direct', 'm.push_rules'] },
-};
+/** The sync filter. Presence only from the people m.direct names (their status messages), never everyone in a big room. */
+export function syncFilter(contacts: string[]) {
+  return {
+    room: {
+      state: { lazy_load_members: true },
+      timeline: { limit: TIMELINE_LIMIT, lazy_load_members: true, unread_thread_notifications: true },
+      ephemeral: { types: ['m.receipt', 'm.typing'] },
+      account_data: { types: ['m.fully_read'] },
+    },
+    presence: contacts.length ? { types: ['m.presence'], senders: contacts } : { not_types: ['*'] },
+    account_data: { types: ['m.direct', 'm.push_rules'] },
+  };
+}
 /** Describe a custom emoji reaction: its key is the image's mxc: URI. */
 function packEmoji(url: string, shortcode?: unknown): P.CustomEmojiFact {
   const name = typeof shortcode === 'string' ? shortcode.replace(/^:|:$/g, '') : '';
@@ -74,7 +78,6 @@ function imagePack(id: string, fallbackName: string, content: any): P.ReactionCo
   return { id, name: typeof content.pack?.display_name === 'string' ? content.pack.display_name : fallbackName, ...(typeof icon === 'string' ? { icon } : {}), emoji };
 }
 
-const FILTER_KEY = `filter:${Bun.hash(JSON.stringify(FILTER)).toString(36)}`;
 const LAZY = JSON.stringify({ lazy_load_members: true });
 
 interface Config {
@@ -373,6 +376,7 @@ export class MatrixAdapter {
       this.dir.rooms.clear();
       this.dir.setDirect({});
       this.dir.pushRules = null;
+      this.statusCache = null;
     }
     this.db.set('user', userId);
     this.client = client;
@@ -389,11 +393,21 @@ export class MatrixAdapter {
 
   // ================================================================ sync loop
 
+  /**
+   * The filter for the people m.direct names now, uploaded when they change. Someone new to it gets their status
+   * asked for once: an incremental sync only brings presence that changes after.
+   */
   private async filterId(): Promise<string> {
-    const cached = this.db.get(FILTER_KEY);
-    if (cached) return cached;
-    const res = await this.api().request('POST', `/_matrix/client/v3/user/${enc(this.selfId)}/filter`, { body: FILTER });
-    this.db.set(FILTER_KEY, res.filter_id);
+    const contacts = this.dir.contacts();
+    const filter = syncFilter(contacts);
+    const hash = Bun.hash(JSON.stringify(filter)).toString(36);
+    const saved: { hash: string | null; id: string; contacts: string[] } | null = JSON.parse(this.db.get('filter') ?? 'null');
+    if (saved?.hash === hash) return saved.id;
+    const res = await this.api().request('POST', `/_matrix/client/v3/user/${enc(this.selfId)}/filter`, { body: filter });
+    this.db.set('filter', JSON.stringify({ hash, id: res.filter_id, contacts }));
+    const known = new Set(saved?.contacts ?? []);
+    const fresh = contacts.filter((u) => !known.has(u));
+    if (fresh.length && this.db.get('since')) this.fetchStatuses(fresh).catch((e) => this.log('debug', `status lookup failed: ${describe(e)}`));
     return res.filter_id;
   }
 
@@ -402,7 +416,6 @@ export class MatrixAdapter {
   }
 
   private async syncLoop() {
-    let filter = await this.filterId();
     let failures = 0;
     while (!this.stopped) {
       await this.hubReady();
@@ -415,6 +428,7 @@ export class MatrixAdapter {
       const t0 = Date.now();
       const verifying = !initial && !!this.e2ee?.verifying;
       try {
+        const filter = await this.filterId();
         res = await this.api().request('GET', '/_matrix/client/v3/sync', {
           // The first sync of a session returns at once, so the account shows online without waiting out a long poll.
           query: { filter, since: since ?? undefined, timeout: initial || !this.online ? 0 : verifying ? VERIFY_SYNC_TIMEOUT : SYNC_TIMEOUT, set_presence: 'offline' },
@@ -432,9 +446,11 @@ export class MatrixAdapter {
             await this.sleep(Math.min(e.retryAfterMs ?? 5000, 120_000));
             continue;
           }
-          if (/filter/i.test(e.error) && e.status === 400) {
-            this.db.set(FILTER_KEY, null);
-            filter = await this.filterId();
+          // A filter the server forgot: upload it again at once. Refused again, it waits like any other failure.
+          if (/filter/i.test(e.error) && e.status === 400 && failures === 0) {
+            const saved = JSON.parse(this.db.get('filter') ?? 'null');
+            this.db.set('filter', saved ? JSON.stringify({ ...saved, hash: null }) : null);
+            failures++;
             continue;
           }
         }
@@ -489,6 +505,8 @@ export class MatrixAdapter {
     const joins = Object.entries<any>(res.rooms?.join ?? {});
     const newRooms = new Set(joins.map(([id]) => id).filter((id) => !this.dir.rooms.has(id)));
     const touched: Room[] = [];
+    // Pins and roles that changed. A first sync, or a room just joined, has nothing to compare with: what it brings is how things are.
+    const news: P.AdapterEvent[] = [];
     this.db.tx(() => {
       for (const [id, jr] of joins) {
         const room = this.dir.room(id);
@@ -506,8 +524,9 @@ export class MatrixAdapter {
             structural = true;
           }
         }
-        for (const ev of jr.state?.events ?? []) if (this.applyState(room, ev)) structural = true;
-        for (const ev of jr.timeline?.events ?? []) if (ev?.state_key !== undefined && this.applyState(room, ev)) structural = true;
+        const compare = initial || newRooms.has(id) ? undefined : news;
+        for (const ev of jr.state?.events ?? []) if (this.applyState(room, ev, compare)) structural = true;
+        for (const ev of jr.timeline?.events ?? []) if (ev?.state_key !== undefined && this.applyState(room, ev, compare)) structural = true;
         if (room.backToken === null && typeof jr.timeline?.prev_batch === 'string') room.backToken = jr.timeline.prev_batch;
         touched.push(room);
       }
@@ -529,6 +548,8 @@ export class MatrixAdapter {
       await this.loadMembers();
       this.emitStructure();
     } else this.flushIdentities();
+    for (const e of news) this.hub.emit(e);
+    for (const ev of res.presence?.events ?? []) if (ev?.type === 'm.presence' && typeof ev.sender === 'string') this.noteStatus(ev.sender, ev.content);
 
     for (const [id, jr] of joins) {
       const room = this.dir.room(id);
@@ -552,6 +573,7 @@ export class MatrixAdapter {
       const room = this.dir.rooms.get(id);
       if (!room) continue;
       this.readState(room, jr);
+      this.receipts(room, jr, initial);
       if (!initial) this.typing(room, jr);
     }
     if (initial) this.emitThreads();
@@ -588,10 +610,16 @@ export class MatrixAdapter {
     await Promise.all([worker(), worker(), worker(), worker()]);
   }
 
-  /** Apply one state event. Returns true if it changes how rooms are presented. */
-  private applyState(room: Room, ev: MxEvent): boolean {
+  /**
+   * Apply one state event. Returns true if it changes how rooms are presented. With `news` (a room whose state is
+   * known), the pins and roles it changes go there.
+   */
+  private applyState(room: Room, ev: MxEvent, news?: P.AdapterEvent[]): boolean {
     if (!ev || typeof ev.type !== 'string' || typeof ev.state_key !== 'string' || !ev.event_id) return false;
+    const before = room.get(ev.type, ev.state_key);
     if (!room.setState(ev)) return false;
+    // The same event again (redacted, say) is no new change.
+    if (news && before?.event_id !== ev.event_id) news.push(...this.stateNews(room, before, ev));
     this.db.saveState(room.id, ev);
     if (ev.type === 'm.room.member') this.encryptionMembers.delete(room.id);
     if (ev.type === 'm.room.member' && ev.state_key !== this.selfId) {
@@ -599,6 +627,23 @@ export class MatrixAdapter {
       if (m === 'join' || m === 'invite') this.pendingIdentities.set(ev.state_key, this.dir.identity(room, ev.state_key));
     }
     return STRUCTURAL.has(ev.type);
+  }
+
+  /**
+   * Pins and roles one state event changes, against the one it replaces. A room never pinned in has no pinned
+   * events at all, which is no pins; with no power levels before there is nothing to compare with.
+   */
+  private stateNews(room: Room, before: MxEvent | undefined, after: MxEvent): P.AdapterEvent[] {
+    if (after.state_key !== '') return [];
+    if (after.type === 'm.room.pinned_events' && !room.isSpace) return pinChanges(before ?? { ...after, content: {} }, after, (m) => this.conversationIn(room, m) ?? room.id);
+    if (after.type === 'm.room.power_levels' && before) return roleChanges({ kind: room.isSpace ? 'space' : 'conversation', nativeId: room.id }, before, after, (u) => room.isPrivilegedCreator(u));
+    return [];
+  }
+
+  /** The conversation an event of this room is in (a thread, or the room), as far as the index knows. */
+  private conversationIn(room: Room, eventId: string): string | undefined {
+    const row = this.db.event(eventId);
+    return row?.room === room.id ? row.conv : undefined;
   }
 
   /** Lazy loading only sends members who speak; small rooms get their full member list once. */
@@ -1066,6 +1111,61 @@ export class MatrixAdapter {
     }
   }
 
+  /**
+   * Other people's read receipts, each up to the event it names. A first sync brings every receipt there is, so then
+   * only those in direct chats and groups: a big room has thousands of readers.
+   */
+  private receipts(room: Room, jr: any, initial: boolean) {
+    if (room.isSpace) return;
+    if (initial) {
+      const place = this.dir.place(room);
+      if (place.kind === 'conversation' && place.shape === 'channel') return;
+    }
+    const conversationOf = (message: string, thread?: string) => {
+      const known = this.conversationIn(room, message);
+      if (known) return known;
+      return thread && this.db.thread(threadId(room.id, thread)) ? threadId(room.id, thread) : room.id;
+    };
+    for (const ev of jr.ephemeral?.events ?? []) {
+      if (ev?.type !== 'm.receipt') continue;
+      for (const e of receiptEvents(ev.content, this.selfId, conversationOf)) this.hub.emit(e);
+    }
+  }
+
+  /** The status message each person with a direct chat last had ('' for none), kept across restarts. */
+  private statusCache: Map<string, string> | null = null;
+  private statuses(): Map<string, string> {
+    return (this.statusCache ??= new Map(Object.entries(JSON.parse(this.db.get('statuses') ?? '{}'))));
+  }
+
+  /** An m.presence content from someone: their status message, when it changed. Online and offline are not kept. */
+  private noteStatus(who: string, content: unknown) {
+    if (who === this.selfId || !this.dir.isContact(who)) return;
+    const statuses = this.statuses();
+    const text = statusOf(content);
+    const was = statuses.get(who);
+    if (was === text) return;
+    statuses.set(who, text);
+    this.db.set('statuses', JSON.stringify(Object.fromEntries(statuses)));
+    if (was === undefined && !text) return; // first heard of, with none: nothing to say
+    this.hub.emit({ t: 'customStatus', who, ...(text ? { text } : {}) });
+  }
+
+  /** Ask for these people's presence once, one at a time. A server with presence off says so to the first. */
+  private async fetchStatuses(users: string[]) {
+    for (const u of users) {
+      if (this.stopped) return;
+      try {
+        const before = this.statuses().get(u);
+        const res = await this.api().request('GET', `/_matrix/client/v3/presence/${enc(u)}/status`, { retries: 1 });
+        // Presence that came through sync meanwhile is newer.
+        if (this.statuses().get(u) === before) this.noteStatus(u, res);
+      } catch (e) {
+        if (e instanceof MatrixError && (e.status === 403 || e.errcode === 'M_UNRECOGNIZED')) return;
+      }
+    }
+  }
+
   /** m.typing carries the room's whole list each time it changes: who is new or still there typed, who left it stopped. */
   private typing(room: Room, jr: any) {
     for (const ev of jr.ephemeral?.events ?? []) {
@@ -1164,10 +1264,13 @@ export class MatrixAdapter {
       e2ee: !!this.e2ee,
       identity: (f) => this.emitIdentity(f, true),
       applied: (room, ev) => {
-        // The same as the event coming back through sync: stored, and the hub told of a new name, topic or shape.
-        if (!this.applyState(room, ev)) return;
-        this.emitStructure();
-        this.emitThreads();
+        // The same as the event coming back through sync: stored, and the hub told of a new name, topic or shape, or a pin.
+        const news: P.AdapterEvent[] = [];
+        if (this.applyState(room, ev, news)) {
+          this.emitStructure();
+          this.emitThreads();
+        }
+        for (const e of news) this.hub.emit(e);
       },
     };
   }

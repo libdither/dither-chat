@@ -11,6 +11,7 @@ src/rooms.ts     joined-room state, spaces graph, shapes, names, power levels, p
 src/messages.ts  event content -> message kind/body/attachments, relations, mentions
 src/format.ts    Matrix HTML <-> canonical Markdown (protocol MessageFact.body)
 src/db.ts        private state in $DITHER_ACCOUNT_DIR/matrix.sqlite (bun:sqlite)
+src/history.ts   pins, roles, read receipts and status messages for the hub's history (docs/history.md)
 src/e2ee.ts      end-to-end encryption: the OlmMachine and the requests it asks for, backup, verification
 src/cryptostore.ts  IndexedDB for that library under Bun, written through to crypto.sqlite
 src/recovery.ts  recovery key format and Secret Storage
@@ -69,6 +70,23 @@ last event seen. Recent threads are discovered per room with `/threads` so a thr
 still shows up. Read state: `unread_notifications` counts plus your `m.read` receipt or `m.fully_read`.
 The since token, per-room back-pagination tokens and the relation indexes live in `matrix.sqlite`, so a
 restart resumes where it left off.
+
+History (docs/history.md), from what sync already brings:
+
+| Matrix | event |
+| --- | --- |
+| `m.room.pinned_events` against the one it replaces | `pin` per message added or removed, `by` the sender |
+| `m.room.power_levels` against the one it replaces | `role` when a member listed in either moves between Admin (100), Moderator (50), "Level N" and the default (no role): the old one taken, the new one given. v12 creators are skipped |
+| others' `m.read` in `m.receipt` | `receipt` for the event named (`state: 'read'`; the hub reads it as "up to") |
+| `m.presence` from people in `m.direct` | `customStatus` when `status_msg` changes; online and offline are not kept |
+
+Pins and roles come only from incremental syncs, or from your own change through `configure`: an initial sync,
+or a room just joined, is how things are, with nothing before it to compare. A room known before with no
+`m.room.pinned_events` had no pins. The initial sync's receipts (every receipt in each room) are
+sent for direct chats, groups and self only; later ones for every room. Presence is filtered to the people
+`m.direct` names (the filter's `senders`, re-uploaded when they change; someone new to it has their status fetched
+once with `GET /presence/{user}/status`); your own presence stays `offline`. The last status per person is kept
+in `matrix.sqlite`.
 
 ## End-to-end encryption
 
