@@ -18,7 +18,7 @@ import { PlaceProfile } from './PlaceProfile.tsx';
 import { MessageHistoryLayer } from './MessageHistory.tsx';
 import { Rail } from './Rail.tsx';
 import { TitleBar } from './TitleBar.tsx';
-import { SearchPane } from './Search.tsx';
+import { FindShortcut, SearchPane } from './Search.tsx';
 import { SettingsPane } from './Settings.tsx';
 import { FolderSidebar, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar } from './Sidebar.tsx';
 import { ConversationPane, PersonPane } from './Timeline.tsx';
@@ -370,6 +370,7 @@ export function App() {
       <ContextMenuLayer />
       <ForwardLayer />
       <Switcher />
+      <FindShortcut />
       <NewMessage />
       <Viewer />
     </div>

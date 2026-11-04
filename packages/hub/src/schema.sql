@@ -174,6 +174,8 @@ CREATE TRIGGER IF NOT EXISTS message_fts_update AFTER UPDATE OF body ON message 
   INSERT INTO message_fts (message_fts, rowid, body) VALUES ('delete', old.rowid, old.body);
   INSERT INTO message_fts (rowid, body) VALUES (new.rowid, new.body);
 END;
+-- The index's words and how many messages have each, for correcting a misspelt word (docs/search.md).
+CREATE VIRTUAL TABLE IF NOT EXISTS message_fts_vocab USING fts5vocab(message_fts, row);
 
 -- Forwards this hub sent, by the message they became, so they show as forwards even where the network has no
 -- such thing. Keyed by hub message id; the message itself may arrive before or after this row.

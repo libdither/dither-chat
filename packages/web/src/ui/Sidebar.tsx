@@ -44,6 +44,7 @@ import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapsho
 import { inboxSnap, shownInbox } from '../inbox.ts';
 import { SortButton, useFlip } from './Reorganize.tsx';
 import { Fragment } from 'preact';
+import { rememberSearch, SearchBox } from './SearchBox.tsx';
 
 // ------------------------------------------------------------------ navigation helpers
 
@@ -205,16 +206,16 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
         <h1>Inbox<NewMessageButton /></h1>
         <span class="side-sub">Everything that wants you, from every network</span>
       </header>
-      <form
-        class="search"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (q.trim()) go({ view: 'search', q: q.trim() });
+      <SearchBox
+        value={q}
+        setValue={setQ}
+        placeholder={phone.value ? 'Search all messages' : 'Search all messages (Ctrl+K to jump)'}
+        submit={(t) => {
+          if (!t) return;
+          rememberSearch(t);
+          go({ view: 'search', q: t });
         }}
-      >
-        <Icon name="search" size={15} />
-        <input placeholder={phone.value ? 'Search all messages' : 'Search all messages (Ctrl+K to jump)'} enterkeyhint="search" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} />
-      </form>
+      />
       <div class="inbox-chips" role="radiogroup" aria-label="Show">
         {FILTERS.map((f) => (
           <button class={`chip-btn ${filter === f.id ? 'on' : ''}`} role="radio" aria-checked={filter === f.id} onClick={() => setPrefs({ inboxFilter: f.id })}>

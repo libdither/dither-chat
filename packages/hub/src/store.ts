@@ -92,6 +92,24 @@ function markSnippet(body: string, terms: string[]): string {
   return out;
 }
 
+/** Edits from a to b, a swap of neighbours counting as one; anything past `max` is max + 1. */
+export function editDistance(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let pp: number[] = [], p = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const c = [i];
+    let low = i;
+    for (let j = 1; j <= b.length; j++) {
+      c[j] = Math.min(p[j] + 1, c[j - 1] + 1, p[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) c[j] = Math.min(c[j], pp[j - 2] + 1);
+      low = Math.min(low, c[j]);
+    }
+    if (low > max) return max + 1;
+    [pp, p] = [p, c];
+  }
+  return Math.min(p[b.length], max + 1);
+}
+
 /** Fields that may go from nothing to something and back (Store.logChanges). */
 const SETTABLE = new Set(['topic', 'bio', 'status', 'pronouns']);
 
@@ -1859,9 +1877,29 @@ export class Store {
     ).map((r) => r.id);
   }
 
-  search(input: string, limit = 50, cursor: string | null = null): P.SearchPage {
+  private accountsNamed(name: string): string[] {
+    return (this.db.query(`SELECT id FROM account WHERE id = ?1 OR label = ?1 COLLATE NOCASE`).all(name) as Row[]).map((r) => r.id);
+  }
+
+  /**
+   * Messages matching what was typed (docs/search.md). Nothing found as typed: inside words, then with misspelt words
+   * corrected. `context`: that many messages before and after each hit.
+   */
+  search(input: string, limit = 50, cursor: string | null = null, context = 0): P.SearchPage {
+    let page = this.searchOnce(input, limit, cursor);
+    const fixed = !page.hits.length && !cursor ? this.spellFix(input) : null;
+    const alt = fixed ? this.searchOnce(fixed, limit, null) : null;
+    if (alt?.hits.length) page = { ...alt, corrected: fixed!, people: page.people, identities: [...alt.identities, ...page.identities] };
+    if (context > 0) this.surround(page, Math.min(context, 3));
+    return page;
+  }
+
+  private searchOnce(input: string, limit: number, cursor: string | null): P.SearchPage {
     const q = parseSearch(input);
-    const where: string[] = ['m.deleted = 0'];
+    const is = new Set(q.is);
+    // Kept deleted and disappeared messages only when asked for, and not when they are set to stay out of sight.
+    const gone = is.has('deleted') ? (this.retention().show === 'hidden' ? '0' : `m.deleted = 1 AND m.gone_how IS NOT NULL AND (m.body != '' OR EXISTS (SELECT 1 FROM attachment a WHERE a.message_id = m.id))`) : 'm.deleted = 0';
+    const where: string[] = [gone];
     const args: any[] = [];
     const within = (col: string, ids: string[]) => {
       // More ids than SQLite takes as parameters: inline through json_each.
@@ -1871,24 +1909,36 @@ export class Store {
     for (const f of q.from) within('m.author_id', this.identitiesNamed(f));
     for (const f of q.in) within('m.conversation_id', this.conversationsNamed(f));
     if (q.network.length) within('m.network', q.network);
+    for (const a of q.account) (where.push('EXISTS (SELECT 1 FROM message_seen s WHERE s.message_id = m.id AND s.account_id IN (SELECT value FROM json_each(?)))'), args.push(JSON.stringify(this.accountsNamed(a))));
     if (q.mentionsMe) where.push('m.mentions_self = 1');
+    // Every network writes a mention as <@native id> (Discord also <@!id>).
+    for (const f of q.mentions) {
+      where.push(`EXISTS (SELECT 1 FROM identity i WHERE i.id IN (SELECT value FROM json_each(?)) AND i.network = m.network AND (instr(m.body, '<@' || i.native_id || '>') OR instr(m.body, '<@!' || i.native_id || '>')))`);
+      args.push(JSON.stringify(this.identitiesNamed(f)));
+    }
     if (q.after !== null) (where.push('m.ts >= ?'), args.push(q.after));
     if (q.before !== null) (where.push('m.ts < ?'), args.push(q.before));
     for (const h of q.has) {
       if (h === 'attachment') where.push('EXISTS (SELECT 1 FROM attachment a WHERE a.message_id = m.id)');
       else if (h === 'link') where.push(`m.body LIKE '%http%://%'`);
       else if (h === 'reaction') where.push('EXISTS (SELECT 1 FROM reaction_tally t WHERE t.message_id = m.id)');
+      else if (h === 'embed') where.push(`json_array_length(m.extra, '$.embeds') > 0`);
+      else if (h === 'sticker') where.push(`m.kind = 'sticker'`);
       else (where.push('EXISTS (SELECT 1 FROM attachment a WHERE a.message_id = m.id AND a.kind = ?)'), args.push(h));
     }
+    if (is.has('pinned')) where.push(`(SELECT e.kind FROM message_event e WHERE e.message_id = m.id AND e.kind IN ('pin', 'unpin') ORDER BY e.at DESC LIMIT 1) = 'pin'`);
+    if (is.has('edited')) where.push('m.edited_ts IS NOT NULL');
+    const filtered = where.length > 1 || gone !== 'm.deleted = 0';
     const offset = q.relevance && cursor ? parseInt(cursor) || 0 : 0;
+    const dir = q.oldest ? 'ASC' : 'DESC';
     if (cursor && !q.relevance) {
       const [ts, rowid] = cursor.split(':').map(Number);
-      where.push('(m.ts, m.rowid) < (?, ?)');
+      where.push(`(m.ts, m.rowid) ${q.oldest ? '>' : '<'} (?, ?)`);
       args.push(ts, rowid);
     }
     const fts = this.ftsQuery(q);
     const take = limit + 1;
-    const order = 'm.ts DESC, m.rowid DESC';
+    const order = `m.ts ${dir}, m.rowid ${dir}`;
     const texts = [...q.phrases, ...q.terms];
 
     // Tokens miss the middle of a word, and unspaced CJK text is one long token, so a hit in FTS is no proof there are no others.
@@ -1907,7 +1957,7 @@ export class Store {
         .all(fts, ...args, take, offset) as Row[];
       // Better slow than empty.
       substring = !rows.length && !cursor;
-    } else if (!fts && (q.not.length || where.length > 1)) {
+    } else if (!fts && (q.not.length || filtered)) {
       rows = (this.db.query(`SELECT m.*, m.rowid AS rid FROM message m WHERE ${[...where, ...without].join(' AND ')} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...args, ...withoutArgs, take, offset) as Row[]).map((r) => ({ ...r, snip: markSnippet(r.body, []) }));
     }
     if (substring) {
@@ -1933,6 +1983,51 @@ export class Store {
       next: !more ? null : (q.relevance ? String(offset + limit) : `${last.ts}:${last.rid}`) + (substring ? ':s' : ''),
       mode,
     };
+  }
+
+  /** What was said just before and after each hit, for reading it in place. */
+  private surround(page: P.SearchPage, n: number) {
+    const near = (id: string, op: '<' | '>') =>
+      this.db
+        .query(
+          `SELECT o.* FROM message t JOIN message o ON o.conversation_id = t.conversation_id
+           WHERE t.id = ? AND o.deleted = 0 AND (o.ts, o.rowid) ${op} (t.ts, t.rowid) ORDER BY o.ts ${op === '<' ? 'DESC' : 'ASC'}, o.rowid ${op === '<' ? 'DESC' : 'ASC'} LIMIT ?`,
+        )
+        .all(id, n) as Row[];
+    const sides = page.hits.map((h) => [near(h.message.id, '<').reverse(), near(h.message.id, '>')]);
+    const views = new Map(this.messageViews(sides.flat(2)).map((m) => [m.id, m]));
+    page.hits.forEach((h, i) => {
+      h.before = sides[i][0].map((r) => views.get(r.id)!);
+      h.after = sides[i][1].map((r) => views.get(r.id)!);
+    });
+    const shown = new Set(page.identities.map((i) => i.id));
+    page.identities.push(...this.identitiesOf([...views.values()]).filter((i) => !shown.has(i.id)));
+  }
+
+  /**
+   * The query with each word the index lacks swapped for the nearest one it has (one edit for short words, two for
+   * longer), the commonest of equals; null when there is nothing to correct.
+   */
+  private spellFix(input: string): string | null {
+    const q = parseSearch(input);
+    let out = input;
+    q.terms.forEach((t, i) => {
+      const w = t.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase();
+      if (w.length < 4 || w.length > 30 || !/^\p{L}+$/u.test(w) || CJK.test(w)) return;
+      // The last word searches as a prefix, so any word it starts is no typo.
+      const known = i === q.terms.length - 1 ? 'term >= ?1 AND term < ?1 || char(1114111)' : 'term = ?1';
+      if (this.db.query(`SELECT 1 FROM message_fts_vocab WHERE ${known} LIMIT 1`).get(w)) return;
+      const max = w.length < 7 ? 1 : 2;
+      let best: { term: string; d: number; doc: number } | null = null;
+      // Same first letter: a word's start is seldom where the typo is, and it keeps this to one slice of the index.
+      for (const r of this.db.query(`SELECT term, doc FROM message_fts_vocab WHERE term >= ?1 AND term < ?1 || char(1114111)`).iterate(w[0]) as Iterable<Row>) {
+        if (Math.abs(r.term.length - w.length) > max) continue;
+        const d = editDistance(w, r.term, max);
+        if (d <= max && (!best || d < best.d || (d === best.d && r.doc > best.doc))) best = { term: r.term, d, doc: r.doc };
+      }
+      if (best) out = out.replace(new RegExp(`(^|\\s)${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=\\s|$)`), `$1${best.term}`);
+    });
+    return out === input ? null : out;
   }
 
   /** A message and what surrounds it, for jumping there. */

@@ -400,7 +400,7 @@ export class HubServer {
       }
     }
     if (path === '/api/inbox') return ok(s.inbox(num('since') ?? Date.now() - 7 * 86_400_000));
-    if (path === '/api/search') return ok(s.search(url.searchParams.get('q') ?? '', Math.min(num('limit') ?? 40, 100), url.searchParams.get('cursor')));
+    if (path === '/api/search') return ok(s.search(url.searchParams.get('q') ?? '', Math.min(num('limit') ?? 40, 100), url.searchParams.get('cursor'), num('context') ?? 0));
 
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/context$/))) {
       const page = s.messageContext(m[1], Math.min(num('around') ?? 30, 100));
