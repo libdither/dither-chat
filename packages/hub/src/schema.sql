@@ -320,16 +320,20 @@ CREATE TABLE IF NOT EXISTS notify_rule (
 
 -- Every live message gets a decision and the reasons for it, so the UI can
 -- answer "why did this ping me?" and learn from corrections.
+-- 'push' is Important, 'quiet' Active (docs/notifications.md).
 CREATE TABLE IF NOT EXISTS triage (
-  message_id TEXT PRIMARY KEY REFERENCES message(id) ON DELETE CASCADE,
-  decision   TEXT NOT NULL CHECK (decision IN ('push', 'digest', 'silent')),
-  score      REAL,
-  reasons    TEXT NOT NULL,                  -- JSON string[]
-  decided_by TEXT NOT NULL,                  -- 'rules' | 'model'
-  feedback   TEXT,                           -- 'should_push' | 'should_not_push'
-  created_at INTEGER NOT NULL
+  message_id  TEXT PRIMARY KEY REFERENCES message(id) ON DELETE CASCADE,
+  decision    TEXT NOT NULL CHECK (decision IN ('push', 'quiet', 'digest', 'silent')),
+  score       REAL,
+  reasons     TEXT NOT NULL,                 -- JSON string[]
+  decided_by  TEXT NOT NULL,                 -- 'rules' | 'model' | 'learned'
+  feedback    TEXT CHECK (feedback IN ('push', 'quiet', 'digest')),  -- the level you voted it to
+  feedback_at INTEGER,
+  facts       TEXT,                          -- JSON learn.ts Facts: what it was decided from, for backtests
+  created_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS triage_created ON triage(created_at);
+CREATE INDEX IF NOT EXISTS triage_feedback ON triage(feedback_at) WHERE feedback IS NOT NULL;
 
 -- "Mark all read" tells each network one conversation at a time (readqueue.ts).
 CREATE TABLE IF NOT EXISTS read_queue (

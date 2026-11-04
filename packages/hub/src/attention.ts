@@ -547,7 +547,7 @@ const FOLD_SQL = `
   SELECT m.id, m.rowid AS rid, m.ts, m.author_id, m.mentions_self, m.mentions_all, m.kind, m.deleted, i.is_bot, i.person_id,
          r.author_id AS reply_author,
          EXISTS (SELECT 1 FROM reaction x JOIN identity xi ON xi.id = x.identity_id LEFT JOIN person xp ON xp.id = xi.person_id
-                 WHERE x.message_id = m.id AND (xp.is_self = 1 OR xi.id IN (SELECT self_identity FROM account))) AS reacted, t.decision = 'push' AS pushed, t.reasons LIKE '%asks a question%' AS question
+                 WHERE x.message_id = m.id AND (xp.is_self = 1 OR xi.id IN (SELECT self_identity FROM account))) AS reacted, t.decision IN ('push', 'quiet') AS pushed, t.reasons LIKE '%asks a question%' AS question
   FROM message m
   LEFT JOIN identity i ON i.id = m.author_id
   LEFT JOIN message r ON r.id = m.reply_to_id
@@ -739,7 +739,7 @@ export class Attention {
     if (!place) return;
     const s: ConvState = JSON.parse(row.state);
     const question = d.reasons.some((r) => r.includes('asks a question'));
-    if (lateTriage(s, place, { id: messageId, ts: m.ts, author: m.author_id, authorKey: m.person_id ?? m.author_id }, { pushed: d.decision === 'push', question })) {
+    if (lateTriage(s, place, { id: messageId, ts: m.ts, author: m.author_id, authorKey: m.person_id ?? m.author_id }, { pushed: d.decision === 'push' || d.decision === 'quiet', question })) {
       db.query('UPDATE conv_feature SET state = ? WHERE conversation_id = ?').run(JSON.stringify(s), m.cid);
       this.pending.add(m.cid);
     }
@@ -869,7 +869,7 @@ export class Attention {
     const ids = new Set<string>(this.views.keys());
     for (const r of db.query(`SELECT c.id FROM conversation c WHERE ${LISTED}`).all() as Row[]) ids.add(r.id);
     for (const r of db.query(`SELECT DISTINCT target_id AS id FROM vantage WHERE target_kind = 'conversation' AND mentions > 0`).all() as Row[]) ids.add(r.id);
-    for (const r of db.query(`SELECT DISTINCT m.conversation_id AS id FROM triage t JOIN message m ON m.id = t.message_id WHERE t.decision = 'push' AND t.created_at > ?`).all(now - 14 * DAY) as Row[]) ids.add(r.id);
+    for (const r of db.query(`SELECT DISTINCT m.conversation_id AS id FROM triage t JOIN message m ON m.id = t.message_id WHERE t.decision IN ('push', 'quiet') AND t.created_at > ?`).all(now - 14 * DAY) as Row[]) ids.add(r.id);
     const items: P.AttentionView[] = [];
     const removed: string[] = [];
     for (const id of ids) {

@@ -1,5 +1,9 @@
 /**
- * Notification triage: rules first, then a score for 'smart' conversations.
+ * Notification triage: rules first, then a score for 'smart' conversations, then what you taught it by voting.
+ *
+ * Three levels (docs/notifications.md): Important ('push': the phone buzzes, the desktop notifies), Active ('quiet':
+ * a silent notification on the phone) and Digest. Every decision keeps the facts it was made from, and rules learned
+ * from your votes (learn.ts, votes.ts) move a decision between the levels.
  *
  * Level resolution, most specific first:
  *   conversation > thread parent > containing spaces (nearest first) > account > network > global > default by shape
@@ -13,14 +17,15 @@
  * The daily digest is one notification about what was held back as digest since the last one. Quiet hours hold it
  * too: it goes out when they end, and takes the place of their summary if both are due.
  *
- * Every decision is stored with its reasons so the UI can explain it and the
- * user's corrections can become few-shot examples for a local model.
+ * Every decision is stored with its reasons so the UI can explain it, and with its facts so your votes can be
+ * learned from and every set of rules backtested against them.
  */
 
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { previewText, type Store } from './store.ts';
 import { describeActivity, type ActivityStore, type Features } from './activity.ts';
+import { applyRules, TIER_NAME, type Facts, type Level, type Rule } from './learn.ts';
 
 type Row = Record<string, any>;
 
@@ -28,8 +33,10 @@ export interface Decision {
   decision: P.TriageDecision;
   score: number | null;
   reasons: string[];
-  decidedBy: 'rules' | 'model';
+  decidedBy: 'rules' | 'model' | 'learned';
   title: string;
+  /** What it was decided from; absent for silenced places, which are not voted on. */
+  facts?: Facts;
   body: string;
   /** From a starred person or one set to always notify: may get through quiet hours. */
   starred?: boolean;
@@ -95,12 +102,20 @@ export function validDailyDigest(d: Partial<P.DailyDigest>): d is P.DailyDigest 
 }
 
 const URGENT = /\b(urgent|asap|emergency|right now|call me|help!|deadline|today|tonight|are you (around|there|free))\b/i;
+/** Smart places: at or above this score Important, at or above `SMART_ACTIVE` Active, else Digest. */
 const SMART_THRESHOLD = 0.55;
+const SMART_ACTIVE = 0.3;
+const smartTier = (score: number): Level => (score >= SMART_THRESHOLD ? 'push' : score >= SMART_ACTIVE ? 'quiet' : 'digest');
 
 export class Triage {
+  /** Rules learned from your votes, most specific first (votes.ts keeps them). */
+  rules: Rule[] = [];
+  /** The local model's prompt as last written from them; null for the built-in one. */
+  prompt: string | null = null;
+
   constructor(
     private store: Store,
-    private model?: { url: string; name: string },
+    readonly model?: { url: string; name: string },
     private activity?: ActivityStore,
   ) {}
 
@@ -217,7 +232,8 @@ export class Triage {
   async decide(messageId: string, now = Date.now()): Promise<Decision | null> {
     const d = await this.decideByRules(messageId);
     if (d) this.withActivity(d, messageId, now);
-    if (d?.decision !== 'push') return d;
+    if (d?.facts) this.withVotes(d, d.facts);
+    if (d?.decision !== 'push' && d?.decision !== 'quiet') return d;
     const q = this.store.quietHours();
     if (!inQuietHours(q, now) || (q!.allowStarred && d.starred)) return d;
     d.decision = 'digest';
@@ -226,6 +242,54 @@ export class Triage {
     const conversationId = this.store.one<Row>('SELECT conversation_id FROM message WHERE id = ?', messageId)!.conversation_id;
     this.store.setQuietHeld({ count: (held?.count ?? 0) + 1, conversationId, messageId });
     return d;
+  }
+
+  /** What your votes taught overrides the level triage's own rules chose. */
+  private withVotes(d: Decision, f: Facts) {
+    const hit = applyRules(this.rules, f);
+    if (!hit.rule || hit.level === d.decision) return;
+    d.reasons.unshift(`${TIER_NAME[hit.level]}, learned from your votes (was ${TIER_NAME[d.decision as Level]})`);
+    d.decision = hit.level;
+    d.decidedBy = 'learned';
+  }
+
+  /** The facts for a stored message, for a vote on one decided before facts were kept. */
+  factsFor(messageId: string, base: Level): Facts | null {
+    const s = this.store;
+    const m = s.one<Row>('SELECT * FROM message WHERE id = ?', messageId);
+    if (!m) return null;
+    const c = s.one<Row>('SELECT * FROM conversation WHERE id = ?', m.conversation_id);
+    if (!c) return null;
+    const author = m.author_id ? s.one<Row>('SELECT * FROM identity WHERE id = ?', m.author_id) : null;
+    return { ...this.facts(m, c, author), base };
+  }
+
+  /** Everything a decision is made from, as flags. Read from the message's text: a question, urgency. */
+  private facts(m: Row, c: Row, author: Row | null): Omit<Facts, 'base'> {
+    const s = this.store;
+    const repliedTo = m.reply_to_id ? s.one<Row>('SELECT author_id FROM message WHERE id = ?', m.reply_to_id) : null;
+    const parent = c.shape === 'thread' && c.parent_id ? c.parent_id : null;
+    const recentSelf = s.one<Row>(
+      `SELECT 1 FROM message WHERE conversation_id = ? AND ts > ? AND ts < ? AND author_id IN (SELECT self_identity FROM account WHERE self_identity IS NOT NULL) LIMIT 1`,
+      c.id,
+      m.ts - 30 * 60_000,
+      m.ts,
+    );
+    return {
+      network: c.network,
+      shape: c.shape,
+      conversation: c.id,
+      spaces: this.ancestors(parent ?? c.id).map((x) => x.id as string),
+      author: author?.person_id ?? author?.id ?? null,
+      bot: !!author?.is_bot,
+      mention: !!m.mentions_self && !m.mentions_all,
+      everyone: !!m.mentions_self && !!m.mentions_all,
+      reply: !!repliedTo && s.isSelf(repliedTo.author_id),
+      question: /\?\s*$|\?\s/.test(m.body),
+      urgent: URGENT.test(m.body),
+      active: !!recentSelf,
+      media: m.kind === 'media' || m.kind === 'sticker',
+    };
   }
 
   /**
@@ -308,6 +372,7 @@ export class Triage {
       decidedBy,
       title,
       body,
+      ...(decision !== 'silent' ? { facts: { ...f, base: decision } } : {}),
     });
 
     if (eff.level === 'none') {
@@ -315,8 +380,8 @@ export class Triage {
       return done('silent');
     }
 
-    const repliedTo = m.reply_to_id ? s.one<Row>('SELECT author_id FROM message WHERE id = ?', m.reply_to_id) : null;
-    const replyToSelf = !!repliedTo && s.isSelf(repliedTo.author_id);
+    const f = this.facts(m, c, author);
+    const replyToSelf = f.reply;
     const mention = !!m.mentions_self;
     // Keywords match what people typed, not mention tokens like <@123>.
     const plain = m.body.replace(/<[@#][^>]+>/g, ' ');
@@ -348,44 +413,48 @@ export class Triage {
         if (mention) reasons.push('Mentions you, but this place is digest-only');
         return done('digest');
       case 'mentions':
-        if (mention) reasons.push('Mentions you');
+        if (f.mention) reasons.push('Mentions you');
         if (replyToSelf) reasons.push('Replies to your message');
-        if (mention || replyToSelf) return done('push');
+        if (f.mention || replyToSelf) return done('push');
+        // @everyone reaches you, but it is not about you: a silent one.
+        if (f.everyone) {
+          reasons.push('Pings @everyone');
+          return done('quiet');
+        }
         reasons.push(`Mentions only: ${eff.source}`);
         return done('digest');
       case 'smart': {
         let score = 0.15;
         const why: string[] = [];
-        if (mention) (score += 0.5), why.push('mentions you');
+        if (f.mention) (score += 0.5), why.push('mentions you');
+        else if (f.everyone) (score += 0.2), why.push('pings @everyone');
         if (replyToSelf) (score += 0.4), why.push('replies to you');
-        const addressed = mention || replyToSelf || c.shape === 'direct';
-        if (/\?\s*$|\?\s/.test(m.body) && (addressed || c.shape === 'group')) (score += 0.15), why.push('asks a question');
-        if (URGENT.test(m.body)) (score += 0.3), why.push('sounds time-sensitive');
+        const addressed = f.mention || replyToSelf || c.shape === 'direct';
+        if (f.question && (addressed || c.shape === 'group')) (score += 0.15), why.push('asks a question');
+        if (f.urgent) (score += 0.3), why.push('sounds time-sensitive');
         const members = s.one<Row>('SELECT COUNT(*) AS n FROM participant WHERE conversation_id = ?', c.id)?.n ?? 0;
         if (members && members <= 6) (score += 0.1), why.push(`small group (${members})`);
-        const recentSelf = s.one<Row>(
-          `SELECT 1 FROM message WHERE conversation_id = ? AND ts > ? AND author_id IN (SELECT self_identity FROM account WHERE self_identity IS NOT NULL) LIMIT 1`,
-          c.id,
-          m.ts - 30 * 60_000,
-        );
-        if (recentSelf) (score += 0.25), why.push("you're active here");
+        if (f.active) (score += 0.25), why.push("you're active here");
         if (c.variant === 'announcement') (score -= 0.1), why.push('announcement channel');
         score = Math.max(0, Math.min(1, score));
 
         const llm = this.model ? await this.askModel(m, c, authorName, where).catch(() => null) : null;
         if (llm) {
           reasons.push(`Model: ${llm.reason}`);
-          return done(llm.score >= SMART_THRESHOLD ? 'push' : 'digest', llm.score, 'model');
+          return done(llm.level, llm.score, 'model');
         }
         reasons.push(why.length ? `Smart: ${why.join(', ')}` : 'Smart: nothing addressed to you');
-        return done(score >= SMART_THRESHOLD ? 'push' : 'digest', Math.round(score * 100) / 100);
+        return done(smartTier(score), Math.round(score * 100) / 100);
       }
     }
     return done('digest');
   }
 
-  /** Optional local model (Ollama). Recent context plus the user's corrections as few-shot examples. */
-  private async askModel(m: Row, c: Row, author: string, where: string): Promise<{ score: number; reason: string } | null> {
+  /**
+   * Optional local model (Ollama). Its instructions are written from the rules your votes taught (votes.ts), with the
+   * votes they still get wrong as examples; then the place's recent messages.
+   */
+  private async askModel(m: Row, c: Row, author: string, where: string): Promise<{ level: Level; score: number; reason: string } | null> {
     const s = this.store;
     const context = s
       .raw<Row>(
@@ -397,15 +466,12 @@ export class Triage {
       .reverse()
       .map((r) => `${r.who}: ${previewText(r.body, 'text')}`)
       .join('\n');
-    const examples = s
-      .raw<Row>(`SELECT m.body, t.feedback FROM triage t JOIN message m ON m.id = t.message_id WHERE t.feedback IS NOT NULL ORDER BY t.created_at DESC LIMIT 6`)
-      .map((r) => `- "${previewText(r.body, 'text')}" -> ${r.feedback === 'should_push' ? 'notify' : 'do not notify'}`)
-      .join('\n');
-    const prompt = `You decide whether a chat message should interrupt the user with a phone notification.
+    const prompt = `${this.prompt ?? DEFAULT_PROMPT}
+
 Place: ${where}. Author: ${author}.
 Recent messages:
 ${context}
-${examples ? `The user corrected these before:\n${examples}\n` : ''}Reply with JSON {"score": 0..1, "reason": "<8 words"} for the last message.`;
+Reply with JSON {"level": "important" | "active" | "digest", "reason": "<8 words"} for the last message.`;
     const res = await fetch(`${this.model!.url}/api/generate`, {
       method: 'POST',
       body: JSON.stringify({ model: this.model!.name, prompt, stream: false, format: 'json' }),
@@ -413,10 +479,16 @@ ${examples ? `The user corrected these before:\n${examples}\n` : ''}Reply with J
     });
     if (!res.ok) return null;
     const out = JSON.parse(((await res.json()) as any).response);
-    if (typeof out.score !== 'number') return null;
-    return { score: out.score, reason: String(out.reason ?? '').slice(0, 80) };
+    const level = ({ important: 'push', active: 'quiet', digest: 'digest' } as const)[out.level as 'important'];
+    if (!level) return null;
+    return { level, score: { push: 0.9, quiet: 0.5, digest: 0.1 }[level], reason: String(out.reason ?? '').slice(0, 80) };
   }
 }
+
+const DEFAULT_PROMPT = `You sort incoming chat messages for one person into three levels:
+- important: their phone buzzes and their computer shows a notification. For what they would want to drop things for.
+- active: a silent notification on their phone. Worth seeing soon, not worth an interruption.
+- digest: no notification; read later with everything else.`;
 
 function rank(l: P.NotifyLevel): number {
   return { none: 0, digest: 1, mentions: 2, smart: 3, all: 4 }[l];

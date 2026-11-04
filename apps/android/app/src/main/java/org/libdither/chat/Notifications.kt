@@ -23,6 +23,8 @@ import org.json.JSONObject
 /** Message notifications, from the hub's push payload (webpush.ts pushPayload), as the web app's sw.js shows them. */
 object Notifications {
     const val MESSAGES = "messages"
+    /** Active (docs/notifications.md): in the shade and on the lock screen, without sound or vibration. */
+    const val QUIET = "messages-quiet"
     const val CALLS = "calls"
     const val REPLY = "reply"
     private const val ID = 1
@@ -31,7 +33,8 @@ object Notifications {
 
     fun channels(c: Context) {
         nm(c).createNotificationChannels(listOf(
-            NotificationChannel(MESSAGES, "Messages", NotificationManager.IMPORTANCE_HIGH),
+            NotificationChannel(MESSAGES, "Important messages", NotificationManager.IMPORTANCE_HIGH),
+            NotificationChannel(QUIET, "Active messages (silent)", NotificationManager.IMPORTANCE_LOW),
             NotificationChannel(CALLS, "Ongoing call", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) },
         ))
     }
@@ -59,7 +62,8 @@ object Notifications {
         // The sender's picture comes from the hub: off the thread the push arrived on.
         Thread {
             val look = Looks.of(app, d.optString("network"), d.optString("icon").ifEmpty { null }, title)
-            post(app, tag, title, d.optString("body"), hash, if (conv != null && d.optBoolean("canReply")) d.optString("replyTo").ifEmpty { null } else null, conv != null && d.optBoolean("canReply"), nid = nid, device = device, look = look)
+            val vote = d.optString("messageId").ifEmpty { null }?.let { Vote(it, d.optString("level", "push")) }
+            post(app, tag, title, d.optString("body"), hash, if (conv != null && d.optBoolean("canReply")) d.optString("replyTo").ifEmpty { null } else null, conv != null && d.optBoolean("canReply"), nid = nid, device = device, look = look, vote = vote)
             outcome(app, nid, device, "shown")
         }.start()
     }
@@ -75,8 +79,12 @@ object Notifications {
         Thread { runCatching { Hub.request(app, "POST", "/api/activity/notifications", JSONObject().put("events", org.json.JSONArray().put(e))) } }.start()
     }
 
-    fun post(c: Context, tag: String, title: String, body: String, hash: String?, replyTo: String?, canReply: Boolean, sticky: Boolean = false, nid: String? = null, device: String? = null, look: Looks.Look? = null) {
-        val b = Notification.Builder(c, MESSAGES)
+    /** The message a notification is about and its level, so it can be voted up or down from the shade. */
+    data class Vote(val messageId: String, val level: String)
+
+    fun post(c: Context, tag: String, title: String, body: String, hash: String?, replyTo: String?, canReply: Boolean, sticky: Boolean = false, nid: String? = null, device: String? = null, look: Looks.Look? = null, vote: Vote? = null) {
+        val quiet = vote?.level == "quiet"
+        val b = Notification.Builder(c, if (quiet) QUIET else MESSAGES)
             .setSmallIcon(look?.small ?: R.drawable.ic_notification)
             .setColor(look?.color ?: c.getColor(R.color.accent))
             .setContentTitle(title)
@@ -90,12 +98,25 @@ object Notifications {
             val gone = Intent(c, DismissReceiver::class.java).putExtra("nid", nid).putExtra("device", device)
             b.setDeleteIntent(PendingIntent.getBroadcast(c, tag.hashCode(), gone, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
         }
+        // Active: up to Important or down to Digest, before Reply. Important: Reply, then down to Active.
+        val votes = when (vote?.level) {
+            "quiet" -> listOf("up" to "Important", "down" to "Digest")
+            "push" -> listOf("down" to "Not important")
+            else -> emptyList()
+        }
+        fun addVotes() = votes.forEachIndexed { i, (dir, label) ->
+            val intent = Intent(c, VoteReceiver::class.java).putExtra("message", vote!!.messageId).putExtra("vote", dir).putExtra("tag", tag)
+            val pi = PendingIntent.getBroadcast(c, tag.hashCode() * 31 + i + 1, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            b.addAction(Notification.Action.Builder(null, label, pi).build())
+        }
+        if (quiet) addVotes()
         if (canReply) {
             val intent = Intent(c, ReplyReceiver::class.java).putExtra("conversation", tag).putExtra("replyTo", replyTo).putExtra("nid", nid).putExtra("device", device)
             // Mutable: the system writes the typed text into it.
             val pi = PendingIntent.getBroadcast(c, tag.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
             b.addAction(Notification.Action.Builder(null, "Reply", pi).addRemoteInput(RemoteInput.Builder(REPLY).setLabel("Message").build()).build())
         }
+        if (!quiet) addVotes()
         nm(c).notify(tag, ID, b.build())
     }
 
@@ -204,5 +225,22 @@ class ReplyReceiver : BroadcastReceiver() {
 class DismissReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, intent: Intent) {
         Notifications.outcome(c, intent.getStringExtra("nid"), intent.getStringExtra("device"), "dismissed")
+    }
+}
+
+/** A vote from the shade (docs/notifications.md): the hub moves the message a level and learns from it. */
+class VoteReceiver : BroadcastReceiver() {
+    override fun onReceive(c: Context, intent: Intent) {
+        val message = intent.getStringExtra("message") ?: return
+        val vote = intent.getStringExtra("vote") ?: return
+        intent.getStringExtra("tag")?.let { Notifications.clear(c, it) }
+        val done = goAsync()
+        Thread {
+            try {
+                runCatching { Hub.request(c, "POST", "/api/messages/$message/feedback", JSONObject().put("vote", vote)) }
+            } finally {
+                done.finish()
+            }
+        }.start()
     }
 }

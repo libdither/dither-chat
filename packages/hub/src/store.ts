@@ -110,7 +110,9 @@ export class Store {
     const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
     const reactionsBefore = this.oldReactions();
     const broadcastsUnknown = this.addMentionsAll();
+    const oldTriage = this.setAsideTriage();
     this.db.exec(schema);
+    if (oldTriage) this.adoptOldTriage();
     if (broadcastsUnknown) this.markBroadcasts();
     this.adoptOldReactions(reactionsBefore);
     this.journal = new Journal(this.db);
@@ -121,6 +123,27 @@ export class Store {
     for (const r of this.db.query('SELECT self_identity FROM account WHERE self_identity IS NOT NULL').all() as Row[]) {
       this.selfIdentities.add(r.self_identity);
     }
+  }
+
+  /**
+   * A triage table from before Active (decision 'quiet') and votes by level: its CHECK cannot be changed in place, so
+   * it is set aside, the schema makes the new one, and the rows come across with "should push" as a vote for Important
+   * and "should not push" as one for Digest.
+   */
+  private setAsideTriage(): boolean {
+    const t = this.db.query(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'triage'`).get() as Row | null;
+    if (!t || t.sql.includes("'quiet'")) return false;
+    this.db.exec('DROP INDEX IF EXISTS triage_created; ALTER TABLE triage RENAME TO triage_v1');
+    return true;
+  }
+
+  private adoptOldTriage() {
+    this.db.exec(`INSERT OR IGNORE INTO triage (message_id, decision, score, reasons, decided_by, feedback, feedback_at, created_at)
+      SELECT message_id, decision, score, reasons, decided_by,
+             CASE feedback WHEN 'should_push' THEN 'push' WHEN 'should_not_push' THEN 'digest' END,
+             CASE WHEN feedback IS NOT NULL THEN created_at END, created_at
+      FROM triage_v1;
+      DROP TABLE triage_v1;`);
   }
 
   /** Message tables from before @everyone was told apart from a mention by name get the column. */
@@ -889,15 +912,24 @@ export class Store {
     this.dirty.extra.push({ t: 'rules', rules: this.rules() });
   }
 
-  setTriage(messageId: string, t: Omit<P.TriageView, 'feedback'>) {
+  /** A decision, and what it was made from. A vote already given stays. */
+  setTriage(messageId: string, t: Omit<P.TriageView, 'feedback'>, facts?: unknown) {
     this.db
-      .query(`INSERT OR REPLACE INTO triage (message_id, decision, score, reasons, decided_by, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
-      .run(messageId, t.decision, t.score, JSON.stringify(t.reasons), t.decidedBy, Date.now());
+      .query(
+        `INSERT INTO triage (message_id, decision, score, reasons, decided_by, facts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (message_id) DO UPDATE SET decision = excluded.decision, score = excluded.score, reasons = excluded.reasons,
+           decided_by = excluded.decided_by, facts = COALESCE(excluded.facts, facts), created_at = excluded.created_at`,
+      )
+      .run(messageId, t.decision, t.score, JSON.stringify(t.reasons), t.decidedBy, facts ? JSON.stringify(facts) : null, Date.now());
   }
 
-  triageFeedback(messageId: string, feedback: P.TriageView['feedback']) {
-    this.db.query('UPDATE triage SET feedback = ? WHERE message_id = ?').run(feedback, messageId);
+  triageFeedback(messageId: string, feedback: P.TriageView['feedback'], now = Date.now()) {
+    this.db.query('UPDATE triage SET feedback = ?, feedback_at = ? WHERE message_id = ?').run(feedback, feedback ? now : null, messageId);
     this.dirty.messages.set(messageId, true);
+  }
+
+  setTriageFacts(messageId: string, facts: unknown) {
+    this.db.query('UPDATE triage SET facts = ? WHERE message_id = ?').run(JSON.stringify(facts), messageId);
   }
 
   // ------------------------------------------------------------ views
@@ -1446,12 +1478,13 @@ export class Store {
   }
 
   inbox(sinceTs: number): P.InboxPage {
-    const rows = this.db
-      .query(
-        `SELECT m.* FROM triage t JOIN message m ON m.id = t.message_id
-         WHERE m.ts >= ? AND m.deleted = 0 AND t.decision != 'silent' ORDER BY m.ts DESC LIMIT 300`,
-      )
-      .all(sinceTs) as Row[];
+    // What notified (or you voted up) has its own share, so a busy digest cannot push it out of the list.
+    const pick = (where: string, limit: number) =>
+      this.db
+        .query(`SELECT m.* FROM triage t JOIN message m ON m.id = t.message_id WHERE m.ts >= ? AND m.deleted = 0 AND ${where} ORDER BY m.ts DESC LIMIT ${limit}`)
+        .all(sinceTs) as Row[];
+    const loud = `t.decision != 'silent' AND (t.decision IN ('push', 'quiet') OR t.feedback IN ('push', 'quiet'))`;
+    const rows = [...pick(loud, 150), ...pick(`t.decision != 'silent' AND NOT (${loud})`, 300)].sort((a, b) => b.ts - a.ts);
     const msgs = this.messageViews(rows);
     return { items: msgs.map((m) => ({ message: m, conversationId: m.conversationId })), identities: this.identitiesOf(msgs) };
   }
@@ -1620,6 +1653,9 @@ export class Store {
   quietHeld = () => this.metaJson<{ count: number; conversationId: string; messageId: string }>('quiet_held');
   setQuietHeld = (held: { count: number; conversationId: string; messageId: string } | null) => this.setMetaJson('quiet_held', held);
   dailyDigest = () => this.metaJson<P.DailyDigest>('daily_digest');
+  /** What triage learned from your votes (learn.ts). */
+  triagePolicy = <T>() => this.metaJson<T>('triage_policy');
+  setTriagePolicy = (p: unknown) => this.setMetaJson('triage_policy', p);
   setDailyDigest = (d: P.DailyDigest) => this.setMetaJson('daily_digest', d);
   /** The last daily slot dealt with, and when the digest last started gathering. Kept here so restarts neither repeat nor lose it. */
   digestState = () => this.metaJson<{ slot: string; since: number }>('daily_digest_state');

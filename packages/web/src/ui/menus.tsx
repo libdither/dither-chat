@@ -8,7 +8,8 @@ import { fullTime } from '../format.ts';
 import { LEVEL_LABEL, authorName, convTitle, deepLink, directsOf, effectiveLevel, netName, plainBody, sumUnread, unreadOf } from '../model.ts';
 import { deviceRule, myDevice, setDeviceRule } from '../devices.ts';
 import { pickerFor, quickReactions, reactionScope, reactorsFor, replacing, toggleReaction } from '../reactions.ts';
-import { api, canDelete, canEdit, db, deleteMessage, feedback, go, href, isSelfIdentity, markAllRead, markRead, newMessage, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
+import { api, canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, newMessage, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
+import { TierPicker, triageHeading } from './TierVote.tsx';
 import { Avatar } from './bits.tsx';
 import { copy, groups, menuPoint, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { DEVICE_LEVELS } from './DeviceRules.tsx';
@@ -98,22 +99,15 @@ function TriageFoot({ m }: { m: P.MessageView }) {
   return (
     <div class="sheet-triage">
       <h4>
-        <Icon name={t.decision === 'push' ? 'bell' : t.decision === 'digest' ? 'layers' : 'bellOff'} size={14} />
-        {t.decision === 'push' ? 'This pinged you because' : t.decision === 'digest' ? 'This went to the digest because' : 'This was silent because'}
+        <Icon name={t.decision === 'push' ? 'bell' : t.decision === 'quiet' ? 'bellOff' : t.decision === 'digest' ? 'layers' : 'bellOff'} size={14} />
+        {triageHeading(t.decision)}
       </h4>
       <ul>
         {t.reasons.map((r) => (
           <li>{r}</li>
         ))}
       </ul>
-      <div class="triage-fb">
-        <button class={`chip-btn ${t.feedback === 'should_push' ? 'on' : ''}`} onClick={() => feedback(m.id, 'should_push')}>
-          <Icon name="thumbsUp" size={14} /> {t.decision === 'push' ? 'Right call' : 'Should have pinged'}
-        </button>
-        <button class={`chip-btn ${t.feedback === 'should_not_push' ? 'on' : ''}`} onClick={() => feedback(m.id, 'should_not_push')}>
-          <Icon name="thumbsDown" size={14} /> {t.decision === 'push' ? "Shouldn't have pinged" : 'Right call'}
-        </button>
-      </div>
+      <TierPicker m={m} />
     </div>
   );
 }

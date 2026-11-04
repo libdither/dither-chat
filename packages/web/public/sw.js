@@ -181,18 +181,33 @@ async function dataUrl(canvas) {
   return `data:image/png;base64,${btoa(bin)}`;
 }
 
+/** A vote from the notification: one level down, or for an Active one, up to Important (docs/notifications.md). */
+const VOTES = {
+  push: [{ action: 'down', title: 'Not important' }],
+  quiet: [
+    { action: 'up', title: 'Important' },
+    { action: 'down', title: 'Digest' },
+  ],
+};
+
 /** Shows a notification from the hub's payload (webpush.ts pushPayload, or a page's notify event). Returns its tag. */
 async function show(d) {
   const tag = d.conversationId ?? (d.inbox ? 'dither-digest' : 'dither');
   const look = await looks(d);
+  // Active (docs/notifications.md): shown, but without sound or vibration.
+  const quiet = d.level === 'quiet';
+  const reply = d.conversationId && d.canReply && CAN_REPLY ? [{ action: 'reply', type: 'text', title: 'Reply', placeholder: 'Message' }] : [];
+  const votes = d.messageId ? VOTES[d.level] ?? [] : [];
+  const actions = d.conversationId ? (quiet ? [...votes, ...reply] : [...reply, ...votes, { action: 'open', title: 'Open' }]) : [];
   await self.registration.showNotification(d.title ?? 'dither-chat', {
     body: d.body ?? '',
     tag,
-    renotify: true,
+    renotify: !quiet,
+    silent: quiet,
     icon: look.icon,
     badge: look.badge,
-    data: { conversationId: d.conversationId, inbox: d.inbox, test: d.test, replyTo: d.replyTo, nid: d.nid, device: d.device },
-    actions: d.conversationId ? [...(d.canReply && CAN_REPLY ? [{ action: 'reply', type: 'text', title: 'Reply', placeholder: 'Message' }] : []), { action: 'open', title: 'Open' }] : [],
+    data: { conversationId: d.conversationId, inbox: d.inbox, test: d.test, replyTo: d.replyTo, nid: d.nid, device: d.device, messageId: d.messageId },
+    actions: actions.slice(0, self.Notification?.maxActions ?? 2),
   });
   return tag;
 }
@@ -256,6 +271,12 @@ self.addEventListener('notificationclick', (e) => {
   const text = e.action === 'reply' && typeof e.reply === 'string' ? e.reply.trim() : '';
   if (conv && text) {
     e.waitUntil(sendReply(e.notification, conv, text, replyTo));
+    return;
+  }
+  const mid = e.notification.data?.messageId;
+  if ((e.action === 'up' || e.action === 'down') && mid) {
+    e.notification.close();
+    e.waitUntil(fetch(`/api/messages/${encodeURIComponent(mid)}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ vote: e.action }) }).catch(() => {}));
     return;
   }
   e.notification.close();

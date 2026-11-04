@@ -6,7 +6,7 @@ import { emojiNow, loadEmoji, searchEmoji, SKIN_TONES, skinOf } from '../emoji.t
 import { fullTime } from '../format.ts';
 import { authorName, convTitle, netName, plainBody } from '../model.ts';
 import { hasMine, knownReactionContext, pickerFor, quickReactions, reactionContext, reactionScope, reactorsFor, reactorsLabel, replacing, toggleReaction, type Picked } from '../reactions.ts';
-import { canDelete, canEdit, deleteMessage, startEditing, api, db, feedback, isSelfIdentity, openProfile, prefs, rev, setPrefs, toast } from '../state.ts';
+import { canDelete, canEdit, deleteMessage, startEditing, api, db, isSelfIdentity, openProfile, prefs, rev, setPrefs, toast } from '../state.ts';
 import { haptic, useLayer } from '../phone.ts';
 import { Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';

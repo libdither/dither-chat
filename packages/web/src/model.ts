@@ -551,7 +551,7 @@ export function pingedCount(): number {
     const pushed = new Set<string>();
     for (const m of inbox.value) {
       const c = db.conversations.get(m.conversationId);
-      if (c && visibleConv(c) && m.triage?.decision === 'push' && m.ts > lastRead(c) && unreadOf(c).unread > 0) pushed.add(c.id);
+      if (c && visibleConv(c) && (m.triage?.decision === 'push' || m.triage?.decision === 'quiet') && m.ts > lastRead(c) && unreadOf(c).unread > 0) pushed.add(c.id);
     }
     return pushed.size;
   });

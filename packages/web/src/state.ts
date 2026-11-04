@@ -352,7 +352,8 @@ export function quietHere(ev: { quiet?: string[] }): boolean {
 }
 
 function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
-  if (quietHere(ev)) return;
+  // Active is a silent notification on a phone (the hub sends it there): here it is only a row in the inbox.
+  if (quietHere(ev) || ev.level === 'quiet') return;
   const r = route.value;
   const viewing = !!ev.conversationId && 'conv' in r && r.conv === ev.conversationId && document.visibilityState === 'visible';
   if (viewing) return;
@@ -691,7 +692,6 @@ export function markRead(conversationId: string) {
   );
 }
 
-export const feedback = (messageId: string, fb: P.TriageView['feedback']) => api(`/api/messages/${messageId}/feedback`, { body: { feedback: fb } });
 export const setRule = (scope: P.NotifyScope, target: string | null, level: P.NotifyLevel | null) => api('/api/rules', { method: 'PUT', body: { scope, target, level } });
 /** Shown at once; the hub's event confirms it, and a failure resyncs. */
 export function saveFolders(folders: P.FolderView[]) {

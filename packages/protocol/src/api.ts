@@ -11,6 +11,7 @@ import type {
   MessageKind,
   Network,
   NotifyLevel,
+  NotifyTier,
   NotifyScope,
   ReactionStyle,
   Shape,
@@ -135,8 +136,42 @@ export interface TriageView {
   decision: TriageDecision;
   score: number | null;
   reasons: string[];
-  decidedBy: 'rules' | 'model';
-  feedback: 'should_push' | 'should_not_push' | null;
+  /** 'learned': a rule learned from your votes moved it (docs/notifications.md). */
+  decidedBy: 'rules' | 'model' | 'learned';
+  /** The level you voted it to, if you did. */
+  feedback: NotifyTier | null;
+}
+
+/** A rule learned from your votes, in words. */
+export interface LearnedRuleView {
+  /** Stable while the rule means the same: for keeping or dropping it. */
+  key: string;
+  text: string;
+  level: NotifyTier;
+  /** Votes it matches, and how many of them agree with it. */
+  votes: number;
+  agree: number;
+  /** You kept it: relearning will not drop it. */
+  pinned: boolean;
+}
+
+/** What triage has learned from your votes, and how well it fits them. */
+export interface TriagePolicyView {
+  rules: LearnedRuleView[];
+  /** Rules you dropped: never learned again. */
+  rejected: { key: string; text: string }[];
+  votes: number;
+  /** Votes the rules get wrong, and that triage's own rules alone would. */
+  errors: number;
+  baseline: number;
+  /** Past this share wrong, the rules are learned again. */
+  threshold: number;
+  learnedAt: number | null;
+  /** Why they were last learned again. */
+  lastReason: string | null;
+  /** The local model's prompt, written from the rules; null when there is no model. */
+  prompt: string | null;
+  model: string | null;
 }
 
 /** A link preview or bot card attached to a message. */
@@ -524,7 +559,7 @@ export type ClientEvent =
   | { t: 'message'; message: MessageView; identities: IdentityView[]; live: boolean }
   | { t: 'message.deleted'; id: string; conversationId: string }
   /** No conversation: it is about the inbox as a whole (the daily digest). */
-  | { t: 'notify'; messageId?: string; conversationId?: string; title: string; body: string; reasons: string[]; /** The notification's id in the activity log (docs/activity.md). */ nid?: string; /** Devices whose own rules keep this quiet (docs/devices.md). */ quiet?: string[]; /** The sender's (or the place's) picture, a hub media path. */ icon?: string; network?: Network }
+  | { t: 'notify'; messageId?: string; conversationId?: string; title: string; body: string; reasons: string[]; /** Important or Active; absent is Important. */ level?: 'push' | 'quiet'; /** The notification's id in the activity log (docs/activity.md). */ nid?: string; /** Devices whose own rules keep this quiet (docs/devices.md). */ quiet?: string[]; /** The sender's (or the place's) picture, a hub media path. */ icon?: string; network?: Network }
   /**
    * Someone started typing (it lasts `ttl` ms unless another start comes) or `stop`ped. Of the moment: not journaled,
    * and a client that reconnects simply does not see it. `name` only when the hub knows no name for the identity.

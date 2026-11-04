@@ -340,7 +340,7 @@ const steps: [string, () => void | Promise<unknown>][] = [
     store.setTriage(msg(sig, quiet), { decision: 'digest', score: 0.3, reasons: ['A group'], decidedBy: 'rules' });
     store.dirty.messages.set(msg(sig, quiet), true);
     await settle();
-    await call('POST', `/api/messages/${msg(d1, pushed)}/feedback`, { feedback: 'up' });
+    await call('POST', `/api/messages/${msg(d1, pushed)}/feedback`, { feedback: 'push' });
     store.ingest(sig, { t: 'delete', conversation: 'family', nativeId: quiet });
   }],
   ['a thread off a channel, a conversation opened here', () => {

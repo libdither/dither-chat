@@ -2218,6 +2218,11 @@ code {
   background: color-mix(in oklab, var(--warn) 15%, transparent);
   opacity: 0.8;
 }
+.triage-pill.quiet {
+  color: var(--accent);
+  background: var(--accent-soft);
+  opacity: 0.7;
+}
 .pending {
   opacity: 0.6;
 }
@@ -3042,11 +3047,31 @@ code {
   color: var(--text-faint);
 }
 .digest-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
   color: var(--text-dim);
+}
+.digest-text {
+  flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* In a digest card the votes stay out of the way until the card is hovered. */
+.digest-line .tier-vote {
+  opacity: 0;
+}
+.digest:hover .tier-vote,
+.digest:focus-within .tier-vote {
+  opacity: 1;
+}
+@media (hover: none) {
+  .digest-line .tier-vote {
+    opacity: 1;
+  }
 }
 .digest-line b {
   color: var(--text-dim);
@@ -6728,4 +6753,112 @@ html[data-theme='light'] .acc-dot {
 }
 .toast > .avatar {
   flex-shrink: 0;
+}
+
+/* ------------------------------------------------------------------ notification levels (docs/notifications.md) */
+
+.tier-vote {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+.digest-line .tier-vote {
+  flex-direction: row;
+}
+.tier-vote .icon-btn.small {
+  padding: 1px;
+}
+.tier-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 6px;
+  border-radius: 9px;
+  white-space: nowrap;
+  color: var(--text-faint);
+  background: var(--bg-hover);
+}
+.tier-chip.push {
+  color: var(--warn);
+  background: color-mix(in oklab, var(--warn) 15%, transparent);
+}
+.tier-chip.quiet {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.tier-chip.moved {
+  outline: 1px dashed currentColor;
+  outline-offset: 1px;
+}
+.tier-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px 4px;
+  border-top: 1px solid var(--border-soft);
+}
+.tier-picker .chip-btn {
+  position: relative;
+}
+.tier-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.6;
+}
+.learned .rule-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  margin-bottom: 6px;
+  background: var(--bg-raised);
+  font-size: 13px;
+}
+.learned .rule-row.pinned {
+  border-color: color-mix(in oklab, var(--accent) 40%, var(--border));
+}
+.rule-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+}
+.rule-votes {
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.rule-dropped summary,
+.learned-prompt summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 6px 0;
+}
+.learned-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 8px;
+}
+.learned-prompt {
+  flex: 1 1 100%;
+}
+.learned-prompt pre {
+  white-space: pre-wrap;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 10px 12px;
 }

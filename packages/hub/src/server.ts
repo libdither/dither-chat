@@ -10,6 +10,7 @@ import type { AdapterSocketData, Supervisor } from './supervisor.ts';
 import type { PushService } from './push.ts';
 import type { ReadQueue } from './readqueue.ts';
 import { validDailyDigest, validQuietHours, type Triage } from './triage.ts';
+import type { TriageVotes, Vote } from './votes.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
 import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } from './calls.ts';
 import { compress } from './compress.ts';
@@ -50,6 +51,8 @@ export interface ServerOpts {
   activity?: ActivityStore;
   /** Per-device notification rules (devices.ts, docs/devices.md). */
   devices?: Devices;
+  /** Your votes on triage and the rules learned from them (votes.ts, docs/notifications.md). */
+  votes?: TriageVotes;
 }
 
 // ------------------------------------------------------------------ access
@@ -558,10 +561,32 @@ export class HubServer {
       this.flush();
       return ok();
     }
+    // A vote: { vote: 'up' | 'down' } from where it is now, or { feedback: level | null } straight to a level.
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/feedback$/)) && method === 'POST') {
-      const b = await body<{ feedback: P.TriageView['feedback'] }>();
-      s.triageFeedback(m[1], b.feedback ?? null);
-      return ok();
+      const b = await body<{ vote?: 'up' | 'down'; feedback?: P.NotifyTier | null }>();
+      const v: Vote | undefined = b.vote === 'up' || b.vote === 'down' ? b.vote : b.feedback === null || ['push', 'quiet', 'digest'].includes(b.feedback as string) ? (b.feedback as Vote) : undefined;
+      if (v === undefined) return bad('Say vote: up or down, or feedback: a level or null');
+      if (!this.opts.votes) {
+        s.triageFeedback(m[1], v === 'up' || v === 'down' ? null : v);
+        return ok();
+      }
+      try {
+        const r = this.opts.votes.vote(m[1], v);
+        this.flush();
+        return ok(r);
+      } catch (e: any) {
+        return bad(e.message, 409);
+      }
+    }
+    if (path === '/api/triage/policy' && method === 'GET') return this.opts.votes ? ok(this.opts.votes.view()) : bad('No triage here', 404);
+    if (path === '/api/triage/policy/relearn' && method === 'POST' && this.opts.votes) {
+      this.opts.votes.relearn('you asked');
+      return ok(this.opts.votes.view());
+    }
+    if ((m = path.match(/^\/api\/triage\/rules\/([^/]+)$/)) && method === 'POST' && this.opts.votes) {
+      const b = await body<{ pinned?: boolean; rejected?: boolean }>();
+      this.opts.votes.setRule(decodeURIComponent(m[1]), { pinned: typeof b.pinned === 'boolean' ? b.pinned : undefined, rejected: typeof b.rejected === 'boolean' ? b.rejected : undefined });
+      return ok(this.opts.votes.view());
     }
 
     if (path === '/api/persons/merge' && method === 'POST') {

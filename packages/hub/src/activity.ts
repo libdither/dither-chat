@@ -416,7 +416,7 @@ export class ActivityStore {
       this.db
         .query(`SELECT m.ts, t.decision FROM message m JOIN triage t ON t.message_id = m.id WHERE m.conversation_id IN (${ph}) AND m.ts >= ? AND (m.author_id IS NULL OR m.author_id NOT IN ${SELF})`)
         .all(...convs, since) as Row[]
-    ).map((r) => ({ ts: r.ts, pushed: r.decision === 'push' }));
+    ).map((r) => ({ ts: r.ts, pushed: r.decision === 'push' || r.decision === 'quiet' }));
     const visits = (
       this.db
         .query(`SELECT id, start_at, end_at, active FROM visit WHERE (conversation_id IN (${ph}) OR (? IS NOT NULL AND person_id = ?)) AND view IN ('conversation', 'person') AND start_at >= ? ORDER BY start_at`)
@@ -579,13 +579,16 @@ export class ActivityStore {
 }
 
 /**
- * A label for training when you gave none: your own feedback first; then opened within 15 minutes and replied or
+ * A label for training when you gave none: your own vote first; then opened within 15 minutes and replied or
  * stayed 20 s → should_push; seen nothing for a day, or tapped and left within 5 s → should_not_push. Else null.
  */
 export function weakLabel(
   feedback: string | null,
   o: { seenLive: boolean; openedAfter: number | null; dwell: number | null; repliedAfter: number | null; observedFor: number; tapped: boolean },
 ): 'should_push' | 'should_not_push' | null {
+  // A vote: Important or Active say it was worth a notification, Digest that it was not.
+  if (feedback === 'push' || feedback === 'quiet') return 'should_push';
+  if (feedback === 'digest') return 'should_not_push';
   if (feedback === 'should_push' || feedback === 'should_not_push') return feedback;
   if (o.seenLive) return null;
   if (o.openedAfter != null && o.openedAfter <= 15 * MIN && ((o.repliedAfter != null && o.repliedAfter <= o.openedAfter + REPLY_AFTER) || (o.dwell ?? 0) >= 20)) return 'should_push';

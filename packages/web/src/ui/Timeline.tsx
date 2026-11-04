@@ -21,7 +21,6 @@ import {
 } from '../model.ts';
 import {
   db,
-  feedback,
   go,
   isSelfIdentity,
   loadTimeline,
@@ -52,6 +51,7 @@ import { reactionContext } from '../reactions.ts';
 import { AccountChip, AccountDots, Avatar, Empty, Menu, NetBadge, NetGlyph, Skeleton, levelIcon, variantIcon } from './bits.tsx';
 import { HoverReactions, ReactionBar, useLongPress } from './Reactions.tsx';
 import { Icon } from './icons.tsx';
+import { TierPicker, triageHeading } from './TierVote.tsx';
 import { detailsShown, showDetails, swipeReply } from './Pager.ts';
 import { openConv } from './Sidebar.tsx';
 import { viewer, type ViewerImage } from './Viewer.tsx';
@@ -387,46 +387,28 @@ function Embeds({ m }: { m: P.MessageView }) {
 function TriageNote({ m }: { m: P.MessageView }) {
   const t = m.triage;
   if (!t) return null;
-  const pushed = t.decision === 'push';
+  const now = t.feedback ?? t.decision;
+  const label = now === 'push' ? 'important' : now === 'quiet' ? 'active' : now;
   return (
     <Menu
       align="right"
       trigger={(toggle) => (
-        <button class={`triage-pill ${t.decision}`} onClick={toggle} title="Why did this notify (or not)?">
-          <Icon name={pushed ? 'bell' : t.decision === 'digest' ? 'layers' : 'bellOff'} size={11} />
-          {pushed ? 'pinged' : t.decision}
+        <button class={`triage-pill ${now}`} onClick={toggle} title="Why did this notify (or not)? Vote it up or down a level here">
+          <Icon name={now === 'push' ? 'bell' : now === 'digest' ? 'layers' : 'bellOff'} size={11} />
+          {label}
         </button>
       )}
     >
       {(close) => (
         <div class="triage-pop">
-          <div class="menu-title">{pushed ? 'This pinged you because' : t.decision === 'digest' ? 'This went to the digest because' : 'This was silent because'}</div>
+          <div class="menu-title">{triageHeading(t.decision)}</div>
           <ul>
             {t.reasons.map((r) => (
               <li>{r}</li>
             ))}
           </ul>
           {t.score !== null && <div class="triage-score">score {t.score.toFixed(2)} · decided by {t.decidedBy}</div>}
-          <div class="triage-fb">
-            <button
-              class={`chip-btn ${t.feedback === 'should_push' ? 'on' : ''}`}
-              onClick={() => {
-                feedback(m.id, 'should_push');
-                close();
-              }}
-            >
-              <Icon name="thumbsUp" size={13} /> {pushed ? 'Right call' : 'Should have pinged'}
-            </button>
-            <button
-              class={`chip-btn ${t.feedback === 'should_not_push' ? 'on' : ''}`}
-              onClick={() => {
-                feedback(m.id, 'should_not_push');
-                close();
-              }}
-            >
-              <Icon name="thumbsDown" size={13} /> {pushed ? "Shouldn't have pinged" : 'Right call'}
-            </button>
-          </div>
+          <TierPicker m={m} onDone={close} />
         </div>
       )}
     </Menu>

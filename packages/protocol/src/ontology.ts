@@ -70,7 +70,16 @@ export type NotifyLevel =
 
 export type NotifyScope = 'global' | 'network' | 'account' | 'space' | 'conversation' | 'person' | 'keyword';
 
-export type TriageDecision = 'push' | 'digest' | 'silent';
+/**
+ * Where a message lands (docs/notifications.md): 'push' is Important (the phone buzzes, the desktop shows a
+ * notification), 'quiet' is Active (a silent notification on the phone, none on the desktop), 'digest' waits for the
+ * digest, 'silent' is nowhere but the unread badge.
+ */
+export type TriageDecision = 'push' | 'quiet' | 'digest' | 'silent';
+
+/** The three levels you can vote a decision between. */
+export type NotifyTier = 'push' | 'quiet' | 'digest';
+export const TIER_LABEL: Record<NotifyTier, string> = { push: 'Important', quiet: 'Active', digest: 'Digest' };
 
 export type MessageKind = 'text' | 'media' | 'system' | 'sticker' | 'call' | 'encrypted';
 

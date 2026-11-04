@@ -61,6 +61,9 @@ const originOf = (endpoint: string) => {
  * after registering, before the ntfy app has connected, and whenever the app cannot run: never opened since install,
  * or stopped by battery optimisation.
  */
+/** A phone, going by a registration's label ("Android app, Pixel", "Chrome on Android", "Safari on iOS"). */
+const PHONE = /android|iphone|ipad|\bios\b/i;
+
 const NO_SUBSCRIBER = /\b50701\b|without previously active subscriber/;
 
 /** What a push server said, short enough for Settings. */
@@ -311,11 +314,16 @@ export class PushService {
    * Each device's payload names the device, so what it reports back about the push (activity.ts) says where it happened.
    * `quiet`: devices whose own rules keep this off them (devices.ts), by device id or, unlinked, by push id.
    */
-  async notify(title: string, body: string, conversationId: string | undefined, extra: Record<string, unknown>, quiet: string[] = []): Promise<{ devices: number; accepted: number }> {
+  async notify(title: string, body: string, conversationId: string | undefined, extra: Record<string, unknown>, quiet: string[] = [], level: 'push' | 'quiet' = 'push'): Promise<{ devices: number; accepted: number }> {
     const skip = new Set(quiet);
     const rows = (this.store.db.query('SELECT * FROM push_subscription').all() as Row[]).filter((r) => !skip.has(r.device || r.id));
-    const [results] = await Promise.all([Promise.all(rows.map((r) => this.deliver(r, pushPayload(title, body, conversationId, { ...extra, device: r.id })))), this.toTopic(title, body, conversationId)]);
+    const [results] = await Promise.all([Promise.all(rows.map((r) => this.deliver(r, pushPayload(title, body, conversationId, { ...extra, device: r.id })))), this.toTopic(title, body, conversationId, level)]);
     return { devices: rows.length, accepted: results.filter((r) => r.ok).length };
+  }
+
+  /** Registrations that are not phones (by the label the page gave): Active, a silent phone notification, skips them. */
+  desktops(): string[] {
+    return (this.store.db.query('SELECT id, device, label FROM push_subscription').all() as Row[]).filter((r) => !PHONE.test(r.label ?? '')).map((r) => r.device || r.id);
   }
 
   async test(ref: { id?: string; endpoint?: string }) {
@@ -327,10 +335,10 @@ export class PushService {
   }
 
   /** The older route: plain ntfy messages to one topic, readable by that server. Off unless DITHER_NTFY_URL is set. */
-  private async toTopic(title: string, body: string, conversationId?: string): Promise<{ ok: boolean; error?: string }> {
+  private async toTopic(title: string, body: string, conversationId?: string, level: 'push' | 'quiet' = 'push'): Promise<{ ok: boolean; error?: string }> {
     const t = this.topic;
     if (!t) return { ok: true };
-    const headers: Record<string, string> = { Title: title, Tags: 'speech_balloon' };
+    const headers: Record<string, string> = { Title: title, Tags: 'speech_balloon', ...(level === 'quiet' ? { Priority: 'low' } : {}) };
     if (t.token) headers.Authorization = `Bearer ${t.token}`;
     if (t.click) headers.Click = `${t.click}/#/inbox${conversationId ? `/c/${conversationId}` : ''}`;
     try {

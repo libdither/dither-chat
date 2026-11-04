@@ -11,6 +11,7 @@ import { HubServer, mediaSigner } from './server.ts';
 import { Store } from './store.ts';
 import { Supervisor } from './supervisor.ts';
 import { Triage } from './triage.ts';
+import { TriageVotes } from './votes.ts';
 import { loadVapidKeys } from './webpush.ts';
 
 const args = process.argv.slice(2);
@@ -46,6 +47,7 @@ const model = process.env.DITHER_TRIAGE_MODEL
 const activity = new ActivityStore(store, { featuresInTriage: args.includes('--activity-features') || process.env.DITHER_ACTIVITY_FEATURES === '1' });
 activity.prune(Date.now(), true);
 const triage = new Triage(store, model, activity);
+const votes = new TriageVotes(store, triage);
 const attention = new Attention(store, triage);
 // Per-device notification rules (docs/devices.md).
 const devices = new Devices(store, triage);
@@ -58,27 +60,34 @@ function triageLater(ids: string[]) {
     for (const id of ids) {
       const d = await triage.decide(id).catch((e) => (console.error('triage failed', e), null));
       if (!d) continue;
-      store.setTriage(id, d);
+      store.setTriage(id, d, d.facts);
       if (d.features) activity.keepInputs(id, d.features);
       store.dirty.messages.set(id, true);
       attention.triaged(id, d);
-      if (d.decision === 'push') {
+      if (d.decision === 'push' || d.decision === 'quiet') {
         const conversationId = store.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', id)!.conversation_id;
-        deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message');
+        deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', d.decision);
       }
     }
   });
 }
 
 /** Each one gets an id the devices see (`nid`), so what they say happened to it lands in the activity log. */
-function deliver(title: string, body: string, conversationId: string, messageId: string, reasons: string[], pushExtra: Record<string, unknown> = {}, kind: 'message' | 'held' = 'held') {
+/**
+ * Important ('push') goes everywhere; Active ('quiet') only to phones, silently, and to open pages as an entry in the
+ * list rather than a notification (docs/notifications.md). A message's push carries its level and id, so the
+ * notification can be voted up or down from where it shows.
+ */
+function deliver(title: string, body: string, conversationId: string, messageId: string, reasons: string[], pushExtra: Record<string, unknown> = {}, kind: 'message' | 'held' = 'held', level: 'push' | 'quiet' = 'push') {
   const nid = activity.notification({ kind, messageId, conversationId });
   // Devices whose own rules keep this off them: their push is not sent, and their open pages show no toast.
   const quiet = devices.quietOn(conversationId, kind === 'message' && devices.addressed(messageId));
+  const skip = level === 'quiet' ? [...quiet, ...push.desktops()] : quiet;
   const look = store.notifyLook(conversationId, kind === 'message' ? messageId : undefined);
-  server.notify({ t: 'notify', messageId, conversationId, title, body, reasons, ...look, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}) });
+  const vote = kind === 'message' ? { messageId, level } : {};
+  server.notify({ t: 'notify', messageId, conversationId, title, body, reasons, ...look, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(level === 'quiet' ? { level } : {}) });
   push
-    .notify(title, body, conversationId, { ...pushExtra, ...look, ...(nid ? { nid } : {}) }, quiet)
+    .notify(title, body, conversationId, { ...pushExtra, ...look, ...vote, ...(nid ? { nid } : {}) }, skip, level)
     .then((r) => nid && activity.sent(nid, r))
     .catch((e) => console.error('push failed', e));
 }
@@ -97,6 +106,7 @@ setInterval(() => {
   // First: when both are due, the digest counts what was held and clears it.
   const digest = triage.takeDailyDigest();
   if (digest) deliverDigest(digest.title, digest.body);
+  votes.daily();
   const held = triage.takeHeldSummary();
   if (held) deliver(held.title, held.body, held.conversationId, held.messageId, ['Quiet hours ended']);
 }, 60_000);
@@ -141,6 +151,7 @@ const server = new HubServer(store, sup, triage, {
   attention,
   activity,
   devices,
+  votes,
   turn: process.env.DITHER_TURN_URLS && process.env.DITHER_TURN_SECRET ? { urls: process.env.DITHER_TURN_URLS.split(',').map((u) => u.trim()), secret: process.env.DITHER_TURN_SECRET } : undefined,
   onDemoReset: !demo ? undefined : async () => {
     for (const a of store.accounts().filter((a) => a.demo)) {
