@@ -244,6 +244,8 @@ export type AdapterEvent =
       self?: IdentityFact;
       /** Live view endpoint for the hub to proxy (Discord sandbox VNC). */
       liveView?: { vncPort: number; width: number; height: number } | null;
+      /** Non-secret facts about the session, for the account's page in dither-accounts (the hub ignores them). */
+      details?: Record<string, string | number | boolean | null>;
     }
   | { t: 'identity'; identity: IdentityFact }
   | { t: 'space'; space: SpaceFact }
