@@ -5,6 +5,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.LocusId
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -236,7 +237,10 @@ class MainActivity : Activity() {
 
         override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
             // Opening a conversation clears its notification, as the service worker does in a browser.
-            Regex("""#/.*?/?c/([\w-]+)""").find(url ?: "")?.let { Notifications.clear(this@MainActivity, it.groupValues[1]) }
+            val conv = Regex("""#/.*?/?c/([\w-]+)""").find(url ?: "")?.groupValues?.get(1)
+            conv?.let { Notifications.clear(this@MainActivity, it) }
+            // And tells the system which conversation is on screen, the one its shortcut and notification name.
+            if (Build.VERSION.SDK_INT >= 30) setLocusContext(conv?.let { LocusId(Notifications.shortcutId(it)) }, null)
         }
 
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {

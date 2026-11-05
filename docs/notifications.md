@@ -10,6 +10,9 @@ Triage puts every message at one of four levels, or silences it:
 | **Not interesting** | `drop` | nothing; unread in its chat, nowhere else | |
 | silent | `silent` | the unread badge only (the place is set to Nothing) | |
 
+On Android an Important or Active message shows in its conversation's notification, with the last few messages, and
+an update with `alert: false` changes it without sounding ([android.md](android.md#how-a-message-notification-looks)).
+
 Code: `packages/hub/src/triage.ts` (where a message starts, the decision), `learn.ts` (the model, pure), `votes.ts`
 (votes, training, the policy view), `main.ts` `deliver` (who gets what); `packages/web/src/triage.ts`,
 `ui/TierVote.tsx`, `ui/Inbox.tsx` (the Triage board), `public/sw.js`; `apps/android/.../Notifications.kt`.
