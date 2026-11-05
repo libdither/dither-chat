@@ -82,6 +82,9 @@ Counted:
 **The backtest**: the model against every vote, and the priors alone against them, shown on the board. **Forget**
 (× beside a learned weight) leaves that feature out of training for good; *Learn again* undoes it.
 
+**Content features** from message embeddings and jev's yes/no answers (`emb`, `knn`, `jev:<q>`) exist behind
+`DITHER_EMBEDDINGS=1` but are not weighed yet: see [embeddings.md](embeddings.md).
+
 ### The decision prompt
 
 Each time it learns, a prompt for a local model is written (`writePrompt`): the three questions, the strongest
