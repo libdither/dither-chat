@@ -74,10 +74,12 @@ beforeAll(async () => {
   expect(r.status).toBe(200);
   sup = new RoutedSupervisor(store, supOpts(), { url: m.url, dataDir: dir, repoRoot: REPO, firstListMs: 5000 });
   await sup.connect();
-  await approveAll();
-  // The hub manages the four real kinds; restarting this fake one (after a gap) needs the same for its kind.
+  // The hub asks to manage the four real kinds; restarting this fake one (for a snapshot, after a gap) needs the same.
   const app = JSON.parse(readFileSync(join(dir, 'accounts-app.json'), 'utf8')).app;
   await fetch(`${m.url}/api/grants`, { method: 'POST', body: JSON.stringify({ app, interface: 'accounts', level: 'manage', kinds: ['chat-fake'] }) });
+  // The extractor is online before the hub's grant: the hub restarts it for a snapshot once it may see it.
+  await until(() => m.sup.state(REMOTE).online, 10_000, 'the extractor online');
+  await approveAll();
   sup.startAll();
 });
 
@@ -120,6 +122,17 @@ describe('remote accounts through dither-accounts', () => {
     void sup.command(LOCAL, { t: 'markRead', conversation: 'x', upTo: 'y' }, 200).catch(() => {});
     await until(() => localCommands.some((c) => c.t === 'markRead'), 2000, 'the local command');
   });
+
+  test('what came while the hub was away arrives when it is back', async () => {
+    await sup.stopAll();
+    const before = fresh.length;
+    await m.sup.command(REMOTE, { t: 'action', action: 'emit', args: { n: 4 } });
+    await Bun.sleep(200);
+    sup = new RoutedSupervisor(store, supOpts(), { url: m.url, dataDir: dir, repoRoot: REPO, firstListMs: 5000 });
+    await sup.connect();
+    sup.startAll();
+    await until(() => fresh.length >= before + 4, 8000, 'the four held messages');
+  }, 20_000);
 
   test('a gap restarts the account, whose snapshot fills it', async () => {
     const pid1 = ((await sup.command(REMOTE, { t: 'action', action: 'pid' })) as { pid: number }).pid;

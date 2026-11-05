@@ -168,8 +168,13 @@ export class RoutedSupervisor extends Supervisor {
     const chat = list.filter((a) => a.interfaces.includes('chat') && a.grants.chat);
     const before = new Set(this.remote.keys());
     const now = new Map(chat.map((a) => [a.id, a]));
-    // An account the manager now runs and this hub ran itself: stop ours (the manager will not start it while ours lives).
-    for (const id of now.keys()) if (!before.has(id) && super.online(id)) void super.stop(id);
+    for (const [id, view] of now) {
+      if (before.has(id)) continue;
+      // Newly the manager's: anything of ours for it stops (an adapter, a start waiting on the lock).
+      void super.stop(id);
+      // Already online there, so its snapshot went by before this hub could see it: start it over to get one.
+      if (view.online) this.client?.admin({ do: 'restart', account: id }).catch((e) => console.error(`[${id}] restart for a snapshot failed:`, e));
+    }
     this.remote = now;
     for (const a of chat) {
       // An account another app added there: the hub shows it too, under its network.

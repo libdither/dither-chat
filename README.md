@@ -90,6 +90,7 @@ clients over Tailscale (bind is `0.0.0.0`; the server only answers loopback + ta
 | Mark all read | done: everywhere, or per server, folder or person, through a paced queue on the hub. Verified on the demo adapter only |
 | Quiet hours | done: a daily schedule that holds pushes, with one summary when it ends. Verified on the demo adapter only |
 | Sending files | done: paste, drop or pick. Live on Discord, on a local homeserver for Matrix (encrypted rooms too, once encryption is set up), not yet live on Signal |
+| Accounts in dither-accounts | built: the adapters moved to [dither-accounts](../dither-accounts), whose manager can run any account for this hub while the hub runs the rest, one account at a time, with a lock so none runs twice and a one-line rollback ([docs/accounts.md](docs/accounts.md)). Verified with the Matrix testbed and a fake chat account, not yet on a live account |
 | Discord adapter (sandboxed real web client) | works on a live account: login through the live view, snapshot, history, send, reply, react. DMs and group DMs arrive live. Server channels do not: while the client sits idle, Discord pushes nothing for them, so they update when opened |
 
 What is missing and why: [docs/ROADMAP.md](docs/ROADMAP.md).
