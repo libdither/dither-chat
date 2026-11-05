@@ -30,7 +30,22 @@ export function AccountsSidebar({ active, onAdd }: { active?: string; onAdd: () 
     <div class="sidebar-inner">
       <header class="side-head">
         <h1>Accounts</h1>
-        <span class="side-sub">Each account runs in its own adapter on this hub</span>
+        <span class="side-sub">
+          {db.accountsManager ? (
+            <>
+              Each account runs in{' '}
+              {db.accountsManager.url ? (
+                <a href={db.accountsManager.url} target="_blank" rel="noopener">
+                  dither-accounts
+                </a>
+              ) : (
+                'dither-accounts'
+              )}
+            </>
+          ) : (
+            'Each account runs in its own adapter on this hub'
+          )}
+        </span>
       </header>
       <div class="side-scroll">
         {accounts.map((a) => (
@@ -615,7 +630,11 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
   const [showLog, setShowLog] = useState(false);
   const [live, setLive] = useState(false);
   const [busy, setBusy] = useState('');
+  const [purge, setPurge] = useState(false);
   if (!a) return null;
+  const m = a.managedBy;
+  // Its session can go too when dither-accounts holds it; an imported one's session is this hub's, and stays.
+  const canPurge = !!m && m.origin !== 'import';
   const act = async (fn: () => Promise<unknown>, label: string) => {
     setBusy(label);
     try {
@@ -662,6 +681,24 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
             <dd>{a.label}</dd>
             <dt>Status</dt>
             <dd>{STATUS[a.status]}</dd>
+            <dt>Runs in</dt>
+            <dd>
+              {m ? (
+                <>
+                  dither-accounts
+                  {m.url && (
+                    <>
+                      {' · '}
+                      <a href={m.url} target="_blank" rel="noopener">
+                        its page there
+                      </a>
+                    </>
+                  )}
+                </>
+              ) : (
+                'this hub'
+              )}
+            </dd>
             <dt>Carries</dt>
             <dd>
               {seen.spaces} {seen.spaces === 1 ? 'space' : 'spaces'} · {seen.convs} {seen.convs === 1 ? 'conversation' : 'conversations'}
@@ -704,13 +741,26 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
         <section class="det-section danger">
           <h3>Remove</h3>
           <p class="det-note">Disconnects the adapter and drops anything only this account could see. The account on {netName(a.network)} itself is untouched.</p>
+          {canPurge && (
+            <label class="toggle-row">
+              <input type="checkbox" checked={purge} onChange={(e) => setPurge((e.target as HTMLInputElement).checked)} />
+              <span>
+                <b>Also delete its session</b>
+                <small>
+                  Unticked, dither-accounts keeps the session, so the account can come back without signing in again.
+                  {(a.network === 'signal' || a.network === 'whatsapp') && ' Deleting it does not unlink this device on your phone: do that there too.'}
+                </small>
+              </span>
+            </label>
+          )}
           <button
             class="btn danger"
             disabled={!!busy}
             onClick={() => {
-              if (confirm(`Remove the ${netName(a.network)} account “${a.label}” from dither-chat?`))
+              const doPurge = canPurge && purge;
+              if (confirm(`Remove the ${netName(a.network)} account “${a.label}” from dither-chat${doPurge ? ', and delete its session' : ''}?`))
                 act(async () => {
-                  await api(`/api/accounts/${a.id}`, { method: 'DELETE' });
+                  await api(`/api/accounts/${a.id}${doPurge ? '?purge=1' : ''}`, { method: 'DELETE' });
                   go({ view: 'accounts' });
                 }, 'delete');
             }}
@@ -793,6 +843,22 @@ export function AddAccount({ onClose }: { onClose: () => void }) {
           ))}
         </div>
         <p class="add-blurb">{help.blurb}</p>
+        {db.accountsManager && (
+          <p class="add-note">
+            <Icon name="info" size={14} /> It runs in dither-accounts
+            {db.accountsManager.url ? (
+              <>
+                , so you can also add it on{' '}
+                <a href={db.accountsManager.url} target="_blank" rel="noopener">
+                  its page
+                </a>
+                .
+              </>
+            ) : (
+              '.'
+            )}
+          </p>
+        )}
         <label class="field-label">
           Label <span class="muted-label">— how you tell two accounts on {netName(network)} apart</span>
         </label>

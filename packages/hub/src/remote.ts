@@ -10,18 +10,28 @@
  * manager's memory. If too many wait, the manager drops them and says so (a gap); the hub then restarts that account's
  * adapter, whose fresh snapshot fills the hole.
  *
+ * Everything the hub does to a remote account goes through the manager: its log, its live view (the manager's socket
+ * on this hub's token), renames, enabling, removing (with its directory if asked). The hub follows what the manager
+ * says back: a rename or a disable on its page, and why it cannot run an account. An account that leaves the list goes
+ * back to the local supervisor only if its session is here (one imported in place); one the manager made has nothing
+ * here to run.
+ *
  * The manager's client is loaded from a dither-accounts checkout beside this repo (DITHER_ACCOUNTS_CLIENT overrides
  * the path), only when this mode is on: dither-chat itself does not depend on dither-accounts.
  */
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { NETWORKS } from '@dither-chat/protocol';
-import type { AccountRow } from './store.ts';
+import { ACCOUNT_COLORS, type AccountRow } from './store.ts';
 import { Supervisor } from './supervisor.ts';
 
 /** The kinds this hub hands to the manager when they are new. */
 export const MANAGED_KINDS = ['discord', 'signal', 'matrix', 'whatsapp'];
+
+/** The attention an account gets while the manager cannot run it, and when the manager no longer has it. */
+const NOT_RUNNING = 'Not running in dither-accounts: ';
+const GONE = 'Removed from dither-accounts, and its session is not on this hub. Remove it here too, or add it again.';
 
 /** What this file uses of dither-accounts' AccountsClient and its spec (packages/client, packages/spec). */
 export interface AccountView {
@@ -34,12 +44,20 @@ export interface AccountView {
   enabled: boolean;
   grants: Record<string, 'read' | 'write' | 'manage'>;
   dryRun: boolean;
+  /** Why the manager is not running it. (Optional: managers before these fields did not say.) */
+  error?: string | null;
+  /** This hub may run it (start, stop, its log, its live view). */
+  manages?: boolean;
+  liveView?: boolean;
+  /** Who made it: this hub, another app, the manager's page, or an import from this hub's data. */
+  origin?: 'self' | 'app' | 'page' | 'import';
 }
 interface Client {
   accounts: AccountView[];
   connected: boolean;
   callRaw(account: string, op: string, input?: Record<string, unknown>, timeoutMs?: number): Promise<unknown>;
   admin(action: Record<string, unknown>, timeoutMs?: number): Promise<any>;
+  liveViewUrl(account: string): string;
   close(): void;
 }
 interface ClientModule {
@@ -64,7 +82,12 @@ export interface RemoteOpts {
   repoRoot: string;
   /** How long startAll waits for the manager's first account list before starting what is plainly local. */
   firstListMs?: number;
+  /** The manager's page as the user's browser reaches it (DITHER_ACCOUNTS_PUBLIC_URL), for links to an account there. */
+  publicUrl?: string | null;
 }
+
+/** POST /api/accounts answers this status when the error from created() carries it. */
+export const UNREACHABLE = 'dither-accounts is not reachable, so the account was not added. Try again once it is running.';
 
 type SupOpts = ConstructorParameters<typeof Supervisor>[1];
 
@@ -84,6 +107,8 @@ export class RoutedSupervisor extends Supervisor {
   private gotFirstList!: () => void;
   private saved: Saved | null = null;
   private storeRef: ConstructorParameters<typeof Supervisor>[0];
+  /** Accounts the manager ran (last time, or until they left its list): never started here without a session here. */
+  private wasRemote = new Set<string>();
 
   constructor(
     store: ConstructorParameters<typeof Supervisor>[0],
@@ -97,7 +122,10 @@ export class RoutedSupervisor extends Supervisor {
     if (existsSync(p)) {
       try {
         this.saved = JSON.parse(readFileSync(p, 'utf8'));
-        for (const id of this.saved?.remote ?? []) this.remote.set(id, { id, kind: '', label: '', interfaces: ['chat'], running: false, online: false, enabled: true, grants: {}, dryRun: false });
+        for (const id of this.saved?.remote ?? []) {
+          this.remote.set(id, { id, kind: '', label: '', interfaces: ['chat'], running: false, online: false, enabled: true, grants: {}, dryRun: false });
+          this.wasRemote.add(id);
+        }
       } catch {}
     }
   }
@@ -114,6 +142,20 @@ export class RoutedSupervisor extends Supervisor {
 
   isRemote(id: string): boolean {
     return this.remote.has(id);
+  }
+
+  /** The account's session is in this hub's data (it was imported in place, or never left): the local supervisor can run it. */
+  private sessionHere(id: string): boolean {
+    const dir = join(this.remoteOpts.dataDir, 'accounts', id);
+    try {
+      return readdirSync(dir).some((n) => n !== 'adapter.log' && n !== 'extractor.lock');
+    } catch {
+      return false;
+    }
+  }
+  /** Whether the local supervisor may start it: not if the manager ran it and its session is not here. */
+  private mayRunHere(id: string): boolean {
+    return !this.wasRemote.has(id) || this.sessionHere(id);
   }
 
   /** Connect now if the manager answers; else keep trying in the background (local accounts run meanwhile). */
@@ -166,7 +208,8 @@ export class RoutedSupervisor extends Supervisor {
 
   private accountsChanged(list: AccountView[]) {
     const chat = list.filter((a) => a.interfaces.includes('chat') && a.grants.chat);
-    const before = new Set(this.remote.keys());
+    const prev = this.remote;
+    const before = new Set(prev.keys());
     const now = new Map(chat.map((a) => [a.id, a]));
     for (const [id, view] of now) {
       if (before.has(id)) continue;
@@ -176,24 +219,54 @@ export class RoutedSupervisor extends Supervisor {
       if (view.online) this.client?.admin({ do: 'restart', account: id }).catch((e) => console.error(`[${id}] restart for a snapshot failed:`, e));
     }
     this.remote = now;
+    // Views say who runs an account and who made it (managedBy): send again those that changed.
+    for (const id of new Set([...before, ...now.keys()])) {
+      const was = prev.get(id);
+      const is = now.get(id);
+      if (!was !== !is || was?.origin !== is?.origin) this.storeRef.accountChanged?.(id);
+    }
     for (const a of chat) {
-      // An account another app added there: the hub shows it too, under its network.
+      this.wasRemote.add(a.id);
+      // An account another app added there (or the manager's page): the hub shows it too, under its network.
       if (!this.storeRef.account(a.id) && (NETWORKS as readonly string[]).includes(a.kind)) {
-        this.storeRef.createAccount({ id: a.id, network: a.kind as P.Network, label: a.label, color: '#9BE15D', adapter: a.kind });
+        const used = new Set(this.storeRef.accounts().map((x) => x.color));
+        this.storeRef.createAccount({ id: a.id, network: a.kind as P.Network, label: a.label, color: ACCOUNT_COLORS.find((c) => !used.has(c)) ?? ACCOUNT_COLORS[0], adapter: a.kind });
       }
+      this.follow(a, prev.get(a.id));
       if (!a.online) this.markOffline(a.id);
     }
-    // Gone from the manager (forgotten there, or this hub lost its grant): back to the local supervisor.
+    // Gone from the manager (forgotten there, or this hub lost its grant): back to the local supervisor if its session
+    // is here; one the manager made has none here, so it says so instead of starting empty.
     for (const id of before) {
       if (now.has(id)) continue;
       const acc = this.storeRef.account(id);
-      if (acc?.enabled && !acc.demo) super.start(id);
+      if (!acc?.enabled || acc.demo) continue;
+      if (this.mayRunHere(id)) super.start(id);
+      else this.storeRef.updateAccount(id, { status: 'error', attention: JSON.stringify({ kind: 'unknown', message: GONE, since: Date.now() }) });
     }
     if (this.saved) {
       this.saved.remote = [...now.keys()];
       this.save();
     }
     this.gotFirstList();
+  }
+
+  /** What the manager says about an account that the hub shows too: a rename or a disable on its page, why it is not running. */
+  private follow(a: AccountView, was: AccountView | undefined) {
+    const acc = this.storeRef.account(a.id);
+    if (!acc) return;
+    if (was?.label && a.label !== was.label && a.label !== acc.label) this.storeRef.updateAccount(a.id, { label: a.label });
+    if (!a.enabled && acc.enabled) this.storeRef.updateAccount(a.id, { enabled: 0, status: 'disabled' });
+    else if (a.enabled && !acc.enabled && was && !was.enabled) this.storeRef.updateAccount(a.id, { enabled: 1, status: 'connecting' });
+    const ours = (() => {
+      try {
+        return (JSON.parse(acc.attention ?? 'null')?.message ?? '').startsWith(NOT_RUNNING);
+      } catch {
+        return false;
+      }
+    })();
+    if (a.error && !a.running) this.storeRef.updateAccount(a.id, { status: 'error', attention: JSON.stringify({ kind: 'unknown', message: NOT_RUNNING + a.error, since: Date.now() }) });
+    else if (ours) this.storeRef.updateAccount(a.id, { attention: null });
   }
 
   private markOffline(id: string) {
@@ -208,7 +281,7 @@ export class RoutedSupervisor extends Supervisor {
     // Wait (briefly) for the manager's list, so an account it runs is never started here too.
     const wait = Promise.race([this.firstList, Bun.sleep(this.remoteOpts.firstListMs ?? 10_000)]);
     void wait.then(() => {
-      for (const a of this.storeRef.accounts()) if (a.enabled && !this.remote.has(a.id)) super.start(a.id);
+      for (const a of this.storeRef.accounts()) if (a.enabled && !this.remote.has(a.id) && this.mayRunHere(a.id)) super.start(a.id);
     });
   }
 
@@ -252,17 +325,48 @@ export class RoutedSupervisor extends Supervisor {
     this.client?.admin({ do: 'secret', account: id, secret }).catch((e) => console.error(`[${id}] secret through the manager failed:`, e));
   }
 
-  /** New accounts of the kinds the manager runs go there, under the hub's id, once the manager is reachable. */
-  override async created(acc: AccountRow, secret: unknown) {
-    if (!this.client?.connected || !MANAGED_KINDS.includes(acc.adapter)) return super.created(acc, secret);
-    await this.client.admin({ do: 'create', id: acc.id, kind: acc.adapter, label: acc.label, config: JSON.parse(acc.config || '{}'), secret: secret ?? {} });
-    // It is remote from now on (the manager's list follows).
-    this.remote.set(acc.id, { id: acc.id, kind: acc.adapter, label: acc.label, interfaces: ['chat'], running: true, online: false, enabled: true, grants: { chat: 'manage' }, dryRun: false });
+  /** managedBy for the account's view: set while the manager lists it. */
+  managed(id: string): P.AccountManaged | undefined {
+    const r = this.remote.get(id);
+    if (!r) return undefined;
+    const base = this.remoteOpts.publicUrl?.replace(/\/$/, '');
+    return { url: base ? `${base}/#/accounts/${encodeURIComponent(id)}` : null, origin: r.origin ?? null };
   }
 
-  override async forget(id: string) {
+  /**
+   * New accounts of the kinds the manager runs go there, under the hub's id. While it is not reachable they are
+   * refused (status 503) rather than run here, since the manager is where accounts live (docs/accounts.md).
+   */
+  override async created(acc: AccountRow, secret: unknown) {
+    if (!MANAGED_KINDS.includes(acc.adapter)) return super.created(acc, secret);
+    if (!this.client?.connected) throw Object.assign(new Error(UNREACHABLE), { status: 503 });
+    await this.client.admin({ do: 'create', id: acc.id, kind: acc.adapter, label: acc.label, config: JSON.parse(acc.config || '{}'), secret: secret ?? {} });
+    // It is remote from now on (the manager's list follows).
+    this.remote.set(acc.id, { id: acc.id, kind: acc.adapter, label: acc.label, interfaces: ['chat'], running: true, online: false, enabled: true, grants: { chat: 'manage' }, dryRun: false, origin: 'self' });
+  }
+
+  override async forget(id: string, purge = false) {
     if (!this.remote.has(id)) return;
-    await this.client?.admin({ do: 'delete', account: id });
+    await this.client?.admin({ do: 'delete', account: id, purge });
     this.remote.delete(id);
+  }
+
+  override async renamed(id: string, label: string) {
+    if (!this.remote.has(id)) return;
+    await this.client?.admin({ do: 'update', account: id, label }).catch((e) => console.error(`[${id}] rename through the manager failed:`, e));
+  }
+
+  /** The manager keeps the log where the account lives, which for one it made is not here. */
+  override async log(id: string): Promise<string> {
+    if (!this.remote.has(id)) return super.log(id);
+    if (!this.client) throw new Error('dither-accounts is not reachable');
+    const r = (await this.client.admin({ do: 'log', account: id, lines: 400 })) as { lines: string[] };
+    return r.lines.join('\n').slice(-20_000);
+  }
+
+  /** The manager's socket for it, on this hub's token: the hub carries it on to the page's live view. */
+  override liveViewUrl(id: string): string | null {
+    const v = this.remote.get(id);
+    return v?.liveView && v.manages && this.client ? this.client.liveViewUrl(id) : null;
   }
 }

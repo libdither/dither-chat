@@ -34,6 +34,19 @@ export interface AccountView {
   liveView: boolean;
   demo: boolean;
   createdAt: number;
+  /** Set when dither-accounts runs it rather than this hub (docs/accounts.md). Absent from older hubs. */
+  managedBy?: AccountManaged;
+}
+
+/** How an account that dither-accounts runs came to be there, and where its page is. */
+export interface AccountManaged {
+  /** The account on the manager's page, when the hub knows the page's address (DITHER_ACCOUNTS_PUBLIC_URL). */
+  url: string | null;
+  /**
+   * Who made it: this hub, another app, the manager's page, or an import of a session this hub kept (`import`: its
+   * session is in the hub's data, so deleting it there would not delete it). Null until the manager has said.
+   */
+  origin: 'self' | 'app' | 'page' | 'import' | null;
 }
 
 export interface IdentityView {
@@ -630,6 +643,8 @@ export interface Bootstrap {
   categories: CategoryView[];
   placeCategories: PlaceCategoryView[];
   categoryProvider: string;
+  /** Set when this hub's chat accounts run in dither-accounts. Absent from older hubs and hubs that run their own. */
+  accountsManager?: { url: string | null };
   rules: RuleView[];
   /** Absent from hubs that predate per-device rules. */
   devices?: DeviceView[];
@@ -769,6 +784,8 @@ export type SyncResponse =
       events: ClientEvent[];
       selfPersonId?: string | null;
       categoryProvider?: string;
+      /** As in the bootstrap; null: this hub runs its own accounts. */
+      accountsManager?: { url: string | null } | null;
       reactionUsage?: ReactionUsage[];
       /** Messages the inbox lists that arrived or changed since. */
       inbox?: MessageView[];

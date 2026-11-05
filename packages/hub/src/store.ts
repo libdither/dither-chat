@@ -10,6 +10,9 @@ import { TypingRelay, typingTtl } from './typing.ts';
 
 type Row = Record<string, any>;
 
+/** The colours accounts take in turn: a new account gets the first no other account has. */
+export const ACCOUNT_COLORS = ['#F2A541', '#E86A92', '#B794F6', '#FF8C61', '#9BE15D', '#5CC8FF', '#F7D154', '#FF6B6B'];
+
 export interface AccountRow {
   id: string;
   network: P.Network;
@@ -1228,6 +1231,10 @@ export class Store {
 
   /** Which provider fills category_score; shown in Settings. */
   categoryProvider = 'keyword';
+  /** Set by main.ts when accounts run in dither-accounts: the manager's page, if known. */
+  accountsManager: { url: string | null } | null = null;
+  /** Which accounts dither-accounts runs (remote.ts sets it); views carry it as managedBy. */
+  accountManaged: (id: string) => P.AccountManaged | undefined = () => undefined;
 
   categories(): P.CategoryView[] {
     return (this.db.query('SELECT * FROM category ORDER BY position, name').all() as Row[]).map((c) => ({ id: c.id, name: c.name, question: c.question, keywords: json(c.keywords, []), color: c.color, threshold: c.threshold ?? null }));
@@ -1545,7 +1552,13 @@ export class Store {
       liveView: !!r.live_view,
       demo: !!r.demo,
       createdAt: r.created_at,
+      ...((m) => (m ? { managedBy: m } : {}))(this.accountManaged(r.id)),
     };
+  }
+
+  /** Something outside the row changed how an account looks (who runs it): send its view again. */
+  accountChanged(id: string) {
+    if (this.account(id)) this.dirty.accounts.add(id);
   }
 
   identityView(r: Row): P.IdentityView {
@@ -2465,6 +2478,7 @@ export class Store {
       categories: this.categories(),
       placeCategories: this.placeCategories(),
       categoryProvider: this.categoryProvider,
+      ...(this.accountsManager ? { accountsManager: this.accountsManager } : {}),
       rules: this.rules(),
       reactionUsage: this.reactionUsage(),
       now: Date.now(),

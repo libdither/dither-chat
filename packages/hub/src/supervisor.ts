@@ -109,8 +109,28 @@ export class Supervisor {
     this.start(acc.id);
   }
 
-  /** The account is being deleted from the hub (after stop). remote.ts removes it from the manager too. */
-  async forget(_id: string) {}
+  /**
+   * The account is being deleted from the hub (after stop). remote.ts removes it from the manager too, with its
+   * directory if `purge` and the manager made it. Here the directory stays, as it always has.
+   */
+  async forget(_id: string, _purge = false) {}
+
+  /** The hub renamed an account. remote.ts tells the manager, so its page and the adapter's label follow. */
+  async renamed(_id: string, _label: string) {}
+
+  /** The end of an account's adapter log. remote.ts asks the manager, which keeps the log where the account lives. */
+  async log(id: string): Promise<string> {
+    const p = join(this.opts.dataDir, 'accounts', id, 'adapter.log');
+    if (!existsSync(p)) return '';
+    // The tail only: the file is rotated at 10 MB (housekeeping.ts) and need not be read whole.
+    const f = Bun.file(p);
+    return (await f.slice(Math.max(0, f.size - 24_000)).text()).slice(-20_000);
+  }
+
+  /** Where an account's live view is when another process runs it (remote.ts: the manager's socket); null: its VNC port here. */
+  liveViewUrl(_id: string): string | null {
+    return null;
+  }
 
   startAll() {
     for (const a of this.store.accounts()) if (a.enabled) this.start(a.id);

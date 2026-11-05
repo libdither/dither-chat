@@ -21,6 +21,8 @@ export function emptyDb() {
     /** `${kind}:${id}` -> what each category says about that place */
     placeCategories: new Map<string, P.PlaceCategoryView[]>(),
     categoryProvider: 'keyword',
+    /** Set when the hub's accounts run in dither-accounts: its page, if the hub knows where. */
+    accountsManager: null as { url: string | null } | null,
     rules: [] as P.RuleView[],
     /** Devices and their own notification rules (docs/devices.md). */
     devices: [] as P.DeviceView[],
@@ -114,6 +116,7 @@ export function applyBootstrapTo(db: Db, b: P.Bootstrap) {
   setPlacePrefs(db, b.placePrefs ?? []);
   setCategories(db, b.categories ?? [], b.placeCategories ?? []);
   db.categoryProvider = b.categoryProvider ?? 'keyword';
+  db.accountsManager = b.accountsManager ?? null;
   db.rules = b.rules;
   db.devices = b.devices ?? [];
   db.attention = new Map((b.attention ?? []).map((a) => [a.id, a]));
@@ -198,6 +201,7 @@ export function applyEventTo(db: Db, ev: P.ClientEvent): boolean {
 export function applySyncTo(db: Db, r: Extract<P.SyncResponse, { sync: unknown }>): boolean {
   if (r.selfPersonId !== undefined) db.selfPersonId = r.selfPersonId;
   if (r.categoryProvider !== undefined) db.categoryProvider = r.categoryProvider;
+  if (r.accountsManager !== undefined) db.accountsManager = r.accountsManager;
   if (r.reactionUsage) db.reactionUsage = r.reactionUsage;
   for (const i of r.identities) putIdentity(db, i);
   let threads = false;

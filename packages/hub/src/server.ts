@@ -5,7 +5,7 @@ import { join, normalize, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, directTarget, discordEmojiUrl, IMPORT_CHUNK, MAX_UPLOAD, NETWORK_META, NETWORKS, sendBlocker } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
-import type { Store } from './store.ts';
+import { ACCOUNT_COLORS, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
 import type { PushService } from './push.ts';
 import type { ReadQueue } from './readqueue.ts';
@@ -31,10 +31,10 @@ import { fetchPublicToFile } from './fetchsafe.ts';
 import { AboutError, Abouts } from './about.ts';
 import { People } from './people.ts';
 
-const ACCOUNT_COLORS = ['#F2A541', '#E86A92', '#B794F6', '#FF8C61', '#9BE15D', '#5CC8FF', '#F7D154', '#FF6B6B'];
 
 type ClientData = { kind: 'client' };
-type LiveViewData = { kind: 'liveview'; accountId: string; port: number; tcp?: Socket<unknown>; queue: Uint8Array[] };
+/** A browser's live view, carried to the account's VNC port here, or (remote accounts) to dither-accounts' socket for it. */
+type LiveViewData = { kind: 'liveview'; accountId: string; port?: number; url?: string; tcp?: Socket<unknown>; up?: WebSocket; queue: Uint8Array[]; closed?: boolean };
 type WsData = ClientData | LiveViewData | AdapterSocketData | CallSocketData | VoiceSocketData;
 
 export interface ServerOpts {
@@ -202,6 +202,7 @@ export class HubServer {
           else if (d.kind === 'liveview') {
             const buf = typeof msg === 'string' ? new TextEncoder().encode(msg) : new Uint8Array(msg);
             if (d.tcp) d.tcp.write(buf);
+            else if (d.up?.readyState === WebSocket.OPEN) d.up.send(buf);
             else d.queue.push(buf);
           }
         },
@@ -211,7 +212,11 @@ export class HubServer {
           else if (d.kind === 'adapter') self.sup.detach(ws as ServerWebSocket<AdapterSocketData>);
           else if (d.kind === 'call') self.calls.close(ws as ServerWebSocket<CallSocketData>);
           else if (d.kind === 'voice') self.calls.voiceClose(ws as ServerWebSocket<VoiceSocketData>);
-          else d.tcp?.end();
+          else {
+            d.closed = true;
+            d.tcp?.end();
+            d.up?.close();
+          }
         },
     };
     const common = { idleTimeout: 120, websocket };
@@ -290,9 +295,31 @@ export class HubServer {
 
   private openLiveView(ws: ServerWebSocket<LiveViewData>) {
     const d = ws.data;
+    if (d.url) {
+      const up = new WebSocket(d.url, ['binary']);
+      up.binaryType = 'arraybuffer';
+      d.up = up;
+      up.onopen = () => {
+        if (d.closed) return up.close();
+        for (const b of d.queue) up.send(b);
+        d.queue = [];
+      };
+      up.onmessage = (e) => ws.sendBinary(new Uint8Array(e.data as ArrayBuffer));
+      up.onclose = () => {
+        try {
+          ws.close();
+        } catch {}
+      };
+      up.onerror = () => {
+        try {
+          ws.close(1011, 'live view unreachable');
+        } catch {}
+      };
+      return;
+    }
     Bun.connect({
       hostname: '127.0.0.1',
-      port: d.port,
+      port: d.port!,
       socket: {
         open(sock) {
           d.tcp = sock;
@@ -394,12 +421,15 @@ export class HubServer {
     }
     if ((m = path.match(/^\/api\/call\/([\w-]+)\/voice$/))) return this.calls.upgradeVoice(req, server, m[1], url);
     if ((m = path.match(/^\/api\/liveview\/([\w-]+)$/))) {
+      // A remote account's live view comes through dither-accounts on this hub's token; a local one from its VNC port.
+      const url = this.sup.liveViewUrl?.(m[1]) ?? null;
       const acc = this.store.account(m[1]);
-      const lv = acc?.live_view ? (JSON.parse(acc.live_view) as { vncPort: number }) : null;
-      if (!lv) return new Response('no live view for this account', { status: 404 });
+      const lv = !url && acc?.live_view ? (JSON.parse(acc.live_view) as { vncPort: number }) : null;
+      if (!url && !lv) return new Response('no live view for this account', { status: 404 });
       const proto = req.headers.get('sec-websocket-protocol');
       const headers = proto?.split(',').map((s) => s.trim()).includes('binary') ? { 'Sec-WebSocket-Protocol': 'binary' } : undefined;
-      if (server.upgrade(req, { data: { kind: 'liveview', accountId: m[1], port: lv.vncPort, queue: [] } satisfies LiveViewData, headers })) return undefined;
+      const data: LiveViewData = url ? { kind: 'liveview', accountId: m[1], url, queue: [] } : { kind: 'liveview', accountId: m[1], port: lv!.vncPort, queue: [] };
+      if (server.upgrade(req, { data, headers })) return undefined;
       return new Response('upgrade failed', { status: 400 });
     }
     if (path === '/api/voice/dave') return this.daveCurrent();
@@ -1052,8 +1082,16 @@ export class HubServer {
       const used = new Set(s.accounts().map((a) => a.color));
       const color = b.color ?? ACCOUNT_COLORS.find((c) => !used.has(c)) ?? ACCOUNT_COLORS[0];
       const acc = s.createAccount({ network: b.network, label: b.label?.trim() || NETWORK_META[b.network].name, color, adapter: b.adapter ?? b.network, config: b.config });
-      if (this.sup.created) await this.sup.created(acc, b.secret ?? {});
-      else {
+      if (this.sup.created) {
+        try {
+          await this.sup.created(acc, b.secret ?? {});
+        } catch (e) {
+          // Not added after all (dither-accounts is down, or refused it): the row goes too.
+          s.deleteAccount(acc.id);
+          this.flush();
+          return bad((e as Error).message, (e as { status?: number }).status ?? 502);
+        }
+      } else {
         this.sup.writeSecret(acc.id, b.secret ?? {});
         this.sup.start(acc.id);
       }
@@ -1064,7 +1102,8 @@ export class HubServer {
       if (!acc) return bad('no such account', 404);
       if (method === 'DELETE') {
         await this.sup.stop(acc.id);
-        await this.sup.forget?.(acc.id);
+        // ?purge=1: dither-accounts deletes the session's directory too, if it made it.
+        await this.sup.forget?.(acc.id, url.searchParams.get('purge') === '1');
         s.deleteAccount(acc.id);
         this.flush();
         return ok();
@@ -1076,6 +1115,7 @@ export class HubServer {
           ...(b.color !== undefined ? { color: b.color } : {}),
           ...(b.enabled !== undefined ? { enabled: b.enabled ? 1 : 0 } : {}),
         });
+        if (b.label !== undefined) await this.sup.renamed?.(acc.id, b.label);
         if (b.enabled === false) {
           await this.sup.stop(acc.id);
           s.updateAccount(acc.id, { status: 'disabled' });
@@ -1093,11 +1133,9 @@ export class HubServer {
       return ok({ ok: true, result: r });
     }
     if ((m = path.match(/^\/api\/accounts\/([\w-]+)\/log$/))) {
-      const p = join(this.sup.accountDir(m[1]), 'adapter.log');
-      // The tail only: the file is rotated at 10 MB (housekeeping.ts) and need not be read whole.
-      const f = Bun.file(p);
-      const text = existsSync(p) ? await f.slice(Math.max(0, f.size - 24_000)).text() : '';
-      return new Response(text.slice(-20_000), { headers: { 'content-type': 'text/plain; charset=utf-8' } });
+      // Local accounts' logs are here; remote ones' are wherever dither-accounts keeps the account.
+      const text = (await this.sup.log?.(m[1]).catch((e: Error) => `(the log is not available: ${e.message})`)) ?? '';
+      return new Response(text, { headers: { 'content-type': 'text/plain; charset=utf-8' } });
     }
     return bad('not found', 404);
   }

@@ -10,8 +10,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { RoutedSupervisor } from '../src/remote.ts';
+import { HubServer } from '../src/server.ts';
 import { Store } from '../src/store.ts';
 import { Supervisor, type InprocAdapter } from '../src/supervisor.ts';
+import { Triage } from '../src/triage.ts';
 
 const ACCOUNTS = process.env.DITHER_ACCOUNTS_REPO ?? resolve(import.meta.dir, '../../../../dither-accounts');
 const have = existsSync(join(ACCOUNTS, 'packages/manager/src/index.ts'));
@@ -188,6 +190,105 @@ describe('remote accounts through dither-accounts', () => {
     } finally {
       sleeper.kill();
       await local.stop(id);
+    }
+  });
+
+  test('an account the manager made: its log, renames both ways, its live view through the manager', async () => {
+    const id = 'acc_madeThere001';
+    const atVnc: string[] = [];
+    const vnc = Bun.listen({ hostname: '127.0.0.1', port: 0, socket: { open: (s) => void s.write('RFB 003.008\n'), data: (_s, d) => void atVnc.push(Buffer.from(d).toString()) } });
+    const port = 19460 + Math.floor(Math.random() * 1000);
+    const hub = new HubServer(store, sup, new Triage(store), { port, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    hub.start();
+    try {
+      store.createAccount({ id, network: 'matrix', label: 'made there', color: '#B794F6', adapter: 'chat-fake' });
+      const app = JSON.parse(readFileSync(join(dir, 'accounts-app.json'), 'utf8')).app;
+      await m.router.admin(app, { do: 'create', id, kind: 'chat-fake', label: 'made there', config: { vncPort: vnc.port } });
+      await until(() => sup.isRemote(id) && sup.online(id) && !!sup.liveViewUrl(id), 10_000, 'remote, online, with a live view');
+      // Its view says the manager runs it and that this hub made it; the imported one says so too.
+      store.accountManaged = (x) => sup.managed(x);
+      expect(store.accountView(store.account(id)!).managedBy).toEqual({ url: null, origin: 'self' });
+      expect(store.accountView(store.account(REMOTE)!).managedBy).toEqual({ url: null, origin: 'import' });
+      expect(store.accountView(store.account(LOCAL)!).managedBy).toBeUndefined();
+      // Nothing of it is in the hub's data: its log comes from the manager.
+      expect(existsSync(join(dir, 'accounts', id))).toBe(false);
+      expect(await (await fetch(`http://127.0.0.1:${port}/api/accounts/${id}/log`)).text()).toContain('dither-accounts starting chat-fake extractor');
+      // Renamed in the hub: the manager follows. Renamed on the manager's page: the hub follows.
+      await fetch(`http://127.0.0.1:${port}/api/accounts/${id}`, { method: 'PATCH', body: JSON.stringify({ label: 'renamed in the hub' }) });
+      await until(() => m.store.account(id)?.label === 'renamed in the hub', 3000, 'the rename there');
+      await fetch(`${m.url}/api/accounts/${id}`, { method: 'PATCH', body: JSON.stringify({ label: 'renamed on the page' }) });
+      await until(() => store.account(id)?.label === 'renamed on the page', 3000, 'the rename back');
+      // The page's live view socket on the hub, carried through the manager's socket to the VNC port.
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/api/liveview/${id}`, ['binary']);
+      ws.binaryType = 'arraybuffer';
+      const first = await new Promise<string>((res, rej) => {
+        ws.onmessage = (e) => res(Buffer.from(e.data as ArrayBuffer).toString());
+        ws.onerror = () => rej(new Error('the live view failed'));
+      });
+      expect(first).toBe('RFB 003.008\n');
+      ws.send(new TextEncoder().encode('RFB 003.008\n'));
+      await until(() => atVnc.join('').includes('RFB 003.008'), 3000, 'the reply at the VNC port');
+      ws.close();
+    } finally {
+      hub.stop();
+      vnc.stop(true);
+    }
+  });
+
+  test('removed from the manager with no session here: not started here, it says so', async () => {
+    const id = 'acc_madeThere001';
+    await m.router.remove(m.store.account(id), true);
+    await until(() => !sup.isRemote(id), 3000, 'gone from the list');
+    await Bun.sleep(200);
+    expect(sup.online(id)).toBe(false);
+    expect(store.account(id)!.status).toBe('error');
+    expect(JSON.parse(store.account(id)!.attention!).message).toMatch(/^Removed from dither-accounts/);
+    // A hub restart does not start it either.
+    await sup.stopAll();
+    sup = new RoutedSupervisor(store, supOpts(), { url: m.url, dataDir: dir, repoRoot: REPO, firstListMs: 5000 });
+    await sup.connect();
+    sup.startAll();
+    await Bun.sleep(500);
+    expect(sup.online(id)).toBe(false);
+    store.deleteAccount(id);
+  });
+
+  test('a new chat account while the manager is unreachable is refused, not run here', async () => {
+    // Another hub process on the same data, whose manager never answers: it knows the accounts the manager ran.
+    const down = new RoutedSupervisor(store, supOpts(), { url: 'http://127.0.0.1:1', dataDir: dir, repoRoot: REPO, publicUrl: 'https://accounts.example/' });
+    expect(down.managed(REMOTE)).toEqual({ url: `https://accounts.example/#/accounts/${REMOTE}`, origin: null });
+    const port = 19460 + Math.floor(Math.random() * 1000);
+    const hub = new HubServer(store, down, new Triage(store), { port, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    hub.start();
+    try {
+      const before = store.accounts().length;
+      const r = await fetch(`http://127.0.0.1:${port}/api/accounts`, { method: 'POST', body: JSON.stringify({ network: 'discord', label: 'refused' }) });
+      expect(r.status).toBe(503);
+      expect((await r.json()).error).toMatch(/^dither-accounts is not reachable/);
+      expect(store.accounts().length).toBe(before);
+      expect(store.accounts().some((a) => a.label === 'refused')).toBe(false);
+    } finally {
+      hub.stop();
+    }
+  });
+
+  test("why the manager cannot run an account shows in the hub", async () => {
+    const id = 'acc_lockedThere1';
+    const d = join(dir, 'manager', 'accounts', id);
+    mkdirSync(d, { recursive: true });
+    const sleeper = Bun.spawn(['sleep', '30']);
+    writeFileSync(join(d, 'extractor.lock'), JSON.stringify({ pid: sleeper.pid, owner: 'someone', at: new Date().toISOString() }));
+    store.createAccount({ id, network: 'matrix', label: 'locked there', color: '#FF8C61', adapter: 'chat-fake' });
+    const app = JSON.parse(readFileSync(join(dir, 'accounts-app.json'), 'utf8')).app;
+    try {
+      await m.router.admin(app, { do: 'create', id, kind: 'chat-fake', label: 'locked there' });
+      await until(() => !!store.account(id)?.attention, 5000, 'the attention');
+      expect(store.account(id)!.status).toBe('error');
+      expect(JSON.parse(store.account(id)!.attention!).message).toBe(`Not running in dither-accounts: someone (pid ${sleeper.pid}) runs this account`);
+    } finally {
+      sleeper.kill();
+      await m.router.remove(m.store.account(id), true);
+      store.deleteAccount(id);
     }
   });
 });

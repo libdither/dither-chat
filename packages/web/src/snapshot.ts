@@ -102,6 +102,7 @@ export function currentBootstrap(): P.Bootstrap {
     categories: db.categories,
     placeCategories: [...db.placeCategories.values()].flat(),
     categoryProvider: db.categoryProvider,
+    ...(db.accountsManager ? { accountsManager: db.accountsManager } : {}),
     rules: db.rules,
     devices: db.devices,
     reactionUsage: db.reactionUsage,

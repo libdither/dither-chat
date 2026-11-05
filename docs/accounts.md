@@ -72,6 +72,33 @@ Check it:
 
 The adapter log stays where it was: the account's `adapter.log`, which the manager now writes.
 
+## Accounts the manager holds
+
+The page works the same for an account whatever runs it; for one the manager runs:
+
+- **Log and live view.** "Adapter log" asks the manager (`admin log`), and the live view goes through the manager's
+  socket for the account (`/consumer/liveview/<id>`, on the hub's token), so both work for an account whose session
+  is not in the hub's data.
+- **Names and disabling follow both ways.** A rename here tells the manager; a rename or a disable on its page shows
+  here. The last rename wins.
+- **Not running there.** While the manager reports why it is not running an account, the account here is `error`
+  with an attention that starts "Not running in dither-accounts:". It clears when the manager's error does.
+- **Leaving the manager's list** (forgotten there, or the hub lost its grant). The hub runs it itself only if its
+  session is in the hub's data: its directory holds more than `adapter.log` and `extractor.lock`, as an imported
+  account's does. Any other account gets status `error`, "Removed from dither-accounts…". Accounts the manager ran
+  before are held to the same rule at startup.
+- **Removing it here** keeps its session in dither-accounts unless "Also delete its session" is ticked
+  (`DELETE /api/accounts/<id>?purge=1`). The box shows only when the manager holds the session (`managedBy.origin`
+  is not `import`), and the manager deletes only directories it made. Deleting a Signal or WhatsApp session does not
+  unlink the device on the phone.
+- **New accounts while the manager is unreachable** are refused (503, "dither-accounts is not reachable…") rather
+  than run here: the manager is where accounts live.
+- **Accounts another app or the manager's page added** show here too, under their network, in the first free colour.
+
+Views say who runs an account: `managedBy` (`{ url, origin }`) on an account the manager lists, and `accountsManager`
+in the bootstrap and sync answers. With `DITHER_ACCOUNTS_PUBLIC_URL` set (the manager's page as your browser reaches
+it), the page links to the account there and to the manager from the account list and the add dialog.
+
 ## Rollback
 
 - **One account:** `cli.ts forget <id>`. The manager stops the account and drops it, keeping its directory, and the
@@ -99,8 +126,6 @@ it is. Bump the number when an event or command changes in a way the other side 
 
 ## Not done
 
-- **New accounts' logs.** An account added while this mode is on lives in the manager's data dir, so the hub's
-  "adapter log" view does not show its log.
 - **Calls, the Discord live view, Signal and WhatsApp linking** go through the same events and commands. They are
   verified only with the Matrix testbed (`scripts/verify-accounts-matrix.ts`) and the fake chat extractor
   (`test/remote.test.ts`), never on a live account.

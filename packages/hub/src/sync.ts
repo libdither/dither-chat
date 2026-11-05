@@ -42,6 +42,7 @@ export function syncResponse(ctx: SyncContext, req: P.SyncRequest, now = Date.no
     out.events = changedSince(ctx, j.since(req.since));
     out.selfPersonId = (store.one<Row>('SELECT id FROM person WHERE is_self = 1')?.id as string | undefined) ?? null;
     out.categoryProvider = store.categoryProvider;
+    out.accountsManager = store.accountsManager;
     // Your most used reactions change only with reactions, which change messages.
     if (store.one('SELECT 1 FROM sync_change WHERE kind = ? AND seq > ? LIMIT 1', 'message', req.since)) out.reactionUsage = store.reactionUsage();
     const inboxRows = store.raw(

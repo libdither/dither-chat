@@ -203,7 +203,12 @@ const supOpts = {
 };
 // dither-accounts (docs/accounts.md): the accounts its manager runs come through it; the rest run here as always.
 const accountsUrl = process.env.DITHER_ACCOUNTS_URL;
-const sup = accountsUrl && !demo ? new RoutedSupervisor(store, supOpts, { url: accountsUrl, dataDir, repoRoot }) : new Supervisor(store, supOpts);
+const accountsPage = process.env.DITHER_ACCOUNTS_PUBLIC_URL || null;
+const sup = accountsUrl && !demo ? new RoutedSupervisor(store, supOpts, { url: accountsUrl, dataDir, repoRoot, publicUrl: accountsPage }) : new Supervisor(store, supOpts);
+if (sup instanceof RoutedSupervisor) {
+  store.accountsManager = { url: accountsPage };
+  store.accountManaged = (id) => sup.managed(id);
+}
 
 const readQueue = new ReadQueue(store, sup);
 readQueue.start();
