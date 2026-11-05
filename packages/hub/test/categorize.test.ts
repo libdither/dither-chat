@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Categorizer, isPrivateUrl, KeywordProvider, OllamaProvider, type CategoryInput, type CategoryProvider } from '../src/categorize.ts';
+import { Categorizer, describePlace, isPrivateUrl, JevProvider, KeywordProvider, OllamaProvider, type CategoryInput, type CategoryProvider } from '../src/categorize.ts';
+import { categoryThreshold } from '@dither-chat/protocol';
 import { Store, type AccountRow } from '../src/store.ts';
 
 let dir: string;
@@ -104,6 +105,79 @@ describe('categorizer', () => {
     await new Categorizer(store, broken).refresh(true);
     expect(hub('space', spaceId())[0].provider).toBe('keyword');
   });
+});
+
+/** A stand-in for jev: P(yes) is 0.6 when the question's last word appears in the text. */
+function fakeJev(seen: { origin: string | null; bodies: any[] }) {
+  return Bun.serve({
+    port: 0,
+    hostname: '127.0.0.1',
+    async fetch(req) {
+      seen.origin = req.headers.get('origin');
+      const b = (await req.json()) as { question: string; texts: string[]; instruct?: string };
+      seen.bodies.push(b);
+      const word = b.question.replace(/\?$/, '').split(' ').pop()!.toLowerCase();
+      return Response.json({ p: b.texts.map((t) => (t.toLowerCase().includes(word) ? 0.6 : 0.01)) });
+    },
+  });
+}
+
+describe('jev provider', () => {
+  test('one batched call per question, with names, topics and channels only', async () => {
+    const seen = { origin: null as string | null, bodies: [] as any[] };
+    const srv = fakeJev(seen);
+    const jev = new JevProvider(`http://127.0.0.1:${srv.port}`);
+    const inputs: CategoryInput[] = [
+      { kind: 'space', id: 'a', network: 'discord', name: 'Rusty', topic: 'borrowck', channels: ['async'] },
+      { kind: 'conversation', id: 'b', network: 'signal', name: 'Climbing crew', topic: null, channels: [] },
+    ];
+    const r = await jev.scoreMany(inputs, [{ id: 'p', name: 'P', question: 'Is it about rusty', keywords: [] }, { id: 'c', name: 'C', question: 'Is it about climbing', keywords: [] }]);
+    srv.stop(true);
+    expect(seen.bodies.length).toBe(2);
+    expect(seen.bodies[0].texts).toEqual(inputs.map(describePlace));
+    expect(seen.origin).toBeNull();
+    expect(r).toEqual([{ p: 0.6, c: 0.01 }, { p: 0.01, c: 0.6 }]);
+    expect(describePlace(inputs[0])).toBe('discord server: Rusty\nTopic: borrowck\nChannels: async');
+  });
+
+  test('the categorizer scores in batches, and a probe asks every place once without saving', async () => {
+    const seen = { origin: null as string | null, bodies: [] as any[] };
+    const srv = fakeJev(seen);
+    const c = new Categorizer(store, new JevProvider(`http://127.0.0.1:${srv.port}`));
+    await c.refresh(true);
+    expect(seen.bodies.length).toBe(store.categories().length);
+    expect(hub('space', spaceId())[0].provider).toBe('jev');
+    const before = JSON.stringify(store.placeCategories());
+    const probe = await c.probe('Is this community about family?');
+    srv.stop(true);
+    expect(probe.provider).toBe('jev');
+    expect(probe.scores.find((x) => x.kind === 'conversation')!.p).toBe(0.6);
+    expect(probe.scores.find((x) => x.kind === 'space')!.p).toBe(0.01);
+    expect(JSON.stringify(store.placeCategories())).toBe(before);
+  });
+
+  test('a probe with jev down falls back to keywords', async () => {
+    const c = new Categorizer(store, new JevProvider('http://127.0.0.1:1'));
+    const probe = await c.probe('Is this community about rust?');
+    expect(probe.provider).toBe('keyword');
+    expect(probe.scores.find((x) => x.kind === 'space')!.p).toBeGreaterThan(0.5);
+  });
+
+  test('refuses a public address', () => {
+    expect(() => new JevProvider('https://jev.example.com')).toThrow('refusing');
+  });
+});
+
+test('thresholds: saved per category, defaulting by provider', () => {
+  const id = store.putCategory({ name: 'Chess', question: 'Chess?', keywords: [], color: null, threshold: 0.07 });
+  expect(store.categories().find((c) => c.id === id)!.threshold).toBe(0.07);
+  store.putCategory({ ...store.categories().find((c) => c.id === id)!, threshold: null });
+  const c = store.categories().find((c) => c.id === id)!;
+  expect(c.threshold).toBeNull();
+  expect(categoryThreshold(c, 'jev')).toBe(0.12);
+  expect(categoryThreshold(c, 'keyword')).toBe(0.5);
+  expect(categoryThreshold({ threshold: 0.3 }, 'jev')).toBe(0.3);
+  store.deleteCategory(id);
 });
 
 describe('ollama provider', () => {

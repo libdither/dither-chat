@@ -194,16 +194,42 @@ export function levelIcon(l: P.NotifyLevel): string {
   return { all: 'bell', smart: 'sparkles', mentions: 'at', digest: 'layers', none: 'bellOff' }[l];
 }
 
-/** Grey shapes where content is about to land, so the layout does not jump when it does. */
+/**
+ * Grey shapes where content is about to land, so the layout does not jump when it does. They wait a moment before
+ * showing (CSS), so a load that is quick shows nothing at all, and one wave of light crosses all of them together.
+ * Messages come as Discord draws them: groups of a name and one to three lines, now and then a picture.
+ */
 export function Skeleton({ rows = 5, kind = 'row' }: { rows?: number; kind?: 'row' | 'msg' }) {
+  // Fixed, varied shapes: the same every time, so a skeleton that reappears does not reshuffle.
+  const w = (i: number, k: number) => 22 + ((i * 37 + k * 53) % 61);
+  if (kind === 'msg')
+    return (
+      <div class="skeleton msg" role="status" aria-label="Loading messages">
+        {Array.from({ length: rows }, (_, i) => (
+          <div class="sk-item">
+            <span class="sk-avatar" />
+            <span class="sk-lines">
+              <span class="sk-head">
+                <span class="sk-line sk-name" style={{ width: `${70 + ((i * 41) % 70)}px` }} />
+                <span class="sk-line sk-time" />
+              </span>
+              {Array.from({ length: 1 + ((i * 7) % 3) }, (_, k) => (
+                <span class="sk-line" style={{ width: `${w(i, k) + 15}%` }} />
+              ))}
+              {i % 4 === 2 && <span class="sk-media" />}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
   return (
-    <div class={`skeleton ${kind}`} role="status" aria-label="Loading">
+    <div class="skeleton row" role="status" aria-label="Loading">
       {Array.from({ length: rows }, (_, i) => (
         <div class="sk-item">
           <span class="sk-avatar" />
           <span class="sk-lines">
-            <span class="sk-line" style={{ width: `${28 + ((i * 37) % 30)}%` }} />
-            <span class="sk-line" style={{ width: `${45 + ((i * 23) % 50)}%` }} />
+            <span class="sk-line sk-name" style={{ width: `${w(i, 0)}%` }} />
+            <span class="sk-line" style={{ width: `${w(i, 1) + 20}%` }} />
           </span>
         </div>
       ))}

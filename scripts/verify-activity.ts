@@ -60,7 +60,7 @@ try {
   await Bun.sleep(1500);
 
   // ---------------------------------------------------------------- the rail, then back
-  await click('.rail .rail-btn[title^="Notification rules"]');
+  await click('.rail .rail-btn[data-tip="Settings"]');
   await page.until(`location.hash === '#/settings'`, 5000);
   await Bun.sleep(4000);
   await page.eval(`history.back()`);

@@ -44,6 +44,8 @@ export interface ServerOpts {
   readQueue?: ReadQueue;
   /** Rescore categories after they change. */
   onCategoriesChanged?: (force?: boolean) => void;
+  /** Every place's P(yes) for one question, not saved (categorize.ts probe). */
+  probeCategory?: (question: string) => Promise<P.CategoryProbe>;
   onDemoReset?: () => Promise<void>;
   /** TURN relay for direct-mode calls, so their media leaves from this machine. */
   turn?: TurnConfig;
@@ -59,6 +61,8 @@ export interface ServerOpts {
 
 // ------------------------------------------------------------------ access
 
+/** A category's threshold from a request: a probability, or null for the provider's default. */
+const threshold = (t: unknown): number | null => (typeof t === 'number' && t > 0 && t <= 1 ? t : null);
 const v4 = (ip: string) => ip.replace(/^::ffff:/, '');
 export function isLoopback(ip: string) {
   return ip === '::1' || v4(ip).startsWith('127.');
@@ -818,9 +822,16 @@ export class HubServer {
     if (path === '/api/categories' && method === 'POST') {
       const b = await body<Partial<P.CategoryView>>();
       if (!b.name?.trim()) return bad('a category needs a name');
-      const id = s.putCategory({ name: b.name.trim(), question: b.question?.trim() || `Is this community about ${b.name.trim()}?`, keywords: b.keywords ?? [], color: b.color ?? null });
+      const id = s.putCategory({ name: b.name.trim(), question: b.question?.trim() || `Is this community about ${b.name.trim()}?`, keywords: b.keywords ?? [], color: b.color ?? null, threshold: threshold(b.threshold) });
       this.opts.onCategoriesChanged?.();
       return ok({ id });
+    }
+    if (path === '/api/categories/probe' && method === 'POST') {
+      const b = await body<{ question?: string }>();
+      const question = b.question?.trim().slice(0, 300);
+      if (!question) return bad('what should it ask?');
+      if (!this.opts.probeCategory) return bad('no categorizer on this hub', 503);
+      return ok(await this.opts.probeCategory(question));
     }
     if (path === '/api/categories/rescore' && method === 'POST') {
       this.opts.onCategoriesChanged?.(true);
@@ -841,7 +852,7 @@ export class HubServer {
       }
       if (method === 'PATCH') {
         const b = await body<Partial<P.CategoryView>>();
-        s.putCategory({ ...cur, ...b, id: cur.id });
+        s.putCategory({ ...cur, ...b, id: cur.id, threshold: 'threshold' in b ? threshold(b.threshold) : cur.threshold });
         this.opts.onCategoriesChanged?.();
         return ok();
       }

@@ -140,6 +140,30 @@ section at the end, each with its network, folder, categories, and usage ("1 h 2
   name exists ("Add to …"). *Create* makes the folder in the category's colour; *Edit* selects its places
   and opens the name field so you can change both; *×* dismisses it. A dismissal remembers the places it
   suggested and is shared by your devices; a new place in that category brings the suggestion back.
+  Each card has a **sensitivity** slider: toward *More* it takes in places the model is less sure of, toward
+  *Fewer* only the surest. It moves the category's threshold (below), saved when you let go; the card list keeps
+  its order while you drag.
+- **By meaning** (the button in the filter): what you type is asked of every server and group as a question
+  ("rust and systems" becomes "Is this community about rust and systems?"; a question you type ending in `?` is
+  asked as it is), after a pause or on Enter. The list shows what matches, surest first, with how sure the model
+  is; a sensitivity slider decides how sure it must be. *Select all* selects the matches for a move, *Save as
+  category* keeps the question as a category with that threshold, so its folder is suggested and new servers are
+  scored for it too. Nothing is saved by asking (`POST /api/categories/probe`).
+
+## Categories and the model
+
+The categorizer (`packages/hub/src/categorize.ts`) asks each category's question of every community and named group,
+from its name, topic and up to 25 channel names, never its messages. On the live hub the answers come from **jev**, the
+machine's local reranker (`~/Projects/jev`, Qwen3-Reranker-4B, 127.0.0.1:7862): one batched call per question, about
+0.1 s a place the first time, cached by jev after that. `DITHER_CATEGORY_MODEL` picks another: `keyword` (words
+only, the demo hub's default, so its world is the same each run) or an Ollama model name; `DITHER_JEV_URL` moves jev.
+When the model fails, those places are scored by keywords and asked again on the next run (every 5 minutes).
+
+jev's P(yes) is uncalibrated and low: a Rust server scores about 0.5 for "programming", a near miss 0.02. So a place
+belongs to a category when its score is at least the category's **threshold**: yours if you moved its slider (in the
+Organize view or in Directory → Edit categories, where each category shows how many places match), else 12% for jev
+and 50% for keywords (`categoryThreshold` in the protocol). The slider is logarithmic, from 100% down to 0.1%. Your
+Yes/No on a place still beats any score.
 
 ## API
 
@@ -149,6 +173,8 @@ section at the end, each with its network, folder, categories, and usage ("1 h 2
 | `POST /api/usage` | `{ batch, deltas: [{ kind, id, seconds, visits, at, lastVisit }] }` → `{ applied }` |
 | `DELETE /api/usage` | everything, or `{ kind, id }` |
 | `PATCH /api/arrange` | `{ sort?: { rail?, people? }, dismissed?: { [categoryId]: string[] \| null } }` |
+| `POST /api/categories/probe` | `{ question }` → `{ provider, question, scores: [{ kind, id, p }] }`, nothing saved |
+| `PATCH /api/categories/:id` | `{ threshold }` among the rest; `null` goes back to the provider's default |
 
 Tables `place_usage`, `usage_batch`, `arrange_setting` are created by `schema.sql` like every other
 table, so an existing hub gets them on start with nothing to migrate.

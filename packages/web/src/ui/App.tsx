@@ -9,6 +9,7 @@ import { DirectoryPane } from './Directory.tsx';
 import { DragLayer } from './dnd.tsx';
 import { Icon } from './icons.tsx';
 import { ContextMenuLayer } from './ContextMenu.tsx';
+import { TooltipLayer } from './Tooltip.tsx';
 import { ForwardLayer } from './Forward.tsx';
 import { InboxBoard } from './Inbox.tsx';
 import { NewMessage } from './NewMessage.tsx';
@@ -27,7 +28,7 @@ import { Toasts } from './Toasts.tsx';
 import { CallDock } from './Call.tsx';
 import { Viewer } from './Viewer.tsx';
 import { PEEK, panel, usePager, type Rest } from './Pager.ts';
-import { Skeleton } from './bits.tsx';
+import { Boot } from './Loader.tsx';
 import { applyUpdate, updateReady } from '../pwa.ts';
 
 /** What the center pane shows, and whether a details pane is available. */
@@ -300,15 +301,7 @@ export function App() {
 
   if (!loaded.value)
     return (
-      <div class="loading-screen">
-        <div class="loading-skeleton" aria-hidden="true">
-          <Skeleton rows={9} />
-        </div>
-        <div class="loading-note">
-          <div class="spinner" />
-          <span>{connected.value ? 'Loading your conversations…' : 'Connecting to the hub…'}</span>
-        </div>
-      </div>
+      <Boot connected={connected.value} />
     );
 
   const full = r.view === 'directory';
@@ -368,6 +361,7 @@ export function App() {
       <Toasts />
       <DragLayer />
       <ContextMenuLayer />
+      <TooltipLayer />
       <ForwardLayer />
       <Switcher />
       <FindShortcut />

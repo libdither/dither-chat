@@ -155,6 +155,21 @@ plus a permanent notification. I did not measure battery here, so take that rang
 distributor pays this once for every app on the phone. With a Google-flavoured distributor (ntfy from Play with
 ntfy.sh, or an FCM-backed one), the phone already pays it for Google Play services, so it costs nothing extra.
 
+## What a start looks like
+
+One sphere from tap to content (`ui/Loader.tsx`): the logo's dithered sphere, lit from a light that goes round it,
+redrawn through the same 4×4 Bayer matrix at about 12 frames a second.
+
+- **Android 12+ splash**: `res/drawable/splash_orb.xml`, an animated vector of the loader's first frame whose cells
+  fade in by Bayer level (600 ms), 88 dp and centred. It is generated from the loader: `bun scripts/splash-orb.ts`
+  after changing `frame` there. `MainActivity.holdSplash` keeps it up until the WebView reports its first visible
+  frame (`onPageCommitVisible`), 1.5 s at most, and removes it without an exit animation.
+- **The page before its script**: `index.html` draws the same first frame, still, in the same place.
+- **The app**: the boot screen takes over from that frame and turns the sphere, with "Connecting to your hub…" or
+  "Loading your conversations…" under it, and a hint after 8 s.
+- **Switching views**: messages and lists show grey shapes as Discord does (a name, one to three lines, now and then
+  a picture), with one shimmer crossing all of them; they wait 180 ms, so a quick load shows nothing.
+
 ## Starting fast
 
 These live in the web app, so the PWA gets them too.

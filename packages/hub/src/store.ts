@@ -133,6 +133,7 @@ export class Store {
     const broadcastsUnknown = this.addMentionsAll();
     this.addColumns('message', { gone_how: 'TEXT', gone_at: 'INTEGER' });
     this.addColumns('identity', { status: 'TEXT' });
+    this.addColumns('category', { threshold: 'REAL' });
     const oldTriage = this.setAsideTriage();
     const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
     this.db.exec(schema);
@@ -951,7 +952,7 @@ export class Store {
   categoryProvider = 'keyword';
 
   categories(): P.CategoryView[] {
-    return (this.db.query('SELECT * FROM category ORDER BY position, name').all() as Row[]).map((c) => ({ id: c.id, name: c.name, question: c.question, keywords: json(c.keywords, []), color: c.color }));
+    return (this.db.query('SELECT * FROM category ORDER BY position, name').all() as Row[]).map((c) => ({ id: c.id, name: c.name, question: c.question, keywords: json(c.keywords, []), color: c.color, threshold: c.threshold ?? null }));
   }
 
   placeCategories(): P.PlaceCategoryView[] {
@@ -972,10 +973,10 @@ export class Store {
     const pos = position ?? (this.db.query('SELECT COALESCE(MAX(position), 0) + 1 AS p FROM category').get() as Row).p;
     this.db
       .query(
-        `INSERT INTO category (id, name, question, keywords, color, position) VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT (id) DO UPDATE SET name = excluded.name, question = excluded.question, keywords = excluded.keywords, color = excluded.color`,
+        `INSERT INTO category (id, name, question, keywords, color, position, threshold) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET name = excluded.name, question = excluded.question, keywords = excluded.keywords, color = excluded.color, threshold = excluded.threshold`,
       )
-      .run(id, c.name, c.question, JSON.stringify(c.keywords ?? []), c.color ?? null, pos);
+      .run(id, c.name, c.question, JSON.stringify(c.keywords ?? []), c.color ?? null, pos, c.threshold ?? null);
     this.categoriesChanged();
     return id;
   }

@@ -3,17 +3,18 @@
  * automatic order into your own, and rearrange many servers at once, with folders the categories suggest.
  */
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META, type SortMode, type SortScope } from '@dither-chat/protocol';
-import { useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { categoryThreshold, NETWORK_META, type SortMode, type SortScope } from '@dither-chat/protocol';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { arrange, arrangedFolderItems, arrangedRail, freezeOrder, organizing, patchDismissed, resort, setInteracting, setSort, snapshot, SORT_LABELS, sortOf, startArrange } from '../arrange.ts';
 import { ago } from '../format.ts';
 import { categoriesOf, convTitle, kindLabel, netName, placePref, railEntries, type RailEntry } from '../model.ts';
-import { db, patchPlaces, rev, saveFolders, toast } from '../state.ts';
+import { api, db, patchPlaces, rev, saveFolders, toast } from '../state.ts';
 import { resetUsage, usageSummary } from '../usage.ts';
 import { Avatar, Modal } from './bits.tsx';
 import { contextMenu, openMenu, type MenuEntry } from './ContextMenu.tsx';
 import { drag } from './dnd.tsx';
 import { Icon } from './icons.tsx';
+import { pct, Sensitivity } from './Sensitivity.tsx';
 
 // ------------------------------------------------------------------ when the order may change
 
@@ -196,14 +197,17 @@ export interface Suggestion {
   folder: P.FolderView | null;
 }
 
-/** For each category, the places in the rail (not already in a folder) that belong to it, unless dismissed. */
-export function suggestions(): Suggestion[] {
+/**
+ * For each category, the places in the rail (not already in a folder) that belong to it, unless dismissed. `at` holds
+ * thresholds being dragged: those categories stay listed however few they match, so the card does not vanish mid-drag.
+ */
+export function suggestions(at: Record<string, number> = {}): Suggestion[] {
   const loose = railEntries().filter((e) => e.kind !== 'folder' && !placePref(e.kind, split(e.key).id).pinned);
   const out: Suggestion[] = [];
   for (const c of db.categories) {
-    const keys = loose.filter((e) => categoriesOf(e.kind as 'space' | 'conversation', split(e.key).id).some((x) => x.id === c.id)).map((e) => e.key);
+    const keys = loose.filter((e) => categoriesOf(e.kind as 'space' | 'conversation', split(e.key).id, at).some((x) => x.id === c.id)).map((e) => e.key);
     const folder = db.folders.find((f) => f.name.trim().toLowerCase() === c.name.trim().toLowerCase()) ?? null;
-    if (keys.length < (folder ? 1 : 2)) continue;
+    if (!(c.id in at) && keys.length < (folder ? 1 : 2)) continue;
     const dismissed = arrange.value.dismissed[c.id];
     if (dismissed && keys.every((k) => dismissed.includes(k))) continue;
     out.push({ category: c, keys, folder });
@@ -280,6 +284,16 @@ function usageLine(key: string): string {
 
 const rowId = (r: Row) => `${r.key}|${r.folder ?? ''}`;
 
+/** What the filter asks the model when matching by meaning: a question as typed, else "about …". */
+export const probeQuestion = (text: string) => (/\?\s*$/.test(text) ? text.trim() : `Is this community about ${text.trim()}?`);
+
+/** A category's threshold now: what its slider says, else what the hub has. */
+export const thresholdOf = (c: P.CategoryView, at: Record<string, number> = {}) => at[c.id] ?? categoryThreshold(c, db.categoryProvider);
+
+export function saveThreshold(c: P.CategoryView, threshold: number | null) {
+  return api(`/api/categories/${c.id}`, { method: 'PATCH', body: { threshold } }).catch((e) => toast({ kind: 'error', title: 'Could not save', body: e.message }));
+}
+
 export function OrganizeView() {
   rev.value;
   snapshot.value;
@@ -294,14 +308,60 @@ function Organize({ onClose }: { onClose: () => void }) {
   const [anchor, setAnchor] = useState<number | null>(null);
   const [q, setQ] = useState('');
   const [draft, setDraft] = useState<{ name: string; suggestion?: Suggestion } | null>(null);
+  /** Matching by meaning: the reranker's answer to the filter as a question, and how sure it must be. */
+  const [meaning, setMeaning] = useState(false);
+  const [probe, setProbe] = useState<{ question: string; p: Map<string, number>; provider: string } | null>(null);
+  const [probing, setProbing] = useState<string | null>(null);
+  const [cut, setCut] = useState(0.12);
+  /** Category thresholds being dragged, by id. */
+  const [at, setAt] = useState<Record<string, number>>({});
   const list = useRef<HTMLDivElement>(null);
   const filter = useRef<HTMLInputElement>(null);
   const draftInput = useRef<HTMLInputElement>(null);
 
   const needle = q.trim().toLowerCase();
   const every = allRows();
-  const rows = every.filter((r) => !needle || r.name.toLowerCase().includes(needle) || r.sub.toLowerCase().includes(needle));
-  const sugg = useMemo(suggestions, [rev.value, arrange.value]);
+  const asked = meaning && probe && probe.question === probeQuestion(q) && !!needle;
+  const scoreOf = (r: Row) => (asked ? probe!.p.get(r.key) : undefined);
+  const scored = asked ? every.filter((r) => scoreOf(r) !== undefined) : [];
+  const rows = asked
+    ? scored.filter((r) => scoreOf(r)! >= cut).sort((a, b) => scoreOf(b)! - scoreOf(a)!)
+    : meaning && needle
+      ? []
+      : every.filter((r) => !needle || r.name.toLowerCase().includes(needle) || r.sub.toLowerCase().includes(needle));
+  // Biggest first, as they were when the view opened: a card does not move away while its slider is dragged.
+  const order = useRef<string[]>([]);
+  const sugg = useMemo(() => {
+    const xs = suggestions(at);
+    for (const x of xs) if (!order.current.includes(x.category.id)) order.current.push(x.category.id);
+    return xs.sort((a, b) => order.current.indexOf(a.category.id) - order.current.indexOf(b.category.id));
+  }, [rev.value, arrange.value, at]);
+
+  const ask = async (text = q) => {
+    if (!text.trim()) return;
+    const question = probeQuestion(text);
+    setProbing(question);
+    try {
+      const res = await api<P.CategoryProbe>('/api/categories/probe', { body: { question } });
+      setProbe({ question, provider: res.provider, p: new Map(res.scores.map((x) => [`${x.kind}:${x.id}`, x.p])) });
+      setCut(categoryThreshold(undefined, res.provider));
+    } catch (e) {
+      toast({ kind: 'error', title: 'Could not ask the model', body: (e as Error).message });
+    } finally {
+      setProbing((cur) => (cur === question ? null : cur));
+    }
+  };
+  // Typing pauses ask by themselves; Enter asks at once.
+  useEffect(() => {
+    if (!meaning || !q.trim() || probe?.question === probeQuestion(q)) return;
+    const t = setTimeout(() => void ask(), 900);
+    return () => clearTimeout(t);
+  }, [meaning, q]);
+  const saveAsCategory = async () => {
+    const name = q.trim().replace(/\?$/, '');
+    await api('/api/categories', { body: { name: name.charAt(0).toUpperCase() + name.slice(1), question: probeQuestion(q), threshold: cut } });
+    toast({ kind: 'info', title: `Category “${name}”`, body: 'Every place is being scored for it; its folder will be suggested here.' });
+  };
   // Only what is still there counts: a place that moved into a folder is a different row now.
   const selRows = every.filter((r) => sel.has(rowId(r)));
   const keys = [...new Set(selRows.map((r) => r.key))];
@@ -399,7 +459,29 @@ function Organize({ onClose }: { onClose: () => void }) {
         <div class="org-top">
           <div class="search org-search">
             <Icon name="search" size={15} />
-            <input ref={filter} placeholder="Filter (press /)" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} onKeyDown={(e) => e.key === 'ArrowDown' && (e.preventDefault(), focusRow(0))} />
+            <input
+              ref={filter}
+              placeholder={meaning ? 'Describe them: “rust and systems programming”' : 'Filter (press /)'}
+              value={q}
+              onInput={(e) => setQ((e.target as HTMLInputElement).value)}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowDown') (e.preventDefault(), focusRow(0));
+                if (e.key === 'Enter' && meaning) (e.preventDefault(), void ask());
+              }}
+            />
+            {probing && <span class="org-asking" aria-live="polite">Asking…</span>}
+            <button
+              class={`chip-btn org-meaning ${meaning ? 'on' : ''}`}
+              type="button"
+              aria-pressed={meaning}
+              title="Match by meaning: the local model judges every server against what you type"
+              onClick={() => {
+                setMeaning(!meaning);
+                filter.current?.focus();
+              }}
+            >
+              <Icon name="sparkles" size={13} /> By meaning
+            </button>
           </div>
           <div class="level-picker" role="radiogroup" aria-label="Rail order">
             {MODES.rail.map((m) => (
@@ -415,6 +497,25 @@ function Organize({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
+        {meaning && needle && (
+          <div class="org-probe" aria-label="Match by meaning">
+            {asked ? (
+              <>
+                <Sensitivity threshold={cut} onInput={setCut} count={`${rows.length} of ${scored.length} match`} />
+                <button class="btn ghost small" disabled={!rows.length} onClick={() => setSel(new Set(rows.map(rowId)))}>
+                  Select all {rows.length}
+                </button>
+                <button class="btn ghost small" title="Keep this question as a category: its matches are suggested as a folder, and new servers are scored too" onClick={() => void saveAsCategory()}>
+                  <Icon name="layers" size={13} /> Save as category
+                </button>
+                {probe!.provider === 'keyword' && <span class="set-help">The model is not running: matching words only.</span>}
+              </>
+            ) : (
+              <span class="set-help">{probing ? `Asking the model about every server: “${probing}”` : 'Press Enter to ask the model.'}</span>
+            )}
+          </div>
+        )}
+
         {sugg.length > 0 && (
           <section class="org-suggest" aria-label="Suggested folders">
             <h3>Suggested folders</h3>
@@ -425,11 +526,18 @@ function Organize({ onClose }: { onClose: () => void }) {
                     <b>
                       <Icon name="folder" size={13} /> {s.folder ? `Add to “${s.folder.name}”` : s.category.name}
                     </b>
-                    <span>{s.keys.map((k) => placeRow(k)?.name).filter(Boolean).join(', ')}</span>
+                    <span>{s.keys.map((k) => placeRow(k)?.name).filter(Boolean).join(', ') || 'Nothing at this sensitivity'}</span>
                   </div>
+                  <Sensitivity
+                    threshold={thresholdOf(s.category, at)}
+                    count={`${s.keys.length}`}
+                    onInput={(t) => setAt({ ...at, [s.category.id]: t })}
+                    onChange={(t) => void saveThreshold(s.category, t)}
+                  />
                   <div class="org-sugg-actions">
                     <button
                       class="btn primary small"
+                      disabled={!s.keys.length}
                       onClick={() => {
                         acceptSuggestion(s);
                         clear();
@@ -547,12 +655,12 @@ function Organize({ onClose }: { onClose: () => void }) {
                       </span>
                     ))}
                   </span>
-                  <span class="org-usage">{usageLine(r.key)}</span>
+                  <span class="org-usage">{asked ? <span class="org-score">{pct(scoreOf(r)!)}</span> : usageLine(r.key)}</span>
                 </div>
               </>
             );
           })}
-          {!rows.length && <p class="set-help">Nothing matches.</p>}
+          {!rows.length && <p class="set-help">{meaning && needle && !asked ? '' : asked ? 'Nothing at this sensitivity: slide toward More.' : 'Nothing matches.'}</p>}
         </div>
         <p class="org-keys">
           <kbd>↑</kbd>

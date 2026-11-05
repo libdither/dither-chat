@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { Categorizer, KeywordProvider, OllamaProvider, type CategoryProvider } from './categorize.ts';
+import { Categorizer, JevProvider, KeywordProvider, OllamaProvider, type CategoryProvider } from './categorize.ts';
 import { ActivityStore } from './activity.ts';
 import { Attention } from './attention.ts';
 import { applyDemoOverlay, createDemoAccounts, demoFactory } from './demo.ts';
@@ -114,10 +114,15 @@ setInterval(() => {
 
 const push = new PushService(store, loadVapidKeys(dataDir), process.env.DITHER_PUSH_SUBJECT ?? process.env.DITHER_PUBLIC_URL ?? 'https://github.com/libdither/dither-chat');
 
+/**
+ * jev, the machine's reranker, unless DITHER_CATEGORY_MODEL says otherwise ("keyword", or an Ollama model name). A demo
+ * hub keeps to keywords so its world is the same every time.
+ */
 function categoryProvider(): CategoryProvider {
-  const name = process.env.DITHER_CATEGORY_MODEL;
-  if (!name) return new KeywordProvider();
+  const name = process.env.DITHER_CATEGORY_MODEL ?? (demo ? 'keyword' : 'jev');
+  if (name === 'keyword') return new KeywordProvider();
   try {
+    if (name === 'jev') return new JevProvider(process.env.DITHER_JEV_URL ?? 'http://127.0.0.1:7862');
     return new OllamaProvider(process.env.DITHER_OLLAMA_URL ?? 'http://127.0.0.1:11434', name);
   } catch (e) {
     console.error(`categories: ${(e as Error).message}; using keywords`);
@@ -152,6 +157,7 @@ const server = new HubServer(store, sup, triage, {
   push,
   readQueue,
   onCategoriesChanged: (force) => void categorizer.refresh(force),
+  probeCategory: (question) => categorizer.probe(question),
   attention,
   activity,
   devices,

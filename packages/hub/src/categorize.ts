@@ -1,10 +1,12 @@
 /**
  * Sorting communities into categories by asking a yes/no question of each: "Is this about programming?"
- * gives a probability per place, in the manner of a zero-shot classifier.
+ * gives a probability per place, in the manner of a zero-shot classifier. The live hub asks jev, the machine's
+ * reranker (Qwen3-Reranker, ~0.1 s a place); its P(yes) is uncalibrated, so each category has its own threshold you
+ * move with a slider (protocol categoryThreshold).
  *
  * Input is names, topics and channel names, and never message bodies or who is in a place. Nothing leaves
- * this machine unless DITHER_OLLAMA_URL points elsewhere on purpose: providers are local, the Ollama one
- * refuses a public address without DITHER_CATEGORY_ALLOW_REMOTE=1, and no hosted provider exists.
+ * this machine unless a URL points elsewhere on purpose: providers are local, the Ollama and jev ones
+ * refuse a public address without DITHER_CATEGORY_ALLOW_REMOTE=1, and no hosted provider exists.
  *
  * Your overrides are stored apart from scores and always win (Store: PlaceCategoryView.override).
  */
@@ -35,6 +37,8 @@ export interface CategoryQuestion {
 export interface CategoryProvider {
   readonly id: string;
   score(input: CategoryInput, questions: CategoryQuestion[]): Promise<Record<string, number>>;
+  /** Many places at once, when the provider batches; same answers as `score` on each. */
+  scoreMany?(inputs: CategoryInput[], questions: CategoryQuestion[]): Promise<Record<string, number>[]>;
 }
 
 const STOP = new Set(['is', 'this', 'a', 'an', 'the', 'about', 'for', 'of', 'and', 'or', 'to', 'in', 'on', 'it', 'place', 'community', 'group', 'server', 'space', 'mostly', 'people', 'with', 'your', 'you', 'that', 'do', 'does', 'are']);
@@ -106,6 +110,49 @@ Reply with only a JSON object mapping each question id to a number.`;
       out[q.id] = Math.max(0, Math.min(1, p));
     }
     return out;
+  }
+}
+
+/** How a place reads to a reranker: what it is, its name, its topic, some channel names. */
+export function describePlace(input: CategoryInput): string {
+  const what = input.kind === 'space' ? `${input.network} server` : `${input.network} group chat`;
+  return [`${what}: ${input.name}`, input.topic && `Topic: ${input.topic.slice(0, 300)}`, input.channels.length && `Channels: ${input.channels.slice(0, 25).join(', ')}`].filter(Boolean).join('\n');
+}
+
+const JEV_INSTRUCT = 'Given a chat community (its name, topic and channel names), judge whether it fits the description';
+
+/**
+ * jev (~/Projects/jev): the machine's yes/no reranker, one batched call per question. Answers are cached by jev, so
+ * asking again about an unchanged place is free.
+ */
+export class JevProvider implements CategoryProvider {
+  readonly id = 'jev';
+  constructor(private url = 'http://127.0.0.1:7862', private timeoutMs = 600_000) {
+    if (!isPrivateUrl(url) && process.env.DITHER_CATEGORY_ALLOW_REMOTE !== '1') throw new Error(`refusing to send names to ${url}: not on this machine or a private network`);
+  }
+
+  async score(input: CategoryInput, questions: CategoryQuestion[]) {
+    return (await this.scoreMany([input], questions))[0];
+  }
+
+  async scoreMany(inputs: CategoryInput[], questions: CategoryQuestion[]) {
+    const out = inputs.map(() => ({}) as Record<string, number>);
+    const texts = inputs.map(describePlace);
+    for (const q of questions) {
+      for (let i = 0; i < texts.length; i += 500) {
+        const p = await this.judge(q.question, texts.slice(i, i + 500));
+        p.forEach((x, j) => (out[i + j][q.id] = Math.round(Math.max(0, Math.min(1, x ?? 0)) * 1000) / 1000));
+      }
+    }
+    return out;
+  }
+
+  private async judge(question: string, texts: string[]): Promise<(number | null)[]> {
+    const res = await fetch(`${this.url}/v1/judge`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question, texts, instruct: JEV_INSTRUCT }), signal: AbortSignal.timeout(this.timeoutMs) });
+    if (!res.ok) throw new Error(`jev answered ${res.status}`);
+    const p = ((await res.json()) as { p?: unknown }).p;
+    if (!Array.isArray(p) || p.length !== texts.length) throw new Error('jev gave no answers');
+    return p as (number | null)[];
   }
 }
 
@@ -186,11 +233,34 @@ export class Categorizer {
     const questions = s.categories().map((c) => ({ id: c.id, name: c.name, question: c.question, keywords: c.keywords }));
     if (!questions.length) return;
     const qid = JSON.stringify(questions);
-    let changed = false;
+    const todo: { input: CategoryInput; hash: string }[] = [];
     for (const input of this.inputs()) {
       const hash = createHash('sha256').update(JSON.stringify(input)).update(qid).digest('base64url').slice(0, 16);
       const prev = s.one<Row>('SELECT input_hash, provider FROM category_score WHERE kind = ? AND place_id = ? LIMIT 1', input.kind, input.id);
       if (!force && prev?.input_hash === hash && prev.provider === this.provider.id) continue;
+      todo.push({ input, hash });
+    }
+    if (!todo.length) return;
+    const many = this.provider.scoreMany?.bind(this.provider);
+    if (many) {
+      // In slices, so the first places show up before the last are scored, and a failure costs one slice.
+      for (let i = 0; i < todo.length; i += 50) {
+        const part = todo.slice(i, i + 50);
+        let provider: CategoryProvider = this.provider;
+        let scores: Record<string, number>[];
+        try {
+          scores = await many(part.map((t) => t.input), questions);
+        } catch (e) {
+          console.warn(`categorize: ${provider.id} failed on ${part.length} places, using keywords: ${(e as Error).message}`);
+          provider = this.fallback;
+          scores = await Promise.all(part.map((t) => this.fallback.score(t.input, questions)));
+        }
+        part.forEach((t, j) => s.putScores(t.input.kind, t.input.id, scores[j], provider.id, t.hash));
+        s.categoriesChanged();
+      }
+      return;
+    }
+    for (const { input, hash } of todo) {
       let provider: CategoryProvider = this.provider;
       let scores: Record<string, number>;
       try {
@@ -201,8 +271,26 @@ export class Categorizer {
         scores = await provider.score(input, questions);
       }
       s.putScores(input.kind, input.id, scores, provider.id, hash);
-      changed = true;
     }
-    if (changed) s.categoriesChanged();
+    s.categoriesChanged();
+  }
+
+  /**
+   * One question asked of every place, nothing saved: the Organize view's "by meaning" filter. Falls back to keywords
+   * (words of the question) when the provider fails.
+   */
+  async probe(question: string): Promise<P.CategoryProbe> {
+    const inputs = this.inputs();
+    const q: CategoryQuestion = { id: 'probe', name: question, question, keywords: [] };
+    let provider: CategoryProvider = this.provider;
+    let scores: Record<string, number>[];
+    try {
+      scores = provider.scoreMany ? await provider.scoreMany(inputs, [q]) : await Promise.all(inputs.map((i) => provider.score(i, [q])));
+    } catch (e) {
+      console.warn(`categorize: ${provider.id} failed on a probe, using keywords: ${(e as Error).message}`);
+      provider = this.fallback;
+      scores = await Promise.all(inputs.map((i) => this.fallback.score(i, [q])));
+    }
+    return { provider: provider.id, question, scores: inputs.map((i, j) => ({ kind: i.kind, id: i.id, p: scores[j].probe ?? 0 })) };
   }
 }

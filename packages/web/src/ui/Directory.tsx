@@ -9,6 +9,8 @@ import { AccountChip, Avatar, Count, Empty, Modal, NetBadge } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
 import { dropPlace, openPlaceMenu } from './Organize.tsx';
+import { saveThreshold, thresholdOf } from './Reorganize.tsx';
+import { pct, Sensitivity } from './Sensitivity.tsx';
 
 export interface Place {
   key: string;
@@ -149,7 +151,7 @@ function PlaceCategories({ place: p, onClose }: { place: Place; onClose: () => v
             <span class="cat-row-text">
               <b>{c.name}</b>
               <small>
-                {r?.p != null ? `${Math.round(r.p * 100)}% by ${r.provider}` : 'Not scored yet'}
+                {r?.p != null ? `${pct(r.p)} by ${r.provider}, ${pct(thresholdOf(c))} needed` : 'Not scored yet'}
                 {r?.override != null && ' · your choice'}
               </small>
             </span>
@@ -168,13 +170,16 @@ function PlaceCategories({ place: p, onClose }: { place: Place; onClose: () => v
 function ManageCategories({ onClose }: { onClose: () => void }) {
   rev.value;
   const [name, setName] = useState('');
+  const [at, setAt] = useState<Record<string, number>>({});
+  const matching = (c: P.CategoryView) => [...db.placeCategories.values()].filter((rows) => rows.some((x) => x.categoryId === c.id && memberOf(x, at))).length;
   const save = (c: P.CategoryView, patch: Partial<P.CategoryView>) => api(`/api/categories/${c.id}`, { method: 'PATCH', body: patch }).catch((e) => toast({ kind: 'error', title: 'Could not save', body: e.message }));
   const val = (e: Event) => (e.target as HTMLInputElement).value;
   return (
     <Modal title="Categories" onClose={onClose} wide>
       <p class="set-help">
-        Each category is a yes/no question asked of every place. Now answering: <b>{db.categoryProvider === 'keyword' ? 'keyword matching, no model' : db.categoryProvider}</b>. Set <code>DITHER_CATEGORY_MODEL</code> to use a local
-        Ollama model. Only names, topics and channel names are used, and they stay on your hub.
+        Each category is a yes/no question asked of every place. Now answering: <b>{db.categoryProvider === 'keyword' ? 'keyword matching, no model' : db.categoryProvider === 'jev' ? 'jev, the local reranker' : db.categoryProvider}</b>. The
+        model is never fully sure, so each category has a sensitivity: slide toward More to take in places it is less sure of. Only names, topics and channel
+        names are used, and they stay on your hub.
       </p>
       {db.categories.map((c) => (
         <div class="cat-edit">
@@ -184,6 +189,7 @@ function ManageCategories({ onClose }: { onClose: () => void }) {
           <button class="icon-btn small" title="Delete category" onClick={() => confirm(`Delete “${c.name}”?`) && api(`/api/categories/${c.id}`, { method: 'DELETE' })}>
             <Icon name="trash" size={14} />
           </button>
+          <Sensitivity threshold={thresholdOf(c, at)} count={`${matching(c)} places`} onInput={(t) => setAt({ ...at, [c.id]: t })} onChange={(t) => void saveThreshold(c, t)} />
         </div>
       ))}
       <form

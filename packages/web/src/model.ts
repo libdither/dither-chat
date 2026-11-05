@@ -4,7 +4,7 @@
  * memoized per `rev`.
  */
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META } from '@dither-chat/protocol';
+import { categoryThreshold, NETWORK_META } from '@dither-chat/protocol';
 import { db, inbox, isSelfIdentity, prefs, rev } from './state.ts';
 
 const memos = new Map<string, { rev: number; value: unknown }>();
@@ -331,11 +331,13 @@ export function activityOfSpace(id: string): number {
 
 // ------------------------------------------------------------------ categories
 
-export const memberOf = (x: P.PlaceCategoryView) => x.override ?? (x.p ?? 0) >= 0.5;
+/** Your choice, else the score against the category's threshold (`at` overrides it while a slider moves). */
+export const memberOf = (x: P.PlaceCategoryView, at?: Record<string, number>) =>
+  x.override ?? (x.p ?? 0) >= (at?.[x.categoryId] ?? categoryThreshold(db.categories.find((c) => c.id === x.categoryId), x.provider));
 
-export function categoriesOf(kind: 'space' | 'conversation', id: string): P.CategoryView[] {
+export function categoriesOf(kind: 'space' | 'conversation', id: string, at?: Record<string, number>): P.CategoryView[] {
   const mine = db.placeCategories.get(`${kind}:${id}`) ?? [];
-  return db.categories.filter((c) => mine.some((x) => x.categoryId === c.id && memberOf(x)));
+  return db.categories.filter((c) => mine.some((x) => x.categoryId === c.id && memberOf(x, at)));
 }
 
 // ------------------------------------------------------------------ notification level (mirrors hub triage.ts)

@@ -275,7 +275,9 @@ CREATE TABLE IF NOT EXISTS category (
   question TEXT NOT NULL,
   keywords TEXT NOT NULL DEFAULT '[]',
   color    TEXT,
-  position REAL NOT NULL DEFAULT 0
+  position REAL NOT NULL DEFAULT 0,
+  -- P(yes) at which a place belongs; NULL is the provider's default (protocol categoryThreshold).
+  threshold REAL
 );
 CREATE TABLE IF NOT EXISTS category_score (
   category_id TEXT NOT NULL REFERENCES category(id) ON DELETE CASCADE,

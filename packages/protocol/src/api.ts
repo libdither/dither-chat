@@ -374,6 +374,22 @@ export interface CategoryView {
   /** Used when no model is running. Empty means words from the name and question. */
   keywords: string[];
   color: string | null;
+  /** A place belongs when P(yes) is at least this; null is the provider's default (categoryThreshold). */
+  threshold?: number | null;
+}
+
+/**
+ * Where a category starts matching when you have not moved its slider. Keyword scores are coarse (0.8 for a name hit);
+ * the reranker's P(yes) is uncalibrated and low (a Rust server scores about 0.5 for "programming"), so it starts lower.
+ */
+export const categoryThreshold = (c: Pick<CategoryView, 'threshold'> | undefined, provider: string | null | undefined): number =>
+  c?.threshold ?? (provider?.startsWith('jev') ? 0.12 : 0.5);
+
+/** Every place's P(yes) for a question asked once (POST /api/categories/probe), not saved. */
+export interface CategoryProbe {
+  provider: string;
+  question: string;
+  scores: { kind: 'space' | 'conversation'; id: string; p: number }[];
 }
 
 export interface PlaceCategoryView {

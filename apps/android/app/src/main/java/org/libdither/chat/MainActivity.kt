@@ -19,6 +19,7 @@ import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.view.ViewTreeObserver
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.inputmethod.EditorInfo
@@ -97,6 +98,8 @@ class MainActivity : Activity() {
     var callActive = false
         private set
     private var backCallback: Any? = null
+    /** The system splash stays up until the page has drawn its own sphere in the same place, or for 1.5 s at most. */
+    private var splashHeld = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -109,9 +112,31 @@ class MainActivity : Activity() {
         edgeToEdge()
         lightBars(isLight(bg))
         registerBack()
+        holdSplash()
         hub = Hub.origin(this)
         val h = hub
         if (h == null) showSetup(null, null) else showWeb(h, hashFrom(intent))
+    }
+
+    // ---------------------------------------------------------------- splash
+
+    /**
+     * Android 12+ shows res/drawable/splash_orb.xml dithering in, then this keeps it until the page is on screen: the
+     * page starts with the same sphere at the same size and place (index.html), so the hand-over does not show.
+     */
+    private fun holdSplash() {
+        if (Build.VERSION.SDK_INT < 31) return
+        splashHeld = true
+        val content = findViewById<View>(android.R.id.content)
+        content.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (splashHeld && SystemClock.uptimeMillis() - createdAt < 1500) return false
+                content.viewTreeObserver.removeOnPreDrawListener(this)
+                return true
+            }
+        })
+        // No exit animation of its own: what is under it already looks the same.
+        splashScreen.setOnExitAnimationListener { it.remove() }
     }
 
     // ---------------------------------------------------------------- layout
@@ -198,6 +223,10 @@ class MainActivity : Activity() {
             // Links out of the app, and the hub's own files (media, downloads), go to the system.
             openExternal(u)
             return true
+        }
+
+        override fun onPageCommitVisible(view: WebView, url: String?) {
+            splashHeld = false
         }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
@@ -440,6 +469,7 @@ class MainActivity : Activity() {
     // ---------------------------------------------------------------- first run
 
     private fun showSetup(prefill: String?, error: String?) {
+        splashHeld = false
         dropWeb()
         root.removeAllViews()
         val dp = { v: Int -> TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt() }

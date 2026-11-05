@@ -10,6 +10,8 @@
         <item name="android:windowLightNavigationBar">false</item>
         <!-- The system splash: same colour as the page behind it, so it hands over without a flash. -->
         <item name="android:windowSplashScreenBackground">@color/app_bg</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <!-- The page's loading sphere dithering in (drawable/splash_orb.xml); MainActivity holds it until the page shows. -->
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_orb</item>
+        <item name="android:windowSplashScreenAnimationDuration">600</item>
     </style>
 </resources>
