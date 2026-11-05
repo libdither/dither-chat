@@ -71,7 +71,9 @@ Delivery is only confirmed where the device runs code for the push. A push serve
 ### `triage_input`: what triage knew when it decided
 
 With the flag on (below), the features triage saw are kept with its decision, so training uses what was known then,
-not outcomes that came later.
+not outcomes that came later: `{ conversation, person, x }`, where `x` holds the interaction features as of the
+message (`interact.ts`: how often you answer here and after this author, engaged now, time since you last looked,
+another device in use, push open rate; docs/triage-replay.md).
 
 ## How outcomes link
 
@@ -113,8 +115,8 @@ Privacy → "What it has learned" shows them for the busiest places; `GET /api/a
 
 - **Triage**, behind `DITHER_ACTIVITY_FEATURES=1` (or `--activity-features`): `Triage.decide` adds one reason, such
   as "Activity: you opened 4 of 5 pushes, usually within 2 min; replied after 50% of them; opened it unprompted 3 of
-  4 times", and the features go with the decision into `triage_input`. **Decisions do not change yet.** Without the
-  flag nothing is computed.
+  4 times", and the features go with the decision into `triage_input`, with the interaction features (`x`). **Decisions
+  do not change**: only the replay uses `x` so far. Without the flag nothing is computed.
 - **Attention**: `Attention.activity` is set, and `GET /api/attention/:id` (`explain`) includes the features. The
   score does not use them yet.
 

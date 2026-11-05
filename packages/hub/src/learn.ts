@@ -14,7 +14,10 @@
  * conversation moves on one vote, a person or a server on a few, a whole network or "anything that mentions you"
  * only on many, so two votes in one Signal chat do not quieten all of Signal.
  *
- * Votes count in full, newer more. Notifications you got and let stand count a little, as "that was fine".
+ * Votes count in full, newer more. Notifications you got and let stand count a little, as "that was fine". A candidate
+ * model, run in shadow next to the live one (votes.ts), learns instead from what you did (labels.ts): each example
+ * then says something about only some of the chances (`y`), and may carry numeric features from outside (`x`:
+ * interaction features from interact.ts, later content features), each kind with its own regularisation (`NUMERIC`).
  */
 import type * as P from '@dither-chat/protocol';
 
@@ -65,14 +68,24 @@ export interface Facts {
 }
 
 export interface Example {
+  /** The message, when known. */
+  id?: string;
   facts: Facts;
   words: string[];
-  label: Level;
+  /** The level it was voted to (or, for one that stood, decided at). Its labels, unless `y` says otherwise. */
+  label?: Level;
+  /** What it says for each chance; a chance left out is not learned from it. Default: `labels(label)`. */
+  y?: Partial<Record<Head, 0 | 1>>;
+  /** Numeric features as of the decision (interact.ts; later content features), by name. */
+  x?: Record<string, number>;
   weight: number;
-  /** A vote, as opposed to a decision you let stand. */
+  /** A vote, as opposed to a decision you let stand or something you did. */
   vote: boolean;
   at: number;
 }
+
+/** An example's labels, by chance. */
+export const labelsOf = (e: Pick<Example, 'y' | 'label'>): Partial<Record<Head, 0 | 1>> => e.y ?? (e.label ? labels(e.label) : {});
 
 /** What each level says for each chance: Important is worth a ping, so also worth Active and the digest. */
 export function labels(l: Level): Record<Head, 0 | 1> {
@@ -127,8 +140,27 @@ export function words(body: string, max = 40): string[] {
   return [...out];
 }
 
-/** Every feature of a message, with its value: 1, or for words a share that adds up to one feature's worth. */
-export function features(f: Facts, ws: readonly string[] = []): [string, number][] {
+/**
+ * Numeric features, by kind (the part of the name before ':'): how firmly each is held at zero, and what it means in
+ * words. Kinds not listed get `NUMERIC_LAMBDA`. Content features (embeddings, local-model answers) add theirs here.
+ */
+export const NUMERIC: Record<string, { lambda: number; text: string }> = {
+  rr: { lambda: 10, text: 'how often you answer' },
+  engaged: { lambda: 10, text: "you're talking there now" },
+  alt: { lambda: 10, text: 'back-and-forth there now' },
+  since: { lambda: 10, text: 'how long since you looked' },
+  device: { lambda: 10, text: "you're at a screen" },
+  open: { lambda: 10, text: 'how often you open its pushes' },
+};
+export const NUMERIC_LAMBDA = 10;
+/** Numeric feature names carry this prefix inside the model, so they never collide with the rest. */
+export const NUM = '#';
+
+/**
+ * Every feature of a message, with its value: 1, or for words a share that adds up to one feature's worth; numeric
+ * ones (`x`) as they are, named with a leading '#'.
+ */
+export function features(f: Facts, ws: readonly string[] = [], xs?: Record<string, number>): [string, number][] {
   const out: [string, number][] = [['all', 1], [`conv:${f.conversation}`, 1], [`network:${f.network}`, 1], [`shape:${f.shape}`, 1]];
   for (const s of f.spaces.slice(0, 3)) out.push([`space:${s}`, 1]);
   if (f.author) out.push([`author:${f.author}`, 1]);
@@ -143,8 +175,9 @@ export function features(f: Facts, ws: readonly string[] = []): [string, number]
   out.push([`conv:${f.conversation}&${you}`, 1]);
   if (f.spaces[0]) out.push([`space:${f.spaces[0]}&${you}`, 1]);
   if (f.author) out.push([`author:${f.author}&${you}`, 1]);
-  const x = ws.length ? 1 / Math.sqrt(ws.length) : 0;
-  for (const w of ws) out.push([`w:${w}`, x]);
+  const share = ws.length ? 1 / Math.sqrt(ws.length) : 0;
+  for (const w of ws) out.push([`w:${w}`, share]);
+  if (xs) for (const [k, v] of Object.entries(xs)) if (v && Number.isFinite(v)) out.push([NUM + k, v]);
   return out;
 }
 
@@ -156,6 +189,7 @@ const kindOf = (feature: string) => feature.slice(0, feature.search(/[:&]|$/));
  * only on many.
  */
 export function lambda(feature: string): number {
+  if (feature.startsWith(NUM)) return NUMERIC[kindOf(feature.slice(1))]?.lambda ?? NUMERIC_LAMBDA;
   // A scope with whether it is about you moves first: "this server, unless it mentions you" before "this server".
   if (feature.includes('&')) return base(feature) / 2;
   return base(feature);
@@ -195,9 +229,9 @@ export interface Prediction {
 }
 
 /** The chances for a message: its prior (or a local model's, `start`) plus the learned weights of its features. */
-export function predict(m: Model, f: Facts, ws: readonly string[] = [], start?: P.TriageProbs): Prediction {
+export function predict(m: Model, f: Facts, ws: readonly string[] = [], start?: P.TriageProbs, x?: Record<string, number>): Prediction {
   const p0 = start ?? prior(f);
-  const fs = features(f, ws);
+  const fs = features(f, ws, x);
   const probs = {} as P.TriageProbs;
   const why: Prediction['why'] = [];
   for (const h of HEADS) {
@@ -219,15 +253,16 @@ export const importance = (p: P.TriageProbs) => Math.round(((p.ping + p.active +
 
 /**
  * Fit the weights: for each chance, weighted logistic loss plus each feature's L2 weight, by cyclic coordinate Newton
- * steps (a dozen sweeps are plenty: each feature is a handful of examples). Features you rejected are left out.
+ * steps (a dozen sweeps are plenty: each feature is a handful of examples). Features you rejected are left out. An
+ * example counts only for the chances it labels.
  */
 export function train(examples: readonly Example[], rejected: ReadonlySet<string> = new Set(), sweeps = 12): Model {
   const index = new Map<string, number>();
   const names: string[] = [];
   const rows = examples.map((e) => {
-    const fs = features(e.facts, e.words).filter(([k]) => !rejected.has(k));
+    const fs = features(e.facts, e.words, e.x).filter(([k]) => !rejected.has(k));
     const ids = fs.map(([k]) => index.get(k) ?? (index.set(k, names.push(k) - 1), names.length - 1));
-    return { ids, vals: fs.map(([, x]) => x), prior: prior(e.facts), y: labels(e.label), c: e.weight };
+    return { ids, vals: fs.map(([, x]) => x), prior: prior(e.facts), y: labelsOf(e), c: e.weight };
   });
   // Which examples each feature is in.
   const at: { i: number; x: number }[][] = names.map(() => []);
@@ -244,8 +279,10 @@ export function train(examples: readonly Example[], rejected: ReadonlySet<string
         let H = lam[f];
         for (const { i, x } of at[f]) {
           const r = rows[i];
+          const y = r.y[h];
+          if (y === undefined) continue;
           const p = sigmoid(z[i]);
-          g += r.c * (p - r.y[h]) * x;
+          g += r.c * (p - y) * x;
           H += r.c * p * (1 - p) * x * x;
         }
         const d = Math.max(-2, Math.min(2, -g / H));
@@ -272,7 +309,7 @@ export interface Backtest {
 
 export function backtest(m: Model, examples: readonly Example[]): Backtest {
   const votes = examples.filter((e) => e.vote);
-  const wrong = votes.filter((e) => predict(m, e.facts, e.words).level !== e.label).sort((a, b) => b.at - a.at);
+  const wrong = votes.filter((e) => predict(m, e.facts, e.words, undefined, e.x).level !== e.label).sort((a, b) => b.at - a.at);
   return { votes: votes.length, errors: wrong.length, baseline: votes.filter((e) => levelFrom(prior(e.facts)) !== e.label).length, wrong };
 }
 
@@ -336,6 +373,7 @@ export function describe(feature: string, n: Namer): string {
     else if (k === 'shape') out.push(`in ${SHAPES[v] ?? v}`);
     else if (k === 'w') out.push(`says “${v}”`);
     else if (k === 'all') out.push('anything');
+    else if (k.startsWith(NUM)) out.push(NUMERIC[k.slice(1)]?.text ?? k.slice(1));
     else out.push(FLAG_WORDS[p] ?? p);
   }
   const text = out.join(', ');
@@ -384,7 +422,7 @@ export function writePrompt(m: Model, wrong: readonly Example[], n: Namer): stri
       const what = features(e.facts)
         .map(([k]) => k)
         .filter((k) => /^(conv|author|space):[^&]*$/.test(k) || ['mention', 'reply', 'question', 'urgent', 'everyone'].includes(k));
-      lines.push(`- ${what.map((k) => describe(k, n)).join('; ')}: they said ${TIER_NAME[e.label]}`);
+      lines.push(`- ${what.map((k) => describe(k, n)).join('; ')}: they said ${TIER_NAME[e.label!]}`);
     }
   }
   return lines.join('\n');

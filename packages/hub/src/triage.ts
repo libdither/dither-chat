@@ -29,6 +29,7 @@ import { NETWORK_META } from '@dither-chat/protocol';
 import { previewText, type Store } from './store.ts';
 import { describeActivity, type ActivityStore, type Features } from './activity.ts';
 import { describeWeight, emptyModel, importance, levelFrom, predict, prior, TIER_NAME, words, type Facts, type Level, type Model, type Namer } from './learn.ts';
+import { InteractionLog } from './interact.ts';
 
 type Row = Record<string, any>;
 
@@ -116,6 +117,7 @@ export class Triage {
   namer: Namer | null = null;
   /** The local model's prompt as last written from it; null for the built-in one. */
   prompt: string | null = null;
+  private interactions: InteractionLog | null = null;
 
   constructor(
     private store: Store,
@@ -266,7 +268,10 @@ export class Triage {
   async decide(messageId: string, now = Date.now()): Promise<Decision | null> {
     const d = await this.decideByRules(messageId);
     if (d) this.withActivity(d, messageId, now);
-    if (d?.facts) this.withModel(d, d.facts, words(this.store.one<Row>('SELECT body FROM message WHERE id = ?', messageId)?.body ?? ''), d.llm);
+    if (d?.facts) {
+      const ws = words(this.store.one<Row>('SELECT body FROM message WHERE id = ?', messageId)?.body ?? '');
+      this.withModel(d, d.facts, ws, d.llm);
+    }
     if (d?.decision !== 'push' && d?.decision !== 'quiet') return d;
     const q = this.store.quietHours();
     if (!inQuietHours(q, now) || (q!.allowStarred && d.starred)) return d;
@@ -284,7 +289,7 @@ export class Triage {
    */
   private withModel(d: Decision, f: Facts, ws: string[], llm?: P.TriageProbs) {
     const p = predict(this.learned, f, ws, llm);
-    d.probs = { ping: round(p.probs.ping), active: round(p.probs.active), interesting: round(p.probs.interesting) };
+    d.probs = rounded(p.probs);
     d.score = importance(p.probs);
     const before = llm ? levelFrom(llm) : levelFrom(prior(f));
     if (p.level !== before) {
@@ -294,6 +299,11 @@ export class Triage {
       d.decidedBy = 'learned';
     } else if (p.level === 'drop') d.reasons.unshift(`Not interesting enough for the digest (${Math.round(p.probs.interesting * 100)}%)`);
     d.decision = p.level;
+  }
+
+  /** Where the rules put a stored message, with its facts, before the model and quiet hours: for the replay. */
+  rulesFor(messageId: string): Promise<Decision | null> {
+    return this.decideByRules(messageId);
   }
 
   /** The facts for a stored message, for a vote on one decided before facts were kept. */
@@ -357,8 +367,8 @@ export class Triage {
 
   /**
    * Behind DITHER_ACTIVITY_FEATURES: what the activity log says about this place becomes a reason, and the features
-   * go with the decision so the model's training sees what was known then (docs/activity.md). The decision itself
-   * does not change yet.
+   * go with the decision so the model's training sees what was known then (docs/activity.md), interaction features
+   * (interact.ts) among them. The decision itself does not use them.
    */
   private withActivity(d: Decision, messageId: string, now: number) {
     const a = this.activity;
@@ -366,7 +376,9 @@ export class Triage {
     const cid = this.store.one<Row>('SELECT conversation_id FROM message WHERE id = ?', messageId)?.conversation_id;
     const f = cid ? a.features(cid, now) : null;
     if (!f) return;
-    d.features = f;
+    const m = this.store.one<Row>('SELECT m.ts, COALESCE(i.person_id, m.author_id) AS author FROM message m LEFT JOIN identity i ON i.id = m.author_id WHERE m.id = ?', messageId);
+    this.interactions ??= new InteractionLog(this.store.db);
+    d.features = m ? { ...f, x: this.interactions.features(cid!, m.author, m.ts) } : f;
     const said = describeActivity(f.person ?? f.conversation);
     if (said) d.reasons.push(said);
   }
@@ -552,6 +564,7 @@ Reply with JSON {"ping": 0-1, "active": 0-1, "interesting": 0-1, "reason": "<8 w
 }
 
 const round = (x: number) => Math.round(x * 1000) / 1000;
+const rounded = (p: P.TriageProbs): P.TriageProbs => ({ ping: round(p.ping), active: round(p.active), interesting: round(p.interesting) });
 
 const DEFAULT_PROMPT = `You read incoming chat messages for one person and answer three questions about each, as chances from 0 to 1:
 - ping: should their phone buzz and their computer show a notification? For what they would drop things for.
