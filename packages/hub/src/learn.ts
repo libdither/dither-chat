@@ -151,6 +151,10 @@ export const NUMERIC: Record<string, { lambda: number; text: string }> = {
   since: { lambda: 10, text: 'how long since you looked' },
   device: { lambda: 10, text: "you're at a screen" },
   open: { lambda: 10, text: 'how often you open its pushes' },
+  // Content (embeddings.ts): already one number each, learned from many examples, so held less firmly.
+  emb: { lambda: 5, text: 'reads like messages you answer' },
+  knn: { lambda: 5, text: 'like ones you answered before' },
+  jev: { lambda: 5, text: "the local model's reading of it" },
 };
 export const NUMERIC_LAMBDA = 10;
 /** Numeric feature names carry this prefix inside the model, so they never collide with the rest. */

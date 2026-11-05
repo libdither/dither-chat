@@ -51,6 +51,8 @@ export interface ExploreContext {
   quietHours: boolean;
   /** A DM's first message after a lull. */
   dmAfterLull: boolean;
+  /** Only ever upward (DITHER_TRIAGE_EXPLORE=up): no Important message is held to Active. */
+  upOnly?: boolean;
   /** Tried up in the last day, anywhere. */
   upToday: number;
   /** Pings in this conversation in the last day, and whether one was already held here. */
@@ -78,7 +80,7 @@ export function explore(c: ExploreContext, rng: () => number = Math.random): Exp
   if ((c.level === 'digest' || c.level === 'drop') && (near(c.probs) || near(c.shadow)) && c.upToday < EXPLORE.upPerDay) {
     return rng() < EXPLORE.up ? { level: 'quiet', explore: 'up', propensity: EXPLORE.up } : { level: c.level, explore: null, propensity: 1 - EXPLORE.up };
   }
-  if (c.level === 'push' && c.pingsHere >= EXPLORE.downBusy && !c.heldHere) {
+  if (c.level === 'push' && !c.upOnly && c.pingsHere >= EXPLORE.downBusy && !c.heldHere) {
     return rng() < EXPLORE.down ? { level: 'quiet', explore: 'down', propensity: EXPLORE.down } : { level: c.level, explore: null, propensity: 1 - EXPLORE.down };
   }
   return none;

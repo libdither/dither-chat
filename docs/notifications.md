@@ -133,7 +133,7 @@ The candidate learns at every vote and once a day, from your votes and from what
 learned, one line says what it would have done over the last week: "would have pinged 40 fewer (120 instead of 160),
 missed 1 message you answered within 15 minutes, and caught 2 more" (`GET /api/triage/shadow`, counts only).
 
-### Exploration (off unless `DITHER_TRIAGE_EXPLORE=1`)
+### Exploration (off unless `DITHER_TRIAGE_EXPLORE` is `1` or `up`)
 
 To learn about what the current decisions never show, the hub can change a few, only ever toward silence or toward a
 silent notification, and log the chance it did so with (`triage.explore`, `triage.propensity`), so that off-policy
@@ -142,16 +142,22 @@ estimates become possible later:
 - **Up**: a Digest or Not-interesting message whose Active chance (the live model's or the shadow's) is in 25–50% is
   tried as **Active** with probability 2%, at most 3 a day. Its first reason says "Trying this one as Active: worth
   it?", so the vote buttons are the answer.
-- **Down**: in a conversation with 10 or more pings in the last day, an Important message becomes **Active** with
-  probability 5%, at most once there a day: how much does the buzz itself matter?
+- **Down** (only with `1`, not `up`): in a conversation with 10 or more pings in the last day, an Important message
+  becomes **Active** with probability 5%, at most once there a day: how much does the buzz itself matter?
+
+The live hub runs with `up`: it only ever adds a silent notification.
 - **Never** during quiet hours, for starred people or keywords, for a mention of you or a reply to you, for a DM's
   first message after 5 quiet minutes, or in a place set to Nothing.
 
 `propensity` is the chance of what was done when the draw happened (2% or 98% up, 5% or 95% down) and NULL when no
 draw could happen.
 
-**Content features** from message embeddings and jev's yes/no answers (`emb`, `knn`, `jev:<q>`) exist behind
-`DITHER_EMBEDDINGS=1` but are not weighed yet: see [embeddings.md](embeddings.md).
+**Content features** from message embeddings and jev's yes/no answers (`emb`, `knn`, `jev:<q>`), behind
+`DITHER_EMBEDDINGS=1`: the shadow model weighs them as numeric features (regularisation 5), the live one does not.
+They are made just before each decision (`Embeddings.prepare`, giving up after 800 ms) and kept with it in
+`triage_input`; for training they are read afresh, since a labelled message's probe score is cross-fitted. jev is asked
+only about messages in conversations you wrote or reacted in during the last 30 days. See
+[embeddings.md](embeddings.md).
 
 ### The decision prompt
 

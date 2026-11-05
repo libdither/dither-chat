@@ -31,8 +31,9 @@ what was built, how to evaluate it, and the evaluation's verdict.
   zero). `prepare(ids, timeoutMs)` embeds a message at once, with a deadline, for a caller that wants the feature
   before deciding.
 - **jev's questions**, as gated features: `ask` (asks the reader to reply, decide or do something?), `soon`
-  (time-sensitive, needs attention today?) and `plans` (plans that include the reader?). They are asked only for new
-  messages triage was unsure about (ping 0.3–0.95, or Active ≥0.2), at most 2000 a day. They are fixed strings, so
+  (time-sensitive, needs attention today?) and `plans` (plans that include the reader?). They are asked about messages in
+  conversations you wrote or reacted in during the last 30 days, before triage decides (`prepare`), at most 2000 a
+  day; the backfill may use the first half of a day's budget. They are fixed strings, so
   jev's cache works and the features keep their meaning.
 
 ## The features
@@ -142,11 +143,13 @@ mode** (§4). Re-run this evaluation after two more weeks, when there should be 
 without engaged messages. Switch on if the within-conversation gain holds (the probe beating the rate in most
 conversations) and at-budget recall does not drop.
 
-Two changes before that run:
+Done (2026-11-05): `DITHER_EMBEDDINGS=1` is on, the shadow model weighs `emb`, `knn` and the jev answers
+(docs/notifications.md, "Content features"), and the two changes below are in.
 
 1. **Change the jev gate** from "triage is unsure" to "a conversation you wrote or reacted in during the last 30
    days" (about 350 messages a day). Under the §5 gate the answers are useless here, and ungated they are among the
    best features.
-2. **Choose the probe's λ by inner cross-validation** in `refit()` (try 1, 3, 10).
+2. **Choose the probe's λ by inner cross-validation** in `refit()` (`chooseLambda`, from 1, 3, 10 and 30, by
+   out-of-fold log loss on the time folds).
 
 Do not ship the plain centroid as a feature: across conversations it is worse than nothing.

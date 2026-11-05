@@ -127,10 +127,15 @@ export class Triage {
   prompt: string | null = null;
   /** The candidate model, run in shadow (votes.ts keeps it). */
   candidate: Model | null = null;
-  /** Silent exploration (shadow.ts), off unless DITHER_TRIAGE_EXPLORE=1. */
-  exploring = process.env.DITHER_TRIAGE_EXPLORE === '1';
+  /** Silent exploration (shadow.ts), off unless DITHER_TRIAGE_EXPLORE is 1 (both ways) or `up` (only upward). */
+  exploring: boolean | 'up' = process.env.DITHER_TRIAGE_EXPLORE === '1' || (process.env.DITHER_TRIAGE_EXPLORE === 'up' && 'up');
   /** The draw for exploration; tests replace it. */
   rng: () => number = Math.random;
+  /**
+   * Content features of a message (embeddings.ts: `emb`, `knn`, `jev:<q>`), when DITHER_EMBEDDINGS is on. Like the
+   * interaction features, only the shadow model weighs them.
+   */
+  content: ((messageId: string) => Record<string, number>) | null = null;
   private interactions: InteractionLog | null = null;
 
   constructor(
@@ -285,7 +290,10 @@ export class Triage {
     if (d?.facts) {
       const ws = words(this.store.one<Row>('SELECT body FROM message WHERE id = ?', messageId)?.body ?? '');
       this.withModel(d, d.facts, ws, d.llm);
-      if (this.candidate) d.shadow = rounded(predict(this.candidate, d.facts, ws, d.llm, d.features?.x).probs);
+      const content = this.content?.(messageId);
+      if (content && Object.keys(content).length && d.features) d.features.x = { ...d.features.x, ...content };
+      const x = d.features?.x ?? content;
+      if (this.candidate) d.shadow = rounded(predict(this.candidate, d.facts, ws, d.llm, x).probs);
       if (this.exploring) this.withExploration(d, messageId, now);
     }
     if (d?.decision !== 'push' && d?.decision !== 'quiet') return d;
@@ -331,7 +339,7 @@ export class Triage {
     const m = s.one<Row>('SELECT m.conversation_id, m.ts, c.shape FROM message m JOIN conversation c ON c.id = m.conversation_id WHERE m.id = ?', messageId);
     if (!m || !d.facts || !d.probs || !isLevel(d.decision)) return;
     const counts = exploreCounts(s.db, m.conversation_id, m.shape, m.ts, now);
-    const e = explore({ level: d.decision, probs: d.probs, shadow: d.shadow, facts: d.facts, starred: !!d.starred, keyword: !!d.keyword, quietHours: inQuietHours(s.quietHours(), now), ...counts }, this.rng);
+    const e = explore({ upOnly: this.exploring === 'up', level: d.decision, probs: d.probs, shadow: d.shadow, facts: d.facts, starred: !!d.starred, keyword: !!d.keyword, quietHours: inQuietHours(s.quietHours(), now), ...counts }, this.rng);
     d.propensity = e.propensity;
     if (!e.explore) return;
     d.decision = e.level;

@@ -163,9 +163,14 @@ export class TriageVotes {
   candidateExamples(now = Date.now(), ex = this.examples(now), fresh = false): Example[] {
     const s = this.store;
     const inputs = s.db.query('SELECT features FROM triage_input WHERE message_id = ?');
+    // Content features are read now, not as kept: a labelled message's probe score is cross-fitted (embeddings.ts),
+    // so it never learned from its own label, and jev's answers may have come after the decision.
+    const content = this.triage.content;
     const xOf = (id: string | undefined) => {
       const r = id ? (inputs.get(id) as Row | null) : null;
-      return r ? (JSON.parse(r.features).x as Record<string, number> | undefined) : undefined;
+      const kept = r ? (JSON.parse(r.features).x as Record<string, number> | undefined) : undefined;
+      const c = id && content ? content(id) : null;
+      return c && Object.keys(c).length ? { ...kept, ...c } : kept;
     };
     const votes = ex.filter((e) => e.vote).map((e) => ({ ...e, x: xOf(e.id) }));
     if (fresh || !this.implicitCache || now - this.implicitCache.at > IMPLICIT_TTL || now < this.implicitCache.at) {

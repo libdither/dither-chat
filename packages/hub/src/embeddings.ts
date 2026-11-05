@@ -30,6 +30,7 @@ export const EMBED_INSTRUCT = 'Given a chat message someone received, represent 
 export const SHORT = 40;
 export const RETENTION_DAYS = 30;
 const MIN = 60_000;
+const HOUR = 3_600_000;
 const DAY = 86_400_000;
 
 /** jev's questions. Fixed strings, so its cache works and the features mean the same thing over time. */
@@ -314,6 +315,31 @@ export function crossFit(X: readonly ArrayLike<number>[], y: readonly number[], 
     folds.forEach((g, i) => g === f && (out[i] = probeLogit(p, X[i])));
   }
   return out;
+}
+
+/** The strengths `chooseLambda` tries. */
+export const LAMBDAS = [1, 3, 10, 30];
+
+/**
+ * The probe's strength, chosen by its own cross-validation on the time folds: the one whose out-of-fold logits have
+ * the lowest weighted log loss. Picking it on the days it is judged on would flatter it.
+ */
+export function chooseLambda(X: readonly ArrayLike<number>[], y: readonly number[], folds: readonly number[], o: ProbeOptions = {}, grid = LAMBDAS): number {
+  let best = { lambda: o.lambda ?? 10, loss: Infinity };
+  for (const lambda of grid) {
+    const oof = crossFit(X, y, folds, { ...o, lambda });
+    let loss = 0;
+    let n = 0;
+    oof.forEach((z, i) => {
+      if (z === null) return;
+      const w = o.weight?.[i] ?? 1;
+      const p = 1 / (1 + Math.exp(-z));
+      loss -= w * Math.log(Math.min(1 - 1e-9, Math.max(1e-9, y[i] ? p : 1 - p)));
+      n += w;
+    });
+    if (n && loss / n < best.loss) best = { lambda, loss: loss / n };
+  }
+  return best.lambda;
 }
 
 // ------------------------------------------------------------------ nearest labelled neighbours
@@ -707,8 +733,7 @@ export class Embeddings {
   private asked = { day: '', n: 0 };
   private busy: Promise<unknown> = Promise.resolve();
   private lastRefit = 0;
-  /** New messages triage had not decided yet when they were embedded: asked about on a later step. */
-  private undecided = new Map<string, number>();
+  private parts = new Map<string, { at: number; yes: boolean }>();
 
   constructor(private hub: Database, path: string, private opts: EmbeddingsOptions = {}) {
     this.store = new EmbeddingStore(path);
@@ -806,31 +831,29 @@ export class Embeddings {
       const vs = await this.jev.embed(chunk.map((c) => c.text));
       this.store.put(chunk.flatMap((c, j) => (vs[j] ? [{ id: c.row.id, conversation: c.row.conversation_id, author: c.row.person_id ?? c.row.author_id, ts: c.row.ts, raw: vs[j]! }] : [])));
     }
-    if (fresh) await this.askJev(todo.map((t) => t.row.id));
-    else if (this.undecided.size) await this.askJev([]);
+    // Older ones too, so training has answers to learn from, but only with the first half of the day's budget.
+    if (fresh || this.asked.n < (this.opts.jevPerDay ?? 2000) / 2) await this.askJev(todo.map((t) => t.row.id));
   }
 
-  /** jev's questions for the messages triage was unsure about, within the day's budget. */
+  /**
+   * jev's questions for messages in conversations you take part in (you wrote or reacted there in the last 30 days),
+   * within the day's budget. They come before triage decides, so the answers can be features of the decision. (The
+   * design's gate, "triage was unsure", needed the decision first and passed too few messages to help:
+   * docs/embeddings.md.)
+   */
   async askJev(ids: readonly string[]) {
     const day = new Date(this.now()).toISOString().slice(0, 10);
     if (this.asked.day !== day) this.asked = { day, n: 0 };
     const budget = (this.opts.jevPerDay ?? 2000) - this.asked.n;
-    const q = this.hub.query('SELECT t.probs, m.ts FROM triage t JOIN message m ON m.id = t.message_id WHERE t.message_id = ?');
     const pick: { id: string; ts: number; text: string }[] = [];
     const self = selfIdentities(this.hub);
-    for (const [id, at] of this.undecided) if (this.now() - at > 10 * MIN) this.undecided.delete(id);
-    for (const id of [...this.undecided.keys(), ...ids]) {
+    for (const id of ids) {
       if (pick.length >= budget) break;
-      const t = q.get(id) as { probs: string | null; ts: number } | null;
-      if (!t?.probs) {
-        if (!this.undecided.has(id)) this.undecided.set(id, this.now());
-        continue;
-      }
-      this.undecided.delete(id);
-      if (!needsJev(JSON.parse(t.probs)) || Object.keys(this.store.answers(id)).length) continue;
+      if (Object.keys(this.store.answers(id)).length) continue;
       const row = this.hub.query(`${MESSAGE_SQL} WHERE m.id = ?`).get(id) as MessageRow | null;
-      const text = row && inputFor(this.hub, row, self);
-      if (text) pick.push({ id, ts: t.ts, text });
+      if (!row || !this.takesPart(row.conversation_id, self)) continue;
+      const text = inputFor(this.hub, row, self);
+      if (text) pick.push({ id, ts: row.ts, text });
     }
     if (!pick.length) return;
     const answers = pick.map(() => ({}) as Record<string, number>);
@@ -842,6 +865,24 @@ export class Embeddings {
     this.asked.n += pick.length;
   }
 
+  /** You wrote or reacted in this conversation in the last 30 days; remembered for an hour. */
+  private takesPart(conversationId: string, self: ReadonlySet<string>): boolean {
+    const hit = this.parts.get(conversationId);
+    if (hit && this.now() - hit.at < HOUR) return hit.yes;
+    const since = this.now() - RETENTION_DAYS * DAY;
+    const ids = [...self];
+    const marks = ids.map(() => '?').join(',');
+    const yes =
+      !!ids.length &&
+      !!(
+        this.hub.query(`SELECT 1 FROM message WHERE conversation_id = ? AND ts >= ? AND author_id IN (${marks}) LIMIT 1`).get(conversationId, since, ...ids) ??
+        this.hub.query(`SELECT 1 FROM reaction r JOIN message m ON m.id = r.message_id WHERE m.conversation_id = ? AND m.ts >= ? AND r.identity_id IN (${marks}) LIMIT 1`).get(conversationId, since, ...ids)
+      );
+    this.parts.set(conversationId, { at: this.now(), yes });
+    if (this.parts.size > 5000) this.parts.clear();
+    return yes;
+  }
+
   /**
    * Embed these messages now if they are not yet, giving up after `timeoutMs`: for a caller that would rather have
    * the feature for a new message than wait for the background job. Never throws.
@@ -850,7 +891,7 @@ export class Embeddings {
     if (!this.store.mean()) return;
     const self = selfIdentities(this.hub);
     const rows = ids.map((id) => this.hub.query(`${MESSAGE_SQL} WHERE m.id = ?`).get(id) as MessageRow | null).filter((r): r is MessageRow => !!r);
-    await Promise.race([this.embedRows(rows, self, false).catch(() => {}), new Promise((r) => setTimeout(r, timeoutMs))]);
+    await Promise.race([this.embedRows(rows, self, true).catch(() => {}), new Promise((r) => setTimeout(r, timeoutMs))]);
   }
 
   /** Refit, giving the event loop room between the fits. */
@@ -899,9 +940,12 @@ export class Embeddings {
       const X = ex.map((e) => e.s.v);
       const y = ex.map((e) => e.y);
       const weight = ex.map((e) => e.weight);
-      const oofs = crossFit(X, y, timeFolds(ex.length), { offset, weight });
+      const folds = timeFolds(ex.length);
+      const lambda = chooseLambda(X, y, folds, { offset, weight });
       await yieldNow();
-      const probe = fitProbe(X, y, { offset, weight });
+      const oofs = crossFit(X, y, folds, { offset, weight, lambda });
+      await yieldNow();
+      const probe = fitProbe(X, y, { offset, weight, lambda });
       await yieldNow();
       const oof = new Map<string, number>();
       ex.forEach((e, i) => oofs[i] !== null && oof.set(e.id, oofs[i]!));

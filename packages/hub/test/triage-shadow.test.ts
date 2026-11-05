@@ -156,6 +156,8 @@ describe('the exploration draw', () => {
     expect(explore(ctx({ ...push, pingsHere: 12 }), yes)).toEqual({ level: 'quiet', explore: 'down', propensity: EXPLORE.down });
     expect(explore(ctx({ ...push, pingsHere: 3 }), yes).explore).toBeNull();
     expect(explore(ctx({ ...push, pingsHere: 12, heldHere: true }), yes).explore).toBeNull();
+    // DITHER_TRIAGE_EXPLORE=up: nothing is held.
+    expect(explore(ctx({ ...push, pingsHere: 12, upOnly: true }), yes)).toEqual({ level: 'push', explore: null, propensity: null });
   });
 
   test('never: quiet hours, starred, keywords, mentions and replies to you, a DM after a lull', () => {

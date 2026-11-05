@@ -60,11 +60,15 @@ attention.activity = activity;
 // Message embeddings and jev's answers as content features (docs/embeddings.md): made in the background, never blocking.
 const embeddings = flag('embeddings') ? new Embeddings(store.db, join(dataDir, 'embeddings.sqlite'), { jev: new Jev(process.env.DITHER_JEV_URL ?? 'http://127.0.0.1:7862') }) : null;
 embeddings?.start();
+// The shadow model weighs them (votes.ts); the live decision does not.
+if (embeddings) triage.content = (id) => embeddings.features(id, 'ping');
 
 // Triage runs serially so notifications keep message order.
 let queue = Promise.resolve();
 function triageLater(ids: string[]) {
   queue = queue.then(async () => {
+    // The new messages' content features, if jev answers quickly; else triage goes on without them.
+    await embeddings?.prepare(ids, 800);
     for (const id of ids) {
       const d = await triage.decide(id).catch((e) => (console.error('triage failed', e), null));
       if (!d) continue;

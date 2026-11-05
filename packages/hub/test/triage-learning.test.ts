@@ -60,7 +60,8 @@ describe('label masks and numeric features', () => {
   test('numeric features: named apart, held by their own lambda, learned as one slope across places', () => {
     expect(features(facts(), [], { 'rr:conv': 2, engaged: 0 }).filter(([k]) => k.startsWith('#'))).toEqual([['#rr:conv', 2]]);
     expect(lambda('#rr:conv')).toBe(10);
-    expect(lambda('#emb')).toBe(10);
+    expect(lambda('#emb')).toBe(5);
+    expect(lambda('#other')).toBe(10);
     expect(say('#rr:conv', { conversation: String, space: String, person: String, network: String })).toBe('How often you answer');
     // Places where you answer (rate +2) get answered; places where you do not (-3) do not.
     const ex: Example[] = [];

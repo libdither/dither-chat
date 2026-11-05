@@ -301,20 +301,19 @@ describe('the embedder on a hub', () => {
     expect(emb.store.has(id('pic'))).toBe(true);
   });
 
-  test('new messages are followed; jev is asked only where triage was unsure', async () => {
+  test('new messages are followed; jev is asked only where you take part', async () => {
+    store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'news', shape: 'channel', name: 'news' } });
+    store.ingest(acc, { t: 'message', message: { nativeId: 'n0', conversation: 'news', author: 'friend3', ts: now - 1500, body: 'lunch deals today' } });
     store.ingest(acc, { t: 'message', message: { nativeId: 'n1', conversation: 'grp', author: 'friend2', ts: now - 1000, body: 'lunch tomorrow?' } });
     store.ingest(acc, { t: 'message', message: { nativeId: 'n2', conversation: 'grp', author: 'friend2', ts: now - 500, body: 'meme lol' } });
     const id = (n: string) => store.one<{ id: string }>('SELECT id FROM message WHERE native_id = ?', n)!.id;
-    const probs = (p: number) => ({ ping: p, active: p, interesting: p });
-    store.db.query(`INSERT INTO triage (message_id, decision, reasons, decided_by, probs, created_at) VALUES (?, 'quiet', '[]', 'learned', ?, ?)`).run(id('n1'), JSON.stringify(probs(0.5)), now);
     expect(await emb.tick()).toBe('new');
     expect(emb.store.has(id('n1'))).toBe(true);
+    // Asked before triage decides, in a group you write in; not in a channel you only read.
     expect(emb.store.answers(id('n1')).ask).toBeCloseTo(0.8, 6);
-    // n2 was not decided yet: asked about once it is, if it is near a threshold (it is not).
-    expect(Object.keys(emb.store.answers(id('n2')))).toEqual([]);
-    store.db.query(`INSERT INTO triage (message_id, decision, reasons, decided_by, probs, created_at) VALUES (?, 'drop', '[]', 'learned', ?, ?)`).run(id('n2'), JSON.stringify(probs(0.01)), now);
-    await emb.askJev([]);
-    expect(Object.keys(emb.store.answers(id('n2')))).toEqual([]);
+    expect(emb.store.answers(id('n2')).ask).toBeCloseTo(0.05, 6);
+    expect(emb.store.has(id('n0'))).toBe(true);
+    expect(Object.keys(emb.store.answers(id('n0')))).toEqual([]);
     expect(emb.features(id('n1'))['jev:ask']).toBeCloseTo(Math.log(4), 2);
   });
 
@@ -343,4 +342,21 @@ describe('the embedder on a hub', () => {
     await emb.prepare([id], 1000);
     expect(emb.store.has(id)).toBe(true);
   });
+});
+
+test('the probe picks its own strength from the grid, by its out-of-fold loss', async () => {
+  const { chooseLambda, LAMBDAS, timeFolds } = await import('../src/embeddings.ts');
+  const X: number[][] = [];
+  const y: number[] = [];
+  for (let i = 0; i < 60; i++) {
+    const pos = i % 3 === 0;
+    const v = new Array(8).fill(0).map((_, j) => Math.sin(i * 7 + j) * 0.2);
+    v[0] = pos ? 1 : -1;
+    X.push(v);
+    y.push(pos ? 1 : 0);
+  }
+  const l = chooseLambda(X, y, timeFolds(60));
+  expect(LAMBDAS).toContain(l);
+  // A clean signal: a weaker hold on the weights fits it better.
+  expect(l).toBeLessThanOrEqual(3);
 });
