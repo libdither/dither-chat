@@ -93,3 +93,22 @@ describe('one notification per conversation', () => {
     expect(JSON.stringify(p).length).toBeLessThan(3500);
   });
 });
+
+test('a clear push goes only to devices that said they take it', async () => {
+  const { PushService } = await import('../src/push.ts');
+  const { generateVapidKeys } = await import('../src/webpush.ts');
+  const dir = mkdtempSync(join(tmpdir(), 'dither-clear-'));
+  const store = new Store(join(dir, 'hub.sqlite'), () => null);
+  const sent: string[] = [];
+  const push = new PushService(store, generateVapidKeys(), 's');
+  push.transport = (async (url: string) => (sent.push(url), new Response('', { status: 201 }))) as unknown as typeof fetch;
+  const ecdh = (await import('node:crypto')).createECDH('prime256v1');
+  ecdh.generateKeys();
+  const keys = { p256dh: ecdh.getPublicKey().toString('base64url'), auth: Buffer.alloc(16, 1).toString('base64url') };
+  push.subscribe({ endpoint: 'https://fcm.googleapis.com/fcm/send/old-app', ...keys }, 'Android app, Pixel');
+  push.subscribe({ endpoint: 'https://fcm.googleapis.com/fcm/send/new-app', ...keys }, 'Android app, Pixel', true);
+  await push.clear('cnv_1');
+  expect(sent).toEqual(['https://fcm.googleapis.com/fcm/send/new-app']);
+  store.db.close();
+  rmSync(dir, { recursive: true, force: true });
+});

@@ -35,6 +35,7 @@ interface Pending {
   label: string;
   origin: string;
   at: number;
+  clears: boolean;
 }
 
 function relayName(endpoint: string): string {
@@ -63,8 +64,6 @@ const originOf = (endpoint: string) => {
  */
 /** A phone, going by a registration's label ("Android app, Pixel", "Chrome on Android", "Safari on iOS"). */
 const PHONE = /android|iphone|ipad|\bios\b/i;
-/** The Android app's own registrations (Push.kt), which may take a push that shows nothing. */
-const APP = /^Android app\b/;
 
 const NO_SUBSCRIBER = /\b50701\b|without previously active subscriber/;
 
@@ -88,7 +87,7 @@ export class PushService {
 
   constructor(private store: Store, private keys: VapidKeys, private subject: string, env = process.env) {
     const cols = (store.db.query('PRAGMA table_info(push_subscription)').all() as Row[]).map((c) => c.name);
-    for (const c of ['last_error_at', 'last_test_at', 'last_arrived_at']) if (!cols.includes(c)) store.db.exec(`ALTER TABLE push_subscription ADD COLUMN ${c} INTEGER`);
+    for (const c of ['last_error_at', 'last_test_at', 'last_arrived_at', 'clears']) if (!cols.includes(c)) store.db.exec(`ALTER TABLE push_subscription ADD COLUMN ${c} INTEGER`);
     this.relays = extraRelays(env.DITHER_PUSH_RELAYS);
     this.topic = env.DITHER_NTFY_URL ? { url: env.DITHER_NTFY_URL, token: env.DITHER_NTFY_TOKEN, click: env.DITHER_PUBLIC_URL, lastOkAt: null, lastError: null } : null;
   }
@@ -196,7 +195,7 @@ export class PushService {
     for (const [k, p] of this.pending) {
       if (p.origin !== origin) continue;
       this.pending.delete(k);
-      if (this.subscribe(p.target, p.label)) n++;
+      if (this.subscribe(p.target, p.label, p.clears)) n++;
     }
     return n;
   }
@@ -223,14 +222,15 @@ export class PushService {
 
   // ---------------------------------------------------------------- devices
 
-  subscribe(t: PushTarget, label?: string): string | null {
+  /** `clears`: the device closes a notification on a `{ clear }` push and shows nothing (the Android app since 0.7). */
+  subscribe(t: PushTarget, label?: string, clears = false): string | null {
     const name = label?.trim().slice(0, 80) ?? '';
     if (!this.allow(t.endpoint)) {
       const origin = originOf(t.endpoint);
       if (origin && /^https?:$/.test(new URL(origin).protocol)) {
         this.prune();
         this.pending.delete(t.endpoint);
-        this.pending.set(t.endpoint, { target: t, label: name || 'A device', origin, at: Date.now() });
+        this.pending.set(t.endpoint, { target: t, label: name || 'A device', origin, at: Date.now(), clears });
         while (this.pending.size > MAX_PENDING) this.pending.delete(this.pending.keys().next().value!);
       }
       return null;
@@ -239,10 +239,10 @@ export class PushService {
     const id = fingerprint(t.endpoint);
     this.store.db
       .query(
-        `INSERT INTO push_subscription (id, endpoint, p256dh, auth, label, created_at) VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT (endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, label = COALESCE(NULLIF(excluded.label, ''), label), failures = 0, last_error = NULL, last_error_at = NULL`,
+        `INSERT INTO push_subscription (id, endpoint, p256dh, auth, label, created_at, clears) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, label = COALESCE(NULLIF(excluded.label, ''), label), clears = excluded.clears, failures = 0, last_error = NULL, last_error_at = NULL`,
       )
-      .run(id, t.endpoint, t.p256dh, t.auth, name, Date.now());
+      .run(id, t.endpoint, t.p256dh, t.auth, name, Date.now(), clears ? 1 : 0);
     this.store.db.query(`UPDATE push_subscription SET label = 'A device' WHERE id = ? AND label = ''`).run(id);
     return id;
   }
@@ -324,11 +324,11 @@ export class PushService {
   }
 
   /**
-   * A conversation was read: its notification goes from the Android app (docs/notifications.md). Only there, since a
-   * browser must show something for every push, and a push that shows nothing counts against the site.
+   * A conversation was read: its notification goes from the devices that said they can take that (docs/notifications.md):
+   * the Android app. Not browsers, which must show something for every push, nor older apps, which would show it.
    */
   async clear(conversationId: string): Promise<void> {
-    const rows = (this.store.db.query('SELECT * FROM push_subscription').all() as Row[]).filter((r) => APP.test(r.label ?? ''));
+    const rows = this.store.db.query('SELECT * FROM push_subscription WHERE clears = 1').all() as Row[];
     await Promise.all(rows.map((r) => this.deliver(r, { clear: conversationId, device: r.id })));
   }
 

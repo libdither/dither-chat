@@ -59,7 +59,7 @@ object Push {
         val old = p.getString("push.endpoint", null)
         Thread {
             val sub = JSONObject().put("endpoint", e.url).put("keys", JSONObject().put("p256dh", keys.pubKey).put("auth", keys.auth))
-            val (code, text) = runCatching { Hub.request(c, "POST", "/api/push/subscribe", JSONObject().put("subscription", sub).put("label", "Android app, ${Build.MODEL}")) }
+            val (code, text) = runCatching { Hub.request(c, "POST", "/api/push/subscribe", JSONObject().put("subscription", sub).put("label", "Android app, ${Build.MODEL}").put("clears", true)) }
                 .getOrElse { 0 to (it.message ?: "network error") }
             if (code !in 200..299) {
                 Log.w(TAG, "the hub refused the endpoint: $code")

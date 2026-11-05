@@ -127,8 +127,9 @@ unread lines, so the notification grows instead of being replaced by the latest 
   from a device whose label is not a phone's): you are already looking.
 - **Read elsewhere, gone here.** Every five seconds the hub looks at the conversations it notified about; one read since
   then (in the app, in the network's own client when it reports reads, or by writing there) gets a push
-  `{ clear: conversationId }`, which closes it. That goes only to the Android app's registrations: a browser must show
-  something for every push.
+  `{ clear: conversationId }`, which closes it. That goes only to registrations that said they take it (`clears: true`
+  on `POST /api/push/subscribe`, the Android app from 0.7): a browser must show something for every push, and an older
+  app would show an empty one.
 - **In a browser** (`sw.js`): the lines become the body (`Author: text` in groups), a group's title counts them, and
   `renotify`/`silent` follow `alert`. A hub from before this sends no `alert`, and every Important message sounds.
 - **On Android**: a conversation notification, see docs/android.md.

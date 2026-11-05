@@ -775,10 +775,10 @@ export class HubServer {
       if (!push) return bad('push is not available', 404);
       if (path === '/api/push' && method === 'GET') return ok({ publicKey: push.publicKey, devices: push.devices(), servers: push.servers(), pending: push.pendingList(), topic: push.topicView() } satisfies P.PushInfo);
       if (path === '/api/push/subscribe' && method === 'POST') {
-        const b = await body<{ subscription: { endpoint?: string; keys?: { p256dh?: string; auth?: string } }; label?: string }>();
+        const b = await body<{ subscription: { endpoint?: string; keys?: { p256dh?: string; auth?: string } }; label?: string; clears?: boolean }>();
         const sub = b.subscription;
         if (!sub?.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) return bad('that is not a push subscription');
-        const id = push.subscribe({ endpoint: sub.endpoint, p256dh: sub.keys.p256dh, auth: sub.keys.auth }, b.label);
+        const id = push.subscribe({ endpoint: sub.endpoint, p256dh: sub.keys.p256dh, auth: sub.keys.auth }, b.label, b.clears === true);
         if (id) {
           this.opts.devices?.touch();
           return ok({ id });
