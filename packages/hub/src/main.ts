@@ -9,6 +9,7 @@ import { PushService } from './push.ts';
 import { ReadQueue } from './readqueue.ts';
 import { HubServer, mediaSigner } from './server.ts';
 import { Store } from './store.ts';
+import { RoutedSupervisor } from './remote.ts';
 import { Supervisor } from './supervisor.ts';
 import { Triage } from './triage.ts';
 import { TriageVotes } from './votes.ts';
@@ -126,13 +127,16 @@ function categoryProvider(): CategoryProvider {
 const categorizer = new Categorizer(store, categoryProvider());
 store.categoryProvider = categorizer.provider.id;
 
-const sup = new Supervisor(store, {
+const supOpts = {
   hubAdapterUrl: `ws://127.0.0.1:${tls ? plainPort : port}/adapter`,
   dataDir,
   repoRoot,
   inproc: demoFactory,
   onFresh: triageLater,
-});
+};
+// dither-accounts (docs/accounts.md): the accounts its manager runs come through it; the rest run here as always.
+const accountsUrl = process.env.DITHER_ACCOUNTS_URL;
+const sup = accountsUrl && !demo ? new RoutedSupervisor(store, supOpts, { url: accountsUrl, dataDir, repoRoot }) : new Supervisor(store, supOpts);
 
 const readQueue = new ReadQueue(store, sup);
 readQueue.start();
@@ -180,6 +184,7 @@ if (!demo && realAccounts.length) {
 // A demo world showing adversarial features from the start (scripts/verify-history.ts): before its history is seeded.
 if (demo && flag('adversarial') && !store.retention().adversarial) store.setRetention({ ...store.retention(), adversarial: true, deleted: true, disappearing: true, statuses: true });
 if (demo && !store.accounts().some((a) => a.demo)) createDemoAccounts(store);
+if (sup instanceof RoutedSupervisor) await sup.connectOrRetry();
 sup.startAll();
 if (store.accounts().some((a) => a.demo)) applyDemoOverlay(store);
 server.start();

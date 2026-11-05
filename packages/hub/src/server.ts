@@ -913,8 +913,11 @@ export class HubServer {
       const used = new Set(s.accounts().map((a) => a.color));
       const color = b.color ?? ACCOUNT_COLORS.find((c) => !used.has(c)) ?? ACCOUNT_COLORS[0];
       const acc = s.createAccount({ network: b.network, label: b.label?.trim() || NETWORK_META[b.network].name, color, adapter: b.adapter ?? b.network, config: b.config });
-      this.sup.writeSecret(acc.id, b.secret ?? {});
-      this.sup.start(acc.id);
+      if (this.sup.created) await this.sup.created(acc, b.secret ?? {});
+      else {
+        this.sup.writeSecret(acc.id, b.secret ?? {});
+        this.sup.start(acc.id);
+      }
       return ok(s.accountView(acc));
     }
     if ((m = path.match(/^\/api\/accounts\/([\w-]+)$/))) {
@@ -922,6 +925,7 @@ export class HubServer {
       if (!acc) return bad('no such account', 404);
       if (method === 'DELETE') {
         await this.sup.stop(acc.id);
+        await this.sup.forget?.(acc.id);
         s.deleteAccount(acc.id);
         this.flush();
         return ok();
