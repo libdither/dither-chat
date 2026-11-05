@@ -12,6 +12,7 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, writeFileSync } from 
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import type { AccountRow, Store } from './store.ts';
+import { acquireLock, releaseLock } from './lock.ts';
 
 export interface InprocAdapter {
   start(emit: (ev: P.AdapterEvent) => void): void;
@@ -27,6 +28,7 @@ export interface AdapterSocketData {
 }
 
 interface Running {
+  retry?: Timer;
   proc?: Subprocess;
   inproc?: InprocAdapter;
   ws?: ServerWebSocket<AdapterSocketData>;
@@ -38,6 +40,8 @@ interface Running {
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: Timer };
 
 const BACKOFF = [1, 2, 5, 10, 30, 60];
+/** How often an account another process runs is looked at again. */
+const LOCK_RETRY_MS = 15_000;
 
 export interface CallSink {
   onAdapterEvent(accountId: string, ev: Extract<P.AdapterEvent, { t: 'call' }>): void;
@@ -45,7 +49,7 @@ export interface CallSink {
 }
 
 export class Supervisor {
-  private running = new Map<string, Running>();
+  protected running = new Map<string, Running>();
   private pending = new Map<string, Pending>();
   /** Where call events go (the server's Calls). */
   calls?: CallSink;
@@ -74,6 +78,15 @@ export class Supervisor {
     chmodSync(p, 0o600);
   }
 
+  /** A new account from the API: its secret, then its adapter. remote.ts gives it to the manager instead. */
+  async created(acc: AccountRow, secret: unknown) {
+    this.writeSecret(acc.id, secret ?? {});
+    this.start(acc.id);
+  }
+
+  /** The account is being deleted from the hub (after stop). remote.ts removes it from the manager too. */
+  async forget(_id: string) {}
+
   startAll() {
     for (const a of this.store.accounts()) if (a.enabled) this.start(a.id);
   }
@@ -84,6 +97,7 @@ export class Supervisor {
     const cur = this.running.get(id);
     if (cur && !cur.stopping && (cur.proc || cur.inproc)) return;
     const r: Running = cur ?? { restarts: 0, stopping: false, lastStart: 0 };
+    clearTimeout(r.retry);
     r.stopping = false;
     r.lastStart = Date.now();
     this.running.set(id, r);
@@ -102,6 +116,17 @@ export class Supervisor {
         status: 'error',
         attention: JSON.stringify({ kind: 'unknown', message: `No adapter installed for "${acc.adapter}"`, since: Date.now() }),
       });
+      return;
+    }
+    // Someone else (dither-accounts' manager, an orphaned adapter) runs this account: not a second session. Look
+    // again later, so an orphan's account comes back once it is gone.
+    const held = acquireLock(dir, 'dither-chat', id);
+    if (held) {
+      r.retry = setTimeout(() => this.start(id), LOCK_RETRY_MS);
+      // An adapter from before a crash that found its way back to this hub: it is the account's session; leave it be.
+      if (r.ws) return;
+      this.store.updateAccount(id, { status: 'error', attention: JSON.stringify({ kind: 'unknown', message: `Not started here: ${held}`, since: Date.now() }) });
+      appendFileSync(join(dir, 'adapter.log'), `--- ${new Date().toISOString()} not started: ${held}\n`);
       return;
     }
     this.store.updateAccount(id, { status: 'connecting' });
@@ -143,9 +168,11 @@ export class Supervisor {
     if (!r || (r.proc && r.proc !== proc)) return;
     r.proc = undefined;
     appendFileSync(join(this.accountDir(id), 'adapter.log'), `--- exited code=${code} signal=${signal}\n`);
-    if (r.stopping) return;
     const acc = this.store.account(id);
-    if (!acc?.enabled) return;
+    if (r.stopping || !acc?.enabled) {
+      releaseLock(this.accountDir(id));
+      return;
+    }
     // A process that ran for a while gets a fresh backoff.
     if (Date.now() - r.lastStart > 120_000) r.restarts = 0;
     const delay = BACKOFF[Math.min(r.restarts, BACKOFF.length - 1)];
@@ -158,6 +185,7 @@ export class Supervisor {
     const r = this.running.get(id);
     if (!r) return;
     r.stopping = true;
+    clearTimeout(r.retry);
     if (r.inproc) {
       r.inproc.stop();
       r.inproc = undefined;
@@ -173,6 +201,7 @@ export class Supervisor {
       p.kill('SIGTERM');
       await p.exited.catch(() => {});
       clearTimeout(killer);
+      releaseLock(this.accountDir(id));
     }
     this.running.delete(id);
   }
@@ -224,7 +253,8 @@ export class Supervisor {
     this.handle(ws.data.accountId, ev);
   }
 
-  private handle(accountId: string, ev: P.AdapterEvent) {
+  /** An adapter's event, from its socket, an in-process adapter, or (remote.ts) dither-accounts' manager. */
+  protected handle(accountId: string, ev: P.AdapterEvent) {
     if (ev.t === 'reply') {
       const p = this.pending.get(ev.id);
       if (!p) return;

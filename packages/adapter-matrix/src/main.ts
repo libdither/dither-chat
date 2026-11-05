@@ -31,7 +31,9 @@ const lockHolder = () => {
 const isSibling = (pid: number) => {
   if (!pid || pid === process.pid) return false;
   try {
-    if (!readFileSync(`/proc/${pid}/cmdline`, 'utf8').includes('adapter-matrix')) return false;
+    // This copy (packages/adapter-matrix) and dither-accounts' (extractors/matrix) are siblings too.
+    const cmd = readFileSync(`/proc/${pid}/cmdline`, 'utf8');
+    if (!cmd.includes('adapter-matrix') && !cmd.includes('extractors/matrix')) return false;
     return readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').includes(`DITHER_ACCOUNT_ID=${accountId}`);
   } catch {
     return false;

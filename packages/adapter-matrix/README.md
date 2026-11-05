@@ -1,5 +1,9 @@
 # @dither-chat/adapter-matrix
 
+> **Moved.** This adapter now lives in [dither-accounts](../../../dither-accounts) as `extractors/matrix`, where its
+> manager runs it for dither-chat and any other app you allow (docs/accounts.md). This copy stays so the hub keeps
+> running accounts itself until dither-accounts is published; changes go to dither-accounts.
+
 The Matrix adapter: one Client-Server API session per hub account, plain `fetch`, no SDK, plus the Rust crypto library for end-to-end encryption if you turn that on.
 The hub spawns it as `bun packages/adapter-matrix/src/main.ts` with the `DITHER_*` environment
 described in `packages/protocol/src/adapter.ts`.
