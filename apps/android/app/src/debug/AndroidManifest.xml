@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: a push from adb, to try notifications without a hub or a distributor. Never in a release. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <receiver
+            android:name=".DebugPushReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="org.libdither.chat.DEBUG_PUSH" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

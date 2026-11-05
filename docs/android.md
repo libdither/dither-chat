@@ -99,8 +99,44 @@ Verified end to end on the emulator against a demo hub (2026-11-02), with ntfy a
   before this change (which only shows the hub's error text) works with it too.
 
 ntfy accepts the hub's VAPID-signed, aes128gcm Web Push as-is. Tapping a notification opens its conversation, and
-Reply sends through the hub. A message notification has the network's mark as its small icon and the sender's picture,
-with the network's badge, as its large icon; which devices get it at all is up to each device's rules ([devices.md](devices.md)).
+Reply sends through the hub. Which devices get a message at all is up to each device's rules ([devices.md](devices.md)).
+
+### How a message notification looks
+
+A message is a **conversation notification**, as Discord, Signal and Google Messages post them (`Notifications.kt`,
+design in [research/notification-design.md](research/notification-design.md) §7–8):
+
+- **One per conversation** (tag = conversation id), in `Notification.MessagingStyle` with the push's `lines`: the last
+  few messages from others since you last read or wrote there, each with its author as a `Person` (name, key, round
+  picture from `icons` or `sender.icon`). A group or channel (`conv.shape` not `direct`) has the conversation's title
+  above the messages. A push from an older hub, without `lines`, shows as one message made from its title and body.
+- **The picture on the left.** Each conversation has a long-lived dynamic shortcut `conv:<id>` (`pushDynamicShortcut`,
+  with the people, a `LocusId` and an adaptive icon: the group's or server's picture, or for a DM the person's,
+  scaled into the middle 72 of 108 so the mask leaves it whole). The notification names it with `setShortcutId` and
+  `setLocusId`, so Android 11+ draws it in the conversation layout: the shortcut's picture in the icon slot, with the
+  small icon, the network's mark in its colour, as a badge on it. No large icon. The shortcut opens the conversation.
+  Without a valid long-lived shortcut Android falls back to the plain layout, with the picture missing.
+- **Bursts.** `setOnlyAlertOnce(!alert)`: a push with `alert: false` changes the text without sound, vibration or
+  heads-up. When it is the conversation's first notification it is muted with `GROUP_ALERT_SUMMARY`, which is what
+  `setSilent(true)` does on Android 12+ but also works on 10 and 11 (a group child that leaves alerting to a summary
+  which leaves it to its children never alerts). Active (`level: 'quiet'`) still goes to the silent channel.
+- **One group, `dither-messages`, with a summary** (`InboxStyle`, a line per conversation, `GROUP_ALERT_CHILDREN` so
+  it never sounds itself) once two conversations are showing. Cancelling a summary cancels its children, so it stays
+  while one is left (the system then shows that one alone) and goes with the last. The digest has its own group.
+- **Read elsewhere.** A `{ clear: <conversationId> }` push cancels that conversation's notification and updates the
+  summary, without any outcome event. Opening the conversation in the app does the same, and tells the system it is on
+  screen (`setLocusContext`).
+- **Reply** sends through the hub, then re-posts the notification (recovered from the one showing) with what you wrote
+  as its newest message, quietly, and reports the shortcut as used. On failure it says why, with what you typed.
+
+Checked on the emulator's Android 15: the DM with three messages and the picture on the left with the badge, a group
+with several senders, a silent update and a silent new conversation (no heads-up, no `notification_alert` event in
+`logcat -b events`), the summary over two conversations, a clear, and a reply appended.
+
+**Trying it without a hub's push.** A debug build (`src/debug`, never in a release) has a receiver that shows a
+payload from adb: `adb shell am broadcast -a org.libdither.chat.DEBUG_PUSH -n org.libdither.chat/.DebugPushReceiver
+--es b64 <the payload's JSON in base64>`. `--es hub <origin>` sets the hub (for Reply), `--es cancel <tag>` cancels a
+notification.
 
 ### Which servers the hub sends to
 
@@ -304,6 +340,8 @@ For debugging, `./gradlew assembleDebug` builds an 8.8 MB debuggable APK. Its We
   the page, the WebRTC features direct mode uses. Audio routing has only been seen on the emulator, which offers a
   speaker and nothing else.
 - Not tried on a physical phone.
+- Conversation notifications were checked on Android 15 only. A conversation archived or left keeps its shortcut until
+  Android drops it (`removeLongLivedShortcuts` is not called yet), and there are no bubbles.
 - Changing the hub address leaves the old hub's push registration in place. Remove it in that hub's settings first.
 - The first render still builds the whole conversation list; rendering only what is visible would cut the remaining
   cold-start time further.
