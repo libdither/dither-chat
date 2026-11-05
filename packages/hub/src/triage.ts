@@ -30,6 +30,7 @@ import { previewText, type Store } from './store.ts';
 import { describeActivity, type ActivityStore, type Features } from './activity.ts';
 import { describeWeight, emptyModel, importance, levelFrom, predict, prior, TIER_NAME, words, type Facts, type Level, type Model, type Namer } from './learn.ts';
 import { InteractionLog } from './interact.ts';
+import { explore, exploreCounts, EXPLORE_DOWN_REASON, EXPLORE_UP_REASON } from './shadow.ts';
 
 type Row = Record<string, any>;
 
@@ -50,6 +51,13 @@ export interface Decision {
   starred?: boolean;
   /** What the activity log said about this place when deciding (DITHER_ACTIVITY_FEATURES), kept for training. */
   features?: Features;
+  /** Matched one of your keywords. */
+  keyword?: boolean;
+  /** The candidate model's chances, kept next to the live ones; it never decides (shadow.ts). */
+  shadow?: P.TriageProbs;
+  /** Exploration changed the decision (DITHER_TRIAGE_EXPLORE), and the chance of what was done when it drew. */
+  explore?: 'up' | 'down' | null;
+  propensity?: number | null;
 }
 
 /** What the networks do where nothing is set: DMs and group chats notify on every message, channels on mentions. */
@@ -117,6 +125,12 @@ export class Triage {
   namer: Namer | null = null;
   /** The local model's prompt as last written from it; null for the built-in one. */
   prompt: string | null = null;
+  /** The candidate model, run in shadow (votes.ts keeps it). */
+  candidate: Model | null = null;
+  /** Silent exploration (shadow.ts), off unless DITHER_TRIAGE_EXPLORE=1. */
+  exploring = process.env.DITHER_TRIAGE_EXPLORE === '1';
+  /** The draw for exploration; tests replace it. */
+  rng: () => number = Math.random;
   private interactions: InteractionLog | null = null;
 
   constructor(
@@ -271,6 +285,8 @@ export class Triage {
     if (d?.facts) {
       const ws = words(this.store.one<Row>('SELECT body FROM message WHERE id = ?', messageId)?.body ?? '');
       this.withModel(d, d.facts, ws, d.llm);
+      if (this.candidate) d.shadow = rounded(predict(this.candidate, d.facts, ws, d.llm, d.features?.x).probs);
+      if (this.exploring) this.withExploration(d, messageId, now);
     }
     if (d?.decision !== 'push' && d?.decision !== 'quiet') return d;
     const q = this.store.quietHours();
@@ -304,6 +320,23 @@ export class Triage {
   /** Where the rules put a stored message, with its facts, before the model and quiet hours: for the replay. */
   rulesFor(messageId: string): Promise<Decision | null> {
     return this.decideByRules(messageId);
+  }
+
+  /**
+   * Silent exploration (shadow.ts): maybe try a message just under Active as Active, or hold an Important one in a
+   * busy conversation to Active. Logs what it did and with what chance.
+   */
+  private withExploration(d: Decision, messageId: string, now: number) {
+    const s = this.store;
+    const m = s.one<Row>('SELECT m.conversation_id, m.ts, c.shape FROM message m JOIN conversation c ON c.id = m.conversation_id WHERE m.id = ?', messageId);
+    if (!m || !d.facts || !d.probs || !isLevel(d.decision)) return;
+    const counts = exploreCounts(s.db, m.conversation_id, m.shape, m.ts, now);
+    const e = explore({ level: d.decision, probs: d.probs, shadow: d.shadow, facts: d.facts, starred: !!d.starred, keyword: !!d.keyword, quietHours: inQuietHours(s.quietHours(), now), ...counts }, this.rng);
+    d.propensity = e.propensity;
+    if (!e.explore) return;
+    d.decision = e.level;
+    d.explore = e.explore;
+    d.reasons.unshift(e.explore === 'up' ? EXPLORE_UP_REASON : EXPLORE_DOWN_REASON);
   }
 
   /** The facts for a stored message, for a vote on one decided before facts were kept. */
@@ -368,7 +401,7 @@ export class Triage {
   /**
    * Behind DITHER_ACTIVITY_FEATURES: what the activity log says about this place becomes a reason, and the features
    * go with the decision so the model's training sees what was known then (docs/activity.md), interaction features
-   * (interact.ts) among them. The decision itself does not use them.
+   * (interact.ts) among them. The live decision does not use them; the shadow model does.
    */
   private withActivity(d: Decision, messageId: string, now: number) {
     const a = this.activity;
@@ -477,7 +510,7 @@ export class Triage {
     }
     if (keyword) {
       reasons.push(`Matches keyword “${keyword.target}”`);
-      return done('push');
+      return { ...done('push'), keyword: true };
     }
     if (author?.is_bot && eff.level !== 'all' && !mention) {
       reasons.push('From a bot');
@@ -565,6 +598,7 @@ Reply with JSON {"ping": 0-1, "active": 0-1, "interesting": 0-1, "reason": "<8 w
 
 const round = (x: number) => Math.round(x * 1000) / 1000;
 const rounded = (p: P.TriageProbs): P.TriageProbs => ({ ping: round(p.ping), active: round(p.active), interesting: round(p.interesting) });
+const isLevel = (d: P.TriageDecision): d is Level => d !== 'silent';
 
 const DEFAULT_PROMPT = `You read incoming chat messages for one person and answer three questions about each, as chances from 0 to 1:
 - ping: should their phone buzz and their computer show a notification? For what they would drop things for.

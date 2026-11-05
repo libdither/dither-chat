@@ -56,6 +56,15 @@ export async function forgetFactor(key: string, rejected: boolean) {
   triagePolicy.value = await api<P.TriagePolicyView>(`/api/triage/factors/${encodeURIComponent(key)}`, { body: { rejected } });
 }
 
+/** What the candidate model, running in shadow, would have done lately. */
+export const triageShadow = signal<P.TriageShadowView | null>(null);
+
+export async function loadShadow() {
+  try {
+    triageShadow.value = await api<P.TriageShadowView>('/api/triage/shadow');
+  } catch {}
+}
+
 export async function relearn() {
   triagePolicy.value = await api<P.TriagePolicyView>('/api/triage/policy/relearn', { body: {} });
 }

@@ -134,6 +134,7 @@ export class Store {
     this.addColumns('message', { gone_how: 'TEXT', gone_at: 'INTEGER' });
     this.addColumns('identity', { status: 'TEXT' });
     this.addColumns('category', { threshold: 'REAL' });
+    this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL' });
     const oldTriage = this.setAsideTriage();
     const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
     this.db.exec(schema);
@@ -1228,15 +1229,19 @@ export class Store {
   }
 
 
-  /** A decision, and what it was made from. A vote already given stays. */
-  setTriage(messageId: string, t: Omit<P.TriageView, 'feedback'>, facts?: unknown) {
+  /** A decision, and what it was made from; with the shadow model's chances and what exploration did, if anything. A vote already given stays. */
+  setTriage(messageId: string, t: Omit<P.TriageView, 'feedback'> & { shadow?: P.TriageProbs; explore?: 'up' | 'down' | null; propensity?: number | null }, facts?: unknown) {
     this.db
       .query(
-        `INSERT INTO triage (message_id, decision, score, reasons, decided_by, facts, probs, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO triage (message_id, decision, score, reasons, decided_by, facts, probs, shadow, explore, propensity, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (message_id) DO UPDATE SET decision = excluded.decision, score = excluded.score, reasons = excluded.reasons,
-           decided_by = excluded.decided_by, facts = COALESCE(excluded.facts, facts), probs = excluded.probs, created_at = excluded.created_at`,
+           decided_by = excluded.decided_by, facts = COALESCE(excluded.facts, facts), probs = excluded.probs, shadow = excluded.shadow,
+           explore = excluded.explore, propensity = excluded.propensity, created_at = excluded.created_at`,
       )
-      .run(messageId, t.decision, t.score, JSON.stringify(t.reasons), t.decidedBy, facts ? JSON.stringify(facts) : null, t.probs ? JSON.stringify(t.probs) : null, Date.now());
+      .run(
+        messageId, t.decision, t.score, JSON.stringify(t.reasons), t.decidedBy, facts ? JSON.stringify(facts) : null, t.probs ? JSON.stringify(t.probs) : null,
+        t.shadow ? JSON.stringify(t.shadow) : null, t.explore ?? null, t.propensity ?? null, Date.now(),
+      );
   }
 
   triageFeedback(messageId: string, feedback: P.TriageView['feedback'], now = Date.now()) {

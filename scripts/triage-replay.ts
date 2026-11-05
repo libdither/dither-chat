@@ -19,9 +19,10 @@ import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { HEADS, levelFrom, predict, prior, STOOD, STOOD_PER_PLACE, train, voteWeight, words, type Example, type Facts, type Level, type Model } from '../packages/hub/src/learn.ts';
+import { HEADS, levelFrom, predict, prior, STOOD, STOOD_PER_PLACE, THRESHOLDS, train, voteWeight, words, type Example, type Facts, type Level, type Model } from '../packages/hub/src/learn.ts';
 import { dmPeer, Interactions, logFeatures, SELF_SQL, type NumericFeatures } from '../packages/hub/src/interact.ts';
 import { BURST, gatherOutcomes, implicitLabel, LABEL_WEIGHTS, LATE, OPEN_WITHIN, QUICK, type Label, type LabelWeights, type Outcome } from '../packages/hub/src/labels.ts';
+import { EXPLORE, explorable } from '../packages/hub/src/shadow.ts';
 import { Store } from '../packages/hub/src/store.ts';
 import { Triage } from '../packages/hub/src/triage.ts';
 
@@ -401,8 +402,21 @@ function metrics(test: ReplayExample[], run: Run, nDays: number, events: number[
     const xs = counted.filter(keep);
     return { alerts: xs.length, precisionReply: r(xs.length ? xs.filter((i) => actedQuick(test[i].outcome)).length / xs.length : null) };
   };
+  // How often exploration (shadow.ts) could draw, with this policy deciding: up, a Digest or Not-interesting message
+  // with its Active chance in the band under the threshold; down, Important in a conversation with 10+ pings that day.
+  let upEligible = 0;
+  let downEligible = 0;
+  const pingsPerConvDay = new Map<string, number>();
+  test.forEach((e, i) => run.levels[i] === 'push' && pingsPerConvDay.set(`${e.conv}/${e.day}`, (pingsPerConvDay.get(`${e.conv}/${e.day}`) ?? 0) + 1));
+  test.forEach((e, i) => {
+    const p = run.probs[i];
+    if (!p || !explorable({ facts: e.facts, starred: false, keyword: false, quietHours: false, dmAfterLull: e.facts.shape === 'direct' && e.outcome.lullFirst })) return;
+    if ((run.levels[i] === 'digest' || run.levels[i] === 'drop') && p.active >= EXPLORE.upBand && p.active < THRESHOLDS.active) upEligible++;
+    if (run.levels[i] === 'push' && (pingsPerConvDay.get(`${e.conv}/${e.day}`) ?? 0) >= EXPLORE.downBusy) downEligible++;
+  });
   return {
     messages: n,
+    exploreEligiblePerDay: run.probs.some(Boolean) ? { up: r(upEligible / nDays, 1), down: r(downEligible / nDays, 1) } : null,
     notifiedPerDay: r(notified / nDays, 1),
     pushesPerDay: r(pushes / nDays, 1),
     alertsPerDay: r(alertTimes.length / nDays, 1),
@@ -621,6 +635,9 @@ function markdown(s: any): string {
   L.push('', 'Agree / disagree with what was logged (uncoalesced alerts, not already there): precision where the logged decision also pinged, and where it did not.', '');
   L.push('| Policy | Agree: alerts | precision | New: alerts | precision |', '| --- | ---: | ---: | ---: | ---: |');
   for (const x of s.results.filter((x: any) => !x.coalesce)) L.push(`| ${x.policy} | ${x.agreeWithLogged.alerts} | ${x.agreeWithLogged.precisionReply ?? '–'} | ${x.newVsLogged.alerts} | ${x.newVsLogged.precisionReply ?? '–'} |`);
+  L.push('', 'Exploration (shadow.ts) with each policy deciding: messages a day it could draw on. Up draws at 2% (at most 3 a day), down at 5% (once per conversation a day).', '');
+  L.push('| Policy | Up-eligible/day | Down-eligible/day |', '| --- | ---: | ---: |');
+  for (const x of s.results.filter((x: any) => !x.coalesce && x.exploreEligiblePerDay)) L.push(`| ${x.policy} | ${x.exploreEligiblePerDay.up} | ${x.exploreEligiblePerDay.down} |`);
   L.push('', 'Held-out votes (each scored by the model fitted before the day it was given):', '');
   L.push('| Policy | Votes | Right | Log loss |', '| --- | ---: | ---: | ---: |');
   for (const [k, v] of Object.entries<any>(s.voteAgreement)) L.push(`| ${k} | ${v.votes} | ${v.right} | ${v.logLoss ?? '–'} |`);

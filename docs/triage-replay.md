@@ -47,7 +47,8 @@ bun scripts/triage-replay.ts --db <scratch dir>/hub-copy-….sqlite --out <dir> 
      unprompted; interesting: anything at all);
    - **latency**: median minutes to your answer, alerted or not;
    - **paired tests**: exact McNemar on the same reply events, each policy against P1 (and P0);
-   - **agree / disagree** with what was logged: precision where the logged decision also pinged, and where it did not.
+   - **agree / disagree** with what was logged: precision where the logged decision also pinged, and where it did not;
+   - **exploration**: how many messages a day each policy would let exploration draw on (shadow.ts).
 5. With **`--tune`**, a grid over the implicit-label weights (a scale on the design's weights, and the weight of
    "nothing happened"), each scored on held-out votes, recall, precision and recall at the budget.
 
@@ -59,7 +60,7 @@ bun scripts/triage-replay.ts --db <scratch dir>/hub-copy-….sqlite --out <dir> 
 | P0 | the network prior only: where the networks' own settings put it |
 | P1 | the live model: votes and decisions that stood, refitted daily (votes.ts) |
 | P1+labels | P1 with labels from what you did (labels.ts) instead of decisions that stood |
-| P2 | P1+labels with interaction features (interact.ts) |
+| P2 | P1+labels with interaction features (interact.ts): the shadow model the live hub runs |
 
 **Adding a policy** (P3 embeddings, P4 local-model answers): write a module and pass it with `--extra`.
 
@@ -91,3 +92,4 @@ numeric features `x` keeps. Give a new kind of numeric feature its regularisatio
 - **"Already there"** (you wrote there in the 15 minutes before, a visit spanned it, or an open page kept the
   notification to itself) is excluded from ping metrics: a buzz is worth nothing then.
 
+## Results
