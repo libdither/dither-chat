@@ -93,3 +93,55 @@ numeric features `x` keeps. Give a new kind of numeric feature its regularisatio
   notification to itself) is excluded from ping metrics: a buzz is worth nothing then.
 
 ## Results
+
+First run: a copy of the live hub taken 2026-11-05. 177,561 decisions over 7 days (from 2026-10-30, when triage
+began keeping them), 6 test days (5.5 days of data, 174,282 decisions). 12 votes, all on pings. 37 reply events (a
+quick answer when you were not already there). Interaction features were rebuilt in the replay, since `triage_input`
+was empty until then. The budget is what was logged, coalesced: 35 alerts a day.
+
+| Policy | Pings/day | Alerts/day (coalesced) | Max alerts/h (coalesced) | Precision, reply ≤15 min (coalesced) | Recall | Recall at 35 alerts/day | Held-out votes right |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| L (logged) | 89.7 | 35.0 | 15 | 0.221 | 0.757 | (0.757) | 2 / 12 |
+| P0 | 303.1 | 94.4 | 18 | 0.099 | 0.946 | cannot be cut | 2 / 12 |
+| P1 | 290.8 | 92.4 | 18 | 0.099 | 0.919 | 0.595 | 2 / 12 |
+| P1+labels | 278.1 | 83.3 | 17 | 0.110 | 0.919 | 0.838 | 4 / 12 |
+| P2 | 156.0 | 55.4 | 12 | 0.170 | 0.919 | 0.838 | 8 / 12 |
+
+What it says:
+
+- **Today's rules ping far more than was logged.** P0 and P1 decide by today's settings, where Signal groups notify
+  every message; L is history under older rules. The live hub pinged about 260 times on 2026-11-05, in line with P1.
+- **Coalescing alone cuts alerts by two thirds** (P1: 291 pings, 92 alerts a day) and changes no decision.
+- **P2, the shadow model, pings about half as often as P1 (156 against 291 a day; 55 against 92 alerts) at the same
+  recall** (34 of 37 reply events each), with precision 0.17 against 0.10. Uncoalesced, where P2 agrees with what
+  was logged its precision is 0.38. Where it pings something that was not pinged, it is 0.07, and the bias above
+  makes that number pessimistic.
+- **At an equal budget of 35 alerts a day, the labels are what matter**: recall 0.84 for P1+labels and P2 against 0.60
+  for P1. Paired on the same events, P2 covers 9 that P1 misses and P1 none that P2 misses (McNemar p = 0.004).
+  P1+labels covers 12 that P1 misses and misses 3 (p = 0.035).
+- **Calibration improves but is still poor for ping.** Brier score for ping: P1 0.0071, P2 0.0045, against a base rate
+  of 0.07%. Both still put 0.8–0.9 on every message in a chatty group. The *interesting* chance gets worse (0.130 to
+  0.160): no label says "not interesting", so it only learns to go up. It decides nothing yet, but it needs negatives
+  (a digest entry seen and left) before it can.
+- **Votes**: P2 gets 8 of the 12 held-out votes right, P1 2. With 12 votes from 8 conversations, all of them "a ping
+  that should have been Active", that is a hint, not evidence.
+- **Exploration**: with P1 deciding, no message a day falls in the 25–50% Active band, so up-exploration could never
+  fire on the live model's chances alone. With P2 about 9 a day do, which is why the shadow's chance counts too
+  (at 2% that is one every week or so). About 217 Important messages a day are in conversations busy enough for the
+  down holdout.
+
+**Tuning the label weights** (`--tune`, P2's shape). Scaling the design's weights by 0.5, 1 or 2 changes almost
+nothing. The weight of "nothing happened" decides it:
+
+| "Nothing happened" weight | Votes right | Alerts/day | Recall | Precision | Recall at budget |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 (the design's table alone) | 4 | 85.5 | 0.919 | 0.105 | 0.595 |
+| 0.01 | 7 | 77.6 | 0.919 | 0.116 | 0.811 |
+| **0.03** (chosen) | **8** | 55.4 | 0.919 | 0.170 | 0.838 |
+| 0.1 | 6 | 44.9 | 0.865 | 0.195 | 0.784 |
+| 0.3 | 6 | 36.4 | 0.811 | 0.232 | 0.784 |
+
+At 0.03 the votes agree best and recall holds; above it, recall starts to drop. Without it, 8,235 of the 8,710 labels
+are missing, nearly all the rest are positive, and the model can only learn to notify more. With 12 votes and 37
+reply events this rules out the extremes. It does not fine-tune anything. Run it again after two more weeks of
+`triage_input`, and with exploration's labels.

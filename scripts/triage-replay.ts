@@ -452,7 +452,7 @@ function atBudget(test: ReplayExample[], run: Run, budget: number, nDays: number
   const cov = covered(test, a, events);
   const perDay = a.filter(Boolean).length / nDays;
   // A policy whose chances are a handful of fixed values (P0) cannot be cut at an arbitrary volume.
-  return { threshold: r(hi, 4), alertsPerDay: r(perDay, 1), reached: Math.abs(perDay - budget) <= Math.max(1, budget * 0.2), recall: r(events.length ? cov.filter(Boolean).length / events.length : null) };
+  return { threshold: r(hi, 4), alertsPerDay: r(perDay, 1), reached: Math.abs(perDay - budget) <= Math.max(1, budget * 0.2), recall: r(events.length ? cov.filter(Boolean).length / events.length : null), covered: cov };
 }
 
 // ------------------------------------------------------------------ the run
@@ -518,19 +518,20 @@ async function main() {
     const m = metrics(test, run, nDays, events);
     return { policy: run.policy, coalesce: run.coalesce, ...m, atBudget: atBudget(test, run, budget, nDays, events) };
   });
-  // Paired comparisons on the same reply events.
-  const paired: { a: string; b: string; coalesce: boolean; onlyA: number; onlyB: number; p: number }[] = [];
-  const order = policies.map((p) => p.name);
-  for (const coalesce of [false, true])
-    for (const a of results.filter((x) => x.coalesce === coalesce))
-      for (const bName of ['P0', 'P1']) {
-        const b = results.find((x) => x.coalesce === coalesce && x.policy === bName);
-        // Each pair once: against P1, and against P0 for what comes before P1.
-        if (!b || a.policy === bName || (bName === 'P0' && order.indexOf(a.policy) > order.indexOf('P1'))) continue;
-        const onlyA = a.covered.filter((c, k) => c && !b.covered[k]).length;
-        const onlyB = a.covered.filter((c, k) => !c && b.covered[k]).length;
-        paired.push({ a: a.policy, b: bName, coalesce, onlyA, onlyB, p: r(mcnemar(onlyA, onlyB), 4)! });
-      }
+  // Paired comparisons on the same reply events, against P1: at each policy's own threshold, and at the budget.
+  const paired: { a: string; b: string; at: string; onlyA: number; onlyB: number; p: number }[] = [];
+  const pair = (a: string, at: string, ca: boolean[], cb: boolean[]) => {
+    const onlyA = ca.filter((c, k) => c && !cb[k]).length;
+    const onlyB = ca.filter((c, k) => !c && cb[k]).length;
+    paired.push({ a, b: 'P1', at, onlyA, onlyB, p: r(mcnemar(onlyA, onlyB), 4)! });
+  };
+  for (const coalesce of [false, true]) {
+    const b = results.find((x) => x.coalesce === coalesce && x.policy === 'P1');
+    if (!b) continue;
+    for (const a of results.filter((x) => x.coalesce === coalesce && x.policy !== 'P1')) pair(a.policy, coalesce ? 'own threshold, coalesced' : 'own threshold', a.covered, b.covered);
+    if (coalesce && b.atBudget?.reached)
+      for (const a of results.filter((x) => x.coalesce && x.policy !== 'P1' && x.atBudget?.reached)) pair(a.policy, `budget ${budget}/day, coalesced`, a.atBudget!.covered, b.atBudget!.covered);
+  }
 
   let tuning: unknown = null;
   if (flag('tune')) tuning = tune(examples, testDays, test, events, nDays, budget);
@@ -543,7 +544,7 @@ async function main() {
     features: featureSummary(test),
     budget,
     policies: policies.map((p) => ({ name: p.name, about: p.about })),
-    results: results.map(({ covered, ...rest }) => rest),
+    results: results.map(({ covered, atBudget, ...rest }) => ({ ...rest, atBudget: atBudget && { ...atBudget, covered: undefined } })),
     voteAgreement: Object.fromEntries(Object.entries(voteChecks).map(([k, v]) => [k, { votes: v.n, right: v.right, logLoss: v.n ? r(v.logLoss / v.n) : null }])),
     paired,
     tuning,
@@ -645,9 +646,9 @@ function markdown(s: any): string {
   L.push('| Policy | ping | active | interesting |', '| --- | --- | --- | --- |');
   for (const x of s.results.filter((x: any) => !x.coalesce && Object.keys(x.calibration).length))
     L.push(`| ${x.policy} | ${HEADS.map((h) => (x.calibration[h] ? `${x.calibration[h].brier} (base ${x.calibration[h].base}, n ${x.calibration[h].n})` : '–')).join(' | ')} |`);
-  L.push('', 'Paired on the same reply events (McNemar, exact): covered only by A, only by B.', '');
-  L.push('| A | B | Coalesced | Only A | Only B | p |', '| --- | --- | --- | ---: | ---: | ---: |');
-  for (const p of s.paired) L.push(`| ${p.a} | ${p.b} | ${p.coalesce ? 'yes' : 'no'} | ${p.onlyA} | ${p.onlyB} | ${p.p} |`);
+  L.push('', 'Paired against P1 on the same reply events (McNemar, exact): covered only by A, only by P1.', '');
+  L.push('| A | At | Only A | Only P1 | p |', '| --- | --- | ---: | ---: | ---: |');
+  for (const p of s.paired) L.push(`| ${p.a} | ${p.at} | ${p.onlyA} | ${p.onlyB} | ${p.p} |`);
   L.push('', `Labels from what you did: ${s.labels.labelled} messages. Rules: ${Object.entries(s.labels.rules).map(([k, v]) => `${k} ${v}`).join(', ')}. By chance (positive/negative): ${Object.entries<any>(s.labels.heads).map(([h, v]) => `${h} ${v.pos}/${v.neg}`).join(', ')}.`);
   L.push('', `Interaction features on test messages (share non-zero, mean): ${Object.entries<any>(s.features).map(([k, v]) => `${k} ${r(v.nonzero / s.window.testMessages, 3)}, ${v.mean}`).join('; ')}.`);
   if (s.tuning) {
