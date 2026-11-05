@@ -734,6 +734,7 @@ export class Embeddings {
   private busy: Promise<unknown> = Promise.resolve();
   private lastRefit = 0;
   private parts = new Map<string, { at: number; yes: boolean }>();
+  private caughtUp = false;
 
   constructor(private hub: Database, path: string, private opts: EmbeddingsOptions = {}) {
     this.store = new EmbeddingStore(path);
@@ -748,7 +749,10 @@ export class Embeddings {
       try {
         const did = await this.tick();
         next = did === 'new' ? 1_000 : did === 'backfill' ? 4_000 : 20_000;
-        if (this.now() - this.lastRefit > DAY) await this.refitSoftly();
+        // Daily, and once more when the backfill is done: most labelled messages only have vectors from then.
+        const caughtUp = did === 'idle' && !this.caughtUp;
+        if (caughtUp) this.caughtUp = true;
+        if (caughtUp || this.now() - this.lastRefit > DAY) await this.refitSoftly();
       } catch (e) {
         // jev down or busy: the features are missing meanwhile, and triage goes on without them.
         console.error(`embeddings: ${(e as Error).message}; trying again in 5 min`);
