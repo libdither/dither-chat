@@ -5,6 +5,7 @@ import { ActivityStore } from './activity.ts';
 import { Attention } from './attention.ts';
 import { applyDemoOverlay, createDemoAccounts, demoFactory } from './demo.ts';
 import { Devices } from './devices.ts';
+import { Embeddings, Jev } from './embeddings.ts';
 import { PushService } from './push.ts';
 import { ReadQueue } from './readqueue.ts';
 import { HubServer, mediaSigner } from './server.ts';
@@ -53,6 +54,9 @@ const attention = new Attention(store, triage);
 // Per-device notification rules (docs/devices.md).
 const devices = new Devices(store, triage);
 attention.activity = activity;
+// Message embeddings and jev's answers as content features (docs/embeddings.md): made in the background, never blocking.
+const embeddings = flag('embeddings') ? new Embeddings(store.db, join(dataDir, 'embeddings.sqlite'), { jev: new Jev(process.env.DITHER_JEV_URL ?? 'http://127.0.0.1:7862') }) : null;
+embeddings?.start();
 
 // Triage runs serially so notifications keep message order.
 let queue = Promise.resolve();
@@ -205,6 +209,7 @@ console.log(`dither-chat hub on ${tls ? 'https' : 'http'}://${hostname}:${port}$
 
 const shutdown = async () => {
   attention.stop();
+  embeddings?.close();
   server.stop();
   await sup.stopAll();
   // What stopping changed is in the journal too; then the next start can trust it (journal.ts).
