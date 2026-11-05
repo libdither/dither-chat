@@ -174,8 +174,8 @@ function ShadowLine() {
   const explored = s.explored.up + s.explored.down;
   return (
     <p class="muted shadow-line" title="A second model learns from what you do after messages (answers, opens, taps) as well as your votes. It only watches: it decides nothing until it is switched on.">
-      <Icon name="eye" size={13} /> Learning from what you do, in the background: over the last {plural(days, 'day')} it would have pinged{' '}
-      {fewer >= 0 ? `${fewer} fewer` : `${-fewer} more`} ({s.shadow.ping} instead of {s.live.ping}), missed {plural(s.answered.missed, 'message')} you answered within 15 minutes
+      Learning from what you do, in the background: over the last {plural(days, 'day')} it would have pinged{' '}
+      {fewer > 0 ? `${fewer} fewer` : fewer < 0 ? `${-fewer} more` : 'as many'} ({s.shadow.ping} instead of {s.live.ping}), missed {plural(s.answered.missed, 'message')} you answered within 15 minutes
       {s.answered.gained ? `, and caught ${s.answered.gained} more` : ''}.{explored ? ` ${plural(explored, 'notification')} changed to learn from (silent only).` : ''}
     </p>
   );
