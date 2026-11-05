@@ -57,7 +57,7 @@ interface ClientModule {
 }
 
 export interface RemoteOpts {
-  /** The manager: http://127.0.0.1:8480 */
+  /** The manager: http://127.0.0.1:8486 */
   url: string;
   /** Where accounts-app.json is kept (the hub's data dir). */
   dataDir: string;
