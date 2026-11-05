@@ -146,7 +146,7 @@ export class Triage {
     return c.name ?? 'Group';
   }
 
-  private communityOf(spaceId: string): Row | null {
+  communityOf(spaceId: string): Row | null {
     let cur = this.store.one<Row>('SELECT * FROM space WHERE id = ?', spaceId);
     const seen = new Set<string>();
     while (cur && cur.kind === 'section' && !seen.has(cur.id)) {

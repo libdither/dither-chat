@@ -110,6 +110,31 @@ Storage: `triage` (`decision`, `score`, `reasons`, `facts` as JSON, `probs` as J
 start (`store.ts` `setAsideTriage`); the decision list that came before is dropped and the model trained from the
 votes.
 
+## One notification per conversation
+
+Triage decides per message; delivery is per conversation (`packages/hub/src/delivery.ts`). A device keeps one
+notification for each conversation (its tag is the conversation id), and every push about it carries the conversation's
+unread lines, so the notification grows instead of being replaced by the latest message.
+
+- **What a push carries**, besides `title`, `body`, `icon` and the rest: `lines` (the last six messages from others
+  since you last read the conversation or wrote there, at Digest or above, oldest first and ending with this one; each
+  `{ author, key, body, ts }`), `icons` (a picture per author `key`), `count` (unread from others), `conv`
+  (`{ title, shape: 'direct' | 'group' | 'channel', icon }`, a channel's icon being its server's), `sender`
+  (`{ name, key, icon }`), and `alert`. The oldest lines go first when the push would pass about 3.5 KB.
+- **When it sounds** (`alert`): an Important message that is the first in five minutes here, or that comes after only
+  Active ones in this burst, or that mentions or replies to you. Every other update changes the notification silently.
+  Active never sounds. Nothing sounds while a page on a computer has been in use in the last two minutes (a visit
+  from a device whose label is not a phone's): you are already looking.
+- **Read elsewhere, gone here.** Every five seconds the hub looks at the conversations it notified about; one read since
+  then (in the app, in the network's own client when it reports reads, or by writing there) gets a push
+  `{ clear: conversationId }`, which closes it. That goes only to the Android app's registrations: a browser must show
+  something for every push.
+- **In a browser** (`sw.js`): the lines become the body (`Author: text` in groups), a group's title counts them, and
+  `renotify`/`silent` follow `alert`. A hub from before this sends no `alert`, and every Important message sounds.
+- **On Android**: a conversation notification, see docs/android.md.
+
+The burst state is kept in memory: after a restart, the next message in each conversation sounds.
+
 ## Elsewhere
 
 - The inbox ranking (docs/inbox.md) counts Active like Important: "pinged you" while unread.

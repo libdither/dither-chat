@@ -196,6 +196,18 @@ const VOTES = {
   ],
 };
 
+/** Title and body: a group's lines each say who wrote them, and the title counts them. */
+function grouped(d) {
+  const lines = Array.isArray(d.lines) && d.lines.length ? d.lines : null;
+  if (!lines) return { title: d.title ?? 'dither-chat', body: d.body ?? '' };
+  const direct = d.conv?.shape === 'direct';
+  const n = Math.max(d.count ?? 0, lines.length);
+  return {
+    title: direct || n < 2 ? d.title : `${d.conv?.title ?? d.title} (${n})`,
+    body: lines.map((l) => (direct ? l.body : `${l.author}: ${l.body}`)).join('\n'),
+  };
+}
+
 /** Shows a notification from the hub's payload (webpush.ts pushPayload, or a page's notify event). Returns its tag. */
 async function show(d) {
   const tag = d.conversationId ?? (d.inbox ? 'dither-digest' : 'dither');
@@ -206,11 +218,15 @@ async function show(d) {
   const votes = d.messageId ? VOTES[d.level] ?? [] : [];
   // The votes first: a browser that shows two actions shows them.
   const actions = d.conversationId ? [...votes, ...reply, ...(votes.length ? [] : [{ action: 'open', title: 'Open' }])] : [];
-  await self.registration.showNotification(d.title ?? 'dither-chat', {
-    body: d.body ?? '',
+  // One notification per conversation (docs/notifications.md): its unread lines, and a sound only when the hub says
+  // so. An older hub sends neither, and every Important message sounds.
+  const alert = d.alert ?? !quiet;
+  const { title, body } = grouped(d);
+  await self.registration.showNotification(title, {
+    body,
     tag,
-    renotify: !quiet,
-    silent: quiet,
+    renotify: alert,
+    silent: !alert,
     icon: look.icon,
     badge: look.badge,
     data: { conversationId: d.conversationId, inbox: d.inbox, test: d.test, replyTo: d.replyTo, nid: d.nid, device: d.device, messageId: d.messageId },
@@ -226,6 +242,11 @@ self.addEventListener('push', (e) => {
   } catch {}
   // A test asks the device to say it arrived, so Settings can tell "the relay took it" from "it got here".
   const arrived = d.test && d.device ? fetch('/api/push/arrived', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: d.device }) }).catch(() => {}) : null;
+  // Read somewhere else: the hub sends these to the Android app only, but a page that gets one closes it the same way.
+  if (d.clear) {
+    e.waitUntil(self.registration.getNotifications({ tag: d.clear }).then((ns) => ns.forEach((n) => n.close())));
+    return;
+  }
   e.waitUntil(
     (async () => {
       await arrived;

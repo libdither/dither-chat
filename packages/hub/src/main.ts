@@ -4,6 +4,7 @@ import { Categorizer, JevProvider, KeywordProvider, OllamaProvider, type Categor
 import { ActivityStore } from './activity.ts';
 import { Attention } from './attention.ts';
 import { applyDemoOverlay, createDemoAccounts, demoFactory } from './demo.ts';
+import { Delivery } from './delivery.ts';
 import { Devices } from './devices.ts';
 import { PushService } from './push.ts';
 import { ReadQueue } from './readqueue.ts';
@@ -52,6 +53,8 @@ const votes = new TriageVotes(store, triage);
 const attention = new Attention(store, triage);
 // Per-device notification rules (docs/devices.md).
 const devices = new Devices(store, triage);
+// One notification per conversation, buzzing once a burst (docs/notifications.md).
+const delivery = new Delivery(store, triage);
 attention.activity = activity;
 
 // Triage runs serially so notifications keep message order.
@@ -82,13 +85,15 @@ function triageLater(ids: string[]) {
 function deliver(title: string, body: string, conversationId: string, messageId: string, reasons: string[], pushExtra: Record<string, unknown> = {}, kind: 'message' | 'held' = 'held', level: 'push' | 'quiet' = 'push') {
   const nid = activity.notification({ kind, messageId, conversationId });
   // Devices whose own rules keep this off them: their push is not sent, and their open pages show no toast.
-  const quiet = devices.quietOn(conversationId, kind === 'message' && devices.addressed(messageId));
+  const addressed = kind === 'message' && devices.addressed(messageId);
+  const quiet = devices.quietOn(conversationId, addressed);
   const skip = level === 'quiet' ? [...quiet, ...push.desktops()] : quiet;
   const look = store.notifyLook(conversationId, kind === 'message' ? messageId : undefined);
   const vote = kind === 'message' ? { messageId, level } : {};
+  const grouped = kind === 'message' ? delivery.plan(conversationId, messageId, level, addressed) : null;
   server.notify({ t: 'notify', messageId, conversationId, title, body, reasons, ...look, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(level === 'quiet' ? { level } : {}) });
   push
-    .notify(title, body, conversationId, { ...pushExtra, ...look, ...vote, ...(nid ? { nid } : {}) }, skip, level)
+    .notify(title, body, conversationId, { ...pushExtra, ...look, ...vote, ...grouped, ...(nid ? { nid } : {}) }, skip, level)
     .then((r) => nid && activity.sent(nid, r))
     .catch((e) => console.error('push failed', e));
 }
@@ -102,6 +107,11 @@ function deliverDigest(title: string, body: string) {
     .then((r) => nid && activity.sent(nid, r))
     .catch((e) => console.error('push failed', e));
 }
+
+// Read anywhere since its notification went out: off the phones.
+setInterval(() => {
+  for (const cid of delivery.read()) push.clear(cid).catch((e) => console.error('push clear failed', e));
+}, 5_000);
 
 setInterval(() => {
   // First: when both are due, the digest counts what was held and clears it.

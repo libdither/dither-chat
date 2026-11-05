@@ -191,3 +191,29 @@ test('votes come first: Important down to Active or right; Active up to Importan
   await quiet.push({ title: 't', conversationId: 'cnv_1', messageId: 'msg_1', level: 'quiet' });
   expect(quiet.shown[0].o.actions.slice(0, 2).map((a: any) => a.title)).toEqual(['▲ Important', '▼ Digest']);
 });
+
+test('a conversation shows its unread lines, and sounds only when the hub says so', async () => {
+  const w = worker();
+  const lines = [
+    { author: 'Ann', key: 'p1', body: 'are you coming', ts: 1 },
+    { author: 'Bo', key: 'p2', body: 'leaving at 6', ts: 2 },
+  ];
+  await w.push({ title: 'Family', body: 'Bo: leaving at 6', conversationId: 'cnv_1', level: 'push', alert: false, count: 3, conv: { title: 'Family', shape: 'group' }, lines });
+  expect(w.shown.at(-1)!.title).toBe('Family (3)');
+  expect(w.shown.at(-1)!.o.body).toBe('Ann: are you coming\nBo: leaving at 6');
+  expect(w.shown.at(-1)!.o).toMatchObject({ tag: 'cnv_1', renotify: false, silent: true });
+  await w.push({ title: 'Ann · Signal', conversationId: 'cnv_2', level: 'push', alert: true, conv: { title: 'Ann', shape: 'direct' }, lines: lines.slice(0, 1).concat({ ...lines[0], body: 'hello?' }) });
+  expect(w.shown.at(-1)!.title).toBe('Ann · Signal');
+  expect(w.shown.at(-1)!.o.body).toBe('are you coming\nhello?');
+  expect(w.shown.at(-1)!.o).toMatchObject({ renotify: true, silent: false });
+  // An older hub: no lines, and Important always sounds.
+  await w.push({ title: 'Old', body: 'hi', conversationId: 'cnv_3', level: 'push' });
+  expect(w.shown.at(-1)!.o).toMatchObject({ body: 'hi', renotify: true, silent: false });
+});
+
+test('a clear push closes the conversation and shows nothing', async () => {
+  const w = worker();
+  await w.push({ clear: 'cnv_9', device: 'd' });
+  expect(w.shown.length).toBe(0);
+  expect(w.closed).toEqual(['other:cnv_9']);
+});

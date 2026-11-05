@@ -63,6 +63,8 @@ const originOf = (endpoint: string) => {
  */
 /** A phone, going by a registration's label ("Android app, Pixel", "Chrome on Android", "Safari on iOS"). */
 const PHONE = /android|iphone|ipad|\bios\b/i;
+/** The Android app's own registrations (Push.kt), which may take a push that shows nothing. */
+const APP = /^Android app\b/;
 
 const NO_SUBSCRIBER = /\b50701\b|without previously active subscriber/;
 
@@ -319,6 +321,15 @@ export class PushService {
     const rows = (this.store.db.query('SELECT * FROM push_subscription').all() as Row[]).filter((r) => !skip.has(r.device || r.id));
     const [results] = await Promise.all([Promise.all(rows.map((r) => this.deliver(r, pushPayload(title, body, conversationId, { ...extra, device: r.id })))), this.toTopic(title, body, conversationId, level)]);
     return { devices: rows.length, accepted: results.filter((r) => r.ok).length };
+  }
+
+  /**
+   * A conversation was read: its notification goes from the Android app (docs/notifications.md). Only there, since a
+   * browser must show something for every push, and a push that shows nothing counts against the site.
+   */
+  async clear(conversationId: string): Promise<void> {
+    const rows = (this.store.db.query('SELECT * FROM push_subscription').all() as Row[]).filter((r) => APP.test(r.label ?? ''));
+    await Promise.all(rows.map((r) => this.deliver(r, { clear: conversationId, device: r.id })));
   }
 
   /** Registrations that are not phones (by the label the page gave): Active, a silent phone notification, skips them. */

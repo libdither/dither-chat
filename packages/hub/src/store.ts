@@ -126,7 +126,7 @@ export class Store {
   /** Who is typing where: in memory only (typing.ts). */
   readonly typers = new TypingRelay();
 
-  constructor(path: string, private media: MediaSigner) {
+  constructor(path: string, readonly media: MediaSigner) {
     this.db = new Database(path, { create: true, strict: true });
     const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
     const reactionsBefore = this.oldReactions();
