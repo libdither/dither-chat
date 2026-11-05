@@ -10,6 +10,7 @@
 import type * as P from '@dither-chat/protocol';
 import { DEFAULT_ACTIVITY, NOTIFICATION_EVENTS, RETENTION_CHOICES, VISIT_SOURCES, VISIT_VIEWS } from '@dither-chat/protocol';
 import type { Store } from './store.ts';
+import type { NumericFeatures } from './interact.ts';
 
 type Row = Record<string, any>;
 
@@ -211,6 +212,8 @@ export interface Features {
   conversation: P.PlaceActivity;
   /** A DM: everything with that person, over all their networks. */
   person: P.PlaceActivity | null;
+  /** Interaction features as of the message (interact.ts), for the candidate model's training. */
+  x?: NumericFeatures;
 }
 
 export class ActivityStore {

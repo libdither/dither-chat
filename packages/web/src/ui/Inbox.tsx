@@ -3,7 +3,7 @@ import { ago } from '../format.ts';
 import { accountsNeedingYou, authorName, communitiesOf, convLabel, plainBody, unreadOf, visibleConv } from '../model.ts';
 import { useEffect, useState } from 'preact/hooks';
 import { db, go, inbox, markAllRead, rev } from '../state.ts';
-import { forgetFactor, levelOf, loadPolicy, relearn, triagePolicy } from '../triage.ts';
+import { forgetFactor, levelOf, loadPolicy, loadShadow, relearn, triagePolicy, triageShadow } from '../triage.ts';
 import { TierVote } from './TierVote.tsx';
 import { Avatar, SourceChip } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -162,6 +162,25 @@ export function InboxBoard() {
 
 const HEAD_LABEL: Record<P.TriageHead, string> = { ping: 'Ping', active: 'Notify', interesting: 'Digest' };
 
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** What the candidate model, which learns from what you do and only watches, would have done this week. */
+function ShadowLine() {
+  const s = triageShadow.value;
+  useEffect(() => void loadShadow(), []);
+  if (!s || !s.decided) return null;
+  const fewer = s.live.ping - s.shadow.ping;
+  const days = s.since ? Math.max(1, Math.min(s.days, Math.ceil((Date.now() - s.since) / 86_400_000))) : s.days;
+  const explored = s.explored.up + s.explored.down;
+  return (
+    <p class="muted shadow-line" title="A second model learns from what you do after messages (answers, opens, taps) as well as your votes. It only watches: it decides nothing until it is switched on.">
+      Learning from what you do, in the background: over the last {plural(days, 'day')} it would have pinged{' '}
+      {fewer > 0 ? `${fewer} fewer` : fewer < 0 ? `${-fewer} more` : 'as many'} ({s.shadow.ping} instead of {s.live.ping}), missed {plural(s.answered.missed, 'message')} you answered within 15 minutes
+      {s.answered.gained ? `, and caught ${s.answered.gained} more` : ''}.{explored ? ` ${plural(explored, 'notification')} changed to learn from (silent only).` : ''}
+    </p>
+  );
+}
+
 /** What the decision model learned from your votes, how well it fits them, and the prompt written from it. */
 function Learned() {
   const p = triagePolicy.value;
@@ -193,6 +212,7 @@ function Learned() {
           : `${p.votes} vote${p.votes === 1 ? '' : 's'}: it gets ${p.errors} wrong; the networks' own settings alone would get ${p.baseline} wrong.`}
         {p.learnedAt ? ` Last learned ${ago(p.learnedAt)} (${p.lastReason}).` : ''}
       </p>
+      <ShadowLine />
       {p.factors.map((f) => (
         <div class="rule-row">
           <span class={`factor-weight ${f.weight > 0 ? 'up' : 'down'}`} title={`${f.weight > 0 ? '+' : ''}${f.weight.toFixed(2)} log-odds`}>

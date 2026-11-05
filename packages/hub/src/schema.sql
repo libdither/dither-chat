@@ -339,6 +339,9 @@ CREATE TABLE IF NOT EXISTS triage (
   feedback_at INTEGER,
   facts       TEXT,                          -- JSON learn.ts Facts: what it was decided from, for training
   probs       TEXT,                          -- JSON { ping, active, interesting }: the model's chances
+  shadow      TEXT,                          -- JSON { ping, active, interesting }: the candidate model's, which never decides
+  explore     TEXT,                          -- 'up' | 'down': exploration changed the decision (shadow.ts)
+  propensity  REAL,                          -- the chance of what was done, when exploration drew; NULL when it did not
   created_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS triage_created ON triage(created_at);

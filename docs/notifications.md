@@ -14,7 +14,9 @@ On Android an Important or Active message shows in its conversation's notificati
 an update with `alert: false` changes it without sounding ([android.md](android.md#how-a-message-notification-looks)).
 
 Code: `packages/hub/src/triage.ts` (where a message starts, the decision), `learn.ts` (the model, pure), `votes.ts`
-(votes, training, the policy view), `main.ts` `deliver` (who gets what); `packages/web/src/triage.ts`,
+(votes, training, the policy view, the shadow model), `labels.ts` (labels from what you did), `interact.ts`
+(interaction features), `shadow.ts` (exploration, the shadow summary), `main.ts` `deliver` (who gets what);
+`scripts/triage-replay.ts` (the offline replay, docs/triage-replay.md); `packages/web/src/triage.ts`,
 `ui/TierVote.tsx`, `ui/Inbox.tsx` (the Triage board), `public/sw.js`; `apps/android/.../Notifications.kt`.
 
 ## The three chances
@@ -82,6 +84,72 @@ Counted:
 **The backtest**: the model against every vote, and the priors alone against them, shown on the board. **Forget**
 (× beside a learned weight) leaves that feature out of training for good; *Learn again* undoes it.
 
+### The shadow model
+
+Next to the live model a **candidate** learns, and only watches (`votes.ts`, `shadow.ts`). Its chances are kept with
+every decision (`triage.shadow`); it decides nothing. It is switched on only if the replay (docs/triage-replay.md)
+*and* a week in shadow agree it is better at the same or lower alert volume. It differs from the live model in two
+ways:
+
+**Labels from what you did** (`labels.ts`), besides your votes, which stay the gold standard. Each says something
+about only some of the three chances (the others are left out of training for it, `Example.y`), with a weight
+against a vote's 1:
+
+| What happened after a message | Weight | Says |
+| --- | ---: | --- |
+| you answered it within 15 min, not already there | 0.5 | ping, active, interesting |
+| you answered it while there, or within 3 h; or reacted to it | 0.3 | active, interesting |
+| you tapped its push within 5 min and stayed 20 s | 0.3 | active, interesting; ping too unless already there |
+| you opened its conversation within an hour, nothing more | 0.1 | interesting |
+| you dismissed its push unopened | 0.3 | not ping |
+| its push showed and was not opened in a day | 0.1 | not ping, not active |
+| you tapped and left within 5 s | 0.3 | not ping |
+| you opened its conversation within the hour although nobody was notified (first of the burst) | 0.2 | active |
+| nothing at all in 3 h after the first message of a burst (not about you) | 0.03 | not ping, not active |
+
+"Answered" is your next message in the conversation, attributed to the message it replies to, else the last message
+before it. "Already there": you wrote there in the 15 minutes before, a visit spanned the message, or an open page kept
+its notification to itself. Reactions carry no time, so they count as a late answer. The last row is not in the
+design report: without it nearly every label is positive and the model only learns to notify more; its weight was
+chosen in the replay. Decisions that merely stood count for nothing here.
+
+**Interaction features** (`interact.ts`), numbers worked out as of each message from only what came before, kept
+with the decision in `triage_input` (docs/activity.md) and learned as one slope each across all places
+(regularisation 10, `NUMERIC` in `learn.ts`):
+
+| Feature | What |
+| --- | --- |
+| `rr:conv`, `rr:author` | how often you write in the conversation within half an hour of a message there, and after this author's messages anywhere: decayed (30-day half-life), Beta-smoothed, as log-odds against 5% |
+| `engaged`, `alt` | you wrote there in the last 15 min; how often you answered someone there in the last half hour, log(1 + n) |
+| `since:seen` | log(1 + hours) since you last opened the conversation (or its DM peer) or wrote there, less a day's worth |
+| `device:active` | a visit on any device was in use in the last 2 minutes |
+| `open:rate` | how often you opened its pushes within the hour, as log-odds against 30% |
+
+Numeric features from elsewhere (content: embeddings, local-model answers) are added the same way: a name in
+`Example.x` and the `x` argument of `predict`, and a kind in `NUMERIC` for their regularisation and words.
+
+The candidate learns at every vote and once a day, from your votes and from what you did over the last two weeks
+(read again at most every 6 hours, a pass over two weeks of messages). On the Triage board, under what the live model
+learned, one line says what it would have done over the last week: "would have pinged 40 fewer (120 instead of 160),
+missed 1 message you answered within 15 minutes, and caught 2 more" (`GET /api/triage/shadow`, counts only).
+
+### Exploration (off unless `DITHER_TRIAGE_EXPLORE=1`)
+
+To learn about what the current decisions never show, the hub can change a few, only ever toward silence or toward a
+silent notification, and log the chance it did so with (`triage.explore`, `triage.propensity`), so that off-policy
+estimates become possible later:
+
+- **Up**: a Digest or Not-interesting message whose Active chance (the live model's or the shadow's) is in 25–50% is
+  tried as **Active** with probability 2%, at most 3 a day. Its first reason says "Trying this one as Active: worth
+  it?", so the vote buttons are the answer.
+- **Down**: in a conversation with 10 or more pings in the last day, an Important message becomes **Active** with
+  probability 5%, at most once there a day: how much does the buzz itself matter?
+- **Never** during quiet hours, for starred people or keywords, for a mention of you or a reply to you, for a DM's
+  first message after 5 quiet minutes, or in a place set to Nothing.
+
+`propensity` is the chance of what was done when the draw happened (2% or 98% up, 5% or 95% down) and NULL when no
+draw could happen.
+
 **Content features** from message embeddings and jev's yes/no answers (`emb`, `knn`, `jev:<q>`) exist behind
 `DITHER_EMBEDDINGS=1` but are not weighed yet: see [embeddings.md](embeddings.md).
 
@@ -109,10 +177,11 @@ the digest); Active is not worth a ping but worth a notification; Digest only in
 
 `POST /api/messages/:id/feedback` takes `{ vote: 'up' | 'down' }` or `{ feedback: 'push' | 'quiet' | 'digest' | 'drop' |
 null }` and answers with the new vote and the policy. `GET /api/triage/policy`, `POST /api/triage/policy/relearn`,
-`POST /api/triage/factors/:key {rejected}`.
+`POST /api/triage/factors/:key {rejected}`, `GET /api/triage/shadow` (P.TriageShadowView).
 
 Storage: `triage` (`decision`, `score`, `reasons`, `facts` as JSON, `probs` as JSON `{ ping, active, interesting }`,
-`feedback`), the model in `meta` (`triage_policy`). A triage table from before `drop` is set aside and copied over on
+`feedback`; `shadow` as JSON chances, `explore`, `propensity`), the models in `meta` (`triage_policy`: `model`, and
+`candidate` for the shadow). A triage table from before `drop` is set aside and copied over on
 start (`store.ts` `setAsideTriage`); the decision list that came before is dropped and the model trained from the
 votes.
 

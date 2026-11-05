@@ -187,6 +187,25 @@ export interface TriagePolicyView {
   model: string | null;
 }
 
+/**
+ * What the candidate model, run in shadow next to the live one, would have done over the last `days`
+ * (GET /api/triage/shadow, docs/notifications.md). Counts of decisions, never which.
+ */
+export interface TriageShadowView {
+  days: number;
+  /** The oldest decision with a shadow, or null with none yet. */
+  since: number | null;
+  /** Decisions with a shadow. */
+  decided: number;
+  /** Pings and silent notifications: as decided, and as the shadow would have. */
+  live: { ping: number; active: number };
+  shadow: { ping: number; active: number };
+  /** Messages you answered within 15 minutes that both pinged; that only the live model pinged (the shadow would have missed them); that only the shadow would have. */
+  answered: { both: number; missed: number; gained: number };
+  /** Decisions exploration changed (DITHER_TRIAGE_EXPLORE): tried as Active, or held from Important to Active. */
+  explored: { up: number; down: number };
+}
+
 /** A link preview or bot card attached to a message. */
 export interface EmbedView {
   title?: string;

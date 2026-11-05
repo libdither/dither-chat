@@ -673,6 +673,8 @@ export class HubServer {
       }
     }
     if (path === '/api/triage/policy' && method === 'GET') return this.opts.votes ? ok(this.opts.votes.view()) : bad('No triage here', 404);
+    // What the shadow model would have done lately (shadow.ts): counts only.
+    if (path === '/api/triage/shadow' && method === 'GET') return this.opts.votes ? ok(this.opts.votes.shadow()) : bad('No triage here', 404);
     if (path === '/api/triage/policy/relearn' && method === 'POST' && this.opts.votes) {
       this.opts.votes.learn('you asked');
       return ok(this.opts.votes.view());
