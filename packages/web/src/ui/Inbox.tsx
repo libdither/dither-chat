@@ -1,21 +1,14 @@
 import type * as P from '@dither-chat/protocol';
 import { ago } from '../format.ts';
-import { accountsNeedingYou, authorName, communitiesOf, convLabel, convTitle, placeConv, plainBody, rootCommunity, unreadOf, visibleConv } from '../model.ts';
+import { accountsNeedingYou, authorName, communitiesOf, convLabel, plainBody, unreadOf, visibleConv } from '../model.ts';
 import { useEffect, useState } from 'preact/hooks';
-import { TIER_LABEL } from '@dither-chat/protocol';
 import { db, go, inbox, markAllRead, rev } from '../state.ts';
-import { changeRule, levelOf, loadPolicy, relearn, triagePolicy } from '../triage.ts';
+import { forgetFactor, levelOf, loadPolicy, relearn, triagePolicy } from '../triage.ts';
 import { TierVote } from './TierVote.tsx';
-import { Avatar, Count, SourceChip } from './bits.tsx';
+import { Avatar, SourceChip } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { useMenu } from './ContextMenu.tsx';
 import { messageMenu } from './menus.tsx';
-
-function placeOf(c: P.ConversationView) {
-  const base = placeConv(c);
-  const com = base.spaceIds.length ? rootCommunity(base.spaceIds[0]) : null;
-  return com;
-}
 
 function PingCard({ m }: { m: P.MessageView }) {
   const ctx = useMenu(() => messageMenu(m));
@@ -54,20 +47,11 @@ function PingCard({ m }: { m: P.MessageView }) {
   );
 }
 
-interface DigestGroup {
-  key: string;
-  title: string;
-  network: P.Network;
-  icon: { id: string; name: string; url: string | null; square: boolean };
-  accountIds: string[];
-  messages: P.MessageView[];
-  places: Set<string>;
-  reasons: Set<string>;
-  first: P.ConversationView;
-}
+const DIGEST_SHOWN = 40;
 
 export function InboxBoard() {
   rev.value;
+  const [allDigest, setAllDigest] = useState(false);
   const items = inbox.value.filter((m) => {
     const c = db.conversations.get(m.conversationId);
     return c && visibleConv(c);
@@ -75,41 +59,20 @@ export function InboxBoard() {
   // The last week, by where each one is now: a vote moves it between the lists at once.
   const week = Date.now() - 7 * 86_400_000;
   const recent = items.filter((m) => m.triage && m.ts > week);
-  const important = recent.filter((m) => levelOf(m.triage!) === 'push').slice(0, 40);
-  const active = recent.filter((m) => levelOf(m.triage!) === 'quiet').slice(0, 40);
-  const digest = items.filter((m) => m.triage && levelOf(m.triage) === 'digest');
-  const groups = new Map<string, DigestGroup>();
-  for (const m of digest) {
-    const c = db.conversations.get(m.conversationId)!;
-    const com = placeOf(c);
-    const key = com?.id ?? c.id;
-    let g = groups.get(key);
-    if (!g) {
-      g = {
-        key,
-        title: com?.name ?? convTitle(c),
-        network: c.network,
-        icon: com ? { id: com.id, name: com.name, url: com.icon, square: true } : { id: c.id, name: convTitle(c), url: c.avatar, square: c.shape !== 'direct' },
-        accountIds: com?.accountIds ?? c.vantages.map((v) => v.accountId),
-        messages: [],
-        places: new Set(),
-        reasons: new Set(),
-        first: c,
-      };
-      groups.set(key, g);
-    }
-    g.messages.push(m);
-    g.places.add(convLabel(c));
-    for (const r of m.triage?.reasons ?? []) g.reasons.add(r);
-  }
+  const at = (l: P.TriageDecision) => recent.filter((m) => levelOf(m.triage!) === l);
+  const important = at('push').slice(0, 40);
+  const active = at('quiet').slice(0, 40);
+  // What matters most first, as the model sees it; then the newest.
+  const byScore = (a: P.MessageView, b: P.MessageView) => (b.triage!.score ?? 0) - (a.triage!.score ?? 0) || b.ts - a.ts;
+  const digest = at('digest').sort(byScore);
+  const below = at('drop').sort(byScore).slice(0, 30);
   const s = { attention: accountsNeedingYou() };
-  const digestGroups = [...groups.values()].sort((a, b) => b.messages[0].ts - a.messages[0].ts);
   return (
     <section class="pane board">
       <header class="board-head">
         <div>
           <h2>Triage</h2>
-          <p>Every message from every account goes through the same rules. Here is where each landed, and why. Vote one up or down a level and triage learns from it.</p>
+          <p>Every message from every account goes through the same decision model. Here is where each landed, and why. Vote one up or down a level and it learns from that.</p>
         </div>
         <button class="btn ghost small" title="Mark every conversation read, here and on the networks" onClick={() => markAllRead([...db.conversations.values()].filter(visibleConv), 'all your accounts')}>
           <Icon name="check" size={14} /> Mark all read
@@ -169,36 +132,37 @@ export function InboxBoard() {
           <h3>
             <Icon name="layers" size={15} /> Digest
           </h3>
-          <p class="muted">Held back instead of notifying. Read it when you feel like it, or vote one up.</p>
-          <div class="digest-grid">
-            {digestGroups.map((g) => (
-              <div class="digest" role="button" tabIndex={0} onClick={() => go({ view: 'inbox', conv: g.messages[0].conversationId })}>
-                <span class="digest-head">
-                  <Avatar id={g.icon.id} name={g.icon.name} url={g.icon.url} size={28} square={g.icon.square} network={g.network} accountIds={g.accountIds} />
-                  <b>{g.title}</b>
-                  <Count n={g.messages.length} muted />
-                </span>
-                <span class="digest-places">{[...g.places].slice(0, 4).join(', ')}</span>
-                {g.messages.slice(0, 3).map((m) => (
-                  <span class="digest-line" data-mid={m.id}>
-                    <span class="digest-text">
-                      <b>{authorName(m.authorId)}</b> {plainBody(m.body, m.network).slice(0, 90)}
-                    </span>
-                    <TierVote m={m} />
-                  </span>
-                ))}
-                <span class="digest-why">{[...g.reasons][0]}</span>
-              </div>
-            ))}
-          </div>
+          <p class="muted">Held back instead of notifying, what matters most first. Read it when you feel like it, or vote one up or down.</p>
+          {digest.length === 0 && <p class="muted">Nothing this week.</p>}
+          {(allDigest ? digest : digest.slice(0, DIGEST_SHOWN)).map((m) => (
+            <PingCard m={m} />
+          ))}
+          {!allDigest && digest.length > DIGEST_SHOWN && (
+            <button class="btn ghost small" onClick={() => setAllDigest(true)}>
+              Show all {digest.length}
+            </button>
+          )}
         </div>
+        {below.length > 0 && (
+          <details class="board-block below">
+            <summary>
+              <Icon name="eyeOff" size={15} /> Not interesting <span class="muted">· the closest {below.length} from the last two days</span>
+            </summary>
+            <p class="muted">Not even the digest: these stay unread in their chats. Vote one up if it should have made the digest.</p>
+            {below.map((m) => (
+              <PingCard m={m} />
+            ))}
+          </details>
+        )}
         <Learned />
       </div>
     </section>
   );
 }
 
-/** What triage learned from your votes, how well it fits them, and the prompt written from it. */
+const HEAD_LABEL: Record<P.TriageHead, string> = { ping: 'Ping', active: 'Notify', interesting: 'Digest' };
+
+/** What the decision model learned from your votes, how well it fits them, and the prompt written from it. */
 function Learned() {
   const p = triagePolicy.value;
   const [busy, setBusy] = useState(false);
@@ -212,40 +176,45 @@ function Learned() {
       setBusy(false);
     }
   };
+  const t = p.thresholds;
   return (
     <div class="board-block learned">
       <h3>
         <Icon name="sparkles" size={15} /> What it learned from your votes
       </h3>
       <p class="muted">
+        For each message it predicts three chances: worth a ping (at {Math.round(t.ping * 100)}% it buzzes), worth a silent notification (at {Math.round(t.active * 100)}%), and interesting enough for the digest (at{' '}
+        {Math.round(t.interesting * 100)}%). It starts from what Discord, Signal and the rest would notify you about; your votes move it from there, one chat at once, a person or a server
+        after a few, everything only after many.
+      </p>
+      <p class="muted">
         {p.votes === 0
-          ? 'No votes yet. Vote a notification up or down a level, here or from the notification itself, and rules that explain your votes show up here.'
-          : `${p.votes} vote${p.votes === 1 ? '' : 's'}: these rules get ${p.errors} wrong, triage's own rules alone would get ${p.baseline} wrong. Past ${Math.round(p.threshold * 100)}% wrong it learns them again.`}
+          ? 'No votes yet. Vote a notification up or down a level, here or from the notification itself, and what it learns shows up here.'
+          : `${p.votes} vote${p.votes === 1 ? '' : 's'}: it gets ${p.errors} wrong; the networks' own settings alone would get ${p.baseline} wrong.`}
         {p.learnedAt ? ` Last learned ${ago(p.learnedAt)} (${p.lastReason}).` : ''}
       </p>
-      {p.rules.map((r) => (
-        <div class={`rule-row ${r.pinned ? 'pinned' : ''}`}>
-          <span class="rule-text">{r.text}</span>
-          <span class={`tier-chip ${r.level}`}>{TIER_LABEL[r.level]}</span>
-          <span class="rule-votes" title="Votes it matches that agree with it">
-            {r.agree} of {r.votes} vote{r.votes === 1 ? '' : 's'}
+      {p.factors.map((f) => (
+        <div class="rule-row">
+          <span class={`factor-weight ${f.weight > 0 ? 'up' : 'down'}`} title={`${f.weight > 0 ? '+' : ''}${f.weight.toFixed(2)} log-odds`}>
+            {f.weight > 0 ? '▲' : '▼'} {HEAD_LABEL[f.head]}
           </span>
-          <button class={`icon-btn small ${r.pinned ? 'on' : ''}`} disabled={busy} title={r.pinned ? 'Kept: relearning will not drop it. Click to let it go' : 'Keep it, whatever relearning finds'} onClick={act(() => changeRule(r.key, { pinned: !r.pinned }))}>
-            <Icon name="star" size={13} />
-          </button>
-          <button class="icon-btn small" disabled={busy} title="Drop it, and never learn it (or a narrower version of it) again" onClick={act(() => changeRule(r.key, { rejected: true }))}>
+          <span class="rule-text">{f.text}</span>
+          <span class="rule-votes" title="Votes it was part of">
+            {f.votes} vote{f.votes === 1 ? '' : 's'}
+          </span>
+          <button class="icon-btn small" disabled={busy} title="Forget this, and never learn it again" onClick={act(() => forgetFactor(f.key, true))}>
             <Icon name="x" size={13} />
           </button>
         </div>
       ))}
       {p.rejected.length > 0 && (
         <details class="rule-dropped">
-          <summary>{p.rejected.length} dropped</summary>
+          <summary>{p.rejected.length} forgotten</summary>
           {p.rejected.map((r) => (
             <div class="rule-row">
               <span class="rule-text">{r.text}</span>
-              <button class="btn ghost small" disabled={busy} onClick={act(() => changeRule(r.key, { rejected: false }))}>
-                Allow again
+              <button class="btn ghost small" disabled={busy} onClick={act(() => forgetFactor(r.key, false))}>
+                Learn again
               </button>
             </div>
           ))}
@@ -258,7 +227,7 @@ function Learned() {
         {p.prompt && (
           <details class="learned-prompt">
             <summary>Decision prompt{p.model ? ` for ${p.model}` : ''}</summary>
-            {!p.model && <p class="muted">No local model is set (DITHER_TRIAGE_MODEL), so the rules above apply on their own. With one, smart places ask it with this.</p>}
+            {!p.model && <p class="muted">No local model is set (DITHER_TRIAGE_MODEL), so the model above decides on its own. With one, places set to Smart ask it with this, and its chances become the starting point.</p>}
             <pre>{p.prompt}</pre>
           </details>
         )}

@@ -1,6 +1,7 @@
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, NETWORK_META, sendBlocker } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, NETWORK_META, sendBlocker, TIER_LABEL } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import type { ComponentChildren } from 'preact';
 import { ago, bytes, clock, dayLabel, fullTime, sameDay } from '../format.ts';
 import { retention } from '../history.ts';
 import { isJumbo, renderMarkdown } from '../markdown.ts';
@@ -54,7 +55,7 @@ import { openAbout } from './About.tsx';
 import { AccountChip, AccountDots, Avatar, Empty, Menu, NetBadge, NetGlyph, Skeleton, levelIcon, variantIcon } from './bits.tsx';
 import { HoverReactions, ReactionBar, useLongPress } from './Reactions.tsx';
 import { Icon } from './icons.tsx';
-import { TierPicker, triageHeading } from './TierVote.tsx';
+import { TIER_ICON, TierPicker, TriageChances, triageHeading } from './TierVote.tsx';
 import { MessageHistory, Ticks } from './MessageHistory.tsx';
 import { detailsShown, showDetails, swipeReply } from './Pager.ts';
 import { openConv } from './Sidebar.tsx';
@@ -315,7 +316,8 @@ function useMdContext(network: P.Network) {
   };
 }
 
-function Body({ m }: { m: P.MessageView }) {
+/** The text; `tail` (your message's ticks) sits right after its last word. */
+function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
   const html = useMemo(() => renderMarkdown(m.body, useMdContext(m.network)), [m.body, m.network, rev.value]);
   if (m.deleted) return <div class="msg-body deleted">{m.gone?.how === 'disappeared' ? 'Message disappeared' : 'Message deleted'}</div>;
   if (m.kind === 'encrypted')
@@ -325,12 +327,20 @@ function Body({ m }: { m: P.MessageView }) {
       </div>
     );
   if (!m.body) return null;
-  return <div class={`msg-body ${isJumbo(m.body) ? 'jumbo' : ''}`} dangerouslySetInnerHTML={{ __html: html }} onClick={(e) => {
+  const click = (e: MouseEvent) => {
     const el = e.target as HTMLElement;
     if (el.classList?.contains('spoiler')) el.classList.add('shown');
     const user = el.dataset?.user;
     if (user) openProfile(db.identityByNative.get(`${m.network}:${user}`));
-  }} />;
+  };
+  if (tail)
+    return (
+      <div class={`msg-body ${isJumbo(m.body) ? 'jumbo' : ''}`} onClick={click}>
+        <span class="msg-text" dangerouslySetInnerHTML={{ __html: html }} />
+        {tail}
+      </div>
+    );
+  return <div class={`msg-body ${isJumbo(m.body) ? 'jumbo' : ''}`} dangerouslySetInnerHTML={{ __html: html }} onClick={click} />;
 }
 
 /** A plain click opens the viewer; a middle or modified click still opens the file in a tab. */
@@ -381,18 +391,13 @@ function Edited({ m }: { m: P.MessageView }) {
   );
 }
 
-/** Marks beside the time: pinned, and how far your message got. */
+/** A mark beside the time: pinned. How far your message got sits after its text (`Ticks`). */
 function Marks({ m }: { m: P.MessageView }) {
-  return (
-    <>
-      {m.pinned && (
-        <span class="msg-pin" title="Pinned">
-          <Icon name="pin" size={11} />
-        </span>
-      )}
-      <Ticks m={m} />
-    </>
-  );
+  return m.pinned ? (
+    <span class="msg-pin" title="Pinned">
+      <Icon name="pin" size={11} />
+    </span>
+  ) : null;
 }
 
 function Attachments({ m }: { m: P.MessageView }) {
@@ -463,7 +468,7 @@ function TriageNote({ m }: { m: P.MessageView }) {
   const t = m.triage;
   if (!t) return null;
   const now = t.feedback ?? t.decision;
-  const label = now === 'push' ? 'Important' : now === 'quiet' ? 'Active' : now === 'digest' ? 'Digest' : 'Silent';
+  const label = now === 'silent' ? 'Silent' : TIER_LABEL[now];
   const spec = (): MenuSpec => ({
     label: 'Notification',
     items: [
@@ -477,7 +482,8 @@ function TriageNote({ m }: { m: P.MessageView }) {
                 <li>{r}</li>
               ))}
             </ul>
-            {t.score !== null && <div class="triage-score">score {t.score.toFixed(2)} · decided by {t.decidedBy}</div>}
+            {t.probs && <TriageChances p={t.probs} />}
+            {t.score !== null && <div class="triage-score">matters {Math.round(t.score * 100)}% · decided by {t.decidedBy === 'learned' ? 'your votes' : t.decidedBy}</div>}
             <TierPicker m={m} onDone={close} />
           </div>
         ),
@@ -491,10 +497,10 @@ function TriageNote({ m }: { m: P.MessageView }) {
       aria-label={`Notification: ${label}`}
       onClick={(e) => {
         const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        openMenu({ x: r.right - 300, y: r.bottom + 4 }, spec());
+        openMenu({ x: r.right - 340, y: r.bottom + 4 }, spec());
       }}
     >
-      <Icon name={now === 'push' ? 'bell' : now === 'digest' ? 'layers' : 'bellOff'} size={14} />
+      <Icon name={now === 'silent' ? 'bellOff' : TIER_ICON[now]} size={14} />
     </button>
   );
 }
@@ -540,6 +546,8 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
       </div>
     );
 
+  // Your message's ticks, after its text.
+  const ticks = m.receipts && isSelfIdentity(m.authorId) ? <Ticks m={m} /> : null;
   return (
     <div
       class={`msg ${grouped ? 'grouped' : ''} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''}`}
@@ -594,19 +602,20 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
           <Gone m={m} />
         ) : m.forward && !m.deleted ? (
           <ForwardCard m={m}>
-            <Body m={m.forward.text !== undefined ? { ...m, body: m.forward.text } : m} />
+            <Body m={m.forward.text !== undefined ? { ...m, body: m.forward.text } : m} tail={ticks} />
             <Attachments m={m} />
             <Embeds m={m} />
           </ForwardCard>
         ) : (
           <>
-            <Body m={m} />
+            <Body m={m} tail={ticks} />
             <Attachments m={m} />
             <Embeds m={m} />
           </>
         )}
+        {ticks && (!m.body || m.deleted) && <span class="msg-marks">{ticks}</span>}
         {grouped && (m.editedTs || m.edits) && <Edited m={m} />}
-        {grouped && (m.pinned || m.receipts) && (
+        {grouped && m.pinned && (
           <span class="msg-marks">
             <Marks m={m} />
           </span>

@@ -1,30 +1,35 @@
 /**
- * Learning from your votes (docs/notifications.md). Triage puts every message at one of three levels: Important
- * (the phone buzzes, the desktop shows a notification), Active (a silent notification on the phone) or Digest. You
- * vote a decision up or down a level; this finds rules that explain your votes and applies them to what comes next.
+ * Learning from your votes (docs/notifications.md). Triage puts every message at one of four levels: Important (the
+ * phone buzzes, the desktop shows a notification), Active (a silent notification on the phone), Digest, or below the
+ * digest ('drop': still unread in its chat, nowhere else).
  *
- * Every decision keeps the facts it was made from (`Facts`: where, who, mentions you, a question, ...), so any set of
- * rules can be tried against every vote you ever gave: a backtest. The rules are a decision list, most specific
- * first: the first one that matches a message sets its level, else triage's own rules stand. They are learned greedily:
- * of all the conditions your votes suggest (a place, a person, a server, alone or with a flag such as "does not
- * mention you"), take the one that gets the most votes right, again and again, while each step still helps.
+ * The level comes from three chances the model predicts for each message: worth a ping, worth at least a silent
+ * notification, and interesting enough for the digest. At `THRESHOLDS.ping` or more it pings; else at `active` or
+ * more it is Active; else at `interesting` or more it goes in the digest; else below it.
  *
- * Votes count in full, newer more. Decisions you did not vote on count a little, as "that was fine": enough to keep a
- * rule from reaching past what you voted on, never enough to outvote you. Votes on one conversation move it on their
- * own; a rule over a server, a person or a network needs two votes that agree.
+ * Each chance starts from a prior: where the network's own settings (or yours, for a place you set) would put the
+ * message. Discord and Signal notify you about something, so it starts as Important. What your votes taught is added
+ * on top, in log-odds: one weight per feature (a conversation, a person, a server, a flag such as "mentions you", the
+ * words it uses) and per chance, fitted by L2-regularised logistic regression. The regularisation is the hierarchy: a
+ * conversation moves on one vote, a person or a server on a few, a whole network or "anything that mentions you"
+ * only on many, so two votes in one Signal chat do not quieten all of Signal.
  *
- * After each vote the rules are backtested; past `RELEARN_ERROR` wrong they are learned again, and a local model's
- * prompt (triage.ts askModel) is written again from them, with the votes they still get wrong as examples.
+ * Votes count in full, newer more. Notifications you got and let stand count a little, as "that was fine".
  */
 import type * as P from '@dither-chat/protocol';
 
 export type Level = P.NotifyTier;
-export const TIERS: Level[] = ['digest', 'quiet', 'push'];
+export type Head = P.TriageHead;
+export const TIERS: Level[] = ['drop', 'digest', 'quiet', 'push'];
+export const HEADS: Head[] = ['ping', 'active', 'interesting'];
 export const tierUp = (l: Level): Level => TIERS[Math.min(TIERS.length - 1, TIERS.indexOf(l) + 1)];
 export const tierDown = (l: Level): Level => TIERS[Math.max(0, TIERS.indexOf(l) - 1)];
 export const isTier = (x: unknown): x is Level => TIERS.includes(x as Level);
 
-/** What a decision was made from. No message text: flags only. */
+/** It pings at 80% sure, as asked; Active and the digest at even odds. */
+export const THRESHOLDS: P.TriageProbs = { ping: 0.8, active: 0.5, interesting: 0.5 };
+
+/** What a decision was made from. The words are not kept here: they are read from the message when needed. */
 export interface Facts {
   network: string;
   shape: string;
@@ -43,23 +48,25 @@ export interface Facts {
   /** You wrote there in the half hour before. */
   active: boolean;
   media: boolean;
-  /** Triage's own level, before any learned rule. */
+  /** Where the network's own settings, or yours for this place, put it: the prior. */
   base: Level;
-}
-
-export interface Rule {
-  /** Predicates that must all hold (`predicates`). */
-  when: string[];
-  level: Level;
-  /** Votes it matches that agree, and all votes it matches. */
-  votes: number;
-  agree: number;
-  /** You kept it: it survives relearning. */
-  pinned?: boolean;
+  /** What the network does with this place: notify on every message, only mentions, or nothing. */
+  native?: 'all' | 'mentions' | 'none';
+  /** The network itself would have notified you about it. */
+  notify?: boolean;
+  /** Triage's own sense of how addressed to you it is, 0 to 1 (triage.ts). */
+  score?: number;
+  /** You set this place's level yourself. */
+  explicit?: boolean;
+  link?: boolean;
+  long?: boolean;
+  /** From someone you have as a person (a contact, a friend), not a stranger. */
+  known?: boolean;
 }
 
 export interface Example {
   facts: Facts;
+  words: string[];
   label: Level;
   weight: number;
   /** A vote, as opposed to a decision you let stand. */
@@ -67,153 +74,206 @@ export interface Example {
   at: number;
 }
 
-const FLAGS = ['mention', 'everyone', 'reply', 'question', 'urgent', 'bot', 'active', 'media'] as const;
-/** Flags whose absence says something: "unless it mentions you". */
-const NEGATABLE = new Set(['mention', 'reply', 'question', 'active']);
+/** What each level says for each chance: Important is worth a ping, so also worth Active and the digest. */
+export function labels(l: Level): Record<Head, 0 | 1> {
+  return { ping: l === 'push' ? 1 : 0, active: l === 'push' || l === 'quiet' ? 1 : 0, interesting: l === 'drop' ? 0 : 1 };
+}
 
-/** Every predicate that holds for these facts. */
-export function predicates(f: Facts): string[] {
-  const out = [`conv:${f.conversation}`, `network:${f.network}`, `shape:${f.shape}`, `base:${f.base}`];
-  for (const s of f.spaces.slice(0, 3)) out.push(`space:${s}`);
-  if (f.author) out.push(`author:${f.author}`);
-  for (const k of FLAGS) {
-    if (f[k]) out.push(k);
-    else if (NEGATABLE.has(k)) out.push(`!${k}`);
+export function levelFrom(p: P.TriageProbs, t: P.TriageProbs = THRESHOLDS): Level {
+  return p.ping >= t.ping ? 'push' : p.active >= t.active ? 'quiet' : p.interesting >= t.interesting ? 'digest' : 'drop';
+}
+
+/**
+ * Before any vote. The network would notify (or you set the place to): Important. Below that, how addressed to you
+ * it is decides whether it is interesting enough for the digest; a place you set to Digest keeps its digest.
+ */
+export function prior(f: Facts): P.TriageProbs {
+  switch (f.base) {
+    case 'push':
+      return { ping: 0.9, active: 0.97, interesting: 0.99 };
+    case 'quiet':
+      return { ping: 0.2, active: 0.85, interesting: 0.97 };
+    case 'digest':
+      return { ping: 0.03, active: 0.1, interesting: f.explicit ? 0.9 : Math.min(0.95, Math.max(0.05, 0.2 + (f.score ?? 0.15))) };
+    case 'drop':
+      return { ping: 0.01, active: 0.03, interesting: 0.2 };
   }
+}
+
+// ------------------------------------------------------------------ features
+
+const FLAGS = ['mention', 'everyone', 'reply', 'question', 'urgent', 'bot', 'active', 'media', 'link', 'long', 'known'] as const;
+/** Flags whose absence says something: "unless it mentions you". */
+const NEGATABLE = new Set(['mention', 'reply', 'question', 'active', 'known']);
+
+const STOP = new Set(
+  'the and for are but not you all any can her was one our out has have had him his how its may new now see two who did get got let put say she too use that this with from they will would there their what about which when your said could into them than then been were more some just like also only over such very well here where after before because these those while being does doing what\'s it\'s i\'m don\'t can\'t yeah yes lol'.split(' '),
+);
+
+/** The words a message uses, for the model: distinct, lower case, three letters or more; no links, mentions or code. */
+export function words(body: string, max = 40): string[] {
+  const text = body
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/<[@#:!&a-z]*[^>]*>/gi, ' ')
+    .replace(/```[\s\S]*?```|`[^`]*`/g, ' ')
+    .toLowerCase();
+  const out = new Set<string>();
+  for (const w of text.match(/[\p{L}\p{N}'’]{3,24}/gu) ?? []) {
+    const k = w.replace(/’/g, "'").replace(/^'+|'+$/g, '');
+    if (k.length < 3 || STOP.has(k) || /^\d+$/.test(k)) continue;
+    out.add(k);
+    if (out.size >= max) break;
+  }
+  return [...out];
+}
+
+/** Every feature of a message, with its value: 1, or for words a share that adds up to one feature's worth. */
+export function features(f: Facts, ws: readonly string[] = []): [string, number][] {
+  const out: [string, number][] = [['all', 1], [`conv:${f.conversation}`, 1], [`network:${f.network}`, 1], [`shape:${f.shape}`, 1]];
+  for (const s of f.spaces.slice(0, 3)) out.push([`space:${s}`, 1]);
+  if (f.author) out.push([`author:${f.author}`, 1]);
+  for (const k of FLAGS) {
+    if (f[k]) out.push([k, 1]);
+    else if (NEGATABLE.has(k) && f[k] !== undefined) out.push([`!${k}`, 1]);
+  }
+  if (f.native) out.push([`native:${f.native}`, 1]);
+  if (f.notify !== undefined) out.push([f.notify ? 'notify' : '!notify', 1]);
+  // "In this server, unless it is about you": each scope with whether it mentions or replies to you.
+  const you = f.mention || f.reply ? 'you' : '!you';
+  out.push([`conv:${f.conversation}&${you}`, 1]);
+  if (f.spaces[0]) out.push([`space:${f.spaces[0]}&${you}`, 1]);
+  if (f.author) out.push([`author:${f.author}&${you}`, 1]);
+  const x = ws.length ? 1 / Math.sqrt(ws.length) : 0;
+  for (const w of ws) out.push([`w:${w}`, x]);
   return out;
 }
 
-const SCOPE_RANK: Record<string, number> = { conv: 0, author: 1, space: 2, network: 3, shape: 4 };
-const scopeOf = (p: string) => (p.includes(':') && !p.startsWith('base:') ? p.slice(0, p.indexOf(':')) : null);
-/** Most specific first: a conversation before a person before a server; more conditions before fewer. */
-export function specificity(when: string[]): [number, number] {
-  const ranks = when.map((p) => SCOPE_RANK[scopeOf(p) ?? ''] ?? 5);
-  return [Math.min(...ranks, 5), -when.length];
-}
-const bySpecificity = (a: Rule, b: Rule) => {
-  const [x1, x2] = specificity(a.when);
-  const [y1, y2] = specificity(b.when);
-  return x1 - y1 || x2 - y2 || b.votes - a.votes;
-};
-export const ruleKey = (r: Pick<Rule, 'when' | 'level'>) => `${[...r.when].sort().join('&')}>${r.level}`;
-export const condKey = (when: string[]) => [...when].sort().join('&');
+const kindOf = (feature: string) => feature.slice(0, feature.search(/[:&]|$/));
 
-/** The level for these facts: the first rule that matches, else triage's own. Silenced places are never touched. */
-export function applyRules(rules: readonly Rule[], f: Facts, has?: Set<string>): { level: Level; rule: Rule | null } {
-  const set = has ?? new Set(predicates(f));
-  for (const r of rules) if (r.when.every((p) => set.has(p))) return { level: r.level, rule: r };
-  return { level: f.base, rule: null };
+/**
+ * How firmly each kind of feature is held at zero (the L2 weight). A conversation moves on one vote; a person and
+ * words (together worth one feature) on a few; a server on several; a network, a shape or a flag across every place
+ * only on many.
+ */
+export function lambda(feature: string): number {
+  // A scope with whether it is about you moves first: "this server, unless it mentions you" before "this server".
+  if (feature.includes('&')) return base(feature) / 2;
+  return base(feature);
+}
+
+function base(feature: string): number {
+  switch (kindOf(feature)) {
+    case 'conv':
+      return 0.5;
+    case 'author':
+    case 'w':
+      return 1;
+    case 'space':
+      return 4;
+    case 'all':
+      return 80;
+    default:
+      return 40;
+  }
+}
+
+// ------------------------------------------------------------------ the model
+
+export interface Model {
+  w: Record<Head, Record<string, number>>;
+}
+export const emptyModel = (): Model => ({ w: { ping: {}, active: {}, interesting: {} } });
+
+const sigmoid = (z: number) => 1 / (1 + Math.exp(-z));
+const logit = (p: number) => Math.log(p / (1 - p));
+
+export interface Prediction {
+  probs: P.TriageProbs;
+  level: Level;
+  /** The features that moved it most, strongest first. */
+  why: { feature: string; head: Head; by: number }[];
+}
+
+/** The chances for a message: its prior (or a local model's, `start`) plus the learned weights of its features. */
+export function predict(m: Model, f: Facts, ws: readonly string[] = [], start?: P.TriageProbs): Prediction {
+  const p0 = start ?? prior(f);
+  const fs = features(f, ws);
+  const probs = {} as P.TriageProbs;
+  const why: Prediction['why'] = [];
+  for (const h of HEADS) {
+    let z = logit(p0[h]);
+    for (const [k, x] of fs) {
+      const w = m.w[h][k];
+      if (!w) continue;
+      z += w * x;
+      if (Math.abs(w * x) >= 0.25) why.push({ feature: k, head: h, by: w * x });
+    }
+    probs[h] = sigmoid(z);
+  }
+  why.sort((a, b) => Math.abs(b.by) - Math.abs(a.by));
+  return { probs, level: levelFrom(probs), why };
+}
+
+/** How much a prediction matters, for sorting: the mean of the three chances. */
+export const importance = (p: P.TriageProbs) => Math.round(((p.ping + p.active + p.interesting) / 3) * 1000) / 1000;
+
+/**
+ * Fit the weights: for each chance, weighted logistic loss plus each feature's L2 weight, by cyclic coordinate Newton
+ * steps (a dozen sweeps are plenty: each feature is a handful of examples). Features you rejected are left out.
+ */
+export function train(examples: readonly Example[], rejected: ReadonlySet<string> = new Set(), sweeps = 12): Model {
+  const index = new Map<string, number>();
+  const names: string[] = [];
+  const rows = examples.map((e) => {
+    const fs = features(e.facts, e.words).filter(([k]) => !rejected.has(k));
+    const ids = fs.map(([k]) => index.get(k) ?? (index.set(k, names.push(k) - 1), names.length - 1));
+    return { ids, vals: fs.map(([, x]) => x), prior: prior(e.facts), y: labels(e.label), c: e.weight };
+  });
+  // Which examples each feature is in.
+  const at: { i: number; x: number }[][] = names.map(() => []);
+  rows.forEach((r, i) => r.ids.forEach((f, j) => at[f].push({ i, x: r.vals[j] })));
+  const lam = names.map(lambda);
+  const model = emptyModel();
+  for (const h of HEADS) {
+    const w = new Float64Array(names.length);
+    const z = rows.map((r) => logit(r.prior[h]));
+    for (let s = 0; s < sweeps; s++) {
+      let moved = 0;
+      for (let f = 0; f < names.length; f++) {
+        let g = lam[f] * w[f];
+        let H = lam[f];
+        for (const { i, x } of at[f]) {
+          const r = rows[i];
+          const p = sigmoid(z[i]);
+          g += r.c * (p - r.y[h]) * x;
+          H += r.c * p * (1 - p) * x * x;
+        }
+        const d = Math.max(-2, Math.min(2, -g / H));
+        if (!d) continue;
+        w[f] += d;
+        for (const { i, x } of at[f]) z[i] += d * x;
+        moved = Math.max(moved, Math.abs(d));
+      }
+      if (moved < 1e-4) break;
+    }
+    for (let f = 0; f < names.length; f++) if (Math.abs(w[f]) >= 1e-3) model.w[h][names[f]] = Math.round(w[f] * 1e4) / 1e4;
+  }
+  return model;
 }
 
 export interface Backtest {
   votes: number;
-  /** Votes the rules get wrong; and without any rules, triage's own. */
+  /** Votes the model gets wrong; and without what it learned, the networks' own settings. */
   errors: number;
   baseline: number;
-  /** The newest of the votes they get wrong, newest first. */
+  /** The newest of the votes it gets wrong, newest first. */
   wrong: Example[];
 }
 
-export function backtest(rules: readonly Rule[], examples: readonly Example[]): Backtest {
+export function backtest(m: Model, examples: readonly Example[]): Backtest {
   const votes = examples.filter((e) => e.vote);
-  const wrong = votes.filter((e) => applyRules(rules, e.facts).level !== e.label).sort((a, b) => b.at - a.at);
-  return { votes: votes.length, errors: wrong.length, baseline: votes.filter((e) => e.facts.base !== e.label).length, wrong };
-}
-
-export const MAX_RULES = 24;
-/** A step must get at least this much more right (a vote counts up to 1). */
-const MIN_GAIN = 0.4;
-/** Of the votes a rule matches, at least this share must agree with it. */
-const MIN_AGREE = 0.7;
-
-/** Conditions a vote suggests: each scope alone, and each with one flag or with what triage would have done. */
-function conditions(f: Facts): string[][] {
-  const ps = predicates(f);
-  const scopes = ps.filter((p) => scopeOf(p));
-  const rest = ps.filter((p) => !scopeOf(p));
-  const out: string[][] = scopes.map((s) => [s]);
-  for (const s of scopes) for (const r of rest) out.push([s, r]);
-  // Across every place: "anything that would buzz and does not mention you".
-  for (const r of rest) if (!r.startsWith('base:')) out.push([`base:${f.base}`, r]);
-  return out;
-}
-
-/**
- * The rules your votes support. Starts from the rules you kept, then adds, one at a time, whichever condition gets
- * the most right, until none helps by `MIN_GAIN`. Each candidate goes where its specificity puts it in the list, so
- * the gain counts only the examples no earlier rule already decides.
- */
-export function learn(examples: readonly Example[], keep: readonly Rule[] = [], rejected: ReadonlySet<string> = new Set()): Rule[] {
-  const sets = examples.map((e) => new Set(predicates(e.facts)));
-  const byPred = new Map<string, number[]>();
-  sets.forEach((s, i) => s.forEach((p) => (byPred.get(p) ?? byPred.set(p, []).get(p)!).push(i)));
-  const matching = (when: string[]): number[] => {
-    const lists = when.map((p) => byPred.get(p) ?? []).sort((a, b) => a.length - b.length);
-    if (!lists.length) return [];
-    const others = lists.slice(1).map((l) => new Set(l));
-    return lists[0].filter((i) => others.every((o) => o.has(i)));
-  };
-
-  // A rule you dropped takes its narrower versions with it: "in this DM" dropped is not "in this DM, unless a question".
-  const dropped = [...rejected].map((k) => ({ when: k.slice(0, k.lastIndexOf('>')).split('&'), level: k.slice(k.lastIndexOf('>') + 1) }));
-  const refused = (when: string[], level: Level) => dropped.some((d) => d.level === level && d.when.every((p) => when.includes(p)));
-
-  // Candidates from the votes only: a pattern has to be something you said.
-  const cands = new Map<string, { when: string[]; level: Level; idx: number[] }>();
-  for (const e of examples) {
-    if (!e.vote) continue;
-    for (const when of conditions(e.facts)) {
-      const key = ruleKey({ when, level: e.label });
-      if (cands.has(key) || refused(when, e.label)) continue;
-      cands.set(key, { when, level: e.label, idx: matching(when) });
-    }
-  }
-
-  let rules = [...keep].sort(bySpecificity);
-  for (let round = rules.length; round < MAX_RULES; round++) {
-    // Which rule decides each example now, and whether that is right.
-    const decider = sets.map((s) => rules.findIndex((r) => r.when.every((p) => s.has(p))));
-    const right = examples.map((e, i) => (decider[i] < 0 ? e.facts.base : rules[decider[i]].level) === e.label);
-    const present = new Set(rules.map(ruleKey));
-    let best: { rule: Rule; gain: number } | null = null;
-    for (const [key, c] of cands) {
-      if (present.has(key)) continue;
-      const at = insertAt(rules, c.when);
-      let gain = 0;
-      let votes = 0;
-      let agree = 0;
-      for (const i of c.idx) {
-        const e = examples[i];
-        if (e.vote) {
-          votes++;
-          if (e.label === c.level) agree++;
-        }
-        if (decider[i] >= 0 && decider[i] < at) continue;
-        gain += e.weight * (Number(c.level === e.label) - Number(right[i]));
-      }
-      const support = c.when.some((p) => p.startsWith('conv:')) ? 1 : 2;
-      if (agree < support || agree / votes < MIN_AGREE || gain < MIN_GAIN) continue;
-      // On a tie, the simpler condition, then the narrower scope.
-      const simpler = () => c.when.length - best!.rule.when.length || specificity(c.when)[0] - specificity(best!.rule.when)[0];
-      if (!best || gain > best.gain + 1e-9 || (Math.abs(gain - best.gain) < 1e-9 && simpler() < 0)) {
-        best = { rule: { when: c.when, level: c.level, votes, agree }, gain };
-      }
-    }
-    if (!best) break;
-    rules = [...rules.slice(0, insertAt(rules, best.rule.when)), best.rule, ...rules.slice(insertAt(rules, best.rule.when))];
-  }
-  // Counts for the kept ones too, as of these votes.
-  return rules.map((r) => {
-    if (!r.pinned) return r;
-    const idx = matching(r.when).filter((i) => examples[i].vote);
-    return { ...r, votes: idx.length, agree: idx.filter((i) => examples[i].label === r.level).length };
-  });
-}
-
-function insertAt(rules: readonly Rule[], when: string[]): number {
-  const probe: Rule = { when, level: 'digest', votes: Infinity, agree: 0 };
-  const i = rules.findIndex((r) => bySpecificity(probe, r) < 0);
-  return i < 0 ? rules.length : i;
+  const wrong = votes.filter((e) => predict(m, e.facts, e.words).level !== e.label).sort((a, b) => b.at - a.at);
+  return { votes: votes.length, errors: wrong.length, baseline: votes.filter((e) => levelFrom(prior(e.facts)) !== e.label).length, wrong };
 }
 
 /** Older votes count less: half after three months, never under a quarter. */
@@ -224,8 +284,6 @@ export function voteWeight(at: number, now: number): number {
 export const STOOD = 0.05;
 /** Of those, at most this many per conversation, the newest. */
 export const STOOD_PER_PLACE = 10;
-/** Relearn when the rules get more than this share of votes wrong. */
-export const RELEARN_ERROR = 0.1;
 
 // ------------------------------------------------------------------ in words
 
@@ -236,7 +294,8 @@ export interface Namer {
   network(id: string): string;
 }
 
-export const TIER_NAME: Record<Level, string> = { push: 'Important', quiet: 'Active', digest: 'Digest' };
+export const TIER_NAME: Record<Level, string> = { push: 'Important', quiet: 'Active', digest: 'Digest', drop: 'Not interesting' };
+export const HEAD_NAME: Record<Head, string> = { ping: 'ping', active: 'notify', interesting: 'make the digest' };
 const SHAPES: Record<string, string> = { direct: 'DMs', group: 'group chats', channel: 'channels', thread: 'threads', self: 'notes to self' };
 const FLAG_WORDS: Record<string, string> = {
   mention: 'mentions you',
@@ -251,48 +310,81 @@ const FLAG_WORDS: Record<string, string> = {
   active: "you'd been talking there",
   '!active': "you hadn't been talking there",
   media: 'has an attachment',
+  link: 'has a link',
+  long: 'is long',
+  known: 'from someone you know',
+  '!known': 'from a stranger',
+  notify: 'the network would notify',
+  '!notify': 'the network would not notify',
+  'native:all': 'where the network notifies every message',
+  'native:mentions': 'where the network notifies only mentions',
+  'native:none': 'where the network is muted',
+  you: 'about you',
+  '!you': 'not about you',
 };
 
-/** "From Sam, in #general · Hub, that does not mention you" */
-export function describe(when: string[], n: Namer): string {
-  const parts: string[] = [];
-  const flags: string[] = [];
-  for (const p of [...when].sort((a, b) => (SCOPE_RANK[scopeOf(a) ?? ''] ?? 9) - (SCOPE_RANK[scopeOf(b) ?? ''] ?? 9))) {
+/** "In #general · Hub, not about you", "Says “deploy”", "From Sam" */
+export function describe(feature: string, n: Namer): string {
+  const parts = feature.split('&');
+  const out: string[] = [];
+  for (const p of parts) {
     const [k, v] = p.includes(':') ? [p.slice(0, p.indexOf(':')), p.slice(p.indexOf(':') + 1)] : [p, ''];
-    if (k === 'conv') parts.push(`in ${n.conversation(v)}`);
-    else if (k === 'author') parts.push(`from ${n.person(v)}`);
-    else if (k === 'space') parts.push(`in ${n.space(v)}`);
-    else if (k === 'network') parts.push(`on ${n.network(v)}`);
-    else if (k === 'shape') parts.push(`in ${SHAPES[v] ?? v}`);
-    else if (k === 'base') flags.push(`would have been ${TIER_NAME[v as Level]}`);
-    else flags.push(FLAG_WORDS[p] ?? p);
+    if (k === 'conv') out.push(`in ${n.conversation(v)}`);
+    else if (k === 'author') out.push(`from ${n.person(v)}`);
+    else if (k === 'space') out.push(`in ${n.space(v)}`);
+    else if (k === 'network') out.push(`on ${n.network(v)}`);
+    else if (k === 'shape') out.push(`in ${SHAPES[v] ?? v}`);
+    else if (k === 'w') out.push(`says “${v}”`);
+    else if (k === 'all') out.push('anything');
+    else out.push(FLAG_WORDS[p] ?? p);
   }
-  const head = parts.length ? parts.join(', ') : 'Anything';
-  const text = flags.length ? `${head}, that ${flags.join(' and ')}` : head;
+  const text = out.join(', ');
   return text[0].toUpperCase() + text.slice(1);
 }
 
+/** "More likely to ping: In #general · Hub, about you" */
+export function describeWeight(feature: string, head: Head, by: number, n: Namer): string {
+  return `${by > 0 ? 'More' : 'Less'} likely to ${HEAD_NAME[head]}: ${describe(feature, n)}`;
+}
+
+/** The biggest weights, strongest first, at most `max` per chance. */
+export function topWeights(m: Model, max = 12): { feature: string; head: Head; weight: number }[] {
+  const out: { feature: string; head: Head; weight: number }[] = [];
+  for (const h of HEADS)
+    out.push(
+      ...Object.entries(m.w[h])
+        .filter(([, w]) => Math.abs(w) >= 0.15)
+        .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+        .slice(0, max)
+        .map(([feature, weight]) => ({ feature, head: h, weight })),
+    );
+  return out.sort((a, b) => Math.abs(b.weight) - Math.abs(a.weight));
+}
+
 /**
- * The prompt for a local model, written from the rules: what each level means, the rules in words, and the votes
- * the rules still get wrong as examples (described by their facts, never their text).
+ * The prompt for a local model, written from what was learned: the three questions, the strongest weights in words,
+ * and votes the model still gets wrong (described by their features, never their text).
  */
-export function writePrompt(rules: readonly Rule[], wrong: readonly Example[], n: Namer): string {
+export function writePrompt(m: Model, wrong: readonly Example[], n: Namer): string {
   const lines = [
-    'You sort incoming chat messages for one person into three levels:',
-    '- important: their phone buzzes and their computer shows a notification. For what they would want to drop things for.',
-    '- active: a silent notification on their phone. Worth seeing soon, not worth an interruption.',
-    '- digest: no notification; read later with everything else.',
+    'You read incoming chat messages for one person and answer three questions about each, as chances from 0 to 1:',
+    '- ping: should their phone buzz and their computer show a notification? For what they would drop things for.',
+    '- active: is it worth at least a silent notification on their phone, to see soon?',
+    '- interesting: is it worth reading later in their digest at all?',
+    'By default, whatever Discord or Signal itself would notify them about is worth a ping.',
   ];
-  if (rules.length) {
-    lines.push('', 'They taught you these rules by voting on past notifications; the first that fits wins:');
-    for (const r of rules) lines.push(`- ${describe(r.when, n)}: ${r.level === 'push' ? 'important' : r.level === 'quiet' ? 'active' : 'digest'}`);
+  const top = topWeights(m, 6);
+  if (top.length) {
+    lines.push('', 'Their votes on past notifications taught these, strongest first:');
+    for (const t of top) lines.push(`- ${describeWeight(t.feature, t.head, t.weight, n)}`);
   }
   if (wrong.length) {
-    lines.push('', 'The rules still get these of their votes wrong; weigh them too:');
+    lines.push('', 'These votes still come out wrong; weigh them too:');
     for (const e of wrong.slice(0, 6)) {
-      const f = e.facts;
-      const what = predicates(f).filter((p) => !p.startsWith('!') && !p.startsWith('base:') && !p.startsWith('shape:') && !p.startsWith('network:'));
-      lines.push(`- ${describe(what, n)}: they said ${e.label === 'push' ? 'important' : e.label === 'quiet' ? 'active' : 'digest'}`);
+      const what = features(e.facts)
+        .map(([k]) => k)
+        .filter((k) => /^(conv|author|space):[^&]*$/.test(k) || ['mention', 'reply', 'question', 'urgent', 'everyone'].includes(k));
+      lines.push(`- ${what.map((k) => describe(k, n)).join('; ')}: they said ${TIER_NAME[e.label]}`);
     }
   }
   return lines.join('\n');

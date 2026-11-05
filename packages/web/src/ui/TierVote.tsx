@@ -1,7 +1,7 @@
 /**
- * Voting a triage decision between Important, Active and Digest (docs/notifications.md). `TierVote` is up and down
- * arrows around the level, for lists you go through one by one; `TierPicker` is the three levels side by side, for a
- * message's menu.
+ * Voting a triage decision between Important, Active, Digest and below it (docs/notifications.md). `TierVote` is up
+ * and down arrows around the level, for lists you go through one by one; `TierPicker` is the levels side by side, for
+ * a message's menu.
  */
 import type * as P from '@dither-chat/protocol';
 import { isTier, levelOf, TIER_LABEL, TIERS, tierDown, tierUp, vote } from '../triage.ts';
@@ -11,7 +11,9 @@ const WHAT: Record<P.NotifyTier, string> = {
   push: 'buzzes your phone and notifies your desktop',
   quiet: 'a silent notification on your phone',
   digest: 'no notification, read it with the digest',
+  drop: 'not even the digest: unread in its chat only',
 };
+export const TIER_ICON: Record<P.NotifyTier, 'bell' | 'bellOff' | 'layers' | 'eyeOff'> = { push: 'bell', quiet: 'bellOff', digest: 'layers', drop: 'eyeOff' };
 
 export function TierVote({ m }: { m: P.MessageView }) {
   const t = m.triage;
@@ -33,7 +35,7 @@ export function TierVote({ m }: { m: P.MessageView }) {
         {TIER_LABEL[now]}
         {t.feedback === t.decision && <Icon name="check" size={10} />}
       </span>
-      <button class={`icon-btn small ${!down && t.feedback === 'digest' ? 'on' : ''}`} title={down ? `Should be ${TIER_LABEL[down]}: ${WHAT[down]}` : 'Right call: Digest'} onClick={stop(() => vote(m, 'down'))}>
+      <button class={`icon-btn small ${!down && t.feedback === 'drop' ? 'on' : ''}`} title={down ? `Should be ${TIER_LABEL[down]}: ${WHAT[down]}` : 'Right call: not interesting'} onClick={stop(() => vote(m, 'down'))}>
         <Icon name="chevronDown" size={15} />
       </button>
     </span>
@@ -58,7 +60,7 @@ export function TierPicker({ m, onDone }: { m: P.MessageView; onDone?: () => voi
             onDone?.();
           }}
         >
-          <Icon name={l === 'push' ? 'bell' : l === 'quiet' ? 'bellOff' : 'layers'} size={13} /> {TIER_LABEL[l]}
+          <Icon name={TIER_ICON[l]} size={13} /> {TIER_LABEL[l]}
           {l === t.decision && <span class="tier-dot" />}
         </button>
       ))}
@@ -68,5 +70,36 @@ export function TierPicker({ m, onDone }: { m: P.MessageView; onDone?: () => voi
 
 /** "This buzzed you because", "This came as a silent notification because", ... */
 export function triageHeading(d: P.TriageDecision): string {
-  return d === 'push' ? 'Important: this notified you because' : d === 'quiet' ? 'Active: a silent notification because' : d === 'digest' ? 'This went to the digest because' : 'This was silent because';
+  return d === 'push'
+    ? 'Important: this notified you because'
+    : d === 'quiet'
+      ? 'Active: a silent notification because'
+      : d === 'digest'
+        ? 'This went to the digest because'
+        : d === 'drop'
+          ? 'Not interesting enough for the digest because'
+          : 'This was silent because';
+}
+
+/** The model's three chances, as small bars: ping, notify, digest. */
+export function TriageChances({ p }: { p: P.TriageProbs }) {
+  const rows: [keyof P.TriageProbs, string, number][] = [
+    ['ping', 'Ping', 0.8],
+    ['active', 'Notify', 0.5],
+    ['interesting', 'Digest', 0.5],
+  ];
+  return (
+    <div class="triage-chances">
+      {rows.map(([k, label, at]) => (
+        <div class={`triage-chance ${p[k] >= at ? 'over' : ''}`} title={`${label}: ${Math.round(p[k] * 100)}% (at ${Math.round(at * 100)}% or more it does)`}>
+          <span>{label}</span>
+          <span class="triage-bar">
+            <span style={{ width: `${Math.round(p[k] * 100)}%` }} />
+            <i style={{ left: `${at * 100}%` }} />
+          </span>
+          <b>{Math.round(p[k] * 100)}%</b>
+        </div>
+      ))}
+    </div>
+  );
 }

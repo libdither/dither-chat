@@ -98,10 +98,11 @@ object Notifications {
             val gone = Intent(c, DismissReceiver::class.java).putExtra("nid", nid).putExtra("device", device)
             b.setDeleteIntent(PendingIntent.getBroadcast(c, tag.hashCode(), gone, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
         }
-        // Active: up to Important or down to Digest, before Reply. Important: Reply, then down to Active.
+        // Up and down a level from the shade (docs/notifications.md). Active: up to Important or down to the digest,
+        // before Reply. Important: Reply, then down to Active, or up, which says it was right.
         val votes = when (vote?.level) {
-            "quiet" -> listOf("up" to "Important", "down" to "Digest")
-            "push" -> listOf("down" to "Not important")
+            "quiet" -> listOf("up" to "▲ Important", "down" to "▼ Digest")
+            "push" -> listOf("down" to "▼ Active", "up" to "✓ Right")
             else -> emptyList()
         }
         fun addVotes() = votes.forEachIndexed { i, (dir, label) ->

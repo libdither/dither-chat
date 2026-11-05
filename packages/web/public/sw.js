@@ -181,12 +181,18 @@ async function dataUrl(canvas) {
   return `data:image/png;base64,${btoa(bin)}`;
 }
 
-/** A vote from the notification: one level down, or for an Active one, up to Important (docs/notifications.md). */
+/**
+ * A vote from the notification (docs/notifications.md): Important down to Active, or up, which says it was right;
+ * Active up to Important or down to the digest.
+ */
 const VOTES = {
-  push: [{ action: 'down', title: 'Not important' }],
+  push: [
+    { action: 'down', title: '▼ Active' },
+    { action: 'up', title: '✓ Right' },
+  ],
   quiet: [
-    { action: 'up', title: 'Important' },
-    { action: 'down', title: 'Digest' },
+    { action: 'up', title: '▲ Important' },
+    { action: 'down', title: '▼ Digest' },
   ],
 };
 
@@ -198,7 +204,8 @@ async function show(d) {
   const quiet = d.level === 'quiet';
   const reply = d.conversationId && d.canReply && CAN_REPLY ? [{ action: 'reply', type: 'text', title: 'Reply', placeholder: 'Message' }] : [];
   const votes = d.messageId ? VOTES[d.level] ?? [] : [];
-  const actions = d.conversationId ? (quiet ? [...votes, ...reply] : [...reply, ...votes, { action: 'open', title: 'Open' }]) : [];
+  // The votes first: a browser that shows two actions shows them.
+  const actions = d.conversationId ? [...votes, ...reply, ...(votes.length ? [] : [{ action: 'open', title: 'Open' }])] : [];
   await self.registration.showNotification(d.title ?? 'dither-chat', {
     body: d.body ?? '',
     tag,

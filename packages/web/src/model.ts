@@ -340,7 +340,8 @@ export function categoriesOf(kind: 'space' | 'conversation', id: string): P.Cate
 
 // ------------------------------------------------------------------ notification level (mirrors hub triage.ts)
 
-const DEFAULT_LEVEL: Record<P.Shape, P.NotifyLevel> = { direct: 'all', group: 'smart', channel: 'mentions', thread: 'mentions', self: 'none' };
+/** What the networks do where nothing is set: DMs and group chats notify on every message, channels on mentions. */
+const NATIVE_DEFAULT: Record<P.Shape, 'all' | 'mentions' | 'none'> = { direct: 'all', group: 'all', channel: 'mentions', thread: 'mentions', self: 'none' };
 const rank = (l: P.NotifyLevel) => ({ none: 0, digest: 1, mentions: 2, smart: 3, all: 4 })[l];
 
 export interface Effective {
@@ -381,11 +382,39 @@ export function effectiveLevel(c: P.ConversationView): Effective {
     }
     if (!base && (l = hit('network', c.network))) base = { level: l, source: `all of ${netName(c.network)}`, explicit: false, scope: 'network' };
     if (!base && (l = hit('global', null))) base = { level: l, source: 'global default', explicit: false, scope: 'global' };
-    if (!base) base = { level: DEFAULT_LEVEL[c.shape], source: `default for ${c.shape === 'direct' ? 'DMs' : c.shape + 's'}`, explicit: false, scope: 'default' };
+    // Nothing set: as the network has it (hub triage.ts nativeLevel), muted held for the digest.
+    if (!base) {
+      const n = nativeLevel(c, parent);
+      return { level: n === 'none' ? 'digest' : n, source: `as in ${netName(c.network)}`, explicit: false, scope: 'default' };
+    }
     const mute = nativeMuteLevel(c, parent);
     if (mute && rank(base.level) > rank(mute)) return { level: mute, source: `muted in ${netName(c.network)}`, explicit: false, scope: 'native' };
     return base;
   });
+}
+
+/** What the network itself does here: the most specific setting that has not run out, nearest first. */
+function nativeLevel(c: P.ConversationView, parent?: P.ConversationView): 'all' | 'mentions' | 'none' {
+  const now = Date.now();
+  const at = (m: P.NativeMute | null | undefined) => (!m || (m.until !== undefined && m.until <= now) ? null : m.until !== undefined ? 'none' : (m.level ?? null));
+  for (const m of [c.nativeMute, parent?.nativeMute]) {
+    const lv = at(m);
+    if (lv) return lv;
+  }
+  const seen = new Set<string>();
+  let frontier = [...(parent ?? c).spaceIds];
+  while (frontier.length) {
+    const next: string[] = [];
+    for (const sid of frontier) {
+      if (seen.has(sid)) continue;
+      seen.add(sid);
+      const lv = at(db.spaces.get(sid)?.nativeMute);
+      if (lv) return lv;
+      next.push(...(db.parents.get(sid) ?? []).map((e) => e.parentId));
+    }
+    frontier = next;
+  }
+  return NATIVE_DEFAULT[c.shape];
 }
 
 function nativeMuteLevel(c: P.ConversationView, parent?: P.ConversationView): P.NotifyLevel | null {

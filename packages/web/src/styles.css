@@ -2534,8 +2534,14 @@ code {
   border-color: var(--accent);
 }
 
+/* The notification menu is wider than other menus: four levels and three bars. */
+.cm:has(.triage-pop) {
+  max-width: min(340px, calc(100vw - 16px));
+}
 .triage-pop {
-  min-width: 320px;
+  width: 326px;
+  max-width: 100%;
+  box-sizing: border-box;
   padding: 4px;
 }
 .triage-pop ul {
@@ -8083,18 +8089,30 @@ button.msg-edited.link:hover {
   margin-left: 4px;
   vertical-align: middle;
 }
+/* Your message's ticks: right after its text, close to the background, there when you look for them. */
 .msg-ticks {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  margin-left: 4px;
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
   font-size: 10px;
-  color: var(--text-faint);
-  vertical-align: middle;
+  line-height: 1;
+  color: color-mix(in oklab, var(--text-faint) 45%, transparent);
+  vertical-align: baseline;
 }
 .msg-ticks.read,
 .msg-ticks.played {
-  color: var(--accent);
+  color: color-mix(in oklab, var(--accent) 50%, transparent);
+}
+.msg-ticks:hover {
+  color: var(--text-faint);
+}
+.msg-text {
+  display: contents;
 }
 .msg-marks {
   display: inline-flex;
@@ -8198,4 +8216,78 @@ button.msg-edited.link:hover {
   margin-left: auto;
   font-variant-numeric: tabular-nums;
   font-weight: normal;
+}
+
+/* Triage: below the digest, the model's chances, what it learned */
+.tier-chip.drop {
+  opacity: 0.7;
+  background: transparent;
+  outline: 1px solid var(--border-soft);
+}
+.board-block.below > summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.board-block.below > summary .muted {
+  font-weight: normal;
+}
+.triage-chances {
+  display: grid;
+  gap: 4px;
+  padding: 4px 8px 8px;
+  font-size: 11px;
+}
+.triage-chance {
+  display: grid;
+  grid-template-columns: 44px 1fr 34px;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-faint);
+}
+.triage-chance b {
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.triage-chance.over b,
+.triage-chance.over span:first-child {
+  color: var(--text);
+}
+.triage-bar {
+  position: relative;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+}
+.triage-bar span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--text-faint) 60%, transparent);
+}
+.triage-chance.over .triage-bar span {
+  background: var(--accent);
+}
+.triage-bar i {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--text-faint);
+}
+.factor-weight {
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  min-width: 64px;
+}
+.factor-weight.up {
+  color: var(--accent);
+}
+.factor-weight.down {
+  color: var(--text-faint);
 }

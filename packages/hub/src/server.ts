@@ -654,7 +654,7 @@ export class HubServer {
     // A vote: { vote: 'up' | 'down' } from where it is now, or { feedback: level | null } straight to a level.
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/feedback$/)) && method === 'POST') {
       const b = await body<{ vote?: 'up' | 'down'; feedback?: P.NotifyTier | null }>();
-      const v: Vote | undefined = b.vote === 'up' || b.vote === 'down' ? b.vote : b.feedback === null || ['push', 'quiet', 'digest'].includes(b.feedback as string) ? (b.feedback as Vote) : undefined;
+      const v: Vote | undefined = b.vote === 'up' || b.vote === 'down' ? b.vote : b.feedback === null || ['push', 'quiet', 'digest', 'drop'].includes(b.feedback as string) ? (b.feedback as Vote) : undefined;
       if (v === undefined) return bad('Say vote: up or down, or feedback: a level or null');
       if (!this.opts.votes) {
         s.triageFeedback(m[1], v === 'up' || v === 'down' ? null : v);
@@ -670,12 +670,14 @@ export class HubServer {
     }
     if (path === '/api/triage/policy' && method === 'GET') return this.opts.votes ? ok(this.opts.votes.view()) : bad('No triage here', 404);
     if (path === '/api/triage/policy/relearn' && method === 'POST' && this.opts.votes) {
-      this.opts.votes.relearn('you asked');
+      this.opts.votes.learn('you asked');
       return ok(this.opts.votes.view());
     }
-    if ((m = path.match(/^\/api\/triage\/rules\/([^/]+)$/)) && method === 'POST' && this.opts.votes) {
-      const b = await body<{ pinned?: boolean; rejected?: boolean }>();
-      this.opts.votes.setRule(decodeURIComponent(m[1]), { pinned: typeof b.pinned === 'boolean' ? b.pinned : undefined, rejected: typeof b.rejected === 'boolean' ? b.rejected : undefined });
+    // Forget something the model learned, for good ({ rejected: true }), or let it be learned again.
+    if ((m = path.match(/^\/api\/triage\/factors\/([^/]+)$/)) && method === 'POST' && this.opts.votes) {
+      const b = await body<{ rejected?: boolean }>();
+      if (typeof b.rejected !== 'boolean') return bad('Say rejected: true or false');
+      this.opts.votes.forget(decodeURIComponent(m[1]), b.rejected);
       return ok(this.opts.votes.view());
     }
 

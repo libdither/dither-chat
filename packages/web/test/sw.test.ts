@@ -182,3 +182,12 @@ test('a page without push hands its notification to the worker; without a canvas
   expect(shown[0].title).toBe('Ana · Signal');
   expect(shown[0].o).toMatchObject({ tag: 'cnv_1', icon: '/icon-192.png', badge: '/icon-192.png', data: { nid: 'n1' } });
 });
+
+test('votes come first: Important down to Active or right; Active up to Important or down to the digest', async () => {
+  const loud = worker();
+  await loud.push({ title: 't', conversationId: 'cnv_1', messageId: 'msg_1', level: 'push' });
+  expect(actions(loud).slice(0, 2)).toEqual(['down', 'up']);
+  const quiet = worker();
+  await quiet.push({ title: 't', conversationId: 'cnv_1', messageId: 'msg_1', level: 'quiet' });
+  expect(quiet.shown[0].o.actions.slice(0, 2).map((a: any) => a.title)).toEqual(['▲ Important', '▼ Digest']);
+});

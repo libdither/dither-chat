@@ -588,7 +588,7 @@ export function weakLabel(
 ): 'should_push' | 'should_not_push' | null {
   // A vote: Important or Active say it was worth a notification, Digest that it was not.
   if (feedback === 'push' || feedback === 'quiet') return 'should_push';
-  if (feedback === 'digest') return 'should_not_push';
+  if (feedback === 'digest' || feedback === 'drop') return 'should_not_push';
   if (feedback === 'should_push' || feedback === 'should_not_push') return feedback;
   if (o.seenLive) return null;
   if (o.openedAfter != null && o.openedAfter <= 15 * MIN && ((o.repliedAfter != null && o.repliedAfter <= o.openedAfter + REPLY_AFTER) || (o.dwell ?? 0) >= 20)) return 'should_push';

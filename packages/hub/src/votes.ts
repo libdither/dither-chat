@@ -1,29 +1,32 @@
 /**
- * Your votes on triage's decisions, and the rules learned from them (learn.ts, docs/notifications.md). A vote moves a
- * decision up or down a level; after each one the rules are backtested against every vote, and learned again when
- * they get more than `RELEARN_ERROR` of them wrong. The local model's prompt is written again with them.
+ * Your votes on triage's decisions, and the model learned from them (learn.ts, docs/notifications.md). A vote moves a
+ * decision up or down a level, or says it was right; after each one the model is fitted again to every vote (it takes
+ * well under a second) and backtested. Once a day too, as votes age and decisions stand. The local model's prompt is
+ * written again with it.
  */
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import {
-  applyRules,
   backtest,
   describe,
+  emptyModel,
   isTier,
-  learn,
-  RELEARN_ERROR,
-  ruleKey,
   STOOD,
   STOOD_PER_PLACE,
+  THRESHOLDS,
   tierDown,
   tierUp,
+  topWeights,
+  train,
   voteWeight,
+  words,
+  features,
   writePrompt,
   type Example,
   type Facts,
   type Level,
+  type Model,
   type Namer,
-  type Rule,
 } from './learn.ts';
 import type { Store } from './store.ts';
 import type { Triage } from './triage.ts';
@@ -32,7 +35,8 @@ type Row = Record<string, any>;
 const DAY = 86_400_000;
 
 interface State {
-  rules: Rule[];
+  model: Model;
+  /** Features you told it to forget. */
   rejected: string[];
   learnedAt: number | null;
   lastReason: string | null;
@@ -48,40 +52,48 @@ export class TriageVotes {
     private store: Store,
     private triage: Triage,
   ) {
-    this.state = { rules: [], rejected: [], learnedAt: null, lastReason: null, prompt: null, ...(store.triagePolicy<State>() ?? {}) };
+    const saved = store.triagePolicy<Partial<State> & { rules?: unknown }>() ?? {};
+    // The decision list that came before learns nothing the model would keep: it starts over from the votes.
+    this.state = { model: saved.model ?? emptyModel(), rejected: saved.model ? (saved.rejected ?? []) : [], learnedAt: saved.model ? (saved.learnedAt ?? null) : null, lastReason: saved.lastReason ?? null, prompt: saved.prompt ?? null };
     this.publish();
+    if (!saved.model) this.learn('the decision model replaced the rules');
   }
 
   /** Every vote, and the newest decisions you let stand in each place. Facts missing on older votes are filled in. */
   examples(now = Date.now()): Example[] {
     const s = this.store;
     const out: Example[] = [];
-    for (const r of s.raw<Row>(`SELECT message_id, decision, feedback, feedback_at, facts FROM triage WHERE feedback IS NOT NULL ORDER BY feedback_at DESC LIMIT 5000`)) {
+    for (const r of s.raw<Row>(
+      `SELECT t.message_id, t.decision, t.feedback, t.feedback_at, t.facts, m.body FROM triage t LEFT JOIN message m ON m.id = t.message_id
+       WHERE t.feedback IS NOT NULL ORDER BY t.feedback_at DESC LIMIT 5000`,
+    )) {
       let facts = r.facts ? (JSON.parse(r.facts) as Facts) : null;
       if (!facts && isTier(r.decision)) {
         facts = this.triage.factsFor(r.message_id, r.decision);
         if (facts) s.setTriageFacts(r.message_id, facts);
       }
       if (!facts) continue;
-      out.push({ facts, label: r.feedback, weight: voteWeight(r.feedback_at ?? now, now), vote: true, at: r.feedback_at ?? 0 });
+      out.push({ facts, words: words(r.body ?? ''), label: r.feedback, weight: voteWeight(r.feedback_at ?? now, now), vote: true, at: r.feedback_at ?? 0 });
     }
+    // Only a notification you got and left alone says "that was fine": a digest entry or what fell below it
+    // was likely never looked at.
     const stood = s.raw<Row>(
       `SELECT decision, facts, created_at FROM (
          SELECT t.decision, t.facts, t.created_at, ROW_NUMBER() OVER (PARTITION BY m.conversation_id ORDER BY t.created_at DESC) AS n
          FROM triage t JOIN message m ON m.id = t.message_id
-         WHERE t.feedback IS NULL AND t.facts IS NOT NULL AND t.decision IN ('push', 'quiet', 'digest') AND t.created_at > ? AND t.created_at < ?)
+         WHERE t.feedback IS NULL AND t.facts IS NOT NULL AND t.decision IN ('push', 'quiet') AND t.created_at > ? AND t.created_at < ?)
        WHERE n <= ?`,
       now - 30 * DAY,
       now - DAY / 2,
       STOOD_PER_PLACE,
     );
-    for (const r of stood) out.push({ facts: JSON.parse(r.facts), label: r.decision, weight: STOOD, vote: false, at: r.created_at });
+    for (const r of stood) out.push({ facts: JSON.parse(r.facts), words: [], label: r.decision, weight: STOOD, vote: false, at: r.created_at });
     return out;
   }
 
   /**
    * Up or down a level from where it is now (your last vote, else the decision), or straight to a level; null takes
-   * the vote back. Up on Important, or down on Digest, says it was right.
+   * the vote back. Up on Important, or down below the digest, says it was right.
    */
   vote(messageId: string, v: Vote, now = Date.now()): { feedback: Level | null; policy: P.TriagePolicyView } {
     const s = this.store;
@@ -97,62 +109,41 @@ export class TriageVotes {
     }
     s.triageFeedback(messageId, target, now);
     const ex = this.examples(now);
-    this.check(now, ex);
+    this.learn('a vote', now, ex);
     return { feedback: target, policy: this.view(now, ex) };
-  }
-
-  /** Backtest; past the threshold, learn again. */
-  check(now = Date.now(), ex = this.examples(now)) {
-    const bt = backtest(this.state.rules, ex);
-    if (bt.votes && bt.errors / bt.votes > RELEARN_ERROR) this.relearn(`${bt.errors} of ${bt.votes} votes wrong`, now, ex);
   }
 
   /** Once a day: votes age, and decisions you let stand join in. */
   daily(now = Date.now()) {
-    if (!this.state.learnedAt || now - this.state.learnedAt > DAY) this.relearn('daily', now);
+    if (!this.state.learnedAt || now - this.state.learnedAt > DAY) this.learn('daily', now);
   }
 
-  relearn(reason: string, now = Date.now(), ex = this.examples(now)) {
-    const rejected = new Set(this.state.rejected);
-    const kept = this.state.rules.filter((r) => r.pinned);
-    const fresh = learn(ex, kept, rejected);
-    // Keep whichever fits better; the new ones on a tie, since they count today's weights.
-    const fit = (rules: Rule[]) => ex.reduce((n, e) => n + e.weight * Number(applyRules(rules, e.facts).level === e.label), 0);
-    const old = this.state.rules.filter((r) => !rejected.has(ruleKey(r)));
-    const rules = fit(fresh) >= fit(old) - 1e-9 ? fresh : old;
-    const wrong = backtest(rules, ex).wrong;
-    this.state = { ...this.state, rules, learnedAt: now, lastReason: reason, prompt: writePrompt(rules, wrong, this.namer()) };
+  learn(reason: string, now = Date.now(), ex = this.examples(now)) {
+    const model = train(ex, new Set(this.state.rejected));
+    const wrong = backtest(model, ex).wrong;
+    this.state = { ...this.state, model, learnedAt: now, lastReason: reason, prompt: writePrompt(model, wrong, this.namer()) };
     this.save();
   }
 
-  /** Keep a rule through relearning, let it go again, or drop it for good (and undo that). */
-  setRule(key: string, change: { pinned?: boolean; rejected?: boolean }, now = Date.now()) {
+  /** Forget a feature for good (it is never learned again), or let it be learned again. */
+  forget(key: string, rejected: boolean, now = Date.now()) {
     const st = this.state;
-    if (change.pinned !== undefined) st.rules = st.rules.map((r) => (ruleKey(r) === key ? { ...r, pinned: change.pinned || undefined } : r));
-    if (change.rejected === true && !st.rejected.includes(key)) {
-      st.rejected = [...st.rejected, key];
-      st.rules = st.rules.filter((r) => ruleKey(r) !== key);
-      this.relearn('you dropped a rule', now);
-      return;
-    }
-    if (change.rejected === false) {
-      st.rejected = st.rejected.filter((k) => k !== key);
-      this.relearn('you let a rule back', now);
-      return;
-    }
-    this.save();
+    st.rejected = rejected ? [...new Set([...st.rejected, key])] : st.rejected.filter((k) => k !== key);
+    this.learn(rejected ? 'you had it forget something' : 'you let something be learned again', now);
   }
 
   view(now = Date.now(), ex = this.examples(now)): P.TriagePolicyView {
     const n = this.namer();
-    const bt = backtest(this.state.rules, ex);
+    const m = this.state.model;
+    const bt = backtest(m, ex);
+    const voted = ex.filter((e) => e.vote).map((e) => new Set(features(e.facts, e.words).map(([k]) => k)));
     return {
-      rules: this.state.rules.map((r) => ({ key: ruleKey(r), text: describe(r.when, n), level: r.level, votes: r.votes, agree: r.agree, pinned: !!r.pinned })),
-      rejected: this.state.rejected.map((key) => ({ key, text: describe(key.slice(0, key.lastIndexOf('>')).split('&'), n) })),
+      factors: topWeights(m).map((t) => ({ key: t.feature, text: describe(t.feature, n), head: t.head, weight: t.weight, votes: voted.filter((s) => s.has(t.feature)).length })),
+      rejected: this.state.rejected.map((key) => ({ key, text: describe(key, n) })),
       votes: bt.votes,
       errors: bt.errors,
       baseline: bt.baseline,
-      threshold: RELEARN_ERROR,
+      thresholds: THRESHOLDS,
       learnedAt: this.state.learnedAt,
       lastReason: this.state.lastReason,
       prompt: this.state.prompt,
@@ -166,11 +157,12 @@ export class TriageVotes {
   }
 
   private publish() {
-    this.triage.rules = this.state.rules;
+    this.triage.learned = this.state.model;
     this.triage.prompt = this.state.prompt;
+    this.triage.namer ??= this.namer();
   }
 
-  private namer(): Namer {
+  namer(): Namer {
     const s = this.store;
     return {
       conversation: (id) => {

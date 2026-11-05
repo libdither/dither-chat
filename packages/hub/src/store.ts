@@ -136,7 +136,7 @@ export class Store {
     const oldTriage = this.setAsideTriage();
     const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
     this.db.exec(schema);
-    if (oldTriage) this.adoptOldTriage();
+    if (oldTriage) this.adoptOldTriage(oldTriage);
     if (oldLog) this.adoptOldChangeLog();
     if (broadcastsUnknown) this.markBroadcasts();
     this.adoptOldReactions(reactionsBefore);
@@ -155,20 +155,26 @@ export class Store {
    * it is set aside, the schema makes the new one, and the rows come across with "should push" as a vote for Important
    * and "should not push" as one for Digest.
    */
-  private setAsideTriage(): boolean {
+  private setAsideTriage(): 'v1' | 'v2' | null {
     const t = this.db.query(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'triage'`).get() as Row | null;
-    if (!t || t.sql.includes("'quiet'")) return false;
-    this.db.exec('DROP INDEX IF EXISTS triage_created; ALTER TABLE triage RENAME TO triage_v1');
-    return true;
+    if (!t || t.sql.includes("'drop'")) return null;
+    this.db.exec('DROP INDEX IF EXISTS triage_created; DROP INDEX IF EXISTS triage_feedback; ALTER TABLE triage RENAME TO triage_v1');
+    return t.sql.includes("'quiet'") ? 'v2' : 'v1';
   }
 
-  private adoptOldTriage() {
-    this.db.exec(`INSERT OR IGNORE INTO triage (message_id, decision, score, reasons, decided_by, feedback, feedback_at, created_at)
-      SELECT message_id, decision, score, reasons, decided_by,
-             CASE feedback WHEN 'should_push' THEN 'push' WHEN 'should_not_push' THEN 'digest' END,
-             CASE WHEN feedback IS NOT NULL THEN created_at END, created_at
-      FROM triage_v1;
-      DROP TABLE triage_v1;`);
+  /** v2 (before 'drop', below the digest): the rows as they are. v1 (before Active): "should push" as a vote for Important. */
+  private adoptOldTriage(from: 'v1' | 'v2') {
+    if (from === 'v2')
+      this.db.exec(`INSERT OR IGNORE INTO triage (message_id, decision, score, reasons, decided_by, feedback, feedback_at, facts, created_at)
+        SELECT message_id, decision, score, reasons, decided_by, feedback, feedback_at, facts, created_at FROM triage_v1;
+        DROP TABLE triage_v1;`);
+    else
+      this.db.exec(`INSERT OR IGNORE INTO triage (message_id, decision, score, reasons, decided_by, feedback, feedback_at, created_at)
+        SELECT message_id, decision, score, reasons, decided_by,
+               CASE feedback WHEN 'should_push' THEN 'push' WHEN 'should_not_push' THEN 'digest' END,
+               CASE WHEN feedback IS NOT NULL THEN created_at END, created_at
+        FROM triage_v1;
+        DROP TABLE triage_v1;`);
   }
 
   /**
@@ -1225,11 +1231,11 @@ export class Store {
   setTriage(messageId: string, t: Omit<P.TriageView, 'feedback'>, facts?: unknown) {
     this.db
       .query(
-        `INSERT INTO triage (message_id, decision, score, reasons, decided_by, facts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO triage (message_id, decision, score, reasons, decided_by, facts, probs, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (message_id) DO UPDATE SET decision = excluded.decision, score = excluded.score, reasons = excluded.reasons,
-           decided_by = excluded.decided_by, facts = COALESCE(excluded.facts, facts), created_at = excluded.created_at`,
+           decided_by = excluded.decided_by, facts = COALESCE(excluded.facts, facts), probs = excluded.probs, created_at = excluded.created_at`,
       )
-      .run(messageId, t.decision, t.score, JSON.stringify(t.reasons), t.decidedBy, facts ? JSON.stringify(facts) : null, Date.now());
+      .run(messageId, t.decision, t.score, JSON.stringify(t.reasons), t.decidedBy, facts ? JSON.stringify(facts) : null, t.probs ? JSON.stringify(t.probs) : null, Date.now());
   }
 
   triageFeedback(messageId: string, feedback: P.TriageView['feedback'], now = Date.now()) {
@@ -1654,7 +1660,7 @@ export class Store {
           })
           .filter((x) => x.count > 0),
         seenVia,
-        triage: t ? { decision: t.decision, score: t.score, reasons: json(t.reasons, []), decidedBy: t.decided_by, feedback: t.feedback } : null,
+        triage: t ? { decision: t.decision, score: t.score, reasons: json(t.reasons, []), decidedBy: t.decided_by, feedback: t.feedback, probs: json(t.probs, null) } : null,
       };
     });
   }
@@ -1823,14 +1829,19 @@ export class Store {
     };
   }
 
-  inbox(sinceTs: number): P.InboxPage {
-    // What notified (or you voted up) has its own share, so a busy digest cannot push it out of the list.
-    const pick = (where: string, limit: number) =>
+  inbox(sinceTs: number, now = Date.now()): P.InboxPage {
+    // What notified (or you voted up) has its own share, so a busy digest cannot push it out of the list; the digest
+    // is what matters most, not what came last; and the most interesting of what fell below it, to vote up.
+    const pick = (where: string, limit: number, order = 'm.ts DESC', since = sinceTs) =>
       this.db
-        .query(`SELECT m.* FROM triage t JOIN message m ON m.id = t.message_id WHERE m.ts >= ? AND m.deleted = 0 AND ${where} ORDER BY m.ts DESC LIMIT ${limit}`)
-        .all(sinceTs) as Row[];
-    const loud = `t.decision != 'silent' AND (t.decision IN ('push', 'quiet') OR t.feedback IN ('push', 'quiet'))`;
-    const rows = [...pick(loud, 150), ...pick(`t.decision != 'silent' AND NOT (${loud})`, 300)].sort((a, b) => b.ts - a.ts);
+        .query(`SELECT m.* FROM triage t JOIN message m ON m.id = t.message_id WHERE m.ts >= ? AND m.deleted = 0 AND ${where} ORDER BY ${order} LIMIT ${limit}`)
+        .all(since) as Row[];
+    const at = `COALESCE(t.feedback, t.decision)`;
+    const rows = [
+      ...pick(`t.decision != 'silent' AND ${at} IN ('push', 'quiet')`, 150),
+      ...pick(`t.decision != 'silent' AND ${at} = 'digest'`, 300, 't.score DESC, m.ts DESC'),
+      ...pick(`t.decision != 'silent' AND ${at} = 'drop'`, 40, 't.score DESC, m.ts DESC', Math.max(sinceTs, now - 2 * 86_400_000)),
+    ].sort((a, b) => b.ts - a.ts);
     const msgs = this.messageViews(rows);
     return { items: msgs.map((m) => ({ message: m, conversationId: m.conversationId })), identities: this.identitiesOf(msgs) };
   }

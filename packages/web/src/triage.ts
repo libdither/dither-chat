@@ -1,13 +1,13 @@
 /**
- * Voting on triage's decisions (docs/notifications.md): Important, Active or Digest, up or down a level from where a
- * message is now. The hub learns rules from the votes; this keeps what it says about them.
+ * Voting on triage's decisions (docs/notifications.md): Important, Active, Digest or below it, up or down a level from
+ * where a message is now. The hub's decision model learns from the votes; this keeps what it says it learned.
  */
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { TIER_LABEL } from '@dither-chat/protocol';
 import { api, inbox, patchMessage, toast } from './state.ts';
 
-export const TIERS: P.NotifyTier[] = ['digest', 'quiet', 'push'];
+export const TIERS: P.NotifyTier[] = ['drop', 'digest', 'quiet', 'push'];
 export { TIER_LABEL };
 export const isTier = (d: P.TriageDecision | null | undefined): d is P.NotifyTier => TIERS.includes(d as P.NotifyTier);
 
@@ -27,7 +27,7 @@ function setFeedback(id: string, feedback: P.NotifyTier | null) {
 
 /**
  * Up or down a level, or straight to one; the same level again takes the vote back. Shown at once; a refusal puts it
- * back. Up on Important or down on Digest says it was right.
+ * back. Up on Important or down below the digest says it was right.
  */
 export async function vote(m: P.MessageView, v: 'up' | 'down' | P.NotifyTier | null) {
   const t = m.triage;
@@ -51,8 +51,9 @@ export async function loadPolicy() {
   } catch {}
 }
 
-export async function changeRule(key: string, change: { pinned?: boolean; rejected?: boolean }) {
-  triagePolicy.value = await api<P.TriagePolicyView>(`/api/triage/rules/${encodeURIComponent(key)}`, { body: change });
+/** Forget something it learned, for good; or let it be learned again. */
+export async function forgetFactor(key: string, rejected: boolean) {
+  triagePolicy.value = await api<P.TriagePolicyView>(`/api/triage/factors/${encodeURIComponent(key)}`, { body: { rejected } });
 }
 
 export async function relearn() {

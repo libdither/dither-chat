@@ -75,11 +75,14 @@ export type NotifyScope = 'global' | 'network' | 'account' | 'space' | 'conversa
  * notification), 'quiet' is Active (a silent notification on the phone, none on the desktop), 'digest' waits for the
  * digest, 'silent' is nowhere but the unread badge.
  */
-export type TriageDecision = 'push' | 'quiet' | 'digest' | 'silent';
+export type TriageDecision = 'push' | 'quiet' | 'digest' | 'drop' | 'silent';
 
-/** The three levels you can vote a decision between. */
-export type NotifyTier = 'push' | 'quiet' | 'digest';
-export const TIER_LABEL: Record<NotifyTier, string> = { push: 'Important', quiet: 'Active', digest: 'Digest' };
+/**
+ * The levels you can vote a decision between: Important, Active, Digest, and below the digest ('drop': not
+ * interesting enough for it; still unread in its chat).
+ */
+export type NotifyTier = 'push' | 'quiet' | 'digest' | 'drop';
+export const TIER_LABEL: Record<NotifyTier, string> = { push: 'Important', quiet: 'Active', digest: 'Digest', drop: 'Not interesting' };
 
 export type MessageKind = 'text' | 'media' | 'system' | 'sticker' | 'call' | 'encrypted';
 

@@ -326,16 +326,17 @@ CREATE TABLE IF NOT EXISTS notify_rule (
 
 -- Every live message gets a decision and the reasons for it, so the UI can
 -- answer "why did this ping me?" and learn from corrections.
--- 'push' is Important, 'quiet' Active (docs/notifications.md).
+-- 'push' is Important, 'quiet' Active, 'drop' below the digest (docs/notifications.md).
 CREATE TABLE IF NOT EXISTS triage (
   message_id  TEXT PRIMARY KEY REFERENCES message(id) ON DELETE CASCADE,
-  decision    TEXT NOT NULL CHECK (decision IN ('push', 'quiet', 'digest', 'silent')),
-  score       REAL,
+  decision    TEXT NOT NULL CHECK (decision IN ('push', 'quiet', 'digest', 'drop', 'silent')),
+  score       REAL,                          -- how much it matters, 0 to 1: the digest is sorted by it
   reasons     TEXT NOT NULL,                 -- JSON string[]
   decided_by  TEXT NOT NULL,                 -- 'rules' | 'model' | 'learned'
-  feedback    TEXT CHECK (feedback IN ('push', 'quiet', 'digest')),  -- the level you voted it to
+  feedback    TEXT CHECK (feedback IN ('push', 'quiet', 'digest', 'drop')),  -- the level you voted it to
   feedback_at INTEGER,
-  facts       TEXT,                          -- JSON learn.ts Facts: what it was decided from, for backtests
+  facts       TEXT,                          -- JSON learn.ts Facts: what it was decided from, for training
+  probs       TEXT,                          -- JSON { ping, active, interesting }: the model's chances
   created_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS triage_created ON triage(created_at);

@@ -244,7 +244,7 @@ export const INBOX_MAX = 300;
 export function mergeInbox(list: P.MessageView[], ms: P.MessageView[]): P.MessageView[] {
   const ids = new Set(ms.map((m) => m.id));
   const out = list.filter((x) => !ids.has(x.id));
-  for (const m of ms) if (!m.deleted && m.triage && m.triage.decision !== 'silent') out.push(m);
+  for (const m of ms) if (!m.deleted && m.triage && m.triage.decision !== 'silent' && (m.triage.feedback ?? m.triage.decision) !== 'drop') out.push(m);
   return out.sort((a, b) => b.ts - a.ts).slice(0, INBOX_MAX);
 }
 

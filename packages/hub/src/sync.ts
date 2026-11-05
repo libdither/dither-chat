@@ -46,7 +46,7 @@ export function syncResponse(ctx: SyncContext, req: P.SyncRequest, now = Date.no
     if (store.one('SELECT 1 FROM sync_change WHERE kind = ? AND seq > ? LIMIT 1', 'message', req.since)) out.reactionUsage = store.reactionUsage();
     const inboxRows = store.raw(
       `SELECT m.* FROM sync_change c JOIN message m ON m.id = c.id JOIN triage t ON t.message_id = m.id
-       WHERE c.kind = 'message' AND c.seq > ? AND t.decision != 'silent' AND m.ts >= ? ORDER BY m.ts DESC LIMIT ?`,
+       WHERE c.kind = 'message' AND c.seq > ? AND t.decision != 'silent' AND COALESCE(t.feedback, t.decision) != 'drop' AND m.ts >= ? ORDER BY m.ts DESC LIMIT ?`,
       req.since,
       now - INBOX_DAYS * 86_400_000,
       INBOX_MAX,

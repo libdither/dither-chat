@@ -303,7 +303,7 @@ export function applyEvents(events: P.ClientEvent[]) {
           if (pt) upsertInto(pt.messages, m);
         }
         if (quoted.has(m.id)) quoted.set(m.id, m);
-        if (m.triage && m.triage.decision !== 'silent') mergeInbox([m]);
+        if (m.triage && m.triage.decision !== 'silent' && (m.triage.feedback ?? m.triage.decision) !== 'drop') mergeInbox([m]);
         // An echo of something we sent: drop the optimistic copy.
         if (pending.value.length) {
           const mine = isSelfIdentity(m.authorId);

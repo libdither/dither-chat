@@ -137,42 +137,52 @@ export interface UploadView {
 
 export interface TriageView {
   decision: TriageDecision;
+  /** How much it matters, 0 to 1: the mean of the three chances below. The digest is sorted by it. */
   score: number | null;
   reasons: string[];
-  /** 'learned': a rule learned from your votes moved it (docs/notifications.md). */
+  /** 'learned': what your votes taught moved it from where the network's own settings put it (docs/notifications.md). */
   decidedBy: 'rules' | 'model' | 'learned';
   /** The level you voted it to, if you did. */
   feedback: NotifyTier | null;
+  /** The model's three chances: worth a ping, worth a silent notification, worth the digest. */
+  probs?: TriageProbs | null;
 }
 
-/** A rule learned from your votes, in words. */
-export interface LearnedRuleView {
-  /** Stable while the rule means the same: for keeping or dropping it. */
+/** What the decision model predicts for a message (docs/notifications.md). */
+export interface TriageProbs {
+  ping: number;
+  active: number;
+  interesting: number;
+}
+export type TriageHead = keyof TriageProbs;
+
+/** Something the model learned from your votes: a feature, in words, and how far it moves one of the three chances. */
+export interface LearnedFactorView {
+  /** The feature, stable: for forgetting it. */
   key: string;
   text: string;
-  level: NotifyTier;
-  /** Votes it matches, and how many of them agree with it. */
+  head: TriageHead;
+  /** In log-odds: +1 roughly doubles the odds again over. */
+  weight: number;
+  /** Votes it was part of. */
   votes: number;
-  agree: number;
-  /** You kept it: relearning will not drop it. */
-  pinned: boolean;
 }
 
 /** What triage has learned from your votes, and how well it fits them. */
 export interface TriagePolicyView {
-  rules: LearnedRuleView[];
-  /** Rules you dropped: never learned again. */
+  factors: LearnedFactorView[];
+  /** Features you told it to forget: never learned again. */
   rejected: { key: string; text: string }[];
   votes: number;
-  /** Votes the rules get wrong, and that triage's own rules alone would. */
+  /** Votes the model gets wrong, and that the networks' own settings alone would. */
   errors: number;
   baseline: number;
-  /** Past this share wrong, the rules are learned again. */
-  threshold: number;
+  /** A message pings at `ping` or more, is Active at `active`, goes in the digest at `interesting`. */
+  thresholds: TriageProbs;
   learnedAt: number | null;
-  /** Why they were last learned again. */
+  /** Why it last learned. */
   lastReason: string | null;
-  /** The local model's prompt, written from the rules; null when there is no model. */
+  /** The local model's prompt, written from what was learned; shown whether or not a model is set. */
   prompt: string | null;
   model: string | null;
 }

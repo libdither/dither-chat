@@ -1,8 +1,9 @@
 /**
  * Notification levels and votes (docs/notifications.md), end to end against a demo hub in headless Chromium: the
- * Triage board's Important, Active and Digest lists; a vote moving a message between them at once; a rule learned
- * from votes, shown with its backtest; the next message in that place landing where the votes said; the level picker
- * in a message's menu; and dropping a rule.
+ * Triage board's Important, Active and Digest lists, the digest by how much each matters, and what fell below it; a
+ * vote moving a message between them at once; what the model learned from it, with its backtest; the next message in
+ * that place landing where the vote said; the level picker and the model's chances in a message's menu; forgetting
+ * what it learned; and your message's read ticks after its text.
  *
  *   bun scripts/verify-notifications.ts http://127.0.0.1:8492 [/tmp/shots]
  * The hub must be a fresh demo hub (--demo) with its own data dir: this votes and sends.
@@ -50,6 +51,11 @@ try {
   let l = await lists();
   const heads = Object.keys(l);
   check(['Important', 'Active', 'Digest'].every((h) => heads.includes(h)), 'the board lists Important, Active and Digest', heads);
+  const scores = await p.eval<number[]>(`(() => { const b = [...document.querySelectorAll('.board-block')].find((x) => x.querySelector('h3')?.textContent.trim() === 'Digest'); return [...b.querySelectorAll('[data-mid]')].map((x) => x.dataset.mid); })()`).then(
+    async (ids) => ids.map((id) => inbox.items.find((i: any) => i.message.id === id)?.message.triage.score ?? -1),
+  );
+  check(scores.length > 1 && scores.every((x, i) => i === 0 || x <= scores[i - 1] || x === -1), 'the digest, what matters most first', scores.slice(0, 8));
+  check(await p.eval<boolean>(`!!document.querySelector('details.below summary')`), 'what fell below the digest, to vote up');
   if (shots) await p.shot(`${shots}/notif-01-board.png`);
 
   // Vote an Important DM message down: it moves to Active at once.
@@ -61,10 +67,11 @@ try {
   check(l['Active'].includes(first) && !l['Important'].includes(first), 'voting it down moves it to Active at once');
   await Bun.sleep(800);
   const policy = await get('/api/triage/policy');
-  check(policy.votes === 1 && policy.rules.length >= 1 && policy.rules[0].level === 'quiet', 'a rule learned from the vote', policy.rules.map((r: any) => r.text));
-  check(policy.errors === 0 && policy.baseline === 1, 'its backtest: right where triage alone was wrong', { errors: policy.errors, baseline: policy.baseline });
+  const top = policy.factors[0];
+  check(policy.votes === 1 && top?.head === 'ping' && top.weight < 0 && top.text.startsWith('In your DM with'), 'learned from the vote: less likely to ping in that DM', policy.factors.slice(0, 3).map((f: any) => `${f.head} ${f.weight} ${f.text}`));
+  check(policy.errors === 0 && policy.baseline === 1, 'its backtest: right where the networks alone were wrong', { errors: policy.errors, baseline: policy.baseline });
   const learned = await p.eval<string>(`document.querySelector('.learned')?.innerText ?? ''`);
-  check(learned.includes(policy.rules[0].text) && /1 vote/.test(learned), 'the board shows the rule and the vote count', learned.split('\n').slice(0, 3));
+  check(learned.includes(top.text) && /1 vote/.test(learned), 'the board shows what it learned and the vote count', learned.split('\n').slice(0, 6));
   if (shots) await p.shot(`${shots}/notif-02-voted.png`);
 
   // The next message there lands where the vote said: answer them, and the demo answers back.
@@ -90,13 +97,24 @@ try {
   if (pill) {
     await Bun.sleep(300);
     const picker = await p.eval<string[]>(`[...document.querySelectorAll('.triage-pop .tier-picker button')].map((b) => b.textContent.trim())`);
-    check(picker.join() === 'Important,Active,Digest', 'a message’s pill offers the three levels', picker);
+    check(picker.join() === 'Important,Active,Digest,Not interesting', 'a message’s pill offers the four levels', picker);
+    const chances = await p.eval<string[]>(`[...document.querySelectorAll('.triage-pop .triage-chance > span:first-child')].map((b) => b.textContent.trim())`);
+    check(chances.join() === 'Ping,Notify,Digest', 'and the model’s three chances', chances);
+    if (shots) await p.shot(`${shots}/notif-03-pill.png`);
   } else console.log('skip the pill (no triaged message in view)');
 
-  // Dropping the rule.
-  const key = policy.rules[0].key;
-  const dropped = await (await post(`/api/triage/rules/${encodeURIComponent(key)}`, { rejected: true })).json();
-  check(!dropped.rules.some((r: any) => r.key === key) && dropped.rejected.some((r: any) => r.key === key), 'a dropped rule is gone and listed as dropped');
+  // Forgetting what it learned.
+  const key = top.key;
+  const forgot = await (await post(`/api/triage/factors/${encodeURIComponent(key)}`, { rejected: true })).json();
+  check(!forgot.factors.some((r: any) => r.key === key) && forgot.rejected.some((r: any) => r.key === key), 'what it forgot is gone and listed as forgotten');
+
+  // Read ticks: after the text of your message, not by your name.
+  const climb = boot.conversations.find((c: any) => c.name === 'Climbing crew 🧗')?.id;
+  await p.goto(`${hub}/#/inbox/c/${climb}`);
+  await p.until(`!!document.querySelector('.msg-ticks')`, 15000);
+  const where = await p.eval<{ head: number; body: number }>(`({ head: document.querySelectorAll('.msg-head .msg-ticks').length, body: document.querySelectorAll('.msg-body .msg-ticks').length })`);
+  check(where.head === 0 && where.body > 0, 'read ticks sit after the text, not by the name', where);
+  if (shots) await p.shot(`${shots}/notif-04-ticks.png`);
   check(!p.errors.length, 'no page errors', p.errors);
 } finally {
   await close();

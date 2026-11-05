@@ -1,104 +1,119 @@
-# Notification levels, and learning from your votes
+# Notification levels, and the decision model that learns from your votes
 
-Triage puts every message at one of three levels, or silences it:
+Triage puts every message at one of four levels, or silences it:
 
 | Level | `decision` | Phone | Desktop |
 | --- | --- | --- | --- |
 | **Important** | `push` | buzzes (the *Important messages* channel) | a notification, and a toast in an open page |
 | **Active** | `quiet` | a silent notification (the *Active messages (silent)* channel, a `silent` web notification) | nothing: it is a row in the inbox |
-| **Digest** | `digest` | nothing; counted in the daily digest | nothing |
+| **Digest** | `digest` | nothing; counted in the daily digest, listed on the Triage board by how much it matters | nothing |
+| **Not interesting** | `drop` | nothing; unread in its chat, nowhere else | |
 | silent | `silent` | the unread badge only (the place is set to Nothing) | |
 
-Code: `packages/hub/src/triage.ts` (decides), `learn.ts` (rules from votes, pure), `votes.ts` (votes, backtests,
-relearning, the policy view), `main.ts` `deliver` (who gets what); `packages/web/src/triage.ts`, `ui/TierVote.tsx`,
-`ui/Inbox.tsx` (the Triage board), `public/sw.js`; `apps/android/.../Notifications.kt`.
+Code: `packages/hub/src/triage.ts` (where a message starts, the decision), `learn.ts` (the model, pure), `votes.ts`
+(votes, training, the policy view), `main.ts` `deliver` (who gets what); `packages/web/src/triage.ts`,
+`ui/TierVote.tsx`, `ui/Inbox.tsx` (the Triage board), `public/sw.js`; `apps/android/.../Notifications.kt`.
 
-## Triage's own rules
+## The three chances
 
-The place's notification level (`effectiveLevel`, unchanged) picks the start:
+For every new live message from someone else (whatever its place's level, unless silenced) the model predicts three
+chances:
 
-- **Every message** (DMs by default): Important.
-- **Mentions** (channels and threads by default): a mention by name or a reply to you is Important; `@everyone` and
-  `@here` are Active, since they reach you without being about you; the rest is Digest.
-- **Smart** (group chats by default): the score as before (mentions you +0.5, `@everyone` +0.2, replies to you +0.4, a
-  question +0.15, sounds urgent +0.3, a small group +0.1, you were talking there +0.25, an announcement channel −0.1,
-  from 0.15). At 0.55 or more Important, at 0.3 or more Active, else Digest. With a local model
-  (`DITHER_TRIAGE_MODEL`), the model picks the level instead, from the prompt below.
-- **Digest only**: Digest. **Nothing**: silent.
+- **ping**: worth buzzing you. At **80%** or more it is Important.
+- **active**: worth at least a silent notification. Else at 50% or more, Active.
+- **interesting**: worth the digest at all. Else at 50% or more, Digest; below, Not interesting.
+
+How much a message matters (`score`, the mean of the three) orders the digest. The chances are shown with a message's
+"why" (the bell among its hover actions) as three bars.
+
+### Where it starts: the networks' own settings
+
+Each chance starts from a **prior**, set by where the message would land without any votes:
+
+- **A place you set** (a conversation, a server, an account, a network, everything) keeps its level as before:
+  Every message is Important; Mentions makes a mention or a reply to you Important, `@everyone` Active, the rest
+  Digest; Smart scores it (below); Digest only is Digest.
+- **A place you did not set** goes by what the network itself would do (`nativeLevel`): its own notification setting
+  for the channel, then its category, then its server, as Discord, Element or WhatsApp report them, a mute that has run
+  out no longer counting; else the network's default: DMs and group chats every message, channels mentions only.
+  **What the network would notify you about is Important**: every message where it notifies on every message; a
+  mention, a reply to you or `@everyone` where it notifies on mentions. The rest starts as Digest. Signal does not
+  say which groups you muted in the app (signal-cli keeps no group mutes), so Signal groups notify on every message
+  until you vote them down.
 - Starred people and keywords: Important. Bots, unless they mention you or the place notifies on everything: Digest.
+
+Important starts at ping 0.9, Active at ping 0.2 and active 0.85; Digest at ping 0.03 and active 0.1, with
+interesting 0.2 plus how addressed to you it is (the Smart score: mentions you +0.5, `@everyone` +0.2, replies to you
++0.4, a question +0.15, sounds urgent +0.3, a small group +0.1, you were talking there +0.25, an announcement channel
+−0.1, from 0.15), so plain chatter in a busy server falls below the digest and a question where you were talking makes
+it. A place you set to Digest only starts at interesting 0.9.
+
+With a local model (`DITHER_TRIAGE_MODEL`, Ollama), places set to Smart ask it for the three chances instead, from the
+decision prompt and the place's last eight messages; its answer is the starting point.
 
 Quiet hours hold Important and Active alike, as before.
 
-Then the rules learned from your votes (below) may move it. A silenced place is never moved: change its level instead.
+### What it learns
+
+On top of the prior, in log-odds, one weight per **feature** and per chance (`features`): the conversation, the
+author (their person, else identity), the server and categories, the network, the shape; flags (mentions you,
+`@everyone`, replies to you, a question, urgent, a bot, you had been talking there, an attachment, a link, long, from
+someone you know) and their absence where it says something; what the network does there and whether it would
+notify; each of the conversation, the server and the author **with whether it is about you** (mentions or replies to
+you), so "this server, unless it is about you" is one weight; and the message's **words** (distinct, three letters or
+more, no links, mentions or common words), together worth one feature.
+
+Weights are fitted by L2-regularised logistic regression, cyclic coordinate Newton, after every vote (well under a
+second on the live hub) and once a day. The regularisation is the hierarchy (`lambda`): a conversation moves on one
+vote, a person and words on a few, a server on several, a network, a shape or a flag across every place only on many;
+a scope with "about you" moves before the bare scope. So two votes in one Signal chat change that chat, not all of
+Signal (the decision list this replaced learned "all of Signal → Digest" from exactly that).
+
+Counted:
+
+- **Votes**, in full when new, halving over three months, never under a quarter.
+- **Notifications you let stand** (Important or Active, not voted on, older than half a day): the 10 newest of each
+  conversation from the last 30 days, at 0.05 each, as "that was fine". A digest entry that stood says nothing: it was
+  likely never looked at.
+
+**The backtest**: the model against every vote, and the priors alone against them, shown on the board. **Forget**
+(× beside a learned weight) leaves that feature out of training for good; *Learn again* undoes it.
+
+### The decision prompt
+
+Each time it learns, a prompt for a local model is written (`writePrompt`): the three questions, the strongest
+weights in words, and up to six votes it still gets wrong, described by their features (never their text). The board
+shows it under *Decision prompt*, with or without a model.
 
 ## Voting
 
 Every decision that is not silent can be voted **up** or **down** a level from where it is now (your last vote, else
-the decision). Up on Important, or down on Digest, says it was right: that counts too, as a vote for where it is.
-Voting it to the level it already has takes the vote back.
+the decision). Up on Important, or down on Not interesting, says it was right: that counts too. Voting it to the level
+it already has takes the vote back. A vote's labels for the three chances: Important is worth a ping (so also Active and
+the digest); Active is not worth a ping but worth a notification; Digest only interesting; Not interesting none.
 
-- **The Triage board** (Inbox → Triage, the phone's Triage tab): Important, Active and Digest for the last week, each
-  message with ▲ and ▼ around its level. A vote moves it to the other list at once; a dashed outline marks one you
-  moved, a tick one you said was right.
-- **A message's menu** and the pill beside a message (desktop): the three levels side by side, triage's choice marked
-  with a dot.
-- **The notification itself.** Important: *Not important* (to Active), next to Reply. Active: *Important* and
-  *Digest*. In a browser that shows only two actions, those come first. The vote goes to
-  `POST /api/messages/:id/feedback {vote}` from the service worker or the app, like a reply from a notification does.
+- **The Triage board** (Inbox → Triage, the phone's Triage tab): Important and Active for the last week, newest first;
+  the Digest, what matters most first; *Not interesting*, the closest 30 of the last two days, to vote up. Each message
+  with ▲ and ▼ around its level; a vote moves it to the other list at once.
+- **A message's notification menu** (the bell among its hover actions): why, the three chances, and the four levels
+  side by side, triage's choice marked with a dot.
+- **The notification itself.** Important: Reply, *▼ Active*, *✓ Right*. Active: *▲ Important*, *▼ Digest*, Reply. In a
+  browser that shows only two actions, the votes come first. The vote goes to `POST /api/messages/:id/feedback {vote}`
+  from the service worker or the app, like a reply from a notification does.
 
-`POST /api/messages/:id/feedback` takes `{ vote: 'up' | 'down' }` or `{ feedback: 'push' | 'quiet' | 'digest' | null }`
-and answers with the new vote and the policy (below).
+`POST /api/messages/:id/feedback` takes `{ vote: 'up' | 'down' }` or `{ feedback: 'push' | 'quiet' | 'digest' | 'drop' |
+null }` and answers with the new vote and the policy. `GET /api/triage/policy`, `POST /api/triage/policy/relearn`,
+`POST /api/triage/factors/:key {rejected}`.
 
-Before this, votes were "should have pinged" / "shouldn't have pinged". They came across as votes for Important and
-for Digest (`store.ts` `adoptOldTriage`, which also rebuilds the table for the new decision).
-
-## What it learns
-
-Every decision keeps its **facts** (`triage.facts`, JSON): the network, the conversation's shape, the conversation,
-its spaces (nearest first), the author (their person, else identity), and flags: from a bot, mentions you by name,
-`@everyone`, replies to you, asks a question, sounds urgent, you had written there in the half hour before, has an
-attachment; and triage's own level before any learned rule (`base`). No text. Votes on older messages get their facts
-computed when they are voted on.
-
-A **rule** is a condition and a level: "In #general · Hub, that does not mention you → Digest". A condition is one
-scope (a conversation, a person, a space, a network, a shape) alone, or with one flag or its absence ("does not
-mention you", "is not a question") or with triage's own level ("would have been Important"); or a flag with triage's
-own level across every place. The rules form a list, most specific first (a conversation, then a person, then a
-space, a network, a shape; more conditions before fewer): the first that matches sets the level.
-
-They are learned greedily (`learn`): every condition one of your votes suggests is a candidate; take the one that gets
-the most right, put it where its specificity says, and again, while a step still gains 0.4 and up to 24 rules. Counted:
-
-- **Votes**, in full when new, halving over three months, never under a quarter.
-- **Decisions you let stand**: the 10 newest of each conversation from the last 30 days, older than half a day,
-  at 0.05 each. Enough to keep a rule from reaching past your votes (two votes in a server's channels while the
-  mentions there stood make "in that server, unless it mentions you", not "in that server"), never enough to outvote
-  one.
-- A rule over one conversation needs one vote; over anything wider, two that agree. At least 70% of the votes a rule
-  matches must agree with it.
-
-**The backtest** (`backtest`): the rules against every vote: how many they get wrong, and how many triage's own rules
-alone would. After each vote, if the rules get more than **10%** wrong, they are learned again, and the new set kept
-if it fits better. They are also learned again once a day, as votes age and decisions stand. The Triage board shows the
-rules, the counts, and when and why they were last learned.
-
-**Keep** a rule (the star) and relearning will not drop it. **Drop** one (×) and neither it nor a narrower version of it
-at the same level is learned again; *Allow again* under "dropped" undoes that.
-
-### The decision prompt
-
-Each time the rules are learned they are also written into a prompt for a local model (`writePrompt`): what the three
-levels mean, the rules in words, and up to six votes the rules still get wrong, described by their facts. With
-`DITHER_TRIAGE_MODEL` set, smart places ask the model with it, plus the place's last eight messages, and the model
-answers with a level. The learned rules still apply after the model. Without a model the rules apply on their own; the
-board shows the prompt either way, under *Decision prompt*.
-
-`GET /api/triage/policy`, `POST /api/triage/policy/relearn`, `POST /api/triage/rules/:key {pinned?, rejected?}`.
+Storage: `triage` (`decision`, `score`, `reasons`, `facts` as JSON, `probs` as JSON `{ ping, active, interesting }`,
+`feedback`), the model in `meta` (`triage_policy`). A triage table from before `drop` is set aside and copied over on
+start (`store.ts` `setAsideTriage`); the decision list that came before is dropped and the model trained from the
+votes.
 
 ## Elsewhere
 
 - The inbox ranking (docs/inbox.md) counts Active like Important: "pinged you" while unread.
 - Device rules (docs/devices.md) still only take notifications off a device. Active also skips every push registration
   that is not a phone, going by its label (Android, iPhone, iPad, iOS); an ntfy topic gets it at low priority.
-- The activity export's weak label maps a vote for Important or Active to `should_push` and one for Digest to
-  `should_not_push`.
+- The activity export's weak label maps a vote for Important or Active to `should_push` and one for Digest or Not
+  interesting to `should_not_push`.
