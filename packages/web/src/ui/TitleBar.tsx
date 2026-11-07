@@ -10,7 +10,7 @@
  */
 import { useEffect } from 'preact/hooks';
 import { convTitle } from '../model.ts';
-import { db, route, type Route } from '../state.ts';
+import { db, rev, route, type Route } from '../state.ts';
 import { variantIcon } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { switcherOpen } from './Switcher.tsx';
@@ -47,6 +47,7 @@ function placeTitle(r: Route): { title: string; icon: string } {
 }
 
 export function TitleBar() {
+  rev.value;
   const { title, icon } = placeTitle(route.value);
   useEffect(() => {
     document.title = title === 'Inbox' ? 'dither-chat' : `${title} · dither-chat`;

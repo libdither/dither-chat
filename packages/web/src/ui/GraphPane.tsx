@@ -5,11 +5,13 @@
 import type { FunctionComponent } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { Empty } from './bits.tsx';
+import { rev } from '../state.ts';
 
 type View = FunctionComponent<{ onBack: () => void }>;
 let loaded: View | null = null;
 
 export function GraphPane({ onBack }: { onBack: () => void }) {
+  rev.value;
   const [View, setView] = useState<View | null>(() => loaded);
   const [error, setError] = useState(false);
   useEffect(() => {

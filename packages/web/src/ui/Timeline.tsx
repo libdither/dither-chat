@@ -33,6 +33,7 @@ import {
   toast,
   prefs,
   quoted,
+  metaRev,
   rev,
   route,
   send,
@@ -52,6 +53,7 @@ import {
   openProfile,
   toLatest,
   timelineKey,
+  timelineRev,
   timelines,
 } from '../state.ts';
 import { reactionContext } from '../reactions.ts';
@@ -74,6 +76,7 @@ import { attachmentMenu, conversationMenu, identityMenu, imageMenu, linkMenu, me
 import { desk } from '../desk.ts';
 import { android } from '../android.ts';
 import { counting, markPainted, rendered } from '../perf.ts';
+import { memo } from './memo.ts';
 
 
 // ------------------------------------------------------------------ header
@@ -326,7 +329,7 @@ function useMdContext(network: P.Network) {
 /** The text; `tail` (your message's ticks) sits right after its last word. */
 function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
   // Only mentions and room links read the db (names may arrive later); other bodies render once.
-  const html = useMemo(() => renderMarkdown(m.body, useMdContext(m.network)), [m.body, m.network, /<[@#]/.test(m.body) ? rev.value : 0]);
+  const html = useMemo(() => renderMarkdown(m.body, useMdContext(m.network)), [m.body, m.network, /<[@#]/.test(m.body) ? metaRev.value : 0]);
   if (m.deleted) return <div class="msg-body deleted">{m.gone?.how === 'disappeared' ? 'Message disappeared' : 'Message deleted'}</div>;
   if (m.kind === 'encrypted')
     return (
@@ -363,6 +366,8 @@ function openViewer(e: MouseEvent, images: ViewerImage[], index: number) {
  * said and when it went.
  */
 function Gone({ m }: { m: P.MessageView }) {
+  // Its "5m ago" moves on with the list, as it did when every change drew every message.
+  rev.value;
   const [open, setOpen] = useState(false);
   const how = m.gone!.how === 'disappeared' ? 'Disappeared' : 'Deleted';
   const shown = { ...m, deleted: false };
@@ -514,16 +519,27 @@ function TriageNote({ m }: { m: P.MessageView }) {
   );
 }
 
-/** `target`: the message it replies to, found by the timeline (a map per render, not a search per message). */
-function MessageItem({ m, grouped, merged, onReply, highlight, target }: { m: P.MessageView; grouped: boolean; merged: boolean; onReply: (m: P.MessageView) => void; highlight: boolean; target: P.MessageView | null }) {
+/** Where a message in a merged timeline came from, for the title of its network mark. */
+function sourceTitle(m: P.MessageView): string | undefined {
+  const conv = db.conversations.get(m.conversationId);
+  if (!conv) return undefined;
+  const seenVia = m.seenVia.map((id) => db.accounts.get(id)).filter((a): a is P.AccountView => !!a);
+  return `${kindLabel(conv)}${seenVia.length ? ' · via ' + seenVia.map((a) => a.label).join(', ') : ''}`;
+}
+
+/**
+ * Drawn again only when its props change (memo.ts) or a name or setting does (`metaRev`): a message arriving draws
+ * itself and the one before it, not the whole timeline. The timeline looks up what it would read that changes with
+ * each message: `target`, the message it replies to (a map per render, not a search per message); `thread`, its
+ * thread's conversation; `src`, where it came from in a merged timeline. `onQuote` shows the quoted message.
+ */
+const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuote, highlight, target, thread }: { m: P.MessageView; grouped: boolean; src?: string; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null }) {
   if (counting) rendered('MessageItem');
+  metaRev.value;
   const author = m.authorId ? db.identities.get(m.authorId) : null;
   const person = personOf(m.authorId);
   const self = isSelfIdentity(m.authorId);
   const name = self ? (identityName(m.authorId) || 'You') : authorName(m.authorId);
-  const conv = db.conversations.get(m.conversationId);
-  const thread = m.threadId ? db.conversations.get(m.threadId) : null;
-  const seenVia = m.seenVia.map((id) => db.accounts.get(id)).filter((a): a is P.AccountView => !!a);
   const reply = () => onReply(m);
   // Right-click or hold: the innermost thing that has a menu of its own (a file, a link, a person), else the message.
   const menuAt = (target: EventTarget | null): MenuSpec | null => {
@@ -578,7 +594,7 @@ function MessageItem({ m, grouped, merged, onReply, highlight, target }: { m: P.
       </div>
       <div class="msg-main">
         {target && (
-          <button class="reply-quote" onClick={() => document.getElementById(`m-${target.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>
+          <button class="reply-quote" onClick={() => onQuote(target.id)}>
             <Icon name="reply" size={12} />
             <b>{isSelfIdentity(target.authorId) ? 'You' : authorName(target.authorId)}</b>
             <span>{target.deleted ? 'Message deleted' : plainBody(target.body, target.network).slice(0, 120) || 'Attachment'}</span>
@@ -590,8 +606,8 @@ function MessageItem({ m, grouped, merged, onReply, highlight, target }: { m: P.
               {name}
             </span>
             {author?.isBot && <span class="bot-tag">BOT</span>}
-            {merged && conv && (
-              <span class="msg-src" title={`${kindLabel(conv)}${seenVia.length ? ' · via ' + seenVia.map((a) => a.label).join(', ') : ''}`}>
+            {src !== undefined && (
+              <span class="msg-src" title={src}>
                 <NetGlyph network={m.network} size={11} />
                 {netName(m.network)}
               </span>
@@ -674,13 +690,25 @@ function MessageItem({ m, grouped, merged, onReply, highlight, target }: { m: P.
       </div>
     </div>
   );
-}
+});
 
 // ------------------------------------------------------------------ timeline
 
+/** Messages drawn at the newest end of a timeline. The rest stay in memory and are drawn as the view nears them. */
+export const WINDOW = 150;
+/** How many more are drawn each time the view nears an end of what is drawn. */
+const STEP = 100;
+
+/** What is drawn: from `from` (a message id; '^' the oldest held; null the newest WINDOW) to `to` (an id; null the newest). */
+interface Drawn {
+  key: string;
+  from: string | null;
+  to: string | null;
+}
+
 function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tkey: string; convIds: string[]; merged: boolean; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string }) {
   if (counting) rendered('Timeline');
-  rev.value;
+  timelineRev(tkey).value;
   const scroller = useRef<HTMLDivElement>(null);
   const t = timelines.get(tkey);
   const [flash, setFlash] = useState<string | null>(null);
@@ -701,22 +729,80 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
     return () => clearTimeout(id);
   });
 
+  const msgs = t?.messages ?? [];
+  // Settings → Adversarial features: deleted and disappeared messages not shown at all.
+  const hideGone = retention.value.show === 'hidden';
+  const all = hideGone ? msgs.filter((m) => !m.deleted) : msgs;
+  const at = new Map<string, number>();
+  all.forEach((m, i) => at.set(m.id, i));
+
+  // A long timeline is drawn in part (docs/perf.md): a switch back to it draws the newest WINDOW, not all it holds.
+  const [, redraw] = useState(0);
+  const drawn = useRef<Drawn>({ key: tkey, from: null, to: null });
+  if (drawn.current.key !== tkey) drawn.current = { key: tkey, from: null, to: null };
+  const draw = (from: string | null, to: string | null) => {
+    drawn.current = { key: tkey, from, to };
+    redraw((n) => n + 1);
+  };
+  const around = (i: number): [string, string | null] => [all[Math.max(0, i - STEP / 2)].id, i + STEP / 2 >= all.length - 1 ? null : all[i + STEP / 2].id];
+  const bounds = () => {
+    const d = drawn.current;
+    const toAt = d.to ? at.get(d.to) : undefined;
+    const end = toAt === undefined ? all.length : toAt + 1;
+    const fromAt = d.from === '^' ? 0 : d.from ? at.get(d.from) : undefined;
+    return { start: fromAt === undefined || fromAt >= end ? Math.max(0, end - WINDOW) : fromAt, end };
+  };
+  // A message linked to (?m=) that is held but not drawn: draw what is around it.
+  if (focus && scrolledTo.current !== focus) {
+    const i = at.get(focus);
+    const b = bounds();
+    if (i !== undefined && (i < b.start || i >= b.end)) {
+      const [from, to] = around(i);
+      drawn.current = { key: tkey, from, to };
+    }
+  }
+  const { start, end } = bounds();
+  const first = all[start];
+  const last = all[end - 1];
+
   // At the very top the browser keeps the view at the top while older messages come in above it: that shows
-  // them, and asks for the next page, and the next, to the start. So the message that was first stays where it was.
-  const anchor = useRef<{ id: string; y: number } | null>(null);
+  // them, and asks for the next page, and the next, to the start. So the message that was first stays where it was;
+  // drawing more below keeps the one that was last where it was.
+  const anchor = useRef<{ id: string; y: number; edge: 'first' | 'last' } | null>(null);
+  const hold = (m: P.MessageView | undefined, edge: 'first' | 'last') => {
+    const node = m && document.getElementById(`m-${m.id}`);
+    if (node) anchor.current = { id: m.id, y: node.getBoundingClientRect().top, edge };
+  };
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
     // column-reverse: scrollTop is 0 at the bottom and negative going up.
     if (el.scrollHeight + el.scrollTop - el.clientHeight < 400) {
-      const first = t && !t.loading && t.hasMore ? t.messages[0] : null;
-      const node = first && document.getElementById(`m-${first.id}`);
-      if (node) anchor.current = { id: first.id, y: node.getBoundingClientRect().top };
-      loadTimeline(tkey, true);
+      if (start > 0) {
+        hold(first, 'first');
+        draw(all[Math.max(0, start - STEP)].id, drawn.current.to);
+      } else {
+        if (t && !t.loading && t.hasMore) {
+          hold(first, 'first');
+          // The page coming is drawn whole, as is everything above it.
+          if (drawn.current.from !== '^') drawn.current = { ...drawn.current, from: '^' };
+        }
+        loadTimeline(tkey, true);
+      }
     }
-    if (t?.detached) {
+    const d = drawn.current;
+    if (d.to !== null) {
+      if (Math.abs(el.scrollTop) < 400) {
+        hold(last, 'last');
+        draw(d.from ?? first?.id ?? null, end - 1 + STEP >= all.length - 1 ? null : all[end - 1 + STEP].id);
+      }
+    } else if (t?.detached) {
       if (Math.abs(el.scrollTop) < 400) void loadNewer(tkey);
-    } else if (Math.abs(el.scrollTop) < 40 && document.visibilityState === 'visible') convIds.forEach(markRead);
+    } else if (Math.abs(el.scrollTop) < 40 && document.visibilityState === 'visible') {
+      convIds.forEach(markRead);
+      // Back at the newest after drawing far up: only the newest again. What goes is above the view.
+      if (d.from !== null && end - start > WINDOW + STEP) draw(null, null);
+    }
   };
   useEffect(() => {
     const id = setTimeout(() => onScroll(), 300);
@@ -724,34 +810,52 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
   });
 
   const mine = pending.value.filter((p) => convIds.includes(p.conversationId));
-  const msgs = t?.messages ?? [];
   useLayoutEffect(() => {
     const a = anchor.current;
-    if (!a || t?.loading || msgs[0]?.id === a.id) return;
+    if (!a || t?.loading || (a.edge === 'first' ? first?.id : last?.id) === a.id) return;
     anchor.current = null;
     const node = document.getElementById(`m-${a.id}`);
     const el = scroller.current;
     const moved = node ? node.getBoundingClientRect().top - a.y : 0;
     if (el && Math.abs(moved) >= 1) el.scrollTop += moved;
   });
+
+  // A reply's quote shows the message it quotes: drawn first if it is held but not drawn.
+  const revealing = useRef<string | null>(null);
+  const quote = useRef((_: string) => {});
+  quote.current = (id: string) => {
+    const el = document.getElementById(`m-${id}`);
+    if (el) return el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const i = at.get(id);
+    if (i === undefined) return;
+    revealing.current = id;
+    draw(...around(i));
+  };
+  const onQuote = useMemo(() => (id: string) => quote.current(id), []);
+  useLayoutEffect(() => {
+    const id = revealing.current;
+    const el = id && document.getElementById(`m-${id}`);
+    if (!el) return;
+    revealing.current = null;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+
   // A switch is done once the newest message is on screen, or the hub has answered (docs/perf.md).
   const painted = useRef('');
   useEffect(() => {
     if (!t || painted.current === tkey) return;
-    const last = msgs[msgs.length - 1];
-    const newest = tkey.startsWith('c:') ? db.conversations.get(tkey.slice(2))?.lastMessage?.id : last?.id;
-    if (t.loading && !(last && last.id === newest)) return;
+    const newestHeld = msgs[msgs.length - 1];
+    const newest = tkey.startsWith('c:') ? db.conversations.get(tkey.slice(2))?.lastMessage?.id : newestHeld?.id;
+    if (t.loading && !(newestHeld && newestHeld.id === newest)) return;
     painted.current = tkey;
     markPainted('dither:timeline', { key: tkey, messages: msgs.length });
   });
   const items: any[] = [];
   let prev: P.MessageView | null = null;
-  let dividerDone = false;
-  const hideGone = retention.value.show === 'hidden';
   const byId = new Map(msgs.map((x) => [x.id, x]));
-  for (const m of msgs) {
-    // Settings → Adversarial features: deleted and disappeared messages not shown at all.
-    if (hideGone && m.deleted) continue;
+  const unreadFrom = firstUnreadTs === null ? -1 : all.findIndex((m) => m.ts > firstUnreadTs && !isSelfIdentity(m.authorId));
+  for (let i = start; i < end; i++) {
+    const m = all[i];
     if (!prev || !sameDay(prev.ts, m.ts)) items.push(<div class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
     if (merged && prev && prev.conversationId !== m.conversationId) {
       const c = db.conversations.get(m.conversationId);
@@ -764,24 +868,23 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
         </div>,
       );
     }
-    if (!dividerDone && firstUnreadTs !== null && m.ts > firstUnreadTs && !isSelfIdentity(m.authorId)) {
-      items.push(<div class="new-sep"><span>New</span></div>);
-      dividerDone = true;
-    }
+    if (i === unreadFrom) items.push(<div class="new-sep"><span>New</span></div>);
     const grouped = !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId;
     const target = m.replyToId ? (byId.get(m.replyToId) ?? quoted.get(m.replyToId) ?? null) : null;
-    items.push(<MessageItem key={m.id} m={m} grouped={grouped} merged={merged} onReply={onReply} highlight={m.id === flash} target={target} />);
+    const thread = m.threadId ? (db.conversations.get(m.threadId) ?? null) : null;
+    items.push(<MessageItem key={m.id} m={m} grouped={grouped} src={merged ? sourceTitle(m) : undefined} onReply={onReply} onQuote={onQuote} highlight={m.id === flash} target={target} thread={thread} />);
     prev = m;
   }
 
   return (
     <div class="timeline-scroll" ref={scroller} onScroll={onScroll}>
       <div class="timeline-inner">
-        {t && !t.hasMore && msgs.length > 0 && <div class="timeline-start">This is the start of what dither-chat has stored here.</div>}
+        {t && !t.hasMore && msgs.length > 0 && start === 0 && <div class="timeline-start">This is the start of what dither-chat has stored here.</div>}
         {t?.detached && (
           <button
             class="jump-latest"
             onClick={() => {
+              draw(null, null);
               void toLatest(tkey);
               // Off the old message in the address too, so a reload (a new build) does not jump back to it.
               const r = route.value;
@@ -795,30 +898,32 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
         {!t && <Skeleton rows={7} kind="msg" />}
         {t && !t.loading && msgs.length === 0 && <Empty icon="groups" title="No messages yet" />}
         {items}
-        {mine.map((p) => (
-          <div key={p.tempId} class={`msg pending ${p.failed ? 'failed' : ''} ${p.queued ? 'queued' : ''}`} data-temp-id={p.tempId}>
-            <div class="msg-gutter" />
-            <div class="msg-main">
-              <div class="msg-body">{p.body}</div>
-              {p.files?.map((name, i) => (
-                <div key={i} class="pending-file">
-                  <Icon name="paperclip" size={12} /> {name}
-                </div>
-              ))}
-              <span class="pending-note">{p.failed ? `Failed: ${p.failed}` : p.queued ? 'Waiting for the hub, sends when it is back' : 'Sending…'}</span>
-              {p.failed && (
-                <span class="pending-actions">
-                  <button class="btn ghost small" onClick={() => retrySend(p.tempId)}>
-                    Try again
-                  </button>
-                  <button class="btn ghost small" onClick={() => discardSend(p.tempId)}>
-                    Discard
-                  </button>
-                </span>
-              )}
+        {/* Not yet sent: after the newest, so only while the newest is drawn. */}
+        {end === all.length &&
+          mine.map((p) => (
+            <div key={p.tempId} class={`msg pending ${p.failed ? 'failed' : ''} ${p.queued ? 'queued' : ''}`} data-temp-id={p.tempId}>
+              <div class="msg-gutter" />
+              <div class="msg-main">
+                <div class="msg-body">{p.body}</div>
+                {p.files?.map((name, i) => (
+                  <div key={i} class="pending-file">
+                    <Icon name="paperclip" size={12} /> {name}
+                  </div>
+                ))}
+                <span class="pending-note">{p.failed ? `Failed: ${p.failed}` : p.queued ? 'Waiting for the hub, sends when it is back' : 'Sending…'}</span>
+                {p.failed && (
+                  <span class="pending-actions">
+                    <button class="btn ghost small" onClick={() => retrySend(p.tempId)}>
+                      Try again
+                    </button>
+                    <button class="btn ghost small" onClick={() => discardSend(p.tempId)}>
+                      Discard
+                    </button>
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
       </div>
     </div>
   );

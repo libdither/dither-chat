@@ -1,19 +1,21 @@
 /**
  * Client-side view of the ontology: names, paths, trees and unread
  * aggregation derived from the hub's normalized data. Everything here is
- * memoized per `rev`.
+ * memoized per data version (versions.ts), which moves at once rather than once a frame. Reading it subscribes
+ * nothing: a component reads `rev` or `metaRev` itself.
  */
 import type * as P from '@dither-chat/protocol';
 import { categoryThreshold, NETWORK_META } from '@dither-chat/protocol';
-import { db, inbox, isSelfIdentity, prefs, rev } from './state.ts';
+import { dataVersion, db, inbox, isSelfIdentity, prefs } from './state.ts';
 import { triageBoard, type Board } from './board.ts';
 
 const memos = new Map<string, { rev: number; value: unknown }>();
 function memo<T>(key: string, fn: () => T): T {
   const m = memos.get(key);
-  if (m && m.rev === rev.value) return m.value as T;
+  const v = dataVersion();
+  if (m && m.rev === v) return m.value as T;
   const value = fn();
-  memos.set(key, { rev: rev.value, value });
+  memos.set(key, { rev: v, value });
   return value;
 }
 

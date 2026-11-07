@@ -135,6 +135,7 @@ function SettingsNav() {
 }
 
 function WelcomePane({ view, id }: { view: string; id?: string }) {
+  rev.value;
   const space = view === 'space' && id ? db.spaces.get(id) : undefined;
   const folder = view === 'folder' && id ? db.folders.find((f) => f.id === id) : undefined;
   const titles: Record<string, { h: string; p: string; icon: string }> = {
@@ -229,6 +230,7 @@ let lastDetail: Route | null = null;
 let lastHome: Route = { view: 'inbox' };
 
 function TabBar({ r }: { r: Route }) {
+  rev.value;
   const tab = tabOf(r);
   const all = totalUnread().badge;
   const attention = [...db.accounts.values()].some((a) => a.attention);
@@ -254,16 +256,25 @@ function TabBar({ r }: { r: Route }) {
   );
 }
 
-export function App() {
-  if (counting) rendered('App');
+/** The installed app's icon shows what wants you, where the platform has badges. */
+function AppBadge() {
   rev.value;
-  const r = route.value;
-  const p = phone.value;
-  // The installed app's icon shows what wants you, where the platform has badges.
   const badge = loaded.value ? totalUnread().badge : 0;
   useEffect(() => {
     if ('setAppBadge' in navigator) (badge ? navigator.setAppBadge(badge) : navigator.clearAppBadge()).catch(() => {});
   }, [badge]);
+  return null;
+}
+
+/**
+ * Reads no `rev`: each pane, list and layer below reads what it shows, so a change to one conversation does not
+ * draw the whole app again (docs/perf.md). Only a place's profile page asks `db` where it lives.
+ */
+export function App() {
+  if (counting) rendered('App');
+  const r = route.value;
+  if (r.view === 'profile' || lastDetail?.view === 'profile') rev.value;
+  const p = phone.value;
   // A mark-all-read can outlive the page that started it.
   useEffect(() => {
     api<{ pending: number }>('/api/read-all').then((p) => (readProgress.value = { pending: p.pending, failed: 0 })).catch(() => {});
@@ -341,6 +352,7 @@ export function App() {
           </span>
         </div>
       )}
+      <AppBadge />
       {!p && <TitleBar />}
       <Rail />
       <aside class="sidebar">{sidebarFor(r, () => (addingAccount.value = true))}</aside>

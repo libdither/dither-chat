@@ -14,7 +14,7 @@ Options: `--port` (8620; the hub it starts listens there), `--runs`, `--cpu 1,4`
 biggest conversation, 15), `--web <dist>` (a build to use instead of building one), `--out <file.json>` (every run's
 numbers), `--baseline <file>`, `--keep` (leave the temp dir with the world, the build and the hub's log), `--css <css>`
 (added to every page, to try a style change without a build), `--work <dir>` (an empty dir to work in instead of a
-temp dir, kept afterwards).
+temp dir, kept afterwards), `--size <w>x<h>` (1280x800; below 700 wide it emulates a phone, as `--size 390x844`).
 
 It takes about five minutes. It builds the web app, seeds a world in a temp dir, starts its own demo hub on it
 (`--demo`, with the demo's random chatter off, `DITHER_DEMO_CHATTER=0`), and drives a fresh headless Chromium per
@@ -41,17 +41,17 @@ the end (row by row it took 17 times as long). Seeding takes about 15 s.
 
 ## What it measures
 
-Desktop size (1280 × 800), at each CPU throttle, `runs` times; the medians are compared.
+Desktop size (1280 × 800) unless `--size` says otherwise, at each CPU throttle, `runs` times; the medians are compared.
 
 | metric | what |
 |---|---|
 | `hub.bootstrap.ms`, `hub.inbox.ms`, `hub.bootstrap.bytes` | the hub's own answer times (median of five) and the bootstrap's size |
 | `cold.*` | a device that never saw this hub: time to the list painted, to the hub's data applied (`dither:fresh`), the longest task, App renders, layouts, DOM nodes |
-| `open.first.*` | switching to six conversations for the first time (the two biggest channels, the biggest DM and group, a channel of a few thousand, a DM of a few dozen): median and slowest time to the `dither:timeline` mark, the longest task, App renders and layouts summed over the six |
+| `open.first.*` | switching to six conversations for the first time (the two biggest channels, the biggest DM and group, a channel of a few thousand, a DM of a few dozen): median and slowest time to the `dither:timeline` mark, the longest task, renders of App, the inbox list and messages, and layouts, summed over the six |
 | `open.again.*` | the same six again, from memory |
 | `older.*` | `pages` older pages in the biggest conversation: the median and last page's time, messages loaded, and how many pages moved the view (the message that was first did not stay put) |
-| `long.reopen.*` | away and back to that long timeline: time, longest task, renders, layouts, DOM nodes, `.msg` and reply quote counts |
-| `arrival.*` | a message from someone else arriving while it is open (the demo's `say` action): time to show, main-thread busy until things settle, App and MessageItem renders, layouts |
+| `long.reopen.*` | away and back to that long timeline: time, longest task, App and message renders, layouts, DOM nodes, `.msg` and reply quote counts |
+| `arrival.*` | a message from someone else arriving while it is open (the demo's `say` action): time to show, main-thread busy until things settle, App, message and inbox list renders, layouts |
 | `relaunch.*` | the app opened again later, from the device's snapshot: time to the list, to fresh data, longest task, renders; then the six opened again |
 
 Each step waits until nothing has rendered for half a second before it counts. A plain reload is not measured: it
@@ -66,6 +66,10 @@ between runs, and renders rarely, where times move 5–30% on a shared machine. 
 five seconds before the first run, or that run meets the demo world still settling and counts ten times the renders. Times in the baseline are of the machine that wrote it, so compare like with
 like: on another machine, write a baseline from `main` first (`--update --baseline /tmp/main.json`), then run the
 branch against it.
+
+Some render counts also have ceilings of their own (`CEILINGS` in the script), whatever the baseline says: at most
+two App renders and three of the inbox list per switch, none of App and at most five messages for an arriving message,
+and at most 250 messages drawn on a reopen. An `--update` over one of them fails and writes nothing.
 
 ## What the page tells it
 
@@ -121,17 +125,72 @@ What made the difference:
 - **`/api/inbox`** sorted a week of triage (200k rows on the live hub) for each of its picks. An index on the level
   and score (`triage_level_score`) lets each pick stop at its limit; `test/inbox-plan.test.ts` checks the plans.
 
+## Scoped renders and a window
+
+The second round, from the "next" list of the first. Medians of three runs on the same machine, `main` before (with
+the first round in it) against this.
+
+| | 1× before | 1× after | 4× before | 4× after |
+|---|---|---|---|---|
+| first open of a conversation (median of six) | 205 ms | 150 ms | 852 ms | 581 ms |
+| App renders for the six | 30 | 6 | 30 | 6 |
+| inbox list renders for the six | 30 | 14 | 30 | 13 |
+| message renders for the six | 708 | 354 | 708 | 354 |
+| longest task in them | 62 ms | 75 ms | 266 ms | 331 ms |
+| reopening one from memory | 64 ms | 50 ms | 272 ms | 215 ms |
+| an older page | 176 ms | 101 ms | 787 ms | 444 ms |
+| that long timeline reopened | 437 ms | 98 ms | 2,058 ms | 413 ms |
+| its DOM nodes | 50k | 16k | 50k | 16k |
+| messages drawn in it | 960 | 150 | 960 | 150 |
+| a message arriving: on screen after | 133 ms | 61 ms | 388 ms | 104 ms |
+| main thread busy with it | 171 ms | 33 ms | 543 ms | 142 ms |
+| App renders for it | 1 | 0 | 1 | 0 |
+| message renders for it | 961 | 1 | 961 | 1 |
+| relaunch, a conversation opened after it | 115 ms | 76 ms | 499 ms | 302 ms |
+
+Cold load and relaunch to the list are unchanged (within noise). The longest task of a first open is longer: a
+conversation's messages now come in one render where they came in two, so that one is bigger.
+
+What changed:
+
+- **Scoped versions** (`packages/web/src/versions.ts`). `rev` still moves on any change to `db` or the inbox, and the
+  sidebars, the rail and the panes read it. `metaRev` moves only when names or settings may have: not for a
+  conversation's new last message or unread counts (`conversationMetaChanged` in syncmodel.ts), the inbox ranking,
+  or an identity sent again unchanged (`putIdentity` keeps the object it has). Each timeline has its own
+  (`timelineRev`), for its messages, its loading and the messages its replies quote; loading a page no longer moves
+  `rev` at all. model.ts memoizes on `dataVersion()`, a plain count that moves at once, so reading a model function
+  subscribes nothing.
+- **`App` reads no `rev`** (only on a place's profile page, which asks `db` where it lives). Every pane, list and
+  layer under it reads its own; the app badge is a small `AppBadge`.
+- **Memoised rows and messages** (`ui/memo.ts`). `MessageItem`, `ConvRow` and `PersonRow` render again only when
+  their props change or `metaRev` moves. Updates replace a message or conversation object rather than change it, so
+  the same object is the same thing. What a message would read that changes with every message (its thread's
+  conversation, the message its reply quotes, where it came from in a merged timeline) the timeline passes in. A
+  row's "5m" and a deleted message's "ago" are small components that still read `rev`, so they move on as before.
+  Rows get the same `onClick` each time (`opener` in Sidebar.tsx), and people rows their `directs` as a prop.
+- **Batched**: the signals move once the task that changed things is done (a timer), not on every change. Once per
+  animation frame measured worse: the render then ran in the same task as the frame's layout and paint, and the
+  longest task of a first open went from about 320 to 512 ms at 4×; a hidden page gets no frames either.
+- **A window on long timelines** (Timeline.tsx). A timeline draws its newest 150 messages (`WINDOW`); the rest stay
+  in memory. Nearing the top of what is drawn draws 100 more from memory, keeping the message that was first where it
+  was, and only at the oldest held does it ask the hub for an older page, which is then drawn whole with everything
+  above it. Back at the newest, it draws only the newest 150 again (what goes is above the view). A link to a held
+  message (`?m=`) or a click on a reply's quote draws the 100 around that message and shows it; scrolling down from
+  there draws more until the newest. The first message drawn gets its day line and is not grouped, as the first
+  loaded one always was; the New line is placed over everything held and drawn when it is in the window; copies not
+  yet sent show only while the newest is drawn. The DOM keeps the messages' order.
+- **`content-visibility` on desktop**, tried again with the window (`--css '.msg{content-visibility:auto;contain-intrinsic-size:auto 64px}'`,
+  4×): a first open 35% slower, layouts two to three times as many, and older pages moved the view (13 of 15) and
+  loaded themselves again. It stays phones-only. At phone size (`--size 390x844`) the window keeps the view still
+  too.
+
 ## Next
 
 What these numbers point at, not done yet:
 
-- **A switch still renders the whole app.** Every change to `db` bumps `rev`, and `App` reads it, so the rail, the
-  sidebar and every message re-render: about five App renders per first open, one per arrival. Scoped versions
-  (the list, each timeline, identities) would leave a switch to the timeline alone.
-- **Long timelines are drawn whole**: 960 messages are 50k DOM nodes and a 2 s reopen at 4×. A window of what is on
-  screen would bound it. `content-visibility` on desktop (only phones have it, styles.css), tried with `--css`, takes
-  26% off that reopen and 22% off an arriving message at 4×, but makes an older page 27% slower and triples the
-  layouts of a reopen.
 - **The bootstrap is 4.4–5.4 MB**, two thirds of it conversations, and most of those channels nobody has written in.
   On the live hub's copy, leaving out null and default fields saves 25%, leaving out the 3,489 channels without
-  messages 43%, both 55%.
+  messages 43%, both 55%. It needs a snapshot schema change (snapshot.ts keeps the bootstrap as the hub sent it), so
+  it is a change of its own.
+- **A first open's longest task** is the first render of a conversation's page, 60 messages at once. Drawing the
+  newest screenful first would split it.

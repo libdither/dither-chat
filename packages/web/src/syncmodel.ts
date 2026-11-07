@@ -82,9 +82,37 @@ export function indexThreads(db: Db) {
   }
 }
 
-export function putIdentity(db: Db, i: P.IdentityView) {
-  db.identities.set(i.id, i);
+let identityEdits = 0;
+/** How many times an identity was added or changed: events repeat identities, and an unchanged one is no change. */
+export const identityVersion = () => identityEdits;
+
+/** Keeps the object it has when nothing in it changed. Returns whether something did. */
+export function putIdentity(db: Db, i: P.IdentityView): boolean {
   db.identityByNative.set(`${i.network}:${i.nativeId}`, i.id);
+  const old = db.identities.get(i.id);
+  if (old && (old === i || JSON.stringify(old) === JSON.stringify(i))) return false;
+  db.identities.set(i.id, i);
+  identityEdits++;
+  return true;
+}
+
+/**
+ * Whether a conversation's new copy changes more than its last message and read state: its name, its place, its
+ * settings. Those are what other things show of it (docs/perf.md).
+ */
+export function conversationMetaChanged(prev: P.ConversationView | undefined, next: P.ConversationView): boolean {
+  if (!prev) return true;
+  for (const k of Object.keys(next) as (keyof P.ConversationView)[]) {
+    if (k === 'lastMessage' || k === 'lastMessageAt') continue;
+    if (k === 'vantages') {
+      if (prev.vantages.length !== next.vantages.length || prev.vantages.some((v, i) => v.accountId !== next.vantages[i].accountId)) return true;
+      continue;
+    }
+    const a = prev[k];
+    const b = next[k];
+    if (a !== b && JSON.stringify(a) !== JSON.stringify(b)) return true;
+  }
+  return Object.keys(prev).length !== Object.keys(next).length;
 }
 
 export const prefKey = (kind: P.PlaceKind, id: string) => `${kind}:${id}`;

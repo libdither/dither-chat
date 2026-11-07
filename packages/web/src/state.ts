@@ -3,14 +3,15 @@ import type * as P from '@dither-chat/protocol';
 import { SYNC_VERSION } from '@dither-chat/protocol';
 import { leaveLayerEntry, takeOverLayers } from './phone.ts';
 import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
-import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, emptyDb, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
+import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, emptyDb, identityVersion, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
+import { changed, timelineChanged } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
 import { ECHO_SKEW, openOutbox, settled, type Echo, type OutboxEntry, type OutboxFile } from './outbox.ts';
 
 // ------------------------------------------------------------------ data
 
-/** Bumped on every change to `db`; components read rev.value to re-render. */
-export const rev = signal(0);
+/** What components read to re-render: `rev` for the lists, `metaRev` for names and settings, one per timeline (versions.ts). */
+export { changed, dataVersion, metaRev, rev, timelineChanged, timelineRev } from './versions.ts';
 export const connected = signal(false);
 export const loaded = signal(false);
 
@@ -253,24 +254,34 @@ export async function api<T = any>(path: string, init?: { method?: string; body?
 
 // ------------------------------------------------------------------ applying hub data
 
-const putIdentity = (i: P.IdentityView) => put(db, i);
+const putIdentity = (i: P.IdentityView) => void (put(db, i) && changed('meta'));
 
 export function applyBootstrap(b: P.Bootstrap) {
   applyBootstrapTo(db, b);
   loaded.value = true;
-  rev.value++;
+  changed('meta');
 }
 
 /** Change every copy of a message the client holds. */
 export function patchMessage(id: string, patch: (m: P.MessageView) => P.MessageView) {
   for (const t of timelines.values()) {
     const i = t.messages.findIndex((x) => x.id === id);
-    if (i >= 0) t.messages[i] = patch(t.messages[i]);
+    if (i >= 0) {
+      t.messages[i] = patch(t.messages[i]);
+      timelineChanged(t.key);
+    }
   }
   const q = quoted.get(id);
-  if (q) quoted.set(id, patch(q));
-  rev.value++;
+  if (q) {
+    quoted.set(id, patch(q));
+    timelineChanged();
+  }
 }
+
+/** Events that change nothing in `db`: typing, toasts and read progress have signals of their own. */
+const NOT_DB = new Set<P.ClientEvent['t']>(['typing', 'notify', 'sync', 'readProgress', 'resync']);
+/** Events that change what lists show but no names or settings: `metaRev` stays. */
+const LIST_ONLY = new Set<P.ClientEvent['t']>(['message', 'message.deleted', 'identity', 'attention', 'usage', 'arrange']);
 
 /** Others react to events too (usage.ts: time spent in places, sort settings), without state.ts knowing them. */
 export const eventHooks = new Set<(ev: P.ClientEvent) => void>();
@@ -279,7 +290,17 @@ export function applyEvents(events: P.ClientEvent[]) {
   let threadsDirty = false;
   const behind = new Set<string>();
   const regrouped = new Set<string>();
+  const ids = identityVersion();
+  let list = false;
+  let meta = false;
   for (const ev of events) {
+    if (!NOT_DB.has(ev.t)) {
+      list = true;
+      // What only moves a conversation's last message and counts, or the inbox's order, leaves names alone. An
+      // identity that changed moves them (identityVersion, below).
+      if (ev.t === 'conversation') meta ||= conversationMetaChanged(db.conversations.get(ev.conversation.id), ev.conversation);
+      else if (!LIST_ONLY.has(ev.t)) meta = true;
+    }
     threadsDirty = applyEventTo(db, ev) || threadsDirty;
     switch (ev.t) {
       case 'person':
@@ -302,13 +323,22 @@ export function applyEvents(events: P.ClientEvent[]) {
         const m = ev.message;
         const t = timelines.get('c:' + m.conversationId);
         // A detached window only takes updates to what it holds: a new message would leave a silent gap.
-        if (t && (!t.detached || t.messages.some((x) => x.id === m.id))) upsertInto(t.messages, m);
+        if (t && (!t.detached || t.messages.some((x) => x.id === m.id))) {
+          upsertInto(t.messages, m);
+          timelineChanged(t.key);
+        }
         const conv = db.conversations.get(m.conversationId);
         if (conv?.shape === 'direct' && conv.peerPersonId) {
           const pt = timelines.get('p:' + conv.peerPersonId);
-          if (pt) upsertInto(pt.messages, m);
+          if (pt) {
+            upsertInto(pt.messages, m);
+            timelineChanged(pt.key);
+          }
         }
-        if (quoted.has(m.id)) quoted.set(m.id, m);
+        if (quoted.has(m.id)) {
+          quoted.set(m.id, m);
+          timelineChanged();
+        }
         if (m.triage && m.triage.decision !== 'silent' && (m.triage.feedback ?? m.triage.decision) !== 'drop') mergeInbox([m]);
         // Perhaps the message a pending copy became: matched below, once the frame is applied.
         if (pending.value.length && isSelfIdentity(m.authorId)) noteEcho(m);
@@ -334,11 +364,14 @@ export function applyEvents(events: P.ClientEvent[]) {
   }
   for (const key of regrouped) if (!timelines.get(key)?.loading) void catchUp(key);
   settle();
-  rev.value++;
+  if (meta || identityVersion() !== ids) changed('meta');
+  else if (list) changed('list');
 }
 
 function mergeInbox(ms: P.MessageView[]) {
-  if (ms.length) inbox.value = merged(inbox.value, ms);
+  if (!ms.length) return;
+  inbox.value = merged(inbox.value, ms);
+  changed('list');
 }
 
 export function isSelfIdentity(id: string | null | undefined): boolean {
@@ -405,7 +438,7 @@ export async function loadTimeline(key: string, older = false): Promise<void> {
   }
   if (older && !t.hasMore) return;
   t.loading = true;
-  rev.value++;
+  timelineChanged(key);
   const [kind, id] = key.split(':') as ['c' | 'p', string];
   const before = older && t.messages.length ? t.messages[0].ts : undefined;
   const url = kind === 'c' ? `/api/conversations/${id}/messages` : `/api/persons/${id}/timeline`;
@@ -425,7 +458,10 @@ export async function loadTimeline(key: string, older = false): Promise<void> {
     if (caught === 'refused') {
       const page = await api<P.MessagePage & { quoted?: P.MessageView[]; conversationIds?: string[] }>(`${url}?limit=60${before ? `&before=${before}` : ''}`);
       page.identities.forEach(putIdentity);
-      page.quoted?.forEach((m) => quoted.set(m.id, m));
+      if (page.quoted?.length) {
+        page.quoted.forEach((m) => quoted.set(m.id, m));
+        timelineChanged();
+      }
       if (stale) {
         // Kept messages the hub no longer has in this range were deleted meanwhile.
         const got = new Set(page.messages.map((m) => m.id));
@@ -445,7 +481,7 @@ export async function loadTimeline(key: string, older = false): Promise<void> {
       // stale: ask for the latest on open. Show what we have meanwhile, unless that is nothing.
       if (got) {
         t.hasMore = true;
-        void fromNetwork(t, id).then(() => rev.value++);
+        void fromNetwork(t, id).then(() => timelineChanged(key));
       } else t.hasMore = await fromNetwork(t, id);
     }
   } catch (e) {
@@ -454,7 +490,7 @@ export async function loadTimeline(key: string, older = false): Promise<void> {
   } finally {
     t.loading = false;
     settle();
-    rev.value++;
+    timelineChanged(key);
     persistSoon();
   }
 }
@@ -477,7 +513,7 @@ export async function jumpTo(conversationId: string, messageId: string) {
   if (!page) return toast({ kind: 'error', title: 'Message not found', body: 'It may have been deleted.' });
   page.identities.forEach(putIdentity);
   timelines.set(key, { key, messages: page.messages, hasMore: page.hasMore, loading: false, detached: page.hasNewer });
-  rev.value++;
+  timelineChanged(key);
 }
 
 export async function loadNewer(key: string) {
@@ -493,7 +529,7 @@ export async function loadNewer(key: string) {
     t.detached = page.hasMore;
   } finally {
     t.loading = false;
-    rev.value++;
+    timelineChanged(key);
   }
 }
 
@@ -517,7 +553,7 @@ function reload(key: string) {
   return loadTimeline(key).then(() => {
     const fresh = timelines.get(key);
     if (fresh) for (const m of t.messages) if (!fresh.messages.some((x) => x.id === m.id)) upsertInto(fresh.messages, m);
-    rev.value++;
+    timelineChanged(key);
   });
 }
 
@@ -532,7 +568,7 @@ async function catchUp(key: string) {
     if (!pos || (await syncTimelines([t], () => pos)) === 'refused') await reload(key);
   } finally {
     catching.delete(key);
-    rev.value++;
+    timelineChanged(key);
   }
 }
 
@@ -551,9 +587,13 @@ function timelineRequest(t: Timeline, seq: number): P.SyncTimelineRequest {
 function applyTimelines(r: Extract<P.SyncResponse, { sync: unknown }>) {
   r.identities.forEach(putIdentity);
   r.quoted.forEach((m) => quoted.set(m.id, m));
+  if (r.quoted.length) timelineChanged();
   for (const tl of r.timelines) {
     const t = timelines.get(tl.key);
-    if (t) applyTimelineDelta(t, tl);
+    if (t) {
+      applyTimelineDelta(t, tl);
+      timelineChanged(t.key);
+    }
   }
   settle();
 }
@@ -586,8 +626,8 @@ export async function loadInbox() {
   const page = await api<P.InboxPage>('/api/inbox');
   page.identities.forEach(putIdentity);
   inbox.value = page.items.map((i) => i.message);
-  // What pinged you is counted from the inbox, behind a memo keyed on rev.
-  rev.value++;
+  // What pinged you is counted from the inbox, behind a memo keyed on the data version.
+  changed('list');
 }
 
 // ------------------------------------------------------------------ actions
@@ -812,7 +852,7 @@ export const setRule = (scope: P.NotifyScope, target: string | null, level: P.No
 /** Shown at once; the hub's event confirms it, and a failure resyncs. */
 export function saveFolders(folders: P.FolderView[]) {
   db.folders = folders;
-  rev.value++;
+  changed('meta');
   return api('/api/folders', { method: 'PUT', body: { folders } }).catch(placeFailed);
 }
 export function patchPlaces(items: P.PlacePrefPatch[]) {
@@ -821,7 +861,7 @@ export function patchPlaces(items: P.PlacePrefPatch[]) {
     const cur = db.placePrefs.get(k) ?? { kind: i.kind, id: i.id, position: null, pinned: false, hidden: false, open: false, railed: false };
     db.placePrefs.set(k, { ...cur, ...i });
   }
-  rev.value++;
+  changed('meta');
   return api('/api/place-prefs', { method: 'PATCH', body: { items } }).catch(placeFailed);
 }
 function placeFailed(e: Error) {
@@ -978,6 +1018,7 @@ function resync() {
     for (const t of tls) t.from = undefined;
     for (const t of mine) if (!tls.includes(t)) void reload(t.key);
     applySyncTo(db, { ...r, events: [] });
+    changed('meta');
     applyEvents(r.events);
     if (r.inbox) mergeInbox(r.inbox);
     synced = ws?.readyState === WebSocket.OPEN && gen === socketGen;

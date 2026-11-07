@@ -5,7 +5,7 @@
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { canonicalReactionKey, REACTION_RULES } from '@dither-chat/protocol';
-import { api, db, isSelfIdentity, patchMessage, prefs, rev, toast } from './state.ts';
+import { api, changed, db, isSelfIdentity, patchMessage, prefs, toast } from './state.ts';
 
 export interface Picked {
   key: string;
@@ -51,7 +51,7 @@ export function reactionContext(conversationId: string): Promise<P.ReactionConte
   contexts.set(cacheKey, entry);
   value.then((v) => {
     entry.known = v;
-    rev.value++;
+    changed('meta');
   });
   return value;
 }
@@ -103,6 +103,8 @@ function bumpUsage(network: P.Network, picked: Picked) {
   if (u) u.count++;
   else db.reactionUsage.push({ key, network, count: 1, ...(picked.emoji ? { emoji: picked.emoji } : {}) });
   db.reactionUsage.sort((a, b) => b.count - a.count);
+  // The quick reactions over every message come from this.
+  changed('meta');
 }
 
 // ------------------------------------------------------------------ acting
