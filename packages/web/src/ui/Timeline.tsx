@@ -322,7 +322,8 @@ function useMdContext(network: P.Network) {
 
 /** The text; `tail` (your message's ticks) sits right after its last word. */
 function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
-  const html = useMemo(() => renderMarkdown(m.body, useMdContext(m.network)), [m.body, m.network, rev.value]);
+  // Only mentions and room links read the db (names may arrive later); other bodies render once.
+  const html = useMemo(() => renderMarkdown(m.body, useMdContext(m.network)), [m.body, m.network, /<[@#]/.test(m.body) ? rev.value : 0]);
   if (m.deleted) return <div class="msg-body deleted">{m.gone?.how === 'disappeared' ? 'Message disappeared' : 'Message deleted'}</div>;
   if (m.kind === 'encrypted')
     return (
