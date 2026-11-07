@@ -318,7 +318,10 @@ export const WEIGHTS = {
   /** The latest message, halving each `recencyHalfLife`: the tiebreaker. */
   recency: 10,
   recencyHalfLife: DAY,
-  /** At or above this, a conversation needs you: above the "caught up" line. */
+  /** You were here, halving each `visitedHalfLife` since you left: the chat you were just in stays near the top. */
+  visited: 30,
+  visitedHalfLife: 2 * HOUR,
+  /** At or above this (without `visited`), a conversation needs you. */
   needs: 20,
   /** Muted places sit here, ordered among themselves by recency. */
   mutedFloor: -50,
@@ -342,7 +345,7 @@ export interface ScoreInput {
   pinged: string | null;
   /** Where the mute comes from, when the level is Nothing or Digest. */
   muted: string | null;
-  /** usage.ts: decayed seconds and visits (half-life a week) as of `at`, and the last visit. */
+  /** usage.ts: decayed seconds and visits (half-life a week) as of `at` (the last time you were there), and the last visit. */
   usage: { score: number; visitScore: number; at: number; lastVisit: number | null } | null;
   /** Follow-up seam: a local model's answer for this conversation (AttentionJudge). */
   judged?: Judged | null;
@@ -404,6 +407,11 @@ export function relationshipOf(s: ConvState, usage: ScoreInput['usage'], now: nu
   };
   const top = Object.entries(parts).sort((a, b) => b[1] - a[1])[0][0];
   return { strength: Object.values(parts).reduce((a, b) => a + b, 0), top, parts };
+}
+
+/** When you were last here: the end of your latest stay. Null for a place you never stayed in long enough to count a visit. */
+export function lastThere(usage: ScoreInput['usage']): number | null {
+  return usage?.lastVisit ? Math.max(usage.lastVisit, usage.at) : null;
 }
 
 /** "a minute", "5 minutes", "an hour", "3 days", "2 weeks". */
@@ -516,12 +524,20 @@ export function scoreConversation(x: ScoreInput): Scored {
     reasons.push({ w: parts.judged, text: `Model: ${x.judged.reason}` });
   }
 
+  // You were just here: the chat you left is still near the top when you go back to it. It moves the row, not
+  // whether the row needs you.
+  const there = lastThere(x.usage);
+  if (there !== null) {
+    parts.visited = W.visited * 2 ** (-Math.max(0, now - there) / W.visitedHalfLife);
+    reasons.push({ w: parts.visited, text: `You were here ${duration(Math.max(0, now - there))} ago` });
+  }
+
   const score = Object.values(parts).reduce((a, b) => a + b, 0);
   const shown = reasons.filter((r) => Math.abs(r.w) >= 2).sort((a, b) => Math.abs(b.w) - Math.abs(a.w));
   if (!shown.length && x.lastMessageAt) shown.push({ w: parts.recency, text: `Last message ${duration(age)} ago` });
   return {
     score: round(score),
-    needs: score >= W.needs,
+    needs: score - (parts.visited ?? 0) >= W.needs,
     reasons: shown.slice(0, 4).map((r) => r.text),
     parts: Object.fromEntries(Object.entries(parts).map(([k, v]) => [k, round(v)])),
     noise,
@@ -923,6 +939,24 @@ export class Attention {
       else if (r) items.push(r);
     }
     return this.event(items, gone);
+  }
+
+  /**
+   * A device said where you have been (usage.ts): score those conversations again now, so the chat you were just in
+   * is near the top by the time you leave it. A person's usage is their DMs'.
+   */
+  visited(places: { kind: string; id: string }[]): P.ClientEvent[] {
+    const db = this.store.db;
+    const ids = new Set<string>();
+    for (const p of places) {
+      if (p.kind === 'conversation') ids.add(p.id);
+      else if (p.kind === 'person')
+        for (const r of db
+          .query(`SELECT DISTINCT c.id FROM conversation c JOIN participant pa ON pa.conversation_id = c.id JOIN identity i ON i.id = pa.identity_id WHERE c.shape = 'direct' AND i.person_id = ?`)
+          .all(p.id) as Row[])
+          ids.add(r.id);
+    }
+    return ids.size ? this.sync(ids) : [];
   }
 
   /** The background pump, and scores that move with time. `send` broadcasts to clients. */

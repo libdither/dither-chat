@@ -26,7 +26,7 @@ Devices only send to it.
 | `active` | seconds in use, by the usage rules: page visible, window focused, input in the last 5 minutes, at most 30 s per tick |
 | `source` | how you got there (below) |
 | `push_id` | the notification tapped, for `notification` and `toast` |
-| `rank`, `score`, `needs` | from an inbox row: its position (0 = top), its attention score, and whether it was above the "caught up" line |
+| `rank`, `score`, `needs` | from an inbox row: its position (0 = top), its attention score, and whether it needed you (before 2026-11-07, whether it was above the "caught up" line: the same thing) |
 | `read_to_id`, `read_to_ts` | the latest message when the conversation was marked read during the stay |
 | `sent`, `reactions`, `history`, `threads`, `attachments` | messages sent, reactions added, older pages loaded, threads and attachments opened |
 | `next_view` | where you went next; null while it lasts or when the app went away |

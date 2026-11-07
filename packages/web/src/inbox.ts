@@ -31,9 +31,9 @@ const hold = (): Hold | undefined => {
   return key ? { key, prev: inboxSnap.value.snap } : undefined;
 };
 
-/** Notes to self notify nobody, which is not the same as muted: they keep their place by date. */
+/** Notes to self notify nobody, which is not the same as muted: they rank like any other row. */
 const ranked = (rows: InboxRow[]): Ranked[] =>
-  rows.map((r) => ({ key: r.conv.id, score: r.score, needs: r.needs, last: r.conv.lastMessageAt ?? 0, muted: r.conv.shape !== 'self' && unreadOf(r.conv).muted }));
+  rows.map((r) => ({ key: r.conv.id, score: r.score, last: r.conv.lastMessageAt ?? 0, muted: r.conv.shape !== 'self' && unreadOf(r.conv).muted }));
 
 let waiting: ReturnType<typeof setTimeout> | undefined;
 /** Take a new snapshot if now is a good moment; otherwise as soon as it is. */
@@ -50,15 +50,15 @@ export function resortInbox(reason: ResortReason) {
     hold(),
   );
   const prev = inboxSnap.value;
-  const same = !!prev.snap && prev.snap.needs === snap.needs && prev.snap.keys.join('\n') === snap.keys.join('\n');
+  const same = !!prev.snap && prev.snap.keys.join('\n') === snap.keys.join('\n');
   inboxSnap.value = { v: same ? prev.v : prev.v + 1, at: now, snap };
   try {
     localStorage.setItem(KEY, JSON.stringify(snap));
   } catch {}
 }
 
-/** The rows a filter chip shows, in order, and how many of the first ones need you (where the "caught up" line goes). */
-export function shownInbox(filter: InboxFilter): { rows: InboxRow[]; divider: number } {
+/** The rows a filter chip shows, in order. */
+export function shownInbox(filter: InboxFilter): InboxRow[] {
   const rows = inboxRows();
   const byId = new Map(rows.map((r) => [r.conv.id, r]));
   const snap = inboxSnap.value.snap;
@@ -71,8 +71,7 @@ export function shownInbox(filter: InboxFilter): { rows: InboxRow[]; divider: nu
     if (filter === 'unread') return unreadOf(c).unread > 0 || wasUnread.has(id);
     return true;
   };
-  const v = inboxView(snap, ranked(rows), keep);
-  return { rows: v.keys.map((k) => byId.get(k)!), divider: v.divider };
+  return inboxView(snap, ranked(rows), keep).map((k) => byId.get(k)!);
 }
 
 let started = false;

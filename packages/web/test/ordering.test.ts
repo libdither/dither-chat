@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { inboxChanged, inboxSnapshot, inboxView, rank, RESORT_EVERY, sameSnapshot, shouldResort, sortKeys, stabilize, type Ranked, type Sortable } from '../src/ordering.ts';
+import { inboxChanged, inboxLift, inboxSnapshot, inboxView, rank, RESORT_EVERY, sameSnapshot, shouldResort, sortKeys, stabilize, switcherOrder, type Candidate, type Ranked, type Sortable } from '../src/ordering.ts';
 import { IDLE_AFTER, Tracker, VISIT_AFTER } from '../src/tracker.ts';
 
 const p = (key: string, o: Partial<Sortable> = {}): Sortable => ({ key, name: key.split(':')[1], pinned: false, position: null, last: 0, score: 0, ...o });
@@ -117,58 +117,75 @@ describe('measuring', () => {
 });
 
 describe('the inbox', () => {
-  const r = (key: string, score: number, needs = score >= 20): Ranked => ({ key, score, needs });
+  const r = (key: string, score: number, extra: Partial<Ranked> = {}): Ranked => ({ key, score, ...extra });
+  const u = (x: Ranked) => ({ ...x, unread: false });
 
-  test('what needs you comes first, then by score; ties never flicker', () => {
-    expect(rank([r('a', 5), r('b', 30), r('c', 18, true), r('d', 5)])).toEqual(['b', 'c', 'a', 'd']);
+  test('one order, by score; ties go by the latest message, then never flicker', () => {
+    expect(rank([r('a', 5), r('b', 30), r('c', 18), r('d', 5)])).toEqual(['b', 'c', 'a', 'd']);
+    expect(rank([r('a', 5, { last: 1 }), r('b', 5, { last: 9 })])).toEqual(['b', 'a']);
   });
 
-  test('below the line, the latest message first, muted places last', () => {
-    const at = (key: string, score: number, last: number, muted = false): Ranked => ({ key, score, needs: score >= 20, last, muted });
-    // b scores higher, but a has the newer message; m is newest of all but muted.
-    expect(rank([at('n', 40, 1), at('b', 15, 2), at('a', 4, 9), at('m', -45, 10, true), at('z', 2, 2)])).toEqual(['n', 'a', 'b', 'z', 'm']);
+  test('muted places go last, however high they score', () => {
+    expect(rank([r('n', 40), r('m', 90, { muted: true }), r('z', 2)])).toEqual(['n', 'z', 'm']);
   });
 
-  test('the "caught up" line goes after what needs you', () => {
-    expect(inboxView(null, [r('a', 5), r('b', 30), r('c', 40)])).toEqual({ keys: ['c', 'b', 'a'], divider: 2 });
-    expect(inboxView(null, [r('a', 5)]).divider).toBe(0);
-    expect(inboxView(null, [r('a', 50)]).divider).toBe(1);
-  });
-
-  test('between snapshots nothing moves: new scores wait, new rows go at the end, the line stays put', () => {
-    const snap = inboxSnapshot([{ ...r('a', 50), unread: true }, { ...r('b', 30), unread: false }, { ...r('c', 5), unread: false }]);
-    expect(snap).toEqual({ keys: ['a', 'b', 'c'], needs: 2, unread: ['a'] });
-    // a was read and sank, c got a message and rose, d is new and needs you.
+  test('between snapshots nothing moves: new scores wait, new rows go at the end', () => {
+    const snap = inboxSnapshot([{ ...r('a', 50), unread: true }, u(r('b', 30)), u(r('c', 5))]);
+    expect(snap).toEqual({ keys: ['a', 'b', 'c'], unread: ['a'] });
+    // a was read and sank, c got a message and rose, d is new.
     const fresh = [r('a', 3), r('b', 30), r('c', 60), r('d', 70)];
-    expect(inboxView(snap, fresh)).toEqual({ keys: ['a', 'b', 'c', 'd'], divider: 2 });
+    expect(inboxView(snap, fresh)).toEqual(['a', 'b', 'c', 'd']);
     expect(inboxChanged(snap, fresh)).toBe(true);
     // A row that went away takes nothing else with it.
-    expect(inboxView(snap, [r('b', 30), r('c', 5)])).toEqual({ keys: ['b', 'c'], divider: 1 });
+    expect(inboxView(snap, [r('b', 30), r('c', 5)])).toEqual(['b', 'c']);
     // The next snapshot takes the fresh order.
-    const next = inboxSnapshot(fresh.map((x) => ({ ...x, unread: false })));
-    expect(inboxView(next, fresh)).toEqual({ keys: ['d', 'c', 'b', 'a'], divider: 3 });
+    const next = inboxSnapshot(fresh.map(u));
+    expect(inboxView(next, fresh)).toEqual(['d', 'c', 'b', 'a']);
     expect(inboxChanged(next, fresh)).toBe(false);
   });
 
-  test('the open conversation keeps its place, on its side of the line, until you leave it', () => {
-    const u = (x: Ranked) => ({ ...x, unread: false });
+  test('the open conversation keeps its place until you leave it', () => {
     const prev = inboxSnapshot([r('a', 60), r('b', 50), r('c', 40), r('d', 5)].map(u));
-    // You opened b and answered it: it no longer needs you and would sink below the line.
+    // You opened b and answered it: its score changed.
     const fresh = [r('a', 60), r('b', 12), r('c', 40), r('d', 5), r('e', 70)];
     const held = inboxSnapshot(fresh.map(u), { key: 'b', prev });
-    expect(held).toEqual({ keys: ['e', 'b', 'a', 'c', 'd'], needs: 4, unread: [] });
+    expect(held).toEqual({ keys: ['e', 'b', 'a', 'c', 'd'], unread: [] });
     expect(inboxChanged(held, fresh, { key: 'b', prev: held })).toBe(false);
-    // A row below the line stays below it, however high it scores now.
+    // However high it scores now.
     const low = inboxSnapshot([r('a', 60), r('b', 50), r('d', 5)].map(u));
-    expect(inboxSnapshot([r('a', 60), r('b', 50), r('d', 90)].map(u), { key: 'd', prev: low })).toMatchObject({ keys: ['a', 'b', 'd'], needs: 2 });
-    // Once you leave it, it goes where it belongs.
+    expect(inboxSnapshot([r('a', 60), r('b', 50), r('d', 90)].map(u), { key: 'd', prev: low }).keys).toEqual(['a', 'b', 'd']);
+    // Once you leave it, it goes where it belongs: with the hub's "you were here" points, near the top.
     expect(inboxSnapshot(fresh.map(u)).keys).toEqual(['e', 'a', 'c', 'b', 'd']);
+    expect(inboxSnapshot([...fresh.filter((x) => x.key !== 'b'), r('b', 12 + 30)].map(u)).keys).toEqual(['e', 'a', 'b', 'c', 'd']);
   });
 
-  test('a filter hides rows without moving the others or the line', () => {
-    const snap = inboxSnapshot([r('dm1', 50), r('g1', 40), r('dm2', 10), r('g2', 5)].map((x) => ({ ...x, unread: false })));
+  test('a filter hides rows without moving the others', () => {
+    const snap = inboxSnapshot([r('dm1', 50), r('g1', 40), r('dm2', 10), r('g2', 5)].map(u));
     const fresh = [r('dm1', 50), r('g1', 40), r('dm2', 10), r('g2', 5)];
-    expect(inboxView(snap, fresh, (k) => k.startsWith('g'))).toEqual({ keys: ['g1', 'g2'], divider: 1 });
-    expect(inboxView(snap, fresh, (k) => k.startsWith('dm'))).toEqual({ keys: ['dm1', 'dm2'], divider: 1 });
+    expect(inboxView(snap, fresh, (k) => k.startsWith('g'))).toEqual(['g1', 'g2']);
+    expect(inboxView(snap, fresh, (k) => k.startsWith('dm'))).toEqual(['dm1', 'dm2']);
+  });
+});
+
+describe('the switcher', () => {
+  const c = (key: string, match: number, score: number | null = null, last = 0): Candidate => ({ key, match, score, last });
+
+  test('the inbox score lifts a match: twice per 50 points, a muted place counts half', () => {
+    expect(inboxLift(0)).toBe(1);
+    expect(inboxLift(50)).toBe(2);
+    expect(inboxLift(-50)).toBe(0.5);
+    expect(inboxLift(null)).toBe(1);
+  });
+
+  test('match quality times the score', () => {
+    // Both start with what you typed: the one you are likelier to want first.
+    expect(switcherOrder([c('sam', 997, 5), c('sara', 996, 60)])).toEqual(['sara', 'sam']);
+    // A name that starts with it beats one that only contains it, unless the other is far more likely.
+    expect(switcherOrder([c('prefix', 990, 10), c('inside', 495, 20)])).toEqual(['prefix', 'inside']);
+    expect(switcherOrder([c('prefix', 990, 0), c('inside', 495, 80)])).toEqual(['inside', 'prefix']);
+    // Without a score: as well as the name matches, then the latest message.
+    expect(switcherOrder([c('a', 500, null, 1), c('b', 500, null, 9), c('c', 800)])).toEqual(['c', 'b', 'a']);
+    // A poor match never turns a score upside down.
+    expect(switcherOrder([c('x', -40, 50), c('y', -10, -50)])).toEqual(['x', 'y']);
   });
 });

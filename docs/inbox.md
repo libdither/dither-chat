@@ -1,16 +1,20 @@
-# The inbox: one list, ranked by "does this need me"
+# The inbox: one list, ranked by "will I want this now"
 
 The inbox used to be fixed sections (Needs you, Pinged you, Unread, Recent chats) with group chats in a separate
 Groups view. It is now one list: DMs, group chats, rooms outside a space and notes to self, plus any other
 channel or thread while it has an unread mention or pinged you. Accounts that need you (a QR to scan, a login)
-stay on top. The hub ranks every conversation by how much it needs you; a line, **Caught up**, marks where that
-ends. Above the line, rows go by score; below it, by the latest message, as a chat app's list would, with muted
-places last. Unread rows keep their bold title and badge wherever they land.
+stay on top. The hub scores every conversation by how much it needs you and by where you were just now, and the
+list goes by that score, with muted places last. Unread rows keep their bold title and badge wherever they land.
+
+Until 2026-11-07 a line, **Caught up**, split the list: above it what needed you, by score; below it everything
+else by the latest message. A chat you had just answered no longer needed you, so it fell below the line, often
+far down, about 45 minutes after you last wrote. Now there is one order, and the chat you were just in stays near
+the top for a few hours ([You were here](#you-were-here)).
 
 Filter chips: **All**, **People** (DMs), **Groups** (everything else), **Unread**. The choice is kept per device.
 
 The score uses metadata only: who wrote, when, who replied to whom, mentions, the conversation's shape and member
-count, unread state, triage's decisions and time spent (`usage.ts`). It never reads message text. "Asks a question"
+count, unread state, triage's decisions and time spent and where you were (`usage.ts`). It never reads message text. "Asks a question"
 comes from triage's stored decision, not from the text.
 
 Code: `packages/hub/src/attention.ts` (features and score), `packages/web/src/inbox.ts` (the order on screen),
@@ -18,10 +22,11 @@ Code: `packages/hub/src/attention.ts` (features and score), `packages/web/src/in
 
 ## The score
 
-In points, roughly 0 to 100. A conversation **needs you** at 20 or more.
+In points, roughly 0 to 100. A conversation **needs you** at 20 or more, not counting `visited`: being there
+lately moves a row, it does not make it need you.
 
 ```
-score = max(owed, unread + pinged, live) + relationship + noise + recency   (muted: −50 + recency)
+score = max(owed, unread + pinged, live) + relationship + noise + recency + visited   (muted: −50 + recency)
 
 owed         = 60 × p × curve(age)
 unread       = 8 + 12 × min(addressed, 3) + 3 × min(other, 3)         when anything is unread
@@ -30,6 +35,7 @@ live         = 30 × 2^(−since your last message / 30 min)              you an
 relationship = 25 × strength                                           strength 0..1
 noise        = 20 × fit if fit < 0, else 8 × fit                       fit −1..1
 recency      = 10 × 2^(−since last message / 1 day)
+visited      = 30 × 2^(−since you were last there / 2 h)                a place you stayed in for a visit (3 s or more)
 ```
 
 Something to **answer** (owed), something to **read** (unread, pinged) and a **conversation going on** (live) are one
@@ -74,17 +80,35 @@ So someone you answer 9 times in 10 is worth about 50 points as soon as they wri
 ### Unread and pinged
 
 DM messages and mentions count 12 each (up to 3). Other unread messages count 3 each (up to 3). Anything unread
-adds 8. An unread busy group you never take part in therefore stays below the line, and a mention in it lifts
+adds 8. An unread busy group you never take part in therefore does not need you, and a mention in it lifts
 it. Pinged adds 15 when triage pushed a message you have not read.
 
 ### A conversation going on
 
-Answering clears what you owed, so before this term the chat you had just answered fell below the line, among chats
-you had finished with days ago. `live` keeps it above the line while the back-and-forth lasts: when your last message
-and their last one are within an hour of each other, it starts at 30 and halves every 30 minutes after your last
-message. With an ordinary relationship and recency it stays above the line for about 45 minutes, and longer if
-they keep answering. A message of yours into a silent place is not a conversation and gets nothing. Once it lets go,
-it is the newest row below the line, which goes by the latest message, so it is still the first place to look.
+Answering clears what you owed, so before this term the chat you had just answered fell among chats you had
+finished with days ago. `live` keeps it needing you while the back-and-forth lasts: when your last message and
+their last one are within an hour of each other, it starts at 30 and halves every 30 minutes after your last
+message. With an ordinary relationship and recency it needs you for about 45 minutes, and longer if they keep
+answering. A message of yours into a silent place is not a conversation and gets nothing. After that, `visited`
+keeps it near the top for a few hours more.
+
+### You were here
+
+Most of the time you open a chat, it is one you were in a little while ago: in the activity log of a real hub
+(2026-11-03 to 11-07), 36% of returns to a conversation came within an hour of the last stay there, and 54% within
+three. So the time since you were **last there** counts: 30 points as you leave, half after 2 hours, an eighth after
+6. "Last there" is the end of your latest stay, from the usage totals (`place_usage`: the later of `last_visit` and
+the time the last batch was measured), for the person of a DM and the conversation otherwise. A place you only
+passed through, never long enough to count a visit, gets nothing.
+
+The device sends its usage half a second after a visit begins (`usage.ts`), and the hub scores those conversations
+again at once (`Attention.visited`). While you are in a chat it keeps its place on screen (below); when you leave,
+the next snapshot finds it near the top. The reason reads "You were here 5 minutes ago".
+
+The weight and half-life were checked against the activity log with `scripts/inbox-replay.ts`: on the
+conversations opened within 2 hours of a stay there, the median position went from 5th to 3rd, and the first five
+rows held 74% of them instead of 54%. Over all opens the one list does about as well as the two parts did, a little
+better ([the replay](#the-replay)).
 
 ### Relationship strength
 
@@ -134,9 +158,10 @@ the row's tooltip and at the top of its right-click menu (a sheet on a phone):
 | relationship ≥ 0.3, by its largest part | You talk with Sam often: about 12 messages a week · You spend time here: 2 hours lately · You wrote here 3 hours ago · You answer here 80% of the time · It goes both ways here |
 | noise | Busy (about 200 messages a day) and you rarely take part · Quiet, and you take part when it speaks |
 | muted | Muted: (where the mute comes from) |
+| visited | You were here 5 minutes ago |
 | none of the above | Last message 3 days ago |
 
-A row above the line with nothing unread but a turn you owe shows a small ↩ with how long it has waited.
+A row that needs you with nothing unread but a turn you owe shows a small ↩ with how long it has waited.
 
 ## Features, kept incrementally
 
@@ -171,7 +196,8 @@ then too. `POST /api/attention/rebuild` folds again.
 
 ## When the list moves
 
-The order on screen is a snapshot (`inbox.ts`), taken by the same rule as the sidebar's automatic orders
+The order is the hub's score, highest first, with muted places last; equal scores go by the latest message
+(`rank` in `ordering.ts`). The order on screen is a snapshot (`inbox.ts`), taken by the same rule as the sidebar's automatic orders
 (`shouldResort` in `ordering.ts`, [organize.md](organize.md#when-the-order-changes)): at start, when the app
 comes back to the front, every 5 minutes, and with one more reason for the inbox, **activity**: any change in
 the ranking (a new score, a new conversation, one gone). None of these happen while anything is in use: a
@@ -179,12 +205,11 @@ pointer over a list, a touch on one in the last 4 seconds, an open menu, a drag,
 They retry every 1.5 s until that ends. So the inbox is as current as a chat app's while you are not touching
 it, and never moves under your pointer or finger.
 
-The conversation you have open keeps its place across snapshots, on the same side of the line, until you leave it
-(`inboxSnapshot`'s `hold`): reading or answering it changes its score, and it should not jump away while you are in
-it. Leaving it asks for a snapshot, so it settles where it now belongs once nothing is in use.
+The conversation you have open keeps its place across snapshots until you leave it (`inboxSnapshot`'s `hold`):
+reading or answering it changes its score, and it should not jump away while you are in it. Leaving it asks for a
+snapshot, so it settles where it now belongs once nothing is in use: with what `visited` adds, near the top.
 
-Between snapshots rows keep their places, and the line stays after the rows that needed you then. A new
-conversation goes at the end until the next one. Rows that are no longer listed go. Rows slide to their new
+Between snapshots rows keep their places. A new conversation goes at the end until the next one. Rows that are no longer listed go. Rows slide to their new
 places when the order changes (`useFlip`). Under **Unread**, a row that was unread at the snapshot stays until
 the next, so reading it does not pull it out from under you. Before the hub has scored a conversation, or with
 a hub that predates scores, it ranks unread first, then by recency.
@@ -193,6 +218,15 @@ The inbox button and the phone's Triage tab count the messages in the Triage boa
 read, by where each is now (one you voted down to Active no longer counts), plus accounts that need you. The board's
 own "important, N unread" is the same number, from the same lists (`packages/web/src/board.ts`). A turn you owe does not
 raise a badge you cannot clear by reading.
+
+## Jump to (Ctrl+K)
+
+The switcher ranks by how well the name matches times the inbox's score: `match × 2^(score / 50)`
+(`switcherOrder`, `inboxLift` in `ordering.ts`). So the score doubles a match's weight every 50 points: among names
+that start with what you typed, the one you are likelier to want comes first, and a name that only contains it can
+come first when its score is much higher (about 50 points). A muted place counts half. A person scores as their best
+DM; communities, folders and views have no score and count once. With nothing typed it shows the top of the inbox,
+in the order on screen, a DM as its person, then the rest by the latest message.
 
 ## API
 
@@ -206,6 +240,35 @@ raise a badge you cannot clear by reading.
 
 Old `#/groups` and `#/groups/c/<id>` links open the inbox and the same conversation, and the address bar shows
 the new link.
+
+## The replay
+
+`scripts/inbox-replay.ts` replays the activity log against a copy of a hub (made read-only with `VACUUM INTO`) and
+asks, at every moment you opened a conversation, at which position each ordering would have shown it. It rebuilds
+the world at that moment: every candidate's features folded up to then (the same fold as the hub), what was unread
+(messages from others since you last wrote or stayed there; before the log starts, everything counts as read),
+where you had been (the log's stays) and the mutes as they are now. App starts and resuming are not choices and are
+left out; a person's page counts as the best of their DMs. The earlier days are for choosing weights, the last two
+are held out. It writes counts and rates only.
+
+```
+bun scripts/inbox-replay.ts --live .data/hub.sqlite --out <scratch dir> [--holdout 2] [--grid]
+```
+
+On a real hub, 2026-11-03 to 11-07 (184 opens of a listed conversation; about 400 rows listed). MRR is the mean of
+1/position; R@5 the share opened from the first five rows:
+
+| | choosing days, all (150) | held out, all (34) | back within 2 h, choosing (57) | held out (6) |
+|---|---|---|---|---|
+| two parts, "caught up" line | MRR 0.273 · R@5 0.44 · median 7th | 0.355 · 0.41 · 6th | 0.323 · 0.54 · 5th | 0.559 · 0.83 · 2nd |
+| one list (now) | 0.285 · 0.47 · 6th | 0.366 · 0.41 · 8.5th | 0.410 · 0.74 · 3rd | 0.769 · 0.83 · 1st |
+| latest message first | 0.283 · 0.42 · 7.5th | 0.294 · 0.41 · 6.5th | 0.368 · 0.61 · 4th | 0.579 · 0.67 · 2nd |
+
+Five days is little: differences of a few hundredths are noise. Clicks on inbox rows favour the order that was on
+screen then (the two parts), so the replay also reports opens from elsewhere (notifications, Ctrl+K, search) apart;
+there the latest message does best, since a notification is about the latest message. `--grid` tries weights 15 to
+60 and half-lives of 1 to 4 hours for `visited`: more weight helps "back" on the choosing days and does nothing
+for the held-out ones, so it stays at 30 and 2 hours.
 
 ## Seams for what comes next
 

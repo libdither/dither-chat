@@ -140,9 +140,16 @@ export const onForeground = new Set<() => void>();
 
 /** Visible, focused, and input in the last IDLE_AFTER: the rule for counting time, here and in the activity log. */
 export const inUse = () => document.visibilityState === 'visible' && document.hasFocus() && Date.now() - lastInput < IDLE_AFTER;
+let sendSoon: ReturnType<typeof setTimeout> | undefined;
 const tick = () => {
+  const visits = tracker?.visits;
   tracker?.update(Date.now(), keysOfRoute(route.value), inUse());
   save();
+  // A visit just began: the hub hears now, so the inbox has the chat near the top by the time you leave it (docs/inbox.md).
+  if (tracker && tracker.visits !== visits) {
+    clearTimeout(sendSoon);
+    sendSoon = setTimeout(() => flush(), 500);
+  }
 };
 
 export function startUsage() {

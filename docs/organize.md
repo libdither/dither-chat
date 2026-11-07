@@ -25,8 +25,9 @@ last 5 minutes (`IDLE_AFTER`). A tick never counts for more than 30 s, so a lapt
 count the night. A visit counts once you have been in a place for 3 s (`VISIT_AFTER`), so passing through
 a server on the way to another does not; coming back after 30 minutes away counts as a new visit.
 
-**Where it goes.** The device accumulates in memory and `localStorage`, and sends a batch every minute
-and when the page is hidden (`fetch` with `keepalive`). Each batch has an id; the hub ignores an id it has
+**Where it goes.** The device accumulates in memory and `localStorage`, and sends a batch every minute,
+when the page is hidden (`fetch` with `keepalive`), and half a second after a visit begins, so the inbox knows
+where you are by the time you leave ([inbox.md](inbox.md#you-were-here)). Each batch has an id; the hub ignores an id it has
 seen, so resending after a lost answer does not count twice. Offline, batches wait in an outbox. The
 measuring itself is `tracker.ts`, pure and tested.
 

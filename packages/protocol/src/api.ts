@@ -663,9 +663,9 @@ export interface Bootstrap {
  */
 export interface AttentionView {
   id: string;
-  /** Higher needs you more. Roughly 0..100; muted places sit below 0. */
+  /** The inbox's order: higher first. Roughly 0..100; muted places sit below 0. */
   score: number;
-  /** Above the inbox's "caught up" line. */
+  /** It needs you: something to answer or read, or a conversation going on. Not where you were. */
   needs: boolean;
   /** Why, most important first, as sentences. */
   reasons: string[];

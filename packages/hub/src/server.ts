@@ -165,9 +165,12 @@ export class HubServer {
     });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     sup.calls = this.calls;
-    this.usage = new UsageStore(store.db, (changed, removed, all) =>
-      this.broadcast([{ t: 'usage', places: this.usage.get(changed), removed, ...(all ? { replace: true as const } : {}) }]),
-    );
+    this.usage = new UsageStore(store.db, (changed, removed, all) => {
+      const a = this.opts.attention;
+      // Where you have been moves the inbox (docs/inbox.md): the chat you were just in stays near the top.
+      const scores = a ? (all ? a.rescoreAll() : a.visited([...changed, ...removed])) : [];
+      this.broadcast([{ t: 'usage', places: this.usage.get(changed), removed, ...(all ? { replace: true as const } : {}) }, ...scores]);
+    });
   }
 
   start() {
