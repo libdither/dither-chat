@@ -87,7 +87,7 @@ describe('media archive', () => {
     const key = (u: string) => new Bun.CryptoHasher('sha256').update(u).digest('hex');
     const a = new MediaArchiver(store, cache, async (url) => {
       fetched.push(url);
-      if (url.includes('expired')) return false;
+      if (url.includes('expired') || url.includes('discordapp')) return false;
       writeFileSync(join(cache, key(url)), 'x');
       return true;
     });
@@ -98,8 +98,11 @@ describe('media archive', () => {
     // Nothing new: nothing fetched again, and the failure waits for its retry time.
     await a.tick();
     expect(fetched.length).toBe(2);
+    const past = (Math.floor(Date.now() / 1000) - 3600).toString(16);
+    store.ingest(acc, { t: 'message', message: att('5', `https://cdn.discordapp.com/attachments/1/2/x.png?ex=${past}&is=0&hm=0`), live: false });
     store.ingest(acc, { t: 'message', message: att('4', 'https://cdn.example/b.png'), live: false });
     await a.tick();
     expect(fetched.at(-1)).toBe('https://cdn.example/b.png');
+    expect(store.db.query('SELECT tries, error FROM media_archive_fail ORDER BY error').all()).toEqual([{ tries: 1, error: null }, { tries: 3, error: 'expired' }]);
   });
 });

@@ -6,7 +6,8 @@
  *
  * Attachments are walked by rowid from a cursor kept in meta, so a restart carries on and the first run goes
  * through every attachment the hub already has. One fetch at a time; one that fails is tried again later, up to
- * three times, then left (media_archive_fail).
+ * three times, then left (media_archive_fail). A Discord link already past its expiry is left at once, marked
+ * 'expired': only asking Discord to sign it again (attachments/refresh-urls, through the account) could bring it back.
  */
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -47,6 +48,17 @@ export class MediaArchiver {
   }
   private set cursor(n: number) {
     this.store.db.query(`INSERT INTO meta (key, value) VALUES ('media_archive_cursor', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(String(n));
+  }
+
+  /** A Discord CDN link whose signature ran out (the `ex` parameter, hex seconds). */
+  static expired(url: string, now = Date.now()): boolean {
+    try {
+      const u = new URL(url);
+      const ex = u.searchParams.get('ex');
+      return /(^|\.)discord(app)?\.(com|net)$/.test(u.hostname) && !!ex && /^[0-9a-f]+$/i.test(ex) && parseInt(ex, 16) * 1000 < now;
+    } catch {
+      return false;
+    }
   }
 
   /** Whether a URL is one the cache can hold: not a local file or inline data. */
@@ -93,6 +105,9 @@ export class MediaArchiver {
       error = String(e?.message ?? e).slice(0, 200);
     }
     if (ok) this.kept++;
+    else if (MediaArchiver.expired(url))
+      // A signed link past its expiry won't work on a retry; only a refreshed link could (error 'expired' marks them).
+      this.store.db.query('INSERT INTO media_archive_fail (key, tries, last_at, error) VALUES (?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET tries = excluded.tries, last_at = excluded.last_at, error = excluded.error').run(key, MAX_TRIES, Date.now(), 'expired');
     else this.store.db.query('INSERT INTO media_archive_fail (key, tries, last_at, error) VALUES (?, 1, ?, ?) ON CONFLICT (key) DO UPDATE SET tries = tries + 1, last_at = excluded.last_at, error = excluded.error').run(key, Date.now(), error);
   }
 
@@ -107,6 +122,10 @@ export class MediaArchiver {
       if (!MediaArchiver.remote(r.url)) continue;
       const key = new Bun.CryptoHasher('sha256').update(r.url).digest('hex');
       if (!keys.delete(key)) continue;
+      if (MediaArchiver.expired(r.url)) {
+        this.store.db.query(`UPDATE media_archive_fail SET tries = ?, last_at = ?, error = 'expired' WHERE key = ?`).run(MAX_TRIES, Date.now(), key);
+        continue;
+      }
       let ok = false;
       try {
         ok = await this.fetchOne(r.url, r.account);
