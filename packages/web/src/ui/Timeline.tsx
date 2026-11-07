@@ -9,6 +9,7 @@ import {
   LEVEL_LABEL,
   authorName,
   plainBody,
+  convByNative,
   convLabel,
   convTitle,
   crumbs,
@@ -314,8 +315,8 @@ function useMdContext(network: P.Network) {
       return { name: isSelfIdentity(id) ? identityName(id) : authorName(id), self: isSelfIdentity(id) };
     },
     room: (nativeId: string) => {
-      for (const c of db.conversations.values()) if (c.network === network && c.nativeId === nativeId) return convTitle(c);
-      return null;
+      const c = convByNative(network, nativeId);
+      return c ? convTitle(c) : null;
     },
   };
 }

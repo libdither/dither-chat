@@ -44,10 +44,19 @@ export function resolveTokens(text: string, network: P.Network): string {
       return '@' + (hid ? (isSelfIdentity(hid) ? 'you' : authorName(hid)) : 'user');
     })
     .replace(/<#([^>\s]+)>/g, (_, id) => {
-      for (const c of db.conversations.values()) if (c.network === network && c.nativeId === id) return '#' + convTitle(c);
-      return '#channel';
+      const c = convByNative(network, id);
+      return c ? '#' + convTitle(c) : '#channel';
     })
     .replace(/<a?:(\w+):\d+>/g, ':$1:');
+}
+
+/** A conversation by its network's own id, as room links name them: one map per `rev`, not a scan per link. */
+export function convByNative(network: P.Network, nativeId: string): P.ConversationView | undefined {
+  return memo('convByNative', () => {
+    const m = new Map<string, P.ConversationView>();
+    for (const c of db.conversations.values()) if (!m.has(`${c.network}:${c.nativeId}`)) m.set(`${c.network}:${c.nativeId}`, c);
+    return m;
+  }).get(`${network}:${nativeId}`);
 }
 
 /** A message body as one plain line, for quotes and previews. */
