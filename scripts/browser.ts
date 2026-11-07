@@ -44,7 +44,40 @@ export async function launch(opts: { caCert?: string; host?: string; args?: stri
   }
   const target = targets.find((t) => t.type === 'page');
   if (!target) throw new Error('chromium did not start');
-  const ws = new WebSocket(target.webSocketDebuggerUrl);
+  const first = await attach(target.webSocketDebuggerUrl, port);
+  const pages = [first];
+  return {
+    page: first.page,
+    /** The browser's own directory: every one of its processes has it on the command line. */
+    profileDir: home,
+    /** The DevTools port, for targets of its own (service workers, other pages). */
+    port,
+    /** Another page of the same browser (same profile, so the same service worker), in a window of its own if asked. */
+    async newPage(url: string, o: { newWindow?: boolean } = {}): Promise<Page> {
+      const { targetId } = await first.page.send<{ targetId: string }>('Target.createTarget', { url: 'about:blank', newWindow: !!o.newWindow });
+      let t: any;
+      for (let i = 0; i < 50 && !t; i++) {
+        t = ((await fetch(`http://127.0.0.1:${port}/json`).then((r) => r.json())) as any[]).find((x) => x.id === targetId);
+        if (!t) await Bun.sleep(100);
+      }
+      if (!t) throw new Error('no new page');
+      const next = await attach(t.webSocketDebuggerUrl, port);
+      pages.push(next);
+      await next.page.goto(url);
+      return next.page;
+    },
+    async close() {
+      for (const p of pages) p.ws.close();
+      proc.kill();
+      await proc.exited;
+      rmSync(home, { recursive: true, force: true });
+    },
+  };
+}
+
+/** A DevTools session with one page. */
+async function attach(wsUrl: string, port: number): Promise<{ page: Page; ws: WebSocket }> {
+  const ws = new WebSocket(wsUrl);
   await new Promise((res, rej) => ((ws.onopen = res), (ws.onerror = rej)));
   let seq = 0;
   const waiting = new Map<number, { res: (v: any) => void; rej: (e: Error) => void }>();
@@ -118,15 +151,5 @@ export async function launch(opts: { caCert?: string; host?: string; args?: stri
   page.on('Runtime.exceptionThrown', (p) => errors.push(p.exceptionDetails?.exception?.description ?? p.exceptionDetails?.text));
   page.on('Log.entryAdded', (p) => p.entry?.level === 'error' && errors.push(p.entry.text));
   await page.send('Log.enable');
-  return {
-    page,
-    /** The browser's own directory: every one of its processes has it on the command line. */
-    profileDir: home,
-    async close() {
-      ws.close();
-      proc.kill();
-      await proc.exited;
-      rmSync(home, { recursive: true, force: true });
-    },
-  };
+  return { page, ws };
 }

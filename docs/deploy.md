@@ -59,7 +59,13 @@ WantedBy=default.target
 Without `loginctl enable-linger $USER` a user service stops when you log out and does not start at boot.
 
 To deploy a new version: `git pull && bun install && bun run web:build && systemctl --user restart dither-chat`.
-Installed apps notice the new service worker when reopened (or within an hour) and show a reload bar.
+Installed apps notice the new service worker when reopened, when the hub comes back after the restart, or within an
+hour, and show a reload bar. A page in sight never reloads by itself (`packages/web/src/update.ts`): the new build goes
+in when you tap the bar, or when the app goes out of sight with nothing in progress (text typed, a call, an open sheet,
+menu, dialog or picture, an old message jumped to, a message not yet through to the hub). Another tab of the app that
+is in sight keeps its build and shows the bar too: a tab out of sight lets the new worker in only while no other window
+of the app is in sight (`sw.js`), and a tab updated by another one reloads only when it is out of sight and idle.
+`bun scripts/verify-update.ts <demo hub> --dist <its --web dir>` checks all of this in a browser.
 
 Check a deployment with a private browser that trusts nothing extra:
 

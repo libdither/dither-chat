@@ -742,7 +742,15 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
       <div class="timeline-inner">
         {t && !t.hasMore && msgs.length > 0 && <div class="timeline-start">This is the start of what dither-chat has stored here.</div>}
         {t?.detached && (
-          <button class="jump-latest" onClick={() => void toLatest(tkey)}>
+          <button
+            class="jump-latest"
+            onClick={() => {
+              void toLatest(tkey);
+              // Off the old message in the address too, so a reload (a new build) does not jump back to it.
+              const r = route.value;
+              if ('msg' in r && r.msg) go({ ...r, msg: undefined }, true);
+            }}
+          >
             <Icon name="chevronDown" size={14} /> Older messages. Jump to the latest
           </button>
         )}
