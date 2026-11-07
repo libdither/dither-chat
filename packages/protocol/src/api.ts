@@ -149,6 +149,15 @@ export interface UploadView {
 }
 
 /**
+ * An upload made a piece at a time (docs/uploads.md): `POST /api/uploads/start` with { name, mime, size }, then
+ * `PUT /api/uploads/:id?offset=<received>` with up to UPLOAD_CHUNK bytes each. It can be sent once `received` is
+ * `size`. A piece at the wrong offset is refused with 409 and { received }, where to carry on from.
+ */
+export interface UploadState extends UploadView {
+  received: number;
+}
+
+/**
  * The answer to `POST /api/conversations/:id/send`. `messageId` is the hub's id for the sent message when the network
  * said which it is: the app replaces its pending copy with that message (packages/web/src/outbox.ts).
  */

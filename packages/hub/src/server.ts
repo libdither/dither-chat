@@ -3,7 +3,7 @@ import { createHmac } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, directTarget, discordEmojiUrl, IMPORT_CHUNK, MAX_UPLOAD, NETWORK_META, NETWORKS, sendBlocker } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, directTarget, discordEmojiUrl, IMPORT_CHUNK, MAX_UPLOAD, NETWORK_META, NETWORKS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { ACCOUNT_COLORS, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
@@ -623,12 +623,30 @@ export class HubServer {
       return ok(s.reactionContextView(accountId, conv.network, ctx ?? { canReact: true, custom: [] }));
     }
 
-    if (path === '/api/uploads' && method === 'POST') {
-      if (Number(req.headers.get('content-length') ?? 0) > MAX_UPLOAD) return bad('that file is too large', 413);
-      const bytes = new Uint8Array(await req.arrayBuffer());
-      if (!bytes.length) return bad('empty file');
-      if (bytes.length > MAX_UPLOAD) return bad('that file is too large', 413);
-      return ok(this.uploads.put(bytes, cleanFileName(req.headers.get('x-file-name')), req.headers.get('content-type') ?? ''));
+    // Files to send (docs/uploads.md): streamed to disk, whole in one request or a piece at a time at its offset.
+    if (path.startsWith('/api/uploads')) {
+      const fail = (e: any) => Response.json({ error: String(e?.message ?? e), ...(e?.received !== undefined ? { received: e.received } : {}) }, { status: e?.status ?? 400 });
+      try {
+        if (path === '/api/uploads' && method === 'POST') {
+          const length = req.headers.get('content-length') ? Number(req.headers.get('content-length')) : undefined;
+          if ((length ?? 0) > MAX_UPLOAD) return bad('that file is too large', 413);
+          return ok(await this.uploads.receive(req.body, cleanFileName(req.headers.get('x-file-name')), req.headers.get('content-type') ?? '', { length }));
+        }
+        if (path === '/api/uploads/start' && method === 'POST') {
+          const b = await body<{ name?: string; mime?: string; size?: number }>();
+          return ok(this.uploads.start(cleanFileName(typeof b.name === 'string' ? b.name : null, false), String(b.mime ?? ''), Number(b.size)));
+        }
+        if ((m = path.match(/^\/api\/uploads\/([0-9a-f]{24})$/))) {
+          if (method === 'GET') return this.uploads.state(m[1]) ? ok(this.uploads.state(m[1])) : bad('no such upload: it may have expired', 404);
+          if (method === 'PUT') {
+            if (Number(req.headers.get('content-length') ?? 0) > UPLOAD_CHUNK) return bad('piece too large', 413);
+            return ok(await this.uploads.write(m[1], num('offset') ?? -1, req.body));
+          }
+          if (method === 'DELETE') return (this.uploads.remove([m[1]]), ok());
+        }
+      } catch (e) {
+        return fail(e);
+      }
     }
     // History sources (docs/import.md): uploaded in pieces at their offset, so a dropped connection resumes.
     if ((m = path.match(/^\/api\/history-gaps\/([\w-]+)(\/stop)?$/))) {

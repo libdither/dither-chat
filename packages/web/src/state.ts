@@ -6,7 +6,8 @@ import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snap
 import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, emptyDb, identityVersion, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
 import { changed, timelineChanged } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
-import { ECHO_SKEW, openOutbox, settled, type Echo, type OutboxEntry, type OutboxFile } from './outbox.ts';
+import { ECHO_SKEW, openOutbox, settled, type Echo, type OutboxEntry } from './outbox.ts';
+import { hubTransport, UploadJob } from './upload.ts';
 
 // ------------------------------------------------------------------ data
 
@@ -47,6 +48,8 @@ export interface PendingSend {
   files?: string[];
   /** Waiting for the hub to be reachable again; it goes out then, by itself. */
   queued?: boolean;
+  /** Its files are still uploading (uploadsOf has their progress). */
+  uploading?: boolean;
   /** The hub took it; the copy stays until its message is here (outbox.ts). */
   acked?: boolean;
   /** The hub's id for the message it became, when its answer said. */
@@ -632,14 +635,14 @@ export async function loadInbox() {
 
 // ------------------------------------------------------------------ actions
 
-async function upload(f: OutboxFile): Promise<P.UploadView> {
-  const res = await fetch('/api/uploads', { method: 'POST', body: f.blob, headers: { 'content-type': f.type || 'application/octet-stream', 'x-file-name': encodeURIComponent(f.name) } });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error ?? `HTTP ${res.status}`), { status: res.status });
-  return data;
-}
+/** A file attached in the composer starts uploading at once, a piece at a time (upload.ts, docs/uploads.md). */
+export const startUpload = (f: File) => new UploadJob(f, f.name, f.type || 'application/octet-stream');
+/** The uploads of sends not yet through, by tempId, for their progress on the pending copy. */
+const sendUploads = new Map<string, UploadJob[]>();
+export const uploadsOf = (tempId: string): UploadJob[] => sendUploads.get(tempId) ?? [];
 
-type SendOpts = { accountId?: string; replyTo?: string; files?: File[] };
+/** `uploads`: the composer's uploads of `files`, one each, already under way. */
+type SendOpts = { accountId?: string; replyTo?: string; files?: File[]; uploads?: UploadJob[] };
 /** Sends kept on this device until the hub has them (outbox.ts): a reload or the app being closed does not lose them. */
 const outbox = openOutbox(typeof indexedDB === 'undefined' ? undefined : indexedDB);
 /** Sends not yet through, by tempId: what they need to go out again. The outbox keeps the same. */
@@ -655,6 +658,12 @@ export async function send(conversationId: string, body: string, opts: SendOpts 
   const e: OutboxEntry = { tempId, conversationId, body, ts: Date.now(), accountId: opts.accountId, replyTo: opts.replyTo, files: opts.files?.map((f) => ({ name: f.name, type: f.type, blob: f })) };
   pending.value = [...pending.value, pendingOf(e)];
   outgoing.set(tempId, e);
+  if (opts.uploads?.length) {
+    sendUploads.set(tempId, opts.uploads);
+    // Their ids go with the send as soon as the hub gives them, so a reload carries on rather than starting again.
+    const ids = (e.uploads = opts.uploads.map((j) => j.id));
+    opts.uploads.forEach((j, i) => (j.onId = (id) => ((ids[i] = id), void outbox.put(e))));
+  }
   // Kept before it goes, so that closing the app meanwhile cannot lose it; a slow IndexedDB does not hold it up long.
   await Promise.race([outbox.put(e), new Promise((r) => setTimeout(r, 500))]);
   if (!connected.value) {
@@ -670,8 +679,27 @@ async function deliver(tempId: string) {
   if (!o || delivering.has(tempId)) return;
   delivering.add(tempId);
   setPending(tempId, { queued: false, failed: undefined });
-  const uploadAll = async () => {
-    o.attachments = (await Promise.all(o.files!.map(upload))).map((u) => u.id);
+  // Each file's upload: the composer's, still going or done, or one carrying on from what the hub has. `again`:
+  // the hub let them expire, so each begins anew.
+  const uploadAll = async (again = false) => {
+    const ids = (o.uploads ??= []);
+    const had = sendUploads.get(tempId) ?? [];
+    const jobs = o.files!.map((f, i) => {
+      const prev = had[i];
+      const j = !again && prev && prev.status.value !== 'cancelled' ? prev : new UploadJob(f.blob, f.name, f.type || 'application/octet-stream', { id: again ? undefined : ids[i] });
+      if (prev && j !== prev) prev.cancel();
+      ids[i] = j.id;
+      j.onId = (id) => ((ids[i] = id), void outbox.put(o));
+      return j;
+    });
+    sendUploads.set(tempId, jobs);
+    void outbox.put(o);
+    if (jobs.some((j) => j.status.value !== 'done')) setPending(tempId, { uploading: true });
+    try {
+      o.attachments = (await Promise.all(jobs.map((j) => j.settle()))).map((u) => u.id);
+    } finally {
+      setPending(tempId, { uploading: false });
+    }
     void outbox.put(o);
   };
   // clientId: a retry after a lost answer, or after a reload, goes out once (server.ts).
@@ -685,10 +713,11 @@ async function deliver(tempId: string) {
     } catch (e: any) {
       // The hub let the uploads expire while this waited: make them again from the files, once.
       if (e?.status !== 410 || !o.files?.length) throw e;
-      await uploadAll();
+      await uploadAll(true);
       r = await post();
     }
     outgoing.delete(tempId);
+    sendUploads.delete(tempId);
     void outbox.remove(tempId);
     setPending(tempId, { acked: true, messageId: r?.messageId });
     settle();
@@ -728,8 +757,12 @@ export function retrySend(tempId: string) {
   probe();
 }
 
-/** A refused send, thrown away. */
+/** A refused send, thrown away, and its files with it. */
 export function discardSend(tempId: string) {
+  const o = outgoing.get(tempId);
+  for (const j of uploadsOf(tempId)) j.cancel();
+  for (const id of o?.uploads ?? []) if (id) void hubTransport.cancel(id);
+  sendUploads.delete(tempId);
   outgoing.delete(tempId);
   void outbox.remove(tempId);
   pending.value = pending.value.filter((x) => x.tempId !== tempId);

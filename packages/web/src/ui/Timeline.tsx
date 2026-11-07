@@ -68,6 +68,7 @@ import { openConv } from './Sidebar.tsx';
 import { viewer, type ViewerImage } from './Viewer.tsx';
 import { JoinCallButton } from './Call.tsx';
 import { EmojiComplete } from './EmojiComplete.tsx';
+import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
 import { TypingBar } from './Typing.tsx';
 import { composerDone, composerTyped } from '../typing.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
@@ -908,9 +909,10 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
                 {p.files?.map((name, i) => (
                   <div key={i} class="pending-file">
                     <Icon name="paperclip" size={12} /> {name}
+                    {p.uploading && <PendingUpload tempId={p.tempId} index={i} />}
                   </div>
                 ))}
-                <span class="pending-note">{p.failed ? `Failed: ${p.failed}` : p.queued ? 'Waiting for the hub, sends when it is back' : 'Sending…'}</span>
+                <span class="pending-note">{p.failed ? `Failed: ${p.failed}` : p.queued ? 'Waiting for the hub, sends when it is back' : p.uploading ? 'Uploading…' : 'Sending…'}</span>
                 {p.failed && (
                   <span class="pending-actions">
                     <button class="btn ghost small" onClick={() => retrySend(p.tempId)}>
@@ -944,28 +946,16 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   const accs = (conv?.vantages ?? []).map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a);
   const sender = accs.find((a) => a.id === targets.accountId) ?? accs.find((a) => a.status === 'online') ?? accs[0];
   const canAttach = !!conv && !!sender?.capabilities.includes('sendMedia') && !(conv.network === 'matrix' && conv.encrypted && !sender.capabilities.includes('e2ee'));
-  const [files, setFiles] = useState<{ file: File; url: string | null }[]>([]);
+  // Each uploads as it is attached; one that cannot be sent stays in the row with the reason (ComposerFiles.tsx).
+  const att = useAttached(conv?.network, targets.convId);
   const [dropping, setDropping] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
   const addFiles = (list: File[]) => {
     if (!list.length || !conv) return;
     if (!canAttach) return toast({ kind: 'error', title: 'Cannot send files here', body: conv.encrypted ? 'Set up encryption on the account\'s page to send files in encrypted Matrix rooms.' : `${netName(conv.network)} is not set up to send files.` });
-    const limit = ATTACHMENT_LIMITS[conv.network];
-    const fit = list.filter((f) => f.size <= limit.bytes);
-    if (fit.length < list.length) toast({ kind: 'error', title: 'File too large', body: `${netName(conv.network)} takes files up to ${limit.bytes / 1024 / 1024} MB.` });
-    setFiles((cur) => [...cur, ...fit.map((file) => ({ file, url: file.type.startsWith('image/') ? URL.createObjectURL(file) : null }))].slice(0, limit.files));
+    void att.add(list);
   };
-  const dropFile = (i: number) =>
-    setFiles((cur) => {
-      if (cur[i]?.url) URL.revokeObjectURL(cur[i].url!);
-      return cur.filter((_, j) => j !== i);
-    });
-  const clearFiles = () =>
-    setFiles((cur) => {
-      cur.forEach((f) => f.url && URL.revokeObjectURL(f.url));
-      return [];
-    });
-  useEffect(() => clearFiles, [targets.convId]);
+  const files = att.sendable;
   const draftKey = `dither-chat:draft:${targets.convId}`;
   const [text, setText] = useState(() => localStorage.getItem(draftKey) ?? '');
   const ta = useRef<HTMLTextAreaElement>(null);
@@ -1013,17 +1003,17 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   }, [reply]);
   const submit = () => {
     const body = text.trim();
-    if ((!body && !files.length) || disabledReason) return;
+    if ((!body && !files.length) || disabledReason || (att.failed && !edit)) return;
     if (edit) {
       const m = edit;
       cancelEdit();
       if (body !== m.body) void editMessage(m, body);
       return;
     }
-    send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id, files: files.map((f) => f.file) });
+    send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id, files: files.map((f) => f.file), uploads: files.map((f) => f.job!) });
     composerDone();
     type('');
-    clearFiles();
+    att.clear(true);
     clearReply();
   };
   return (
@@ -1059,24 +1049,12 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           </button>
         </div>
       )}
-      {files.length > 0 && (
-        <div class="composer-files">
-          {files.map((f, i) => (
-            <div class="composer-file" title={f.file.name}>
-              {f.url ? <img src={f.url} alt="" /> : <Icon name="file" size={22} />}
-              <span>{f.file.name}</span>
-              <button class="icon-btn small" onClick={() => dropFile(i)} aria-label={`Remove ${f.file.name}`}>
-                <Icon name="x" size={12} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      <AttachedFiles files={att.files} remove={att.remove} />
       <EmojiComplete ta={ta} convId={targets.convId} network={conv?.network} />
       <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
         {canAttach && !edit && !disabledReason && (
           <>
-            <button class="icon-btn attach-btn" onClick={() => picker.current?.click()} title="Attach files" aria-label="Attach files">
+            <button class="icon-btn attach-btn" onClick={() => picker.current?.click()} title={`Attach files, up to ${conv ? ATTACHMENT_LIMITS[conv.network].bytes / 1024 / 1024 : 0} MB each`} aria-label="Attach files">
               <Icon name="paperclip" size={17} />
             </button>
             <input
@@ -1151,7 +1129,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
             }
           }}
         />
-        <button class="send-btn" disabled={(!text.trim() && !files.length) || !!disabledReason} onClick={submit} aria-label="Send">
+        <button class="send-btn" disabled={(!text.trim() && !files.length) || !!disabledReason || (att.failed && !edit)} onClick={submit} aria-label="Send" title={att.failed && !edit ? 'A file did not upload: try it again or remove it' : undefined}>
           <Icon name="send" size={17} />
         </button>
       </div>
