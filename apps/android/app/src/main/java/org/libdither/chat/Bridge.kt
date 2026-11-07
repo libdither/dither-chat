@@ -46,6 +46,7 @@ class Bridge(private val activity: MainActivity, private val origin: Uri) : WebV
             "theme" -> activity.onTheme(m.optString("bg"))
             "hub.change" -> activity.changeHub()
             "open" -> activity.openForPage(m.optString("what"), m.optString("pkg").ifEmpty { null })
+            "file" -> activity.openFileForPage(m.optString("url"), m.optString("name").ifEmpty { null }, m.optString("mime").ifEmpty { null })
         }
     }
 
@@ -67,7 +68,7 @@ class Bridge(private val activity: MainActivity, private val origin: Uri) : WebV
             .put("distributors", distributors)
             .put("current", UnifiedPush.getAckDistributor(activity) ?: UnifiedPush.getSavedDistributor(activity) ?: JSONObject.NULL)
             .put("notifications", activity.getSystemService(NotificationManager::class.java).areNotificationsEnabled())
-            .put("opens", JSONArray(listOf("app", "appInfo", "notifications")))
+            .put("opens", JSONArray(listOf("app", "appInfo", "notifications", "file")))
     }
 
     /** To the page, or held until it says hello. */

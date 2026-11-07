@@ -1,0 +1,8 @@
+{
+  "name": "@dither-chat/desk",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/main.ts"
+  }
+}

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Editor
+Name[de]=Bearbeiter
+Exec=editor %f
+MimeType=text/plain;
+
+[Desktop Action new]
+Name=New window

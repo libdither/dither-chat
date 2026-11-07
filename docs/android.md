@@ -16,7 +16,8 @@ Around the WebView:
 |---|---|
 | Microphone, camera | `WebChromeClient.onPermissionRequest`, only for the hub's origin, mapped to `RECORD_AUDIO` / `CAMERA` runtime permissions, asked when the page asks |
 | Attachments | `onShowFileChooser` with the system picker, several files where the page allows it |
-| Links | Anything that is not the app's own page (other sites, the hub's `/media/` files, downloads) opens in the system browser |
+| Links | Anything that is not the app's own page (other sites, downloads from elsewhere) opens in the system browser |
+| Files | The hub's `/media/` and `/emoji/` files are downloaded into the app's cache and offered with the system chooser, as `content://org.libdither.chat.files/<name>` (Files.kt). The page passes the file's name and type; older pages fall back to the hub's headers |
 | Back | Walks the page's history: its routes, and the sheets and panels that push entries (`phone.ts`). At the start the app goes to the background and stays alive, so the next open is instant |
 | Launch | Theme, splash and WebView background are the page's own colour (`#14151b`, or the light theme's after the page reports it), so there is no white flash |
 | System bars | Edge to edge; the bars and keyboard are padding around the WebView |

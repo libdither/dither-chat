@@ -10,6 +10,7 @@ import { PushSettings } from './Push.tsx';
 import { PrivacySettings } from './Privacy.tsx';
 import { HistorySettings } from './HistorySettings.tsx';
 import { AdversarialSettings } from './Adversarial.tsx';
+import { DeskSettings } from './DeskSettings.tsx';
 import { phone } from '../phone.ts';
 import { Sheet } from './Sheet.tsx';
 import { chosenTheme, followsSystem, Swatch, ThemeList } from './Themes.tsx';
@@ -320,6 +321,8 @@ export function SettingsPane() {
           <h3>Appearance</h3>
           <AppearanceTheme />
         </section>
+
+        <DeskSettings />
 
         <section class="set-block" id="set-calls">
           <h3>Calls</h3>
