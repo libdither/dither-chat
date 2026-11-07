@@ -1,0 +1,382 @@
+{
+ "note": "bun scripts/verify-perf.ts --update (docs/perf.md). Times are of the machine it ran on.",
+ "at": "2026-11-07",
+ "runs": 3,
+ "pages": 15,
+ "chromium": "Chromium 155.0.8059.39",
+ "world": {
+  "conversations": 5632,
+  "withMessages": 1455,
+  "identities": 11502,
+  "spaces": 1162,
+  "messages": 461072,
+  "triaged": 161277,
+  "unread": 971
+ },
+ "metrics": {
+  "hub.bootstrap.bytes": {
+   "v": 4438003,
+   "kind": "bytes"
+  },
+  "hub.bootstrap.ms": {
+   "v": 80,
+   "kind": "ms"
+  },
+  "hub.inbox.ms": {
+   "v": 53,
+   "kind": "ms"
+  },
+  "1x.cold.list": {
+   "v": 674,
+   "kind": "ms"
+  },
+  "1x.cold.fresh": {
+   "v": 252,
+   "kind": "ms"
+  },
+  "1x.cold.longest": {
+   "v": 264,
+   "kind": "ms"
+  },
+  "1x.cold.longTasks": {
+   "v": 566,
+   "kind": "ms"
+  },
+  "1x.cold.renders": {
+   "v": 4,
+   "kind": "tally"
+  },
+  "1x.cold.layouts": {
+   "v": 9,
+   "kind": "tally"
+  },
+  "1x.cold.nodes": {
+   "v": 13965,
+   "kind": "count"
+  },
+  "1x.cold.bootstrapBytes": {
+   "v": 4437721,
+   "kind": "bytes"
+  },
+  "1x.open.first": {
+   "v": 201,
+   "kind": "ms"
+  },
+  "1x.open.first.max": {
+   "v": 278,
+   "kind": "ms"
+  },
+  "1x.open.first.longest": {
+   "v": 62,
+   "kind": "ms"
+  },
+  "1x.open.first.renders": {
+   "v": 30,
+   "kind": "tally"
+  },
+  "1x.open.first.layouts": {
+   "v": 20,
+   "kind": "tally"
+  },
+  "1x.open.again": {
+   "v": 66,
+   "kind": "ms"
+  },
+  "1x.open.again.max": {
+   "v": 70,
+   "kind": "ms"
+  },
+  "1x.open.again.longest": {
+   "v": 0,
+   "kind": "ms"
+  },
+  "1x.open.again.renders": {
+   "v": 6,
+   "kind": "tally"
+  },
+  "1x.open.again.layouts": {
+   "v": 6,
+   "kind": "tally"
+  },
+  "1x.older.page": {
+   "v": 174,
+   "kind": "ms"
+  },
+  "1x.older.last": {
+   "v": 249,
+   "kind": "ms"
+  },
+  "1x.older.msgs": {
+   "v": 960,
+   "kind": "count"
+  },
+  "1x.older.viewMoves": {
+   "v": 0,
+   "kind": "count"
+  },
+  "1x.long.reopen": {
+   "v": 480,
+   "kind": "ms"
+  },
+  "1x.long.reopen.longest": {
+   "v": 317,
+   "kind": "ms"
+  },
+  "1x.long.reopen.renders": {
+   "v": 1,
+   "kind": "tally"
+  },
+  "1x.long.reopen.layouts": {
+   "v": 1,
+   "kind": "tally"
+  },
+  "1x.long.reopen.nodes": {
+   "v": 50328,
+   "kind": "count"
+  },
+  "1x.long.reopen.msgs": {
+   "v": 960,
+   "kind": "count"
+  },
+  "1x.long.reopen.quotes": {
+   "v": 109,
+   "kind": "count"
+  },
+  "1x.arrival.shown": {
+   "v": 129,
+   "kind": "ms"
+  },
+  "1x.arrival.busy": {
+   "v": 174,
+   "kind": "ms"
+  },
+  "1x.arrival.longest": {
+   "v": 68,
+   "kind": "ms"
+  },
+  "1x.arrival.renders": {
+   "v": 1,
+   "kind": "tally"
+  },
+  "1x.arrival.messageRenders": {
+   "v": 961,
+   "kind": "tally"
+  },
+  "1x.arrival.layouts": {
+   "v": 8,
+   "kind": "tally"
+  },
+  "1x.relaunch.list": {
+   "v": 373,
+   "kind": "ms"
+  },
+  "1x.relaunch.fresh": {
+   "v": 378,
+   "kind": "ms"
+  },
+  "1x.relaunch.longest": {
+   "v": 173,
+   "kind": "ms"
+  },
+  "1x.relaunch.renders": {
+   "v": 3,
+   "kind": "tally"
+  },
+  "1x.relaunch.open": {
+   "v": 116,
+   "kind": "ms"
+  },
+  "1x.relaunch.open.max": {
+   "v": 143,
+   "kind": "ms"
+  },
+  "1x.relaunch.open.longest": {
+   "v": 55,
+   "kind": "ms"
+  },
+  "1x.relaunch.open.renders": {
+   "v": 31,
+   "kind": "tally"
+  },
+  "1x.relaunch.open.layouts": {
+   "v": 30,
+   "kind": "tally"
+  },
+  "4x.cold.list": {
+   "v": 2149,
+   "kind": "ms"
+  },
+  "4x.cold.fresh": {
+   "v": 629,
+   "kind": "ms"
+  },
+  "4x.cold.longest": {
+   "v": 846,
+   "kind": "ms"
+  },
+  "4x.cold.longTasks": {
+   "v": 1715,
+   "kind": "ms"
+  },
+  "4x.cold.renders": {
+   "v": 4,
+   "kind": "tally"
+  },
+  "4x.cold.layouts": {
+   "v": 8,
+   "kind": "tally"
+  },
+  "4x.cold.nodes": {
+   "v": 13965,
+   "kind": "count"
+  },
+  "4x.cold.bootstrapBytes": {
+   "v": 4437919,
+   "kind": "bytes"
+  },
+  "4x.open.first": {
+   "v": 860,
+   "kind": "ms"
+  },
+  "4x.open.first.max": {
+   "v": 1150,
+   "kind": "ms"
+  },
+  "4x.open.first.longest": {
+   "v": 269,
+   "kind": "ms"
+  },
+  "4x.open.first.renders": {
+   "v": 30,
+   "kind": "tally"
+  },
+  "4x.open.first.layouts": {
+   "v": 20,
+   "kind": "tally"
+  },
+  "4x.open.again": {
+   "v": 268,
+   "kind": "ms"
+  },
+  "4x.open.again.max": {
+   "v": 286,
+   "kind": "ms"
+  },
+  "4x.open.again.longest": {
+   "v": 188,
+   "kind": "ms"
+  },
+  "4x.open.again.renders": {
+   "v": 6,
+   "kind": "tally"
+  },
+  "4x.open.again.layouts": {
+   "v": 6,
+   "kind": "tally"
+  },
+  "4x.older.page": {
+   "v": 769,
+   "kind": "ms"
+  },
+  "4x.older.last": {
+   "v": 1047,
+   "kind": "ms"
+  },
+  "4x.older.msgs": {
+   "v": 960,
+   "kind": "count"
+  },
+  "4x.older.viewMoves": {
+   "v": 0,
+   "kind": "count"
+  },
+  "4x.long.reopen": {
+   "v": 2045,
+   "kind": "ms"
+  },
+  "4x.long.reopen.longest": {
+   "v": 1342,
+   "kind": "ms"
+  },
+  "4x.long.reopen.renders": {
+   "v": 1,
+   "kind": "tally"
+  },
+  "4x.long.reopen.layouts": {
+   "v": 1,
+   "kind": "tally"
+  },
+  "4x.long.reopen.nodes": {
+   "v": 50316,
+   "kind": "count"
+  },
+  "4x.long.reopen.msgs": {
+   "v": 960,
+   "kind": "count"
+  },
+  "4x.long.reopen.quotes": {
+   "v": 109,
+   "kind": "count"
+  },
+  "4x.arrival.shown": {
+   "v": 438,
+   "kind": "ms"
+  },
+  "4x.arrival.busy": {
+   "v": 568,
+   "kind": "ms"
+  },
+  "4x.arrival.longest": {
+   "v": 262,
+   "kind": "ms"
+  },
+  "4x.arrival.renders": {
+   "v": 1,
+   "kind": "tally"
+  },
+  "4x.arrival.messageRenders": {
+   "v": 961,
+   "kind": "tally"
+  },
+  "4x.arrival.layouts": {
+   "v": 2,
+   "kind": "tally"
+  },
+  "4x.relaunch.list": {
+   "v": 1454,
+   "kind": "ms"
+  },
+  "4x.relaunch.fresh": {
+   "v": 1554,
+   "kind": "ms"
+  },
+  "4x.relaunch.longest": {
+   "v": 731,
+   "kind": "ms"
+  },
+  "4x.relaunch.renders": {
+   "v": 3,
+   "kind": "tally"
+  },
+  "4x.relaunch.open": {
+   "v": 490,
+   "kind": "ms"
+  },
+  "4x.relaunch.open.max": {
+   "v": 623,
+   "kind": "ms"
+  },
+  "4x.relaunch.open.longest": {
+   "v": 246,
+   "kind": "ms"
+  },
+  "4x.relaunch.open.renders": {
+   "v": 31,
+   "kind": "tally"
+  },
+  "4x.relaunch.open.layouts": {
+   "v": 23,
+   "kind": "tally"
+  }
+ }
+}

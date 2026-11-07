@@ -349,6 +349,8 @@ CREATE TABLE IF NOT EXISTS triage (
   created_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS triage_created ON triage(created_at);
+-- The inbox's picks by level, best first (store.ts inboxQueries).
+CREATE INDEX IF NOT EXISTS triage_level_score ON triage(COALESCE(feedback, decision), score);
 CREATE INDEX IF NOT EXISTS triage_feedback ON triage(feedback_at) WHERE feedback IS NOT NULL;
 
 -- Live messages handed to triage and not yet decided (main.ts): a restart decides what a crash left in the queue.

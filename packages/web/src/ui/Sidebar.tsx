@@ -44,6 +44,7 @@ import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapsho
 import { inboxSnap, shownInbox } from '../inbox.ts';
 import { SortButton, useFlip } from './Reorganize.tsx';
 import { rememberSearch, SearchBox } from './SearchBox.tsx';
+import { counting, rendered } from '../perf.ts';
 
 // ------------------------------------------------------------------ navigation helpers
 
@@ -201,6 +202,7 @@ const FILTERS: { id: InboxFilter; label: string }[] = [
  * for you, ranked by how likely you are to want each now (docs/inbox.md).
  */
 export function InboxSidebar({ activeConv }: { activeConv?: string }) {
+  if (counting) rendered('InboxSidebar');
   rev.value;
   const snap = inboxSnap.value;
   const accounts = accountsNeedingYou();

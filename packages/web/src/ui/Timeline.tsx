@@ -9,6 +9,7 @@ import {
   LEVEL_LABEL,
   authorName,
   plainBody,
+  convByNative,
   convLabel,
   convTitle,
   crumbs,
@@ -70,6 +71,7 @@ import { composerDone, composerTyped } from '../typing.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { ForwardCard, forwarding } from './Forward.tsx';
 import { attachmentMenu, conversationMenu, identityMenu, imageMenu, linkMenu, messageMenu, personMenu } from './menus.tsx';
+import { counting, markPainted, rendered } from '../perf.ts';
 
 
 // ------------------------------------------------------------------ header
@@ -313,15 +315,16 @@ function useMdContext(network: P.Network) {
       return { name: isSelfIdentity(id) ? identityName(id) : authorName(id), self: isSelfIdentity(id) };
     },
     room: (nativeId: string) => {
-      for (const c of db.conversations.values()) if (c.network === network && c.nativeId === nativeId) return convTitle(c);
-      return null;
+      const c = convByNative(network, nativeId);
+      return c ? convTitle(c) : null;
     },
   };
 }
 
 /** The text; `tail` (your message's ticks) sits right after its last word. */
 function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
-  const html = useMemo(() => renderMarkdown(m.body, useMdContext(m.network)), [m.body, m.network, rev.value]);
+  // Only mentions and room links read the db (names may arrive later); other bodies render once.
+  const html = useMemo(() => renderMarkdown(m.body, useMdContext(m.network)), [m.body, m.network, /<[@#]/.test(m.body) ? rev.value : 0]);
   if (m.deleted) return <div class="msg-body deleted">{m.gone?.how === 'disappeared' ? 'Message disappeared' : 'Message deleted'}</div>;
   if (m.kind === 'encrypted')
     return (
@@ -509,13 +512,14 @@ function TriageNote({ m }: { m: P.MessageView }) {
   );
 }
 
-function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageView; grouped: boolean; merged: boolean; onReply: (m: P.MessageView) => void; highlight: boolean }) {
+/** `target`: the message it replies to, found by the timeline (a map per render, not a search per message). */
+function MessageItem({ m, grouped, merged, onReply, highlight, target }: { m: P.MessageView; grouped: boolean; merged: boolean; onReply: (m: P.MessageView) => void; highlight: boolean; target: P.MessageView | null }) {
+  if (counting) rendered('MessageItem');
   const author = m.authorId ? db.identities.get(m.authorId) : null;
   const person = personOf(m.authorId);
   const self = isSelfIdentity(m.authorId);
   const name = self ? (identityName(m.authorId) || 'You') : authorName(m.authorId);
   const conv = db.conversations.get(m.conversationId);
-  const target = m.replyToId ? (timelines.get(timelineKey('c', m.conversationId))?.messages.find((x) => x.id === m.replyToId) ?? quoted.get(m.replyToId)) : null;
   const thread = m.threadId ? db.conversations.get(m.threadId) : null;
   const seenVia = m.seenVia.map((id) => db.accounts.get(id)).filter((a): a is P.AccountView => !!a);
   const reply = () => onReply(m);
@@ -673,6 +677,7 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
 // ------------------------------------------------------------------ timeline
 
 function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tkey: string; convIds: string[]; merged: boolean; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string }) {
+  if (counting) rendered('Timeline');
   rev.value;
   const scroller = useRef<HTMLDivElement>(null);
   const t = timelines.get(tkey);
@@ -694,11 +699,19 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
     return () => clearTimeout(id);
   });
 
+  // At the very top the browser keeps the view at the top while older messages come in above it: that shows
+  // them, and asks for the next page, and the next, to the start. So the message that was first stays where it was.
+  const anchor = useRef<{ id: string; y: number } | null>(null);
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
     // column-reverse: scrollTop is 0 at the bottom and negative going up.
-    if (el.scrollHeight + el.scrollTop - el.clientHeight < 400) loadTimeline(tkey, true);
+    if (el.scrollHeight + el.scrollTop - el.clientHeight < 400) {
+      const first = t && !t.loading && t.hasMore ? t.messages[0] : null;
+      const node = first && document.getElementById(`m-${first.id}`);
+      if (node) anchor.current = { id: first.id, y: node.getBoundingClientRect().top };
+      loadTimeline(tkey, true);
+    }
     if (t?.detached) {
       if (Math.abs(el.scrollTop) < 400) void loadNewer(tkey);
     } else if (Math.abs(el.scrollTop) < 40 && document.visibilityState === 'visible') convIds.forEach(markRead);
@@ -710,10 +723,30 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
 
   const mine = pending.value.filter((p) => convIds.includes(p.conversationId));
   const msgs = t?.messages ?? [];
+  useLayoutEffect(() => {
+    const a = anchor.current;
+    if (!a || t?.loading || msgs[0]?.id === a.id) return;
+    anchor.current = null;
+    const node = document.getElementById(`m-${a.id}`);
+    const el = scroller.current;
+    const moved = node ? node.getBoundingClientRect().top - a.y : 0;
+    if (el && Math.abs(moved) >= 1) el.scrollTop += moved;
+  });
+  // A switch is done once the newest message is on screen, or the hub has answered (docs/perf.md).
+  const painted = useRef('');
+  useEffect(() => {
+    if (!t || painted.current === tkey) return;
+    const last = msgs[msgs.length - 1];
+    const newest = tkey.startsWith('c:') ? db.conversations.get(tkey.slice(2))?.lastMessage?.id : last?.id;
+    if (t.loading && !(last && last.id === newest)) return;
+    painted.current = tkey;
+    markPainted('dither:timeline', { key: tkey, messages: msgs.length });
+  });
   const items: any[] = [];
   let prev: P.MessageView | null = null;
   let dividerDone = false;
   const hideGone = retention.value.show === 'hidden';
+  const byId = new Map(msgs.map((x) => [x.id, x]));
   for (const m of msgs) {
     // Settings → Adversarial features: deleted and disappeared messages not shown at all.
     if (hideGone && m.deleted) continue;
@@ -734,7 +767,8 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
       dividerDone = true;
     }
     const grouped = !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId;
-    items.push(<MessageItem key={m.id} m={m} grouped={grouped} merged={merged} onReply={onReply} highlight={m.id === flash} />);
+    const target = m.replyToId ? (byId.get(m.replyToId) ?? quoted.get(m.replyToId) ?? null) : null;
+    items.push(<MessageItem key={m.id} m={m} grouped={grouped} merged={merged} onReply={onReply} highlight={m.id === flash} target={target} />);
     prev = m;
   }
 

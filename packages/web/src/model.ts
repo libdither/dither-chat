@@ -44,10 +44,19 @@ export function resolveTokens(text: string, network: P.Network): string {
       return '@' + (hid ? (isSelfIdentity(hid) ? 'you' : authorName(hid)) : 'user');
     })
     .replace(/<#([^>\s]+)>/g, (_, id) => {
-      for (const c of db.conversations.values()) if (c.network === network && c.nativeId === id) return '#' + convTitle(c);
-      return '#channel';
+      const c = convByNative(network, id);
+      return c ? '#' + convTitle(c) : '#channel';
     })
     .replace(/<a?:(\w+):\d+>/g, ':$1:');
+}
+
+/** A conversation by its network's own id, as room links name them: one map per `rev`, not a scan per link. */
+export function convByNative(network: P.Network, nativeId: string): P.ConversationView | undefined {
+  return memo('convByNative', () => {
+    const m = new Map<string, P.ConversationView>();
+    for (const c of db.conversations.values()) if (!m.has(`${c.network}:${c.nativeId}`)) m.set(`${c.network}:${c.nativeId}`, c);
+    return m;
+  }).get(`${network}:${nativeId}`);
 }
 
 /** A message body as one plain line, for quotes and previews. */
@@ -462,6 +471,8 @@ export function sumUnread(convs: P.ConversationView[]): Unread {
     mentions = 0,
     badge = 0;
   for (const c of convs) {
+    // Nothing unread adds nothing, whatever its level: most conversations, and the level is the dear part.
+    if (!c.vantages.some((v) => v.unread || v.mentions)) continue;
     const u = unreadOf(c);
     if (u.muted && !u.badge) continue;
     unread += u.unread;
@@ -469,6 +480,11 @@ export function sumUnread(convs: P.ConversationView[]): Unread {
     badge += u.badge;
   }
   return { unread, mentions, badge, muted: false };
+}
+
+/** Everything shown, summed: the app's badge and the Home tab's. Once per `rev`. */
+export function totalUnread(): Unread {
+  return memo('totalUnread', () => sumUnread([...db.conversations.values()].filter(visibleConv)));
 }
 
 export function spaceUnread(id: string): Unread {
