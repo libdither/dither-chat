@@ -631,7 +631,8 @@ async function deliver(tempId: string) {
     void outbox.put(o);
   };
   // clientId: a retry after a lost answer, or after a reload, goes out once (server.ts).
-  const post = () => api<P.SendResult>(`/api/conversations/${o.conversationId}/send`, { body: { body: o.body, accountId: o.accountId, replyTo: o.replyTo, attachments: o.attachments, clientId: tempId } });
+  const clientId = o.attempt ? `${tempId}~${o.attempt}` : tempId;
+  const post = () => api<P.SendResult>(`/api/conversations/${o.conversationId}/send`, { body: { body: o.body, accountId: o.accountId, replyTo: o.replyTo, attachments: o.attachments, clientId } });
   try {
     if (o.files?.length && !o.attachments) await uploadAll();
     let r: P.SendResult;
@@ -656,6 +657,8 @@ async function deliver(tempId: string) {
       probe();
     } else {
       o.failed = e.message;
+      // 504: the network took it and went quiet, so it may be out. Trying again is then your call (retrySend).
+      o.unsure = e?.status === 504;
       void outbox.put(o);
       setPending(tempId, { failed: e.message });
     }
@@ -673,6 +676,8 @@ export function retrySend(tempId: string) {
   const o = outgoing.get(tempId);
   if (!o) return;
   o.failed = undefined;
+  // After "it may have been sent", trying again is a new send: the hub answers the old id with the same doubt.
+  if (o.unsure) (o.attempt = (o.attempt ?? 0) + 1), (o.unsure = false);
   void outbox.put(o);
   if (connected.value) return void deliver(tempId);
   setPending(tempId, { failed: undefined, queued: true });

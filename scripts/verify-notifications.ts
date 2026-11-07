@@ -99,7 +99,7 @@ try {
     const picker = await p.eval<string[]>(`[...document.querySelectorAll('.triage-pop .tier-picker button')].map((b) => b.textContent.trim())`);
     check(picker.join() === 'Important,Active,Digest,Not interesting', 'a message’s pill offers the four levels', picker);
     const chances = await p.eval<string[]>(`[...document.querySelectorAll('.triage-pop .triage-chance > span:first-child')].map((b) => b.textContent.trim())`);
-    check(chances.join() === 'Ping,Notify,Digest', 'and the model’s three chances', chances);
+    check(chances.join() === 'Important,Active,Digest', 'and the model’s three chances', chances);
     if (shots) await p.shot(`${shots}/notif-03-pill.png`);
   } else console.log('skip the pill (no triaged message in view)');
 

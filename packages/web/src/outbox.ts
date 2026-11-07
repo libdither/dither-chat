@@ -17,7 +17,7 @@ export interface OutboxFile {
 }
 
 export interface OutboxEntry {
-  /** Also the send's clientId. */
+  /** Also the send's clientId (with `~<attempt>` after a retry you asked for, below). */
   tempId: string;
   conversationId: string;
   body: string;
@@ -30,6 +30,12 @@ export interface OutboxEntry {
   attachments?: string[];
   /** The hub refused it: shown with the reason, to try again or throw away. */
   failed?: string;
+  /**
+   * The hub could not tell whether it went out (the network did not answer in time, 504). A retry you ask for then
+   * goes as a new send (`attempt`), since the hub answers the old id with the same "may have been sent".
+   */
+  unsure?: boolean;
+  attempt?: number;
 }
 
 export interface Outbox {
