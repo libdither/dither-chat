@@ -8345,7 +8345,7 @@ button.msg-edited.link:hover {
 }
 .triage-chance {
   display: grid;
-  grid-template-columns: 44px 1fr 34px;
+  grid-template-columns: 60px 1fr 34px;
   align-items: center;
   gap: 6px;
   color: var(--text-faint);

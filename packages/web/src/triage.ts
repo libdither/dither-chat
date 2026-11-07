@@ -5,19 +5,27 @@
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { TIER_LABEL } from '@dither-chat/protocol';
+import { levelOf } from './board.ts';
 import { api, inbox, patchMessage, toast } from './state.ts';
+
+export { levelOf };
 
 export const TIERS: P.NotifyTier[] = ['drop', 'digest', 'quiet', 'push'];
 export { TIER_LABEL };
 export const isTier = (d: P.TriageDecision | null | undefined): d is P.NotifyTier => TIERS.includes(d as P.NotifyTier);
 
-/** Where a message is now: your vote, else the decision. */
-export const levelOf = (t: P.TriageView): P.TriageDecision => t.feedback ?? t.decision;
 export const tierUp = (l: P.NotifyTier): P.NotifyTier | null => TIERS[TIERS.indexOf(l) + 1] ?? null;
 export const tierDown = (l: P.NotifyTier): P.NotifyTier | null => TIERS[TIERS.indexOf(l) - 1] ?? null;
 
 /** What the hub learned, as of the last vote or look. */
 export const triagePolicy = signal<P.TriagePolicyView | null>(null);
+
+/** Where each chance decides, until the hub's policy is in (the hub's defaults, docs/notifications.md). */
+export const DEFAULT_THRESHOLDS: P.TriageProbs = { ping: 0.8, active: 0.5, interesting: 0.5 };
+/** The hub's thresholds for the three chances. */
+export const thresholds = (): P.TriageProbs => triagePolicy.value?.thresholds ?? DEFAULT_THRESHOLDS;
+/** The level each chance stands for, in the board's words. */
+export const HEAD_LABEL: Record<P.TriageHead, string> = { ping: 'Important', active: 'Active', interesting: 'Digest' };
 
 function setFeedback(id: string, feedback: P.NotifyTier | null) {
   const patch = (m: P.MessageView): P.MessageView => (m.triage ? { ...m, triage: { ...m.triage, feedback } } : m);

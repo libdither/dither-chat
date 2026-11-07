@@ -6,6 +6,7 @@
 import type * as P from '@dither-chat/protocol';
 import { categoryThreshold, NETWORK_META } from '@dither-chat/protocol';
 import { db, inbox, isSelfIdentity, prefs, rev } from './state.ts';
+import { triageBoard, type Board } from './board.ts';
 
 const memos = new Map<string, { rev: number; value: unknown }>();
 function memo<T>(key: string, fn: () => T): T {
@@ -431,7 +432,8 @@ function nativeMuteLevel(c: P.ConversationView, parent?: P.ConversationView): P.
   return best;
 }
 
-export const LEVEL_LABEL: Record<P.NotifyLevel, string> = { all: 'All messages', smart: 'Smart', mentions: 'Mentions', digest: 'Digest', none: 'Off' };
+/** A place's notification setting. 'digest' is "Digest only": nothing there notifies; not to be confused with the Digest level of one message. */
+export const LEVEL_LABEL: Record<P.NotifyLevel, string> = { all: 'All messages', smart: 'Smart', mentions: 'Mentions', digest: 'Digest only', none: 'Off' };
 
 // ------------------------------------------------------------------ unread
 
@@ -575,17 +577,29 @@ export function accountsNeedingYou(): P.AccountView[] {
   return memo('accountsNeedingYou', () => [...db.accounts.values()].filter((a) => a.attention && visibleAccount(a.id)));
 }
 
-/** Conversations where triage pushed something you have not read yet: the inbox button's count. */
+/** A triaged message you have not read: its conversation has unread messages, and you last read it before this one. */
+export function messageUnread(m: P.MessageView): boolean {
+  const c = db.conversations.get(m.conversationId);
+  return !!c && c.vantages.some((v) => (v.lastReadTs ?? 0) < m.ts) && unreadOf(c).unread > 0;
+}
+
+/** The Triage board's lists and counts (board.ts), for what is shown here. */
+export function board(): Board {
+  return memo('board', () =>
+    triageBoard(inbox.value, {
+      now: Date.now(),
+      shown: (m) => {
+        const c = db.conversations.get(m.conversationId);
+        return !!c && visibleConv(c);
+      },
+      unread: messageUnread,
+    }),
+  );
+}
+
+/** Important messages on the Triage board you have not read yet, by where they are now (your vote counts): the inbox button's count. */
 export function pingedCount(): number {
-  return memo('pinged', () => {
-    const lastRead = (c: P.ConversationView) => Math.min(...c.vantages.map((v) => v.lastReadTs ?? 0));
-    const pushed = new Set<string>();
-    for (const m of inbox.value) {
-      const c = db.conversations.get(m.conversationId);
-      if (c && visibleConv(c) && (m.triage?.decision === 'push' || m.triage?.decision === 'quiet') && m.ts > lastRead(c) && unreadOf(c).unread > 0) pushed.add(c.id);
-    }
-    return pushed.size;
-  });
+  return board().importantUnread;
 }
 
 export function deepLink(c: P.ConversationView): string | null {

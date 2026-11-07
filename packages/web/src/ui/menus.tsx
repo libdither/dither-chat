@@ -236,7 +236,7 @@ export function linkMenu(url: string, m: P.MessageView | null, onReply?: () => v
 // ------------------------------------------------------------------ notification settings
 
 const LEVELS: P.NotifyLevel[] = ['all', 'smart', 'mentions', 'digest', 'none'];
-const LEVEL_MENU: Record<P.NotifyLevel, string> = { all: 'All Messages', smart: 'Smart', mentions: 'Only @mentions', digest: 'Digest', none: 'Nothing' };
+const LEVEL_MENU: Record<P.NotifyLevel, string> = { all: 'All Messages', smart: 'Smart', mentions: 'Only @mentions', digest: 'Digest only', none: 'Nothing' };
 
 function notifyEntries(scope: 'conversation' | 'space', id: string, current: P.NotifyLevel | null, inherited: string): MenuEntry[] {
   return [

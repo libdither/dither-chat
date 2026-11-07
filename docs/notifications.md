@@ -17,7 +17,8 @@ Code: `packages/hub/src/triage.ts` (where a message starts, the decision), `lear
 (votes, training, the policy view, the shadow model), `labels.ts` (labels from what you did), `interact.ts`
 (interaction features), `shadow.ts` (exploration, the shadow summary), `main.ts` `deliver` (who gets what);
 `scripts/triage-replay.ts` (the offline replay, docs/triage-replay.md); `packages/web/src/triage.ts`,
-`ui/TierVote.tsx`, `ui/Inbox.tsx` (the Triage board), `public/sw.js`; `apps/android/.../Notifications.kt`.
+`ui/TierVote.tsx`, `ui/Inbox.tsx` (the Triage board), `board.ts` (its lists and counts, and the badge), `public/sw.js`;
+`apps/android/.../Notifications.kt`. `scripts/verify-triage.ts` checks the board's counts, a vote and the words in a browser.
 
 ## The three chances
 
@@ -174,7 +175,12 @@ the digest); Active is not worth a ping but worth a notification; Digest only in
 
 - **The Triage board** (Inbox → Triage, the phone's Triage tab): Important and Active for the last week, newest first;
   the Digest, what matters most first; *Not interesting*, the closest 30 of the last two days, to vote up. Each message
-  with ▲ and ▼ around its level; a vote moves it to the other list at once.
+  with ▲ and ▼ around its level; a vote moves it to the other list at once. The counts at the top are the lists'
+  lengths, and the Triage button's badge is the Important list's unread messages (`packages/web/src/board.ts`), so a
+  vote changes them together.
+- **The three chances** are shown under the same names: Important (ping), Active (active) and Digest (interesting), each
+  bar marked at the hub's own threshold (`GET /api/triage/policy`'s `thresholds`). A place's notification setting that
+  sends everything to the digest is called *Digest only*, to keep it apart from a message's Digest level.
 - **A message's notification menu** (the bell among its hover actions): why, the three chances, and the four levels
   side by side, triage's choice marked with a dot.
 - **The notification itself.** Important: Reply, *▼ Active*, *✓ Right*. Active: *▲ Important*, *▼ Digest*, Reply. In a

@@ -175,10 +175,10 @@ export function LevelMenu({ c }: { c: P.ConversationView }) {
 }
 
 const LEVEL_HELP: Record<P.NotifyLevel, string> = {
-  all: 'Push every message',
-  smart: 'Push what looks addressed to you or urgent',
-  mentions: 'Push @mentions and replies to you',
-  digest: 'Never push; collect into the digest',
+  all: 'Every message is Important',
+  smart: 'Triage decides each one: Important, Active or Digest',
+  mentions: '@mentions and replies to you are Important; the rest goes to the digest',
+  digest: 'Nothing notifies; everything waits for the digest',
   none: 'Silent; unread count only',
 };
 
@@ -481,8 +481,8 @@ function TriageNote({ m }: { m: P.MessageView }) {
           <div class="triage-pop">
             <div class="menu-title">{triageHeading(t.decision)}</div>
             <ul>
-              {t.reasons.map((r) => (
-                <li>{r}</li>
+              {t.reasons.map((r, i) => (
+                <li key={i}>{r}</li>
               ))}
             </ul>
             {t.probs && <TriageChances p={t.probs} />}

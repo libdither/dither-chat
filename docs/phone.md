@@ -68,7 +68,7 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Desktop capability | How on a desktop | Before, on a phone | Now, on a phone |
 |---|---|---|---|
 | Inbox: one ranked list of DMs, groups, rooms outside a space and notes ([inbox.md](inbox.md)) | Sidebar | Inbox tab | Home, Inbox in the rail |
-| Triage board: pings with thumbs up/down, digest cards, stats | Center pane with nothing open | **Unreachable**: the inbox tab showed the list | Triage tab |
+| Triage board: Important, Active, Digest and Not interesting, each with ▲/▼ votes, and the counts | Center pane with nothing open | **Unreachable**: the inbox tab showed the list | Triage tab |
 | Mark all read, everywhere | Board button | **Unreachable** | Triage tab; per place in its arrange sheet |
 | People, merged DM timeline, one network's chat | Rail, sidebar, header chips | People tab; chips wrapped | Rail; the chips scroll sideways, and the details panel lists each chat |
 | Group chats (now in the inbox), spaces with channel trees and threads, folders | Rail and sidebar | Groups and Spaces tabs, no rail | The inbox, and the rail and its list, as in Discord |
@@ -103,7 +103,7 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Default levels, per network, smart triage, notifications while open | Settings | More tab | You tab; the section list on a desktop now scrolls to each section |
 | Web Push opt-in, devices | Settings | More tab | You tab |
 | Quiet hours, daily digest | Settings | More tab | You tab; time fields at 16px |
-| Keywords that always ping | Settings | More tab | You tab |
+| Keywords that are always Important | Settings | More tab | You tab |
 | Theme, demo accounts, reset demo | Settings | More tab | You tab |
 | Toasts, open the conversation from one | Bottom right | Covered the composer | At the top; tap to open, flick to dismiss |
 | Unread and mention badges | Rail | None on the tabs | Rail, and the Home and Triage tabs; You has a dot when an account needs you |

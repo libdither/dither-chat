@@ -1,9 +1,10 @@
 import type * as P from '@dither-chat/protocol';
 import { ago } from '../format.ts';
-import { accountsNeedingYou, authorName, communitiesOf, convLabel, plainBody, unreadOf, visibleConv } from '../model.ts';
+import { BELOW_DAYS } from '../board.ts';
+import { accountsNeedingYou, authorName, board, communitiesOf, convLabel, messageUnread, plainBody, visibleConv } from '../model.ts';
 import { useEffect, useState } from 'preact/hooks';
 import { db, go, inbox, markAllRead, rev } from '../state.ts';
-import { forgetFactor, levelOf, loadPolicy, loadShadow, relearn, triagePolicy, triageShadow } from '../triage.ts';
+import { forgetFactor, HEAD_LABEL, loadPolicy, loadShadow, relearn, triagePolicy, triageShadow } from '../triage.ts';
 import { TierVote } from './TierVote.tsx';
 import { Avatar, SourceChip } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -18,7 +19,7 @@ function PingCard({ m }: { m: P.MessageView }) {
   const author = m.authorId ? db.identities.get(m.authorId) : null;
   const person = author?.personId ? db.persons.get(author.personId) : null;
   const t = m.triage!;
-  const unread = (c.vantages.some((v) => (v.lastReadTs ?? 0) < m.ts) && unreadOf(c).unread > 0) || false;
+  const unread = messageUnread(m);
   return (
     <div class={`ping ${unread ? 'unread' : ''}`} data-mid={m.id} {...ctx}>
       <button class="ping-main" onClick={() => go({ view: 'inbox', conv: c.id })}>
@@ -34,8 +35,10 @@ function PingCard({ m }: { m: P.MessageView }) {
           </span>
           <span class="ping-body">{plainBody(m.body, m.network).slice(0, 220) || (m.attachments.length ? 'Sent an attachment' : '')}</span>
           <span class="ping-reasons">
-            {t.reasons.map((r) => (
-              <span class="reason">{r}</span>
+            {t.reasons.map((r, i) => (
+              <span key={i} class="reason">
+                {r}
+              </span>
             ))}
           </span>
         </span>
@@ -47,25 +50,30 @@ function PingCard({ m }: { m: P.MessageView }) {
   );
 }
 
-const DIGEST_SHOWN = 40;
+/** Long lists show this many, then a button for the rest. */
+const SHOWN = 40;
+
+/** A list of cards, the first SHOWN of them until asked for all. Keyed by message: a vote moves a card between lists. */
+function Cards({ ms }: { ms: P.MessageView[] }) {
+  const [all, setAll] = useState(false);
+  return (
+    <>
+      {(all ? ms : ms.slice(0, SHOWN)).map((m) => (
+        <PingCard key={m.id} m={m} />
+      ))}
+      {!all && ms.length > SHOWN && (
+        <button class="btn ghost small" onClick={() => setAll(true)}>
+          Show all {ms.length}
+        </button>
+      )}
+    </>
+  );
+}
 
 export function InboxBoard() {
   rev.value;
-  const [allDigest, setAllDigest] = useState(false);
-  const items = inbox.value.filter((m) => {
-    const c = db.conversations.get(m.conversationId);
-    return c && visibleConv(c);
-  });
-  // The last week, by where each one is now: a vote moves it between the lists at once.
-  const week = Date.now() - 7 * 86_400_000;
-  const recent = items.filter((m) => m.triage && m.ts > week);
-  const at = (l: P.TriageDecision) => recent.filter((m) => levelOf(m.triage!) === l);
-  const important = at('push').slice(0, 40);
-  const active = at('quiet').slice(0, 40);
-  // What matters most first, as the model sees it; then the newest.
-  const byScore = (a: P.MessageView, b: P.MessageView) => (b.triage!.score ?? 0) - (a.triage!.score ?? 0) || b.ts - a.ts;
-  const digest = at('digest').sort(byScore);
-  const below = at('drop').sort(byScore).slice(0, 30);
+  // The last week, by where each one is now: a vote moves it between the lists at once. The badge counts from the same.
+  const { important, active, digest, below, importantUnread } = board();
   const s = { attention: accountsNeedingYou() };
   return (
     <section class="pane board">
@@ -78,16 +86,16 @@ export function InboxBoard() {
           <Icon name="check" size={14} /> Mark all read
         </button>
         <div class="board-stats">
-          <span>
-            <b>{important.length}</b> important
+          <span data-count="important">
+            <b>{important.length}</b> important{importantUnread > 0 ? `, ${importantUnread} unread` : ''}
           </span>
-          <span>
+          <span data-count="active">
             <b>{active.length}</b> active
           </span>
-          <span>
+          <span data-count="digest">
             <b>{digest.length}</b> in digest
           </span>
-          <span>
+          <span data-count="attention">
             <b>{s.attention.length}</b> need you
           </span>
         </div>
@@ -99,7 +107,7 @@ export function InboxBoard() {
               <Icon name="alert" size={15} /> Accounts that need you
             </h3>
             {s.attention.map((a) => (
-              <button class="attention-card" onClick={() => go({ view: 'accounts', account: a.id })}>
+              <button key={a.id} class="attention-card" onClick={() => go({ view: 'accounts', account: a.id })}>
                 <SourceChip network={a.network} accountIds={[a.id]} />
                 <b>{a.label}</b>
                 <span>{a.attention?.message}</span>
@@ -112,11 +120,9 @@ export function InboxBoard() {
           <h3>
             <Icon name="bell" size={15} /> Important
           </h3>
-          <p class="muted">Buzzed your phone and notified your desktop.</p>
+          <p class="muted">Buzzed your phone and notified your desktop. The ones you have not read are the count on the Triage button.</p>
           {important.length === 0 && <p class="muted">Nothing this week.</p>}
-          {important.map((m) => (
-            <PingCard m={m} />
-          ))}
+          <Cards ms={important} />
         </div>
         <div class="board-block">
           <h3>
@@ -124,9 +130,7 @@ export function InboxBoard() {
           </h3>
           <p class="muted">A silent notification on your phone; nothing on the desktop.</p>
           {active.length === 0 && <p class="muted">Nothing this week.</p>}
-          {active.map((m) => (
-            <PingCard m={m} />
-          ))}
+          <Cards ms={active} />
         </div>
         <div class="board-block">
           <h3>
@@ -134,24 +138,18 @@ export function InboxBoard() {
           </h3>
           <p class="muted">Held back instead of notifying, what matters most first. Read it when you feel like it, or vote one up or down.</p>
           {digest.length === 0 && <p class="muted">Nothing this week.</p>}
-          {(allDigest ? digest : digest.slice(0, DIGEST_SHOWN)).map((m) => (
-            <PingCard m={m} />
-          ))}
-          {!allDigest && digest.length > DIGEST_SHOWN && (
-            <button class="btn ghost small" onClick={() => setAllDigest(true)}>
-              Show all {digest.length}
-            </button>
-          )}
+          <Cards ms={digest} />
         </div>
         {below.length > 0 && (
           <details class="board-block below">
             <summary>
-              <Icon name="eyeOff" size={15} /> Not interesting <span class="muted">· the closest {below.length} from the last two days</span>
+              <Icon name="eyeOff" size={15} /> Not interesting{' '}
+              <span class="muted">
+                · the closest {below.length} from the last {BELOW_DAYS === 2 ? 'two days' : `${BELOW_DAYS} days`}
+              </span>
             </summary>
             <p class="muted">Not even the digest: these stay unread in their chats. Vote one up if it should have made the digest.</p>
-            {below.map((m) => (
-              <PingCard m={m} />
-            ))}
+            <Cards ms={below} />
           </details>
         )}
         <Learned />
@@ -159,8 +157,6 @@ export function InboxBoard() {
     </section>
   );
 }
-
-const HEAD_LABEL: Record<P.TriageHead, string> = { ping: 'Ping', active: 'Notify', interesting: 'Digest' };
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -174,8 +170,8 @@ function ShadowLine() {
   const explored = s.explored.up + s.explored.down;
   return (
     <p class="muted shadow-line" title="A second model learns from what you do after messages (answers, opens, taps) as well as your votes. It only watches: it decides nothing until it is switched on.">
-      Learning from what you do, in the background: over the last {plural(days, 'day')} it would have pinged{' '}
-      {fewer > 0 ? `${fewer} fewer` : fewer < 0 ? `${-fewer} more` : 'as many'} ({s.shadow.ping} instead of {s.live.ping}), missed {plural(s.answered.missed, 'message')} you answered within 15 minutes
+      Learning from what you do, in the background: over the last {plural(days, 'day')} it would have made{' '}
+      {fewer > 0 ? `${fewer} fewer` : fewer < 0 ? `${-fewer} more` : 'as many'} Important ({s.shadow.ping} instead of {s.live.ping}), missed {plural(s.answered.missed, 'message')} you answered within 15 minutes
       {s.answered.gained ? `, and caught ${s.answered.gained} more` : ''}.{explored ? ` ${plural(explored, 'notification')} changed to learn from (silent only).` : ''}
     </p>
   );
@@ -202,8 +198,8 @@ function Learned() {
         <Icon name="sparkles" size={15} /> What it learned from your votes
       </h3>
       <p class="muted">
-        For each message it predicts three chances: worth a ping (at {Math.round(t.ping * 100)}% it buzzes), worth a silent notification (at {Math.round(t.active * 100)}%), and interesting enough for the digest (at{' '}
-        {Math.round(t.interesting * 100)}%). It starts from what Discord, Signal and the rest would notify you about; your votes move it from there, one chat at once, a person or a server
+        For each message it predicts three chances: <b>Important</b>, worth buzzing you (at {Math.round(t.ping * 100)}% or more); else <b>Active</b>, worth a silent notification (at{' '}
+        {Math.round(t.active * 100)}%); else <b>Digest</b>, interesting enough for the digest (at {Math.round(t.interesting * 100)}%); below that, Not interesting. It starts from what Discord, Signal and the rest would notify you about; your votes move it from there, one chat at once, a person or a server
         after a few, everything only after many.
       </p>
       <p class="muted">
@@ -214,7 +210,7 @@ function Learned() {
       </p>
       <ShadowLine />
       {p.factors.map((f) => (
-        <div class="rule-row">
+        <div key={f.key} class="rule-row">
           <span class={`factor-weight ${f.weight > 0 ? 'up' : 'down'}`} title={`${f.weight > 0 ? '+' : ''}${f.weight.toFixed(2)} log-odds`}>
             {f.weight > 0 ? '▲' : '▼'} {HEAD_LABEL[f.head]}
           </span>
@@ -231,7 +227,7 @@ function Learned() {
         <details class="rule-dropped">
           <summary>{p.rejected.length} forgotten</summary>
           {p.rejected.map((r) => (
-            <div class="rule-row">
+            <div key={r.key} class="rule-row">
               <span class="rule-text">{r.text}</span>
               <button class="btn ghost small" disabled={busy} onClick={act(() => forgetFactor(r.key, false))}>
                 Learn again

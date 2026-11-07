@@ -4,7 +4,8 @@
  * a message's menu.
  */
 import type * as P from '@dither-chat/protocol';
-import { isTier, levelOf, TIER_LABEL, TIERS, tierDown, tierUp, vote } from '../triage.ts';
+import { useEffect } from 'preact/hooks';
+import { HEAD_LABEL, isTier, levelOf, loadPolicy, thresholds, TIER_LABEL, TIERS, tierDown, tierUp, triagePolicy, vote } from '../triage.ts';
 import { Icon } from './icons.tsx';
 
 const WHAT: Record<P.NotifyTier, string> = {
@@ -81,21 +82,20 @@ export function triageHeading(d: P.TriageDecision): string {
           : 'This was silent because';
 }
 
-/** The model's three chances, as small bars: ping, notify, digest. */
+/** The model's three chances, as small bars, named for the level each one decides: Important, Active, Digest. */
 export function TriageChances({ p }: { p: P.TriageProbs }) {
-  const rows: [keyof P.TriageProbs, string, number][] = [
-    ['ping', 'Ping', 0.8],
-    ['active', 'Notify', 0.5],
-    ['interesting', 'Digest', 0.5],
-  ];
+  // The hub's own thresholds; its defaults until its policy is in.
+  useEffect(() => void (triagePolicy.value || loadPolicy()), []);
+  const at = thresholds();
+  const keys: (keyof P.TriageProbs)[] = ['ping', 'active', 'interesting'];
   return (
     <div class="triage-chances">
-      {rows.map(([k, label, at]) => (
-        <div class={`triage-chance ${p[k] >= at ? 'over' : ''}`} title={`${label}: ${Math.round(p[k] * 100)}% (at ${Math.round(at * 100)}% or more it does)`}>
-          <span>{label}</span>
+      {keys.map((k) => (
+        <div key={k} class={`triage-chance ${p[k] >= at[k] ? 'over' : ''}`} title={`${HEAD_LABEL[k]}: ${Math.round(p[k] * 100)}% (at ${Math.round(at[k] * 100)}% or more it is ${HEAD_LABEL[k]})`}>
+          <span>{HEAD_LABEL[k]}</span>
           <span class="triage-bar">
             <span style={{ width: `${Math.round(p[k] * 100)}%` }} />
-            <i style={{ left: `${at * 100}%` }} />
+            <i style={{ left: `${at[k] * 100}%` }} />
           </span>
           <b>{Math.round(p[k] * 100)}%</b>
         </div>
