@@ -12,11 +12,12 @@ import { netName } from '../model.ts';
 import { api, toast } from '../state.ts';
 import { Icon } from './icons.tsx';
 
-const HELP: Partial<Record<P.Network, { accept: string; what: string; folder?: string }>> = {
+const HELP: Partial<Record<P.Network, { accept: string; what: string; folder?: string; zip?: string }>> = {
   signal: {
     accept: '.backup',
-    what: 'a Molly or Signal backup. Pick the folder Molly backs up to (it holds SignalBackups and, with “Include kept messages”, .backup files), or a single .backup file.',
+    what: 'a Molly or Signal backup. Pick the folder Molly backs up to (it holds SignalBackups and, with “Include kept messages”, .backup files), or that folder zipped (on a phone, where a browser can’t pick a folder), or a single .backup file.',
     folder: 'Upload the backup folder',
+    zip: 'Upload it as a .zip',
   },
   discord: { accept: '.zip,.json,.html', what: 'Discord’s data package (package.zip) or a DiscordChatExporter export.' },
 };
@@ -94,6 +95,7 @@ function CensusLine({ c }: { c: P.ImportCensus }) {
           {count(x.snapshots, 'new-format snapshot')}
           {x.newestSnapshot ? ` (newest ${x.newestSnapshot.replace(/^signal-backup-/, '')})` : ''} · {count(x.attachments, 'attachment file')} ({bytes(x.attachmentBytes)}) ·{' '}
           {count(x.backups.length, '.backup file')}
+          {x.zip ? ' · unpacked from the zip' : ''}
         </p>
         {x.legacy && <CensusLine c={x.legacy} />}
       </>
@@ -180,7 +182,7 @@ function SourceRow({ s, account, onChange, importing }: { s: P.ImportSourceView;
   };
   const run = s.run;
   const running = !!run && !run.finishedAt;
-  const pct = s.status === 'uploading' ? s.received / Math.max(1, s.size) : s.status === 'counting' ? (s.progress ?? 0) : running ? run!.progress : null;
+  const pct = s.status === 'uploading' ? s.received / Math.max(1, s.size) : s.status === 'counting' || (s.status === 'checking' && s.progress !== null) ? (s.progress ?? 0) : running ? run!.progress : null;
   const canImport = s.importable && s.status === 'ready' && s.accountId === account.id && !running;
   const imported = !!run && !run.dryRun && run.stage === 'done';
   return (
@@ -331,6 +333,7 @@ export function ImportsSection({ a }: { a: P.AccountView }) {
   const cancel = useRef(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
+  const zipInput = useRef<HTMLInputElement>(null);
   const load = () => api<{ sources: P.ImportSourceView[] }>('/api/imports').then((r) => setSources(r.sources), () => setSources([]));
   const importing = !!sources?.some((s) => s.run && !s.run.finishedAt);
   const busy = !!upload || importing || !!sources?.some((s) => s.status === 'checking' || s.status === 'counting');
@@ -418,10 +421,16 @@ export function ImportsSection({ a }: { a: P.AccountView }) {
               <Icon name="folder" size={14} /> {help.folder}
             </button>
           )}
+          {help?.zip && (
+            <button class="btn ghost" onClick={() => zipInput.current?.click()}>
+              <Icon name="paperclip" size={14} /> {help.zip}
+            </button>
+          )}
           <button class="btn ghost" onClick={() => fileInput.current?.click()}>
             <Icon name="paperclip" size={14} /> Upload files
           </button>
           <input ref={fileInput} type="file" multiple hidden onChange={onPick} />
+          <input ref={zipInput} type="file" accept=".zip,application/zip" hidden onChange={onPick} />
           <input ref={folderInput} type="file" multiple hidden onChange={onPick} />
         </div>
       )}

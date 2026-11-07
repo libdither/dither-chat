@@ -14,7 +14,7 @@ import type { TriageVotes, Vote } from './votes.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
 import { ImportRunner } from './imports/engine.ts';
 import { GapFill } from './imports/gapfill.ts';
-import { MediaArchiver } from './mediaarchive.ts';
+import { linkPath, MediaArchiver } from './mediaarchive.ts';
 import { ImportSources } from './imports/sources.ts';
 import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } from './calls.ts';
 import { compress } from './compress.ts';
@@ -154,7 +154,7 @@ export class HubServer {
     this.importer = new ImportRunner(store, this.imports, opts.dataDir, (msg) => console.warn(msg));
     this.gapfill = new GapFill(store, (acc, cmd) => this.sup.command(acc, cmd, 180_000), (msg) => console.warn(msg));
     if (opts.archiveMedia)
-      this.archiver = new MediaArchiver(store, join(opts.dataDir, 'media-cache'), (url, acc) => this.archiveOne(url, acc), (msg) => console.warn(msg));
+      this.archiver = new MediaArchiver(store, join(opts.dataDir, 'media-cache'), (url, acc, from) => this.archiveOne(url, acc, from), (msg) => console.warn(msg), (acc, urls) => this.refreshUrls(acc, urls));
     this.calls = new Calls(store, sup, { turn: opts.turn, pickAccount: (c, a) => this.pickAccount(c, a) });
     this.abouts = new Abouts({
       store,
@@ -1219,8 +1219,8 @@ export class HubServer {
   }
 
   /** Fetch one URL into the media cache, as showing it would (mediaarchive.ts); true when it is there. */
-  private async archiveOne(url: string, accountId: string | null): Promise<boolean> {
-    const res = await this.fetchMedia(url, accountId);
+  private async archiveOne(url: string, accountId: string | null, from?: string): Promise<boolean> {
+    const res = await this.fetchMedia(url, accountId, from);
     await res.body?.cancel().catch(() => {});
     return res.ok;
   }
@@ -1234,7 +1234,22 @@ export class HubServer {
     return { bytes: new Uint8Array(await res.arrayBuffer()), mime: res.headers.get('content-type') ?? 'application/octet-stream' };
   }
 
-  private async fetchMedia(raw: string, accountId: string | null): Promise<Response> {
+  /**
+   * Discord attachment links signed again by the account (its extractor's refreshUrls action): new link by old.
+   * Throws when the account can't ask (offline, or an extractor from before the action).
+   */
+  private async refreshUrls(accountId: string, urls: string[]): Promise<Map<string, string>> {
+    if (this.store.account(accountId)?.network !== 'discord') throw new Error('not a Discord account');
+    const r = await this.sup.command<{ refreshed?: { original: string; refreshed: string }[] }>(accountId, { t: 'action', action: 'refreshUrls', args: { urls } }, 90_000);
+    if (!Array.isArray(r?.refreshed)) throw new Error('the extractor cannot refresh links');
+    return new Map(r.refreshed.map((x) => [x.original, x.refreshed]));
+  }
+
+  /**
+   * The bytes behind `raw`, from the media cache, else fetched and kept there. `from` is where to fetch them when not
+   * from `raw` itself: a Discord link signed again, whose bytes are kept under the old link the message has.
+   */
+  private async fetchMedia(raw: string, accountId: string | null, from?: string): Promise<Response> {
     const cacheDir = join(this.opts.dataDir, 'media-cache');
     if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
     const key = new Bun.CryptoHasher('sha256').update(raw).digest('hex');
@@ -1252,8 +1267,13 @@ export class HubServer {
     let bytes: Uint8Array;
     let mime = 'application/octet-stream';
     if (raw.startsWith('https://') || raw.startsWith('http://')) {
+      // An old Discord link, opened before the archive got to it: signed again through the account first.
+      if (!from && accountId && MediaArchiver.expired(raw))
+        from = await this.refreshUrls(accountId, [raw])
+          .then((m) => m.get(raw) ?? [...m.entries()].find(([o]) => linkPath(o) === linkPath(raw))?.[1])
+          .catch(() => undefined);
       // A URL from someone else's message: public addresses only, redirects checked, size capped (fetchsafe.ts).
-      const r = await fetchPublicToFile(raw, file);
+      const r = await fetchPublicToFile(from ?? raw, file);
       if (!r.ok) return new Response(r.error, { status: r.status });
       writeFileSync(file + '.mime', r.mime, { mode: 0o600 });
       return new Response(Bun.file(file), { headers: headers(r.mime) });

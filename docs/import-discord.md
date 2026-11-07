@@ -139,8 +139,9 @@ network code.
 The hub serves `file://` only under its data dir (`server.ts` `fetchMedia`). So the importer copies the referenced
 files to `<DITHER_DATA>/import/discord/<accountId>/<name>`, using a hardlink when on the same filesystem, and writes
 those paths as attachment URLs. Only referenced attachments, avatars and emoji are copied, not whole folders. The 14
-missing files and the expired CDN links (about 7k) become attachments with their original URL. A later pass could
-refresh them through the logged-in client (Discord's `attachments/refresh-urls`), but that is optional.
+missing files and the expired CDN links (about 7k) become attachments with their original URL. The media archive
+signs those again through the logged-in client (Discord's `attachments/refresh-urls`) and keeps their bytes
+(docs/import.md, "Media archive").
 
 The exports (about 8.4 GB with media) were copied to the hub's machine over ssh as sources. Since they now sit inside
 the data dir, apply hardlinks referenced files into `<data>/imports/media/` (content-addressed), so deleting a

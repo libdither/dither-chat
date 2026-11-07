@@ -22,6 +22,15 @@ export function cleanFileName(raw: string | null): string {
   return name.length > 200 ? name.slice(name.length - 200) : name;
 }
 
+/** A path inside a picked folder, each part cleaned like a file name; never absolute, never "..". */
+export function cleanRelPath(p: string): string {
+  return p
+    .split(/[\\/]+/)
+    .filter((x) => x && x !== '.' && x !== '..')
+    .map((x) => cleanFileName(x))
+    .join('/');
+}
+
 export class Uploads {
   private items = new Map<string, P.OutgoingAttachment & { at: number }>();
 

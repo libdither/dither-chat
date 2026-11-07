@@ -236,5 +236,13 @@ the source and everything before the failed stage intact.
   only when asked. Progress in `gap_fill`; a restart carries on.
 - **Media archive**: every attachment with a remote URL is fetched into `media-cache/` soon after it arrives (a
   rowid cursor in `meta`), one at a time; failures are tried three times, six hours apart (`media_archive_fail`).
-  The cache is no longer trimmed unless `DITHER_MEDIA_CACHE_MB` is set. Discord links that expired before the
-  archive saw them can't be fetched: the extractor has no `attachments/refresh-urls` yet.
+  The cache is no longer trimmed unless `DITHER_MEDIA_CACHE_MB` is set. A Discord link past its expiry (`ex`) is
+  signed again through the account that saw it: the extractor's `refreshUrls` action (an `action` command, so no
+  protocol change) posts to `attachments/refresh-urls`, fifty links at a time and paced like history, as Discord's
+  own client does when it shows an old attachment. The bytes from the new link are kept under the old link, which is
+  what the message stores. A link Discord won't sign again is marked `gone`. Opening an old attachment before the
+  archive reaches it signs that one link on the spot.
+- **Zipped folders**: a Signal upload that is one `.zip` (a Molly folder zipped on a phone, whose browser can pick
+  files but not folders) stays in `raw/` as it came and is unpacked into the source's `unpacked/` in a worker
+  (`imports/zip.ts`: Zip64, stored or deflated, CRC-checked, paths cleaned, links refused), then counted as the
+  folder. Its identity is the zip's sha256.

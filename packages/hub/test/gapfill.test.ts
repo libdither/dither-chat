@@ -106,3 +106,48 @@ describe('media archive', () => {
     expect(store.db.query('SELECT tries, error FROM media_archive_fail ORDER BY error').all()).toEqual([{ tries: 1, error: null }, { tries: 3, error: 'expired' }]);
   });
 });
+
+describe('expired Discord links', () => {
+  test('are signed again in batches through the account, kept under the old link; ones Discord won’t sign are gone', async () => {
+    const { store, acc } = world('refresh');
+    const cache = join(dir, 'media-cache-refresh');
+    mkdirSync(cache, { recursive: true });
+    const past = (Math.floor(Date.now() / 1000) - 3600).toString(16);
+    const link = (i: number) => `https://cdn.discordapp.com/attachments/1/${i}/f${i}.png?ex=${past}&is=0&hm=0`;
+    for (let i = 0; i < 60; i++) store.ingest(acc, { t: 'message', message: { ...msg(100 + i, T0 + i), attachments: [{ kind: 'image', url: link(i) }] }, live: false });
+    const key = (u: string) => new Bun.CryptoHasher('sha256').update(u).digest('hex');
+    const asked: string[][] = [];
+    const fetched: [string, string | undefined][] = [];
+    let offline = true;
+    const a = new MediaArchiver(
+      store,
+      cache,
+      async (url, _acc, from) => {
+        fetched.push([url, from]);
+        if (!from) return false;
+        writeFileSync(join(cache, key(url)), 'x');
+        return true;
+      },
+      () => {},
+      async (account, urls) => {
+        expect(account).toBe('acc_dc');
+        if (offline) throw new Error('offline');
+        asked.push(urls);
+        // Discord answers without the old signature, and leaves out one it no longer has.
+        return new Map(urls.filter((u) => !u.includes('/7/')).map((u) => [u.split('?')[0], u.split('?')[0] + '?ex=ffffffff&is=1&hm=1']));
+      },
+    );
+    await a.tick();
+    // Nothing fetched one by one; all marked for a batch, and the account was offline.
+    expect(fetched).toEqual([]);
+    expect((store.db.query(`SELECT COUNT(*) AS n FROM media_archive_fail WHERE error = 'expired'`).get() as any).n).toBe(60);
+    offline = false;
+    (a as any).refreshPausedUntil = 0;
+    await a.refreshExpired();
+    expect(asked.map((b) => b.length)).toEqual([50, 10]);
+    expect(fetched.every(([u, f]) => f && f.startsWith(u.split('?')[0]) && f.includes('ex=ffffffff'))).toBe(true);
+    expect(existsSync(join(cache, key(link(0))))).toBe(true);
+    expect(store.db.query('SELECT error FROM media_archive_fail').all()).toEqual([{ error: 'gone' }]);
+    expect(a.refreshed).toBe(59);
+  });
+});

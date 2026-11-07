@@ -12,6 +12,9 @@ import { HubServer, mediaSigner } from '../src/server.ts';
 import { Store } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
 import { SYNTHETIC_PASSPHRASE, syntheticBackup, syntheticV2 } from './fixtures/synthetic-backup.ts';
+import { makeZip } from './fixtures/zip.ts';
+import { unzip, zipEntries } from '../src/imports/zip.ts';
+import { cleanRelPath } from '../src/uploads.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'dither-imports-'));
 const backup = syntheticBackup();
@@ -59,6 +62,38 @@ describe('legacy backup reader', () => {
     expect(c.frames).toEqual({ 'recipient.self': 1, 'recipient.contact': 1, chat: 1, chatItem: 1 });
     expect(c.chatItems).toEqual({ standard: 1 });
     expect(c.standard.reactions).toBe(1);
+  });
+});
+
+describe('zip reader', () => {
+  const enc = (t: string) => new TextEncoder().encode(t);
+  const big = new Uint8Array(300_000).map((_, i) => (i * 7) % 251);
+  for (const zip64 of [false, true])
+    test(`unpacks stored and deflated entries${zip64 ? ', Zip64' : ''}, paths cleaned`, async () => {
+      const z = join(dir, `t${zip64 ? 64 : 32}.zip`);
+      writeFileSync(z, makeZip([{ name: 'Backups/', bytes: new Uint8Array() }, { name: 'Backups/a.txt', bytes: enc('hello'), store: true }, { name: 'Backups/files/ab/big', bytes: big }, { name: '../../escape', bytes: enc('x') }, { name: 'empty', bytes: new Uint8Array() }], { zip64 }));
+      expect(zipEntries(z).map((e) => e.name)).toEqual(['Backups/', 'Backups/a.txt', 'Backups/files/ab/big', '../../escape', 'empty']);
+      const out = join(dir, `out${zip64 ? 64 : 32}`);
+      const r = await unzip(z, out, { clean: cleanRelPath, maxBytes: 1 << 30 });
+      expect(r).toEqual({ files: 4, bytes: 5 + big.length + 1 });
+      expect(readFileSync(join(out, 'Backups/a.txt'), 'utf8')).toBe('hello');
+      expect(new Uint8Array(readFileSync(join(out, 'Backups/files/ab/big')))).toEqual(big);
+      expect(readFileSync(join(out, 'escape'), 'utf8')).toBe('x');
+      expect(statSync(join(out, 'empty')).size).toBe(0);
+    });
+
+  test('refuses links, a damaged entry, too much, and what is not a zip', async () => {
+    const z = join(dir, 'bad.zip');
+    writeFileSync(z, makeZip([{ name: 'l', bytes: enc('/etc/passwd'), mode: 0o120777 }]));
+    await expect(unzip(z, join(dir, 'o1'), { clean: cleanRelPath, maxBytes: 1 << 30 })).rejects.toThrow(/link/);
+    const ok = makeZip([{ name: 'a', bytes: enc('hello hello hello'), store: true }]);
+    ok[30 + 1 + 2] ^= 1; // a byte of the data
+    writeFileSync(z, ok);
+    await expect(unzip(z, join(dir, 'o2'), { clean: cleanRelPath, maxBytes: 1 << 30 })).rejects.toThrow(/checksum/);
+    writeFileSync(z, makeZip([{ name: 'a', bytes: big }]));
+    await expect(unzip(z, join(dir, 'o3'), { clean: cleanRelPath, maxBytes: 1000 })).rejects.toThrow(/more than/);
+    writeFileSync(z, 'not a zip at all');
+    expect(() => zipEntries(z)).toThrow(/not a zip/);
   });
 });
 
@@ -175,6 +210,36 @@ describe('import sources over HTTP', () => {
     v = await until(id, (v) => v.status === 'ready');
     expect((v.census as any).legacy.messages.total).toBe(5);
     expect(statSync(join(hubDir, 'imports/sources', id, 'raw/escape.txt')).size).toBe(att.length);
+  });
+
+  test('a zipped Molly folder is unpacked beside the zip and counted as the folder', async () => {
+    const zip = makeZip(
+      [
+        { name: 'Backups/SignalBackups/signal-backup-2026-11-06-10-00-00/main', bytes: new TextEncoder().encode('encrypted main') },
+        { name: 'Backups/SignalBackups/signal-backup-2026-11-06-10-00-00/metadata', bytes: new TextEncoder().encode('metadata') },
+        { name: 'Backups/SignalBackups/files/ab/abcdef', bytes: new TextEncoder().encode('an attachment') },
+        { name: 'Backups/signal-2026-11-06-10-00-00.backup', bytes: backup, store: true },
+      ],
+      { zip64: true },
+    );
+    const created = await json<P.ImportSourceView>('/api/imports', { method: 'POST', body: { accountId: 'acc_sig', name: 'Backups.zip', size: zip.length } });
+    const id = created.data.id;
+    expect(created.data.kind).toBe('signal-folder');
+    await json(`/api/imports/${id}/data?offset=0`, { method: 'PUT', body: zip });
+    let v = await until(id, (v) => v.status !== 'uploading' && v.status !== 'checking');
+    expect(v.status).toBe('needs-passphrase');
+    expect(v.sha256).toBe(new Bun.CryptoHasher('sha256').update(zip).digest('hex'));
+    expect(v.census).toMatchObject({ format: 'signal-folder', zip: true, snapshots: 1, attachments: 1, backups: [{ name: 'signal-2026-11-06-10-00-00.backup', legacy: true }] });
+    await json(`/api/imports/${id}/passphrase`, { method: 'POST', body: { passphrase: SYNTHETIC_PASSPHRASE } });
+    v = await until(id, (v) => v.status === 'ready');
+    expect((v.census as any).legacy.messages.total).toBe(5);
+    // raw/ keeps the zip as it came; checking again doesn't unpack again.
+    const src = join(hubDir, 'imports/sources', id);
+    expect(statSync(join(src, 'raw/Backups.zip')).size).toBe(zip.length);
+    const before = statSync(join(src, 'unpacked')).mtimeMs;
+    await json(`/api/imports/${id}/check`, { method: 'POST', body: {} });
+    await until(id, (v) => v.status === 'ready');
+    expect(statSync(join(src, 'unpacked')).mtimeMs).toBe(before);
   });
 
   test('a source can be given an account, and forgotten', async () => {

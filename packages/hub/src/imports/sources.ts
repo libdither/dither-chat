@@ -5,6 +5,8 @@
  *                 added it (an upload here, or by hand next to an rsync'd raw/); the hub only edits label/account.
  *   raw/          the bytes as they came: one uploaded file, or an export's own tree. Never modified.
  *   state.json    what the hub worked out: hash, size, census, errors. Derived; deleting it redoes the work.
+ *   unpacked/     a zipped upload unpacked (a Molly folder zipped on the phone). Derived from raw/'s zip; deleting
+ *                 it unpacks again.
  *   passphrase    a backup's passphrase, if given (0600).
  *
  * The directory is the truth and needs no database row, so a source copied in by rsync appears on the
@@ -15,7 +17,7 @@ import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, rea
 import { dirname, join, relative, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { MAX_IMPORT } from '@dither-chat/protocol';
-import { cleanFileName } from '../uploads.ts';
+import { cleanFileName, cleanRelPath } from '../uploads.ts';
 import { importable } from './engine.ts';
 import { isPassphrase, normalizePassphrase, sniffLegacy } from './signal-backup.ts';
 
@@ -46,6 +48,8 @@ interface StateFile {
   kind?: P.ImportSourceKind;
   checkedAt?: number;
   run?: P.ImportRunView;
+  /** unpacked/ came from the zip with this sha256. */
+  unpackedFrom?: string;
 }
 
 const ID = /^[\w][\w.-]{0,100}$/;
@@ -322,10 +326,22 @@ export class ImportSources {
       if (!pass) return this.setState(id, { status: 'needs-passphrase' });
       return this.count(id, up, pass);
     }
+    let root = join(d, 'raw');
+    const zipped = !!up && src.network === 'signal' && /\.zip$/i.test(up);
+    if (zipped) {
+      // A Molly folder zipped (a phone's browser picks files, not folders): unpacked beside raw/, which keeps the
+      // zip as it came, then counted as the folder.
+      root = join(d, 'unpacked');
+      if (this.readState(id)?.unpackedFrom !== sha256 || !existsSync(root)) {
+        await this.unpack(id, up!, root);
+        this.setState(id, { unpackedFrom: sha256 });
+      }
+    }
     if (kind === 'signal-folder' || (src.network === 'signal' && !up)) {
       // A Molly backup folder: new-format snapshots under SignalBackups/, and with "Include kept messages", .backup
       // files beside it. The newest .backup is the one counted.
-      const folder = signalFolder(join(d, 'raw'));
+      const folder = signalFolder(root);
+      if (zipped) folder.census.zip = true;
       this.setState(id, { kind: 'signal-folder', census: folder.census });
       if (folder.newestBackup) {
         const pass = this.passphrase(id);
@@ -334,6 +350,38 @@ export class ImportSources {
       }
     }
     this.setState(id, { status: 'ready' });
+  }
+
+  /** Unpack a zipped upload into `dest` in a worker; a half-unpacked folder is thrown away and done again. */
+  private unpack(id: string, zip: string, dest: string): Promise<void> {
+    const tmp = dest + '.part';
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(dest, { recursive: true, force: true });
+    mkdirSync(tmp, { recursive: true, mode: 0o700 });
+    this.progress.set(id, 0);
+    return new Promise((resolve, reject) => {
+      const w = new Worker(new URL('./unzip-worker.ts', import.meta.url).href);
+      this.workers.set(id, w);
+      const end = (err?: Error) => {
+        w.terminate();
+        this.workers.delete(id);
+        this.progress.delete(id);
+        if (err) {
+          rmSync(tmp, { recursive: true, force: true });
+          reject(err);
+        } else {
+          renameSync(tmp, dest);
+          resolve();
+        }
+      };
+      w.onmessage = (e: MessageEvent<any>) => {
+        if (typeof e.data.progress === 'number') this.progress.set(id, e.data.progress);
+        else if (e.data.done) end();
+        else end(new Error(`unpacking the zip: ${e.data.error ?? 'failed'}`));
+      };
+      w.onerror = (e) => end(new Error(`unpacking the zip: ${e.message || 'failed'}`));
+      w.postMessage({ zip, outDir: tmp, maxBytes: MAX_IMPORT });
+    });
   }
 
   private passphrase(id: string): string | null {
@@ -406,6 +454,13 @@ export class ImportSources {
     const d = this.dir(id);
     return d ? join(d, 'raw') : null;
   }
+
+  /** Where a reader finds the source's files: the unpacked zip, when it was one, else raw/. */
+  contentDir(id: string): string | null {
+    const d = this.dir(id);
+    if (!d) return null;
+    return existsSync(join(d, 'unpacked')) ? join(d, 'unpacked') : join(d, 'raw');
+  }
 }
 
 function walk(dir: string): string[] {
@@ -433,14 +488,6 @@ function hashInWorker(what: { file: string } | { dir: string }): Promise<{ size:
 
 const MAX_FILES = 200_000;
 
-/** A path inside a picked folder, each part cleaned like a file name; never absolute, never "..". */
-export function cleanRelPath(p: string): string {
-  return p
-    .split(/[\\/]+/)
-    .filter((x) => x && x !== '.' && x !== '..')
-    .map((x) => cleanFileName(x))
-    .join('/');
-}
 
 /** What a Molly backup folder holds, by names and sizes only. */
 export function signalFolder(raw: string): { census: P.ImportCensus; newestBackup: string | null } {

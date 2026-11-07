@@ -192,8 +192,10 @@ for text only).
 ## Recommended pipeline
 
 ```
-phone: Molly → make an on-device (legacy) backup
-phone: dither-chat → Accounts → Signal → History → Upload (resumable; the file goes to <data>/imports/sources/)
+phone: Molly → on-device backup, with "Include kept messages" (writes SignalBackups/ and a legacy .backup)
+phone: dither-chat → Accounts → Signal → History → upload the folder, or the folder as one .zip (a phone's browser
+       picks files, not folders), or the .backup alone (resumable; it goes to <data>/imports/sources/; a zip is
+       unpacked beside it)
 hub, in a worker:
   1. header check: is it a legacy backup, which version                 done on upload
   2. passphrase → census: counts, date range, keepmsg rows, schema       done; a wrong passphrase is forgotten
