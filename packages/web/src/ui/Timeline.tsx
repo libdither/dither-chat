@@ -697,11 +697,19 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
     return () => clearTimeout(id);
   });
 
+  // At the very top the browser keeps the view at the top while older messages come in above it: that shows
+  // them, and asks for the next page, and the next, to the start. So the message that was first stays where it was.
+  const anchor = useRef<{ id: string; y: number } | null>(null);
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
     // column-reverse: scrollTop is 0 at the bottom and negative going up.
-    if (el.scrollHeight + el.scrollTop - el.clientHeight < 400) loadTimeline(tkey, true);
+    if (el.scrollHeight + el.scrollTop - el.clientHeight < 400) {
+      const first = t && !t.loading && t.hasMore ? t.messages[0] : null;
+      const node = first && document.getElementById(`m-${first.id}`);
+      if (node) anchor.current = { id: first.id, y: node.getBoundingClientRect().top };
+      loadTimeline(tkey, true);
+    }
     if (t?.detached) {
       if (Math.abs(el.scrollTop) < 400) void loadNewer(tkey);
     } else if (Math.abs(el.scrollTop) < 40 && document.visibilityState === 'visible') convIds.forEach(markRead);
@@ -713,6 +721,15 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
 
   const mine = pending.value.filter((p) => convIds.includes(p.conversationId));
   const msgs = t?.messages ?? [];
+  useLayoutEffect(() => {
+    const a = anchor.current;
+    if (!a || t?.loading || msgs[0]?.id === a.id) return;
+    anchor.current = null;
+    const node = document.getElementById(`m-${a.id}`);
+    const el = scroller.current;
+    const moved = node ? node.getBoundingClientRect().top - a.y : 0;
+    if (el && Math.abs(moved) >= 1) el.scrollTop += moved;
+  });
   // A switch is done once the newest message is on screen, or the hub has answered (docs/perf.md).
   const painted = useRef('');
   useEffect(() => {
