@@ -51,12 +51,12 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Drafts per conversation | M | L | done | On each device, not synced |
 | Send attachments and images | H | M | done | Paste, drop or pick. Sent live on Discord, against a local homeserver on Matrix, on the demo adapter. Signal's live send is unverified: only a fake signal-cli has seen it. In encrypted Matrix rooms only once encryption is set up |
 | Mark all read | M | L | done | Everywhere, or per server, folder or person. A paced queue on the hub tells the networks and survives restarts |
-| Typing indicator, outgoing | L | L | later | Shown incoming, not sent |
+| Typing indicator, outgoing | L | L | done | Both ways on every network, with a privacy switch ([typing.md](typing.md)) |
 | Pinned messages, polls, stickers from the picker | M | M | later | |
 | Calls without media: timeline events, ringing push, link out, who is in Discord voice | M | M | next | Signal offers already reach the timeline; hangups and Matrix calls do not. No media stack needed |
 | Matrix calls through Element Call | M | H | later | Standalone is cheapest but is a second login. Self-hosting needs LiveKit and a homeserver you control. MatrixRTC is unmerged |
 | Signal 1:1 voice | L | H | later | signal-cli has it experimentally since 0.14.2, voice only, with no packaged tunnel binary, and would need a WebRTC bridge to the PWA |
-| Discord voice and video | L | H | blocked | A third-party voice client is a banned self-bot. Piping media through the sandbox is fragile and breaks E2EE at the hub, so take the call in Discord's app |
+| Discord voice | M | H | done | Through the account's own client in its sandbox (bridge), or from the device with Discord's libdave and the hub's TURN relay (direct) ([calls.md](calls.md)). Video is not done |
 | Matrix E2EE rooms: read, write, media, edits, reactions | H | H | done | Opt-in per account, with the Rust crypto library. Verified on a local homeserver only, against clients built on the same library and matrix-nio, not Element |
 | Matrix E2EE: old messages through the key backup | H | M | done | Recovery key, Secret Storage key or passphrase. Keys come per session when a message needs them |
 | Matrix E2EE: verifying this device | M | M | done | Emoji with another of your devices, or a Secret Storage key. No QR |
@@ -84,4 +84,5 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Public certificate through DNS-01 | M | L | done | Let's Encrypt wildcard through a Caddy on the hub's machine. No per-device step |
 | Login, beyond tailnet membership | M | M | next | Anyone on the tailnet can read everything today |
 | Offline reading of recent messages | M | M | later | The shell works offline; data does not |
-| Backups of `.data` | M | L | later | |
+| Backups of `.data` | M | L | done | A nightly `VACUUM INTO`, the newest seven kept, and a copy before any schema change ([deploy.md](deploy.md#backups-and-upkeep)) |
+| Names the hub answers to, media from public addresses only | H | L | done | A Host allowlist against DNS rebinding, and the media proxy refuses private addresses and caps sizes ([deploy.md](deploy.md#who-can-reach-it)) |
