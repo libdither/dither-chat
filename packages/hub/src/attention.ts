@@ -549,12 +549,19 @@ export function scoreConversation(x: ScoreInput): Scored {
 // ------------------------------------------------------------------ the follow-up seam
 
 /**
- * A local model asked "does this need a reply from me?" and "how important is it?" for a few candidate
- * conversations, with your corrections as examples, the way triage.ts asks Ollama (docs/inbox.md). Nothing
- * implements it yet; `Attention.judged` is where answers would go, and `scoreConversation` already uses them.
+ * A model's say in the order (docs/inbox.md). Two ways in:
+ *  - `judge`: a local model asked "does this need a reply from me?" and "how important is it?" for a few candidate
+ *    conversations, the way triage.ts asks Ollama. Nothing implements it yet; `Attention.judged` is where answers
+ *    would go, and `scoreConversation` already uses them.
+ *  - `rank`: a learned order (ranker.ts), asked as each conversation is scored, with the formula's answer. Its score
+ *    is what the inbox sorts by; `needs` and the reasons stay the formula's. Null keeps the formula's score.
  */
 export interface AttentionJudge {
-  judge(items: { conversationId: string; messageIds: string[] }[]): Promise<Map<string, Judged>>;
+  judge?(items: { conversationId: string; messageIds: string[] }[]): Promise<Map<string, Judged>>;
+  rank?(conversationId: string, x: ScoreInput, formula: Scored): { score: number; reason?: string } | null;
+  /** What it says about one conversation, for `explain`. */
+  explain?(conversationId: string): unknown;
+  forget?(conversationId: string): void;
 }
 
 // ------------------------------------------------------------------ kept in the database
@@ -587,6 +594,8 @@ export class Attention {
   private timers: ReturnType<typeof setInterval>[] = [];
   /** Answers from an AttentionJudge, by conversation (follow-up). */
   readonly judged = new Map<string, Judged>();
+  /** A model's say in the order: the learned one (ranker.ts). */
+  judge?: AttentionJudge;
   /** The activity log's per-place features (docs/activity.md): shown by `explain`, not scored yet. */
   activity?: Pick<ActivityStore, 'features'>;
 
@@ -685,6 +694,7 @@ export class Attention {
   private forget(cid: string) {
     this.reset(cid);
     this.judged.delete(cid);
+    this.judge?.forget?.(cid);
   }
 
   /**
@@ -827,6 +837,8 @@ export class Attention {
     if (!x) return null;
     const s = scoreConversation(x);
     const f = x.state;
+    // So what the learned order says is as of now too.
+    this.judge?.rank?.(cid, x, s);
     return {
       ...s,
       listed: x.listed,
@@ -840,6 +852,7 @@ export class Attention {
         owedKind: f.turn?.kind ?? null,
       },
       activity: this.activity?.features(cid, now) ?? null,
+      learned: this.judge?.explain?.(cid) ?? null,
     };
   }
 
@@ -855,7 +868,9 @@ export class Attention {
     const x = this.input(cid, now);
     if (!x) return null;
     const s = scoreConversation(x);
-    return { id: cid, score: s.score, needs: s.needs, reasons: s.reasons, owedSince: s.owedSince, at: now };
+    const r = this.judge?.rank?.(cid, x, s) ?? null;
+    const reasons = r?.reason ? [...s.reasons.slice(0, 3), r.reason] : s.reasons;
+    return { id: cid, score: r ? r.score : s.score, needs: s.needs, reasons, owedSince: s.owedSince, at: now };
   }
 
   /** The view if it changed, 'removed' if the inbox no longer lists it, null if nothing changed. */

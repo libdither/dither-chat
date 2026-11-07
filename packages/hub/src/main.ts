@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import { Categorizer, JevProvider, KeywordProvider, OllamaProvider, type CategoryProvider } from './categorize.ts';
 import { ActivityStore } from './activity.ts';
 import { Attention } from './attention.ts';
+import { InboxRanker, rankMode } from './ranker.ts';
 import { applyDemoOverlay, createDemoAccounts, demoFactory } from './demo.ts';
 import { Delivery } from './delivery.ts';
 import { Devices } from './devices.ts';
@@ -63,6 +64,9 @@ activity.prune(Date.now(), true);
 const triage = new Triage(store, model, activity);
 const votes = new TriageVotes(store, triage);
 const attention = new Attention(store, triage);
+// The inbox's learned order (ranker.ts, docs/inbox.md). DITHER_INBOX_RANK=shadow works it out without sorting by it; off.
+const ranker = new InboxRanker(store, triage, rankMode(process.env.DITHER_INBOX_RANK), join(dataDir, 'hub.sqlite'));
+attention.judge = ranker;
 // Per-device notification rules (docs/devices.md).
 const devices = new Devices(store, triage);
 // One notification per conversation, buzzing once a burst (docs/notifications.md).
@@ -263,6 +267,8 @@ sup.startAll();
 if (store.accounts().some((a) => a.demo)) applyDemoOverlay(store);
 server.start();
 attention.start((events) => server.broadcast(events));
+ranker.onFit = () => server.broadcast(attention.rescoreAll());
+ranker.start();
 // Scores live in memory and were worked out afresh: a client resuming from before this start takes the whole list.
 server.broadcast([{ t: 'attention', items: attention.list(), removed: [], replace: true }]);
 if (store.journal.started === 'unclean') console.log('sync: the hub did not stop cleanly last time; clients start over with a full bootstrap');
@@ -281,6 +287,7 @@ const shutdown = async () => {
   // What is being triaged finishes first (a few seconds at most); the rest waits in triage_pending for the next start.
   await Promise.race([queue, new Promise((r) => setTimeout(r, 5_000))]);
   backup.stop();
+  ranker.stop();
   attention.stop();
   embeddings?.close();
   server.stop();
