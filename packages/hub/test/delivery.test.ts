@@ -84,6 +84,38 @@ describe('one notification per conversation', () => {
     expect(p.conv.icon).toBe(p.sender.icon!);
   });
 
+  test("a Discord group with no picture: the sender's until the extractor names Discord's default one, then that, logged as no change", () => {
+    let dc = store.createAccount({ network: 'discord', label: 'dc', color: '#111', adapter: 'discord' });
+    store.ingest(dc, { t: 'status', status: 'online', self: { nativeId: 'dme', displayName: 'Me' } });
+    dc = store.accounts().find((a) => a.id === dc.id)!;
+    store.ingest(dc, { t: 'identity', identity: { nativeId: 'cy', displayName: 'Cy', avatarUrl: 'https://cdn.example/cy.png' } });
+    const group = { nativeId: 'gdm', shape: 'group' as const, name: 'Trip', participants: ['cy'] };
+    store.ingest(dc, { t: 'conversation', conversation: group });
+    const t = Date.now() + 20_000;
+    const sayIn = (nativeId: string, ts: number) => {
+      store.ingest(dc, { t: 'message', message: { nativeId, conversation: 'gdm', author: 'cy', ts, body: 'tickets?' }, live: true });
+      store.db.query(`INSERT OR REPLACE INTO triage (message_id, decision, reasons, decided_by, created_at) VALUES (?, 'push', '[]', 'rules', ?)`).run(msg(nativeId), ts);
+      return delivery.plan(conv('gdm'), msg(nativeId), 'push', false, ts)!;
+    };
+    const before = sayIn('g1', t);
+    expect(before.conv).toEqual({ title: 'Trip', shape: 'group' });
+    expect(before.sender.icon).toBe(`/media/${dc.id}/https://cdn.example/cy.png`);
+    expect(store.conversationView(conv('gdm'))!.avatar).toBeNull();
+
+    // The extractor (contracts: group DM icons) names the picture Discord's own client shows for such a group.
+    const DEFAULT = 'https://discord.com/assets/placeholder-group-icon.png';
+    store.ingest(dc, { t: 'conversation', conversation: { ...group, avatarUrl: DEFAULT } });
+    const after = sayIn('g2', t + 1);
+    expect(after.conv.icon).toBe(`/media/${dc.id}/${DEFAULT}`);
+    expect(after.sender.icon).toBe(`/media/${dc.id}/https://cdn.example/cy.png`);
+    expect(store.conversationView(conv('gdm'))!.avatar).toBe(`/media/${dc.id}/${DEFAULT}`);
+    expect(store.one(`SELECT COUNT(*) AS n FROM change_log WHERE target_id = ? AND field = 'avatar'`, conv('gdm'))!.n).toBe(0);
+    // A fact without one keeps it; a real change is still logged.
+    store.ingest(dc, { t: 'conversation', conversation: { ...group, name: 'Trip!' } });
+    expect(store.conversationView(conv('gdm'))!.avatar).toBe(`/media/${dc.id}/${DEFAULT}`);
+    expect(store.one(`SELECT COUNT(*) AS n FROM change_log WHERE target_id = ? AND field = 'name'`, conv('gdm'))!.n).toBe(1);
+  });
+
   test('a long burst keeps under the push budget', () => {
     const t = Date.now() + 10_000;
     for (let i = 0; i < 12; i++) say(`L${i}`, 'fam', i % 2 ? 'ann' : 'bo', t + i, 'x'.repeat(400));
