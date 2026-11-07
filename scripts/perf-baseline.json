@@ -15,31 +15,31 @@
  },
  "metrics": {
   "hub.bootstrap.bytes": {
-   "v": 4437979,
+   "v": 4438003,
    "kind": "bytes"
   },
   "hub.bootstrap.ms": {
-   "v": 81,
+   "v": 80,
    "kind": "ms"
   },
   "hub.inbox.ms": {
-   "v": 59,
+   "v": 53,
    "kind": "ms"
   },
   "1x.cold.list": {
-   "v": 702,
+   "v": 674,
    "kind": "ms"
   },
   "1x.cold.fresh": {
-   "v": 275,
+   "v": 252,
    "kind": "ms"
   },
   "1x.cold.longest": {
-   "v": 275,
+   "v": 264,
    "kind": "ms"
   },
   "1x.cold.longTasks": {
-   "v": 582,
+   "v": 566,
    "kind": "ms"
   },
   "1x.cold.renders": {
@@ -51,23 +51,23 @@
    "kind": "tally"
   },
   "1x.cold.nodes": {
-   "v": 13964,
+   "v": 13965,
    "kind": "count"
   },
   "1x.cold.bootstrapBytes": {
-   "v": 4437697,
+   "v": 4437721,
    "kind": "bytes"
   },
   "1x.open.first": {
-   "v": 207,
+   "v": 201,
    "kind": "ms"
   },
   "1x.open.first.max": {
-   "v": 317,
+   "v": 278,
    "kind": "ms"
   },
   "1x.open.first.longest": {
-   "v": 69,
+   "v": 62,
    "kind": "ms"
   },
   "1x.open.first.renders": {
@@ -79,11 +79,11 @@
    "kind": "tally"
   },
   "1x.open.again": {
-   "v": 64,
+   "v": 66,
    "kind": "ms"
   },
   "1x.open.again.max": {
-   "v": 72,
+   "v": 70,
    "kind": "ms"
   },
   "1x.open.again.longest": {
@@ -99,11 +99,11 @@
    "kind": "tally"
   },
   "1x.older.page": {
-   "v": 176,
+   "v": 174,
    "kind": "ms"
   },
   "1x.older.last": {
-   "v": 252,
+   "v": 249,
    "kind": "ms"
   },
   "1x.older.msgs": {
@@ -115,7 +115,7 @@
    "kind": "count"
   },
   "1x.long.reopen": {
-   "v": 483,
+   "v": 480,
    "kind": "ms"
   },
   "1x.long.reopen.longest": {
@@ -131,7 +131,7 @@
    "kind": "tally"
   },
   "1x.long.reopen.nodes": {
-   "v": 50327,
+   "v": 50328,
    "kind": "count"
   },
   "1x.long.reopen.msgs": {
@@ -143,15 +143,15 @@
    "kind": "count"
   },
   "1x.arrival.shown": {
-   "v": 164,
+   "v": 129,
    "kind": "ms"
   },
   "1x.arrival.busy": {
-   "v": 168,
+   "v": 174,
    "kind": "ms"
   },
   "1x.arrival.longest": {
-   "v": 61,
+   "v": 68,
    "kind": "ms"
   },
   "1x.arrival.renders": {
@@ -167,15 +167,15 @@
    "kind": "tally"
   },
   "1x.relaunch.list": {
-   "v": 385,
+   "v": 373,
    "kind": "ms"
   },
   "1x.relaunch.fresh": {
-   "v": 394,
+   "v": 378,
    "kind": "ms"
   },
   "1x.relaunch.longest": {
-   "v": 185,
+   "v": 173,
    "kind": "ms"
   },
   "1x.relaunch.renders": {
@@ -183,15 +183,15 @@
    "kind": "tally"
   },
   "1x.relaunch.open": {
-   "v": 122,
+   "v": 116,
    "kind": "ms"
   },
   "1x.relaunch.open.max": {
-   "v": 150,
+   "v": 143,
    "kind": "ms"
   },
   "1x.relaunch.open.longest": {
-   "v": 61,
+   "v": 55,
    "kind": "ms"
   },
   "1x.relaunch.open.renders": {
@@ -203,19 +203,19 @@
    "kind": "tally"
   },
   "4x.cold.list": {
-   "v": 2058,
+   "v": 2149,
    "kind": "ms"
   },
   "4x.cold.fresh": {
-   "v": 602,
+   "v": 629,
    "kind": "ms"
   },
   "4x.cold.longest": {
-   "v": 818,
+   "v": 846,
    "kind": "ms"
   },
   "4x.cold.longTasks": {
-   "v": 1685,
+   "v": 1715,
    "kind": "ms"
   },
   "4x.cold.renders": {
@@ -223,27 +223,27 @@
    "kind": "tally"
   },
   "4x.cold.layouts": {
-   "v": 7,
+   "v": 8,
    "kind": "tally"
   },
   "4x.cold.nodes": {
-   "v": 13964,
+   "v": 13965,
    "kind": "count"
   },
   "4x.cold.bootstrapBytes": {
-   "v": 4437896,
+   "v": 4437919,
    "kind": "bytes"
   },
   "4x.open.first": {
-   "v": 899,
+   "v": 860,
    "kind": "ms"
   },
   "4x.open.first.max": {
-   "v": 1160,
+   "v": 1150,
    "kind": "ms"
   },
   "4x.open.first.longest": {
-   "v": 300,
+   "v": 269,
    "kind": "ms"
   },
   "4x.open.first.renders": {
@@ -255,15 +255,15 @@
    "kind": "tally"
   },
   "4x.open.again": {
-   "v": 275,
+   "v": 268,
    "kind": "ms"
   },
   "4x.open.again.max": {
-   "v": 319,
+   "v": 286,
    "kind": "ms"
   },
   "4x.open.again.longest": {
-   "v": 193,
+   "v": 188,
    "kind": "ms"
   },
   "4x.open.again.renders": {
@@ -275,11 +275,11 @@
    "kind": "tally"
   },
   "4x.older.page": {
-   "v": 781,
+   "v": 769,
    "kind": "ms"
   },
   "4x.older.last": {
-   "v": 1130,
+   "v": 1047,
    "kind": "ms"
   },
   "4x.older.msgs": {
@@ -291,11 +291,11 @@
    "kind": "count"
   },
   "4x.long.reopen": {
-   "v": 1970,
+   "v": 2045,
    "kind": "ms"
   },
   "4x.long.reopen.longest": {
-   "v": 1284,
+   "v": 1342,
    "kind": "ms"
   },
   "4x.long.reopen.renders": {
@@ -307,7 +307,7 @@
    "kind": "tally"
   },
   "4x.long.reopen.nodes": {
-   "v": 50315,
+   "v": 50316,
    "kind": "count"
   },
   "4x.long.reopen.msgs": {
@@ -319,15 +319,15 @@
    "kind": "count"
   },
   "4x.arrival.shown": {
-   "v": 423,
+   "v": 438,
    "kind": "ms"
   },
   "4x.arrival.busy": {
-   "v": 566,
+   "v": 568,
    "kind": "ms"
   },
   "4x.arrival.longest": {
-   "v": 268,
+   "v": 262,
    "kind": "ms"
   },
   "4x.arrival.renders": {
@@ -343,15 +343,15 @@
    "kind": "tally"
   },
   "4x.relaunch.list": {
-   "v": 1529,
+   "v": 1454,
    "kind": "ms"
   },
   "4x.relaunch.fresh": {
-   "v": 1695,
+   "v": 1554,
    "kind": "ms"
   },
   "4x.relaunch.longest": {
-   "v": 809,
+   "v": 731,
    "kind": "ms"
   },
   "4x.relaunch.renders": {
@@ -359,15 +359,15 @@
    "kind": "tally"
   },
   "4x.relaunch.open": {
-   "v": 488,
+   "v": 490,
    "kind": "ms"
   },
   "4x.relaunch.open.max": {
-   "v": 614,
+   "v": 623,
    "kind": "ms"
   },
   "4x.relaunch.open.longest": {
-   "v": 243,
+   "v": 246,
    "kind": "ms"
   },
   "4x.relaunch.open.renders": {
@@ -375,7 +375,7 @@
    "kind": "tally"
   },
   "4x.relaunch.open.layouts": {
-   "v": 22,
+   "v": 23,
    "kind": "tally"
   }
  }
