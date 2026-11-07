@@ -1,0 +1,145 @@
+/**
+ * Sends not yet through to the hub, kept on this device (IndexedDB), and how a sent copy finds the message it became.
+ *
+ * A message typed without the hub waits, and the app says it will go out by itself (docs/sync.md). Kept only in
+ * memory, a reload or the system closing the app lost it. Kept here, with its files, it is shown again and goes out
+ * when the hub is back, under the same `clientId`, so the hub sends a retry once (server.ts).
+ *
+ * The pending copy on screen goes once the real message is here. The hub's answer names it (`messageId`), so it is
+ * matched by id; only an answer without one (a network that did not say) falls back to the text, and one message
+ * never stands for two copies. Pure apart from the IndexedDB part, so it is tested without a browser.
+ */
+
+export interface OutboxFile {
+  name: string;
+  type: string;
+  blob: Blob;
+}
+
+export interface OutboxEntry {
+  /** Also the send's clientId. */
+  tempId: string;
+  conversationId: string;
+  body: string;
+  ts: number;
+  accountId?: string;
+  replyTo?: string;
+  /** Kept until the send is through: an upload the hub let expire is made again from these. */
+  files?: OutboxFile[];
+  /** The uploads' ids on the hub, once made. */
+  attachments?: string[];
+  /** The hub refused it: shown with the reason, to try again or throw away. */
+  failed?: string;
+}
+
+export interface Outbox {
+  put(e: OutboxEntry): Promise<void>;
+  remove(tempId: string): Promise<void>;
+  all(): Promise<OutboxEntry[]>;
+}
+
+const STORE = 'sends';
+
+/** The outbox in IndexedDB; in memory only where there is none (or it refuses), which is how it was before. */
+export function openOutbox(factory: IDBFactory | undefined = globalThis.indexedDB, name = 'dither-chat-outbox'): Outbox {
+  const memory = new Map<string, OutboxEntry>();
+  let dbp: Promise<IDBDatabase | null> | null = null;
+  const idb = () =>
+    (dbp ??= new Promise<IDBDatabase | null>((resolve) => {
+      if (!factory) return resolve(null);
+      try {
+        const req = factory.open(name, 1);
+        req.onupgradeneeded = () => req.result.createObjectStore(STORE, { keyPath: 'tempId' });
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    }));
+  const tx = async <T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T> | void): Promise<T | undefined> => {
+    const d = await idb();
+    if (!d) return undefined;
+    return new Promise<T | undefined>((resolve) => {
+      try {
+        const t = d.transaction(STORE, mode);
+        const req = fn(t.objectStore(STORE));
+        t.oncomplete = () => resolve(req ? req.result : undefined);
+        t.onerror = t.onabort = () => resolve(undefined);
+      } catch {
+        resolve(undefined);
+      }
+    });
+  };
+  return {
+    async put(e) {
+      memory.set(e.tempId, e);
+      await tx('readwrite', (s) => s.put(e));
+    },
+    async remove(tempId) {
+      memory.delete(tempId);
+      await tx('readwrite', (s) => s.delete(tempId));
+    },
+    async all() {
+      const kept = (await tx<OutboxEntry[]>('readonly', (s) => s.getAll())) ?? [];
+      const out = new Map(kept.map((e) => [e.tempId, e]));
+      for (const [k, e] of memory) if (!out.has(k)) out.set(k, e);
+      return [...out.values()].sort((a, b) => a.ts - b.ts);
+    },
+  };
+}
+
+// ------------------------------------------------------------------ the copy on screen and its message
+
+/** A pending copy, as far as matching goes. */
+export interface Sent {
+  tempId: string;
+  conversationId: string;
+  body: string;
+  ts: number;
+  files?: string[];
+  /** The hub took it. */
+  acked?: boolean;
+  /** The hub's id for the message it became, when its answer said. */
+  messageId?: string;
+}
+
+/** A message of ours the client has. */
+export interface Echo {
+  id: string;
+  conversationId: string;
+  body: string;
+  ts: number;
+  attachments: number;
+}
+
+/** How much earlier than the copy its message may be dated: the network's clock, not this device's. */
+export const ECHO_SKEW = 60_000;
+
+const sameContent = (s: Sent, m: Echo) => (s.files?.length ? m.attachments > 0 : s.body.trim() === m.body.trim());
+
+/**
+ * The copies the messages we have now stand for, by tempId. By id first; then, for copies the hub took without saying
+ * which message they became, the oldest such message of ours in the same conversation with the same text (with files,
+ * when it had files) dated no earlier than the copy. `claimed` holds the messages already matched, and grows: one
+ * message never takes two copies, and a copy waiting for its id never takes another's message.
+ */
+export function settled(sent: Sent[], echoes: Echo[], claimed: Set<string>): string[] {
+  const out: string[] = [];
+  const byId = new Map(echoes.map((m) => [m.id, m]));
+  for (const s of sent) {
+    if (s.messageId && byId.has(s.messageId)) {
+      out.push(s.tempId);
+      claimed.add(s.messageId);
+    }
+  }
+  const waitingIds = new Set(sent.filter((s) => s.messageId).map((s) => s.messageId!));
+  const oldest = [...echoes].sort((a, b) => a.ts - b.ts);
+  for (const s of [...sent].sort((a, b) => a.ts - b.ts)) {
+    if (!s.acked || s.messageId) continue;
+    const m = oldest.find((m) => !claimed.has(m.id) && !waitingIds.has(m.id) && m.conversationId === s.conversationId && m.ts >= s.ts - ECHO_SKEW && sameContent(s, m));
+    if (!m) continue;
+    out.push(s.tempId);
+    claimed.add(m.id);
+  }
+  return out;
+}

@@ -7,12 +7,14 @@ import { startDevices } from './devices.ts';
 import { trackViewport } from './phone.ts';
 import { registerServiceWorker } from './pwa.ts';
 import { dropSnapshot, readSnapshot, restore } from './snapshot.ts';
-import { applyBootstrap, applyEvents, beforeSync, connect, loaded } from './state.ts';
+import { applyBootstrap, applyEvents, beforeSync, connect, loaded, restoreOutbox } from './state.ts';
 import './styles.css';
 
 const scriptAt = performance.now();
 // The hub first, so the socket is on its way while this device's snapshot is read.
 connect();
+// Sends that were waiting for the hub when the app last closed: shown again, and sent after the first sync.
+void restoreOutbox();
 trackViewport();
 startAndroid();
 startActivity();

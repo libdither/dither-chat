@@ -57,6 +57,7 @@
       },
       "devDependencies": {
         "@preact/preset-vite": "^2.10.6",
+        "fake-indexeddb": "6.2.7",
         "vite": "^8.3.5",
       },
     },

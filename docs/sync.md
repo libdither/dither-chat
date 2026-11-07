@@ -97,7 +97,15 @@ adapter announcing the same things again, and a send retried after a lost answer
   It never blocks anything. The loading screen is only for a first start with nothing kept.
 - **Sends** without the hub wait, marked "Waiting for the hub, sends when it is back", and go out when the sync after
   reconnecting is done. Each carries a `clientId`; the hub answers a repeat of one it is sending or sent in the last
-  15 minutes with the first answer, so a send whose answer was lost goes out once.
+  15 minutes with the first answer, so a send whose answer was lost goes out once. Until the hub has taken it, a send
+  is kept on the device (IndexedDB, with its files, `outbox.ts`): after a reload or the system closing the app it is
+  shown again and goes out after the first sync, under the same `clientId`. One the hub refused stays, with the
+  reason, to try again or discard.
+- **The pending copy** of a send goes when its message is here. The hub's answer carries `messageId`, the hub id of the
+  message the network says it sent (ids are derived from the network's, so it is known before the message is stored),
+  and the copy goes when that message arrives, live, in a sync or in a page, or at once if it is already here. Only an
+  answer without an id (a network that did not say) falls back to the text, matched to the oldest message of ours
+  there with the same text that no other copy took.
 - `pwa.ts` used to fetch `sw.js` on every return. It now checks when the hub process changed (the sync says which
   process answered), at most every 10 minutes on a return, and hourly.
 
@@ -157,6 +165,9 @@ hub, a message sent while the browser was offline was on screen 100 ms after the
   nothing and costs one delta; a message sent meanwhile appears from it; a long drop shows the notice and it goes; a
   send without the hub waits and goes out once; a cold start from the snapshot resumes with a delta; and a restarted
   hub is caught up from its journal.
+- `bun scripts/verify-sends.ts <demo hub> --stop "<cmd>" --start "<cmd>"`: one send is one message after its echo,
+  two identical sends stay two, and a send made with the hub stopped survives a reload and goes out once when it is
+  back. `bun test packages/web/test/outbox.test.ts` for the outbox and the matching.
 - `bun scripts/measure-sync.ts <hub> [--open N]` for the table above.
 
 ## Limits
