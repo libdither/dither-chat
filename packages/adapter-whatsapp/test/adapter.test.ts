@@ -360,6 +360,19 @@ test('send a file: upload, then a media message with the caption', async () => {
   expect(sent.attachments![0]).toMatchObject({ kind: 'image', url: `wa-media:${msgId(ALICE, 'SENT1')}` });
 });
 
+test('send a voice note with text: the text goes out first as its own message, the audio has no caption', async () => {
+  const h = await harness();
+  await h.emit(fx('text'));
+  await h.ctl({ result: { op: 'upload', value: { url: 'https://mmg/v', directPath: '/v/v', mediaKey: 'a2V5', fileEncSHA256: 'ZW5j', fileSHA256: 'c2hh', fileLength: 5 } } });
+  const r = (await h.adapter.command({ t: 'send', id: '1', conversation: ALICE, body: 'listen to this', replyTo: msgId(ALICE, 'A1'), attachments: [{ path: '/tmp/v.ogg', name: 'v.ogg', mime: 'audio/ogg', size: 5, kind: 'audio' }] })) as { nativeId: string };
+  const sends = h.cmds.filter((c) => c.op === 'send');
+  expect(r.nativeId).toBe(msgId(ALICE, 'SENT1'));
+  expect(sends).toHaveLength(2);
+  expect(sends[0].message.extendedTextMessage).toMatchObject({ text: 'listen to this', contextInfo: { stanzaID: 'A1' } });
+  expect(sends[1].message).toEqual({ audioMessage: { url: 'https://mmg/v', directPath: '/v/v', mediaKey: 'a2V5', fileEncSHA256: 'ZW5j', fileSHA256: 'c2hh', fileLength: '5', mimetype: 'audio/ogg' } });
+  expect(ofType(h.events, 'message').slice(-2).map((e) => e.message.body)).toEqual(['listen to this', '']);
+});
+
 test('react: message keys for a DM and for a LID-addressed group, one reaction at a time', async () => {
   const h = await harness();
   await h.emit(fx('text'));
