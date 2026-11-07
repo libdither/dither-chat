@@ -15,6 +15,7 @@ import { cleanFileName, Uploads } from './uploads.ts';
 import { ImportRunner } from './imports/engine.ts';
 import { GapFill } from './imports/gapfill.ts';
 import { linkPath, MediaArchiver } from './mediaarchive.ts';
+import { mediaHeaders } from './mediaheaders.ts';
 import { ImportSources } from './imports/sources.ts';
 import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } from './calls.ts';
 import { compress } from './compress.ts';
@@ -1292,7 +1293,7 @@ export class HubServer {
     if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
     const key = new Bun.CryptoHasher('sha256').update(raw).digest('hex');
     const file = join(cacheDir, key);
-    const headers = (mime: string) => ({ 'content-type': mime, 'cache-control': 'private, max-age=604800, immutable' });
+    const headers = (mime: string) => mediaHeaders(raw, key, mime);
     if (existsSync(file) && existsSync(file + '.mime')) {
       // Recently seen stays longest when the cache is trimmed (mediacache.ts).
       try {
@@ -1319,7 +1320,7 @@ export class HubServer {
       const p = normalize(decodeURIComponent(raw.slice('file://'.length)));
       const root = resolve(this.opts.dataDir);
       if (!resolve(p).startsWith(root + '/') || !existsSync(p) || !statSync(p).isFile()) return new Response('not found', { status: 404 });
-      return new Response(Bun.file(p), { headers: { 'cache-control': 'private, max-age=604800' } });
+      return new Response(Bun.file(p), { headers: mediaHeaders(raw, key, Bun.file(p).type, 'private, max-age=604800') });
     } else {
       if (!accountId) return new Response('no account to resolve media', { status: 404 });
       const r = await this.sup.command<{ mime: string; base64: string }>(accountId, { t: 'fetchMedia', url: raw }, 30_000).catch(() => null);
