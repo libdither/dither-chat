@@ -555,6 +555,18 @@ export class HubServer {
     // What the network says about one identity (people.ts, docs/profile.md). ?fresh=1 asks even if a recent answer is kept.
     if ((m = path.match(/^\/api\/identities\/([\w-]+)\/about$/))) {
       if (!s.nativeOf('identity', m[1])) return bad('no such identity', 404);
+      // Your own bio, on a network whose adapter can change it (capability 'editProfile').
+      if (method === 'PUT') {
+        const b = await body<{ bio?: unknown }>();
+        if (typeof b.bio !== 'string') return bad('bio: a string');
+        try {
+          const v = await this.people.setBio(m[1], b.bio);
+          this.flush();
+          return ok(v);
+        } catch (e) {
+          return bad((e as Error).message, (e as { status?: number }).status ?? 500);
+        }
+      }
       const v = await this.people.get(m[1], url.searchParams.get('fresh') === '1');
       this.flush();
       return ok(v);

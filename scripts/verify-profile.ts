@@ -2,7 +2,8 @@
  * Profile pages (docs/profile.md), end to end against a demo hub in headless Chromium: the name at the top of a DM
  * opens the person's page; what the networks say about them (bio, status, pronouns, friend), servers in common with
  * their nickname and roles there, group chats, mutual friends and recent messages, each with a picture; the actions
- * from their menu in the hero; your own page listing your friends once each; and the page on a phone.
+ * from their menu in the hero; your own page listing your friends once each, with your own bio editable on each
+ * network whose adapter can change it (never Matrix, never someone else's); and the page on a phone.
  *
  *   bun scripts/verify-profile.ts http://127.0.0.1:8498 [/tmp/shots]
  * The hub must be a demo hub (--demo).
@@ -91,11 +92,44 @@ try {
   check(!(await text('.pf-actions')).includes('Message'), 'and no Message button to yourself');
   if (shots) await p.shot(`${shots}/profile-self.png`);
 
+  // Your own bio, editable where the adapter can (editProfile): Discord, Signal, WhatsApp, not Matrix.
+  const editors = await p.eval<string[]>(`[...document.querySelectorAll('.pf-own-bio .about-pencil')].map((b) => b.getAttribute('aria-label'))`);
+  check(editors.some((l) => l.includes('Discord')) && editors.includes('Change your bio on Signal') && editors.includes('Change your bio on WhatsApp') && !editors.some((l) => l.includes('Matrix')), 'your bio has an editor on each network that can change it, none on Matrix', editors);
+  const typeBio = (v: string) =>
+    p.eval(`(() => { const t = document.querySelector('.pf-own-bio textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(t, ${JSON.stringify(v)}); t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await click('.pf-own-bio .about-pencil[aria-label="Change your bio on Discord"]');
+  await p.until(`!!document.querySelector('.pf-own-bio textarea')`, 3000);
+  await typeBio('x'.repeat(195));
+  await Bun.sleep(100);
+  const over = await p.eval<{ count: string; disabled: boolean }>(`({ count: document.querySelector('.pf-bio-count')?.textContent ?? '', disabled: !![...document.querySelectorAll('.pf-own-bio .btn.primary')].find((b) => b.textContent === 'Save')?.disabled })`);
+  check(over.count === '5 over 190' && over.disabled, 'past Discord’s 190 characters it says how far over, and will not save', over);
+  const bio = 'testing my own bio from dither 🧪';
+  await typeBio(bio);
+  await Bun.sleep(100);
+  check((await text('.pf-bio-count')) === '158 of 190 left', 'under it, how many are left', await text('.pf-bio-count'));
+  if (shots) await p.shot(`${shots}/profile-own-bio-edit.png`);
+  await click('.pf-own-bio .btn.primary');
+  await p.until(`!document.querySelector('.pf-own-bio textarea')`, 8000);
+  check((await card('About')).includes(bio), 'saved, it shows at once', (await card('About')).split('\n').slice(0, 4));
+  const kept = await Promise.all(boot.accounts.filter((a: any) => a.network === 'discord').map((a: any) => fetch(`${hub}/api/identities/${a.selfIdentityId}/profile`).then((r) => r.json())));
+  check(kept.filter((k) => k.abouts.some((a: any) => a.bio === bio)).length === 1, 'and the hub keeps it for next time, on that account only');
+  await p.goto(`${hub}/#/p/per_self`);
+  await settled();
+  check((await card('About')).includes(bio), 'still there after a reload');
+  // WhatsApp's About is its status too: the hub says the new one.
+  await click('.pf-own-bio .about-pencil[aria-label="Change your bio on WhatsApp"]');
+  await p.until(`!!document.querySelector('.pf-own-bio textarea')`, 3000);
+  check((await text('.pf-bio-count')).endsWith('of 139 left'), 'WhatsApp counts to 139', await text('.pf-bio-count'));
+  await p.eval(`document.querySelector('.pf-own-bio textarea').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await Bun.sleep(100);
+  check(!(await p.eval<boolean>(`!!document.querySelector('.pf-own-bio textarea')`)), 'Escape puts it back without saving');
+
   // A phone.
   await p.size(390, 840, true);
   await p.goto(`${hub}/#/p/${alice.id}`);
   await settled();
   await Bun.sleep(400);
+  check(!(await p.eval<boolean>(`!!document.querySelector('.pf-own-bio, .pf-card .about-pencil')`)), 'someone else’s bio has no editor');
   const fit = await p.eval<{ sw: number; w: number; back: boolean }>(`({ sw: document.querySelector('.pf-scroll').scrollWidth, w: document.querySelector('.pf-scroll').clientWidth, back: !!document.querySelector('.profile-page .profile-back')?.getBoundingClientRect().width })`);
   check(fit.sw <= fit.w + 1 && fit.back, 'on a phone it fits the width, with a way back', fit);
   if (shots) await p.shot(`${shots}/profile-phone.png`);

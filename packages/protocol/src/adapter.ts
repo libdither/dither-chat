@@ -56,7 +56,9 @@ export type Capability =
   /** Changes them (the `configure` command), where the About says this account may. */
   | 'configure'
   /** Reads what the network says about one person: bio, mutual spaces and friends (the `profile` command, about.ts PersonAbout). */
-  | 'profile';
+  | 'profile'
+  /** Changes the account's own profile: its bio/About (the `setProfile` command). */
+  | 'editProfile';
 
 // ---------------------------------------------------------------- facts
 
@@ -357,6 +359,12 @@ export type AdapterCommand =
    * reply.result: PersonAbout
    */
   | { t: 'profile'; id: string; who: string }
+  /**
+   * Change the account's own profile (capability 'editProfile'). Only the fields given change. `bio`: the bio or
+   * About text ('' clears it). The adapter checks the network's limit (about.ts BIO_LIMIT) and fails with a plain
+   * error past it. reply.result: PersonAbout of the account itself as it now stands.
+   */
+  | { t: 'setProfile'; id: string; change: { bio?: string } }
   /** reply.result for join: { direct?: DirectVoiceSession }. One call per account at a time. */
   | { t: 'call'; id: string; call: string; op: 'join'; conversation: string; mode: CallMode; muted?: boolean; deafened?: boolean }
   | { t: 'call'; id: string; call: string; op: 'leave' }

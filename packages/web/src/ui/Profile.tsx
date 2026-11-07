@@ -7,6 +7,7 @@ import type * as P from '@dither-chat/protocol';
 import { RELATIONSHIP_LABEL } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { ago, fullTime } from '../format.ts';
+import { bioEditor, bioLeft } from '../bio.ts';
 import { openers } from '../direct.ts';
 import { communitiesOf, convLabel, convTitle, directsOf, identityName, kindLabel, netName, plainBody, rootCommunity } from '../model.ts';
 import { api, db, go, isSelfIdentity, newMessage, openMessage, openProfile, rev, setRule, toast } from '../state.ts';
@@ -92,12 +93,91 @@ function useProfile(personId?: string, identityId?: string) {
       .catch(() => live && setProfile('none'));
     return () => void (live = false);
   }, [personId, identityId, signature]);
-  return { profile, abouts, asking: asking > 0, refresh: () => profile && profile !== 'none' && ask(profile.identityIds, true) };
+  return { profile, abouts, learn, asking: asking > 0, refresh: () => profile && profile !== 'none' && ask(profile.identityIds, true) };
+}
+
+/** Your own bio on one network, and a way to change it, within the network's limit. */
+function OwnBio({ identity, about, account, label, onSaved }: { identity: P.IdentityView; about?: P.PersonAboutView; account: P.AccountView; label: boolean; onSaved: (a: P.PersonAboutView) => void }) {
+  const st = (identity.network === 'signal' || identity.network === 'whatsapp') && identity.status;
+  const bio = (st && (!about || st.at > about.fetchedAt) ? st.text : about?.bio) ?? '';
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const net = netName(identity.network);
+  const room = draft !== null ? bioLeft(identity.network, draft) : null;
+  const left = room?.left ?? null;
+  const save = async () => {
+    if (draft === null || busy) return;
+    if (draft === bio) return setDraft(null);
+    if (left !== null && left < 0) return setError(`Too long for ${net}: ${-left} over.`);
+    setBusy(true);
+    setError(null);
+    try {
+      onSaved(await api<P.PersonAboutView>(`/api/identities/${identity.id}/about`, { method: 'PUT', body: { bio: draft } }));
+      setDraft(null);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const tag = label && (
+    <span class="pf-bio-net">
+      <NetGlyph network={identity.network} size={11} /> {net}
+      {account.label && account.label !== net ? ` · ${account.label}` : ''}
+    </span>
+  );
+  if (draft === null)
+    return (
+      <div class="pf-bio pf-own-bio">
+        {tag}
+        <div class="about-text multi">
+          <p>{bio ? plainBody(bio, identity.network) : <em>No bio on {net} yet</em>}</p>
+          <button class="icon-btn small about-pencil" title={`Change your bio on ${net}`} aria-label={`Change your bio on ${net}`} onClick={() => (setDraft(bio), setError(null))}>
+            <Icon name="pencil" size={13} />
+          </button>
+        </div>
+      </div>
+    );
+  return (
+    <div class="pf-bio pf-own-bio">
+      {tag}
+      <div class="about-edit multi">
+        <textarea
+          class="about-input"
+          rows={3}
+          value={draft}
+          aria-label={`Your bio on ${net}`}
+          aria-invalid={left !== null && left < 0}
+          onInput={(e) => setDraft((e.target as HTMLTextAreaElement).value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') (e.stopPropagation(), setDraft(null), setError(null));
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing) (e.preventDefault(), void save());
+          }}
+          ref={(el) => void (el && document.activeElement !== el && !busy && el.focus())}
+        />
+        {error && <p class="pf-bio-error" role="alert">{error}</p>}
+        <div class="about-edit-btns">
+          {room && (
+            <span class={`pf-bio-count ${room.left < 0 ? 'over' : room.left <= 10 ? 'near' : ''}`} title={`${net} takes up to ${room.limit} characters`}>
+              {room.left < 0 ? `${-room.left} over ${room.limit}` : `${room.left} of ${room.limit} left`}
+            </span>
+          )}
+          <button class="btn ghost small" onClick={() => (setDraft(null), setError(null))}>
+            Cancel
+          </button>
+          <button class="btn primary small" disabled={busy || (left !== null && left < 0)} onClick={() => void save()}>
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function ProfilePane({ personId, identityId, onBack }: { personId?: string; identityId?: string; onBack: () => void }) {
   rev.value;
-  const { profile, abouts, asking, refresh } = useProfile(personId, identityId);
+  const { profile, abouts, learn, asking, refresh } = useProfile(personId, identityId);
   const [merging, setMerging] = useState(false);
   const [filter, setFilter] = useState('');
   const person = personId ? db.persons.get(personId) : undefined;
@@ -162,8 +242,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const friends = onePerPerson([...new Set(said.flatMap((a) => a.friends ?? []))]).filter((iid) => !isSelfIdentity(iid));
 
   // ---- who they are
+  // Your own bio, on each network that lets you change it from here: shown with its editor, not below.
+  const editable = isSelf ? ids.map((i) => ({ i, account: bioEditor(db.accounts.values(), i.id) })).filter((x): x is { i: P.IdentityView; account: P.AccountView } => !!x.account) : [];
   // The richest first; a network's stock line ("Available") says nothing.
   const bios = said
+    .filter((a) => !editable.some((x) => x.i.id === a.identityId))
     .map((a) => {
       // A newer About heard since the profile was asked replaces its bio.
       const st = (a.network === 'signal' || a.network === 'whatsapp') && db.identities.get(a.identityId)?.status;
@@ -299,7 +382,10 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const main = (
     <>
       <Card title="About" icon="info" extra={asking ? <span class="pf-asking">Asking…</span> : undefined}>
-        {bios.length ? (
+        {editable.map(({ i, account }) => (
+          <OwnBio identity={i} about={abouts[i.id]} account={account} label={editable.length + bios.length > 1 || nets.length > 1} onSaved={learn} />
+        ))}
+        {bios.length || editable.length ? (
           bios.map((a) => (
             <div class="pf-bio">
               {(bios.length > 1 || nets.length > 1) && (

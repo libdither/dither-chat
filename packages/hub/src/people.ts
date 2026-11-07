@@ -4,7 +4,7 @@
  * shows at once while a fresh one comes.
  */
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META } from '@dither-chat/protocol';
+import { BIO_LIMIT, bioLength, NETWORK_META } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import type { Store } from './store.ts';
 
@@ -13,7 +13,7 @@ type Row = Record<string, any>;
 export interface PeopleDeps {
   store: Store;
   online: (accountId: string) => boolean;
-  command: <T>(accountId: string, cmd: { t: 'profile'; who: string }, timeoutMs?: number) => Promise<T>;
+  command: <T>(accountId: string, cmd: { t: 'profile'; who: string } | { t: 'setProfile'; change: { bio?: string } }, timeoutMs?: number) => Promise<T>;
 }
 
 const caps = (store: Store, accountId: string): P.Capability[] => JSON.parse(store.account(accountId)?.capabilities ?? '[]');
@@ -93,22 +93,7 @@ export class People {
     if (accountId && !why) {
       try {
         const about = await this.d.command<P.PersonAbout>(accountId, { t: 'profile', who: n.nativeId }, 20_000);
-        // What their profile said before, if it says something else now (docs/history.md).
-        if (k && about)
-          s.logChanges('identity', identityId, accountId, [
-            // On Signal and WhatsApp the About is the status, logged as one below.
-            ['bio', ABOUT_IS_STATUS.has(n.network) ? undefined : k.about.bio, ABOUT_IS_STATUS.has(n.network) ? undefined : (about.bio ?? '')],
-            ['pronouns', k.about.pronouns, about.pronouns ?? ''],
-            ['banner', k.about.banner, about.banner],
-          ]);
-        // The status as of now, the same as an adapter's customStatus says it.
-        if (about) {
-          const st = ABOUT_IS_STATUS.has(n.network) ? { text: about.bio, emoji: about.status?.emoji } : 'status' in about ? (about.status ?? null) : undefined;
-          if (st !== undefined) s.setStatus(identityId, st, accountId);
-        }
-        s.db
-          .query('INSERT INTO about (target_id, account_id, data, fetched_at) VALUES (?, ?, ?, ?) ON CONFLICT (target_id, account_id) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at')
-          .run(identityId, accountId, JSON.stringify(about ?? {}), Date.now());
+        this.keep(identityId, accountId, n.network, about, k);
         return this.view(identityId, accountId, about ?? {}, Date.now(), undefined);
       } catch (e) {
         const stale = `Could not ask ${net}: ${(e as Error).message}`;
@@ -116,6 +101,57 @@ export class People {
       }
     }
     return k ? this.view(identityId, k.accountId, k.about, k.at, why!) : this.view(identityId, accountId, {}, Date.now(), why!);
+  }
+
+  /**
+   * Change your own bio on one network (capability 'editProfile'). Only an account's own identity, through that
+   * account; the network's limit is checked here first. Throws with an HTTP status for the route.
+   */
+  async setBio(identityId: string, bio: string): Promise<P.PersonAboutView> {
+    const s = this.d.store;
+    const n = s.nativeOf('identity', identityId);
+    if (!n) throw Object.assign(new Error('no such identity'), { status: 404 });
+    const net = NETWORK_META[n.network].name;
+    const acc = s.one<Row>('SELECT id, label FROM account WHERE self_identity = ?', identityId);
+    if (!acc) throw Object.assign(new Error('Only your own profile can be changed.'), { status: 403 });
+    if (!caps(s, acc.id).includes('editProfile')) throw Object.assign(new Error(`Your bio on ${net} cannot be changed from here.`), { status: 409 });
+    if (!this.d.online(acc.id)) throw Object.assign(new Error(`${net} · ${acc.label} is not connected.`), { status: 409 });
+    const limit = BIO_LIMIT[n.network];
+    const len = bioLength(bio);
+    if (limit !== undefined && len > limit) throw Object.assign(new Error(`Too long for ${net}: ${len} characters, and it takes ${limit}.`), { status: 400 });
+    let about: P.PersonAbout;
+    try {
+      about = (await this.d.command<P.PersonAbout>(acc.id, { t: 'setProfile', change: { bio } }, 20_000)) ?? {};
+    } catch (e) {
+      throw Object.assign(new Error(`${net} did not take it: ${(e as Error).message}`), { status: 502 });
+    }
+    // What the network has now, as if the profile had been asked again.
+    const k = this.keptOne(identityId);
+    const now = { ...k?.about, ...about, bio: about.bio ?? bio };
+    this.keep(identityId, acc.id, n.network, now, k);
+    s.dirty.identities.add(identityId);
+    return this.view(identityId, acc.id, now, Date.now(), undefined);
+  }
+
+  /** An answer from the network: what changed since the last one, the status it carries, and the answer kept. */
+  private keep(identityId: string, accountId: string, network: P.Network, about: P.PersonAbout | null | undefined, k: { about: P.PersonAbout } | null) {
+    const s = this.d.store;
+    // What their profile said before, if it says something else now (docs/history.md).
+    if (k && about)
+      s.logChanges('identity', identityId, accountId, [
+        // On Signal and WhatsApp the About is the status, logged as one below.
+        ['bio', ABOUT_IS_STATUS.has(network) ? undefined : k.about.bio, ABOUT_IS_STATUS.has(network) ? undefined : (about.bio ?? '')],
+        ['pronouns', k.about.pronouns, about.pronouns ?? ''],
+        ['banner', k.about.banner, about.banner],
+      ]);
+    // The status as of now, the same as an adapter's customStatus says it.
+    if (about) {
+      const st = ABOUT_IS_STATUS.has(network) ? { text: about.bio, emoji: about.status?.emoji } : 'status' in about ? (about.status ?? null) : undefined;
+      if (st !== undefined) s.setStatus(identityId, st, accountId);
+    }
+    s.db
+      .query('INSERT INTO about (target_id, account_id, data, fetched_at) VALUES (?, ?, ?, ?) ON CONFLICT (target_id, account_id) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at')
+      .run(identityId, accountId, JSON.stringify(about ?? {}), Date.now());
   }
 
   private keptOne(identityId: string): { about: P.PersonAbout; at: number; accountId: string } | null {

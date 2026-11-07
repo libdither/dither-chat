@@ -11,7 +11,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { ABOUT_LABEL as P_ABOUT_LABEL, NETWORK_META } from '@dither-chat/protocol';
+import { ABOUT_LABEL as P_ABOUT_LABEL, BIO_LIMIT as P_BIO_LIMIT, NETWORK_META } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
 import type { InprocAdapter } from './supervisor.ts';
@@ -890,6 +890,8 @@ const SIGNAL_ABOUT: Record<string, { text: string; emoji: string }> = {
   mom: { text: 'Call me!', emoji: '☎️' },
   sam: { text: 'Busy, text me', emoji: '📵' },
 };
+/** Bios the demo's own accounts set (setProfile), by `${network}:${native id}`, over the ones above. */
+const OWN_BIO = new Map<string, string>();
 const WHATSAPP_ABOUT: Record<string, string> = {
   alice: 'Available',
   nana: 'Grandchildren are the best ❤️',
@@ -976,7 +978,8 @@ class DemoAdapter implements InprocAdapter {
     const contacts = Object.values(pool).filter((i) => i.contact && i !== this.self);
     if (this.network === 'discord') {
       const mine = SPACES.filter((x) => x.acc.includes(this.key) && x.fact.kind === 'community').map((x) => x.fact.nativeId);
-      const p = DISCORD_PROFILES[key ?? ''] ?? {};
+      const own = OWN_BIO.get(`discord:${who}`);
+      const p = { ...DISCORD_PROFILES[key ?? ''], ...(own !== undefined ? { bio: own } : {}) };
       for (const f of contacts) this.emit({ t: 'identity', identity: f });
       return {
         ...(p.bio ? { bio: p.bio } : {}),
@@ -994,7 +997,8 @@ class DemoAdapter implements InprocAdapter {
     }
     const me_ = pool[key as keyof typeof pool] as P.IdentityFact | undefined;
     if (this.network === 'signal') {
-      const about = SIGNAL_ABOUT[key ?? ''];
+      const own = OWN_BIO.get(`signal:${who}`);
+      const about = own !== undefined ? (own ? { text: own, emoji: SIGNAL_ABOUT[key ?? '']?.emoji ?? '' } : undefined) : SIGNAL_ABOUT[key ?? ''];
       return {
         ...(about ? { bio: about.text, status: { emoji: about.emoji } } : {}),
         relationship: me ? undefined : me_?.contact ? 'contact' : 'stranger',
@@ -1004,7 +1008,7 @@ class DemoAdapter implements InprocAdapter {
     }
     if (this.network === 'whatsapp') {
       return {
-        bio: WHATSAPP_ABOUT[key ?? ''] ?? 'Hey there! I am using WhatsApp.',
+        bio: OWN_BIO.get(`whatsapp:${who}`) ?? WHATSAPP_ABOUT[key ?? ''] ?? 'Hey there! I am using WhatsApp.',
         relationship: me ? undefined : me_?.contact ? 'contact' : 'stranger',
         ...(me_?.handle ? { links: [{ label: 'Phone', value: me_.handle, url: `https://wa.me/${me_.handle.replace(/\D/g, '')}` }] } : {}),
         ...(key === 'hoa' ? { facts: [{ label: 'Business', value: 'Maple Street Garden Swap' }] } : {}),
@@ -1209,7 +1213,8 @@ class DemoAdapter implements InprocAdapter {
     const ago = (min: number) => epoch - min * 60_000;
 
     // Discord's demo accounts forward natively, as the real adapter does; the others leave it to the hub.
-    const caps: P.Capability[] = ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect', 'typing', 'about', 'configure', 'profile'];
+    // Matrix has no bio, so its demo account cannot edit one.
+    const caps: P.Capability[] = ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect', 'typing', 'about', 'configure', 'profile', ...(this.network === 'matrix' ? [] : (['editProfile'] as const))];
     emit({ t: 'hello', network: this.network, version: 'demo', capabilities: this.network === 'discord' ? [...caps, 'forward'] : caps });
     emit({ t: 'status', status: 'online', self: { ...this.self, isSelf: true } });
     const pool = this.network === 'discord' ? D : this.network === 'signal' ? S : this.network === 'whatsapp' ? W : M;
@@ -1431,6 +1436,21 @@ class DemoAdapter implements InprocAdapter {
       case 'profile':
         reply(this.profile(cmd.who));
         break;
+      case 'setProfile': {
+        // As the real adapters do: the network's limit, then the About as a status on Signal and WhatsApp.
+        const bio = cmd.change.bio;
+        const limit = P_BIO_LIMIT[this.network];
+        if (bio !== undefined && limit !== undefined && [...bio].length > limit) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: `bio is longer than ${limit} characters` });
+          break;
+        }
+        if (bio !== undefined) {
+          OWN_BIO.set(`${this.network}:${this.self.nativeId}`, bio);
+          if (this.network === 'signal' || this.network === 'whatsapp') this.emit({ t: 'customStatus', who: this.self.nativeId, text: bio, ts: Date.now() });
+        }
+        reply(this.profile(this.self.nativeId));
+        break;
+      }
       case 'about':
       case 'configure':
         try {

@@ -259,6 +259,63 @@ test('edit and delete go through the account that wrote it, where the network al
   hub.stop();
 });
 
+test('your own bio: only yours, only where the adapter can, within the network limit', async () => {
+  const sent: any[] = [];
+  const sup = {
+    authorize: () => null,
+    online: () => true,
+    command: async (id: string, c: any) => {
+      sent.push([id, c]);
+      if (c.change.bio === 'refused') throw new Error('bio rejected');
+      return { bio: c.change.bio, pronouns: 'they/them' };
+    },
+  } as any;
+  const p6 = port + 6;
+  const hub = new HubServer(store, sup, new Triage(store), { port: p6, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+  hub.start();
+  const d = store.createAccount({ network: 'discord', label: 'bio', color: '#000', adapter: 'discord' });
+  const w = store.createAccount({ network: 'whatsapp', label: 'wa', color: '#000', adapter: 'whatsapp' });
+  const m = store.createAccount({ network: 'matrix', label: 'mx', color: '#000', adapter: 'matrix' });
+  store.ingest(d, { t: 'hello', network: 'discord', version: '1', capabilities: ['profile', 'editProfile'] });
+  store.ingest(w, { t: 'hello', network: 'whatsapp', version: '1', capabilities: ['profile', 'editProfile'] });
+  store.ingest(m, { t: 'hello', network: 'matrix', version: '1', capabilities: ['profile'] });
+  store.ingest(store.account(d.id)!, { t: 'status', status: 'online', self: { nativeId: 'biome', isSelf: true } });
+  store.ingest(store.account(d.id)!, { t: 'identity', identity: { nativeId: 'someoneelse', displayName: 'Them' } });
+  store.ingest(store.account(w.id)!, { t: 'status', status: 'online', self: { nativeId: 'wame', isSelf: true } });
+  store.ingest(store.account(m.id)!, { t: 'status', status: 'online', self: { nativeId: '@me:x.org', isSelf: true } });
+  store.flush();
+  const iid = (native: string) => store.one<{ id: string }>('SELECT id FROM identity WHERE native_id = ?', native)!.id;
+  const put = (native: string, bio: unknown) => fetch(`http://127.0.0.1:${p6}/api/identities/${iid(native)}/about`, { method: 'PUT', body: JSON.stringify({ bio }) });
+
+  expect((await put('someoneelse', 'hi')).status).toBe(403);
+  const mx = await put('@me:x.org', 'hi');
+  expect(mx.status).toBe(409);
+  expect((await mx.json()).error).toContain('Matrix');
+  expect((await put('biome', 42)).status).toBe(400);
+  // Discord takes 190 characters; an emoji counts once.
+  const long = await put('biome', 'x'.repeat(191));
+  expect(long.status).toBe(400);
+  expect((await long.json()).error).toBe('Too long for Discord: 191 characters, and it takes 190.');
+  expect((await put('wame', 'x'.repeat(140))).status).toBe(400);
+  expect(sent).toEqual([]);
+  const ok = await put('biome', '🧗'.repeat(190));
+  expect(ok.status).toBe(200);
+  expect(await ok.json()).toMatchObject({ bio: '🧗'.repeat(190), pronouns: 'they/them', accountId: d.id, network: 'discord' });
+  expect(sent).toEqual([[d.id, { t: 'setProfile', change: { bio: '🧗'.repeat(190) } }]]);
+  // Kept, so the profile's first paint has it.
+  const kept = await (await fetch(`http://127.0.0.1:${p6}/api/identities/${iid('biome')}/profile`)).json();
+  expect(kept.abouts[0].bio).toBe('🧗'.repeat(190));
+  // The network's refusal, said plainly; an empty bio clears it.
+  const no = await put('biome', 'refused');
+  expect(no.status).toBe(502);
+  expect((await no.json()).error).toBe('Discord did not take it: bio rejected');
+  expect((await put('biome', '')).status).toBe(200);
+  // On WhatsApp the About is the status line too.
+  expect((await put('wame', 'at the beach')).status).toBe(200);
+  expect(store.one<{ status: string }>('SELECT status FROM identity WHERE id = ?', iid('wame'))!.status).toContain('at the beach');
+  hub.stop();
+});
+
 describe('sending files', () => {
   const p3 = port + 3;
   const url = `http://127.0.0.1:${p3}`;
