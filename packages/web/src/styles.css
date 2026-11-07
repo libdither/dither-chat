@@ -8542,3 +8542,34 @@ button.msg-edited.link:hover {
   min-width: 0;
   font-variant-numeric: tabular-nums;
 }
+.import-conflicts {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.import-conflict {
+  border-top: 1px solid var(--border-soft);
+  padding-top: 8px;
+}
+.import-sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 4px 0;
+}
+.import-sides p {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.import-gaps {
+  margin-top: 14px;
+}
+.import-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}

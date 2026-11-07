@@ -85,6 +85,19 @@ const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => '\\' + c);
 /** A snippet for a match SQLite's tokens could not see. */
 const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 
+/**
+ * Two renderings of one message compared for an import: an export's body was rebuilt from HTML, so mentions,
+ * emoji, links and Markdown marks may be written differently while the words are the same.
+ */
+export function normalizeForCompare(s: string): string {
+  return s
+    .replace(/<a?:(\w+):\d+>/g, '$1')
+    .replace(/<@[!&]?\d+>|<#\d+>|@\S+|#\S+/g, '')
+    .replace(/\[([^\]]*)\]\(([^)]*)\)/g, '$1$2')
+    .replace(/[*_~|`>#\s\\]/g, '')
+    .toLowerCase();
+}
+
 function markSnippet(body: string, terms: string[]): string {
   const lower = body.toLowerCase();
   const first = Math.min(...terms.map((t) => lower.indexOf(t.toLowerCase())).filter((i) => i >= 0));
@@ -146,7 +159,7 @@ export class Store {
     this.db.transaction(() => {
       const reactionsBefore = this.oldReactions();
       const broadcastsUnknown = this.addMentionsAll();
-      this.addColumns('message', { gone_how: 'TEXT', gone_at: 'INTEGER' });
+      this.addColumns('message', { gone_how: 'TEXT', gone_at: 'INTEGER', imported: 'INTEGER NOT NULL DEFAULT 0' });
       this.addColumns('identity', { status: 'TEXT' });
       this.addColumns('category', { threshold: 'REAL' });
       this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL' });
@@ -857,7 +870,7 @@ export class Store {
         `INSERT INTO message (id, conversation_id, network, native_id, author_id, ts, edited_ts, kind, body, reply_to_id, thread_id, mentions_self, mentions_all, extra)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (network, native_id) DO UPDATE SET
-           edited_ts = COALESCE(excluded.edited_ts, edited_ts), kind = excluded.kind,
+           edited_ts = COALESCE(excluded.edited_ts, edited_ts), kind = excluded.kind, imported = 0,
            -- A kept deleted message the network sends again empty (a Matrix redaction) keeps what was kept.
            body = CASE WHEN deleted = 1 AND excluded.body = '' THEN body ELSE excluded.body END,
            reply_to_id = COALESCE(excluded.reply_to_id, reply_to_id), thread_id = COALESCE(excluded.thread_id, thread_id),
@@ -917,6 +930,175 @@ export class Store {
     if (changed || this.placeSig('conversation', cid) !== convBefore) this.dirty.conversations.add(cid);
     if (live || (existed && changed)) this.dirty.messages.set(id, live);
     return !existed && live && !fromSelf ? id : null;
+  }
+
+  // ------------------------------------------------------------ history imports (imports/engine.ts, docs/import.md)
+
+  /**
+   * One conversation's facts from a history import, or a slice of them. Fill-only: what the hub has stays and live
+   * data always wins; a message the hub lacks goes in through the same path as backfill (`message`, not live), so it
+   * looks exactly like one the network sent. Nothing notifies, and unread counts are left as they were. Where the
+   * source says something else than the hub, the hub's version stays and the difference is kept (import_conflict).
+   */
+  importBatch(
+    acc: AccountRow,
+    b: { conversation: P.ConversationFact; identities: P.IdentityFact[]; messages: P.MessageFact[] },
+    o: { sourceSha: string; runId: string; dryRun: boolean; archiveNew: boolean; first: boolean },
+  ): P.ImportCounts {
+    const counts: P.ImportCounts = { conversations: o.first ? 1 : 0, conversationsNew: 0, messages: b.messages.length, new: 0, same: 0, filled: 0, conflicts: 0, duplicates: 0 };
+    const cid = hubId('cnv', acc.network, b.conversation.nativeId);
+    const convExisted = !!this.db.query('SELECT 1 FROM conversation WHERE id = ?').get(cid);
+    if (o.first && !convExisted) counts.conversationsNew = 1;
+    const run = () => {
+      if (!convExisted && !o.dryRun) this.conversation(acc, { ...b.conversation, ...(o.archiveNew ? { archived: true } : {}) });
+      const v0 = this.db.query(`SELECT unread, mentions FROM vantage WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`).get(acc.id, cid) as Row | null;
+      if (!o.dryRun)
+        for (const f of b.identities) {
+          const iid = hubId('idn', acc.network, f.nativeId);
+          const added = this.db
+            .query(
+              `INSERT INTO identity (id, network, native_id, handle, display_name, avatar_url, seen_via, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (network, native_id) DO UPDATE SET handle = COALESCE(handle, excluded.handle), display_name = COALESCE(display_name, excluded.display_name),
+                 avatar_url = COALESCE(avatar_url, excluded.avatar_url), seen_via = COALESCE(seen_via, excluded.seen_via)
+               WHERE handle IS NULL OR display_name IS NULL OR avatar_url IS NULL`,
+            )
+            .run(iid, acc.network, f.nativeId, f.handle ?? null, f.displayName ?? null, f.avatarUrl ?? null, acc.id, Date.now()).changes;
+          if (added) this.dirty.identities.add(iid);
+        }
+      let newest = 0;
+      for (const f of b.messages) {
+        const mid = hubId('msg', acc.network, f.nativeId);
+        const row = this.db.query('SELECT body, kind, deleted, reply_to_id, (SELECT COUNT(*) FROM attachment WHERE message_id = m.id) AS atts FROM message m WHERE id = ?').get(mid) as Row | null;
+        if (!row) {
+          counts.new++;
+          newest = Math.max(newest, f.ts);
+          if (o.dryRun) continue;
+          this.message(acc, f, false);
+          this.db.query('UPDATE message SET imported = 1 WHERE id = ?').run(mid);
+          this.db.query('INSERT OR IGNORE INTO import_origin (message_id, source_sha, run_id) VALUES (?, ?, ?)').run(mid, o.sourceSha, o.runId);
+          continue;
+        }
+        if (!o.dryRun) this.db.query('INSERT OR IGNORE INTO import_origin (message_id, source_sha, run_id) VALUES (?, ?, ?)').run(mid, o.sourceSha, o.runId);
+        const conflict = (kind: 'body' | 'deleted') => {
+          counts.conflicts++;
+          if (o.dryRun) return;
+          const value = { body: f.body, ...(f.editedTs ? { editedTs: f.editedTs } : {}), ...(f.attachments?.length ? { attachments: f.attachments.map((a) => a.name ?? a.kind) } : {}) };
+          this.db
+            .query('INSERT OR IGNORE INTO import_conflict (message_id, kind, source_sha, run_id, source_value, detected_at) VALUES (?, ?, ?, ?, ?, ?)')
+            .run(mid, kind, o.sourceSha, o.runId, JSON.stringify(value), Date.now());
+        };
+        if (row.deleted) {
+          if (f.body && !row.body) conflict('deleted');
+          else counts.same++;
+          continue;
+        }
+        // A system line ("… started a call") is worded by whoever rendered it: the same event either way.
+        if (row.kind === 'system' || f.kind === 'system') {
+          counts.same++;
+          continue;
+        }
+        if (f.body && normalizeForCompare(row.body) !== normalizeForCompare(f.body)) {
+          conflict('body');
+          continue;
+        }
+        let filled = false;
+        if (!row.reply_to_id && f.replyTo) {
+          if (!o.dryRun) this.db.query('UPDATE message SET reply_to_id = ? WHERE id = ?').run(hubId('msg', acc.network, f.replyTo), mid);
+          filled = true;
+        }
+        if (!row.atts && f.attachments?.length) {
+          if (!o.dryRun) this.insertAttachments(acc, mid, f.nativeId, f.attachments);
+          filled = true;
+        }
+        if (filled) {
+          counts.filled++;
+          if (!o.dryRun) this.dirty.messages.set(mid, false);
+        } else counts.same++;
+      }
+      if (o.dryRun) return;
+      // Old messages are read; a conversation's counts stay what the network said.
+      if (v0) this.db.query(`UPDATE vantage SET unread = ?, mentions = ? WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`).run(v0.unread, v0.mentions, acc.id, cid);
+      else if (newest)
+        this.db
+          .query(`UPDATE vantage SET last_read_ts = MAX(COALESCE(last_read_ts, 0), ?), unread = 0, mentions = 0 WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`)
+          .run(newest, acc.id, cid);
+      this.dirty.conversations.add(cid);
+    };
+    this.db.transaction(run)();
+    return counts;
+  }
+
+  private insertAttachments(acc: AccountRow, mid: string, nativeId: string, atts: P.AttachmentFact[]) {
+    atts.forEach((a, i) => {
+      this.db
+        .query(`INSERT OR REPLACE INTO attachment (id, message_id, kind, mime, name, size, width, height, url, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(hubId('att', acc.network, `${nativeId}#${a.nativeId ?? i}`), mid, a.kind, a.mime ?? null, a.name ?? null, a.size ?? null, a.width ?? null, a.height ?? null, a.url, i);
+    });
+  }
+
+  /** What an import found that differs from the hub, newest first. */
+  importConflicts(sourceSha: string, limit = 100, offset = 0): P.ImportConflictView[] {
+    const rows = this.db
+      .query(
+        `SELECT c.*, m.conversation_id, m.body, m.deleted, m.edited_ts, m.ts FROM import_conflict c JOIN message m ON m.id = c.message_id
+         WHERE c.source_sha = ? ORDER BY m.ts DESC LIMIT ? OFFSET ?`,
+      )
+      .all(sourceSha, limit, offset) as Row[];
+    return rows.map((r) => ({
+      messageId: r.message_id,
+      conversationId: r.conversation_id,
+      kind: r.kind,
+      hub: { body: r.body, deleted: !!r.deleted, editedTs: r.edited_ts ?? null },
+      source: JSON.parse(r.source_value),
+      ts: r.ts,
+      decision: r.decision ?? null,
+    }));
+  }
+
+  importConflictCounts(sourceSha: string): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const r of this.db.query('SELECT kind, COUNT(*) AS n FROM import_conflict WHERE source_sha = ? GROUP BY kind').all(sourceSha) as Row[]) out[r.kind] = r.n;
+    return out;
+  }
+
+  /**
+   * Take a source's version of a message, or stop showing the difference. Taking it keeps the hub's words as an
+   * earlier version (message_event), like an edit.
+   */
+  decideImportConflict(messageId: string, kind: string, sourceSha: string, decision: 'take-source' | 'ignore' | null) {
+    const c = this.db.query('SELECT * FROM import_conflict WHERE message_id = ? AND kind = ? AND source_sha = ?').get(messageId, kind, sourceSha) as Row | null;
+    if (!c) throw new Error('no such conflict');
+    this.db.transaction(() => {
+      if (decision === 'take-source' && c.decision !== 'take-source') {
+        const m = this.db.query('SELECT body, author_id FROM message WHERE id = ?').get(messageId) as Row;
+        const v = JSON.parse(c.source_value) as { body: string };
+        if (m.body) this.messageEvent(messageId, 'edit', { body: m.body }, m.author_id, null, Date.now());
+        this.db.query('UPDATE message SET body = ? WHERE id = ?').run(v.body, messageId);
+        this.dirty.messages.set(messageId, false);
+      }
+      this.db.query('UPDATE import_conflict SET decision = ?, decided_at = ? WHERE message_id = ? AND kind = ? AND source_sha = ?').run(decision, Date.now(), messageId, kind, sourceSha);
+    })();
+  }
+
+  /** Undo a source: messages only it brought (never sent by the network since) go; the rest only lose the origin. */
+  undoImport(sourceSha: string): { removed: number } {
+    let removed = 0;
+    this.db.transaction(() => {
+      const only = this.db
+        .query(
+          `SELECT o.message_id, m.conversation_id FROM import_origin o JOIN message m ON m.id = o.message_id
+           WHERE o.source_sha = ? AND m.imported = 1 AND NOT EXISTS (SELECT 1 FROM import_origin x WHERE x.message_id = o.message_id AND x.source_sha != o.source_sha)`,
+        )
+        .all(sourceSha) as Row[];
+      for (const r of only) {
+        this.db.query('DELETE FROM message WHERE id = ?').run(r.message_id);
+        this.dirty.conversations.add(r.conversation_id);
+        removed++;
+      }
+      this.db.query('DELETE FROM import_origin WHERE source_sha = ?').run(sourceSha);
+      this.db.query('DELETE FROM import_conflict WHERE source_sha = ?').run(sourceSha);
+    })();
+    return { removed };
   }
 
   // ------------------------------------------------------------ hub-side mutations

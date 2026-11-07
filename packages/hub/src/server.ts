@@ -12,6 +12,9 @@ import type { ReadQueue } from './readqueue.ts';
 import { validDailyDigest, validQuietHours, type Triage } from './triage.ts';
 import type { TriageVotes, Vote } from './votes.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
+import { ImportRunner } from './imports/engine.ts';
+import { GapFill } from './imports/gapfill.ts';
+import { MediaArchiver } from './mediaarchive.ts';
 import { ImportSources } from './imports/sources.ts';
 import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } from './calls.ts';
 import { compress } from './compress.ts';
@@ -60,6 +63,8 @@ export interface ServerOpts {
   devices?: Devices;
   /** Your votes on triage and the rules learned from them (votes.ts, docs/notifications.md). */
   votes?: TriageVotes;
+  /** Fetch every remote attachment into the media cache soon after it arrives (mediaarchive.ts). A real hub, not a demo. */
+  archiveMedia?: boolean;
 }
 
 // ------------------------------------------------------------------ access
@@ -125,6 +130,9 @@ export class HubServer {
   private uploads: Uploads;
   /** Raw history sources waiting to be imported (imports/sources.ts, docs/import.md). */
   readonly imports: ImportSources;
+  readonly importer: ImportRunner;
+  readonly gapfill: GapFill;
+  private archiver?: MediaArchiver;
   private typingGate = new TypingGate();
   private usage: UsageStore;
   readonly calls: Calls;
@@ -143,6 +151,10 @@ export class HubServer {
   ) {
     this.uploads = new Uploads(join(opts.dataDir, 'uploads'));
     this.imports = new ImportSources(opts.dataDir, (msg) => console.warn(msg));
+    this.importer = new ImportRunner(store, this.imports, opts.dataDir, (msg) => console.warn(msg));
+    this.gapfill = new GapFill(store, (acc, cmd) => this.sup.command(acc, cmd, 180_000), (msg) => console.warn(msg));
+    if (opts.archiveMedia)
+      this.archiver = new MediaArchiver(store, join(opts.dataDir, 'media-cache'), (url, acc) => this.archiveOne(url, acc), (msg) => console.warn(msg));
     this.calls = new Calls(store, sup, { turn: opts.turn, pickAccount: (c, a) => this.pickAccount(c, a) });
     this.abouts = new Abouts({
       store,
@@ -230,6 +242,8 @@ export class HubServer {
     }
     this.flushTimer = setInterval(() => this.flush(), 80);
     this.imports.resume();
+    this.gapfill.resume();
+    this.archiver?.start();
     this.store.journal.prune();
     this.pruneTimer = setInterval(() => this.store.journal.prune(), 3_600_000);
     return this.server;
@@ -238,6 +252,9 @@ export class HubServer {
   stop() {
     clearInterval(this.flushTimer);
     clearInterval(this.pruneTimer);
+    this.importer.stop();
+    this.gapfill.stopAll();
+    this.archiver?.stop();
     this.imports.stop();
     this.flush();
     this.server?.stop(true);
@@ -554,21 +571,51 @@ export class HubServer {
       return ok(this.uploads.put(bytes, cleanFileName(req.headers.get('x-file-name')), req.headers.get('content-type') ?? ''));
     }
     // History sources (docs/import.md): uploaded in pieces at their offset, so a dropped connection resumes.
+    if ((m = path.match(/^\/api\/history-gaps\/([\w-]+)(\/stop)?$/))) {
+      if (!s.account(m[1])) return bad('no such account', 404);
+      try {
+        if (method === 'GET') return ok(this.gapfill.status(m[1]));
+        if (method === 'POST' && m[2]) return (this.gapfill.stop(m[1]), ok(this.gapfill.status(m[1])));
+        if (method === 'POST') return ok(this.gapfill.start(m[1], { allChannels: !!(await body<{ allChannels?: boolean }>()).allChannels }));
+      } catch (e: any) {
+        return bad(String(e?.message ?? e));
+      }
+    }
     if (path.startsWith('/api/imports')) {
       const fail = (e: any) => Response.json({ error: String(e?.message ?? e), ...(e?.received !== undefined ? { received: e.received } : {}) }, { status: e?.status ?? 400 });
       try {
         if (path === '/api/imports' && method === 'GET') return ok({ sources: this.imports.list() });
         if (path === '/api/imports' && method === 'POST') {
-          const b = await body<{ accountId?: string; name?: string; size?: number; label?: string }>();
+          const b = await body<{ accountId?: string; name?: string; size?: number; files?: { path: string; size: number }[]; label?: string }>();
           const acc = b.accountId ? s.account(b.accountId) : null;
           if (!acc) return bad('no such account', 404);
-          return ok(this.imports.create({ network: acc.network as P.Network, accountId: acc.id, name: String(b.name ?? ''), size: Number(b.size), label: b.label }));
+          return ok(this.imports.create({ network: acc.network as P.Network, accountId: acc.id, name: b.name, size: b.size, files: Array.isArray(b.files) ? b.files : undefined, label: b.label }));
         }
         if ((m = path.match(/^\/api\/imports\/([\w.-]+)\/data$/)) && method === 'PUT') {
           if (Number(req.headers.get('content-length') ?? 0) > IMPORT_CHUNK) return bad('piece too large', 413);
-          return ok(await this.imports.put(m[1], num('offset') ?? -1, req.body));
+          return ok(await this.imports.put(m[1], num('offset') ?? -1, req.body, num('file') ?? 0));
         }
+        if ((m = path.match(/^\/api\/imports\/([\w.-]+)\/files$/)) && method === 'GET') return ok({ files: this.imports.uploadState(m[1]) });
         if ((m = path.match(/^\/api\/imports\/([\w.-]+)\/passphrase$/)) && method === 'POST') return ok(this.imports.setPassphrase(m[1], String((await body<{ passphrase?: string }>()).passphrase ?? '')));
+        if ((m = path.match(/^\/api\/imports\/([\w.-]+)\/run$/)) && method === 'POST') return ok(this.importer.start(m[1], { dryRun: !!(await body<{ dryRun?: boolean }>()).dryRun }));
+        if (path === '/api/imports/stop' && method === 'POST') return (this.importer.stop(), ok());
+        if ((m = path.match(/^\/api\/imports\/([\w.-]+)\/conflicts$/))) {
+          const v = this.imports.view(m[1]);
+          if (!v?.sha256) return bad('no such source', 404);
+          if (method === 'POST') {
+            const b = await body<{ messageId?: string; kind?: string; decision?: 'take-source' | 'ignore' | null }>();
+            if (b.decision !== null && b.decision !== 'take-source' && b.decision !== 'ignore') return bad('decision is take-source, ignore or null');
+            s.decideImportConflict(String(b.messageId), String(b.kind), v.sha256, b.decision);
+            return ok();
+          }
+          return ok({ counts: s.importConflictCounts(v.sha256), items: s.importConflicts(v.sha256, Math.min(num('limit') ?? 50, 200), num('offset') ?? 0) });
+        }
+        if ((m = path.match(/^\/api\/imports\/([\w.-]+)\/undo$/)) && method === 'POST') {
+          const v = this.imports.view(m[1]);
+          if (!v?.sha256) return bad('no such source', 404);
+          if (this.importer.busy) return bad('an import is running', 409);
+          return ok(s.undoImport(v.sha256));
+        }
         if ((m = path.match(/^\/api\/imports\/([\w.-]+)\/check$/)) && method === 'POST') {
           void this.imports.check(m[1]);
           return ok(this.imports.view(m[1]));
@@ -581,7 +628,10 @@ export class HubServer {
             const net = b.accountId ? (s.account(b.accountId)!.network as P.Network) : undefined;
             return ok(this.imports.patch(m[1], { label: b.label, accountId: b.accountId, network: net }));
           }
-          if (method === 'DELETE') return (this.imports.remove(m[1]), ok());
+          if (method === 'DELETE') {
+            if (this.importer.busy === m[1]) return bad('it is being imported; stop that first', 409);
+            return (this.imports.remove(m[1]), ok());
+          }
         }
       } catch (e) {
         return fail(e);
@@ -1166,6 +1216,13 @@ export class HubServer {
     const expect = createHmac('sha256', this.opts.secret).update(`${raw}|${accountId ?? ''}`).digest('base64url').slice(0, 16);
     if (sig !== expect) return new Response('bad signature', { status: 403 });
     return this.fetchMedia(raw, accountId);
+  }
+
+  /** Fetch one URL into the media cache, as showing it would (mediaarchive.ts); true when it is there. */
+  private async archiveOne(url: string, accountId: string | null): Promise<boolean> {
+    const res = await this.fetchMedia(url, accountId);
+    await res.body?.cancel().catch(() => {});
+    return res.ok;
   }
 
   /** The bytes behind a stored media URL, for sending them on. */

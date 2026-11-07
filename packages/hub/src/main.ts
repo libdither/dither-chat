@@ -224,6 +224,7 @@ const server = new HubServer(store, sup, triage, {
   activity,
   devices,
   votes,
+  archiveMedia: !demo,
   turn: process.env.DITHER_TURN_URLS && process.env.DITHER_TURN_SECRET ? { urls: process.env.DITHER_TURN_URLS.split(',').map((u) => u.trim()), secret: process.env.DITHER_TURN_SECRET } : undefined,
   onDemoReset: !demo ? undefined : async () => {
     for (const a of store.accounts().filter((a) => a.demo)) {

@@ -129,11 +129,12 @@ async function vacuumInto(from: string, to: string) {
 }
 
 /**
- * The media cache under `maxBytes` (DITHER_MEDIA_CACHE_MB, default 8192): the least recently shown files go first
- * (server.ts touches a file each time it serves it). Discord links expire, so media evicted here may not come back
- * for old messages; hence the generous default. Leftover partial downloads go too.
+ * The media cache is kept indefinitely: it holds every attachment the archiver fetched (mediaarchive.ts), and
+ * Discord's links expire, so anything evicted may never come back. Only leftover partial downloads go. Setting
+ * DITHER_MEDIA_CACHE_MB caps it again: past that, the least recently shown files go first (server.ts touches a file
+ * each time it serves it).
  */
-export function pruneMediaCache(dir: string, maxBytes = (Number(process.env.DITHER_MEDIA_CACHE_MB) || 8192) * 1024 * 1024, now = Date.now()): { removed: number; bytes: number } {
+export function pruneMediaCache(dir: string, maxBytes = Number(process.env.DITHER_MEDIA_CACHE_MB) > 0 ? Number(process.env.DITHER_MEDIA_CACHE_MB) * 1024 * 1024 : Infinity, now = Date.now()): { removed: number; bytes: number } {
   if (!existsSync(dir)) return { removed: 0, bytes: 0 };
   const files: { name: string; size: number; at: number }[] = [];
   let removed = 0;

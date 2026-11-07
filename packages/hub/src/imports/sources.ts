@@ -12,10 +12,11 @@
  */
 import { randomBytes } from 'node:crypto';
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { MAX_IMPORT } from '@dither-chat/protocol';
 import { cleanFileName } from '../uploads.ts';
+import { importable } from './engine.ts';
 import { isPassphrase, normalizePassphrase, sniffLegacy } from './signal-backup.ts';
 
 interface SourceFile {
@@ -26,8 +27,11 @@ interface SourceFile {
   account: string | null;
   addedAt: number;
   addedBy: string;
-  /** Uploads: the file as the client named it, and how big it will be. */
-  upload?: { name: string; size: number };
+  /**
+   * Uploads: the files as the client named them, relative to raw/, and how big each will be. One file, or a folder
+   * picked whole (a Molly backup folder: SignalBackups/ and .backup files). Older sources say { name, size }.
+   */
+  upload?: { files?: { path: string; size: number }[]; name?: string; size?: number };
   notes?: string;
   [k: string]: unknown;
 }
@@ -41,6 +45,7 @@ interface StateFile {
   error: string | null;
   kind?: P.ImportSourceKind;
   checkedAt?: number;
+  run?: P.ImportRunView;
 }
 
 const ID = /^[\w][\w.-]{0,100}$/;
@@ -49,6 +54,8 @@ export class ImportSources {
   readonly root: string;
   /** Live progress of jobs, so a listing mid-census shows it without rewriting state.json. */
   private progress = new Map<string, number>();
+  /** Runs in progress, updated in place by the runner; state.json gets each stage. */
+  private runs = new Map<string, P.ImportRunView>();
   private jobs = new Map<string, Promise<void>>();
   private workers = new Map<string, Worker>();
   private writing = new Set<string>();
@@ -66,6 +73,7 @@ export class ImportSources {
     for (const id of this.ids()) {
       const st = this.readState(id);
       if (!st || st.status === 'checking' || st.status === 'counting') this.check(id);
+      if (st?.run && !st.run.finishedAt) this.setState(id, { run: { ...st.run, stage: 'stopped', finishedAt: Date.now(), error: 'The hub restarted during it; run it again (it carries on where it was).' } });
     }
   }
 
@@ -115,17 +123,58 @@ export class ImportSources {
     this.writeJson(join(this.root, id, 'state.json'), { ...cur, ...patch });
   }
 
+  /** An import run's state, kept with the source so it survives a restart. */
+  setRun(id: string, run: P.ImportRunView) {
+    if (!this.dir(id)) return;
+    if (run.finishedAt) this.runs.delete(id);
+    else this.runs.set(id, run);
+    this.setState(id, { run: { ...run } });
+  }
+
+  /** An upload's files, relative to raw/. */
+  private uploadFiles(src: SourceFile): { path: string; size: number }[] | null {
+    const u = src.upload;
+    if (!u) return null;
+    if (u.files) return u.files;
+    return u.name ? [{ path: cleanFileName(u.name), size: u.size ?? 0 }] : null;
+  }
+
   /** The uploaded file, for single-file sources. */
   private uploadPath(id: string, src: SourceFile): string | null {
-    return src.upload ? join(this.root, id, 'raw', cleanFileName(src.upload.name)) : null;
+    const files = this.uploadFiles(src);
+    return files?.length === 1 ? join(this.root, id, 'raw', files[0].path) : null;
+  }
+
+  private received(id: string, src: SourceFile): number {
+    let n = 0;
+    for (const f of this.uploadFiles(src) ?? []) {
+      try {
+        n += statSync(join(this.root, id, 'raw', f.path)).size;
+      } catch {}
+    }
+    return n;
+  }
+
+  /** Each file of an upload and how much of it has arrived, so a client can carry on. */
+  uploadState(id: string): { path: string; size: number; received: number }[] {
+    const src = this.dir(id) ? this.readSource(id) : null;
+    if (!src) throw Object.assign(new Error('no such source'), { status: 404 });
+    return (this.uploadFiles(src) ?? []).map((f) => {
+      let received = 0;
+      try {
+        received = statSync(join(this.root, id, 'raw', f.path)).size;
+      } catch {}
+      return { ...f, received };
+    });
   }
 
   view(id: string): P.ImportSourceView | null {
     const src = this.dir(id) ? this.readSource(id) : null;
     if (!src) return null;
     const st = this.readState(id);
-    const up = this.uploadPath(id, src);
-    const received = up && existsSync(up) ? statSync(up).size : (st?.size ?? 0);
+    const files = this.uploadFiles(src);
+    const total = files ? files.reduce((n, f) => n + f.size, 0) : null;
+    const received = files ? (st?.status === 'uploading' ? this.received(id, src) : (total ?? 0)) : (st?.size ?? 0);
     return {
       id,
       network: src.network ?? null,
@@ -133,9 +182,9 @@ export class ImportSources {
       kind: st?.kind ?? src.kind ?? 'unknown',
       label: src.label || id,
       status: st?.status ?? 'checking',
-      size: src.upload?.size ?? st?.size ?? 0,
+      size: total ?? st?.size ?? 0,
       received,
-      files: st?.files ?? (up ? 1 : 0),
+      files: files?.length ?? st?.files ?? 0,
       sha256: st?.sha256 ?? null,
       addedAt: src.addedAt ?? 0,
       addedBy: src.addedBy ?? 'unknown',
@@ -144,6 +193,8 @@ export class ImportSources {
       census: st?.census ?? null,
       error: st?.error ?? null,
       notes: typeof src.notes === 'string' ? src.notes : null,
+      run: this.runs.get(id) ?? st?.run ?? null,
+      importable: importable(st?.kind ?? src.kind ?? 'unknown'),
     };
   }
 
@@ -160,47 +211,69 @@ export class ImportSources {
 
   // ---------------------------------------------------------------- uploads
 
-  create(o: { network: P.Network; accountId: string; name: string; size: number; label?: string }): P.ImportSourceView {
-    if (!Number.isSafeInteger(o.size) || o.size <= 0) throw new Error('empty file');
-    if (o.size > MAX_IMPORT) throw new Error('that file is too large');
-    const name = cleanFileName(o.name);
+  /**
+   * A new upload: one file ({ name, size }) or several with their paths in a picked folder ({ files }). Nothing is
+   * written into raw/ but what these name, each under its own cleaned path.
+   */
+  create(o: { network: P.Network; accountId: string; name?: string; size?: number; files?: { path: string; size: number }[]; label?: string }): P.ImportSourceView {
+    const files = (o.files ?? [{ path: o.name ?? '', size: o.size ?? 0 }]).map((f) => ({ path: cleanRelPath(f.path), size: Number(f.size) }));
+    if (!files.length || files.length > MAX_FILES) throw new Error(`between 1 and ${MAX_FILES} files`);
+    if (files.some((f) => !f.path || !Number.isSafeInteger(f.size) || f.size < 0)) throw new Error('a file without a name or size');
+    if (new Set(files.map((f) => f.path)).size !== files.length) throw new Error('the same file twice');
+    const total = files.reduce((n, f) => n + f.size, 0);
+    if (total <= 0) throw new Error('nothing to upload');
+    if (total > MAX_IMPORT) throw new Error('that is too large');
     const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
     const id = `${o.network}-${stamp}-${randomBytes(2).toString('hex')}`;
     const d = join(this.root, id);
-    mkdirSync(join(d, 'raw'), { recursive: true, mode: 0o700 });
-    writeFileSync(join(d, 'raw', name), '', { mode: 0o600 });
-    const kind: P.ImportSourceKind = o.network === 'signal' && /\.backup$/i.test(name) ? 'signal-backup' : o.network === 'discord' && /\.zip$/i.test(name) ? 'discord-package' : 'unknown';
-    const src: SourceFile = { v: 1, network: o.network, kind, label: o.label?.trim() || name, account: o.accountId, addedAt: Date.now(), addedBy: 'upload', upload: { name, size: o.size } };
+    for (const f of files) {
+      mkdirSync(dirname(join(d, 'raw', f.path)), { recursive: true, mode: 0o700 });
+      writeFileSync(join(d, 'raw', f.path), '', { mode: 0o600 });
+    }
+    const first = files[0].path;
+    const top = first.split('/')[0];
+    const kind: P.ImportSourceKind =
+      o.network === 'signal' && files.length === 1 && /\.backup$/i.test(first)
+        ? 'signal-backup'
+        : o.network === 'signal'
+          ? 'signal-folder'
+          : o.network === 'discord' && files.length === 1 && /\.zip$/i.test(first)
+            ? 'discord-package'
+            : 'unknown';
+    const label = o.label?.trim() || (files.length === 1 ? first : `${top} (${files.length} files)`);
+    const src: SourceFile = { v: 1, network: o.network, kind, label, account: o.accountId, addedAt: Date.now(), addedBy: 'upload', upload: { files } };
     this.writeJson(join(d, 'source.json'), src);
-    this.setState(id, { status: 'uploading', size: o.size, files: 1 });
+    this.setState(id, { status: 'uploading', size: total, files: files.length });
     return this.view(id)!;
   }
 
-  /** Append one piece at `offset`, which must be exactly what has arrived so far. */
-  async put(id: string, offset: number, body: ReadableStream<Uint8Array> | null): Promise<P.ImportSourceView> {
+  /** Append one piece of file `file` at `offset`, which must be exactly what has arrived of it so far. */
+  async put(id: string, offset: number, body: ReadableStream<Uint8Array> | null, file = 0): Promise<P.ImportSourceView> {
     const src = this.dir(id) ? this.readSource(id) : null;
-    const path = src && this.uploadPath(id, src);
-    if (!src || !path || !src.upload) throw Object.assign(new Error('no such upload'), { status: 404 });
+    const f = src ? this.uploadFiles(src)?.[file] : undefined;
+    if (!src || !f) throw Object.assign(new Error('no such upload'), { status: 404 });
+    const path = join(this.root, id, 'raw', f.path);
     if (this.readState(id)?.status !== 'uploading') throw Object.assign(new Error('this upload is already complete'), { status: 409 });
-    if (this.writing.has(id)) throw Object.assign(new Error('another piece is still being written'), { status: 409 });
+    const key = `${id}#${file}`;
+    if (this.writing.has(key)) throw Object.assign(new Error('another piece is still being written'), { status: 409 });
     const have = statSync(path).size;
     if (offset !== have) throw Object.assign(new Error(`expected offset ${have}`), { status: 409, received: have });
-    this.writing.add(id);
+    this.writing.add(key);
     const fd = openSync(path, 'a');
     let written = 0;
     try {
       if (body) {
         for await (const chunk of body) {
-          if (have + written + chunk.length > src.upload.size) throw Object.assign(new Error('more bytes than the file has'), { status: 400 });
+          if (have + written + chunk.length > f.size) throw Object.assign(new Error('more bytes than the file has'), { status: 400 });
           writeSync(fd, chunk);
           written += chunk.length;
         }
       }
     } finally {
       closeSync(fd);
-      this.writing.delete(id);
+      this.writing.delete(key);
     }
-    if (have + written === src.upload.size) {
+    if (this.received(id, src) === this.uploadFiles(src)!.reduce((n, x) => n + x.size, 0) && ![...this.writing].some((k) => k.startsWith(id + '#'))) {
       this.setState(id, { status: 'checking' });
       this.check(id);
     }
@@ -231,7 +304,8 @@ export class ImportSources {
     if (!src) return;
     const d = join(this.root, id);
     const up = this.uploadPath(id, src);
-    if (up && src.upload && (!existsSync(up) || statSync(up).size < src.upload.size)) return this.setState(id, { status: 'uploading' });
+    const want = this.uploadFiles(src);
+    if (want && this.received(id, src) < want.reduce((n, f) => n + f.size, 0)) return this.setState(id, { status: 'uploading' });
     this.setState(id, { status: 'checking', error: null });
 
     let kind: P.ImportSourceKind = src.kind ?? 'unknown';
@@ -264,6 +338,17 @@ export class ImportSources {
       if (!pass) return this.setState(id, { status: 'needs-passphrase' });
       return this.count(id, up, pass);
     }
+    if (kind === 'signal-folder' || (src.network === 'signal' && !up)) {
+      // A Molly backup folder: new-format snapshots under SignalBackups/, and with "Include kept messages", .backup
+      // files beside it. The newest .backup is the one counted.
+      const folder = signalFolder(join(d, 'raw'));
+      this.setState(id, { kind: 'signal-folder', census: folder.census });
+      if (folder.newestBackup) {
+        const pass = this.passphrase(id);
+        if (!pass) return this.setState(id, { status: 'needs-passphrase' });
+        return this.count(id, folder.newestBackup, pass, folder.census);
+      }
+    }
     this.setState(id, { status: 'ready' });
   }
 
@@ -273,7 +358,7 @@ export class ImportSources {
   }
 
   /** Read the whole backup through in a worker; a wrong passphrase is forgotten and asked for again. */
-  private count(id: string, path: string, passphrase: string): Promise<void> {
+  private count(id: string, path: string, passphrase: string, base?: P.ImportCensus): Promise<void> {
     this.setState(id, { status: 'counting', error: null });
     this.progress.set(id, 0);
     return new Promise((done) => {
@@ -287,7 +372,7 @@ export class ImportSources {
       };
       w.onmessage = (e: MessageEvent<any>) => {
         if (typeof e.data.progress === 'number') this.progress.set(id, e.data.progress);
-        else if (e.data.census) finish({ status: 'ready', census: e.data.census, error: null });
+        else if (e.data.census) finish({ status: 'ready', census: base ? { ...base, legacy: e.data.census } : e.data.census, error: null });
         else if (e.data.badPassphrase) {
           rmSync(join(this.root, id, 'passphrase'), { force: true });
           finish({ status: 'needs-passphrase', error: 'That passphrase does not open this backup.' });
@@ -304,6 +389,7 @@ export class ImportSources {
     if (!isPassphrase(passphrase)) throw new Error('A backup passphrase is 30 digits.');
     const st = this.readState(id);
     if (st?.status === 'uploading') throw Object.assign(new Error('the upload is not complete yet'), { status: 409 });
+    if (st?.kind !== 'signal-backup' && st?.kind !== 'signal-folder') throw new Error('only a Signal .backup has a passphrase');
     if (this.jobs.has(id)) throw Object.assign(new Error('still checking this source'), { status: 409 });
     writeFileSync(join(d, 'passphrase'), normalizePassphrase(passphrase), { mode: 0o600 });
     this.check(id);
@@ -351,4 +437,41 @@ async function hashFile(path: string): Promise<string> {
   const h = new Bun.CryptoHasher('sha256');
   for await (const chunk of Bun.file(path).stream()) h.update(chunk);
   return h.digest('hex');
+}
+
+const MAX_FILES = 200_000;
+
+/** A path inside a picked folder, each part cleaned like a file name; never absolute, never "..". */
+export function cleanRelPath(p: string): string {
+  return p
+    .split(/[\\/]+/)
+    .filter((x) => x && x !== '.' && x !== '..')
+    .map((x) => cleanFileName(x))
+    .join('/');
+}
+
+/** What a Molly backup folder holds, by names and sizes only. */
+export function signalFolder(raw: string): { census: P.ImportCensus; newestBackup: string | null } {
+  const files = walk(raw);
+  const snapshots = new Set<string>();
+  let attachments = 0;
+  let attachmentBytes = 0;
+  const backups: { path: string; bytes: number; version: number | null }[] = [];
+  for (const p of files) {
+    const rel = relative(raw, p);
+    const parts = rel.split('/');
+    const snap = parts.findIndex((x) => /^signal-backup-/.test(x));
+    if (snap >= 0 && snap < parts.length - 1) snapshots.add(parts[snap]);
+    if (parts.includes('files') && parts.indexOf('files') < parts.length - 1) {
+      attachments++;
+      attachmentBytes += statSync(p).size;
+    }
+    if (/\.backup$/i.test(rel)) backups.push({ path: rel, bytes: statSync(p).size, version: sniffLegacy(p)?.version ?? null });
+  }
+  const valid = backups.filter((b) => b.version !== null).sort((a, b) => (a.path < b.path ? 1 : -1));
+  const snaps = [...snapshots].sort();
+  return {
+    census: { format: 'signal-folder', snapshots: snaps.length, newestSnapshot: snaps.at(-1) ?? null, attachments, attachmentBytes, backups: backups.map((b) => ({ name: b.path.split('/').pop(), bytes: b.bytes, legacy: b.version !== null })) },
+    newestBackup: valid[0] ? join(raw, valid[0].path) : null,
+  };
 }

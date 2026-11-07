@@ -150,6 +150,33 @@ describe('import sources over HTTP', () => {
     expect((await until('discord-main-dce-html', (v) => v.status === 'ready')).sha256).toBe(first);
   });
 
+  test('a Molly backup folder goes up file by file and its .backup is counted', async () => {
+    const meta = new TextEncoder().encode('metadata bytes');
+    const main = new TextEncoder().encode('encrypted main');
+    const att = new TextEncoder().encode('an attachment');
+    const files = [
+      { path: 'Backups/SignalBackups/signal-backup-2026-11-06-10-00-00/main', bytes: main },
+      { path: 'Backups/SignalBackups/signal-backup-2026-11-06-10-00-00/metadata', bytes: meta },
+      { path: 'Backups/SignalBackups/files/ab/abcdef', bytes: att },
+      { path: 'Backups/signal-2026-11-06-10-00-00.backup', bytes: backup },
+      { path: '../../../escape.txt', bytes: att },
+    ];
+    const created = await json<P.ImportSourceView>('/api/imports', { method: 'POST', body: { accountId: 'acc_sig', files: files.map((f) => ({ path: f.path, size: f.bytes.length })) } });
+    expect(created.status).toBe(200);
+    const id = created.data.id;
+    expect(created.data).toMatchObject({ kind: 'signal-folder', files: 5, label: 'Backups (5 files)' });
+    const state = (await json<{ files: { path: string; received: number }[] }>(`/api/imports/${id}/files`)).data.files;
+    expect(state.map((f) => f.path)).toContain('escape.txt');
+    for (let i = 0; i < files.length; i++) await json(`/api/imports/${id}/data?file=${i}&offset=0`, { method: 'PUT', body: files[i].bytes });
+    let v = await until(id, (v) => v.status !== 'uploading' && v.status !== 'checking');
+    expect(v.status).toBe('needs-passphrase');
+    expect(v.census).toMatchObject({ format: 'signal-folder', snapshots: 1, newestSnapshot: 'signal-backup-2026-11-06-10-00-00', attachments: 1, backups: [{ name: 'signal-2026-11-06-10-00-00.backup', legacy: true }] });
+    await json(`/api/imports/${id}/passphrase`, { method: 'POST', body: { passphrase: SYNTHETIC_PASSPHRASE } });
+    v = await until(id, (v) => v.status === 'ready');
+    expect((v.census as any).legacy.messages.total).toBe(5);
+    expect(statSync(join(hubDir, 'imports/sources', id, 'raw/escape.txt')).size).toBe(att.length);
+  });
+
   test('a source can be given an account, and forgotten', async () => {
     store.createAccount({ id: 'acc_dc', network: 'discord', label: 'main', color: '#000', adapter: 'discord', token: 't' } as any);
     const p = await json<P.ImportSourceView>('/api/imports/discord-main-dce-html', { method: 'PATCH', body: { accountId: 'acc_dc' } });

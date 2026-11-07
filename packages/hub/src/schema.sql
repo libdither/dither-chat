@@ -156,6 +156,7 @@ CREATE TABLE IF NOT EXISTS message (
   -- When gone, how and when (docs/history.md): 'deleted' or 'disappeared'; the body stays if the hub kept it.
   gone_how        TEXT,
   gone_at         INTEGER,
+  imported        INTEGER NOT NULL DEFAULT 0, -- inserted by a history import, not yet sent by the network (docs/import.md)
   extra           TEXT,
   UNIQUE (network, native_id)
 );
@@ -547,4 +548,65 @@ CREATE TABLE IF NOT EXISTS receipt (
   state       TEXT NOT NULL CHECK (state IN ('delivered', 'read', 'played')),
   at          INTEGER NOT NULL,
   PRIMARY KEY (message_id, identity_id, state)
+) WITHOUT ROWID;
+
+-- ------------------------------------------------------------------ history imports (imports/, docs/import.md)
+-- Sources themselves live under <data>/imports/sources/<id>/; these rows say what each import did, so it can be
+-- rerun, reviewed and undone. A message inserted by an import has message.imported = 1 until the network sends it.
+CREATE TABLE IF NOT EXISTS import_run (
+  id          TEXT PRIMARY KEY,
+  source_id   TEXT NOT NULL,
+  source_sha  TEXT NOT NULL,
+  account_id  TEXT NOT NULL,
+  reader      TEXT NOT NULL,
+  dry_run     INTEGER NOT NULL DEFAULT 0,
+  started_at  INTEGER NOT NULL,
+  finished_at INTEGER,
+  status      TEXT NOT NULL,              -- running, done, error, stopped
+  counts      TEXT,                       -- JSON ImportCounts
+  error       TEXT
+);
+
+-- Which sources brought a message. With imported = 1 and only one source here, undoing that source deletes it.
+CREATE TABLE IF NOT EXISTS import_origin (
+  message_id TEXT NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+  source_sha TEXT NOT NULL,
+  run_id     TEXT NOT NULL,
+  PRIMARY KEY (message_id, source_sha)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS import_origin_source ON import_origin(source_sha);
+
+-- Where a source disagrees with the hub. The hub keeps its version until a decision says otherwise.
+CREATE TABLE IF NOT EXISTS import_conflict (
+  message_id   TEXT NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+  kind         TEXT NOT NULL,             -- body, deleted
+  source_sha   TEXT NOT NULL,
+  run_id       TEXT NOT NULL,
+  source_value TEXT NOT NULL,             -- JSON: what the source says
+  detected_at  INTEGER NOT NULL,
+  decision     TEXT,                      -- NULL (keep the hub's), 'take-source', 'ignore'
+  decided_at   INTEGER,
+  PRIMARY KEY (message_id, kind, source_sha)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS import_conflict_source ON import_conflict(source_sha, kind);
+
+-- The gap between an import and live sync, fetched page by page through the account (imports/gapfill.ts).
+CREATE TABLE IF NOT EXISTS gap_fill (
+  account_id      TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  gap_end         INTEGER,                -- newest imported message; NULL: none, so back to the start
+  pages           INTEGER NOT NULL DEFAULT 0,
+  fetched         INTEGER NOT NULL DEFAULT 0,
+  done            INTEGER NOT NULL DEFAULT 0,
+  error           TEXT,
+  updated_at      INTEGER NOT NULL,
+  PRIMARY KEY (account_id, conversation_id)
+) WITHOUT ROWID;
+
+-- Remote media (an attachment's URL) the archiver could not keep, so it stops asking (mediaarchive.ts).
+CREATE TABLE IF NOT EXISTS media_archive_fail (
+  key     TEXT PRIMARY KEY,               -- sha256 of the URL, as the media cache names it
+  tries   INTEGER NOT NULL,
+  last_at INTEGER NOT NULL,
+  error   TEXT
 ) WITHOUT ROWID;

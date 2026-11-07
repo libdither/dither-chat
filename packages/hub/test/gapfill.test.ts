@@ -1,0 +1,105 @@
+/**
+ * Fetching what an import and live sync both lack (imports/gapfill.ts), against a fake channel served a page at a
+ * time; and keeping every remote attachment's bytes (mediaarchive.ts).
+ */
+import { afterAll, describe, expect, test } from 'bun:test';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type * as P from '@dither-chat/protocol';
+import { GapFill } from '../src/imports/gapfill.ts';
+import { MediaArchiver } from '../src/mediaarchive.ts';
+import { mediaSigner } from '../src/server.ts';
+import { Store } from '../src/store.ts';
+
+const dir = mkdtempSync(join(tmpdir(), 'dither-gap-'));
+afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+const ME = '1';
+const PEER = '2';
+const minute = 60_000;
+const T0 = Date.UTC(2026, 4, 1);
+
+function world(name: string) {
+  const store = new Store(join(dir, `${name}.sqlite`), mediaSigner('s'));
+  let acc = store.createAccount({ id: 'acc_dc', network: 'discord', label: 'main', color: '#000', adapter: 'discord' });
+  store.ingest(acc, { t: 'status', status: 'online', self: { nativeId: ME, isSelf: true } });
+  acc = store.account('acc_dc')!;
+  return { store, acc };
+}
+const msg = (id: number, ts: number, conversation = 'dm1'): P.MessageFact => ({ nativeId: String(id), conversation, author: PEER, ts, body: `m${id}` });
+
+describe('gap fill', () => {
+  test('pages back from live sync until it meets the import, then stops', async () => {
+    const { store, acc } = world('gap');
+    // The channel as Discord has it: one message a minute for 100 minutes.
+    const channel = Array.from({ length: 100 }, (_, i) => msg(1000 + i, T0 + i * minute));
+    // The export ends at minute 20; live sync has minutes 90 on.
+    store.importBatch(acc, { conversation: { nativeId: 'dm1', shape: 'direct', participants: [ME, PEER] }, identities: [], messages: channel.slice(0, 21) }, { sourceSha: 'sha', runId: 'r', dryRun: false, archiveNew: false, first: true });
+    for (const m of channel.slice(90)) store.ingest(acc, { t: 'message', message: m, live: false });
+    const asked: number[] = [];
+    const gaps = new GapFill(store, async (_acc, cmd) => {
+      asked.push(cmd.beforeTs!);
+      const page = channel.filter((m) => m.ts < cmd.beforeTs!).slice(-cmd.limit).slice(-30);
+      for (const m of page) store.ingest(acc, { t: 'message', message: m, live: false });
+      return { count: page.length, done: page.length < 30 && page[0]?.ts === channel[0].ts };
+    });
+    const v = gaps.start('acc_dc');
+    expect(v.conversations).toBe(1);
+    for (let i = 0; i < 200 && gaps.status('acc_dc').running; i++) await Bun.sleep(50);
+    const s = gaps.status('acc_dc');
+    expect(s).toMatchObject({ running: false, done: 1, failed: 0 });
+    expect((store.db.query('SELECT COUNT(*) AS n FROM message').get() as any).n).toBe(100);
+    // It started at the oldest live message and never paged past the import.
+    expect(asked[0]).toBe(T0 + 90 * minute);
+    expect(Math.min(...asked)).toBeGreaterThan(T0 + 20 * minute);
+    expect(s.fetched).toBe(69);
+  }, 20_000);
+
+  test('a conversation nothing was imported into goes back to its start; channels only when asked', async () => {
+    const { store, acc } = world('gap2');
+    store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'chan', shape: 'channel', name: 'big' } });
+    store.ingest(acc, { t: 'message', message: msg(5, T0 + 5 * minute, 'chan'), live: false });
+    const channel = Array.from({ length: 10 }, (_, i) => msg(100 + i, T0 + i * minute, 'dm2'));
+    store.ingest(acc, { t: 'message', message: channel[9], live: false });
+    const gaps = new GapFill(store, async (_acc, cmd) => {
+      const page = channel.filter((m) => m.ts < cmd.beforeTs!).slice(-4);
+      for (const m of page) store.ingest(acc, { t: 'message', message: m, live: false });
+      return { count: page.length, done: page.length < 4 };
+    });
+    gaps.start('acc_dc');
+    for (let i = 0; i < 200 && gaps.status('acc_dc').running; i++) await Bun.sleep(50);
+    expect(gaps.status('acc_dc')).toMatchObject({ conversations: 1, done: 1 });
+    expect((store.db.query(`SELECT COUNT(*) AS n FROM message WHERE conversation_id = (SELECT id FROM conversation WHERE native_id = 'dm2')`).get() as any).n).toBe(10);
+  }, 20_000);
+});
+
+describe('media archive', () => {
+  test('every remote attachment is fetched once; failures are counted and left after three tries', async () => {
+    const { store, acc } = world('media');
+    const cache = join(dir, 'media-cache');
+    mkdirSync(cache, { recursive: true });
+    const att = (id: string, url: string): P.MessageFact => ({ ...msg(Number(id), T0), attachments: [{ kind: 'image', url }] });
+    store.ingest(acc, { t: 'message', message: att('1', 'https://cdn.example/a.png'), live: false });
+    store.ingest(acc, { t: 'message', message: att('2', 'file:///local.png'), live: false });
+    store.ingest(acc, { t: 'message', message: att('3', 'https://cdn.example/expired.png'), live: false });
+    const fetched: string[] = [];
+    const key = (u: string) => new Bun.CryptoHasher('sha256').update(u).digest('hex');
+    const a = new MediaArchiver(store, cache, async (url) => {
+      fetched.push(url);
+      if (url.includes('expired')) return false;
+      writeFileSync(join(cache, key(url)), 'x');
+      return true;
+    });
+    await a.tick();
+    expect(fetched).toEqual(['https://cdn.example/a.png', 'https://cdn.example/expired.png']);
+    expect(existsSync(join(cache, key('https://cdn.example/a.png')))).toBe(true);
+    expect(store.db.query('SELECT tries FROM media_archive_fail').all()).toEqual([{ tries: 1 }]);
+    // Nothing new: nothing fetched again, and the failure waits for its retry time.
+    await a.tick();
+    expect(fetched.length).toBe(2);
+    store.ingest(acc, { t: 'message', message: att('4', 'https://cdn.example/b.png'), live: false });
+    await a.tick();
+    expect(fetched.at(-1)).toBe('https://cdn.example/b.png');
+  });
+});

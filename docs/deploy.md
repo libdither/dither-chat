@@ -84,10 +84,11 @@ the first chance. Copies you made yourself are never removed. Before opening a d
 seen, the hub also copies it to `backups/pre-migrate-<time>.sqlite` (newest five kept), and every migration runs in
 one transaction.
 
-Every six hours it trims `media-cache/` to `DITHER_MEDIA_CACHE_MB` (8192), least recently shown first. Discord's
-links expire, so an evicted image of an old Discord message may not load again; keep the limit generous. Adapter
-logs rotate at 10 MB. Triage rows older than `DITHER_TRIAGE_KEEP_DAYS` (90) go when nothing can be learned from
-them: in conversations you never wrote in, never voted on, never notified and never explored.
+Every six hours it clears partial downloads from `media-cache/`. The cache itself is kept indefinitely: the media
+archive (`packages/hub/src/mediaarchive.ts`) fills it with every remote attachment soon after it arrives, because Discord's links
+expire. Setting `DITHER_MEDIA_CACHE_MB` caps it again, least recently shown first. Adapter logs rotate at 10 MB.
+Triage rows older than `DITHER_TRIAGE_KEEP_DAYS` (90) go when nothing can be learned from them: in conversations you
+never wrote in, never voted on, never notified and never explored.
 
 To restore, stop the hub, move `hub.sqlite`, `hub.sqlite-wal` and `hub.sqlite-shm` aside, copy a backup to
 `hub.sqlite`, and start it. Clients notice and download everything again.

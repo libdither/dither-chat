@@ -14,8 +14,10 @@ Goals:
   disagreement, and lets you review and decide it. A decision is remembered and replayed on every rerun.
 - **Raw sources are kept.** The bytes you gave the hub are never modified, so a better reader can come back to them.
 
-Status: sources (upload, rsync, hash, census) are built. The readers, planner, apply step and review UI are the plan
-below.
+Status: built for Discord. Sources (upload of files or folders, rsync, hash, census), the DiscordChatExporter HTML
+reader, the fill-only apply with provenance, conflicts and undo, the review UI, the gap fill through the account and
+the media archive are in. Signal has upload and census only: no reader yet. Where the code differs from the design
+below, the code section at the end says so.
 
 ## Stages
 
@@ -201,10 +203,38 @@ the source and everything before the failed stage intact.
 
 ## Order of work
 
-1. ✅ Sources: upload, copy-in, hashing, Signal census, History section.
-2. Signal legacy reader + planner + `importFacts` + apply, with a fixture backup built from Molly's own exporter
-   test, then a dry run on the real backup (counts only) before any apply.
-3. Review UI for conflicts; undo.
-4. DCE HTML reader for the two Discord exports already on the hub, then a gap fill through the adapter's `history`.
-5. Automatic pipeline on upload.
-6. DCE JSON, Discord data package, Signal backup v2.
+1. ✅ Sources: upload (one file, or a folder picked whole), copy-in, hashing, Signal census, History section.
+2. ✅ DCE HTML reader (`imports/discord-html.ts`) and the import itself (`imports/engine.ts`, `Store.importBatch`):
+   dry run, import, review of differences, undo. Tested on a copy of the live database with both real exports:
+   390k messages in about 3½ minutes, unread counts untouched, a second run changing nothing.
+3. ✅ Gap fill through the Discord account (`imports/gapfill.ts`) and the media archive (`mediaarchive.ts`).
+4. Signal: a reader for the new Molly folder (`SignalBackups/` plus the "Include kept messages" `.backup`), then the
+   same import path. Kept content goes in through the hub's own kept-message mechanism (docs/history.md).
+5. Automatic pipeline on upload; decisions as rules; DCE JSON and the Discord data package.
+
+## What the code does (and where it is simpler than the design)
+
+- **One pass, not plan-then-apply.** `Store.importBatch` classifies and applies in the same transaction; a dry run
+  is the same pass with every write skipped. Outcomes: new, same, filled (a reply link or attachments the hub
+  lacked), conflict. There is no rank or upgrade yet: an existing row is never replaced by an import.
+- **Provenance.** `message.imported = 1` on rows an import inserted, cleared when the network sends the message;
+  `import_origin (message_id, source_sha)` for every message a source carried; `import_run` per run.
+  Undo deletes rows with `imported = 1` that no other source brought.
+- **Conflicts** are kept in `import_conflict` with the source's side; the hub's side is the row itself. A decision is
+  per conflict: *Use the export's* replaces the body and keeps the hub's words as an earlier version (an `edit`
+  message_event), *Keep the hub's* hides it. System lines ("… started a call") never conflict: each renderer words
+  them its own way.
+- **Unread counts** are put back after each slice, so an import never makes anything unread; a conversation only the
+  import knows is created archived and read.
+- **Facts** are cached per source and reader at `<data>/imports/work/<source>/<reader>/facts.ndjson`, keyed by the
+  source's sha256 and the account's own id; the files they point at are hardlinked (copied across filesystems) into
+  `<data>/imports/media/<sha256[0:2]>/<sha256><ext>`.
+- **Slices** of 150 messages, each its own transaction, with the event loop let go between them.
+- **Gap fill** (`/api/history-gaps/:account`): per conversation of the account, from the oldest message above the
+  newest imported one, `history` pages of 100 going back until a page brings nothing above the import (or the chat's
+  start when nothing was imported). Direct and group chats, and the channels an import reached; every server channel
+  only when asked. Progress in `gap_fill`; a restart carries on.
+- **Media archive**: every attachment with a remote URL is fetched into `media-cache/` soon after it arrives (a
+  rowid cursor in `meta`), one at a time; failures are tried three times, six hours apart (`media_archive_fail`).
+  The cache is no longer trimmed unless `DITHER_MEDIA_CACHE_MB` is set. Discord links that expired before the
+  archive saw them can't be fetched: the extractor has no `attachments/refresh-urls` yet.
