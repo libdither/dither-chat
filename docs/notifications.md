@@ -219,6 +219,9 @@ unread lines, so the notification grows instead of being replaced by the latest 
   app would show an empty one.
 - **In a browser** (`sw.js`): the lines become the body (`Author: text` in groups), a group's title counts them, and
   `renotify`/`silent` follow `alert`. A hub from before this sends no `alert`, and every Important message sounds.
+  The icon is `conv.icon` for a group or channel (as on Android), else the sender's `icon`; with neither, the first
+  letter of the title on a grey disc. A Discord group without a picture of its own has the default one Discord's
+  client shows for it (the extractor reads it from the client).
 - **On Android**: a conversation notification, see docs/android.md.
 
 The burst state is kept in memory: after a restart, the next message in each conversation sounds.
