@@ -113,7 +113,8 @@ export type Route =
   | { view: 'inbox'; conv?: string; msg?: string }
   /** The triage board. On a desktop it is the inbox with nothing open; a phone gives it a tab of its own. */
   | { view: 'triage' }
-  | { view: 'people'; person?: string }
+  /** graph: the people graph (graph/GraphView.tsx) in place of a thread. */
+  | { view: 'people'; person?: string; graph?: boolean }
   /** A profile page (docs/profile.md): a person, an identity not merged into one, or a conversation or space. */
   | { view: 'profile'; person?: string; identity?: string; conv?: string; space?: string }
   | { view: 'spaces' }
@@ -130,7 +131,7 @@ export function parseHash(h = location.hash): Route {
   const q = new URLSearchParams(query ?? '');
   switch (p[0]) {
     case 'people':
-      return { view: 'people', person: p[1] };
+      return p[1] === 'graph' && !p[2] ? { view: 'people', graph: true } : { view: 'people', person: p[1] };
     case 'p':
       return { view: 'profile', person: p[1] };
     case 'i':
@@ -169,7 +170,7 @@ export function href(r: Route): string {
     case 'inbox':
       return r.conv ? `#/inbox/c/${e(r.conv)}${r.msg ? `?m=${e(r.msg)}` : ''}` : '#/inbox';
     case 'people':
-      return r.person ? `#/people/${e(r.person)}` : '#/people';
+      return r.person ? `#/people/${e(r.person)}` : r.graph ? '#/people/graph' : '#/people';
     case 'profile':
       if (r.conv) return `#/about/c/${e(r.conv)}`;
       if (r.space) return `#/about/s/${e(r.space)}`;

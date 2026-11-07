@@ -309,6 +309,45 @@ export interface MemberCoverageView {
   reportedAt?: number;
 }
 
+/**
+ * People and the places they share (GET /api/graph, docs/people-graph.md): who is in which server or group, as far as
+ * the hub knows. Server members come only with the adversarial `members` setting; a profile's mutual servers and a
+ * group's participants always. Never message text.
+ */
+export interface PeopleGraph {
+  /** Whether server members are recorded. Without it, a server has only who a profile or a channel's members named. */
+  members: boolean;
+  /** Your account ids; the `accounts` below are indexes into this. */
+  accounts: string[];
+  people: GraphPerson[];
+  places: GraphPlace[];
+  /** Person–place links as flat triples: person index, place index, GRAPH_SOURCE bits. Each pair once. */
+  links: number[];
+}
+export interface GraphPerson {
+  /** A person's id, or an identity's when no person holds it (`identity`). */
+  id: string;
+  identity?: true;
+  name: string;
+  networks: Network[];
+  /** Accounts that have a direct chat with them. */
+  dm: number[];
+  bot?: true;
+}
+export interface GraphPlace {
+  /** A community space (`space`) or a group conversation (`group`). */
+  id: string;
+  kind: 'space' | 'group';
+  name: string | null;
+  network: Network;
+  /** Accounts that see it. */
+  accounts: number[];
+  /** The network's member count, when it gave one (members setting on). */
+  total?: number;
+}
+/** Where a link came from: members seen (adversarial), a profile's mutual servers, a conversation's participants. */
+export const GRAPH_SOURCE = { members: 1, profile: 2, participant: 4 } as const;
+
 /** What one of your accounts can react with in a conversation. */
 export interface ReactionContextView {
   accountId: string | null;
