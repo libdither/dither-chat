@@ -331,3 +331,21 @@ describe('upkeep', () => {
     expect(existsSync(join(d, 'adapter.log.1'))).toBe(true);
   });
 });
+
+describe('the protocol version an adapter speaks', () => {
+  test('another version is flagged and stays flagged until a matching hello; none at all is taken as it is', async () => {
+    const { PROTOCOL_VERSION } = await import('@dither-chat/protocol');
+    const store = new Store(':memory:', mediaSigner('s'));
+    const acc = store.createAccount({ network: 'matrix', label: 'm', color: '#000', adapter: 'matrix' });
+    const attention = () => store.account(acc.id)!.attention;
+    store.ingest(acc, { t: 'hello', network: 'matrix', version: '1', capabilities: [] });
+    store.ingest(acc, { t: 'status', status: 'online' });
+    expect(attention()).toBeNull();
+    store.ingest(acc, { t: 'hello', network: 'matrix', version: '1', capabilities: [], protocol: PROTOCOL_VERSION + 1 });
+    expect(JSON.parse(attention()!).message).toContain('update this hub');
+    store.ingest(acc, { t: 'status', status: 'online' });
+    expect(JSON.parse(attention()!).message).toContain(`protocol ${PROTOCOL_VERSION + 1}`);
+    store.ingest(acc, { t: 'hello', network: 'matrix', version: '1', capabilities: [], protocol: PROTOCOL_VERSION });
+    expect(attention()).toBeNull();
+  });
+});

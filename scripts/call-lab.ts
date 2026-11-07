@@ -24,7 +24,7 @@
  * machine, so latency is arrival time minus send time on one clock. Audio latency comes from
  * correlating 2 s windows of the received loudness envelope against the recording's.
  */
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { launch } from './browser.ts';
 
@@ -44,7 +44,9 @@ const cfg = JSON.parse(readFileSync(process.argv[2]!, 'utf8')) as {
 };
 const SECS = cfg.seconds ?? 40;
 const HUB = cfg.hub.replace(/\/$/, '');
-const PROBE = readFileSync(join(import.meta.dir, '../packages/adapter-discord/src/lab/probe.js'), 'utf8');
+// The probe the running adapter has: dither-accounts' copy when it sits next to this checkout (supervisor.ts adapterEntry).
+const probeAt = [join(import.meta.dir, '../../dither-accounts/extractors/discord/src/lab/probe.js'), join(import.meta.dir, '../packages/adapter-discord/src/lab/probe.js')];
+const PROBE = readFileSync(probeAt.find((p) => existsSync(p)) ?? probeAt[1], 'utf8');
 const SPEECH_B64 = readFileSync(cfg.speech).toString('base64');
 
 async function lab<T = any>(account: string, body: Record<string, unknown>): Promise<T> {
@@ -104,7 +106,7 @@ function tree(all: Proc[], roots: number[]) {
 function groups(deviceDir: string | null) {
   const all = procs();
   const find = (re: RegExp) => all.filter((p) => re.test(p.cmd)).map((p) => p.pid);
-  const adapter = (acc: string) => find(/adapter-discord\/src\/main\.ts/).filter((pid) => readEnv(pid).includes(acc));
+  const adapter = (acc: string) => find(/(?:adapter-discord|extractors\/discord)\/src\/main\.ts/).filter((pid) => readEnv(pid).includes(acc));
   const sandbox = (acc: string) => tree(all, adapter(acc)).filter((pid) => !adapter(acc).includes(pid));
   const dev = deviceDir ? find(new RegExp(deviceDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).filter((pid) => !all.find((p) => p.pid === pid)?.cmd.includes('--type=')) : [];
   return {

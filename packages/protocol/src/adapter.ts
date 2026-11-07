@@ -233,8 +233,15 @@ export interface OpenDirectResult {
 
 // ---------------------------------------------------------------- adapter -> hub
 
+/**
+ * The adapter↔hub protocol's version, sent in every hello (adapter-client.ts adds it). Bump it when an event or
+ * command changes in a way the other side cannot read; the hub flags an account whose adapter speaks another one.
+ * Adapters live in dither-accounts too (docs/accounts.md), so the two sides can be updated at different times.
+ */
+export const PROTOCOL_VERSION = 1;
+
 export type AdapterEvent =
-  | { t: 'hello'; network: Network; version: string; capabilities: Capability[] }
+  | { t: 'hello'; network: Network; version: string; capabilities: Capability[]; protocol?: number }
   | {
       t: 'status';
       status: AccountStatus;

@@ -79,6 +79,24 @@ The adapter log stays where it was: the account's `adapter.log`, which the manag
 - **Everything:** remove `DITHER_ACCOUNTS_URL` from the hub's unit, stop the manager, and restart the hub. Every
   account runs here again on its own directory.
 
+Either way the hub runs the same code the manager did: an account the hub runs itself starts from
+`../dither-accounts/extractors/<kind>` when that checkout sits next to this one, then from `DITHER_ADAPTERS_DIR`
+(`<dir>/<kind>/src/main.ts`, colon-separated), and only then from this repo's `packages/adapter-<kind>`
+(`adapterEntry` in supervisor.ts). A rollback never opens a newer session store with older code.
+
+## Keeping the two in step
+
+The protocol is written here and copied there; the adapters are written there.
+
+```sh
+bun scripts/accounts-sync.ts           # copy packages/protocol over dither-accounts' packages/chat-protocol
+bun scripts/accounts-sync.ts --check   # exit 1 if they differ; also lists adapter files that differ
+```
+
+Every hello carries `PROTOCOL_VERSION` (protocol adapter.ts; the shared client adds it). An adapter that names
+another version gets an attention on its account saying which side to update; one from before versions is taken as
+it is. Bump the number when an event or command changes in a way the other side cannot read.
+
 ## Not done
 
 - **New accounts' logs.** An account added while this mode is on lives in the manager's data dir, so the hub's
@@ -86,4 +104,6 @@ The adapter log stays where it was: the account's `adapter.log`, which the manag
 - **Calls, the Discord live view, Signal and WhatsApp linking** go through the same events and commands. They are
   verified only with the Matrix testbed (`scripts/verify-accounts-matrix.ts`) and the fake chat extractor
   (`test/remote.test.ts`), never on a live account.
-- **The adapters still live here** (`packages/adapter-*`) until dither-accounts is published.
+- **The adapters still have a copy here** (`packages/adapter-*`) until dither-accounts is published, so this repo
+  runs on its own. The hub prefers dither-accounts' copy when it is next to this checkout; `accounts-sync.ts --check`
+  says how far this one is behind.

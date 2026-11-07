@@ -72,7 +72,7 @@ function groups(deviceDir: string | null): Record<string, number[]> {
   const find = (re: RegExp) => all.filter((p) => re.test(p.cmd)).map((p) => p.pid);
   const root = (pids: number[]) => pids.filter((pid) => !all.find((p) => p.pid === pid)?.cmd.includes('--type='));
   // The adapter starts Xvfb, Chromium and x11vnc itself, so the sandbox is everything under it.
-  const adapter = find(/adapter-discord\/src\/main\.ts/).filter((pid) => readEnv(pid).includes(accountId));
+  const adapter = find(/(?:adapter-discord|extractors\/discord)\/src\/main\.ts/).filter((pid) => readEnv(pid).includes(accountId));
   return {
     device: deviceDir ? tree(all, root(find(new RegExp(deviceDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))))) : [],
     sandbox: tree(all, adapter).filter((pid) => !adapter.includes(pid)),

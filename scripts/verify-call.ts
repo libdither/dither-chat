@@ -5,13 +5,24 @@
  *
  *   bun scripts/verify-call.ts <hub url> <conversation id> [bridge|direct] [seconds] [wav file]
  *
- * Run it only against a voice channel the test account owns: joining is visible to everyone there.
+ * Run it only against a voice channel the test account owns: joining is visible to everyone there. It refuses unless
+ * DITHER_CALL_TEST_ACCOUNTS (comma-separated account ids) names an account that sees the conversation, and no
+ * other account does, so a real account never joins by mistake.
  * The wav (16-bit PCM) becomes the microphone; without one Chromium sends a beep.
  */
 import { launch } from './browser.ts';
 
 const [base, conv, mode = 'bridge', secs = '20', wav] = process.argv.slice(2);
 if (!base || !conv) throw new Error('usage: bun scripts/verify-call.ts <hub url> <conversation id> [bridge|direct] [seconds] [wav]');
+{
+  const allowed = new Set((process.env.DITHER_CALL_TEST_ACCOUNTS ?? '').split(',').map((s) => s.trim()).filter(Boolean));
+  const boot = await (await fetch(`${base.replace(/\/$/, '')}/api/bootstrap`)).json();
+  const c = boot.conversations?.find((x: { id: string }) => x.id === conv);
+  const seers: string[] = c?.vantages?.map((v: { accountId: string }) => v.accountId) ?? [];
+  if (!c) throw new Error(`no conversation ${conv} on ${base}`);
+  if (!seers.length || seers.some((a) => !allowed.has(a)))
+    throw new Error(`refusing: ${conv} is seen by ${seers.join(', ') || 'no account'}; set DITHER_CALL_TEST_ACCOUNTS to the test account(s) only`);
+}
 
 const { page, close } = await launch({
   args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required', ...(wav ? [`--use-file-for-fake-audio-capture=${wav}`] : [])],

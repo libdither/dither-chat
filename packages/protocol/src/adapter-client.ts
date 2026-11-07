@@ -11,7 +11,7 @@
  */
 
 import { join } from 'node:path';
-import type { AdapterCommand, AdapterEvent } from './adapter.ts';
+import { PROTOCOL_VERSION, type AdapterCommand, type AdapterEvent } from './adapter.ts';
 import { readSecretFile, writeSecretFile } from './secret-file.ts';
 
 export interface HubLink {
@@ -102,7 +102,8 @@ export function linkHub(opts: LinkOptions): HubLink {
     accountDir,
     config,
     label: process.env.DITHER_ACCOUNT_LABEL ?? '',
-    emit: (ev) => send(JSON.stringify(ev)),
+    // Every hello says which protocol this side speaks (adapter.ts PROTOCOL_VERSION).
+    emit: (ev) => send(JSON.stringify(ev.t === 'hello' && ev.protocol === undefined ? { ...ev, protocol: PROTOCOL_VERSION } : ev)),
     log: (level, msg, data) => {
       send(JSON.stringify({ t: 'log', level, msg, data } satisfies AdapterEvent));
       // When connected, the hub already persists this via the log event; only

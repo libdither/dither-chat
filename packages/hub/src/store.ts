@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } f
 import { dirname, join } from 'node:path';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
-import { ADVERSARIAL_KEEPS, canonicalReactionKey, DEFAULT_RETENTION, parseSearch, REACTION_RULES } from '@dither-chat/protocol';
+import { ADVERSARIAL_KEEPS, canonicalReactionKey, DEFAULT_RETENTION, parseSearch, PROTOCOL_VERSION, REACTION_RULES } from '@dither-chat/protocol';
 import { Journal } from './journal.ts';
 import { TypingRelay, typingTtl } from './typing.ts';
 
@@ -128,6 +128,8 @@ export class Store {
   /** What changed at which position, for clients that come back (journal.ts, docs/sync.md). */
   readonly journal: Journal;
   private selfIdentities = new Set<string>();
+  /** Accounts whose adapter speaks another protocol version, and what to tell you about it. */
+  private protocolWarnings = new Map<string, string>();
   /** Who is typing where: in memory only (typing.ts). */
   readonly typers = new TypingRelay();
 
@@ -425,9 +427,18 @@ export class Store {
     const fresh: string[] = [];
     const tx = this.db.transaction(() => {
       switch (ev.t) {
-        case 'hello':
+        case 'hello': {
           this.updateAccount(acc.id, { capabilities: JSON.stringify(ev.capabilities) });
+          // An adapter from before versions (no number) is taken as it is; one that names another version is flagged,
+          // and stays flagged through its status updates until an adapter that matches says hello.
+          const other = typeof ev.protocol === 'number' && ev.protocol !== PROTOCOL_VERSION;
+          if (other) {
+            const message = `This adapter speaks protocol ${ev.protocol} and the hub ${PROTOCOL_VERSION}: update ${(ev.protocol ?? 0) > PROTOCOL_VERSION ? 'this hub' : 'the adapter (dither-accounts)'} so they match`;
+            this.protocolWarnings.set(acc.id, message);
+            this.updateAccount(acc.id, { attention: JSON.stringify({ kind: 'unknown', message, since: Date.now() }) });
+          } else if (this.protocolWarnings.delete(acc.id)) this.updateAccount(acc.id, { attention: null });
           break;
+        }
         case 'status': {
           const patch: Parameters<Store['updateAccount']>[1] = { status: ev.status };
           if (ev.attention !== undefined) {
@@ -436,7 +447,8 @@ export class Store {
               ? JSON.stringify({ ...ev.attention, since: prev && prev.kind === ev.attention.kind ? prev.since : Date.now() })
               : null;
           } else if (ev.status === 'online') {
-            patch.attention = null;
+            const warning = this.protocolWarnings.get(acc.id);
+            patch.attention = warning ? JSON.stringify({ kind: 'unknown', message: warning, since: Date.now() }) : null;
           }
           if (ev.liveView !== undefined) patch.live_view = ev.liveView ? JSON.stringify(ev.liveView) : null;
           if (ev.self) {
