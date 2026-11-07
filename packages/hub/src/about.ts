@@ -166,6 +166,7 @@ export class Abouts {
       const found = about.pinned.messages.map((n) => s.messageView(hubId('msg', network, n))).filter((m): m is P.MessageView => !!m && !m.deleted);
       pinned = { messages: found, missing: about.pinned.messages.length - found.length, canEdit: about.pinned.canEdit, ...(about.pinned.reason ? { reason: about.pinned.reason } : {}) };
     }
+    const coverage = kind === 'space' && s.one<{ n: number }>(`SELECT 1 AS n FROM space WHERE id = ? AND kind = 'community'`, id) ? s.memberCoverage(id) : undefined;
     const canConfigure =
       configurable && !stale && (Object.values(fields).some((f) => f?.canEdit) || !!about.invite?.canCreate || !!about.invite?.canRevoke || !!about.pinned?.canEdit);
     return {
@@ -174,6 +175,7 @@ export class Abouts {
       members,
       identities: s.identitiesByIds(members?.list.map((m) => m.identityId) ?? []),
       pinned,
+      ...(coverage ? { coverage } : {}),
       target: { kind, id },
       network,
       accountId,

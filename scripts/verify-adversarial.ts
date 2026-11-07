@@ -2,7 +2,8 @@
  * Adversarial features (docs/history.md) and the composer taking focus, end to end against a demo hub in headless
  * Chromium: by default nothing deleted or disappeared is kept and the switches are out of sight; the warning's "Yes"
  * stays greyed for 15 seconds; ticking it shows the switches, which then keep what is deleted; hiding them turns
- * them off again. Opening a chat from the sidebar puts the cursor in its message box.
+ * them off again. Server members (passive) are recorded only once their switch is on, and a server's About then says
+ * how many were seen. Opening a chat from the sidebar puts the cursor in its message box.
  *
  *   bun scripts/verify-adversarial.ts http://127.0.0.1:8499 [/tmp/shots]
  * The hub must be a fresh demo hub (--demo, without --adversarial) with its own data dir: this changes settings.
@@ -24,6 +25,9 @@ const check = (ok: unknown, what: string, detail: unknown = '') => {
   if (!ok) failures++;
 };
 const retention = () => fetch(`${hub}/api/retention`).then((r) => r.json()) as Promise<any>;
+const libdither = boot.spaces.find((s: any) => s.name === 'libdither' && s.kind === 'community')?.id;
+if (!libdither) throw new Error('the demo world lacks libdither');
+const coverage = () => fetch(`${hub}/api/spaces/${libdither}/about`).then((r) => r.json()).then((a: any) => a.coverage) as Promise<any>;
 
 const { page: p, close } = await launch();
 await p.send('Emulation.setFocusEmulationEnabled', { enabled: true });
@@ -37,7 +41,8 @@ try {
 
   // Defaults: the demo's seeded deleted and disappeared messages were not kept, and no status history.
   const r0 = await retention();
-  check(!r0.adversarial && !r0.deleted && !r0.disappearing && !r0.statuses && !r0.presence, 'adversarial features off by default', r0);
+  check(!r0.adversarial && !r0.deleted && !r0.disappearing && !r0.statuses && !r0.presence && !r0.members, 'adversarial features off by default', r0);
+  check((await coverage()) === undefined, 'no server members recorded or shown by default');
   await p.goto(`${hub}/#/c/${climb}`);
   await p.until(`document.querySelectorAll('.msg').length > 3`, 15000);
   await Bun.sleep(500);
@@ -82,11 +87,18 @@ try {
   const r1 = await retention();
   check(r1.adversarial && !r1.deleted, 'shown, but each feature still off', r1);
   const labels = await p.eval<string[]>(`[...document.querySelectorAll('#set-adversarial .toggle-row b')].map((b) => b.textContent)`);
-  check(labels.join() === 'Keep deleted messages,Keep disappearing messages,Log statuses,Log presence (online/idle/offline)', 'its switches', labels);
+  check(labels.join() === 'Keep deleted messages,Keep disappearing messages,Log statuses,Log presence (online/idle/offline),Record server members (passive)', 'its switches', labels);
   // The demo's presence came while they were hidden: nothing of it was kept, and status history neither.
   const alice = boot.persons.find((x: any) => x.name === 'Alice Chen');
   const logged = (await fetch(`${hub}/api/persons/${alice.id}/changes?fields=status,presence`).then((x) => x.json())) as any;
   check(logged.changes.length === 0, 'nothing of presence or statuses was logged while hidden', logged.changes.map((c: any) => c.field));
+  check((await coverage()) === undefined, 'shown, but no members coverage until its own switch');
+  await p.eval(`[...document.querySelectorAll('#set-adversarial .toggle-row')].find((l) => l.textContent.includes('Record server members')).querySelector('input').click()`);
+  await Bun.sleep(400);
+  check((await retention()).members, 'recording server members turned on');
+  // The demo adapter told its members before the switch: none were kept, and the About says so.
+  const cov = await coverage();
+  check(cov && cov.seen === 0 && cov.total === undefined, "a server's About shows coverage, with nothing seen from before the switch", cov);
   await p.eval(`[...document.querySelectorAll('#set-adversarial .toggle-row')].find((l) => l.textContent.includes('Keep deleted')).querySelector('input').click()`);
   await Bun.sleep(400);
   check((await retention()).deleted, 'keeping deleted messages turned on');
@@ -97,7 +109,8 @@ try {
   await p.eval(`[...document.querySelectorAll('#set-adversarial button')].find((b) => b.textContent.includes('Hide adversarial features')).click()`);
   await Bun.sleep(400);
   const r2 = await retention();
-  check(!r2.adversarial && !r2.deleted && !r2.disappearing && !r2.statuses && !r2.presence, 'hiding them turns them all off', r2);
+  check(!r2.adversarial && !r2.deleted && !r2.disappearing && !r2.statuses && !r2.presence && !r2.members, 'hiding them turns them all off', r2);
+  check((await coverage()) === undefined, 'and members coverage is out of sight');
   check(!(await p.eval<boolean>(`!!document.querySelector('#set-adversarial .adv-body')`)), 'and the section closes');
 
   // A profile's Status section without them: the current status, no history.

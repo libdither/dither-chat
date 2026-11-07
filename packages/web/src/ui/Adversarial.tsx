@@ -1,6 +1,6 @@
 /**
- * Settings → Adversarial features (docs/history.md): keeping what others deleted or set to disappear, and logging
- * people's statuses and presence over time. Off, and out of sight, until you have read why they are here behind a warning: a
+ * Settings → Adversarial features (docs/history.md): keeping what others deleted or set to disappear, logging
+ * people's statuses and presence over time, and recording who is in which server. Off, and out of sight, until you have read why they are here behind a warning: a
  * popup whose "Yes, I really want to do this" stays greyed for 15 seconds. Hiding them again turns them all off.
  */
 import { ADVERSARIAL_KEEPS } from '@dither-chat/protocol';
@@ -26,7 +26,7 @@ export function AdversarialSettings() {
         .map(([k, v]) => [k, Object.fromEntries(Object.entries(v).filter(([f]) => !(ADVERSARIAL_KEEPS as readonly string[]).includes(f)))] as const)
         .filter(([, v]) => Object.keys(v).length),
     );
-    void saveRetention({ adversarial: false, deleted: false, disappearing: false, statuses: false, presence: false, sources });
+    void saveRetention({ adversarial: false, deleted: false, disappearing: false, statuses: false, presence: false, members: false, sources });
   };
   return (
     <section class={`set-block adversarial ${r.adversarial ? 'open' : ''}`} id="set-adversarial">
@@ -64,6 +64,16 @@ export function AdversarialSettings() {
               <small>
                 Each time people you follow (friends, contacts, people you have a DM with) come online, go idle or do not disturb, or go offline, and on
                 which devices, where the network says. Shown in the Status section of their profile. Nothing of it is kept while this is off.
+              </small>
+            </span>
+          </label>
+          <label class="toggle-row">
+            <input type="checkbox" checked={r.members} onChange={(e) => void saveRetention({ members: (e.target as HTMLInputElement).checked })} />
+            <span>
+              <b>Record server members (passive)</b>
+              <small>
+                Who your accounts' clients have seen in each server: message authors and the member list as it loads anyway, never a walk of the whole list.
+                Shown on a server's About (seen N of M) and under In common on profiles.
               </small>
             </span>
           </label>
@@ -124,6 +134,10 @@ function Warning({ onClose }: { onClose: () => void }) {
           <li>
             <b>Presence history.</b> A log of when someone comes online, goes idle and goes offline, and on which device, shows when they wake,
             sleep, work and are with their phone. It is a finer-grained record of their day than they ever chose to share.
+          </li>
+          <li>
+            <b>Server members.</b> A record of who is in which server, kept as your client sees them, puts together who knows whom and who goes where.
+            People join a server to be in it, not to be listed by its members.
           </li>
         </ul>
         <p>

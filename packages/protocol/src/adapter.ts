@@ -58,7 +58,12 @@ export type Capability =
   /** Reads what the network says about one person: bio, mutual spaces and friends (the `profile` command, about.ts PersonAbout). */
   | 'profile'
   /** Changes the account's own profile: its bio/About (the `setProfile` command). */
-  | 'editProfile';
+  | 'editProfile'
+  /**
+   * Says who it sees as a member of a space (the `members` event). Only what the network's own client loaded anyway:
+   * no request of its own.
+   */
+  | 'members';
 
 // ---------------------------------------------------------------- facts
 
@@ -71,6 +76,18 @@ export interface IdentityFact {
   isSelf?: boolean;
   /** In the address book / friends list. Contacts get a Person, strangers in big channels do not. */
   contact?: boolean;
+}
+
+/** Someone seen as a member of a space. The identity fact for `who` is emitted first. */
+export interface MemberFact {
+  /** Native identity id. */
+  who: string;
+  /** ms epoch: when they joined the space, where the network says. */
+  joinedAt?: number;
+  /** Role names in the space. */
+  roles?: string[];
+  /** Their nickname in the space. */
+  nick?: string;
 }
 
 export interface SpaceRef {
@@ -303,6 +320,17 @@ export type AdapterEvent =
    * people it has a DM with), never everyone in a big server, as for customStatus. `devices`: where they are on.
    */
   | { t: 'presence'; who: string; state: 'online' | 'idle' | 'dnd' | 'offline'; devices?: ('desktop' | 'mobile' | 'web')[]; ts?: number }
+  /**
+   * People seen as members of a space (a Discord guild's native id).
+   * - source 'seen' (passive): members the network's client loaded anyway (the member list in view, message
+   *   authors' member objects, chunks it asked for itself). It makes no request of its own.
+   * - source 'walk' (active): members from a walk of the member list. The hub has no such walk yet.
+   * `total`: the network's member count, and `online` its online count, when known. `complete`: this walk reached
+   * the end of what the network will list. For a big Discord guild that may be only the online members, so complete
+   * means "all the network shows", not "everyone".
+   * Batches: at most 500 members per event. Kept only with the adversarial `members` setting on (docs/history.md).
+   */
+  | { t: 'members'; space: string; members: MemberFact[]; source: 'seen' | 'walk'; total?: number; online?: number; complete?: boolean; ts?: number }
   /** Someone else got, read or played (a voice note, a video) these messages. Matrix: read up to the last of them. */
   | { t: 'receipt'; conversation: string; messages: string[]; who: string; state: ReceiptState; ts: number }
   /**

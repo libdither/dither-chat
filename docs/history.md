@@ -1,7 +1,7 @@
 # Message history: what changes, and what the networks take back
 
 The hub keeps what the networks let go of or rewrite, each switchable in Settings → Message history (or, for the
-first two, statuses and presence, Adversarial features), everywhere or per network or account:
+first two, statuses, presence and server members, Adversarial features), everywhere or per network or account:
 
 | | What is kept | Where it shows |
 |---|---|---|
@@ -13,24 +13,26 @@ first two, statuses and presence, Adversarial features), everywhere or per netwo
 | **Changes** (one switch) | names, descriptions, pictures, settings, members and roles of conversations and spaces; pins; people's names, usernames, pictures, bios, pronouns and banners | History on the profile page (docs/profile.md); a pin mark on pinned messages |
 | **Statuses** (adversarial) | each change to people's custom statuses (the About on Signal and WhatsApp); the current one is kept either way | the Status section of the profile page |
 | **Presence** (adversarial) | each time people you follow come online, go idle or do not disturb, or go offline, and on which devices; nothing at all while off | the Status section of the profile page |
+| **Server members** (adversarial, passive) | who your accounts' clients saw as a member of each server, with nick, roles and when they joined, and the server's member and online counts: only what the client loaded anyway (message authors, the member list in view), never a walk of the list | "Members seen: 5 of 1,287 listed" on a server's About; the server under In common on a profile |
 
 "Deleted and disappeared messages in chats" picks a collapsed line or nothing at all (they are still kept, and come
 back with the setting). Forget what was kept erases each kind for good.
 
 Code: `packages/hub/src/store.ts` (`gone`, `logChange`, `logChanges`, `messageEvent`, `receipt`, `setStatus`, `setPresence`, `keeps`,
 `changes`, `messageHistory`, `eraseKept`), `about.ts` (settings), `people.ts` (profiles); adapters emit `pin`, `role`,
-`customStatus`, `presence` and `receipt` (packages/protocol/src/adapter.ts); `packages/web/src/history.ts`,
+`customStatus`, `presence`, `receipt` and `members` (packages/protocol/src/adapter.ts); `packages/web/src/history.ts`,
 `ui/HistorySettings.tsx`, `ui/HistoryCard.tsx`, `ui/StatusCard.tsx`, `ui/MessageHistory.tsx`, `ui/Timeline.tsx` (`Gone`, `Edited`, `Marks`).
 
 ## Adversarial features
 
-Keeping what others deleted, keeping what a disappearing timer was meant to erase, and logging people's statuses
-and presence over time all work against what the people on the other end expect. They are off by default (`adversarial: false`),
+Keeping what others deleted, keeping what a disappearing timer was meant to erase, logging people's statuses
+and presence over time, and recording who is in which server all work against what the people on the other end expect. They are off by default (`adversarial: false`),
 and the hub does none of them, whatever their own switches or per-source overrides say, until Settings →
 Adversarial features → "Show adversarial features" has been through its warning: a popup saying why, whose "Yes, I
 really want to do this" stays greyed for 15 seconds, and ticking it shows the switches (each still off). "Hide
 adversarial features" turns them all off again. While hidden, what was kept stays in the database but out of sight:
-kept deleted messages are served empty, status and presence history are left out of the profile. Message history → Forget erases it.
+kept deleted messages are served empty, status and presence history are left out of the profile, server members and
+coverage are left out of About and profiles. Message history → Forget erases it.
 
 `ui/Adversarial.tsx`; `ADVERSARIAL_KEEPS` in packages/protocol. A demo hub started with `--adversarial` shows them
 from the start (scripts/verify-history.ts); scripts/verify-adversarial.ts checks the gate.
@@ -51,6 +53,12 @@ Three tables, by what they hang off:
   `{ state, devices? }`; a role
   `{ identityId, role, color }`; a member an identity id), `actor_id` where the network says who, `at`, `account_id`.
   Indexed by target, field and time.
+- **`membership`** (key space, identity): `joined_at`, `roles` (JSON names), `nick`, `source` (`seen`; `walk` is
+  reserved), `first_seen`, `last_seen`, `account_id`. Seen again, last seen moves on, and a nick or roles the event
+  leaves out stay as they were. **`member_coverage`** (key space): the network's `total` and `online` counts as last
+  given. Coverage is seen / total, honest about how little that may be: Discord lists a big server's online members
+  at most. Both go with the space when no account sees it any more. Written only while `adversarial` and `members`
+  are on; at most 500 members per event.
 - **`identity.status`**: the custom status (or About) as last heard, `{ text?, emoji?, at }`; `{ at }` alone is
   cleared, NULL is nothing heard yet, so the first status is where history starts rather than a change.
 

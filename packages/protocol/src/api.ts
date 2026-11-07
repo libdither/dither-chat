@@ -280,6 +280,8 @@ export interface AboutView extends Omit<About, 'members' | 'pinned' | 'fields'> 
   };
   /** The members' identities, since strangers in a big place are not in the bootstrap. */
   identities: IdentityView[];
+  /** A space's members your accounts have seen, with the adversarial `members` setting on. */
+  coverage?: MemberCoverageView;
   pinned?: {
     /** Pinned messages the hub has, newest pin first. */
     messages: MessageView[];
@@ -288,6 +290,23 @@ export interface AboutView extends Omit<About, 'members' | 'pinned' | 'fields'> 
     canEdit: boolean;
     reason?: string;
   };
+}
+
+/**
+ * How much of a space's member list the hub has seen (passively: only what your accounts' clients loaded anyway).
+ * Never everyone: Discord lists a big server's online members at most, and the client loads only what is in view.
+ */
+export interface MemberCoverageView {
+  /** Members seen, ever, by any of your accounts. */
+  seen: number;
+  /** The network's member count and online count, as last reported. */
+  total?: number;
+  online?: number;
+  /** seen / total, at most 1, when total is known. */
+  fraction?: number;
+  /** ms epoch: when someone here was last seen, and when the network last gave its counts. */
+  lastSeenAt?: number;
+  reportedAt?: number;
 }
 
 /** What one of your accounts can react with in a conversation. */
@@ -487,6 +506,11 @@ export interface ProfileView {
   firstSeenTs: number | null;
   /** What each network said last, kept by the hub; ask `GET /api/identities/:id/about` for a fresh one. */
   abouts: PersonAboutView[];
+  /**
+   * Spaces your accounts' clients have seen them as a member of, last seen first. Only with the adversarial `members`
+   * setting on; not every space they are in.
+   */
+  memberOf?: { spaceId: string; nick?: string; roles?: string[]; joinedAt?: number; lastSeenAt: number }[];
 }
 
 /** POST /api/directs: a direct conversation, opened or found. */
@@ -816,9 +840,11 @@ export interface RetentionSettings extends KeepSettings {
   statuses: boolean;
   /** People's presence (online, idle, do not disturb, offline) over time, as it changes. Adversarial. */
   presence: boolean;
+  /** Who is in which server, from what the network's client loads anyway (passive). Adversarial. */
+  members: boolean;
   /**
    * Adversarial features shown, after the warning (docs/history.md): keeping what others deleted or set to disappear,
-   * and logging statuses and presence. Until then the hub does none of them, whatever their switches say.
+   * logging statuses and presence, and recording server members. Until then the hub does none of them, whatever their switches say.
    */
   adversarial: boolean;
   /** Kept deleted and disappeared messages: a collapsed row in the timeline, or not shown at all. */
@@ -836,6 +862,7 @@ export const DEFAULT_RETENTION: RetentionSettings = {
   changes: true,
   statuses: false,
   presence: false,
+  members: false,
   adversarial: false,
   show: 'collapsed',
   sources: {},

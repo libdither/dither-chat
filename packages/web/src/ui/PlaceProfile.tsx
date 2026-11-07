@@ -28,6 +28,15 @@ const LEVEL_HINT: Record<P.NotifyLevel, string> = {
   none: 'Nothing at all, not even the digest.',
 };
 
+/** "Seen 12 of 1,287 listed (1%) · 214 online": honest about how little that may be. */
+export function coverageText(c: P.MemberCoverageView): string {
+  const seen = c.seen.toLocaleString();
+  if (!c.total) return c.seen ? `Seen ${seen}; no member count from the network yet` : 'None seen yet';
+  const f = c.fraction ?? 0;
+  const pct = f > 0 && f < 0.01 ? 'under 1%' : `${Math.round(f * 100)}%`;
+  return `Seen ${seen} of ${c.total.toLocaleString()} listed (${pct})${c.online != null ? ` · ${c.online.toLocaleString()} online when counted` : ''}`;
+}
+
 export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; id: string; onBack: () => void }) {
   rev.value;
   const conv = kind === 'conversation' ? db.conversations.get(id) : undefined;
@@ -191,6 +200,17 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
         <div class="pf-card pf-embed">
           <InviteSection inv={view.invite} busy={busy === 'invite'} onChange={(op) => change({ key: 'invite', op }, op === 'create' ? 'New invite link made' : 'Invite link turned off')} />
         </div>
+      )}
+
+      {view?.coverage && (
+        <Card title="Members seen" icon="users">
+          <p>{coverageText(view.coverage)}</p>
+          <p class="pf-hint">
+            Only those your accounts' clients loaded on their own: message authors and the member list as it showed. Never everyone
+            {view.coverage.total ? `, and ${netName(network)} lists at most part of a big server` : ''}.
+            {view.coverage.lastSeenAt ? ` Last seen ${fullTime(view.coverage.lastSeenAt)}.` : ''}
+          </p>
+        </Card>
       )}
 
       {view?.rules && view.rules.length > 0 && (
