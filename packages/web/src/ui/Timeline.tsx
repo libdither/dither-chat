@@ -512,14 +512,14 @@ function TriageNote({ m }: { m: P.MessageView }) {
   );
 }
 
-function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageView; grouped: boolean; merged: boolean; onReply: (m: P.MessageView) => void; highlight: boolean }) {
+/** `target`: the message it replies to, found by the timeline (a map per render, not a search per message). */
+function MessageItem({ m, grouped, merged, onReply, highlight, target }: { m: P.MessageView; grouped: boolean; merged: boolean; onReply: (m: P.MessageView) => void; highlight: boolean; target: P.MessageView | null }) {
   if (counting) rendered('MessageItem');
   const author = m.authorId ? db.identities.get(m.authorId) : null;
   const person = personOf(m.authorId);
   const self = isSelfIdentity(m.authorId);
   const name = self ? (identityName(m.authorId) || 'You') : authorName(m.authorId);
   const conv = db.conversations.get(m.conversationId);
-  const target = m.replyToId ? (timelines.get(timelineKey('c', m.conversationId))?.messages.find((x) => x.id === m.replyToId) ?? quoted.get(m.replyToId)) : null;
   const thread = m.threadId ? db.conversations.get(m.threadId) : null;
   const seenVia = m.seenVia.map((id) => db.accounts.get(id)).filter((a): a is P.AccountView => !!a);
   const reply = () => onReply(m);
@@ -746,6 +746,7 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
   let prev: P.MessageView | null = null;
   let dividerDone = false;
   const hideGone = retention.value.show === 'hidden';
+  const byId = new Map(msgs.map((x) => [x.id, x]));
   for (const m of msgs) {
     // Settings → Adversarial features: deleted and disappeared messages not shown at all.
     if (hideGone && m.deleted) continue;
@@ -766,7 +767,8 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
       dividerDone = true;
     }
     const grouped = !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId;
-    items.push(<MessageItem key={m.id} m={m} grouped={grouped} merged={merged} onReply={onReply} highlight={m.id === flash} />);
+    const target = m.replyToId ? (byId.get(m.replyToId) ?? quoted.get(m.replyToId) ?? null) : null;
+    items.push(<MessageItem key={m.id} m={m} grouped={grouped} merged={merged} onReply={onReply} highlight={m.id === flash} target={target} />);
     prev = m;
   }
 
