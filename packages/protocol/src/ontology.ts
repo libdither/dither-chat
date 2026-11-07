@@ -148,6 +148,17 @@ export function attachmentKind(mime: string): AttachmentKind {
   return top === 'image' || top === 'video' || top === 'audio' ? top : 'file';
 }
 
+/**
+ * Whether the hub lets a browser show this type from its own origin: images other than SVG, video, audio, PDF and
+ * plain text. Anything else (HTML, SVG, XML, scripts, a type it doesn't know) could run as a page there, so the hub
+ * serves it as a download.
+ */
+export function showsInline(mime: string | null | undefined): boolean {
+  const t = (mime ?? '').split(';')[0].trim().toLowerCase();
+  if (/xml|svg|html/.test(t)) return false;
+  return /^(image|video|audio)\/[\w.+-]+$/.test(t) || t === 'application/pdf' || t === 'text/plain';
+}
+
 /** The most the hub takes in one file, in bytes. */
 export const MAX_UPLOAD = 25 * 1024 * 1024;
 /** What each network takes, as far as we can tell without asking. Discord's is the limit without Nitro. */

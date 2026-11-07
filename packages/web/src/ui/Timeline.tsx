@@ -1,5 +1,5 @@
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, NETWORK_META, sendBlocker, TIER_LABEL } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, NETWORK_META, sendBlocker, showsInline, TIER_LABEL } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import { ago, bytes, clock, dayLabel, fullTime, sameDay } from '../format.ts';
@@ -422,7 +422,8 @@ function Attachments({ m }: { m: P.MessageView }) {
         if (a.kind === 'video') return <video class="att-video" data-att={i} src={a.url} controls preload="metadata" />;
         if (a.kind === 'audio') return <audio class="att-audio" data-att={i} src={a.url} controls preload="metadata" />;
         return (
-          <a class="att-file" data-att={i} href={a.url} target="_blank" rel="noreferrer">
+          // A type the hub won't show (HTML, SVG, ...) is a download: straight away, not through an empty tab.
+          <a class="att-file" data-att={i} href={a.url} target="_blank" rel="noreferrer" download={showsInline(a.mime) ? undefined : (a.name ?? true)}>
             <Icon name="file" size={22} />
             <span>
               <b>{a.name ?? 'file'}</b>

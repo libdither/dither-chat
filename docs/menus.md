@@ -92,8 +92,9 @@ Mark Everything As Read. Discord's home button has no menu, but this inbox spans
 ### Images, files and links
 
 Open Image (the viewer) · Open Original · Copy Image (as PNG) · Save Image · Copy Link, then the message's
-menu. Files, video and audio say Open/Save File (Video, Audio). A link: Open Link · Copy Link, then the message's
-menu.
+menu. Files, video and audio say Open/Save File (Video, Audio); a file the hub only serves as a download (HTML, SVG,
+anything but a picture, video, audio, PDF or plain text) has Save alone. A link: Open Link · Copy Link, then the
+message's menu.
 
 ## Forwarding
 

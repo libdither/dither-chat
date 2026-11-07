@@ -1,24 +1,44 @@
 /**
  * Attachment bytes are served from the hub's own origin, so a hostile type must not run there: nosniff and a sandbox on
- * every response, and a download for anything that is not an image, video or audio file (mediaheaders.ts).
+ * every response, and a download for anything that is not an image, video, audio, PDF or plain text file
+ * (mediaheaders.ts). An account's log and an export are guarded the same way.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { attachmentDisposition, inlineType, mediaHeaders, safeFilename, safeMime } from '../src/mediaheaders.ts';
+import { showsInline } from '@dither-chat/protocol';
+import { attachmentDisposition, inlineType, mediaHeaders, PLAYER_CSP, SANDBOX_CSP, safeFilename, safeMime, sniffMime } from '../src/mediaheaders.ts';
 import { HubServer, mediaSigner } from '../src/server.ts';
 import { Store } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
 
 describe('which types render inline', () => {
-  test('image, video and audio files do', () => {
-    for (const t of ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif', 'video/mp4', 'video/webm', 'audio/ogg', 'audio/mpeg', 'IMAGE/PNG', 'image/png; charset=binary']) expect(inlineType(t)).toBe(true);
+  test('image, video, audio, PDF and plain text files do', () => {
+    for (const t of ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif', 'video/mp4', 'video/webm', 'audio/ogg', 'audio/mpeg', 'IMAGE/PNG', 'image/png; charset=binary', 'application/pdf', 'text/plain', 'text/plain; charset=utf-8'])
+      expect([t, inlineType(t)]).toEqual([t, true]);
   });
 
   test('anything that can run or script does not', () => {
-    for (const t of ['text/html', 'text/html; charset=utf-8', 'application/xhtml+xml', 'image/svg+xml', 'IMAGE/SVG+XML', 'image/svg+xml; charset=utf-8', 'application/xml', 'text/xml', 'application/pdf', 'text/plain', 'application/javascript', 'text/javascript', 'application/octet-stream', 'application/zip', 'image/vnd.foo+xml', 'image/html', 'video/x-html', 'multipart/x-mixed-replace', ''])
-      expect(inlineType(t)).toBe(false);
+    for (const t of ['text/html', 'text/html; charset=utf-8', 'application/xhtml+xml', 'image/svg+xml', 'IMAGE/SVG+XML', 'image/svg+xml; charset=utf-8', 'application/xml', 'text/xml', 'text/css', 'application/json', 'application/javascript', 'text/javascript', 'application/octet-stream', 'application/zip', 'image/vnd.foo+xml', 'image/html', 'video/x-html', 'multipart/x-mixed-replace', ''])
+      expect([t, inlineType(t)]).toEqual([t, false]);
+  });
+
+  test('the web app asks the same question of the protocol', () => {
+    for (const t of ['image/png', 'application/pdf', 'text/plain', 'image/svg+xml', 'text/html', null, undefined]) expect(showsInline(t)).toBe(inlineType(t ?? ''));
+  });
+
+  test('a file with no name to go by, by its first bytes', () => {
+    const b = (...x: (number | string)[]) => new Uint8Array(x.flatMap((v) => (typeof v === 'string' ? [...v].map((c) => c.charCodeAt(0)) : [v])));
+    expect(sniffMime(b(0x89, 'PNG', 0x0d, 0x0a))).toBe('image/png');
+    expect(sniffMime(b(0xff, 0xd8, 0xff, 0xe0))).toBe('image/jpeg');
+    expect(sniffMime(b('RIFF', 0, 0, 0, 0, 'WEBP'))).toBe('image/webp');
+    expect(sniffMime(b(0, 0, 0, 0x20, 'ftypisom'))).toBe('video/mp4');
+    expect(sniffMime(b(0, 0, 0, 0x20, 'ftypheic'))).toBe('image/heic');
+    expect(sniffMime(b(0x1a, 0x45, 0xdf, 0xa3))).toBe('video/webm');
+    expect(sniffMime(b('%PDF-1.7'))).toBe('application/pdf');
+    expect(sniffMime(b('<svg xmlns='))).toBeNull();
+    expect(sniffMime(b('<!doctype html>'))).toBeNull();
   });
 
   test('a content type that is not a type is opaque bytes', () => {
@@ -72,6 +92,7 @@ describe('the media route', () => {
     'mxc://hs/png': { mime: 'image/png', body: 'png' },
     'mxc://hs/mp4': { mime: 'video/mp4', body: 'mp4' },
     'mxc://hs/ogg': { mime: 'audio/ogg', body: 'ogg' },
+    'mxc://hs/txt': { mime: 'text/plain; charset=utf-8', body: '<script>alert(1)</script>' },
     'mxc://hs/odd': { mime: 'text/html\r\nx-evil: 1', body: 'x' },
   };
   let hub: HubServer;
@@ -88,10 +109,11 @@ describe('the media route', () => {
         return { mime: s.mime, base64: Buffer.from(s.body).toString('base64') };
       },
       created: async () => {},
+      log: async () => '<script>alert(1)</script>',
     } as any;
     hub = new HubServer(store, sup, new Triage(store), { port, hostname: '127.0.0.1', dataDir: join(dir, 'data'), webDist: dir, secret: 's' });
     hub.start();
-    acc = store.createAccount({ network: 'matrix', label: 'x', color: '#000', adapter: 'matrix' });
+    acc = store.createAccount({ network: 'matrix', label: 'x', color: '#000', adapter: 'matrix' }).id;
     mkdirSync(join(dir, 'data'), { recursive: true });
   });
   afterAll(() => {
@@ -100,14 +122,24 @@ describe('the media route', () => {
   });
 
   const get = (raw: string, a: string | null = acc) => fetch(`${url}${sign(raw, a)}`);
-  const guarded = (r: Response) => {
+  const guarded = (r: Response, csp = SANDBOX_CSP) => {
     expect(r.headers.get('x-content-type-options')).toBe('nosniff');
-    expect(r.headers.get('content-security-policy')).toBe('sandbox');
+    expect(r.headers.get('content-security-policy')).toBe(csp);
     expect(r.headers.get('cache-control')).toContain('private');
   };
 
+  test('the sandbox runs no script and loads nothing else; video and audio keep the origin their player needs', () => {
+    for (const csp of [SANDBOX_CSP, PLAYER_CSP]) {
+      expect(csp).toMatch(/^sandbox[ ;]/);
+      expect(csp).toContain("default-src 'none'");
+      expect(csp).not.toContain('allow-scripts');
+      expect(csp).not.toContain('script-src');
+    }
+    expect(PLAYER_CSP).toStartWith('sandbox allow-same-origin;');
+  });
+
   test('active types are downloads, sandboxed, and keep their bytes (fresh fetch, then from the cache)', async () => {
-    for (const raw of ['mxc://hs/html', 'mxc://hs/svg', 'mxc://hs/xml', 'mxc://hs/xhtml', 'mxc://hs/pdf']) {
+    for (const raw of ['mxc://hs/html', 'mxc://hs/svg', 'mxc://hs/xml', 'mxc://hs/xhtml']) {
       for (const pass of ['fresh', 'cached']) {
         const r = await get(raw);
         expect(r.status, `${raw} ${pass}`).toBe(200);
@@ -119,13 +151,14 @@ describe('the media route', () => {
     }
   });
 
-  test('images, video and audio stay inline', async () => {
-    for (const raw of ['mxc://hs/png', 'mxc://hs/mp4', 'mxc://hs/ogg']) {
+  test('images, video, audio, PDF and plain text stay inline', async () => {
+    for (const raw of ['mxc://hs/png', 'mxc://hs/mp4', 'mxc://hs/ogg', 'mxc://hs/pdf', 'mxc://hs/txt']) {
       for (const pass of ['fresh', 'cached']) {
         const r = await get(raw);
-        guarded(r);
+        guarded(r, /^(video|audio)\//.test(served[raw].mime) ? PLAYER_CSP : SANDBOX_CSP);
         expect(r.headers.get('content-type'), `${raw} ${pass}`).toBe(served[raw].mime);
-        expect(r.headers.get('content-disposition'), `${raw} ${pass}`).toBeNull();
+        // Bun names a file it sends (filename="<cache key>", no type), which browsers take as inline.
+        expect(r.headers.get('content-disposition') ?? '', `${raw} ${pass}`).not.toStartWith('attachment');
         await r.text();
       }
     }
@@ -160,5 +193,20 @@ describe('the media route', () => {
     guarded(other);
     expect(other.headers.get('content-type')).toBe('application/octet-stream');
     expect(other.headers.get('content-disposition')).toStartWith('attachment; filename="thing.unknownext"');
+    // Signal keeps what you sent under a name with no extension: a picture is still a picture.
+    writeFileSync(join(dataDir, 'sent-1-0'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]));
+    const sent = await get(`file://${dataDir}/sent-1-0`, null);
+    guarded(sent);
+    expect(sent.headers.get('content-type')).toBe('image/png');
+    expect(sent.headers.get('content-disposition')).toBeNull();
+    await Promise.all([pic, other, sent].map((r) => r.arrayBuffer()));
+  });
+
+  test("an account's log is plain text that is never sniffed or run", async () => {
+    const r = await fetch(`${url}/api/accounts/${acc}/log`);
+    expect(r.headers.get('content-type')).toBe('text/plain; charset=utf-8');
+    expect(r.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(r.headers.get('content-security-policy')).toBe(SANDBOX_CSP);
+    await r.text();
   });
 });
