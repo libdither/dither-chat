@@ -367,10 +367,13 @@ function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
   if (viewing) return;
   toast({ kind: 'notify', title: ev.title, body: ev.body, conversationId: ev.conversationId, reasons: ev.reasons, icon: ev.icon, network: ev.network }, 8000);
   if (!prefs.value.pushEnabled && prefs.value.notifications && 'Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
+    // A group's own picture goes over the sender's, as in a push (delivery.ts conv).
+    const c = ev.conversationId ? db.conversations.get(ev.conversationId) : undefined;
+    const conv = c && c.shape !== 'direct' && c.avatar ? { shape: c.shape === 'channel' || c.shape === 'thread' ? 'channel' : 'group', icon: c.avatar } : undefined;
     const show = (reg?: ServiceWorkerRegistration) => {
-      // The worker draws the sender's picture and the network's badge, as it does for a push (sw.js).
-      if (reg?.active) return reg.active.postMessage({ t: 'notify', d: { title: ev.title, body: ev.body, conversationId: ev.conversationId, inbox: !ev.conversationId, icon: ev.icon, network: ev.network, nid: ev.nid } });
-      const opts = { body: ev.body, tag: ev.conversationId ?? 'dither-digest', icon: ev.icon, data: { conversationId: ev.conversationId, inbox: !ev.conversationId } };
+      // The worker draws the picture and the network's badge, as it does for a push (sw.js).
+      if (reg?.active) return reg.active.postMessage({ t: 'notify', d: { title: ev.title, body: ev.body, conversationId: ev.conversationId, inbox: !ev.conversationId, icon: ev.icon, network: ev.network, nid: ev.nid, ...(conv ? { conv } : {}) } });
+      const opts = { body: ev.body, tag: ev.conversationId ?? 'dither-digest', icon: conv?.icon ?? ev.icon, data: { conversationId: ev.conversationId, inbox: !ev.conversationId } };
       if (reg) reg.showNotification(ev.title, opts);
       else new Notification(ev.title, opts).onclick = () => go({ view: 'inbox', conv: ev.conversationId });
     };

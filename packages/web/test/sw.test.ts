@@ -18,7 +18,7 @@ function worker(opts: { canReply?: boolean; fetch?: (url: string, init: any) => 
   const NotificationEvent: any = function () {};
   if (opts.canReply !== false) NotificationEvent.prototype.reply = null;
   const fetchStub = async (url: string, init: any) => {
-    fetched.push({ url, body: JSON.parse(init.body), method: init.method });
+    fetched.push({ url, body: init.body ? JSON.parse(init.body) : undefined, method: init.method });
     return (opts.fetch ?? (async () => Response.json({ ok: true })))(url, init);
   };
   new Function('self', 'fetch', 'NotificationEvent', 'caches', src)(self, fetchStub, NotificationEvent, {});
@@ -181,6 +181,40 @@ test('a page without push hands its notification to the worker; without a canvas
   await done;
   expect(shown[0].title).toBe('Ana · Signal');
   expect(shown[0].o).toMatchObject({ tag: 'cnv_1', icon: '/icon-192.png', badge: '/icon-192.png', data: { nid: 'n1' } });
+});
+
+test("a group's or channel's own picture over the sender's; a DM, or a group without one, the sender's", async () => {
+  // Just enough canvas for looks() to draw; what it fetches is the picture it chose.
+  const g: any = globalThis;
+  const saved = { OffscreenCanvas: g.OffscreenCanvas, Path2D: g.Path2D, createImageBitmap: g.createImageBitmap };
+  const ctx = new Proxy({}, { get: () => () => {}, set: () => true });
+  g.OffscreenCanvas = class {
+    getContext() {
+      return ctx;
+    }
+    async convertToBlob() {
+      return new Blob([new Uint8Array([1])]);
+    }
+  };
+  g.Path2D = class {};
+  g.createImageBitmap = async () => ({ width: 1, height: 1 });
+  try {
+    const pictures: string[] = [];
+    const w = worker({ fetch: async (url) => (pictures.push(url), new Response('x')) });
+    const base = { title: 't', conversationId: 'cnv_1', network: 'discord', icon: '/media/sender' };
+    await w.push({ ...base, conv: { title: 'Trip', shape: 'group', icon: '/media/group' } });
+    await w.push({ ...base, conv: { title: 'general', shape: 'channel', icon: '/media/server' } });
+    await w.push({ ...base, icon: '/media/ann', conv: { title: 'Ann', shape: 'direct', icon: '/media/ann-dm' } });
+    await w.push({ ...base, icon: '/media/bo', conv: { title: 'Trip', shape: 'group' } });
+    await w.push({ ...base, icon: '/media/cy' });
+    expect(pictures).toEqual(['/media/group', '/media/server', '/media/ann', '/media/bo', '/media/cy']);
+    // No picture at all: still drawn (the letter on a disc), with nothing fetched.
+    await w.push({ title: 'Zed', conversationId: 'cnv_2', network: 'discord', conv: { title: 'Zed', shape: 'group' } });
+    expect(pictures).toHaveLength(5);
+    expect(w.shown.at(-1)!.o.icon).toStartWith('data:image/png;base64,');
+  } finally {
+    Object.assign(g, saved);
+  }
 });
 
 test('votes come first: Important down to Active or right; Active up to Important or down to the digest', async () => {

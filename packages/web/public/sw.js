@@ -94,22 +94,28 @@ const NETWORKS = {
 
 const pictures = new Map();
 
+/** A group's or channel's own picture (the push's conv.icon, as on Android), else the sender's. */
+function pictureOf(d) {
+  return (d.conv && d.conv.shape !== 'direct' && d.conv.icon) || d.icon;
+}
+
 /**
- * The sender's picture, round, with the network's badge in a corner, as the notification's icon; the network's mark
- * as its badge (the small monochrome icon Android puts in the status bar). Without a picture, the first letter of the
- * title on a plain disc. Wherever a worker cannot draw, the app's icon as before.
+ * The picture (pictureOf), round, with the network's badge in a corner, as the notification's icon; the network's
+ * mark as its badge (the small monochrome icon Android puts in the status bar). Without a picture, the first letter
+ * of the title on a plain disc. Wherever a worker cannot draw, the app's icon as before.
  */
 async function looks(d) {
   const out = { icon: '/icon-192.png', badge: '/icon-192.png' };
   const net = NETWORKS[d.network];
   if (!net || typeof OffscreenCanvas === 'undefined' || typeof Path2D === 'undefined' || typeof createImageBitmap === 'undefined') return out;
   try {
-    const key = `${d.network}|${d.icon ?? d.title ?? ''}`;
+    const src = pictureOf(d);
+    const key = `${d.network}|${src ?? d.title ?? ''}`;
     let icon = pictures.get(key);
     if (!icon) {
       let pic = null;
-      if (d.icon) {
-        const res = await fetch(d.icon, { signal: AbortSignal.timeout(4000) }).catch(() => null);
+      if (src) {
+        const res = await fetch(src, { signal: AbortSignal.timeout(4000) }).catch(() => null);
         if (res?.ok) pic = await createImageBitmap(await res.blob()).catch(() => null);
       }
       icon = await dataUrl(drawIcon(pic, net, d.title ?? ''));
