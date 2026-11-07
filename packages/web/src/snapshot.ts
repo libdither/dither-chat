@@ -14,7 +14,8 @@
  * the new code does not expect.
  */
 import type * as P from '@dither-chat/protocol';
-import { db, inbox, loaded, quoted, rev, timelines, type Timeline } from './state.ts';
+import { db, inbox, loaded, quoted, timelines, type Timeline } from './state.ts';
+import { changed, dataVersion, timelineChanged } from './versions.ts';
 
 declare const __SNAPSHOT_SCHEMA__: string;
 const SCHEMA = typeof __SNAPSHOT_SCHEMA__ === 'string' ? __SNAPSHOT_SCHEMA__ : 'dev';
@@ -191,7 +192,8 @@ export function restore(s: Snapshot, apply: (b: P.Bootstrap) => void, putIdentit
   rest.quoted.forEach((m) => quoted.set(m.id, m));
   inbox.value = rest.inbox;
   fromSnapshot = true;
-  rev.value++;
+  changed('meta');
+  timelineChanged();
   return true;
 }
 
@@ -202,7 +204,7 @@ export function freshFromHub() {
 
 // ------------------------------------------------------------------ saving
 
-/** The `rev` the stored bootstrap reflects. */
+/** The data version (versions.ts) the stored bootstrap reflects. */
 let savedRev = -1;
 let pending: { text: string; rev: number } | null = null;
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -212,7 +214,7 @@ let timer: ReturnType<typeof setTimeout> | undefined;
  * bootstrap is serialized again from `db`, which is what happens when the app goes out of sight.
  */
 export function persistSoon(bootstrapText?: string, ms = 1500) {
-  if (bootstrapText) pending = { text: bootstrapText, rev: rev.value };
+  if (bootstrapText) pending = { text: bootstrapText, rev: dataVersion() };
   clearTimeout(timer);
   timer = setTimeout(() => {
     const idle = (globalThis as any).requestIdleCallback as ((cb: () => void, o?: { timeout: number }) => void) | undefined;
@@ -229,8 +231,8 @@ export async function persistNow() {
     // What the hub sent, as it sent it. Anything since is caught by the save when the app goes out of sight.
     ({ text, rev: savedRev } = pending);
     pending = null;
-  } else if (savedRev !== rev.value) {
-    savedRev = rev.value;
+  } else if (savedRev !== dataVersion()) {
+    savedRev = dataVersion();
     text = JSON.stringify(currentBootstrap());
   }
   // What a timeline is current to: a kept copy not yet caught up, its own position; one loaded here, the client's.

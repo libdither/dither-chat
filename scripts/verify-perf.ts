@@ -3,14 +3,15 @@
  *
  *   bun scripts/verify-perf.ts [--port 8620] [--runs 3] [--cpu 1,4] [--pages 15] [--web <built dist>]
  *                              [--update] [--out results.json] [--baseline scripts/perf-baseline.json] [--css <css>]
- *                              [--work <empty dir>] [--keep]
+ *                              [--work <empty dir>] [--keep] [--size 390x844]
  *
  * Builds the web app (unless --web names a build), seeds a fresh world (scripts/perf-world.ts) in a temp dir, starts
  * a hub on it, and measures in headless Chromium at each CPU throttle, `runs` times each:
  *
  *   cold load to the list; first open of six conversations, reopening them, `pages` older pages in the biggest, the
  *   long timeline reopened, a message arriving while it is open; then a relaunch from the device's snapshot and the
- *   same six opened again. Times, long tasks, and counts: App renders, LayoutCount, DOM nodes, .msg elements.
+ *   same six opened again. Times, long tasks, and counts: renders of App, the inbox list and messages, LayoutCount,
+ *   DOM nodes, .msg elements.
  *
  * Medians go against the baseline: a count over its baseline fails (bytes get 1%), a time over baseline × 1.25 +
  * 50 ms fails. --update writes the medians as the new baseline. It runs locally: CI has no browser.
@@ -31,6 +32,8 @@ const UPDATE = args.includes('--update');
 const OUT = opt('out', '');
 /** Extra CSS for every page, to try a style change without a build (e.g. content-visibility on desktop). */
 const CSS = opt('css', '');
+/** The window, 1280x800 (a desktop); 390x844 measures a phone's layout. */
+const [WIDTH, HEIGHT] = opt('size', '1280x800').split('x').map(Number);
 const root = resolve(import.meta.dir, '..');
 const BASELINE = resolve(opt('baseline', join(root, 'scripts/perf-baseline.json')));
 const base = `http://127.0.0.1:${PORT}`;
@@ -38,6 +41,20 @@ const base = `http://127.0.0.1:${PORT}`;
 /** count: the page's structure (nodes, messages), exact. tally: renders and layouts, which a frame boundary can move by one or two. */
 type Kind = 'ms' | 'count' | 'tally' | 'bytes';
 type Metrics = Record<string, { v: number; kind: Kind }>;
+/**
+ * Render counts no baseline may go over, at any throttle: what scoped renders bought (docs/perf.md). An --update
+ * fails on them too, so a regression cannot become the new baseline.
+ */
+const CEILINGS: Record<string, number> = {
+  'open.first.renders': 12, // App, at most twice per switch, six switches
+  'open.again.renders': 12,
+  'relaunch.open.renders': 12,
+  'open.first.sidebarRenders': 18, // the inbox list, three per switch
+  'arrival.renders': 1,
+  'arrival.messageRenders': 5, // the new message and its neighbours
+  'arrival.sidebarRenders': 2,
+  'long.reopen.msgs': 250, // the window
+};
 // The world, the build and the hub's log. Its own prefix: a cleanup of someone else's temp dirs must not take it.
 const work = args.includes('--work') ? opt('work', '') : mkdtempSync(join(tmpdir(), `dither-verify-perf-${PORT}-`));
 const running: { hub?: ReturnType<typeof Bun.spawn> } = {};
@@ -109,12 +126,16 @@ async function main() {
   console.log(`\n${'metric'.padEnd(34)} ${'baseline'.padStart(10)} ${'now'.padStart(10)}  change`);
   for (const [k, m] of Object.entries(metrics)) {
     const b = old?.metrics[k];
+    const ceiling = CEILINGS[k.replace(/^\d+x\./, '')];
+    const capped = ceiling !== undefined && m.v > ceiling;
+    if (capped) failed++;
     const over = b && (m.kind === 'ms' ? m.v > b.v * 1.25 + 50 : m.kind === 'bytes' ? m.v > b.v * 1.01 : m.kind === 'tally' ? m.v > b.v + Math.max(2, b.v * 0.1) : m.v > b.v);
     if (over && !UPDATE) failed++;
     const change = b ? `${m.v >= b.v ? '+' : ''}${b.v ? Math.round(((m.v - b.v) / b.v) * 100) : 0}%` : 'new';
-    console.log(`${(over ? 'FAIL ' : '     ') + k.padEnd(29)} ${String(b?.v ?? '').padStart(10)} ${String(m.v).padStart(10)}  ${change}${m.kind === 'ms' ? '' : ` (${m.kind})`}`);
+    console.log(`${(over || capped ? 'FAIL ' : '     ') + k.padEnd(29)} ${String(b?.v ?? '').padStart(10)} ${String(m.v).padStart(10)}  ${change}${m.kind === 'ms' ? '' : ` (${m.kind})`}${capped ? ` over its ceiling of ${ceiling}` : ''}`);
   }
-  if (UPDATE) {
+  if (UPDATE && failed) console.log(`\n${failed} over their ceilings: the baseline is not written`);
+  else if (UPDATE) {
     const chromium = Bun.spawnSync(['chromium', '--version']).stdout.toString().trim();
     writeFileSync(BASELINE, JSON.stringify({ note: 'bun scripts/verify-perf.ts --update (docs/perf.md). Times are of the machine it ran on.', at: new Date().toISOString().slice(0, 10), runs: RUNS, pages: PAGES, chromium, world: world.counts, metrics }, null, 1) + '\n');
     console.log(`\nwrote ${BASELINE}`);
@@ -144,7 +165,7 @@ async function run(cpu: number, world: World): Promise<Metrics> {
   const m: Metrics = {};
   const put = (k: string, v: number, kind: Kind = 'ms') => (m[k] = { v: Math.round(v), kind });
   try {
-    await page.size(1280, 800);
+    await page.size(WIDTH, HEIGHT, WIDTH < 700);
     await page.send('Performance.enable');
     if (cpu > 1) await page.send('Emulation.setCPUThrottlingRate', { rate: cpu });
     await page.send('Page.addScriptToEvaluateOnNewDocument', { source: INIT });
@@ -171,6 +192,8 @@ async function run(cpu: number, world: World): Promise<Metrics> {
       put(`${name}.max`, Math.max(...xs.map((x) => x.painted)));
       put(`${name}.longest`, Math.max(...xs.map((x) => x.longest)));
       put(`${name}.renders`, xs.reduce((s, x) => s + x.renders, 0), 'tally');
+      put(`${name}.sidebarRenders`, xs.reduce((s, x) => s + x.sidebarRenders, 0), 'tally');
+      put(`${name}.messageRenders`, xs.reduce((s, x) => s + x.messageRenders, 0), 'tally');
       put(`${name}.layouts`, xs.reduce((s, x) => s + x.layouts, 0), 'tally');
     };
     await pass('open.first');
@@ -190,6 +213,7 @@ async function run(cpu: number, world: World): Promise<Metrics> {
     put('long.reopen', back.painted);
     put('long.reopen.longest', back.longest);
     put('long.reopen.renders', back.renders, 'tally');
+    put('long.reopen.messageRenders', back.messageRenders, 'tally');
     put('long.reopen.layouts', back.layouts, 'tally');
     put('long.reopen.nodes', back.nodes, 'count');
     put('long.reopen.msgs', back.msgs, 'count');
@@ -200,6 +224,7 @@ async function run(cpu: number, world: World): Promise<Metrics> {
     put('arrival.longest', a.longest);
     put('arrival.renders', a.renders.App ?? 0, 'tally');
     put('arrival.messageRenders', a.renders.MessageItem ?? 0, 'tally');
+    put('arrival.sidebarRenders', a.renders.InboxSidebar ?? 0, 'tally');
     put('arrival.layouts', a.layouts, 'tally');
 
     // Relaunch: the app opened again later, from the snapshot it kept.
@@ -280,7 +305,8 @@ async function open(page: Page, c: WorldConv, lastId: string) {
   if (!shown) throw new Error(`${c.id}: its newest message is not on screen after the mark`);
   const lts = await page.eval<[number, number][]>(`__perf.lt.slice(${lt0})`);
   const x = await page.eval<{ nodes: number; msgs: number; quotes: number }>(`({ nodes: document.getElementsByTagName('*').length, msgs: document.querySelectorAll('.timeline-scroll .msg').length, quotes: document.querySelectorAll('.timeline-scroll .reply-quote').length })`);
-  return { painted, renders: diff(r0, await renders(page)).App ?? 0, layouts: (await metrics(page)).LayoutCount - m0.LayoutCount, longest: Math.max(0, ...lts.map((t) => t[1])), ...x };
+  const d = diff(r0, await renders(page));
+  return { painted, renders: d.App ?? 0, sidebarRenders: d.InboxSidebar ?? 0, messageRenders: d.MessageItem ?? 0, layouts: (await metrics(page)).LayoutCount - m0.LayoutCount, longest: Math.max(0, ...lts.map((t) => t[1])), ...x };
 }
 
 /**

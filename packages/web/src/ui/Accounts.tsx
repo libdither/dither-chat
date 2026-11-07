@@ -892,6 +892,7 @@ const NET_HELP: Record<P.Network, { adapter: string; blurb: string; fields: { ke
 };
 
 export function AddAccount({ onClose }: { onClose: () => void }) {
+  rev.value;
   const [network, setNetwork] = useState<P.Network>('discord');
   const [label, setLabel] = useState('');
   const [homeserver, setHomeserver] = useState('https://matrix.org');

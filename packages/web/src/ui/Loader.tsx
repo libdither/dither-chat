@@ -51,7 +51,8 @@ export function DitherOrb({ size = 88, class: cls, appear = true }: { size?: num
     let raf = 0;
     let last = -1;
     const tick = (now: number) => {
-      const t = now - start;
+      // A frame's time can be from just before the effect ran: below zero, the frame index was too, and `d` undefined.
+      const t = Math.max(0, now - start);
       // About 12 frames a second, a little coarse on purpose; the first 600 ms dither it in.
       const i = Math.floor(t / 85) % FRAMES;
       const reveal = appear ? Math.min(16, Math.floor((t / 600) * 16) + 1) : 16;

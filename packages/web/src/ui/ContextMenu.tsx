@@ -7,7 +7,7 @@ import { signal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { phone, useLayer } from '../phone.ts';
-import { toast } from '../state.ts';
+import { rev, toast } from '../state.ts';
 import { Icon } from './icons.tsx';
 import { useLongPress } from './Reactions.tsx';
 import { Sheet } from './Sheet.tsx';
@@ -305,6 +305,8 @@ function SheetMenu({ spec, onClose }: { spec: MenuSpec; onClose: () => void }) {
 
 /** Mounted once at the app root. */
 export function ContextMenuLayer() {
+  // Rows draw from `db` (a menu's level, who is in it): an open menu follows it.
+  rev.value;
   const m = contextMenu.value;
   if (!m) return null;
   // A new menu replaces the old one outright, so its position and focus start over.

@@ -5,7 +5,7 @@
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { DEFAULT_RETENTION } from '@dither-chat/protocol';
-import { api, db, eventHooks, rev, toast } from './state.ts';
+import { api, changed, db, eventHooks, toast } from './state.ts';
 
 export const retention = signal<P.RetentionSettings>(DEFAULT_RETENTION);
 let loading: Promise<void> | null = null;
@@ -69,6 +69,6 @@ export function presenceText(p: P.PresenceView | null | undefined): string {
 export async function loadChanges(path: string): Promise<P.ChangeView[]> {
   const r = await api<{ changes: P.ChangeView[]; identities: P.IdentityView[] }>(path);
   for (const i of r.identities) if (!db.identities.has(i.id)) db.identities.set(i.id, i);
-  if (r.identities.length) rev.value++;
+  if (r.identities.length) changed('meta');
   return r.changes;
 }

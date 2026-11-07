@@ -9,7 +9,7 @@
 
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { db, rev, toast } from './state.ts';
+import { changed, db, toast } from './state.ts';
 
 export interface CallStats {
   /** Media bytes this device sent and received so far. */
@@ -141,7 +141,7 @@ async function onServer(m: P.CallServerMessage) {
     case 'state': {
       const st = m.state as P.CallState & { identities?: P.IdentityView[] };
       for (const i of st.identities ?? []) db.identities.set(i.id, i);
-      if (st.identities?.length) rev.value++;
+      if (st.identities?.length) changed('meta');
       const participants = st.participants.map((p) => {
         const native = db.identities.get(p.id)?.nativeId;
         const local = native ? speakingLocal.get(native) : undefined;

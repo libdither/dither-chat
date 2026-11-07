@@ -15,39 +15,39 @@
  },
  "metrics": {
   "hub.bootstrap.bytes": {
-   "v": 4438003,
+   "v": 4437940,
    "kind": "bytes"
   },
   "hub.bootstrap.ms": {
-   "v": 80,
+   "v": 79,
    "kind": "ms"
   },
   "hub.inbox.ms": {
-   "v": 53,
+   "v": 52,
    "kind": "ms"
   },
   "1x.cold.list": {
-   "v": 674,
+   "v": 704,
    "kind": "ms"
   },
   "1x.cold.fresh": {
-   "v": 252,
+   "v": 266,
    "kind": "ms"
   },
   "1x.cold.longest": {
-   "v": 264,
+   "v": 267,
    "kind": "ms"
   },
   "1x.cold.longTasks": {
-   "v": 566,
+   "v": 567,
    "kind": "ms"
   },
   "1x.cold.renders": {
-   "v": 4,
+   "v": 3,
    "kind": "tally"
   },
   "1x.cold.layouts": {
-   "v": 9,
+   "v": 8,
    "kind": "tally"
   },
   "1x.cold.nodes": {
@@ -55,23 +55,31 @@
    "kind": "count"
   },
   "1x.cold.bootstrapBytes": {
-   "v": 4437721,
+   "v": 4437661,
    "kind": "bytes"
   },
   "1x.open.first": {
-   "v": 201,
+   "v": 150,
    "kind": "ms"
   },
   "1x.open.first.max": {
-   "v": 278,
+   "v": 206,
    "kind": "ms"
   },
   "1x.open.first.longest": {
-   "v": 62,
+   "v": 75,
    "kind": "ms"
   },
   "1x.open.first.renders": {
-   "v": 30,
+   "v": 6,
+   "kind": "tally"
+  },
+  "1x.open.first.sidebarRenders": {
+   "v": 14,
+   "kind": "tally"
+  },
+  "1x.open.first.messageRenders": {
+   "v": 354,
    "kind": "tally"
   },
   "1x.open.first.layouts": {
@@ -79,11 +87,11 @@
    "kind": "tally"
   },
   "1x.open.again": {
-   "v": 66,
+   "v": 50,
    "kind": "ms"
   },
   "1x.open.again.max": {
-   "v": 70,
+   "v": 62,
    "kind": "ms"
   },
   "1x.open.again.longest": {
@@ -94,16 +102,24 @@
    "v": 6,
    "kind": "tally"
   },
+  "1x.open.again.sidebarRenders": {
+   "v": 6,
+   "kind": "tally"
+  },
+  "1x.open.again.messageRenders": {
+   "v": 354,
+   "kind": "tally"
+  },
   "1x.open.again.layouts": {
    "v": 6,
    "kind": "tally"
   },
   "1x.older.page": {
-   "v": 174,
+   "v": 101,
    "kind": "ms"
   },
   "1x.older.last": {
-   "v": 249,
+   "v": 127,
    "kind": "ms"
   },
   "1x.older.msgs": {
@@ -115,15 +131,19 @@
    "kind": "count"
   },
   "1x.long.reopen": {
-   "v": 480,
+   "v": 98,
    "kind": "ms"
   },
   "1x.long.reopen.longest": {
-   "v": 317,
+   "v": 59,
    "kind": "ms"
   },
   "1x.long.reopen.renders": {
    "v": 1,
+   "kind": "tally"
+  },
+  "1x.long.reopen.messageRenders": {
+   "v": 150,
    "kind": "tally"
   },
   "1x.long.reopen.layouts": {
@@ -131,99 +151,111 @@
    "kind": "tally"
   },
   "1x.long.reopen.nodes": {
-   "v": 50328,
+   "v": 16383,
    "kind": "count"
   },
   "1x.long.reopen.msgs": {
-   "v": 960,
+   "v": 150,
    "kind": "count"
   },
   "1x.long.reopen.quotes": {
-   "v": 109,
+   "v": 17,
    "kind": "count"
   },
   "1x.arrival.shown": {
-   "v": 129,
+   "v": 61,
    "kind": "ms"
   },
   "1x.arrival.busy": {
-   "v": 174,
+   "v": 33,
    "kind": "ms"
   },
   "1x.arrival.longest": {
-   "v": 68,
+   "v": 0,
    "kind": "ms"
   },
   "1x.arrival.renders": {
-   "v": 1,
+   "v": 0,
    "kind": "tally"
   },
   "1x.arrival.messageRenders": {
-   "v": 961,
+   "v": 1,
+   "kind": "tally"
+  },
+  "1x.arrival.sidebarRenders": {
+   "v": 1,
    "kind": "tally"
   },
   "1x.arrival.layouts": {
-   "v": 8,
+   "v": 1,
    "kind": "tally"
   },
   "1x.relaunch.list": {
-   "v": 373,
+   "v": 383,
    "kind": "ms"
   },
   "1x.relaunch.fresh": {
-   "v": 378,
+   "v": 398,
    "kind": "ms"
   },
   "1x.relaunch.longest": {
-   "v": 173,
+   "v": 171,
    "kind": "ms"
   },
   "1x.relaunch.renders": {
-   "v": 3,
+   "v": 2,
    "kind": "tally"
   },
   "1x.relaunch.open": {
-   "v": 116,
+   "v": 76,
    "kind": "ms"
   },
   "1x.relaunch.open.max": {
-   "v": 143,
+   "v": 98,
    "kind": "ms"
   },
   "1x.relaunch.open.longest": {
-   "v": 55,
+   "v": 0,
    "kind": "ms"
   },
   "1x.relaunch.open.renders": {
-   "v": 31,
+   "v": 6,
+   "kind": "tally"
+  },
+  "1x.relaunch.open.sidebarRenders": {
+   "v": 13,
+   "kind": "tally"
+  },
+  "1x.relaunch.open.messageRenders": {
+   "v": 480,
    "kind": "tally"
   },
   "1x.relaunch.open.layouts": {
-   "v": 30,
+   "v": 27,
    "kind": "tally"
   },
   "4x.cold.list": {
-   "v": 2149,
+   "v": 2138,
    "kind": "ms"
   },
   "4x.cold.fresh": {
-   "v": 629,
+   "v": 641,
    "kind": "ms"
   },
   "4x.cold.longest": {
-   "v": 846,
+   "v": 804,
    "kind": "ms"
   },
   "4x.cold.longTasks": {
-   "v": 1715,
+   "v": 1711,
    "kind": "ms"
   },
   "4x.cold.renders": {
-   "v": 4,
+   "v": 3,
    "kind": "tally"
   },
   "4x.cold.layouts": {
-   "v": 8,
+   "v": 9,
    "kind": "tally"
   },
   "4x.cold.nodes": {
@@ -231,23 +263,31 @@
    "kind": "count"
   },
   "4x.cold.bootstrapBytes": {
-   "v": 4437919,
+   "v": 4437859,
    "kind": "bytes"
   },
   "4x.open.first": {
-   "v": 860,
+   "v": 581,
    "kind": "ms"
   },
   "4x.open.first.max": {
-   "v": 1150,
+   "v": 809,
    "kind": "ms"
   },
   "4x.open.first.longest": {
-   "v": 269,
+   "v": 331,
    "kind": "ms"
   },
   "4x.open.first.renders": {
-   "v": 30,
+   "v": 6,
+   "kind": "tally"
+  },
+  "4x.open.first.sidebarRenders": {
+   "v": 13,
+   "kind": "tally"
+  },
+  "4x.open.first.messageRenders": {
+   "v": 354,
    "kind": "tally"
   },
   "4x.open.first.layouts": {
@@ -255,19 +295,27 @@
    "kind": "tally"
   },
   "4x.open.again": {
-   "v": 268,
+   "v": 215,
    "kind": "ms"
   },
   "4x.open.again.max": {
-   "v": 286,
+   "v": 242,
    "kind": "ms"
   },
   "4x.open.again.longest": {
-   "v": 188,
+   "v": 147,
    "kind": "ms"
   },
   "4x.open.again.renders": {
    "v": 6,
+   "kind": "tally"
+  },
+  "4x.open.again.sidebarRenders": {
+   "v": 6,
+   "kind": "tally"
+  },
+  "4x.open.again.messageRenders": {
+   "v": 354,
    "kind": "tally"
   },
   "4x.open.again.layouts": {
@@ -275,11 +323,11 @@
    "kind": "tally"
   },
   "4x.older.page": {
-   "v": 769,
+   "v": 444,
    "kind": "ms"
   },
   "4x.older.last": {
-   "v": 1047,
+   "v": 577,
    "kind": "ms"
   },
   "4x.older.msgs": {
@@ -291,15 +339,19 @@
    "kind": "count"
   },
   "4x.long.reopen": {
-   "v": 2045,
+   "v": 413,
    "kind": "ms"
   },
   "4x.long.reopen.longest": {
-   "v": 1342,
+   "v": 246,
    "kind": "ms"
   },
   "4x.long.reopen.renders": {
    "v": 1,
+   "kind": "tally"
+  },
+  "4x.long.reopen.messageRenders": {
+   "v": 150,
    "kind": "tally"
   },
   "4x.long.reopen.layouts": {
@@ -307,75 +359,87 @@
    "kind": "tally"
   },
   "4x.long.reopen.nodes": {
-   "v": 50316,
+   "v": 16362,
    "kind": "count"
   },
   "4x.long.reopen.msgs": {
-   "v": 960,
+   "v": 150,
    "kind": "count"
   },
   "4x.long.reopen.quotes": {
-   "v": 109,
+   "v": 17,
    "kind": "count"
   },
   "4x.arrival.shown": {
-   "v": 438,
+   "v": 104,
    "kind": "ms"
   },
   "4x.arrival.busy": {
-   "v": 568,
+   "v": 142,
    "kind": "ms"
   },
   "4x.arrival.longest": {
-   "v": 262,
+   "v": 65,
    "kind": "ms"
   },
   "4x.arrival.renders": {
-   "v": 1,
+   "v": 0,
    "kind": "tally"
   },
   "4x.arrival.messageRenders": {
-   "v": 961,
+   "v": 1,
+   "kind": "tally"
+  },
+  "4x.arrival.sidebarRenders": {
+   "v": 1,
    "kind": "tally"
   },
   "4x.arrival.layouts": {
-   "v": 2,
+   "v": 1,
    "kind": "tally"
   },
   "4x.relaunch.list": {
-   "v": 1454,
+   "v": 1499,
    "kind": "ms"
   },
   "4x.relaunch.fresh": {
-   "v": 1554,
+   "v": 1663,
    "kind": "ms"
   },
   "4x.relaunch.longest": {
-   "v": 731,
+   "v": 707,
    "kind": "ms"
   },
   "4x.relaunch.renders": {
-   "v": 3,
+   "v": 2,
    "kind": "tally"
   },
   "4x.relaunch.open": {
-   "v": 490,
+   "v": 302,
    "kind": "ms"
   },
   "4x.relaunch.open.max": {
-   "v": 623,
+   "v": 416,
    "kind": "ms"
   },
   "4x.relaunch.open.longest": {
-   "v": 246,
+   "v": 176,
    "kind": "ms"
   },
   "4x.relaunch.open.renders": {
-   "v": 31,
+   "v": 6,
+   "kind": "tally"
+  },
+  "4x.relaunch.open.sidebarRenders": {
+   "v": 13,
+   "kind": "tally"
+  },
+  "4x.relaunch.open.messageRenders": {
+   "v": 480,
    "kind": "tally"
   },
   "4x.relaunch.open.layouts": {
-   "v": 23,
+   "v": 21,
    "kind": "tally"
   }
  }

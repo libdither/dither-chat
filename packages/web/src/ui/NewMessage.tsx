@@ -4,7 +4,7 @@ import { directTarget, guessDirectNetwork, guessDirectNetworks } from '@dither-c
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { directNote, openers } from '../direct.ts';
 import { directsOf, identityName, netName } from '../model.ts';
-import { db, go, newMessage, openDirect } from '../state.ts';
+import { db, go, newMessage, openDirect, rev } from '../state.ts';
 import { AccountChip, Avatar, NetBadge, useDialog } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { fuzzyScore } from './Switcher.tsx';
@@ -38,6 +38,7 @@ function knownPeople(): Row[] {
 }
 
 export function NewMessage() {
+  rev.value;
   return newMessage.value ? <NewMessageBox identityId={newMessage.value.identityId} /> : null;
 }
 

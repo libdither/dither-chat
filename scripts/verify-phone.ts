@@ -345,7 +345,7 @@ try {
   await tap(await at('.msg .avatar-btn'));
   await page.until(`location.hash.startsWith('#/p/') || location.hash.startsWith('#/i/')`);
   await Bun.sleep(900);
-  check('no sideways overflow: profile, top to bottom', !(await overflowThrough('.profile-scroll')).length, await overflowThrough('.profile-scroll'));
+  check('no sideways overflow: profile, top to bottom', !(await overflowThrough('.pf-scroll')).length, await overflowThrough('.pf-scroll'));
   await shot('52-phone-profile');
   await swipe([6, 400], [330, 400]);
   await Bun.sleep(300);

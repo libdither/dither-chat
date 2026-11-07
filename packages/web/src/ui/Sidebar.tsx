@@ -30,7 +30,7 @@ import {
   visibleConv,
   type RailEntry,
 } from '../model.ts';
-import { db, go, newMessage, prefs, rev, route, setPrefs, type InboxFilter, type Route } from '../state.ts';
+import { db, go, metaRev, newMessage, prefs, rev, route, setPrefs, type InboxFilter, type Route } from '../state.ts';
 import { RowTyping } from './Typing.tsx';
 import { AccountChip, AccountDots, Avatar, Count, NetBadge, NetGlyph, SourceChip, levelIcon, variantIcon } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
@@ -45,6 +45,7 @@ import { inboxSnap, shownInbox } from '../inbox.ts';
 import { SortButton, useFlip } from './Reorganize.tsx';
 import { rememberSearch, SearchBox } from './SearchBox.tsx';
 import { counting, rendered } from '../perf.ts';
+import { memo } from './memo.ts';
 
 // ------------------------------------------------------------------ navigation helpers
 
@@ -109,11 +110,36 @@ function placeLine(c: P.ConversationView): string {
 
 // ------------------------------------------------------------------ rows
 
+/** A row's "5m": it reads the list's version, so it moves on as often as the list changes, without the row. */
+function Ago({ ts }: { ts: number | null | undefined }) {
+  rev.value;
+  return <>{ago(ts)}</>;
+}
+
+function Owed({ at }: { at: number }) {
+  rev.value;
+  return (
+    <span class="row-owed" aria-label={`Unanswered for ${since(at)}`}>
+      <Icon name="reply" size={11} />
+      {since(at)}
+    </span>
+  );
+}
+
+/** One opener per place, the same each time, so a row whose conversation did not change is not drawn again. */
+const openers = new Map<string, () => void>();
+function opener(key: string, open: () => void): () => void {
+  let f = openers.get(key);
+  if (!f) openers.set(key, (f = open));
+  return f;
+}
+
 /**
  * `why` is the inbox's reasons, shown on hover and at the top of the row's menu; `owedSince` marks a message you
  * have not answered, for a row that needs you without anything unread.
  */
-export function ConvRow({ c, active, onClick, showPlace = true, why, owedSince }: { c: P.ConversationView; active: boolean; onClick: () => void; showPlace?: boolean; why?: string[]; owedSince?: number | null }) {
+export const ConvRow = memo(function ConvRow({ c, active, onClick, showPlace = true, why, owedSince }: { c: P.ConversationView; active: boolean; onClick: () => void; showPlace?: boolean; why?: string[]; owedSince?: number | null }) {
+  metaRev.value;
   const u = unreadOf(c);
   const lvl = effectiveLevel(c);
   const place = showPlace ? placeLine(c) : '';
@@ -154,24 +180,21 @@ export function ConvRow({ c, active, onClick, showPlace = true, why, owedSince }
             {isChannel ? convTitle(c) : convLabel(c)}
           </span>
           {c.encrypted && <Icon name="lock" size={11} class="row-lock" />}
-          <span class="row-time">{ago(c.lastMessageAt)}</span>
+          <span class="row-time">
+            <Ago ts={c.lastMessageAt} />
+          </span>
         </span>
         {place && <span class="row-place">{place}</span>}
         <span class="row-bottom">
           <span class="row-preview">{preview(c)}</span>
-          {owedSince && !u.unread ? (
-            <span class="row-owed" aria-label={`Unanswered for ${since(owedSince)}`}>
-              <Icon name="reply" size={11} />
-              {since(owedSince)}
-            </span>
-          ) : null}
+          {owedSince && !u.unread ? <Owed at={owedSince} /> : null}
           {u.muted && <Icon name={levelIcon(lvl.level)} size={12} class="row-muted" />}
           {u.badge ? <Count n={u.badge} /> : u.unread && !u.muted ? <span class="unread-dot" /> : null}
         </span>
       </span>
     </button>
   );
-}
+});
 
 function SectionHead({ id, label, count, actions }: { id: string; label: string; count?: number; actions?: any }) {
   const collapsed = !!prefs.value.collapsed[id];
@@ -261,7 +284,7 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
           </>
         )}
         {rows.map((r) => (
-          <ConvRow key={r.conv.id} c={r.conv} active={r.conv.id === activeConv} onClick={() => go({ view: 'inbox', conv: r.conv.id })} why={r.reasons} owedSince={r.needs ? r.owedSince : null} />
+          <ConvRow key={r.conv.id} c={r.conv} active={r.conv.id === activeConv} onClick={opener(`inbox:${r.conv.id}`, () => go({ view: 'inbox', conv: r.conv.id }))} why={r.reasons} owedSince={r.needs ? r.owedSince : null} />
         ))}
         {!rows.length && <p class="inbox-empty">{filter === 'unread' ? 'Nothing unread.' : filter === 'all' ? 'No conversations yet.' : 'None here.'}</p>}
       </div>
@@ -271,8 +294,9 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
 
 // ------------------------------------------------------------------ people
 
-export function PersonRow({ person, active, onClick }: { person: P.PersonView; active: boolean; onClick: () => void }) {
-  const directs = directsOf(person.id);
+/** `directs`: the person's direct conversations (directsOf), which change with each message where the person does not. */
+export const PersonRow = memo(function PersonRow({ person, directs, active, onClick }: { person: P.PersonView; directs: P.ConversationView[]; active: boolean; onClick: () => void }) {
+  metaRev.value;
   const last = directs.reduce<P.ConversationView | null>((a, c) => (!a || (c.lastMessageAt ?? 0) > (a.lastMessageAt ?? 0) ? c : a), null);
   const u = sumUnread(directs);
   const nets = [...new Set(directs.map((d) => d.network))];
@@ -297,7 +321,9 @@ export function PersonRow({ person, active, onClick }: { person: P.PersonView; a
               </span>
             ))}
           </span>
-          <span class="row-time">{ago(last?.lastMessageAt)}</span>
+          <span class="row-time">
+            <Ago ts={last?.lastMessageAt} />
+          </span>
         </span>
         <span class="row-bottom">
           <span class="row-preview">
@@ -309,7 +335,7 @@ export function PersonRow({ person, active, onClick }: { person: P.PersonView; a
       </span>
     </button>
   );
-}
+});
 
 export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
   rev.value;
@@ -324,9 +350,9 @@ export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
       </header>
       <div class="side-scroll">
         {starred.length > 0 && <SectionHead id="people-star" label="Starred" count={starred.length} />}
-        {!isCollapsed('people-star') && starred.map(({ person }) => <PersonRow person={person} active={person.id === activePerson} onClick={() => go({ view: 'people', person: person.id })} />)}
+        {!isCollapsed('people-star') && starred.map(({ person, directs }) => <PersonRow key={person.id} person={person} directs={directs} active={person.id === activePerson} onClick={opener(`people:${person.id}`, () => go({ view: 'people', person: person.id }))} />)}
         <SectionHead id="people-all" label="Direct messages" count={rest.length} />
-        {!isCollapsed('people-all') && rest.map(({ person }) => <PersonRow person={person} active={person.id === activePerson} onClick={() => go({ view: 'people', person: person.id })} />)}
+        {!isCollapsed('people-all') && rest.map(({ person, directs }) => <PersonRow key={person.id} person={person} directs={directs} active={person.id === activePerson} onClick={opener(`people:${person.id}`, () => go({ view: 'people', person: person.id }))} />)}
       </div>
     </div>
   );
@@ -518,7 +544,7 @@ export function FolderSidebar({ folderId, activeConv, activePerson }: { folderId
           }
           if (it.kind === 'person') {
             const p = db.persons.get(it.id);
-            return p ? <PersonRow person={p} active={p.id === activePerson} onClick={() => go({ view: 'folder', folder: f.id, person: p.id })} /> : null;
+            return p ? <PersonRow person={p} directs={directsOf(p.id)} active={p.id === activePerson} onClick={() => go({ view: 'folder', folder: f.id, person: p.id })} /> : null;
           }
           const c = db.conversations.get(it.id);
           return c && visibleConv(c) ? <ConvRow c={c} active={c.id === activeConv} onClick={() => open(c)} /> : null;
