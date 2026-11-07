@@ -26,6 +26,8 @@ const REFRESH_PAUSE_MS = 10 * 60_000;
 
 /** New links for old ones, keyed by the old link; empty when the account knows none. Throws when it can't ask. */
 export type Refresh = (accountId: string, urls: string[]) => Promise<Map<string, string>>;
+/** A file now in the cache, with what its attachment says about it (mediainfo.ts looks at it). */
+export type Kept = (a: { url: string; name: string | null; mime: string | null; messageId: string }) => Promise<void>;
 
 /** The part of a Discord link its signature leaves alone: where the file is. */
 export const linkPath = (url: string) => {
@@ -56,6 +58,7 @@ export class MediaArchiver {
     private fetchOne: (url: string, accountId: string | null, from?: string) => Promise<boolean>,
     private log: (msg: string) => void = () => {},
     private refresh?: Refresh,
+    private onKept?: Kept,
   ) {}
 
   start(everyMs = 60_000) {
@@ -98,14 +101,14 @@ export class MediaArchiver {
       for (;;) {
         const rows = this.store.db
           .query(
-            `SELECT a.rowid AS rid, a.url, (SELECT account_id FROM message_seen s WHERE s.message_id = a.message_id LIMIT 1) AS account
+            `SELECT a.rowid AS rid, a.url, a.name, a.mime, a.message_id, (SELECT account_id FROM message_seen s WHERE s.message_id = a.message_id LIMIT 1) AS account
              FROM attachment a WHERE a.rowid > ? ORDER BY a.rowid LIMIT ?`,
           )
           .all(this.cursor, BATCH) as Row[];
         if (!rows.length) break;
         for (const r of rows) {
           if (this.stopped) return;
-          if (MediaArchiver.remote(r.url)) await this.keep(r.url, r.account);
+          if (MediaArchiver.remote(r.url) && (await this.keep(r.url, r.account))) await this.onKept?.({ url: r.url, name: r.name, mime: r.mime, messageId: r.message_id });
           this.cursor = r.rid;
         }
       }
@@ -118,17 +121,18 @@ export class MediaArchiver {
     }
   }
 
-  private async keep(url: string, account: string | null) {
+  /** True when it fetched the file just now. */
+  private async keep(url: string, account: string | null): Promise<boolean> {
     const key = new Bun.CryptoHasher('sha256').update(url).digest('hex');
-    if (existsSync(join(this.cacheDir, key))) return;
+    if (existsSync(join(this.cacheDir, key))) return false;
     const fail = this.store.db.query('SELECT tries FROM media_archive_fail WHERE key = ?').get(key) as Row | null;
-    if (fail) return; // retry() takes these
+    if (fail) return false; // retry() takes these
     let ok = false;
     let error: string | null = null;
     const markExpired = () =>
       this.store.db.query('INSERT INTO media_archive_fail (key, tries, last_at, error) VALUES (?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET tries = excluded.tries, last_at = excluded.last_at, error = excluded.error').run(key, MAX_TRIES, Date.now(), 'expired');
     // Signed again with others in a batch (refreshExpired), not one request each.
-    if (this.refresh && MediaArchiver.expired(url)) return markExpired();
+    if (this.refresh && MediaArchiver.expired(url)) return (markExpired(), false);
     try {
       ok = await this.fetchOne(url, account);
     } catch (e: any) {
@@ -139,6 +143,7 @@ export class MediaArchiver {
       // A signed link past its expiry won't work on a retry; only a refreshed link could (error 'expired' marks them).
       markExpired();
     else this.store.db.query('INSERT INTO media_archive_fail (key, tries, last_at, error) VALUES (?, 1, ?, ?) ON CONFLICT (key) DO UPDATE SET tries = tries + 1, last_at = excluded.last_at, error = excluded.error').run(key, Date.now(), error);
+    return ok;
   }
 
   /**
@@ -151,10 +156,10 @@ export class MediaArchiver {
     if (!want.size) return;
     const now = Date.now();
     const paused = (a: string) => (this.accountPausedUntil.get(a) ?? 0) > now;
-    const byAccount = new Map<string, { key: string; url: string }[]>();
+    const byAccount = new Map<string, { key: string; url: string; name: string | null; mime: string | null; messageId: string }[]>();
     let n = 0;
     let waiting = 0;
-    for (const r of this.store.db.query(`SELECT a.url, (SELECT group_concat(account_id, ' ') FROM message_seen s WHERE s.message_id = a.message_id) AS accounts FROM attachment a`).iterate() as Iterable<Row>) {
+    for (const r of this.store.db.query(`SELECT a.url, a.name, a.mime, a.message_id, (SELECT group_concat(account_id, ' ') FROM message_seen s WHERE s.message_id = a.message_id) AS accounts FROM attachment a`).iterate() as Iterable<Row>) {
       if (!want.size || n >= maxBatches * REFRESH_BATCH) break;
       if (!r.accounts || !MediaArchiver.expired(r.url)) continue;
       const key = new Bun.CryptoHasher('sha256').update(r.url).digest('hex');
@@ -166,7 +171,7 @@ export class MediaArchiver {
         continue;
       }
       const list = byAccount.get(account) ?? [];
-      list.push({ key, url: r.url });
+      list.push({ key, url: r.url, name: r.name, mime: r.mime, messageId: r.message_id });
       byAccount.set(account, list);
       n++;
     }
@@ -199,6 +204,7 @@ export class MediaArchiver {
             this.refreshed++;
             this.kept++;
             this.store.db.query('DELETE FROM media_archive_fail WHERE key = ?').run(b.key);
+            await this.onKept?.({ url: b.url, name: b.name, mime: b.mime, messageId: b.messageId });
           } else mark.run(MAX_TRIES, Date.now(), 'refreshed, still failed', b.key);
         }
       }
@@ -214,7 +220,7 @@ export class MediaArchiver {
     if (!due.length) return;
     const keys = new Set(due.map((d) => d.key as string));
     // Find their URLs again: a failure keeps only the key.
-    for (const r of this.store.db.query(`SELECT a.url, (SELECT account_id FROM message_seen s WHERE s.message_id = a.message_id LIMIT 1) AS account FROM attachment a`).iterate() as Iterable<Row>) {
+    for (const r of this.store.db.query(`SELECT a.url, a.name, a.mime, a.message_id, (SELECT account_id FROM message_seen s WHERE s.message_id = a.message_id LIMIT 1) AS account FROM attachment a`).iterate() as Iterable<Row>) {
       if (!keys.size || this.stopped) break;
       if (!MediaArchiver.remote(r.url)) continue;
       const key = new Bun.CryptoHasher('sha256').update(r.url).digest('hex');
@@ -230,6 +236,7 @@ export class MediaArchiver {
       if (ok) {
         this.kept++;
         this.store.db.query('DELETE FROM media_archive_fail WHERE key = ?').run(key);
+        await this.onKept?.({ url: r.url, name: r.name, mime: r.mime, messageId: r.message_id });
       } else this.store.db.query('UPDATE media_archive_fail SET tries = tries + 1, last_at = ? WHERE key = ?').run(Date.now(), key);
     }
   }

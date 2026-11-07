@@ -92,8 +92,9 @@ Mark Everything As Read. Discord's home button has no menu, but this inbox spans
 ### Images, files and links
 
 Open Image (the viewer) · Open Original · Copy Image (as PNG) · Save Image · Copy Link, then the message's
-menu. Files, video and audio say Open/Save File (Video, Audio); a file the hub only serves as a download (HTML, SVG,
-anything but a picture, video, audio, PDF or plain text) has Save alone. With the desktop helper paired
+menu. A file the app has a viewer for (text and code, Markdown, JSON, CSV, PDF, archives: [files.md](files.md)) has
+View File first. Files, video and audio say Open/Save File (Video, Audio); a file the hub only serves as a download
+(HTML, SVG, anything but a picture, video, audio, PDF or plain text) has Save alone. With the desktop helper paired
 ([desktop.md](desktop.md#opening-links-and-files-in-your-own-apps)), every file has Open, which opens it in the
 desktop's app for its type, and Open With… lists the others; in the Android app, Open offers it with the system's
 chooser. A link: Open Link · Copy Link, then the message's menu; Open Link goes to the default browser through the

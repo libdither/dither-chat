@@ -1,7 +1,8 @@
 /**
  * The desktop helper end to end, in headless Chromium against a demo hub: pair through Settings with the code the
- * `pair` command prints, click a link in a message, Open Link from its menu, Open With… on a file, and a click on
- * the file. The helper runs here with a recording stand-in for xdg-open and gio, so nothing is ever opened.
+ * `pair` command prints, click a link in a message, Open Link from its menu, Open With… on a file, Open File from the
+ * file's viewer, and a click on a file with no viewer. The helper runs here with a recording stand-in for xdg-open and
+ * gio, so nothing is ever opened.
  *
  *   bun scripts/verify-desk.ts http://127.0.0.1:8680 8681 /tmp/desk-verify
  * The hub must be a demo hub (--demo) with its own data dir. Port 8681 must be free.
@@ -153,11 +154,32 @@ try {
   check(JSON.stringify(launch_) === JSON.stringify(['launch', join(fixtures, 'applications/other.desktop'), pdf]), `with its desktop file and the downloaded file: ${JSON.stringify(launch_)}`);
   check(existsSync(pdf) && readFileSync(pdf, 'latin1').startsWith('%PDF-'), 'the PDF was downloaded into the folder');
 
+  // A PDF has a viewer in the app (docs/files.md): a click opens it, and its header hands the file to the desktop.
   const tabsBefore = await tabs();
   await click(at.x, at.y);
+  await p.until(`document.querySelector('.fviewer')?.dataset.kind === 'pdf'`, 10000);
+  const head = await p.eval<string[]>(`[...document.querySelectorAll('.fviewer-bar [aria-label]')].map((e) => e.getAttribute('aria-label'))`);
+  check(['Open File', 'Open With…', 'Download'].every((l) => head.includes(l)), `a click on the PDF opens the viewer, its header: ${head.join(', ')}`);
+  await p.shot(join(dir, 'viewer-paired.png'));
+  await p.eval(`document.querySelector('.fviewer-bar button[aria-label="Open File"]').click()`);
   const second = join(downloads, 'local-first-chat-sync (2).pdf');
-  check(await waitFor(() => opened().some((a) => a.length === 1 && a[0] === second)), 'a click on the file downloads it again and hands it to the opener');
+  check(await waitFor(() => opened().some((a) => a.length === 1 && a[0] === second)), "the viewer's Open File downloads it again and hands it to the opener");
   check((await tabs()) === tabsBefore, 'and no tab opened in the browser');
+  await p.eval(`document.querySelector('.fviewer-bar button[aria-label="Close"]').click()`);
+  // Closing goes back a step in history (phone.ts layers): let it land before going elsewhere.
+  await p.until(`!document.querySelector('.fviewer')`, 3000);
+  await Bun.sleep(500);
+
+  // A type with no viewer: a click hands it to the opener, as before.
+  const house = boot.conversations.find((c: any) => c.name === 'Housemates');
+  await p.goto(`${hub}/#/c/${house.id}`);
+  const xlsx = `[...document.querySelectorAll('.att-file')].find((a) => a.querySelector('b')?.textContent === 'rent-split.xlsx')`;
+  await p.until(`!!${xlsx}`, 15000);
+  at = (await p.eval<{ x: number; y: number }>(`(() => { const e = ${xlsx}; e.scrollIntoView({ block: 'center' }); const r = e.getBoundingClientRect(); return { x: r.left + 20, y: r.top + r.height / 2 }; })()`))!;
+  await click(at.x, at.y);
+  const sheet = join(downloads, 'rent-split.xlsx');
+  check(await waitFor(() => opened().some((a) => a.length === 1 && a[0] === sheet)), 'a click on a file with no viewer here (a spreadsheet) hands it to the opener');
+  check(!(await p.eval(`!!document.querySelector('.fviewer')`)) && (await tabs()) === tabsBefore, 'with no viewer and no tab');
   console.log('     downloads:', readdirSync(downloads).join(', '));
 
   // ---------------------------------------------------------------- unpair

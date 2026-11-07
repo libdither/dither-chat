@@ -76,6 +76,10 @@ says), files to the app registered for their type, or one you pick with **Open W
 
 Without the helper, or with it switched off or not answering, everything opens as it did before.
 
+A file the app has a viewer for (text and code, Markdown, JSON, CSV, PDF, archives: [files.md](files.md)) opens in
+that viewer on a click even with the helper on; the viewer's header has Open File and Open With…, which go to the
+helper. A file with no viewer goes straight to the helper, as before.
+
 ### Running it
 
 It needs Bun and, for Open With…, `gio` (GLib). As a systemd user service,
@@ -158,4 +162,4 @@ file, as they could run `xdg-open` themselves.
 `bun test` in `packages/desk` runs against a fake hub, with `test/fixtures/record.ts` standing in for `xdg-open` and
 `gio`: it records its arguments and opens nothing. `bun scripts/verify-desk.ts <demo hub> <free port> <dir>` does the
 same end to end in headless Chromium: pairs through Settings with the code `pair` prints, clicks a link, uses Open
-Link, Open With… and a click on the demo's PDF, and unpairs. Neither ever opens a browser, file or app on the desktop.
+Link, Open With…, Open File from the demo PDF's viewer and a click on the demo spreadsheet (no viewer), and unpairs. Neither ever opens a browser, file or app on the desktop.

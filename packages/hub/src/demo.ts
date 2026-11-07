@@ -120,10 +120,169 @@ function tinyPdf(text: string): Uint8Array {
   return new TextEncoder().encode(out);
 }
 
-/** Demo attachments fetched through fetchMedia, so they are served at /media/ as a network's files are. */
+/** A zip of stored (uncompressed) entries, as a phone's "share as zip" makes. For the file viewers (docs/files.md). */
+export function storedZip(entries: [name: string, text: string][]): Uint8Array {
+  const enc = new TextEncoder();
+  const local: Uint8Array[] = [];
+  const central: Uint8Array[] = [];
+  let at = 0;
+  const u16 = (n: number) => [n & 0xff, (n >> 8) & 0xff];
+  const u32 = (n: number) => [n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff];
+  for (const [name, text] of entries) {
+    const n = enc.encode(name);
+    const data = enc.encode(text);
+    const crc = Bun.hash.crc32(data);
+    const common = [...u16(20), ...u16(0x800), ...u16(0), ...u16(0), ...u16(0x21), ...u32(crc), ...u32(data.length), ...u32(data.length), ...u16(n.length), ...u16(0)];
+    local.push(new Uint8Array([0x50, 0x4b, 3, 4, ...common, ...n, ...data]));
+    central.push(new Uint8Array([0x50, 0x4b, 1, 2, ...u16(20), ...common, ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(at), ...n]));
+    at += 30 + n.length + data.length;
+  }
+  const cdSize = central.reduce((k, c) => k + c.length, 0);
+  const end = new Uint8Array([0x50, 0x4b, 5, 6, ...u16(0), ...u16(0), ...u16(entries.length), ...u16(entries.length), ...u32(cdSize), ...u32(at), ...u16(0)]);
+  return new Uint8Array(Buffer.concat([...local, ...central, end]));
+}
+
+const text = (s: string) => new TextEncoder().encode(s);
+
+const ROUTING_NOTES = `# Greedy routing notes
+
+Embedding peers into **hyperbolic space** keeps greedy forwarding loop-free, as long as every node knows its
+neighbours' coordinates. These are the numbers from the simulator so far.
+
+## Stretch by topology
+
+| topology | nodes | stretch | p99 |
+| --- | ---: | ---: | ---: |
+| ring | 1k | 1.08 | 1.31 |
+| grid | 4k | 1.12 | 1.40 |
+| scale-free | 10k | 1.21 | 1.77 |
+
+## Open questions
+
+- [x] ring and grid
+- [ ] churn: what happens when a coordinate owner leaves?
+- [ ] can a node lie about its coordinate?
+
+> Greedy routing succeeds whenever the embedding is *greedy*: every node has a neighbour closer to the target.
+
+\`\`\`rust
+fn next_hop(me: &Coord, peers: &[Peer], to: &Coord) -> Option<PeerId> {
+    peers
+        .iter()
+        .filter(|p| p.coord.dist(to) < me.dist(to))
+        .min_by(|a, b| a.coord.dist(to).total_cmp(&b.coord.dist(to)))
+        .map(|p| p.id)
+}
+\`\`\`
+
+Background: [Kleinberg, geographic routing in hyperbolic space](https://example.org/greedy-embedding).
+Figure from the paper, not loaded until asked: ![the embedding](https://example.org/figure.png)
+
+Raw HTML is shown, not run: <script>alert('nope')</script> <img src=x onerror=alert(1)>
+`;
+
+const STRETCH_CSV = `topology,nodes,stretch,p99,notes
+ring,1000,1.08,1.31,
+grid,4000,1.12,1.40,"4-neighbour, wraps at the edges"
+scale-free,10000,1.21,1.77,"Barabási–Albert, m=3"
+small-world,10000,1.17,1.62,"Watts–Strogatz, p=0.1"
+`;
+
+const BUILD_LOG = Array.from({ length: 60 }, (_, i) => {
+  const t = `2026-11-0${(i % 3) + 4}T12:${String(10 + Math.floor(i / 2)).padStart(2, '0')}:${String((i * 7) % 60).padStart(2, '0')}Z`;
+  if (i === 41) return `${t} error[E0308]: mismatched types in doctest \`insert_get\``;
+  if (i === 42) return `${t}   --> hashdb/src/lib.rs:88:13`;
+  return `${t} ${['Compiling hashdb v0.9.2', 'Compiling dither-core v0.4.0', 'Running unittests src/lib.rs', 'test store::tests::round_trip ... ok', 'Doc-tests hashdb'][i % 5]}`;
+}).join('\n') + '\nbuild #482 failed\n';
+
+const INSERT_GET = `//! The doctest that broke #482, fixed.
+use hashdb::{HashDb, Key};
+
+/// Inserts a value and reads it back.
+///
+/// \`\`\`
+/// let mut db = hashdb::HashDb::default();
+/// let k = db.insert(b"hello".to_vec());
+/// assert_eq!(db.get(&k), Some(&b"hello".to_vec()));
+/// \`\`\`
+pub fn insert_get(db: &mut HashDb, value: Vec<u8>) -> Option<Vec<u8>> {
+    let key: Key = db.insert(value);
+    // 0.9 returns a reference now; clone for the old signature.
+    db.get(&key).cloned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn round_trip() {
+        let mut db = HashDb::default();
+        assert_eq!(insert_get(&mut db, vec![1, 2, 3]), Some(vec![1, 2, 3]));
+    }
+}
+`;
+
+const BENCH = JSON.stringify(
+  {
+    build: 483,
+    commit: 'a3f9c21',
+    machine: { cpu: 'Ryzen 7 7840U', cores: 16, memoryGiB: 32 },
+    results: [
+      { name: 'route/greedy/1k', ns: 412, stddev: 9.1 },
+      { name: 'route/greedy/10k', ns: 1870, stddev: 33.4 },
+      { name: 'dht/bootstrap', ns: 92_400, stddev: 1_210, notes: null },
+      { name: 'hashdb/insert', ns: 88, stddev: 1.2 },
+    ],
+    regressions: [],
+    ok: true,
+  },
+  null,
+  2,
+);
+
+const TOPOLOGY_SVG = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200" viewBox="0 0 320 200">
+  <script>alert('an SVG is shown as its source, never run')</script>
+  <circle cx="60" cy="100" r="18" fill="#7c5cff"/>
+  <circle cx="160" cy="50" r="18" fill="#0dbd8b"/>
+  <circle cx="260" cy="100" r="18" fill="#ff8c61"/>
+  <path d="M60 100 L160 50 L260 100" stroke="#888" fill="none"/>
+</svg>
+`;
+
+const SIM_ZIP = storedZip([
+  ['dither-sim-0.4/', ''],
+  ['dither-sim-0.4/README.md', '# dither-sim\n\n10k-node simulations in the browser.\n'],
+  ['dither-sim-0.4/index.html', '<!doctype html><title>dither-sim</title><script src="sim.js"></script>\n'],
+  ['dither-sim-0.4/sim.js', 'export function step(world) { return world; }\n'],
+  ['dither-sim-0.4/topologies/ring.json', '{"nodes":1000}\n'],
+  ['dither-sim-0.4/LICENSE', 'MIT\n'],
+]);
+
+const RENT_XLSX = storedZip([
+  ['[Content_Types].xml', '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>'],
+  ['xl/workbook.xml', '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>'],
+  ['xl/worksheets/sheet1.xml', '<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>'],
+]);
+
+/**
+ * Demo attachments fetched through fetchMedia, so they are served at /media/ as a network's files are. The types are
+ * what a network might say, wrong ones included (Discord calls a .rs file application/rls-services+xml).
+ */
 const DEMO_FILES: Record<string, { mime: string; bytes: Uint8Array }> = {
   'demo:local-first-chat-sync.pdf': { mime: 'application/pdf', bytes: tinyPdf('Local-first chat sync (demo)') },
+  'demo:routing-notes.md': { mime: 'application/octet-stream', bytes: text(ROUTING_NOTES) },
+  'demo:stretch.csv': { mime: 'text/csv', bytes: text(STRETCH_CSV) },
+  'demo:topology.svg': { mime: 'image/svg+xml', bytes: text(TOPOLOGY_SVG) },
+  'demo:build-482.txt': { mime: 'text/plain', bytes: text(BUILD_LOG) },
+  'demo:insert_get.rs': { mime: 'application/rls-services+xml', bytes: text(INSERT_GET) },
+  'demo:dither-sim-0.4.zip': { mime: 'application/zip', bytes: SIM_ZIP },
+  'demo:bench-483.json': { mime: 'application/octet-stream', bytes: text(BENCH) },
+  'demo:rent-split.xlsx': { mime: 'application/octet-stream', bytes: RENT_XLSX },
 };
+/** A demo file as an attachment. */
+const file = (key: string, name: string): P.AttachmentFact => ({ kind: 'file', mime: DEMO_FILES[key].mime, name, size: DEMO_FILES[key].bytes.length, url: key });
 
 // ------------------------------------------------------------------ pictures
 
@@ -442,9 +601,13 @@ const CONVS: DemoConv[] = [
     msgs: [
       [DAY + 120, D.lev, 'CI is red on main, the hashdb bump broke a doctest'],
       [DAY + 118, D.ci, '❌ `main` · build #482 failed · `hashdb`: doctest `insert_get`'],
+      [DAY + 117, D.ci, 'full log', { att: [file('demo:build-482.txt', 'build-482.txt')] }],
       [DAY + 40, D.lev, 'fixed in #211'],
+      [DAY + 39, D.lev, 'the fixed test, for anyone on the old branch', { att: [file('demo:insert_get.rs', 'insert_get.rs')] }],
       [DAY + 35, D.lev, '**dither-sim v0.4** is out: 10k-node simulations in the browser. https://github.com/libdither/dither-sim', { fwd: { conversation: ch('dither-ann'), message: `${ch('dither-ann')}~0`, space: g.dither } }],
+      [DAY + 34, D.lev, 'release build, if you want to run it offline', { att: [file('demo:dither-sim-0.4.zip', 'dither-sim-0.4.zip')] }],
       [DAY + 30, D.ci, '✅ `main` · build #483 passed'],
+      [DAY + 29, D.ci, 'benchmarks for #483', { att: [file('demo:bench-483.json', 'bench-483.json')] }],
       [3 * H, D.quinn, 'starting a thread for the bootstrap refactor', { thread: T.ditherBoot }],
       [58, D.quinn, `${at(D.zyan)} can you review the bootstrap PR before Friday? it touches the handshake`],
     ],
@@ -465,6 +628,9 @@ const CONVS: DemoConv[] = [
     fact: dch(['dmain', 'dalt'], 'dither-routing', 'routing-research', 'dither-dev', 1),
     msgs: [
       [4 * DAY, D.zyan, 'notes on greedy embedding into hyperbolic space: https://github.com/zyansheep/routing-research'],
+      [4 * DAY - 5, D.zyan, 'the write-up so far', { att: [file('demo:routing-notes.md', 'routing-notes.md')] }],
+      [4 * DAY - 8, D.zyan, 'and the raw numbers', { att: [file('demo:stretch.csv', 'stretch.csv')] }],
+      [4 * DAY - 10, D.zyan, 'the three-node picture', { att: [file('demo:topology.svg', 'topology.svg')] }],
       [4 * DAY - 30, D.lev, 'the stretch numbers look great'],
       [DAY + 60, D.pixelfox, 'read the notes. how do you handle churn?'],
     ],
@@ -667,6 +833,7 @@ const CONVS: DemoConv[] = [
     fact: { nativeId: room('house', 'matrix.org'), shape: 'group', name: 'Housemates', participants: [M.self.nativeId, M.jules.nativeId, M.noor.nativeId, M.ben.nativeId], encrypted: true },
     msgs: [
       [2 * DAY, M.jules, 'rent split for november is in the sheet'],
+      [2 * DAY - 1, M.jules, '', { kind: 'media', att: [file('demo:rent-split.xlsx', 'rent-split.xlsx')] }],
       [DAY + 300, M.noor, 'who left the oven on 😭'],
       [DAY + 290, M.ben, 'guilty', { react: { '😂': [M.noor, M.jules] } }],
       [DAY + 100, M.noor, '', { kind: 'encrypted' }],

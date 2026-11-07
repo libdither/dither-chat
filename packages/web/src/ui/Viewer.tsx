@@ -1,11 +1,23 @@
 /**
  * Images, full screen. Pinch or double-tap to zoom, drag to pan, swipe sideways between a message's images,
  * swipe down to put it away. With a mouse: the wheel zooms, the arrows page, Escape closes.
+ *
+ * Other files open here too (docs/files.md): text and code, Markdown, JSON, CSV, PDF and archives, each shown by a
+ * viewer in a chunk of its own (files/), loaded when such a file is first opened. The header always has Download; with
+ * the desktop helper or the Android app it can open the file in an app as well.
  */
 import { signal } from '@preact/signals';
+import type { FunctionComponent } from 'preact';
+import type * as P from '@dither-chat/protocol';
+import { languageOf } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { android } from '../android.ts';
+import { desk } from '../desk.ts';
+import { fileFacts, fileIcon, fileKind, fileMime, fileViewer } from '../files.ts';
 import { commits, lockAxis, settleMs, velocity } from '../gesture.ts';
 import { reducedMotion, useLayer } from '../phone.ts';
+import { api } from '../state.ts';
+import { openAttachment, openWith } from './fileopen.tsx';
 import { Icon } from './icons.tsx';
 
 export interface ViewerImage {
@@ -18,7 +30,147 @@ export const viewer = signal<{ images: ViewerImage[]; index: number } | null>(nu
 
 export function Viewer() {
   const v = viewer.value;
-  return v ? <ViewerBox images={v.images} start={v.index} /> : null;
+  const f = fileViewer.value;
+  if (v) return <ViewerBox images={v.images} start={v.index} />;
+  return f ? <FileBox key={f.att.url} att={f.att} /> : null;
+}
+
+/** What each file viewer gets. */
+export interface FileViewProps {
+  att: P.AttachmentView;
+  info: P.FileInfo | null;
+  kind: P.FileKind;
+  /** For highlighting: what the hub found, else by the name. */
+  language: string | null;
+}
+type FileView = FunctionComponent<FileViewProps>;
+
+const VIEWS: Partial<Record<P.FileKind, () => Promise<{ default: FileView }>>> = {
+  text: () => import('./files/TextView.tsx'),
+  markdown: () => import('./files/MarkdownView.tsx'),
+  json: () => import('./files/JsonView.tsx'),
+  csv: () => import('./files/TableView.tsx'),
+  pdf: () => import('./files/PdfView.tsx'),
+  archive: () => import('./files/ArchiveView.tsx'),
+};
+const loadedViews = new Map<P.FileKind, FileView>();
+
+function FileBox({ att }: { att: P.AttachmentView }) {
+  const close = () => (fileViewer.value = null);
+  useLayer(close);
+  // Not looked at by the hub yet: it looks now (GET /api/attachments/:id/info), and the viewer waits for the answer.
+  const [info, setInfo] = useState<P.FileInfo | null>(att.info ?? null);
+  const [asked, setAsked] = useState(!!att.info);
+  useEffect(() => {
+    if (att.info) return;
+    let live = true;
+    api<P.FileInfo>(`/api/attachments/${encodeURIComponent(att.id)}/info`)
+      .then((i) => live && setInfo(i))
+      .catch(() => {})
+      .finally(() => live && setAsked(true));
+    return () => {
+      live = false;
+    };
+  }, [att.id]);
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && close();
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, []);
+  const a = { ...att, info: info ?? undefined };
+  const kind = fileKind(a);
+  // The bytes are a picture after all: the image viewer shows it.
+  useEffect(() => {
+    if (asked && kind === 'image') {
+      fileViewer.value = null;
+      viewer.value = { images: [{ url: att.url, name: att.name, width: info?.width, height: info?.height }], index: 0 };
+    }
+  }, [asked, kind]);
+  const name = att.name ?? 'file';
+  const apps = !!desk.value?.files || !!android?.opensFiles();
+  return (
+    <div class="fviewer" role="dialog" aria-modal="true" aria-label={name} data-kind={asked ? kind : 'unknown'}>
+      <div class="fviewer-bar">
+        <Icon name={fileIcon(kind, info?.language)} size={20} />
+        <span class="fviewer-name">
+          <b title={name}>{name}</b>
+          <small>{fileFacts(a)}</small>
+        </span>
+        {apps && (
+          <button class="icon-btn" onClick={() => openAttachment(a)} aria-label="Open File" title="Open in its app">
+            <Icon name="external" size={20} />
+          </button>
+        )}
+        {!!desk.value && !!fileMime(a) && (
+          <button class="icon-btn fviewer-with" onClick={() => void openWith(a)} aria-label="Open With…" title="Open with another app">
+            <Icon name="more" size={20} />
+          </button>
+        )}
+        <a class="icon-btn" href={att.url} download={name} aria-label="Download" title="Download">
+          <Icon name="download" size={20} />
+        </a>
+        <button class="icon-btn" onClick={close} aria-label="Close" title="Close">
+          <Icon name="x" size={22} />
+        </button>
+      </div>
+      <div class="fviewer-body">{!asked ? (
+          <div class="fv-wait">Looking at the file…</div>
+        ) : VIEWS[kind] ? (
+          <FileBody kind={kind} att={a} info={info} language={info?.language ?? languageOf(att.name)} />
+        ) : kind === 'video' ? (
+          <video class="fv-media" src={att.url} controls preload="metadata" />
+        ) : kind === 'audio' ? (
+          <audio class="fv-media" src={att.url} controls preload="metadata" />
+        ) : (
+          <NoView a={a} />
+        )}</div>
+    </div>
+  );
+}
+
+function FileBody(p: FileViewProps) {
+  const [View, setView] = useState<FileView | null>(() => loadedViews.get(p.kind) ?? null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const have = loadedViews.get(p.kind);
+    if (have) return setView(() => have);
+    let live = true;
+    VIEWS[p.kind]!()
+      .then((m) => {
+        loadedViews.set(p.kind, m.default);
+        if (live) setView(() => m.default);
+      })
+      .catch(() => live && setFailed(true));
+    return () => {
+      live = false;
+    };
+  }, [p.kind]);
+  if (failed) return <div class="fv-wait">Could not load the viewer. Check the connection to the hub, then try again.</div>;
+  return View ? <View {...p} /> : <div class="fv-wait">Loading…</div>;
+}
+
+/** A type with no viewer here. */
+function NoView({ a }: { a: P.AttachmentView }) {
+  return (
+    <div class="fv-none">
+      <Icon name="file" size={40} />
+      <p>There is no preview for this kind of file.</p>
+      <p>
+        <a href={a.url} download={a.name ?? true}>
+          Download it
+        </a>
+        {(desk.value?.files || android?.opensFiles()) && (
+          <>
+            {' or '}
+            <button class="link" onClick={() => openAttachment(a)}>
+              open it in its app
+            </button>
+          </>
+        )}
+        .
+      </p>
+    </div>
+  );
 }
 
 const MAX = 5;
