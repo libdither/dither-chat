@@ -96,7 +96,17 @@ async function harness(o: { loggedIn?: boolean; opts?: Partial<AdapterOptions> }
     emit: async (ev: any) => {
       const n = events.length;
       await ctl({ emit: ev });
-      await Bun.sleep(30);
+      // Until the adapter has handled it: what it emits, then a quiet moment; or, for an event that yields nothing,
+      // long enough that a slow machine would have shown something. A fixed wait failed under load.
+      const start = Date.now();
+      let seen = n;
+      let quiet = Date.now();
+      while (Date.now() - start < 2000) {
+        await Bun.sleep(10);
+        if (events.length !== seen) (seen = events.length), (quiet = Date.now());
+        else if (seen > n && Date.now() - quiet >= 40) break;
+        else if (seen === n && Date.now() - start >= 250) break;
+      }
       return events.slice(n);
     },
     cmd: (op: string, nth = 0) => cmds.filter((c) => c.op === op)[nth],

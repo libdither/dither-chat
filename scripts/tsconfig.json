@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "paths": {
+      "@dither-chat/protocol": ["../packages/protocol/src/index.ts"],
+      "@dither-chat/protocol/client": ["../packages/protocol/src/adapter-client.ts"],
+      "@dither-chat/protocol/*": ["../packages/protocol/src/*"]
+    }
+  },
+  "include": ["*.ts"]
+}

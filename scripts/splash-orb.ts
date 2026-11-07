@@ -36,3 +36,5 @@ ${anims}</animated-vector>
 `;
 await Bun.write('apps/android/app/src/main/res/drawable/splash_orb.xml', xml);
 console.log(levels.map((l) => l.length).join(' '));
+
+export {};

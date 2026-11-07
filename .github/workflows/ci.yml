@@ -1,0 +1,26 @@
+# Typecheck and tests for every package on each push and pull request. Everything runs against fakes (a fake
+# signal-cli, a fake WhatsApp bridge, a replica of Discord's client, in-memory hubs), so no network binaries are needed.
+# The remote-account tests (hub test/remote.test.ts) need a dither-accounts checkout beside this one and skip here.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run test

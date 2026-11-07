@@ -64,7 +64,7 @@ try {
   await p.eval(`document.querySelector('[data-mid="${first}"] .tier-vote button:last-child').click()`);
   await Bun.sleep(150);
   l = await lists();
-  check(l['Active'].includes(first) && !l['Important'].includes(first), 'voting it down moves it to Active at once');
+  check(l['Active'].includes(first!) && !l['Important'].includes(first!), 'voting it down moves it to Active at once');
   await Bun.sleep(800);
   const policy = await get('/api/triage/policy');
   const top = policy.factors[0];

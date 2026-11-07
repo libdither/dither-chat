@@ -96,3 +96,5 @@ console.log(`${base}: ${boot.conversations.length} conversations`);
 await measure('full', full);
 if (boot.sync) await measure('delta', delta);
 else console.log('delta  (this hub has no /api/sync)');
+
+export {};
