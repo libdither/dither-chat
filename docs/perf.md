@@ -129,7 +129,9 @@ What these numbers point at, not done yet:
   sidebar and every message re-render: about five App renders per first open, one per arrival. Scoped versions
   (the list, each timeline, identities) would leave a switch to the timeline alone.
 - **Long timelines are drawn whole**: 960 messages are 50k DOM nodes and a 2 s reopen at 4×. A window of what is on
-  screen, or `content-visibility` on desktop (only phones have it, styles.css), would bound it.
+  screen would bound it. `content-visibility` on desktop (only phones have it, styles.css), tried with `--css`, takes
+  26% off that reopen and 22% off an arriving message at 4×, but makes an older page 27% slower and triples the
+  layouts of a reopen.
 - **The bootstrap is 4.4–5.4 MB**, two thirds of it conversations, and most of those channels nobody has written in.
   On the live hub's copy, leaving out null and default fields saves 25%, leaving out the 3,489 channels without
   messages 43%, both 55%.
