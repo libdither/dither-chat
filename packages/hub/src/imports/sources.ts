@@ -309,27 +309,11 @@ export class ImportSources {
     this.setState(id, { status: 'checking', error: null });
 
     let kind: P.ImportSourceKind = src.kind ?? 'unknown';
-    let size = 0;
-    let files = 0;
-    let sha256: string;
+    const { size, files, sha256 } = await hashInWorker(up ? { file: up } : { dir: join(d, 'raw') });
     if (up) {
-      size = statSync(up).size;
-      files = 1;
-      sha256 = await hashFile(up);
       const legacy = sniffLegacy(up);
       if (legacy) kind = 'signal-backup';
       else if (kind === 'signal-backup') throw new Error('this is not a Signal backup: it does not start with a backup header');
-    } else {
-      // A folder: its identity is the hash of its sorted (path, size, sha256) lines.
-      const list = walk(join(d, 'raw'));
-      const lines: string[] = [];
-      for (const p of list) {
-        const s = statSync(p).size;
-        size += s;
-        files++;
-        lines.push(`${relative(join(d, 'raw'), p)}\t${s}\t${await hashFile(p)}`);
-      }
-      sha256 = new Bun.CryptoHasher('sha256').update(lines.join('\n')).digest('hex');
     }
     this.setState(id, { size, files, sha256, kind, checkedAt: Date.now() });
 
@@ -433,10 +417,18 @@ function walk(dir: string): string[] {
   return out.sort();
 }
 
-async function hashFile(path: string): Promise<string> {
-  const h = new Bun.CryptoHasher('sha256');
-  for await (const chunk of Bun.file(path).stream()) h.update(chunk);
-  return h.digest('hex');
+/** Hash a file or a folder in a worker (hash-worker.ts). */
+function hashInWorker(what: { file: string } | { dir: string }): Promise<{ size: number; files: number; sha256: string }> {
+  return new Promise((resolve, reject) => {
+    const w = new Worker(new URL('./hash-worker.ts', import.meta.url).href);
+    w.onmessage = (e: MessageEvent<any>) => {
+      w.terminate();
+      if (e.data.error) reject(new Error(e.data.error));
+      else resolve(e.data);
+    };
+    w.onerror = (e) => (w.terminate(), reject(new Error(e.message || 'hashing failed')));
+    w.postMessage(what);
+  });
 }
 
 const MAX_FILES = 200_000;
