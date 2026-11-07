@@ -26,7 +26,9 @@ export interface OutboxEntry {
   replyTo?: string;
   /** Kept until the send is through: an upload the hub let expire is made again from these. */
   files?: OutboxFile[];
-  /** The uploads' ids on the hub, once made. */
+  /** Each file's upload on the hub as soon as it has one, so one cut off by a reload carries on (upload.ts). */
+  uploads?: (string | undefined)[];
+  /** The uploads' ids on the hub, once all of each has arrived. */
   attachments?: string[];
   /** The hub refused it: shown with the reason, to try again or throw away. */
   failed?: string;

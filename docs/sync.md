@@ -100,7 +100,9 @@ adapter announcing the same things again, and a send retried after a lost answer
   15 minutes with the first answer, so a send whose answer was lost goes out once. Until the hub has taken it, a send
   is kept on the device (IndexedDB, with its files, `outbox.ts`): after a reload or the system closing the app it is
   shown again and goes out after the first sync, under the same `clientId`. One the hub refused stays, with the
-  reason, to try again or discard.
+  reason, to try again or discard. Its files upload as they are attached, a piece at a time ([uploads.md](uploads.md)):
+  a send waits for the ones still uploading, an upload carries on after a reload, and the hub keeps them across its
+  own restart.
 - **The pending copy** of a send goes when its message is here. The hub's answer carries `messageId`, the hub id of the
   message the network says it sent (ids are derived from the network's, so it is known before the message is stored),
   and the copy goes when that message arrives, live, in a sync or in a page, or at once if it is already here. Only an

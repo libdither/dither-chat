@@ -2,10 +2,10 @@
  * The hub over real sockets: TLS, the plaintext side listener, and who gets refused.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { ATTACHMENT_LIMITS, MAX_UPLOAD } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, MAX_UPLOAD, UPLOAD_CHUNK } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { HubServer, isTailnet, mediaSigner, sameOrigin } from '../src/server.ts';
 import { Store, type AccountRow } from '../src/store.ts';
@@ -322,12 +322,13 @@ describe('sending files', () => {
   const sent: any[] = [];
   let hub: HubServer;
   let d: AccountRow;
+  let sup: any;
   const up = (body: BodyInit, headers: Record<string, string> = {}) => fetch(`${url}/api/uploads`, { method: 'POST', body, headers: { 'content-type': 'image/png', 'x-file-name': 'a%20b.png', ...headers } });
   const send = (conv: string, body: object) => fetch(`${url}/api/conversations/${conv}/send`, { method: 'POST', body: JSON.stringify(body) });
   const cid = (native: string) => store.one<{ id: string }>('SELECT id FROM conversation WHERE native_id = ?', native)!.id;
 
   beforeAll(() => {
-    const sup = {
+    sup = {
       authorize: () => null,
       online: () => true,
       command: async (_id: string, c: any) => {
@@ -335,7 +336,7 @@ describe('sending files', () => {
         sent.push({ ...c, seen: c.attachments?.map((f: any) => readFileSync(f.path, 'utf8')) });
         return { nativeId: 'x' };
       },
-    } as any;
+    };
     hub = new HubServer(store, sup, new Triage(store), { port: p3, hostname: '127.0.0.1', dataDir: join(dir, 'files'), webDist: dir, secret: 's' });
     hub.start();
     d = store.createAccount({ network: 'discord', label: 'files', color: '#000', adapter: 'discord' });
@@ -383,5 +384,70 @@ describe('sending files', () => {
   });
   test('an empty message is still refused', async () => {
     expect((await send(cid('ff'), { body: '  ' })).status).toBe(400);
+  });
+  test('a stream with no length is cut off at the cap, and nothing is kept', async () => {
+    const before = readdirSync(join(dir, 'files/uploads')).length;
+    let left = MAX_UPLOAD + 1;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(c) {
+        const n = Math.min(left, 1024 * 1024);
+        left -= n;
+        if (n) c.enqueue(new Uint8Array(n));
+        else c.close();
+      },
+    });
+    const res = await fetch(`${url}/api/uploads`, { method: 'POST', body: stream, headers: { 'x-file-name': 'big' } });
+    expect(res.status).toBe(413);
+    expect(readdirSync(join(dir, 'files/uploads')).length).toBe(before);
+  });
+  test('a connection dropped midway leaves no file', async () => {
+    const before = readdirSync(join(dir, 'files/uploads')).length;
+    const ctl = new AbortController();
+    let sent = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      async pull(c) {
+        if (sent++ < 3) return c.enqueue(new Uint8Array(64 * 1024));
+        ctl.abort();
+        await Bun.sleep(1000);
+      },
+    });
+    await fetch(`${url}/api/uploads`, { method: 'POST', body: stream, signal: ctl.signal }).catch(() => null);
+    for (let i = 0; i < 50 && readdirSync(join(dir, 'files/uploads')).length !== before; i++) await Bun.sleep(20);
+    expect(readdirSync(join(dir, 'files/uploads')).length).toBe(before);
+  });
+  test('in pieces: offsets, a resumed piece, then sent by id and deleted', async () => {
+    const put = (id: string, offset: number, b: BodyInit) => fetch(`${url}/api/uploads/${id}?offset=${offset}`, { method: 'PUT', body: b });
+    const start = await fetch(`${url}/api/uploads/start`, { method: 'POST', body: JSON.stringify({ name: '50%20off/../q.txt', mime: 'text/plain', size: 10 }) });
+    const s = await start.json();
+    expect(s).toMatchObject({ name: 'q.txt', mime: 'text/plain', size: 10, received: 0 });
+    expect(await (await put(s.id, 0, 'hello')).json()).toMatchObject({ received: 5 });
+    const wrong = await put(s.id, 0, 'hello');
+    expect(wrong.status).toBe(409);
+    expect(await wrong.json()).toMatchObject({ received: 5 });
+    expect(await (await fetch(`${url}/api/uploads/${s.id}`)).json()).toMatchObject({ received: 5, size: 10 });
+    // Not all there: the send is told it is gone, and the app uploads it again.
+    expect((await send(cid('ff'), { attachments: [s.id] })).status).toBe(410);
+    expect(await (await put(s.id, 5, 'world')).json()).toMatchObject({ received: 10 });
+    expect((await send(cid('ff'), { attachments: [s.id] })).status).toBe(200);
+    expect(sent.at(-1).seen).toEqual(['helloworld']);
+    expect((await fetch(`${url}/api/uploads/${s.id}`)).status).toBe(404);
+  });
+  test('in pieces: refused sizes, an oversized piece, and a cancel', async () => {
+    const start = (size: number) => fetch(`${url}/api/uploads/start`, { method: 'POST', body: JSON.stringify({ name: 'x', size }) });
+    expect((await start(MAX_UPLOAD + 1)).status).toBe(413);
+    expect(await (await start(0)).json()).toMatchObject({ error: 'empty file' });
+    const s = await (await start(UPLOAD_CHUNK * 2)).json();
+    expect((await fetch(`${url}/api/uploads/${s.id}?offset=0`, { method: 'PUT', body: new Uint8Array(UPLOAD_CHUNK + 1) })).status).toBe(413);
+    expect((await fetch(`${url}/api/uploads/${s.id}`, { method: 'DELETE' })).status).toBe(200);
+    expect((await fetch(`${url}/api/uploads/${s.id}`)).status).toBe(404);
+    expect(existsSync(join(dir, 'files/uploads', s.id))).toBe(false);
+  });
+  test('a restart keeps what was uploaded: the send still goes', async () => {
+    const u = await (await up('survives')).json();
+    hub.stop();
+    hub = new HubServer(store, sup, new Triage(store), { port: p3, hostname: '127.0.0.1', dataDir: join(dir, 'files'), webDist: dir, secret: 's' });
+    hub.start();
+    expect((await send(cid('ff'), { body: 'after', attachments: [u.id] })).status).toBe(200);
+    expect(sent.at(-1).seen).toEqual(['survives']);
   });
 });

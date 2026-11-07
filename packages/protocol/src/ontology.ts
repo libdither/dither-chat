@@ -156,8 +156,13 @@ export function showsInline(mime: string | null | undefined): boolean {
   return /^(image|video|audio)\/[\w.+-]+$/.test(t) || t === 'application/pdf' || t === 'text/plain';
 }
 
-/** The most the hub takes in one file, in bytes. */
+/**
+ * The most the hub takes in one file, in bytes. Uploads go to disk, but adapters still read a file whole to send it
+ * (Discord's as base64), so this stays where every network's limit below is.
+ */
 export const MAX_UPLOAD = 25 * 1024 * 1024;
+/** The largest piece of an upload in one request: small enough that a dropped connection on a phone loses little. */
+export const UPLOAD_CHUNK = 2 * 1024 * 1024;
 /** What each network takes, as far as we can tell without asking. Discord's is the limit without Nitro. */
 export const ATTACHMENT_LIMITS: Record<Network, { bytes: number; files: number }> = {
   discord: { bytes: 10 * 1024 * 1024, files: 10 },

@@ -53,7 +53,7 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 |---|---|---|---|---|
 | Edit and delete your own messages | H | L | done | Verified on the demo adapter, not yet on a live network |
 | Drafts per conversation | M | L | done | On each device, not synced |
-| Send attachments and images | H | M | done | Paste, drop or pick. Sent live on Discord, against a local homeserver on Matrix, on the demo adapter. Signal's live send is unverified: only a fake signal-cli has seen it. In encrypted Matrix rooms only once encryption is set up |
+| Send attachments and images | H | M | done | Paste, drop or pick. Each file uploads as it is attached, with progress and a cancel, in pieces that carry on after a dropped connection; uploads survive a hub restart; a file that cannot go says why ([uploads.md](uploads.md)). Sent live on Discord, against a local homeserver on Matrix, on the demo adapter. Signal's live send is unverified: only a fake signal-cli has seen it. In encrypted Matrix rooms only once encryption is set up |
 | Mark all read | M | L | done | Everywhere, or per server, folder or person. A paced queue on the hub tells the networks and survives restarts |
 | Typing indicator, outgoing | L | L | done | Both ways on every network, with a privacy switch ([typing.md](typing.md)) |
 | Pinned messages, polls, stickers from the picker | M | M | later | |
