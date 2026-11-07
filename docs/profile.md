@@ -50,6 +50,17 @@ Right:
 - **Notifications**: Star, and Always notify without starring.
 - **Note**: yours only, kept on the hub.
 
+### Your own bio
+
+On your own page, the bio on each network whose adapter can change it (capability `editProfile`: Discord, Signal,
+WhatsApp; Matrix has no bio) shows with a pencil. Editing shows how many characters the network still takes
+(`BIO_LIMIT` in about.ts: Discord 190, Signal 140, WhatsApp 139, an emoji counting once) and will not save past it.
+Saving is `PUT /api/identities/:id/about` with `{ bio }` ('' clears it): the hub takes it only for an account's own
+identity (403 otherwise), only where the adapter lists `editProfile` (409), checks the limit again (400), then sends
+the adapter `setProfile` and keeps what it answers like any profile it was asked for. A network that refuses says
+why (502). On Signal and WhatsApp the About is also the status line, so the identity's status changes with it.
+Someone else's bio never has a pencil.
+
 ### Asking the networks
 
 The page shows at once what the hub has and what each network said last (`ProfileView.abouts`), then asks again for

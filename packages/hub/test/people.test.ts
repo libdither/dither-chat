@@ -47,10 +47,10 @@ beforeAll(() => {
   people = new People({
     store,
     online: (a) => !offline.has(a),
-    command: <T>(account: string, cmd: { t: 'profile'; who: string }) =>
+    command: <T>(account: string, cmd: { t: 'profile'; who: string } | { t: 'setProfile'; change: { bio?: string } }) =>
       new Promise<T>((resolve, reject) => {
         const id = crypto.randomUUID();
-        asked.push({ account, who: cmd.who });
+        asked.push({ account, who: cmd.t === 'profile' ? cmd.who : 'set' });
         pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
         adapters.get(account)!.command({ ...cmd, id });
       }),
@@ -106,6 +106,22 @@ test('your own: your friends; an offline account: what it said last, saying why'
   expect(v.stale).toContain('is not connected');
   expect(v.bio).toBe('on the wall, back at 8');
   offline.delete('acc_demo-signal');
+});
+
+test('your own bio through the demo adapter: set, kept, and on Signal the status line too', async () => {
+  const me = store.one<{ self_identity: string }>(`SELECT self_identity FROM account WHERE id = 'acc_demo-signal'`)!.self_identity;
+  const v = await people.setBio(me, 'climbing at 6');
+  expect(v.bio).toBe('climbing at 6');
+  expect(people.kept([me])[0].bio).toBe('climbing at 6');
+  expect(JSON.parse(store.one<{ status: string }>('SELECT status FROM identity WHERE id = ?', me)!.status).text).toBe('climbing at 6');
+  expect((await people.get(me, true)).bio).toBe('climbing at 6');
+  await expect(people.setBio(me, 'x'.repeat(141))).rejects.toThrow('Too long for Signal: 141 characters, and it takes 140.');
+  // Someone else's, and Matrix's (no bio there): refused before asking.
+  asked.length = 0;
+  await expect(people.setBio(identityOf('signal'), 'hi')).rejects.toThrow('Only your own profile');
+  const mx = store.one<{ self_identity: string }>(`SELECT self_identity FROM account WHERE id = 'acc_demo-matrix'`)!.self_identity;
+  await expect(people.setBio(mx, 'hi')).rejects.toThrow('cannot be changed from here');
+  expect(asked.length).toBe(0);
 });
 
 test('an adapter without profile: said plainly, nothing asked', async () => {

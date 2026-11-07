@@ -329,6 +329,15 @@ export interface PersonAbout {
   facts?: { label: string; value: string }[];
 }
 
+/**
+ * How long your own bio may be on each network that lets you change it (capability 'editProfile'), in characters
+ * as bioLength counts them. Matrix has no bio.
+ */
+export const BIO_LIMIT: Partial<Record<Network, number>> = { discord: 190, signal: 140, whatsapp: 139 };
+
+/** A bio's length the way the limits count it: one per character, so an emoji is one. */
+export const bioLength = (s: string) => [...s].length;
+
 /** friend: accepted; requested: you asked them; requesting: they asked you; contact: in your address book. */
 export type PersonRelationship = 'friend' | 'requested' | 'requesting' | 'blocked' | 'contact' | 'stranger';
 

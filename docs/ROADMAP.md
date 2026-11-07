@@ -39,6 +39,7 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Merge and unmerge, with same-name hints | H | L | done | Hints never merge on their own |
 | Start a new DM, from a profile or a "New message" dialog | H | M | done | Pick someone known, or type a Matrix ID or Signal number; choose which account when several can. Verified against a local homeserver and the demo adapter. Discord's is only unit-tested against a replica of the client, and Signal's only against a fake signal-cli. New Matrix rooms are unencrypted until E2EE lands |
 | Discord bio, roles, mutual servers | M | M | later | A new adapter command, testable only on a live account |
+| Change your own bio from your profile | M | L | done | Discord, Signal and WhatsApp (`setProfile`, adapters in dither-accounts); Matrix has no bio. The hub and page are tested against the demo adapter; Signal's adapter only against a fake signal-cli and WhatsApp's against a fake bridge |
 | Matrix and Signal extended profiles | L | L | blocked | The protocols hold little more than name and avatar |
 | Presence (online, idle) | M | M | next | An adversarial feature (docs/history.md): the hub logs the `presence` event and shows it in a profile's Status section; the Discord and Matrix adapters that emit it are in dither-accounts. Signal does not report it |
 | Block, ignore | M | M | later | Differs per network |
