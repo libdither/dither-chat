@@ -853,17 +853,22 @@ export class WhatsAppAdapter {
     const ctx = { ...base, ...(wa.mentions.length ? { mentionedJID: wa.mentions } : {}) };
     const hasCtx = Object.keys(ctx).length > 0;
     let first: string | undefined;
+    const textMessage = (): WaMessage => (hasCtx ? { extendedTextMessage: { text: wa.text, contextInfo: ctx } } : { conversation: wa.text });
     if (attachments?.length) {
+      // WhatsApp audio has no caption field, so the text of a leading audio goes out as its own message first.
+      const textFirst = attachments[0].kind === 'audio' && !!wa.text.trim();
+      const plain = base.expiration ? { expiration: base.expiration } : {};
       for (const [i, a] of attachments.entries()) {
-        const m = await this.mediaMessage(a, i === 0 ? wa.text : '', i === 0 ? ctx : base.expiration ? { expiration: base.expiration } : {});
+        const lead = i === 0 && !textFirst;
+        const m = await this.mediaMessage(a, lead ? wa.text : '', lead ? ctx : plain);
+        if (i === 0 && textFirst) first = await this.sendRaw(chat, textMessage());
         const id = await this.sendRaw(chat, m);
         first ??= id;
       }
       return { nativeId: first! };
     }
     if (!wa.text.trim()) throw new Error('nothing to send');
-    const message: WaMessage = hasCtx ? { extendedTextMessage: { text: wa.text, contextInfo: ctx } } : { conversation: wa.text };
-    return { nativeId: await this.sendRaw(chat, message) };
+    return { nativeId: await this.sendRaw(chat, textMessage()) };
   }
 
   /** Send a message and publish it (WhatsApp does not echo what this device sends). */
