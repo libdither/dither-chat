@@ -471,6 +471,8 @@ export function sumUnread(convs: P.ConversationView[]): Unread {
     mentions = 0,
     badge = 0;
   for (const c of convs) {
+    // Nothing unread adds nothing, whatever its level: most conversations, and the level is the dear part.
+    if (!c.vantages.some((v) => v.unread || v.mentions)) continue;
     const u = unreadOf(c);
     if (u.muted && !u.badge) continue;
     unread += u.unread;
@@ -478,6 +480,11 @@ export function sumUnread(convs: P.ConversationView[]): Unread {
     badge += u.badge;
   }
   return { unread, mentions, badge, muted: false };
+}
+
+/** Everything shown, summed: the app's badge and the Home tab's. Once per `rev`. */
+export function totalUnread(): Unread {
+  return memo('totalUnread', () => sumUnread([...db.conversations.values()].filter(visibleConv)));
 }
 
 export function spaceUnread(id: string): Unread {

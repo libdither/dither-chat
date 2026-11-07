@@ -1,6 +1,6 @@
 import { searchOp } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
-import { accountsNeedingYou, pingedCount, rootCommunity, sumUnread, visibleConv } from '../model.ts';
+import { accountsNeedingYou, pingedCount, rootCommunity, totalUnread } from '../model.ts';
 import { api, back, connected, db, go, loaded, pending, prefs, previousRoute, readProgress, refresh, rev, route, unreachable, type Route } from '../state.ts';
 import { dropLayer, phone, pushLayer } from '../phone.ts';
 import { AccountPane, AccountsSidebar, AddAccount, addingAccount } from './Accounts.tsx';
@@ -227,7 +227,7 @@ let lastHome: Route = { view: 'inbox' };
 
 function TabBar({ r }: { r: Route }) {
   const tab = tabOf(r);
-  const all = sumUnread([...db.conversations.values()].filter(visibleConv)).badge;
+  const all = totalUnread().badge;
   const attention = [...db.accounts.values()].some((a) => a.attention);
   const tabs: { id: Tab; label: string; icon: string; to: () => Route; badge?: number; dot?: boolean }[] = [
     { id: 'home', label: 'Home', icon: 'home', to: () => lastHome, badge: all },
@@ -257,7 +257,7 @@ export function App() {
   const r = route.value;
   const p = phone.value;
   // The installed app's icon shows what wants you, where the platform has badges.
-  const badge = loaded.value ? sumUnread([...db.conversations.values()].filter(visibleConv)).badge : 0;
+  const badge = loaded.value ? totalUnread().badge : 0;
   useEffect(() => {
     if ('setAppBadge' in navigator) (badge ? navigator.setAppBadge(badge) : navigator.clearAppBadge()).catch(() => {});
   }, [badge]);
