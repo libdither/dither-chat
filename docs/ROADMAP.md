@@ -87,6 +87,7 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Updates reach installed apps | H | L | done | Reload bar, or automatic when the app is out of sight |
 | Public certificate through DNS-01 | M | L | done | Let's Encrypt wildcard through a Caddy on the hub's machine. No per-device step |
 | Login, beyond tailnet membership | M | M | next | Anyone on the tailnet can read everything today |
+| Fast on a big hub | H | M | next | [perf.md](perf.md): a harness with a baseline, and the quick wins done. Next: a switch that renders only the timeline, long timelines windowed, a smaller bootstrap |
 | Offline reading of recent messages | M | M | later | The shell works offline; data does not |
 | Backups of `.data` | M | L | done | A nightly `VACUUM INTO`, the newest seven kept, and a copy before any schema change ([deploy.md](deploy.md#backups-and-upkeep)) |
 | Names the hub answers to, media from public addresses only | H | L | done | A Host allowlist against DNS rebinding, and the media proxy refuses private addresses and caps sizes ([deploy.md](deploy.md#who-can-reach-it)) |
