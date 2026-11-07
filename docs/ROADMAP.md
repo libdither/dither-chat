@@ -44,6 +44,7 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Presence (online, idle) | M | M | next | An adversarial feature (docs/history.md): the hub logs the `presence` event and shows it in a profile's Status section; the Discord and Matrix adapters that emit it are in dither-accounts. Signal does not report it |
 | Server members seen (passive, adversarial) | L | M | done | Who your accounts' clients loaded anyway, and "seen N of M listed" on a server's About. Hub side done; Discord's emitter lives in dither-accounts. Walking the member list is held |
 | Message counts per server, estimated | M | S | done | From stored messages only (docs/profile.md): seen, share with a Wilson interval, and on Discord a total from each channel's age and rate, with a range; none where the data cannot support one |
+| People graph: who shares which servers and groups | M | M | done | From the People header (docs/people-graph.md). Links from group participants, profiles' mutual servers, and members seen when recorded; WebGL with a worker layout, capped at 6,000 nodes by default. Not checked against the live hub's data in a browser |
 | Block, ignore | M | M | later | Differs per network |
 
 ## Messaging

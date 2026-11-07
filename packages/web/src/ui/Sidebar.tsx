@@ -77,6 +77,16 @@ function NewMessageButton() {
   );
 }
 
+/** Opens the people graph: who shares which servers and groups (graph/GraphView.tsx). */
+function GraphButton() {
+  const on = route.value.view === 'people' && !!route.value.graph;
+  return (
+    <button class={`icon-btn small side-graph ${on ? 'on' : ''}`} title="Who shares what" aria-label="People graph" aria-pressed={on} onClick={() => go(on ? { view: 'people' } : { view: 'people', graph: true })}>
+      <Icon name="graph" size={16} />
+    </button>
+  );
+}
+
 function preview(c: P.ConversationView): string {
   const m = c.lastMessage;
   if (!m) return c.topic ?? kindLabel(c);
@@ -307,7 +317,7 @@ export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
   return (
     <div class="sidebar-inner">
       <header class="side-head">
-        <h1>People<NewMessageButton /><SortButton scope="people" class="side-sort" /></h1>
+        <h1>People<NewMessageButton /><GraphButton /><SortButton scope="people" class="side-sort" /></h1>
         <span class="side-sub">One thread per person, across every network</span>
       </header>
       <div class="side-scroll">

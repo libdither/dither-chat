@@ -16,6 +16,7 @@ import { NewMessage } from './NewMessage.tsx';
 import { ReactionLayer } from './Reactions.tsx';
 import { ProfilePane } from './Profile.tsx';
 import { PlaceProfile } from './PlaceProfile.tsx';
+import { GraphPane } from './GraphPane.tsx';
 import { MessageHistoryLayer } from './MessageHistory.tsx';
 import { Rail } from './Rail.tsx';
 import { TitleBar } from './TitleBar.tsx';
@@ -39,6 +40,7 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
     case 'inbox':
       return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <InboxBoard /> };
     case 'people':
+      if (r.graph) return { pane: <GraphPane onBack={back} /> };
       return r.person ? { pane: <PersonPane personId={r.person} onBack={back} />, detail: { kind: 'person', id: r.person } } : { pane: <WelcomePane view="people" /> };
     case 'profile':
       if (r.conv || r.space) return { pane: <PlaceProfile kind={r.conv ? 'conversation' : 'space'} id={(r.conv ?? r.space)!} onBack={back} /> };
@@ -163,7 +165,7 @@ function isDetail(r: Route): boolean {
     case 'space':
       return !!r.conv;
     case 'people':
-      return !!r.person;
+      return !!r.person || !!r.graph;
     case 'folder':
       return !!(r.conv || r.person);
     case 'accounts':

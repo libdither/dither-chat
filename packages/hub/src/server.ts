@@ -31,6 +31,7 @@ import { hostAllowed, hostNames } from './hosts.ts';
 import { fetchPublicToFile } from './fetchsafe.ts';
 import { AboutError, Abouts } from './about.ts';
 import { People } from './people.ts';
+import { peopleGraph } from './graph.ts';
 
 
 type ClientData = { kind: 'client' };
@@ -491,6 +492,8 @@ export class HubServer {
       }
     }
     if (path === '/api/inbox') return ok(s.inbox(num('since') ?? Date.now() - 7 * 86_400_000));
+    // People and the places they share (graph.ts, docs/people-graph.md).
+    if (path === '/api/graph' && method === 'GET') return ok(peopleGraph(s));
     if (path === '/api/search') return ok(s.search(url.searchParams.get('q') ?? '', Math.min(num('limit') ?? 40, 100), url.searchParams.get('cursor'), num('context') ?? 0));
 
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/context$/))) {
