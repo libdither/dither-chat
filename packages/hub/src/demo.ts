@@ -847,7 +847,8 @@ let chatterTimer: Timer | undefined;
 let chatterIdx = 0;
 
 function scheduleChatter() {
-  if (chatterTimer) return;
+  // Benchmarks (scripts/verify-perf.ts) count renders, which a stray message would change.
+  if (chatterTimer || process.env.DITHER_DEMO_CHATTER === '0') return;
   const tick = () => {
     const line = CHATTER[chatterIdx++ % CHATTER.length];
     running.get(line[0])?.typeThenSay(line[1], line[2], line[3]);
@@ -1497,6 +1498,13 @@ class DemoAdapter implements InprocAdapter {
         this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'demo media is inline' });
         break;
       case 'action':
+        // say: a live message from someone else, for scripts/verify-perf.ts. Native ids of the conversation and author.
+        if (cmd.action === 'say') {
+          const a = cmd.args as { conversation: string; author: string; body: string };
+          this.say(a.conversation, { nativeId: a.author }, a.body);
+          reply({ ok: true });
+          break;
+        }
         reply(cmd.action === 'typingLog' ? { typing: this.typingLog } : { note: 'demo adapters have no actions' });
         break;
       default:

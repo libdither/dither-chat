@@ -70,6 +70,7 @@ import { composerDone, composerTyped } from '../typing.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { ForwardCard, forwarding } from './Forward.tsx';
 import { attachmentMenu, conversationMenu, identityMenu, imageMenu, linkMenu, messageMenu, personMenu } from './menus.tsx';
+import { counting, markPainted, rendered } from '../perf.ts';
 
 
 // ------------------------------------------------------------------ header
@@ -510,6 +511,7 @@ function TriageNote({ m }: { m: P.MessageView }) {
 }
 
 function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageView; grouped: boolean; merged: boolean; onReply: (m: P.MessageView) => void; highlight: boolean }) {
+  if (counting) rendered('MessageItem');
   const author = m.authorId ? db.identities.get(m.authorId) : null;
   const person = personOf(m.authorId);
   const self = isSelfIdentity(m.authorId);
@@ -673,6 +675,7 @@ function MessageItem({ m, grouped, merged, onReply, highlight }: { m: P.MessageV
 // ------------------------------------------------------------------ timeline
 
 function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tkey: string; convIds: string[]; merged: boolean; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string }) {
+  if (counting) rendered('Timeline');
   rev.value;
   const scroller = useRef<HTMLDivElement>(null);
   const t = timelines.get(tkey);
@@ -710,6 +713,16 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
 
   const mine = pending.value.filter((p) => convIds.includes(p.conversationId));
   const msgs = t?.messages ?? [];
+  // A switch is done once the newest message is on screen, or the hub has answered (docs/perf.md).
+  const painted = useRef('');
+  useEffect(() => {
+    if (!t || painted.current === tkey) return;
+    const last = msgs[msgs.length - 1];
+    const newest = tkey.startsWith('c:') ? db.conversations.get(tkey.slice(2))?.lastMessage?.id : last?.id;
+    if (t.loading && !(last && last.id === newest)) return;
+    painted.current = tkey;
+    markPainted('dither:timeline', { key: tkey, messages: msgs.length });
+  });
   const items: any[] = [];
   let prev: P.MessageView | null = null;
   let dividerDone = false;

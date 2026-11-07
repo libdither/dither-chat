@@ -31,6 +31,7 @@ import { Viewer } from './Viewer.tsx';
 import { PEEK, panel, usePager, type Rest } from './Pager.ts';
 import { Boot } from './Loader.tsx';
 import { applyUpdate, updateReady } from '../pwa.ts';
+import { counting, rendered } from '../perf.ts';
 
 /** What the center pane shows, and whether a details pane is available. */
 function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'conv' | 'person'; id: string } } {
@@ -251,6 +252,7 @@ function TabBar({ r }: { r: Route }) {
 }
 
 export function App() {
+  if (counting) rendered('App');
   rev.value;
   const r = route.value;
   const p = phone.value;
