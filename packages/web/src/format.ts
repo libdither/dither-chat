@@ -20,16 +20,21 @@ export function since(ts: number, now = Date.now()): string {
   if (d < DAY) return `${Math.floor(d / HOUR)}h`;
   return `${Math.floor(d / DAY)}d`;
 }
-// Made once: toLocaleDateString builds a formatter per call, which a long list pays hundreds of times per render.
+// Made once: toLocale*String builds a formatter per call, which a long list or timeline pays thousands of times per render.
 let weekdayFmt: Intl.DateTimeFormat | undefined;
 let dayFmt: Intl.DateTimeFormat | undefined;
+let clockFmt: Intl.DateTimeFormat | undefined;
+let fullFmt: Intl.DateTimeFormat | undefined;
+let longDayFmt: Intl.DateTimeFormat | undefined;
+let dateFmt: Intl.DateTimeFormat | undefined;
+let yearDateFmt: Intl.DateTimeFormat | undefined;
 
 export function clock(ts: number): string {
-  return new Date(ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return (clockFmt ??= new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })).format(ts);
 }
 
 export function fullTime(ts: number): string {
-  return new Date(ts).toLocaleString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return (fullFmt ??= new Intl.DateTimeFormat(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })).format(ts);
 }
 
 export function dayLabel(ts: number, now = Date.now()): string {
@@ -39,8 +44,9 @@ export function dayLabel(ts: number, now = Date.now()): string {
   const diff = Math.round((startOf(n) - startOf(d)) / DAY);
   if (diff === 0) return 'Today';
   if (diff === 1) return 'Yesterday';
-  if (diff < 6) return d.toLocaleDateString(undefined, { weekday: 'long' });
-  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'long', day: 'numeric', year: d.getFullYear() === n.getFullYear() ? undefined : 'numeric' });
+  if (diff < 6) return (longDayFmt ??= new Intl.DateTimeFormat(undefined, { weekday: 'long' })).format(d);
+  if (d.getFullYear() === n.getFullYear()) return (dateFmt ??= new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'long', day: 'numeric' })).format(d);
+  return (yearDateFmt ??= new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' })).format(d);
 }
 
 export function sameDay(a: number, b: number) {
