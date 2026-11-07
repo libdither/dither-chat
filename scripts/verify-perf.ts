@@ -35,7 +35,8 @@ const root = resolve(import.meta.dir, '..');
 const BASELINE = resolve(opt('baseline', join(root, 'scripts/perf-baseline.json')));
 const base = `http://127.0.0.1:${PORT}`;
 
-type Kind = 'ms' | 'count' | 'bytes';
+/** count: the page's structure (nodes, messages), exact. tally: renders and layouts, which a frame boundary can move by one or two. */
+type Kind = 'ms' | 'count' | 'tally' | 'bytes';
 type Metrics = Record<string, { v: number; kind: Kind }>;
 // The world, the build and the hub's log. Its own prefix: a cleanup of someone else's temp dirs must not take it.
 const work = args.includes('--work') ? opt('work', '') : mkdtempSync(join(tmpdir(), `dither-verify-perf-${PORT}-`));
@@ -64,7 +65,14 @@ async function main() {
   await until(async () => (await fetch(`${base}/api/health`).catch(() => null))?.ok ?? false, 30_000, 'the hub did not start');
   // The demo accounts bring their own world in once they are up.
   await until(async () => (await getJson('/api/bootstrap')).accounts.every((a: any) => a.status === 'online'), 30_000, 'demo accounts not online');
-  await Bun.sleep(1500);
+  // Then until its journal stands still: a first run that meets the demo world still settling counts its renders.
+  let seq = -1;
+  let still = Date.now();
+  while (Date.now() - still < 5000) {
+    await Bun.sleep(1000);
+    const now = (await getJson('/api/bootstrap')).sync?.seq ?? 0;
+    if (now !== seq) (seq = now), (still = Date.now());
+  }
   const boot = await getJson('/api/bootstrap');
   if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
 
@@ -101,7 +109,7 @@ async function main() {
   console.log(`\n${'metric'.padEnd(34)} ${'baseline'.padStart(10)} ${'now'.padStart(10)}  change`);
   for (const [k, m] of Object.entries(metrics)) {
     const b = old?.metrics[k];
-    const over = b && (m.kind === 'ms' ? m.v > b.v * 1.25 + 50 : m.kind === 'bytes' ? m.v > b.v * 1.01 : m.v > b.v);
+    const over = b && (m.kind === 'ms' ? m.v > b.v * 1.25 + 50 : m.kind === 'bytes' ? m.v > b.v * 1.01 : m.kind === 'tally' ? m.v > b.v + Math.max(2, b.v * 0.1) : m.v > b.v);
     if (over && !UPDATE) failed++;
     const change = b ? `${m.v >= b.v ? '+' : ''}${b.v ? Math.round(((m.v - b.v) / b.v) * 100) : 0}%` : 'new';
     console.log(`${(over ? 'FAIL ' : '     ') + k.padEnd(29)} ${String(b?.v ?? '').padStart(10)} ${String(m.v).padStart(10)}  ${change}${m.kind === 'ms' ? '' : ` (${m.kind})`}`);
@@ -151,8 +159,8 @@ async function run(cpu: number, world: World): Promise<Metrics> {
     put('cold.fresh', cold.fresh);
     put('cold.longest', cold.longest);
     put('cold.longTasks', cold.longTotal);
-    put('cold.renders', cold.renders.App ?? 0, 'count');
-    put('cold.layouts', cold.layouts, 'count');
+    put('cold.renders', cold.renders.App ?? 0, 'tally');
+    put('cold.layouts', cold.layouts, 'tally');
     put('cold.nodes', cold.nodes, 'count');
     put('cold.bootstrapBytes', cold.bootstrapBytes, 'bytes');
 
@@ -162,8 +170,8 @@ async function run(cpu: number, world: World): Promise<Metrics> {
       put(`${name}`, median(xs.map((x) => x.painted)));
       put(`${name}.max`, Math.max(...xs.map((x) => x.painted)));
       put(`${name}.longest`, Math.max(...xs.map((x) => x.longest)));
-      put(`${name}.renders`, xs.reduce((s, x) => s + x.renders, 0), 'count');
-      put(`${name}.layouts`, xs.reduce((s, x) => s + x.layouts, 0), 'count');
+      put(`${name}.renders`, xs.reduce((s, x) => s + x.renders, 0), 'tally');
+      put(`${name}.layouts`, xs.reduce((s, x) => s + x.layouts, 0), 'tally');
     };
     await pass('open.first');
     await pass('open.again');
@@ -181,8 +189,8 @@ async function run(cpu: number, world: World): Promise<Metrics> {
     const back = await open(page, big, lastIds.get(big.id)!);
     put('long.reopen', back.painted);
     put('long.reopen.longest', back.longest);
-    put('long.reopen.renders', back.renders, 'count');
-    put('long.reopen.layouts', back.layouts, 'count');
+    put('long.reopen.renders', back.renders, 'tally');
+    put('long.reopen.layouts', back.layouts, 'tally');
     put('long.reopen.nodes', back.nodes, 'count');
     put('long.reopen.msgs', back.msgs, 'count');
     put('long.reopen.quotes', back.quotes, 'count');
@@ -190,9 +198,9 @@ async function run(cpu: number, world: World): Promise<Metrics> {
     put('arrival.shown', a.shown);
     put('arrival.busy', a.busy);
     put('arrival.longest', a.longest);
-    put('arrival.renders', a.renders.App ?? 0, 'count');
-    put('arrival.messageRenders', a.renders.MessageItem ?? 0, 'count');
-    put('arrival.layouts', a.layouts, 'count');
+    put('arrival.renders', a.renders.App ?? 0, 'tally');
+    put('arrival.messageRenders', a.renders.MessageItem ?? 0, 'tally');
+    put('arrival.layouts', a.layouts, 'tally');
 
     // Relaunch: the app opened again later, from the snapshot it kept.
     await until(async () => ((await page.eval<number | null>(SNAPSHOT_TIMELINES)) ?? 0) >= world.open.length, 20_000, 'the snapshot did not keep the timelines').catch((e) => console.warn(e.message));
@@ -204,7 +212,7 @@ async function run(cpu: number, world: World): Promise<Metrics> {
     put('relaunch.list', warm.list);
     put('relaunch.fresh', warm.fresh);
     put('relaunch.longest', warm.longest);
-    put('relaunch.renders', warm.renders.App ?? 0, 'count');
+    put('relaunch.renders', warm.renders.App ?? 0, 'tally');
     await pass('relaunch.open');
     if (page.errors.length) console.warn('page errors:', page.errors.slice(0, 5));
   } finally {
