@@ -43,7 +43,6 @@ import { openAbout } from './About.tsx';
 import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapshot } from '../arrange.ts';
 import { inboxSnap, shownInbox } from '../inbox.ts';
 import { SortButton, useFlip } from './Reorganize.tsx';
-import { Fragment } from 'preact';
 import { rememberSearch, SearchBox } from './SearchBox.tsx';
 
 // ------------------------------------------------------------------ navigation helpers
@@ -189,14 +188,14 @@ const FILTERS: { id: InboxFilter; label: string }[] = [
 
 /**
  * One list: DMs, group chats, rooms outside a space and notes to self, plus anything else while it has something
- * for you, ranked by how much each needs you (docs/inbox.md). A line marks where that ends.
+ * for you, ranked by how likely you are to want each now (docs/inbox.md).
  */
 export function InboxSidebar({ activeConv }: { activeConv?: string }) {
   rev.value;
   const snap = inboxSnap.value;
   const accounts = accountsNeedingYou();
   const filter = FILTERS.some((f) => f.id === prefs.value.inboxFilter) ? prefs.value.inboxFilter : 'all';
-  const { rows, divider } = shownInbox(filter);
+  const rows = shownInbox(filter);
   const [q, setQ] = useState('');
   const scroll = useRef<HTMLDivElement>(null);
   useFlip(scroll, snap.v, '[data-row]');
@@ -249,15 +248,8 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
               ))}
           </>
         )}
-        {rows.map((r, i) => (
-          <Fragment key={r.conv.id}>
-            {i === divider && (
-              <div class="caught-up" role="separator">
-                <span>{i === 0 ? 'Nothing needs you' : 'Caught up'}</span>
-              </div>
-            )}
-            <ConvRow c={r.conv} active={r.conv.id === activeConv} onClick={() => go({ view: 'inbox', conv: r.conv.id })} why={r.reasons} owedSince={i < divider ? r.owedSince : null} />
-          </Fragment>
+        {rows.map((r) => (
+          <ConvRow key={r.conv.id} c={r.conv} active={r.conv.id === activeConv} onClick={() => go({ view: 'inbox', conv: r.conv.id })} why={r.reasons} owedSince={r.needs ? r.owedSince : null} />
         ))}
         {!rows.length && <p class="inbox-empty">{filter === 'unread' ? 'Nothing unread.' : filter === 'all' ? 'No conversations yet.' : 'None here.'}</p>}
       </div>

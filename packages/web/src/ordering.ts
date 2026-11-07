@@ -95,33 +95,29 @@ export function sameSnapshot(a: Record<string, string[]>, b: Record<string, stri
 
 // ------------------------------------------------------------------ the inbox (docs/inbox.md)
 
-/** One inbox row as the ranking sees it: the hub's score, and whether it is above the "caught up" line. */
+/** One inbox row as the ranking sees it: the hub's score. */
 export interface Ranked {
   key: string;
   score: number;
-  needs: boolean;
-  /** The latest message, anyone's: below the line this is the order. */
+  /** The latest message, anyone's: breaks ties. */
   last?: number;
   /** Muted here or on its network: below everything else. */
   muted?: boolean;
 }
 
 /**
- * Two orders, one each side of the line. Above it, by how much each needs you; below it, by the latest message, as
- * a chat app would, so the chat you just answered is the first one under the line. Muted places sink to the end.
- * Ties go by key, so the order never flickers.
+ * One order: by the hub's score, which already counts what needs you, a conversation going on and where you were
+ * just now. Muted places sink to the end. Ties go by the latest message, then by key, so the order never flickers.
  */
 export function rank(items: readonly Ranked[]): string[] {
-  const below = (a: Ranked, b: Ranked) => Number(!!a.muted) - Number(!!b.muted) || (b.last ?? 0) - (a.last ?? 0);
   return [...items]
-    .sort((a, b) => Number(b.needs) - Number(a.needs) || (a.needs ? 0 : below(a, b)) || b.score - a.score || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    .sort((a, b) => Number(!!a.muted) - Number(!!b.muted) || b.score - a.score || (b.last ?? 0) - (a.last ?? 0) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
     .map((x) => x.key);
 }
 
-/** The inbox's order as last taken: the keys, how many of the first ones needed you, and which were unread then. */
+/** The inbox's order as last taken: the keys, and which were unread then. */
 export interface InboxSnapshot {
   keys: string[];
-  needs: number;
   unread: string[];
 }
 
@@ -132,43 +128,53 @@ export interface Hold {
 }
 
 /**
- * The order to show now. `hold` keeps the conversation you have open where it was, on the same side of the line:
- * reading it or answering it changes its score, and it should not jump away while you are in it. It settles at the
- * first snapshot after you leave.
+ * The order to show now. `hold` keeps the conversation you have open where it was: reading it or answering it
+ * changes its score, and it should not jump away while you are in it. It settles at the first snapshot after you
+ * leave.
  */
 export function inboxSnapshot(items: readonly (Ranked & { unread: boolean })[], hold?: Hold): InboxSnapshot {
   let keys = rank(items);
-  let needs = items.filter((x) => x.needs).length;
   const was = hold?.prev ? hold.prev.keys.indexOf(hold.key) : -1;
-  const item = hold && items.find((x) => x.key === hold.key);
-  if (hold?.prev && item && was >= 0) {
-    const above = was < hold.prev.needs;
-    const rest = keys.filter((k) => k !== hold.key);
-    const restNeeds = needs - Number(item.needs);
-    rest.splice(Math.min(rest.length, above ? Math.min(was, restNeeds) : Math.max(was, restNeeds)), 0, hold.key);
-    keys = rest;
-    needs = restNeeds + Number(above);
+  if (hold && was >= 0 && items.some((x) => x.key === hold.key)) {
+    keys = keys.filter((k) => k !== hold.key);
+    keys.splice(Math.min(was, keys.length), 0, hold.key);
   }
-  return { keys, needs, unread: items.filter((x) => x.unread).map((x) => x.key) };
+  return { keys, unread: items.filter((x) => x.unread).map((x) => x.key) };
 }
 
-/** Whether a fresh ranking would show anything different from the snapshot: an order or the line. */
+/** Whether a fresh ranking would show a different order from the snapshot. */
 export function inboxChanged(snap: InboxSnapshot | null, fresh: readonly Ranked[], hold?: Hold): boolean {
   if (!snap) return true;
-  const now = inboxSnapshot(fresh.map((x) => ({ ...x, unread: false })), hold);
-  return now.needs !== snap.needs || now.keys.join('\n') !== snap.keys.join('\n');
+  return inboxSnapshot(fresh.map((x) => ({ ...x, unread: false })), hold).keys.join('\n') !== snap.keys.join('\n');
 }
 
 /**
- * The inbox on screen: the snapshot's order for what it knows and anything new after it (as `stabilize`), and
- * where the "caught up" line goes: after the snapshot's needs-you rows still there. `keep` is a filter chip; it
- * hides rows without moving any.
+ * The inbox on screen: the snapshot's order for what it knows and anything new after it (as `stabilize`). `keep`
+ * is a filter chip; it hides rows without moving any.
  */
-export function inboxView(snap: InboxSnapshot | null, fresh: readonly Ranked[], keep: (key: string) => boolean = () => true): { keys: string[]; divider: number } {
+export function inboxView(snap: InboxSnapshot | null, fresh: readonly Ranked[], keep: (key: string) => boolean = () => true): string[] {
   const order = rank(fresh);
-  const need = snap ? new Set(snap.keys.slice(0, snap.needs)) : new Set(fresh.filter((x) => x.needs).map((x) => x.key));
-  const keys = (snap ? stabilize(snap.keys, order) : order).filter(keep);
-  let divider = 0;
-  while (divider < keys.length && need.has(keys[divider])) divider++;
-  return { keys, divider };
+  return (snap ? stabilize(snap.keys, order) : order).filter(keep);
+}
+
+/**
+ * How much the inbox's score lifts a match in the switcher: twice per 50 points. So among names that match about
+ * as well, the one you are likelier to want comes first, and a muted place (about -50) counts half.
+ */
+export function inboxLift(score: number | null | undefined): number {
+  return 2 ** (Math.max(-100, Math.min(150, score ?? 0)) / 50);
+}
+
+/** One switcher candidate: how well its name matches (fuzzyScore), its inbox score if it has one, its latest message. */
+export interface Candidate {
+  key: string;
+  match: number;
+  score: number | null;
+  last: number;
+}
+
+/** The switcher's order: match quality times the inbox's lift, then the latest message, then key. */
+export function switcherOrder(found: readonly Candidate[]): string[] {
+  const w = (c: Candidate) => Math.max(1, c.match) * inboxLift(c.score);
+  return [...found].sort((a, b) => w(b) - w(a) || b.last - a.last || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)).map((c) => c.key);
 }

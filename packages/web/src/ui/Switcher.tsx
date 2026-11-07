@@ -2,7 +2,9 @@
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { allCommunities, communitiesOf, convLabel, convTitle, netName, people, visibleConv } from '../model.ts';
+import { allCommunities, communitiesOf, convLabel, convTitle, directsOf, netName, people, visibleConv } from '../model.ts';
+import { shownInbox } from '../inbox.ts';
+import { switcherOrder } from '../ordering.ts';
 import { db, go, newMessage, type Route } from '../state.ts';
 import { useLayer } from '../phone.ts';
 import { Avatar, NetGlyph } from './bits.tsx';
@@ -37,8 +39,15 @@ interface Item {
   icon: any;
   to: Route;
   last: number;
+  /** The inbox's score (docs/inbox.md): a person's is their best DM's. */
+  score?: number | null;
   act?: () => void;
 }
+
+const scoreOf = (ids: string[]) => {
+  const s = ids.map((id) => db.attention.get(id)?.score).filter((x): x is number => x !== undefined);
+  return s.length ? Math.max(...s) : null;
+};
 
 function items(): Item[] {
   const out: Item[] = [
@@ -48,15 +57,25 @@ function items(): Item[] {
     { key: 'v:accounts', label: 'Accounts', sub: 'View', icon: <Icon name="power" size={18} />, to: { view: 'accounts' }, last: 0 },
   ];
   if ([...db.accounts.values()].some((a) => a.status === 'online' && a.capabilities.includes('openDirect'))) out.push({ key: 'a:new', label: 'New message', sub: 'Start a direct conversation', icon: <Icon name="plus" size={18} />, to: { view: 'inbox' }, last: 0, act: () => (newMessage.value = {}) });
-  for (const { person, last } of people()) out.push({ key: person.id, label: person.name, sub: 'Person', icon: <Avatar id={person.id} name={person.name} url={person.avatar} size={24} />, to: { view: 'people', person: person.id }, last });
+  for (const { person, last } of people())
+    out.push({ key: person.id, label: person.name, sub: 'Person', icon: <Avatar id={person.id} name={person.name} url={person.avatar} size={24} />, to: { view: 'people', person: person.id }, last, score: scoreOf(directsOf(person.id).map((d) => d.id)) });
   for (const s of allCommunities()) out.push({ key: s.id, label: s.name, sub: `${netName(s.network)} community`, icon: <Avatar id={s.id} name={s.name} url={s.icon} size={24} square network={s.network} />, to: { view: 'space', space: s.id }, last: 0 });
   for (const f of db.folders) out.push({ key: f.id, label: f.name, sub: 'Folder', icon: <Icon name="folder" size={18} />, to: { view: 'folder', folder: f.id }, last: 0 });
   for (const c of db.conversations.values()) {
     if (!visibleConv(c) || c.shape === 'direct') continue;
     const com = communitiesOf(c)[0];
-    out.push({ key: c.id, label: c.shape === 'channel' ? convLabel(c) : convTitle(c), sub: com ? com.name : netName(c.network), icon: <NetGlyph network={c.network as P.Network} size={16} />, to: homeRoute(c), last: c.lastMessageAt ?? 0 });
+    out.push({ key: c.id, label: c.shape === 'channel' ? convLabel(c) : convTitle(c), sub: com ? com.name : netName(c.network), icon: <NetGlyph network={c.network as P.Network} size={16} />, to: homeRoute(c), last: c.lastMessageAt ?? 0, score: scoreOf([c.id]) });
   }
   return out;
+}
+
+/** With nothing typed: the top of the inbox as it is on screen, a DM as its person; then the rest by the latest message. */
+function opening(all: Item[]): Item[] {
+  const byKey = new Map(all.map((i) => [i.key, i]));
+  const keys = new Set(shownInbox('all').map((r) => (r.conv.shape === 'direct' && r.conv.peerPersonId ? r.conv.peerPersonId : r.conv.id)));
+  const top = [...keys].map((k) => byKey.get(k)).filter((i): i is Item => !!i);
+  const rest = all.filter((i) => !keys.has(i.key)).sort((a, b) => b.last - a.last);
+  return [...top, ...rest].slice(0, 9);
 }
 
 export function Switcher() {
@@ -79,16 +98,20 @@ function SwitcherBox() {
   const [sel, setSel] = useState(0);
   const box = useRef<HTMLInputElement>(null);
   const all = useMemo(items, []);
+  const first = useMemo(() => opening(all), [all]);
   useEffect(() => box.current?.focus(), []);
   const close = () => (switcherOpen.value = false);
   useLayer(close);
   const needle = q.trim();
-  const found = all
-    .map((i) => ({ i, s: fuzzyScore(`${i.label}`, needle) }))
-    .filter((x) => x.s !== null)
-    .sort((a, b) => b.s! - a.s! || b.i.last - a.i.last)
-    .slice(0, 9)
-    .map((x) => x.i);
+  // How well the name matches, times how likely you are to want it now (the inbox's score).
+  const byKey = new Map(all.map((i) => [i.key, i]));
+  const matched = needle
+    ? all.flatMap((i) => {
+        const match = fuzzyScore(i.label, needle);
+        return match === null ? [] : [{ key: i.key, match, score: i.score ?? null, last: i.last }];
+      })
+    : [];
+  const found = needle ? switcherOrder(matched).slice(0, 9).map((k) => byKey.get(k)!) : first;
   const rows: Item[] = needle ? [...found, { key: 'search', label: `Search messages for “${needle}”`, sub: 'Search', icon: <Icon name="search" size={18} />, to: { view: 'search', q: needle }, last: 0 }] : [...found];
   const at = Math.min(sel, rows.length - 1);
   const pick = (i: Item | undefined) => {
@@ -118,7 +141,7 @@ function SwitcherBox() {
         />
         <div class="switcher-list">
           {rows.map((r, i) => (
-            <button class={`switcher-row ${i === at ? 'active' : ''}`} onClick={() => pick(r)} onMouseEnter={() => setSel(i)}>
+            <button class={`switcher-row ${i === at ? 'active' : ''}`} data-key={r.key} onClick={() => pick(r)} onMouseEnter={() => setSel(i)}>
               <span class="switcher-icon">{r.icon}</span>
               <span class="switcher-label">{r.label}</span>
               <small>{r.sub}</small>

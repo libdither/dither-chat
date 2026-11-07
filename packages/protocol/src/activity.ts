@@ -50,7 +50,7 @@ export interface VisitRecord {
   source: VisitSource;
   /** The notification tapped (`notification`, `toast`). */
   pushId?: string | null;
-  /** From an inbox row: its position (0 = top), its attention score, and whether it was above the "caught up" line. */
+  /** From an inbox row: its position (0 = top), its attention score, and whether it needed you. */
   rank?: number | null;
   score?: number | null;
   needs?: boolean | null;

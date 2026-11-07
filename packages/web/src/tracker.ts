@@ -18,6 +18,8 @@ export type Acc = { seconds: number; visits: number; lastVisit: number | null; a
 /** The measuring itself, with the clock passed in so it can be tested. */
 export class Tracker {
   pending = new Map<string, Acc>();
+  /** Visits counted so far: a change means one just began. */
+  visits = 0;
   private current: string[] = [];
   private stay = new Map<string, number>();
   private counted = new Set<string>();
@@ -41,6 +43,7 @@ export class Tracker {
           this.counted.add(k);
           a.visits++;
           a.lastVisit = now;
+          this.visits++;
         }
       }
     }

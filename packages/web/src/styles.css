@@ -521,24 +521,6 @@ code {
     inset: -9px -3px;
   }
 }
-.caught-up {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 10px 6px 6px;
-  color: var(--text-faint);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-.caught-up::before,
-.caught-up::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--border-soft);
-}
 .row-owed {
   flex: none;
   display: inline-flex;

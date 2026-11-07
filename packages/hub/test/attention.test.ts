@@ -24,6 +24,7 @@ import {
 } from '../src/attention.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
+import { UsageStore } from '../src/usage.ts';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -183,6 +184,33 @@ describe('muted places', () => {
     expect(muted.score).toBeLessThan(idle.score);
     expect(muted.score).toBeLessThan(WEIGHTS.mutedFloor + WEIGHTS.recency + 0.01);
     expect(muted.reasons[0]).toBe('Muted: muted in Discord');
+  });
+});
+
+describe('where you were', () => {
+  const now = T0 + 40 * DAY;
+  const base = { now, shape: 'group' as const, members: 12, lastMessageAt: now - 2 * DAY, state: freshState(), author: null, authorName: null, unread: 0, mentions: 0, pinged: null, muted: null };
+  const was = (ago: number, lastVisit = now - ago - 10 * MIN) => scoreConversation({ ...base, usage: { score: 600, visitScore: 1, at: now - ago, lastVisit } });
+
+  test('the chat you just left stays near the top, and lets go over a few hours', () => {
+    const none = scoreConversation({ ...base, usage: null });
+    expect(was(MIN).score - none.score).toBeGreaterThan(WEIGHTS.visited - 1);
+    expect(was(MIN).reasons[0]).toBe('You were here a minute ago');
+    expect(was(2 * HOUR).parts.visited).toBeCloseTo(WEIGHTS.visited / 2, 0);
+    expect(was(12 * HOUR).parts.visited).toBeLessThan(1);
+  });
+
+  test('counts from when you left, not when you arrived', () => {
+    expect(was(MIN, now - 3 * HOUR).parts.visited).toBeCloseTo(was(MIN).parts.visited!, 1);
+  });
+
+  test('moves the row, not whether it needs you', () => {
+    expect(was(MIN).score).toBeGreaterThan(WEIGHTS.needs);
+    expect(was(MIN).needs).toBe(false);
+  });
+
+  test('a place you only passed through counts nothing', () => {
+    expect(scoreConversation({ ...base, usage: { score: 2, visitScore: 0, at: now - MIN, lastVisit: null } }).parts.visited).toBeUndefined();
   });
 });
 
@@ -424,6 +452,22 @@ describe('incremental features in the hub', () => {
     store.markRead(cid('news'), clock);
     flush();
     expect(att.list().some((v) => v.id === cid('news'))).toBe(false);
+  });
+
+  test('where you have just been is scored again at once: a group by itself, a DM through its person', () => {
+    clock += HOUR;
+    const usage = new UsageStore(store.db);
+    const before = att.view(cid('trio'))!.score;
+    usage.apply('b1', [{ kind: 'conversation', id: cid('trio'), seconds: 40, visits: 1, at: clock, lastVisit: clock - 30_000 }], clock);
+    const evs = att.visited([{ kind: 'conversation', id: cid('trio') }]);
+    const item = (evs[0] as Extract<P.ClientEvent, { t: 'attention' }>).items.find((i) => i.id === cid('trio'))!;
+    expect(item.score).toBeGreaterThan(before + WEIGHTS.visited - 2);
+    expect(item.reasons).toContain('You were here a moment ago');
+    const sam = store.one<{ person_id: string | null }>(`SELECT person_id FROM identity WHERE native_id = 'sam'`)!.person_id;
+    expect(sam).toBeTruthy();
+    usage.apply('b2', [{ kind: 'person', id: sam!, seconds: 40, visits: 1, at: clock, lastVisit: clock }], clock);
+    const dm = (att.visited([{ kind: 'person', id: sam! }])[0] as Extract<P.ClientEvent, { t: 'attention' }>).items.map((i) => i.id);
+    expect(dm).toEqual([cid('dm')]);
   });
 
   test('reacting to what they wrote answers it: the conversation folds again, and owes nothing', () => {

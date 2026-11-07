@@ -537,7 +537,7 @@ export function annotateAccounts(network: P.Network): boolean {
 export interface InboxRow {
   conv: P.ConversationView;
   score: number;
-  /** Above the "caught up" line. */
+  /** It needs you: an answer, something to read, a conversation going on. Shows the ↩ of a turn you owe. */
   needs: boolean;
   reasons: string[];
   owedSince: number | null;
