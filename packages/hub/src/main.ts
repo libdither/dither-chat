@@ -16,6 +16,14 @@ import { Supervisor } from './supervisor.ts';
 import { Triage } from './triage.ts';
 import { TriageVotes } from './votes.ts';
 import { loadVapidKeys } from './webpush.ts';
+import { NightlyBackup, pruneMediaCache, rotateAdapterLogs, tightenPermissions } from './housekeeping.ts';
+
+// Everything the hub writes is its user's alone: the database holds every message.
+process.umask(0o077);
+// One stray throw must not take the hub down. systemd would restart it, but every client would then start over with a
+// full download, and what was queued would wait for the next start. Log it and carry on.
+process.on('uncaughtException', (e) => console.error('uncaught exception (the hub keeps running)', e));
+process.on('unhandledRejection', (e) => console.error('unhandled rejection (the hub keeps running)', e));
 
 const args = process.argv.slice(2);
 const flag = (n: string) => args.includes(`--${n}`) || process.env[`DITHER_${n.toUpperCase()}`] === '1';
@@ -37,12 +45,15 @@ const tls = tlsCert && tlsKey ? { cert: resolve(tlsCert), key: resolve(tlsKey), 
 const plainPort = Number(opt('plain-port', String(port + 1)));
 
 if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+for (const p of tightenPermissions(dataDir)) console.log(`made ${p} private to this user`);
 const secretPath = join(dataDir, 'hub-secret');
 if (!existsSync(secretPath)) writeFileSync(secretPath, Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url'), { mode: 0o600 });
 chmodSync(secretPath, 0o600);
 const secret = readFileSync(secretPath, 'utf8').trim();
 
 const store = new Store(join(dataDir, 'hub.sqlite'), mediaSigner(secret));
+// What the last run left undecided, before this run's adapters add their own (decided once the server is up).
+const leftover = store.takePendingTriage(Date.now() - 30 * 60_000);
 const model = process.env.DITHER_TRIAGE_MODEL
   ? { url: process.env.DITHER_OLLAMA_URL ?? 'http://127.0.0.1:11434', name: process.env.DITHER_TRIAGE_MODEL }
   : undefined;
@@ -63,25 +74,35 @@ embeddings?.start();
 // The shadow model weighs them (votes.ts); the live decision does not.
 if (embeddings) triage.content = (id) => embeddings.features(id, 'ping');
 
-// Triage runs serially so notifications keep message order.
+// Triage runs serially so notifications keep message order. Each message waits in triage_pending until it is decided,
+// so one a crash or restart caught in the queue is decided at the next start (below, after the server starts).
 let queue = Promise.resolve();
 function triageLater(ids: string[]) {
-  queue = queue.then(async () => {
-    // The new messages' content features, if jev answers quickly; else triage goes on without them.
-    await embeddings?.prepare(ids, 800);
-    for (const id of ids) {
-      const d = await triage.decide(id).catch((e) => (console.error('triage failed', e), null));
+  store.pendTriage(ids);
+  queue = queue.then(() => triageNow(ids)).catch((e) => console.error('triage queue', e));
+}
+async function triageNow(ids: string[]) {
+  // The new messages' content features, if jev answers quickly; else triage goes on without them (embeddings.ts
+  // stops waiting for a minute after jev was slow, so a hung jev cannot hold notifications up).
+  await embeddings?.prepare(ids, 800).catch(() => {});
+  for (const id of ids) {
+    try {
+      const d = await triage.decide(id);
       if (!d) continue;
+      // The message may have gone while it was decided (a leave, a deleted account).
+      const conversationId = store.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', id)?.conversation_id;
+      if (!conversationId) continue;
       store.setTriage(id, d, d.facts);
       if (d.features) activity.keepInputs(id, d.features);
       store.dirty.messages.set(id, true);
       attention.triaged(id, d);
-      if (d.decision === 'push' || d.decision === 'quiet') {
-        const conversationId = store.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', id)!.conversation_id;
-        deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', d.decision);
-      }
+      if (d.decision === 'push' || d.decision === 'quiet') deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', d.decision);
+    } catch (e) {
+      console.error('triage failed', id, e);
+    } finally {
+      store.triageDone(id);
     }
-  });
+  }
 }
 
 /** Each one gets an id the devices see (`nid`), so what they say happened to it lands in the activity log. */
@@ -120,6 +141,29 @@ function deliverDigest(title: string, body: string) {
 setInterval(() => {
   for (const cid of delivery.read()) push.clear(cid).catch((e) => console.error('push clear failed', e));
 }, 5_000);
+
+// Upkeep (housekeeping.ts): a nightly copy of the database, the media cache under its size, logs rotated, and triage
+// rows nobody learns from let go after 90 days.
+const backup = new NightlyBackup({ dataDir, db: join(dataDir, 'hub.sqlite') });
+if (!demo) backup.start();
+const upkeep = async () => {
+  try {
+    const m = pruneMediaCache(join(dataDir, 'media-cache'));
+    if (m.removed) console.log(`media cache: removed ${m.removed} files, ${Math.round(m.bytes / 1048576)} MB kept`);
+    rotateAdapterLogs(join(dataDir, 'accounts'));
+    // In batches, with room for everything else between them.
+    let gone = 0;
+    for (let n = store.pruneTriage(); n > 0; n = store.pruneTriage()) {
+      gone += n;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    if (gone) console.log(`triage: let go of ${gone} rows nobody learns from`);
+  } catch (e) {
+    console.error('upkeep failed', e);
+  }
+};
+setTimeout(() => void upkeep(), 60_000);
+setInterval(() => void upkeep(), 6 * 3_600_000);
 
 setInterval(() => {
   // First: when both are due, the digest counts what was held and clears it.
@@ -216,12 +260,21 @@ attention.start((events) => server.broadcast(events));
 // Scores live in memory and were worked out afresh: a client resuming from before this start takes the whole list.
 server.broadcast([{ t: 'attention', items: attention.list(), removed: [], replace: true }]);
 if (store.journal.started === 'unclean') console.log('sync: the hub did not stop cleanly last time; clients start over with a full bootstrap');
+// Messages a crash or restart left undecided (taken before any adapter started): those from the last half hour still
+// get their notification.
+if (leftover.length) {
+  console.log(`triage: deciding ${leftover.length} messages left over from before this start`);
+  triageLater(leftover);
+}
 // New servers and renamed channels turn up whenever an adapter says so; unchanged places cost a hash.
 void categorizer.refresh();
 setInterval(() => void categorizer.refresh(), 5 * 60_000);
 console.log(`dither-chat hub on ${tls ? 'https' : 'http'}://${hostname}:${port}${tls ? ` (plain http on ${plainPort}: adapters, CA download)` : ''}  data=${dataDir}`);
 
 const shutdown = async () => {
+  // What is being triaged finishes first (a few seconds at most); the rest waits in triage_pending for the next start.
+  await Promise.race([queue, new Promise((r) => setTimeout(r, 5_000))]);
+  backup.stop();
   attention.stop();
   embeddings?.close();
   server.stop();

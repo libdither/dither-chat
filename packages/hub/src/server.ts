@@ -1,6 +1,6 @@
 import type { Server, ServerWebSocket, Socket, WebSocketHandler } from 'bun';
 import { createHmac } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, directTarget, discordEmojiUrl, MAX_UPLOAD, NETWORK_META, NETWORKS, sendBlocker } from '@dither-chat/protocol';
@@ -22,6 +22,8 @@ import { Devices } from './devices.ts';
 import { changesOf } from './journal.ts';
 import { syncResponse } from './sync.ts';
 import { TypingGate } from './typing.ts';
+import { hostAllowed, hostNames } from './hosts.ts';
+import { fetchPublicToFile } from './fetchsafe.ts';
 import { AboutError, Abouts } from './about.ts';
 import { People } from './people.ts';
 
@@ -89,6 +91,12 @@ export function sameOrigin(req: Request): boolean {
   }
 }
 
+/** A name this hub does not have (hosts.ts). DITHER_ALLOWED_HOSTS adds one. */
+const unknownHost = () => new Response('unknown host: add it to DITHER_ALLOWED_HOSTS (docs/deploy.md)', { status: 421 });
+
+/** Adapter kinds: a package name under packages/ or extractors/, never a path. */
+export const validAdapterName = (a: unknown): a is string => typeof a === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(a);
+
 // ------------------------------------------------------------------ media
 
 export function mediaSigner(secret: string) {
@@ -100,9 +108,16 @@ export function mediaSigner(secret: string) {
   };
 }
 
+/** An error after the command went to the adapter: whether it was carried out is not known. */
+const unknownOutcome = (e: unknown) => /timed out|disconnected mid/i.test(String((e as Error)?.message ?? e));
+
 export class HubServer {
   server!: Server<WsData>;
   private plain?: Server<WsData>;
+  /** Listeners on the other addresses of a comma-separated `hostname` (DITHER_HOST), e.g. loopback and the tailnet IP. */
+  private extra: Server<WsData>[] = [];
+  /** The names a request's Host may carry (hosts.ts): DNS rebinding gets nowhere. */
+  private names = hostNames();
   private clients = new Set<ServerWebSocket<ClientData>>();
   private flushTimer?: Timer;
   private pruneTimer?: Timer;
@@ -184,21 +199,30 @@ export class HubServer {
         },
     };
     const common = { idleTimeout: 120, websocket };
-    this.server = Bun.serve<WsData, never>({
-      ...common,
-      port: this.opts.port,
-      hostname: this.opts.hostname,
-      ...(tls ? { tls: { cert: Bun.file(tls.cert), key: Bun.file(tls.key) } } : {}),
-      fetch: guarded((req, server) => self.route(req, server)),
-    });
+    // One listener per address: binding loopback and the tailnet address rather than 0.0.0.0 keeps the LAN out.
+    const hosts = this.opts.hostname.split(',').map((h) => h.trim()).filter(Boolean);
+    const [first, ...rest] = hosts.length ? hosts : ['0.0.0.0'];
+    const serve = (hostname: string) =>
+      Bun.serve<WsData, never>({
+        ...common,
+        port: this.opts.port,
+        hostname,
+        ...(tls ? { tls: { cert: Bun.file(tls.cert), key: Bun.file(tls.key) } } : {}),
+        fetch: guarded((req, server) => self.route(req, server)),
+      });
+    this.server = serve(first);
+    this.extra = rest.map(serve);
     // Adapters on this machine still speak ws://, and a device has to fetch the CA before it can trust HTTPS.
     if (tls && this.opts.plainPort) {
-      this.plain = Bun.serve<WsData, never>({
-        ...common,
-        port: this.opts.plainPort,
-        hostname: this.opts.hostname,
-        fetch: guarded((req, server) => self.plainRoute(req, server)),
-      });
+      const plain = (hostname: string) =>
+        Bun.serve<WsData, never>({
+          ...common,
+          port: this.opts.plainPort,
+          hostname,
+          fetch: guarded((req, server) => self.plainRoute(req, server)),
+        });
+      this.plain = plain(first);
+      this.extra.push(...rest.map(plain));
     }
     this.flushTimer = setInterval(() => this.flush(), 80);
     this.store.journal.prune();
@@ -212,6 +236,7 @@ export class HubServer {
     this.flush();
     this.server?.stop(true);
     this.plain?.stop(true);
+    for (const s of this.extra) s.stop(true);
   }
 
   flush() {
@@ -276,6 +301,7 @@ export class HubServer {
     const ip = server.requestIP(req)?.address ?? '';
     if (isLoopback(ip) && url.pathname === '/adapter') return this.route(req, server);
     if (!isLoopback(ip) && !isTailnet(ip)) return new Response('tailnet only', { status: 403 });
+    if (!hostAllowed(req.headers.get('host'), this.names)) return unknownHost();
     if (url.pathname === '/ca.crt') return this.caCert();
     if (url.pathname === '/api/health') return Response.json({ ok: true, now: Date.now() });
     if (url.pathname === '/trust') return new Response(this.trustPage(req), { headers: { 'content-type': 'text/html; charset=utf-8' } });
@@ -317,6 +343,8 @@ export class HubServer {
 
     // Everything else: this machine and the tailnet only, never the LAN.
     if (!isLoopback(ip) && !isTailnet(ip)) return new Response('tailnet only', { status: 403 });
+    // And only under a name this hub has (hosts.ts), so a page that rebinds its own domain here gets nothing.
+    if (!hostAllowed(req.headers.get('host'), this.names)) return unknownHost();
 
     if (path.startsWith('/api/') && req.method !== 'GET' && !sameOrigin(req)) return new Response('cross-site request refused', { status: 403 });
     if ((path === '/api/live' || path.startsWith('/api/liveview/') || path.startsWith('/api/call')) && !sameOrigin(req)) return new Response('cross-site socket refused', { status: 403 });
@@ -534,6 +562,13 @@ export class HubServer {
         if (key && !res.ok) this.sends.delete(key);
         return res.clone();
       } catch (e) {
+        // The adapter took it and then went quiet: it may well have gone out. A retry with the same id gets this
+        // answer rather than a second copy; a new send (a new id) is the person's call.
+        if (key && unknownOutcome(e)) {
+          const answer = Response.json({ error: 'The network did not answer in time. It may have been sent: look before sending it again.', unknown: true }, { status: 504 });
+          this.sends.set(key, { at: now, done: Promise.resolve(answer) });
+          return answer.clone();
+        }
         if (key) this.sends.delete(key);
         throw e;
       }
@@ -922,6 +957,7 @@ export class HubServer {
     if (path === '/api/accounts' && method === 'POST') {
       const b = await body<{ network: P.Network; label?: string; color?: string; adapter?: string; config?: unknown; secret?: unknown }>();
       if (!NETWORKS.includes(b.network)) return bad('unknown network');
+      if (b.adapter !== undefined && !validAdapterName(b.adapter)) return bad('unknown adapter');
       if (s.accounts().some((a) => a.demo)) return bad('This is a demo hub. Real accounts go on a hub with its own data dir, started without --demo.');
       const used = new Set(s.accounts().map((a) => a.color));
       const color = b.color ?? ACCOUNT_COLORS.find((c) => !used.has(c)) ?? ACCOUNT_COLORS[0];
@@ -968,7 +1004,9 @@ export class HubServer {
     }
     if ((m = path.match(/^\/api\/accounts\/([\w-]+)\/log$/))) {
       const p = join(this.sup.accountDir(m[1]), 'adapter.log');
-      const text = existsSync(p) ? readFileSync(p, 'utf8') : '';
+      // The tail only: the file is rotated at 10 MB (housekeeping.ts) and need not be read whole.
+      const f = Bun.file(p);
+      const text = existsSync(p) ? await f.slice(Math.max(0, f.size - 24_000)).text() : '';
       return new Response(text.slice(-20_000), { headers: { 'content-type': 'text/plain; charset=utf-8' } });
     }
     return bad('not found', 404);
@@ -1102,15 +1140,23 @@ export class HubServer {
     const key = new Bun.CryptoHasher('sha256').update(raw).digest('hex');
     const file = join(cacheDir, key);
     const headers = (mime: string) => ({ 'content-type': mime, 'cache-control': 'private, max-age=604800, immutable' });
-    if (existsSync(file) && existsSync(file + '.mime')) return new Response(Bun.file(file), { headers: headers(readFileSync(file + '.mime', 'utf8')) });
+    if (existsSync(file) && existsSync(file + '.mime')) {
+      // Recently seen stays longest when the cache is trimmed (mediacache.ts).
+      try {
+        const t = new Date();
+        utimesSync(file, t, t);
+      } catch {}
+      return new Response(Bun.file(file), { headers: headers(readFileSync(file + '.mime', 'utf8')) });
+    }
 
     let bytes: Uint8Array;
     let mime = 'application/octet-stream';
     if (raw.startsWith('https://') || raw.startsWith('http://')) {
-      const res = await fetch(raw, { signal: AbortSignal.timeout(20_000) });
-      if (!res.ok) return new Response('upstream failed', { status: 502 });
-      mime = res.headers.get('content-type') ?? mime;
-      bytes = new Uint8Array(await res.arrayBuffer());
+      // A URL from someone else's message: public addresses only, redirects checked, size capped (fetchsafe.ts).
+      const r = await fetchPublicToFile(raw, file);
+      if (!r.ok) return new Response(r.error, { status: r.status });
+      writeFileSync(file + '.mime', r.mime, { mode: 0o600 });
+      return new Response(Bun.file(file), { headers: headers(r.mime) });
     } else if (raw.startsWith('file://')) {
       const p = normalize(decodeURIComponent(raw.slice('file://'.length)));
       const root = resolve(this.opts.dataDir);

@@ -10,9 +10,9 @@
  * Throwing from onCommand sends { ok: false, error }.
  */
 
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AdapterCommand, AdapterEvent } from './adapter.ts';
+import { readSecretFile, writeSecretFile } from './secret-file.ts';
 
 export interface HubLink {
   readonly accountId: string;
@@ -109,15 +109,9 @@ export function linkHub(opts: LinkOptions): HubLink {
       // echo to stdout when standalone (else every line lands in adapter.log twice).
       if (level !== 'debug' && !open) console.log(`[${level}] ${msg}`, data ?? '');
     },
-    secret: <T>() => {
-      const p = join(accountDir, 'secret.json');
-      return (existsSync(p) ? JSON.parse(readFileSync(p, 'utf8') || '{}') : {}) as T;
-    },
-    saveSecret: (value) => {
-      const p = join(accountDir, 'secret.json');
-      writeFileSync(p, JSON.stringify(value, null, 2), { mode: 0o600 });
-      chmodSync(p, 0o600);
-    },
+    // Written whole or not at all, with the last good copy kept (secret-file.ts).
+    secret: <T>() => readSecretFile<T>(join(accountDir, 'secret.json'), (m) => console.error(m)),
+    saveSecret: (value) => writeSecretFile(join(accountDir, 'secret.json'), value),
     get connected() {
       return open;
     },

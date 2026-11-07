@@ -893,10 +893,25 @@ export class Embeddings {
    */
   async prepare(ids: readonly string[], timeoutMs = 500): Promise<void> {
     if (!this.store.mean()) return;
+    // One at a time, and none for a minute after jev was too slow: the background job embeds the rest, and a hung
+    // jev never holds the notification queue up for more than one wait.
+    if (this.preparing || this.now() < this.prepareQuietUntil) return;
     const self = selfIdentities(this.hub);
     const rows = ids.map((id) => this.hub.query(`${MESSAGE_SQL} WHERE m.id = ?`).get(id) as MessageRow | null).filter((r): r is MessageRow => !!r);
-    await Promise.race([this.embedRows(rows, self, true).catch(() => {}), new Promise((r) => setTimeout(r, timeoutMs))]);
+    if (!rows.length) return;
+    const work: Promise<void> = this.embedRows(rows, self, true)
+      .then(() => {}, () => {})
+      .finally(() => {
+        if (this.preparing === work) this.preparing = null;
+      });
+    this.preparing = work;
+    let timer: Timer | undefined;
+    const late = await Promise.race([work.then(() => false), new Promise<boolean>((r) => (timer = setTimeout(() => r(true), timeoutMs)))]);
+    clearTimeout(timer);
+    if (late) this.prepareQuietUntil = this.now() + 60_000;
   }
+  private preparing: Promise<void> | null = null;
+  private prepareQuietUntil = 0;
 
   /** Refit, giving the event loop room between the fits. */
   private async refitSoftly() {

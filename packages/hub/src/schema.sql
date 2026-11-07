@@ -160,6 +160,9 @@ CREATE TABLE IF NOT EXISTS message (
   UNIQUE (network, native_id)
 );
 CREATE INDEX IF NOT EXISTS message_conv_ts ON message(conversation_id, ts);
+-- The inbox, outcomes and embeddings read by time across conversations, and "what you wrote" by author.
+CREATE INDEX IF NOT EXISTS message_ts ON message(ts);
+CREATE INDEX IF NOT EXISTS message_author_ts ON message(author_id, ts);
 
 -- Full-text search over bodies, kept current by triggers. Store backfills it once for older databases.
 -- It follows message.rowid, so after a VACUUM run: INSERT INTO message_fts(message_fts) VALUES ('rebuild');
@@ -346,6 +349,12 @@ CREATE TABLE IF NOT EXISTS triage (
 );
 CREATE INDEX IF NOT EXISTS triage_created ON triage(created_at);
 CREATE INDEX IF NOT EXISTS triage_feedback ON triage(feedback_at) WHERE feedback IS NOT NULL;
+
+-- Live messages handed to triage and not yet decided (main.ts): a restart decides what a crash left in the queue.
+CREATE TABLE IF NOT EXISTS triage_pending (
+  message_id TEXT PRIMARY KEY REFERENCES message(id) ON DELETE CASCADE,
+  at         INTEGER NOT NULL
+);
 
 -- "Mark all read" tells each network one conversation at a time (readqueue.ts).
 CREATE TABLE IF NOT EXISTS read_queue (

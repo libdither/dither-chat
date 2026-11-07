@@ -237,10 +237,13 @@ describe('the store', () => {
 /** A stand-in for jev: words map to fixed directions, so "lunch" messages sit together. */
 class FakeJev implements JevClient {
   down = false;
+  /** Set: embed waits until it is called. */
+  hang: (() => void) | null = null;
   embedded = 0;
   judged: string[] = [];
   async embed(texts: string[]) {
     if (this.down) throw new Error('jev answered 503');
+    if (this.hang) await new Promise<void>((r) => (this.hang = r));
     this.embedded += texts.length;
     return texts.map((t) => {
       const v = new Array(DIMS).fill(0.05);
@@ -341,6 +344,23 @@ describe('the embedder on a hub', () => {
     jev.down = false;
     await emb.prepare([id], 1000);
     expect(emb.store.has(id)).toBe(true);
+  });
+
+  test('jev hung: one wait, then no more waiting for a minute, and never two requests at once', async () => {
+    store.ingest(acc, { t: 'message', message: { nativeId: 'n4', conversation: 'grp', author: 'friend2', ts: now - 50, body: 'lunch later?' } });
+    const id = store.one<{ id: string }>('SELECT id FROM message WHERE native_id = ?', 'n4')!.id;
+    jev.hang = () => {};
+    const before = jev.embedded;
+    let t = performance.now();
+    await emb.prepare([id], 40);
+    expect(performance.now() - t).toBeLessThan(500);
+    t = performance.now();
+    await emb.prepare([id], 5_000);
+    expect(performance.now() - t).toBeLessThan(50);
+    jev.hang();
+    jev.hang = null;
+    await new Promise((r) => setTimeout(r, 20));
+    expect(jev.embedded - before).toBe(1);
   });
 });
 

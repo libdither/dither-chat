@@ -58,6 +58,40 @@ WantedBy=default.target
 
 Without `loginctl enable-linger $USER` a user service stops when you log out and does not start at boot.
 
+### Who can reach it
+
+The hub answers loopback and tailnet addresses only. Two more settings narrow that:
+
+- `DITHER_HOST` takes several addresses, comma-separated, and opens one listener on each:
+  `DITHER_HOST=127.0.0.1,100.64.0.10` (this machine's tailnet address) keeps the hub off the LAN entirely. The
+  default `0.0.0.0` relies on the address check alone, and 100.64.0.0/10 is also carrier-grade NAT space.
+- The `Host` a request names must be one the hub has: an IP address, `localhost`, this machine's name and its
+  MagicDNS name (`<machine>.<tailnet>.ts.net`), the host of `DITHER_PUBLIC_URL`, or one listed in
+  `DITHER_ALLOWED_HOSTS` (comma-separated). Anything else gets 421. Without this, a web page open on any tailnet
+  device could point its own domain at the hub (DNS rebinding) and use it as you.
+
+Media the hub fetches for a message (an embed's image, an avatar) comes from public addresses only, with each
+redirect checked again, up to `DITHER_MEDIA_MAX_MB` (500) per file. `DITHER_MEDIA_ALLOW_PRIVATE=1` lifts the
+address check for a testbed whose homeserver runs on this machine. Adapters the hub starts get its environment
+without its own secrets (anything named like a secret, token, password or key).
+
+### Backups and upkeep
+
+The hub keeps its data directory private to its user (umask 077, and older files other users could read are closed
+at start). It copies the database every night at 04:00 (`DITHER_BACKUP_HOUR`) to `backups/auto-<time>.sqlite` with
+`VACUUM INTO` from a separate process, and keeps the newest seven (`DITHER_BACKUP_KEEP`). After downtime it copies at
+the first chance. Copies you made yourself are never removed. Before opening a database with a schema it has not
+seen, the hub also copies it to `backups/pre-migrate-<time>.sqlite` (newest five kept), and every migration runs in
+one transaction.
+
+Every six hours it trims `media-cache/` to `DITHER_MEDIA_CACHE_MB` (8192), least recently shown first. Discord's
+links expire, so an evicted image of an old Discord message may not load again; keep the limit generous. Adapter
+logs rotate at 10 MB. Triage rows older than `DITHER_TRIAGE_KEEP_DAYS` (90) go when nothing can be learned from
+them: in conversations you never wrote in, never voted on, never notified and never explored.
+
+To restore, stop the hub, move `hub.sqlite`, `hub.sqlite-wal` and `hub.sqlite-shm` aside, copy a backup to
+`hub.sqlite`, and start it. Clients notice and download everything again.
+
 To deploy a new version: `git pull && bun install && bun run web:build && systemctl --user restart dither-chat`.
 Installed apps notice the new service worker when reopened (or within an hour) and show a reload bar.
 

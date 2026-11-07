@@ -1,5 +1,7 @@
 import { Database } from 'bun:sqlite';
-import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
 import { ADVERSARIAL_KEEPS, canonicalReactionKey, DEFAULT_RETENTION, parseSearch, REACTION_RULES } from '@dither-chat/protocol';
@@ -113,6 +115,9 @@ export function editDistance(a: string, b: string, max: number): number {
 /** Fields that may go from nothing to something and back (Store.logChanges). */
 const SETTABLE = new Set(['topic', 'bio', 'status', 'pronouns']);
 
+/** Bump when a migration step changes without schema.sql changing, so the database is copied before it runs. */
+const MIGRATIONS = 1;
+
 export class Store {
   readonly db: Database;
   readonly dirty = new Dirty();
@@ -128,20 +133,30 @@ export class Store {
 
   constructor(path: string, readonly media: MediaSigner) {
     this.db = new Database(path, { create: true, strict: true });
+    // Outside any transaction: inside one, SQLite ignores foreign_keys.
+    this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
     const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
-    const reactionsBefore = this.oldReactions();
-    const broadcastsUnknown = this.addMentionsAll();
-    this.addColumns('message', { gone_how: 'TEXT', gone_at: 'INTEGER' });
-    this.addColumns('identity', { status: 'TEXT' });
-    this.addColumns('category', { threshold: 'REAL' });
-    this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL' });
-    const oldTriage = this.setAsideTriage();
-    const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
-    this.db.exec(schema);
-    if (oldTriage) this.adoptOldTriage(oldTriage);
-    if (oldLog) this.adoptOldChangeLog();
-    if (broadcastsUnknown) this.markBroadcasts();
-    this.adoptOldReactions(reactionsBefore);
+    // A schema (or migration code) this database has not met yet: copy it first (backups/pre-migrate-*), then take
+    // every step in one transaction, so a crash part way leaves the database as it was, not half moved.
+    const sig = createHash('sha256').update(`${MIGRATIONS}\n${schema}`).digest('hex').slice(0, 16);
+    const known = this.schemaSig();
+    if (known !== null && known !== sig) this.snapshotBeforeMigrating(path);
+    this.db.transaction(() => {
+      const reactionsBefore = this.oldReactions();
+      const broadcastsUnknown = this.addMentionsAll();
+      this.addColumns('message', { gone_how: 'TEXT', gone_at: 'INTEGER' });
+      this.addColumns('identity', { status: 'TEXT' });
+      this.addColumns('category', { threshold: 'REAL' });
+      this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL' });
+      const oldTriage = this.setAsideTriage();
+      const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
+      this.db.exec(schema);
+      if (oldTriage) this.adoptOldTriage(oldTriage);
+      if (oldLog) this.adoptOldChangeLog();
+      if (broadcastsUnknown) this.markBroadcasts();
+      this.adoptOldReactions(reactionsBefore);
+      this.db.query(`INSERT INTO meta (key, value) VALUES ('schema_sig', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(sig);
+    })();
     this.journal = new Journal(this.db);
     // Messages from before full-text search existed.
     if (!this.db.query(`SELECT 1 FROM meta WHERE key = 'fts_backfilled'`).get()) {
@@ -150,6 +165,74 @@ export class Store {
     for (const r of this.db.query('SELECT self_identity FROM account WHERE self_identity IS NOT NULL').all() as Row[]) {
       this.selfIdentities.add(r.self_identity);
     }
+  }
+
+  /** The schema this database was last opened with: '' for one from before it was recorded, null for a new one. */
+  private schemaSig(): string | null {
+    if (!this.db.query(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'message'`).get()) return null;
+    try {
+      return ((this.db.query(`SELECT value FROM meta WHERE key = 'schema_sig'`).get() as Row | null)?.value as string) ?? '';
+    } catch {
+      return '';
+    }
+  }
+
+  /** backups/pre-migrate-<time>.sqlite next to the database, the newest five kept. Not for an in-memory database. */
+  private snapshotBeforeMigrating(path: string) {
+    if (path === ':memory:' || path === '') return;
+    const dir = join(dirname(path), 'backups');
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const file = join(dir, `pre-migrate-${new Date().toISOString().replace(/[:.]/g, '-')}.sqlite`);
+    this.db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
+    chmodSync(file, 0o600);
+    console.log(`schema changed: copied the database to ${file} before migrating`);
+    const old = readdirSync(dir).filter((f) => /^pre-migrate-.*\.sqlite$/.test(f)).sort();
+    for (const f of old.slice(0, Math.max(0, old.length - 5))) rmSync(join(dir, f), { force: true });
+  }
+
+  // ------------------------------------------------------------ triage queue and retention
+
+  /** Live messages handed to triage (main.ts), until it has decided them. */
+  pendTriage(ids: readonly string[], at = Date.now()) {
+    const q = this.db.query('INSERT OR IGNORE INTO triage_pending (message_id, at) VALUES (?, ?)');
+    this.db.transaction(() => {
+      for (const id of ids) q.run(id, at);
+    })();
+  }
+
+  triageDone(id: string) {
+    this.db.query('DELETE FROM triage_pending WHERE message_id = ?').run(id);
+  }
+
+  /**
+   * What a crash or restart left undecided: those handed over since `since` to decide now, in order; older ones are
+   * too late to notify about and are let go.
+   */
+  takePendingTriage(since: number): string[] {
+    const ids = (this.db.query('SELECT message_id FROM triage_pending WHERE at >= ? ORDER BY at, rowid').all(since) as Row[]).map((r) => r.message_id as string);
+    this.db.query('DELETE FROM triage_pending WHERE at < ?').run(since);
+    return ids;
+  }
+
+  /**
+   * Triage rows nobody will learn from: older than `keepDays`, in conversations you have never written in, never voted
+   * on, never notified and never explored. Learning reads two weeks (votes.ts) and the replay a few (docs/
+   * triage-replay.md), so the default 90 days keeps every label. At most `limit` rows a call. Returns how many went.
+   */
+  pruneTriage(now = Date.now(), keepDays = Number(process.env.DITHER_TRIAGE_KEEP_DAYS) || 90, limit = 5000): number {
+    const self = [...this.selfIdentities];
+    const marks = self.map(() => '?').join(',');
+    const yours = self.length ? `SELECT DISTINCT conversation_id FROM message WHERE author_id IN (${marks})` : 'SELECT NULL WHERE 0';
+    const r = this.db
+      .query(
+        `DELETE FROM triage WHERE rowid IN (
+           SELECT t.rowid FROM triage t JOIN message m ON m.id = t.message_id
+           WHERE t.created_at < ? AND t.feedback IS NULL AND t.explore IS NULL AND t.decision IN ('digest', 'drop', 'silent')
+             AND m.conversation_id NOT IN (${yours})
+           LIMIT ?)`,
+      )
+      .run(now - keepDays * 86_400_000, ...self, limit);
+    return r.changes;
   }
 
   /**

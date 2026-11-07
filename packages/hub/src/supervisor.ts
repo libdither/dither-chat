@@ -1,16 +1,16 @@
 /**
  * Runs one adapter per enabled account and routes commands to it.
  *
- * Out-of-process adapters (matrix, signal, discord) are spawned as
- * `bun packages/adapter-<kind>/src/main.ts` and connect back over the
- * /adapter WebSocket. In-process adapters (the demo) use the same
+ * Out-of-process adapters (matrix, signal, discord, whatsapp) are spawned from
+ * adapterEntry() and connect back over the /adapter WebSocket. In-process adapters (the demo) use the same
  * event/command types through a direct callback.
  */
 
 import type { ServerWebSocket, Subprocess } from 'bun';
-import { appendFileSync, chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
+import { writeSecretFile } from '@dither-chat/protocol/secret-file';
 import type { AccountRow, Store } from './store.ts';
 import { acquireLock, releaseLock } from './lock.ts';
 
@@ -18,6 +18,33 @@ export interface InprocAdapter {
   start(emit: (ev: P.AdapterEvent) => void): void;
   command(cmd: P.AdapterCommand): void;
   stop(): void;
+}
+
+/**
+ * The entry of an adapter kind. dither-accounts' extractors are where the adapters live now (docs/accounts.md), so a
+ * checkout of it next to this one comes first, and an account this hub runs itself (a rollback, a manager that is
+ * down) runs the same code the manager would. Then DITHER_ADAPTERS_DIR (`<dir>/<kind>/src/main.ts`, colon-separated),
+ * then this repo's own copy, packages/adapter-<kind>. A kind is a plain name, never a path.
+ */
+export function adapterEntry(repoRoot: string, kind: string, env: Record<string, string | undefined> = process.env): string | null {
+  if (!/^[a-z][a-z0-9-]{0,31}$/.test(kind)) return null;
+  const dirs = [...(env.DITHER_ADAPTERS_DIR ?? '').split(':').filter(Boolean), ...(env.DITHER_ADAPTERS_DIR ? [] : [join(repoRoot, '..', 'dither-accounts', 'extractors')])];
+  for (const d of dirs) {
+    const entry = join(resolve(d), kind, 'src', 'main.ts');
+    if (existsSync(entry)) return entry;
+  }
+  const own = join(repoRoot, 'packages', `adapter-${kind}`, 'src', 'main.ts');
+  return existsSync(own) ? own : null;
+}
+
+/**
+ * The hub's environment without its own secrets (the TURN secret, push tokens and the like): an adapter gets what
+ * it needs through its account directory and DITHER_ACCOUNT_*.
+ */
+export function adapterEnv(env: Record<string, string | undefined>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) if (v !== undefined && !/SECRET|TOKEN|PASSWORD|PASSWD|PRIVATE_KEY|API_KEY|CREDENTIAL/i.test(k)) out[k] = v;
+  return out;
 }
 
 export type InprocFactory = (acc: AccountRow, dir: string) => InprocAdapter | null;
@@ -73,9 +100,7 @@ export class Supervisor {
   }
 
   writeSecret(id: string, secret: unknown) {
-    const p = join(this.accountDir(id), 'secret.json');
-    writeFileSync(p, JSON.stringify(secret ?? {}, null, 2), { mode: 0o600 });
-    chmodSync(p, 0o600);
+    writeSecretFile(join(this.accountDir(id), 'secret.json'), secret ?? {});
   }
 
   /** A new account from the API: its secret, then its adapter. remote.ts gives it to the manager instead. */
@@ -110,8 +135,8 @@ export class Supervisor {
       return;
     }
 
-    const entry = join(this.opts.repoRoot, 'packages', `adapter-${acc.adapter}`, 'src', 'main.ts');
-    if (!existsSync(entry)) {
+    const entry = adapterEntry(this.opts.repoRoot, acc.adapter);
+    if (!entry) {
       this.store.updateAccount(id, {
         status: 'error',
         attention: JSON.stringify({ kind: 'unknown', message: `No adapter installed for "${acc.adapter}"`, since: Date.now() }),
@@ -135,7 +160,7 @@ export class Supervisor {
     const proc = Bun.spawn(['bun', entry], {
       cwd: this.opts.repoRoot,
       env: {
-        ...process.env,
+        ...adapterEnv(process.env),
         DITHER_HUB_URL: this.opts.hubAdapterUrl,
         DITHER_ACCOUNT_ID: id,
         DITHER_ADAPTER_TOKEN: acc.token,
