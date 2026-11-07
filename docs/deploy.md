@@ -75,6 +75,10 @@ redirect checked again, up to `DITHER_MEDIA_MAX_MB` (500) per file. `DITHER_MEDI
 address check for a testbed whose homeserver runs on this machine. Adapters the hub starts get its environment
 without its own secrets (anything named like a secret, token, password or key).
 
+Attachments are served from the hub's own origin, so a message cannot run script there: every `/media/` response carries
+`X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox`, and anything that is not an image, video or
+audio file (HTML, SVG, XML, PDF, unknown types) is sent as a download (`packages/hub/src/mediaheaders.ts`).
+
 ### Backups and upkeep
 
 The hub keeps its data directory private to its user (umask 077, and older files other users could read are closed
