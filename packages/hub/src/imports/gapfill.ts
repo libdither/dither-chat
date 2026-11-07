@@ -58,7 +58,7 @@ export class GapFill {
   resume() {
     for (const r of this.store.db.query(`SELECT key, value FROM meta WHERE key LIKE 'gapfill:%'`).all() as Row[]) {
       try {
-        this.start(r.key.slice('gapfill:'.length), JSON.parse(r.value));
+        this.start(r.key.slice('gapfill:'.length), JSON.parse(r.value), true);
       } catch (e: any) {
         this.log(`gap fill resume: ${e?.message ?? e}`);
       }
@@ -69,11 +69,12 @@ export class GapFill {
     for (const r of this.running.values()) r.stop = true;
   }
 
-  start(accountId: string, o: GapFillOptions = {}): P.GapFillView {
+  start(accountId: string, o: GapFillOptions = {}, resuming = false): P.GapFillView {
     if (this.running.has(accountId)) return this.status(accountId);
     const acc = this.store.account(accountId);
     if (!acc || acc.network !== 'discord') throw new Error('gap filling is for Discord accounts');
-    this.plan(accountId, o);
+    // Carrying on after a restart keeps the plan it had; starting again looks for conversations added since.
+    if (!resuming) this.plan(accountId, o);
     this.store.db.query('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value').run(`gapfill:${accountId}`, JSON.stringify(o));
     const state = { stop: false, current: null as string | null };
     this.running.set(accountId, state);
@@ -89,10 +90,10 @@ export class GapFill {
          WHERE c.network = 'discord' AND c.shape IN ('direct', 'group', 'channel', 'thread')`,
       )
       .all(accountId) as Row[];
-    const imported = (cid: string) =>
-      this.store.db.query('SELECT MAX(m.ts) AS t FROM message m WHERE m.conversation_id = ? AND EXISTS (SELECT 1 FROM import_origin o WHERE o.message_id = m.id)').get(cid) as Row;
+    // The newest message an import inserted: back along the (conversation, ts) index from the newest message.
+    const newestImported = this.store.db.query('SELECT ts FROM message WHERE conversation_id = ? AND imported = 1 ORDER BY ts DESC LIMIT 1');
     for (const c of convs) {
-      const gapEnd = (imported(c.id)?.t as number | null) ?? null;
+      const gapEnd = ((newestImported.get(c.id) as Row | null)?.ts as number | undefined) ?? null;
       if ((c.shape === 'channel' || c.shape === 'thread') && gapEnd === null && !o.allChannels) continue;
       this.store.db
         .query(`INSERT INTO gap_fill (account_id, conversation_id, gap_end, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT DO UPDATE SET gap_end = MAX(COALESCE(gap_end, 0), COALESCE(excluded.gap_end, 0))`)
