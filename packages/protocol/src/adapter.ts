@@ -240,6 +240,16 @@ export interface OpenDirectResult {
  */
 export const PROTOCOL_VERSION = 1;
 
+/** One link of an account's dependency chain (AdapterEvent status.layers). */
+export interface StatusLayer {
+  /** Short and stable: 'browser', 'extension', 'signed in', 'API key'. */
+  name: string;
+  /** ok; waiting (not there yet, expected to come); failed; off (not used here). */
+  state: 'ok' | 'waiting' | 'failed' | 'off';
+  /** One line: what it is, or why not ("33 of 33 hooks", "no SAPISID cookie"). */
+  note?: string;
+}
+
 export type AdapterEvent =
   | { t: 'hello'; network: Network; version: string; capabilities: Capability[]; protocol?: number }
   | {
@@ -253,6 +263,12 @@ export type AdapterEvent =
       liveView?: { vncPort: number; width: number; height: number } | null;
       /** Non-secret facts about the session, for the account's page in dither-accounts (the hub ignores them). */
       details?: Record<string, string | number | boolean | null>;
+      /**
+       * What the account rests on, outermost first (display, browser, extension, signed in, ...), for the dependency
+       * chain on its page in dither-accounts: the first layer that is not `ok` is why it is not working. The hub
+       * ignores it. Each status that has it sends the whole chain.
+       */
+      layers?: StatusLayer[];
     }
   | { t: 'identity'; identity: IdentityFact }
   | { t: 'space'; space: SpaceFact }
