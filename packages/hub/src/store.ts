@@ -2348,20 +2348,43 @@ export class Store {
   }
 
   inbox(sinceTs: number, now = Date.now()): P.InboxPage {
-    // What notified (or you voted up) has its own share, so a busy digest cannot push it out of the list; the digest
-    // is what matters most, not what came last; and the most interesting of what fell below it, to vote up.
-    const pick = (where: string, limit: number, order = 'm.ts DESC', since = sinceTs) =>
-      this.db
-        .query(`SELECT m.* FROM triage t JOIN message m ON m.id = t.message_id WHERE m.ts >= ? AND m.deleted = 0 AND ${where} ORDER BY ${order} LIMIT ${limit}`)
-        .all(since) as Row[];
-    const at = `COALESCE(t.feedback, t.decision)`;
-    const rows = [
-      ...pick(`t.decision != 'silent' AND ${at} IN ('push', 'quiet')`, 150),
-      ...pick(`t.decision != 'silent' AND ${at} = 'digest'`, 300, 't.score DESC, m.ts DESC'),
-      ...pick(`t.decision != 'silent' AND ${at} = 'drop'`, 40, 't.score DESC, m.ts DESC', Math.max(sinceTs, now - 2 * 86_400_000)),
-    ].sort((a, b) => b.ts - a.ts);
+    const rows: Row[] = [];
+    const got = new Map<string, number>();
+    for (const q of Store.inboxQueries(sinceTs, now)) {
+      const left = q.limit - (got.get(q.pick) ?? 0);
+      if (left <= 0) continue;
+      const r = this.db.query(q.sql).all(q.since, left) as Row[];
+      got.set(q.pick, (got.get(q.pick) ?? 0) + r.length);
+      rows.push(...r);
+    }
+    rows.sort((a, b) => b.ts - a.ts);
     const msgs = this.messageViews(rows);
     return { items: msgs.map((m) => ({ message: m, conversationId: m.conversationId })), identities: this.identitiesOf(msgs) };
+  }
+
+  /**
+   * The inbox's picks. What notified (or you voted up) has its own share, so a busy digest cannot push it out of the
+   * list; the digest is what matters most, not what came last; and the most interesting of what fell below it, to
+   * vote up. A week of triage is hundreds of thousands of rows, so each walks an index and stops at its limit
+   * (test/inbox-plan.test.ts): the few that notified from triage_level_score; the digest and below by score, best
+   * first, then (with what is left of the limit) the many without a score, newest first along message_ts.
+   * That is ORDER BY score DESC, ts DESC with no score last, as one query had it, without sorting the week.
+   */
+  static inboxQueries(sinceTs: number, now = Date.now()) {
+    const at = `COALESCE(t.feedback, t.decision)`;
+    const ok = `m.ts >= ? AND m.deleted = 0 AND t.decision != 'silent'`;
+    const byLevel = (level: string, scored: boolean) =>
+      scored
+        ? `SELECT m.* FROM triage t CROSS JOIN message m ON m.id = t.message_id WHERE ${at} = '${level}' AND t.score IS NOT NULL AND ${ok} ORDER BY t.score DESC, m.ts DESC LIMIT ?`
+        : `SELECT m.* FROM message m CROSS JOIN triage t ON t.message_id = m.id WHERE ${at} = '${level}' AND t.score IS NULL AND ${ok} ORDER BY m.ts DESC LIMIT ?`;
+    const drop = Math.max(sinceTs, now - 2 * 86_400_000);
+    return [
+      { pick: 'notified', limit: 150, since: sinceTs, sql: `SELECT m.* FROM triage t CROSS JOIN message m ON m.id = t.message_id WHERE ${at} IN ('push', 'quiet') AND ${ok} ORDER BY m.ts DESC LIMIT ?` },
+      { pick: 'digest', limit: 300, since: sinceTs, sql: byLevel('digest', true) },
+      { pick: 'digest', limit: 300, since: sinceTs, sql: byLevel('digest', false) },
+      { pick: 'drop', limit: 40, since: drop, sql: byLevel('drop', true) },
+      { pick: 'drop', limit: 40, since: drop, sql: byLevel('drop', false) },
+    ];
   }
 
   /** Quoted for FTS5, so what people type can never be a syntax error or an operator. */
