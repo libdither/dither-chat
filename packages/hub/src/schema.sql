@@ -610,3 +610,27 @@ CREATE TABLE IF NOT EXISTS media_archive_fail (
   last_at INTEGER NOT NULL,
   error   TEXT
 ) WITHOUT ROWID;
+
+-- Who your accounts have seen as a member of which space, from what their clients loaded anyway (a `members` event,
+-- source 'seen'). Adversarial: written only with the members setting on (docs/history.md). Never the whole list.
+CREATE TABLE IF NOT EXISTS membership (
+  space_id    TEXT NOT NULL,              -- spc_…
+  identity_id TEXT NOT NULL,              -- idn_…
+  joined_at   INTEGER,                    -- where the network says
+  roles       TEXT,                       -- JSON: role names
+  nick        TEXT,
+  source      TEXT NOT NULL CHECK (source IN ('seen', 'walk')),
+  first_seen  INTEGER NOT NULL,
+  last_seen   INTEGER NOT NULL,
+  account_id  TEXT,                       -- the account that saw them last
+  PRIMARY KEY (space_id, identity_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS membership_identity ON membership(identity_id);
+
+-- A space's member and online counts as the network last gave them, beside how many membership has.
+CREATE TABLE IF NOT EXISTS member_coverage (
+  space_id    TEXT PRIMARY KEY,
+  total       INTEGER,
+  online      INTEGER,
+  reported_at INTEGER NOT NULL
+) WITHOUT ROWID;

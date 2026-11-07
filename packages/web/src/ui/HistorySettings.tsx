@@ -142,6 +142,9 @@ export function HistorySettings() {
         <button class="btn ghost small danger" onClick={forget('presence', 'logged presence')}>
           Presence history
         </button>
+        <button class="btn ghost small danger" onClick={forget('members', 'recorded server members')}>
+          Server members
+        </button>
       </div>
     </section>
   );

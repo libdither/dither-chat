@@ -228,3 +228,22 @@ describe('the rules, as plain functions', () => {
     expect(r.invite?.canCreate).toBe(false);
   });
 });
+
+describe('members seen (adversarial, passive)', () => {
+  test("a server's About says how many members were seen only with the members setting on", async () => {
+    const id = space('discord', 'libdither');
+    const before = store.retention();
+    expect((await abouts.get('space', id)).coverage).toBeUndefined();
+    store.setRetention({ ...before, adversarial: true, members: true });
+    try {
+      const dmain = store.accounts().find((a) => a.network === 'discord' && store.vantageAccounts('space', id).includes(a.id))!;
+      const native = store.nativeOf('space', id)!.nativeId;
+      store.ingest(dmain, { t: 'members', space: native, source: 'seen', members: [{ who: 'm1' }, { who: 'm2' }], total: 200, online: 30, ts: 5 });
+      expect((await abouts.get('space', id)).coverage).toEqual({ seen: 2, total: 200, online: 30, fraction: 0.01, lastSeenAt: 5, reportedAt: 5 });
+      // A section is not a server of its own.
+      expect((await abouts.get('space', space('discord', 'General'))).coverage).toBeUndefined();
+    } finally {
+      store.setRetention(before);
+    }
+  });
+});

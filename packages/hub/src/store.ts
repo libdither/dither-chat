@@ -401,6 +401,7 @@ export class Store {
         .all() as Row[];
       for (const s of orphanSpaces) {
         this.db.query('DELETE FROM space WHERE id = ?').run(s.id);
+        this.forgetMembers(s.id);
         this.db.query('DELETE FROM space_edge WHERE parent_id = ? OR (child_kind = ? AND child_id = ?)').run(s.id, 'space', s.id);
         this.db.query('DELETE FROM folder_item WHERE item_kind = ? AND item_id = ?').run('space', s.id);
         this.dirty.removed.push({ t: 'space.removed', id: s.id });
@@ -527,6 +528,9 @@ export class Store {
           break;
         case 'receipt':
           this.receipt(acc, ev);
+          break;
+        case 'members':
+          this.members(acc, ev);
           break;
         case 'reactionsCleared': {
           const mid = hubId('msg', acc.network, ev.message);
@@ -850,6 +854,7 @@ export class Store {
     }
     if (kind === 'space') {
       this.db.query('DELETE FROM space WHERE id = ?').run(id);
+      this.forgetMembers(id);
       this.db.query(`DELETE FROM space_edge WHERE parent_id = ? OR (child_kind = 'space' AND child_id = ?)`).run(id, id);
       this.dirty.removed.push({ t: 'space.removed', id });
     } else {
@@ -1443,6 +1448,88 @@ export class Store {
     this.db.query(`DELETE FROM change_log WHERE id IN (SELECT id FROM change_log WHERE target_kind = 'identity' AND target_id = ? AND field = 'presence' ORDER BY at DESC, id DESC LIMIT -1 OFFSET 1000)`).run(iid);
   }
 
+  /** Server members are recorded: an adversarial feature, so only with adversarial features shown and members on. */
+  recordsMembers(): boolean {
+    const r = this.retention();
+    return r.adversarial && r.members;
+  }
+
+  /**
+   * People an account's client saw as members of a space, and the network's counts when it gave them. Seen again,
+   * a member is updated: last seen moves on, and what the network no longer says (a nick) stays as it was.
+   */
+  private members(acc: AccountRow, ev: Extract<P.AdapterEvent, { t: 'members' }>) {
+    if (!this.recordsMembers()) return;
+    const sid = hubId('spc', acc.network, ev.space);
+    if (!this.db.query('SELECT 1 FROM space WHERE id = ?').get(sid)) return;
+    const at = ev.ts ?? Date.now();
+    const put = this.db.query(
+      `INSERT INTO membership (space_id, identity_id, joined_at, roles, nick, source, first_seen, last_seen, account_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (space_id, identity_id) DO UPDATE SET
+         joined_at = COALESCE(excluded.joined_at, joined_at), roles = COALESCE(excluded.roles, roles), nick = COALESCE(excluded.nick, nick),
+         source = excluded.source, first_seen = MIN(first_seen, excluded.first_seen), last_seen = MAX(last_seen, excluded.last_seen),
+         account_id = excluded.account_id`,
+    );
+    for (const m of (ev.members ?? []).slice(0, 500)) {
+      if (!m || typeof m.who !== 'string' || !m.who) continue;
+      const roles = Array.isArray(m.roles) ? JSON.stringify(m.roles.filter((r) => typeof r === 'string')) : null;
+      const joined = typeof m.joinedAt === 'number' && Number.isFinite(m.joinedAt) ? m.joinedAt : null;
+      put.run(sid, this.ensureIdentity(acc, m.who), joined, roles, typeof m.nick === 'string' && m.nick ? m.nick : null, ev.source === 'walk' ? 'walk' : 'seen', at, at, acc.id);
+    }
+    const count = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) && n >= 0 ? Math.floor(n) : null);
+    const total = count(ev.total);
+    const online = count(ev.online);
+    if (total !== null || online !== null)
+      this.db
+        .query(
+          `INSERT INTO member_coverage (space_id, total, online, reported_at) VALUES (?, ?, ?, ?)
+           ON CONFLICT (space_id) DO UPDATE SET total = COALESCE(excluded.total, total), online = COALESCE(excluded.online, online), reported_at = MAX(reported_at, excluded.reported_at)`,
+        )
+        .run(sid, total, online, at);
+  }
+
+  /** How many of a space's members the hub has seen, beside the network's counts. Nothing while members are not recorded. */
+  memberCoverage(spaceId: string): P.MemberCoverageView | undefined {
+    if (!this.recordsMembers()) return undefined;
+    const seen = this.db.query('SELECT COUNT(*) AS n, MAX(last_seen) AS last FROM membership WHERE space_id = ?').get(spaceId) as Row;
+    const cov = this.db.query('SELECT total, online, reported_at FROM member_coverage WHERE space_id = ?').get(spaceId) as Row | null;
+    const total = cov?.total ?? undefined;
+    return {
+      seen: seen.n,
+      ...(total !== undefined ? { total } : {}),
+      ...(cov?.online != null ? { online: cov.online } : {}),
+      ...(total ? { fraction: Math.min(1, seen.n / total) } : {}),
+      ...(seen.last != null ? { lastSeenAt: seen.last } : {}),
+      ...(cov ? { reportedAt: cov.reported_at } : {}),
+    };
+  }
+
+  /** Spaces these identities were seen as members of, last seen first. Nothing while members are not recorded. */
+  memberOf(identityIds: string[]): NonNullable<P.ProfileView['memberOf']> {
+    if (!this.recordsMembers() || !identityIds.length) return [];
+    const rows = this.db
+      .query(`SELECT space_id, nick, roles, joined_at, last_seen FROM membership WHERE identity_id IN (${identityIds.map(() => '?').join(',')}) ORDER BY last_seen DESC LIMIT 200`)
+      .all(...identityIds) as Row[];
+    const out = new Map<string, NonNullable<P.ProfileView['memberOf']>[number]>();
+    for (const r of rows) {
+      if (out.has(r.space_id)) continue;
+      const roles = json<string[] | null>(r.roles, null);
+      out.set(r.space_id, {
+        spaceId: r.space_id,
+        ...(r.nick ? { nick: r.nick } : {}),
+        ...(roles?.length ? { roles } : {}),
+        ...(r.joined_at != null ? { joinedAt: r.joined_at } : {}),
+        lastSeenAt: r.last_seen,
+      });
+    }
+    return [...out.values()];
+  }
+
+  private forgetMembers(spaceId: string) {
+    this.db.query('DELETE FROM membership WHERE space_id = ?').run(spaceId);
+    this.db.query('DELETE FROM member_coverage WHERE space_id = ?').run(spaceId);
+  }
+
   /** Something that happened to a message. The same from a second account within ten minutes is one. */
   messageEvent(messageId: string, kind: P.MessageEventView['kind'], data: unknown, actorId: string | null, accountId: string | null, at = Date.now()) {
     const d = data === undefined ? null : JSON.stringify(data);
@@ -1517,8 +1604,12 @@ export class Store {
     return { versions, events, receipts, identities: this.identitiesByIds(ids) };
   }
 
-  /** Forget what was kept: deleted or disappeared messages' words and files, edits, reactions taken back, receipts, the change log, or logged statuses or presence. */
-  eraseKept(what: 'deleted' | 'disappeared' | 'edits' | 'reactions' | 'receipts' | 'changes' | 'statuses' | 'presence'): number {
+  /** Forget what was kept: deleted or disappeared messages' words and files, edits, reactions taken back, receipts, the change log, logged statuses or presence, or server members seen. */
+  eraseKept(what: 'deleted' | 'disappeared' | 'edits' | 'reactions' | 'receipts' | 'changes' | 'statuses' | 'presence' | 'members'): number {
+    if (what === 'members') {
+      this.db.query('DELETE FROM member_coverage').run();
+      return this.db.query('DELETE FROM membership').run().changes;
+    }
     if (what === 'statuses' || what === 'presence')
       return this.db.query(`DELETE FROM change_log WHERE target_kind = 'identity' AND field = ?`).run(what === 'statuses' ? 'status' : 'presence').changes;
     const touched = (sql: string) => (this.db.query(sql).all() as Row[]).forEach((r) => this.dirty.messages.set(r.message_id, true));
@@ -2156,6 +2247,7 @@ export class Store {
       totalMessages: span.n,
       firstSeenTs: span.first ?? null,
       abouts: [],
+      ...(this.recordsMembers() ? { memberOf: this.memberOf(ids) } : {}),
     };
   }
 

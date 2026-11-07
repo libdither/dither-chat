@@ -229,6 +229,14 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       const s = m.spaceId ? db.spaces.get(m.spaceId) : null;
       if (s) spaces.set(s.id, { s, messages: 0, nick: m.nick, roles: m.roles });
     }
+  // Servers your accounts saw them in as a member (the adversarial members setting), where no profile said so.
+  for (const m of profile.memberOf ?? []) {
+    const s = db.spaces.get(m.spaceId);
+    if (!s) continue;
+    const cur = spaces.get(s.id);
+    if (!cur) spaces.set(s.id, { s, messages: 0, nick: m.nick, roles: m.roles?.map((name) => ({ name })) });
+    else if (!cur.nick && !cur.roles?.length) spaces.set(s.id, { ...cur, nick: m.nick, roles: m.roles?.map((name) => ({ name })) });
+  }
   for (const x of convs) {
     for (const com of communitiesOf(x.c)) {
       const root = rootCommunity(com.id) ?? com;

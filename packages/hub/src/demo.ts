@@ -1215,7 +1215,7 @@ class DemoAdapter implements InprocAdapter {
     // Discord's demo accounts forward natively, as the real adapter does; the others leave it to the hub.
     // Matrix has no bio, so its demo account cannot edit one.
     const caps: P.Capability[] = ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect', 'typing', 'about', 'configure', 'profile', ...(this.network === 'matrix' ? [] : (['editProfile'] as const))];
-    emit({ t: 'hello', network: this.network, version: 'demo', capabilities: this.network === 'discord' ? [...caps, 'forward'] : caps });
+    emit({ t: 'hello', network: this.network, version: 'demo', capabilities: this.network === 'discord' ? [...caps, 'forward', 'members'] : caps });
     emit({ t: 'status', status: 'online', self: { ...this.self, isSelf: true } });
     const pool = this.network === 'discord' ? D : this.network === 'signal' ? S : this.network === 'whatsapp' ? W : M;
     for (const i of Object.values(pool)) if (i !== this.self && !(this.network === 'discord' && (i === D.zyan || i === D.zyn))) emit({ t: 'identity', identity: i });
@@ -1223,6 +1223,22 @@ class DemoAdapter implements InprocAdapter {
     if (this.key === 'dalt') emit({ t: 'identity', identity: D.zyan });
 
     for (const s of SPACES) if (s.acc.includes(this.key)) emit({ t: 'space', space: s.fact });
+    // Members the client loaded anyway (passive), with Discord's counts: kept only with the adversarial members setting.
+    if (this.key === 'dmain')
+      emit({
+        t: 'members',
+        space: g.dither,
+        source: 'seen',
+        total: 1287,
+        online: 214,
+        members: [
+          { who: D.alice.nativeId, nick: 'alice', roles: ['Contributor'], joinedAt: ago(400 * 24 * 60) },
+          { who: D.ravi.nativeId, roles: ['Contributor'] },
+          { who: D.quinn.nativeId, roles: [] },
+          { who: D.ci.nativeId, roles: ['Bot'] },
+          { who: D.zyan.nativeId, roles: ['Maintainer'] },
+        ],
+      });
     for (const c of CONVS) {
       if (!c.acc.includes(this.key)) continue;
       const msgs = c.msgs;

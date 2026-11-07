@@ -42,6 +42,7 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Change your own bio from your profile | M | L | done | Discord, Signal and WhatsApp (`setProfile`, adapters in dither-accounts); Matrix has no bio. The hub and page are tested against the demo adapter; Signal's adapter only against a fake signal-cli and WhatsApp's against a fake bridge |
 | Matrix and Signal extended profiles | L | L | blocked | The protocols hold little more than name and avatar |
 | Presence (online, idle) | M | M | next | An adversarial feature (docs/history.md): the hub logs the `presence` event and shows it in a profile's Status section; the Discord and Matrix adapters that emit it are in dither-accounts. Signal does not report it |
+| Server members seen (passive, adversarial) | L | M | done | Who your accounts' clients loaded anyway, and "seen N of M listed" on a server's About. Hub side done; Discord's emitter lives in dither-accounts. Walking the member list is held |
 | Block, ignore | M | M | later | Differs per network |
 
 ## Messaging
