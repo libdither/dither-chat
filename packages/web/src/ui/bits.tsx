@@ -89,12 +89,13 @@ export function Avatar({
   accountIds?: string[];
   icon?: string;
 }) {
-  const [broken, setBroken] = useState(false);
+  // The picture that failed, not "failed": a group whose picture arrives later (or changes) shows the new one.
+  const [broken, setBroken] = useState<string | null>(null);
   const radius = square ? Math.round(size * 0.3) : size / 2;
   return (
     <span class="avatar" style={{ width: `${size}px`, height: `${size}px` }}>
-      {url && !broken ? (
-        <img src={url} alt="" width={size} height={size} style={{ borderRadius: `${radius}px` }} onError={() => setBroken(true)} loading="lazy" />
+      {url && broken !== url ? (
+        <img src={url} alt="" width={size} height={size} style={{ borderRadius: `${radius}px` }} onError={() => setBroken(url)} loading="lazy" />
       ) : (
         <span class="avatar-fallback" style={{ borderRadius: `${radius}px`, background: hueOf(id), fontSize: `${Math.max(10, Math.round(size * (icon ? 0.5 : 0.36)))}px` }}>
           {icon ?? initials(name)}
