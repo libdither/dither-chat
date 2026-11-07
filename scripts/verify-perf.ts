@@ -176,6 +176,7 @@ async function run(cpu: number, world: World): Promise<Metrics> {
     put('older.page', median(pages.map((p) => p.ms)));
     put('older.last', pages.at(-1)!.ms);
     put('older.msgs', pages.at(-1)!.msgs, 'count');
+    put('older.viewMoves', pages.filter((p) => p.moved).length, 'count');
     await open(page, world.open[1], lastIds.get(world.open[1].id)!);
     const back = await open(page, big, lastIds.get(big.id)!);
     put('long.reopen', back.painted);
@@ -184,6 +185,7 @@ async function run(cpu: number, world: World): Promise<Metrics> {
     put('long.reopen.layouts', back.layouts, 'count');
     put('long.reopen.nodes', back.nodes, 'count');
     put('long.reopen.msgs', back.msgs, 'count');
+    put('long.reopen.quotes', back.quotes, 'count');
     const a = await arrival(page, big);
     put('arrival.shown', a.shown);
     put('arrival.busy', a.busy);
@@ -269,17 +271,22 @@ async function open(page: Page, c: WorldConv, lastId: string) {
   const shown = await page.eval<boolean>(`!!document.getElementById(${JSON.stringify(`m-${lastId}`)})`);
   if (!shown) throw new Error(`${c.id}: its newest message is not on screen after the mark`);
   const lts = await page.eval<[number, number][]>(`__perf.lt.slice(${lt0})`);
-  const x = await page.eval<{ nodes: number; msgs: number }>(`({ nodes: document.getElementsByTagName('*').length, msgs: document.querySelectorAll('.timeline-scroll .msg').length })`);
+  const x = await page.eval<{ nodes: number; msgs: number; quotes: number }>(`({ nodes: document.getElementsByTagName('*').length, msgs: document.querySelectorAll('.timeline-scroll .msg').length, quotes: document.querySelectorAll('.timeline-scroll .reply-quote').length })`);
   return { painted, renders: diff(r0, await renders(page)).App ?? 0, layouts: (await metrics(page)).LayoutCount - m0.LayoutCount, longest: Math.max(0, ...lts.map((t) => t[1])), ...x };
 }
 
-/** Scroll to the top of the open timeline and time the next older page onto the screen. */
+/**
+ * Scroll to the top of the open timeline and time the next older page onto the screen. `moved`: the message that was
+ * first did not stay where it was (at the very top the browser keeps the view there, and pages load one after another).
+ */
 async function older(page: Page) {
   const r = await page.eval<{ ms: number; msgs: number }>(`(async () => {
     const el = document.querySelector('.timeline-scroll');
     const n0 = el.querySelectorAll('.msg').length;
     const t0 = performance.now();
     el.scrollTop = -el.scrollHeight;
+    const first = el.querySelector('.msg');
+    window.__first = { id: first.id, top: first.getBoundingClientRect().top };
     el.dispatchEvent(new Event('scroll'));
     while (el.querySelectorAll('.msg').length <= n0) {
       if (performance.now() - t0 > 30000) throw new Error('no older page');
@@ -289,7 +296,11 @@ async function older(page: Page) {
     return { ms: performance.now() - t0, msgs: el.querySelectorAll('.msg').length };
   })()`);
   await settle(page);
-  return r;
+  const moved = await page.eval<number | null>(`(() => {
+    const first = document.getElementById(window.__first.id);
+    return first ? Math.round(first.getBoundingClientRect().top - window.__first.top) : null;
+  })()`);
+  return { ...r, moved: moved === null || Math.abs(moved) > 2 };
 }
 
 /** A message from someone else arriving in the open conversation. */
