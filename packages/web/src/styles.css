@@ -3596,6 +3596,8 @@ code {
 }
 .keyword-add .input {
   flex: 1;
+  /* A long placeholder must not hold the row wider than a phone. */
+  min-width: 0;
 }
 
 /* ---------------------------------------------------------------- search */

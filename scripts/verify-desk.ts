@@ -85,8 +85,11 @@ try {
 
   // ---------------------------------------------------------------- pairing
   await p.goto(`${hub}/#/settings`);
+  // Unpaired, Settings doesn't knock on 127.0.0.1 by itself: no refused connection, no local-network prompt.
+  await p.until(`document.querySelector('[data-desk-status="unchecked"]')`, 15000);
+  await Bun.sleep(1500);
+  check((await p.eval(`document.querySelector('#set-desk [data-desk-status]').dataset.deskStatus`)) === 'unchecked', 'unpaired, opening Settings does not look for the helper');
   // Not on the default port here: type this one.
-  await p.until(`document.querySelector('[data-desk-status="absent"]')`, 15000);
   await p.eval(`(() => {
     const i = document.querySelector('input[aria-label="Helper port"]');
     i.value = '${deskPort}';
