@@ -877,10 +877,10 @@ const NET_HELP: Record<P.Network, { adapter: string; blurb: string; fields: { ke
   // These two run only in dither-accounts (docs/accounts.md).
   telegram: {
     adapter: 'telegram',
-    blurb: 'Signs in to Telegram as you, like Telegram Desktop, with an app of your own: make one at my.telegram.org (API development tools) for its api_id and api_hash. After you add it, scan the QR code with Telegram on your phone, or sign in with your number and the code Telegram sends.',
+    blurb: "Signs in to Telegram as you, as another device the way Telegram Desktop does. Leave api_id and api_hash empty to use Telegram Desktop's own app, or give both from an app of your own (my.telegram.org, API development tools), which is what Telegram's terms ask for. After you add it, scan the QR code with Telegram on your phone, or sign in with your number and the code Telegram sends.",
     fields: [
-      { key: 'apiId', label: 'api_id', placeholder: '1234567' },
-      { key: 'apiHash', label: 'api_hash', placeholder: '32 letters and digits', secret: true },
+      { key: 'apiId', label: 'api_id', placeholder: "empty: Telegram Desktop's", optional: true },
+      { key: 'apiHash', label: 'api_hash', placeholder: "empty: Telegram Desktop's", secret: true, optional: true },
       { key: 'testDc', label: "Telegram's test servers", placeholder: 'yes, for a test account; else leave empty', optional: true },
     ],
   },
