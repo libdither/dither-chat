@@ -41,27 +41,34 @@ export function startOrganize() {
   setInteracting(() => !!drag.value || !!contextMenu.value || pointerOnList || Date.now() - touchedAt < 4000 || keyboardIn());
 }
 
-/** Moves animate: each row slides from where it was when the order last changed. Rows are `sel`, keyed by their data. */
+/** Where each row is, from the top of the list's content. */
+function rowTops(box: HTMLElement, sel: string) {
+  const origin = box.getBoundingClientRect().top - box.scrollTop;
+  const id = (x: HTMLElement) => `${x.dataset.dndKey ?? x.dataset.row}|${x.dataset.dndFolder ?? ''}`;
+  return new Map([...box.querySelectorAll<HTMLElement>(sel)].map((x) => [id(x), { el: x, top: x.getBoundingClientRect().top - origin }]));
+}
+
+/**
+ * Moves animate: each row slides from where it was when the order changed. Rows are `sel`, keyed by their data.
+ * Rows are measured only when `version` (the order) changes: before the new order is drawn, from the DOM as it still
+ * is, and after. Measuring after every render forced a layout of the whole list each time.
+ */
 export function useFlip(ref: { current: HTMLElement | null }, version: number, sel = '[data-dnd-key]') {
-  const last = useRef(new Map<string, number>());
   const seen = useRef(version);
+  const before = useRef<ReturnType<typeof rowTops> | null>(null);
+  if (seen.current !== version && !before.current && ref.current && !matchMedia('(prefers-reduced-motion: reduce)').matches) before.current = rowTops(ref.current, sel);
   useLayoutEffect(() => {
-    const box = ref.current;
-    if (!box) return;
-    const origin = box.getBoundingClientRect().top - box.scrollTop;
-    const rows = [...box.querySelectorAll<HTMLElement>(sel)];
-    const id = (x: HTMLElement) => `${x.dataset.dndKey ?? x.dataset.row}|${x.dataset.dndFolder ?? ''}`;
-    const now = new Map(rows.map((x) => [id(x), x.getBoundingClientRect().top - origin]));
-    if (seen.current !== version && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      for (const x of rows) {
-        const before = last.current.get(id(x));
-        const after = now.get(id(x))!;
-        if (before === undefined || Math.abs(before - after) < 1) continue;
-        x.animate([{ transform: `translateY(${before - after}px)` }, { transform: 'none' }], { duration: 280, easing: 'cubic-bezier(.2,.7,.2,1)' });
-      }
-    }
+    if (seen.current === version) return;
     seen.current = version;
-    last.current = now;
+    const was = before.current;
+    before.current = null;
+    const box = ref.current;
+    if (!box || !was) return;
+    for (const [key, { el, top }] of rowTops(box, sel)) {
+      const from = was.get(key)?.top;
+      if (from === undefined || Math.abs(from - top) < 1) continue;
+      el.animate([{ transform: `translateY(${from - top}px)` }, { transform: 'none' }], { duration: 280, easing: 'cubic-bezier(.2,.7,.2,1)' });
+    }
   });
 }
 
