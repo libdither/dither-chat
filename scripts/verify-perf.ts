@@ -2,7 +2,8 @@
  * Load and chat-switch performance against a demo hub of its own, grown to the live hub's size (docs/perf.md).
  *
  *   bun scripts/verify-perf.ts [--port 8620] [--runs 3] [--cpu 1,4] [--pages 15] [--web <built dist>]
- *                              [--update] [--out results.json] [--baseline scripts/perf-baseline.json]
+ *                              [--update] [--out results.json] [--baseline scripts/perf-baseline.json] [--css <css>]
+ *                              [--work <empty dir>] [--keep]
  *
  * Builds the web app (unless --web names a build), seeds a fresh world (scripts/perf-world.ts) in a temp dir, starts
  * a hub on it, and measures in headless Chromium at each CPU throttle, `runs` times each:
@@ -14,7 +15,7 @@
  * Medians go against the baseline: a count over its baseline fails (bytes get 1%), a time over baseline × 1.25 +
  * 50 ms fails. --update writes the medians as the new baseline. It runs locally: CI has no browser.
  */
-import { existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { launch, type Page } from './browser.ts';
@@ -28,16 +29,20 @@ const CPUS = opt('cpu', '1,4').split(',').map(Number);
 const PAGES = Number(opt('pages', '15'));
 const UPDATE = args.includes('--update');
 const OUT = opt('out', '');
+/** Extra CSS for every page, to try a style change without a build (e.g. content-visibility on desktop). */
+const CSS = opt('css', '');
 const root = resolve(import.meta.dir, '..');
 const BASELINE = resolve(opt('baseline', join(root, 'scripts/perf-baseline.json')));
 const base = `http://127.0.0.1:${PORT}`;
 
 type Kind = 'ms' | 'count' | 'bytes';
 type Metrics = Record<string, { v: number; kind: Kind }>;
-const work = mkdtempSync(join(tmpdir(), 'dither-perf-'));
+// The world, the build and the hub's log. Its own prefix: a cleanup of someone else's temp dirs must not take it.
+const work = args.includes('--work') ? opt('work', '') : mkdtempSync(join(tmpdir(), `dither-verify-perf-${PORT}-`));
 const running: { hub?: ReturnType<typeof Bun.spawn> } = {};
 
 async function main() {
+  mkdirSync(work, { recursive: true });
   // ------------------------------------------------------------------ the app, the world, the hub
   let web = opt('web', '');
   if (!web) {
@@ -135,6 +140,7 @@ async function run(cpu: number, world: World): Promise<Metrics> {
     await page.send('Performance.enable');
     if (cpu > 1) await page.send('Emulation.setCPUThrottlingRate', { rate: cpu });
     await page.send('Page.addScriptToEvaluateOnNewDocument', { source: INIT });
+    if (CSS) await page.send('Page.addScriptToEvaluateOnNewDocument', { source: `document.addEventListener('DOMContentLoaded', () => document.head.append(Object.assign(document.createElement('style'), { textContent: ${JSON.stringify(CSS)} })))` });
     const lastIds = new Map<string, string>();
     for (const c of world.open) lastIds.set(c.id, (await getJson(`/api/conversations/${c.id}/messages?limit=1`)).messages.at(-1).id);
 
@@ -365,6 +371,6 @@ try {
   running.hub?.kill();
   await running.hub?.exited;
   if (args.includes('--keep')) console.log(`kept ${work}`);
-  else rmSync(work, { recursive: true, force: true });
+  else if (!args.includes('--work')) rmSync(work, { recursive: true, force: true });
 }
 process.exit(code);
