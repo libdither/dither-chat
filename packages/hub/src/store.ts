@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
 import { ADVERSARIAL_KEEPS, canonicalReactionKey, DEFAULT_RETENTION, parseSearch, PROTOCOL_VERSION, REACTION_RULES } from '@dither-chat/protocol';
+import { binsFor, estimateMessages, snowflakeTime, type ChannelInput } from './msgcount.ts';
 import { Journal } from './journal.ts';
 import { TypingRelay, typingTtl } from './typing.ts';
 
@@ -148,6 +149,8 @@ export class Store {
   private selfIdentities = new Set<string>();
   /** Accounts whose adapter speaks another protocol version, and what to tell you about it. */
   private protocolWarnings = new Map<string, string>();
+  /** A channel's bin counts for msgcount.ts, by channel, count and newest message: a new message makes a new key. */
+  private binCache = new Map<string, number[]>();
   /** Who is typing where: in memory only (typing.ts). */
   readonly typers = new TypingRelay();
 
@@ -1525,6 +1528,99 @@ export class Store {
     return [...out.values()];
   }
 
+  /**
+   * Their message count in each server they posted in, from the messages held (msgcount.ts, docs/profile.md): the
+   * observed count, their share, and a total only where one can be estimated. `onlySpace`: that server alone.
+   */
+  messageActivity(ref: { personId?: string; identityId?: string }, onlySpace?: string, now = Date.now()): P.ActivityView | null {
+    const ids = ref.personId
+      ? (this.db.query('SELECT id FROM identity WHERE person_id = ?').all(ref.personId) as Row[]).map((r) => r.id as string)
+      : ref.identityId && this.db.query('SELECT 1 FROM identity WHERE id = ?').get(ref.identityId)
+        ? [ref.identityId]
+        : [];
+    if (!ids.length) return ref.personId && this.db.query('SELECT 1 FROM person WHERE id = ?').get(ref.personId) ? { spaces: [] } : null;
+    const ph = ids.map(() => '?').join(',');
+    const roots = new Map<string, string | null>();
+    const bySpace = new Map<string, Map<string, number>>();
+    for (const r of this.db.query(`SELECT conversation_id AS c, COUNT(*) AS n, MIN(ts) AS first FROM message WHERE author_id IN (${ph}) GROUP BY conversation_id`).all(...ids) as Row[]) {
+      const sid = this.communityOf(r.c, roots);
+      if (!sid || (onlySpace && sid !== onlySpace)) continue;
+      const m = bySpace.get(sid) ?? new Map<string, number>();
+      m.set(r.c, r.n);
+      bySpace.set(sid, m);
+    }
+    if (onlySpace && !bySpace.has(onlySpace) && this.db.query(`SELECT 1 FROM space WHERE id = ? AND kind = 'community'`).get(onlySpace)) bySpace.set(onlySpace, new Map());
+    // The earliest they could have posted: when their Discord account was made.
+    const made = (this.db.query(`SELECT native_id FROM identity WHERE id IN (${ph}) AND network = 'discord'`).all(...ids) as Row[])
+      .map((r) => snowflakeTime(r.native_id, now))
+      .filter((t): t is number => t !== null);
+    const sum = (m: Map<string, number>) => [...m.values()].reduce((a, b) => a + b, 0);
+    const spaces: P.MessageCountEstimate[] = [];
+    for (const [sid, authored] of [...bySpace].sort((a, b) => sum(b[1]) - sum(a[1])).slice(0, 20)) {
+      const network = (this.db.query('SELECT network FROM space WHERE id = ?').get(sid) as Row).network as P.Network;
+      const channels = this.conversationsUnder([sid])
+        .slice(0, 2000)
+        .map((cid) => this.channelInput(cid, authored.get(cid) ?? 0))
+        .filter((c): c is ChannelInput => !!c);
+      let from = made.length ? Math.min(...made) : null;
+      // And when they joined, where the members setting kept it: unless they posted before it (they left and came back).
+      if (this.recordsMembers()) {
+        const j = this.db.query(`SELECT MIN(joined_at) AS at FROM membership WHERE space_id = ? AND identity_id IN (${ph})`).get(sid, ...ids) as Row;
+        const first = Math.min(...channels.filter((c) => c.authored && c.oldest !== null).map((c) => c.oldest!));
+        if (j.at != null && j.at <= first) from = Math.max(from ?? j.at, j.at);
+      }
+      const newest = channels.reduce((t, c) => Math.max(t, c.newest ?? 0), 0);
+      spaces.push({ spaceId: sid, ...estimateMessages(channels, { from, now }), asOf: newest || null, networks: [network] });
+    }
+    return { spaces };
+  }
+
+  /** The top-level community a conversation is in (through sections, and a thread's channel), or null. */
+  private communityOf(convId: string, memo: Map<string, string | null>): string | null {
+    if (memo.has(convId)) return memo.get(convId)!;
+    memo.set(convId, null);
+    const c = this.db.query('SELECT parent_id FROM conversation WHERE id = ?').get(convId) as Row | null;
+    let out: string | null = null;
+    if (c?.parent_id) out = this.communityOf(c.parent_id, memo);
+    else {
+      let frontier = (this.db.query(`SELECT parent_id FROM space_edge WHERE child_kind = 'conversation' AND child_id = ?`).all(convId) as Row[]).map((r) => r.parent_id as string);
+      for (let depth = 0; frontier.length && !out && depth < 6; depth++) {
+        const next: string[] = [];
+        for (const sid of frontier) {
+          const sp = this.db.query('SELECT kind FROM space WHERE id = ?').get(sid) as Row | null;
+          if (sp?.kind === 'community') {
+            out = sid;
+            break;
+          }
+          next.push(...(this.db.query(`SELECT parent_id FROM space_edge WHERE child_kind = 'space' AND child_id = ?`).all(sid) as Row[]).map((r) => r.parent_id as string));
+        }
+        frontier = next;
+      }
+    }
+    memo.set(convId, out);
+    return out;
+  }
+
+  /** A conversation as msgcount.ts takes it: what is held, and, where it could be estimated, held per bin. */
+  private channelInput(convId: string, authored: number): ChannelInput | null {
+    const c = this.db.query('SELECT network, native_id FROM conversation WHERE id = ?').get(convId) as Row | null;
+    if (!c) return null;
+    const s = this.db.query('SELECT COUNT(*) AS n, MIN(ts) AS lo, MAX(ts) AS hi FROM message WHERE conversation_id = ?').get(convId) as Row;
+    let bins: number[] = [];
+    if (c.network === 'discord' && s.n > 0) {
+      const key = `${convId}:${s.n}:${s.hi}`;
+      bins = this.binCache.get(key) ?? [];
+      if (!bins.length) {
+        const { count, width } = binsFor(s.lo, s.hi);
+        bins = new Array(count).fill(0);
+        for (const r of this.db.query('SELECT MIN(?, CAST((ts - ?) / ? AS INTEGER)) AS b, COUNT(*) AS n FROM message WHERE conversation_id = ? GROUP BY b').all(count - 1, s.lo, width, convId) as Row[]) bins[r.b] = r.n;
+        if (this.binCache.size > 5000) this.binCache.clear();
+        this.binCache.set(key, bins);
+      }
+    }
+    return { network: c.network, nativeId: c.native_id, captured: s.n, oldest: s.lo ?? null, newest: s.hi ?? null, bins, authored };
+  }
+
   private forgetMembers(spaceId: string) {
     this.db.query('DELETE FROM membership WHERE space_id = ?').run(spaceId);
     this.db.query('DELETE FROM member_coverage WHERE space_id = ?').run(spaceId);
@@ -2281,7 +2377,16 @@ export class Store {
     if (/^cnv_/.test(name)) return [name];
     const like = `%${likeEscape(name)}%`;
     const out = new Set((this.db.query(`SELECT id FROM conversation WHERE name LIKE ? ESCAPE '\\' OR id = ?`).all(like, name) as Row[]).map((r) => r.id as string));
-    let frontier = (this.db.query(`SELECT id FROM space WHERE name LIKE ? ESCAPE '\\' OR id = ?`).all(like, name) as Row[]).map((r) => r.id as string);
+    const spaces = (this.db.query(`SELECT id FROM space WHERE name LIKE ? ESCAPE '\\' OR id = ?`).all(like, name) as Row[]).map((r) => r.id as string);
+    for (const id of this.conversationsUnder(spaces)) out.add(id);
+    for (const id of [...out]) for (const t of this.db.query('SELECT id FROM conversation WHERE parent_id = ?').all(id) as Row[]) out.add(t.id);
+    return [...out];
+  }
+
+  /** Conversations in these spaces or their sections, and those conversations' threads. */
+  private conversationsUnder(spaceIds: string[]): string[] {
+    const out = new Set<string>();
+    let frontier = spaceIds;
     const seen = new Set(frontier);
     while (frontier.length) {
       const next: string[] = [];
