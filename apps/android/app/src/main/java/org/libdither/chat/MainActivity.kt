@@ -193,7 +193,10 @@ class MainActivity : Activity() {
         }
         w.webViewClient = Client()
         w.webChromeClient = Chrome()
-        w.setDownloadListener { url, _, _, _, _ -> openExternal(Uri.parse(url)) }
+        w.setDownloadListener { url, _, disposition, mime, _ ->
+            val u = Uri.parse(url)
+            if (HubFiles.isHubFile(u, hub)) HubFiles.open(this, u, null, mime, disposition) else openExternal(u)
+        }
         // Only the hub's origin gets the bridge: a page it links to never sees DitherAndroid at all.
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             val b = Bridge(this, origin)
@@ -221,8 +224,8 @@ class MainActivity : Activity() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val u = request.url
             if (Hub.sameOrigin(u, hub) && isAppPath(u.path)) return false
-            // Links out of the app, and the hub's own files (media, downloads), go to the system.
-            openExternal(u)
+            // The hub's own files are downloaded and offered to the apps that open them; links out of the app go to the system.
+            if (HubFiles.isHubFile(u, hub)) HubFiles.open(this@MainActivity, u, null, null) else openExternal(u)
             return true
         }
 
@@ -425,6 +428,13 @@ class MainActivity : Activity() {
     }
 
     fun changeHub() = showSetup(hub?.toString(), null)
+
+    /** A file from a message, with the name and type the page knows. Only the hub's own files. */
+    fun openFileForPage(url: String, name: String?, mime: String?) {
+        val h = hub ?: return
+        val u = runCatching { Uri.parse(java.net.URL(java.net.URL(h.toString()), url).toString()) }.getOrNull() ?: return
+        if (HubFiles.isHubFile(u, hub)) HubFiles.open(this, u, name, mime)
+    }
 
     fun registerPush(vapid: String) {
         val b = bridge ?: return

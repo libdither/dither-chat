@@ -1,5 +1,5 @@
 /** Every package's tests, one after another, as CI runs them: bun scripts/test-all.ts (or bun run test). */
-const packages = ['protocol', 'hub', 'web', 'adapter-discord', 'adapter-matrix', 'adapter-signal', 'adapter-whatsapp'];
+const packages = ['protocol', 'hub', 'web', 'adapter-discord', 'adapter-matrix', 'adapter-signal', 'adapter-whatsapp', 'desk'];
 const failed: string[] = [];
 for (const p of packages) {
   console.log(`\n== packages/${p}`);

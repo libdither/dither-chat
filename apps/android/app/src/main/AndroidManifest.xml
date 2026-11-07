@@ -50,6 +50,13 @@
             </intent-filter>
         </service>
 
+        <!-- Files from messages, handed to another app by the chooser (Files.kt). -->
+        <provider
+            android:name=".FilesProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <receiver
             android:name=".ReplyReceiver"
             android:exported="false" />

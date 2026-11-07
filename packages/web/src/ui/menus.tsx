@@ -7,12 +7,14 @@ import { NETWORK_META, showsInline } from '@dither-chat/protocol';
 import { fullTime } from '../format.ts';
 import { LEVEL_LABEL, authorName, convTitle, deepLink, directsOf, effectiveLevel, netName, plainBody, sumUnread, unreadOf } from '../model.ts';
 import { deviceRule, myDevice, setDeviceRule } from '../devices.ts';
+import { android } from '../android.ts';
+import { appsFor, desk, openFile, openLink } from '../desk.ts';
 import { pickerFor, quickReactions, reactionScope, reactorsFor, replacing, toggleReaction } from '../reactions.ts';
 import { api, canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, newMessage, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
 import { hasHistory, historyOf } from './MessageHistory.tsx';
 import { TierPicker, triageHeading } from './TierVote.tsx';
 import { Avatar } from './bits.tsx';
-import { copy, groups, menuPoint, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
+import { copy, groups, menuPoint, openMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { DEVICE_LEVELS } from './DeviceRules.tsx';
 import { forwarding } from './Forward.tsx';
 import { addLook } from './Reactions.tsx';
@@ -198,6 +200,27 @@ function save(url: string, name?: string | null) {
   a.remove();
 }
 
+/** Opens a file: through the desktop helper when it is on, else in a tab (a type the browser shows) or as a download. */
+export function openAttachment(a: Pick<P.AttachmentView, 'url' | 'name' | 'mime'>) {
+  if (android?.opensFiles()) return android.openFile(a);
+  void openFile(a).then((ok) => {
+    if (ok) return;
+    if (showsInline(a.mime)) window.open(a.url, '_blank', 'noopener');
+    else save(a.url, a.name);
+  });
+}
+
+/** The desktop's apps for the file's type, in a menu where the last one was. */
+async function openWith(a: P.AttachmentView) {
+  const apps = await appsFor(a.mime);
+  if (!apps) return toast({ kind: 'error', title: 'The desktop helper does not answer', body: 'Is dither-desk running? See Settings → Desktop helper.' });
+  if (!apps.length) return toast({ kind: 'info', title: `No app opens ${a.mime}`, body: 'Save it instead.' });
+  openMenu(
+    { x: menuPoint().x, y: menuPoint().y },
+    { label: 'Open with', head: <div class="cm-sheet-title">Open {a.name ?? 'file'} with</div>, items: [{ kind: 'label', label: 'Open with' }, ...apps.map((x, i) => ({ label: i === 0 ? `${x.name} (default)` : x.name, run: () => void openFile(a, x.id) }))] },
+  );
+}
+
 const absolute = (url: string) => new URL(url, location.href).href;
 
 export function attachmentMenu(a: P.AttachmentView, m: P.MessageView | null, images: ViewerImage[] = [], onReply?: () => void): MenuSpec {
@@ -206,8 +229,10 @@ export function attachmentMenu(a: P.AttachmentView, m: P.MessageView | null, ima
   const items = groups(
     [
       image && { label: 'Open Image', icon: 'image', run: () => (viewer.value = { images: images.length ? images : [{ url: a.url, name: a.name }], index: Math.max(0, images.findIndex((x) => x.url === a.url)) }) },
-      // A type the hub serves only as a download has nothing to open: Save does the same.
-      (image || showsInline(a.mime)) && { label: image ? 'Open Original' : `Open ${noun}`, icon: 'external', run: () => window.open(a.url, '_blank', 'noopener') },
+      // A type the hub serves only as a download has nothing to open here: Save does the same. The desktop helper
+      // can open any of them in the desktop's own apps.
+      (image || showsInline(a.mime) || (!image && (!!desk.value?.files || !!android?.opensFiles()))) && { label: image ? 'Open Original' : `Open ${noun}`, icon: 'external', run: () => (image ? window.open(a.url, '_blank', 'noopener') : openAttachment(a)) },
+      !!desk.value && !!a.mime && { label: 'Open With…', icon: 'external', run: () => void openWith(a) },
       image && { label: 'Copy Image', icon: 'copy', run: () => void copyImage(a.url) },
       { label: `Save ${noun}`, icon: 'download', run: () => save(a.url, a.name) },
       { label: 'Copy Link', icon: 'link', run: () => copy(absolute(a.url), 'Link copied') },
@@ -226,7 +251,7 @@ export function linkMenu(url: string, m: P.MessageView | null, onReply?: () => v
     label: 'Link actions',
     items: groups(
       [
-        { label: 'Open Link', icon: 'external', run: () => window.open(url, '_blank', 'noopener,noreferrer') },
+        { label: 'Open Link', icon: 'external', run: () => void openLink(url).then((ok) => ok || window.open(url, '_blank', 'noopener,noreferrer')) },
         { label: 'Copy Link', icon: 'link', run: () => copy(url, 'Link copied') },
       ],
       m ? messageEntries(m, onReply) : [],

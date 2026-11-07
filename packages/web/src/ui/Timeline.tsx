@@ -70,7 +70,9 @@ import { TypingBar } from './Typing.tsx';
 import { composerDone, composerTyped } from '../typing.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { ForwardCard, forwarding } from './Forward.tsx';
-import { attachmentMenu, conversationMenu, identityMenu, imageMenu, linkMenu, messageMenu, personMenu } from './menus.tsx';
+import { attachmentMenu, conversationMenu, identityMenu, imageMenu, linkMenu, messageMenu, openAttachment, personMenu } from './menus.tsx';
+import { desk } from '../desk.ts';
+import { android } from '../android.ts';
 import { counting, markPainted, rendered } from '../perf.ts';
 
 
@@ -426,7 +428,7 @@ function Attachments({ m }: { m: P.MessageView }) {
         if (a.kind === 'audio') return <audio class="att-audio" data-att={i} src={a.url} controls preload="metadata" />;
         return (
           // A type the hub won't show (HTML, SVG, ...) is a download: straight away, not through an empty tab.
-          <a class="att-file" data-att={i} href={a.url} target="_blank" rel="noreferrer" download={showsInline(a.mime) ? undefined : (a.name ?? true)}>
+          <a class="att-file" data-att={i} href={a.url} target="_blank" rel="noreferrer" download={showsInline(a.mime) ? undefined : (a.name ?? true)} onClick={(e) => (desk.value?.files || android?.opensFiles()) && (e.preventDefault(), openAttachment(a))}>
             <Icon name="file" size={22} />
             <span>
               <b>{a.name ?? 'file'}</b>

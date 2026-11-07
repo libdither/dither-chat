@@ -36,6 +36,9 @@
         "@dither-chat/protocol": "workspace:*",
       },
     },
+    "packages/desk": {
+      "name": "@dither-chat/desk",
+    },
     "packages/hub": {
       "name": "@dither-chat/hub",
       "dependencies": {
@@ -112,6 +115,8 @@
     "@dither-chat/adapter-signal": ["@dither-chat/adapter-signal@workspace:packages/adapter-signal"],
 
     "@dither-chat/adapter-whatsapp": ["@dither-chat/adapter-whatsapp@workspace:packages/adapter-whatsapp"],
+
+    "@dither-chat/desk": ["@dither-chat/desk@workspace:packages/desk"],
 
     "@dither-chat/hub": ["@dither-chat/hub@workspace:packages/hub"],
 

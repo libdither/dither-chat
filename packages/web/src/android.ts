@@ -81,6 +81,11 @@ export const android = port
       open(what: 'app' | 'appInfo' | 'notifications', pkg?: string) {
         android!.send({ t: 'open', what, pkg });
       },
+      /** True when this app downloads a hub file and offers it to the phone's apps (older builds do not). */
+      opensFiles: () => !!android!.info.value?.opens.includes('file'),
+      openFile(f: { url: string; name: string | null; mime: string | null }) {
+        android!.send({ t: 'file', url: f.url, name: f.name, mime: f.mime });
+      },
     }
   : null;
 

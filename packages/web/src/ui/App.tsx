@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { accountsNeedingYou, pingedCount, rootCommunity, totalUnread } from '../model.ts';
 import { api, back, connected, db, go, loaded, pending, prefs, previousRoute, readProgress, refresh, rev, route, unreachable, type Route } from '../state.ts';
 import { dropLayer, phone, pushLayer } from '../phone.ts';
+import { android } from '../android.ts';
 import { AccountPane, AccountsSidebar, AddAccount, addingAccount } from './Accounts.tsx';
 import { ConversationDetails, PersonDetails } from './Details.tsx';
 import { DirectoryPane } from './Directory.tsx';
@@ -118,6 +119,8 @@ function SettingsNav() {
           ['Message history', 'clock', 'set-history'],
           ['Adversarial features', 'eyeOff', 'set-adversarial'],
           ['Appearance', 'eye', 'set-appearance'],
+          // The phone app opens links and files in the phone's apps by itself.
+          ...(android ? [] : [['Desktop helper', 'monitor', 'set-desk']]),
         ].map(([t, i, id]) => (
           <button class="settings-nav-item" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
             <Icon name={i} size={16} /> {t}

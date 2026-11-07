@@ -4,6 +4,7 @@ import { App } from './ui/App.tsx';
 import { reportContent, reportFresh, startAndroid } from './android.ts';
 import { startActivity } from './activity.ts';
 import { startDevices } from './devices.ts';
+import { installDeskLinks } from './desk.ts';
 import { trackViewport } from './phone.ts';
 import { registerServiceWorker } from './pwa.ts';
 import { dropSnapshot, readSnapshot, restore } from './snapshot.ts';
@@ -19,6 +20,7 @@ trackViewport();
 startAndroid();
 startActivity();
 startDevices();
+installDeskLinks();
 
 let source = 'hub';
 let readMs = -1;

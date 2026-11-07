@@ -101,6 +101,30 @@ const M = {
 };
 const at = (i: P.IdentityFact) => `<@${i.nativeId}>`;
 
+// ------------------------------------------------------------------ files
+
+/** A one-page PDF with a line of text, built so its offsets are right. */
+function tinyPdf(text: string): Uint8Array {
+  const objs = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>', '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>'];
+  const stream = `BT /F1 16 Tf 30 100 Td (${text}) Tj ET`;
+  objs.push(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  let out = '%PDF-1.4\n';
+  const offsets = objs.map((o, i) => {
+    const at = out.length;
+    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+    return at;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`;
+  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return new TextEncoder().encode(out);
+}
+
+/** Demo attachments fetched through fetchMedia, so they are served at /media/ as a network's files are. */
+const DEMO_FILES: Record<string, { mime: string; bytes: Uint8Array }> = {
+  'demo:local-first-chat-sync.pdf': { mime: 'application/pdf', bytes: tinyPdf('Local-first chat sync (demo)') },
+};
+
 // ------------------------------------------------------------------ pictures
 
 const svg = (w: number, hgt: number, body: string) =>
@@ -619,7 +643,7 @@ const CONVS: DemoConv[] = [
     fact: { nativeId: room('dm-alice', 'matrix.org'), shape: 'direct', participants: [M.self.nativeId, M.alice.nativeId], encrypted: true },
     msgs: [
       [3 * DAY + 100, M.alice, 'sending you the paper on CRDT-based chat sync I mentioned'],
-      [3 * DAY + 99, M.alice, 'local-first-chat-sync.pdf', { kind: 'media', att: [{ kind: 'file', mime: 'application/pdf', name: 'local-first-chat-sync.pdf', size: 2_400_000, url: 'data:application/pdf;base64,' }] }],
+      [3 * DAY + 99, M.alice, 'local-first-chat-sync.pdf', { kind: 'media', att: [{ kind: 'file', mime: 'application/pdf', name: 'local-first-chat-sync.pdf', size: DEMO_FILES['demo:local-first-chat-sync.pdf'].bytes.length, url: 'demo:local-first-chat-sync.pdf' }] }],
       [3 * DAY + 60, M.self, 'thanks! reading it tonight'],
     ],
   },
@@ -1494,9 +1518,13 @@ class DemoAdapter implements InprocAdapter {
         if (this.typingLog.length > 50) this.typingLog.shift();
         reply();
         break;
-      case 'fetchMedia':
-        this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'demo media is inline' });
+      case 'fetchMedia': {
+        // Most demo media is inline (data:); a file under demo: goes through the hub's /media/ like a network's would.
+        const f = DEMO_FILES[cmd.url];
+        if (f) reply({ mime: f.mime, base64: Buffer.from(f.bytes).toString('base64') });
+        else this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'demo media is inline' });
         break;
+      }
       case 'action':
         // say: a live message from someone else, for scripts/verify-perf.ts. Native ids of the conversation and author.
         if (cmd.action === 'say') {
