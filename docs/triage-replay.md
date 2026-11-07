@@ -145,3 +145,9 @@ At 0.03 the votes agree best and recall holds; above it, recall starts to drop. 
 are missing, nearly all the rest are positive, and the model can only learn to notify more. With 12 votes and 37
 reply events this rules out the extremes. It does not fine-tune anything. Run it again after two more weeks of
 `triage_input`, and with exploration's labels.
+
+That table was chosen and scored on the same days, so its best row looks better than it is. Since 2026-11-06
+`--tune` splits the test days in two: weights are chosen on the first half (validation) and reported on the second
+(holdout). Run on 2026-11-06 (7 test days, 19 votes): the first four days hold only 2 votes, so the validation choice
+(scale 0.5, nothing 0.1) is noise and gets 7 of 17 holdout votes right, where nothing 0.03 gets 10 or 11 of 17 at
+about 44 alerts a day. 0.03 stays. The split will mean something once the validation half has a few dozen votes.

@@ -357,6 +357,11 @@ function covered(test: ReplayExample[], sounded: boolean[], events: number[]): b
   });
 }
 
+/** Reply events: indices of messages you answered within 15 minutes when you were not already there. */
+function replyEvents(es: ReplayExample[]): number[] {
+  return es.map((e, i) => (e.outcome.answered && e.outcome.nextOwn !== null && e.outcome.nextOwn <= QUICK && !there(e.outcome) ? i : -1)).filter((i) => i >= 0);
+}
+
 function metrics(test: ReplayExample[], run: Run, nDays: number, events: number[]) {
   const n = test.length;
   const notified = run.levels.filter((l) => l === 'push' || l === 'quiet').length;
@@ -474,8 +479,9 @@ async function main() {
   // The first day has nothing before it to learn from; the last may be partial, and is kept.
   const testDays = allDays.slice(1);
   const test = examples.filter((e) => testDays.includes(e.day));
-  const nDays = testDays.reduce((n, d) => n + (Math.min(dataEnd, dayStart(d + 1)) - dayStart(d)) / DAY, 0) || 1;
-  const events = test.map((e, i) => (e.outcome.answered && e.outcome.nextOwn !== null && e.outcome.nextOwn <= QUICK && !there(e.outcome) ? i : -1)).filter((i) => i >= 0);
+  const spanOf = (ds: number[]) => ds.reduce((n, d) => n + (Math.min(dataEnd, dayStart(d + 1)) - dayStart(d)) / DAY, 0) || 1;
+  const nDays = spanOf(testDays);
+  const events = replyEvents(test);
 
   const runs: Run[] = [];
   const voteChecks: Record<string, { n: number; right: number; logLoss: number }> = {};
@@ -534,7 +540,7 @@ async function main() {
   }
 
   let tuning: unknown = null;
-  if (flag('tune')) tuning = tune(examples, testDays, test, events, nDays, budget);
+  if (flag('tune')) tuning = tune(examples, testDays, test, spanOf, budget);
 
   const summary = {
     generated: new Date().toISOString(),
@@ -582,42 +588,62 @@ function featureSummary(es: ReplayExample[]) {
 /**
  * The implicit labels' weights against held-out votes: each candidate set of weights trains P1+labels day by day, and
  * is scored on the votes given that day. With a dozen votes this can only rule out the wildly wrong.
+ *
+ * The test days are split in two: the weights are chosen on the first half (validation) and reported on the second
+ * (holdout), so the number quoted for the chosen weights is not the one they were chosen by. `all` is both halves.
  */
-function tune(examples: ReplayExample[], testDays: number[], test: ReplayExample[], events: number[], nDays: number, budget: number) {
+function tune(examples: ReplayExample[], testDays: number[], test: ReplayExample[], spanOf: (days: number[]) => number, budget: number) {
   const ctx0 = fitContext(examples);
+  const half = Math.ceil(testDays.length / 2);
+  const parts = { validation: testDays.slice(0, half), holdout: testDays.slice(half) };
   const grid: { name: string; w: LabelWeights }[] = [];
   for (const scale of [0.5, 1, 2])
     for (const nothing of [0, 0.01, 0.03, 0.1, 0.3]) {
       const w = Object.fromEntries(Object.entries(LABEL_WEIGHTS).map(([k, v]) => [k, k === 'nothing' ? nothing : v * scale])) as unknown as LabelWeights;
       grid.push({ name: `scale ${scale}, nothing ${nothing}`, w });
     }
-  return grid.map(({ name, w }) => {
+  const rows = grid.map(({ name, w }) => {
     const p = learned('tune', name, (ctx) => [...ctx.votes(ctx.cut, INTERACTION), ...ctx.implicit(ctx.cut, w, INTERACTION)], INTERACTION);
-    let n = 0;
-    let right = 0;
-    let loss = 0;
-    const levels: Level[] = [];
-    const probs: P.TriageProbs[] = [];
+    const decided = new Map<ReplayExample, { level: Level; probs: P.TriageProbs }>();
+    const voted = new Map<number, { n: number; right: number; loss: number }>();
     for (const d of testDays) {
       p.fit!({ ...ctx0, cut: dayStart(d) });
       for (const e of test) if (e.day === d) {
         const x = p.decide(e);
-        levels.push(x.level);
-        probs.push(x.probs!);
+        decided.set(e, { level: x.level, probs: x.probs! });
       }
+      const v = { n: 0, right: 0, loss: 0 };
       for (const e of examples) {
         if (!e.vote || dayOf(e.vote.at) !== d) continue;
         const x = p.decide(e);
-        n++;
-        if (x.level === e.vote.level) right++;
+        v.n++;
+        if (x.level === e.vote.level) v.right++;
         const q = Math.min(1 - 1e-6, Math.max(1e-6, x.probs!.ping));
-        loss -= e.vote.level === 'push' ? Math.log(q) : Math.log(1 - q);
+        v.loss -= e.vote.level === 'push' ? Math.log(q) : Math.log(1 - q);
       }
+      voted.set(d, v);
     }
-    const run: Run = { policy: 'tune', coalesce: true, levels, probs, alert: alerts(test, levels, true) };
-    const m = metrics(test, run, nDays, events);
-    return { weights: name, votes: n, right, pingLogLoss: n ? r(loss / n) : null, alertsPerDay: m.alertsPerDay, recall: m.recall, precisionReply: m.precisionReply, atBudget: atBudget(test, run, budget, nDays, events) };
+    const score = (days: number[]) => {
+      const sub = test.filter((e) => days.includes(e.day));
+      const levels = sub.map((e) => decided.get(e)!.level);
+      const probs = sub.map((e) => decided.get(e)!.probs);
+      const run: Run = { policy: 'tune', coalesce: true, levels, probs, alert: alerts(sub, levels, true) };
+      const span = spanOf(days);
+      const events = replyEvents(sub);
+      const m = metrics(sub, run, span, events);
+      const v = days.reduce((a, d) => ({ n: a.n + (voted.get(d)?.n ?? 0), right: a.right + (voted.get(d)?.right ?? 0), loss: a.loss + (voted.get(d)?.loss ?? 0) }), { n: 0, right: 0, loss: 0 });
+      return { days: days.length, votes: v.n, right: v.right, pingLogLoss: v.n ? r(v.loss / v.n) : null, alertsPerDay: m.alertsPerDay, recall: m.recall, precisionReply: m.precisionReply, atBudget: atBudget(sub, run, budget, span, events) };
+    };
+    return { weights: name, all: score(testDays), validation: score(parts.validation), holdout: score(parts.holdout) };
   });
+  // Chosen on validation only: most votes right, then the lower ping log loss, then recall at the budget.
+  const key = (x: (typeof rows)[number]['validation']) => [x.right, -(x.pingLogLoss ?? Infinity), x.atBudget?.recall ?? -1];
+  const better = (a: number[], b: number[]) => {
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] > b[i];
+    return false;
+  };
+  const chosen = rows.reduce((best, x) => (better(key(x.validation), key(best.validation)) ? x : best), rows[0]);
+  return { split: { validationDays: parts.validation.length, holdoutDays: parts.holdout.length }, chosen: chosen?.weights ?? null, rows };
 }
 
 function markdown(s: any): string {
@@ -652,9 +678,15 @@ function markdown(s: any): string {
   L.push('', `Labels from what you did: ${s.labels.labelled} messages. Rules: ${Object.entries(s.labels.rules).map(([k, v]) => `${k} ${v}`).join(', ')}. By chance (positive/negative): ${Object.entries<any>(s.labels.heads).map(([h, v]) => `${h} ${v.pos}/${v.neg}`).join(', ')}.`);
   L.push('', `Interaction features on test messages (share non-zero, mean): ${Object.entries<any>(s.features).map(([k, v]) => `${k} ${r(v.nonzero / s.window.testMessages, 3)}, ${v.mean}`).join('; ')}.`);
   if (s.tuning) {
-    L.push('', 'Tuning the implicit-label weights (P2 shape), scored on held-out votes:', '');
-    L.push('| Weights | Votes | Right | Ping log loss | Alerts/day | Recall | Precision | Recall at budget |', '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
-    for (const t of s.tuning) L.push(`| ${t.weights} | ${t.votes} | ${t.right} | ${t.pingLogLoss ?? '–'} | ${t.alertsPerDay} | ${t.recall ?? '–'} | ${t.precisionReply ?? '–'} | ${t.atBudget?.recall ?? '–'} |`);
+    const t = s.tuning;
+    L.push('', `Tuning the implicit-label weights (P2 shape): chosen on the first ${t.split.validationDays} test days (validation), reported on the last ${t.split.holdoutDays} (holdout). Chosen: **${t.chosen}**.`, '');
+    L.push('| Weights | Validation: votes right | Ping log loss | Recall at budget | Holdout: votes right | Alerts/day | Recall | Precision | Recall at budget |', '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
+    const cell = (x: any) => x ?? '–';
+    for (const row of t.rows) {
+      const v = row.validation;
+      const h = row.holdout;
+      L.push(`| ${row.weights === t.chosen ? `**${row.weights}**` : row.weights} | ${v.right} / ${v.votes} | ${cell(v.pingLogLoss)} | ${cell(v.atBudget?.recall)} | ${h.right} / ${h.votes} | ${h.alertsPerDay} | ${cell(h.recall)} | ${cell(h.precisionReply)} | ${cell(h.atBudget?.recall)} |`);
+    }
   }
   return L.join('\n') + '\n';
 }
