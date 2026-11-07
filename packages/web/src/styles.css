@@ -7646,6 +7646,93 @@ html[data-theme='light'] .acc-dot {
   letter-spacing: 0;
   font-weight: 500;
 }
+/* The Status section: a card that opens (StatusCard.tsx). */
+.pf-status-card > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.pf-status-card > summary::-webkit-details-marker {
+  display: none;
+}
+.pf-status-card > summary > h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  margin: 0;
+  min-width: 0;
+}
+.pf-status-peek {
+  display: flex;
+  margin-left: auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-dim);
+}
+.pf-status-peek-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pf-status-chevron {
+  flex: none;
+  margin-left: auto;
+  transition: transform 0.15s;
+}
+.pf-status-card:not([open]) .pf-status-peek + .pf-status-chevron {
+  margin-left: 0;
+}
+.pf-status-card[open] .pf-status-chevron {
+  transform: rotate(180deg);
+}
+.pf-status-card[open] .pf-status-peek {
+  display: none;
+}
+.pf-status-card:not([open]) {
+  gap: 0;
+}
+.pf-status-now {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pf-status-now .pf-status {
+  margin: 0;
+  flex-wrap: wrap;
+}
+/* Rows stay on one line: the words wrap, the time stays at the end. */
+.pf-status-card .hist-item {
+  flex-wrap: nowrap;
+}
+.pf-status-card .hist-item > span:not([class]) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.presence-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+.presence-dot.online {
+  background: var(--good);
+}
+.presence-dot.idle {
+  background: var(--warn);
+}
+.presence-dot.dnd {
+  background: var(--danger);
+}
+.presence-dot.offline {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--text-faint);
+}
 .pf-asking {
   color: var(--text-faint);
   animation: pf-pulse 1.4s ease-in-out infinite;

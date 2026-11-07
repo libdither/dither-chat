@@ -1,7 +1,7 @@
 # Message history: what changes, and what the networks take back
 
 The hub keeps what the networks let go of or rewrite, each switchable in Settings → Message history (or, for the
-first two and statuses, Adversarial features), everywhere or per network or account:
+first two, statuses and presence, Adversarial features), everywhere or per network or account:
 
 | | What is kept | Where it shows |
 |---|---|---|
@@ -11,25 +11,26 @@ first two and statuses, Adversarial features), everywhere or per network or acco
 | **Reactions taken back** | who took back which reaction; reactions a moderator cleared | Message History in the message's menu |
 | **Read receipts** | who got, read and played your messages, and when (Signal, WhatsApp, Matrix) | ticks beside your messages; click for who |
 | **Changes** (one switch) | names, descriptions, pictures, settings, members and roles of conversations and spaces; pins; people's names, usernames, pictures, bios, pronouns and banners | History on the profile page (docs/profile.md); a pin mark on pinned messages |
-| **Statuses** (adversarial) | each change to people's custom statuses (the About on Signal and WhatsApp); the current one is kept either way | History on the profile page |
+| **Statuses** (adversarial) | each change to people's custom statuses (the About on Signal and WhatsApp); the current one is kept either way | the Status section of the profile page |
+| **Presence** (adversarial) | each time people you follow come online, go idle or do not disturb, or go offline, and on which devices; nothing at all while off | the Status section of the profile page |
 
 "Deleted and disappeared messages in chats" picks a collapsed line or nothing at all (they are still kept, and come
 back with the setting). Forget what was kept erases each kind for good.
 
-Code: `packages/hub/src/store.ts` (`gone`, `logChange`, `logChanges`, `messageEvent`, `receipt`, `setStatus`, `keeps`,
+Code: `packages/hub/src/store.ts` (`gone`, `logChange`, `logChanges`, `messageEvent`, `receipt`, `setStatus`, `setPresence`, `keeps`,
 `changes`, `messageHistory`, `eraseKept`), `about.ts` (settings), `people.ts` (profiles); adapters emit `pin`, `role`,
-`customStatus` and `receipt` (packages/protocol/src/adapter.ts); `packages/web/src/history.ts`,
-`ui/HistorySettings.tsx`, `ui/HistoryCard.tsx`, `ui/MessageHistory.tsx`, `ui/Timeline.tsx` (`Gone`, `Edited`, `Marks`).
+`customStatus`, `presence` and `receipt` (packages/protocol/src/adapter.ts); `packages/web/src/history.ts`,
+`ui/HistorySettings.tsx`, `ui/HistoryCard.tsx`, `ui/StatusCard.tsx`, `ui/MessageHistory.tsx`, `ui/Timeline.tsx` (`Gone`, `Edited`, `Marks`).
 
 ## Adversarial features
 
 Keeping what others deleted, keeping what a disappearing timer was meant to erase, and logging people's statuses
-over time all work against what the people on the other end expect. They are off by default (`adversarial: false`),
+and presence over time all work against what the people on the other end expect. They are off by default (`adversarial: false`),
 and the hub does none of them, whatever their own switches or per-source overrides say, until Settings →
 Adversarial features → "Show adversarial features" has been through its warning: a popup saying why, whose "Yes, I
 really want to do this" stays greyed for 15 seconds, and ticking it shows the switches (each still off). "Hide
 adversarial features" turns them all off again. While hidden, what was kept stays in the database but out of sight:
-kept deleted messages are served empty, status history is left out of History. Message history → Forget erases it.
+kept deleted messages are served empty, status and presence history are left out of the profile. Message history → Forget erases it.
 
 `ui/Adversarial.tsx`; `ADVERSARIAL_KEEPS` in packages/protocol. A demo hub started with `--adversarial` shows them
 from the start (scripts/verify-history.ts); scripts/verify-adversarial.ts checks the gate.
@@ -46,7 +47,8 @@ Three tables, by what they hang off:
 - **`receipt`** (message_id → message, ON DELETE CASCADE; key message, identity, state): the first time each person
   got, read or played each of your messages. Others' messages are not kept: nobody's receipts but yours are news.
 - **`change_log`** for places and people (`target_kind` conversation, space or identity): `field`, `old` and `new`
-  as JSON (a setting keeps its own type: seconds, true or false; a status is `{ text, emoji }`; a role
+  as JSON (a setting keeps its own type: seconds, true or false; a status is `{ text, emoji }`; presence
+  `{ state, devices? }`; a role
   `{ identityId, role, color }`; a member an identity id), `actor_id` where the network says who, `at`, `account_id`.
   Indexed by target, field and time.
 - **`identity.status`**: the custom status (or About) as last heard, `{ text?, emoji?, at }`; `{ at }` alone is
@@ -57,7 +59,11 @@ Rules that keep it honest and small:
 - The same change seen by a second account within ten minutes is one change (`change_log` and `message_event`).
 - A change straight back within a day cancels the first (a Discord name flipping between a server nickname and the
   global one), except for statuses, members and roles, where going back is the story.
-- Statuses keep each person's newest 100; strangers (identities with no person) keep their newest 20 names and pictures.
+- Presence is a `change_log` row (field `presence`) only while adversarial features are shown and presence is on
+  (and changes are kept, as for statuses); otherwise the event is dropped. The newest row is how they are now, so a
+  change is anything else: the same heard from a second account, or again after a restart, is nothing new. The first
+  heard is a row from nothing. Changes straight back are kept (going back is the story).
+- Statuses keep each person's newest 100, presence each identity's newest 1000; strangers (identities with no person) keep their newest 20 names and pictures.
 - The first change log (text values, edits mixed in) is migrated on start: values to JSON, edits into
   `message_event`.
 
@@ -97,4 +103,4 @@ receipts.
 ## Not logged
 
 A server's own membership (joins and leaves in big servers, which Discord does not send to user clients without the
-member list open), channels made, renamed or removed in a server, and presence (online, idle, offline).
+member list open), channels made, renamed or removed in a server. Presence only as above, and only of people the account follows.

@@ -302,4 +302,41 @@ describe('adversarial features', () => {
     expect(store.eraseKept('statuses')).toBeGreaterThan(0);
     expect(changes('identity', dc, 'ann').some((c) => c.field === 'status')).toBe(false);
   });
+
+  const presence = () => changes('identity', dc, 'bob').filter((c) => c.field === 'presence');
+  const heard = (state: P.PresenceView['state'], ts: number, devices?: P.PresenceView['devices'], acc = dc) => store.ingest(acc, { t: 'presence', who: 'bob', state, devices, ts });
+
+  test('presence is kept only with adversarial features shown and presence on', () => {
+    store.setRetention({ ...DEFAULT_RETENTION, presence: true });
+    heard('online', 1000);
+    store.setRetention({ ...ADV, presence: false });
+    heard('idle', 2000);
+    expect(store.one('SELECT COUNT(*) AS n FROM change_log WHERE field = ?', 'presence')).toEqual({ n: 0 });
+  });
+
+  test('presence over time: the first heard, then each change; the same again, or from another account, is nothing new', () => {
+    store.setRetention({ ...ADV, presence: true });
+    const dc2 = store.createAccount({ network: 'discord', label: 'd2', color: '#222', adapter: 'discord' });
+    heard('online', 1000, ['web', 'desktop', 'desktop']);
+    heard('online', 1100, ['desktop', 'web'], dc2);
+    heard('idle', 2000, ['desktop']);
+    heard('idle', 2100, ['desktop'], dc2);
+    heard('offline', 3000, ['mobile']);
+    expect(presence().map((c) => [c.old, c.new, c.at])).toEqual([
+      [{ state: 'idle', devices: ['desktop'] }, { state: 'offline' }, 3000],
+      [{ state: 'online', devices: ['desktop', 'web'] }, { state: 'idle', devices: ['desktop'] }, 2000],
+      [null, { state: 'online', devices: ['desktop', 'web'] }, 1000],
+    ]);
+    // Only some fields, or all but some.
+    const bob = [{ kind: 'identity' as const, id: hubId('idn', 'discord', 'bob') }];
+    expect(store.changes(bob, 100, { fields: ['presence'] }).length).toBe(3);
+    expect(store.changes(bob, 100, { except: ['presence'] }).some((c) => c.field === 'presence')).toBe(false);
+    // Hidden, then forgotten.
+    store.setRetention({ ...ADV, presence: true, adversarial: false });
+    expect(presence()).toEqual([]);
+    store.setRetention({ ...ADV, presence: true });
+    expect(store.eraseKept('presence')).toBe(3);
+    expect(presence()).toEqual([]);
+    store.setRetention(ADV);
+  });
 });

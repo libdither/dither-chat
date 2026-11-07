@@ -37,6 +37,10 @@ Left:
   from them. Discord's mutual servers count even where they never wrote; the rest comes from messages and member
   lists the hub has.
 - **Recent messages**: each with the place's picture (the server's icon for a channel), the place, and when.
+- **Status**, collapsed until opened (ui/StatusCard.tsx): the current status and since when, and with adversarial
+  features shown (docs/history.md) the logged status history and presence (now, and each stretch with how long it
+  lasted). Absent when there is no status and nothing logged.
+- **History**: what changed about them, except statuses and presence (ui/HistoryCard.tsx).
 
 Right:
 - **Mutual friends** (Discord), or on your own page **Friends**: your Discord friends, Signal and WhatsApp

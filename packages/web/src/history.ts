@@ -52,9 +52,18 @@ export function setSource(key: string, what: keyof P.KeepSettings, on: boolean |
   return saveRetention({ sources });
 }
 
-export async function eraseKept(what: 'deleted' | 'disappeared' | 'edits' | 'reactions' | 'receipts' | 'changes' | 'statuses') {
+export async function eraseKept(what: 'deleted' | 'disappeared' | 'edits' | 'reactions' | 'receipts' | 'changes' | 'statuses' | 'presence') {
   const r = await api<{ erased: number }>('/api/retention/erase', { body: { what } });
   toast({ kind: 'info', title: r.erased ? `Forgot ${r.erased}` : 'Nothing to forget', body: '' }, 2500);
+}
+
+const PRESENCE_LABEL: Record<P.PresenceView['state'], string> = { online: 'Online', idle: 'Idle', dnd: 'Do not disturb', offline: 'Offline' };
+
+/** A logged presence in words: "Online on desktop and mobile". */
+export function presenceText(p: P.PresenceView | null | undefined): string {
+  if (!p) return 'Nothing';
+  const on = p.devices?.length ? ` on ${p.devices.join(' and ')}` : '';
+  return `${PRESENCE_LABEL[p.state] ?? p.state}${on}`;
 }
 
 export async function loadChanges(path: string): Promise<P.ChangeView[]> {

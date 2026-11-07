@@ -1,6 +1,6 @@
 /**
  * Settings → Adversarial features (docs/history.md): keeping what others deleted or set to disappear, and logging
- * people's statuses over time. Off, and out of sight, until you have read why they are here behind a warning: a
+ * people's statuses and presence over time. Off, and out of sight, until you have read why they are here behind a warning: a
  * popup whose "Yes, I really want to do this" stays greyed for 15 seconds. Hiding them again turns them all off.
  */
 import { ADVERSARIAL_KEEPS } from '@dither-chat/protocol';
@@ -26,7 +26,7 @@ export function AdversarialSettings() {
         .map(([k, v]) => [k, Object.fromEntries(Object.entries(v).filter(([f]) => !(ADVERSARIAL_KEEPS as readonly string[]).includes(f)))] as const)
         .filter(([, v]) => Object.keys(v).length),
     );
-    void saveRetention({ adversarial: false, deleted: false, disappearing: false, statuses: false, sources });
+    void saveRetention({ adversarial: false, deleted: false, disappearing: false, statuses: false, presence: false, sources });
   };
   return (
     <section class={`set-block adversarial ${r.adversarial ? 'open' : ''}`} id="set-adversarial">
@@ -54,7 +54,17 @@ export function AdversarialSettings() {
             <input type="checkbox" checked={r.statuses} onChange={(e) => void saveRetention({ statuses: (e.target as HTMLInputElement).checked })} />
             <span>
               <b>Log statuses</b>
-              <small>Each change to people's custom statuses (or About, on Signal and WhatsApp), with when. Shown under History on their profile. Their current status shows either way.</small>
+              <small>Each change to people's custom statuses (or About, on Signal and WhatsApp), with when. Shown in the Status section of their profile. Their current status shows either way.</small>
+            </span>
+          </label>
+          <label class="toggle-row">
+            <input type="checkbox" checked={r.presence} onChange={(e) => void saveRetention({ presence: (e.target as HTMLInputElement).checked })} />
+            <span>
+              <b>Log presence (online/idle/offline)</b>
+              <small>
+                Each time people you follow (friends, contacts, people you have a DM with) come online, go idle or do not disturb, or go offline, and on
+                which devices, where the network says. Shown in the Status section of their profile. Nothing of it is kept while this is off.
+              </small>
             </span>
           </label>
 
@@ -110,6 +120,10 @@ function Warning({ onClose }: { onClose: () => void }) {
           <li>
             <b>Status history.</b> A log of someone's statuses over time says where they were, how they felt and when they were around. That is
             surveillance, however idle the reason.
+          </li>
+          <li>
+            <b>Presence history.</b> A log of when someone comes online, goes idle and goes offline, and on which device, shows when they wake,
+            sleep, work and are with their phone. It is a finer-grained record of their day than they ever chose to share.
           </li>
         </ul>
         <p>

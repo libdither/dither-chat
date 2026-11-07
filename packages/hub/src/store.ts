@@ -130,6 +130,8 @@ export function editDistance(a: string, b: string, max: number): number {
 
 /** Fields that may go from nothing to something and back (Store.logChanges). */
 const SETTABLE = new Set(['topic', 'bio', 'status', 'pronouns']);
+const PRESENCE_STATES = new Set<string>(['online', 'idle', 'dnd', 'offline']);
+const PRESENCE_DEVICES = new Set<string>(['desktop', 'mobile', 'web']);
 
 /** Bump when a migration step changes without schema.sql changing, so the database is copied before it runs. */
 const MIGRATIONS = 1;
@@ -519,6 +521,9 @@ export class Store {
         }
         case 'customStatus':
           this.setStatus(this.ensureIdentity(acc, ev.who), ev.text || ev.emoji ? { text: ev.text, emoji: ev.emoji } : null, acc.id, ev.ts);
+          break;
+        case 'presence':
+          if (this.logsPresence()) this.setPresence(this.ensureIdentity(acc, ev.who), ev.state, ev.devices, acc.id, ev.ts);
           break;
         case 'receipt':
           this.receipt(acc, ev);
@@ -1414,6 +1419,30 @@ export class Store {
     if (heard && r.adversarial && r.statuses) this.logChange('identity', iid, 'status', was, now, accountId, at);
   }
 
+  /** Whether presence is logged: an adversarial feature, like statuses over time, and part of the change log. */
+  logsPresence(): boolean {
+    const r = this.retention();
+    return r.adversarial && r.presence && r.changes;
+  }
+
+  /**
+   * Someone's presence as heard now, logged only while logsPresence(); otherwise the hub keeps nothing of it. The
+   * newest logged row is how they are now, so a change is anything else, and the same heard from a second account
+   * (or again after a restart) is nothing new. The first heard is logged too, as from nothing.
+   */
+  setPresence(iid: string, state: P.PresenceView['state'], devices: P.PresenceView['devices'], accountId: string | null, ts?: number) {
+    if (!this.logsPresence() || !PRESENCE_STATES.has(state)) return;
+    const on = [...new Set((devices ?? []).filter((d) => PRESENCE_DEVICES.has(d)))].sort();
+    const now = JSON.stringify({ state, ...(on.length && state !== 'offline' ? { devices: on } : {}) });
+    const last = this.db.query(`SELECT new FROM change_log WHERE target_kind = 'identity' AND target_id = ? AND field = 'presence' ORDER BY at DESC, id DESC LIMIT 1`).get(iid) as Row | null;
+    if (last?.new === now) return;
+    this.db
+      .query(`INSERT INTO change_log (target_kind, target_id, field, old, new, at, account_id) VALUES ('identity', ?, 'presence', ?, ?, ?, ?)`)
+      .run(iid, last?.new ?? null, now, ts ?? Date.now(), accountId);
+    // Presence changes many times a day: each person's newest 1000.
+    this.db.query(`DELETE FROM change_log WHERE id IN (SELECT id FROM change_log WHERE target_kind = 'identity' AND target_id = ? AND field = 'presence' ORDER BY at DESC, id DESC LIMIT -1 OFFSET 1000)`).run(iid);
+  }
+
   /** Something that happened to a message. The same from a second account within ten minutes is one. */
   messageEvent(messageId: string, kind: P.MessageEventView['kind'], data: unknown, actorId: string | null, accountId: string | null, at = Date.now()) {
     const d = data === undefined ? null : JSON.stringify(data);
@@ -1442,13 +1471,17 @@ export class Store {
     this.dirty.conversations.add(m.conversation_id);
   }
 
-  /** What changed about these, newest first. */
-  changes(targets: { kind: P.ChangeView['target']['kind']; id: string }[], limit = 100): P.ChangeView[] {
+  /** What changed about these, newest first. `fields`: only these; `except`: not these. */
+  changes(targets: { kind: P.ChangeView['target']['kind']; id: string }[], limit = 100, pick: { fields?: string[]; except?: string[] } = {}): P.ChangeView[] {
     if (!targets.length) return [];
     const where = targets.map(() => '(target_kind = ? AND target_id = ?)').join(' OR ');
-    // Statuses over time only with adversarial features shown.
-    const statuses = this.retention().adversarial ? '' : ` AND NOT (target_kind = 'identity' AND field = 'status')`;
-    const rows = this.db.query(`SELECT * FROM change_log WHERE (${where})${statuses} ORDER BY at DESC, id DESC LIMIT ?`).all(...targets.flatMap((t) => [t.kind, t.id]), limit) as Row[];
+    // Statuses and presence over time only with adversarial features shown.
+    const watched = this.retention().adversarial ? '' : ` AND NOT (target_kind = 'identity' AND field IN ('status', 'presence'))`;
+    const only = pick.fields?.length ? ` AND field IN (${pick.fields.map(() => '?').join(', ')})` : '';
+    const not = pick.except?.length ? ` AND field NOT IN (${pick.except.map(() => '?').join(', ')})` : '';
+    const rows = this.db
+      .query(`SELECT * FROM change_log WHERE (${where})${watched}${only}${not} ORDER BY at DESC, id DESC LIMIT ?`)
+      .all(...targets.flatMap((t) => [t.kind, t.id]), ...(pick.fields ?? []), ...(pick.except ?? []), limit) as Row[];
     const val = (r: Row, v: string | null): unknown => {
       const x = json<unknown>(v, null);
       return (r.field === 'avatar' || r.field === 'banner') && typeof x === 'string' ? this.media(x, r.account_id) : x;
@@ -1484,9 +1517,10 @@ export class Store {
     return { versions, events, receipts, identities: this.identitiesByIds(ids) };
   }
 
-  /** Forget what was kept: deleted or disappeared messages' words and files, edits, reactions taken back, receipts, or the change log. */
-  eraseKept(what: 'deleted' | 'disappeared' | 'edits' | 'reactions' | 'receipts' | 'changes' | 'statuses'): number {
-    if (what === 'statuses') return this.db.query(`DELETE FROM change_log WHERE target_kind = 'identity' AND field = 'status'`).run().changes;
+  /** Forget what was kept: deleted or disappeared messages' words and files, edits, reactions taken back, receipts, the change log, or logged statuses or presence. */
+  eraseKept(what: 'deleted' | 'disappeared' | 'edits' | 'reactions' | 'receipts' | 'changes' | 'statuses' | 'presence'): number {
+    if (what === 'statuses' || what === 'presence')
+      return this.db.query(`DELETE FROM change_log WHERE target_kind = 'identity' AND field = ?`).run(what === 'statuses' ? 'status' : 'presence').changes;
     const touched = (sql: string) => (this.db.query(sql).all() as Row[]).forEach((r) => this.dirty.messages.set(r.message_id, true));
     if (what === 'edits' || what === 'reactions') {
       const kind = what === 'edits' ? 'edit' : 'unreact';

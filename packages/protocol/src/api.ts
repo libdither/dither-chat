@@ -814,9 +814,11 @@ export interface RetentionSettings extends KeepSettings {
   changes: boolean;
   /** People's statuses over time (an adversarial feature). */
   statuses: boolean;
+  /** People's presence (online, idle, do not disturb, offline) over time, as it changes. Adversarial. */
+  presence: boolean;
   /**
    * Adversarial features shown, after the warning (docs/history.md): keeping what others deleted or set to disappear,
-   * and logging statuses. Until then the hub does none of them, whatever their switches say.
+   * and logging statuses and presence. Until then the hub does none of them, whatever their switches say.
    */
   adversarial: boolean;
   /** Kept deleted and disappeared messages: a collapsed row in the timeline, or not shown at all. */
@@ -833,10 +835,18 @@ export const DEFAULT_RETENTION: RetentionSettings = {
   receipts: true,
   changes: true,
   statuses: false,
+  presence: false,
   adversarial: false,
   show: 'collapsed',
   sources: {},
 };
+
+/** Someone's presence, as a presence change's `old` and `new` (ChangeView, field "presence"). */
+export interface PresenceView {
+  state: 'online' | 'idle' | 'dnd' | 'offline';
+  /** Where they are on, when the network says. */
+  devices?: ('desktop' | 'mobile' | 'web')[];
+}
 
 /** The kinds kept only with adversarial features shown. */
 export const ADVERSARIAL_KEEPS = ['deleted', 'disappearing'] as const satisfies readonly (keyof KeepSettings)[];
@@ -844,12 +854,12 @@ export const ADVERSARIAL_KEEPS = ['deleted', 'disappearing'] as const satisfies 
 /**
  * One thing that changed about a place or a person. `old` and `new` are the values themselves: text for names and
  * descriptions, a media path for pictures, a setting's own type (seconds, true or false, "admins"), `{ text, emoji }`
- * for a status, an identity id for a member, `{ identityId, role, color }` for a role. null: nothing.
+ * for a status, `{ state, devices }` for presence, an identity id for a member, `{ identityId, role, color }` for a role. null: nothing.
  */
 export interface ChangeView {
   id: number;
   target: { kind: 'conversation' | 'space' | 'identity'; id: string };
-  /** name, topic, avatar, displayName, handle, bio, status, pronouns, banner, a setting key, member, role. */
+  /** name, topic, avatar, displayName, handle, bio, status, presence, pronouns, banner, a setting key, member, role. */
   field: string;
   old: unknown;
   new: unknown;

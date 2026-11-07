@@ -507,7 +507,9 @@ export class HubServer {
         m[1] === 'persons'
           ? (s.db.query('SELECT id FROM identity WHERE person_id = ?').all(m[2]) as { id: string }[]).map((r) => ({ kind: 'identity' as const, id: r.id }))
           : [{ kind: kind as P.ChangeView['target']['kind'], id: m[2] }];
-      const changes = s.changes(targets, limit);
+      // ?fields=status,presence: only those; ?except=…: all but those.
+      const list = (k: string) => url.searchParams.get(k)?.split(',').filter((f) => /^\w{1,32}$/.test(f)).slice(0, 20);
+      const changes = s.changes(targets, limit, { fields: list('fields'), except: list('except') });
       // Whoever they name, and whoever made them, for rendering.
       const named = new Set(changes.flatMap((c) => [c.identityId, c.actorId, c.target.kind === 'identity' ? c.target.id : undefined].filter((x): x is string => !!x)));
       return ok({ changes, identities: s.identitiesByIds(named) });
@@ -536,6 +538,7 @@ export class HubServer {
           receipts: bool(b.receipts, cur.receipts),
           changes: bool(b.changes, cur.changes),
           statuses: bool(b.statuses, cur.statuses),
+          presence: bool(b.presence, cur.presence),
           adversarial: bool(b.adversarial, cur.adversarial),
           show: b.show === 'hidden' || b.show === 'collapsed' ? b.show : cur.show,
           sources,
@@ -546,7 +549,7 @@ export class HubServer {
     }
     if (path === '/api/retention/erase' && method === 'POST') {
       const b = await body<{ what?: string }>();
-      const kinds = ['deleted', 'disappeared', 'edits', 'reactions', 'receipts', 'changes', 'statuses'] as const;
+      const kinds = ['deleted', 'disappeared', 'edits', 'reactions', 'receipts', 'changes', 'statuses', 'presence'] as const;
       if (!kinds.includes(b.what as (typeof kinds)[number])) return bad(`what: ${kinds.join(', ')}`);
       const n = s.eraseKept(b.what as (typeof kinds)[number]);
       this.flush();
