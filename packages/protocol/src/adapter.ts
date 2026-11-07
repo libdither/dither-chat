@@ -296,6 +296,11 @@ export type AdapterEvent =
    * (friends, contacts, people it has a DM with), never everyone in a big server.
    */
   | { t: 'customStatus'; who: string; text?: string; emoji?: string; ts?: number }
+  /**
+   * Someone's presence as the network reports it now. Only for people the account follows (friends, contacts,
+   * people it has a DM with), never everyone in a big server, as for customStatus. `devices`: where they are on.
+   */
+  | { t: 'presence'; who: string; state: 'online' | 'idle' | 'dnd' | 'offline'; devices?: ('desktop' | 'mobile' | 'web')[]; ts?: number }
   /** Someone else got, read or played (a voice note, a video) these messages. Matrix: read up to the last of them. */
   | { t: 'receipt'; conversation: string; messages: string[]; who: string; state: ReceiptState; ts: number }
   /**

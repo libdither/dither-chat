@@ -1,12 +1,13 @@
 /**
  * History on a profile page (docs/history.md): what changed about a place (name, description, picture, settings,
- * who joined and left) or a person (names, pictures, bio, status, pronouns on each network), newest first.
+ * who joined and left) or a person (names, pictures, bio, pronouns on each network), newest first. A person's status
+ * and presence over time are in their Status section (StatusCard.tsx) instead.
  */
 import type * as P from '@dither-chat/protocol';
 import { ABOUT_KEYS, ABOUT_LABEL } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { ago, fullTime } from '../format.ts';
-import { loadChanges, retention } from '../history.ts';
+import { loadChanges, presenceText, retention } from '../history.ts';
 import { identityName, netName } from '../model.ts';
 import { db, openProfile, rev } from '../state.ts';
 import { valueText } from './About.tsx';
@@ -84,7 +85,7 @@ export function HistoryCard({ path, network }: { path: string; network?: P.Netwo
   );
 }
 
-function Change({ c, network }: { c: P.ChangeView; network?: P.Network }) {
+export function Change({ c, network }: { c: P.ChangeView; network?: P.Network }) {
   const [open, setOpen] = useState(false);
   const ident = c.target.kind === 'identity' ? db.identities.get(c.target.id) : null;
   const where = ident && !network ? (
@@ -141,6 +142,18 @@ function Change({ c, network }: { c: P.ChangeView; network?: P.Network }) {
         {where}
         <span>
           Status: {statusText(c.old) && <s>{statusText(c.old)}</s>} {statusText(c.old) && '→'} <b>{statusText(c.new) ?? 'cleared'}</b>
+        </span>
+        {when}
+      </li>
+    );
+
+  if (c.field === 'presence')
+    return (
+      <li class="hist-item">
+        <span class={`presence-dot ${(c.new as P.PresenceView | null)?.state ?? 'offline'}`} />
+        {where}
+        <span>
+          Presence: <b>{presenceText(c.new as P.PresenceView | null)}</b>
         </span>
         {when}
       </li>

@@ -14,6 +14,7 @@ import { Avatar, Empty, NetBadge, NetGlyph, Skeleton } from './bits.tsx';
 import { copy, groups, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
+import { StatusCard } from './StatusCard.tsx';
 import { identityMenu, personMenu } from './menus.tsx';
 import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, Tag } from './ProfileShell.tsx';
 import { openConv } from './Sidebar.tsx';
@@ -180,6 +181,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     .filter((x): x is NonNullable<P.IdentityView['status']> => !!(x?.text || x?.emoji))
     .sort((a, b) => b.at - a.at)[0];
   const status = live ?? (said.find((a) => a.status?.text) ?? said.find((a) => a.status?.emoji))?.status;
+  const changesPath = person ? `/api/persons/${person.id}/changes` : `/api/identities/${first.id}/changes`;
   // One number written two ways is one link.
   const seen = new Set<string>();
   const links = said
@@ -351,6 +353,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         ))}
       </Card>
 
+      <StatusCard path={changesPath} status={status} at={live && status === live ? live.at : undefined} />
+
       {(sharedSpaces.length > 0 || groupChats.length > 0) && (
         <Card title={isSelf ? 'Your places' : 'In common'} icon="layers" count={sharedSpaces.length + groupChats.length}>
           {sharedSpaces.length > 0 && (
@@ -413,7 +417,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           })}
         </div>
       </Card>
-      <HistoryCard path={person ? `/api/persons/${person.id}/changes` : `/api/identities/${first.id}/changes`} />
+      <HistoryCard path={`${changesPath}?except=status,presence`} />
     </>
   );
 

@@ -2,7 +2,7 @@
  * Settings → Message history (docs/history.md): what the hub keeps when a network rewrites a message (edited) or
  * takes back a reaction, read receipts, and the log of names, descriptions and settings as they change. Each kind may
  * be turned off everywhere or for one network or account, and what was kept may be forgotten. Keeping deleted and
- * disappeared messages and statuses over time are under Adversarial features (Adversarial.tsx).
+ * disappeared messages, statuses and presence over time are under Adversarial features (Adversarial.tsx).
  */
 import type * as P from '@dither-chat/protocol';
 import { ABOUT_RULES } from '@dither-chat/protocol';
@@ -138,6 +138,9 @@ export function HistorySettings() {
         </button>
         <button class="btn ghost small danger" onClick={forget('statuses', 'logged statuses')}>
           Status history
+        </button>
+        <button class="btn ghost small danger" onClick={forget('presence', 'logged presence')}>
+          Presence history
         </button>
       </div>
     </section>

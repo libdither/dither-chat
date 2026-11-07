@@ -1279,6 +1279,9 @@ class DemoAdapter implements InprocAdapter {
     emit({ t: 'role', target: { kind: 'conversation', nativeId: climb.nativeId }, member: S.sam.nativeId, role: 'Admin', given: true, by: S.priya.nativeId, ts: ago(56) });
     emit({ t: 'customStatus', who: S.alice.nativeId, text: 'out climbing', emoji: '🧗', ts: ago(200) });
     emit({ t: 'customStatus', who: S.alice.nativeId, text: 'on the wall, back at 8', emoji: '🧗', ts: ago(55) });
+    // Presence as it changed, logged only with adversarial features and presence on.
+    for (const [state, min, devices] of [['online', 240, ['desktop']], ['idle', 210, ['desktop']], ['offline', 180, []], ['online', 56, ['mobile']], ['dnd', 30, ['mobile', 'desktop']]] as const)
+      emit({ t: 'presence', who: S.alice.nativeId, state, devices: [...devices], ts: ago(min) });
     msg(`${climb.nativeId}~h-mine`, S.self, 54, 'I can drive, leaving at 6');
     for (const [who, state, min] of [[S.alice, 'delivered', 53], [S.alice, 'read', 52], [S.priya, 'delivered', 53], [S.priya, 'read', 50]] as const)
       emit({ t: 'receipt', conversation: climb.nativeId, messages: [`${climb.nativeId}~h-mine`], who: who.nativeId, state, ts: ago(min) });

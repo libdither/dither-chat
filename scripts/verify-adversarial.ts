@@ -37,7 +37,7 @@ try {
 
   // Defaults: the demo's seeded deleted and disappeared messages were not kept, and no status history.
   const r0 = await retention();
-  check(!r0.adversarial && !r0.deleted && !r0.disappearing && !r0.statuses, 'adversarial features off by default', r0);
+  check(!r0.adversarial && !r0.deleted && !r0.disappearing && !r0.statuses && !r0.presence, 'adversarial features off by default', r0);
   await p.goto(`${hub}/#/c/${climb}`);
   await p.until(`document.querySelectorAll('.msg').length > 3`, 15000);
   await Bun.sleep(500);
@@ -82,7 +82,11 @@ try {
   const r1 = await retention();
   check(r1.adversarial && !r1.deleted, 'shown, but each feature still off', r1);
   const labels = await p.eval<string[]>(`[...document.querySelectorAll('#set-adversarial .toggle-row b')].map((b) => b.textContent)`);
-  check(labels.join() === 'Keep deleted messages,Keep disappearing messages,Log statuses', 'its switches', labels);
+  check(labels.join() === 'Keep deleted messages,Keep disappearing messages,Log statuses,Log presence (online/idle/offline)', 'its switches', labels);
+  // The demo's presence came while they were hidden: nothing of it was kept, and status history neither.
+  const alice = boot.persons.find((x: any) => x.name === 'Alice Chen');
+  const logged = (await fetch(`${hub}/api/persons/${alice.id}/changes?fields=status,presence`).then((x) => x.json())) as any;
+  check(logged.changes.length === 0, 'nothing of presence or statuses was logged while hidden', logged.changes.map((c: any) => c.field));
   await p.eval(`[...document.querySelectorAll('#set-adversarial .toggle-row')].find((l) => l.textContent.includes('Keep deleted')).querySelector('input').click()`);
   await Bun.sleep(400);
   check((await retention()).deleted, 'keeping deleted messages turned on');
@@ -93,8 +97,16 @@ try {
   await p.eval(`[...document.querySelectorAll('#set-adversarial button')].find((b) => b.textContent.includes('Hide adversarial features')).click()`);
   await Bun.sleep(400);
   const r2 = await retention();
-  check(!r2.adversarial && !r2.deleted && !r2.disappearing && !r2.statuses, 'hiding them turns them all off', r2);
+  check(!r2.adversarial && !r2.deleted && !r2.disappearing && !r2.statuses && !r2.presence, 'hiding them turns them all off', r2);
   check(!(await p.eval<boolean>(`!!document.querySelector('#set-adversarial .adv-body')`)), 'and the section closes');
+
+  // A profile's Status section without them: the current status, no history.
+  await p.goto(`${hub}/#/p/${alice.id}`);
+  await p.until(`!!document.querySelector('.pf-status-card')`, 10000);
+  await p.eval(`document.querySelector('.pf-status-card summary').click()`);
+  await Bun.sleep(200);
+  const st = await p.eval<string>(`document.querySelector('.pf-status-card').innerText`);
+  check(st.includes('🧗') && st.includes('since') && !/HISTORY/i.test(st) && !st.includes('Online'), 'the Status section shows the current status and no history', st.split('\n'));
 } finally {
   await close();
 }
