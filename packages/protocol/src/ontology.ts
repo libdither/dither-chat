@@ -15,7 +15,11 @@
  * (persons, folders, notification rules, triage) are never written back.
  */
 
-export type Network = 'discord' | 'signal' | 'matrix' | 'whatsapp';
+export type Network = 'discord' | 'signal' | 'matrix' | 'whatsapp' | 'telegram' | 'gmessages';
+/**
+ * The networks this hub offers. telegram and gmessages (Google Messages: SMS and RCS) are in the type for
+ * dither-accounts' extractors being built (its docs), and join this list once the hub runs them.
+ */
 export const NETWORKS: readonly Network[] = ['discord', 'signal', 'matrix', 'whatsapp'];
 
 /** Where a conversation sits in the social structure, independent of network. */
@@ -111,6 +115,10 @@ export const REACTION_RULES: Record<Network, ReactionRules> = {
   signal: { exclusive: true, freeText: false },
   matrix: { exclusive: false, freeText: true },
   whatsapp: { exclusive: true, freeText: false },
+  // One reaction each without Premium.
+  telegram: { exclusive: true, freeText: false },
+  // RCS reactions; SMS has none.
+  gmessages: { exclusive: true, freeText: false },
 };
 
 export function discordEmojiUrl(id: string, animated?: boolean): string {
@@ -148,6 +156,9 @@ export const ATTACHMENT_LIMITS: Record<Network, { bytes: number; files: number }
   signal: { bytes: MAX_UPLOAD, files: 10 },
   matrix: { bytes: MAX_UPLOAD - 1024 * 1024, files: 10 },
   whatsapp: { bytes: MAX_UPLOAD, files: 10 },
+  telegram: { bytes: MAX_UPLOAD, files: 10 },
+  // RCS takes large files; a carrier's MMS fallback may not.
+  gmessages: { bytes: MAX_UPLOAD, files: 10 },
 };
 
 /** Brand colours used to annotate the source of every object in the UI. */
@@ -156,4 +167,6 @@ export const NETWORK_META: Record<Network, { name: string; color: string; spaceN
   signal: { name: 'Signal', color: '#3A91F5', spaceNoun: 'group', sectionNoun: 'section' },
   matrix: { name: 'Matrix', color: '#0DBD8B', spaceNoun: 'space', sectionNoun: 'subspace' },
   whatsapp: { name: 'WhatsApp', color: '#1DAA61', spaceNoun: 'community', sectionNoun: 'section' },
+  telegram: { name: 'Telegram', color: '#2AABEE', spaceNoun: 'group', sectionNoun: 'folder' },
+  gmessages: { name: 'Google Messages', color: '#1A73E8', spaceNoun: 'group', sectionNoun: 'section' },
 };

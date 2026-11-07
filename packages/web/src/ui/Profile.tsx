@@ -24,6 +24,8 @@ const WHAT_NETWORKS_SHARE: Record<P.Network, string> = {
   signal: 'Profile name, About and avatar. Signal has no directory, and no mutual friends.',
   matrix: 'Display name and avatar, and pronouns or time zone where their server keeps them.',
   whatsapp: 'The name in your address book, their About and picture, and whether it is a business.',
+  telegram: 'Name, username, bio and photo, and their phone number or last seen only where they allow it.',
+  gmessages: 'The name and number in your contacts. Messages has no profiles.',
 };
 
 function externalProfile(i: P.IdentityView): string | null {

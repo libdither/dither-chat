@@ -798,6 +798,17 @@ const NET_HELP: Record<P.Network, { adapter: string; blurb: string; fields: { ke
     blurb: 'Links this hub as another WhatsApp device, like WhatsApp Web. After you add it, scan the QR code with your phone, or ask for a pairing code. Your phone stays in charge; open WhatsApp on it at least every two weeks or the link lapses.',
     fields: [],
   },
+  // Not in NETWORKS yet: dither-accounts' extractors for these are being built.
+  telegram: {
+    adapter: 'telegram',
+    blurb: 'Signs in to Telegram as you, like Telegram Desktop. After you add it, scan the QR code with Telegram on your phone, or sign in with your number and the code Telegram sends.',
+    fields: [],
+  },
+  gmessages: {
+    adapter: 'gmessages',
+    blurb: 'Pairs with Google Messages on your Android phone, like messages.google.com. After you add it, scan the QR code in Messages → Device pairing. Your phone stays in charge and must stay online.',
+    fields: [],
+  },
 };
 
 export function AddAccount({ onClose }: { onClose: () => void }) {

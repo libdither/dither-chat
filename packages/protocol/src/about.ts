@@ -191,6 +191,18 @@ export const ABOUT_RULES: Record<Network, AboutRules> = {
     nameMax: 100,
     topicMax: 2048,
   },
+  telegram: {
+    conversation: ['name', 'topic', 'avatar', 'slowMode', 'joinApproval'],
+    space: ['name', 'topic', 'avatar'],
+    slowMode: [0, 10, 30, 60, 5 * 60, 15 * 60, HOUR],
+    nameMax: 128,
+    topicMax: 255,
+  },
+  gmessages: {
+    conversation: ['name'],
+    space: [],
+    nameMax: 100,
+  },
 };
 
 export const ABOUT_LABEL: Record<AboutKey, string> = {
