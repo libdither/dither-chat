@@ -292,3 +292,17 @@ describe('remote accounts through dither-accounts', () => {
     }
   });
 });
+
+describeAll('kinds the hub asks for after it registered', () => {
+  test('only kinds with no grant and no request, open or denied, are asked for', async () => {
+    const { kindsToAsk } = await import('../src/remote.ts');
+    const kinds = ['discord', 'signal', 'telegram', 'gmessages'];
+    // Registered before telegram and gmessages existed: those two.
+    expect(kindsToAsk({ grants: [{ interface: 'chat', kinds: null }, { interface: 'accounts', kinds: ['discord', 'signal'] }], requests: [] }, kinds)).toEqual(['telegram', 'gmessages']);
+    // Asked already (waiting), or the answer was no: nothing more.
+    expect(kindsToAsk({ grants: [{ interface: 'accounts', kinds: ['discord', 'signal'] }], requests: [{ interface: 'accounts', kinds: ['telegram'], state: 'pending' }, { interface: 'accounts', kinds: ['gmessages'], state: 'denied' }] }, kinds)).toEqual([]);
+    // A grant for every kind (kinds null) covers them all; nothing known asks for all of them.
+    expect(kindsToAsk({ grants: [{ interface: 'accounts', kinds: null }] }, kinds)).toEqual([]);
+    expect(kindsToAsk(null, kinds)).toEqual(kinds);
+  });
+});

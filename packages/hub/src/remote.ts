@@ -27,7 +27,7 @@ import { ACCOUNT_COLORS, type AccountRow } from './store.ts';
 import { Supervisor } from './supervisor.ts';
 
 /** The kinds this hub hands to the manager when they are new. */
-export const MANAGED_KINDS = ['discord', 'signal', 'matrix', 'whatsapp'];
+export const MANAGED_KINDS = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages'];
 
 /** The attention an account gets while the manager cannot run it, and when the manager no longer has it. */
 const NOT_RUNNING = 'Not running in dither-accounts: ';
@@ -72,6 +72,26 @@ interface ClientModule {
   }) => Client;
   register(url: string, req: unknown): Promise<{ app: string; token: string }>;
   self(url: string, app: string, token: string): Promise<unknown>;
+  /** Missing from managers before it: then the hub does not ask for kinds added since it registered. */
+  requestAccess?(url: string, app: string, token: string, requests: unknown[]): Promise<unknown>;
+}
+
+/** What the manager says of this app (AppInfo), as much as kindsToAsk reads. */
+interface AppSelf {
+  grants?: { interface: string; kinds: string[] | null }[];
+  requests?: { interface: string; kinds?: string[] | null; state?: string }[];
+}
+
+/**
+ * The chat kinds this hub runs that it has neither a grant for nor asked about: an open request waits for you, and a
+ * denied one is your answer, so neither is asked again.
+ */
+export function kindsToAsk(info: AppSelf | null | undefined, kinds: readonly string[] = MANAGED_KINDS): string[] {
+  const covered = new Set<string>();
+  const add = (k: string[] | null | undefined) => (k == null ? kinds.forEach((x) => covered.add(x)) : k.forEach((x) => covered.add(x)));
+  for (const g of info?.grants ?? []) if (g.interface === 'accounts') add(g.kinds);
+  for (const r of info?.requests ?? []) if (r.interface === 'accounts') add(r.kinds);
+  return kinds.filter((k) => !covered.has(k));
 }
 
 export interface RemoteOpts {
@@ -172,7 +192,23 @@ export class RoutedSupervisor extends Supervisor {
   async connect(): Promise<void> {
     const mod = (await import(process.env.DITHER_ACCOUNTS_CLIENT ?? resolve(this.remoteOpts.repoRoot, '../dither-accounts/packages/client/src/index.ts'))) as ClientModule;
     const url = this.remoteOpts.url;
-    let known = this.saved && this.saved.url === url ? await mod.self(url, this.saved.app, this.saved.token).then(() => true, (e) => !/\b401\b/.test(String(e))) : false;
+    let info: AppSelf | null = null;
+    let known =
+      this.saved && this.saved.url === url
+        ? await mod.self(url, this.saved.app, this.saved.token).then(
+            (x) => ((info = x as AppSelf), true),
+            (e) => !/\b401\b/.test(String(e)),
+          )
+        : false;
+    // Registered before some kinds existed (telegram, gmessages): ask for those now, for you to approve on its page.
+    const missing = known && info ? kindsToAsk(info) : [];
+    if (missing.length && mod.requestAccess)
+      await mod
+        .requestAccess(url, this.saved!.app, this.saved!.token, [{ interface: 'accounts', level: 'manage', kinds: missing, reason: `Add, sign in and remove ${missing.join(' and ')} accounts too` }])
+        .then(
+          () => console.log(`dither-accounts: asked to manage ${missing.join(', ')} accounts as well; approve it on the manager's page`),
+          (e) => console.error('dither-accounts: asking for the new kinds failed:', e),
+        );
     if (!known) {
       const reg = await mod.register(url, {
         name: 'dither-chat',

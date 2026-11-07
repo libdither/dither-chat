@@ -11,8 +11,8 @@ test('a typed address says which network it is for', () => {
   expect(guessDirectNetwork('15551234567@s.whatsapp.net')).toBe('whatsapp');
 });
 
-test('a phone number could be Signal or WhatsApp', () => {
-  expect(guessDirectNetworks('+1 (555) 123-4567')).toEqual(['signal', 'whatsapp']);
+test('a phone number could be Signal, WhatsApp, Telegram or Google Messages', () => {
+  expect(guessDirectNetworks('+1 (555) 123-4567')).toEqual(['signal', 'whatsapp', 'telegram', 'gmessages']);
   expect(guessDirectNetworks('200000000000002@lid')).toEqual(['whatsapp']);
   expect(guessDirectNetworks('ann')).toEqual([]);
 });
@@ -28,4 +28,17 @@ test('addresses are normalised, and what is wrong is said', () => {
   expect(directTarget('whatsapp', '+44 20 7183 0042')).toEqual({ peer: '+442071830042' });
   expect(directTarget('whatsapp', '15551234567@s.whatsapp.net')).toEqual({ peer: '15551234567@s.whatsapp.net' });
   expect(directTarget('whatsapp', '07183 0042')).toHaveProperty('error');
+});
+
+test('Telegram takes an @username, a phone number or an id; Google Messages a phone number', () => {
+  expect(guessDirectNetworks('@durov_fan')).toEqual(['telegram']);
+  expect(guessDirectNetworks('@ab')).toEqual([]); // too short for a username
+  expect(guessDirectNetwork('@ann:matrix.org')).toBe('matrix'); // still Matrix with a server
+  expect(directTarget('telegram', '@durov_fan')).toEqual({ peer: '@durov_fan' });
+  expect(directTarget('telegram', 'durov_fan')).toEqual({ peer: '@durov_fan' });
+  expect(directTarget('telegram', '+44 20 7183 0042')).toEqual({ peer: '+442071830042' });
+  expect(directTarget('telegram', '123456789')).toEqual({ peer: '123456789' });
+  expect(directTarget('telegram', 'a b')).toHaveProperty('error');
+  expect(directTarget('gmessages', '+1 (555) 123-4567')).toEqual({ peer: '+15551234567' });
+  expect(directTarget('gmessages', '@durov_fan')).toHaveProperty('error');
 });

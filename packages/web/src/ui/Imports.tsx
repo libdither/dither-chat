@@ -399,8 +399,12 @@ export function ImportsSection({ a }: { a: P.AccountView }) {
     <section class="det-section">
       <h3>History</h3>
       <p class="det-note">
-        {netName(a.network)} gives a linked device little or no history. Bring older messages in from {help?.what ?? 'an export.'} What you upload stays on the hub, in its data
-        directory, and an import only adds what the hub lacks.
+        {a.network === 'telegram'
+          ? 'Telegram keeps your whole history on its servers: older messages come in as you scroll back.'
+          : a.network === 'gmessages'
+            ? 'Older texts come from your phone as you scroll back.'
+            : `${netName(a.network)} gives a linked device little or no history.`}{' '}
+        Bring older messages in from {help?.what ?? 'an export.'} What you upload stays on the hub, in its data directory, and an import only adds what the hub lacks.
       </p>
       {upload ? (
         <div class="import-upload">

@@ -90,7 +90,13 @@ function LinkCode({ account, at }: { account: P.AccountView; at: P.Attention }) 
   const [busy, setBusy] = useState(false);
   const [phoneNo, setPhoneNo] = useState('');
   const wa = account.network === 'whatsapp';
+  const tg = account.network === 'telegram';
   const app = netName(account.network);
+  const where: Partial<Record<P.Network, string>> = {
+    whatsapp: 'Settings → Linked devices → Link a device.',
+    telegram: 'Settings → Devices → Link Desktop Device.',
+    gmessages: 'Tap your profile picture → Device pairing → QR code scanner.',
+  };
   const pairCode = (at.detail as { pairCode?: string } | undefined)?.pairCode;
   const [now, setNow] = useState(Date.now());
   const svg = useMemo(() => (at.qr ? qrSvg(at.qr) : null), [at.qr]);
@@ -126,7 +132,7 @@ function LinkCode({ account, at }: { account: P.AccountView; at: P.Attention }) 
     try {
       await api(`/api/accounts/${account.id}/action`, { body: { action: 'pairPhone', args: { phone: phoneNo } } });
     } catch (e: any) {
-      toast({ kind: 'error', title: 'No pairing code', body: e.message });
+      toast({ kind: 'error', title: tg ? 'No code sent' : 'No pairing code', body: e.message });
     } finally {
       setBusy(false);
     }
@@ -140,18 +146,21 @@ function LinkCode({ account, at }: { account: P.AccountView; at: P.Attention }) 
         ) : (
           <ol>
             <li>Open {app} on your phone.</li>
-            <li>{wa ? 'Settings → Linked devices → Link a device.' : 'Settings → Linked devices → Link new device.'}</li>
+            <li>{where[account.network] ?? 'Settings → Linked devices → Link new device.'}</li>
             <li>Point the camera at this code. Tap it to fill the screen.</li>
           </ol>
         )}
         {timer && !pairCode && <p class="qr-timer">{timer}</p>}
         {coarsePointer && !wa && <p class="qr-note">A phone can't scan its own screen. If this is the phone you're linking, open this page on a computer.</p>}
-        {wa && !pairCode && (
+        {(wa || tg) && !pairCode && (
           <div class="qr-pair">
-            <p class="qr-note">{coarsePointer ? "A phone can't scan its own screen. " : ''}Or link with your phone number: WhatsApp then asks you to type a code instead.</p>
+            <p class="qr-note">
+              {coarsePointer ? "A phone can't scan its own screen. " : ''}
+              {wa ? 'Or link with your phone number: WhatsApp then asks you to type a code instead.' : 'Or sign in with your phone number: Telegram sends you a code to type here.'}
+            </p>
             <input class="input" type="tel" placeholder="+15551234567" value={phoneNo} onInput={(e) => setPhoneNo((e.target as HTMLInputElement).value)} />
             <button class="btn ghost" disabled={busy || phoneNo.replace(/\D/g, '').length < 7} onClick={pair}>
-              Get a pairing code
+              {wa ? 'Get a pairing code' : 'Send me a code'}
             </button>
           </div>
         )}
@@ -477,6 +486,13 @@ function AttentionBlock({ a }: { a: P.AccountView }) {
       </div>
       {at.kind === 'link_device' && <LinkCode account={a} at={at} />}
       {verification && <VerifyDevice account={a} verification={verification} />}
+      {at.kind === 'verify' && (at.detail as any)?.code && <SignInCode account={a} code={(at.detail as any).code} />}
+      {at.kind === 'verify' && typeof (at.detail as any)?.emoji === 'string' && (
+        <p class="pair-emoji" aria-label={`Tap ${(at.detail as any).emoji} on your phone`}>
+          {(at.detail as any).emoji}
+        </p>
+      )}
+      {at.kind === 'login' && !at.liveView && (a.network === 'gmessages' ? <SignInWith account={a} what="cookies" /> : a.network === 'telegram' || a.network === 'matrix' ? <SignInWith account={a} what="password" /> : null)}
       {at.liveView && (
         <button class="btn primary" onClick={() => setLive(true)}>
           <Icon name="monitor" size={15} /> Open live view
@@ -484,6 +500,66 @@ function AttentionBlock({ a }: { a: P.AccountView }) {
       )}
       {at.kind === 'selector_broken' && at.detail !== undefined && <pre class="detail-dump">{JSON.stringify(at.detail, null, 2)}</pre>}
       {live && <LiveView account={a} onClose={() => setLive(false)} />}
+    </div>
+  );
+}
+
+/** An account action from the attention, with a toast when it fails. */
+async function attentionAction(a: P.AccountView, action: string, args?: Record<string, unknown>): Promise<boolean> {
+  try {
+    await api(`/api/accounts/${a.id}/action`, { body: { action, ...(args ? { args } : {}) } });
+    return true;
+  } catch (e: any) {
+    toast({ kind: 'error', title: 'That did not work', body: e.message });
+    return false;
+  }
+}
+
+/** Telegram's sign-in by number: the code it sent, again, or back to a QR code. */
+function SignInCode({ account, code }: { account: P.AccountView; code: { length?: number; next?: string } }) {
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const run = async (action: string, args?: Record<string, unknown>) => {
+    setBusy(true);
+    if ((await attentionAction(account, action, args)) && action === 'signIn') setValue('');
+    setBusy(false);
+  };
+  const digits = value.replace(/\D/g, '');
+  return (
+    <div class="qr-pair">
+      <input class="input" inputMode="numeric" autocomplete="one-time-code" placeholder={code.length ? '•'.repeat(code.length) : 'Code'} value={value} onInput={(e) => setValue((e.target as HTMLInputElement).value)} aria-label="The code" />
+      <button class="btn primary" disabled={busy || digits.length < (code.length ?? 4)} onClick={() => run('signIn', { code: digits })}>
+        Sign in
+      </button>
+      <button class="btn ghost" disabled={busy} onClick={() => run('resendCode')}>
+        Send it again
+      </button>
+      <button class="btn ghost" disabled={busy} onClick={() => run('refreshLink')}>
+        Use a QR code instead
+      </button>
+    </div>
+  );
+}
+
+/** A sign-in that lapsed or needs one more step: a password (Telegram's two-step one, Matrix), or Google's cookies (Google Messages). */
+function SignInWith({ account, what }: { account: P.AccountView; what: 'password' | 'cookies' }) {
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    if (await attentionAction(account, what === 'cookies' ? 'pairGoogle' : 'relogin', what === 'cookies' ? { cookies: value.trim() } : { password: value })) setValue('');
+    setBusy(false);
+  };
+  return (
+    <div class="qr-pair">
+      {what === 'cookies' ? (
+        <textarea class="input" rows={3} spellcheck={false} placeholder="Cookies of messages.google.com, signed in: “Copy as cURL” from the browser's network tab, a cookie export, or SID=…; HSID=…" value={value} onInput={(e) => setValue((e.target as HTMLTextAreaElement).value)} />
+      ) : (
+        <input class="input" type="password" autocomplete="current-password" placeholder="Password" value={value} onInput={(e) => setValue((e.target as HTMLInputElement).value)} />
+      )}
+      <button class="btn primary" disabled={busy || !value.trim()} onClick={submit}>
+        {what === 'cookies' ? 'Pair with Google' : 'Sign in'}
+      </button>
     </div>
   );
 }
@@ -798,16 +874,20 @@ const NET_HELP: Record<P.Network, { adapter: string; blurb: string; fields: { ke
     blurb: 'Links this hub as another WhatsApp device, like WhatsApp Web. After you add it, scan the QR code with your phone, or ask for a pairing code. Your phone stays in charge; open WhatsApp on it at least every two weeks or the link lapses.',
     fields: [],
   },
-  // Not in NETWORKS yet: dither-accounts' extractors for these are being built.
+  // These two run only in dither-accounts (docs/accounts.md).
   telegram: {
     adapter: 'telegram',
-    blurb: 'Signs in to Telegram as you, like Telegram Desktop. After you add it, scan the QR code with Telegram on your phone, or sign in with your number and the code Telegram sends.',
-    fields: [],
+    blurb: 'Signs in to Telegram as you, like Telegram Desktop, with an app of your own: make one at my.telegram.org (API development tools) for its api_id and api_hash. After you add it, scan the QR code with Telegram on your phone, or sign in with your number and the code Telegram sends.',
+    fields: [
+      { key: 'apiId', label: 'api_id', placeholder: '1234567' },
+      { key: 'apiHash', label: 'api_hash', placeholder: '32 letters and digits', secret: true },
+      { key: 'testDc', label: "Telegram's test servers", placeholder: 'yes, for a test account; else leave empty', optional: true },
+    ],
   },
   gmessages: {
     adapter: 'gmessages',
-    blurb: 'Pairs with Google Messages on your Android phone, like messages.google.com. After you add it, scan the QR code in Messages → Device pairing. Your phone stays in charge and must stay online.',
-    fields: [],
+    blurb: 'Pairs with Google Messages on your Android phone, like messages.google.com: your texts (SMS and RCS) go through the phone, which must stay on and online. After you add it, scan the QR code under Device pairing in Messages. If your phone has no QR scanner there any more, paste the cookies of messages.google.com (signed in) below instead, and tap the emoji your phone shows.',
+    fields: [{ key: 'cookies', label: 'Google cookies', placeholder: '“Copy as cURL” of messages.google.com, or SID=…; HSID=…', secret: true, optional: true }],
   },
 };
 

@@ -72,6 +72,17 @@ Check it:
 
 The adapter log stays where it was: the account's `adapter.log`, which the manager now writes.
 
+## Networks that run only in dither-accounts
+
+`telegram` and `gmessages` (Google Messages: SMS and RCS through the phone) have no adapter here: their extractors
+live in dither-accounts (its docs/telegram.md and docs/gmessages.md), so they work only in remote mode. The hub knows
+them as networks (labels, addressing a new chat by @username or phone number, the add dialog's fields, the QR, code,
+password, emoji and cookie steps of their sign-in).
+
+A hub registered before these kinds existed asks the manager on its next start to manage them too
+(`kindsToAsk` in remote.ts): approve that request on the manager's page. A request still open, or one you denied, is
+not asked again.
+
 ## Accounts the manager holds
 
 The page works the same for an account whatever runs it; for one the manager runs:

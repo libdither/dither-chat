@@ -3328,6 +3328,12 @@ code {
   letter-spacing: 0.12em;
   user-select: all;
 }
+/* Google Messages' pairing by Google account: the emoji to tap on the phone. */
+.pair-emoji {
+  font-size: 64px;
+  line-height: 1;
+  margin: 8px 0;
+}
 .qr-full {
   position: fixed;
   inset: 0;

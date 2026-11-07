@@ -154,7 +154,8 @@ function messageEntries(m: P.MessageView, onReply?: () => void): MenuEntry[] {
       m.authorId && { label: self ? 'Your Profile' : 'Profile', icon: 'user', run: () => openProfile(m.authorId) },
       hasHistory(m) && { label: 'Message History', icon: 'clock', run: () => (historyOf.value = m) },
     ],
-    [canDelete(m) && { label: 'Delete Message', icon: 'trash', hint: 'Del', danger: true, run: () => deleteMessage(m) }],
+    // Google Messages has no unsend: a delete only takes it off your phone.
+    [canDelete(m) && { label: m.network === 'gmessages' ? 'Delete From Your Phone' : 'Delete Message', icon: 'trash', hint: 'Del', danger: true, run: () => deleteMessage(m) }],
     [
       { label: 'Copy Message ID', icon: 'idBadge', run: () => copy(m.nativeId, 'Message ID copied') },
       { label: 'Copy dither-chat ID', icon: 'idBadge', run: () => copy(m.id, 'ID copied') },

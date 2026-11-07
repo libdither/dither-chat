@@ -120,9 +120,9 @@ export function kindLabel(c: P.ConversationView): string {
   const variant = { text: '', announcement: 'announcement ', forum: 'forum ', voice: 'voice ', stage: 'stage ', media: 'media ', rules: 'rules ' }[c.variant] ?? '';
   switch (c.shape) {
     case 'direct':
-      return c.network === 'signal' || c.network === 'whatsapp' ? `${n} chat` : `${n} DM`;
+      return c.network === 'discord' || c.network === 'matrix' ? `${n} DM` : `${n} chat`;
     case 'group':
-      return c.network === 'discord' ? 'Discord group DM' : c.network === 'signal' || c.network === 'whatsapp' ? `${n} group` : 'Matrix room (private)';
+      return c.network === 'discord' ? 'Discord group DM' : c.network === 'matrix' ? 'Matrix room (private)' : `${n} group`;
     case 'self':
       return `${n} notes to self`;
     case 'thread': {
@@ -130,7 +130,9 @@ export function kindLabel(c: P.ConversationView): string {
       return parent?.variant === 'forum' ? `${n} forum post` : `${n} thread`;
     }
     case 'channel':
-      return c.network === 'discord' ? `Discord ${variant}channel` : c.spaceIds.length ? `Matrix ${variant}room` : 'Matrix room (no space)';
+      if (c.network === 'discord') return `Discord ${variant}channel`;
+      if (c.network === 'matrix') return c.spaceIds.length ? `Matrix ${variant}room` : 'Matrix room (no space)';
+      return `${n} ${variant}channel`;
   }
 }
 

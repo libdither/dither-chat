@@ -16,11 +16,8 @@
  */
 
 export type Network = 'discord' | 'signal' | 'matrix' | 'whatsapp' | 'telegram' | 'gmessages';
-/**
- * The networks this hub offers. telegram and gmessages (Google Messages: SMS and RCS) are in the type for
- * dither-accounts' extractors being built (its docs), and join this list once the hub runs them.
- */
-export const NETWORKS: readonly Network[] = ['discord', 'signal', 'matrix', 'whatsapp'];
+/** The networks this hub offers. telegram and gmessages (Google Messages: SMS and RCS) run only in dither-accounts. */
+export const NETWORKS: readonly Network[] = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages'];
 
 /** Where a conversation sits in the social structure, independent of network. */
 export type Shape =

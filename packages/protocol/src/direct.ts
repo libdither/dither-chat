@@ -9,19 +9,23 @@ const SNOWFLAKE = /^\d{15,22}$/;
 const phone = (s: string) => s.replace(/[\s().-]/g, '');
 
 const WAJID = /^\d{5,20}@(s\.whatsapp\.net|lid)$/;
+/** A Telegram username: 5 to 32 letters, digits and underscores, starting with a letter. */
+const TG_USER = /^@?[A-Za-z][A-Za-z0-9_]{4,31}$/;
+const TG_ID = /^\d{5,15}$/;
 
 /** The network a typed address can only belong to. Names and Discord ids answer null: pick those from a list. */
 export function guessDirectNetwork(input: string): Network | null {
   return guessDirectNetworks(input)[0] ?? null;
 }
 
-/** Every network a typed address could belong to: a phone number fits Signal and WhatsApp. */
+/** Every network a typed address could belong to: a phone number fits Signal, WhatsApp, Telegram and Google Messages. */
 export function guessDirectNetworks(input: string): Network[] {
   const s = input.trim();
   if (MXID.test(s)) return ['matrix'];
   if (WAJID.test(s)) return ['whatsapp'];
   if (ACI.test(s.toLowerCase())) return ['signal'];
-  if (PHONE.test(phone(s))) return ['signal', 'whatsapp'];
+  if (PHONE.test(phone(s))) return ['signal', 'whatsapp', 'telegram', 'gmessages'];
+  if (s.startsWith('@') && TG_USER.test(s)) return ['telegram'];
   return [];
 }
 
@@ -37,5 +41,11 @@ export function directTarget(network: Network, input: string): { peer: string } 
     if (WAJID.test(s)) return { peer: s };
     return PHONE.test(phone(s)) ? { peer: phone(s) } : { error: 'A phone number needs its country code, like +15551234567' };
   }
+  if (network === 'telegram') {
+    if (PHONE.test(phone(s))) return { peer: phone(s) };
+    if (TG_USER.test(s)) return { peer: s.startsWith('@') ? s : `@${s}` };
+    return TG_ID.test(s) ? { peer: s } : { error: 'A Telegram @username, or a phone number with its country code, like +15551234567' };
+  }
+  if (network === 'gmessages') return PHONE.test(phone(s)) ? { peer: phone(s) } : { error: 'A phone number needs its country code, like +15551234567' };
   return SNOWFLAKE.test(s) ? { peer: s } : { error: 'Pick someone you know on Discord: it needs their user id' };
 }
