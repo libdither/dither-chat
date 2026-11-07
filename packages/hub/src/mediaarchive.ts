@@ -46,6 +46,8 @@ export class MediaArchiver {
   /** Kept from a link signed again, since start. */
   refreshed = 0;
   private refreshPausedUntil = 0;
+  /** Accounts that could not refresh lately, until when. */
+  private accountPausedUntil = new Map<string, number>();
 
   constructor(
     private store: Store,
@@ -147,20 +149,29 @@ export class MediaArchiver {
     if (!this.refresh || Date.now() < this.refreshPausedUntil) return;
     const want = new Set((this.store.db.query(`SELECT key FROM media_archive_fail WHERE error IS NULL OR error = 'expired'`).all() as Row[]).map((r) => r.key as string));
     if (!want.size) return;
+    const now = Date.now();
+    const paused = (a: string) => (this.accountPausedUntil.get(a) ?? 0) > now;
     const byAccount = new Map<string, { key: string; url: string }[]>();
     let n = 0;
-    for (const r of this.store.db.query(`SELECT a.url, (SELECT account_id FROM message_seen s WHERE s.message_id = a.message_id LIMIT 1) AS account FROM attachment a`).iterate() as Iterable<Row>) {
+    let waiting = 0;
+    for (const r of this.store.db.query(`SELECT a.url, (SELECT group_concat(account_id, ' ') FROM message_seen s WHERE s.message_id = a.message_id) AS accounts FROM attachment a`).iterate() as Iterable<Row>) {
       if (!want.size || n >= maxBatches * REFRESH_BATCH) break;
-      if (!r.account || !MediaArchiver.expired(r.url)) continue;
+      if (!r.accounts || !MediaArchiver.expired(r.url)) continue;
       const key = new Bun.CryptoHasher('sha256').update(r.url).digest('hex');
       if (!want.delete(key)) continue;
-      const list = byAccount.get(r.account) ?? [];
+      // Any account that saw it can ask; one that couldn't lately waits.
+      const account = (r.accounts as string).split(' ').find((a) => !paused(a));
+      if (!account) {
+        waiting++;
+        continue;
+      }
+      const list = byAccount.get(account) ?? [];
       list.push({ key, url: r.url });
-      byAccount.set(r.account, list);
+      byAccount.set(account, list);
       n++;
     }
     const mark = this.store.db.query('UPDATE media_archive_fail SET tries = ?, last_at = ?, error = ? WHERE key = ?');
-    for (const [account, list] of byAccount) {
+    accounts: for (const [account, list] of byAccount) {
       for (let i = 0; i < list.length; i += REFRESH_BATCH) {
         if (this.stopped) return;
         const batch = list.slice(i, i + REFRESH_BATCH);
@@ -169,8 +180,8 @@ export class MediaArchiver {
           fresh = await this.refresh(account, batch.map((b) => b.url));
         } catch (e: any) {
           this.log(`media archive: refreshing links through ${account} failed (${e?.message ?? e}); trying again later`);
-          this.refreshPausedUntil = Date.now() + REFRESH_PAUSE_MS;
-          return;
+          this.accountPausedUntil.set(account, Date.now() + REFRESH_PAUSE_MS);
+          continue accounts;
         }
         const byPath = new Map([...fresh].map(([o, f]) => [linkPath(o), f]));
         for (const b of batch) {
@@ -193,8 +204,8 @@ export class MediaArchiver {
       }
     }
     if (n) this.log(`media archive: ${this.refreshed} kept from links signed again so far`);
-    // Nothing expired among the failures: look again in a while, not every tick.
-    else this.refreshPausedUntil = Date.now() + REFRESH_PAUSE_MS;
+    // Nothing to ask for now (none expired, or only through accounts that can't): look again in a while.
+    else this.refreshPausedUntil = Date.now() + (waiting ? REFRESH_PAUSE_MS / 2 : REFRESH_PAUSE_MS);
   }
 
   /** Failures from a while ago, once more each, until they have had their tries. */

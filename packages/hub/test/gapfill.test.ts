@@ -142,7 +142,11 @@ describe('expired Discord links', () => {
     expect(fetched).toEqual([]);
     expect((store.db.query(`SELECT COUNT(*) AS n FROM media_archive_fail WHERE error = 'expired'`).get() as any).n).toBe(60);
     offline = false;
+    // It waits for that account a while, not for ever.
+    await a.refreshExpired();
+    expect(asked).toEqual([]);
     (a as any).refreshPausedUntil = 0;
+    (a as any).accountPausedUntil.clear();
     await a.refreshExpired();
     expect(asked.map((b) => b.length)).toEqual([50, 10]);
     expect(fetched.every(([u, f]) => f && f.startsWith(u.split('?')[0]) && f.includes('ex=ffffffff'))).toBe(true);
@@ -150,4 +154,31 @@ describe('expired Discord links', () => {
     expect(store.db.query('SELECT error FROM media_archive_fail').all()).toEqual([{ error: 'gone' }]);
     expect(a.refreshed).toBe(59);
   });
+});
+
+test('an account that can’t refresh holds up only its own links', async () => {
+  const { store, acc } = world('refresh2');
+  const old = store.account(store.createAccount({ id: 'acc_old', network: 'discord', label: 'old', color: '#000', adapter: 'discord' }).id)!;
+  store.ingest(old, { t: 'status', status: 'online', self: { nativeId: '9', isSelf: true } });
+  const cache = join(dir, 'media-cache-refresh2');
+  mkdirSync(cache, { recursive: true });
+  const past = (Math.floor(Date.now() / 1000) - 3600).toString(16);
+  const link = (i: number) => `https://cdn.discordapp.com/attachments/1/${i}/f.png?ex=${past}&is=0&hm=0`;
+  // The old account's links come first in the table.
+  store.ingest(old, { t: 'message', message: { ...msg(1, T0, 'dmold'), attachments: [{ kind: 'image', url: link(1) }] }, live: false });
+  store.ingest(acc, { t: 'message', message: { ...msg(2, T0), attachments: [{ kind: 'image', url: link(2) }] }, live: false });
+  const key = (u: string) => new Bun.CryptoHasher('sha256').update(u).digest('hex');
+  const a = new MediaArchiver(
+    store,
+    cache,
+    async (url, _acc, from) => (from ? (writeFileSync(join(cache, key(url)), 'x'), true) : false),
+    () => {},
+    async (account, urls) => {
+      if (account === 'acc_old') throw new Error('the extractor cannot refresh links');
+      return new Map(urls.map((u) => [u, u + '&new']));
+    },
+  );
+  await a.tick();
+  expect(existsSync(join(cache, key(link(2))))).toBe(true);
+  expect(store.db.query('SELECT error FROM media_archive_fail').all()).toEqual([{ error: 'expired' }]);
 });
