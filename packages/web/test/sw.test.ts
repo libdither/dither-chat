@@ -217,3 +217,26 @@ test('a clear push closes the conversation and shows nothing', async () => {
   expect(w.shown.length).toBe(0);
   expect(w.closed).toEqual(['other:cnv_9']);
 });
+
+test('a page out of sight lets a new build in only while no window of the app is in sight; the bar always does', async () => {
+  const run = async (data: unknown, windows: { visibilityState: string }[]) => {
+    const listeners: Record<string, (e: any) => void> = {};
+    let skipped = 0;
+    const self: any = {
+      registration: {},
+      addEventListener: (t: string, fn: (e: any) => void) => (listeners[t] = fn),
+      skipWaiting: () => void skipped++,
+      clients: { matchAll: async (o: any) => (o?.includeUncontrolled ? windows : []) },
+    };
+    new Function('self', 'fetch', 'NotificationEvent', 'caches', src)(self, async () => Response.json({}), function () {}, {});
+    let done: Promise<unknown> = Promise.resolve();
+    listeners.message({ data, waitUntil: (p: Promise<unknown>) => (done = p) });
+    await done;
+    return skipped;
+  };
+  const hidden = { visibilityState: 'hidden' };
+  const visible = { visibilityState: 'visible' };
+  expect(await run({ t: 'skipWaiting', unlessSeen: true }, [hidden, hidden])).toBe(1);
+  expect(await run({ t: 'skipWaiting', unlessSeen: true }, [hidden, visible])).toBe(0);
+  expect(await run('skipWaiting', [visible])).toBe(1);
+});

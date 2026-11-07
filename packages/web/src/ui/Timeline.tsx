@@ -40,8 +40,11 @@ import {
   canDelete,
   canEdit,
   deleteMessage,
+  discardSend,
+  editDrafts,
   editMessage,
   editing,
+  retrySend,
   jumpTo,
   startEditing,
   loadNewer,
@@ -172,10 +175,10 @@ export function LevelMenu({ c }: { c: P.ConversationView }) {
 }
 
 const LEVEL_HELP: Record<P.NotifyLevel, string> = {
-  all: 'Push every message',
-  smart: 'Push what looks addressed to you or urgent',
-  mentions: 'Push @mentions and replies to you',
-  digest: 'Never push; collect into the digest',
+  all: 'Every message is Important',
+  smart: 'Triage decides each one: Important, Active or Digest',
+  mentions: '@mentions and replies to you are Important; the rest goes to the digest',
+  digest: 'Nothing notifies; everything waits for the digest',
   none: 'Silent; unread count only',
 };
 
@@ -478,8 +481,8 @@ function TriageNote({ m }: { m: P.MessageView }) {
           <div class="triage-pop">
             <div class="menu-title">{triageHeading(t.decision)}</div>
             <ul>
-              {t.reasons.map((r) => (
-                <li>{r}</li>
+              {t.reasons.map((r, i) => (
+                <li key={i}>{r}</li>
               ))}
             </ul>
             {t.probs && <TriageChances p={t.probs} />}
@@ -739,7 +742,15 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
       <div class="timeline-inner">
         {t && !t.hasMore && msgs.length > 0 && <div class="timeline-start">This is the start of what dither-chat has stored here.</div>}
         {t?.detached && (
-          <button class="jump-latest" onClick={() => void toLatest(tkey)}>
+          <button
+            class="jump-latest"
+            onClick={() => {
+              void toLatest(tkey);
+              // Off the old message in the address too, so a reload (a new build) does not jump back to it.
+              const r = route.value;
+              if ('msg' in r && r.msg) go({ ...r, msg: undefined }, true);
+            }}
+          >
             <Icon name="chevronDown" size={14} /> Older messages. Jump to the latest
           </button>
         )}
@@ -748,16 +759,26 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
         {t && !t.loading && msgs.length === 0 && <Empty icon="groups" title="No messages yet" />}
         {items}
         {mine.map((p) => (
-          <div class={`msg pending ${p.failed ? 'failed' : ''} ${p.queued ? 'queued' : ''}`}>
+          <div key={p.tempId} class={`msg pending ${p.failed ? 'failed' : ''} ${p.queued ? 'queued' : ''}`} data-temp-id={p.tempId}>
             <div class="msg-gutter" />
             <div class="msg-main">
               <div class="msg-body">{p.body}</div>
-              {p.files?.map((name) => (
-                <div class="pending-file">
+              {p.files?.map((name, i) => (
+                <div key={i} class="pending-file">
                   <Icon name="paperclip" size={12} /> {name}
                 </div>
               ))}
               <span class="pending-note">{p.failed ? `Failed: ${p.failed}` : p.queued ? 'Waiting for the hub, sends when it is back' : 'Sending…'}</span>
+              {p.failed && (
+                <span class="pending-actions">
+                  <button class="btn ghost small" onClick={() => retrySend(p.tempId)}>
+                    Try again
+                  </button>
+                  <button class="btn ghost small" onClick={() => discardSend(p.tempId)}>
+                    Discard
+                  </button>
+                </span>
+              )}
             </div>
           </div>
         ))}
@@ -823,7 +844,8 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   }, [draftKey]);
   useEffect(() => {
     if (edit) {
-      setText(edit.body);
+      // An edit the hub refused comes back with what you wrote.
+      setText(editDrafts.get(edit.id) ?? edit.body);
       ta.current?.focus();
     }
   }, [edit]);
@@ -834,6 +856,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
     else localStorage.removeItem(draftKey);
   };
   const cancelEdit = () => {
+    if (edit) editDrafts.delete(edit.id);
     editing.value = null;
     setText(localStorage.getItem(draftKey) ?? '');
   };
@@ -850,8 +873,9 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
     const body = text.trim();
     if ((!body && !files.length) || disabledReason) return;
     if (edit) {
-      if (body !== edit.body) editMessage(edit, body);
+      const m = edit;
       cancelEdit();
+      if (body !== m.body) void editMessage(m, body);
       return;
     }
     send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id, files: files.map((f) => f.file) });
@@ -979,7 +1003,10 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
             if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && (!touchKeyboard() || e.ctrlKey || e.metaKey)) {
               e.preventDefault();
               submit();
-            } else if (e.key === 'Escape') clearReply();
+            } else if (e.key === 'Escape') {
+              if (edit) cancelEdit();
+              else clearReply();
+            }
           }}
         />
         <button class="send-btn" disabled={(!text.trim() && !files.length) || !!disabledReason} onClick={submit} aria-label="Send">

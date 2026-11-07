@@ -21,6 +21,9 @@ const CAN_REPLY = typeof NotificationEvent !== 'undefined' && 'reply' in Notific
 
 self.addEventListener('message', (e) => {
   if (e.data === 'skipWaiting') self.skipWaiting();
+  // From a page out of sight (pwa.ts): only while no window of the app is in sight, so none is left on the old build.
+  if (e.data?.t === 'skipWaiting' && e.data.unlessSeen)
+    e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((cs) => cs.some((c) => c.visibilityState === 'visible') || self.skipWaiting()));
   if (e.data === 'canReply') e.source?.postMessage({ t: 'canReply', value: CAN_REPLY });
   // An open page without push hands its notifications here, so they look the same as pushed ones.
   if (e.data?.t === 'notify' && e.data.d) e.waitUntil(show(e.data.d));

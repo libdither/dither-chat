@@ -1037,7 +1037,10 @@ export class HubServer {
     }
     const result = await this.sup.command(accountId, { t: 'send', conversation: conv.nativeId, body: b.body ?? '', replyTo, ...(files.length ? { attachments: files } : {}) }, files.length ? 180_000 : undefined);
     this.uploads.remove(ids);
-    return ok({ ok: true, accountId, result });
+    // Message ids are derived from the network's, so this is the message's id whether or not it is stored yet.
+    const native = (result as { nativeId?: unknown } | undefined)?.nativeId;
+    const messageId = typeof native === 'string' && native ? hubId('msg', conv.network, native) : undefined;
+    return ok({ ok: true, accountId, result, ...(messageId ? { messageId } : {}) } satisfies P.SendResult);
   }
 
   /**

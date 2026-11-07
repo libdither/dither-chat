@@ -135,6 +135,17 @@ export interface UploadView {
   size: number;
 }
 
+/**
+ * The answer to `POST /api/conversations/:id/send`. `messageId` is the hub's id for the sent message when the network
+ * said which it is: the app replaces its pending copy with that message (packages/web/src/outbox.ts).
+ */
+export interface SendResult {
+  ok: true;
+  accountId: string;
+  result?: unknown;
+  messageId?: string;
+}
+
 export interface TriageView {
   decision: TriageDecision;
   /** How much it matters, 0 to 1: the mean of the three chances below. The digest is sorted by it. */

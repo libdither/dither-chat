@@ -542,6 +542,8 @@ describe('sends', () => {
     const c = await call('POST', `/api/conversations/${conv}/send`, body);
     expect(a).toEqual(b);
     expect(c).toEqual(a);
+    // The answer names the message the network sent, as the hub will store it (the app's pending copy goes on it).
+    expect(a.messageId).toBe(hubId('msg', 'discord', 'x'));
     expect(sent.filter((x) => x.t === 'send').length).toBe(before + 1);
     await call('POST', `/api/conversations/${conv}/send`, { body: 'hello', clientId: 'tmp-other' });
     expect(sent.filter((x) => x.t === 'send').length).toBe(before + 2);

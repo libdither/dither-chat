@@ -114,7 +114,7 @@ use later (`Attention.placeNoise`); triage does not use them yet.
 
 ### Muted
 
-A conversation muted on the hub (Nothing, Digest) or on its network sits at −50 plus its recency, below
+A conversation muted on the hub (Nothing, Digest only) or on its network sits at −50 plus its recency, below
 everything else, and never needs you. Notes to self are silent by default because you do not notify yourself.
 That is not a mute, so they rank normally.
 
@@ -189,8 +189,10 @@ places when the order changes (`useFlip`). Under **Unread**, a row that was unre
 the next, so reading it does not pull it out from under you. Before the hub has scored a conversation, or with
 a hub that predates scores, it ranks unread first, then by recency.
 
-The inbox button and the phone's Triage tab count what pinged you and is still unread, plus accounts that need
-you, as before. A turn you owe does not raise a badge you cannot clear by reading.
+The inbox button and the phone's Triage tab count the messages in the Triage board's Important list that you have not
+read, by where each is now (one you voted down to Active no longer counts), plus accounts that need you. The board's
+own "important, N unread" is the same number, from the same lists (`packages/web/src/board.ts`). A turn you owe does not
+raise a badge you cannot clear by reading.
 
 ## API
 
@@ -226,7 +228,7 @@ ranking with an open turn, say) and their latest message ids, it answers per con
 already uses them: `p` becomes the mean of the reply rate and `needsReply`, `importance` adds up to 10 points,
 and the reason shows as "Model: …". Nothing implements it yet. It should follow triage.ts's `askModel`:
 Ollama at `DITHER_OLLAMA_URL`, a few recent messages as context, a short timeout, and your corrections as
-few-shot examples. Those would come from triage's thumbs up/down and, once added, a "doesn't need me" action on
+few-shot examples. Those would come from triage's votes (▲/▼ on a message's level) and, once added, a "doesn't need me" action on
 an inbox row. Run it off the ingest path, on a timer or after a sync, for a handful of conversations at a time.
 This is the only part that would read message text, and only in the local model.
 

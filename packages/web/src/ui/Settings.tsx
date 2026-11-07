@@ -243,8 +243,9 @@ export function SettingsPane() {
             <div>
               <b>Local model (optional)</b>
               <small>
-                Start the hub with <code>DITHER_TRIAGE_MODEL=llama3.2</code> (and Ollama on the home machine) to score the harder "Smart" cases with a local LLM, using the recent thread
-                as context and your thumbs up / down as examples. No message ever leaves the hub.
+                With <code>DITHER_EMBEDDINGS=1</code> the hub asks <b>jev</b>, the local yes/no text model on the home machine, about messages where you take part (does it ask something
+                of you, is it time-sensitive, does it include you in plans) and gives the model learning in the background those answers next to your votes. You vote with the arrows
+                beside a message's level, on the Triage board or in its notification menu. No message ever leaves the hub's machine.
               </small>
             </div>
           </div>
@@ -259,8 +260,8 @@ export function SettingsPane() {
         <DailyDigestSettings />
 
         <section class="set-block" id="set-keywords">
-          <h3>Keywords that always ping</h3>
-          <p class="set-help">A message containing one of these pushes no matter where it lands (unless that place is set to Off).</p>
+          <h3>Keywords that are always Important</h3>
+          <p class="set-help">A message containing one of these is Important, buzzing your phone, wherever it lands (unless that place is set to Off).</p>
           <div class="keyword-list">
             {keywordRules.map((r) => (
               <span class="keyword-chip">

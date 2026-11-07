@@ -5,6 +5,7 @@ import { leaveLayerEntry, takeOverLayers } from './phone.ts';
 import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
 import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, emptyDb, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
 import { applyTyping, type TypingState } from './typers.ts';
+import { ECHO_SKEW, openOutbox, settled, type Echo, type OutboxEntry, type OutboxFile } from './outbox.ts';
 
 // ------------------------------------------------------------------ data
 
@@ -45,6 +46,10 @@ export interface PendingSend {
   files?: string[];
   /** Waiting for the hub to be reachable again; it goes out then, by itself. */
   queued?: boolean;
+  /** The hub took it; the copy stays until its message is here (outbox.ts). */
+  acked?: boolean;
+  /** The hub's id for the message it became, when its answer said. */
+  messageId?: string;
 }
 export const pending = signal<PendingSend[]>([]);
 /** Who is typing where, live only (typing.ts). */
@@ -241,7 +246,7 @@ export async function api<T = any>(path: string, init?: { method?: string; body?
   // Not everything here is JSON: the account log and the access gate's refusals are plain text.
   const json = res.headers.get('content-type')?.includes('json');
   const data = json && text ? JSON.parse(text) : text || null;
-  if (!res.ok) throw new Error(data?.error ?? (text.slice(0, 200) || `${res.status}`));
+  if (!res.ok) throw Object.assign(new Error(data?.error ?? (text.slice(0, 200) || `${res.status}`)), { status: res.status });
   return data as T;
 }
 
@@ -304,11 +309,8 @@ export function applyEvents(events: P.ClientEvent[]) {
         }
         if (quoted.has(m.id)) quoted.set(m.id, m);
         if (m.triage && m.triage.decision !== 'silent' && (m.triage.feedback ?? m.triage.decision) !== 'drop') mergeInbox([m]);
-        // An echo of something we sent: drop the optimistic copy.
-        if (pending.value.length) {
-          const mine = isSelfIdentity(m.authorId);
-          if (mine) pending.value = pending.value.filter((p) => !(p.conversationId === m.conversationId && !p.queued && (p.files?.length ? m.attachments.length > 0 : p.body.trim() === m.body.trim())));
-        }
+        // Perhaps the message a pending copy became: matched below, once the frame is applied.
+        if (pending.value.length && isSelfIdentity(m.authorId)) noteEcho(m);
         break;
       }
       case 'notify':
@@ -330,6 +332,7 @@ export function applyEvents(events: P.ClientEvent[]) {
     if (t && last && !t.loading && !t.messages.some((m) => m.id === last.id)) void catchUp(key);
   }
   for (const key of regrouped) if (!timelines.get(key)?.loading) void catchUp(key);
+  settle();
   rev.value++;
 }
 
@@ -446,6 +449,7 @@ export async function loadTimeline(key: string, older = false): Promise<void> {
     console.warn('timeline not loaded', key, e);
   } finally {
     t.loading = false;
+    settle();
     rev.value++;
     persistSoon();
   }
@@ -547,6 +551,7 @@ function applyTimelines(r: Extract<P.SyncResponse, { sync: unknown }>) {
     const t = timelines.get(tl.key);
     if (t) applyTimelineDelta(t, tl);
   }
+  settle();
 }
 
 /**
@@ -583,24 +588,31 @@ export async function loadInbox() {
 
 // ------------------------------------------------------------------ actions
 
-async function upload(file: File): Promise<P.UploadView> {
-  const res = await fetch('/api/uploads', { method: 'POST', body: file, headers: { 'content-type': file.type || 'application/octet-stream', 'x-file-name': encodeURIComponent(file.name) } });
+async function upload(f: OutboxFile): Promise<P.UploadView> {
+  const res = await fetch('/api/uploads', { method: 'POST', body: f.blob, headers: { 'content-type': f.type || 'application/octet-stream', 'x-file-name': encodeURIComponent(f.name) } });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(data.error ?? `HTTP ${res.status}`), { status: res.status });
   return data;
 }
 
 type SendOpts = { accountId?: string; replyTo?: string; files?: File[] };
-/** Sends not yet through, by tempId: what they need to go out again. */
-const outgoing = new Map<string, { conversationId: string; body: string; opts: SendOpts; attachments?: string[] }>();
+/** Sends kept on this device until the hub has them (outbox.ts): a reload or the app being closed does not lose them. */
+const outbox = openOutbox(typeof indexedDB === 'undefined' ? undefined : indexedDB);
+/** Sends not yet through, by tempId: what they need to go out again. The outbox keeps the same. */
+const outgoing = new Map<string, OutboxEntry>();
+/** On their way now: a send goes out once at a time, whoever asks. */
+const delivering = new Set<string>();
 const setPending = (tempId: string, patch: Partial<PendingSend>) => (pending.value = pending.value.map((x) => (x.tempId === tempId ? { ...x, ...patch } : x)));
+const pendingOf = (e: OutboxEntry): PendingSend => ({ tempId: e.tempId, conversationId: e.conversationId, body: e.body, ts: e.ts, accountId: e.accountId, files: e.files?.map((f) => f.name), failed: e.failed });
 
 /** Shown at once as pending. Without the hub it waits, and goes out when the hub is back (flushOutgoing). */
 export async function send(conversationId: string, body: string, opts: SendOpts = {}) {
   const tempId = 'tmp-' + Math.random().toString(36).slice(2);
-  const p: PendingSend = { tempId, conversationId, body, ts: Date.now(), accountId: opts.accountId, files: opts.files?.map((f) => f.name) };
-  pending.value = [...pending.value, p];
-  outgoing.set(tempId, { conversationId, body, opts });
+  const e: OutboxEntry = { tempId, conversationId, body, ts: Date.now(), accountId: opts.accountId, replyTo: opts.replyTo, files: opts.files?.map((f) => ({ name: f.name, type: f.type, blob: f })) };
+  pending.value = [...pending.value, pendingOf(e)];
+  outgoing.set(tempId, e);
+  // Kept before it goes, so that closing the app meanwhile cannot lose it; a slow IndexedDB does not hold it up long.
+  await Promise.race([outbox.put(e), new Promise((r) => setTimeout(r, 500))]);
   if (!connected.value) {
     setPending(tempId, { queued: true });
     probe();
@@ -611,13 +623,31 @@ export async function send(conversationId: string, body: string, opts: SendOpts 
 
 async function deliver(tempId: string) {
   const o = outgoing.get(tempId);
-  if (!o) return;
+  if (!o || delivering.has(tempId)) return;
+  delivering.add(tempId);
   setPending(tempId, { queued: false, failed: undefined });
+  const uploadAll = async () => {
+    o.attachments = (await Promise.all(o.files!.map(upload))).map((u) => u.id);
+    void outbox.put(o);
+  };
+  // clientId: a retry after a lost answer, or after a reload, goes out once (server.ts).
+  const post = () => api<P.SendResult>(`/api/conversations/${o.conversationId}/send`, { body: { body: o.body, accountId: o.accountId, replyTo: o.replyTo, attachments: o.attachments, clientId: tempId } });
   try {
-    o.attachments ??= o.opts.files?.length ? (await Promise.all(o.opts.files.map(upload))).map((u) => u.id) : undefined;
-    // clientId: a retry after a lost answer goes out once (server.ts).
-    await api(`/api/conversations/${o.conversationId}/send`, { body: { body: o.body, accountId: o.opts.accountId, replyTo: o.opts.replyTo, attachments: o.attachments, clientId: tempId } });
+    if (o.files?.length && !o.attachments) await uploadAll();
+    let r: P.SendResult;
+    try {
+      r = await post();
+    } catch (e: any) {
+      // The hub let the uploads expire while this waited: make them again from the files, once.
+      if (e?.status !== 410 || !o.files?.length) throw e;
+      await uploadAll();
+      r = await post();
+    }
     outgoing.delete(tempId);
+    void outbox.remove(tempId);
+    setPending(tempId, { acked: true, messageId: r?.messageId });
+    settle();
+    // A message that never comes back (a network that does not echo it) leaves no copy behind for long.
     setTimeout(() => (pending.value = pending.value.filter((x) => x.tempId !== tempId)), 30_000);
   } catch (e: any) {
     // No answer at all is the network, not a refusal: wait for the hub.
@@ -625,14 +655,75 @@ async function deliver(tempId: string) {
       setPending(tempId, { queued: true });
       probe();
     } else {
-      outgoing.delete(tempId);
+      o.failed = e.message;
+      void outbox.put(o);
       setPending(tempId, { failed: e.message });
     }
+  } finally {
+    delivering.delete(tempId);
   }
 }
 
 function flushOutgoing() {
   for (const p of pending.value) if (p.queued) void deliver(p.tempId);
+}
+
+/** A refused send, again. */
+export function retrySend(tempId: string) {
+  const o = outgoing.get(tempId);
+  if (!o) return;
+  o.failed = undefined;
+  void outbox.put(o);
+  if (connected.value) return void deliver(tempId);
+  setPending(tempId, { failed: undefined, queued: true });
+  probe();
+}
+
+/** A refused send, thrown away. */
+export function discardSend(tempId: string) {
+  outgoing.delete(tempId);
+  void outbox.remove(tempId);
+  pending.value = pending.value.filter((x) => x.tempId !== tempId);
+}
+
+/**
+ * Sends kept from before this start (a reload, the app closed meanwhile): shown again where they were, and sent once
+ * the hub is caught up with, as before the reload.
+ */
+export async function restoreOutbox() {
+  const kept = (await outbox.all()).filter((e) => !outgoing.has(e.tempId));
+  if (!kept.length) return;
+  for (const e of kept) outgoing.set(e.tempId, e);
+  pending.value = [...pending.value, ...kept.map((e) => ({ ...pendingOf(e), queued: !e.failed }))].sort((a, b) => a.ts - b.ts);
+  // The sync after connecting sends them; if it is already done, now.
+  if (connected.value && synced && !held) flushOutgoing();
+  else if (!connected.value) probe();
+}
+
+/** Messages already matched to a pending copy. */
+const claimed = new Set<string>();
+/** Our own messages that came lately, for a copy whose answer comes after its message. */
+let echoes: Echo[] = [];
+const echoOf = (m: P.MessageView): Echo => ({ id: m.id, conversationId: m.conversationId, body: m.body, ts: m.ts, attachments: m.attachments.length });
+
+function noteEcho(m: P.MessageView) {
+  const now = Date.now();
+  echoes = [...echoes.filter((e) => e.id !== m.id && now - e.ts < 5 * 60_000).slice(-99), echoOf(m)];
+}
+
+/** Drop the pending copies whose message is here now (outbox.ts says which). */
+function settle() {
+  const sent = pending.value.filter((p) => p.acked);
+  if (!sent.length) return;
+  const ids = new Set(sent.map((p) => p.messageId).filter(Boolean));
+  const convs = new Set(sent.map((p) => p.conversationId));
+  const since = Math.min(...sent.map((p) => p.ts)) - ECHO_SKEW;
+  const known = new Map(echoes.map((e) => [e.id, e]));
+  for (const t of timelines.values())
+    for (const m of t.messages) if (ids.has(m.id) || (m.ts >= since && convs.has(m.conversationId) && isSelfIdentity(m.authorId))) known.set(m.id, echoOf(m));
+  const gone = new Set(settled(sent, [...known.values()], claimed));
+  for (const id of claimed) if (claimed.size > 500) claimed.delete(id);
+  if (gone.size) pending.value = pending.value.filter((p) => !gone.has(p.tempId));
 }
 
 /** The dialog for starting a direct conversation; open at a known identity when given one. */
@@ -665,8 +756,19 @@ export function startEditing(m: P.MessageView) {
   if (!('conv' in r) || r.conv !== m.conversationId) go({ view: 'inbox', conv: m.conversationId });
   editing.value = m;
 }
-export const editMessage = (m: P.MessageView, body: string) =>
-  api(`/api/messages/${m.id}/edit`, { body: { body } }).catch((e) => toast({ kind: 'error', title: 'Could not edit', body: e.message }));
+/** What you wrote in an edit the hub refused, by message: editing it again starts from there, not from the old text. */
+export const editDrafts = new Map<string, string>();
+export async function editMessage(m: P.MessageView, body: string) {
+  try {
+    await api(`/api/messages/${m.id}/edit`, { body: { body } });
+    editDrafts.delete(m.id);
+  } catch (e: any) {
+    editDrafts.set(m.id, body);
+    toast({ kind: 'error', title: 'Could not edit', body: `${e.message}. What you wrote is kept: edit the message again to retry.` });
+    // Back to the edit, with your text, unless you are editing something else by now.
+    if (!editing.value) editing.value = m;
+  }
+}
 export function deleteMessage(m: P.MessageView) {
   if (!confirm('Delete this message for everyone? This goes to the network and cannot be undone.')) return;
   api(`/api/messages/${m.id}/delete`, { body: {} }).catch((e) => toast({ kind: 'error', title: 'Could not delete', body: e.message }));
