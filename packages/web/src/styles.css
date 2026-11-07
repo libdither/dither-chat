@@ -7880,6 +7880,11 @@ a.pf-link:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Seen and estimated message counts: two lines rather than cut off. */
+.pf-space-text small.pf-msgcount {
+  white-space: normal;
+  line-height: 1.3;
+}
 .pf-roles {
   display: flex;
   flex-wrap: wrap;

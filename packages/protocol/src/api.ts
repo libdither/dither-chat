@@ -513,6 +513,48 @@ export interface ProfileView {
   memberOf?: { spaceId: string; nick?: string; roles?: string[]; joinedAt?: number; lastSeenAt: number }[];
 }
 
+/**
+ * How many messages someone has posted in a server, from the messages the hub holds and nothing else (hub
+ * msgcount.ts, docs/profile.md). `observed` is exact and a lower bound; a total is given only where the data supports it.
+ */
+export interface MessageCountEstimate {
+  /** The server (its top-level community). */
+  spaceId: string;
+  /** Their messages the hub holds there: they posted at least this many. */
+  observed: number;
+  /** Messages by anyone the hub holds there. */
+  captured: number;
+  /** Their share of those, a 95% Wilson interval. */
+  shareLow: number;
+  shareHigh: number;
+  /** Their estimated count with its range, only when a total could be estimated. */
+  estimate?: number;
+  low?: number;
+  high?: number;
+  /**
+   * Their messages in channels with no estimate (gaps in what is held, or too little of it), counted as seen only:
+   * `high` is then not a ceiling, and the count may be more. At most a tenth of `observed`, or there is no estimate.
+   */
+  unestimated?: number;
+  /** The server's own estimated total, when channels with no estimate hold at most a tenth of what is held. */
+  total?: { estimate: number; low: number; high: number };
+  /**
+   * 'share': observed and share only, the total unknown. 'complete': the hub holds the channels back to their start.
+   * 'snowflake-lifetime': the unseen time before the oldest message held, from each channel's id, at its own rate.
+   */
+  method: 'share' | 'complete' | 'snowflake-lifetime';
+  /** Why, in a sentence: what the total rests on, or why there is none. */
+  reason?: string;
+  /** ms epoch: the newest message held there, which the estimate is as of. null when none. */
+  asOf: number | null;
+  networks: Network[];
+}
+
+/** GET /api/persons/:id/activity, /api/identities/:id/activity[?space=]: servers they posted in, most messages first. */
+export interface ActivityView {
+  spaces: MessageCountEstimate[];
+}
+
 /** POST /api/directs: a direct conversation, opened or found. */
 export interface OpenedDirect {
   conversation: ConversationView | null;

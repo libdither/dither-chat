@@ -35,7 +35,8 @@ Left:
 - **In common** (on your own page, **Your places**): servers as tiles with their icon, their nickname and roles
   there, or how many messages they wrote in it; then group chats with their picture, kind, and how many messages are
   from them. Discord's mutual servers count even where they never wrote; the rest comes from messages and member
-  lists the hub has.
+  lists the hub has. A server they wrote in says how many of their messages the hub holds there, and an estimate of
+  how many they posted when one can be made (below, "Message counts").
 - **Recent messages**: each with the place's picture (the server's icon for a channel), the place, and when.
 - **Status**, collapsed until opened (ui/StatusCard.tsx): the current status and since when, and with adversarial
   features shown (docs/history.md) the logged status history and presence (now, and each stretch with how long it
@@ -79,6 +80,38 @@ null for one it does not have), friends into identities, pictures into signed me
 | Signal | About | About emoji | | | contact, blocked | (hub's own) | | contacts | phone | |
 | WhatsApp | About | | | | contact, blocked | (hub's own) | | address book | phone | business |
 | Matrix | | | where the server keeps them | | has a DM | (hub's own) | | DM partners | matrix.to | time zone |
+
+### Message counts
+
+`GET /api/persons/:id/activity` (or `/api/identities/:id/activity`, `?space=` for one server) says, per server they
+wrote in, how many messages they posted there, from the messages the hub already holds. It asks no network and
+fetches nothing (hub msgcount.ts). It never claims more than the data supports:
+
+- **Seen** (`observed`): their messages the hub holds there, deleted and imported ones included. Exact, and a lower
+  bound: "≥120 seen".
+- **Share**: their part of all the messages the hub holds there, with a 95% Wilson score interval, which stays honest
+  for small samples and for someone who wrote none or all of them.
+- **An estimate** (`estimate`, `low`, `high`), only on Discord and only where the data supports one. Discord ids are
+  snowflakes, but one id stream serves all of Discord, so the spacing of ids in a channel says nothing about how many
+  messages it had. A channel's own id does say when it was made. So, per channel: the hub's messages are assumed to
+  cover everything from the oldest one held to the newest (history pages and live sync come without holes). That
+  window is cut into up to 24 bins of a week or more, and a bin with nothing held may be a hole (a recent page and an
+  old reply fetched alone look like years held), so a channel with one gets no estimate. Held back to its start
+  (`complete`): the count is the count. Otherwise the stretch from when the channel was made to the oldest message
+  held is filled at the channel's own rate (`snowflake-lifetime`): its mean for the estimate, its quietest and
+  busiest week-long bins for the range, and their share of it with its Wilson interval. Only time after they could
+  have posted counts: after their Discord account was made, and after they joined where the adversarial members
+  setting kept that (a join after their first message held is a rejoin, and ignored). Channel ranges add up as they
+  are, so the range is wide on purpose: it means "if the unseen time was like some stretch we saw", not a confidence
+  interval, since a server's activity drifts.
+- **No estimate** (`share`, "≥120 seen (total unknown)") when the window held has an empty bin, is under a week or
+  under a fifth of the channel's life, or holds under 20 messages; on networks whose ids carry no time (Matrix, Signal, WhatsApp, Telegram,
+  Google Messages); or when channels with no estimate hold over a tenth of their messages. `reason` says which.
+  Under a tenth, those are counted as seen only and named (`unestimated`), and the page puts a "+" on the top of the
+  range: it is not a ceiling then.
+
+The profile's In common tiles show it ("≥120 seen; ~1,400 estimated, 900–2,100", rounded to two figures), with the
+share, the server's own estimated total and what it rests on in the tooltip.
 
 ## A place
 

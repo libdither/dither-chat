@@ -9,6 +9,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { ago, fullTime } from '../format.ts';
 import { bioEditor, bioLeft } from '../bio.ts';
 import { openers } from '../direct.ts';
+import { countText, countTitle } from '../msgcount.ts';
 import { communitiesOf, convLabel, convTitle, directsOf, identityName, kindLabel, netName, plainBody, rootCommunity } from '../model.ts';
 import { api, db, go, isSelfIdentity, newMessage, openMessage, openProfile, rev, setRule, toast } from '../state.ts';
 import { Avatar, Empty, NetBadge, NetGlyph, Skeleton } from './bits.tsx';
@@ -69,6 +70,7 @@ function useProfile(personId?: string, identityId?: string) {
   const [profile, setProfile] = useState<P.ProfileView | null | 'none'>(null);
   const [abouts, setAbouts] = useState<Record<string, P.PersonAboutView>>({});
   const [asking, setAsking] = useState(0);
+  const [counts, setCounts] = useState<Record<string, P.MessageCountEstimate>>({});
   const learn = (a: P.PersonAboutView) => {
     a.identities.forEach((i) => db.identities.set(i.id, i));
     setAbouts((x) => ({ ...x, [a.identityId]: a }));
@@ -92,9 +94,14 @@ function useProfile(personId?: string, identityId?: string) {
         ask(p.identityIds);
       })
       .catch(() => live && setProfile('none'));
+    // Their message count per server, estimated from what the hub holds: after the profile, it can wait.
+    setCounts({});
+    api<P.ActivityView>(personId ? `/api/persons/${personId}/activity` : `/api/identities/${identityId}/activity`)
+      .then((v) => live && setCounts(Object.fromEntries(v.spaces.map((e) => [e.spaceId, e]))))
+      .catch(() => {});
     return () => void (live = false);
   }, [personId, identityId, signature]);
-  return { profile, abouts, learn, asking: asking > 0, refresh: () => profile && profile !== 'none' && ask(profile.identityIds, true) };
+  return { profile, abouts, counts, learn, asking: asking > 0, refresh: () => profile && profile !== 'none' && ask(profile.identityIds, true) };
 }
 
 /** Your own bio on one network, and a way to change it, within the network's limit. */
@@ -178,7 +185,7 @@ function OwnBio({ identity, about, account, label, onSaved }: { identity: P.Iden
 
 export function ProfilePane({ personId, identityId, onBack }: { personId?: string; identityId?: string; onBack: () => void }) {
   rev.value;
-  const { profile, abouts, learn, asking, refresh } = useProfile(personId, identityId);
+  const { profile, abouts, counts, learn, asking, refresh } = useProfile(personId, identityId);
   const [merging, setMerging] = useState(false);
   const [filter, setFilter] = useState('');
   const person = personId ? db.persons.get(personId) : undefined;
@@ -453,24 +460,32 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         <Card title={isSelf ? 'Your places' : 'In common'} icon="layers" count={sharedSpaces.length + groupChats.length}>
           {sharedSpaces.length > 0 && (
             <div class="pf-spaces">
-              {sharedSpaces.map(({ s, messages, nick, roles }) => (
-                <button class="pf-space" onClick={() => go({ view: 'space', space: s.id })} title={s.name}>
-                  <Avatar id={s.id} name={s.name} url={s.icon} size={40} square network={s.network} />
-                  <span class="pf-space-text">
-                    <b>{s.name}</b>
-                    <small>{nick ? `as ${nick}` : messages ? `${messages.toLocaleString()} message${messages === 1 ? '' : 's'}` : 'member'}</small>
-                    {roles && roles.length > 0 && (
-                      <span class="pf-roles">
-                        {roles.slice(0, 3).map((r) => (
-                          <span class="pf-role" style={r.color ? { '--role': r.color } : undefined}>
-                            {r.name}
-                          </span>
-                        ))}
-                      </span>
-                    )}
-                  </span>
-                </button>
-              ))}
+              {sharedSpaces.map(({ s, messages, nick, roles }) => {
+                const est = counts[s.id]?.observed ? counts[s.id] : undefined;
+                return (
+                  <button class="pf-space" onClick={() => go({ view: 'space', space: s.id })} title={s.name}>
+                    <Avatar id={s.id} name={s.name} url={s.icon} size={40} square network={s.network} />
+                    <span class="pf-space-text">
+                      <b>{s.name}</b>
+                      {(nick || !est) && <small>{nick ? `as ${nick}` : messages ? `${messages.toLocaleString()} message${messages === 1 ? '' : 's'}` : 'member'}</small>}
+                      {est && (
+                        <small class="pf-msgcount" title={countTitle(est, fullTime)}>
+                          {countText(est)}
+                        </small>
+                      )}
+                      {roles && roles.length > 0 && (
+                        <span class="pf-roles">
+                          {roles.slice(0, 3).map((r) => (
+                            <span class="pf-role" style={r.color ? { '--role': r.color } : undefined}>
+                              {r.name}
+                            </span>
+                          ))}
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           )}
           {groupChats.length > 0 && (

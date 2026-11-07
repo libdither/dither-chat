@@ -501,6 +501,11 @@ export class HubServer {
       const p = s.profile(path.startsWith('/api/persons/') ? { personId: m[1] } : { identityId: m[1] });
       return p ? ok({ ...p, abouts: this.people.kept(p.identityIds) }) : bad('nobody by that id', 404);
     }
+    // Their message count per server, estimated from what the hub holds (msgcount.ts, docs/profile.md).
+    if ((m = path.match(/^\/api\/(persons|identities)\/([\w-]+)\/activity$/))) {
+      const v = s.messageActivity(m[1] === 'persons' ? { personId: m[2] } : { identityId: m[2] }, url.searchParams.get('space') || undefined);
+      return v ? ok(v) : bad('nobody by that id', 404);
+    }
     // What changed (docs/history.md): a place's name, description, settings and members; a person's names, pictures
     // and profile across their identities.
     if ((m = path.match(/^\/api\/(conversations|spaces|persons|identities)\/([\w-]+)\/changes$/))) {
