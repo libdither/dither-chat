@@ -3,7 +3,8 @@
 The inbox used to be fixed sections (Needs you, Pinged you, Unread, Recent chats) with group chats in a separate
 Groups view. It is now one list: DMs, group chats, rooms outside a space and notes to self, plus any other
 channel or thread while it has an unread mention or pinged you. Accounts that need you (a QR to scan, a login)
-stay on top. The hub scores every conversation by how much it needs you and by where you were just now, and the
+stay on top. The hub scores every conversation by how much it needs you and by where you were just now (the
+formula, below), then a model learned from what you open reorders it ([A learned order](#a-learned-order)); the
 list goes by that score, with muted places last. Unread rows keep their bold title and badge wherever they land.
 
 Until 2026-11-07 a line, **Caught up**, split the list: above it what needed you, by score; below it everything
@@ -17,12 +18,14 @@ The score uses metadata only: who wrote, when, who replied to whom, mentions, th
 count, unread state, triage's decisions and time spent and where you were (`usage.ts`). It never reads message text. "Asks a question"
 comes from triage's stored decision, not from the text.
 
-Code: `packages/hub/src/attention.ts` (features and score), `packages/web/src/inbox.ts` (the order on screen),
-`ordering.ts` (the snapshot rules, shared with the sidebar), `ui/Sidebar.tsx` (`InboxSidebar`).
+Code: `packages/hub/src/attention.ts` (features and score), `rank.ts`, `rankhistory.ts` and `ranker.ts` (the
+learned order), `packages/web/src/inbox.ts` (the order on screen), `ordering.ts` (the snapshot rules, shared with
+the sidebar), `ui/Sidebar.tsx` (`InboxSidebar`).
 
 ## The score
 
-In points, roughly 0 to 100. A conversation **needs you** at 20 or more, not counting `visited`: being there
+This is the formula. It is the order on a fresh hub, the learned order's prior, and always the source of `needs`
+and the reasons. In points, roughly 0 to 100. A conversation **needs you** at 20 or more, not counting `visited`: being there
 lately moves a row, it does not make it need you.
 
 ```
@@ -235,11 +238,77 @@ in the order on screen, a DM as its person, then the rest by the latest message.
 | bootstrap `attention` | `AttentionView[]`: `{ id, score, needs, reasons, owedSince, at }` for every listed conversation |
 | event `{ t: 'attention', items, removed }` | changed scores, and conversations no longer listed |
 | `GET /api/attention` | `{ now, items }` |
-| `GET /api/attention/:conversationId` | everything about one score: its parts, noise, relationship, reply rate, usual reply time |
+| `GET /api/attention/:conversationId` | everything about one score: the formula's parts, noise, relationship, reply rate, usual reply time; `learned`: the model's open and send chances and points |
+| `GET /api/attention/model` | the learned order: its mode, when it last learned and from how many opens, its prior, and what it learned as changes to weights on named features |
 | `POST /api/attention/rebuild` | `{ conversations?: string[] }`: fold these, or all, again from the start |
+
+The bootstrap's and the events' `score` is the learned order's when it is on (the default), the formula's otherwise.
 
 Old `#/groups` and `#/groups/c/<id>` links open the inbox and the same conversation, and the address bar shows
 the new link.
+
+## A learned order
+
+The formula's weights are guesses. The learned order is fitted to what you actually open. For each listed
+conversation it predicts two chances from its metadata (`rank.ts`), each a logistic regression:
+
+- **open**: you open it within the next 3 hours, given it is listed;
+- **send**: you write in it, given you open it.
+
+They combine into one expected value, `open × (1 + send)`: an open that leads to a message counts twice. That value
+is turned back into the formula's points (the formula score whose prior open chance would give it), so the client
+still sorts by one `AttentionView.score` and Ctrl+K's lift means the same. Under the prior the points are exactly
+the formula's. Muted places keep the formula's score and stay at the bottom; `needs` and the reasons stay the
+formula's. When the learned score is 10 points or more away from the formula's, one reason says so: "Higher: you
+often open chats like this at times like this", or "Lower: …".
+
+**"See a chat if it is listed"** is the third chance. It depends on where the row is, not on the chat: you look at
+the rows near the top more, so they get opened more whatever they are. That is the examination chance,
+`(1 + position)^−0.5` (`examination`). It does not reorder anything by itself, since putting the likeliest rows
+where you look most is already what sorting by value does. What it changes is the learning: an open from an inbox row
+counts `1 / examination(position)` times, with the position the visit log kept (at most 10 times). An open from a
+notification, Ctrl+K or search counts once.
+
+**Features**, all metadata: the formula's score, how long since you were there (an hour and a day half-life, and
+never), since the latest message (the same two), since you wrote, unread messages and mentions, the owed and
+conversation-going-on parts, a push still unread, relationship strength, noise, decayed visits and minutes, and
+the shape (DM, group, notes). Never what was said.
+
+**Prior.** The open chance starts as a function of the formula's score alone, `logit = −5.1 + 0.66 × score/10`:
+1 in 160 at 0 points, 1 in 7 at 50, even odds at 77. That was fitted to the opens of the choosing days below
+(`--calibrate`). So a fresh hub, or one with no activity log, orders exactly as the formula does. The send chance
+starts at one in six. Fitting adds weights on top of the prior and pulls them back toward it (L2: 1 for the
+prior's two weights, 30 for the rest), so a few days of opens move the order a little and a few weeks more.
+
+**Learning in the hub** (`ranker.ts`), like triage's refits (`learn.ts`):
+- It rebuilds the inbox as it was at each open in the activity log's last 60 days (at most 1,500 opens), with
+  the replay's code (`rankhistory.ts`).
+- It keeps every conversation you opened within the next 3 hours, the 40 with the latest message or stay, and
+  40 drawn from the rest, each counting for as many as it stands for. Then it fits both chances again from the
+  prior and saves the result in `meta`.
+- It refits at start if it has never learned, a day after the last refit, and after 10 more opens have had their
+  3 hours.
+- The work runs on a read-only connection of its own, at most about 25 ms at a time. Measured on a copy of the
+  real hub (184 opens, 675K messages): the longest the hub was held was 86 ms, and the whole refit took about 10 s
+  in the background. Scoring all 484 listed conversations took 185 ms with the model, the same as without.
+- Clearing the activity log puts it back to the prior at the next check (every 30 minutes).
+
+`DITHER_INBOX_RANK`: `model` (the default) sorts by it; `shadow` works it out and shows it in
+`GET /api/attention/:id` without sorting by it; `off` does neither.
+
+**Why it is the default.** In the replay below, refitted each day on the days before as the hub does, it beat the
+formula's one list on the held-out days. MRR went 0.366 → 0.526; the paired difference was +0.160, with a 95%
+bootstrap interval of 0.078 to 0.245. It ranked the opened conversation higher for 20 of 34 opens and lower for 4,
+and the median position went 8.5th → 2nd. On opens from elsewhere, which inbox position cannot have favoured, the
+difference was +0.139 (0.027 to 0.289). On the choosing days, where its first refits had a day or two of opens, it
+was about even: +0.025 (−0.006 to 0.058). Every regularisation from 3 to 300 and position correction from 0 to 1
+did better than the formula on the held-out days (`--model-grid`: MRR 0.42 to 0.52). The choosing days could not
+tell them apart, so the shipped ones were fixed before looking. Two held-out days is little; the hub keeps
+learning, and the replay can be run again as the log grows.
+
+What it learned on the real hub, in short: the time since the latest message counts much more than the formula's
+`recency` gives it, mentions and relationship a little more, and "you were here" a little less than `visited`'s
+30 points.
 
 ## The replay
 
@@ -252,8 +321,11 @@ left out; a person's page counts as the best of their DMs. The earlier days are 
 are held out. It writes counts and rates only.
 
 ```
-bun scripts/inbox-replay.ts --live .data/hub.sqlite --out <scratch dir> [--holdout 2] [--grid]
+bun scripts/inbox-replay.ts --live .data/hub.sqlite --out <scratch dir> [--holdout 2] [--grid] [--model-grid] [--calibrate]
 ```
+
+The learned order is replayed as the hub runs it: refitted at the start of each day on the opens before it whose
+3 hours had passed, from the same rebuilt moments and the same sampling, and asked at every open of the day.
 
 On a real hub, 2026-11-03 to 11-07 (184 opens of a listed conversation; about 400 rows listed). MRR is the mean of
 1/position; R@5 the share opened from the first five rows:
@@ -263,6 +335,7 @@ On a real hub, 2026-11-03 to 11-07 (184 opens of a listed conversation; about 40
 | two parts, "caught up" line | MRR 0.273 · R@5 0.44 · median 7th | 0.355 · 0.41 · 6th | 0.323 · 0.54 · 5th | 0.559 · 0.83 · 2nd |
 | one list (now) | 0.285 · 0.47 · 6th | 0.366 · 0.41 · 8.5th | 0.410 · 0.74 · 3rd | 0.769 · 0.83 · 1st |
 | latest message first | 0.283 · 0.42 · 7.5th | 0.294 · 0.41 · 6.5th | 0.368 · 0.61 · 4th | 0.579 · 0.67 · 2nd |
+| learned order (default) | 0.310 · 0.47 · 6th | 0.526 · 0.68 · 2nd | 0.470 · 0.72 · 3rd | 0.852 · 0.83 · 1st |
 
 Five days is little: differences of a few hundredths are noise. Clicks on inbox rows favour the order that was on
 screen then (the two parts), so the replay also reports opens from elsewhere (notifications, Ctrl+K, search) apart;
@@ -285,8 +358,9 @@ afterwards. Import in transactions of a few thousand messages so the hub keeps a
 
 ### A local model for "needs a reply from me?"
 
-`AttentionJudge` in `attention.ts` is the interface: given a few candidate conversations (the top of the
-ranking with an open turn, say) and their latest message ids, it answers per conversation
+`AttentionJudge` in `attention.ts` is the interface. Its `rank` is the learned order's way in (above). Its `judge`:
+given a few candidate conversations (the top of the ranking with an open turn, say) and their latest message ids,
+it answers per conversation
 `{ needsReply: 0..1, importance: 0..1, reason }`. Answers go in `Attention.judged`, and `scoreConversation`
 already uses them: `p` becomes the mean of the reply rate and `needsReply`, `importance` adds up to 10 points,
 and the reason shows as "Model: …". Nothing implements it yet. It should follow triage.ts's `askModel`:
@@ -297,5 +371,5 @@ This is the only part that would read message text, and only in the local model.
 
 What you actually did with notifications and chats, as labelled data for this model and for triage's, is in the
 activity log ([activity.md](activity.md)): open rate after a push, time to open, dwell, replies after opening, and
-how often you open a place nobody pushed you about. `GET /api/attention/:id` includes those features; the score does
-not use them yet.
+how often you open a place nobody pushed you about. `GET /api/attention/:id` includes those features; the formula does
+not use them. The learned order learns from the same log (above).

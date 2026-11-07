@@ -5,6 +5,8 @@
  *   bun scripts/inbox-replay.ts --live ~/path/.data/hub.sqlite --out <scratch dir> [--holdout 2]
  *   bun scripts/inbox-replay.ts --db <scratch dir>/hub-copy.sqlite --out <scratch dir>   (reuse a copy)
  *   bun scripts/inbox-replay.ts ... --grid      (also: the "you were here" weight and half-life)
+ *   bun scripts/inbox-replay.ts ... --model-grid   (also: the learned order's regularisation and position correction)
+ *   bun scripts/inbox-replay.ts ... --calibrate    (the learned order's prior: open chance against the formula alone)
  *
  * It never opens the live database for writing: it copies it with VACUUM INTO (read-only) and works on the copy. It
  * writes `inbox-replay.md` and `inbox-replay.json` to --out: counts, ranks and rates, never message text, names or ids.
@@ -13,12 +15,16 @@
  * (attention.ts's fold), what was unread (messages from others since you last wrote or stayed there), where you had
  * been (the visit log), and the mutes as they are now. Days split in two: the earlier ones for choosing, the last
  * `--holdout` days to report.
+ *
+ * The learned order (rank.ts) is replayed as the hub runs it: refitted each day on the opens before that day whose
+ * horizon had passed, starting from the prior, and asked at every open of the day.
  */
 import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { decayed, USAGE_HALF_LIFE } from '@dither-chat/protocol';
-import { emptyTally, foldMessage, freshState, scoreConversation, sumTallies, WEIGHTS, type ConvState, type ScoreInput, type Tally } from '../packages/hub/src/attention.ts';
+import { scoreConversation, WEIGHTS } from '../packages/hub/src/attention.ts';
+import { FEATURES, fitRank, HORIZON, predict, PRIOR, rankFeatures, type Feature, type Features, type Moment, type RankModel } from '../packages/hub/src/rank.ts';
+import { isChoice, loadWorld, momentOf, mutedBy, Rebuild, seenAt, type Seen, type World } from '../packages/hub/src/rankhistory.ts';
 import { Store } from '../packages/hub/src/store.ts';
 import { Triage } from '../packages/hub/src/triage.ts';
 
@@ -39,12 +45,7 @@ const outDir = resolve(opt('out', join(import.meta.dir, '..', '.replay'))!);
 const holdoutDays = Number(opt('holdout', '2'));
 const tzOffset = Number(opt('tz', String(-new Date().getTimezoneOffset() / 60))) * HOUR;
 const dayOf = (ts: number) => Math.floor((ts + tzOffset) / DAY);
-
-/** Ids that are you: the accounts' own, and the identities of the person marked as you. */
-const SELF_SQL = `(SELECT self_identity FROM account WHERE self_identity IS NOT NULL UNION SELECT i.id FROM identity i JOIN person p ON p.id = i.person_id WHERE p.is_self = 1)`;
-/** What the inbox always lists (attention.ts LISTED). */
-const LISTED = `(c.shape IN ('direct', 'group', 'self') OR (c.shape = 'channel' AND NOT EXISTS (
-  SELECT 1 FROM space_edge e WHERE e.child_kind = 'conversation' AND e.child_id = c.id)))`;
+const dayStart = (d: number) => d * DAY - tzOffset;
 
 function copyLive(): string {
   const given = opt('db');
@@ -59,239 +60,11 @@ function copyLive(): string {
   return copy;
 }
 
-// ------------------------------------------------------------------ the world, rebuilt
+// ------------------------------------------------------------------ the world, rebuilt (rankhistory.ts)
 
-/** One conversation the inbox may list. Never written out. */
-export interface Conv {
-  id: string;
-  shape: ScoreInput['shape'];
-  members: number;
-  /** Always listed (a DM, group, notes, a room outside a space); else only while it has an unread mention or push. */
-  listed: boolean;
-  /** The usage key: the person for a DM, else the conversation. */
-  usageKey: string;
-  muted: string | null;
-  state: ConvState;
-  lastMessageAt: number | null;
-  /** Messages from others, in order: when, a mention of you, pushed. */
-  incoming: { ts: number; mention: boolean; pushed: boolean }[];
-  /** When you wrote, in order. */
-  own: number[];
-}
-
-/** One stay in a conversation or with a person, from the log. */
-export interface Stay {
-  start: number;
-  end: number;
-  active: number;
-  source: string;
-  /** Its inbox row's position then, from an inbox row. */
-  rank: number | null;
-  sent: number;
-  /** The usage key it counts for, and the conversations it opens. */
-  key: string;
-  targets: string[];
-}
-
-/** Where you had been by `t`: per usage key, decayed seconds and visits and when you were last there. */
-export function usageAt(stays: Stay[], t: number): Map<string, NonNullable<ScoreInput['usage']>> {
-  const out = new Map<string, NonNullable<ScoreInput['usage']>>();
-  for (const s of stays) {
-    if (s.start >= t) break;
-    const end = Math.min(s.end, t);
-    const seconds = Math.min(s.active, (end - s.start) / 1000 + 60);
-    const counted = s.active >= 3;
-    const u = out.get(s.key) ?? { score: 0, visitScore: 0, at: end, lastVisit: null };
-    const at = Math.max(u.at, end);
-    out.set(s.key, {
-      score: decayed(u.score, u.at, at) + decayed(seconds, end, at),
-      visitScore: decayed(u.visitScore, u.at, at) + (counted ? decayed(1, end, at) : 0),
-      at,
-      lastVisit: counted ? Math.max(u.lastVisit ?? 0, s.start + 3000) : u.lastVisit,
-    });
-  }
-  return out;
-}
-
-/** Everything a policy may look at for one conversation at one moment. */
-export interface Seen {
-  conv: Conv;
-  input: ScoreInput;
-  /** When you were last there (from the log), or null. */
-  lastThere: number | null;
-}
-
-export interface World {
-  convs: Map<string, Conv>;
-  stays: Stay[];
-  /** The first stay in the log: before it, nobody knows where you were. */
-  logStart: number;
-  /** Tallies per (conversation, author). */
-  tallies: Map<string, Map<string, Tally>>;
-}
-
-/** The candidates at `t`, as the inbox would have scored them, with everything folded up to `t`. */
-export function seenAt(w: World, t: number, usage: Map<string, NonNullable<ScoreInput['usage']>>): Seen[] {
-  const out: Seen[] = [];
-  for (const c of w.convs.values()) {
-    // Folded up to `t` only: a conversation with no messages yet is not in the inbox.
-    if (c.lastMessageAt === null) continue;
-    const u = usage.get(c.usageKey) ?? null;
-    const lastOwn = c.own.length ? c.own[c.own.length - 1] : null;
-    const there = u ? Math.max(u.at, u.lastVisit ?? 0) : null;
-    // Read up to: your last message, your last stay, or the start of the log (before it, assume caught up).
-    const read = Math.max(lastOwn ?? 0, there ?? 0, w.logStart);
-    let unread = 0;
-    let mentions = 0;
-    let pushedUnread = false;
-    for (let i = c.incoming.length - 1; i >= 0 && c.incoming[i].ts > read; i--) {
-      unread++;
-      if (c.incoming[i].mention) mentions++;
-      if (c.incoming[i].pushed) pushedUnread = true;
-    }
-    if (!c.listed && !mentions && !pushedUnread) continue;
-    if (!c.listed && c.muted) continue;
-    const turn = c.state.turn?.addressed != null ? c.state.turn : null;
-    const author = turn?.authorKey ? sumTallies([...(w.tallies.get(turn.authorKey)?.values() ?? [])], t) : null;
-    out.push({
-      conv: c,
-      lastThere: there,
-      input: {
-        now: t,
-        shape: c.shape,
-        members: c.members,
-        lastMessageAt: c.lastMessageAt,
-        state: c.state,
-        author,
-        authorName: null,
-        unread,
-        mentions,
-        pinged: pushedUnread ? 'a push' : null,
-        muted: c.muted,
-        usage: u,
-      },
-    });
-  }
-  return out;
-}
-
-function load(path: string) {
+function load(path: string): World & { db: Database } {
   const store = new Store(path, () => null);
-  const db = store.db;
-  const triage = new Triage(store);
-  const self = new Set((db.query(`SELECT * FROM ${SELF_SQL}`).all() as Row[]).map((r) => Object.values(r)[0] as string));
-  const selfPerson = (db.query('SELECT id FROM person WHERE is_self = 1').get() as Row | null)?.id ?? null;
-
-  const stays: Stay[] = [];
-  const peerOf = new Map<string, string | null>();
-  const dmsOf = new Map<string, string[]>();
-  const peers = db
-    .query(
-      `SELECT c.id, i.person_id FROM conversation c JOIN participant pa ON pa.conversation_id = c.id JOIN identity i ON i.id = pa.identity_id
-       LEFT JOIN person p ON p.id = i.person_id WHERE c.shape = 'direct' AND i.person_id IS NOT NULL AND COALESCE(p.is_self, 0) = 0 AND i.id NOT IN ${SELF_SQL}`,
-    )
-    .all() as Row[];
-  for (const r of peers) {
-    if (peerOf.has(r.id)) continue;
-    peerOf.set(r.id, r.person_id);
-    dmsOf.set(r.person_id, [...(dmsOf.get(r.person_id) ?? []), r.id]);
-  }
-
-  // Candidates: what the inbox always lists, and anything that ever mentioned you or was pushed.
-  const rows = db
-    .query(
-      `SELECT c.id, c.shape, ${LISTED} AS listed, (SELECT COUNT(*) FROM participant WHERE conversation_id = c.id) AS members FROM conversation c
-       WHERE ${LISTED} OR EXISTS (SELECT 1 FROM message m WHERE m.conversation_id = c.id AND m.mentions_self = 1)
-          OR EXISTS (SELECT 1 FROM message m JOIN triage t ON t.message_id = m.id WHERE m.conversation_id = c.id AND t.decision IN ('push', 'quiet'))`,
-    )
-    .all() as Row[];
-  const convs = new Map<string, Conv>();
-  for (const r of rows) {
-    const eff = triage.effectiveLevel(r.id);
-    const quiet = eff.level === 'none' || eff.level === 'digest';
-    const peer = peerOf.get(r.id) ?? null;
-    convs.set(r.id, {
-      id: r.id,
-      shape: r.shape,
-      members: r.members,
-      listed: !!r.listed,
-      usageKey: r.shape === 'direct' && peer ? `person:${peer}` : `conversation:${r.id}`,
-      muted: quiet && !(r.shape === 'self' && !eff.explicit) ? eff.source : null,
-      state: freshState(),
-      lastMessageAt: null,
-      incoming: [],
-      own: [],
-    });
-  }
-
-  for (const v of db
-    .query(`SELECT start_at, end_at, active, source, rank, sent, view, conversation_id, person_id FROM visit WHERE view IN ('conversation', 'person') ORDER BY start_at`)
-    .all() as Row[]) {
-    const c = v.conversation_id ? convs.get(v.conversation_id) : null;
-    const person = v.view === 'person' ? v.person_id : c?.shape === 'direct' ? peerOf.get(c.id) : null;
-    const key = person ? `person:${person}` : `conversation:${v.conversation_id}`;
-    const targets = v.view === 'person' ? (dmsOf.get(v.person_id) ?? []) : v.conversation_id ? [v.conversation_id] : [];
-    stays.push({ start: v.start_at, end: v.end_at, active: v.active, source: v.source, rank: v.rank, sent: v.sent, key, targets });
-  }
-  const logStart = stays[0]?.start ?? Infinity;
-  return { store, db, convs, stays, logStart, self, selfPerson };
-}
-
-/**
- * Fold every candidate's messages in time order, stopping at each moment in `at` to call `visit` with the world as
- * it was then. Messages are what attention.ts folds: no text.
- */
-function replay(l: ReturnType<typeof load>, at: number[], visit: (t: number, w: World) => void) {
-  const tallies = new Map<string, Map<string, Tally>>();
-  const w: World = { convs: l.convs, stays: l.stays, logStart: l.logStart, tallies };
-  const ids = [...l.convs.keys()];
-  const q = l.db.query(
-    `SELECT m.id, m.ts, m.conversation_id AS cid, m.author_id, m.mentions_self, m.mentions_all, m.kind, m.deleted, i.is_bot, i.person_id,
-            r.author_id AS reply_author,
-            EXISTS (SELECT 1 FROM reaction x WHERE x.message_id = m.id AND x.identity_id IN ${SELF_SQL}) AS reacted,
-            t.decision IN ('push', 'quiet') AS pushed, t.reasons LIKE '%asks a question%' AS question
-     FROM message m LEFT JOIN identity i ON i.id = m.author_id LEFT JOIN message r ON r.id = m.reply_to_id LEFT JOIN triage t ON t.message_id = m.id
-     WHERE m.conversation_id IN (SELECT value FROM json_each(?)) ORDER BY m.ts, m.rowid`,
-  );
-  const mine = (id: string | null, person: string | null) => (!!id && l.self.has(id)) || (!!person && person === l.selfPerson);
-  let next = 0;
-  for (const r of q.iterate(JSON.stringify(ids)) as Iterable<Row>) {
-    while (next < at.length && at[next] < r.ts) visit(at[next++], w);
-    const c = l.convs.get(r.cid)!;
-    const me = mine(r.author_id, r.person_id);
-    const ignore = !!r.deleted || r.kind === 'system';
-    const key = r.person_id ?? r.author_id;
-    foldMessage(
-      c.state,
-      (k) => {
-        let m = tallies.get(k);
-        if (!m) tallies.set(k, (m = new Map()));
-        let t = m.get(c.id);
-        if (!t) m.set(c.id, (t = emptyTally()));
-        return t;
-      },
-      {
-        id: r.id,
-        ts: r.ts,
-        author: r.author_id,
-        authorKey: key,
-        mine: me,
-        bot: !!r.is_bot,
-        mentionsMe: !!r.mentions_self && !r.mentions_all,
-        repliesToMe: mine(r.reply_author, null),
-        question: !!r.question,
-        pushed: !!r.pushed,
-        ignore,
-        reactedByMe: !!r.reacted,
-      },
-      { shape: c.shape, members: c.members },
-    );
-    if (ignore) continue;
-    c.lastMessageAt = Math.max(c.lastMessageAt ?? 0, r.ts);
-    if (me) c.own.push(r.ts);
-    else c.incoming.push({ ts: r.ts, mention: !!r.mentions_self, pushed: !!r.pushed });
-  }
-  while (next < at.length) visit(at[next++], w);
+  return { ...loadWorld(store.db, mutedBy(new Triage(store))), db: store.db };
 }
 
 // ------------------------------------------------------------------ orderings
@@ -358,11 +131,18 @@ export interface Open {
   listLength: number;
   /** You had been there within the last 2 hours: going back to a chat you were just in. */
   back: boolean;
+  /** You wrote during the stay. */
+  sent: boolean;
   ranks: Record<string, number>;
 }
 
-/** Opens worth asking about: a choice you made, of something the inbox lists. App start and resuming are not. */
-const isChoice = (s: Stay) => s.source !== 'start' && s.source !== 'resume' && (s.active >= 3 || s.source === 'notification' || s.source === 'toast');
+/** What the learned order needs from one open: every candidate's features then, and what you opened. */
+interface Snap {
+  t: number;
+  targets: string[];
+  sent: boolean;
+  cands: { id: string; x: Features; muted: boolean }[];
+}
 
 export interface Summary {
   n: number;
@@ -386,20 +166,23 @@ export function summarize(ranks: number[]): Summary {
   };
 }
 
-/** Replay `policies` over every open; the rank of what you opened, under each. */
-function measure(l: ReturnType<typeof load>, policies: Policy[]): { opens: Open[]; skipped: Record<string, number> } {
+/** Replay `policies` over every open: the rank of what you opened under each, and what the learned order learns from. */
+function measure(l: ReturnType<typeof load>, policies: Policy[]): { opens: Open[]; snaps: Snap[]; moments: Moment[]; skipped: Record<string, number> } {
   const choices = l.stays.filter(isChoice);
   const opens: Open[] = [];
+  const snaps: Snap[] = [];
+  const moments: Moment[] = [];
   const skipped: Record<string, number> = { notListed: 0, noTarget: 0 };
   let i = 0;
-  replay(
+  new Rebuild(
+    l.db,
     l,
     choices.map((s) => s.start),
     (t, w) => {
       const stay = choices[i++];
       if (!stay.targets.length) return void skipped.noTarget++;
       // Where you had been until just before this open; the stay itself is not yet known.
-      const seen = seenAt(w, t, usageAt(w.stays, t));
+      const seen = seenAt(w, t);
       const ids = new Set(seen.map((s) => s.conv.id));
       if (!stay.targets.some((x) => ids.has(x))) return void skipped.notListed++;
       const ranks: Record<string, number> = {};
@@ -408,15 +191,62 @@ function measure(l: ReturnType<typeof load>, policies: Policy[]): { opens: Open[
         ranks[p.id] = Math.min(...stay.targets.map((x) => order.indexOf(x)).filter((r) => r >= 0));
       }
       const back = seen.some((s) => stay.targets.includes(s.conv.id) && s.lastThere !== null && t - s.lastThere <= 2 * HOUR);
-      opens.push({ t, day: dayOf(t), source: stay.source, listLength: seen.length, back, ranks });
+      opens.push({ t, day: dayOf(t), source: stay.source, listLength: seen.length, back, sent: stay.sent > 0, ranks });
+      snaps.push({
+        t,
+        targets: stay.targets.filter((x) => ids.has(x)),
+        sent: stay.sent > 0,
+        cands: seen.map((s) => ({ id: s.conv.id, x: rankFeatures(s.input, scoreConversation(s.input)), muted: !!s.input.muted && s.conv.shape !== 'self' })),
+      });
+      // As the hub learns: a sample of the candidates (rankhistory.ts).
+      moments.push(momentOf(w, stay, t, seen)!);
     },
-  );
-  return { opens, skipped };
+  ).run();
+  return { opens, snaps, moments, skipped };
+}
+
+// ------------------------------------------------------------------ the learned order
+
+/** Where a model puts what you opened, muted places last as on screen. */
+function modelRank(m: RankModel, s: Snap): number {
+  const order = s.cands
+    .map((c) => ({ id: c.id, v: predict(m, c.x).value, muted: c.muted }))
+    .sort((a, b) => Number(a.muted) - Number(b.muted) || b.v - a.v || (a.id < b.id ? -1 : 1))
+    .map((c) => c.id);
+  return Math.min(...s.targets.map((x) => order.indexOf(x)).filter((r) => r >= 0));
+}
+
+/** Replay the learned order as the hub runs it: refitted each day on what had matured before it. Adds `ranks[id]`. */
+function learned(ms: Moment[], opens: Open[], snaps: Snap[], id: string, o: { eta: number; lambda?: Record<Feature, number> }): Record<number, RankModel> {
+  const models: Record<number, RankModel> = {};
+  for (const d of [...new Set(opens.map((x) => x.day))]) {
+    const cut = dayStart(d);
+    const known = ms.filter((m) => m.at + HORIZON <= cut);
+    models[d] = known.length ? fitRank(known, cut, o) : PRIOR;
+  }
+  opens.forEach((x, i) => (x.ranks[id] = modelRank(models[x.day], snaps[i])));
+  return models;
 }
 
 // ------------------------------------------------------------------ the report
 
 const fmt = (x: number) => x.toFixed(3);
+
+/** The difference in MRR between two orderings on the same opens, with a 95% interval from resampling the opens. */
+export function mrrGap(opens: Open[], a: string, b: string, draws = 4000): { gap: number; lo: number; hi: number; better: number; worse: number } {
+  const d = opens.map((o) => 1 / (o.ranks[a] + 1) - 1 / (o.ranks[b] + 1));
+  const mean = (xs: number[]) => xs.reduce((s, x) => s + x, 0) / (xs.length || 1);
+  let seed = 7;
+  const rand = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+  const means: number[] = [];
+  for (let i = 0; i < draws; i++) means.push(mean(d.map(() => d[Math.floor(rand() * d.length)])));
+  means.sort((x, y) => x - y);
+  return { gap: mean(d), lo: means[Math.floor(draws * 0.025)], hi: means[Math.floor(draws * 0.975)], better: d.filter((x) => x > 1e-9).length, worse: d.filter((x) => x < -1e-9).length };
+}
+const gapLine = (what: string, o: Open[]) => {
+  const g = mrrGap(o, 'learned', 'one-list');
+  return `- ${what} (n=${o.length}): ${g.gap >= 0 ? '+' : ''}${fmt(g.gap)}, 95% interval ${fmt(g.lo)} to ${fmt(g.hi)}; higher for ${g.better} opens, lower for ${g.worse}`;
+};
 
 function table(title: string, policies: Policy[], groups: [string, Open[]][]): string {
   const lines = [`### ${title}`, '', `| ordering | ${groups.map(([g, o]) => `${g} (n=${o.length}) MRR · R@5 · R@10 · median`).join(' | ')} |`, `|---|${groups.map(() => '---').join('|')}|`];
@@ -438,9 +268,25 @@ if (import.meta.main) {
   const policies: Policy[] = [twoLists, oneList(), latest, lastVisited];
   if (flag('grid'))
     for (const v of [15, 30, 45, 60]) for (const h of [1, 2, 4]) policies.push(oneList(`here-${v}-${h}h`, { visited: v, visitedHalfLife: h * HOUR }));
-  const { opens, skipped } = measure(l, policies);
+  const { opens, snaps, moments, skipped } = measure(l, policies);
   const days = [...new Set(opens.map((o) => o.day))].sort((a, b) => a - b);
   const holdout = new Set(days.slice(-holdoutDays));
+  // The learned order, as shipped; and with --model-grid, other settings to choose from on the choosing days.
+  const models = learned(moments, opens, snaps, 'learned', { eta: 0.5 });
+  policies.push({ id: 'learned', what: 'the learned order (rank.ts) as shipped, refitted daily on the days before', order: () => [] });
+  const at = (lam: number): Record<Feature, number> => Object.fromEntries(FEATURES.map((f) => [f, f === 'bias' || f === 'formula' ? 1 : lam])) as Record<Feature, number>;
+  if (flag('model-grid'))
+    for (const lam of [3, 10, 30, 100, 300])
+      for (const eta of [0, 0.5, 1]) {
+        const id = `learned-${lam}-${eta}`;
+        learned(moments, opens, snaps, id, { eta, lambda: at(lam) });
+        policies.push({ id, what: `learned, pulled back to the prior by ${lam}, position correction ${eta}`, order: () => [] });
+      }
+  if (flag('calibrate')) {
+    const ms = moments.filter((m) => !holdout.has(dayOf(m.at)));
+    const only = Object.fromEntries(FEATURES.map((f) => [f, f === 'bias' || f === 'formula' ? 0 : 1e9])) as Record<Feature, number>;
+    console.log('prior, fitted on the choosing days:', JSON.stringify(fitRank(ms, Date.now(), { lambda: only, eta: 0 }).open), 'shipped:', JSON.stringify(PRIOR.open));
+  }
   const val = opens.filter((o) => !holdout.has(o.day));
   const hold = opens.filter((o) => holdout.has(o.day));
   const fromInbox = (o: Open) => o.source === 'inbox';
@@ -454,9 +300,25 @@ if (import.meta.main) {
     '',
     '"Back" are opens of a conversation you had been in within the last 2 hours.',
     '',
-    table('Choosing days', policies, [['all', val], ['from the inbox', val.filter(fromInbox)], ['elsewhere', val.filter((o) => !fromInbox(o))], ['back', val.filter((o) => o.back)]]),
+    '"Wrote" are opens where you sent a message.',
     '',
-    table('Held-out days', policies, [['all', hold], ['from the inbox', hold.filter(fromInbox)], ['elsewhere', hold.filter((o) => !fromInbox(o))], ['back', hold.filter((o) => o.back)]]),
+    table('Choosing days', policies, [['all', val], ['from the inbox', val.filter(fromInbox)], ['elsewhere', val.filter((o) => !fromInbox(o))], ['back', val.filter((o) => o.back)], ['wrote', val.filter((o) => o.sent)]]),
+    '',
+    table('Held-out days', policies, [['all', hold], ['from the inbox', hold.filter(fromInbox)], ['elsewhere', hold.filter((o) => !fromInbox(o))], ['back', hold.filter((o) => o.back)], ['wrote', hold.filter((o) => o.sent)]]),
+    '',
+    'Learned order minus one list, MRR on the same opens:',
+    '',
+    gapLine('choosing days', val),
+    gapLine('held-out days', hold),
+    gapLine('held out, opened from elsewhere', hold.filter((o) => !fromInbox(o))),
+    '',
+    'The learned order as it stood at the start of the last day, change from the prior in log-odds (positive: likelier):',
+    '',
+    ...(['open', 'send'] as const).map((k) => {
+      const m = models[days[days.length - 1]];
+      const d = FEATURES.map((f) => [f, (m[k][f] ?? 0) - (PRIOR[k][f] ?? 0)] as const).filter(([, v]) => Math.abs(v) >= 0.01).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+      return `- ${k} (from ${m.moments} opens): ${d.map(([f, v]) => `${f} ${v > 0 ? '+' : ''}${v.toFixed(2)}`).join(', ') || 'the prior'}`;
+    }),
     '',
     'Orderings:',
     ...policies.map((p) => `- \`${p.id}\`: ${p.what}`),

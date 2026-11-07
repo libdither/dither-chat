@@ -5,7 +5,8 @@ whether those decisions were right, the hub needs labelled data: which notificat
 you did then, and which chats you opened without being told to. Usage (`place_usage`, [organize.md](organize.md))
 only keeps decayed totals per place, so it cannot answer that. The activity log can. It is the training and
 evaluation data for the planned local decision model, and its derived features are already available to triage
-and the inbox's ranking behind a flag.
+and the inbox's ranking behind a flag. The inbox's learned order learns from its visits: which conversations you
+opened, from which row, and whether you wrote ([inbox.md](inbox.md#a-learned-order)).
 
 Everything stays on the hub. It is not in the sync journal and not sent to other clients ([sync.md](sync.md)).
 Devices only send to it.
@@ -172,6 +173,7 @@ Settings → Privacy → **Keep an activity log** (on by default):
 - **Export my activity log** and **Export training examples**: the two files above.
 - **Delete activity log…**: everything in `visit`, `notification`, `notification_event` and `triage_input`. Usage
   totals, which order the sidebar, are separate and stay ("Reset Usage History…" in the sort menu clears those).
+  The inbox's learned order goes back to its prior within half an hour, since what it learned came from the log.
 
 On a device, what is not yet sent waits in localStorage (`dither-chat:activity-outbox`) and goes with the next
 batch: every minute and when the page is hidden. The hub keeps the latest snapshot of each visit (counts and times

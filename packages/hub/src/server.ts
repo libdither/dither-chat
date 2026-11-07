@@ -477,6 +477,8 @@ export class HubServer {
       const a = this.opts.attention;
       if (!a) return bad('attention is off', 404);
       if (path === '/api/attention' && method === 'GET') return ok({ now: Date.now(), items: a.list() });
+      // The learned order (ranker.ts): its mode and what it learned, as weights on named features.
+      if (path === '/api/attention/model' && method === 'GET') return ok((a.judge as { view?: () => unknown } | undefined)?.view?.() ?? { mode: 'off' });
       if ((m = path.match(/^\/api\/attention\/([\w-]+)$/)) && method === 'GET') {
         const x = a.explain(m[1]);
         return x ? ok(x) : bad('not in the inbox', 404);

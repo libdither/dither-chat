@@ -76,6 +76,10 @@ try {
   await away();
   await Bun.sleep(2500);
 
+  // The learned order is on, and on a fresh demo hub (no activity log yet) it is its prior: the formula's order.
+  const model = (await fetch(`${hub}/api/attention/model`).then((r) => r.json())) as any;
+  check(model.mode === 'model' && model.moments === 0, 'the learned order is on, at its prior', { mode: model.mode, moments: model.moments });
+
   // One list, in the hub's order.
   let scores = await attention();
   let s = await shown();
