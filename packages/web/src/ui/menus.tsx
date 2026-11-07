@@ -3,7 +3,7 @@
  * the same action. The reasoning per surface is in docs/menus.md.
  */
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META } from '@dither-chat/protocol';
+import { NETWORK_META, showsInline } from '@dither-chat/protocol';
 import { fullTime } from '../format.ts';
 import { LEVEL_LABEL, authorName, convTitle, deepLink, directsOf, effectiveLevel, netName, plainBody, sumUnread, unreadOf } from '../model.ts';
 import { deviceRule, myDevice, setDeviceRule } from '../devices.ts';
@@ -205,7 +205,8 @@ export function attachmentMenu(a: P.AttachmentView, m: P.MessageView | null, ima
   const items = groups(
     [
       image && { label: 'Open Image', icon: 'image', run: () => (viewer.value = { images: images.length ? images : [{ url: a.url, name: a.name }], index: Math.max(0, images.findIndex((x) => x.url === a.url)) }) },
-      { label: image ? 'Open Original' : `Open ${noun}`, icon: 'external', run: () => window.open(a.url, '_blank', 'noopener') },
+      // A type the hub serves only as a download has nothing to open: Save does the same.
+      (image || showsInline(a.mime)) && { label: image ? 'Open Original' : `Open ${noun}`, icon: 'external', run: () => window.open(a.url, '_blank', 'noopener') },
       image && { label: 'Copy Image', icon: 'copy', run: () => void copyImage(a.url) },
       { label: `Save ${noun}`, icon: 'download', run: () => save(a.url, a.name) },
       { label: 'Copy Link', icon: 'link', run: () => copy(absolute(a.url), 'Link copied') },

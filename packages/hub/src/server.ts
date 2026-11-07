@@ -15,7 +15,7 @@ import { cleanFileName, Uploads } from './uploads.ts';
 import { ImportRunner } from './imports/engine.ts';
 import { GapFill } from './imports/gapfill.ts';
 import { linkPath, MediaArchiver } from './mediaarchive.ts';
-import { mediaHeaders } from './mediaheaders.ts';
+import { mediaHeaders, SAFE_HEADERS, sniffMime } from './mediaheaders.ts';
 import { ImportSources } from './imports/sources.ts';
 import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } from './calls.ts';
 import { compress } from './compress.ts';
@@ -906,7 +906,7 @@ export class HubServer {
             c.enqueue(enc.encode(chunk));
           },
         });
-        return new Response(stream, { headers: { 'content-type': 'application/x-ndjson', 'content-disposition': `attachment; filename="${name}-${new Date().toISOString().slice(0, 10)}.jsonl"` } });
+        return new Response(stream, { headers: { 'content-type': 'application/x-ndjson', ...SAFE_HEADERS, 'content-disposition': `attachment; filename="${name}-${new Date().toISOString().slice(0, 10)}.jsonl"` } });
       }
     }
     // Usage and automatic order (usage.ts, docs/organize.md).
@@ -1136,7 +1136,7 @@ export class HubServer {
     if ((m = path.match(/^\/api\/accounts\/([\w-]+)\/log$/))) {
       // Local accounts' logs are here; remote ones' are wherever dither-accounts keeps the account.
       const text = (await this.sup.log?.(m[1]).catch((e: Error) => `(the log is not available: ${e.message})`)) ?? '';
-      return new Response(text, { headers: { 'content-type': 'text/plain; charset=utf-8' } });
+      return new Response(text, { headers: { 'content-type': 'text/plain; charset=utf-8', ...SAFE_HEADERS } });
     }
     return bad('not found', 404);
   }
@@ -1320,7 +1320,11 @@ export class HubServer {
       const p = normalize(decodeURIComponent(raw.slice('file://'.length)));
       const root = resolve(this.opts.dataDir);
       if (!resolve(p).startsWith(root + '/') || !existsSync(p) || !statSync(p).isFile()) return new Response('not found', { status: 404 });
-      return new Response(Bun.file(p), { headers: mediaHeaders(raw, key, Bun.file(p).type, 'private, max-age=604800') });
+      // A file kept on disk (an import, Signal's own copy) has no type recorded: by its name, else by its first bytes.
+      const f = Bun.file(p);
+      const named = f.type.split(';')[0];
+      const type = named !== 'application/octet-stream' ? f.type : (sniffMime(new Uint8Array(await f.slice(0, 16).arrayBuffer())) ?? named);
+      return new Response(f, { headers: mediaHeaders(raw, key, type, 'private, max-age=604800') });
     } else {
       if (!accountId) return new Response('no account to resolve media', { status: 404 });
       const r = await this.sup.command<{ mime: string; base64: string }>(accountId, { t: 'fetchMedia', url: raw }, 30_000).catch(() => null);

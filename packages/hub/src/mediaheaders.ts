@@ -1,14 +1,28 @@
 /**
- * Headers for attachment bytes served from the hub's own origin (server.ts fetchMedia).
+ * Headers for attachment bytes served from the hub's own origin (server.ts fetchMedia), and for other bytes someone
+ * else chose (an account's log, an export).
  *
  * The bytes and their type come from other people's messages. Opened in a tab, an HTML, SVG or XML attachment would run
- * as script on this origin, with the signed-in session and the whole API. So every response carries `nosniff` and
- * `Content-Security-Policy: sandbox` (no allow-* tokens: no script, no forms, no plugins, an opaque origin), and
- * anything that is not a plain image, video or audio file is a download.
+ * as script on this origin, with the signed-in session and the whole API. So every response carries `nosniff` and a
+ * CSP with `sandbox` (an opaque origin, no script, no forms, no plugins) that loads nothing but the file itself, and
+ * anything a browser could run as a page is a download.
  *
- * Inline is an allowlist, not a denylist: image/*, video/*, audio/* except SVG and other +xml types, which can hold
- * script. PDF is a download too (it can run script in a viewer). A type nobody listed is a download.
+ * Inline is an allowlist, not a denylist (protocol showsInline): images other than SVG, video, audio, PDF and plain
+ * text. A type nobody listed is a download. Chromium's and Firefox's PDF viewers show a PDF under the sandbox, and run
+ * its script, if any, in their own origin.
  */
+import { showsInline } from '@dither-chat/protocol';
+
+/** Every response: a document opened in a tab gets an opaque origin and no script, and loads only the file itself. */
+export const SANDBOX_CSP = "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'";
+/**
+ * Video and audio opened in a tab: the browser's own player loads the file again in CORS mode, which fails from an
+ * opaque origin, so these keep the hub's. Still no script, and the page is one the browser built, not the file.
+ */
+export const PLAYER_CSP = SANDBOX_CSP.replace('sandbox;', 'sandbox allow-same-origin;');
+
+/** For other text someone else chose (an account's log, an export). */
+export const SAFE_HEADERS = { 'x-content-type-options': 'nosniff', 'content-security-policy': SANDBOX_CSP } as const;
 
 const TYPE = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/;
 
@@ -20,12 +34,9 @@ export function safeMime(mime: string | null | undefined): string {
   return m;
 }
 
-/** True when a browser may render this type in a top-level tab or as <img>/<video>/<audio> without it being active content. */
+/** True when a browser may show this type in a top-level tab or as <img>/<video>/<audio> without it being active content. */
 export function inlineType(mime: string): boolean {
-  const essence = safeMime(mime).split(';')[0].trim().toLowerCase();
-  const [top, sub] = essence.split('/');
-  if (top !== 'image' && top !== 'video' && top !== 'audio') return false;
-  return !sub.includes('xml') && !sub.includes('html');
+  return showsInline(safeMime(mime));
 }
 
 const EXT: Record<string, string> = { 'text/html': 'html', 'application/xhtml+xml': 'xhtml', 'image/svg+xml': 'svg', 'application/xml': 'xml', 'text/xml': 'xml', 'application/pdf': 'pdf', 'text/plain': 'txt' };
@@ -58,11 +69,33 @@ export function attachmentDisposition(raw: string, key: string, mime: string): s
 /** Every header of a media response. `raw` is the stored URL, `key` its cache key. */
 export function mediaHeaders(raw: string, key: string, mime: string, cache = 'private, max-age=604800, immutable'): Record<string, string> {
   const type = safeMime(mime);
+  const inline = inlineType(type);
   return {
     'content-type': type,
     'cache-control': cache,
     'x-content-type-options': 'nosniff',
-    'content-security-policy': 'sandbox',
-    ...(inlineType(type) ? {} : { 'content-disposition': attachmentDisposition(raw, key, type) }),
+    'content-security-policy': inline && /^(video|audio)\//i.test(type) ? PLAYER_CSP : SANDBOX_CSP,
+    ...(inline ? {} : { 'content-disposition': attachmentDisposition(raw, key, type) }),
   };
+}
+
+/** A type for a file on disk with none recorded and no telling name: by its first bytes, for the kinds a browser shows. */
+export function sniffMime(head: Uint8Array): string | null {
+  const ascii = (from: number, to: number) => String.fromCharCode(...head.subarray(from, to));
+  if (head[0] === 0x89 && ascii(1, 4) === 'PNG') return 'image/png';
+  if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return 'image/jpeg';
+  if (ascii(0, 4) === 'GIF8') return 'image/gif';
+  if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'image/webp';
+  if (ascii(0, 5) === '%PDF-') return 'application/pdf';
+  if (ascii(4, 8) === 'ftyp') {
+    const brand = ascii(8, 12);
+    if (brand === 'avif' || brand === 'avis') return 'image/avif';
+    if (brand === 'heic' || brand === 'heix' || brand === 'mif1') return 'image/heic';
+    if (brand === 'M4A ') return 'audio/mp4';
+    return 'video/mp4';
+  }
+  if (head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) return 'video/webm';
+  if (ascii(0, 4) === 'OggS') return 'audio/ogg';
+  if (ascii(0, 3) === 'ID3') return 'audio/mpeg';
+  return null;
 }
