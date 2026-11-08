@@ -22,7 +22,12 @@
  * and one whose text names another site asks first; the remote-image banner and the proxy; quotes folded; cid:
  * pictures; files open in the viewers; swiping back over a body works on a phone; a white sheet in both themes.
  *
- *   bun scripts/verify-mail.ts http://127.0.0.1:8700 [screenshot dir] [--html]
+ * With --big (a hub started with DITHER_DEMO_MAIL_BIG=1: years of Archive, and a folder the hub does not follow),
+ * first: the progress line while the backfill runs, and gone after it; a mailbox's list goes on as it is scrolled; the
+ * folder lists its first page when opened and the server's older pages as it is scrolled past what the hub holds,
+ * back past the year the hub keeps; nothing off the side.
+ *
+ *   bun scripts/verify-mail.ts http://127.0.0.1:8700 [screenshot dir] [--html] [--big]
  * The hub must be a fresh demo hub (--demo) with its own data dir: reading marks threads read.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -32,14 +37,20 @@ import { launch, type Page } from './browser.ts';
 
 const args = process.argv.slice(2);
 const withHtml = args.includes('--html');
-const [base, shots] = args.filter((a) => a !== '--html');
-if (!base) throw new Error('usage: bun scripts/verify-mail.ts <hub url> [screenshot dir] [--html]');
+const bigRun = args.includes('--big');
+const [base, shots] = args.filter((a) => a !== '--html' && a !== '--big');
+if (!base) throw new Error('usage: bun scripts/verify-mail.ts <hub url> [screenshot dir] [--html] [--big]');
 if (shots) mkdirSync(shots, { recursive: true });
 
 const boot = (await fetch(`${base}/api/bootstrap`).then((r) => r.json())) as any;
 if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
 if (boot.mail?.access?.state !== 'granted') throw new Error('this demo hub has no mail');
-const threads = ((await fetch(`${base}/api/mail/threads?list=v:inbox:*&limit=100`).then((r) => r.json())) as any).threads as any[];
+// A hub just started may still be on its first page (a slow server: --big).
+let threads: any[] = [];
+for (let i = 0; i < 60 && !threads.some((t) => t.subject.includes('Lease renewal')); i++) {
+  if (i) await Bun.sleep(500);
+  threads = ((await fetch(`${base}/api/mail/threads?list=v:inbox:*&limit=100`).then((r) => r.json())) as any).threads;
+}
 const byTitle = (s: string) => threads.find((t) => t.subject.includes(s))!;
 const dinner = byTitle('Dinner on Friday');
 const shipped = byTitle('Your order has shipped');
@@ -630,7 +641,75 @@ async function htmlChecks() {
   check('html: the CSP stopped what was put in the frame by hand', [...asked].some(([id, u]) => stopped.has(id) && u.includes('canary')), [...asked].filter(([, u]) => u.includes('canary')).map(([id, u]) => [u, stopped.has(id)]));
 }
 
+// ------------------------------------------------------------------ --big: a mailbox of years
+
+const mailNow = () => fetch(`${base}/api/mail`).then((r) => r.json()) as Promise<{ accounts: { sync: { phase: string; synced: number } }[]; mailboxes: { id: string; role: string | null; name: string; total: number | null }[] }>;
+
+async function big(themeName: string, phoneSize: boolean, first: boolean) {
+  const tag = `${phoneSize ? 'phone' : 'desktop'} ${themeName} big`;
+  if (phoneSize) await page.size(390, 844, true);
+  else await page.size(1400, 900);
+  const boxes = (await mailNow()).mailboxes;
+  const arc = boxes.find((b) => b.role === 'archive')!;
+  const projects = boxes.find((b) => b.name === 'Projects')!;
+  const rows = () => page.eval<number>(`document.querySelectorAll('.sidebar .mail-row').length`);
+  const lastRow = () => page.eval<string>(`[...document.querySelectorAll('.sidebar .mail-row')].at(-1)?.dataset.thread ?? ''`);
+  const scroller = '.sidebar .side-scroll';
+  const down = async (until: () => Promise<boolean>, tries = 40) => {
+    for (let i = 0; i < tries && !(await until()); i++) {
+      await page.eval(`(() => { const el = document.querySelector(${JSON.stringify(scroller)}); el.scrollTop = el.scrollHeight; })()`);
+      await Bun.sleep(700);
+    }
+  };
+  await theme(themeName, `#/mail/l/${encodeURIComponent(`mb:${arc.id}`)}`);
+  await page.until(`document.querySelectorAll('.sidebar .mail-row').length >= 20`, 15000);
+  if (first) {
+    // While the backfill runs, the last line says so.
+    let phase = (await mailNow()).accounts[0].sync.phase;
+    for (let i = 0; i < 40 && phase === 'first'; i++) {
+      await Bun.sleep(500);
+      phase = (await mailNow()).accounts[0].sync.phase;
+    }
+    const line = `document.querySelector('.sidebar .mail-sync-line')?.textContent ?? ''`;
+    if (phase === 'backfill') {
+      const ok = await page.until(`/^Syncing older mail · [\\d,.\\s]+, back to /.test(${line})`, 5000).then(() => true, () => false);
+      check(`${tag}: the progress line while the backfill runs`, ok, await page.eval<string>(line));
+    } else console.log(`note  ${tag}: the backfill was ${phase} when the list showed, so its line was not checked`);
+  }
+  await down(async () => (await rows()) > 120);
+  const n = await rows();
+  check(`${tag}: the list goes on as it is scrolled, without a button`, n > 120, n);
+  check(`${tag}: no sideways overflow: a long list`, !(await overflow()).length, await overflow());
+  await shot(`mail-${tag.replace(/ /g, '-')}`);
+  if (!first) return;
+  for (let i = 0; i < 120 && (await mailNow()).accounts[0].sync.phase !== 'idle'; i++) await Bun.sleep(500);
+  check(`${tag}: the backfill ends, and the progress line with it`, (await mailNow()).accounts[0].sync.phase === 'idle' && (await page.until(`!document.querySelector('.sidebar .mail-sync-line')`, 5000).then(() => true, () => false)));
+
+  // A folder the hub does not follow: its first page when opened, then the server's older pages as it is scrolled.
+  const held = (await mailNow()).accounts[0].sync.synced;
+  await page.eval(`location.hash = ${JSON.stringify(`#/mail/l/${encodeURIComponent(`mb:${projects.id}`)}`)}`);
+  await page.until(`document.querySelectorAll('.sidebar .mail-row').length >= 20`, 15000).catch(() => {});
+  check(`${tag}: a folder not synced shows its first page when opened`, (await rows()) >= 20, await rows());
+  const opened = (await mailNow()).accounts[0].sync.synced;
+  await down(async () => (await mailNow()).accounts[0].sync.synced > opened && (await rows()) > 70, 30);
+  check(`${tag}: scrolled past it, the folder's older mail comes from the server`, (await mailNow()).accounts[0].sync.synced > opened && opened > held, { held, opened, now: (await mailNow()).accounts[0].sync.synced });
+  const last = await lastRow();
+  await down(async () => (await lastRow()) !== last, 10);
+  const t = ((await fetch(`${base}/api/mail/threads/${await lastRow()}`).then((r) => r.json())) as any).thread;
+  check(`${tag}: its rows reach past the year the hub keeps`, t && t.lastAt < Date.now() - 365 * 86_400_000, t && new Date(t.lastAt).toISOString());
+  check(`${tag}: no sideways overflow: a folder`, !(await overflow()).length, await overflow());
+  await shot(`mail-${tag.replace(/ /g, '-')}-folder`);
+}
+
 try {
+  if (bigRun) {
+    const box = (await mailNow()).mailboxes.find((b) => b.role === 'archive');
+    if (!box || (box.total ?? 0) < 1000) throw new Error('no big Archive: start the hub with DITHER_DEMO_MAIL_BIG=1 for --big');
+    await big('dither-dark', true, true);
+    await big('dither-light', true, false);
+    await big('dither-dark', false, false);
+    await big('dither-light', false, false);
+  }
   await phone('dither-dark', true);
   await phone('dither-light', false);
   await desktop('dither-dark');

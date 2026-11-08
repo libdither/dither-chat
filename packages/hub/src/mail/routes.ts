@@ -14,6 +14,7 @@
  * origin of every non-GET request before it gets here.
  */
 import type * as P from '@dither-chat/protocol';
+import { bigRoutes, pageOnDemand } from './backfill.ts';
 import type { MailHub } from './index.ts';
 import { peopleRoutes } from './people.ts';
 import { sendRoutes } from './outbox.ts';
@@ -50,12 +51,12 @@ export const readRoutes: MailRouter = (hub) => [
     },
   },
   {
-    // ?list=<key>&before=<cursor>&limit=50
+    // ?list=<key>&before=<cursor>&limit=50; past what the hub holds, the server is asked (slice 2, backfill.ts).
     method: 'GET',
     path: /^\/api\/mail\/threads$/,
-    handle: ({ url }) => {
+    handle: async ({ url }) => {
       const key = url.searchParams.get('list') ?? 'v:inbox:*';
-      const page = hub.store.listThreads(key, url.searchParams.get('before'), Number(url.searchParams.get('limit')) || 50);
+      const page = await pageOnDemand(hub, key, url.searchParams.get('before'), Number(url.searchParams.get('limit')) || 50);
       return page ? ok(page satisfies P.MailThreadPage) : bad('no such list', 404);
     },
   },
@@ -114,7 +115,7 @@ export const readRoutes: MailRouter = (hub) => [
 ];
 
 /** Every slice's router. Add yours here. */
-const ROUTERS: MailRouter[] = [readRoutes, peopleRoutes, sendRoutes, opsRoutes, partRoutes];
+const ROUTERS: MailRouter[] = [readRoutes, peopleRoutes, sendRoutes, opsRoutes, partRoutes, bigRoutes];
 
 export function mountRouters(hub: MailHub): MailRoute[] {
   return ROUTERS.flatMap((r) => r(hub));

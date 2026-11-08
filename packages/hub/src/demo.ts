@@ -15,7 +15,7 @@ import { ABOUT_LABEL as P_ABOUT_LABEL, BIO_LIMIT as P_BIO_LIMIT, NETWORK_META } 
 import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
 import type { InprocAdapter } from './supervisor.ts';
-import type { FakeMailBackend, FakeInput } from './mail/fake.ts';
+import { fillMailbox, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
 
 type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa';
@@ -1892,4 +1892,13 @@ export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
       text: `This week's new books and events at the library (week ${40 - i}).`,
     });
   seedHtmlMail(fake, DEMO_MAIL_ACCOUNT, ME, now);
+  // A big mailbox (scripts/verify-mail.ts --big): years of Archive and older Inbox, below the mail above, and a folder.
+  if (process.env.DITHER_DEMO_MAIL_BIG) {
+    for (const [box, n] of [['Archive', 40_000], ['INBOX', 400]] as const) fillMailbox(fake, DEMO_MAIL_ACCOUNT, box, n, { newest: now - 30 * D, oldest: now - 3 * 365 * D, self: ME.email });
+    // A folder the hub does not follow: listed when you open it.
+    fake.addMailbox(DEMO_MAIL_ACCOUNT, { id: 'Projects', name: 'Projects', path: 'Projects', parentId: null, role: null, unread: null, total: null });
+    fillMailbox(fake, DEMO_MAIL_ACCOUNT, 'Projects', 1000, { newest: now - 60 * D, oldest: now - 5 * 365 * D, self: ME.email });
+    // As slow as a server far away, so the backfill can be watched.
+    fake.setOpts(DEMO_MAIL_ACCOUNT, { latencyMs: 250 });
+  }
 }

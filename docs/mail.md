@@ -23,9 +23,8 @@ Email beside your chats, through dither-accounts' `mail` interface. The design, 
 - **Offline**: the page keeps the threads it was showing and the last threads and bodies it opened, so they show
   before the hub answers.
 
-Not yet: search (7), mail in the one-list inbox (8), notifications (9). Only the newest
-500 of Inbox and Sent are synced (older mail and other folders come with slice 2), and a thread shows the start of its
-last message only once you have opened it (slice 2 fetches bodies ahead).
+Not yet: search (7), mail in the one-list inbox (8), notifications (9). Big mailboxes (older mail, other folders, bodies
+ahead) have a section of their own below.
 
 ## People (slice 6)
 
@@ -206,7 +205,80 @@ Without `DITHER_ACCOUNTS_URL` there is no Mail entry; Settings → Mail says wha
 
 `hub/src/mail/limits.ts` (`MAIL_LIMITS`), overridden by `DITHER_MAIL_SYNC_DAYS` (365: how far back slice 2 backfills,
 plus all of Inbox), `DITHER_MAIL_MAX` (150,000 summaries an account), `DITHER_MAIL_CACHE_MB` (500 MB of bodies) and
-`DITHER_MAIL_INDEX_MB` (300 MB of search text). Slice 1 keeps every body it fetched (eviction is slice 2's).
+`DITHER_MAIL_INDEX_MB` (300 MB of search text).
+
+## Big mailboxes (slice 2)
+
+- **How far back.** After the first sync, each account goes on listing older mail in the background, 200 summaries a
+  page: Inbox and Sent back a year (`DITHER_MAIL_SYNC_DAYS`), then All mail (else Archive) back a year, then the rest of
+  Inbox to its end (the design's §14 Q2). It stops at 150,000 summaries an account (`DITHER_MAIL_MAX`).
+- **Older than that, as you scroll.** A list loads its next page as you near its end. When the hub has no more of it
+  and the mailbox has more on the server, the hub fetches the next page then, ahead of anything in the background, and
+  waits up to 8 s for it; past that the list says "Fetching older mail from the server…" and the rows come as they
+  arrive.
+- **Other folders** (Junk, your own) are listed the first time you open one: its first page at once, the rest as you
+  scroll. From then on the hub keeps it up like the others, every minute while a page shows it.
+- **Bodies ahead**: the newest 300 personal messages of the last 14 days, new personal mail as it arrives, and the
+  first 20 rows of each list you open, so their previews show. "Personal" is the message's class once slice 8 sets it;
+  until then, mail to you or Cc'd to you, without list headers, from an address that does not look automated.
+- **The body cache**: 500 MB (`DITHER_MAIL_CACHE_MB`); past it, the least recently read go first, down to 90%. Starred
+  mail stays, and so does a body an outbox item needs (`mail_body.keep = 1`). A body over 2 MB is kept only while it is
+  read (10 minutes). An evicted body is fetched again when it is opened or its HTML, a `cid:` picture or a file is
+  asked for (slice 3's files stay in the media cache), and its row keeps its preview.
+- **Search text**: the first 16 KB of each body's text (`mail_text`), kept after the body goes; 300 MB in all
+  (`DITHER_MAIL_INDEX_MB`), the oldest mail's going first.
+- **The summary cap**: past 150,000, an hourly sweep drops the oldest summaries outside Inbox (not starred, not in a
+  thread opened in the last week). Each mailbox they left goes back to where its listing can find them again
+  (`mail_page`), so scrolling there fetches them.
+- **The progress line** under the list: "Syncing · 2,300" during the first sync, "Syncing older mail · 12,400, back to
+  3 Mar 2025" during the backfill, "Refreshing…" while a mailbox is listed again after a 410.
+- **Timers**: a mailbox a page showed in the last 2 minutes is checked every minute; on a server that syncs by
+  comparing flags, a mailbox over 10,000 messages every 30 minutes instead of 15.
+
+**The budget.** Each account's queue has four priorities and two slots (`hub/src/mail/queue.ts`). What a page waits for
+(a body, a page past what the hub holds) and keeping up go at once. Bodies ahead and the backfill together start at most
+2 calls a second, on one of the two slots, and none for 10 s after a call a page waited for, so reading and scrolling
+never queue behind the backfill (`hub/src/mail/backfill.ts` `Budget`). The manager's own limit is 50 reads a second.
+
+**What pages are sent.** During a backfill threads change all the time. A changed thread goes to the pages
+(`mail.threads`) only when it is among the newest 200 of a mailbox it is in, listed in the one-list inbox, opened in
+the last hour, or asked for by a page in the last 10 minutes. The rest send `mail.lists {stale}`, naming the lists they
+are in (`w:*` for every list of mail with someone); it is journaled, so a page that was away hears it too. A stale list
+keeps showing what it has and loads again when it next shows.
+
+**Measured** (`hub/test/mail-load.test.ts`, 2026-11-08, on the shared machine, which was busy). 60,000 messages on a
+fake server: Inbox 12,000, Sent 6,000 and Archive 42,000, each spread over three years, in threads of three.
+
+| | |
+|---|---|
+| First screen | after 3 calls (mailboxes, Inbox's state, Inbox's newest 50): 34-41 ms |
+| First sync (Inbox and Sent to 500) | 0.2 s |
+| Backfill, unthrottled | 28,200 summaries in 9,334 threads: 147 list pages and 300 bodies, 7-18 s in the test (it stops to measure the heap), about 4 s without |
+| Backfill at the budget | about 3.7 minutes for those 447 calls; the demo hub ran at 2 pages, 400 summaries, a second |
+| Database | 25.8 MB for 28,200 summaries: about 960 bytes a summary with its indexes and slice 6's people (50,000: about 48 MB) |
+| Heap | flat: 77-82 MB from 5,000 to 28,000 summaries held, within 1 MB in each run |
+| Threads sent to pages during the backfill | 600 of 9,334 |
+| A page past the horizon | 100-400 ms: one list call, ahead of the background |
+
+The test prints these on every run. Bodies' sizes depend on the mail, so the body cache was measured only by count.
+
+**Running it.** `bun test packages/hub/test/mail-load.test.ts` takes about 30 s. A demo hub with a big mailbox:
+`DITHER_DEMO_MAIL_BIG=1` adds 40,000 Archive messages over three years, 400 older Inbox messages and an unsynced
+"Projects" folder of 1,000, on a fake server that answers in 250 ms. `bun scripts/verify-mail.ts <hub> [shots] --big`
+then checks endless scroll, the progress line, a folder opened for the first time, and older mail fetched past what the
+hub holds, at 390 px and on a desktop in both themes, before its usual checks.
+
+**For later slices.**
+
+- Search (7): `mail_text` (message_id, text) has the first 16 KB of each fetched body's text by the time MailHub's
+  `body` event fires, for bodies fetched ahead too; `searchText(store, id)` (`hub/src/mail/cache.ts`) reads it. A row
+  goes with its message (`ON DELETE CASCADE`) and under the cap, so an FTS table can follow it with triggers on
+  `mail_text`. `deleted` also fires for summaries the cap drops.
+- Classification (8): once `mail_message.class` is set, bodies ahead go by it; `mail_thread.listed = 1` keeps a
+  thread in the live window.
+- Triage (9): a new personal message's body is fetched on arrival; its `body` event says when it is here.
+- Filing (4): `bigOf(hub)?.window.want(threadIds)` (`backfill.ts`) sends threads you acted on as they change.
+- Sending (5): `UPDATE mail_body SET keep = 1` keeps a body out of eviction.
 
 ## How it keeps up
 

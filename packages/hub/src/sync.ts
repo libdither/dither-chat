@@ -167,6 +167,8 @@ function mailSince(mail: MailHub, of: (kind: string) => string[], list: (kind: s
     const have = new Set(threads.map((t) => t.id));
     out.push({ t: 'mail.threads', threads, removed: ids.filter((id) => !have.has(id)) });
   }
+  const stale = of('mailList');
+  if (stale.length) out.push({ t: 'mail.lists', stale });
   out.push(...gone);
   return out;
 }

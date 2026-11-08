@@ -50,13 +50,14 @@ const ops = (fake: FakeMailBackend) => fake.calls.map((c) => `${c.op}${c.input.m
 const held = (st: MailHub['store'], native: string) => st.one<{ message_id: string }>('SELECT message_id FROM mail_location WHERE native_id = ?', native)?.message_id ?? null;
 
 describe('first sync', () => {
-  test('mailboxes, then states, then Inbox’s newest page, Sent’s, then both further down', async () => {
+  test('mailboxes, Inbox’s state and newest page, Sent’s, the other states, then both further down', async () => {
     const { fake, st, synced } = world({}, (f) => {
       for (let i = 0; i < 70; i++) f.put(ACC, { messageId: `<in${i}@x>`, receivedAt: T0 + i * H, subject: `In ${i}` });
       for (let i = 0; i < 60; i++) f.put(ACC, { mailboxId: 'Sent', messageId: `<out${i}@x>`, from: [{ name: null, email: ME }], receivedAt: T0 + i * H, subject: `Out ${i}` });
     });
     await synced();
-    expect(ops(fake).slice(0, 8)).toEqual(['mail.mailboxes', 'mail.changes INBOX', 'mail.changes Sent', 'mail.changes Archive', 'mail.list INBOX 50', 'mail.list Sent 50', 'mail.list INBOX 150 …', 'mail.list Sent 150 …']);
+    // The screen fills after three calls (slice 2); each state is taken before its mailbox is listed.
+    expect(ops(fake).slice(0, 8)).toEqual(['mail.mailboxes', 'mail.changes INBOX', 'mail.list INBOX 50', 'mail.changes Sent', 'mail.list Sent 50', 'mail.changes Archive', 'mail.list INBOX 150 …', 'mail.list Sent 150 …']);
     expect(st.one<{ n: number }>('SELECT COUNT(*) AS n FROM mail_message')!.n).toBe(130);
     expect(st.account(ACC)!.synced_at).not.toBeNull();
     expect(st.mailboxByNative(ACC, 'INBOX')!.complete).toBe(1);
@@ -64,17 +65,18 @@ describe('first sync', () => {
     await until(() => fake.calls.filter((c) => c.op === 'mail.changes' && c.input.state).length >= 3, 2000, 'the catch-up');
   });
 
-  test('stops at MAIL_LIMITS.firstSync of a big Inbox; the rest is backfill (slice 2)', async () => {
-    const { st, synced } = world({}, (f) => {
+  test('stops at MAIL_LIMITS.firstSync of a big Inbox; the backfill lists the rest', async () => {
+    const { fake, st, synced } = world({}, (f) => {
       for (let i = 0; i < MAIL_LIMITS.firstSync + 40; i++) f.put(ACC, { messageId: `<in${i}@x>`, receivedAt: T0 + i * 60_000, subject: `Mail ${i}` });
     });
     await synced();
     const inbox = st.mailboxByNative(ACC, 'INBOX')!;
-    expect(st.mailboxHeld(inbox.id).n).toBe(MAIL_LIMITS.firstSync);
-    expect(inbox.complete).toBe(0);
-    expect(inbox.list_next).not.toBeNull();
-    // The newest were kept.
-    expect(held(st, 'INBOX.100.1')).toBeNull();
+    await until(() => st.mailbox(inbox.id)!.complete, 3000, 'the backfill');
+    expect(st.mailboxHeld(inbox.id).n).toBe(MAIL_LIMITS.firstSync + 40);
+    // The first sync's pages (the newest first), then the backfill's.
+    const limits = fake.calls.filter((c) => c.op === 'mail.list' && c.input.mailboxId === 'INBOX').map((c) => c.input.limit);
+    expect(limits).toEqual([MAIL_LIMITS.firstPage, 150, 150, 150, MAIL_LIMITS.backfillPage]);
+    expect(held(st, 'INBOX.100.1')).not.toBeNull();
   });
 
   test('the first page shows before the rest is listed', async () => {
@@ -85,7 +87,7 @@ describe('first sync', () => {
     hub!.on('ingested', () => seen.push(st.one<{ n: number }>('SELECT COUNT(*) AS n FROM mail_message')!.n));
     await synced();
     expect(seen[0]).toBe(50);
-    expect(fake.calls.findIndex((c) => c.op === 'mail.list')).toBe(4);
+    expect(fake.calls.findIndex((c) => c.op === 'mail.list')).toBe(2);
   });
 });
 
