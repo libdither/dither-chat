@@ -99,8 +99,8 @@ export function writeSyntheticV2(dir: string, o: { snapshot?: string } = {}) {
     [[4, [[1, 11], [2, 3], [3, T + 5000], [11, [[2, text('hello club')]]]]]],
     [[4, [[1, 10], [2, 2], [3, T + 6000], [15, [[7, [[2, 1], [3, 1], [4, 3]]]]]]]],
     [[4, [[1, 11], [2, 1], [3, T + 7000], [15, [[2, [[1, []]]]]]]]],
-    // Note to Self.
-    [[4, [[1, 12], [2, 1], [3, T + 8000], [11, [[2, text('remember milk')]]]]]],
+    // Note to Self, with the same picture twice.
+    [[4, [[1, 12], [2, 1], [3, T + 8000], [11, [[2, text('remember milk')], [3, [[1, pointer]]], [3, [[1, pointer]]]]]]]],
     // From someone with no ACI: left out.
     [[4, [[1, 13], [2, 4], [3, T + 9000], [11, [[2, text('who')]]]]]],
   ];

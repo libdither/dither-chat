@@ -56,7 +56,7 @@ describe('reading a snapshot', () => {
     const media = join(dir, 'media');
     const lines: any[] = [];
     const stats = readSignalV2({ dir: src, backupKey: key(), selfId: SELF, mediaDir: media }, (l) => lines.push(l));
-    expect(stats).toMatchObject({ conversations: 3, messages: 7, selfMessages: 3, duplicates: 0, files: { linked: 1, missing: 0 } });
+    expect(stats).toMatchObject({ conversations: 3, messages: 7, selfMessages: 3, duplicates: 0, files: { linked: 3, missing: 0 } });
     expect(stats.skipped).toEqual({ deleted: 1, sms: 1, 'chat not kept': 1 });
     const convs = lines.filter((l) => l.t === 'conversation').map((l) => l.conversation);
     const group = `group:${groupIdFromMasterKey(MASTER_KEY).toString('base64')}`;
@@ -78,6 +78,7 @@ describe('reading a snapshot', () => {
     expect(by(T + 6000)).toMatchObject({ kind: 'call', body: '📞 Missed voice call' });
     expect(by(T + 7000)).toMatchObject({ kind: 'system', body: 'You updated the group.' });
     expect(by(T + 8000)).toMatchObject({ conversation: `dm:${SELF}:${SELF}`, body: 'remember milk' });
+    expect(by(T + 8000).attachments!.map((a) => a.nativeId)).toEqual([made.attachmentSha, `${made.attachmentSha}#1`]);
   });
 });
 
@@ -142,9 +143,10 @@ describe('a Molly folder over HTTP', () => {
 
     await json(`/api/imports/${id}/run`, { method: 'POST', body: { dryRun: false } });
     v = await until(id, (v) => !!v.run?.finishedAt);
-    expect(v.run).toMatchObject({ stage: 'done', counts: { messages: 7, new: 6, same: 1, conflicts: 0 }, files: { linked: 1, missing: 0 } });
+    expect(v.run).toMatchObject({ stage: 'done', counts: { messages: 7, new: 6, same: 1, conflicts: 0 }, files: { linked: 3, missing: 0 } });
     const n = (store.db.query(`SELECT COUNT(*) AS n FROM message WHERE network = 'signal'`).get() as any).n;
     expect(n).toBe(7);
+    expect((store.db.query(`SELECT COUNT(*) AS n FROM attachment`).get() as any).n).toBe(3);
     const att = store.db.query(`SELECT url FROM attachment`).get() as any;
     expect(att.url).toStartWith(`file://${join(hubDir, 'imports/media')}`);
 
@@ -152,4 +154,32 @@ describe('a Molly folder over HTTP', () => {
     v = await until(id, (v) => !!v.run?.finishedAt && v.run.counts?.new === 0);
     expect(v.run!.counts).toMatchObject({ new: 0, same: 7 });
   }, 30_000);
+});
+
+describe('comparing with what live sync has', () => {
+  test('a placeholder for a file the hub has is the same message; words the hub never had are filled in', () => {
+    const store = new Store(join(dir, 'cmp.sqlite'), mediaSigner('s'));
+    let acc = store.createAccount({ id: 'acc_s', network: 'signal', label: 'me', color: '#000', adapter: 'signal' } as any);
+    store.ingest(acc, { t: 'status', status: 'online', self: { nativeId: SELF, isSelf: true } });
+    acc = store.account('acc_s')!;
+    const conversation = `dm:${SELF}:${ALICE}`;
+    store.ingest(acc, { t: 'message', message: { nativeId: `${ALICE}:1`, conversation, author: ALICE, ts: 1, kind: 'media', body: '', attachments: [{ kind: 'image', url: 'file:///x.png' }] }, live: false });
+    store.ingest(acc, { t: 'message', message: { nativeId: `${ALICE}:2`, conversation, author: ALICE, ts: 2, kind: 'sticker', body: '' }, live: false });
+    const counts = store.importBatch(
+      acc,
+      {
+        conversation: { nativeId: conversation, shape: 'direct', participants: [SELF, ALICE] },
+        identities: [],
+        messages: [
+          { nativeId: `${ALICE}:1`, conversation, author: ALICE, ts: 1, kind: 'media', body: '📎 Attachment (not in the backup)' },
+          { nativeId: `${ALICE}:2`, conversation, author: ALICE, ts: 2, kind: 'sticker', body: '🐱' },
+        ],
+      },
+      { sourceSha: 'x', runId: 'r', dryRun: false, archiveNew: true, first: true },
+    );
+    expect(counts).toMatchObject({ same: 1, filled: 1, conflicts: 0 });
+    expect((store.db.query(`SELECT body FROM message WHERE ts = 2`).get() as any).body).toBe('🐱');
+    expect((store.db.query(`SELECT body FROM message WHERE ts = 1`).get() as any).body).toBe('');
+    store.db.close();
+  });
 });

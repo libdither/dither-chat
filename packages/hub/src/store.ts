@@ -1014,11 +1014,20 @@ export class Store {
           counts.same++;
           continue;
         }
-        if (f.body && normalizeForCompare(row.body) !== normalizeForCompare(f.body)) {
-          conflict('body');
+        // The hub has the file and no words; the source lacks the file and says so in words: the same message.
+        if (!row.body && row.atts && !f.attachments?.length) {
+          counts.same++;
           continue;
         }
         let filled = false;
+        // Words the hub never had (a sticker's emoji, say) are filled in, not a difference.
+        if (!row.body && f.body) {
+          if (!o.dryRun) this.db.query('UPDATE message SET body = ? WHERE id = ?').run(f.body, mid);
+          filled = true;
+        } else if (f.body && normalizeForCompare(row.body) !== normalizeForCompare(f.body)) {
+          conflict('body');
+          continue;
+        }
         if (!row.reply_to_id && f.replyTo) {
           if (!o.dryRun) this.db.query('UPDATE message SET reply_to_id = ? WHERE id = ?').run(hubId('msg', acc.network, f.replyTo), mid);
           filled = true;
