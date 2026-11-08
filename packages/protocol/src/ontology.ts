@@ -17,11 +17,10 @@
 
 export type Network = 'discord' | 'signal' | 'matrix' | 'whatsapp' | 'telegram' | 'gmessages' | 'messenger' | 'instagram' | 'x';
 /**
- * The networks this hub offers. telegram and gmessages (Google Messages: SMS and RCS) run only in dither-accounts.
- * messenger, instagram and x (X's direct messages) are in the type for dither-accounts' extractors being built, and join
- * this list once the hub runs them.
+ * The networks this hub offers. telegram, gmessages (Google Messages: SMS and RCS), messenger, instagram and x (X's
+ * direct messages) run only in dither-accounts.
  */
-export const NETWORKS: readonly Network[] = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages'];
+export const NETWORKS: readonly Network[] = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x'];
 
 /** Where a conversation sits in the social structure, independent of network. */
 export type Shape =

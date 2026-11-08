@@ -47,5 +47,10 @@ export function directTarget(network: Network, input: string): { peer: string } 
     return TG_ID.test(s) ? { peer: s } : { error: 'A Telegram @username, or a phone number with its country code, like +15551234567' };
   }
   if (network === 'gmessages') return PHONE.test(phone(s)) ? { peer: phone(s) } : { error: 'A phone number needs its country code, like +15551234567' };
+  // Their extractors read and answer chats but can't open a new one yet: start it in the account's live view.
+  if (network === 'messenger' || network === 'instagram' || network === 'x') {
+    const name = network === 'x' ? 'X' : network === 'instagram' ? 'Instagram' : 'Messenger';
+    return { error: `New ${name} chats start in the account's live view for now; they show up here once they exist` };
+  }
   return SNOWFLAKE.test(s) ? { peer: s } : { error: 'Pick someone you know on Discord: it needs their user id' };
 }

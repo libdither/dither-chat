@@ -74,8 +74,10 @@ The adapter log stays where it was: the account's `adapter.log`, which the manag
 
 ## Networks that run only in dither-accounts
 
-`telegram` and `gmessages` (Google Messages: SMS and RCS through the phone) have no adapter here: their extractors
-live in dither-accounts (its docs/telegram.md and docs/gmessages.md), so they work only in remote mode. The hub knows
+`telegram`, `gmessages` (Google Messages: SMS and RCS through the phone), `messenger`, `instagram` and `x` (X's direct
+messages) have no adapter here: their extractors live in dither-accounts (its docs/telegram.md, docs/gmessages.md,
+docs/messenger.md and docs/x.md), so they work only in remote mode. Messenger, Instagram and X run the real web app
+in a sandboxed browser there; you sign in in its live view, and a new chat with someone starts there too for now. The hub knows
 them as networks (labels, addressing a new chat by @username or phone number, the add dialog's fields, the QR, code,
 password, emoji and cookie steps of their sign-in).
 
