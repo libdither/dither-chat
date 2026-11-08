@@ -8,6 +8,7 @@ import type * as P from '@dither-chat/protocol';
 import { categoryThreshold, NETWORK_META } from '@dither-chat/protocol';
 import { dataVersion, db, inbox, isSelfIdentity, prefs } from './state.ts';
 import { triageBoard, type Board } from './board.ts';
+import { mailNames } from './mail/model.ts';
 
 const memos = new Map<string, { rev: number; value: unknown }>();
 function memo<T>(key: string, fn: () => T): T {
@@ -83,6 +84,9 @@ export function identityName(id: string | null | undefined): string {
   if (!i) return 'Unknown';
   return i.displayName || i.handle || i.nativeId;
 }
+
+// "Mail with Sam": a `w:` list's heading names the person (mail/model.ts).
+mailNames.of = (who) => db.persons.get(who)?.name ?? (db.identities.has(who) ? identityName(who) : null);
 
 export function personOf(identityId: string | null | undefined): P.PersonView | null {
   if (!identityId) return null;

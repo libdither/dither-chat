@@ -7,6 +7,7 @@ import { mailAddressText } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { clock, dayLabel, fullTime, sameDay } from '../../format.ts';
 import { bodies, bodyState, loadBody, retryBody } from '../../mail/api.ts';
+import { openProfile } from '../../state.ts';
 import { Avatar } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
 import { BODY_RENDERERS, MESSAGE_ACTIONS } from './slots.tsx';
@@ -56,7 +57,13 @@ export function MessageCard({ message: m, thread, account, open, onToggle }: { m
         </button>
         <div class="mail-msg-meta">
           <div class="mail-msg-from">
-            <span class="mail-msg-name">{who(m.from)}</span>
+            {m.from.identityId && !fromMe ? (
+              <button class="mail-msg-name mail-msg-person" title={`${who(m.from)}: profile`} onClick={() => openProfile(m.from.identityId)}>
+                {who(m.from)}
+              </button>
+            ) : (
+              <span class="mail-msg-name">{who(m.from)}</span>
+            )}
             {m.from.name && <span class="mail-msg-addr">&lt;{m.from.email}&gt;</span>}
           </div>
           <div class="mail-msg-to">

@@ -35,6 +35,7 @@ import { AboutError, Abouts } from './about.ts';
 import { People } from './people.ts';
 import { peopleGraph } from './graph.ts';
 import type { MailHub } from './mail/index.ts';
+import { mailPeople } from './mail/people.ts';
 
 
 type ClientData = { kind: 'client' };
@@ -525,7 +526,8 @@ export class HubServer {
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/messages$/))) return ok(s.messages(m[1], num('before'), Math.min(num('limit') ?? 60, 200)));
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/profile$/)) || (m = path.match(/^\/api\/identities\/([\w-]+)\/profile$/))) {
       const p = s.profile(path.startsWith('/api/persons/') ? { personId: m[1] } : { identityId: m[1] });
-      return p ? ok({ ...p, abouts: this.people.kept(p.identityIds) }) : bad('nobody by that id', 404);
+      const mail = p && mailPeople(this.opts.mail)?.profile(p.identityIds);
+      return p ? ok({ ...p, abouts: this.people.kept(p.identityIds), ...(mail ? { mail } : {}) }) : bad('nobody by that id', 404);
     }
     // Their message count per server, estimated from what the hub holds (msgcount.ts, docs/profile.md).
     if ((m = path.match(/^\/api\/(persons|identities)\/([\w-]+)\/activity$/))) {
@@ -925,6 +927,8 @@ export class HubServer {
       return ok(this.opts.votes.view());
     }
 
+    // The profile's merge box: people by any of their names or handles, and email identities no person holds yet.
+    if (path === '/api/persons/candidates' && method === 'GET') return ok(s.mergeCandidates(url.searchParams.get('q') ?? '', url.searchParams.get('except')));
     if (path === '/api/persons/merge' && method === 'POST') {
       const b = await body<{ into: string; from: string }>();
       s.mergePersons(b.into, b.from);

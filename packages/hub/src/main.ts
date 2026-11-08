@@ -6,6 +6,7 @@ import { Attention } from './attention.ts';
 import { InboxRanker, rankMode } from './ranker.ts';
 import { applyDemoOverlay, createDemoAccounts, DEMO_MAIL_ACCOUNT, demoFactory, seedDemoMail } from './demo.ts';
 import { FakeMailBackend, MailHub, ManagerMailBackend } from './mail/index.ts';
+import { mailPeople } from './mail/people.ts';
 import { Delivery } from './delivery.ts';
 import { Devices } from './devices.ts';
 import { Embeddings, Jev } from './embeddings.ts';
@@ -220,6 +221,8 @@ const demoMail = demo ? new FakeMailBackend() : null;
 const mailBackend = demoMail ?? (sup instanceof RoutedSupervisor ? new ManagerMailBackend({ callRaw: (a, op, input, t) => sup.callMail(a, op, input, t), askMailAgain: () => sup.askMailAgain() }) : null);
 if (sup instanceof RoutedSupervisor && mailBackend instanceof ManagerMailBackend) sup.mail = mailBackend;
 const mail = new MailHub({ db: store.db, backend: mailBackend, managerUrl: accountsPage });
+// Correspondents become identities and persons (mail/people.ts).
+mailPeople(mail)?.connect(store);
 
 const readQueue = new ReadQueue(store, sup);
 readQueue.start();
