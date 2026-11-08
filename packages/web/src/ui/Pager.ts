@@ -32,6 +32,61 @@ export interface PagerModel {
 /** Messages that can be swiped to reply register here. */
 export const swipeReply = new WeakMap<Element, () => void>();
 
+/**
+ * A finger on something the app's listeners cannot hear: a mail's HTML, in a frame of its own document. Positions
+ * are the app's (the frame's offset added); `target` is the frame, `sideways` says whether something inside it
+ * scrolls sideways that way, and `prevent` stops the frame from scrolling once the swipe is the pager's.
+ */
+export interface ForwardedTouch {
+  x: number;
+  y: number;
+  count: number;
+  target: HTMLElement;
+  sideways?: (dx: number) => boolean;
+  prevent: () => void;
+}
+let forwarded: { start(t: ForwardedTouch): void; move(t: ForwardedTouch): void; end(): void; cancel(): void } | null = null;
+
+/** Hands a same-origin frame's touches to the pager, so a swipe over a mail's body goes back like anywhere else. */
+export function forwardTouches(frame: HTMLIFrameElement): () => void {
+  const doc = frame.contentDocument;
+  if (!doc) return () => {};
+  const at = (e: TouchEvent): ForwardedTouch | null => {
+    const t = e.touches[0];
+    if (!t && e.type !== 'touchend') return null;
+    const r = frame.getBoundingClientRect();
+    const inner = e.target instanceof doc.defaultView!.Element ? (e.target as HTMLElement) : null;
+    return {
+      x: (t?.clientX ?? 0) + r.left,
+      y: (t?.clientY ?? 0) + r.top,
+      count: e.touches.length,
+      target: frame,
+      sideways: (dx) => !!inner && scrollsSideways(inner, doc.documentElement, dx),
+      prevent: () => e.cancelable && e.preventDefault(),
+    };
+  };
+  const start = (e: TouchEvent) => {
+    const t = at(e);
+    if (t) forwarded?.start(t);
+  };
+  const move = (e: TouchEvent) => {
+    const t = at(e);
+    if (t) forwarded?.move(t);
+  };
+  const end = () => forwarded?.end();
+  const cancel = () => forwarded?.cancel();
+  doc.addEventListener('touchstart', start, { passive: true });
+  doc.addEventListener('touchmove', move, { passive: false });
+  doc.addEventListener('touchend', end);
+  doc.addEventListener('touchcancel', cancel);
+  return () => {
+    doc.removeEventListener('touchstart', start);
+    doc.removeEventListener('touchmove', move);
+    doc.removeEventListener('touchend', end);
+    doc.removeEventListener('touchcancel', cancel);
+  };
+}
+
 const OVERLAYS = '.ep-layer, .modal-backdrop, .place-menu-back, .viewer, .lv-full, .qr-full, .sheet-layer, .switcher-back, .toasts';
 const PULLABLE = '.side-scroll, .board-scroll';
 const REPLY_AT = 56;
@@ -59,6 +114,8 @@ interface Gesture {
   x0: number;
   y0: number;
   target: HTMLElement;
+  /** A forwarded touch's: whether something inside its frame scrolls sideways. */
+  sideways?: (dx: number) => boolean;
   mode: null | 'pager' | 'reply' | 'pull';
   /** Layers open when the finger came down; one more means a long-press opened a sheet. */
   layers: number;
@@ -144,7 +201,7 @@ export function usePager(app: { current: HTMLElement | null }, card: { current: 
         const visible = card.current?.contains(sc) ? md.rest === 'open' : md.rest === 'peek' || md.rest === 'away';
         return visible ? 'pull' : null;
       }
-      if (scrollsSideways(target, root, dx)) return null;
+      if (scrollsSideways(target, root, dx) || g!.sideways?.(dx)) return null;
       const w = root.clientWidth;
       const inCard = !!card.current?.contains(target);
       const inDetails = !!target.closest('.details');
@@ -181,22 +238,24 @@ export function usePager(app: { current: HTMLElement | null }, card: { current: 
       return null;
     };
 
-    const start = (e: TouchEvent) => {
+    const begin = (x: number, y: number, count: number, target: HTMLElement, sideways?: (dx: number) => boolean) => {
       g = null;
-      if (!phone.value || e.touches.length !== 1 || drag.value || document.body.classList.contains('dragging')) return;
-      const target = e.target as HTMLElement;
+      if (!phone.value || count !== 1 || drag.value || document.body.classList.contains('dragging')) return;
       if (target.closest(OVERLAYS)) return;
       if (target === document.activeElement && target.matches('input, textarea')) return;
-      const t = e.touches[0];
-      g = { x0: t.clientX, y0: t.clientY, target, mode: null, layers: layerCount(), samples: [{ x: t.clientX, t: performance.now() }] };
+      g = { x0: x, y0: y, target, sideways, mode: null, layers: layerCount(), samples: [{ x, t: performance.now() }] };
     };
+    const start = (e: TouchEvent) => begin(e.touches[0]?.clientX ?? 0, e.touches[0]?.clientY ?? 0, e.touches.length, e.target as HTMLElement);
 
     const move = (e: TouchEvent) => {
+      if (e.touches.length) step(e.touches[0].clientX, e.touches[0].clientY, e.touches.length, () => e.cancelable && e.preventDefault());
+    };
+    const step = (x: number, y: number, count: number, prevent: () => void) => {
       if (!g) return;
-      if (e.touches.length !== 1) return cancel();
+      if (count !== 1) return cancel();
       // A hold that became a drag in the list, or opened a sheet: the finger is theirs now.
       if (!g.mode && (drag.value || layerCount() > g.layers)) return void (g = null);
-      const t = e.touches[0];
+      const t = { clientX: x, clientY: y };
       const dx = t.clientX - g.x0;
       const dy = t.clientY - g.y0;
       if (!g.mode) {
@@ -220,7 +279,7 @@ export function usePager(app: { current: HTMLElement | null }, card: { current: 
           g.msg!.style.transition = 'none';
         }
       }
-      if (e.cancelable) e.preventDefault();
+      prevent();
       const now = performance.now();
       g.samples.push({ x: t.clientX, t: now });
       if (g.samples.length > 5) g.samples.shift();
@@ -312,7 +371,14 @@ export function usePager(app: { current: HTMLElement | null }, card: { current: 
     root.addEventListener('touchend', end);
     const lost = () => (g?.mode === 'pager' ? end() : cancel());
     root.addEventListener('touchcancel', lost);
+    forwarded = {
+      start: (t) => begin(t.x, t.y, t.count, t.target, t.sideways),
+      move: (t) => step(t.x, t.y, t.count, t.prevent),
+      end,
+      cancel: lost,
+    };
     return () => {
+      forwarded = null;
       root.removeEventListener('touchstart', start);
       root.removeEventListener('touchmove', move);
       root.removeEventListener('touchend', end);

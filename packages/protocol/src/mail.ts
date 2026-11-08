@@ -9,6 +9,7 @@
  * until then: a seam, not a promise. Each says which slice fills it.
  */
 import type { IdentityView } from './api.ts';
+import type { FileInfo } from './files.ts';
 import type { MailboxRole } from './mail-iface.ts';
 
 export type { MailboxRole } from './mail-iface.ts';
@@ -160,9 +161,14 @@ export interface MailAttachmentView {
   name: string | null;
   mime: string;
   size: number;
+  /** A part shown in place (a picture in a text mail); parts the HTML shows itself are not listed. */
   inline: boolean;
+  /** The bytes (fetched from the server the first time). */
   url: string;
+  /** What the file is by its bytes (FileInfo), looked at when asked. */
   infoUrl: string;
+  /** What it is, once the hub has looked. */
+  info?: FileInfo;
 }
 
 /** Slice 5. */
@@ -451,4 +457,31 @@ export function parseMailAddress(raw: string): { name: string | null; email: str
 /** `Name <a@b>` or the address alone. */
 export function mailAddressText(a: { name: string | null; email: string }): string {
   return a.name && a.name !== a.email ? `${a.name} <${a.email}>` : a.email;
+}
+
+// ------------------------------------------------------------------ links
+
+/** Top-level domains a bare name in a link's text is read as a site by ("paypal.com"); others need http or www. */
+const COMMON_TLDS = new Set('com org net edu gov mil int io co ai app dev me info biz xyz online site shop store zip mov top link click'.split(' '));
+
+/** The host a link's text names, when its text is a web address or a bare domain ("paypal.com/login"). */
+export function shownHost(text: string): string | null {
+  const t = text.trim().replace(/[\s\u200b-\u200d]+/g, '');
+  if (!t || t.length > 300) return null;
+  const m = t.match(/^(https?:\/\/)?((?:[a-z0-9\u00a1-\uffff](?:[a-z0-9\u00a1-\uffff-]*[a-z0-9\u00a1-\uffff])?\.)+([a-z\u00a1-\uffff]{2,63}))\.?(?::\d+)?(?:[/?#]\S*)?$/i);
+  if (!m) return null;
+  const tld = m[3].toLowerCase();
+  if (!m[1] && !/^www\./i.test(m[2]) && !(tld.length === 2 || COMMON_TLDS.has(tld))) return null;
+  try {
+    return new URL(`https://${m[2]}`).hostname;
+  } catch {
+    return null;
+  }
+}
+const bareHost = (h: string) => h.replace(/^www\./, '').replace(/\.$/, '');
+/** The text names another site than the link goes to (subdomains of the named site are the same site). */
+export function hostsDiffer(shown: string, goes: string): boolean {
+  const a = bareHost(shown);
+  const b = bareHost(goes);
+  return a !== b && !b.endsWith('.' + a);
 }

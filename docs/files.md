@@ -43,8 +43,9 @@ demo hub keeps nothing ahead of time, so the walk fetches its own (local) demo f
 left alone. A message from the last two days is sent again to the apps once its file is looked at, so an open card
 changes by itself; an older one shows it when next loaded. A new `SNIFF_VERSION` starts the walk over.
 
-The viewer asks `GET /api/attachments/:id/info` when a file it opens has not been looked at yet: the hub fetches the
-file (as opening it would) and looks at it then.
+The viewer asks the file's `infoUrl` when a file it opens has not been looked at yet: the hub fetches the file (as
+opening it would) and looks at it then. A chat attachment's is `GET /api/attachments/:id/info`, a mail file's
+`GET /api/mail/messages/:id/attachments/:aid/info` (files.ts `FileSource`, docs/mail.md).
 
 ### Serving
 

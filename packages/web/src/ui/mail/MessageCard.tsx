@@ -10,6 +10,7 @@ import { bodies, bodyState, loadBody, retryBody } from '../../mail/api.ts';
 import { openProfile } from '../../state.ts';
 import { Avatar } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
+import { MailFiles } from './MailFiles.tsx';
 import { BODY_RENDERERS, MESSAGE_ACTIONS } from './slots.tsx';
 
 /** In the reader: "10:42" today, "Yesterday 18:02", a day and a time before. */
@@ -127,9 +128,7 @@ export function MessageCard({ message: m, thread, account, open, onToggle }: { m
           </div>
         )}
       </div>
-      {m.hasAttachments && <div class="mail-msg-files">
-          <Icon name="paperclip" size={14} /> Has attachments, not shown here yet
-        </div>}
+      {body && <MailFiles body={body} />}
       {actions.length > 0 && (
         <footer class="mail-msg-actions">
           {actions.map((a) => (

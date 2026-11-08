@@ -49,6 +49,18 @@ export interface MailHubOpts {
   dataDir?: string;
   /** How long a send waits for Undo (MAIL_LIMITS.holdMs). */
   holdMs?: number;
+  /** Files and images (slice 3, parts.ts): where they are kept, and the key image tokens are signed with. */
+  media?: MailMediaOpts;
+}
+
+export interface MailMediaOpts {
+  /** The hub's media cache (DATA/media-cache). */
+  dir: string;
+  /** The hub's media key (hub-secret). */
+  key: string;
+  /** What fetches remote images (tests and the demo), and how names resolve. */
+  fetch?: typeof fetch;
+  lookup?: (host: string) => Promise<string[]>;
 }
 
 export class MailHub {
@@ -57,6 +69,7 @@ export class MailHub {
   readonly routes: MailRoute[];
   /** Sending and drafts (slice 5, outbox.ts). */
   readonly outbox: MailOutbox;
+  readonly media: MailMediaOpts | null;
   private syncs = new Map<string, AccountSync>();
   /** Each account's latest status event, kept for when it comes before the account list does. */
   private statuses = new Map<string, MailBackendEvent>();
@@ -75,6 +88,7 @@ export class MailHub {
     this.store.managedUrl = (id) => (base ? `${base}/#/accounts/${encodeURIComponent(id)}` : null);
     this.store.syncOf = (id) => this.syncs.get(id)?.phase ?? 'idle';
     this.outbox = new MailOutbox(this, { dir: opts.dataDir ? `${opts.dataDir}/mail-outbox` : null, holdMs: opts.holdMs, now: this.now, log: this.log });
+    this.media = opts.media ?? null;
     this.routes = mountRouters(this);
   }
 
@@ -289,7 +303,8 @@ export class MailHub {
       const m = path.match(r.path);
       if (!m) continue;
       try {
-        return await r.handle({ req, url, params: m.slice(1).map(decodeURIComponent), body: () => req.json().catch(() => ({})) });
+        // A group that matched nothing is '' (decodeURIComponent would make it "undefined").
+        return await r.handle({ req, url, params: m.slice(1).map((x) => (x === undefined ? '' : decodeURIComponent(x))), body: () => req.json().catch(() => ({})) });
       } catch (e) {
         const err = asMailError(e);
         return Response.json({ error: err.message }, { status: err.status && err.status >= 400 && err.status < 600 ? err.status : 500 });

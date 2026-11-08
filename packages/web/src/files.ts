@@ -133,9 +133,39 @@ export function fileIcon(kind: P.FileKind, language?: string): string {
   return 'file';
 }
 
-/** The file open in the viewer, and the message it came in. */
-export const fileViewer = signal<{ att: P.AttachmentView; message: P.MessageView | null } | null>(null);
+/**
+ * A file the viewers can open: a chat attachment, or a part of a mail (ui/mail/MailFiles.tsx). `infoUrl` answers
+ * what the file is (FileInfo) when `info` is not known yet.
+ */
+export interface FileSource {
+  url: string;
+  infoUrl: string | null;
+  name: string | null;
+  mime: string | null;
+  size: number | null;
+  kind: P.AttachmentKind;
+  info?: P.FileInfo;
+}
+
+/** A chat attachment as a viewer opens it. */
+export const attachmentSource = (a: P.AttachmentView): FileSource => ({
+  url: a.url,
+  infoUrl: `/api/attachments/${encodeURIComponent(a.id)}/info`,
+  name: a.name,
+  mime: a.mime,
+  size: a.size,
+  kind: a.kind,
+  ...(a.info ? { info: a.info } : {}),
+});
+
+/** The file open in the viewer, and the message it came in (a chat message; null for mail). */
+export const fileViewer = signal<{ att: FileSource; message: P.MessageView | null } | null>(null);
 
 export function openFileViewer(att: P.AttachmentView, message: P.MessageView | null = null) {
-  fileViewer.value = { att, message };
+  fileViewer.value = { att: attachmentSource(att), message };
+}
+
+/** Opens any file in the viewer. */
+export function openFileSource(att: FileSource) {
+  fileViewer.value = { att, message: null };
 }

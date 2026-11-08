@@ -7,7 +7,7 @@
  *   - the rail's Mail entry, the list, the views;
  *   - on a phone: the list, a thread over it, and back (the button and the browser's back);
  *   - the reader: the latest and unread messages open, the quote folded behind ···, read here after a second;
- *   - an HTML-only message shows its text part, and none of its script;
+ *   - an HTML-only message shows (its HTML in the frame, or its text part), and none of its script;
  *   - the Accounts screen's Mail group;
  *   - filing (slice 4): read in view reaches the server; on a phone a swipe right archives and Undo brings it back,
  *     a swipe left marks unread and read, a long press picks threads and their bar stars them; on a desktop the
@@ -17,7 +17,12 @@
  *     reply joins the thread with its file; on a desktop, ✎ docks a new message whose To completes from your mail, and
  *     closing it keeps a draft that opens again from the Drafts line.
  *
- *   bun scripts/verify-mail.ts http://127.0.0.1:8700 [screenshot dir]
+ * With --html (slice 3, htmlChecks below), the HTML frame in Chromium: no script runs in it, even put there by hand;
+ * no request leaves for anywhere but the hub; a link click goes through the app's opener and never moves the frame,
+ * and one whose text names another site asks first; the remote-image banner and the proxy; quotes folded; cid:
+ * pictures; files open in the viewers; swiping back over a body works on a phone; a white sheet in both themes.
+ *
+ *   bun scripts/verify-mail.ts http://127.0.0.1:8700 [screenshot dir] [--html]
  * The hub must be a fresh demo hub (--demo) with its own data dir: reading marks threads read.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -25,8 +30,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { launch, type Page } from './browser.ts';
 
-const [base, shots] = process.argv.slice(2);
-if (!base) throw new Error('usage: bun scripts/verify-mail.ts <hub url> [screenshot dir]');
+const args = process.argv.slice(2);
+const withHtml = args.includes('--html');
+const [base, shots] = args.filter((a) => a !== '--html');
+if (!base) throw new Error('usage: bun scripts/verify-mail.ts <hub url> [screenshot dir] [--html]');
 if (shots) mkdirSync(shots, { recursive: true });
 
 const boot = (await fetch(`${base}/api/bootstrap`).then((r) => r.json())) as any;
@@ -169,11 +176,12 @@ async function phone(themeName: string, first: boolean) {
   await Bun.sleep(400);
   check(`${tag}: back goes to the list`, !(await hash()).includes('/t/') && (await inView('.sidebar .mail-list')), await hash());
 
-  // The HTML-only message: its text part, none of its script.
+  // The HTML-only message: its HTML in the frame (slice 3), or its text part; none of its script.
   await tap(await at(`.sidebar .mail-row[data-thread="${shipped.id}"]`));
-  await page.until(`(document.querySelector('.mail-reader .mail-text')?.textContent ?? '').length > 10`, 15000);
-  const text = await page.eval<string>(`document.querySelector('.mail-reader .mail-text').textContent`);
-  check(`${tag}: an HTML-only message shows its text part`, text.includes('your order #4471 has shipped') && text.includes('Track your parcel'), text.slice(0, 120));
+  const shown = `(document.querySelector('.mail-reader .mail-text')?.textContent ?? document.querySelector('.mail-reader .mail-html.ready iframe')?.contentDocument?.body?.innerText ?? '')`;
+  await page.until(`${shown}.length > 10`, 15000);
+  const text = await page.eval<string>(shown);
+  check(`${tag}: an HTML-only message shows`, text.includes('your order #4471 has shipped') && text.includes('Track your parcel'), text.slice(0, 120));
   check(`${tag}: none of its script shows or runs`, !/alert|evil|hacked/.test(text) && !(await page.eval(`document.title.includes('hacked')`)));
   await page.eval('history.back()');
   await Bun.sleep(500);
@@ -457,12 +465,178 @@ async function filing() {
   check('filing: Settings → Mail has the read setting', (await page.eval<string>(`document.querySelector('#set-mail .mail-read-set')?.textContent ?? ''`)).includes('Only when I mark it'));
 }
 
+// ------------------------------------------------------------------ slice 3: the HTML frame (--html)
+
+const FRAME = '.mail-reader .mail-html.ready iframe.mail-frame';
+/** The open mail's frame document, as an expression. */
+const FD = `[...document.querySelectorAll(${JSON.stringify(FRAME)})].pop().contentDocument`;
+
+/** An element in the open mail's frame, scrolled into view, as a point on the page. */
+async function inFrame(sel: string): Promise<Pt> {
+  const r = await page.eval(`(() => {
+    const f = [...document.querySelectorAll(${JSON.stringify(FRAME)})].pop();
+    const el = f?.contentDocument?.querySelector(${JSON.stringify(sel)});
+    if (!el) return null;
+    el.scrollIntoView({ block: 'center' });
+    const a = f.getBoundingClientRect(), b = el.getBoundingClientRect();
+    return [Math.round(a.left + b.left + Math.min(b.width / 2, 24)), Math.round(a.top + b.top + b.height / 2)];
+  })()`);
+  if (!r) throw new Error(`nothing in the frame matches ${sel}`);
+  await Bun.sleep(200);
+  return r;
+}
+async function swipe(a: Pt, b: Pt, steps = 14) {
+  await touch('touchStart', [a]);
+  for (let i = 1; i <= steps; i++) {
+    await touch('touchMove', [[a[0] + ((b[0] - a[0]) * i) / steps, a[1] + ((b[1] - a[1]) * i) / steps]]);
+    await Bun.sleep(16);
+  }
+  await touch('touchEnd', []);
+  await Bun.sleep(600);
+}
+/** The menu item (desktop) or sheet button (phone) with this text. */
+const menuItem = (text: string) => at('.cm-item, .cm-sheet button', `el => el.textContent.includes(${JSON.stringify(text)})`);
+
+async function htmlChecks() {
+  const autumn = byTitle('Autumn at the library');
+  const garden = byTitle('The garden plan');
+  if (!autumn || !garden) throw new Error('the demo has no HTML mail (hub demo-html.ts)');
+  // Every request the page makes from here on, and those the CSP stopped before they went.
+  const asked = new Map<string, string>();
+  const stopped = new Set<string>();
+  page.on('Network.requestWillBeSent', (p) => asked.set(p.requestId, p.request.url));
+  page.on('Network.loadingFailed', (p) => p.blockedReason && stopped.add(p.requestId));
+  const opened = () => page.eval<[string, string, string][]>('window.__opened');
+  const stubOpen = () => page.eval(`(() => { window.__opened = []; window.open = (u, t, f) => (window.__opened.push([String(u), t, f]), null); })()`);
+
+  for (const themeName of ['dither-dark', 'dither-light']) {
+    const tag = `html phone ${themeName}`;
+    const first = themeName === 'dither-dark';
+    await page.size(390, 844, true);
+    await theme(themeName, `#/mail/t/${autumn.id}`);
+    await page.until(`!!document.querySelector(${JSON.stringify(FRAME)})?.contentDocument?.querySelector('.dc-mail')`, 15000);
+    await Bun.sleep(500);
+    await stubOpen();
+
+    const frame = await page.eval<{ sandbox: string; referrer: string; sheet: string; body: string }>(`(() => { const f = document.querySelector(${JSON.stringify(FRAME)}); return { sandbox: f.getAttribute('sandbox'), referrer: f.getAttribute('referrerpolicy'), sheet: getComputedStyle(f.parentElement).backgroundColor, body: getComputedStyle(f.contentDocument.body).backgroundColor }; })()`);
+    check(`${tag}: the frame is sandboxed without scripts`, frame.sandbox === 'allow-same-origin' && frame.referrer === 'no-referrer', frame);
+    check(`${tag}: a white sheet`, frame.sheet === 'rgb(255, 255, 255)' && frame.body === 'rgb(255, 255, 255)', frame);
+    const left = await page.eval<string[]>(`(() => { const d = ${FD}, bad = []; for (const el of d.body.querySelectorAll('*')) { if (/^(script|iframe|object|embed|form|input|button|svg|math|meta|base|link|template|noscript)$/i.test(el.tagName)) bad.push(el.tagName); for (const a of el.attributes) if (/^on/i.test(a.name) || /^\\s*javascript:/i.test(a.value)) bad.push(el.tagName + ' ' + a.name); } return bad; })()`);
+    check(`${tag}: nothing that runs is left in the mail`, !left.length, left);
+    check(`${tag}: none of its script ran`, !(await page.eval<boolean>(`document.title.includes('hacked')`)));
+    if (first) {
+      // Put there by hand, script still does not run: the frame's sandbox stops it. An image from elsewhere does not load: the CSP stops it.
+      const errorsBefore = page.errors.length;
+      await page.eval(`(() => { const d = ${FD}; window.__ran = 0;
+        const s = d.createElement('script'); s.textContent = 'parent.__ran = 1'; d.body.append(s);
+        const i = d.createElement('img'); i.setAttribute('onerror', 'parent.__ran = 2'); i.src = 'data:,x'; i.className = 'probe'; d.body.append(i);
+        const im = d.createElement('img'); im.src = 'https://evil.example/canary.png'; im.className = 'probe'; d.body.append(im);
+        const st = d.createElement('div'); st.className = 'probe'; st.style.backgroundImage = 'url(https://evil.example/css-canary.png)'; st.style.height = '4px'; d.body.append(st); })()`);
+      await Bun.sleep(700);
+      check(`${tag}: script put in the frame by hand does not run`, (await page.eval<number>('window.__ran')) === 0);
+      await page.eval(`${FD}.querySelectorAll('.probe, script').forEach((x) => x.remove())`);
+      // The browser says it blocked them; that is the point, not an error.
+      page.errors.splice(errorsBefore, page.errors.length - errorsBefore, ...page.errors.slice(errorsBefore).filter((e) => !/sandbox|allow-scripts|Content Security Policy|canary/i.test(e)));
+    }
+
+    // Fit to the width: the 600 px newsletter is scaled down, nothing runs off the side.
+    const fit = await page.eval<{ frame: number; mail: number; transform: string; height: number }>(`(() => { const f = document.querySelector(${JSON.stringify(FRAME)}); const m = f.contentDocument.querySelector('.dc-mail'); return { frame: f.clientWidth, mail: Math.round(m.getBoundingClientRect().width), transform: m.style.transform, height: f.clientHeight }; })()`);
+    check(`${tag}: a wide mail is scaled to the width`, fit.transform.includes('scale(') && fit.mail <= fit.frame + 1 && fit.height > 200, fit);
+    check(`${tag}: no sideways overflow: HTML reader`, !(await overflowThrough('.mail-reader-scroll')).length, await overflowThrough('.mail-reader-scroll'));
+
+    // The image banner, then the images through the hub.
+    if (first) {
+      const banner = await page.eval<string>(`document.querySelector('.mail-img-banner')?.textContent ?? ''`);
+      check(`${tag}: remote images held back, with a banner`, /\d+ remote images hidden/.test(banner) && banner.includes('a tracker removed') && banner.includes('Always from Maple Street Library'), banner);
+      check(`${tag}: placeholders where they were`, (await page.eval<number>(`${FD}.querySelectorAll('.dc-img-blocked').length`)) >= 2);
+      await shot('mail-html-phone-blocked');
+      await tap(await at('.mail-img-banner .link-btn', `el => el.textContent.trim() === 'Load'`));
+      await page.until(`(() => { const d = ${FD}; const im = [...(d?.querySelectorAll('img') ?? [])].filter((i) => i.getAttribute('src')?.startsWith('/api/mail/img/')); return im.length >= 2 && im.every((i) => i.complete && i.naturalWidth > 0); })()`, 15000);
+      check(`${tag}: Load shows them, through the hub`, !(await has('.mail-img-banner')));
+      await stubOpen();
+    }
+    await shot(`mail-html-${tag.replace(/ /g, '-')}`);
+
+    // A link: through the app's opener; the frame stays where it is.
+    const url = await page.eval<string>(`${FD}.URL`);
+    await tap(await inFrame('a[href="https://library.example/events"]'));
+    check(`${tag}: a link opens through the app's opener`, JSON.stringify(await opened()) === JSON.stringify([['https://library.example/events', '_blank', 'noopener,noreferrer']]), await opened());
+    check(`${tag}: and the frame does not follow it`, (await page.eval<string>(`${FD}.URL`)) === url);
+    // One whose text names another site: asked first, showing where it really goes.
+    await tap(await inFrame('a[href="https://library-events.example/rsvp"]'));
+    await page.until(`!!document.querySelector('.cm-sheet .mail-link-ask')`, 5000);
+    check(`${tag}: a link whose text names another site asks first`, (await page.eval<string>(`document.querySelector('.mail-link-ask').textContent`)).includes('library-events.example') && (await opened()).length === 1);
+    await tap(await menuItem('Open library-events.example'));
+    check(`${tag}: and opens once you say so`, (await opened())[1]?.[0] === 'https://library-events.example/rsvp', await opened());
+
+    // Swipe back over the body.
+    const fr = await page.eval<{ left: number; top: number; bottom: number }>(`(() => { const f = document.querySelector(${JSON.stringify(FRAME)}); f.scrollIntoView({ block: 'start' }); const r = f.getBoundingClientRect(); return { left: r.left, top: r.top, bottom: Math.min(r.bottom, innerHeight) }; })()`);
+    await Bun.sleep(300);
+    const y = Math.round((Math.max(fr.top, 80) + fr.bottom) / 2);
+    await swipe([Math.round(fr.left + 24), y], [370, y + 4]);
+    check(`${tag}: swiping back over the body goes back`, !(await hash()).includes('/t/') && (await inView('.sidebar .mail-list')), await hash());
+
+    // Quotes folded, a cid: picture, and the files.
+    await tap(await at(`.sidebar .mail-row[data-thread="${garden.id}"]`));
+    await page.until(`!!document.querySelector(${JSON.stringify(FRAME)})?.contentDocument?.querySelector('.dc-fold')`, 15000);
+    check(`${tag}: the quote folds behind ···`, await page.eval<boolean>(`(() => { const d = ${FD}; return d.querySelector('.gmail_quote').classList.contains('dc-folded') && getComputedStyle(d.querySelector('.gmail_quote')).display === 'none'; })()`));
+    const h0 = await page.eval<number>(`document.querySelector(${JSON.stringify(FRAME)}).clientHeight`);
+    await tap(await inFrame('.dc-fold'));
+    check(`${tag}: ··· shows it, and the frame grows`, await page.eval<boolean>(`(() => { const d = ${FD}; return !d.querySelector('.dc-folded') && d.body.innerText.includes('tomatoes go') && document.querySelector(${JSON.stringify(FRAME)}).clientHeight > ${h0}; })()`));
+    await page.until(`(() => { const i = ${FD}.querySelector('img[src*="/cid/"]'); return i && i.complete && i.naturalWidth === 300; })()`, 10000);
+    check(`${tag}: a picture inside the mail (cid:) shows`, true);
+    const cards = await page.eval<string[]>(`[...document.querySelectorAll('.mail-reader .mail-files .att-file b')].map((b) => b.textContent)`);
+    check(`${tag}: the files, but not the picture the mail shows itself`, cards.join() === 'seeds.txt,garden-plan.pdf', cards);
+    if (first) {
+      await tap(await at('.mail-reader .mail-files .att-file', `el => el.textContent.includes('seeds.txt')`));
+      await page.until(`(document.querySelector('.fviewer')?.textContent ?? '').includes('San Marzano')`, 10000);
+      check(`${tag}: a text file opens in the viewer`, true);
+      await tap(await at('.fviewer .icon-btn[aria-label="Close"]'));
+      await tap(await at('.mail-reader .mail-files .att-file', `el => el.textContent.includes('garden-plan.pdf')`));
+      await page.until(`!!document.querySelector('.fviewer[data-kind="pdf"] .fv-page canvas, .fviewer[data-kind="pdf"] .fv-page')`, 20000);
+      check(`${tag}: a PDF opens in the viewer`, await page.eval<boolean>(`(document.querySelector('.fviewer .fviewer-name small')?.textContent ?? '').includes('1 page')`), await page.eval(`document.querySelector('.fviewer .fviewer-name small')?.textContent`));
+      await shot('mail-html-phone-pdf');
+      await tap(await at('.fviewer .icon-btn[aria-label="Close"]'));
+    }
+    await shot(`mail-html-${tag.replace(/ /g, '-')}-garden`);
+    // And from outside the frame, over the message's header, with slice 4's buttons in the reader.
+    const head = await page.eval<{ left: number; y: number }>(`(() => { const h = document.querySelector('.mail-reader .mail-msg.open .mail-msg-head'); h.scrollIntoView({ block: 'center' }); const r = h.getBoundingClientRect(); return { left: r.left, y: Math.round(r.top + r.height / 2) }; })()`);
+    await Bun.sleep(300);
+    await swipe([Math.round(head.left + 60), head.y], [370, head.y + 4]);
+    check(`${tag}: swiping back over the header goes back too`, !(await hash()).includes('/t/') && (await inView('.sidebar .mail-list')), await hash());
+  }
+
+  for (const themeName of ['dither-dark', 'dither-light']) {
+    const tag = `html desktop ${themeName}`;
+    await page.size(1400, 900);
+    await theme(themeName, `#/mail/t/${autumn.id}`);
+    await page.until(`!!document.querySelector(${JSON.stringify(FRAME)})?.contentDocument?.querySelector('.dc-mail img[src^="/api/mail/img/"]')`, 15000);
+    await Bun.sleep(400);
+    await stubOpen();
+    const t = await page.eval<string>(`${FD}.querySelector('.dc-mail').style.transform`);
+    check(`${tag}: a mail that fits is not scaled`, !t.includes('scale'), t);
+    await click(await inFrame('a[href="https://library.example/events"]'));
+    check(`${tag}: a click opens through the app's opener`, (await opened())[0]?.[0] === 'https://library.example/events', await opened());
+    await click(await inFrame('a[href="https://library-events.example/rsvp"]'));
+    await page.until(`!!document.querySelector('.cm-root .cm-item')`, 5000);
+    check(`${tag}: a link whose text names another site asks first`, (await page.eval<string>(`document.querySelector('.cm-root').textContent`)).includes('goes to library-events.example') && (await opened()).length === 1);
+    await page.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+    check(`${tag}: no sideways overflow`, !(await overflow()).length, await overflow());
+    await shot(`mail-html-${tag.replace(/ /g, '-')}`);
+  }
+
+  const out = [...asked].filter(([id, u]) => !stopped.has(id) && !u.startsWith(base) && !/^(data|blob|about):/.test(u)).map(([, u]) => u);
+  check('html: no request left for anywhere but the hub', !out.length, [...new Set(out)].slice(0, 5));
+  check('html: the CSP stopped what was put in the frame by hand', [...asked].some(([id, u]) => stopped.has(id) && u.includes('canary')), [...asked].filter(([, u]) => u.includes('canary')).map(([id, u]) => [u, stopped.has(id)]));
+}
+
 try {
   await phone('dither-dark', true);
   await phone('dither-light', false);
   await desktop('dither-dark');
   await desktop('dither-light');
   await filing();
+  if (withHtml) await htmlChecks();
   // Last: it sends, which changes the demo world.
   await composer('dither-light', false);
   await composerDesktop('dither-light', false);
