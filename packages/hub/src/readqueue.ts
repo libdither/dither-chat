@@ -10,7 +10,7 @@ import type * as P from '@dither-chat/protocol';
 import type { Store } from './store.ts';
 
 /** Time between reads on one account, in ms. */
-export const READ_PACE: Record<P.Network, number> = { discord: 1500, matrix: 300, signal: 300, whatsapp: 1000, telegram: 500, gmessages: 500 };
+export const READ_PACE: Record<P.Network, number> = { discord: 1500, matrix: 300, signal: 300, whatsapp: 1000, telegram: 500, gmessages: 500, messenger: 1000, instagram: 1000, x: 1000 };
 const MAX_ATTEMPTS = 5;
 const BACKOFF = 30_000;
 

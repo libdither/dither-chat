@@ -29,6 +29,9 @@ const WHAT_NETWORKS_SHARE: Record<P.Network, string> = {
   whatsapp: 'The name in your address book, their About and picture, and whether it is a business.',
   telegram: 'Name, username, bio and photo, and their phone number or last seen only where they allow it.',
   gmessages: 'The name and number in your contacts. Messages has no profiles.',
+  messenger: 'Name and profile picture, as Facebook shows them to you.',
+  instagram: 'Username, name, bio and picture, and whether the account is private.',
+  x: 'Name, handle, bio and picture, as their X profile shows them.',
 };
 
 function externalProfile(i: P.IdentityView): string | null {

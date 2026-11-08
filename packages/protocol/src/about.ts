@@ -203,6 +203,18 @@ export const ABOUT_RULES: Record<Network, AboutRules> = {
     space: [],
     nameMax: 100,
   },
+  messenger: {
+    conversation: ['name', 'avatar'],
+    space: [],
+  },
+  instagram: {
+    conversation: ['name'],
+    space: [],
+  },
+  x: {
+    conversation: ['name', 'avatar'],
+    space: [],
+  },
 };
 
 export const ABOUT_LABEL: Record<AboutKey, string> = {

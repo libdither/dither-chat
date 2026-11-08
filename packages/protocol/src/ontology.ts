@@ -15,8 +15,12 @@
  * (persons, folders, notification rules, triage) are never written back.
  */
 
-export type Network = 'discord' | 'signal' | 'matrix' | 'whatsapp' | 'telegram' | 'gmessages';
-/** The networks this hub offers. telegram and gmessages (Google Messages: SMS and RCS) run only in dither-accounts. */
+export type Network = 'discord' | 'signal' | 'matrix' | 'whatsapp' | 'telegram' | 'gmessages' | 'messenger' | 'instagram' | 'x';
+/**
+ * The networks this hub offers. telegram and gmessages (Google Messages: SMS and RCS) run only in dither-accounts.
+ * messenger, instagram and x (X's direct messages) are in the type for dither-accounts' extractors being built, and join
+ * this list once the hub runs them.
+ */
 export const NETWORKS: readonly Network[] = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages'];
 
 /** Where a conversation sits in the social structure, independent of network. */
@@ -116,6 +120,10 @@ export const REACTION_RULES: Record<Network, ReactionRules> = {
   telegram: { exclusive: true, freeText: false },
   // RCS reactions; SMS has none.
   gmessages: { exclusive: true, freeText: false },
+  // One reaction each, any emoji.
+  messenger: { exclusive: true, freeText: false },
+  instagram: { exclusive: true, freeText: false },
+  x: { exclusive: true, freeText: false },
 };
 
 export function discordEmojiUrl(id: string, animated?: boolean): string {
@@ -172,6 +180,10 @@ export const ATTACHMENT_LIMITS: Record<Network, { bytes: number; files: number }
   telegram: { bytes: MAX_UPLOAD, files: 10 },
   // RCS takes large files; a carrier's MMS fallback may not.
   gmessages: { bytes: MAX_UPLOAD, files: 10 },
+  messenger: { bytes: MAX_UPLOAD, files: 10 },
+  instagram: { bytes: MAX_UPLOAD, files: 10 },
+  // A direct message carries one photo, GIF or video.
+  x: { bytes: MAX_UPLOAD, files: 1 },
 };
 
 /** Brand colours used to annotate the source of every object in the UI. */
@@ -182,4 +194,7 @@ export const NETWORK_META: Record<Network, { name: string; color: string; spaceN
   whatsapp: { name: 'WhatsApp', color: '#1DAA61', spaceNoun: 'community', sectionNoun: 'section' },
   telegram: { name: 'Telegram', color: '#2AABEE', spaceNoun: 'group', sectionNoun: 'folder' },
   gmessages: { name: 'Google Messages', color: '#1A73E8', spaceNoun: 'group', sectionNoun: 'section' },
+  messenger: { name: 'Messenger', color: '#0866FF', spaceNoun: 'group', sectionNoun: 'section' },
+  instagram: { name: 'Instagram', color: '#FF0069', spaceNoun: 'group', sectionNoun: 'section' },
+  x: { name: 'X', color: '#000000', spaceNoun: 'group', sectionNoun: 'section' },
 };
