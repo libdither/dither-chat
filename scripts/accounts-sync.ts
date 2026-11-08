@@ -6,9 +6,10 @@
  * The protocol is written here: packages/protocol is copied over dither-accounts' packages/chat-protocol (or, with
  * --check, compared, exiting 1 on a difference). The adapters are written there: extractors/<kind> is what runs, so
  * this only reports how far packages/adapter-<kind> here has fallen behind; the hub runs dither-accounts' copy when
- * it sits next to this checkout (supervisor.ts adapterEntry).
+ * it sits next to this checkout (supervisor.ts adapterEntry). The mail interface's types are written there too:
+ * packages/protocol/src/mail-iface.ts is brought up to date from them (or, with --check, compared).
  */
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 
 const args = process.argv.slice(2);
@@ -53,6 +54,30 @@ if (check) {
   for (const f of extra) console.log(`protocol: src/${f} is only in dither-accounts (left alone)`);
 }
 
+// The mail interface's types are written there: packages/protocol/src/mail-iface.ts copies them (docs/mail.md).
+// Compared from its first type to the op table, which stays theirs; without --check the copy here is brought up to date.
+const decls = (s: string) => {
+  const a = s.indexOf('export interface MailAddress');
+  const b = s.indexOf('const ids =');
+  return a < 0 ? '' : s.slice(a, b < 0 ? undefined : b).trimEnd();
+};
+const ifaceThere = join(there, 'packages', 'interfaces', 'src', 'mail.ts');
+const ifaceHere = join(from, 'src', 'mail-iface.ts');
+let ifaceDiffers = false;
+if (existsSync(ifaceThere)) {
+  const theirs = decls(readFileSync(ifaceThere, 'utf8'));
+  const mine = readFileSync(ifaceHere, 'utf8');
+  if (theirs && theirs !== decls(mine)) {
+    if (check) {
+      ifaceDiffers = true;
+      console.log('mail interface differs: packages/protocol/src/mail-iface.ts is not a copy of packages/interfaces/src/mail.ts there');
+    } else {
+      writeFileSync(ifaceHere, mine.slice(0, mine.indexOf('export interface MailAddress')) + theirs + '\n');
+      console.log('mail interface: copied the types from dither-accounts into src/mail-iface.ts');
+    }
+  }
+}
+
 // The adapters: report only.
 for (const kind of ['discord', 'matrix', 'signal', 'whatsapp']) {
   const live = join(there, 'extractors', kind, 'src');
@@ -62,4 +87,4 @@ for (const kind of ['discord', 'matrix', 'signal', 'whatsapp']) {
   if (behind.length) console.log(`adapter-${kind}: ${behind.length} of ${all.length} files differ from dither-accounts (${behind.slice(0, 5).join(', ')}${behind.length > 5 ? ', …' : ''})`);
 }
 
-if (check && (differ.length || extra.length)) process.exit(1);
+if (check && (differ.length || extra.length || ifaceDiffers)) process.exit(1);

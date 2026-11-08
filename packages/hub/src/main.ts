@@ -4,7 +4,8 @@ import { Categorizer, JevProvider, KeywordProvider, OllamaProvider, type Categor
 import { ActivityStore } from './activity.ts';
 import { Attention } from './attention.ts';
 import { InboxRanker, rankMode } from './ranker.ts';
-import { applyDemoOverlay, createDemoAccounts, demoFactory } from './demo.ts';
+import { applyDemoOverlay, createDemoAccounts, DEMO_MAIL_ACCOUNT, demoFactory, seedDemoMail } from './demo.ts';
+import { FakeMailBackend, MailHub, ManagerMailBackend } from './mail/index.ts';
 import { Delivery } from './delivery.ts';
 import { Devices } from './devices.ts';
 import { Embeddings, Jev } from './embeddings.ts';
@@ -214,6 +215,12 @@ if (sup instanceof RoutedSupervisor) {
   store.accountManaged = (id) => sup.managed(id);
 }
 
+// Mail (docs/mail.md): through dither-accounts' mail interface, or a fake account in a demo world; off otherwise.
+const demoMail = demo ? new FakeMailBackend() : null;
+const mailBackend = demoMail ?? (sup instanceof RoutedSupervisor ? new ManagerMailBackend({ callRaw: (a, op, input, t) => sup.callMail(a, op, input, t), askMailAgain: () => sup.askMailAgain() }) : null);
+if (sup instanceof RoutedSupervisor && mailBackend instanceof ManagerMailBackend) sup.mail = mailBackend;
+const mail = new MailHub({ db: store.db, backend: mailBackend, managerUrl: accountsPage });
+
 const readQueue = new ReadQueue(store, sup);
 readQueue.start();
 
@@ -234,6 +241,7 @@ const server = new HubServer(store, sup, triage, {
   devices,
   votes,
   archiveMedia: !demo,
+  mail,
   turn: process.env.DITHER_TURN_URLS && process.env.DITHER_TURN_SECRET ? { urls: process.env.DITHER_TURN_URLS.split(',').map((u) => u.trim()), secret: process.env.DITHER_TURN_SECRET } : undefined,
   onDemoReset: !demo ? undefined : async () => {
     for (const a of store.accounts().filter((a) => a.demo)) {
@@ -243,6 +251,11 @@ const server = new HubServer(store, sup, triage, {
     store.db.query(`DELETE FROM meta WHERE key = 'demo_overlay'`).run();
     for (const a of createDemoAccounts(store)) sup.start(a.id);
     applyDemoOverlay(store);
+    if (demoMail) {
+      demoMail.removeAccount(DEMO_MAIL_ACCOUNT);
+      mail.deleteNow(DEMO_MAIL_ACCOUNT);
+      seedDemoMail(demoMail);
+    }
   },
 });
 
@@ -262,6 +275,10 @@ if (!demo && realAccounts.length) {
 // A demo world showing adversarial features from the start (scripts/verify-history.ts): before its history is seeded.
 if (demo && flag('adversarial') && !store.retention().adversarial) store.setRetention({ ...store.retention(), adversarial: true, deleted: true, disappearing: true, statuses: true, presence: true, members: true });
 if (demo && !store.accounts().some((a) => a.demo)) createDemoAccounts(store);
+if (demoMail && !mail.store.account(DEMO_MAIL_ACCOUNT)) seedDemoMail(demoMail);
+else if (demoMail) seedDemoMail(demoMail, mail.store.account(DEMO_MAIL_ACCOUNT)!.created_at);
+// Before the manager's first account list, so mail hears it.
+mail.start();
 if (sup instanceof RoutedSupervisor) await sup.connectOrRetry();
 sup.startAll();
 if (store.accounts().some((a) => a.demo)) applyDemoOverlay(store);
@@ -289,6 +306,7 @@ const shutdown = async () => {
   backup.stop();
   ranker.stop();
   attention.stop();
+  mail.stop();
   embeddings?.close();
   server.stop();
   await sup.stopAll();

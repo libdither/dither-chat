@@ -33,6 +33,7 @@ import { PEEK, panel, usePager, type Rest } from './Pager.ts';
 import { Boot } from './Loader.tsx';
 import { applyUpdate, updateReady } from '../pwa.ts';
 import { counting, rendered } from '../perf.ts';
+import { MailCenterLazy, MailSidebarLazy } from './mail/lazy.tsx';
 
 /** What the center pane shows, and whether a details pane is available. */
 function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'conv' | 'person'; id: string } } {
@@ -65,6 +66,8 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       return { pane: <DirectoryPane /> };
     case 'search':
       return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <SearchPane q={r.q} /> };
+    case 'mail':
+      return { pane: <MailCenterLazy thread={r.thread} onBack={back} /> };
   }
 }
 
@@ -97,6 +100,8 @@ function sidebarFor(r: Route, onAdd: () => void) {
       return <SpacesSidebar />;
     case 'search':
       return <InboxSidebar activeConv={r.conv} />;
+    case 'mail':
+      return <MailSidebarLazy list={r.list} active={r.thread} />;
   }
 }
 
@@ -119,6 +124,7 @@ function SettingsNav() {
           ['Message history', 'clock', 'set-history'],
           ['Adversarial features', 'eyeOff', 'set-adversarial'],
           ['Appearance', 'eye', 'set-appearance'],
+          ['Mail', 'mail', 'set-mail'],
           // The phone app opens links and files in the phone's apps by itself.
           ...(android ? [] : [['Desktop helper', 'monitor', 'set-desk']]),
         ].map(([t, i, id]) => (
@@ -175,6 +181,8 @@ function isDetail(r: Route): boolean {
       return !!(r.conv || r.person);
     case 'accounts':
       return !!r.account;
+    case 'mail':
+      return !!r.thread;
     case 'profile':
     case 'directory':
       return true;
@@ -217,6 +225,8 @@ function listRoute(r: Route): Route {
       return placeHome(r) ?? { view: 'people' };
     case 'directory':
       return { view: 'spaces' };
+    case 'mail':
+      return { view: 'mail', list: r.list };
     default:
       return { view: r.view } as Route;
   }

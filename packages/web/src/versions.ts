@@ -6,6 +6,8 @@
  *   ranking and the inbox itself. What a message or a sidebar row shows beyond its own object reads this, so a
  *   message arriving re-renders its row and not every row.
  * - `timelineRev(key)`, one per timeline: its messages, its loading and what replies in it quote.
+ * - `mailRev`, mail (docs/mail.md): its accounts, threads, lists and what the reader has loaded. Mail moving leaves the
+ *   chat lists alone, and chat moving leaves mail alone.
  *
  * Changes are counted at once (`dataVersion`, which model.ts memoizes on); the signals move once the task that made
  * them is done.
@@ -14,6 +16,7 @@ import { batch, signal, type Signal } from '@preact/signals';
 
 export const rev = signal(0);
 export const metaRev = signal(0);
+export const mailRev = signal(0);
 const timelineRevs = new Map<string, Signal<number>>();
 
 let version = 0;
@@ -26,7 +29,7 @@ export function timelineRev(key: string): Signal<number> {
   return s;
 }
 
-const dirty = { list: false, meta: false, all: false, keys: new Set<string>() };
+const dirty = { list: false, meta: false, all: false, mail: false, keys: new Set<string>() };
 let scheduled = false;
 
 /** Something in `db` changed. 'meta': names or settings too, not only a conversation's last message and counts. */
@@ -34,6 +37,12 @@ export function changed(kind: 'list' | 'meta') {
   version++;
   dirty.list = true;
   if (kind === 'meta') dirty.meta = true;
+  schedule();
+}
+
+/** Something in mail changed (db.mail, or what mail/api.ts loaded). */
+export function mailChanged() {
+  dirty.mail = true;
   schedule();
 }
 
@@ -47,11 +56,12 @@ export function timelineChanged(key?: string) {
 /** Moves the signals now. A timer does this by itself; tests call it. */
 export function flush() {
   scheduled = false;
-  if (!dirty.list && !dirty.all && !dirty.keys.size) return;
-  const { list, meta, all, keys } = dirty;
-  dirty.list = dirty.meta = dirty.all = false;
+  if (!dirty.list && !dirty.all && !dirty.mail && !dirty.keys.size) return;
+  const { list, meta, all, mail, keys } = dirty;
+  dirty.list = dirty.meta = dirty.all = dirty.mail = false;
   dirty.keys = new Set();
   batch(() => {
+    if (mail) mailRev.value++;
     if (list) rev.value = version;
     if (meta) metaRev.value++;
     if (all) for (const s of timelineRevs.values()) s.value++;

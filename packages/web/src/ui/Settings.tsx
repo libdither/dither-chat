@@ -1,7 +1,7 @@
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { LEVEL_LABEL, netName } from '../model.ts';
-import { api, db, go, prefs, rev, setPrefs, setRule, toast } from '../state.ts';
+import { api, db, go, mailRev, prefs, rev, setPrefs, setRule, toast } from '../state.ts';
 import { STATUS, addingAccount } from './Accounts.tsx';
 import { AccountChip, NetBadge, NetGlyph, levelIcon } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -11,6 +11,7 @@ import { PrivacySettings } from './Privacy.tsx';
 import { HistorySettings } from './HistorySettings.tsx';
 import { AdversarialSettings } from './Adversarial.tsx';
 import { DeskSettings } from './DeskSettings.tsx';
+import { MailAccessNote, MailAccountRows } from './mail/MailAccounts.tsx';
 import { phone } from '../phone.ts';
 import { Sheet } from './Sheet.tsx';
 import { chosenTheme, followsSystem, Swatch, ThemeList } from './Themes.tsx';
@@ -140,6 +141,25 @@ function DailyDigestSettings() {
         </label>
       </div>
       <p class="set-help">In {d.timezone}. If quiet hours cover this time, it waits until they end and takes the place of their summary. If the hub was down, one digest catches up.</p>
+    </section>
+  );
+}
+
+/** Mail (docs/mail.md): whether the hub may read it, and its accounts. Added and changed on the dither-accounts page. */
+function MailSettings() {
+  mailRev.value;
+  if (db.mail.access.state === 'off')
+    return (
+      <section class="set-block" id="set-mail">
+        <h3>Mail</h3>
+        <p class="set-help">Mail comes through dither-accounts. Set DITHER_ACCOUNTS_URL on the hub to read it here.</p>
+      </section>
+    );
+  return (
+    <section class="set-block" id="set-mail">
+      <h3>Mail</h3>
+      <MailAccessNote />
+      <MailAccountRows />
     </section>
   );
 }
@@ -323,6 +343,8 @@ export function SettingsPane() {
         </section>
 
         <DeskSettings />
+
+        <MailSettings />
 
         <section class="set-block" id="set-calls">
           <h3>Calls</h3>

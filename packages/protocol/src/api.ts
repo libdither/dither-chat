@@ -22,6 +22,7 @@ import type {
 } from './ontology.ts';
 import type { ArrangeSettings, UsageKind, UsageView } from './usage.ts';
 import type { FileInfo } from './files.ts';
+import type { MailAccess, MailAccountView, MailboxView, MailBootstrap, MailOutboxView, MailThreadView } from './mail.ts';
 
 export interface AccountView {
   id: string;
@@ -771,6 +772,8 @@ export interface Bootstrap {
   now: number;
   /** Where in the hub's change journal this bootstrap stands, so the next reconnect asks only for what changed since (docs/sync.md). */
   sync?: SyncPosition;
+  /** Mail (docs/mail.md). Absent from hubs that predate it. */
+  mail?: MailBootstrap;
 }
 
 /**
@@ -841,6 +844,19 @@ export type ClientEvent =
   /** Time spent in places changed (usage.ts, docs/organize.md). `replace`: these are all of them. */
   | { t: 'usage'; places: UsageView[]; removed: { kind: UsageKind; id: string }[]; replace?: true }
   | { t: 'arrange'; arrange: ArrangeSettings }
+  /** Mail (docs/mail.md, docs/mail-design.md §5). Whether the hub may read it, its accounts, their mailboxes. */
+  | { t: 'mail.access'; access: MailAccess }
+  | { t: 'mail.account'; account: MailAccountView }
+  | { t: 'mail.account.removed'; id: string }
+  | { t: 'mail.mailboxes'; accountId: string; mailboxes: MailboxView[] }
+  /** Threads new or changed, and threads gone (emptied, or merged into another). */
+  | { t: 'mail.threads'; threads: MailThreadView[]; removed: string[] }
+  /** Lists the page holds that the hub changed without sending each thread: fetch them again when shown (slice 2). */
+  | { t: 'mail.lists'; stale: string[] }
+  /** An account's sync, as it goes. Of the moment: not journaled (slice 2). */
+  | { t: 'mail.progress'; accountId: string; sync: MailAccountView['sync'] }
+  /** Slice 5. */
+  | { t: 'mail.outbox'; items: MailOutboxView[] }
   /** Ends a frame whose changes went into the journal: a client holding everything up to here can resume from `seq`. */
   | { t: 'sync'; seq: number }
   | { t: 'resync' };

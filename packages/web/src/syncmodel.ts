@@ -6,6 +6,7 @@
  * Timelines, the inbox, notifications and pending sends are state.ts's: they react to events but are not this.
  */
 import type * as P from '@dither-chat/protocol';
+import { applyMailBootstrap, applyMailEvent, emptyMail } from './mail/model.ts';
 
 export function emptyDb() {
   return {
@@ -38,6 +39,8 @@ export function emptyDb() {
     attention: new Map<string, P.AttentionView>(),
     /** Where in the hub's change journal this copy stands (docs/sync.md). Null: nowhere a delta can start from. */
     sync: null as P.SyncPosition | null,
+    /** Mail (mail/model.ts, docs/mail.md). */
+    mail: emptyMail(),
   };
 }
 export type Db = ReturnType<typeof emptyDb>;
@@ -149,12 +152,14 @@ export function applyBootstrapTo(db: Db, b: P.Bootstrap) {
   db.devices = b.devices ?? [];
   db.attention = new Map((b.attention ?? []).map((a) => [a.id, a]));
   db.sync = b.sync ?? null;
+  applyMailBootstrap(db.mail, b.mail);
   indexEdges(db, b.edges);
   indexThreads(db);
 }
 
 /** What one event changes in `db`. Returns true when threads need indexing again (indexThreads). */
 export function applyEventTo(db: Db, ev: P.ClientEvent): boolean {
+  if (applyMailEvent(db.mail, ev)) return false;
   switch (ev.t) {
     case 'account':
       db.accounts.set(ev.account.id, ev.account);

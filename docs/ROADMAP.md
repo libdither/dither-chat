@@ -47,6 +47,19 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | People graph: who shares which servers and groups | M | M | done | From the People header (docs/people-graph.md). Links from group participants, profiles' mutual servers, and members seen when recorded; WebGL with a worker layout, capped at 6,000 nodes by default. Not checked against the live hub's data in a browser |
 | Block, ignore | M | M | later | Differs per network |
 
+## Mail
+
+Built in slices from [mail-design.md](mail-design.md) (its §12); what works now is in [mail.md](mail.md).
+
+| Feature | Value | Cost | Status | Notes |
+|---|---|---|---|---|
+| Read-only mail, end to end (slice 1) | H | M | done | Inbox and Sent's newest 500 per account, kept up by events and `mail.changes`, 410 relists, threads by server id, references or subject; text bodies with quotes folded; read here only. Verified against dither-accounts' Dovecot and the fake server, not a real mailbox |
+| Big mailboxes: backfill to a year, bodies ahead, eviction (slice 2) | H | M | next | `MAIL_LIMITS` and the queue's `gate` are in place |
+| Safe HTML, images through a proxy, attachments (slice 3) | H | M | next | `BODY_RENDERERS` takes the HTML frame |
+| Read on the server after a second, star, archive, move (slice 4) | H | M | next | Listens to MailHub's `read` event; swipes go in `ROW_WRAPPERS` |
+| Sending, replies, drafts, undo (slice 5) | H | M | next | Proton's `mail.send` answers 501 for now |
+| People, search, mail in the one-list inbox, notifications (slices 6-9) | H | M | later | Unknown senders reach the inbox only at Active or above |
+
 ## Messaging
 
 | Feature | Value | Cost | Status | Notes |

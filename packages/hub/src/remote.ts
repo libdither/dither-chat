@@ -25,6 +25,7 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORKS } from '@dither-chat/protocol';
 import { ACCOUNT_COLORS, type AccountRow } from './store.ts';
 import { Supervisor } from './supervisor.ts';
+import type { MailSink } from './mail/backend.ts';
 
 /** The kinds this hub hands to the manager when they are new. */
 export const MANAGED_KINDS = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x'];
@@ -76,11 +77,26 @@ interface ClientModule {
   requestAccess?(url: string, app: string, token: string, requests: unknown[]): Promise<unknown>;
 }
 
-/** What the manager says of this app (AppInfo), as much as kindsToAsk reads. */
+/** What the manager says of this app (AppInfo), as much as kindsToAsk and mailAccessOf read. */
 interface AppSelf {
   grants?: { interface: string; kinds: string[] | null }[];
   requests?: { interface: string; kinds?: string[] | null; state?: string }[];
 }
+
+/** The hub's request for mail (docs/mail.md): read and write, every account, added on the manager's page (§14 Q5). */
+export const MAIL_REQUEST = { interface: 'mail', level: 'write', accounts: '*', reason: 'Show your email beside your chats; mark, file and send mail as you ask' } as const;
+
+/** Whether the hub may read mail: a grant, a request waiting for you, or your no. */
+export function mailAccessOf(info: AppSelf | null | undefined): 'granted' | 'pending' | 'denied' | null {
+  if (info?.grants?.some((g) => g.interface === 'mail')) return 'granted';
+  const asked = (info?.requests ?? []).filter((r) => r.interface === 'mail');
+  if (asked.some((r) => r.state === 'pending')) return 'pending';
+  if (asked.some((r) => r.state === 'denied')) return 'denied';
+  return null;
+}
+
+/** Ask for mail once: not when it has a grant, or a request is waiting or was declined. */
+export const mailToAsk = (info: AppSelf | null | undefined): boolean => mailAccessOf(info) === null;
 
 /**
  * The chat kinds this hub runs that it has neither a grant for nor asked about: an open request waits for you, and a
@@ -129,6 +145,10 @@ export class RoutedSupervisor extends Supervisor {
   private storeRef: ConstructorParameters<typeof Supervisor>[0];
   /** Accounts the manager ran (last time, or until they left its list): never started here without a session here. */
   private wasRemote = new Set<string>();
+  /** Mail (mail/backend.ts ManagerMailBackend): its accounts' list and events go there, not to the chat side. */
+  mail?: MailSink;
+  private mod: ClientModule | null = null;
+  private mailTimer: Timer | null = null;
 
   constructor(
     store: ConstructorParameters<typeof Supervisor>[0],
@@ -191,6 +211,7 @@ export class RoutedSupervisor extends Supervisor {
   /** Register once (or again, if the manager forgot this hub), then connect. */
   async connect(): Promise<void> {
     const mod = (await import(process.env.DITHER_ACCOUNTS_CLIENT ?? resolve(this.remoteOpts.repoRoot, '../dither-accounts/packages/client/src/index.ts'))) as ClientModule;
+    this.mod = mod;
     const url = this.remoteOpts.url;
     let info: AppSelf | null = null;
     let known =
@@ -209,6 +230,12 @@ export class RoutedSupervisor extends Supervisor {
           () => console.log(`dither-accounts: asked to manage ${missing.join(', ')} accounts as well; approve it on the manager's page`),
           (e) => console.error('dither-accounts: asking for the new kinds failed:', e),
         );
+    // Registered before mail (docs/mail.md): ask for it once, for you to approve on its page.
+    if (known && info && this.mail && mailToAsk(info) && mod.requestAccess)
+      await mod.requestAccess(url, this.saved!.app, this.saved!.token, [MAIL_REQUEST]).then(
+        () => ((info = { ...info, requests: [...(info?.requests ?? []), { interface: 'mail', state: 'pending' }] }), console.log("dither-accounts: asked to read and send your mail; approve it on the manager's page")),
+        (e) => console.error('dither-accounts: asking for mail failed:', e),
+      );
     if (!known) {
       const reg = await mod.register(url, {
         name: 'dither-chat',
@@ -216,30 +243,76 @@ export class RoutedSupervisor extends Supervisor {
         requests: [
           { interface: 'chat', level: 'manage', accounts: '*', reason: 'Show your chats, send what you write, and manage chats and servers as you ask' },
           { interface: 'accounts', level: 'manage', kinds: MANAGED_KINDS, reason: 'Add, sign in and remove the chat accounts you set up in the hub' },
+          ...(this.mail ? [MAIL_REQUEST] : []),
         ],
       });
+      info = { requests: this.mail ? [{ interface: 'mail', state: 'pending' }] : [] };
       this.saved = { app: reg.app, token: reg.token, url, remote: [] };
       this.save();
       console.log(`dither-accounts: registered as ${reg.app}; approve its requests on the manager's page`);
     }
+    this.mailAccess(mailAccessOf(info) ?? 'pending');
     this.client = new mod.AccountsClient({
       url,
       app: this.saved!.app,
       token: this.saved!.token,
-      onAccounts: (list) => this.accountsChanged(list),
+      onAccounts: (list) => {
+        this.accountsChanged(list);
+        this.mail?.accounts(list);
+        if (this.mailWaiting) void this.readMailAccess();
+      },
       onEvents: (account, events) => {
+        this.mail?.events(account, events);
         if (!this.remote.has(account)) return;
         for (const ev of events) this.handle(account, ev as P.AdapterEvent);
       },
       onGap: (account, dropped) => {
+        // A mail account catches up with mail.changes; nothing restarts.
+        if (this.mail?.gap(account)) return;
         console.warn(`[${account}] the manager dropped ${dropped} events while the hub was away; restarting the adapter for a fresh snapshot`);
         this.client?.admin({ do: 'restart', account }).catch((e) => console.error(`[${account}] restart after a gap failed:`, e));
       },
       onConnection: (up) => {
+        this.mail?.connection(up);
         if (up) return;
         for (const id of this.remote.keys()) this.markOffline(id);
       },
     });
+  }
+
+  // ---------------------------------------------------------- mail's grant
+
+  private mailState: 'granted' | 'pending' | 'denied' | 'unreachable' = 'unreachable';
+  private get mailWaiting() {
+    return this.mailState === 'pending' || this.mailState === 'denied';
+  }
+  private mailAccess(state: RoutedSupervisor['mailState']) {
+    this.mailState = state;
+    this.mail?.setAccess(state);
+    // While it waits for you: the manager is asked every minute (and on each account list) whether you answered.
+    if (this.mailWaiting && !this.mailTimer && this.mail) this.mailTimer = setInterval(() => void this.readMailAccess(), 60_000);
+    if (!this.mailWaiting && this.mailTimer) {
+      clearInterval(this.mailTimer);
+      this.mailTimer = null;
+    }
+  }
+  private async readMailAccess() {
+    if (!this.mod || !this.saved) return;
+    const info = (await this.mod.self(this.remoteOpts.url, this.saved.app, this.saved.token).catch(() => null)) as AppSelf | null;
+    if (info) this.mailAccess(mailAccessOf(info) ?? 'pending');
+  }
+
+  /** "Ask again" after you declined: a new request on the manager's page. */
+  async askMailAgain(): Promise<void> {
+    if (!this.mod?.requestAccess || !this.saved) throw new Error('dither-accounts is not reachable');
+    await this.mod.requestAccess(this.remoteOpts.url, this.saved.app, this.saved.token, [MAIL_REQUEST]);
+    this.mailAccess('pending');
+  }
+
+  /** A mail call (mail/backend.ts). */
+  callMail(account: string, op: string, input: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
+    if (!this.client) return Promise.reject(Object.assign(new Error('dither-accounts is not reachable'), { code: 'offline' }));
+    return this.client.callRaw(account, op, input, timeoutMs);
   }
 
   private accountsChanged(list: AccountView[]) {
@@ -341,6 +414,8 @@ export class RoutedSupervisor extends Supervisor {
   /** Local adapters stop with the hub; the manager's keep running, and their events wait for the hub to return. */
   override async stopAll() {
     await super.stopAll();
+    if (this.mailTimer) clearInterval(this.mailTimer);
+    this.mailTimer = null;
     this.client?.close();
   }
 

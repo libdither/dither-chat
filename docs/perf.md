@@ -184,6 +184,20 @@ What changed:
   loaded themselves again. It stays phones-only. At phone size (`--size 390x844`) the window keeps the view still
   too.
 
+## Mail (docs/mail.md)
+
+Mail stays out of chat's way: its events move a signal of their own (`mailRev`, versions.ts), so chat's lists do not
+draw again for them, and its screens are a chunk loaded the first time Mail opens (`ui/mail/lazy.tsx`, 13 KB), like the
+people graph's. What the first load carries of it is its model, the Accounts and Settings rows and the rail's entry:
+3 KB of script, and 9 DOM nodes (the four `*.nodes` counts in the baseline moved by those, by hand, not with
+`--update`). The demo world, and so the perf world, has a mail account with 24 messages: the bootstrap is 10 KB bigger.
+
+Measured on 2026-11-07 on a machine with a load of about 6 on 16 cores, so the times moved by up to 40% between runs
+of the same code; runs alternated, origin/main between two of the branch. Renders were the same (App 3 on a cold load
+and 6 for the six opens, message renders 354; sidebar renders 13 to 15 either way). Times of the same build bracketed
+main's: a cold load at 4× took 3,692 ms on main, 2,533 and 3,777 ms on the branch; a first open 1,113 ms on main,
+710 and 1,050 ms. Nothing there says mail slows chat, and nothing that noisy could show a few percent.
+
 ## Next
 
 What these numbers point at, not done yet:

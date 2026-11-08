@@ -51,7 +51,7 @@
    "kind": "tally"
   },
   "1x.cold.nodes": {
-   "v": 13965,
+   "v": 13977,
    "kind": "count"
   },
   "1x.cold.bootstrapBytes": {
@@ -151,7 +151,7 @@
    "kind": "tally"
   },
   "1x.long.reopen.nodes": {
-   "v": 16383,
+   "v": 16395,
    "kind": "count"
   },
   "1x.long.reopen.msgs": {
@@ -259,7 +259,7 @@
    "kind": "tally"
   },
   "4x.cold.nodes": {
-   "v": 13965,
+   "v": 13977,
    "kind": "count"
   },
   "4x.cold.bootstrapBytes": {
@@ -359,7 +359,7 @@
    "kind": "tally"
   },
   "4x.long.reopen.nodes": {
-   "v": 16362,
+   "v": 16374,
    "kind": "count"
   },
   "4x.long.reopen.msgs": {
