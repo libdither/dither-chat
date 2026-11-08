@@ -267,7 +267,8 @@ The manager's `limited` error backs off from 2 s, doubling. Ingest writes 200 su
 backfill the hub broadcasts only threads in the live window (the newest 200 of each followed mailbox, plus threads
 listed in the inbox or changed by you). Other changes become `mail.lists {stale}`, and a page that holds such a list
 refetches it when it next shows. A 50k-message mailbox costs about 250 list pages: some minutes of background, with the
-first screen after one call. By estimate (not measured) the summaries take about 35 MB with their index; slice 2 measures it.
+first screen after one call. By estimate (not measured) the summaries take about 35 MB with their index; slice 2 measured
+about 960 bytes a summary with its indexes and slice 6's people rows, so about 48 MB (docs/mail.md).
 
 ### 3.6 Offline and reconnect
 

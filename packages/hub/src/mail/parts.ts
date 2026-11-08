@@ -157,8 +157,14 @@ class Parts {
     return join(this.media.dir, `mailpart-${hash('a', m.account_id).slice(0, 10)}-${hash('m', m.id).slice(0, 12)}-${hash('p', m.account_id, m.id, a.id).slice(0, 32)}`);
   }
 
-  part(m: Row, pid: string): M.MailAttachment | null {
-    const b = this.store.body(m.id);
+  /** A message's body row; one the body cache let go (cache.ts, slice 2) comes back from the server first. */
+  async bodyOf(m: Row): Promise<Row | null> {
+    if (!this.store.body(m.id)) await this.hub.body(m.id);
+    return this.store.body(m.id);
+  }
+
+  async part(m: Row, pid: string): Promise<M.MailAttachment | null> {
+    const b = await this.bodyOf(m);
     return json<M.MailAttachment[]>(b?.parts, []).find((a) => partId(m.id, a.id) === pid) ?? null;
   }
 
@@ -284,7 +290,7 @@ export const partRoutes: MailRouter = (hub) => {
       handle: async ({ params }) => {
         const m = need(params[0]);
         const want = contentId(params[1]);
-        const b = hub.store.body(m.id);
+        const b = await parts.bodyOf(m);
         const a = json<M.MailAttachment[]>(b?.parts, []).find((x) => x.contentId && contentId(x.contentId) === want);
         if (!a) throw new MailCallError('no such part', 404);
         const { file } = await parts.fetchPart(m, a);
@@ -298,7 +304,7 @@ export const partRoutes: MailRouter = (hub) => {
       path: /^\/api\/mail\/messages\/([\w-]+)\/attachments\/([\w-]+)(\/info)?$/,
       handle: async ({ params }) => {
         const m = need(params[0]);
-        const a = parts.part(m, params[1]);
+        const a = await parts.part(m, params[1]);
         if (!a) throw new MailCallError('no such attachment', 404);
         const { file, mime } = await parts.fetchPart(m, a);
         if (params[2] === '/info') return Response.json((await parts.lookAt(file, a)) satisfies P.FileInfo);

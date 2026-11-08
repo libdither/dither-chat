@@ -82,6 +82,8 @@ export interface MailDirty {
   mailboxes: Set<string>;
   threads: Set<string>;
   threadsRemoved: Set<string>;
+  /** Accounts whose sync progress moved (slice 2): `mail.progress`, not journaled. */
+  progress: Set<string>;
 }
 
 export interface MailAccountInput {
@@ -102,7 +104,7 @@ export interface Ingested {
 }
 
 export class MailStore {
-  readonly dirty: MailDirty = { access: false, accounts: new Set(), mailboxes: new Set(), threads: new Set(), threadsRemoved: new Set() };
+  readonly dirty: MailDirty = { access: false, accounts: new Set(), mailboxes: new Set(), threads: new Set(), threadsRemoved: new Set(), progress: new Set() };
   /** The account on the manager's page: set by MailHub. */
   managedUrl: (accountId: string) => string | null = () => null;
   /** Where an account's sync is (sync.ts): set by MailHub. */
@@ -117,6 +119,8 @@ export class MailStore {
   opsOf: (accountId: string) => P.MailAccountView['ops'] = () => undefined;
   /** What later slices add to a body's view (slice 3: the HTML, files, warnings), from the mail_body row. */
   readonly bodyExtras: ((messageId: string, body: Row) => Partial<P.MailBodyView>)[] = [];
+  /** Of the threads that changed, those held back from `mail.threads` and the lists that makes stale (slice 2's live window). */
+  window: ((ids: string[]) => { held: Set<string>; stale: string[] }) | null = null;
   private selfCache = new Map<string, Set<string>>();
 
   constructor(
@@ -339,13 +343,15 @@ export class MailStore {
     this.run('UPDATE mailbox SET state = ?, state_at = ? WHERE id = ?', state, this.now(), mailboxId);
   }
 
-  /** How far down the list from the top has come. */
+  /** How far down the list from the top has come. Each cursor is kept with the oldest above it (schema-big.sql). */
   setListed(mailboxId: string, l: { next: string | null; horizon: number | null; complete: boolean }) {
     this.run('UPDATE mailbox SET list_next = ?, horizon = ?, complete = ? WHERE id = ?', l.next, l.horizon, l.complete ? 1 : 0, mailboxId);
+    if (l.next && l.horizon !== null) this.run('INSERT OR REPLACE INTO mail_page (mailbox_id, cursor, above) VALUES (?, ?, ?)', mailboxId, l.next, l.horizon);
   }
 
   bumpRelist(mailboxId: string): number {
     this.run('UPDATE mailbox SET relist_gen = relist_gen + 1 WHERE id = ?', mailboxId);
+    this.run('DELETE FROM mail_page WHERE mailbox_id = ?', mailboxId);
     return this.mailbox(mailboxId)?.relist_gen ?? 0;
   }
 
@@ -967,7 +973,7 @@ export class MailStore {
   /** What changed since the last flush, as the page's events. */
   flush(access: () => P.MailAccess): P.ClientEvent[] {
     const d = this.dirty;
-    if (!d.access && !d.accounts.size && !d.mailboxes.size && !d.threads.size && !d.threadsRemoved.size) return [];
+    if (!d.access && !d.accounts.size && !d.mailboxes.size && !d.threads.size && !d.threadsRemoved.size && !d.progress.size) return [];
     const out: P.ClientEvent[] = [];
     if (d.access) out.push({ t: 'mail.access', access: access() });
     const removedAccounts: P.ClientEvent[] = [];
@@ -978,10 +984,16 @@ export class MailStore {
     }
     for (const id of d.mailboxes) if (this.account(id)) out.push({ t: 'mail.mailboxes', accountId: id, mailboxes: this.mailboxes(id).map((b) => this.mailboxView(b)) });
     if (d.threads.size || d.threadsRemoved.size) {
-      const views = this.threadViews([...d.threads]);
+      const w = this.window?.([...d.threads]) ?? null;
+      const views = this.threadViews([...d.threads].filter((id) => !w?.held.has(id)));
       const have = new Set(views.map((v) => v.id));
-      const removed = [...new Set([...d.threadsRemoved, ...[...d.threads].filter((id) => !have.has(id))])].filter((id) => !have.has(id));
-      out.push({ t: 'mail.threads', threads: views, removed });
+      const removed = [...new Set([...d.threadsRemoved, ...[...d.threads].filter((id) => !have.has(id) && !w?.held.has(id))])].filter((id) => !have.has(id));
+      if (views.length || removed.length) out.push({ t: 'mail.threads', threads: views, removed });
+      if (w?.stale.length) out.push({ t: 'mail.lists', stale: w.stale });
+    }
+    for (const id of d.progress) {
+      const a = d.accounts.has(id) ? null : this.account(id);
+      if (a && !a.hidden) out.push({ t: 'mail.progress', accountId: id, sync: this.accountView(a).sync });
     }
     out.push(...removedAccounts);
     d.access = false;
@@ -989,6 +1001,7 @@ export class MailStore {
     d.mailboxes.clear();
     d.threads.clear();
     d.threadsRemoved.clear();
+    d.progress.clear();
     return out;
   }
 }

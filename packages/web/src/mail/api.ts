@@ -6,22 +6,32 @@
 import type * as P from '@dither-chat/protocol';
 import { api, db, eventHooks } from '../state.ts';
 import { mailChanged } from '../versions.ts';
-import { mergePage, newList } from './model.ts';
+import { cursorOf, mergePage, newList } from './model.ts';
 
 import { bodies, bodyState, details } from './held.ts';
 
 export { bodies, bodyState, details } from './held.ts';
 
-/** A list's first page (again), or the next one. */
+/**
+ * A list's first page (again), or the next one. Past what the hub holds it asks the server (slice 2), which can take a
+ * while: a `pending` answer is asked again a moment later, while its threads arrive as `mail.threads`.
+ */
 export async function loadList(key: string, more = false): Promise<void> {
   const s = db.mail;
   const l = s.lists.get(key) ?? newList(key);
-  if (l.loading || (more && (!l.next || !l.loaded))) return;
+  const last = l.ids.length ? s.threads.get(l.ids[l.ids.length - 1]) : undefined;
+  const before = more ? (l.next ?? (last && !l.complete ? cursorOf(last) : null)) : null;
+  if (l.loading || (more && (!before || !l.loaded))) return;
   s.lists.set(key, { ...l, loading: true, error: null });
   mailChanged();
   try {
-    const page = await api<P.MailThreadPage>(`/api/mail/threads?list=${encodeURIComponent(key)}&limit=50${more && l.next ? `&before=${encodeURIComponent(l.next)}` : ''}`);
+    const page = await api<P.MailThreadPage>(`/api/mail/threads?list=${encodeURIComponent(key)}&limit=50${before ? `&before=${encodeURIComponent(before)}` : ''}`);
     mergePage(s, key, page, more);
+    if (page.pending)
+      setTimeout(() => {
+        const now = s.lists.get(key);
+        if (now?.pending) void loadList(key, now.ids.length > 0);
+      }, 1_500);
   } catch (e) {
     const now = s.lists.get(key) ?? l;
     s.lists.set(key, { ...now, loading: false, error: (e as Error).message });

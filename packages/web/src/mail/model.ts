@@ -19,6 +19,12 @@ export interface MailList {
   loaded: boolean;
   loading: boolean;
   error: string | null;
+  /** The hub is fetching the next page from the server: its threads come as `mail.threads` (slice 2). */
+  pending: boolean;
+  /** The hub changed it without sending each thread (`mail.lists`): it loads again when it next shows. */
+  stale: boolean;
+  /** The last page asked for brought nothing new: no more is asked for by itself until the list loads again. */
+  dry: boolean;
 }
 
 export interface MailState {
@@ -100,10 +106,10 @@ export function applyMailEvent(s: MailState, ev: P.ClientEvent): boolean {
       for (const l of s.lists.values()) if (l.loaded) placeInList(s, l, ev.threads);
       return true;
     case 'mail.lists':
-      // Slice 2: lists the hub changed without sending each thread load again when shown.
+      // Lists the hub changed without sending each thread (a backfill, mostly) load again when they next show.
       for (const k of ev.stale) {
-        const l = s.lists.get(k);
-        if (l) l.loaded = false;
+        // `w:*`: every list of mail with someone.
+        for (const [key, l] of k === 'w:*' ? [...s.lists].filter(([x]) => x.startsWith('w:')) : [[k, s.lists.get(k)] as const]) if (l?.loaded) s.lists.set(key, { ...l, stale: true });
       }
       return true;
     case 'mail.progress': {
@@ -137,15 +143,35 @@ function placeInList(s: MailState, l: MailList, changed: P.MailThreadView[]) {
   l.ids = [...keep].map((id) => s.threads.get(id)).filter((t): t is P.MailThreadView => !!t).sort(threadOrder).map((t) => t.id);
 }
 
-/** A page from GET /api/mail/threads: the first replaces the list, the next ones go on its end. */
+/**
+ * A page from GET /api/mail/threads: the first replaces the list, the next ones go on its end. A pending page leaves
+ * `next` empty, so the threads the hub sends meanwhile go in wherever they sort.
+ */
 export function mergePage(s: MailState, key: string, page: P.MailThreadPage, more: boolean) {
   for (const t of page.threads) s.threads.set(t.id, t);
   const l = s.lists.get(key) ?? newList(key);
-  const ids = more ? [...l.ids, ...page.threads.map((t) => t.id).filter((id) => !l.ids.includes(id))] : page.threads.map((t) => t.id);
-  s.lists.set(key, { ...l, ids, next: page.next, complete: page.complete, loaded: true, loading: false, error: null });
+  let ids = page.threads.map((t) => t.id);
+  let dry = false;
+  if (more) {
+    const have = new Set(l.ids);
+    const fresh = ids.filter((id) => !have.has(id));
+    dry = !fresh.length && !page.pending;
+    ids = [...l.ids, ...fresh];
+    // Threads placed while the page was on its way may sit among these.
+    ids = ids.map((id) => s.threads.get(id)).filter((t): t is P.MailThreadView => !!t).sort(threadOrder).map((t) => t.id);
+  }
+  s.lists.set(key, { ...l, ids, next: page.next, complete: page.complete, pending: page.pending, loaded: true, loading: false, error: null, stale: false, dry });
 }
 
-export const newList = (key: string): MailList => ({ key, ids: [], next: null, complete: false, loaded: false, loading: false, error: null });
+export const newList = (key: string): MailList => ({ key, ids: [], next: null, complete: false, loaded: false, loading: false, error: null, pending: false, stale: false, dry: false });
+
+/** Where the page after a list's last thread starts (the hub's cursor). */
+export const cursorOf = (t: P.MailThreadView) => `${t.lastAt}:${t.id}`;
+
+/** Whether a list can go further down: the hub has more, or the server may. */
+export function hasMore(l: MailList | undefined): boolean {
+  return !!l?.loaded && !l.dry && (!!l.next || (!l.complete && !l.pending && l.ids.length > 0));
+}
 
 /** What a list shows: the loaded pages, or before they come, what the threads at hand say of it. */
 export function listThreads(s: MailState, key: string): P.MailThreadView[] {
@@ -201,3 +227,20 @@ export const MAIL_VIEWS: { view: 'inbox' | 'unread' | 'starred' | 'sent'; label:
 ];
 
 export const DEFAULT_LIST = viewList('inbox');
+
+/** "3 Mar", or "3 Mar 2025" before this year. */
+function day(t: number, now: number): string {
+  const d = new Date(t);
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', ...(d.getFullYear() !== new Date(now).getFullYear() ? { year: 'numeric' } : {}) });
+}
+
+/** One line under the list: the first sync, the backfill going back, a refresh after the server lost track. */
+export function syncLine(accounts: P.MailAccountView[], now = Date.now()): string | null {
+  const busy = accounts.filter((a) => a.sync.phase !== 'idle');
+  if (!busy.length) return null;
+  const n = busy.reduce((x, a) => x + a.sync.synced, 0).toLocaleString();
+  if (busy.some((a) => a.sync.phase === 'first')) return `Syncing · ${n}`;
+  if (busy.some((a) => a.sync.phase === 'relist')) return 'Refreshing…';
+  const oldest = Math.min(...busy.map((a) => a.sync.oldest ?? Infinity));
+  return `Syncing older mail · ${n}${Number.isFinite(oldest) ? `, back to ${day(oldest, now)}` : ''}`;
+}

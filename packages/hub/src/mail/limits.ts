@@ -21,6 +21,25 @@ export const MAIL_LIMITS = {
   cacheMb: env('DITHER_MAIL_CACHE_MB', 500),
   /** The search text (slice 7). */
   indexMb: env('DITHER_MAIL_INDEX_MB', 300),
+  /**
+   * Slice 2 (big mailboxes, §3.3, §3.5): backfill pages; prefetch and backfill together at most `backgroundPerSec`
+   * calls a second, on at most `backgroundSlots` of the two, paused `userPauseMs` after any call a page waits for.
+   */
+  backfillPage: 200,
+  backgroundPerSec: 2,
+  backgroundSlots: 1,
+  userPauseMs: 10_000,
+  /** A page a list asks for beyond what the hub holds: how long the answer waits for the server. */
+  pageWaitMs: 8_000,
+  /** Bodies fetched ahead: personal mail of the last `prefetchDays` (at most `prefetchMax`), and a list's first rows. */
+  prefetchDays: 14,
+  prefetchMax: 300,
+  prefetchRows: 20,
+  /** A body over this is kept only while it is read; the search text keeps the first `textBytes` of each. */
+  bodyMaxBytes: 2 * 1024 * 1024,
+  textBytes: 16 * 1024,
+  /** Threads sent to pages as they change: the newest of each followed mailbox; the rest make lists stale. */
+  liveWindow: 200,
   /** The first sync: Inbox's newest page, broadcast at once, then Inbox and Sent down to this many each. */
   firstPage: 50,
   firstSync: 500,

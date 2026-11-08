@@ -40,6 +40,8 @@ export class MailQueue {
   gate: (p: Priority, now: number) => number = () => 0;
   /** Told when a piece of work starts: slice 2's budgets count them. */
   onStart: (p: Priority, now: number) => void = () => {};
+  /** Told when a piece of work ends, done or not (slice 2: how many background calls are in flight). */
+  onEnd: (p: Priority, now: number) => void = () => {};
 
   constructor(
     private concurrency = 2,
@@ -116,15 +118,18 @@ export class MailQueue {
   private start(t: Task) {
     this.running.add(t);
     this.onStart(t.p, this.now());
+    const p = t.p;
     t.fn().then(
       (v) => {
         this.backoff = 0;
         this.running.delete(t);
+        this.onEnd(p, this.now());
         t.resolve(v);
         this.pump();
       },
       (e) => {
         this.running.delete(t);
+        this.onEnd(p, this.now());
         const err = asMailError(e);
         if (err.code === 'limited' && !this.stopped) {
           // The manager's rate limit: back in front of its line, and everything waits a while.

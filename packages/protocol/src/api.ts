@@ -856,7 +856,7 @@ export type ClientEvent =
   | { t: 'mail.mailboxes'; accountId: string; mailboxes: MailboxView[] }
   /** Threads new or changed, and threads gone (emptied, or merged into another). */
   | { t: 'mail.threads'; threads: MailThreadView[]; removed: string[] }
-  /** Lists the page holds that the hub changed without sending each thread: fetch them again when shown (slice 2). */
+  /** Lists the page holds that the hub changed without sending each thread: fetch them again when shown (slice 2). `w:*` names every list of mail with someone. */
   | { t: 'mail.lists'; stale: string[] }
   /** An account's sync, as it goes. Of the moment: not journaled (slice 2). */
   | { t: 'mail.progress'; accountId: string; sync: MailAccountView['sync'] }

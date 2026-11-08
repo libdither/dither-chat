@@ -73,6 +73,8 @@ interface Account {
   epochs: Map<string, number>;
   nextUid: number;
   status: Record<string, unknown>;
+  /** Each mailbox's messages, newest first, until something changes (a big mailbox lists fast). */
+  sorted: Map<string, FakeMessage[]>;
 }
 
 const DEFAULT_MAILBOXES: M.Mailbox[] = [
@@ -92,8 +94,8 @@ export class FakeMailBackend implements MailBackend {
   private state: P.MailAccess['state'] = 'granted';
   private fns = { accounts: [] as ((a: MailBackendAccount[]) => void)[], events: [] as ((a: string, e: MailBackendEvent[]) => void)[], gap: [] as ((a: string) => void)[], connection: [] as ((u: boolean) => void)[], access: [] as ((s: P.MailAccess['state']) => void)[] };
   private failures = new Map<string, Failure[]>();
-  /** Every call made, for tests to count. */
-  readonly calls: { account: string; op: string; input: Record<string, any> }[] = [];
+  /** Every call made, for tests to count, with when it was made. */
+  readonly calls: { account: string; op: string; input: Record<string, any>; at: number }[] = [];
   /** What mail.send sent. */
   readonly sent: FakeSent[] = [];
   /** As a manager on this machine: attachments may come as paths. */
@@ -132,10 +134,12 @@ export class FakeMailBackend implements MailBackend {
   }
 
   async call<T>(account: string, op: string, input: Record<string, any> = {}): Promise<T> {
-    this.calls.push({ account, op, input });
+    this.calls.push({ account, op, input, at: Date.now() });
     const a = this.accs.get(account);
     const latency = a?.opts.latencyMs ?? this.defaults.latencyMs ?? 0;
+    // An answer comes back later, as over a socket: never in the same turn.
     if (latency) await Bun.sleep(latency);
+    else await new Promise((r) => setImmediate(r));
     if (!this.connected) throw new MailCallError('the manager is not reachable', 503, 'offline');
     if (!a) throw new MailCallError(`no account ${account}`, 404, 'unknown-account');
     const fs = this.failures.get(op) ?? [];
@@ -165,6 +169,7 @@ export class FakeMailBackend implements MailBackend {
       epochs: new Map(),
       nextUid: 1,
       status: {},
+      sorted: new Map(),
     };
     a.status = this.statusOf(a, online);
     this.accs.set(id, a);
@@ -176,6 +181,16 @@ export class FakeMailBackend implements MailBackend {
   removeAccount(id: string) {
     this.accs.delete(id);
     this.listChanged();
+  }
+
+  /** A mailbox made on the server (the hub sees it at its next mail.mailboxes). */
+  addMailbox(id: string, box: M.Mailbox) {
+    this.accs.get(id)!.mailboxes.push({ ...box });
+  }
+
+  /** Changes how the account's server behaves from now on (a test making it slow, say). */
+  setOpts(id: string, opts: FakeOpts) {
+    Object.assign(this.accs.get(id)!.opts, opts);
   }
 
   /** The account goes offline or comes back, as its status says. */
@@ -284,6 +299,7 @@ export class FakeMailBackend implements MailBackend {
     const key = a.opts.state === 'account' ? '*' : mailbox;
     a.epochs.set(key, (a.epochs.get(key) ?? 0) + 1);
     if (key !== mailbox) a.epochs.set(mailbox, (a.epochs.get(mailbox) ?? 0) + 1);
+    a.sorted.clear();
     // Proton's refresh keeps its ids; an IMAP server's new UIDVALIDITY gives each message a new one.
     for (const m of a.opts.ids === 'imap' ? [...a.messages.values()] : []) {
       if (m.mailboxId !== mailbox) continue;
@@ -377,6 +393,16 @@ export class FakeMailBackend implements MailBackend {
 
   private journal(a: Account, mailbox: string, kind: 'added' | 'changed' | 'removed', id: string) {
     a.log.push({ seq: ++a.seq, mailbox, kind, id });
+    if (kind !== 'changed') a.sorted.delete(mailbox);
+  }
+
+  private sortedOf(a: Account, box: string): FakeMessage[] {
+    let list = a.sorted.get(box);
+    if (!list) {
+      list = [...a.messages.values()].filter((m) => m.mailboxId === box).sort((x, y) => y.receivedAt - x.receivedAt || (x.id < y.id ? 1 : -1));
+      a.sorted.set(box, list);
+    }
+    return list;
   }
 
   private stateOf(a: Account, mailbox: string): string {
@@ -416,14 +442,14 @@ export class FakeMailBackend implements MailBackend {
       case 'mail.mailboxes':
         return {
           mailboxes: a.mailboxes.map((b) => {
-            const ms = [...a.messages.values()].filter((m) => m.mailboxId === b.id);
+            const ms = this.sortedOf(a, b.id);
             return { ...b, total: ms.length, unread: ms.filter((m) => !m.flags.seen).length };
           }),
         };
       case 'mail.list': {
         const box = String(input.mailboxId);
         if (!a.mailboxes.some((b) => b.id === box)) throw new MailCallError(`no mailbox ${box}`, 404);
-        const all = [...a.messages.values()].filter((m) => m.mailboxId === box).sort((x, y) => y.receivedAt - x.receivedAt || (x.id < y.id ? 1 : -1));
+        const all = this.sortedOf(a, box);
         const from = input.before ? Number(String(input.before).split(':')[0]) : 0;
         const limit = Math.max(1, Math.min(Number(input.limit) || 50, 500));
         const page = all.slice(from, from + limit);
@@ -605,4 +631,31 @@ export function fakeBytes(att: { id: string; size: number }): Uint8Array {
   const out = new Uint8Array(Math.max(0, att.size));
   for (let i = 0; i < out.length; i++) out[i] = unit[i % unit.length];
   return out;
+}
+
+/**
+ * A big mailbox, for the load tests and a big demo world (DITHER_DEMO_MAIL_BIG): `n` plain messages in `mailbox`,
+ * spread evenly from `newest` back to `oldest`, newest first, in threads of three from 300 people; a tenth unread.
+ * In Sent, you wrote them.
+ */
+export function fillMailbox(fake: FakeMailBackend, account: string, mailbox: string, n: number, o: { newest: number; oldest: number; self: string; tag?: string; text?: (i: number) => string }) {
+  const tag = o.tag ?? mailbox.toLowerCase();
+  const span = o.newest - o.oldest;
+  for (let i = 0; i < n; i++) {
+    const t = Math.floor(i / 3);
+    const who = { name: `Person ${t % 300}`, email: `person${t % 300}@big.example` };
+    const mine = mailbox === 'Sent';
+    fake.put(account, {
+      mailboxId: mailbox,
+      messageId: `<${tag}${i}@big.example>`,
+      inReplyTo: i % 3 ? `<${tag}${i - 1}@big.example>` : null,
+      references: i % 3 ? [`<${tag}${t * 3}@big.example>`] : [],
+      from: [mine ? { name: null, email: o.self } : who],
+      to: [mine ? who : { name: null, email: o.self }],
+      subject: `${mailbox} topic ${t}`,
+      receivedAt: o.newest - Math.floor((i * span) / n),
+      flags: { seen: i % 10 !== 0 },
+      ...(o.text ? { text: o.text(i) } : {}),
+    });
+  }
 }
