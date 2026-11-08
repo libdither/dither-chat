@@ -74,6 +74,7 @@ import { composerDone, composerTyped } from '../typing.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { ForwardCard, forwarding } from './Forward.tsx';
 import { attachmentMenu, conversationMenu, identityMenu, imageMenu, linkMenu, messageMenu, openAttachment, personMenu } from './menus.tsx';
+import { fileFacts, fileIcon, fileKind, openFileViewer, VIEWABLE } from '../files.ts';
 import { desk } from '../desk.ts';
 import { android } from '../android.ts';
 import { counting, markPainted, rendered } from '../perf.ts';
@@ -416,13 +417,16 @@ function Marks({ m }: { m: P.MessageView }) {
 
 function Attachments({ m }: { m: P.MessageView }) {
   if (!m.attachments.length) return null;
-  const images = m.attachments.filter((a) => a.kind === 'image');
+  // A file the network called just a file whose bytes are a picture, a video or a sound shows as one (files.ts).
+  const media = (a: P.AttachmentView) => (a.kind === 'file' && a.info && /^(image|video|audio)$/.test(a.info.kind) ? (a.info.kind as P.AttachmentKind) : a.kind);
+  const images = m.attachments.filter((a) => media(a) === 'image');
   return (
     <div class="atts">
       {m.attachments.map((a, i) => {
-        if (a.kind === 'image') {
-          const w = a.width ?? 400;
-          const h = a.height ?? 300;
+        const kind = media(a);
+        if (kind === 'image') {
+          const w = a.width ?? a.info?.width ?? 400;
+          const h = a.height ?? a.info?.height ?? 300;
           const scale = Math.min(1, 400 / w, 300 / h);
           return (
             <a class="att-img" data-att={i} href={a.url} target="_blank" rel="noreferrer" onClick={(e) => openViewer(e, images, images.indexOf(a))} style={{ width: `${Math.round(w * scale)}px`, aspectRatio: `${w} / ${h}` }}>
@@ -430,17 +434,21 @@ function Attachments({ m }: { m: P.MessageView }) {
             </a>
           );
         }
-        if (a.kind === 'video') return <video class="att-video" data-att={i} src={a.url} controls preload="metadata" />;
-        if (a.kind === 'audio') return <audio class="att-audio" data-att={i} src={a.url} controls preload="metadata" />;
+        if (kind === 'video') return <video class="att-video" data-att={i} src={a.url} controls preload="metadata" />;
+        if (kind === 'audio') return <audio class="att-audio" data-att={i} src={a.url} controls preload="metadata" />;
+        const fk = fileKind(a);
+        // A kind with a viewer opens in it (Viewer.tsx); any other opens in its app when the helper or the phone can,
+        // else downloads (a type the hub won't show, HTML or SVG, straight away rather than through an empty tab).
+        const open = (e: MouseEvent) => {
+          if (VIEWABLE.has(fk)) e.preventDefault(), openFileViewer(a, m);
+          else if (desk.value?.files || android?.opensFiles()) e.preventDefault(), openAttachment(a);
+        };
         return (
-          // A type the hub won't show (HTML, SVG, ...) is a download: straight away, not through an empty tab.
-          <a class="att-file" data-att={i} href={a.url} target="_blank" rel="noreferrer" download={showsInline(a.mime) ? undefined : (a.name ?? true)} onClick={(e) => (desk.value?.files || android?.opensFiles()) && (e.preventDefault(), openAttachment(a))}>
-            <Icon name="file" size={22} />
+          <a class="att-file" data-att={i} data-kind={fk} href={a.url} target="_blank" rel="noreferrer" download={showsInline(a.mime) ? undefined : (a.name ?? true)} onClick={open}>
+            <Icon name={fileIcon(fk, a.info?.language)} size={22} />
             <span>
               <b>{a.name ?? 'file'}</b>
-              <small>
-                {a.mime ?? 'file'} {a.size ? `· ${bytes(a.size)}` : ''}
-              </small>
+              <small>{fileFacts(a)}</small>
             </span>
           </a>
         );

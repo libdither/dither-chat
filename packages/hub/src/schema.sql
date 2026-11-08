@@ -613,6 +613,27 @@ CREATE TABLE IF NOT EXISTS media_archive_fail (
   error   TEXT
 ) WITHOUT ROWID;
 
+-- What each kept file is by its bytes (mediainfo.ts, fileinfo.ts, docs/files.md), keyed like the media cache: the
+-- sha256 of the attachment's URL. Names and sizes of an archive's first entries in `list`; nothing is extracted.
+CREATE TABLE IF NOT EXISTS media_info (
+  key      TEXT PRIMARY KEY,
+  mime     TEXT NOT NULL,
+  kind     TEXT NOT NULL,               -- protocol FileKind: the viewer that shows it
+  size     INTEGER NOT NULL,
+  pages    INTEGER,
+  encoding TEXT,
+  lines    INTEGER,
+  language TEXT,
+  entries  INTEGER,
+  list     TEXT,                        -- JSON [{name, size, dir?}]
+  width    INTEGER,
+  height   INTEGER,
+  duration REAL,                        -- seconds
+  partial  INTEGER NOT NULL DEFAULT 0,  -- lines or entries counted in the first part only
+  version  INTEGER NOT NULL,            -- fileinfo.ts SNIFF_VERSION
+  at       INTEGER NOT NULL
+) WITHOUT ROWID;
+
 -- Who your accounts have seen as a member of which space, from what their clients loaded anyway (a `members` event,
 -- source 'seen'). Adversarial: written only with the members setting on (docs/history.md). Never the whole list.
 CREATE TABLE IF NOT EXISTS membership (

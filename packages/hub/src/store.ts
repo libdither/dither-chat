@@ -7,6 +7,7 @@ import type * as P from '@dither-chat/protocol';
 import { ADVERSARIAL_KEEPS, canonicalReactionKey, DEFAULT_RETENTION, parseSearch, PROTOCOL_VERSION, REACTION_RULES } from '@dither-chat/protocol';
 import { binsFor, estimateMessages, snowflakeTime, type ChannelInput } from './msgcount.ts';
 import { Journal } from './journal.ts';
+import { infoFor } from './mediainfo.ts';
 import { TypingRelay, typingTtl } from './typing.ts';
 
 type Row = Record<string, any>;
@@ -2090,6 +2091,7 @@ export class Store {
     const ids = rows.map((r) => r.id);
     const ph = ids.map(() => '?').join(',');
     const atts = this.db.query(`SELECT * FROM attachment WHERE message_id IN (${ph}) ORDER BY position`).all(...ids) as Row[];
+    const infos = atts.length ? infoFor(this.db, atts.map((a) => a.url)) : null;
     const reacts = this.db.query(`SELECT * FROM reaction WHERE message_id IN (${ph})`).all(...ids) as Row[];
     const tallies = this.db.query(`SELECT * FROM reaction_tally WHERE message_id IN (${ph}) ORDER BY seq`).all(...ids) as Row[];
     const emoji = new Map(
@@ -2166,6 +2168,7 @@ export class Store {
           width: a.width,
           height: a.height,
           url: this.media(a.url, seenVia[0]) ?? '',
+          ...(infos?.get(a.url) ? { info: infos.get(a.url) } : {}),
         })),
         embeds: json<{ embeds?: P.EmbedView[] }>(r.extra, {}).embeds?.map((e) => ({ ...e, image: this.media(e.image, seenVia[0]) ?? undefined })) ?? [],
         reactions: (RT.get(r.id) ?? [])

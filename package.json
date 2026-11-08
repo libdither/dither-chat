@@ -17,5 +17,8 @@
     "@types/bun": "latest",
     "acorn": "^8.19.0",
     "typescript": "^5.9.0"
+  },
+  "overrides": {
+    "@napi-rs/canvas": "file:./packages/web/stubs/no-canvas"
   }
 }

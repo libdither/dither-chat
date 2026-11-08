@@ -15,6 +15,8 @@ import { cleanFileName, Uploads } from './uploads.ts';
 import { ImportRunner } from './imports/engine.ts';
 import { GapFill } from './imports/gapfill.ts';
 import { linkPath, MediaArchiver } from './mediaarchive.ts';
+import { infoFor, MediaInfo } from './mediainfo.ts';
+import { genericType } from './fileinfo.ts';
 import { mediaHeaders, SAFE_HEADERS, sniffMime } from './mediaheaders.ts';
 import { ImportSources } from './imports/sources.ts';
 import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } from './calls.ts';
@@ -135,6 +137,8 @@ export class HubServer {
   readonly importer: ImportRunner;
   readonly gapfill: GapFill;
   private archiver?: MediaArchiver;
+  /** What each kept file is (mediainfo.ts, docs/files.md). */
+  readonly mediaInfo: MediaInfo;
   private typingGate = new TypingGate();
   private usage: UsageStore;
   readonly calls: Calls;
@@ -155,8 +159,14 @@ export class HubServer {
     this.imports = new ImportSources(opts.dataDir, (msg) => console.warn(msg));
     this.importer = new ImportRunner(store, this.imports, opts.dataDir, (msg) => console.warn(msg));
     this.gapfill = new GapFill(store, (acc, cmd) => this.sup.command(acc, cmd, 180_000), (msg) => console.warn(msg));
+    // A demo hub keeps nothing ahead of time: its own files (local) are fetched to be looked at.
+    this.mediaInfo = new MediaInfo(store, opts.dataDir, {
+      behindArchive: !!opts.archiveMedia,
+      fetch: opts.archiveMedia ? undefined : (url, acc) => (/^https?:/i.test(url) ? Promise.resolve(false) : this.archiveOne(url, acc)),
+      log: (msg) => console.warn(msg),
+    });
     if (opts.archiveMedia)
-      this.archiver = new MediaArchiver(store, join(opts.dataDir, 'media-cache'), (url, acc, from) => this.archiveOne(url, acc, from), (msg) => console.warn(msg), (acc, urls) => this.refreshUrls(acc, urls));
+      this.archiver = new MediaArchiver(store, join(opts.dataDir, 'media-cache'), (url, acc, from) => this.archiveOne(url, acc, from), (msg) => console.warn(msg), (acc, urls) => this.refreshUrls(acc, urls), (a) => this.mediaInfo.kept(a));
     this.calls = new Calls(store, sup, { turn: opts.turn, pickAccount: (c, a) => this.pickAccount(c, a) });
     this.abouts = new Abouts({
       store,
@@ -254,6 +264,7 @@ export class HubServer {
     this.imports.resume();
     this.gapfill.resume();
     this.archiver?.start();
+    this.mediaInfo.start();
     this.store.journal.prune();
     this.pruneTimer = setInterval(() => this.store.journal.prune(), 3_600_000);
     return this.server;
@@ -265,6 +276,7 @@ export class HubServer {
     this.importer.stop();
     this.gapfill.stopAll();
     this.archiver?.stop();
+    this.mediaInfo.stop();
     this.imports.stop();
     this.flush();
     this.server?.stop(true);
@@ -526,6 +538,20 @@ export class HubServer {
       // Whoever they name, and whoever made them, for rendering.
       const named = new Set(changes.flatMap((c) => [c.identityId, c.actorId, c.target.kind === 'identity' ? c.target.id : undefined].filter((x): x is string => !!x)));
       return ok({ changes, identities: s.identitiesByIds(named) });
+    }
+    // What a file is (docs/files.md): looked at now if the walk hasn't got to it, fetching it first if need be, as
+    // opening it would.
+    if ((m = path.match(/^\/api\/attachments\/([\w-]+)\/info$/)) && method === 'GET') {
+      const a = s.db.query(`SELECT a.url, a.name, a.mime, a.message_id, (SELECT account_id FROM message_seen x WHERE x.message_id = a.message_id LIMIT 1) AS account FROM attachment a WHERE a.id = ?`).get(m[1]) as
+        | { url: string; name: string | null; mime: string | null; message_id: string; account: string | null }
+        | null;
+      if (!a) return bad('no such attachment', 404);
+      const known = infoFor(s.db, [a.url]).get(a.url);
+      if (known) return ok(known);
+      const info = await this.mediaInfo.lookAt({ url: a.url, name: a.name, mime: a.mime, account: a.account }, (u, acc) => this.archiveOne(u, acc)).catch(() => null);
+      if (!info) return bad(a.url.startsWith('data:') ? 'inline media' : 'the file could not be fetched', 404);
+      s.dirty.messages.set(a.message_id, s.dirty.messages.get(a.message_id) ?? false);
+      return ok(info);
     }
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/history$/))) {
       const h = s.messageHistory(m[1]);
@@ -1304,6 +1330,16 @@ export class HubServer {
     return this.fetchMedia(raw, accountId);
   }
 
+  /**
+   * The type to serve a kept file as: the network's, unless it said nothing useful (application/octet-stream) and the
+   * bytes say what it is (mediainfo.ts). mediaHeaders decides what may show inline either way.
+   */
+  private trueType(key: string, stored: string): string {
+    if (!genericType(stored)) return stored;
+    const r = this.store.db.query('SELECT mime FROM media_info WHERE key = ?').get(key) as { mime: string } | null;
+    return r?.mime ?? stored;
+  }
+
   /** Fetch one URL into the media cache, as showing it would (mediaarchive.ts); true when it is there. */
   private async archiveOne(url: string, accountId: string | null, from?: string): Promise<boolean> {
     const res = await this.fetchMedia(url, accountId, from);
@@ -1347,7 +1383,7 @@ export class HubServer {
         const t = new Date();
         utimesSync(file, t, t);
       } catch {}
-      return new Response(Bun.file(file), { headers: headers(readFileSync(file + '.mime', 'utf8')) });
+      return new Response(Bun.file(file), { headers: headers(this.trueType(key, readFileSync(file + '.mime', 'utf8'))) });
     }
 
     let bytes: Uint8Array;
@@ -1370,7 +1406,7 @@ export class HubServer {
       // A file kept on disk (an import, Signal's own copy) has no type recorded: by its name, else by its first bytes.
       const f = Bun.file(p);
       const named = f.type.split(';')[0];
-      const type = named !== 'application/octet-stream' ? f.type : (sniffMime(new Uint8Array(await f.slice(0, 16).arrayBuffer())) ?? named);
+      const type = named !== 'application/octet-stream' ? f.type : (sniffMime(new Uint8Array(await f.slice(0, 16).arrayBuffer())) ?? this.trueType(key, named));
       return new Response(f, { headers: mediaHeaders(raw, key, type, 'private, max-age=604800') });
     } else {
       if (!accountId) return new Response('no account to resolve media', { status: 404 });

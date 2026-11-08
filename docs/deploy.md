@@ -92,7 +92,9 @@ one transaction.
 
 Every six hours it clears partial downloads from `media-cache/`. The cache itself is kept indefinitely: the media
 archive (`packages/hub/src/mediaarchive.ts`) fills it with every remote attachment soon after it arrives, because Discord's links
-expire. Setting `DITHER_MEDIA_CACHE_MB` caps it again, least recently shown first. Adapter logs rotate at 10 MB.
+expire. Each kept file is then looked at once for what it really is (`mediainfo.ts`, [files.md](files.md)), in the
+background, a few seconds of work every half minute. Setting `DITHER_MEDIA_CACHE_MB` caps the cache again, least
+recently shown first. Adapter logs rotate at 10 MB.
 Triage rows older than `DITHER_TRIAGE_KEEP_DAYS` (90) go when nothing can be learned from them: in conversations you
 never wrote in, never voted on, never notified and never explored.
 

@@ -21,6 +21,7 @@ import type {
   Variant,
 } from './ontology.ts';
 import type { ArrangeSettings, UsageKind, UsageView } from './usage.ts';
+import type { FileInfo } from './files.ts';
 
 export interface AccountView {
   id: string;
@@ -138,6 +139,8 @@ export interface AttachmentView {
   width: number | null;
   height: number | null;
   url: string;
+  /** What the file is by its bytes, once the hub has kept and looked at them (files.ts, docs/files.md). */
+  info?: FileInfo;
 }
 
 /** A file uploaded to the hub and waiting to be sent. */
