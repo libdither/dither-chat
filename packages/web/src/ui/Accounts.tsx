@@ -889,6 +889,22 @@ const NET_HELP: Record<P.Network, { adapter: string; blurb: string; fields: { ke
     blurb: 'Pairs with Google Messages on your Android phone, like messages.google.com: your texts (SMS and RCS) go through the phone, which must stay on and online. After you add it, scan the QR code under Device pairing in Messages. If your phone has no QR scanner there any more, paste the cookies of messages.google.com (signed in) below instead, and tap the emoji your phone shows.',
     fields: [{ key: 'cookies', label: 'Google cookies', placeholder: '“Copy as cURL” of messages.google.com, or SID=…; HSID=…', secret: true, optional: true }],
   },
+  // These three are being built in dither-accounts; the hub offers them once they run there.
+  messenger: {
+    adapter: 'messenger',
+    blurb: 'Runs Messenger in a sandboxed browser in dither-accounts. After you add it, open its live view and sign in to Facebook as on your desktop.',
+    fields: [],
+  },
+  instagram: {
+    adapter: 'instagram',
+    blurb: 'Runs Instagram in a sandboxed browser in dither-accounts. After you add it, open its live view and sign in to Instagram as on your desktop.',
+    fields: [],
+  },
+  x: {
+    adapter: 'x',
+    blurb: 'Runs X in a sandboxed browser in dither-accounts, for your direct messages. After you add it, open its live view and sign in to X as on your desktop.',
+    fields: [],
+  },
 };
 
 export function AddAccount({ onClose }: { onClose: () => void }) {
