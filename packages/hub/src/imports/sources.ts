@@ -20,6 +20,8 @@ import { MAX_IMPORT } from '@dither-chat/protocol';
 import { cleanFileName, cleanRelPath } from '../uploads.ts';
 import { importable } from './engine.ts';
 import { isPassphrase, normalizePassphrase, sniffLegacy } from './signal-backup.ts';
+import { backupKeyFromRecoveryKey, parseRecoveryKey } from './signal-keys.ts';
+import { snapshots } from './signal-v2.ts';
 
 interface SourceFile {
   v: 1;
@@ -192,7 +194,7 @@ export class ImportSources {
       sha256: st?.sha256 ?? null,
       addedAt: src.addedAt ?? 0,
       addedBy: src.addedBy ?? 'unknown',
-      hasPassphrase: existsSync(join(this.root, id, 'passphrase')),
+      hasPassphrase: existsSync(join(this.root, id, 'passphrase')) || existsSync(join(this.root, id, 'backup-key')),
       progress: this.progress.get(id) ?? null,
       census: st?.census ?? null,
       error: st?.error ?? null,
@@ -343,11 +345,30 @@ export class ImportSources {
       const folder = signalFolder(root);
       if (zipped) folder.census.zip = true;
       this.setState(id, { kind: 'signal-folder', census: folder.census });
+      // Each part is counted once its secret is here: a .backup with its 30-digit passphrase, new-format snapshots
+      // with the account's recovery key (kept only as the backup key it gives). Ready once nothing is missing.
+      const needs: string[] = [];
       if (folder.newestBackup) {
         const pass = this.passphrase(id);
-        if (!pass) return this.setState(id, { status: 'needs-passphrase' });
-        return this.count(id, folder.newestBackup, pass, folder.census);
+        if (pass) {
+          await this.count(id, folder.newestBackup, pass, folder.census);
+          const st = this.readState(id);
+          if (st?.status !== 'ready') return;
+          folder.census = st.census ?? folder.census;
+        } else needs.push('passphrase');
       }
+      const newest = snapshots(root).at(-1);
+      if (newest) {
+        const key = this.backupKey(id);
+        if (key) {
+          const v2 = await this.countV2(id, newest, key);
+          if (!v2) return;
+          folder.census.v2 = v2;
+        } else needs.unshift('recovery-key');
+      }
+      delete folder.census.needs;
+      if (needs.length) return this.setState(id, { status: 'needs-passphrase', census: { ...folder.census, needs: needs[0] } });
+      return this.setState(id, { status: 'ready', census: folder.census });
     }
     this.setState(id, { status: 'ready' });
   }
@@ -381,6 +402,36 @@ export class ImportSources {
       };
       w.onerror = (e) => end(new Error(`unpacking the zip: ${e.message || 'failed'}`));
       w.postMessage({ zip, outDir: tmp, maxBytes: MAX_IMPORT });
+    });
+  }
+
+  /** The backup key a recovery key gave, for new-format snapshots. */
+  backupKey(id: string): Buffer | null {
+    const p = join(this.root, id, 'backup-key');
+    return existsSync(p) ? Buffer.from(readFileSync(p, 'utf8').trim(), 'hex') : null;
+  }
+
+  /** Count a snapshot with the key, in a worker; a key that doesn't open it is forgotten and asked for again. */
+  private countV2(id: string, snapshot: string, key: Buffer): Promise<P.ImportCensus | null> {
+    this.setState(id, { status: 'counting', error: null });
+    return new Promise((done) => {
+      const w = new Worker(new URL('./census-worker.ts', import.meta.url).href);
+      this.workers.set(id, w);
+      const finish = (census: P.ImportCensus | null, patch?: Partial<StateFile>) => {
+        w.terminate();
+        this.workers.delete(id);
+        if (patch && this.dir(id)) this.setState(id, patch);
+        done(census);
+      };
+      w.onmessage = (e: MessageEvent<any>) => {
+        if (e.data.census) finish(e.data.census);
+        else if (e.data.badKey) {
+          rmSync(join(this.root, id, 'backup-key'), { force: true });
+          finish(null, { status: 'needs-passphrase', error: 'That recovery key does not open this backup.' });
+        } else finish(null, { status: 'error', error: e.data.error ?? 'reading the snapshot failed' });
+      };
+      w.onerror = (e) => finish(null, { status: 'error', error: e.message || 'reading the snapshot failed' });
+      w.postMessage({ v2: snapshot, backupKey: key.toString('hex') });
     });
   }
 
@@ -418,12 +469,16 @@ export class ImportSources {
   setPassphrase(id: string, passphrase: string): P.ImportSourceView {
     const d = this.dir(id);
     if (!d) throw Object.assign(new Error('no such source'), { status: 404 });
-    if (!isPassphrase(passphrase)) throw new Error('A backup passphrase is 30 digits.');
     const st = this.readState(id);
     if (st?.status === 'uploading') throw Object.assign(new Error('the upload is not complete yet'), { status: 409 });
-    if (st?.kind !== 'signal-backup' && st?.kind !== 'signal-folder') throw new Error('only a Signal .backup has a passphrase');
+    if (st?.kind !== 'signal-backup' && st?.kind !== 'signal-folder') throw new Error('only a Signal backup has a passphrase');
     if (this.jobs.has(id)) throw Object.assign(new Error('still checking this source'), { status: 409 });
-    writeFileSync(join(d, 'passphrase'), normalizePassphrase(passphrase), { mode: 0o600 });
+    const pool = st.kind === 'signal-folder' ? parseRecoveryKey(passphrase) : null;
+    // The recovery key itself is never written down: only the backup key derived from it, which opens backups
+    // and nothing else.
+    if (pool) writeFileSync(join(d, 'backup-key'), backupKeyFromRecoveryKey(pool).toString('hex'), { mode: 0o600 });
+    else if (isPassphrase(passphrase)) writeFileSync(join(d, 'passphrase'), normalizePassphrase(passphrase), { mode: 0o600 });
+    else throw new Error(st.kind === 'signal-folder' ? 'A recovery key is 64 letters and digits; a .backup passphrase is 30 digits.' : 'A backup passphrase is 30 digits.');
     this.check(id);
     return this.view(id)!;
   }

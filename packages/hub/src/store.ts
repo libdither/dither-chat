@@ -1009,8 +1009,8 @@ export class Store {
           else counts.same++;
           continue;
         }
-        // A system line ("… started a call") is worded by whoever rendered it: the same event either way.
-        if (row.kind === 'system' || f.kind === 'system') {
+        // A system or call line ("… started a call") is worded by whoever rendered it: the same event either way.
+        if (row.kind === 'system' || f.kind === 'system' || row.kind === 'call' || f.kind === 'call') {
           counts.same++;
           continue;
         }

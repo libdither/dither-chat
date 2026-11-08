@@ -12,11 +12,12 @@ import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import type { Store } from '../store.ts';
 import { DCE_HTML_READER } from './discord-html.ts';
+import { SIGNAL_V2_READER } from './signal-v2.ts';
 import type { ReadStats } from './read-worker.ts';
 import type { ImportSources } from './sources.ts';
 
 const SLICE = 150;
-const READERS: Partial<Record<P.ImportSourceKind, string>> = { 'dce-html': DCE_HTML_READER };
+const READERS: Partial<Record<P.ImportSourceKind, string>> = { 'dce-html': DCE_HTML_READER, 'signal-folder': SIGNAL_V2_READER };
 
 export const importable = (kind: P.ImportSourceKind) => kind in READERS;
 
@@ -101,10 +102,13 @@ export class ImportRunner {
       const m = JSON.parse(readFileSync(manifestPath, 'utf8'));
       if (m.sourceSha === want.sourceSha && m.reader === want.reader && m.self === want.self) {
         run.files = m.stats.files;
+        if (m.stats.skipped) run.skipped = m.stats.skipped;
         return { path: out, stats: m.stats };
       }
     }
-    const rawDir = this.sources.rawDir(sourceId)!;
+    const rawDir = this.sources.contentDir(sourceId)!;
+    const backupKey = this.sources.backupKey(sourceId);
+    if (v.kind === 'signal-folder' && !backupKey) throw new Error('give the recovery key first');
     const mediaDir = join(this.dataDir, 'imports', 'media');
     mkdirSync(mediaDir, { recursive: true, mode: 0o700 });
     const stats = await new Promise<ReadStats>((resolve, reject) => {
@@ -117,10 +121,11 @@ export class ImportRunner {
         else if (e.data.error) (w.terminate(), reject(new Error(e.data.error)));
       };
       w.onerror = (e) => (w.terminate(), reject(new Error(e.message || 'reader failed')));
-      w.postMessage({ kind: v.kind, rawDir, selfId: self, mediaDir, out });
+      w.postMessage({ kind: v.kind, rawDir, selfId: self, mediaDir, out, backupKey: backupKey?.toString('hex') });
     });
     if (!stats.selfMessages) throw new Error('this account wrote nothing in this export: it looks like someone else’s history');
     run.files = stats.files;
+    if (stats.skipped) run.skipped = stats.skipped;
     writeFileSync(manifestPath, JSON.stringify({ ...want, stats, at: Date.now() }, null, 2), { mode: 0o600 });
     return { path: out, stats };
   }

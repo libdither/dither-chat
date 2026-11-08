@@ -55,6 +55,8 @@ export interface ImportRunView {
   counts: ImportCounts | null;
   /** From reading: files the export links to, and how many of those are missing. */
   files?: { linked: number; missing: number };
+  /** From reading: what the reader left out, by why (Signal: sms, deleted, updates the hub has no line for). */
+  skipped?: Record<string, number>;
   startedAt: number;
   finishedAt: number | null;
   error: string | null;

@@ -88,7 +88,30 @@ or on tmpfs) and read it with SQL. That's what Molly's own `FullBackupImporter` 
 `bun scripts/signal-backup-probe.ts v2 <file>` counts the frames of a plaintext stream. It was checked against
 Signal's own test vectors in `~/Repos/molly/app/src/androidTest/assets/backupTests/*.binproto` (synthetic, public
 data): quotes, reactions, attachments, edits (`revisions`) and remote deletes are all counted correctly.
-Decrypting `main` isn't prototyped yet.
+
+### Reading it (built: `packages/hub/src/imports/signal-keys.ts`, `signal-v2.ts`)
+
+No native library: the derivations are ported and checked against libsignal-client's own output (pinned in
+`test/signal-v2.test.ts`), and group ids against all 75 of a real signal-cli account's groups.
+
+- Recovery key (Molly → Settings → Backups → On-device backups → View recovery key; Molly shows `#` for O and `=`
+  for 0) → backup key `HKDF(pool, "20240801_SIGNAL_BACKUP_KEY")`. The hub stores only this backup key
+  (`<source>/backup-key`, 0600), never the recovery key, which could restore the account.
+- `metadata` → backup id: AES-256-CTR under `HKDF(backup key, "20241011_SIGNAL_LOCAL_BACKUP_METADATA_KEY")`, its
+  12-byte nonce and a counter from 0. So the ACI isn't needed.
+- `main`: HMAC key ‖ AES key = `HKDF(backup key, "20241007_SIGNAL_BACKUP_ENCRYPT_MESSAGE_BACKUP:" ‖ backup id)`.
+  The MAC is checked before anything is decrypted; a wrong key is told apart there.
+- Attachments: `files/<2 hex>/hex(SHA-256(plaintextHash ‖ localKey))`, sealed as Signal seals attachments
+  (IV ‖ AES-256-CBC ‖ HMAC-SHA256 under the 64-byte `localKey`), padded; the reader trims to `size` and checks
+  the plaintext hash. They go to `<data>/imports/media/<sha256[0:2]>/<sha256><ext>` like Discord's.
+- Group ids: zkgroup's `Sho` (HMAC-SHA256 ratchet) over the master key with
+  `Signal_ZKGroup_20200424_GroupMasterKey_GroupSecretParams_DeriveFromMasterKey`, 32 bytes, base64.
+- Mapping follows the live adapter word for word where it has a line: text through `fromSignal` (styles and
+  mentions from `BodyRange`), quotes → `replyTo` + `extra.quote`, reactions, edits (the original's timestamp names
+  the message, `editedTs` the latest), stickers (pack id hex), view-once as a placeholder, contacts, polls, calls,
+  timers and group changes as call/system lines. Left out and counted: SMS, deleted messages, authors without an
+  ACI, and updates the hub has no line for (profile changes, safety numbers, pins, …).
+- The newest snapshot is read; older ones in the same folder are ignored.
 
 ## Existing tools
 
@@ -198,8 +221,10 @@ phone: dither-chat → Accounts → Signal → History → upload the folder, or
        unpacked beside it)
 hub, in a worker:
   1. header check: is it a legacy backup, which version                 done on upload
-  2. passphrase → census: counts, date range, keepmsg rows, schema       done; a wrong passphrase is forgotten
-  3. read → facts (replay statements into in-memory SQLite, map rows)   cached by (backup sha256, reader@version)
+  2. passphrase / recovery key → census                                 done; a wrong secret is forgotten
+     (.backup: counts, date range, keepmsg rows; snapshots: chats, items, months)
+  3. read → facts                                                       snapshots: done (signal-v2@1);
+                                                                         .backup: not yet
   4. plan: new / same / fill / conflict / skip, per conversation         dry run, shown in the History section
   5. apply, fill-only, inside the hub                                    conflicts wait for review (docs/import.md)
 ```

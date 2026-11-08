@@ -97,6 +97,12 @@ function CensusLine({ c }: { c: P.ImportCensus }) {
           {count(x.backups.length, '.backup file')}
           {x.zip ? ' · unpacked from the zip' : ''}
         </p>
+        {x.v2 && (
+          <p class="det-note">
+            Newest snapshot: {count(x.v2.chatItems, 'message')} in {count(x.v2.chats, 'chat')}
+            {x.v2.firstMonth ? `, ${x.v2.firstMonth} to ${x.v2.lastMonth}` : ''} · {count(x.v2.recipients.contact ?? 0, 'contact')}, {count(x.v2.recipients.group ?? 0, 'group')}
+          </p>
+        )}
         {x.legacy && <CensusLine c={x.legacy} />}
       </>
     );
@@ -113,6 +119,7 @@ function RunLine({ r }: { r: P.ImportRunView }) {
         ? ` · ${count(c.messages, 'message')} in ${count(c.conversations, 'conversation')}: ${c.new.toLocaleString()} ${r.dryRun ? 'would be new' : 'new'}, ${c.same.toLocaleString()} already here${c.filled ? `, ${c.filled.toLocaleString()} filled in` : ''}${c.conflicts ? `, ${count(c.conflicts, 'difference')}` : ''}${c.conversationsNew ? ` · ${count(c.conversationsNew, 'conversation')} the hub didn’t have (archived)` : ''}${c.duplicates ? ` · ${c.duplicates.toLocaleString()} duplicates skipped` : ''}`
         : ''}
       {r.files ? ` · ${count(r.files.linked, 'file')} kept${r.files.missing ? `, ${r.files.missing} missing from the export` : ''}` : ''}
+      {r.skipped && Object.keys(r.skipped).length ? ` · left out: ${Object.entries(r.skipped).map(([k, n]) => `${n.toLocaleString()} ${k}`).join(', ')}` : ''}
     </p>
   );
 }
@@ -182,6 +189,8 @@ function SourceRow({ s, account, onChange, importing }: { s: P.ImportSourceView;
   };
   const run = s.run;
   const running = !!run && !run.finishedAt;
+  // A new-format Molly backup opens with the account's recovery key, a .backup with its 30-digit passphrase.
+  const recovery = (s.census as { needs?: string } | null)?.needs === 'recovery-key';
   const pct = s.status === 'uploading' ? s.received / Math.max(1, s.size) : s.status === 'counting' || (s.status === 'checking' && s.progress !== null) ? (s.progress ?? 0) : running ? run!.progress : null;
   const canImport = s.importable && s.status === 'ready' && s.accountId === account.id && !running;
   const imported = !!run && !run.dryRun && run.stage === 'done';
@@ -213,8 +222,18 @@ function SourceRow({ s, account, onChange, importing }: { s: P.ImportSourceView;
             act(() => api(`/api/imports/${s.id}/passphrase`, { body: { passphrase: pass } }).then(() => setPass('')));
           }}
         >
-          <input class="input" inputMode="numeric" autoComplete="off" placeholder="30-digit .backup passphrase" value={pass} onInput={(e) => setPass((e.target as HTMLInputElement).value)} />
-          <button class="btn" disabled={busy || pass.replace(/\D/g, '').length !== 30}>
+          {recovery && <p class="det-note">Molly → Settings → Backups → On-device backups → View recovery key. The hub keeps only the backup key it gives, which opens backups and nothing else.</p>}
+          <input
+            class="input"
+            inputMode={recovery ? 'text' : 'numeric'}
+            autoComplete="off"
+            autoCapitalize="off"
+            spellcheck={false}
+            placeholder={recovery ? '64-character recovery key' : '30-digit .backup passphrase'}
+            value={pass}
+            onInput={(e) => setPass((e.target as HTMLInputElement).value)}
+          />
+          <button class="btn" disabled={busy || (recovery ? pass.replace(/[^0-9a-zA-Z#=]/g, '').length !== 64 : pass.replace(/\D/g, '').length !== 30)}>
             Unlock
           </button>
         </form>
