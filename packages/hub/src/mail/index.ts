@@ -11,6 +11,7 @@
  *   read      threads the page read (a second in view): kept here; slice 4 tells the server
  *   body      a body arrived from the server: previews, search text
  *   account   an account was added, changed, lost its access, or was deleted
+ *   sent      the outbox sent a message (slice 5): `replyTo` is the hub message it answered
  *
  * Access to an account ends when it leaves the manager's list or its grant goes: its mail stays readable for
  * MAIL_LIMITS.goneMs (24 h), then goes; "Delete now" goes at once (§14 Q6).
@@ -20,6 +21,7 @@ import type * as P from '@dither-chat/protocol';
 import type * as M from '@dither-chat/protocol/mail-iface';
 import { asMailError, MailCallError, type MailBackend, type MailBackendAccount, type MailBackendEvent } from './backend.ts';
 import { MAIL_LIMITS } from './limits.ts';
+import { MailOutbox } from './outbox.ts';
 import { mountRouters, type MailRoute } from './routes.ts';
 import { MailStore } from './store.ts';
 import { AccountSync } from './sync.ts';
@@ -31,6 +33,7 @@ export interface MailHubEvents {
   read: { threadIds: string[] };
   body: { messageId: string };
   account: { accountId: string; state: 'added' | 'changed' | 'ended' | 'deleted' };
+  sent: { accountId: string; outboxId: string; messageId: string | null; replyTo: string | null; threadId: string | null; dryRun: boolean };
 }
 export type MailHubEvent = keyof MailHubEvents;
 
@@ -42,12 +45,18 @@ export interface MailHubOpts {
   managerUrl?: string | null;
   log?: (msg: string) => void;
   now?: () => number;
+  /** The hub's data dir: the outbox keeps files there until they are sent (slice 5). */
+  dataDir?: string;
+  /** How long a send waits for Undo (MAIL_LIMITS.holdMs). */
+  holdMs?: number;
 }
 
 export class MailHub {
   readonly store: MailStore;
   readonly backend: MailBackend | null;
   readonly routes: MailRoute[];
+  /** Sending and drafts (slice 5, outbox.ts). */
+  readonly outbox: MailOutbox;
   private syncs = new Map<string, AccountSync>();
   /** Each account's latest status event, kept for when it comes before the account list does. */
   private statuses = new Map<string, MailBackendEvent>();
@@ -65,6 +74,7 @@ export class MailHub {
     const base = opts.managerUrl?.replace(/\/$/, '') ?? null;
     this.store.managedUrl = (id) => (base ? `${base}/#/accounts/${encodeURIComponent(id)}` : null);
     this.store.syncOf = (id) => this.syncs.get(id)?.phase ?? 'idle';
+    this.outbox = new MailOutbox(this, { dir: opts.dataDir ? `${opts.dataDir}/mail-outbox` : null, holdMs: opts.holdMs, now: this.now, log: this.log });
     this.routes = mountRouters(this);
   }
 
@@ -104,10 +114,12 @@ export class MailHub {
     b.onAccounts((list) => this.accountsChanged(list));
     b.onEvents((account, events) => this.events(account, events));
     b.onGap((account) => void this.syncs.get(account)?.catchUp());
+    this.outbox.start();
   }
 
   stop() {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
+    this.outbox.stop();
     for (const s of this.syncs.values()) s.stop();
     this.syncs.clear();
   }
@@ -195,11 +207,11 @@ export class MailHub {
 
   /** What changed since the last flush, as the page's events (server.ts flush). */
   flush(): P.ClientEvent[] {
-    return this.store.flush(() => this.access());
+    return [...this.store.flush(() => this.access()), ...this.outbox.flush()];
   }
 
   bootstrap(): P.MailBootstrap {
-    return this.store.bootstrap(this.access());
+    return { ...this.store.bootstrap(this.access()), outbox: this.outbox.views() };
   }
 
   // ---------------------------------------------------------- for the routes

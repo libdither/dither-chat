@@ -40,8 +40,11 @@ export interface MailAccountView {
   online: boolean;
   /** Why it cannot work now: the account's attention, else its first layer that is not ok. */
   problem: { layer: string | null; message: string } | null;
-  /** Whether sending works: false with why, true after a send, null before anyone knows (slice 5 sends). */
-  send: { ok: boolean | null; why: string | null };
+  /**
+   * Whether sending works: false with why, true after a send, null before anyone knows (slice 5 sends). `refused`: the
+   * account answered a send with 501, so it is off until you ask again (POST /api/mail/accounts/:id/sending).
+   */
+  send: { ok: boolean | null; why: string | null; refused?: boolean };
   sync: { phase: 'first' | 'backfill' | 'idle' | 'relist'; synced: number; oldest: number | null };
   /** The account on the manager's page, when the hub knows the page's address. */
   managedUrl: string | null;
@@ -157,6 +160,98 @@ export interface MailOutboxView {
   state: 'held' | 'queued' | 'sending' | 'sent' | 'failed';
   holdUntil: number | null;
   error: string | null;
+  // Slice 5 (sending): the rest.
+  kind?: MailComposeKind;
+  /** The thread it answers or forwards from. */
+  threadId?: string | null;
+  to?: MailAddressView[];
+  /** The draft it came from: put back there when it is undone or fails. */
+  draftKey?: string | null;
+  /** It may have gone out (the account did not answer in time): look in Sent before sending it again. */
+  unsure?: boolean;
+  /** The Message-ID it went out with, once sent; its copy in Sent has it. */
+  sentMessageId?: string | null;
+  /** Answered by a dry run: nothing reached the account. */
+  dryRun?: boolean;
+  createdAt?: number;
+}
+
+// ------------------------------------------------------------------ sending (slice 5)
+
+export type MailComposeKind = 'new' | 'reply' | 'replyAll' | 'forward';
+
+/** An attachment of the original that a forward carries. */
+export interface MailForwardPart {
+  messageId: string;
+  attachmentId: string;
+  name: string | null;
+  mime: string;
+  size: number;
+}
+
+/** A file already on the hub (an upload), as a draft keeps it. */
+export interface MailDraftFile {
+  uploadId: string;
+  name: string;
+  mime: string;
+  size: number;
+}
+
+/** What the composer holds: a draft as the hub keeps it, and what a send carries. */
+export interface MailDraft {
+  accountId: string;
+  kind: MailComposeKind;
+  /** The message answered or forwarded (a hub message id, `mml_`). */
+  replyTo: string | null;
+  /** One of the account's own addresses; null: the account's first. */
+  from: string | null;
+  to: MailAddressView[];
+  cc: MailAddressView[];
+  bcc: MailAddressView[];
+  subject: string;
+  /** What you wrote. The quote or the forwarded message goes after it, made by the hub. */
+  text: string;
+  /** A reply quotes the original. */
+  quote: boolean;
+  files: MailDraftFile[];
+  forwardParts: MailForwardPart[];
+}
+
+/** GET /api/mail/drafts[/:key]. Keys: `t:<thread>` for a reply or forward, `new:<uuid>` for a new message. */
+export interface MailDraftView {
+  key: string;
+  draft: MailDraft;
+  updatedAt: number;
+}
+
+/** POST /api/mail/send. Sent once per `clientId`. */
+export interface MailSendRequest extends MailDraft {
+  clientId: string;
+  draftKey: string | null;
+  /** The page's time zone, for the "On <date>, <name> wrote:" line. */
+  tz?: string;
+}
+
+/** GET /api/mail/compose: a reply, reply all or forward filled in, or a new message's choices. */
+export interface MailComposeStart {
+  draft: MailDraft;
+  /** Where the draft goes: `t:<thread>` or `new:<uuid>`. */
+  draftKey: string;
+  /** The addresses it may send as (status.self.addresses), the account's own first. */
+  fromChoices: { accountId: string; email: string; name: string | null }[];
+  /** "On Tue, Nov 3, 2026 at 10:42 AM, Sam Lee <sam@lee.example> wrote:" and the quoted text, or the forwarded block. */
+  quote: { head: string; text: string } | null;
+  /** The original could not be fetched to quote: why. */
+  quoteError: string | null;
+  /** Reply all would reach more people than reply. */
+  replyAllDiffers: boolean;
+}
+
+/** A recipient the composer offers as you type. */
+export interface MailAddressHit extends MailAddressView {
+  /** You have written to it. */
+  wroteTo: boolean;
+  count: number;
 }
 
 /** What the bootstrap carries of mail: the live window of threads, at most 300. */
@@ -165,6 +260,8 @@ export interface MailBootstrap {
   accounts: MailAccountView[];
   mailboxes: MailboxView[];
   threads: MailThreadView[];
+  /** What the outbox still shows (slice 5). */
+  outbox?: MailOutboxView[];
 }
 
 /** GET /api/mail/threads: a page of a list, newest first. */
@@ -286,6 +383,20 @@ export function mailPreview(text: string | null | undefined, max = 200): string 
   t = t.replace(/\s+/g, ' ').trim();
   if (!t) return null;
   return t.length > max ? t.slice(0, max - 1) + '…' : t;
+}
+
+/** A plain address check: something@something.tld, nothing that would split a header. */
+export const MAIL_ADDRESS = /^[^@\s<>,;"]+@[^@\s<>,;"]+\.[^@\s<>,;"]+$/;
+export const validMailAddress = (e: string) => MAIL_ADDRESS.test(e.trim());
+
+/** `Sam Lee <sam@lee.example>`, `"Lee, Sam" <sam@lee.example>` or `sam@lee.example`; null when it is not an address. */
+export function parseMailAddress(raw: string): { name: string | null; email: string } | null {
+  const s = raw.trim();
+  const m = s.match(/^(.*?)\s*<([^<>\s]+)>$/);
+  const email = (m ? m[2] : s).trim();
+  if (!validMailAddress(email)) return null;
+  const name = m ? m[1].trim().replace(/^"(.*)"$/, '$1').trim() : '';
+  return { name: name || null, email };
 }
 
 /** `Name <a@b>` or the address alone. */

@@ -160,6 +160,8 @@ export class HubServer {
     private opts: ServerOpts,
   ) {
     this.uploads = new Uploads(join(opts.dataDir, 'uploads'));
+    // Mail's outbox sends files uploaded the same way (mail/outbox.ts).
+    if (opts.mail) opts.mail.outbox.files = this.uploads;
     this.imports = new ImportSources(opts.dataDir, (msg) => console.warn(msg));
     this.importer = new ImportRunner(store, this.imports, opts.dataDir, (msg) => console.warn(msg));
     this.gapfill = new GapFill(store, (acc, cmd) => this.sup.command(acc, cmd, 180_000), (msg) => console.warn(msg));

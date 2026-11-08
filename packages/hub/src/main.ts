@@ -220,7 +220,9 @@ if (sup instanceof RoutedSupervisor) {
 const demoMail = demo ? new FakeMailBackend() : null;
 const mailBackend = demoMail ?? (sup instanceof RoutedSupervisor ? new ManagerMailBackend({ callRaw: (a, op, input, t) => sup.callMail(a, op, input, t), askMailAgain: () => sup.askMailAgain() }) : null);
 if (sup instanceof RoutedSupervisor && mailBackend instanceof ManagerMailBackend) sup.mail = mailBackend;
-const mail = new MailHub({ db: store.db, backend: mailBackend, managerUrl: accountsPage });
+// A manager on this machine reads attachments from the outbox's folder; one elsewhere gets their bytes.
+if (mailBackend instanceof ManagerMailBackend) mailBackend.localFiles = /^(?:https?|wss?):\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/i.test(accountsUrl ?? '');
+const mail = new MailHub({ db: store.db, backend: mailBackend, managerUrl: accountsPage, dataDir });
 // Correspondents become identities and persons (mail/people.ts).
 mailPeople(mail)?.connect(store);
 

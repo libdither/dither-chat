@@ -57,7 +57,7 @@ Built in slices from [mail-design.md](mail-design.md) (its §12); what works now
 | Big mailboxes: backfill to a year, bodies ahead, eviction (slice 2) | H | M | next | `MAIL_LIMITS` and the queue's `gate` are in place |
 | Safe HTML, images through a proxy, attachments (slice 3) | H | M | next | `BODY_RENDERERS` takes the HTML frame |
 | Read on the server after a second, star, archive, move (slice 4) | H | M | next | Listens to MailHub's `read` event; swipes go in `ROW_WRAPPERS` |
-| Sending, replies, drafts, undo (slice 5) | H | M | next | Proton's `mail.send` answers 501 for now |
+| Sending, replies, drafts, undo (slice 5) | H | M | done | Composer, reply, reply all, forward with files, drafts on the hub, 10 s Undo, retries; a 501 turns sending off with the draft kept (Proton today). Verified through dither-accounts' SMTP sink and the fake, not a real account |
 | People: email identities and persons, merge search and hint, a profile's Mail card, all mail with someone (slice 6) | H | M | done | Never merged by name. Verified against the fake server and the demo world, not a real mailbox |
 | Search, mail in the one-list inbox, notifications (slices 7-9) | H | M | later | Unknown senders reach the inbox only at Active or above; slice 8 asks `mailPeople(hub).sender()` who is known |
 

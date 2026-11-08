@@ -159,6 +159,8 @@ function mailSince(mail: MailHub, of: (kind: string) => string[], list: (kind: s
     else gone.push({ t: 'mail.account.removed', id });
   }
   for (const id of of('mailboxes')) if (st.account(id)) out.push({ t: 'mail.mailboxes', accountId: id, mailboxes: st.mailboxes(id).map((b) => st.mailboxView(b)) });
+  // The outbox is not journaled: its whole list, as it is now (slice 5).
+  if (mail.backend) out.push({ t: 'mail.outbox', items: mail.outbox.views() });
   const ids = of('mailThread');
   if (ids.length) {
     const threads = st.threadViews(ids);

@@ -860,7 +860,7 @@ export type ClientEvent =
   | { t: 'mail.lists'; stale: string[] }
   /** An account's sync, as it goes. Of the moment: not journaled (slice 2). */
   | { t: 'mail.progress'; accountId: string; sync: MailAccountView['sync'] }
-  /** Slice 5. */
+  /** Every item the outbox still shows (held, queued, sending, failed, or sent a little while ago): the whole list. */
   | { t: 'mail.outbox'; items: MailOutboxView[] }
   /** Ends a frame whose changes went into the journal: a client holding everything up to here can resume from `seq`. */
   | { t: 'sync'; seq: number }

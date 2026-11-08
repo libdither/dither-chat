@@ -194,10 +194,13 @@ export class MailStore {
     const problem = st.status === 'online' && !att ? null : att?.message ? { layer: failed?.name ?? bad?.name ?? null, message: att.message } : bad ? { layer: bad.name, message: bad.note ? `${bad.name}: ${bad.note}` : `${bad.name}: ${bad.state}` } : null;
     const details = (st.details ?? {}) as Record<string, unknown>;
     const sendLayer = layers.find((l) => /send path|smtp/i.test(l.name));
-    const prevSend = json<{ ok: boolean | null; why: string | null; at?: number }>(was.send, { ok: null, why: null });
+    const prevSend = json<{ ok: boolean | null; why: string | null; at?: number; refused?: boolean }>(was.send, { ok: null, why: null });
     const send =
       typeof details.canSend === 'boolean'
-        ? { ok: details.canSend, why: details.canSend ? null : (details.sendNote as string | null) ?? null }
+        ? // A send it answered 501 stays off while it still says it can (slice 5's outbox; "Try again" clears it).
+          details.canSend && prevSend.ok === false && prevSend.refused
+          ? prevSend
+          : { ok: details.canSend, why: details.canSend ? null : (details.sendNote as string | null) ?? null }
         : sendLayer?.state === 'failed'
           ? { ok: false, why: sendLayer.note ?? `${sendLayer.name} failed` }
           : prevSend.ok === false && prevSend.at
@@ -741,7 +744,7 @@ export class MailStore {
 
   accountView(r: Row): P.MailAccountView {
     const held = this.one<{ n: number; oldest: number | null }>('SELECT COUNT(*) AS n, MIN(received_at) AS oldest FROM mail_message WHERE account_id = ?', r.id);
-    const send = json<{ ok: boolean | null; why: string | null }>(r.send, { ok: null, why: null });
+    const send = json<{ ok: boolean | null; why: string | null; refused?: boolean }>(r.send, { ok: null, why: null });
     return {
       id: r.id,
       kind: r.kind,
@@ -753,7 +756,7 @@ export class MailStore {
       dryRun: !!r.dry_run,
       online: !!r.online,
       problem: json(r.problem, null),
-      send: { ok: send.ok ?? null, why: send.why ?? null },
+      send: { ok: send.ok ?? null, why: send.why ?? null, ...(send.ok === false && send.refused ? { refused: true } : {}) },
       sync: { phase: this.syncOf(r.id), synced: held?.n ?? 0, oldest: held?.oldest ?? null },
       managedUrl: this.managedUrl(r.id),
       deleteAt: r.gone_at ? r.gone_at + MAIL_LIMITS.goneMs : null,

@@ -27,12 +27,14 @@ export interface MailState {
   mailboxes: Map<string, P.MailboxView>;
   threads: Map<string, P.MailThreadView>;
   lists: Map<string, MailList>;
+  /** What the hub's outbox still shows (slice 5): held, on its way, failed, or just sent. */
+  outbox: Map<string, P.MailOutboxView>;
 }
 
 export const OFF: P.MailAccess = { state: 'off', managerUrl: null };
 
 export function emptyMail(): MailState {
-  return { access: OFF, accounts: new Map(), mailboxes: new Map(), threads: new Map(), lists: new Map() };
+  return { access: OFF, accounts: new Map(), mailboxes: new Map(), threads: new Map(), lists: new Map(), outbox: new Map() };
 }
 
 /** Newest first; ties by id, as the hub pages them. */
@@ -67,6 +69,7 @@ export function applyMailBootstrap(s: MailState, b: P.MailBootstrap | undefined)
   s.accounts = new Map((b?.accounts ?? []).map((a) => [a.id, a]));
   s.mailboxes = new Map((b?.mailboxes ?? []).map((m) => [m.id, m]));
   s.threads = new Map((b?.threads ?? []).map((t) => [t.id, t]));
+  s.outbox = new Map((b?.outbox ?? []).map((o) => [o.id, o]));
   // Loaded lists may be behind what the hub has now: each loads again when shown.
   s.lists = new Map();
 }
@@ -109,6 +112,8 @@ export function applyMailEvent(s: MailState, ev: P.ClientEvent): boolean {
       return true;
     }
     case 'mail.outbox':
+      // The whole list, each time.
+      s.outbox = new Map(ev.items.map((o) => [o.id, o]));
       return true;
     default:
       return false;

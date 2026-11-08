@@ -3,7 +3,8 @@
  * directory with one `imap` account against that repo's test servers (extractors/imap/test/servers.ts: Dovecot 2.4
  * and an SMTP sink on 127.0.0.1), and this hub's RoutedSupervisor and MailHub on it. The hub asks for mail like any
  * app, the test approves it over the manager's API, then checks the first sync, keeping up through IDLE, flags and a
- * move made by another mail client, and a relist after a UIDVALIDITY change. Sending is slice 5's.
+ * move made by another mail client, and a relist after a UIDVALIDITY change. Sending (slice 5): a reply through the
+ * SMTP sink, threaded, and a message to yourself that comes back through IDLE.
  *
  * Ports 18580-18589 (dither-accounts' own tests use 18550-18569). Needs a dither-accounts checkout beside this repo
  * (or DITHER_ACCOUNTS_REPO) and Dovecot (DOVECOT_BIN, or the store path dither-accounts' tests remember); skipped
@@ -217,4 +218,59 @@ describe('mail through dither-accounts', () => {
     await until(() => !byHdr('<live-1@example.test>'), 20_000, 'the message the rebuild dropped');
     expect(hub.sync(acc)!.phase).toBe('idle');
   }, 60_000);
+});
+
+describe('sending through dither-accounts (slice 5)', () => {
+  /** Sends a composed message and waits for the outbox to say it went (10 s held first). */
+  const sendIt = async (req: Parameters<MailHub['outbox']['accept']>[0]) => {
+    const { outboxId } = await hub.outbox.accept(req);
+    expect(hub.outbox.item(outboxId)!.state).toBe('held');
+    await until(() => hub.outbox.item(outboxId)?.state === 'sent' || hub.outbox.item(outboxId)?.state === 'failed', 60_000, 'the send');
+    const v = hub.outbox.item(outboxId)!;
+    expect([v.state, v.error]).toEqual(['sent', null]);
+    return v;
+  };
+  const header = (raw: string, name: string) => raw.match(new RegExp(`^${name}:\\s*(.*(?:\\r?\\n[ \\t].*)*)`, 'mi'))?.[1].replace(/\r?\n[ \t]+/g, ' ').trim() ?? null;
+
+  test('a reply reaches the SMTP sink with its quote and In-Reply-To, and its copy in Sent joins the thread', async () => {
+    await until(() => hub.store.account(acc)?.synced_at, 40_000, 'the first sync');
+    await until(() => hub.store.accountView(hub.store.account(acc)!).send.ok === true, 20_000, 'canSend');
+    const original = byHdr('<dinner-3@example.test>')!;
+    const start = await hub.outbox.compose('reply', original.id, null, 'UTC');
+    expect(start.draft).toMatchObject({ to: [{ name: 'Sam', email: 'sam@example.test' }], subject: 'Re: Dinner on Friday?', from: alice.email });
+    const before = sink.received.length;
+    const v = await sendIt({ ...start.draft, clientId: `remote-reply-${Date.now()}`, draftKey: start.draftKey, text: 'See you at 7:30.', tz: 'UTC' });
+    await until(() => sink.received.length > before, 20_000, 'the sink');
+    const got = sink.received[sink.received.length - 1];
+    const raw = got.raw.toString('utf8');
+    expect(got.to).toEqual(['sam@example.test']);
+    expect(got.from).toBe(alice.email);
+    expect(header(raw, 'Subject')).toBe('Re: Dinner on Friday?');
+    expect(header(raw, 'In-Reply-To')).toBe('<dinner-3@example.test>');
+    expect(header(raw, 'References')).toContain('<dinner-1@example.test>');
+    expect(header(raw, 'Message-ID')).toBe(v.sentMessageId!);
+    expect(raw).toContain('See you at 7:30.');
+    expect(raw).toMatch(/On .+, Sam <sam@example\.test> wrote:/);
+    expect(raw).toContain('> Booked for 7:30.');
+    // Sent's copy comes back (the outbox asks what changed), threaded by its In-Reply-To.
+    await until(() => byHdr(v.sentMessageId!), 30_000, 'the copy in Sent');
+    const mine = byHdr(v.sentMessageId!)!;
+    expect(mine.thread_id).toBe(original.thread_id);
+    expect(mine.addressed).toBe('self');
+    // The extractor marked the original answered; the hub hears it.
+    await until(async () => {
+      await hub.refresh(acc);
+      return byHdr('<dinner-3@example.test>')?.answered === 1;
+    }, 30_000, 'the original answered');
+  }, 120_000);
+
+  test('a message to yourself goes out and comes back into the Inbox through IDLE', async () => {
+    const start = await hub.outbox.compose('new', null, acc);
+    const v = await sendIt({ ...start.draft, clientId: `remote-self-${Date.now()}`, draftKey: start.draftKey, to: [{ name: 'Alice', email: alice.email }], subject: 'Note to self', text: 'Buy milk.' });
+    await until(() => byHdr(v.sentMessageId!) && count('SELECT 1 FROM mail_location l JOIN mailbox b ON b.id = l.mailbox_id WHERE l.message_id = ? AND b.role = ?', byHdr(v.sentMessageId!)!.id, 'inbox') === 1, 30_000, 'it in the Inbox');
+    expect(byHdr(v.sentMessageId!)!.subject).toBe('Note to self');
+    // A From that is not the account's is refused before it is held.
+    const e = await hub.outbox.accept({ ...start.draft, clientId: `remote-from-${Date.now()}`, draftKey: null, from: 'mallory@example.test', to: [{ name: null, email: alice.email }], subject: 'x', text: 'x' }).catch((x) => x);
+    expect(e.status).toBe(422);
+  }, 120_000);
 });

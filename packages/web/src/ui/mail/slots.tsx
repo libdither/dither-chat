@@ -5,7 +5,7 @@
  *
  *   BODY_RENDERERS   what a message card shows as its body: the first that answers wins, TextBody last (slice 3 puts
  *                    its sanitised HTML frame first)
- *   MESSAGE_ACTIONS  buttons under one message (slice 5: reply, reply all, forward)
+ *   MESSAGE_ACTIONS  buttons under one message (slice 5: reply, reply all, forward, from Composer.tsx)
  *   THREAD_ACTIONS   the reader's header ('head': slice 4's archive, star, trash) and its bottom bar ('bar': slice 5's
  *                    reply bar)
  *   ROW_WRAPPERS     around each thread row, outermost first (slice 4: the swipes, right archives, left marks read
@@ -13,6 +13,8 @@
  */
 import type { ComponentChildren, ComponentType } from 'preact';
 import type * as P from '@dither-chat/protocol';
+import { phone } from '../../phone.ts';
+import { answer, canAnswer, latestOf, replyAllHelps } from './Composer.tsx';
 import { TextBody } from './TextBody.tsx';
 
 export interface BodyProps {
@@ -44,6 +46,20 @@ export interface ThreadAction {
 export type RowWrapper = ComponentType<{ thread: P.MailThreadView; children: ComponentChildren }>;
 
 export const BODY_RENDERERS: BodyRenderer[] = [(p) => <TextBody {...p} />];
-export const MESSAGE_ACTIONS: MessageAction[] = [];
-export const THREAD_ACTIONS: ThreadAction[] = [];
+/** On a phone the latest message is answered from the bar below, so its own buttons would be the same twice. */
+const underMessage = (m: P.MailMessageView, a: P.MailAccountView | undefined) => canAnswer(a) && !(phone.value && latestOf(m.threadId)?.id === m.id);
+const onTheBar = (t: P.MailThreadView, a: P.MailAccountView | undefined) => phone.value && canAnswer(a) && !!latestOf(t.id);
+
+export const MESSAGE_ACTIONS: MessageAction[] = [
+  // Slice 5: answering.
+  { id: 'reply', label: 'Reply', icon: 'reply', show: (m, _t, a) => underMessage(m, a), run: (m) => answer('reply', m) },
+  { id: 'replyAll', label: 'Reply all', icon: 'replyAll', show: (m, _t, a) => underMessage(m, a) && replyAllHelps(m, a), run: (m) => answer('replyAll', m) },
+  { id: 'forward', label: 'Forward', icon: 'forward', show: (m, _t, a) => underMessage(m, a), run: (m) => answer('forward', m) },
+];
+export const THREAD_ACTIONS: ThreadAction[] = [
+  // Slice 5: the phone's bottom bar answers the latest message.
+  { id: 'reply', label: 'Reply', icon: 'reply', place: 'bar', show: onTheBar, run: (t) => latestOf(t.id) && answer('reply', latestOf(t.id)!) },
+  { id: 'replyAll', label: 'Reply all', icon: 'replyAll', place: 'bar', show: (t, a) => onTheBar(t, a) && replyAllHelps(latestOf(t.id)!, a), run: (t) => latestOf(t.id) && answer('replyAll', latestOf(t.id)!) },
+  { id: 'forward', label: 'Forward', icon: 'forward', place: 'bar', show: onTheBar, run: (t) => latestOf(t.id) && answer('forward', latestOf(t.id)!) },
+];
 export const ROW_WRAPPERS: RowWrapper[] = [];

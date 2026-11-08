@@ -33,7 +33,7 @@ import { PEEK, panel, usePager, type Rest } from './Pager.ts';
 import { Boot } from './Loader.tsx';
 import { applyUpdate, updateReady } from '../pwa.ts';
 import { counting, rendered } from '../perf.ts';
-import { MailCenterLazy, MailSidebarLazy } from './mail/lazy.tsx';
+import { MailCenterLazy, MailComposerLazy, MailSidebarLazy } from './mail/lazy.tsx';
 
 /** What the center pane shows, and whether a details pane is available. */
 function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'conv' | 'person'; id: string } } {
@@ -395,6 +395,7 @@ export function App() {
       <Switcher />
       <FindShortcut />
       <NewMessage />
+      <MailComposerLazy />
       <Viewer />
     </div>
   );

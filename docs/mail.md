@@ -24,7 +24,7 @@ Email beside your chats, through dither-accounts' `mail` interface. The design, 
   before the hub answers.
 
 Not yet: the HTML itself (slice 3), attachments (3), marking read, starring, archiving and moving on the server (4),
-sending (5), people and profiles (6), search (7), mail in the one-list inbox (8), notifications (9). Only the newest
+search (7), mail in the one-list inbox (8), notifications (9). Only the newest
 500 of Inbox and Sent are synced (older mail and other folders come with slice 2), and a thread shows the start of its
 last message only once you have opened it (slice 2 fetches bodies ahead).
 
@@ -60,6 +60,62 @@ and a merge, a split or a new person sends that person's threads again. The prof
 `GET /api/persons/candidates?q=&except=`. Tests: `hub/test/mail-people.test.ts`, `web/test/mail-people.test.ts`, and
 `scripts/verify-profile.ts` (the Mail card on a desktop in the dark theme and a phone in the light one, the reader's
 sender, all mail with them, the hint, the merge search by address, merge and split).
+
+## Sending (slice 5)
+
+- **Writing.** ✎ in Mail's header (or `c`) starts a new message. Reply, Reply all and Forward sit under each message; on
+  a phone a bar under the thread answers the latest (`r`, `a`, `f` on a desktop). The composer is a full-screen card on
+  a phone and a panel docked at the bottom right on a desktop, so the list stays usable beside it. It has From (a
+  picker when the account sends as several addresses, its status's `self.addresses`), To, Cc and Bcc as chips that
+  complete from your mail and from people's email addresses, the subject and your text. A reply's quote can be left
+  off; a forward carries the original's text and its files, each of which can be taken off. Ctrl+Enter sends; ✕, Esc
+  or back closes it and keeps the draft.
+- **Who a reply goes to** (`hub/src/mail/compose.ts`): the original's Reply-To, else its From; to your own message, its
+  To again. Reply all adds its To and Cc without your addresses. `Re: ` once (`Fwd: ` for a forward), whatever markers
+  the subject had. From is the address the original came to. The quote is "On Tue, Nov 3, 2026 at 10:42 AM, Sam Lee
+  <sam@lee.example> wrote:" and the original's lines after `> `, in the page's time zone; the HTML part is the same text
+  made into HTML, the quote in a `blockquote type=cite`.
+- **Drafts** live on the hub (dither-accounts has no drafts op), saved 2 s after you stop typing, and on the device at
+  once, so a draft written without the hub, or cut off by a reload, is still there. One per thread (`t:<thread>`:
+  answering a thread that has one opens it) or `new:<uuid>`. "N drafts" under the views opens them. A draft's files
+  stay on the hub an hour after it was last saved or opened (the uploads' own limit).
+- **Undo.** Send gives the message to the hub's outbox (`hub/src/mail/outbox.ts`), once per `clientId`, after checking
+  it: someone to send to (at most 500; 100 on Proton), From one of the account's addresses (422 otherwise), 25 MB a
+  file and 35 MB together (25 MB on Proton). It is held 10 s (`DITHER_MAIL_HOLD_MS`) while a strip says "Sending …
+  in 10 s · Undo"; Undo brings it back into the composer as it was, files and all.
+- **Going out.** Then its files move from the uploads into `<data>/mail-outbox/<id>/` and it goes to `mail.send` ahead
+  of background work: files by `path` when the manager is on this machine (DITHER_ACCOUNTS_URL on loopback), else as
+  base64; a forward's files are fetched from the server (`mail.attachment`) then. What the account answers:
+  - sent: "Sent", and Sent is asked what changed, so the copy shows in the thread (it threads by In-Reply-To);
+  - a dry run: "Dry run: … did not reach the account";
+  - 503, `limited`, or the manager away: tried again, from 2 s up to every 15 min (at once when the manager is back),
+    for a day;
+  - no answer in time: "it may have been sent: look in Sent before sending it again";
+  - 501: sending is off for the account, with the extractor's words (Proton today). It stays off while the account's
+    status still says it can send, until "Try sending again";
+  - 403 (a read grant), 422 (From), anything else: why.
+
+  Whatever does not go out goes back to the drafts, with its files: a failed send is never a lost message. A send the
+  hub stopped in the middle of says it may have been sent. The strip shows failures on every device until dismissed,
+  with "Open draft".
+- **When it cannot send.** A read grant shows no reply buttons, and the reader says why. An account that cannot send
+  (`details.canSend` false with its `sendNote`, or a 501) says so under the thread and in the composer, whose Send is
+  off; drafts still save, and reading, archiving and starring work as before. A dry run grant shows "Dry run: nothing
+  reaches the account" in the composer.
+- **Without the hub**, Send waits in the composer ("Waiting for the hub") and goes when the hub is back, under the same
+  `clientId`; meanwhile the draft is on the device.
+
+Routes (`sendRoutes` in outbox.ts): `GET /api/mail/compose?kind=new|reply|replyAll|forward&message=&account=&tz=` fills a
+message in; `POST /api/mail/send` (a `MailSendRequest`); `GET /api/mail/outbox`; `DELETE /api/mail/outbox/:id` is Undo;
+`POST /api/mail/outbox/:id/dismiss`; `GET /api/mail/drafts[?key=]`, `GET/PUT/DELETE /api/mail/drafts/:key`;
+`GET /api/mail/addresses?q=` completes recipients; `POST /api/mail/accounts/:id/sending` is "Try sending again". The
+`mail.outbox` event carries the outbox's whole list each time (it is not journaled: a sync answer carries it too).
+
+For later slices: MailHub's `sent` event (`{ accountId, outboxId, messageId, replyTo, threadId, dryRun }`) says you
+answered a thread. `quotedHtml` in compose.ts is where slice 3's sanitiser plugs in to quote a message's own HTML.
+
+Not yet: the reply showing in its thread before Sent's copy arrives (the strip says "Sent" meanwhile); quoting a
+message's HTML (slice 3); a send with files made without the hub surviving a reload of the page (its draft does).
 
 ## Setting it up
 
@@ -110,6 +166,11 @@ others were asked, because an IMAP move is a removal there and an addition elsew
 - Tests: `hub/test/mail-thread.test.ts` (threading, as a table), `mail-store.test.ts`, `mail-sync.test.ts` (the fake:
   first-sync order, `more`, 410, moves, Proton-like state, arrivals, gaps, the manager away, access ending, the delta
   sync) and `web/test/mail-model.test.ts`, `mail-text.test.ts`.
+- Sending: `hub/test/mail-compose.test.ts` (recipients, subjects, quotes, the HTML part) and `mail-send.test.ts` (the
+  fake: held and undone, 501 turning sending off with the message kept, a read grant, a dry run, retries and a timeout,
+  files by path and by their bytes, a forward's files, From, a clientId sent once, a restart mid-send).
+  `mail-remote.test.ts` sends a reply through the SMTP sink and checks its headers and its copy in the thread.
+  `verify-mail.ts` writes, undoes and sends on a phone and docks a new message on a desktop, last, since it sends.
 - `hub/test/mail-remote.test.ts` runs against a real manager with an `imap` account on dither-accounts' Dovecot and
   SMTP sink (ports 18580–18589). It needs the dither-accounts checkout (beside this repo, or `DITHER_ACCOUNTS_REPO`)
   and Dovecot (`DOVECOT_BIN`, or the binary dither-accounts' own imap tests found), and skips without them:
