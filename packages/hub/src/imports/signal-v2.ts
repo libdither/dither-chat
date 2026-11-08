@@ -440,6 +440,12 @@ export function mapFrames(b: Uint8Array, files: string, o: Omit<ReadV2Options, '
         .map((a) => keep(sub(fields(a.bytes!), 1)))
         .filter((a): a is P.AttachmentFact => !!a);
       m.kind = atts.length ? 'media' : 'text';
+      // The same file twice in one message (it happens) is still two attachments.
+      const used = new Set<string>();
+      for (const [i, a] of atts.entries()) {
+        if (used.has(a.nativeId!)) a.nativeId = `${a.nativeId}#${i}`;
+        used.add(a.nativeId!);
+      }
       if (atts.length) m.attachments = atts;
       const q = sub(standard, 1);
       if (q) {
