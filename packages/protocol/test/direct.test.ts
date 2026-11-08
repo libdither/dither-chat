@@ -22,6 +22,7 @@ test('addresses are normalised, and what is wrong is said', () => {
   expect(directTarget('signal', '+1 (555) 123-4567')).toEqual({ peer: '+15551234567' });
   expect(directTarget('signal', 'A11CE000-2222-4CCC-9DDD-000000000002')).toEqual({ peer: 'a11ce000-2222-4ccc-9ddd-000000000002' });
   expect(directTarget('discord', '400000000000000001')).toEqual({ peer: '400000000000000001' });
+  for (const n of ['messenger', 'instagram', 'x'] as const) expect(directTarget(n, 'someone')).toEqual({ error: expect.stringContaining('live view') });
   expect(directTarget('matrix', 'ann')).toHaveProperty('error');
   expect(directTarget('signal', '5551234')).toHaveProperty('error');
   expect(directTarget('discord', 'ann#1234')).toHaveProperty('error');

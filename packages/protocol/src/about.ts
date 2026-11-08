@@ -208,7 +208,7 @@ export const ABOUT_RULES: Record<Network, AboutRules> = {
     space: [],
   },
   instagram: {
-    conversation: ['name'],
+    conversation: ['name', 'avatar'],
     space: [],
   },
   x: {
