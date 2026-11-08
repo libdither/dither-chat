@@ -9,6 +9,7 @@
 import { copyFileSync, existsSync, linkSync, mkdirSync, openSync, closeSync, readSync, renameSync, writeSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { authorIndex, readFile } from './discord-html.ts';
+import { readSignalV2 } from './signal-v2.ts';
 import { readdirSync } from 'node:fs';
 
 declare const self: Worker;
@@ -20,6 +21,8 @@ export interface ReadStats {
   /** Messages the importing account wrote: none means the export belongs to someone else. */
   selfMessages: number;
   files: { linked: number; missing: number };
+  /** What a reader left out, by why (Signal: sms, deleted, updates the hub has no line for). */
+  skipped?: Record<string, number>;
 }
 
 function hashFile(path: string): string {
@@ -34,9 +37,18 @@ function hashFile(path: string): string {
   return h.digest('hex');
 }
 
-self.onmessage = (e: MessageEvent<{ kind: string; rawDir: string; selfId: string; mediaDir: string; out: string }>) => {
-  const { kind, rawDir, selfId, mediaDir, out } = e.data;
+self.onmessage = (e: MessageEvent<{ kind: string; rawDir: string; selfId: string; mediaDir: string; out: string; backupKey?: string }>) => {
+  const { kind, rawDir, selfId, mediaDir, out, backupKey } = e.data;
   try {
+    if (kind === 'signal-folder') {
+      const tmp = out + '.tmp';
+      const fd = openSync(tmp, 'w', 0o600);
+      const stats = readSignalV2({ dir: rawDir, backupKey: Buffer.from(backupKey ?? '', 'hex'), selfId, mediaDir, progress: (p) => postMessage({ progress: p }) }, (x) => writeSync(fd, JSON.stringify(x) + '\n'));
+      closeSync(fd);
+      renameSync(tmp, out);
+      postMessage({ done: true, stats });
+      return;
+    }
     if (kind !== 'dce-html') throw new Error(`no reader for ${kind} yet`);
     const stats: ReadStats = { conversations: 0, messages: 0, duplicates: 0, selfMessages: 0, files: { linked: 0, missing: 0 } };
     const stored = new Map<string, string>();

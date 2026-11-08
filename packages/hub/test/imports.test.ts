@@ -206,9 +206,12 @@ describe('import sources over HTTP', () => {
     let v = await until(id, (v) => v.status !== 'uploading' && v.status !== 'checking');
     expect(v.status).toBe('needs-passphrase');
     expect(v.census).toMatchObject({ format: 'signal-folder', snapshots: 1, newestSnapshot: 'signal-backup-2026-11-06-10-00-00', attachments: 1, backups: [{ name: 'signal-2026-11-06-10-00-00.backup', legacy: true }] });
+    expect((v.census as any).needs).toBe('recovery-key');
     await json(`/api/imports/${id}/passphrase`, { method: 'POST', body: { passphrase: SYNTHETIC_PASSPHRASE } });
-    v = await until(id, (v) => v.status === 'ready');
+    // The .backup is counted; the snapshot beside it (made-up bytes here) still waits for a recovery key.
+    v = await until(id, (v) => v.status === 'needs-passphrase' && !!(v.census as any)?.legacy);
     expect((v.census as any).legacy.messages.total).toBe(5);
+    expect((v.census as any).needs).toBe('recovery-key');
     expect(statSync(join(hubDir, 'imports/sources', id, 'raw/escape.txt')).size).toBe(att.length);
   });
 
@@ -230,15 +233,18 @@ describe('import sources over HTTP', () => {
     expect(v.status).toBe('needs-passphrase');
     expect(v.sha256).toBe(new Bun.CryptoHasher('sha256').update(zip).digest('hex'));
     expect(v.census).toMatchObject({ format: 'signal-folder', zip: true, snapshots: 1, attachments: 1, backups: [{ name: 'signal-2026-11-06-10-00-00.backup', legacy: true }] });
+    expect((v.census as any).needs).toBe('recovery-key');
     await json(`/api/imports/${id}/passphrase`, { method: 'POST', body: { passphrase: SYNTHETIC_PASSPHRASE } });
-    v = await until(id, (v) => v.status === 'ready');
+    // The .backup is counted; the snapshot beside it (made-up bytes here) still waits for a recovery key.
+    v = await until(id, (v) => v.status === 'needs-passphrase' && !!(v.census as any)?.legacy);
     expect((v.census as any).legacy.messages.total).toBe(5);
+    expect((v.census as any).needs).toBe('recovery-key');
     // raw/ keeps the zip as it came; checking again doesn't unpack again.
     const src = join(hubDir, 'imports/sources', id);
     expect(statSync(join(src, 'raw/Backups.zip')).size).toBe(zip.length);
     const before = statSync(join(src, 'unpacked')).mtimeMs;
     await json(`/api/imports/${id}/check`, { method: 'POST', body: {} });
-    await until(id, (v) => v.status === 'ready');
+    await until(id, (v) => v.status === 'needs-passphrase' && !!(v.census as any)?.legacy);
     expect(statSync(join(src, 'unpacked')).mtimeMs).toBe(before);
   });
 
