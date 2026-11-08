@@ -15,10 +15,11 @@
  * (persons, folders, notification rules, triage) are never written back.
  */
 
-export type Network = 'discord' | 'signal' | 'matrix' | 'whatsapp' | 'telegram' | 'gmessages' | 'messenger' | 'instagram' | 'x';
+export type Network = 'discord' | 'signal' | 'matrix' | 'whatsapp' | 'telegram' | 'gmessages' | 'messenger' | 'instagram' | 'x' | 'email';
 /**
- * The networks this hub offers. telegram, gmessages (Google Messages: SMS and RCS), messenger, instagram and x (X's
- * direct messages) run only in dither-accounts.
+ * The chat networks this hub offers. telegram, gmessages (Google Messages: SMS and RCS), messenger, instagram and x
+ * (X's direct messages) run only in dither-accounts. `email` is a Network for people's addresses (identities) and the
+ * tables below, but not a chat account kind: mail comes through dither-accounts' mail interface (docs/mail.md).
  */
 export const NETWORKS: readonly Network[] = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x'];
 
@@ -124,6 +125,8 @@ export const REACTION_RULES: Record<Network, ReactionRules> = {
   instagram: { exclusive: true, freeText: false },
   // XChat keeps a set per person (its reaction table's key includes the emoji); any emoji.
   x: { exclusive: false, freeText: false },
+  // Mail has no reactions.
+  email: { exclusive: true, freeText: false, maxDistinct: 0 },
 };
 
 export function discordEmojiUrl(id: string, animated?: boolean): string {
@@ -184,6 +187,8 @@ export const ATTACHMENT_LIMITS: Record<Network, { bytes: number; files: number }
   instagram: { bytes: MAX_UPLOAD, files: 10 },
   // A direct message carries one photo, GIF or video.
   x: { bytes: MAX_UPLOAD, files: 1 },
+  // dither-accounts' mail.attachment and OutgoingFile: 25 MB a file.
+  email: { bytes: MAX_UPLOAD, files: 20 },
 };
 
 /** Brand colours used to annotate the source of every object in the UI. */
@@ -197,4 +202,5 @@ export const NETWORK_META: Record<Network, { name: string; color: string; spaceN
   messenger: { name: 'Messenger', color: '#0866FF', spaceNoun: 'group', sectionNoun: 'section' },
   instagram: { name: 'Instagram', color: '#FF0069', spaceNoun: 'group', sectionNoun: 'section' },
   x: { name: 'X', color: '#000000', spaceNoun: 'group', sectionNoun: 'section' },
+  email: { name: 'Email', color: '#5B7083', spaceNoun: 'mailbox', sectionNoun: 'folder' },
 };

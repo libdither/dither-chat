@@ -38,7 +38,7 @@ export interface ChangeRow {
 }
 
 /** Lists the client holds whole. Their journal id is '*'. */
-const LISTS: Partial<Record<P.ClientEvent['t'], string>> = { folders: 'folders', placePrefs: 'placePrefs', categories: 'categories', rules: 'rules', devices: 'devices', arrange: 'arrange' };
+const LISTS: Partial<Record<P.ClientEvent['t'], string>> = { folders: 'folders', placePrefs: 'placePrefs', categories: 'categories', rules: 'rules', devices: 'devices', arrange: 'arrange', 'mail.access': 'mailAccess' };
 
 /** What a broadcast changed, in journal terms. Typing, notifications and progress are of the moment and not kept. */
 export function changesOf(events: P.ClientEvent[]): Change[] {
@@ -76,6 +76,20 @@ export function changesOf(events: P.ClientEvent[]): Change[] {
         if (e.replace) out.push({ kind: 'attention', id: '*' });
         for (const a of e.items) out.push({ kind: 'attention', id: a.id });
         for (const id of e.removed) out.push({ kind: 'attention', id, removed: true });
+        break;
+      // Mail (docs/mail.md): accounts, each account's mailboxes, and threads. Progress and outbox are not kept here.
+      case 'mail.account':
+        out.push({ kind: 'mailAccount', id: e.account.id });
+        break;
+      case 'mail.account.removed':
+        out.push({ kind: 'mailAccount', id: e.id, removed: true });
+        break;
+      case 'mail.mailboxes':
+        out.push({ kind: 'mailboxes', id: e.accountId });
+        break;
+      case 'mail.threads':
+        for (const t of e.threads) out.push({ kind: 'mailThread', id: t.id });
+        for (const id of e.removed) out.push({ kind: 'mailThread', id, removed: true });
         break;
       case 'usage':
         if (e.replace) out.push({ kind: 'usage', id: '*' });

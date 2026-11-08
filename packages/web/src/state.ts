@@ -4,7 +4,7 @@ import { SYNC_VERSION } from '@dither-chat/protocol';
 import { leaveLayerEntry, takeOverLayers } from './phone.ts';
 import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
 import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, emptyDb, identityVersion, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
-import { changed, timelineChanged } from './versions.ts';
+import { changed, mailChanged, timelineChanged } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
 import { ECHO_SKEW, openOutbox, settled, type Echo, type OutboxEntry } from './outbox.ts';
 import { hubTransport, UploadJob } from './upload.ts';
@@ -12,7 +12,7 @@ import { hubTransport, UploadJob } from './upload.ts';
 // ------------------------------------------------------------------ data
 
 /** What components read to re-render: `rev` for the lists, `metaRev` for names and settings, one per timeline (versions.ts). */
-export { changed, dataVersion, metaRev, rev, timelineChanged, timelineRev } from './versions.ts';
+export { changed, dataVersion, mailRev, metaRev, rev, timelineChanged, timelineRev } from './versions.ts';
 export const connected = signal(false);
 export const loaded = signal(false);
 
@@ -127,7 +127,9 @@ export type Route =
   | { view: 'accounts'; account?: string }
   | { view: 'settings' }
   | { view: 'directory' }
-  | { view: 'search'; q: string; conv?: string; msg?: string };
+  | { view: 'search'; q: string; conv?: string; msg?: string }
+  /** Mail (docs/mail.md): a list (a view or a mailbox, mail/model.ts keys), and the thread open beside it. */
+  | { view: 'mail'; list?: string; thread?: string };
 
 export function parseHash(h = location.hash): Route {
   const [path, query] = h.replace(/^#\/?/, '').split('?');
@@ -163,6 +165,9 @@ export function parseHash(h = location.hash): Route {
       return { view: 'search', q: q.get('q') ?? '', conv: p[1] === 'c' ? p[2] : undefined, msg: q.get('m') ?? undefined };
     case 'c':
       return { view: 'inbox', conv: p[1], msg: q.get('m') ?? undefined };
+    case 'mail':
+      // #/mail, #/mail/l/<list>, #/mail/t/<thread>, #/mail/l/<list>/t/<thread>
+      return p[1] === 'l' ? { view: 'mail', list: p[2], thread: p[3] === 't' ? p[4] : undefined } : { view: 'mail', thread: p[1] === 't' ? p[2] : undefined };
     default:
       return { view: 'inbox', conv: p[1] === 'c' ? p[2] : undefined, msg: q.get('m') ?? undefined };
   }
@@ -195,6 +200,8 @@ export function href(r: Route): string {
       return '#/directory';
     case 'search':
       return `#/search${r.conv ? `/c/${e(r.conv)}` : ''}?q=${e(r.q)}${r.msg ? `&m=${e(r.msg)}` : ''}`;
+    case 'mail':
+      return `#/mail${r.list ? `/l/${e(r.list)}` : ''}${r.thread ? `/t/${e(r.thread)}` : ''}`;
   }
 }
 
@@ -263,6 +270,7 @@ export function applyBootstrap(b: P.Bootstrap) {
   applyBootstrapTo(db, b);
   loaded.value = true;
   changed('meta');
+  mailChanged();
 }
 
 /** Change every copy of a message the client holds. */
@@ -296,8 +304,11 @@ export function applyEvents(events: P.ClientEvent[]) {
   const ids = identityVersion();
   let list = false;
   let meta = false;
+  let mail = false;
   for (const ev of events) {
-    if (!NOT_DB.has(ev.t)) {
+    // Mail has its own signal: chat's lists do not draw again for it.
+    if (ev.t.startsWith('mail.')) mail = true;
+    else if (!NOT_DB.has(ev.t)) {
       list = true;
       // What only moves a conversation's last message and counts, or the inbox's order, leaves names alone. An
       // identity that changed moves them (identityVersion, below).
@@ -369,6 +380,7 @@ export function applyEvents(events: P.ClientEvent[]) {
   settle();
   if (meta || identityVersion() !== ids) changed('meta');
   else if (list) changed('list');
+  if (mail) mailChanged();
 }
 
 function mergeInbox(ms: P.MessageView[]) {

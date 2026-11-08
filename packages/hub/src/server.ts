@@ -34,6 +34,7 @@ import { fetchPublicToFile } from './fetchsafe.ts';
 import { AboutError, Abouts } from './about.ts';
 import { People } from './people.ts';
 import { peopleGraph } from './graph.ts';
+import type { MailHub } from './mail/index.ts';
 
 
 type ClientData = { kind: 'client' };
@@ -69,6 +70,8 @@ export interface ServerOpts {
   votes?: TriageVotes;
   /** Fetch every remote attachment into the media cache soon after it arrives (mediaarchive.ts). A real hub, not a demo. */
   archiveMedia?: boolean;
+  /** Mail (mail/index.ts, docs/mail.md): its routes, its part of the bootstrap and of each flush. */
+  mail?: MailHub;
 }
 
 // ------------------------------------------------------------------ access
@@ -286,6 +289,7 @@ export class HubServer {
 
   flush() {
     const events = this.store.flush();
+    if (this.opts.mail) events.push(...this.opts.mail.flush());
     const a = this.opts.attention;
     if (a) {
       const changed: string[] = [];
@@ -478,12 +482,17 @@ export class HubServer {
     if (path === '/api/bootstrap') {
       // Everything changed so far is in the journal, so the position below covers what this reads.
       this.flush();
-      return ok({ ...s.bootstrap(), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), sync: s.journal.position() } satisfies P.Bootstrap);
+      return ok({ ...s.bootstrap(), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), ...(this.opts.mail ? { mail: this.opts.mail.bootstrap() } : {}), sync: s.journal.position() } satisfies P.Bootstrap);
     }
     if (path === '/api/sync' && method === 'POST') {
       const b = await body<P.SyncRequest>();
       this.flush();
-      return ok(syncResponse({ store: s, attention: this.opts.attention, usage: this.usage, devices: this.opts.devices, boot: this.boot }, b));
+      return ok(syncResponse({ store: s, attention: this.opts.attention, usage: this.usage, devices: this.opts.devices, mail: this.opts.mail, boot: this.boot }, b));
+    }
+    // Mail (mail/routes.ts).
+    if (path === '/api/mail' || path.startsWith('/api/mail/')) {
+      const r = this.opts.mail ? await this.opts.mail.route(req, url) : null;
+      return r ?? bad(this.opts.mail ? 'no such mail route' : 'mail is off on this hub', 404);
     }
     // The inbox's ranking (attention.ts, docs/inbox.md).
     if (path.startsWith('/api/attention')) {

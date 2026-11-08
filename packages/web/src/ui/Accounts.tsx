@@ -5,12 +5,14 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { renderSVG } from 'uqr';
 import { ago } from '../format.ts';
 import { netName } from '../model.ts';
-import { api, db, go, prefs, rev, toast } from '../state.ts';
+import { api, db, go, mailRev, prefs, rev, toast } from '../state.ts';
 import { dropLayer, pushLayer, useLayer } from '../phone.ts';
 import { AccountChip, Modal, NetBadge } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { ImportsSection } from './Imports.tsx';
 import { TelegramSignIns } from './TelegramSignIns.tsx';
+import { MailAccountRows } from './mail/MailAccounts.tsx';
+import { MailAccessNote } from './mail/MailSidebar.tsx';
 
 /** The add-account dialog, opened from the accounts list or from settings. */
 export const addingAccount = signal(false);
@@ -26,6 +28,7 @@ export const STATUS: Record<P.AccountStatus, string> = {
 
 export function AccountsSidebar({ active, onAdd }: { active?: string; onAdd: () => void }) {
   rev.value;
+  mailRev.value;
   const accounts = [...db.accounts.values()];
   return (
     <div class="sidebar-inner">
@@ -74,6 +77,13 @@ export function AccountsSidebar({ active, onAdd }: { active?: string; onAdd: () 
         <button class="add-btn" onClick={onAdd}>
           <Icon name="plus" size={16} /> Add account
         </button>
+        {db.mail.access.state !== 'off' && (
+          <section class="acc-mail-group" aria-label="Mail">
+            <h2 class="acc-group-head">Mail</h2>
+            <MailAccessNote />
+            <MailAccountRows />
+          </section>
+        )}
       </div>
     </div>
   );
@@ -905,6 +915,12 @@ const NET_HELP: Record<P.Network, { adapter: string; blurb: string; fields: { ke
   x: {
     adapter: 'x',
     blurb: 'Runs X in a sandboxed browser in dither-accounts, for your direct messages. After you add it, open its live view and sign in to X as on your desktop.',
+    fields: [],
+  },
+  // Not offered here: mail accounts are added on dither-accounts' page (Mail, below the chat accounts).
+  email: {
+    adapter: 'imap',
+    blurb: 'Mail accounts (IMAP, or Proton Mail) are added on the dither-accounts page; they show up here under Mail.',
     fields: [],
   },
 };

@@ -12,6 +12,7 @@ import type { ChangeRow } from './journal.ts';
 import type { Store } from './store.ts';
 import type { UsageStore } from './usage.ts';
 import type { Devices } from './devices.ts';
+import type { MailHub } from './mail/index.ts';
 
 type Row = Record<string, any>;
 
@@ -27,6 +28,7 @@ export interface SyncContext {
   attention?: Attention;
   usage: UsageStore;
   devices?: Devices;
+  mail?: MailHub;
   boot: string;
 }
 
@@ -141,6 +143,29 @@ function changedSince(ctx: SyncContext, rows: ChangeRow[]): P.ClientEvent[] {
     }
   }
   if (list('arrange')) out.push({ t: 'arrange', arrange: usage.arrange() });
+  if (ctx.mail) out.push(...mailSince(ctx.mail, of, list));
+  return out;
+}
+
+/** Mail's part (docs/mail.md): access, accounts, mailboxes and threads, read as they are now. */
+function mailSince(mail: MailHub, of: (kind: string) => string[], list: (kind: string) => boolean): P.ClientEvent[] {
+  const out: P.ClientEvent[] = [];
+  const st = mail.store;
+  if (list('mailAccess')) out.push({ t: 'mail.access', access: mail.access() });
+  const gone: P.ClientEvent[] = [];
+  for (const id of of('mailAccount')) {
+    const a = st.account(id);
+    if (a && !a.hidden) out.push({ t: 'mail.account', account: st.accountView(a) });
+    else gone.push({ t: 'mail.account.removed', id });
+  }
+  for (const id of of('mailboxes')) if (st.account(id)) out.push({ t: 'mail.mailboxes', accountId: id, mailboxes: st.mailboxes(id).map((b) => st.mailboxView(b)) });
+  const ids = of('mailThread');
+  if (ids.length) {
+    const threads = st.threadViews(ids);
+    const have = new Set(threads.map((t) => t.id));
+    out.push({ t: 'mail.threads', threads, removed: ids.filter((id) => !have.has(id)) });
+  }
+  out.push(...gone);
   return out;
 }
 

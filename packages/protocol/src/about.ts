@@ -217,6 +217,11 @@ export const ABOUT_RULES: Record<Network, AboutRules> = {
     space: [],
     topicMax: 500,
   },
+  // Mail has no conversations or spaces to set anything on.
+  email: {
+    conversation: [],
+    space: [],
+  },
 };
 
 export const ABOUT_LABEL: Record<AboutKey, string> = {

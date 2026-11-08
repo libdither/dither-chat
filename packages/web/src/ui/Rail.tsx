@@ -2,7 +2,8 @@ import { loadRetention } from '../history.ts';
 import type * as P from '@dither-chat/protocol';
 import { Fragment } from 'preact';
 import { accountsNeedingYou, convTitle, directsOf, folderConvs, people, pingedCount, placePref, railEntries, spaceUnread, sumUnread, netName, unreadOf, visibleConv, type RailEntry } from '../model.ts';
-import { db, go, markAllRead, patchPlaces, rev, route, type Route } from '../state.ts';
+import { db, go, mailRev, markAllRead, patchPlaces, rev, route, type Route } from '../state.ts';
+import { unreadInbox } from '../mail/model.ts';
 import { AccountDots, Avatar, Count, NetBadge } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { DitherMark, Icon } from './icons.tsx';
@@ -191,6 +192,22 @@ function inboxMenu(): MenuSpec {
   return { label: 'Inbox', items: groups([{ label: 'Mark Everything As Read', icon: 'check', disabled: !sumUnread(all).unread, run: () => markAllRead(all, 'all your accounts') }]) };
 }
 
+/** Mail, once the hub can read it (docs/mail.md): a dot while Inbox has unread threads. Reads only mail's signal. */
+function RailMail({ active }: { active: boolean }) {
+  mailRev.value;
+  const s = db.mail;
+  if (s.access.state === 'off') return null;
+  const unread = unreadInbox(s);
+  return (
+    <RailItem active={active} unread={unread > 0} title="Mail" sub={unread ? `${unread} unread ${unread === 1 ? 'thread' : 'threads'} in Inbox` : 'Your email, through dither-accounts'} onClick={() => go({ view: 'mail' })}>
+      <span class="rail-mail">
+        <Icon name="mail" size={21} />
+        {unread > 0 && <span class="rail-mail-dot" />}
+      </span>
+    </RailItem>
+  );
+}
+
 export function Rail() {
   rev.value;
   const r = route.value;
@@ -216,6 +233,7 @@ export function Rail() {
       <RailItem active={is((r) => r.view === 'people')} title="People" sub="Every DM, merged per person" badge={peopleBadge} onClick={() => go({ view: 'people' })}>
         <Icon name="users" size={22} />
       </RailItem>
+      <RailMail active={r.view === 'mail'} />
       <div class="rail-sep" />
       <div class="rail-scroll" ref={scroll}>
         {arrangedRail().map((e, i, all) => (

@@ -15,7 +15,8 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { db, inbox, loaded, quoted, timelines, type Timeline } from './state.ts';
-import { changed, dataVersion, timelineChanged } from './versions.ts';
+import { changed, dataVersion, mailChanged, timelineChanged } from './versions.ts';
+import { bodies as mailBodies, details as mailDetails } from './mail/held.ts';
 
 declare const __SNAPSHOT_SCHEMA__: string;
 const SCHEMA = typeof __SNAPSHOT_SCHEMA__ === 'string' ? __SNAPSHOT_SCHEMA__ : 'dev';
@@ -27,6 +28,12 @@ export const MAX_TIMELINES = 12;
 export const MAX_MESSAGES = 40;
 export const MAX_REST_CHARS = 1_500_000;
 export const MAX_INBOX = 100;
+/** Mail the reader opened last (docs/mail.md): its threads and bodies, so they open offline too. */
+export const MAX_MAIL_THREADS = 20;
+export const MAX_MAIL_BODIES = 50;
+export const MAX_MAIL_CHARS = 600_000;
+/** Threads the bootstrap keeps of mail, newest first. */
+export const MAX_MAIL_WINDOW = 300;
 
 export interface CachedTimeline {
   key: string;
@@ -44,6 +51,8 @@ export interface SnapshotRest {
   identities: P.IdentityView[];
   /** Messages the ones above reply to, when they are not loaded themselves. */
   quoted: P.MessageView[];
+  /** The last mail threads and bodies the reader opened. */
+  mail?: { details: P.MailThreadDetail[]; bodies: P.MailBodyView[] };
 }
 
 export interface Snapshot {
@@ -56,7 +65,13 @@ export interface Snapshot {
 
 // ------------------------------------------------------------------ building (pure, tested)
 
-export function buildRest(input: { inbox: P.MessageView[]; timelines: (Timeline & { sync?: P.SyncPosition })[]; identities: Map<string, P.IdentityView>; quoted: Map<string, P.MessageView> }): string {
+export function buildRest(input: {
+  inbox: P.MessageView[];
+  timelines: (Timeline & { sync?: P.SyncPosition })[];
+  identities: Map<string, P.IdentityView>;
+  quoted: Map<string, P.MessageView>;
+  mail?: { details: P.MailThreadDetail[]; bodies: P.MailBodyView[] };
+}): string {
   const out: SnapshotRest = { inbox: input.inbox.slice(0, MAX_INBOX), timelines: [], identities: [], quoted: [] };
   let size = JSON.stringify(out.inbox).length;
   for (const t of input.timelines.slice(0, MAX_TIMELINES)) {
@@ -85,7 +100,27 @@ export function buildRest(input: { inbox: P.MessageView[]; timelines: (Timeline 
     const i = input.identities.get(id);
     if (i) out.identities.push(i);
   }
+  if (input.mail) out.mail = mailRest(input.mail);
   return JSON.stringify(out);
+}
+
+/** The newest of what the reader opened, within the caps: the most recent last in, first kept. */
+export function mailRest(m: { details: P.MailThreadDetail[]; bodies: P.MailBodyView[] }): { details: P.MailThreadDetail[]; bodies: P.MailBodyView[] } {
+  const out = { details: [] as P.MailThreadDetail[], bodies: [] as P.MailBodyView[] };
+  let size = 0;
+  for (const d of m.details.slice(-MAX_MAIL_THREADS).reverse()) {
+    const n = JSON.stringify(d).length;
+    if (size + n > MAX_MAIL_CHARS / 3) break;
+    size += n;
+    out.details.push(d);
+  }
+  for (const b of m.bodies.slice(-MAX_MAIL_BODIES).reverse()) {
+    const n = JSON.stringify(b).length;
+    if (size + n > MAX_MAIL_CHARS) continue;
+    size += n;
+    out.bodies.push(b);
+  }
+  return out;
 }
 
 /** The bootstrap again, from what the client holds now: newer than the one it started from. */
@@ -110,6 +145,16 @@ export function currentBootstrap(): P.Bootstrap {
     attention: [...db.attention.values()],
     now: Date.now(),
     ...(db.sync ? { sync: db.sync } : {}),
+    ...(db.mail.access.state !== 'off' || db.mail.accounts.size
+      ? {
+          mail: {
+            access: db.mail.access,
+            accounts: [...db.mail.accounts.values()],
+            mailboxes: [...db.mail.mailboxes.values()],
+            threads: [...db.mail.threads.values()].sort((a, b) => b.lastAt - a.lastAt).slice(0, MAX_MAIL_WINDOW),
+          },
+        }
+      : {}),
   };
 }
 
@@ -191,8 +236,11 @@ export function restore(s: Snapshot, apply: (b: P.Bootstrap) => void, putIdentit
   putIdentities(rest.identities);
   rest.quoted.forEach((m) => quoted.set(m.id, m));
   inbox.value = rest.inbox;
+  for (const d of rest.mail?.details ?? []) mailDetails.set(d.thread.id, d);
+  for (const b of rest.mail?.bodies ?? []) mailBodies.set(b.messageId, b);
   fromSnapshot = true;
   changed('meta');
+  mailChanged();
   timelineChanged();
   return true;
 }
@@ -244,7 +292,8 @@ export async function persistNow() {
       return c ? { ...c, hasMore: true, loading: false } : undefined;
     })
     .filter((t): t is Timeline & { sync?: P.SyncPosition } => !!t);
-  const rest = buildRest({ inbox: inbox.value, timelines: live, identities: db.identities, quoted });
+  const mail = { details: [...mailDetails.values()].filter((d) => !d.loading && !d.error && d.messages.length), bodies: [...mailBodies.values()] };
+  const rest = buildRest({ inbox: inbox.value, timelines: live, identities: db.identities, quoted, mail });
   if (text === null) return void (await patchRest(rest));
   if (text.length > MAX_BOOTSTRAP_CHARS) {
     console.warn(`snapshot: the bootstrap is ${text.length} characters, over ${MAX_BOOTSTRAP_CHARS}; not kept`);
