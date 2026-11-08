@@ -38,6 +38,7 @@ const P: Record<string, string> = {
   chevronUp: '<path d="m18 15-6-6-6 6"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   reply: '<polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>',
+  replyAll: '<polyline points="7 14 2 9 7 4"/><polyline points="12 14 7 9 12 4"/><path d="M22 20v-7a4 4 0 0 0-4-4H7"/>',
   forward: '<polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/>',
   more: '<circle cx="5" cy="12" r="1.2" fill="currentColor"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/><circle cx="19" cy="12" r="1.2" fill="currentColor"/>',
   idBadge: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h4"/><path d="M7 13h3"/><circle cx="16" cy="11" r="2"/><path d="M13.5 16a2.5 2.5 0 0 1 5 0"/>',

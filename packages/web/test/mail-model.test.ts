@@ -102,3 +102,17 @@ test('the unread count for the rail, and sender lines', () => {
   expect(senderLine(t('x', 1, { from: [{ name: null, email: 'news@list.example' }] }))).toBe('news@list.example');
   expect(senderLine(t('x', 1, { from: ['A', 'B', 'C', 'D'].map((n) => ({ name: `${n} X`, email: `${n}@x` })) }))).toBe('A, …, C, D');
 });
+
+test('the outbox (slice 5): from the bootstrap, then the whole list in each event', () => {
+  const s = emptyMail();
+  const item = (id: string, state: P.MailOutboxView['state']): P.MailOutboxView => ({ id, clientId: `c-${id}`, accountId: ACC, subject: 'Hi', state, holdUntil: null, error: null });
+  applyMailBootstrap(s, { access: { state: 'granted', managerUrl: null }, accounts: [account], mailboxes: [], threads: [], outbox: [item('mob_a', 'held')] });
+  expect([...s.outbox.keys()]).toEqual(['mob_a']);
+  expect(applyMailEvent(s, { t: 'mail.outbox', items: [item('mob_a', 'sent'), item('mob_b', 'failed')] })).toBe(true);
+  expect([...s.outbox.values()].map((o) => `${o.id}:${o.state}`)).toEqual(['mob_a:sent', 'mob_b:failed']);
+  applyMailEvent(s, { t: 'mail.outbox', items: [] });
+  expect(s.outbox.size).toBe(0);
+  // A hub from before slice 5 sends no outbox.
+  applyMailBootstrap(s, { access: { state: 'granted', managerUrl: null }, accounts: [account], mailboxes: [], threads: [] });
+  expect(s.outbox.size).toBe(0);
+});

@@ -10,7 +10,12 @@
  *
  * Changes made "on the server" (deliver, move, setFlags, remove, rebuild) are what another mail client would do; they
  * reach the hub as events and through mail.changes. Calls can be made to fail (410, 503, 404, limited) or slow.
+ *
+ * mail.send (slice 5) checks From against the account's addresses (422), answers a dry run as the manager does, keeps
+ * what it got in `sent` (with the files' bytes, read from a path or base64), and puts a copy in Sent that threads to
+ * the original by In-Reply-To and References, which it marks answered.
  */
+import { readFileSync } from 'node:fs';
 import type * as P from '@dither-chat/protocol';
 import type * as M from '@dither-chat/protocol/mail-iface';
 import { MailCallError, type MailBackend, type MailBackendAccount, type MailBackendEvent } from './backend.ts';
@@ -33,6 +38,14 @@ export interface FakeOpts {
 export interface FakeMessage extends Omit<M.MailMessage, 'mailboxId' | 'id'> {
   id: string;
   mailboxId: string;
+}
+
+/** A message the fake sent (slice 5): what it was given, and its files' bytes. */
+export interface FakeSent {
+  account: string;
+  mail: M.OutgoingMail;
+  files: { filename: string; mime: string; bytes: Uint8Array; by: 'path' | 'base64' }[];
+  messageId: string;
 }
 
 /** What a test or seed gives: anything left out gets a plain default. */
@@ -72,6 +85,10 @@ export class FakeMailBackend implements MailBackend {
   private failures = new Map<string, Failure[]>();
   /** Every call made, for tests to count. */
   readonly calls: { account: string; op: string; input: Record<string, any> }[] = [];
+  /** What mail.send sent. */
+  readonly sent: FakeSent[] = [];
+  /** As a manager on this machine: attachments may come as paths. */
+  localFiles = true;
 
   constructor(private defaults: FakeOpts = {}) {}
 
@@ -125,11 +142,11 @@ export class FakeMailBackend implements MailBackend {
 
   // ---------------------------------------------------------- the server's side, for tests and the demo
 
-  addAccount(id: string, o: { kind?: string; label?: string; email: string; name?: string; addresses?: M.MailAccountAddress[]; level?: 'read' | 'write'; mailboxes?: M.Mailbox[]; opts?: FakeOpts; online?: boolean }) {
+  addAccount(id: string, o: { kind?: string; label?: string; email: string; name?: string; addresses?: M.MailAccountAddress[]; level?: 'read' | 'write'; dryRun?: boolean; mailboxes?: M.Mailbox[]; opts?: FakeOpts; online?: boolean }) {
     const opts: Required<FakeOpts> = { ids: 'imap', threadIds: false, refs: true, state: 'mailbox', events: 'inbox', send: 'ok', latencyMs: 0, changesPage: 200, ...this.defaults, ...o.opts };
     const online = o.online ?? true;
     const a: Account = {
-      view: { id, kind: o.kind ?? (opts.ids === 'proton' ? 'proton' : 'imap'), label: o.label ?? o.email, level: o.level ?? 'write', dryRun: false, online },
+      view: { id, kind: o.kind ?? (opts.ids === 'proton' ? 'proton' : 'imap'), label: o.label ?? o.email, level: o.level ?? 'write', dryRun: !!o.dryRun, online },
       opts,
       self: { email: o.email, ...(o.name ? { displayName: o.name } : {}), ...(o.addresses ? { addresses: o.addresses } : {}) },
       mailboxes: (o.mailboxes ?? DEFAULT_MAILBOXES).map((b) => ({ ...b })),
@@ -165,6 +182,14 @@ export class FakeMailBackend implements MailBackend {
     const a = this.accs.get(id)!;
     a.status = { t: 'status', ...status };
     this.emit(id, [a.status as MailBackendEvent]);
+  }
+
+  /** The grant changed on the manager's page: read or write, dry run or not. */
+  setGrant(id: string, g: { level?: 'read' | 'write'; dryRun?: boolean }) {
+    const a = this.accs.get(id)!;
+    if (g.level) a.view.level = g.level;
+    if (g.dryRun !== undefined) a.view.dryRun = g.dryRun;
+    this.listChanged();
   }
 
   setAccess(state: P.MailAccess['state']) {
@@ -403,11 +428,58 @@ export class FakeMailBackend implements MailBackend {
       case 'mail.changes':
         return this.changes(a, String(input.mailboxId), input.state as string | undefined, Number(input.limit) || a.opts.changesPage);
       case 'mail.send':
-        if (a.opts.send === 501) throw new MailCallError("sending is not supported here", 501, 'failed');
-        throw new MailCallError('the fake does not send yet (slice 5)', 501, 'failed');
+        return this.send(a, input as M.OutgoingMail);
+      case 'mail.attachment': {
+        const m = a.messages.get(String(input.id)) ?? a.messages.get(String(input.message));
+        const att = m?.attachments.find((x) => x.id === input.attachmentId);
+        if (!m || !att) throw new MailCallError('no such attachment', 404);
+        return { filename: att.filename, mime: att.mime, base64: Buffer.from(fakeBytes(att)).toString('base64') };
+      }
       default:
         throw new MailCallError(`the fake does not do ${op}`, 501, 'unknown-op');
     }
+  }
+
+  /** As the manager and an extractor answer mail.send. */
+  private send(a: Account, mail: M.OutgoingMail): { messageId: string; sentId: string | null } | { dryRun: true } {
+    // The manager: a read grant may not write; a dry run answers without reaching the account.
+    if (a.view.level !== 'write') throw new MailCallError('this app may only read this account', 403, 'denied');
+    if (a.view.dryRun) return { dryRun: true };
+    if (a.opts.send === 501) throw new MailCallError("Proton's send path was not found in the page", 501, 'failed');
+    const own = a.self.addresses ?? [{ email: a.self.email, name: a.self.displayName ?? null }];
+    const from = mail.from === undefined ? own[0] : own.find((x) => x.email.toLowerCase() === String(mail.from).trim().toLowerCase());
+    if (!from) throw new MailCallError("from is not one of this account's addresses (its status's self.addresses)", 422);
+    if (!mail.to?.length && !mail.cc?.length && !mail.bcc?.length) throw new MailCallError('to whom?', 400);
+    const files = (mail.attachments ?? []).map((f) => {
+      if (typeof f.path === 'string') {
+        if (!this.localFiles) throw new MailCallError('attachments by path only on the same machine', 400);
+        return { filename: f.filename, mime: f.mime, bytes: new Uint8Array(readFileSync(f.path)), by: 'path' as const };
+      }
+      return { filename: f.filename, mime: f.mime, bytes: new Uint8Array(Buffer.from(f.base64 ?? '', 'base64')), by: 'base64' as const };
+    });
+    const original = mail.replyTo ? a.messages.get(mail.replyTo) : undefined;
+    if (mail.replyTo && !original) throw new MailCallError('no such message to reply to', 404);
+    const messageId = `<${crypto.randomUUID()}@${from.email.split('@')[1] ?? 'fake.example'}>`;
+    const sent = a.mailboxes.find((b) => b.role === 'sent')?.id ?? 'Sent';
+    const copy = this.put(a.view.id, {
+      mailboxId: sent,
+      messageId,
+      threadId: original?.threadId ?? (a.opts.threadIds ? original?.messageId ?? null : null),
+      from: [{ name: from.name ?? null, email: from.email }],
+      to: mail.to,
+      cc: mail.cc ?? [],
+      bcc: mail.bcc ?? [],
+      subject: mail.subject,
+      text: mail.text ?? null,
+      html: mail.html ?? null,
+      inReplyTo: original?.messageId ?? null,
+      references: original ? [...original.references, ...(original.messageId ? [original.messageId] : [])] : [],
+      flags: { seen: true },
+      attachments: files.map((f, i) => ({ id: `out-${i}`, filename: f.filename, mime: f.mime, size: f.bytes.length, inline: false, contentId: null })),
+    });
+    if (original) this.setFlags(a.view.id, original.id, { answered: true });
+    this.sent.push({ account: a.view.id, mail, files, messageId });
+    return { messageId, sentId: copy.id };
   }
 
   private changes(a: Account, box: string, state: string | undefined, limit: number): M.MailChanges {
@@ -443,4 +515,12 @@ export class FakeMailBackend implements MailBackend {
       more,
     };
   }
+}
+
+/** An attachment's bytes on the fake server: its id over and over, as long as it says it is. */
+export function fakeBytes(att: { id: string; size: number }): Uint8Array {
+  const unit = new TextEncoder().encode(`${att.id};`);
+  const out = new Uint8Array(Math.max(0, att.size));
+  for (let i = 0; i < out.length; i++) out[i] = unit[i % unit.length];
+  return out;
 }

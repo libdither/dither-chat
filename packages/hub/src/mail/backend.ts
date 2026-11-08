@@ -52,6 +52,8 @@ export interface MailBackend {
   onAccess(fn: (state: P.MailAccess['state']) => void): void;
   /** After a denial: ask the manager again (§6.6 "Ask again"). */
   askAgain?(): Promise<void>;
+  /** The manager reads this machine's files: attachments go as a `path`, not their bytes (slice 5). */
+  readonly localFiles?: boolean;
 }
 
 /** What remote.ts tells mail about the manager (RoutedSupervisor.mail). */
@@ -73,6 +75,8 @@ export interface ManagerLink {
 /** The mail interface through dither-accounts' manager, on remote.ts's connection. */
 export class ManagerMailBackend implements MailBackend, MailSink {
   connected = false;
+  /** Set when DITHER_ACCOUNTS_URL is on loopback (main.ts). */
+  localFiles = false;
   private state: P.MailAccess['state'] = 'unreachable';
   private mailAccounts = new Set<string>();
   private fns = { accounts: [] as ((a: MailBackendAccount[]) => void)[], events: [] as ((a: string, e: MailBackendEvent[]) => void)[], gap: [] as ((a: string) => void)[], connection: [] as ((u: boolean) => void)[], access: [] as ((s: P.MailAccess['state']) => void)[] };

@@ -8,6 +8,7 @@ import { DEFAULT_LIST, listTitle, MAIL_VIEWS } from '../../mail/model.ts';
 import { db, go, mailRev } from '../../state.ts';
 import { openMenu, type MenuEntry } from '../ContextMenu.tsx';
 import { Icon } from '../icons.tsx';
+import { ComposeButton, DraftsLine } from './Composer.tsx';
 import { MailAccessNote } from './MailAccounts.tsx';
 import { ThreadList } from './ThreadList.tsx';
 
@@ -73,6 +74,7 @@ export function MailSidebar({ list, active }: { list?: string; active?: string }
               <Icon name="folder" size={16} />
             </button>
           )}
+          <ComposeButton accountId={scoped === '*' ? null : scoped} />
         </h1>
         <span class="side-sub">{key === DEFAULT_LIST ? (accounts.length === 1 ? (accounts[0].address ?? accounts[0].label) : accounts.length ? 'All accounts' : 'Through dither-accounts') : listTitle(s, key)}</span>
       </header>
@@ -95,6 +97,7 @@ export function MailSidebar({ list, active }: { list?: string; active?: string }
           )}
         </div>
       )}
+      <DraftsLine />
       <div class="side-scroll">{(accounts.length > 0 || db.mail.threads.size > 0) && <ThreadList list={key} active={active} />}</div>
     </div>
   );

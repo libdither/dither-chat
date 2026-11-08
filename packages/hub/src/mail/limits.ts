@@ -34,6 +34,8 @@ export const MAIL_LIMITS = {
   /** The bootstrap's live window. */
   windowPerAccount: 50,
   windowMax: 300,
+  /** How long a send waits for Undo before it goes (slice 5, §8). */
+  holdMs: env('DITHER_MAIL_HOLD_MS', 10_000),
 };
 
 /** The oldest receivedAt slice 2 backfills to, from now. */

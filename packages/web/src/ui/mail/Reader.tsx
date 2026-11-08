@@ -9,6 +9,7 @@ import { details, loadThread, markThreadRead } from '../../mail/api.ts';
 import { db, mailRev } from '../../state.ts';
 import { Empty, Skeleton } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
+import { SendNote } from './Composer.tsx';
 import { MessageCard } from './MessageCard.tsx';
 import { THREAD_ACTIONS } from './slots.tsx';
 
@@ -89,6 +90,7 @@ export function Reader({ threadId, onBack }: { threadId: string; onBack: () => v
         {account?.level === 'read' && (
           <p class="mail-reader-note">dither-accounts lets dither-chat read this account, not change it. It is marked read here only.</p>
         )}
+        <SendNote account={account} />
         {account && account.level === null && (
           <p class="mail-reader-note">dither-chat no longer has access to this account. What is shown was kept here{account.deleteAt ? ' until it is deleted' : ''}.</p>
         )}

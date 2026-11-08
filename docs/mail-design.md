@@ -563,6 +563,9 @@ existing warning.
 
 ## 8. Sending (`outbox.ts`, `compose.ts`)
 
+As built in slice 5: docs/mail.md "Sending" says what differs (drafts one per thread, the send body is a `MailDraft`,
+a 501 keeps sending off until you ask again, the outbox event carries the whole list).
+
 - **`compose.ts`** builds `OutgoingMail`. Reply: To is the original's Reply-To, else its From; `Re: ` once; `replyTo` is
   its current native id. Reply all adds its To and Cc, minus your addresses. The quote is "On <date>, <name> wrote:" with
   `> ` lines, and in HTML a `blockquote type=cite` around the sanitised original without images. Forward: `Fwd: `, a
