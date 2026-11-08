@@ -28,6 +28,39 @@ sending (5), people and profiles (6), search (7), mail in the one-list inbox (8)
 500 of Inbox and Sent are synced (older mail and other folders come with slice 2), and a thread shows the start of its
 last message only once you have opened it (slice 2 fetches bodies ahead).
 
+## People (slice 6)
+
+The people you write to by mail join the people the hub already knows (`hub/src/mail/people.ts`).
+
+- **Who becomes someone.** Everyone you wrote to (To or Cc, not a draft), and everyone who wrote in a thread you wrote
+  in, gets an identity on the `email` network (its address is its id and handle) and a person of their own, as a DM
+  partner does. Their name is the one on their latest From, else the one you wrote to them under. Anyone else who
+  writes to you stays an address, unless classification (slice 8) calls their mail personal: then they get an
+  identity, without a person. Newsletters and notifications never do. Your own addresses are never anyone.
+- **Never by name.** Sam by mail and Sam on Signal stay two people until you merge them. A profile's "Same name
+  elsewhere" hint says who and where ("Alice Chen <alice@…>", "Alice Chen on Signal and Discord"), and the merge
+  search finds people by an address too, and the email identities no person holds yet.
+- **A profile's Mail card**: their newest threads across every mail account, how many there are, and "All mail with
+  Sam", the list `w:<person>` in Mail (`withList`: every thread they are on, in any mailbox). A merge carries the
+  mail: the merged person's card and list hold every thread of every address of theirs, and a split takes it back.
+  An email-only person asks no network for a profile, and has no chat banner and no empty Recent messages card.
+- **In the reader**, the sender's name opens their page. Thread and message views name the identity and person
+  behind each address (`MailAddressView.identityId`, `personId`; `MailThreadView.personIds`).
+- **When an account's mail is deleted** (24 h after access ended), the identities and persons only it held go too;
+  a person you merged or named keeps its address.
+- Email-only people are not in the People list (it lists people you have chats with) or in the graph.
+
+How: `mail_party` (`schema-people.sql`) holds who is on each thread and how (sent, written to, in a thread you wrote
+in, the name used), kept by `MailStore.recompute`'s hook in the same transaction, so `mailPeople(hub).sender(address)`
+is right as soon as an ingest returns: whether you correspond (`known`, `wroteTo`, `tookPart`), and whether their
+person has a chat identity (`chat`). Identities and persons follow each ingest at once; a big change (an account's
+own addresses becoming known, mail from before this slice on a first start) goes 300 threads a step in the
+background. Views work out the person behind each address as they are made (so `mail_thread.person_ids` stays unused),
+and a merge, a split or a new person sends that person's threads again. The profile's card comes with `GET /api/persons/:id/profile` (`ProfileView.mail`), the merge search is
+`GET /api/persons/candidates?q=&except=`. Tests: `hub/test/mail-people.test.ts`, `web/test/mail-people.test.ts`, and
+`scripts/verify-profile.ts` (the Mail card on a desktop in the dark theme and a phone in the light one, the reader's
+sender, all mail with them, the hint, the merge search by address, merge and split).
+
 ## Setting it up
 
 1. The hub runs with `DITHER_ACCOUNTS_URL` (docs/accounts.md). Set `DITHER_ACCOUNTS_PUBLIC_URL` too, for the links to
@@ -96,5 +129,8 @@ others were asked, because an IMAP move is a removal there and an addition elsew
   (around each thread row: swipes). The queue's `gate` and `onStart` (`hub/src/mail/queue.ts`) take slice 2's budgets.
 - **The protocol**: `protocol/src/mail.ts` already has every view and event of the design's §5; fields a later slice
   fills say which.
+- **People** (slice 6): `mailPeople(hub)` (`hub/src/mail/people.ts`): `sender(address)` for classification and
+  triage, `settle(threadIds)` after classifying mail outside an ingest, `profile(identityIds)`. The page's
+  `composeTo.run` (`web/src/mail/people.ts`) is where a composer plugs in: a profile then offers "Email <address>".
 - `protocol/src/mail-iface.ts` is a copy of dither-accounts' interface types; `bun scripts/accounts-sync.ts --check`
   says when it differs.

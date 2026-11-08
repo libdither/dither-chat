@@ -8590,6 +8590,13 @@ a.pf-link:hover {
   align-self: flex-start;
   margin-top: 2px;
 }
+/* The Mail card (mail/people.ts): a thread you have read is not bold. */
+.pf-mail-row:not(.unread) .pf-row-text b {
+  font-weight: 500;
+}
+.pf-mail-all {
+  align-self: flex-start;
+}
 .pf-msg-body {
   font-size: 13px;
   color: var(--text);
@@ -9813,6 +9820,14 @@ button.msg-edited.link:hover {
   font-weight: 600;
   color: var(--text);
   overflow-wrap: anywhere;
+}
+.mail-msg-person {
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.mail-msg-person:hover {
+  text-decoration: underline;
 }
 .mail-msg-addr {
   font-size: 12px;

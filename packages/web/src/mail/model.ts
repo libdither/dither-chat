@@ -8,7 +8,7 @@
  * longer does comes out.
  */
 import type * as P from '@dither-chat/protocol';
-import { parseMailList, viewList } from '@dither-chat/protocol';
+import { parseMailList, parseWithList, viewList } from '@dither-chat/protocol';
 
 export interface MailList {
   key: string;
@@ -40,6 +40,9 @@ export const threadOrder = (a: P.MailThreadView, b: P.MailThreadView) => b.lastA
 
 /** Whether a thread belongs in a list. */
 export function inList(key: string, t: P.MailThreadView): boolean {
+  // Everything with someone (slice 6): the hub's page says which; a changed thread joins by its people.
+  const who = parseWithList(key);
+  if (who !== null) return t.personIds.includes(who) || t.from.some((f) => !f.self && (f.personId === who || f.identityId === who || f.email === who.toLowerCase()));
   const l = parseMailList(key);
   if (!l) return false;
   if ('mailbox' in l) return t.mailboxIds.includes(l.mailbox);
@@ -169,8 +172,13 @@ function firstName(n: string, several: boolean): string {
   return n.split(/\s+/)[0] ?? n;
 }
 
+/** Who a `w:` list is with, by person or identity id: set by the page's people model (web model.ts). */
+export const mailNames = { of: (_who: string): string | null => null };
+
 /** The list a mailbox or view key names, for headings. */
 export function listTitle(s: MailState, key: string): string {
+  const who = parseWithList(key);
+  if (who !== null) return `Mail with ${mailNames.of(who) ?? who}`;
   const l = parseMailList(key);
   if (!l) return 'Mail';
   if ('mailbox' in l) return s.mailboxes.get(l.mailbox)?.name ?? 'Mailbox';

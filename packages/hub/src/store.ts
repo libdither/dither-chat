@@ -154,6 +154,8 @@ export class Store {
   private binCache = new Map<string, number[]>();
   /** Who is typing where: in memory only (typing.ts). */
   readonly typers = new TypingRelay();
+  /** People a merge, a split or a new person changed: mail/people.ts sends their mail threads again. */
+  personsChanged: ((personIds: string[]) => void) | null = null;
 
   constructor(path: string, readonly media: MediaSigner) {
     this.db = new Database(path, { create: true, strict: true });
@@ -410,9 +412,10 @@ export class Store {
         this.db.query('DELETE FROM folder_item WHERE item_kind = ? AND item_id = ?').run('space', s.id);
         this.dirty.removed.push({ t: 'space.removed', id: s.id });
       }
+      // People known by their mail have no chat to keep them: mail/people.ts lets them go with their mail.
       const orphanPersons = this.db
         .query(`SELECT id FROM person p WHERE is_self = 0 AND NOT EXISTS (SELECT 1 FROM identity i WHERE i.person_id = p.id
-                  AND (EXISTS (SELECT 1 FROM participant pa WHERE pa.identity_id = i.id) OR EXISTS (SELECT 1 FROM message m WHERE m.author_id = i.id)))`)
+                  AND (i.network = 'email' OR EXISTS (SELECT 1 FROM participant pa WHERE pa.identity_id = i.id) OR EXISTS (SELECT 1 FROM message m WHERE m.author_id = i.id)))`)
         .all() as Row[];
       for (const p of orphanPersons) {
         for (const i of this.db.query('SELECT id FROM identity WHERE person_id = ?').all(p.id) as Row[]) this.dirty.identities.add(i.id);
@@ -627,6 +630,49 @@ export class Store {
     return id;
   }
 
+  /**
+   * An email address as an identity (mail/people.ts): no account owns it, the address is its id and handle, and its
+   * name is the one mail gives it. A null name keeps the one it has.
+   */
+  emailIdentity(address: string, name: string | null): string {
+    const e = address.trim().toLowerCase();
+    const id = hubId('idn', 'email', e);
+    const before = this.db.query('SELECT display_name, person_id FROM identity WHERE id = ?').get(id) as Row | null;
+    if (!before) {
+      this.db.query('INSERT INTO identity (id, network, native_id, handle, display_name, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, 'email', e, e, name, Date.now());
+      this.dirty.identities.add(id);
+    } else if (name && name !== before.display_name) {
+      this.db.query('UPDATE identity SET display_name = ?, updated_at = ? WHERE id = ?').run(name, Date.now(), id);
+      this.dirty.identities.add(id);
+      if (before.person_id) this.syncAutoPerson(before.person_id);
+    }
+    return id;
+  }
+
+  /**
+   * Email identities whose mail is all gone from the hub (its account was deleted): each leaves its person, a person
+   * left with nothing goes, and the identity goes. A person you named or merged keeps it, as it keeps chat ones.
+   */
+  dropEmailIdentities(ids: string[]) {
+    const tx = this.db.transaction(() => {
+      for (const id of ids) {
+        const r = this.db.query(`SELECT i.person_id, p.manual, (SELECT COUNT(*) FROM identity o WHERE o.person_id = i.person_id AND o.id != i.id) AS others
+                                 FROM identity i LEFT JOIN person p ON p.id = i.person_id WHERE i.id = ? AND i.network = 'email'`).get(id) as Row | null;
+        if (!r || (r.person_id && (r.manual || r.others))) continue;
+        this.db.query('DELETE FROM identity WHERE id = ?').run(id);
+        this.db.query('DELETE FROM about WHERE target_id = ?').run(id);
+        this.dirty.identities.delete(id);
+        if (r.person_id) {
+          this.db.query('DELETE FROM person WHERE id = ?').run(r.person_id);
+          this.db.query(`DELETE FROM folder_item WHERE item_kind = 'person' AND item_id = ?`).run(r.person_id);
+          this.dirty.persons.delete(r.person_id);
+          this.dirty.removed.push({ t: 'person.removed', id: r.person_id });
+        }
+      }
+    });
+    tx();
+  }
+
   private identity(acc: AccountRow, f: P.IdentityFact): string {
     const id = hubId('idn', acc.network, f.nativeId);
     const before = this.db.query('SELECT handle, display_name, avatar_url, is_bot FROM identity WHERE id = ?').get(id) as Row | null;
@@ -695,6 +741,7 @@ export class Store {
     this.dirty.identities.add(identityId);
     // A direct conversation shows who it is with by person.
     this.touchDirectsOf(pid);
+    this.personsChanged?.([pid]);
     return pid;
   }
 
@@ -1157,6 +1204,7 @@ export class Store {
     this.dirty.removed.push({ t: 'person.removed', id: fromId });
     for (const r of this.db.query('SELECT id FROM identity WHERE person_id = ?').all(intoId) as Row[]) this.dirty.identities.add(r.id);
     this.touchDirectsOf(intoId);
+    this.personsChanged?.([intoId]);
   }
 
   /** Detach an identity into its own person again. */
@@ -1186,6 +1234,7 @@ export class Store {
     this.dirty.persons.add(pid);
     this.touchDirectsOf(pid);
     this.touchDirectsOf(old);
+    this.personsChanged?.([pid, old]);
     return pid;
   }
 
@@ -2448,6 +2497,28 @@ export class Store {
         )
         .all(like, name) as Row[]
     ).map((r) => r.id);
+  }
+
+  /**
+   * Who could be merged into a person (the profile's merge box): people by their name or any of their identities'
+   * names and handles (so an email address finds its person), and email identities no person holds yet. Never you.
+   */
+  mergeCandidates(q: string, exceptPersonId: string | null, limit = 12): { persons: P.PersonView[]; identities: P.IdentityView[] } {
+    const needle = q.trim();
+    if (!needle) return { persons: [], identities: [] };
+    const like = `%${likeEscape(needle)}%`;
+    const persons = this.db
+      .query(
+        `SELECT p.* FROM person p WHERE p.is_self = 0 AND p.id != ?2 AND (p.name LIKE ?1 ESCAPE '\\' OR EXISTS (SELECT 1 FROM identity i WHERE i.person_id = p.id
+           AND (i.display_name LIKE ?1 ESCAPE '\\' OR i.handle LIKE ?1 ESCAPE '\\' OR i.native_id LIKE ?1 ESCAPE '\\')))
+         ORDER BY p.name LIMIT ?3`,
+      )
+      .all(like, exceptPersonId ?? '', limit) as Row[];
+    const loose = this.db
+      .query(`SELECT * FROM identity WHERE network = 'email' AND person_id IS NULL AND (display_name LIKE ?1 ESCAPE '\\' OR native_id LIKE ?1 ESCAPE '\\') ORDER BY display_name, native_id LIMIT ?2`)
+      .all(like, limit) as Row[];
+    const views = persons.map((p) => this.personView(p));
+    return { persons: views, identities: [...this.identitiesByIds(views.flatMap((p) => p.identityIds)), ...loose.map((r) => this.identityView(r))] };
   }
 
   private accountsNamed(name: string): string[] {

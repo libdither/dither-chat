@@ -4,11 +4,13 @@
  * and how you stand with them (accounts, notifications, your note). The actions from their menu sit in the hero.
  */
 import type * as P from '@dither-chat/protocol';
-import { RELATIONSHIP_LABEL } from '@dither-chat/protocol';
+import { RELATIONSHIP_LABEL, withList } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { ago, fullTime } from '../format.ts';
 import { bioEditor, bioLeft } from '../bio.ts';
 import { openers } from '../direct.ts';
+import { composeTo } from '../mail/people.ts';
+import { senderLine } from '../mail/model.ts';
 import { countText, countTitle } from '../msgcount.ts';
 import { communitiesOf, convLabel, convTitle, directsOf, identityName, kindLabel, netName, plainBody, rootCommunity } from '../model.ts';
 import { api, db, go, isSelfIdentity, newMessage, openMessage, openProfile, rev, setRule, toast } from '../state.ts';
@@ -79,7 +81,9 @@ function useProfile(personId?: string, identityId?: string) {
     a.identities.forEach((i) => db.identities.set(i.id, i));
     setAbouts((x) => ({ ...x, [a.identityId]: a }));
   };
-  const ask = (ids: string[], fresh = false) => {
+  const ask = (all: string[], fresh = false) => {
+    // Mail has no profiles to ask for.
+    const ids = all.filter((id) => db.identities.get(id)?.network !== 'email');
     setAsking((n) => n + ids.length);
     for (const id of ids)
       api<P.PersonAboutView>(`/api/identities/${id}/about${fresh ? '?fresh=1' : ''}`)
@@ -187,12 +191,60 @@ function OwnBio({ identity, about, account, label, onSaved }: { identity: P.Iden
   );
 }
 
+/** Mail with them: their newest threads, how many, and all of it in Mail (hub mail/people.ts). */
+function MailCard({ mail, list, name }: { mail: NonNullable<P.ProfileView['mail']>; list: string; name: string }) {
+  const open = (t: P.MailThreadView) => {
+    db.mail.threads.set(t.id, t);
+    go({ view: 'mail', thread: t.id });
+  };
+  return (
+    <Card title="Mail" icon="mail" count={mail.total || undefined} class="pf-mail">
+      {!mail.threads.length && <p class="pf-empty">No mail with them on this hub.</p>}
+      <div class="pf-rows">
+        {mail.threads.map((t) => (
+          <button class={`pf-row pf-mail-row ${t.unread ? 'unread' : ''}`} onClick={() => open(t)} title={fullTime(t.lastAt)}>
+            <NetBadge network="email" size={28} />
+            <span class="pf-row-text">
+              <b>{t.subject || '(no subject)'}</b>
+              <small>
+                {senderLine(t)}
+                {t.count > 1 ? ` · ${t.count}` : ''}
+                {t.preview ? ` — ${t.preview}` : ''}
+              </small>
+            </span>
+            <span class="pf-row-time">{ago(t.lastAt)}</span>
+          </button>
+        ))}
+      </div>
+      {mail.total > 0 && (
+        <button class="link-btn pf-mail-all" onClick={() => go({ view: 'mail', list })}>
+          {mail.total > mail.threads.length ? `All ${mail.total.toLocaleString()} threads with ${name}` : `All mail with ${name}`}
+        </button>
+      )}
+    </Card>
+  );
+}
+
 export function ProfilePane({ personId, identityId, onBack }: { personId?: string; identityId?: string; onBack: () => void }) {
   rev.value;
   const { profile, abouts, counts, learn, asking, refresh } = useProfile(personId, identityId);
   const [merging, setMerging] = useState(false);
   const [filter, setFilter] = useState('');
   const person = personId ? db.persons.get(personId) : undefined;
+  // The hub's merge search: people by any name or handle (an email address too), and email identities no person holds.
+  const [found, setFound] = useState<{ q: string; persons: P.PersonView[]; identities: P.IdentityView[] } | null>(null);
+  const q = filter.trim();
+  useEffect(() => {
+    if (!merging || !q) return;
+    const t = setTimeout(
+      () =>
+        api<{ persons: P.PersonView[]; identities: P.IdentityView[] }>(`/api/persons/candidates?q=${encodeURIComponent(q)}${person ? `&except=${person.id}` : ''}`)
+          .then((r) => setFound({ q, ...r }))
+          .catch(() => {}),
+      150,
+    );
+    return () => clearTimeout(t);
+  }, [merging, q, person?.id]);
 
   if (profile === 'none')
     return (
@@ -213,6 +265,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const isSelf = !!person?.isSelf || ids.some((i) => isSelfIdentity(i.id));
   const directs = person ? directsOf(person.id) : [];
   const nets = [...new Set(ids.map((i) => i.network))];
+  // Networks with chats: mail is not one.
+  const chatNets = nets.filter((n) => n !== 'email');
   const accounts = [...db.accounts.values()];
   // One way in per network they are on and you have no DM on. A network whose adapter cannot do it shows nothing.
   const startable = isSelf ? [] : nets.filter((n) => !directs.some((d) => d.network === n)).map((n) => ids.find((i) => i.network === n)!).filter((i) => openers(accounts, i.network).length > 0);
@@ -300,7 +354,24 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const myNames = new Set(ids.flatMap((i) => [normalized(i.displayName), normalized(i.handle)]).concat(normalized(name)).filter(Boolean));
   const similar = candidates.filter((x) => myNames.has(normalized(x.name)) || x.identityIds.some((id) => myNames.has(normalized(db.identities.get(id)?.displayName)) || myNames.has(normalized(db.identities.get(id)?.handle))));
   const needle = filter.trim().toLowerCase();
-  const matches = needle ? candidates.filter((x) => x.name.toLowerCase().includes(needle)).slice(0, 12) : similar;
+  const named = (x: P.PersonView) => x.name.toLowerCase().includes(needle) || x.identityIds.some((id) => [db.identities.get(id)?.handle, db.identities.get(id)?.displayName].some((v) => v?.toLowerCase().includes(needle)));
+  const local = needle ? candidates.filter(named).slice(0, 12) : similar;
+  const fromHub = found && found.q === filter.trim() ? found : null;
+  const matches = needle ? [...local, ...(fromHub?.persons ?? []).filter((x) => !x.isSelf && !local.some((l) => l.id === x.id))] : local;
+  const looseMail = needle ? (fromHub?.identities ?? []).filter((i) => i.network === 'email' && !i.personId) : [];
+  const shownAs = new Map((fromHub?.identities ?? []).map((i) => [i.id, i]));
+  const nameOf = (id: string) => db.identities.get(id) ?? shownAs.get(id);
+  /** "Sam Rivera on Signal", "Sam Rivera <sam@rivera.example>": who that is, by where they are. */
+  const elsewhere = (x: P.PersonView) => {
+    const is = x.identityIds.map(nameOf).filter((i): i is P.IdentityView => !!i);
+    const mail = is.find((i) => i.network === 'email');
+    const chat = [...new Set(is.filter((i) => i.network !== 'email').map((i) => netName(i.network)))];
+    return `${x.name}${mail ? ` <${mail.nativeId}>` : ''}${chat.length ? ` on ${chat.join(' and ')}` : ''}`;
+  };
+  const mergeIdentity = async (identity: string) => {
+    const { personId: from } = await api<{ personId: string }>(`/api/identities/${identity}/person`, { body: {} });
+    await merge(from);
+  };
   const merge = async (from: string) => {
     const into = await ensure();
     await api('/api/persons/merge', { body: { into, from } });
@@ -310,18 +381,23 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   };
 
   // ---- actions
+  // Their addresses, while the composer can start a mail (slice 5).
+  const emails = isSelf || !composeTo.run ? [] : ids.filter((i) => i.network === 'email');
+  const email = (i: P.IdentityView) => composeTo.run?.({ name: i.displayName, email: i.nativeId, identityId: i.id, ...(i.personId ? { personId: i.personId } : {}) });
   const messageMenu = (): MenuSpec => ({
     label: 'Message',
     items: groups(
       directs.length > 1 && person ? [{ label: 'All Chats Together', icon: 'merge', run: () => go({ view: 'people', person: person.id }) }] : [],
       directs.map((d): MenuEntry => ({ label: `On ${netName(d.network)}`, icon: 'send', run: () => go({ view: 'inbox', conv: d.id }) })),
       startable.map((i): MenuEntry => ({ label: `Start on ${netName(i.network)}`, icon: 'plus', run: () => (newMessage.value = { identityId: i.id }) })),
+      emails.map((i): MenuEntry => ({ label: `Email ${i.nativeId}`, icon: 'mail', run: () => email(i) })),
     ),
   });
-  const messageOptions = (directs.length > 1 ? 1 : 0) + directs.length + startable.length;
+  const messageOptions = (directs.length > 1 ? 1 : 0) + directs.length + startable.length + emails.length;
   const message = () => {
     if (directs.length === 1) go({ view: 'inbox', conv: directs[0].id });
     else if (startable.length === 1) newMessage.value = { identityId: startable[0].id };
+    else if (emails.length === 1) email(emails[0]);
   };
   const moreMenu = (): MenuSpec | null => {
     const base = person ? personMenu(person) : identityMenu(first?.id);
@@ -358,7 +434,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       sub={
         <span class="pf-handles">
           {ids.map((i) => (
-            <button class="pf-handle" title={`Copy ${netName(i.network)} ${i.handle ? 'username' : 'id'}`} onClick={() => copy(i.handle ?? i.nativeId, 'Copied')}>
+            <button class="pf-handle" title={i.network === 'email' ? 'Copy address' : `Copy ${netName(i.network)} ${i.handle ? 'username' : 'id'}`} onClick={() => copy(i.handle ?? i.nativeId, 'Copied')}>
               <NetGlyph network={i.network} size={12} />
               {i.handle ?? i.displayName ?? i.nativeId}
             </button>
@@ -391,7 +467,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       }
       actions={
         <>
-          {!isSelf && messageOptions > 0 && (messageOptions === 1 && directs.length + startable.length === 1 ? <Action primary icon="send" label="Message" onClick={message} /> : <Action primary icon="send" label="Message" menu={messageMenu} />)}
+          {!isSelf && messageOptions > 0 && (messageOptions === 1 ? <Action primary icon="send" label="Message" onClick={message} /> : <Action primary icon="send" label="Message" menu={messageMenu} />)}
           {!isSelf && <Action icon="star" label={person?.starred ? 'Starred' : 'Star'} on={person?.starred} title={person?.starred ? 'Starred: their messages always notify. Click to unstar' : 'Star: always notify for them, everywhere'} onClick={() => patch({ starred: !person?.starred })} />}
           {directs.length > 1 && person && <Action icon="merge" label="All chats" onClick={() => go({ view: 'people', person: person.id })} />}
           <Action icon="more" label="More" menu={moreMenu} />
@@ -512,24 +588,28 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         </Card>
       )}
 
-      <Card title="Recent messages" icon="send" count={profile.recent.length || undefined}>
-        {!profile.recent.length && <p class="pf-empty">None stored. The hub only has what your accounts have fetched.</p>}
-        <div class="pf-rows">
-          {profile.recent.map((m) => {
-            const c = db.conversations.get(m.conversationId);
-            return (
-              <button class="pf-row pf-msg" onClick={() => openMessage(m.conversationId, m.id)} title={fullTime(m.ts)}>
-                {c ? <PlaceIcon c={c} size={28} /> : <NetBadge network={m.network} size={28} />}
-                <span class="pf-row-text">
-                  <small class="pf-msg-where">{c ? (c.shape === 'direct' ? `Direct message · ${netName(c.network)}` : convLabel(c)) : 'Unknown'}</small>
-                  <span class="pf-msg-body">{plainBody(m.body, m.network) || (m.attachments.length ? 'Attachment' : m.kind === 'encrypted' ? 'Encrypted message' : '')}</span>
-                </span>
-                <span class="pf-row-time">{ago(m.ts)}</span>
-              </button>
-            );
-          })}
-        </div>
-      </Card>
+      {profile.mail && <MailCard mail={profile.mail} list={withList(person?.id ?? first.id)} name={name} />}
+
+      {(profile.recent.length > 0 || chatNets.length > 0) && (
+        <Card title="Recent messages" icon="send" count={profile.recent.length || undefined}>
+          {!profile.recent.length && <p class="pf-empty">None stored. The hub only has what your accounts have fetched.</p>}
+          <div class="pf-rows">
+            {profile.recent.map((m) => {
+              const c = db.conversations.get(m.conversationId);
+              return (
+                <button class="pf-row pf-msg" onClick={() => openMessage(m.conversationId, m.id)} title={fullTime(m.ts)}>
+                  {c ? <PlaceIcon c={c} size={28} /> : <NetBadge network={m.network} size={28} />}
+                  <span class="pf-row-text">
+                    <small class="pf-msg-where">{c ? (c.shape === 'direct' ? `Direct message · ${netName(c.network)}` : convLabel(c)) : 'Unknown'}</small>
+                    <span class="pf-msg-body">{plainBody(m.body, m.network) || (m.attachments.length ? 'Attachment' : m.kind === 'encrypted' ? 'Encrypted message' : '')}</span>
+                  </span>
+                  <span class="pf-row-time">{ago(m.ts)}</span>
+                </button>
+              );
+            })}
+          </div>
+        </Card>
+      )}
       <HistoryCard path={`${changesPath}?except=status,presence`} />
     </>
   );
@@ -596,7 +676,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         })}
         {!isSelf && similar.length > 0 && !merging && (
           <p class="pf-hint">
-            Same name elsewhere: {similar.slice(0, 3).map((x) => x.name).join(', ')}.{' '}
+            Same name elsewhere: {similar.slice(0, 3).map(elsewhere).join(', ')}.{' '}
             <button class="link-btn" onClick={() => setMerging(true)}>
               Merge?
             </button>
@@ -615,7 +695,15 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
                 </span>
               </button>
             ))}
-            {needle && !matches.length && <p class="pf-hint">Nobody by that name.</p>}
+            {looseMail.map((i) => (
+              <button class="link-row" onClick={() => mergeIdentity(i.id)}>
+                <Avatar id={i.id} name={i.displayName ?? i.nativeId} size={22} /> {i.displayName ? `${i.displayName} <${i.nativeId}>` : i.nativeId}
+                <span class="row-nets">
+                  <NetBadge network="email" size={13} />
+                </span>
+              </button>
+            ))}
+            {needle && !matches.length && !looseMail.length && <p class="pf-hint">Nobody by that name.</p>}
             <button class="btn ghost small" onClick={() => setMerging(false)}>
               Done
             </button>
@@ -658,9 +746,9 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   return (
     <ProfilePage title={name} label={`${name}'s profile`} onBack={onBack}>
       {hero}
-      {!isSelf && !directs.length && !startable.length && (
+      {!isSelf && !directs.length && !startable.length && chatNets.length > 0 && (
         <p class="pf-hint pf-banner-note">
-          No direct chat yet, and no connected account can start one on {nets.map(netName).join(' or ')}. Start it in the network's own app; it appears here once it exists.
+          No direct chat yet, and no connected account can start one on {chatNets.map(netName).join(' or ')}. Start it in the network's own app; it appears here once it exists.
         </p>
       )}
       <Columns main={main} side={side} />

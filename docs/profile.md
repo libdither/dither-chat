@@ -37,7 +37,10 @@ Left:
   from them. Discord's mutual servers count even where they never wrote; the rest comes from messages and member
   lists the hub has. A server they wrote in says how many of their messages the hub holds there, and an estimate of
   how many they posted when one can be made (below, "Message counts").
-- **Recent messages**: each with the place's picture (the server's icon for a channel), the place, and when.
+- **Mail** (docs/mail.md, "People"), for someone with an email address: their newest threads across your mail
+  accounts, how many, and All mail with them. A thread opens in Mail.
+- **Recent messages**: each with the place's picture (the server's icon for a channel), the place, and when. Not
+  shown for someone known only by mail.
 - **Status**, collapsed until opened (ui/StatusCard.tsx): the current status and since when, and with adversarial
   features shown (docs/history.md) the logged status history and presence (now, and each stretch with how long it
   lasted). Absent when there is no status and nothing logged.
@@ -47,7 +50,8 @@ Right:
 - **Mutual friends** (Discord), or on your own page **Friends**: your Discord friends, Signal and WhatsApp
   contacts and Matrix direct chats, each person once. Click one for theirs.
 - **Accounts**: each identity, with Open on the network and Unmerge; a hint when someone elsewhere has the same name,
-  and the merge search.
+  saying where ("Alice Chen on Signal", "Alice Chen <alice@…>"), and the merge search, which finds people by any name
+  or handle (an email address too) and email addresses no person holds yet (`GET /api/persons/candidates`).
 - **Notifications**: Star, and Always notify without starring.
 - **Note**: yours only, kept on the hub.
 

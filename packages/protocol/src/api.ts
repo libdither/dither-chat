@@ -563,6 +563,11 @@ export interface ProfileView {
    * setting on; not every space they are in.
    */
   memberOf?: { spaceId: string; nick?: string; roles?: string[]; joinedAt?: number; lastSeenAt: number }[];
+  /**
+   * Mail with them (hub mail/people.ts, docs/mail.md): their newest threads across your mail accounts, and how many
+   * there are. Only when they have an email identity; `withList` opens all of it.
+   */
+  mail?: { threads: MailThreadView[]; total: number };
 }
 
 /**

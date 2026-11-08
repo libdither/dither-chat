@@ -200,6 +200,18 @@ export type MailListKey = string;
 export const mailboxList = (mailboxId: string): MailListKey => `mb:${mailboxId}`;
 export const viewList = (view: MailView, accountId: string | null = null): MailListKey => `v:${view}:${accountId ?? '*'}`;
 
+/**
+ * Every thread with someone, in any mailbox of any account (slice 6): `w:<person id>`, `w:<identity id>` or
+ * `w:<address>`. A person's list follows merges: it is all the addresses of the person as it is now.
+ */
+export const withList = (who: string): MailListKey => `w:${who}`;
+
+/** Who a `withList` key is with; null for any other key. */
+export function parseWithList(key: string): string | null {
+  const m = key.match(/^w:(\S+)$/);
+  return m ? m[1] : null;
+}
+
 export function parseMailList(key: string): { mailbox: string } | { view: MailView; accountId: string | null } | null {
   const m = key.match(/^mb:([\w-]+)$/);
   if (m) return { mailbox: m[1] };

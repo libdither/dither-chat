@@ -9,7 +9,7 @@
 import type { Database } from 'bun:sqlite';
 import { readdirSync, readFileSync } from 'node:fs';
 import type * as P from '@dither-chat/protocol';
-import { mailPreview, parseMailList, quoteStart } from '@dither-chat/protocol';
+import { mailPreview, parseMailList, parseWithList, quoteStart } from '@dither-chat/protocol';
 import { mailId } from '@dither-chat/protocol/ids';
 import type * as M from '@dither-chat/protocol/mail-iface';
 import { ACCOUNT_COLORS } from '../store.ts';
@@ -100,6 +100,12 @@ export class MailStore {
   managedUrl: (accountId: string) => string | null = () => null;
   /** Where an account's sync is (sync.ts): set by MailHub. */
   syncOf: (accountId: string) => P.MailAccountView['sync']['phase'] = () => 'idle';
+  /** After a thread is worked out from its messages (none: it went). mail/people.ts keeps who is on it. */
+  readonly recomputed: ((threadId: string, messages: Row[]) => void)[] = [];
+  /** The identity and person behind each address, for the views: set by mail/people.ts. */
+  whoIs: (addresses: string[]) => Map<string, { identityId: string; personId: string | null }> = () => new Map();
+  /** The addresses a `w:` list is with (a person's, an identity's): set by mail/people.ts; else the address itself. */
+  addressesOf: (who: string) => string[] = (who) => (who.includes('@') ? [lc(who)] : []);
   private selfCache = new Map<string, Set<string>>();
 
   constructor(
@@ -607,6 +613,7 @@ export class MailStore {
   recompute(threadId: string) {
     const ms = this.all('SELECT * FROM mail_message WHERE thread_id = ? ORDER BY received_at, id', threadId);
     if (!ms.length) {
+      for (const f of this.recomputed) f(threadId, ms);
       if (this.run('DELETE FROM mail_thread WHERE id = ?', threadId).changes) {
         this.run('DELETE FROM mail_ref WHERE thread_id = ?', threadId);
         this.dirty.threads.delete(threadId);
@@ -658,6 +665,7 @@ export class MailStore {
       last.addressed === 'self' ? 1 : 0,
       threadId,
     );
+    for (const f of this.recomputed) f(threadId, ms);
     this.dirty.threads.add(threadId);
   }
 
@@ -759,10 +767,11 @@ export class MailStore {
   threadView(r: Row): P.MailThreadView {
     const self = this.selfAddresses(r.account_id);
     const parts = json<{ e: string; n: string | null; f: number; l: number }[]>(r.participants, []);
+    const who = this.whoIs(parts.map((p) => p.e).filter((e) => !self.has(e)));
     const from = parts
       .filter((p) => p.f > 0)
       .sort((a, b) => a.l - b.l)
-      .map((p) => ({ name: p.n, email: p.e, ...(self.has(p.e) ? { self: true } : {}) }));
+      .map((p) => ({ name: p.n, email: p.e, ...(self.has(p.e) ? { self: true } : {}), ...whoView(who.get(p.e)) }));
     return {
       id: r.id,
       accountId: r.account_id,
@@ -781,7 +790,7 @@ export class MailStore {
       labels: json(r.labels, []),
       class: r.class ?? null,
       unknown: false,
-      personIds: json(r.person_ids, []),
+      personIds: [...new Set([...who.values()].map((w) => w.personId).filter((x): x is string => !!x))],
       lastFromMe: !!r.last_from_me,
       owedSince: null,
       muted: !!r.muted,
@@ -799,14 +808,16 @@ export class MailStore {
        FROM mail_message m WHERE m.thread_id = ? ORDER BY m.received_at, m.id`,
       threadId,
     );
+    const who = this.whoIs([...new Set(rows.flatMap((m) => [m.from_addr, ...json<M.MailAddress[]>(m.to_json, []).map((a) => a.email), ...json<M.MailAddress[]>(m.cc_json, []).map((a) => a.email)].map(lc)))]);
+    const addr = (a: M.MailAddress) => ({ name: a.name ?? null, email: a.email, ...whoView(who.get(lc(a.email))) });
     return rows.map((m) => ({
       id: m.id,
       threadId: m.thread_id,
       accountId: m.account_id,
       messageId: m.message_id_hdr ?? null,
-      from: { name: m.from_name ?? null, email: m.from_addr ?? '' },
-      to: json<M.MailAddress[]>(m.to_json, []).map((a) => ({ name: a.name ?? null, email: a.email })),
-      cc: json<M.MailAddress[]>(m.cc_json, []).map((a) => ({ name: a.name ?? null, email: a.email })),
+      from: { name: m.from_name ?? null, email: m.from_addr ?? '', ...whoView(who.get(lc(m.from_addr))) },
+      to: json<M.MailAddress[]>(m.to_json, []).map(addr),
+      cc: json<M.MailAddress[]>(m.cc_json, []).map(addr),
       subject: m.subject,
       date: m.date,
       receivedAt: m.received_at,
@@ -846,11 +857,19 @@ export class MailStore {
    */
   listThreads(key: string, before: string | null, limit: number): P.MailThreadPage | null {
     const list = parseMailList(key);
-    if (!list) return null;
+    const withWho = list ? null : parseWithList(key);
+    if (!list && withWho === null) return null;
     const where: string[] = [];
     const args: unknown[] = [];
     let scope: { accounts: string | null; role: string | null; mailbox: string | null };
-    if ('mailbox' in list) {
+    if (withWho !== null) {
+      // Everything with someone (slice 6): any mailbox, any account.
+      where.push('t.id IN (SELECT thread_id FROM mail_party WHERE address IN (SELECT value FROM json_each(?)))');
+      args.push(JSON.stringify(this.addressesOf(withWho)));
+      scope = { accounts: null, role: null, mailbox: null };
+    } else if (!list) {
+      return null;
+    } else if ('mailbox' in list) {
       const b = this.mailbox(list.mailbox);
       if (!b) return null;
       where.push('t.id IN (SELECT m.thread_id FROM mail_location l JOIN mail_message m ON m.id = l.message_id WHERE l.mailbox_id = ?)');
@@ -946,6 +965,8 @@ export class MailStore {
     return out;
   }
 }
+
+const whoView = (w: { identityId: string; personId: string | null } | undefined) => (w ? { identityId: w.identityId, ...(w.personId ? { personId: w.personId } : {}) } : {});
 
 /** How a message reached you: you sent it, you are in To or Cc, or neither (Bcc, a list). */
 export function addressedOf(self: Set<string>, from: string | null, to: M.MailAddress[], cc: M.MailAddress[]): 'to' | 'cc' | 'hidden' | 'self' {
