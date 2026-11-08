@@ -3659,17 +3659,21 @@ code {
   color: var(--text-dim);
   margin-top: 10px;
 }
+/* Three to a row: nine networks in one row are wider than the dialog, which then scrolls sideways, and a narrower tile breaks a name like Messenger mid-word. */
 .net-pick {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 .net-opt {
-  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 12px;
+  padding: 10px 6px;
+  text-align: center;
+  line-height: 1.25;
   border: 1px solid var(--border);
   border-radius: 10px;
   color: var(--text-dim);
