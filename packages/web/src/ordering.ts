@@ -157,6 +157,25 @@ export function inboxView(snap: InboxSnapshot | null, fresh: readonly Ranked[], 
   return (snap ? stabilize(snap.keys, order) : order).filter(keep);
 }
 
+/** What a filter chip asks of an inbox row (docs/inbox.md): one other person on it, and something unread. */
+export interface Chipped {
+  key: string;
+  /** A DM, or a mail thread between you and one other (docs/mail.md). */
+  direct: boolean;
+  unread: boolean;
+}
+
+/**
+ * Whether a filter chip shows a row: People one other person, Groups the rest, Unread what is unread or was when the
+ * order was taken (`wasUnread`), so reading it does not pull it out from under you.
+ */
+export function chipKeeps(chip: 'all' | 'people' | 'groups' | 'unread', r: Chipped, wasUnread: ReadonlySet<string>): boolean {
+  if (chip === 'people') return r.direct;
+  if (chip === 'groups') return !r.direct;
+  if (chip === 'unread') return r.unread || wasUnread.has(r.key);
+  return true;
+}
+
 /**
  * How much the inbox's score lifts a match in the switcher: twice per 50 points. So among names that match about
  * as well, the one you are likelier to want comes first, and a muted place (about -50) counts half.

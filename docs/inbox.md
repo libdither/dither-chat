@@ -14,6 +14,12 @@ the top for a few hours ([You were here](#you-were-here)).
 
 Filter chips: **All**, **People** (DMs), **Groups** (everything else), **Unread**. The choice is kept per device.
 
+**Mail from people** is in the same list (docs/mail.md, slice 8): a thread in Inbox from someone you know that is
+unread, owes a reply, is recent or you just opened. It is scored by this formula on its own fold
+(`hub/src/mail/attention.ts`: you and one other is a DM, you in To a mention), and how you answer someone sums their
+mail and their chats. Its `AttentionView` has `kind: 'mail'` and the thread's id. People includes a thread between you
+and one other; tapping it opens the reader beside the inbox. With no mail account nothing here changes.
+
 The score uses metadata only: who wrote, when, who replied to whom, mentions, the conversation's shape and member
 count, unread state, triage's decisions and time spent and where you were (`usage.ts`). It never reads message text. "Asks a question"
 comes from triage's stored decision, not from the text.
@@ -235,7 +241,7 @@ in the order on screen, a DM as its person, then the rest by the latest message.
 
 | | |
 |---|---|
-| bootstrap `attention` | `AttentionView[]`: `{ id, score, needs, reasons, owedSince, at }` for every listed conversation |
+| bootstrap `attention` | `AttentionView[]`: `{ id, score, needs, reasons, owedSince, at }` for every listed conversation, and `kind: 'mail'` with a mail thread's id for each listed thread |
 | event `{ t: 'attention', items, removed }` | changed scores, and conversations no longer listed |
 | `GET /api/attention` | `{ now, items }` |
 | `GET /api/attention/:conversationId` | everything about one score: the formula's parts, noise, relationship, reply rate, usual reply time; `learned`: the model's open and send chances and points |
@@ -243,6 +249,7 @@ in the order on screen, a DM as its person, then the rest by the latest message.
 | `POST /api/attention/rebuild` | `{ conversations?: string[] }`: fold these, or all, again from the start |
 
 The bootstrap's and the events' `score` is the learned order's when it is on (the default), the formula's otherwise.
+A mail thread keeps the formula's until the learned order learns mail (mail-design.md §12, slice 10).
 
 Old `#/groups` and `#/groups/c/<id>` links open the inbox and the same conversation, and the address bar shows
 the new link.

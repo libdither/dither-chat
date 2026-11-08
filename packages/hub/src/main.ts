@@ -8,6 +8,7 @@ import { applyDemoOverlay, createDemoAccounts, DEMO_MAIL_ACCOUNT, demoFactory, s
 import { demoMailImages } from './mail/demo-html.ts';
 import { FakeMailBackend, MailHub, ManagerMailBackend } from './mail/index.ts';
 import { mailPeople } from './mail/people.ts';
+import { mailAttention } from './mail/attention.ts';
 import { Delivery } from './delivery.ts';
 import { Devices } from './devices.ts';
 import { Embeddings, Jev } from './embeddings.ts';
@@ -226,6 +227,8 @@ if (mailBackend instanceof ManagerMailBackend) mailBackend.localFiles = /^(?:htt
 const mail = new MailHub({ db: store.db, backend: mailBackend, managerUrl: accountsPage, dataDir, media: { dir: join(dataDir, 'media-cache'), key: secret, ...(demoMail ? demoMailImages : {}) } });
 // Correspondents become identities and persons (mail/people.ts).
 mailPeople(mail)?.connect(store);
+// Mail from people in the one-list inbox, scored with the chats (mail/attention.ts).
+mailAttention(mail)?.connect(store, attention);
 
 const readQueue = new ReadQueue(store, sup);
 readQueue.start();

@@ -121,6 +121,8 @@ export class MailStore {
   readonly bodyExtras: ((messageId: string, body: Row) => Partial<P.MailBodyView>)[] = [];
   /** Of the threads that changed, those held back from `mail.threads` and the lists that makes stale (slice 2's live window). */
   window: ((ids: string[]) => { held: Set<string>; stale: string[] }) | null = null;
+  /** What later slices add to a thread's view from their own tables (slice 8: `unknown`, `owedSince`). */
+  readonly threadExtras: ((row: Row, view: P.MailThreadView) => void)[] = [];
   private selfCache = new Map<string, Set<string>>();
 
   constructor(
@@ -799,7 +801,7 @@ export class MailStore {
       .filter((p) => p.f > 0)
       .sort((a, b) => a.l - b.l)
       .map((p) => ({ name: p.n, email: p.e, ...(self.has(p.e) ? { self: true } : {}), ...whoView(who.get(p.e)) }));
-    return {
+    const view: P.MailThreadView = {
       id: r.id,
       accountId: r.account_id,
       subject: r.subject,
@@ -823,6 +825,8 @@ export class MailStore {
       muted: !!r.muted,
       pending: !!this.one('SELECT 1 FROM mail_message WHERE thread_id = ? AND pending IS NOT NULL', r.id),
     };
+    for (const f of this.threadExtras) f(r, view);
+    return view;
   }
 
   threadViews(ids: string[]): P.MailThreadView[] {
@@ -882,8 +886,8 @@ export class MailStore {
   }
 
   /**
-   * A page of a list, newest first. `before`: the cursor a page gave (`<lastAt>:<id>`). Views slice 8 brings
-   * (people, updates) are not here yet: null.
+   * A page of a list, newest first. `before`: the cursor a page gave (`<lastAt>:<id>`). Inbox leaves out mail that is
+   * not from a person (its Updates row is the `updates` view); People is the rest of Inbox from people (slice 8).
    */
   listThreads(key: string, before: string | null, limit: number): P.MailThreadPage | null {
     const list = parseMailList(key);
@@ -909,13 +913,16 @@ export class MailStore {
       args.push(b.id, b.id);
       scope = { accounts: b.account_id, role: null, mailbox: b.id };
     } else {
-      if (list.view === 'people' || list.view === 'updates') return null;
       if (list.accountId) {
         where.push('t.account_id = ?');
         args.push(list.accountId);
       }
       const role = list.view === 'sent' ? 'sent' : 'inbox';
-      if (list.view === 'inbox' || list.view === 'sent') where.push(`EXISTS (SELECT 1 FROM json_each(t.roles) WHERE value = '${role}')`);
+      if (list.view === 'inbox' || list.view === 'sent' || list.view === 'people' || list.view === 'updates') where.push(`EXISTS (SELECT 1 FROM json_each(t.roles) WHERE value = '${role}')`);
+      // Classification (slice 8, classify.ts): an unclassified thread stays in Inbox.
+      if (list.view === 'inbox') where.push(`(t.class IS NULL OR t.class != 'bulk')`);
+      if (list.view === 'people') where.push(`t.class = 'personal'`);
+      if (list.view === 'updates') where.push(`t.class = 'bulk'`);
       if (list.view === 'unread') where.push(`t.unread > 0 AND NOT EXISTS (SELECT 1 FROM json_each(t.roles) WHERE value IN ('junk', 'trash')) AND json_array_length(t.roles) > 0`);
       if (list.view === 'starred') where.push('t.flagged = 1');
       scope = { accounts: list.accountId, role: list.view === 'sent' ? 'sent' : 'inbox', mailbox: null };
@@ -941,8 +948,13 @@ export class MailStore {
     };
   }
 
-  /** What the bootstrap carries: each account's newest Inbox page, at most MAIL_LIMITS.windowMax in all. */
+  /**
+   * What the bootstrap carries: the threads the one-list inbox lists (slice 8), and each account's newest Inbox page,
+   * at most MAIL_LIMITS.windowMax in all.
+   */
   liveWindow(): P.MailThreadView[] {
+    const listed: Row[] = this.all(`SELECT t.* FROM mail_thread t WHERE t.listed = 1 AND t.account_id IN (SELECT id FROM mail_account WHERE hidden = 0) ORDER BY t.last_at DESC LIMIT ?`, MAIL_LIMITS.windowMax);
+    const have = new Set(listed.map((r) => r.id));
     const out: Row[] = [];
     for (const a of this.accounts()) {
       if (a.hidden) continue;
@@ -951,12 +963,12 @@ export class MailStore {
           `SELECT * FROM mail_thread t WHERE t.account_id = ? AND EXISTS (SELECT 1 FROM json_each(t.roles) WHERE value = 'inbox') ORDER BY t.last_at DESC LIMIT ?`,
           a.id,
           MAIL_LIMITS.windowPerAccount,
-        ),
+        ).filter((r) => !have.has(r.id)),
       );
     }
-    return out
-      .sort((a, b) => b.last_at - a.last_at)
+    return [...listed, ...out.sort((a, b) => b.last_at - a.last_at)]
       .slice(0, MAIL_LIMITS.windowMax)
+      .sort((a, b) => b.last_at - a.last_at)
       .map((r) => this.threadView(r));
   }
 

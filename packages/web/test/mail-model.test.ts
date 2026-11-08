@@ -1,7 +1,7 @@
 /** The page's copy of mail (mail/model.ts): bootstrap, events, lists kept in order, sender lines. */
 import { expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
-import { applyMailBootstrap, applyMailEvent, emptyMail, inList, listThreads, mergePage, senderLine, unreadInbox } from '../src/mail/model.ts';
+import { applyMailBootstrap, applyMailEvent, emptyMail, inList, listThreads, mergePage, senderLine, unreadInbox, updatesFold } from '../src/mail/model.ts';
 
 const ACC = 'acc_a';
 const t = (id: string, lastAt: number, x: Partial<P.MailThreadView> = {}): P.MailThreadView => ({
@@ -115,4 +115,23 @@ test('the outbox (slice 5): from the bootstrap, then the whole list in each even
   // A hub from before slice 5 sends no outbox.
   applyMailBootstrap(s, { access: { state: 'granted', managerUrl: null }, accounts: [account], mailboxes: [], threads: [] });
   expect(s.outbox.size).toBe(0);
+});
+
+test('classification (slice 8): Inbox leaves bulk to its Updates row; People is Inbox from people; the dot counts people', () => {
+  const news = (id: string, at: number, unread = 0, name = 'Rust Weekly') => t(id, at, { class: 'bulk', unread, from: [{ name, email: `${id}@news.example` }] });
+  const s = boot([t('sam', 50, { class: 'personal', unread: 1 }), t('new', 45), news('n1', 40, 1), news('n2', 30, 0, 'GitHub'), news('n3', 20, 1, 'GitHub'), t('sent', 60, { class: 'personal', roles: ['sent'] })]);
+  expect(ids(listThreads(s, 'v:inbox:*'))).toEqual(['sam', 'new']);
+  expect(ids(listThreads(s, 'v:people:*'))).toEqual(['sam']);
+  expect(ids(listThreads(s, 'v:updates:*'))).toEqual(['n1', 'n2', 'n3']);
+  expect(updatesFold(s, 'v:inbox:*')).toEqual({ key: 'v:updates:*', count: 3, unread: 2, names: ['Rust Weekly', 'GitHub'], lastAt: 40 });
+  expect(updatesFold(s, `v:inbox:${ACC}`)!.key).toBe(`v:updates:${ACC}`);
+  expect(updatesFold(s, 'v:people:*')).toBeNull();
+  expect(updatesFold(boot([t('sam', 1, { class: 'personal' })]), 'v:inbox:*')).toBeNull();
+  // Unread from a person, or not classified yet; not the newsletters.
+  expect(unreadInbox(s)).toBe(1);
+  // A thread that changes class moves between them as events come.
+  mergePage(s, 'v:inbox:*', { threads: listThreads(s, 'v:inbox:*'), next: null, complete: true, pending: false }, false);
+  applyMailEvent(s, { t: 'mail.threads', threads: [t('sam', 50, { class: 'bulk', unread: 1 })], removed: [] });
+  expect(ids(listThreads(s, 'v:inbox:*'))).toEqual(['new']);
+  expect(updatesFold(s, 'v:inbox:*')!.count).toBe(4);
 });

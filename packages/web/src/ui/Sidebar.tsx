@@ -16,6 +16,7 @@ import {
   railEntries,
   accountsNeedingYou,
   kindLabel,
+  mailRowsWaiting,
   netName,
   people,
   placeConv,
@@ -30,7 +31,9 @@ import {
   visibleConv,
   type RailEntry,
 } from '../model.ts';
-import { db, go, metaRev, newMessage, prefs, rev, route, setPrefs, type InboxFilter, type Route } from '../state.ts';
+import { db, go, mailRev, metaRev, newMessage, prefs, rev, route, setPrefs, type InboxFilter, type Route } from '../state.ts';
+import { senderLine } from '../mail/model.ts';
+import { personItems } from './mail/Classify.tsx';
 import { RowTyping } from './Typing.tsx';
 import { AccountChip, AccountDots, Avatar, Count, NetBadge, NetGlyph, SourceChip, levelIcon, variantIcon } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
@@ -38,7 +41,8 @@ import { Icon } from './icons.tsx';
 import { phone } from '../phone.ts';
 import { dropPlace, openPlaceMenu, placeLabel } from './Organize.tsx';
 import { Menuable, onMenu, useMenu } from './ContextMenu.tsx';
-import { accountMenu, conversationMenu, folderMenuSpec, personMenu, spaceMenu } from './menus.tsx';
+import { accountMenu, conversationMenu, folderMenuSpec, personMenu, spaceMenu, WhyHere } from './menus.tsx';
+import { groups, type MenuSpec } from './ContextMenu.tsx';
 import { openAbout } from './About.tsx';
 import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapshot } from '../arrange.ts';
 import { inboxSnap, shownInbox } from '../inbox.ts';
@@ -196,6 +200,61 @@ export const ConvRow = memo(function ConvRow({ c, active, onClick, showPlace = t
   );
 });
 
+/** A thread's menu in the inbox: why it is here, where it lives in Mail, and whether it is from a person. */
+function mailRowMenu(t: P.MailThreadView, why?: string[]): MenuSpec {
+  const title = t.subject || '(no subject)';
+  return {
+    label: `${title} actions`,
+    head: <div class="cm-sheet-title">{title}</div>,
+    items: groups(why?.length ? [{ kind: 'row', render: () => <WhyHere reasons={why} /> }] : [], [{ label: 'Open in Mail', icon: 'mail', run: () => go({ view: 'mail', thread: t.id }) }], personItems([t])),
+  };
+}
+
+/**
+ * A thread of mail from a person in the one-list inbox (docs/mail.md, slice 8): their picture with the envelope where
+ * a chat's network badge goes, the subject before the start of the last message, the same ↩ and reasons as a chat.
+ * Opening it opens the reader beside the inbox.
+ */
+export const MailRow = memo(function MailRow({ id, active, why, owedSince }: { id: string; active: boolean; why?: string[]; owedSince?: number | null }) {
+  mailRev.value;
+  metaRev.value;
+  const t = db.mail.threads.get(id);
+  const ctx = useMenu(() => (t ? mailRowMenu(t, why) : null));
+  if (!t) return null;
+  const other = [...t.from].reverse().find((f) => !f.self) ?? t.from[t.from.length - 1];
+  const person = other?.personId ? db.persons.get(other.personId) : undefined;
+  const title = t.participants <= 2 ? (person?.name ?? other?.name ?? other?.email ?? '?') : senderLine(t);
+  return (
+    <button
+      class={`row conv-row inbox-mail-row ${active ? 'active' : ''} ${t.unread ? 'unread' : ''}`}
+      onClick={opener(`inbox:${id}`, () => go({ view: 'inbox', conv: id }))}
+      title={why?.length ? why.join('\n') : undefined}
+      data-row={id}
+      {...ctx}
+    >
+      <span class="row-avatar">
+        <Avatar id={person?.id ?? other?.email ?? id} name={person?.name ?? other?.name ?? other?.email ?? title} url={person?.avatar} size={36} square={t.participants > 2} network="email" />
+      </span>
+      <span class="row-main">
+        <span class="row-top">
+          <span class="row-title">{title}</span>
+          <span class="row-time">
+            <Ago ts={t.lastAt} />
+          </span>
+        </span>
+        <span class="row-bottom">
+          <span class="row-preview">
+            <span class="row-subject">{t.subject || '(no subject)'}</span>
+            {t.preview ? ` — ${t.preview}` : ''}
+          </span>
+          {owedSince && !t.unread ? <Owed at={owedSince} /> : null}
+          <Count n={t.unread} />
+        </span>
+      </span>
+    </button>
+  );
+});
+
 function SectionHead({ id, label, count, actions }: { id: string; label: string; count?: number; actions?: any }) {
   const collapsed = !!prefs.value.collapsed[id];
   return (
@@ -222,11 +281,13 @@ const FILTERS: { id: InboxFilter; label: string }[] = [
 
 /**
  * One list: DMs, group chats, rooms outside a space and notes to self, plus anything else while it has something
- * for you, ranked by how likely you are to want each now (docs/inbox.md).
+ * for you, and mail from people (docs/mail.md), ranked by how likely you are to want each now (docs/inbox.md).
  */
 export function InboxSidebar({ activeConv }: { activeConv?: string }) {
   if (counting) rendered('InboxSidebar');
   rev.value;
+  // A mail thread the hub listed whose view has not come yet: the mail event that brings it draws the list again.
+  if (mailRowsWaiting()) mailRev.value;
   const snap = inboxSnap.value;
   const accounts = accountsNeedingYou();
   const filter = FILTERS.some((f) => f.id === prefs.value.inboxFilter) ? prefs.value.inboxFilter : 'all';
@@ -283,9 +344,13 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
               ))}
           </>
         )}
-        {rows.map((r) => (
-          <ConvRow key={r.conv.id} c={r.conv} active={r.conv.id === activeConv} onClick={opener(`inbox:${r.conv.id}`, () => go({ view: 'inbox', conv: r.conv.id }))} why={r.reasons} owedSince={r.needs ? r.owedSince : null} />
-        ))}
+        {rows.map((r) =>
+          r.kind === 'mail' ? (
+            <MailRow key={r.key} id={r.key} active={r.key === activeConv} why={r.reasons} owedSince={r.needs ? r.owedSince : null} />
+          ) : (
+            <ConvRow key={r.conv.id} c={r.conv} active={r.conv.id === activeConv} onClick={opener(`inbox:${r.conv.id}`, () => go({ view: 'inbox', conv: r.conv.id }))} why={r.reasons} owedSince={r.needs ? r.owedSince : null} />
+          ),
+        )}
         {!rows.length && <p class="inbox-empty">{filter === 'unread' ? 'Nothing unread.' : filter === 'all' ? 'No conversations yet.' : 'None here.'}</p>}
       </div>
     </div>

@@ -271,7 +271,7 @@ describe('the page', () => {
     expect(page.json.threads.map((t: P.MailThreadView) => t.subject)).toEqual(['Routed']);
     expect((await get(`/api/mail/threads/${page.json.threads[0].id}`)).json.messages).toHaveLength(1);
     expect((await get('/api/mail/threads/mth_nope')).status).toBe(404);
-    expect((await get('/api/mail/threads?list=v:people:*')).status).toBe(404);
+    expect((await get('/api/mail/threads?list=v:nonsense:*')).status).toBe(404);
     expect((await get(`/api/mail/accounts/${ACC}`, 'DELETE')).status).toBe(409);
     expect(await hub!.route(new Request('http://hub/api/mail/nothing'), new URL('http://hub/api/mail/nothing'))).toBeNull();
   });

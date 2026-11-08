@@ -62,9 +62,14 @@ export class Bodies {
     }
   }
 
-  /** The newest personal mail of the last days: the bodies of those not here. */
+  /**
+   * The newest personal mail of the last days: the bodies of those not here. Only once every followed mailbox reaches
+   * back past those days (§3.3: step 6 after step 5): before, mail still on its way pushes the newest out, and each
+   * pass would fetch more than the cap. The next run of pages asks again.
+   */
   recent(accountId: string) {
     const since = Date.now() - MAIL_LIMITS.prefetchDays * DAY;
+    if (this.hub.store.one(`SELECT 1 FROM mailbox WHERE account_id = ? AND follow = 'always' AND complete = 0 AND (horizon IS NULL OR horizon > ?) LIMIT 1`, accountId, since)) return;
     const rows = this.hub.store.all<{ id: string; from_addr: string | null }>(
       `SELECT m.id, m.from_addr FROM mail_message m WHERE m.account_id = ? AND m.received_at >= ? AND ${PERSONAL} ORDER BY m.received_at DESC LIMIT ?`,
       accountId,
@@ -88,6 +93,12 @@ export class Bodies {
     }, 3_000);
     timer.unref?.();
     this.soon.set(accountId, timer);
+  }
+
+  /** The hub stopped (MailHub.stopping). */
+  stop() {
+    for (const t of this.soon.values()) clearTimeout(t);
+    this.soon.clear();
   }
 
   /** New mail, as it arrives: the personal ones' bodies. */

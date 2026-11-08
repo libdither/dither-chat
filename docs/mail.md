@@ -23,7 +23,7 @@ Email beside your chats, through dither-accounts' `mail` interface. The design, 
 - **Offline**: the page keeps the threads it was showing and the last threads and bodies it opened, so they show
   before the hub answers.
 
-Not yet: search (7), mail in the one-list inbox (8), notifications (9). Big mailboxes (older mail, other folders, bodies
+Not yet: search (7), notifications (9). Big mailboxes (older mail, other folders, bodies
 ahead) have a section of their own below.
 
 ## People (slice 6)
@@ -187,6 +187,48 @@ As built, where it differs from §7: "Always from" is its own table, `mail_sende
 Moved into Trash or Junk, a message keeps its new place here, but those mailboxes are not kept up by the hub (slice 2
 follows mailboxes you open), so what happens to it there later reaches the hub only once they are.
 
+## From a person, and mail in the inbox (slice 8)
+
+- **Each message gets a class** by the first of §4's rules that matches (`hub/src/mail/classify.ts`): your override;
+  yours; in a thread you wrote in; from someone you wrote to (or who wrote in a thread of yours); from someone you
+  merged with a chat contact or know by another address; in Junk; list or machine headers (List-Id,
+  List-Unsubscribe, Precedence bulk/list/junk, Auto-Submitted); a Gmail category label; an automated address
+  (no-reply, notifications, …); more than 10 recipients with you in neither To nor Cc; anything else is from a
+  person nobody knows yet (`unknown`). People come before the bulk rules, so a newsletter's author you write to is a
+  person. A thread is from a person if any message in it is. The rule that decided is kept (`class_why`).
+- **Mail → Inbox** leaves newsletters and notifications out: they fold into one **Updates** row ("Updates · 3 new",
+  who from), where its newest sorts; it opens the Updates view. **People** is the rest of Inbox, from people.
+- **"Not a person"** on a thread (its menu in Mail, the reader's ⋯, its row in the inbox) sends the thread and its
+  latest sender to Updates, from now on. **"This is a person"** brings a sender back, and is offered for Updates and
+  for a sender nobody knows. Nothing moves on the server: Updates is a view of Inbox. The hub emits `override`.
+- **The one-list inbox** lists a thread from a person in Inbox, not muted, that is unread (last message within 30
+  days), or owes a reply (to a message within 14 days), or had mail in the last week, or that you opened in the last
+  two days (`MAIL_INBOX` in `hub/src/mail/attention.ts`). Archiving it takes it out, from here or another mail app.
+  Mail from a sender nobody knows stays in Mail until triage rates it Active or above (§14 Q4: slice 9).
+- **Its order** is the chats' formula (`attention.ts`): you and one other is a DM, else a group of everyone on it; you
+  in To is a mention, a reply to yours replies to you. How you answer someone counts all their mail threads and, once
+  you merged them with a chat contact, their chats too, and the reverse: "You usually reply to Sam within 30
+  minutes; unanswered for 2 hours" reads the same in both. An answer sent from here pays what you owe at once,
+  before Sent's copy comes. Until the learned order learns mail (slice 10), a mail row keeps its formula points.
+- **A mail row** has the person's picture with the envelope where a chat's network goes, the subject before the start
+  of the last message, the same ↩ and reasons on hover, and a menu (why, Open in Mail, Not a person). All and Unread
+  include mail; People includes threads between you and one other, Groups the rest. Tapping it opens the reader
+  beside the inbox (`#/inbox/c/<thread>`).
+
+How: `mail_message.class`/`class_why` and `mail_thread.class` are written by `MailStore.recomputed`'s hook in the
+ingest's transaction; a sender who becomes known (you wrote to them, a merge) has their other threads classified again
+a moment later; mail from before this slice is classified in the background. Your overrides are `mail_override`
+(`schema-inbox.sql`; `PUT /api/mail/senders/:address {override: person|bulk|null}`, `PUT /api/mail/threads/:id/person
+{person: true|false|null}`). `MailAttention` (`hub/src/mail/attention.ts`) folds each thread from a person from the
+start when it changes (`mail_feature`, `mail_author_feature`) and is an `Attention` source: its views are
+`AttentionView`s with `kind: 'mail'`, in the same `attention` events, bootstrap and sync as the chats'.
+`mail_thread.listed` follows, and the bootstrap's window carries every listed thread. The page's inbox rows are
+`{ kind: 'conv' } | { kind: 'mail' }` (`web/src/model.ts`). With no mail account the inbox is the chats' as before.
+Opening a mail row is in the activity log as a stay on the thread's id (`mth_…`): the learned order skips it for now
+(no chat candidate has that id) and slice 10 learns from it.
+Tests: `hub/test/mail-classify.test.ts`, `mail-attention.test.ts`, `web/test/inbox-mail.test.ts`; `verify-inbox.ts`
+(mixed rows) and `verify-mail.ts` (Updates and People on a phone and a desktop in both themes, Not a person).
+
 ## Setting it up
 
 1. The hub runs with `DITHER_ACCOUNTS_URL` (docs/accounts.md). Set `DITHER_ACCOUNTS_PUBLIC_URL` too, for the links to
@@ -218,8 +260,9 @@ plus all of Inbox), `DITHER_MAIL_MAX` (150,000 summaries an account), `DITHER_MA
   arrive.
 - **Other folders** (Junk, your own) are listed the first time you open one: its first page at once, the rest as you
   scroll. From then on the hub keeps it up like the others, every minute while a page shows it.
-- **Bodies ahead**: the newest 300 personal messages of the last 14 days, new personal mail as it arrives, and the
-  first 20 rows of each list you open, so their previews show. "Personal" is the message's class once slice 8 sets it;
+- **Bodies ahead**: the newest 300 personal messages of the last 14 days (once the sync reaches back past those 14
+  days in every mailbox it follows, so mail still on its way does not push more in), new personal mail as it arrives,
+  and the first 20 rows of each list you open, so their previews show. "Personal" is the message's class once slice 8 sets it;
   until then, mail to you or Cc'd to you, without list headers, from an address that does not look automated.
 - **The body cache**: 500 MB (`DITHER_MAIL_CACHE_MB`); past it, the least recently read go first, down to 90%. Starred
   mail stays, and so does a body an outbox item needs (`mail_body.keep = 1`). A body over 2 MB is kept only while it is
@@ -340,7 +383,9 @@ others were asked, because an IMAP move is a removal there and an addition elsew
   server refused it. Changes made in other mail apps arrive through sync instead, as `mail.threads` with new `roles`
   and `unread`.
 - **Writes**: `mailOps(hub)` (`hub/src/mail/ops.ts`) has `flag`, `move` and `settings()`; a slice that files mail
-  itself (Not a person → Updates) calls these rather than writing flags or locations.
+  itself calls these rather than writing flags or locations. (Not a person files nothing: Updates is a view.)
+- **Stopping**: `MailHub.stopping` takes what a slice stops with the hub (its timers and background steps): slice 2's
+  sweeps and prefetch timers and slice 8's background steps are there, so nothing touches the database after `stop()`.
 - **Tables**: a slice's own go in `hub/src/mail/schema-<name>.sql`, loaded after schema.sql.
 - **The page**: `web/src/ui/mail/slots.tsx` has `BODY_RENDERERS` (the first that answers draws a body; `TextBody` is
   last), `MESSAGE_ACTIONS` (under a message), `THREAD_ACTIONS` (the reader's header or bottom bar) and `ROW_WRAPPERS`
@@ -356,5 +401,12 @@ others were asked, because an IMAP move is a removal there and an addition elsew
   images, style sheets or script); slice 5's `quotedHtml` (compose.ts) uses it.
 - **Files and touches on the page**: `files.ts` `FileSource` and `openFileSource` open any file in the viewers;
   `Pager.ts` `forwardTouches(frame)` hands a same-origin frame's touches to the pager.
+- **Classification and the inbox** (slice 8): `mailClassifier(hub)` (`hub/src/mail/classify.ts`): `changed` (after
+  a thread's class or `unknown` changed), `person()`/`setSender()`/`setThread()` for overrides, and the `override`
+  event ("Not a person" is a vote down). `mailAttention(hub)` (`hub/src/mail/attention.ts`): `triage(threadId)` is
+  where triage's rating lets a sender nobody knows into the inbox (Active or above; no until slice 9),
+  `triageFacts(messageIds)` gives the fold triage's pushes and questions, and `isListed`/`input`/`view` read a
+  thread's listing and attention. A thread's class is `mail_thread.class` (`MailThreadView.class`, `unknown`), its
+  owed time `MailThreadView.owedSince`, its inbox score `Attention.view(<thread id>)`.
 - `protocol/src/mail-iface.ts` is a copy of dither-accounts' interface types; `bun scripts/accounts-sync.ts --check`
   says when it differs.

@@ -9,6 +9,8 @@
  *   - the reader: the latest and unread messages open, the quote folded behind ···, read here after a second;
  *   - an HTML-only message shows (its HTML in the frame, or its text part), and none of its script;
  *   - the Accounts screen's Mail group;
+ *   - from a person (slice 8): Inbox folds newsletters and notifications into one Updates row that opens Updates;
+ *     People; on a desktop, "Not a person" and "This is a person" from a row's menu.
  *   - filing (slice 4): read in view reaches the server; on a phone a swipe right archives and Undo brings it back,
  *     a swipe left marks unread and read, a long press picks threads and their bar stars them; on a desktop the
  *     reader's star and archive, the `e` key, a row's right-click menu, Ctrl-click picking, and the read setting.
@@ -46,11 +48,15 @@ const boot = (await fetch(`${base}/api/bootstrap`).then((r) => r.json())) as any
 if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
 if (boot.mail?.access?.state !== 'granted') throw new Error('this demo hub has no mail');
 // A hub just started may still be on its first page (a slow server: --big).
-let threads: any[] = [];
-for (let i = 0; i < 60 && !threads.some((t) => t.subject.includes('Lease renewal')); i++) {
+const page1 = async (list: string) => ((await fetch(`${base}/api/mail/threads?list=${encodeURIComponent(list)}&limit=100`).then((r) => r.json())) as any).threads as any[];
+// Inbox leaves mail not from a person to its Updates row (slice 8).
+let inboxThreads: any[] = [];
+for (let i = 0; i < 60 && !inboxThreads.some((t) => t.subject.includes('Lease renewal')); i++) {
   if (i) await Bun.sleep(500);
-  threads = ((await fetch(`${base}/api/mail/threads?list=v:inbox:*&limit=100`).then((r) => r.json())) as any).threads;
+  inboxThreads = await page1('v:inbox:*');
 }
+const updateThreads = await page1('v:updates:*');
+const threads = [...inboxThreads, ...updateThreads];
 const byTitle = (s: string) => threads.find((t) => t.subject.includes(s))!;
 const dinner = byTitle('Dinner on Friday');
 const shipped = byTitle('Your order has shipped');
@@ -162,7 +168,7 @@ async function phone(themeName: string, first: boolean) {
   await tap(await at('.rail .rail-btn', `el => !!el.querySelector('.rail-mail')`));
   await page.until(`document.querySelectorAll('.sidebar .mail-row').length >= 5`, 10000);
   check(`${tag}: the Mail list shows`, (await hash()).startsWith('#/mail'), await hash());
-  check(`${tag}: rows are in the hub's order`, (await page.eval<string[]>(`[...document.querySelectorAll('.sidebar .mail-row')].map((r) => r.dataset.thread)`)).slice(0, 5).join() === threads.slice(0, 5).map((t) => t.id).join());
+  check(`${tag}: rows are in the hub's order`, (await page.eval<string[]>(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].map((r) => r.dataset.thread)`)).slice(0, 5).join() === inboxThreads.slice(0, 5).map((t) => t.id).join());
   check(`${tag}: no sideways overflow: list`, !(await overflow()).length, await overflow());
   await shot(`mail-${tag.replace(' ', '-')}-list`);
 
@@ -178,7 +184,7 @@ async function phone(themeName: string, first: boolean) {
     check(`${tag}: ··· shows the quote`, await page.eval(`(document.querySelector('.mail-reader .mail-quote')?.textContent ?? '').includes('Should I book a table')`));
     // Read here after a second in view.
     await Bun.sleep(1600);
-    const t = ((await fetch(`${base}/api/mail/threads?list=v:inbox:*&limit=100`).then((r) => r.json())) as any).threads.find((x: any) => x.id === dinner.id);
+    const t = (await page1('v:inbox:*')).find((x: any) => x.id === dinner.id);
     check(`${tag}: read here after a second in view`, t?.unread === 0, t?.unread);
   }
   check(`${tag}: no sideways overflow: reader`, !(await overflowThrough('.mail-reader-scroll')).length, await overflowThrough('.mail-reader-scroll'));
@@ -349,9 +355,76 @@ async function composerDesktop(themeName: string, full: boolean) {
   check(`${tag}: discarding it removes the draft`, !(await has('.mail-drafts-line')));
 }
 
+// ------------------------------------------------------------------ from a person (slice 8)
+
+const UPDATES = `#/mail/l/${encodeURIComponent('v:updates:*')}`;
+
+/**
+ * Inbox folds the newsletters and notifications into one Updates row, which opens the Updates view; People holds the
+ * rest; a thread's menu says "Not a person" (to Updates) or "This is a person" (back), on Theo's thread, which no
+ * other run uses.
+ */
+async function classification(themeName: string, onPhone: boolean) {
+  const tag = `${onPhone ? 'phone' : 'desktop'} ${themeName}: from a person`;
+  const go = onPhone ? tap : click;
+  if (onPhone) await page.size(390, 844, true);
+  else await page.size(1400, 900);
+  await theme(themeName, '#/mail');
+  await page.until(`!!document.querySelector('.sidebar .mail-updates-row')`, 15000);
+  const shownIds = () => page.eval<string[]>(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].map((r) => r.dataset.thread)`);
+  const bulk = new Set(updateThreads.map((t) => t.id));
+  check(`${tag}: Inbox shows no newsletters or notifications`, !(await shownIds()).some((id) => bulk.has(id)));
+  const fold = await page.eval<string>(`document.querySelector('.sidebar .mail-updates-row').textContent`);
+  check(`${tag}: one Updates row says how many are new, and from whom`, /Updates\d+ new/.test(fold) && /This Week in Rust|GitHub|Maple Street Library/.test(fold), fold);
+  check(`${tag}: no sideways overflow: Inbox with its Updates row`, !(await overflow()).length, await overflow());
+  await shot(`mail-${onPhone ? 'phone' : 'desktop'}-${themeName}-updates-row`);
+  await go(await at('.sidebar .mail-updates-row'));
+  await page.until(`location.hash.includes('v%3Aupdates')`, 5000);
+  await page.until(`document.querySelectorAll('.sidebar .mail-row[data-thread]').length >= 5`, 10000);
+  const upd = await shownIds();
+  check(`${tag}: it opens Updates: the mail not from a person`, upd.length >= 5 && upd.every((id) => bulk.has(id)), upd.length);
+  check(`${tag}: Updates has its chip while you are in it`, await has('.sidebar .mail-chips .chip-btn.on'));
+  check(`${tag}: no sideways overflow: Updates`, !(await overflow()).length, await overflow());
+  await shot(`mail-${onPhone ? 'phone' : 'desktop'}-${themeName}-updates`);
+  await go(await at('.sidebar .mail-chips .chip-btn', `el => el.textContent === 'People'`));
+  await page.until(`location.hash.includes('v%3Apeople')`, 5000);
+  await Bun.sleep(600);
+  const ppl = await shownIds();
+  check(`${tag}: People: Dinner and the lease, no newsletters`, ppl.includes(dinner.id) && ppl.includes(lease.id) && !ppl.some((id) => bulk.has(id)), ppl.length);
+  if (onPhone) return;
+  // Theo's climbing mail: nobody knows him (rule 11). Not a person, then a person after all.
+  const climb = byTitle('Climbing on Sunday');
+  const sel = `.sidebar .mail-row[data-thread="${climb.id}"]`;
+  const menu = async () => {
+    const [x, y] = await at(sel);
+    for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await page.send('Input.dispatchMouseEvent', { type, x, y, button: type === 'mouseMoved' ? 'none' : 'right', buttons: type === 'mousePressed' ? 2 : 0, clickCount: 1 });
+    await Bun.sleep(300);
+    return page.eval<string>(`document.querySelector('.cm')?.textContent ?? ''`);
+  };
+  const pick = async (label: string) => {
+    await click(await at('.cm .cm-item', `el => el.textContent.includes(${JSON.stringify(label)})`));
+    await Bun.sleep(600);
+  };
+  const classOf = async () => ((await fetch(`${base}/api/mail/threads/${climb.id}`).then((r) => r.json())) as any).thread;
+  check(`${tag}: a sender nobody knows is in People, marked unknown`, (await shownIds()).includes(climb.id) && (await classOf()).unknown === true);
+  const m = await menu();
+  check(`${tag}: its menu offers both`, m.includes('This is a person') && m.includes('Not a person'), m);
+  await pick('Not a person');
+  check(`${tag}: "Not a person" sends it to Updates`, (await classOf()).class === 'bulk' && !(await has(sel)));
+  await page.eval(`location.hash = ${JSON.stringify(UPDATES)}`);
+  await page.until(`!!document.querySelector(${JSON.stringify(sel)})`, 5000);
+  check(`${tag}: and it is in Updates`, await has(sel));
+  check(`${tag}: there its menu says "This is a person"`, (await menu()).includes('This is a person'));
+  await pick('This is a person');
+  const back = await classOf();
+  check(`${tag}: "This is a person" brings it back, no longer unknown`, back.class === 'personal' && back.unknown === false, back);
+  // As it was, for the next run.
+  await fetch(`${base}/api/mail/threads/${climb.id}/person`, { method: 'PUT', headers: { 'content-type': 'application/json', origin: base }, body: JSON.stringify({ person: null }) });
+}
+
 // ------------------------------------------------------------------ filing (slice 4)
 
-/** Slice 4 on the library's weekly digests (read, in Inbox), a pair per run, so the runs do not meet. */
+/** Slice 4 on the library's weekly digests (read, in Inbox's Updates), a pair per run, so the runs do not meet. */
 async function filing() {
   const hubThread = async (id: string) => (await fetch(`${base}/api/mail/threads/${id}`).then((r) => r.json())) as { thread: any; messages: any[] };
   const settled = (id: string, f: (t: any) => boolean, what: string) =>
@@ -404,7 +477,7 @@ async function filing() {
     const a = week(n);
     const b = week(n - 1);
     await page.size(390, 844, true);
-    await theme(themeName, '#/mail');
+    await theme(themeName, UPDATES);
     await page.until(`document.querySelectorAll('.sidebar .mail-row').length >= 5`, 15000);
     await swipe(row(a.id), 1);
     await page.until(`!document.querySelector(${JSON.stringify(row(a.id))})`, 5000).catch(() => {});
@@ -439,7 +512,7 @@ async function filing() {
     const c = week(n);
     const d = week(n - 1);
     await page.size(1400, 900);
-    await theme(themeName, '#/mail');
+    await theme(themeName, UPDATES);
     await page.until(`document.querySelectorAll('.sidebar .mail-row').length >= 5`, 15000);
     await click(await at(row(c.id)));
     await page.until(`!!document.querySelector('.mail-reader .mail-msg.open .mail-text')`, 15000);
@@ -714,6 +787,10 @@ try {
   await phone('dither-light', false);
   await desktop('dither-dark');
   await desktop('dither-light');
+  await classification('dither-dark', true);
+  await classification('dither-light', true);
+  await classification('dither-light', false);
+  await classification('dither-dark', false);
   await filing();
   if (withHtml) await htmlChecks();
   // Last: it sends, which changes the demo world.

@@ -271,7 +271,7 @@ const ruleOf = (scope: P.NotifyScope, id: string) => db.rules.find((r) => r.scop
 // ------------------------------------------------------------------ conversations
 
 /** Why a conversation sits where it does in the inbox: not an action, so the keys pass over it. */
-function WhyHere({ reasons }: { reasons: string[] }) {
+export function WhyHere({ reasons }: { reasons: string[] }) {
   return (
     <div class="cm-why">
       <span class="cm-why-head">Why it's here</span>

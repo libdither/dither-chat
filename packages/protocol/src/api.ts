@@ -787,7 +787,10 @@ export interface Bootstrap {
  * has an unread mention or pinged you.
  */
 export interface AttentionView {
+  /** A conversation's id, or a mail thread's (`mth_`) when `kind` is 'mail'. */
   id: string;
+  /** A mail thread in the one-list inbox (docs/mail.md); a conversation without it. */
+  kind?: 'mail';
   /** The inbox's order: higher first. Roughly 0..100; muted places sit below 0. */
   score: number;
   /** It needs you: something to answer or read, or a conversation going on. Not where you were. */

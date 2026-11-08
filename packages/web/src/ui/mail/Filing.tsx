@@ -16,6 +16,7 @@ import { connected, db, go, mailRev, route } from '../../state.ts';
 import { groups, onMenu, openMenu, type MenuEntry, type MenuSpec } from '../ContextMenu.tsx';
 import { Icon } from '../icons.tsx';
 import type { MessageAction, RowWrapper, ThreadAction } from './slots.tsx';
+import { personItems } from './Classify.tsx';
 
 const acc = (t: P.MailThreadView) => db.mail.accounts.get(t.accountId);
 const inInbox = (t: P.MailThreadView) => t.roles.includes('inbox');
@@ -62,6 +63,8 @@ export function threadMenu(ts: P.MailThreadView[], from: 'row' | 'reader' | 'sel
       !ts.every((t) => only(t, 'junk')) && ts.every((t) => canMove(t, 'junk')) && { label: 'Mark as junk', icon: 'alert', hint: '!', run: () => file(ts, 'junk') },
       !ts.every((t) => only(t, 'trash')) && ts.every((t) => canMove(t, 'trash')) && { label: 'Move to the trash', icon: 'trash', hint: '#', danger: true, run: () => file(ts, 'trash') },
     ],
+    // Slice 8: from a person or not.
+    personItems(ts),
     [from === 'row' && { label: selected.value.has(ts[0].id) ? 'Unselect' : 'Select', icon: 'check', run: () => toggleSelected(ts[0].id) }],
   ) as MenuEntry[];
   if (!items.length) return null;
@@ -84,7 +87,7 @@ export const FILING_THREAD_ACTIONS: ThreadAction[] = [
     label: 'More',
     icon: 'more',
     place: 'head',
-    show: (_t, a) => canWrite(a),
+    show: (t, a) => canWrite(a) || personItems([t]).length > 0,
     run: (t) => openMenu(pointAt, threadMenu([db.mail.threads.get(t.id) ?? t], 'reader')),
   },
 ];
