@@ -211,9 +211,11 @@ export const ABOUT_RULES: Record<Network, AboutRules> = {
     conversation: ['name', 'avatar'],
     space: [],
   },
+  // XChat groups: name, picture and a description of up to 500 characters (X's web client).
   x: {
-    conversation: ['name', 'avatar'],
+    conversation: ['name', 'avatar', 'topic'],
     space: [],
+    topicMax: 500,
   },
 };
 

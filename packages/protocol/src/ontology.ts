@@ -122,7 +122,8 @@ export const REACTION_RULES: Record<Network, ReactionRules> = {
   // One reaction each, any emoji.
   messenger: { exclusive: true, freeText: false },
   instagram: { exclusive: true, freeText: false },
-  x: { exclusive: true, freeText: false },
+  // XChat keeps a set per person (its reaction table's key includes the emoji); any emoji.
+  x: { exclusive: false, freeText: false },
 };
 
 export function discordEmojiUrl(id: string, animated?: boolean): string {
