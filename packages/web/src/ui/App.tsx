@@ -41,6 +41,8 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
     case 'triage':
       return { pane: <InboxBoard /> };
     case 'inbox':
+      // A mail thread from the inbox opens in the reader, beside the inbox (docs/mail.md).
+      if (r.conv?.startsWith('mth_')) return { pane: <MailCenterLazy thread={r.conv} onBack={back} /> };
       return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <InboxBoard /> };
     case 'people':
       if (r.graph) return { pane: <GraphPane onBack={back} /> };

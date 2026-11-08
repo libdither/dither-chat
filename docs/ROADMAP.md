@@ -59,7 +59,8 @@ Built in slices from [mail-design.md](mail-design.md) (its §12); what works now
 | Read on the server after a second, star, archive, move (slice 4) | H | M | done | Shown at once, pending until the server answers; batches of 1000; 404/403/501 handled; waits through the manager going away and a restart. Swipes, long-press selection, Undo, keys; "only when I mark it" in Settings. Verified on the fake and against dither-accounts' Dovecot, not a real mailbox |
 | Sending, replies, drafts, undo (slice 5) | H | M | done | Composer, reply, reply all, forward with files, drafts on the hub, 10 s Undo, retries; a 501 turns sending off with the draft kept (Proton today). Verified through dither-accounts' SMTP sink and the fake, not a real account |
 | People: email identities and persons, merge search and hint, a profile's Mail card, all mail with someone (slice 6) | H | M | done | Never merged by name. Verified against the fake server and the demo world, not a real mailbox |
-| Search, mail in the one-list inbox, notifications (slices 7-9) | H | M | later | Unknown senders reach the inbox only at Active or above; slice 8 asks `mailPeople(hub).sender()` who is known |
+| Classification and mail in the one-list inbox (slice 8) | H | M | done | §4's rules with your overrides; Inbox folds bulk into Updates, People view; threads from people rank among the chats by the same formula, tallies summed with chat. Verified on the fake and the demo world, not a real mailbox |
+| Search, triage and notifications (slices 7, 9) | H | M | later | Unknown senders reach the inbox only at Active or above: slice 9 plugs its rating into `mailAttention(hub).triage` |
 
 ## Messaging
 

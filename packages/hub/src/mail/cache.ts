@@ -63,9 +63,19 @@ export class BodyCache {
     if (this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = null;
-      this.sweep();
+      try {
+        this.sweep();
+      } catch {
+        // The database closed: the hub is stopping.
+      }
     }, 5_000);
     this.timer.unref?.();
+  }
+
+  /** The hub stopped (MailHub.stopping). */
+  stop() {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
   }
 
   sweep(): { bodies: string[]; text: number } {

@@ -243,13 +243,14 @@ describe('lists', () => {
     expect(st.listThreads('v:inbox:*', p2.next, 3)!.complete).toBe(true);
   });
 
-  test('sent, unread, starred, one mailbox, one account; unknown lists and later views are refused', () => {
+  test('sent, unread, starred, one mailbox, one account; unknown lists are refused', () => {
     expect(st.listThreads(`v:sent:${ACC}`, null, 50)!.threads.map((t) => t.subject)).toEqual(['Sent only']);
     expect(st.listThreads('v:unread:*', null, 50)!.threads.map((t) => t.subject)).toEqual(['Topic number 5', 'Topic number 3', 'Topic number 1']);
     expect(st.listThreads('v:starred:*', null, 50)!.threads.map((t) => t.subject)).toEqual(['Topic number 3']);
     expect(st.listThreads(`mb:${box('Sent').id}`, null, 50)!.threads).toHaveLength(1);
     expect(st.listThreads('v:inbox:acc_other', null, 50)!.threads).toHaveLength(0);
-    expect(st.listThreads('v:people:*', null, 50)).toBeNull();
+    // Nothing is classified without the hub's classifier (slice 8: mail-classify.test.ts).
+    expect(st.listThreads('v:people:*', null, 50)!.threads).toEqual([]);
     expect(st.listThreads('bogus', null, 50)).toBeNull();
   });
 

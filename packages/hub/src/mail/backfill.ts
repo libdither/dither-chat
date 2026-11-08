@@ -424,6 +424,11 @@ export const bigRoutes = (hub: MailHub): [] => {
     }
   }, 3_600_000);
   sweep.unref?.();
+  hub.stopping.push(() => {
+    clearInterval(sweep);
+    cache.stop();
+    bodies.stop();
+  });
   return [];
 };
 

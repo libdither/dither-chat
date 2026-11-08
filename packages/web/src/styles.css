@@ -10612,3 +10612,23 @@ button.msg-edited.link:hover {
     left: 0;
   }
 }
+
+/* Mail in the one-list inbox and Inbox's Updates row (slice 8) */
+.mail-updates-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--accent) 16%, var(--bg-raised));
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+}
+.mail-updates-row .row-preview {
+  color: var(--text-faint);
+}
+.inbox-mail-row .row-subject {
+  color: var(--text);
+}
+.inbox-mail-row:not(.unread) .row-subject {
+  color: var(--text-muted);
+}

@@ -22,6 +22,9 @@ const timelineRevs = new Map<string, Signal<number>>();
 let version = 0;
 /** Moves on every change to `db` at once, before the signals do: memos keyed on it are never stale. */
 export const dataVersion = () => version;
+let mailVersion = 0;
+/** The same for mail (`mailChanged`): the inbox's mail rows are memoized on both. */
+export const mailDataVersion = () => mailVersion;
 
 export function timelineRev(key: string): Signal<number> {
   let s = timelineRevs.get(key);
@@ -42,6 +45,7 @@ export function changed(kind: 'list' | 'meta') {
 
 /** Something in mail changed (db.mail, or what mail/api.ts loaded). */
 export function mailChanged() {
+  mailVersion++;
   dirty.mail = true;
   schedule();
 }

@@ -2,7 +2,9 @@
  * The one ranked inbox (docs/inbox.md), end to end against a demo hub in headless Chromium: one list in the hub's
  * order with muted places last, reasons on hover and in the row's menu, the chat you were just in near the top once
  * you leave it, no reshuffle while the pointer is on the list and a new order once it leaves, the filter chips, the
- * switcher (Ctrl+K) ranked the same way, and old Groups links.
+ * switcher (Ctrl+K) ranked the same way, and old Groups links. Mixed rows (docs/mail.md, slice 8): the demo's mail
+ * from people ranks among the chats, a mail row says why, opens the reader beside the inbox, and leaves when archived;
+ * newsletters and senders nobody knows stay out.
  *
  *   bun scripts/verify-inbox.ts http://127.0.0.1:8472 [/tmp/shots]
  * The hub must be a fresh demo hub (--demo) with its own data dir: this sends a message.
@@ -20,6 +22,10 @@ const boot = (await fetch(`${hub}/api/bootstrap`).then((r) => r.json())) as any;
 if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
 if (!boot.attention) throw new Error('this hub does not rank the inbox');
 const shapeOf = new Map<string, string>(boot.conversations.map((c: any) => [c.id, c.shape]));
+// Mail threads in the inbox (slice 8): you and one other is the chips' "direct".
+const mailThreads = new Map<string, any>((boot.mail?.threads ?? []).map((t: any) => [t.id, t]));
+for (const t of mailThreads.values()) shapeOf.set(t.id, t.participants <= 2 ? 'direct' : 'group');
+const isMail = (k: string) => k.startsWith('mth_');
 const peerOf = new Map<string, string>(boot.conversations.filter((c: any) => c.shape === 'direct' && c.peerPersonId).map((c: any) => [c.id, c.peerPersonId]));
 // Switcher.tsx needs a browser; its name match is small enough to read from source (as packages/web/test/switcher.test.ts).
 const src = await Bun.file(resolve(import.meta.dir, '../packages/web/src/ui/Switcher.tsx')).text();
@@ -67,6 +73,65 @@ const disorder = (keys: string[], scores: Map<string, any>) => {
   return i < 0 ? null : { at: i, scores: keys.slice(Math.max(0, i - 1), i + 1).map((k) => [scores.get(k)?.score ?? null, shapeOf.get(k)]) };
 };
 const away = () => mouse('mouseMoved', 900, 450);
+
+/** Mail from people among the chats (slice 8). Last but one: it archives a thread. */
+async function mixed() {
+  await p.eval(`location.hash = '#/inbox'`);
+  await away();
+  await Bun.sleep(1500);
+  const scores = await attention();
+  const s = await shown();
+  const mail = s.keys.filter(isMail);
+  const subjectOf = (k: string) => mailThreads.get(k)?.subject ?? '';
+  check(mail.length >= 2 && s.keys.some((k) => !isMail(k)), 'mixed rows: mail threads among the chats', mail.map(subjectOf));
+  check(inOrder(s.keys, scores), 'mixed rows in the hub’s order', disorder(s.keys, scores) ?? '');
+  check(mail.every((k) => scores.get(k)?.kind === 'mail'), 'each mail row is the hub’s mail attention');
+  // Only mail from people: the newsletters, the notification and the sender nobody knows stay in Mail.
+  const subjects = mail.map(subjectOf);
+  check(!subjects.some((x) => /Week in Rust|libdither|New arrivals|shipped|Climbing/i.test(x)), 'no newsletters, notifications or unknown senders', subjects);
+  const sam = mail.find((k) => /Dinner/.test(subjectOf(k)));
+  check(sam, 'Sam’s dinner thread is listed');
+  if (!sam) return;
+  const row = await p.eval<{ title: string; badge: boolean; subject: string; unread: boolean }>(
+    `(() => { const el = document.querySelector('[data-row="${sam}"]'); return { title: el.title, badge: !!el.querySelector('.avatar-net'), subject: el.querySelector('.row-subject')?.textContent ?? '', unread: el.classList.contains('unread') }; })()`,
+  );
+  check(row.title.split('\n')[0] === scores.get(sam).reasons[0], 'a mail row says why on hover', row.title.split('\n')[0]);
+  check(row.badge && /Dinner/.test(row.subject) && row.unread, 'the envelope where the network goes, the subject, bold while unread', row);
+  await click(...(await center(`[data-row="${sam}"]`)), 'right');
+  await Bun.sleep(400);
+  const menu = await p.eval<string>(`document.querySelector('.cm[role="menu"]')?.innerText ?? ''`);
+  check(menu.includes(scores.get(sam).reasons[0]) && /Open in Mail/.test(menu) && /Not a person/.test(menu), 'its menu: why, Open in Mail, Not a person', menu.split('\n'));
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await Bun.sleep(300);
+  await shot('inbox-08-mixed');
+  // Tapping it opens the reader beside the inbox; reading it marks it read, and you were here.
+  await click(...(await center(`[data-row="${sam}"]`)));
+  await p.until(`!!document.querySelector('.mail-reader .mail-subject')`, 8000);
+  check((await p.eval('location.hash')) === `#/inbox/c/${sam}` && (await p.eval(`!!document.querySelector('.sidebar [data-row="${sam}"]')`)), 'it opens the reader, with the inbox beside it', await p.eval('location.hash'));
+  let v: any = null;
+  const readThere = (x: any) => x?.reasons.some((r: string) => r.startsWith('You were here')) && !x.reasons.some((r: string) => /unread/.test(r));
+  for (let i = 0; i < 40 && !readThere(v); i++) {
+    await Bun.sleep(250);
+    v = (await attention()).get(sam);
+  }
+  check(readThere(v), 'read, and the hub hears you were there', v?.reasons);
+  await Bun.sleep(800);
+  check(!(await p.eval(`document.querySelector('[data-row="${sam}"]').classList.contains('unread')`)), 'the row is no longer bold');
+  await shot('inbox-09-reader');
+  // Archive removes it.
+  const r = await fetch(`${hub}/api/mail/move`, { method: 'POST', headers: { 'content-type': 'application/json', origin: hub }, body: JSON.stringify({ threadIds: [sam], to: 'archive' }) });
+  check(r.ok, 'archived it');
+  let gone = false;
+  for (let i = 0; i < 30 && !gone; i++) {
+    await Bun.sleep(200);
+    gone = !(await attention()).has(sam);
+  }
+  check(gone, 'archived, the hub lists it no more');
+  await p.eval(`location.hash = '#/inbox'`);
+  await away();
+  await Bun.sleep(1500);
+  check(!(await shown()).keys.includes(sam), 'and its row has left the inbox');
+}
 const shot = async (name: string) => shots && p.shot(`${shots}/${name}.png`);
 
 try {
@@ -103,7 +168,7 @@ try {
 
   // The chat you were just in: a quiet group far down the list. Open it, stay, leave: it moves up. (In the demo world
   // most rows owe a reply, so it climbs a few places; on a real hub it is usually among the first rows.)
-  const low = [...s.keys].reverse().find((k) => shapeOf.get(k) === 'group' && (scores.get(k)?.score ?? 0) > -30 && !scores.get(k)?.reasons.some((r: string) => r.startsWith('You were here')));
+  const low = [...s.keys].reverse().find((k) => !isMail(k) && shapeOf.get(k) === 'group' && (scores.get(k)?.score ?? 0) > -30 && !scores.get(k)?.reasons.some((r: string) => r.startsWith('You were here')));
   check(low, 'a quiet group far down the list');
   const lowFrom = s.keys.indexOf(low!);
   await click(...(await center(`[data-row="${low}"]`)));
@@ -127,7 +192,7 @@ try {
 
   // Answering a group that needs you makes it a conversation going on, at its new score, but not while the pointer
   // is on the list. (A group: in a demo DM the other side answers back a few seconds later, which would open a new turn.)
-  const groupsNeeding = s.keys.filter((k) => shapeOf.get(k) === 'group' && scores.get(k)?.needs && k !== low);
+  const groupsNeeding = s.keys.filter((k) => !isMail(k) && shapeOf.get(k) === 'group' && scores.get(k)?.needs && k !== low);
   await mouse('mouseMoved', ...(await center('.sidebar .conv-row', `el => !${JSON.stringify(groupsNeeding)}.includes(el.dataset.row)`)));
   const before = await shown();
   // Some demo groups refuse a send (an encrypted room without encryption set up): the first that takes one.
@@ -167,7 +232,8 @@ try {
   };
   const all = s.keys.length;
   const people = await chip('People');
-  check(people.keys.length > 0 && people.keys.every((k) => shapeOf.get(k) === 'direct'), 'People: only DMs', people.keys.length);
+  check(people.keys.length > 0 && people.keys.every((k) => shapeOf.get(k) === 'direct'), 'People: only DMs and mail between you and one other', people.keys.length);
+  check(people.keys.some(isMail), 'People has mail in it', people.keys.filter(isMail));
   await shot('inbox-05-people');
   const groups = await chip('Groups');
   check(groups.keys.length > 0 && groups.keys.every((k) => shapeOf.get(k) !== 'direct') && people.keys.length + groups.keys.length === all, 'Groups: everything else');
@@ -182,7 +248,8 @@ try {
   await ctrlK();
   await p.until(`!!document.querySelector('.switcher-row')`, 3000);
   const opening = await p.eval<string[]>(`[...document.querySelectorAll('.switcher-row')].map((el) => el.dataset.key)`);
-  const inboxTop = [...new Set((await shown()).keys.map((k) => peerOf.get(k) ?? k))].slice(0, opening.length);
+  // Mail threads are not places the switcher lists.
+  const inboxTop = [...new Set((await shown()).keys.filter((k) => !isMail(k)).map((k) => peerOf.get(k) ?? k))].slice(0, opening.length);
   check(opening.length > 3 && opening.join() === inboxTop.join(), 'Ctrl+K opens on the top of the inbox', { opening, inboxTop });
   await shot('inbox-07-switcher');
   scores = await attention();
@@ -205,6 +272,8 @@ try {
   check(ranked, 'and the scores took part');
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
   await Bun.sleep(300);
+
+  await mixed();
 
   // An old Groups link.
   const group = boot.conversations.find((c: any) => c.shape === 'group');

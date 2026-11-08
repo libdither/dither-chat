@@ -29,6 +29,19 @@ they start with `dither-accounts/`.
   Nothing is deleted from here. Back to Inbox never moves out of an IMAP server's All mail (Gmail).
 - MailHub gains the `filed` event; `MailThreadView.pending` and `MailAccountView.ops` are new.
 
+**As built in slice 8** (`hub/src/mail/classify.ts`, `attention.ts`, `schema-inbox.sql`):
+
+- Overrides are `mail_override (scope 'sender'|'thread', key, class)`, not `mail_sender.override`: slices built side
+  by side each keep a table of their own (slice 3's images are `mail_sender_images`). Routes: `PUT
+  /api/mail/senders/:address` and `PUT /api/mail/threads/:id/person`. "Not a person" moves nothing on the server.
+- Rule 4 also counts a sender who wrote in a thread you took part in, and rule 5 a person you know by another address
+  (`mailPeople(hub).sender()`'s `tookPart` and `known`). Rule 6 counts a move to Junk still waiting for the server.
+- §10's listing window is bounded: unread with its last message within 30 days, owed to a message within 14 days
+  (`MAIL_INBOX`), so a year of synced mail is not a year of inbox. `mail_feature` holds the fold and `owed_since`,
+  `unknown` and `sent_at` (a send from here, until Sent's copy comes); `mail_author_feature` is keyed by address and
+  summed by person at scoring time, so a merge needs no new fold. Tallies are summed both ways (`Attention.otherTallies`).
+- Mail rows reach the client through `Attention.sources`, so `server.ts` and `sync.ts` are unchanged.
+
 ## 0. In one page
 
 | Decision | Where |

@@ -83,7 +83,8 @@ export function MailSidebar({ list, active }: { list?: string; active?: string }
       <ProblemStrips />
       {accounts.length > 0 && (
         <div class="inbox-chips mail-chips" role="radiogroup" aria-label="Show">
-          {MAIL_VIEWS.map((v) => (
+          {/* Updates is Inbox's folded row; its chip shows while you are in it. */}
+          {MAIL_VIEWS.filter((v) => v.view !== 'updates' || view === 'updates').map((v) => (
             <button class={`chip-btn ${view === v.view ? 'on' : ''}`} role="radio" aria-checked={view === v.view} onClick={() => pick(v.view, scoped)}>
               {v.label}
             </button>

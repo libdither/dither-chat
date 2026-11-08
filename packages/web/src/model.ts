@@ -7,8 +7,9 @@
 import type * as P from '@dither-chat/protocol';
 import { categoryThreshold, NETWORK_META } from '@dither-chat/protocol';
 import { dataVersion, db, inbox, isSelfIdentity, prefs } from './state.ts';
+import { mailDataVersion } from './versions.ts';
 import { triageBoard, type Board } from './board.ts';
-import { mailNames } from './mail/model.ts';
+import { mailInboxRows, mailNames } from './mail/model.ts';
 
 const memos = new Map<string, { rev: number; value: unknown }>();
 function memo<T>(key: string, fn: () => T): T {
@@ -557,15 +558,35 @@ export function annotateAccounts(network: P.Network): boolean {
 
 // ------------------------------------------------------------------ inbox
 
-/** One row of the inbox: a conversation and what the hub says about how much it needs you (docs/inbox.md). */
-export interface InboxRow {
-  conv: P.ConversationView;
+/** What the hub says about how much a row of the inbox needs you (docs/inbox.md). */
+interface InboxScore {
+  /** The conversation's id, or the mail thread's. */
+  key: string;
   score: number;
   /** It needs you: an answer, something to read, a conversation going on. Shows the ↩ of a turn you owe. */
   needs: boolean;
   reasons: string[];
   owedSince: number | null;
 }
+/** One row of the inbox: a conversation, or a thread of mail from a person (docs/mail.md, slice 8). */
+export type InboxRow = ConvInboxRow | MailInboxRow;
+export interface ConvInboxRow extends InboxScore {
+  kind: 'conv';
+  conv: P.ConversationView;
+}
+export interface MailInboxRow extends InboxScore {
+  kind: 'mail';
+  thread: P.MailThreadView;
+}
+
+/** The latest message of a row, anyone's. */
+export const rowLast = (r: InboxRow) => (r.kind === 'conv' ? (r.conv.lastMessageAt ?? 0) : r.thread.lastAt);
+/** Something in it you have not read. */
+export const rowUnread = (r: InboxRow) => (r.kind === 'conv' ? unreadOf(r.conv).unread > 0 : r.thread.unread > 0);
+/** One other person: a DM, or a mail thread between you and one other. */
+export const rowDirect = (r: InboxRow) => (r.kind === 'conv' ? r.conv.shape === 'direct' : r.thread.participants <= 2);
+/** Muted here or on its network: below everything else. Notes to self notify nobody, which is not the same. */
+export const rowMuted = (r: InboxRow) => (r.kind === 'conv' ? r.conv.shape !== 'self' && unreadOf(r.conv).muted : r.thread.muted);
 
 /** DMs, group chats, notes to self and rooms outside a space are always in the inbox; anything else only while the hub lists it. */
 export const inboxShape = (c: P.ConversationView) => c.shape === 'direct' || c.shape === 'group' || c.shape === 'self' || (c.shape === 'channel' && !c.spaceIds.length);
@@ -574,26 +595,55 @@ export const inboxShape = (c: P.ConversationView) => c.shape === 'direct' || c.s
  * Before the hub has scored a conversation (a fresh one, or a hub that predates scores): unread first, then the
  * latest, much as the inbox used to be.
  */
-function unscored(c: P.ConversationView): InboxRow {
+function unscored(c: P.ConversationView): ConvInboxRow {
   const u = unreadOf(c);
   const needs = !u.muted && u.badge > 0;
   const age = Math.max(0, Date.now() - (c.lastMessageAt ?? 0));
-  return { conv: c, score: (needs ? 30 : 0) + 10 * 2 ** (-age / 86_400_000) - (u.muted ? 50 : 0), needs, reasons: [], owedSince: null };
+  return { kind: 'conv', key: c.id, conv: c, score: (needs ? 30 : 0) + 10 * 2 ** (-age / 86_400_000) - (u.muted ? 50 : 0), needs, reasons: [], owedSince: null };
 }
 
-/** Every inbox row, in no particular order: arrange it with inbox.ts. A hidden group only shows while it needs you. */
-export function inboxRows(): InboxRow[] {
-  return memo('inboxRows', () => {
-    const out: InboxRow[] = [];
+/** The conversations' rows. */
+function convRows(): ConvInboxRow[] {
+  return memo('inboxConvRows', () => {
+    const out: ConvInboxRow[] = [];
     for (const c of db.conversations.values()) {
       const a = db.attention.get(c.id);
       if ((!a && !inboxShape(c)) || !visibleConv(c)) continue;
-      const row = a ? { conv: c, score: a.score, needs: a.needs, reasons: a.reasons, owedSince: a.owedSince } : unscored(c);
+      const row: ConvInboxRow = a ? { kind: 'conv', key: c.id, conv: c, score: a.score, needs: a.needs, reasons: a.reasons, owedSince: a.owedSince } : unscored(c);
       if (!row.needs && c.shape !== 'self' && placePref('conversation', c.id).hidden) continue;
       out.push(row);
     }
     return out;
   });
+}
+
+/** Mail threads the hub lists in the inbox (`AttentionView.kind` 'mail'), with the thread the page holds. */
+const mailRows = (): MailInboxRow[] => mailInboxRows(db.attention.values(), db.mail).map((r) => ({ kind: 'mail', ...r }));
+
+let mailMemo: { data: number; mail: number; rows: InboxRow[]; waiting: boolean } | null = null;
+/** Every inbox row, in no particular order: arrange it with inbox.ts. A hidden group only shows while it needs you. */
+export function inboxRows(): InboxRow[] {
+  const convs = convRows();
+  if (!db.mail.accounts.size) return convs;
+  // Mail moves on its own version (versions.ts): the rows are made again when either moved.
+  const data = dataVersion();
+  const mail = mailDataVersion();
+  if (mailMemo?.data !== data || mailMemo.mail !== mail) {
+    const rows = mailRows();
+    let scored = 0;
+    for (const a of db.attention.values()) if (a.kind === 'mail') scored++;
+    mailMemo = { data, mail, rows: [...convs, ...rows], waiting: scored > rows.length };
+  }
+  return mailMemo.rows;
+}
+
+/**
+ * The hub listed a mail thread the page does not hold yet: its view comes with a mail event, which the inbox then
+ * waits for. Otherwise mail events leave the list alone (each mail row follows its own thread).
+ */
+export function mailRowsWaiting(): boolean {
+  inboxRows();
+  return !!db.mail.accounts.size && !!mailMemo?.waiting;
 }
 
 /** Accounts that need you to act (a QR to scan, a login): the rows above the conversations. */

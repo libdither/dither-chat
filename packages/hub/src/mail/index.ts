@@ -75,6 +75,8 @@ export class MailHub {
   private statuses = new Map<string, MailBackendEvent>();
   private listeners = new Map<MailHubEvent, Set<(e: any) => void>>();
   private sweepTimer: Timer | null = null;
+  /** What later slices stop with the hub: their timers and background steps (routes.ts routers push here). */
+  readonly stopping: (() => void)[] = [];
   private started = false;
   private log: (msg: string) => void;
   private now: () => number;
@@ -133,6 +135,7 @@ export class MailHub {
 
   stop() {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
+    for (const f of this.stopping) f();
     this.outbox.stop();
     for (const s of this.syncs.values()) s.stop();
     this.syncs.clear();

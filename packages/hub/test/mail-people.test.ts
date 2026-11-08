@@ -94,8 +94,10 @@ describe('who gets a person', () => {
       expect(i, a.email).not.toBeNull();
       expect(i!.person_id, a.email).toBe(`per_${email(a.email).slice(4)}`);
     }
-    // Lee was only Cc'd by Kim; Theo wrote but you never answered; a newsletter; a draft; you.
-    for (const a of [LEE, THEO, NEWS, DEE, ME]) expect(identity(chat, a.email), a.email).toBeNull();
+    // Lee was only Cc'd by Kim; a newsletter; a draft; you.
+    for (const a of [LEE, NEWS, DEE, ME]) expect(identity(chat, a.email), a.email).toBeNull();
+    // Theo wrote and you never answered: his mail looks personal (slice 8), so an identity, but no person.
+    expect(identity(chat, THEO.email)).toMatchObject({ person_id: null });
     // A person shows as anyone's does, named from mail.
     const sam = chat.personView(chat.one('SELECT * FROM person WHERE id = ?', personOf(chat, email(SAM.email)))!);
     expect(sam.name).toBe('Sam Rivera');
@@ -115,7 +117,7 @@ describe('who gets a person', () => {
 
   test('replying later makes a person of who wrote first', async () => {
     const { chat, fake, people } = await world(seedMail);
-    expect(identity(chat, THEO.email)).toBeNull();
+    expect(identity(chat, THEO.email)?.person_id).toBeNull();
     expect(people.sender(THEO.email).known).toBe(false);
     fake.deliver(ACC, { mailboxId: 'INBOX', messageId: '<t2@x>', inReplyTo: '<t1@x>', references: ['<t1@x>'], from: [ME], to: [THEO], subject: 'Re: Hello from Theo', receivedAt: T0 + 10 * H });
     await until(() => identity(chat, THEO.email)?.person_id, 3000, 'Theo’s person');
@@ -137,7 +139,7 @@ describe('who gets a person', () => {
     hub.store.db.exec('DELETE FROM mail_party');
     people.connect(chat);
     await until(() => identity(chat, ALICE.email)?.person_id && identity(chat, SAM.email)?.person_id, 3000, 'the persons');
-    expect(identity(chat, THEO.email)).toBeNull();
+    expect(identity(chat, THEO.email)?.person_id ?? null).toBeNull();
   });
 
   test('removing a chat account leaves people known by their mail', async () => {

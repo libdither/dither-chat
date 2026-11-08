@@ -564,6 +564,18 @@ export interface AttentionJudge {
   forget?(conversationId: string): void;
 }
 
+/**
+ * Rows of another kind in the same inbox (mail/attention.ts): scored by their own code with `scoreConversation`, and
+ * listed, sent and kept with the conversations' views, in the same `attention` events.
+ */
+export interface AttentionSource {
+  /** Score everything (`all`), or what changed since it last did: the views that changed, and ids no longer listed. */
+  rescore(now: number, all: boolean): { items: P.AttentionView[]; removed: string[] };
+  view(id: string): P.AttentionView | undefined;
+  list(): P.AttentionView[];
+  explain?(id: string, now: number): unknown;
+}
+
 // ------------------------------------------------------------------ kept in the database
 
 const FOLD_SQL = `
@@ -598,6 +610,10 @@ export class Attention {
   judge?: AttentionJudge;
   /** The activity log's per-place features (docs/activity.md): shown by `explain`, not scored yet. */
   activity?: Pick<ActivityStore, 'features'>;
+  /** Other rows of the inbox: mail threads (mail/attention.ts). */
+  readonly sources: AttentionSource[] = [];
+  /** How you answer an author elsewhere (their mail, mail/attention.ts), summed with their chat tallies. */
+  otherTallies?: (authorKey: string) => Tally[];
 
   constructor(
     private store: Store,
@@ -808,7 +824,7 @@ export class Attention {
     }
     const turn = state.turn?.addressed != null ? state.turn : null;
     const author = turn?.authorKey
-      ? sumTallies((db.query('SELECT tally FROM conv_author_feature WHERE author_key = ?').all(turn.authorKey) as Row[]).map((r) => JSON.parse(r.tally)), now)
+      ? sumTallies([...(db.query('SELECT tally FROM conv_author_feature WHERE author_key = ?').all(turn.authorKey) as Row[]).map((r) => JSON.parse(r.tally)), ...(this.otherTallies?.(turn.authorKey) ?? [])], now)
       : null;
     const usageKey = c.shape === 'direct' && peer?.person_id ? ['person', peer.person_id] : ['conversation', cid];
     const u = db.query('SELECT score, visit_score, score_at, last_visit FROM place_usage WHERE kind = ? AND id = ?').get(usageKey[0], usageKey[1]) as Row | null;
@@ -834,7 +850,13 @@ export class Attention {
   explain(cid: string, now = this.now()) {
     this.refreshSelf();
     const x = this.input(cid, now);
-    if (!x) return null;
+    if (!x) {
+      for (const src of this.sources) {
+        const e = src.explain?.(cid, now);
+        if (e) return e;
+      }
+      return null;
+    }
     const s = scoreConversation(x);
     const f = x.state;
     // So what the learned order says is as of now too.
@@ -908,20 +930,37 @@ export class Attention {
       if (r === 'removed') removed.push(id);
       else if (r) items.push(r);
     }
+    this.fromSources(now, true, items, removed);
     this.scored = true;
     return this.event(items, removed);
+  }
+
+  private fromSources(now: number, all: boolean, items: P.AttentionView[], removed: string[]) {
+    for (const src of this.sources) {
+      const r = src.rescore(now, all);
+      items.push(...r.items);
+      removed.push(...r.removed);
+    }
   }
 
   /** One conversation's score as last sent, if the inbox lists it. */
   view(id: string): P.AttentionView | undefined {
     if (!this.scored) this.rescoreAll();
-    return this.views.get(id);
+    const v = this.views.get(id);
+    if (v || !this.sources.length) return v;
+    for (const src of this.sources) {
+      const x = src.view(id);
+      if (x) return x;
+    }
+    return undefined;
   }
 
   /** For the bootstrap: every listed conversation's score. */
   list(): P.AttentionView[] {
     if (!this.scored) this.rescoreAll();
-    return [...this.views.values()];
+    const out = [...this.views.values()];
+    for (const src of this.sources) out.push(...src.list());
+    return out;
   }
 
   /**
@@ -939,9 +978,10 @@ export class Attention {
       this.forget(id);
       if (this.views.delete(id)) gone.push(id);
     }
+    const now = this.now();
+    if (this.sources.length) this.fromSources(now, false, items, gone);
     if (!this.pending.size) return this.event(items, gone);
     this.refreshSelf();
-    const now = this.now();
     const start = performance.now();
     for (const id of this.pending) {
       if (performance.now() - start > budgetMs) break;

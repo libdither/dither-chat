@@ -6,9 +6,9 @@
  */
 import { effect, signal } from '@preact/signals';
 import { isInteracting } from './arrange.ts';
-import { inboxRows, unreadOf, type InboxRow } from './model.ts';
-import { inboxChanged, inboxSnapshot, inboxView, shouldResort, type Hold, type InboxSnapshot, type Ranked, type ResortReason } from './ordering.ts';
-import { loaded, rev, route, type InboxFilter } from './state.ts';
+import { inboxRows, mailRowsWaiting, rowDirect, rowLast, rowMuted, rowUnread, type InboxRow } from './model.ts';
+import { chipKeeps, inboxChanged, inboxSnapshot, inboxView, shouldResort, type Hold, type InboxSnapshot, type Ranked, type ResortReason } from './ordering.ts';
+import { loaded, mailRev, rev, route, type InboxFilter } from './state.ts';
 import { onForeground } from './usage.ts';
 
 const KEY = 'dither-chat:inbox-snapshot';
@@ -31,9 +31,8 @@ const hold = (): Hold | undefined => {
   return key ? { key, prev: inboxSnap.value.snap } : undefined;
 };
 
-/** Notes to self notify nobody, which is not the same as muted: they rank like any other row. */
-const ranked = (rows: InboxRow[]): Ranked[] =>
-  rows.map((r) => ({ key: r.conv.id, score: r.score, last: r.conv.lastMessageAt ?? 0, muted: r.conv.shape !== 'self' && unreadOf(r.conv).muted }));
+/** Chats and mail from people rank as one (docs/mail.md); notes to self rank like any other row. */
+const ranked = (rows: InboxRow[]): Ranked[] => rows.map((r) => ({ key: r.key, score: r.score, last: rowLast(r), muted: rowMuted(r) }));
 
 let waiting: ReturnType<typeof setTimeout> | undefined;
 /** Take a new snapshot if now is a good moment; otherwise as soon as it is. */
@@ -46,7 +45,7 @@ export function resortInbox(reason: ResortReason) {
   }
   const rows = inboxRows();
   const snap = inboxSnapshot(
-    ranked(rows).map((x, i) => ({ ...x, unread: unreadOf(rows[i].conv).unread > 0 })),
+    ranked(rows).map((x, i) => ({ ...x, unread: rowUnread(rows[i]) })),
     hold(),
   );
   const prev = inboxSnap.value;
@@ -60,16 +59,13 @@ export function resortInbox(reason: ResortReason) {
 /** The rows a filter chip shows, in order. */
 export function shownInbox(filter: InboxFilter): InboxRow[] {
   const rows = inboxRows();
-  const byId = new Map(rows.map((r) => [r.conv.id, r]));
+  const byId = new Map(rows.map((r) => [r.key, r]));
   const snap = inboxSnap.value.snap;
   // What was unread when the order was taken stays under Unread until the next one, so reading it does not pull it out from under you.
   const wasUnread = new Set(snap?.unread ?? []);
   const keep = (id: string) => {
-    const c = byId.get(id)!.conv;
-    if (filter === 'people') return c.shape === 'direct';
-    if (filter === 'groups') return c.shape !== 'direct';
-    if (filter === 'unread') return unreadOf(c).unread > 0 || wasUnread.has(id);
-    return true;
+    const r = byId.get(id)!;
+    return chipKeeps(filter, { key: id, direct: rowDirect(r), unread: rowUnread(r) }, wasUnread);
   };
   return inboxView(snap, ranked(rows), keep).map((k) => byId.get(k)!);
 }
@@ -85,6 +81,8 @@ export function startInbox() {
   let soon: ReturnType<typeof setTimeout> | undefined;
   effect(() => {
     rev.value;
+    // A listed mail thread whose view has not come yet: the mail event that brings it is a change of order.
+    if (mailRowsWaiting()) mailRev.value;
     if (!loaded.value) return;
     clearTimeout(soon);
     soon = setTimeout(() => inboxChanged(inboxSnap.value.snap, ranked(inboxRows()), hold()) && resortInbox('activity'), 600);

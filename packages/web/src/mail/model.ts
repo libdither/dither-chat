@@ -57,7 +57,12 @@ export function inList(key: string, t: P.MailThreadView): boolean {
   if (l.accountId && t.accountId !== l.accountId) return false;
   switch (l.view) {
     case 'inbox':
-      return t.roles.includes('inbox');
+      // Mail not from a person folds into Updates (slice 8); an unclassified thread stays.
+      return t.roles.includes('inbox') && t.class !== 'bulk';
+    case 'people':
+      return t.roles.includes('inbox') && t.class === 'personal';
+    case 'updates':
+      return t.roles.includes('inbox') && t.class === 'bulk';
     case 'sent':
       return t.roles.includes('sent');
     case 'unread':
@@ -65,9 +70,60 @@ export function inList(key: string, t: P.MailThreadView): boolean {
     case 'starred':
       return t.flagged;
     default:
-      // People and Updates come with classification (slice 8).
       return false;
   }
+}
+
+/** A mail thread the one-list inbox lists, with the hub's say on it (slice 8; model.ts InboxRow). */
+export interface MailInboxScore {
+  key: string;
+  thread: P.MailThreadView;
+  score: number;
+  needs: boolean;
+  reasons: string[];
+  owedSince: number | null;
+}
+
+/**
+ * The mail rows of the one-list inbox: each `kind: 'mail'` attention view whose thread the page holds, of an account
+ * it shows. A view whose thread has not come yet waits for the next mail event.
+ */
+export function mailInboxRows(attention: Iterable<P.AttentionView>, s: MailState): MailInboxScore[] {
+  const out: MailInboxScore[] = [];
+  if (!s.accounts.size) return out;
+  for (const a of attention) {
+    if (a.kind !== 'mail') continue;
+    const t = s.threads.get(a.id);
+    if (!t || !s.accounts.has(t.accountId)) continue;
+    out.push({ key: t.id, thread: t, score: a.score, needs: a.needs, reasons: a.reasons, owedSince: a.owedSince });
+  }
+  return out;
+}
+
+/** Inbox's Updates row: how many of its threads are new, and from whom, newest first (slice 8). */
+export interface UpdatesFold {
+  key: string;
+  count: number;
+  unread: number;
+  names: string[];
+  lastAt: number;
+}
+
+/** The Updates row for an Inbox list (null for any other list, or when Updates is empty). */
+export function updatesFold(s: MailState, key: string): UpdatesFold | null {
+  const l = parseMailList(key);
+  if (!l || 'mailbox' in l || l.view !== 'inbox') return null;
+  const ukey = viewList('updates', l.accountId);
+  const ts = listThreads(s, ukey);
+  if (!ts.length) return null;
+  const names: string[] = [];
+  for (const t of ts) {
+    const f = [...t.from].reverse().find((x) => !x.self);
+    const n = f ? (f.name ?? f.email.split('@')[0]) : null;
+    if (n && !names.includes(n)) names.push(n);
+    if (names.length >= 4) break;
+  }
+  return { key: ukey, count: ts.length, unread: ts.filter((t) => t.unread > 0).length, names, lastAt: ts[0].lastAt };
 }
 
 export function applyMailBootstrap(s: MailState, b: P.MailBootstrap | undefined) {
@@ -180,10 +236,10 @@ export function listThreads(s: MailState, key: string): P.MailThreadView[] {
   return [...s.threads.values()].filter((t) => inList(key, t)).sort(threadOrder);
 }
 
-/** Unread threads in Inbox, for the rail's dot (slice 8 narrows it to mail from people). */
+/** Unread threads in Inbox from people (or not classified yet), for the rail's dot. */
 export function unreadInbox(s: MailState): number {
   let n = 0;
-  for (const t of s.threads.values()) if (t.unread > 0 && t.roles.includes('inbox') && s.accounts.has(t.accountId)) n++;
+  for (const t of s.threads.values()) if (t.unread > 0 && t.roles.includes('inbox') && (t.class === 'personal' || t.class === null) && s.accounts.has(t.accountId)) n++;
   return n;
 }
 
@@ -218,9 +274,11 @@ export function listTitle(s: MailState, key: string): string {
   return acc ? `${names[l.view]} · ${acc.address ?? acc.label}` : names[l.view];
 }
 
-/** The views the Mail section offers now. People and Updates come with slice 8. */
-export const MAIL_VIEWS: { view: 'inbox' | 'unread' | 'starred' | 'sent'; label: string }[] = [
+/** The views the Mail section offers. Updates is also Inbox's folded row (slice 8). */
+export const MAIL_VIEWS: { view: P.MailView; label: string }[] = [
   { view: 'inbox', label: 'Inbox' },
+  { view: 'people', label: 'People' },
+  { view: 'updates', label: 'Updates' },
   { view: 'unread', label: 'Unread' },
   { view: 'starred', label: 'Starred' },
   { view: 'sent', label: 'Sent' },
