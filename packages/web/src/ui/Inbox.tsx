@@ -1,9 +1,9 @@
 import type * as P from '@dither-chat/protocol';
 import { ago } from '../format.ts';
-import { BELOW_DAYS } from '../board.ts';
-import { accountsNeedingYou, authorName, board, communitiesOf, convLabel, messageUnread, plainBody, visibleConv } from '../model.ts';
+import { BELOW_DAYS, isMailItem, type BoardItem } from '../board.ts';
+import { accountsNeedingYou, authorName, board, boardUnread, communitiesOf, convLabel, messageUnread, plainBody, visibleConv } from '../model.ts';
 import { useEffect, useState } from 'preact/hooks';
-import { db, go, inbox, markAllRead, rev } from '../state.ts';
+import { db, go, inbox, loadMailTriage, markAllRead, rev } from '../state.ts';
 import { forgetFactor, HEAD_LABEL, loadPolicy, loadShadow, relearn, triagePolicy, triageShadow } from '../triage.ts';
 import { TierVote } from './TierVote.tsx';
 import { Avatar, SourceChip } from './bits.tsx';
@@ -50,17 +50,52 @@ function PingCard({ m }: { m: P.MessageView }) {
   );
 }
 
+/** A mail message on the board (slice 9): the sender with the envelope, the subject before its start. */
+function MailPingCard({ m }: { m: P.MailTriageItem }) {
+  const person = m.from.personId ? db.persons.get(m.from.personId) : null;
+  const name = person?.name ?? m.from.name ?? m.from.email;
+  const t = m.triage;
+  return (
+    <div class={`ping mail-ping ${boardUnread(m) ? 'unread' : ''}`} data-mid={m.id} data-mail="1">
+      <button class="ping-main" onClick={() => go({ view: 'inbox', conv: m.threadId })}>
+        <Avatar id={person?.id ?? m.from.email} name={name} url={person?.avatar} size={34} network="email" />
+        <span class="ping-text">
+          <span class="ping-top">
+            <b>{name}</b>
+            <span class="ping-where" title={m.from.email}>
+              <Icon name="mail" size={12} /> by email
+            </span>
+            <span class="ping-time">{ago(m.ts)}</span>
+          </span>
+          <span class="ping-body">
+            <span class="ping-subject">{m.subject || '(no subject)'}</span>
+            {m.preview ? ` — ${m.preview}` : ''}
+          </span>
+          <span class="ping-reasons">
+            {t.reasons.map((r, i) => (
+              <span key={i} class="reason">
+                {r}
+              </span>
+            ))}
+          </span>
+        </span>
+      </button>
+      <span class="ping-fb">
+        <TierVote m={m} />
+      </span>
+    </div>
+  );
+}
+
 /** Long lists show this many, then a button for the rest. */
 const SHOWN = 40;
 
 /** A list of cards, the first SHOWN of them until asked for all. Keyed by message: a vote moves a card between lists. */
-function Cards({ ms }: { ms: P.MessageView[] }) {
+function Cards({ ms }: { ms: BoardItem[] }) {
   const [all, setAll] = useState(false);
   return (
     <>
-      {(all ? ms : ms.slice(0, SHOWN)).map((m) => (
-        <PingCard key={m.id} m={m} />
-      ))}
+      {(all ? ms : ms.slice(0, SHOWN)).map((m) => (isMailItem(m) ? <MailPingCard key={m.id} m={m} /> : <PingCard key={m.id} m={m} />))}
       {!all && ms.length > SHOWN && (
         <button class="btn ghost small" onClick={() => setAll(true)}>
           Show all {ms.length}
@@ -72,6 +107,7 @@ function Cards({ ms }: { ms: P.MessageView[] }) {
 
 export function InboxBoard() {
   rev.value;
+  useEffect(() => void loadMailTriage(), []);
   // The last week, by where each one is now: a vote moves it between the lists at once. The badge counts from the same.
   const { important, active, digest, below, importantUnread } = board();
   const s = { attention: accountsNeedingYou() };

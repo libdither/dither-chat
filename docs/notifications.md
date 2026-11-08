@@ -226,6 +226,14 @@ unread lines, so the notification grows instead of being replaced by the latest 
 
 The burst state is kept in memory: after a restart, the next message in each conversation sounds.
 
+## Mail
+
+New mail from people goes through the same model, with the same votes and levels (docs/mail.md "Triage and
+notifications"): its facts are chat's with network `email` and shape `mail`, it starts at Important for someone you
+write to who wrote to you, and a vote on someone's mail moves their chats once they are one person. Bulk mail is
+never triaged. Mail is on the Triage board with an envelope, notifies one notification per thread, and quiet hours
+and device rules hold it as they hold chat.
+
 ## Elsewhere
 
 - The inbox ranking (docs/inbox.md) counts Active like Important: "pinged you" while unread.

@@ -42,6 +42,19 @@ they start with `dither-accounts/`.
   summed by person at scoring time, so a merge needs no new fold. Tallies are summed both ways (`Attention.otherTallies`).
 - Mail rows reach the client through `Attention.sources`, so `server.ts` and `sync.ts` are unchanged.
 
+**As built in slice 9** (`hub/src/mail/triage.ts`, `schema-triage.sql`; docs/mail.md "Triage and notifications"):
+
+- `mail_triage` gains `thread_id`, `account_id`, `address` (whose person the author is, read again at training so a
+  merge after a vote counts), `level` (the rating before quiet hours held it), `words` and `delivered`. No foreign key:
+  a voted row outlives its message.
+- A sender you know in Bcc or on a list starts at the digest, not Active; the spoofing warnings of slice 3 cap a
+  message at Active. Late mail (over an hour), mail already read and mail outside Inbox are rated without notifying.
+- A notification opens `#/inbox/c/<thread>` (slice 8's reader beside the inbox), not `#/mail/t/<thread>`: the push's
+  conversation is the thread, so the browser and the Android app open it as they are; `mailThreadId` rides along.
+  The Android app shows its own mark for mail until a build adds an envelope (`Looks.NETWORKS`).
+- Votes share chat's route (`POST /api/messages/:id/feedback` takes a mail message id) besides
+  `POST /api/mail/triage/:id/vote`; `TriageVotes.others` is where mail's examples join chat's.
+
 ## 0. In one page
 
 | Decision | Where |

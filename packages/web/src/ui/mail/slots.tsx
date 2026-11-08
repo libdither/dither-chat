@@ -19,6 +19,7 @@ import { answer, canAnswer, latestOf, replyAllHelps } from './Composer.tsx';
 import { FILING_MESSAGE_ACTIONS, FILING_THREAD_ACTIONS, FilingBar, FilingRow } from './Filing.tsx';
 import { HtmlBody } from './HtmlBody.tsx';
 import { TextBody } from './TextBody.tsx';
+import { TRIAGE_MESSAGE_ACTIONS } from './Triage.tsx';
 
 export interface BodyProps {
   message: P.MailMessageView;
@@ -61,6 +62,8 @@ export const MESSAGE_ACTIONS: MessageAction[] = [
   { id: 'forward', label: 'Forward', icon: 'forward', show: (m, _t, a) => underMessage(m, a), run: (m) => answer('forward', m) },
   // Slice 4: a message's star.
   ...FILING_MESSAGE_ACTIONS,
+  // Slice 9: its notification level, why, and the vote.
+  ...TRIAGE_MESSAGE_ACTIONS,
 ];
 export const THREAD_ACTIONS: ThreadAction[] = [
   // Slice 5: the phone's bottom bar answers the latest message.

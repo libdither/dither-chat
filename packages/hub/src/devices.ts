@@ -18,6 +18,9 @@ const SCOPES: P.DeviceScope[] = ['network', 'account', 'space', 'conversation'];
 const MAX_DEVICES = 200;
 
 export class Devices {
+  /** Rule keys for what is not a chat conversation (mail/triage.ts `chain`: a mail thread, its account, Email). */
+  otherChain: ((id: string) => string[] | null) | null = null;
+
   constructor(
     private store: Store,
     private triage: Triage,
@@ -164,7 +167,7 @@ export class Devices {
   chain(conversationId: string): string[] {
     const s = this.store;
     const c = s.one<Row>('SELECT id, network, shape, parent_id FROM conversation WHERE id = ?', conversationId);
-    if (!c) return [];
+    if (!c) return this.otherChain?.(conversationId) ?? [];
     const keys = [`conversation:${c.id}`];
     const parent = c.shape === 'thread' && c.parent_id ? c.parent_id : null;
     if (parent) keys.push(`conversation:${parent}`);

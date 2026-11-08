@@ -1,7 +1,7 @@
 /** src/snapshot.ts: what the start-up snapshot keeps, and its caps. IndexedDB itself: docs/android.md's measurements. */
 import { expect, mock, test } from 'bun:test';
 
-mock.module('../src/state.ts', () => ({ db: {}, inbox: { value: [] }, loaded: { value: false }, quoted: new Map(), rev: { value: 0 }, timelines: new Map() }));
+mock.module('../src/state.ts', () => ({ db: {}, inbox: { value: [] }, mailTriage: { value: [] }, loaded: { value: false }, quoted: new Map(), rev: { value: 0 }, timelines: new Map() }));
 const { buildRest, mailRest, MAX_MAIL_BODIES, MAX_MAIL_CHARS, MAX_MESSAGES, MAX_REST_CHARS, MAX_TIMELINES } = await import('../src/snapshot.ts');
 
 const msg = (id: string, ts: number, extra: Record<string, unknown> = {}): any => ({ id, conversationId: 'c', ts, authorId: `idn_${id}`, body: 'x', replyToId: null, reactions: [], attachments: [], embeds: [], ...extra });
@@ -44,4 +44,12 @@ test('mail: the threads and bodies the reader opened last, within the caps', () 
   expect(mailRest({ details: [], bodies: [body(1, 10), body(2, MAX_MAIL_CHARS)] }).bodies.map((b: any) => b.messageId)).toEqual(['m1']);
   const rest = JSON.parse(buildRest({ inbox: [], timelines: [], identities: new Map(), quoted: new Map(), mail: { details: [detail(1)], bodies: [] } }));
   expect(rest.mail.details).toHaveLength(1);
+});
+
+test('keeps the Triage board’s mail, newest first, as many as the inbox (slice 9)', () => {
+  const item = (i: number): any => ({ kind: 'mail', id: `mml_${i}`, threadId: 'mth_a', accountId: 'a', from: { name: null, email: 'x@y.example' }, subject: 's', preview: null, ts: i, unread: true, triage: { decision: 'push', score: 1, reasons: [], decidedBy: 'rules', feedback: null } });
+  const rest = JSON.parse(buildRest({ inbox: [], timelines: [], identities: ids, quoted: new Map(), mailTriage: Array.from({ length: 150 }, (_, i) => item(150 - i)) }));
+  expect(rest.mailTriage).toHaveLength(100);
+  expect(rest.mailTriage[0].id).toBe('mml_150');
+  expect(JSON.parse(buildRest({ inbox: [], timelines: [], identities: ids, quoted: new Map() })).mailTriage).toBeUndefined();
 });

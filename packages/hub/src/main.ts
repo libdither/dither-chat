@@ -9,6 +9,7 @@ import { demoMailImages } from './mail/demo-html.ts';
 import { FakeMailBackend, MailHub, ManagerMailBackend } from './mail/index.ts';
 import { mailPeople } from './mail/people.ts';
 import { mailAttention } from './mail/attention.ts';
+import { mailTriage, type MailNotice } from './mail/triage.ts';
 import { Delivery } from './delivery.ts';
 import { Devices } from './devices.ts';
 import { Embeddings, Jev } from './embeddings.ts';
@@ -135,6 +136,24 @@ function deliver(title: string, body: string, conversationId: string, messageId:
     .catch((e) => console.error('push failed', e));
 }
 
+/**
+ * Mail's Important and Active (mail/triage.ts), as `deliver` sends chat's: one notification per thread (delivery.ts),
+ * the devices whose rules keep Email or that account off left out (devices.ts), votes from the notification itself.
+ * The push's conversation is the thread, which the app and the worker open beside the inbox.
+ */
+function deliverMail(n: MailNotice) {
+  const nid = activity.notification({ kind: 'message', messageId: n.messageId, conversationId: n.threadId });
+  const quiet = devices.quietOn(n.threadId, n.addressed);
+  const skip = n.level === 'quiet' ? [...quiet, ...push.desktops()] : quiet;
+  const grouped = delivery.plan(n.threadId, n.messageId, n.level, n.addressed);
+  const mail = { mailThreadId: n.threadId };
+  server.notify({ t: 'notify', messageId: n.messageId, conversationId: n.threadId, title: n.title, body: n.body, reasons: n.reasons, ...n.look, ...mail, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(n.level === 'quiet' ? { level: n.level } : {}) });
+  push
+    .notify(n.title, n.body, n.threadId, { ...n.look, ...mail, messageId: n.messageId, level: n.level, ...grouped, ...(nid ? { nid } : {}) }, skip, n.level)
+    .then((r) => nid && activity.sent(nid, r))
+    .catch((e) => console.error('push failed', e));
+}
+
 /** About the inbox, not a conversation: a click opens the inbox. */
 function deliverDigest(title: string, body: string) {
   const nid = activity.notification({ kind: 'digest' });
@@ -229,6 +248,13 @@ const mail = new MailHub({ db: store.db, backend: mailBackend, managerUrl: accou
 mailPeople(mail)?.connect(store);
 // Mail from people in the one-list inbox, scored with the chats (mail/attention.ts).
 mailAttention(mail)?.connect(store, attention);
+// New mail from people triaged by chat's model, with chat's votes, and notified the same way (mail/triage.ts).
+const mailTriaged = mailTriage(mail);
+if (mailTriaged) {
+  mailTriaged.connect({ store, triage, votes, deliver: (n) => deliverMail(n) });
+  devices.otherChain = (id) => mailTriaged.chain(id);
+  delivery.other = mailTriaged;
+}
 
 const readQueue = new ReadQueue(store, sup);
 readQueue.start();

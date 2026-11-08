@@ -112,7 +112,7 @@ export function validDailyDigest(d: Partial<P.DailyDigest>): d is P.DailyDigest 
   return validQuietHours({ start: d.time, end: d.time, timezone: d.timezone });
 }
 
-const URGENT = /\b(urgent|asap|emergency|right now|call me|help!|deadline|today|tonight|are you (around|there|free))\b/i;
+export const URGENT = /\b(urgent|asap|emergency|right now|call me|help!|deadline|today|tonight|are you (around|there|free))\b/i;
 /** Smart places: at or above this score Important, at or above `SMART_ACTIVE` Active, else Digest. */
 const SMART_THRESHOLD = 0.55;
 const SMART_ACTIVE = 0.3;
