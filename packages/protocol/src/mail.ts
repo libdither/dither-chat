@@ -50,6 +50,18 @@ export interface MailAccountView {
   managedUrl: string | null;
   /** Access ended (it left the manager's list, or the grant went): its mail here is deleted at this time. */
   deleteAt: number | null;
+  /** Writes made here (slice 4): how many messages wait for the server, the last that failed, ops it refused (501). */
+  ops?: MailOpsView;
+}
+
+/** An account's writes (slice 4). */
+export interface MailOpsView {
+  /** Messages with a change the server has not confirmed yet. */
+  waiting: number;
+  /** The last change that could not be made, undone here. */
+  error: { message: string; at: number } | null;
+  /** What the account answered 501 to: `flag.seen`, `flag.flagged`, `move`. Its buttons are hidden. */
+  unsupported: string[];
 }
 
 export interface MailboxView {
@@ -98,6 +110,8 @@ export interface MailThreadView {
   /** When the first message you have not answered came (slice 8). */
   owedSince: number | null;
   muted: boolean;
+  /** A change made here the server has not confirmed yet (slice 4). */
+  pending?: boolean;
 }
 
 export interface MailMessageView {
@@ -281,6 +295,41 @@ export interface MailThreadDetail {
   messages: MailMessageView[];
   /** The email identities of the people on it (slice 6). */
   identities?: IdentityView[];
+}
+
+// ------------------------------------------------------------------ writes (slice 4)
+
+/** Where a move goes: a mailbox id, or one by its role in each thread's own account. */
+export type MailMoveTarget = 'archive' | 'inbox' | 'trash' | 'junk' | (string & {});
+
+/** POST /api/mail/flag. Threads: read marks all of them read, unread its latest; star its latest, unstar all. */
+export interface MailFlagRequest {
+  threadIds?: string[];
+  messageIds?: string[];
+  seen?: boolean;
+  flagged?: boolean;
+  /** The page's id for this change: sent again (after the connection dropped), it is made once. */
+  clientId?: string;
+}
+
+/** POST /api/mail/move. Archive moves only what is in Inbox; the others move the whole thread but what you sent. */
+export interface MailMoveRequest {
+  threadIds?: string[];
+  messageIds?: string[];
+  to: MailMoveTarget;
+  clientId?: string;
+}
+
+/** What a write did here: threads changed, messages that will be told to the server. */
+export interface MailOpResult {
+  ok: true;
+  threads: number;
+  messages: number;
+}
+
+/** GET/PUT /api/mail/settings. `markRead`: on the server after a second in view, or only when you mark it (§14 Q3). */
+export interface MailSettings {
+  markRead: 'view' | 'manual';
 }
 
 // ------------------------------------------------------------------ lists

@@ -17,6 +17,7 @@ import { join, resolve } from 'node:path';
 import { mailId } from '@dither-chat/protocol/ids';
 import { ManagerMailBackend } from '../src/mail/backend.ts';
 import { MailHub } from '../src/mail/index.ts';
+import { mailOps } from '../src/mail/ops.ts';
 import { RoutedSupervisor } from '../src/remote.ts';
 import { Store } from '../src/store.ts';
 
@@ -143,7 +144,8 @@ afterAll(async () => {
 describe('mail through dither-accounts', () => {
   test('the grant: asked for, approved, and the account shows with its addresses', async () => {
     await until(() => hub.access().state === 'granted', 70_000, 'the grant seen');
-    await until(() => hub.store.account(acc)?.online, 40_000, 'the account online');
+    // Online comes with the account list; who it is comes with the extractor's status, a moment later.
+    await until(() => hub.store.account(acc)?.online && hub.store.account(acc)?.address, 40_000, 'the account online, with its address');
     const v = hub.store.accountView(hub.store.account(acc)!);
     expect(v).toMatchObject({ kind: 'imap', level: 'write', address: alice.email, online: true });
     await until(() => hub.store.accountView(hub.store.account(acc)!).send.ok === true, 20_000, 'canSend');
@@ -160,12 +162,14 @@ describe('mail through dither-accounts', () => {
     expect(hub.store.followed(acc).map((b) => b.role)).toEqual(['inbox', 'sent', 'archive']);
   }, 60_000);
 
-  test('a body through mail.get; an HTML-only message shows its text; reading here leaves the server’s \\Seen alone', async () => {
+  test('a body through mail.get; an HTML-only message shows its text; read here only leaves the server’s \\Seen alone', async () => {
     const html = await hub.body(byHdr('<html-1@example.test>')!.id);
     expect(html.text).toContain('Your parcel shipped');
     expect(html.text).not.toContain('alert');
     const reply = await hub.body(byHdr('<dinner-3@example.test>')!.id);
     expect(reply.text!.slice(0, reply.quoteAt!)).toBe('Booked for 7:30.\n\n');
+    // "Only when I mark it" (slice 4): read in view stays here.
+    mailOps(hub).setSettings({ markRead: 'manual' });
     hub.readHere([byHdr('<dinner-1@example.test>')!.thread_id]);
     const flags = await other(async (c) => {
       await c.mailboxOpen('INBOX');
@@ -273,4 +277,59 @@ describe('sending through dither-accounts (slice 5)', () => {
     const e = await hub.outbox.accept({ ...start.draft, clientId: `remote-from-${Date.now()}`, draftKey: null, from: 'mallory@example.test', to: [{ name: null, email: alice.email }], subject: 'x', text: 'x' }).catch((x) => x);
     expect(e.status).toBe(422);
   }, 120_000);
+});
+
+describe('writes through dither-accounts (slice 4)', () => {
+  /** A message's flags as another IMAP client sees them, by Message-ID. */
+  const serverFlags = (box: string, hdr: string) =>
+    other(async (c) => {
+      await c.mailboxOpen(box);
+      const out: { uid: number; flags: string[] }[] = [];
+      for await (const msg of c.fetch({ header: { 'message-id': hdr } }, { flags: true, uid: true })) out.push({ uid: msg.uid as number, flags: [...msg.flags] as string[] });
+      return out[0] ?? null;
+    });
+
+  test('read in view reaches the server: a second IMAP client sees \\Seen, then \\Flagged for a star', async () => {
+    const ops = mailOps(hub);
+    ops.setSettings({ markRead: 'view' });
+    const m = byHdr('<html-1@example.test>')!;
+    expect((await serverFlags('INBOX', '<html-1@example.test>'))!.flags).not.toContain('\\Seen');
+    hub.readHere([m.thread_id]);
+    expect(byHdr('<html-1@example.test>')!.seen).toBe(1);
+    await until(async () => (await serverFlags('INBOX', '<html-1@example.test>'))?.flags.includes('\\Seen'), 20_000, '\\Seen on the server');
+    await until(() => byHdr('<html-1@example.test>')!.pending === null, 10_000, 'the change confirmed');
+    ops.flag({ threadIds: [m.thread_id], flagged: true });
+    await until(async () => (await serverFlags('INBOX', '<html-1@example.test>'))?.flags.includes('\\Flagged'), 20_000, '\\Flagged on the server');
+    await until(() => byHdr('<html-1@example.test>')!.pending === null, 10_000, 'the star confirmed');
+    expect(byHdr('<html-1@example.test>')!.flagged).toBe(1);
+  }, 60_000);
+
+  test('archive: the thread leaves Inbox at once; on the server a new UID in Archive, here the same hub message', async () => {
+    const before = byHdr('<dinner-3@example.test>')!;
+    const inbox = hub.store.followed(acc).find((b) => b.role === 'inbox')!;
+    const archive = hub.store.followed(acc).find((b) => b.role === 'archive')!;
+    const oldId = hub.store.one<{ native_id: string }>('SELECT native_id FROM mail_location WHERE mailbox_id = ? AND message_id = ?', inbox.id, before.id)!.native_id;
+    const r = mailOps(hub).move({ threadIds: [before.thread_id], to: 'archive' });
+    expect(r).toMatchObject({ threads: 1, messages: 2 });
+    expect(hub.store.threadView(hub.store.thread(before.thread_id)!).roles).not.toContain('inbox');
+    await until(async () => (await serverFlags('Archive', '<dinner-3@example.test>')) && (await serverFlags('Archive', '<dinner-1@example.test>')), 20_000, 'both in Archive on the server');
+    expect(await serverFlags('INBOX', '<dinner-3@example.test>')).toBeNull();
+    await until(() => hub.store.one('SELECT 1 FROM mail_location WHERE mailbox_id = ? AND message_id = ?', archive.id, before.id) && !byHdr('<dinner-3@example.test>')!.pending, 20_000, 'the Archive location here');
+    const after = byHdr('<dinner-3@example.test>')!;
+    expect(after.id).toBe(before.id);
+    expect(after.thread_id).toBe(before.thread_id);
+    const locs = hub.store.all<{ mailbox_id: string; native_id: string }>('SELECT mailbox_id, native_id FROM mail_location WHERE message_id = ?', before.id);
+    expect(locs.length).toBe(1);
+    expect(locs[0].mailbox_id).toBe(archive.id);
+    // <mailbox>.<UIDVALIDITY>.<UID>: the UID the second client sees in Archive.
+    expect(locs[0].native_id).not.toBe(oldId);
+    expect(Number(locs[0].native_id.split('.').pop())).toBe((await serverFlags('Archive', '<dinner-3@example.test>'))!.uid);
+    // The changes passes that follow keep it there.
+    await hub.refresh(acc);
+    expect(count('SELECT 1 FROM mail_location WHERE message_id = ?', before.id)).toBe(1);
+    // Out of Inbox for good; your reply (slice 5's test sent one) stays in Sent.
+    const roles = hub.store.threadView(hub.store.thread(before.thread_id)!).roles;
+    expect(roles).toContain('archive');
+    expect(roles).not.toContain('inbox');
+  }, 60_000);
 });

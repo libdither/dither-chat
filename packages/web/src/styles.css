@@ -9722,6 +9722,167 @@ button.msg-edited.link:hover {
   text-align: center;
 }
 
+/* Filing (slice 4, ui/mail/Filing.tsx): a row slides over what its swipe does; picked rows; the selection's bar;
+   what still waits; Undo. */
+.mail-swipe {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius);
+  -webkit-touch-callout: none;
+  touch-action: pan-y;
+}
+.mail-swipe-fg {
+  position: relative;
+  background: var(--bg-sidebar);
+  border-radius: var(--radius);
+}
+.mail-swipe-bg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 18px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--on-accent);
+  visibility: hidden;
+}
+.mail-swipe[data-swipe='right'] .mail-swipe-bg {
+  visibility: visible;
+  background: var(--good);
+}
+.mail-swipe[data-swipe='left'] .mail-swipe-bg {
+  visibility: visible;
+  background: var(--accent);
+}
+.mail-swipe[data-swipe='right'] .mail-swipe-read,
+.mail-swipe[data-swipe='left'] .mail-swipe-archive {
+  visibility: hidden;
+}
+.mail-swipe-archive,
+.mail-swipe-read {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0.65;
+  transition: opacity 0.12s, transform 0.12s;
+}
+.mail-swipe.armed .mail-swipe-archive,
+.mail-swipe.armed .mail-swipe-read {
+  opacity: 1;
+  transform: scale(1.06);
+}
+.mail-swipe.selected .mail-row {
+  background: var(--accent-soft);
+}
+.mail-picked {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  width: 36px;
+  height: 36px;
+  margin-top: -18px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: var(--on-accent);
+  pointer-events: none;
+}
+.mail-swipe.pending .row-time {
+  font-style: italic;
+  opacity: 0.6;
+}
+.mail-reader-head .hdr-btn[aria-label='Unstar'] {
+  color: var(--warn);
+}
+/* Over the header while threads are picked, so the list under the finger does not move. */
+.mail-side {
+  position: relative;
+}
+.mail-pickbar {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 48px;
+  padding: 3px 6px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-soft);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+.mail-side:has(> .mail-pickbar) > .side-head {
+  visibility: hidden;
+}
+.mail-pickbar-n {
+  flex: 1;
+  min-width: 0;
+  padding-left: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mail-pickbar .icon-btn.on {
+  color: var(--warn);
+}
+.mail-ops-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 12px 0;
+  font-size: 12px;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+.mail-ops-note.error {
+  color: var(--text-dim);
+}
+.mail-ops-note.error > svg {
+  color: var(--warn);
+  flex: none;
+}
+.mail-undo {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-soft);
+  background: var(--bg-raised);
+  color: var(--text);
+  font-size: 13px;
+  box-shadow: var(--shadow);
+}
+.mail-undo > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 820px) {
+  .mail-undo {
+    bottom: calc(var(--tabbar-h) + 12px);
+  }
+}
+
 /* The reader: a column of messages, each a card. */
 .mail-reader {
   min-width: 0;
