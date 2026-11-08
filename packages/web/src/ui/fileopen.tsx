@@ -6,11 +6,11 @@ import type * as P from '@dither-chat/protocol';
 import { showsInline } from '@dither-chat/protocol';
 import { android } from '../android.ts';
 import { appsFor, openFile } from '../desk.ts';
-import { fileKind, fileMime } from '../files.ts';
+import { fileKind, fileMime, type FileSource } from '../files.ts';
 import { toast } from '../state.ts';
 import { menuPoint, openMenu } from './ContextMenu.tsx';
 
-type FileRef = Pick<P.AttachmentView, 'url' | 'name' | 'mime'> & Partial<Pick<P.AttachmentView, 'kind' | 'info'>>;
+type FileRef = Pick<FileSource, 'url' | 'name' | 'mime'> & Partial<Pick<FileSource, 'kind' | 'info'>>;
 
 const GENERIC = /^(application\/(octet-stream|binary|unknown|x-download|force-download)|binary\/octet-stream)?$/;
 

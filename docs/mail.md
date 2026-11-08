@@ -23,7 +23,7 @@ Email beside your chats, through dither-accounts' `mail` interface. The design, 
 - **Offline**: the page keeps the threads it was showing and the last threads and bodies it opened, so they show
   before the hub answers.
 
-Not yet: the HTML itself (slice 3), attachments (3), search (7), mail in the one-list inbox (8), notifications (9). Only the newest
+Not yet: search (7), mail in the one-list inbox (8), notifications (9). Only the newest
 500 of Inbox and Sent are synced (older mail and other folders come with slice 2), and a thread shows the start of its
 last message only once you have opened it (slice 2 fetches bodies ahead).
 
@@ -111,10 +111,52 @@ message in; `POST /api/mail/send` (a `MailSendRequest`); `GET /api/mail/outbox`;
 `mail.outbox` event carries the outbox's whole list each time (it is not journaled: a sync answer carries it too).
 
 For later slices: MailHub's `sent` event (`{ accountId, outboxId, messageId, replyTo, threadId, dryRun }`) says you
-answered a thread. `quotedHtml` in compose.ts is where slice 3's sanitiser plugs in to quote a message's own HTML.
+answered a thread. A reply or a forward quotes the original's own HTML when it has some, sanitised by slice 3
+(`quotedHtml` in compose.ts: no images, style sheets or script), else its text.
 
-Not yet: the reply showing in its thread before Sent's copy arrives (the strip says "Sent" meanwhile); quoting a
-message's HTML (slice 3); a send with files made without the hub surviving a reload of the page (its draft does).
+Not yet: the reply showing in its thread before Sent's copy arrives (the strip says "Sent" meanwhile); a send with
+files made without the hub surviving a reload of the page (its draft does).
+
+## HTML, images and files (slice 3)
+
+- **The HTML** shows in a frame on a white sheet, in every theme, scaled down to the width when the mail is wider than
+  the screen. The hub sanitises it first (`hub/src/mail/sanitize.ts`, an allowlist on Bun's HTMLRewriter): no script,
+  frame, object, form, svg, math, meta or base survives; no `on…` attribute; links are http(s), mailto or a place in
+  the mail; style keeps its looks but loses `url()`, `@import`, `expression()` and `behavior`. Every kept attribute is
+  written again from its decoded value, so `jav&#x61;script:` is read as the browser would read it, and a tag left
+  open at the end of the input is dropped (it would close on the markup after it).
+- **Two more walls.** The frame is `sandbox="allow-same-origin"` with no `allow-scripts`, and the hub serves the HTML
+  (`GET /api/mail/messages/:id/html`) with `sandbox allow-same-origin; default-src 'none'`, images only from this
+  hub's mail routes and `data:`, `form-action 'none'`, `base-uri 'none'`, `frame-ancestors 'self'`, nosniff and no
+  referrer. `allow-same-origin` is there so the page can reach in: it sizes the frame, folds the quote, catches link
+  clicks and forwards touches. Opened in a tab on its own, the URL is still sandboxed by its CSP.
+- **Quotes** (`blockquote type=cite`, Gmail's, Proton's, Yahoo's, Thunderbird's and Outlook's marks) fold behind ···
+  when only more quotes follow them and something is left above.
+- **Links** open the way chat's do: the desktop helper, else a new tab (Android: the system browser). The frame never
+  follows one. A link whose text names another site ("paypal.com" going to evil.example) asks first, showing where it
+  really goes; the message's ▾ details say so too, with a Reply-To that goes elsewhere and a name that is itself
+  another address.
+- **Remote images** are held back: "4 remote images hidden · Load · Always from Sam", with placeholders of their size.
+  Allowed, they come through the hub (`GET /api/mail/img/<token>`, `hub/src/mail/images.ts`): the token is an HMAC of
+  the message and the URL with the hub's key, so the proxy fetches only what that message names. Public addresses
+  only, checked for every address a name resolves to, and the request goes to the address that was checked (a name
+  that changes its answer meanwhile gets nowhere); redirects checked again; no cookies or referrer; 10 MB at most;
+  kept only if the bytes are an image (not SVG); 7 days in the media cache. A tracker (1-2 px, or hidden by its
+  style) is dropped even when images are allowed: a pixel fetched through the hub still reports the open.
+- **`cid:` pictures** come from the message's own parts and always show.
+- **Files** show under the message as chat's cards; pictures the HTML shows itself are not listed again. They come
+  from the server with `mail.attachment` the first time they are opened, go into the media cache, and are looked at
+  like chat files (`fileinfo.ts`), so a card says what a file really is; one that would run as a program says so.
+  Text, code, Markdown, JSON, CSV, PDF and archives open in the file viewers, pictures in the image viewer, anything
+  else in its app or as a download. A message the server deletes, or an account deleted 24 hours after its access
+  ended, takes its files with it.
+- **Offline**, the frame cannot load and the text part shows instead. A body kept from an earlier session is asked
+  for again once, so images allowed on another device show.
+- **Swipe back** works over the body on a phone: the frame's touches go to the pager (`Pager.ts forwardTouches`).
+
+As built, where it differs from §7: "Always from" is its own table, `mail_sender_images` (schema-html.sql), for slice 8's
+`mail_sender` to take over; there is no `PUT /api/mail/senders/:address` yet, `POST /api/mail/images` takes
+`{ messageId }` or `{ sender, allow }`. A mail file's id in URLs is a hash of the extractor's id.
 
 ## Filing (slice 4: shared read state, star, archive, move)
 
@@ -191,12 +233,19 @@ others were asked, because an IMAP move is a removal there and an addition elsew
 
   verify-mail drives it in headless Chromium on a phone (390 px, touch) and a desktop, in the dark and light themes:
   no page errors, nothing off the side of the screen, list → thread → back on a phone, the quote fold, read here, and
-  the HTML-only message's text. Use a fresh data dir each run: reading marks threads read.
+  the HTML-only message. Use a fresh data dir each run: reading marks threads read. With `--html` it also checks the
+  frame (slice 3): no script runs in it, not even one put there by hand; no request leaves for anywhere but the hub;
+  link clicks go through the opener, and a misleading one asks first; the image banner and the proxy; quotes, `cid:`
+  pictures, files in the viewers; swiping back over a body. The demo's remote images are drawn by the hub itself
+  (`hub/src/mail/demo-html.ts`), so a demo hub reaches nothing outside.
 - Tests: `hub/test/mail-thread.test.ts` (threading, as a table), `mail-store.test.ts`, `mail-sync.test.ts` (the fake:
   first-sync order, `more`, 410, moves, Proton-like state, arrivals, gaps, the manager away, access ending, the delta
   sync), `mail-ops.test.ts` (writes on the fake: pending, batches of 1000, 404/403/501/410, a restart with changes
   waiting, the manager away, read in view and its setting, a read grant) and `web/test/mail-model.test.ts`,
   `mail-text.test.ts`, `mail-ops.test.ts`.
+- Slice 3: `mail-sanitize.test.ts` (a hostile corpus, each output parsed again against the allowlist),
+  `mail-images.test.ts` (the token, private addresses in every spelling, DNS rebinding, redirects, not-an-image, size,
+  headers) and `mail-parts.test.ts` (the routes on the fake).
 - Sending: `hub/test/mail-compose.test.ts` (recipients, subjects, quotes, the HTML part) and `mail-send.test.ts` (the
   fake: held and undone, 501 turning sending off with the message kept, a read grant, a dry run, retries and a timeout,
   files by path and by their bytes, a forward's files, From, a clientId sent once, a restart mid-send).
@@ -229,5 +278,11 @@ others were asked, because an IMAP move is a removal there and an addition elsew
 - **People** (slice 6): `mailPeople(hub)` (`hub/src/mail/people.ts`): `sender(address)` for classification and
   triage, `settle(threadIds)` after classifying mail outside an ingest, `profile(identityIds)`. The page's
   `composeTo.run` (`web/src/mail/people.ts`) is where a composer plugs in: a profile then offers "Email <address>".
+- **A body's view**: `MailStore.bodyExtras` takes functions that add to it (slice 3 fills `html`, `attachments`,
+  `warnings`).
+- **Quoting HTML**: `quoteFragment(html)` in `hub/src/mail/sanitize.ts` is a message's HTML made safe to quote (no
+  images, style sheets or script); slice 5's `quotedHtml` (compose.ts) uses it.
+- **Files and touches on the page**: `files.ts` `FileSource` and `openFileSource` open any file in the viewers;
+  `Pager.ts` `forwardTouches(frame)` hands a same-origin frame's touches to the pager.
 - `protocol/src/mail-iface.ts` is a copy of dither-accounts' interface types; `bun scripts/accounts-sync.ts --check`
   says when it differs.

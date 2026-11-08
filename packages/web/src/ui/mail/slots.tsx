@@ -17,6 +17,7 @@ import type * as P from '@dither-chat/protocol';
 import { phone } from '../../phone.ts';
 import { answer, canAnswer, latestOf, replyAllHelps } from './Composer.tsx';
 import { FILING_MESSAGE_ACTIONS, FILING_THREAD_ACTIONS, FilingBar, FilingRow } from './Filing.tsx';
+import { HtmlBody } from './HtmlBody.tsx';
 import { TextBody } from './TextBody.tsx';
 
 export interface BodyProps {
@@ -48,7 +49,7 @@ export interface ThreadAction {
 export type RowWrapper = ComponentType<{ thread: P.MailThreadView; children: ComponentChildren }>;
 export type ListBar = ComponentType<{ list: string }>;
 
-export const BODY_RENDERERS: BodyRenderer[] = [(p) => <TextBody {...p} />];
+export const BODY_RENDERERS: BodyRenderer[] = [(p) => (p.body.html ? <HtmlBody {...p} /> : null), (p) => <TextBody {...p} />];
 /** On a phone the latest message is answered from the bar below, so its own buttons would be the same twice. */
 const underMessage = (m: P.MailMessageView, a: P.MailAccountView | undefined) => canAnswer(a) && !(phone.value && latestOf(m.threadId)?.id === m.id);
 const onTheBar = (t: P.MailThreadView, a: P.MailAccountView | undefined) => phone.value && canAnswer(a) && !!latestOf(t.id);

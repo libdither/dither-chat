@@ -115,6 +115,8 @@ export class MailStore {
   addressesOf: (who: string) => string[] = (who) => (who.includes('@') ? [lc(who)] : []);
   /** An account's writes waiting for the server (ops.ts sets it). */
   opsOf: (accountId: string) => P.MailAccountView['ops'] = () => undefined;
+  /** What later slices add to a body's view (slice 3: the HTML, files, warnings), from the mail_body row. */
+  readonly bodyExtras: ((messageId: string, body: Row) => Partial<P.MailBodyView>)[] = [];
   private selfCache = new Map<string, Set<string>>();
 
   constructor(
@@ -858,17 +860,19 @@ export class MailStore {
     if (!b) return null;
     const text: string | null = b.text ?? null;
     const addr = (xs: M.MailAddress[]) => xs.map((a) => ({ name: a.name ?? null, email: a.email }));
-    return {
+    const v: P.MailBodyView = {
       messageId,
       text,
       quoteAt: text ? quoteStart(text) : null,
-      // Slice 3 serves the sanitised HTML; until then the text (made from the HTML where there is no text part) shows.
+      // bodyExtras fill these (slice 3: the sanitised HTML, files, warnings).
       html: null,
       bcc: addr(json(b.bcc, [])),
       replyTo: addr(json(b.reply_to, [])),
       attachments: [],
       warnings: [],
     };
+    for (const f of this.bodyExtras) Object.assign(v, f(messageId, b));
+    return v;
   }
 
   /**

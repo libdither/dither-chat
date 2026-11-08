@@ -9,12 +9,13 @@
  *   quote      "On <date>, <name> wrote:" and the original's text with `> ` before each line
  *   forward    a "Forwarded message" block with its headers, then its text; its attachments go along
  *
- * The HTML part is the text made into HTML. The original's own HTML would quote better; that needs slice 3's sanitiser,
- * and `quotedHtml` is where it plugs in.
+ * The HTML part is the text made into HTML, with the original's own HTML quoted when it has some (`quotedHtml`,
+ * slice 3's sanitiser).
  */
 import type * as P from '@dither-chat/protocol';
 import { parseMailAddress, validMailAddress } from '@dither-chat/protocol';
 import type * as M from '@dither-chat/protocol/mail-iface';
+import { quoteFragment } from './sanitize.ts';
 
 /** The message answered or forwarded, as compose needs it. */
 export interface ComposeOriginal {
@@ -25,7 +26,7 @@ export interface ComposeOriginal {
   subject: string;
   date: number;
   text: string | null;
-  /** Its HTML, for slice 3's sanitised quote; unused until then. */
+  /** Its HTML, quoted sanitised (quotedHtml). */
   html?: string | null;
 }
 
@@ -218,11 +219,13 @@ export function textHtml(text: string): string {
 }
 
 /**
- * The original's HTML, made safe to quote: slice 3's sanitiser (images off). Null until it lands, and the quote is
- * made from the original's text instead.
+ * The original's HTML, made safe to quote: slice 3's sanitiser, with no images, style sheets or data: pictures. Null
+ * without HTML, or when it would be over QUOTE_MAX twice over: then the quote is made from the original's text.
  */
-export function quotedHtml(_html: string | null | undefined): string | null {
-  return null;
+export function quotedHtml(html: string | null | undefined): string | null {
+  if (!html) return null;
+  const q = quoteFragment(html);
+  return q.trim() && q.length <= 2 * QUOTE_MAX ? q : null;
 }
 
 /** The HTML part: your text, then the quote in a `blockquote type=cite`, or the forwarded block. */

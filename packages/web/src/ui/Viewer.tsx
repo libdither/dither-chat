@@ -13,7 +13,7 @@ import { languageOf } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { android } from '../android.ts';
 import { desk } from '../desk.ts';
-import { fileFacts, fileIcon, fileKind, fileMime, fileViewer } from '../files.ts';
+import { fileFacts, fileIcon, fileKind, fileMime, fileViewer, type FileSource } from '../files.ts';
 import { commits, lockAxis, settleMs, velocity } from '../gesture.ts';
 import { reducedMotion, useLayer } from '../phone.ts';
 import { api } from '../state.ts';
@@ -37,7 +37,7 @@ export function Viewer() {
 
 /** What each file viewer gets. */
 export interface FileViewProps {
-  att: P.AttachmentView;
+  att: FileSource;
   info: P.FileInfo | null;
   kind: P.FileKind;
   /** For highlighting: what the hub found, else by the name. */
@@ -55,23 +55,23 @@ const VIEWS: Partial<Record<P.FileKind, () => Promise<{ default: FileView }>>> =
 };
 const loadedViews = new Map<P.FileKind, FileView>();
 
-function FileBox({ att }: { att: P.AttachmentView }) {
+function FileBox({ att }: { att: FileSource }) {
   const close = () => (fileViewer.value = null);
   useLayer(close);
-  // Not looked at by the hub yet: it looks now (GET /api/attachments/:id/info), and the viewer waits for the answer.
+  // Not looked at by the hub yet: it looks now (its infoUrl), and the viewer waits for the answer.
   const [info, setInfo] = useState<P.FileInfo | null>(att.info ?? null);
-  const [asked, setAsked] = useState(!!att.info);
+  const [asked, setAsked] = useState(!!att.info || !att.infoUrl);
   useEffect(() => {
-    if (att.info) return;
+    if (att.info || !att.infoUrl) return;
     let live = true;
-    api<P.FileInfo>(`/api/attachments/${encodeURIComponent(att.id)}/info`)
+    api<P.FileInfo>(att.infoUrl)
       .then((i) => live && setInfo(i))
       .catch(() => {})
       .finally(() => live && setAsked(true));
     return () => {
       live = false;
     };
-  }, [att.id]);
+  }, [att.infoUrl]);
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === 'Escape' && close();
     window.addEventListener('keydown', k);
@@ -150,7 +150,7 @@ function FileBody(p: FileViewProps) {
 }
 
 /** A type with no viewer here. */
-function NoView({ a }: { a: P.AttachmentView }) {
+function NoView({ a }: { a: FileSource }) {
   return (
     <div class="fv-none">
       <Icon name="file" size={40} />

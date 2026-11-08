@@ -45,6 +45,8 @@ export interface FakeOpts {
 export interface FakeMessage extends Omit<M.MailMessage, 'mailboxId' | 'id'> {
   id: string;
   mailboxId: string;
+  /** Attachments' bytes by attachment id, for mail.attachment (slice 3); one not here gets bytes made up to its size. */
+  files?: Record<string, Uint8Array | string>;
 }
 
 /** A message the fake sent (slice 5): what it was given, and its files' bytes. */
@@ -369,6 +371,7 @@ export class FakeMailBackend implements MailBackend {
       text: i.text ?? null,
       html: i.html ?? null,
       attachments: i.attachments ?? [],
+      ...(i.files ? { files: i.files } : {}),
     };
   }
 
@@ -430,7 +433,7 @@ export class FakeMailBackend implements MailBackend {
         // As the extractors read it: `id`, or `message` when the manager put its own call id in `id`.
         const m = a.messages.get(String(input.id)) ?? a.messages.get(String(input.message));
         if (!m) throw new MailCallError('no such message', 404);
-        const { mailboxId, id, ...rest } = m;
+        const { mailboxId, id, files: _files, ...rest } = m;
         return { ...this.summary(a, m), ...rest, mailboxId, id, preview: null, text: m.text ?? (m.html ? htmlText(m.html) : null) } satisfies M.MailMessage;
       }
       case 'mail.changes':
@@ -460,7 +463,9 @@ export class FakeMailBackend implements MailBackend {
         const m = a.messages.get(String(input.id)) ?? a.messages.get(String(input.message));
         const att = m?.attachments.find((x) => x.id === input.attachmentId);
         if (!m || !att) throw new MailCallError('no such attachment', 404);
-        return { filename: att.filename, mime: att.mime, base64: Buffer.from(fakeBytes(att)).toString('base64') };
+        // The bytes a test or the demo gave (slice 3), else made up to its size.
+        const given = m.files?.[att.id];
+        return { filename: att.filename, mime: att.mime, base64: Buffer.from(given ?? fakeBytes(att)).toString('base64') };
       }
       default:
         throw new MailCallError(`the fake does not do ${op}`, 501, 'unknown-op');

@@ -146,14 +146,53 @@ export function serverOrigin(input: string, typed = false): { origin: string } |
 
 /** Loopback, private, link-local, carrier-grade NAT (Tailscale's 100.64/10), unique-local: not the public internet. */
 export function isPrivateAddress(ip: string): boolean {
-  const a = ip.toLowerCase().replace(/^\[|\]$/g, '');
-  const v4 = a.match(/^(?:::ffff:)?(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
-  if (v4) {
-    const [x, y] = [+v4[1], +v4[2]];
-    return x === 0 || x === 10 || x === 127 || (x === 169 && y === 254) || (x === 172 && y >= 16 && y <= 31) || (x === 192 && y === 168) || (x === 100 && y >= 64 && y <= 127) || x >= 224;
-  }
+  const a = ip.toLowerCase().replace(/^\[|\]$/g, '').replace(/%.*$/, '');
+  const v4 = a.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (v4) return privateV4(+v4[1], +v4[2]);
+  // Digits and dots that are not four numbers are not an address a check can trust.
+  if (/^[\d.]+$/.test(a)) return true;
   if (!a.includes(':')) return false;
-  return a === '::' || a === '::1' || /^f[cd]/.test(a) || /^fe[89ab]/.test(a) || a.startsWith('64:ff9b:');
+  const g = v6Groups(a);
+  if (!g) return true;
+  if (g.every((x) => x === 0) || (g.slice(0, 7).every((x) => x === 0) && g[7] === 1)) return true;
+  // An IPv4 address inside: mapped (::ffff:a.b.c.d, which URLs write as ::ffff:7f00:1), compatible (::a.b.c.d), 6to4.
+  if (g.slice(0, 5).every((x) => x === 0) && (g[5] === 0xffff || g[5] === 0)) return privateV4(g[6] >> 8, g[6] & 0xff);
+  if (g[0] === 0x2002) return privateV4(g[1] >> 8, g[1] & 0xff);
+  return (
+    (g[0] & 0xfe00) === 0xfc00 || // unique-local, Tailscale's fd7a:115c:a1e0::/48
+    (g[0] & 0xffc0) === 0xfe80 || // link-local
+    (g[0] & 0xffc0) === 0xfec0 || // site-local
+    (g[0] & 0xff00) === 0xff00 || // multicast
+    (g[0] === 0x64 && g[1] === 0xff9b) || // NAT64
+    (g[0] === 0x2001 && g[1] === 0) || // Teredo
+    (g[0] === 0x100 && g[1] === 0 && g[2] === 0 && g[3] === 0) // discard
+  );
+}
+
+function privateV4(x: number, y: number): boolean {
+  return x === 0 || x === 10 || x === 127 || (x === 169 && y === 254) || (x === 172 && y >= 16 && y <= 31) || (x === 192 && y === 168) || (x === 100 && y >= 64 && y <= 127) || x >= 224;
+}
+
+/** An IPv6 address as its eight 16-bit groups; null when it is not one. */
+function v6Groups(a: string): number[] | null {
+  let s = a;
+  let tail: number[] = [];
+  const dotted = s.match(/^(.*:)(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (dotted) {
+    const p = dotted.slice(2).map(Number);
+    if (p.some((n) => n > 255)) return null;
+    tail = [(p[0] << 8) | p[1], (p[2] << 8) | p[3]];
+    s = dotted[1].endsWith('::') ? dotted[1] : dotted[1].slice(0, -1);
+  }
+  const halves = s.split('::');
+  if (halves.length > 2) return null;
+  const parse = (h: string) => (h ? h.split(':').map((x) => (/^[0-9a-f]{1,4}$/.test(x) ? parseInt(x, 16) : NaN)) : []);
+  const head = parse(halves[0]);
+  const rest = halves.length === 2 ? parse(halves[1]) : [];
+  const fill = 8 - head.length - rest.length - tail.length;
+  if (fill < 0 || (halves.length === 1 && fill !== 0) || (halves.length === 2 && fill < 1)) return null;
+  const g = [...head, ...Array(halves.length === 2 ? fill : 0).fill(0), ...rest, ...tail];
+  return g.length === 8 && g.every((x) => Number.isInteger(x)) ? g : null;
 }
 
 /** Where a host name points, and whether any of it is not the public internet. Names that do not resolve count as private. */

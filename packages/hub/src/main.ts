@@ -5,6 +5,7 @@ import { ActivityStore } from './activity.ts';
 import { Attention } from './attention.ts';
 import { InboxRanker, rankMode } from './ranker.ts';
 import { applyDemoOverlay, createDemoAccounts, DEMO_MAIL_ACCOUNT, demoFactory, seedDemoMail } from './demo.ts';
+import { demoMailImages } from './mail/demo-html.ts';
 import { FakeMailBackend, MailHub, ManagerMailBackend } from './mail/index.ts';
 import { mailPeople } from './mail/people.ts';
 import { Delivery } from './delivery.ts';
@@ -222,7 +223,7 @@ const mailBackend = demoMail ?? (sup instanceof RoutedSupervisor ? new ManagerMa
 if (sup instanceof RoutedSupervisor && mailBackend instanceof ManagerMailBackend) sup.mail = mailBackend;
 // A manager on this machine reads attachments from the outbox's folder; one elsewhere gets their bytes.
 if (mailBackend instanceof ManagerMailBackend) mailBackend.localFiles = /^(?:https?|wss?):\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/i.test(accountsUrl ?? '');
-const mail = new MailHub({ db: store.db, backend: mailBackend, managerUrl: accountsPage, dataDir });
+const mail = new MailHub({ db: store.db, backend: mailBackend, managerUrl: accountsPage, dataDir, media: { dir: join(dataDir, 'media-cache'), key: secret, ...(demoMail ? demoMailImages : {}) } });
 // Correspondents become identities and persons (mail/people.ts).
 mailPeople(mail)?.connect(store);
 

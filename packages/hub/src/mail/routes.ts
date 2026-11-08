@@ -18,6 +18,7 @@ import type { MailHub } from './index.ts';
 import { peopleRoutes } from './people.ts';
 import { sendRoutes } from './outbox.ts';
 import { opsRoutes } from './ops.ts';
+import { partRoutes } from './parts.ts';
 
 export interface MailRequest {
   req: Request;
@@ -113,7 +114,7 @@ export const readRoutes: MailRouter = (hub) => [
 ];
 
 /** Every slice's router. Add yours here. */
-const ROUTERS: MailRouter[] = [readRoutes, peopleRoutes, sendRoutes, opsRoutes];
+const ROUTERS: MailRouter[] = [readRoutes, peopleRoutes, sendRoutes, opsRoutes, partRoutes];
 
 export function mountRouters(hub: MailHub): MailRoute[] {
   return ROUTERS.flatMap((r) => r(hub));

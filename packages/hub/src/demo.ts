@@ -16,6 +16,7 @@ import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
 import type { InprocAdapter } from './supervisor.ts';
 import type { FakeMailBackend, FakeInput } from './mail/fake.ts';
+import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
 
 type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa';
 
@@ -1832,7 +1833,7 @@ export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
   });
 
   // The lease: Alice, with Jo in Cc and a PDF; you answered; Jo added a line.
-  put({ messageId: id('lease-1'), from: [alice], to: [ME], cc: [jo], subject: 'Lease renewal', receivedAt: now - 3 * D, text: 'Hi both,\n\nThe landlord sent the renewal. I signed page 2; could you sign pages 3 and 4 and send it back by the 15th?\n\nAlice', attachments: [{ id: 'att-lease', filename: 'lease-renewal.pdf', mime: 'application/pdf', size: 184_320, inline: false, contentId: null }] });
+  put({ messageId: id('lease-1'), from: [alice], to: [ME], cc: [jo], subject: 'Lease renewal', receivedAt: now - 3 * D, text: 'Hi both,\n\nThe landlord sent the renewal. I signed page 2; could you sign pages 3 and 4 and send it back by the 15th?\n\nAlice', attachments: [{ id: 'att-lease', filename: 'lease-renewal.pdf', mime: 'application/pdf', size: 184_320, inline: false, contentId: null }], files: demoFileBytes() });
   put({ mailboxId: 'Sent', messageId: id('lease-2'), inReplyTo: id('lease-1'), references: [id('lease-1')], from: [ME], to: [alice], cc: [jo], subject: 'Re: Lease renewal', receivedAt: now - 2 * D, text: 'Signed and scanned, it is attached. Thanks for sorting this out!\n\nOn Mon, Alice Chen <alice.chen@example.org> wrote:\n> The landlord sent the renewal.' });
   put({ messageId: id('lease-3'), inReplyTo: id('lease-2'), references: [id('lease-1'), id('lease-2')], from: [jo], to: [alice, ME], subject: 'Re: Lease renewal', receivedAt: now - 9 * H, flags: { seen: false }, text: 'Done on my side too. Do we want to ask about the parking spot while we are at it?\n\nJo' });
 
@@ -1890,4 +1891,5 @@ export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
       bulk: { listId: '<arrivals.library.example>', unsubscribe: '<mailto:leave@library.example>', precedence: 'bulk', autoSubmitted: null },
       text: `This week's new books and events at the library (week ${40 - i}).`,
     });
+  seedHtmlMail(fake, DEMO_MAIL_ACCOUNT, ME, now);
 }
