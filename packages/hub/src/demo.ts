@@ -1892,6 +1892,9 @@ export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
       text: `This week's new books and events at the library (week ${40 - i}).`,
     });
   seedHtmlMail(fake, DEMO_MAIL_ACCOUNT, ME, now);
+  // A folder the hub does not follow, with an old receipt: only a search of the server finds it (slice 7).
+  fake.addMailbox(DEMO_MAIL_ACCOUNT, { id: 'Receipts', name: 'Receipts', path: 'Receipts', parentId: null, role: null, unread: null, total: null });
+  put({ mailboxId: 'Receipts', messageId: id('receipt'), from: [{ name: 'Maple Hardware', email: 'orders@maple-hardware.example' }], to: [ME], subject: 'Your receipt, order #4102', receivedAt: now - 40 * D, text: 'Thank you for your order. The drill comes with a two-year warranty; keep this email as your proof of purchase.' });
   // A big mailbox (scripts/verify-mail.ts --big): years of Archive and older Inbox, below the mail above, and a folder.
   if (process.env.DITHER_DEMO_MAIL_BIG) {
     for (const [box, n] of [['Archive', 40_000], ['INBOX', 400]] as const) fillMailbox(fake, DEMO_MAIL_ACCOUNT, box, n, { newest: now - 30 * D, oldest: now - 3 * 365 * D, self: ME.email });

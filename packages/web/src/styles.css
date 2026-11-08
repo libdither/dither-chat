@@ -9883,6 +9883,60 @@ button.msg-edited.link:hover {
   }
 }
 
+/* Mail search (slice 7): in Mail's sidebar, and as a group on the search page. */
+.mail-search-btn + .mail-boxes-btn {
+  margin-left: 0;
+}
+.mail-search-btn.on {
+  color: var(--accent);
+}
+.mail-search {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.mail-search-box {
+  margin: 4px 12px 2px;
+}
+.mail-search-box input {
+  min-width: 0;
+}
+.mail-hit .mail-hit-snip {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+}
+.mail-hit mark {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: var(--highlight);
+  color: inherit;
+  font-weight: 650;
+}
+.mail-hit-n {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.mail-search-head {
+  margin: 14px 12px 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.mail-search-note {
+  text-align: left;
+  padding: 4px 14px;
+}
+.mail-search-all {
+  margin: 2px 12px 6px;
+  font-size: 13px;
+}
+
 /* The reader: a column of messages, each a card. */
 .mail-reader {
   min-width: 0;

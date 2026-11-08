@@ -23,8 +23,8 @@ Email beside your chats, through dither-accounts' `mail` interface. The design, 
 - **Offline**: the page keeps the threads it was showing and the last threads and bodies it opened, so they show
   before the hub answers.
 
-Not yet: search (7), notifications (9). Big mailboxes (older mail, other folders, bodies
-ahead) have a section of their own below.
+Not yet: notifications (9). Big mailboxes (older mail, other folders, bodies ahead) and search have sections of
+their own below.
 
 ## People (slice 6)
 
@@ -229,6 +229,76 @@ Opening a mail row is in the activity log as a stay on the thread's id (`mth_…
 Tests: `hub/test/mail-classify.test.ts`, `mail-attention.test.ts`, `web/test/inbox-mail.test.ts`; `verify-inbox.ts`
 (mixed rows) and `verify-mail.ts` (Updates and People on a phone and a desktop in both themes, Not a person).
 
+## Search (slice 7)
+
+- **Where.** Mail's search button (beside the folders) puts a search box in place of the list. A search is a list key,
+  `s:<query>` (protocol `searchList`), so `#/mail/l/s%3A<query>` links to one and a thread opens beside its results as
+  from any list, and back returns to them. Chips: Unread, Starred, Attachment. The search page gets a **Mail** group
+  above the chats' results: the hub's own top five threads and the way into Mail's search. It shows only while the hub
+  has mail and the query means something in mail (`mailSearchable`), and it is a request of its own, drawn by Mail's
+  chunk, so the chats' results never wait for it (docs/search.md).
+- **The language** is chat search's (docs/search.md: words in any order, the last a prefix, `"phrases"`, `-word`, accents
+  folded) read with mail's operators, `parseSearch(q, now, 'mail')`. Chat's own operators are words there, and mail's
+  are words in chat search:
+
+  | Operator | Means |
+  |---|---|
+  | `from:sam` | the sender's name or address contains it, or the sender is someone whose name (or any of whose identities' names, on any network) does; a person's or identity's id works too |
+  | `to:jo`, `cc:jo` | the same, in To or Cc |
+  | `with:alex` | either side: From, To or Cc |
+  | `subject:lease` | words in the subject (the last a prefix) |
+  | `in:archive`, `in:"Work/Clients"`, `in:anywhere` | a mailbox by role (inbox, sent, drafts, archive, spam or junk, trash), name or path. Junk and Trash are searched only when named, or with `in:anywhere` |
+  | `label:work` | a Gmail or Proton label, or a folder of that name |
+  | `has:attachment` | with a file |
+  | `is:unread`, `is:read`, `is:starred` (or `is:flagged`) | as the hub has it |
+  | `account:proton`, `account:me@x.org` | one mail account, by label, address, kind or id |
+  | `before:`, `after:`, `during:`, `sort:oldest` | as in chat search, on when the server got it |
+
+- **The hub's own index** (`hub/src/mail/schema-search.sql`, `mail/search.ts`): `mail_search` holds what each message is
+  found by (its subject; From, To and Cc names and addresses; its body's search text once fetched, else its preview)
+  beside what a search groups and filters by (account, thread, time, "only in Junk or Trash"), and `mail_fts` indexes
+  it. Triggers on `mail_message`, `mail_text`, `mail_location` and `mailbox` keep both current, so anything that
+  stores a message or a body is searchable without calling anything: the first sync, a server search, the reader, and
+  bodies fetched ahead alike. The body's search text is slice 2's `mail_text` (the first 16 KB, kept after the body
+  cache lets the body go, under the one cap `DITHER_MAIL_INDEX_MB`): a row stored sets it here, and a row the cap
+  drops puts the preview back. Hits are threads, newest matching message first, with how many of their messages matched and the
+  matched words marked; paged by cursor. As chat search does, nothing found as whole words searches inside words, and
+  still nothing corrects misspelt words from `mail_fts_vocab`.
+- **The servers.** `GET /api/mail/search?q=&cursor=&limit=&server=0|1|auto`. The page shows the hub's own hits at once,
+  then asks the servers (`server=1`) when those are under 20 threads, or when you ask ("Search the servers too");
+  `auto` is the same rule on the hub. Each account gets `mail.search` at P0, 50 at most, 20 s at most. Gmail gets the
+  query in its own syntax (X-GM-RAW; an account is Gmail by its address or its `[Gmail]` folders); other IMAP servers
+  and Proton get the words, with the values of `from:`, `to:`, `with:` and `subject:` as words. What they answer is
+  stored as listed summaries (so it opens like any other, and `ingested` goes out), the query's other operators are
+  checked here, and only threads the hub's own search had not found (with what it held before) show, after its own,
+  under "On the server". **Proton's server matches subjects and addresses only**: its answer says so (`note`), and a
+  Proton message's text is found here once its body has been fetched. A server that fails or is offline says so under
+  the results; the hub's own hits show regardless.
+- **Speed**, from `bun scripts/measure-mail-search.ts` on a made-up mailbox of 50,000 messages in 16,658 threads, every
+  message with a fetched body (the worst case for the index: 25.8 MB of search text; 95 MB for `mail_text` and the
+  search tables together, in a 203 MB database; storing them took 85 s), on the shared 16-core machine, median of 7,
+  the first page of 50 threads:
+
+  | Query | ms |
+  |---|---|
+  | a rare word (in 0.2% of messages) | 1.4 |
+  | a word in a quarter of them; its second page | 12; 12 |
+  | a word in nearly all, like "the" or a domain | 74 |
+  | two words; a word and `after:` | 11; 11 |
+  | `subject:` a word | 0.8 |
+  | `from:` someone; a word and `from:` | 21; 21 |
+  | `is:unread`; `has:attachment in:archive` (filters only) | 47; 62 |
+  | inside words (no whole word matched); nothing matched at all | 103; 65 |
+  | a misspelt word, corrected | 100 |
+
+  The first version took 358 ms for the "nearly all" word: joining every match to `mail_message` and checking its
+  mailboxes one by one. The columns beside the text and marking the snippet in JS rather than with FTS5's `snippet()`
+  brought it under 80.
+- **Tests**: `hub/test/mail-search.test.ts` (the operators; people by any of their names; inside words, CJK and
+  corrections; paging; a body fetched ahead found with no call; the text kept past the body cache, and the preview
+  back under slice 2's cap; Junk moves and thread moves; the hub's hits then the server's; deduplication; operators
+  on server hits; Proton's note; a failed and an offline server; the route); `verify-mail.ts`'s search run.
+
 ## Setting it up
 
 1. The hub runs with `DITHER_ACCOUNTS_URL` (docs/accounts.md). Set `DITHER_ACCOUNTS_PUBLIC_URL` too, for the links to
@@ -313,10 +383,10 @@ hub holds, at 390 px and on a desktop in both themes, before its usual checks.
 
 **For later slices.**
 
-- Search (7): `mail_text` (message_id, text) has the first 16 KB of each fetched body's text by the time MailHub's
-  `body` event fires, for bodies fetched ahead too; `searchText(store, id)` (`hub/src/mail/cache.ts`) reads it. A row
-  goes with its message (`ON DELETE CASCADE`) and under the cap, so an FTS table can follow it with triggers on
-  `mail_text`. `deleted` also fires for summaries the cap drops.
+- Search (7) follows `mail_text` (message_id, text) with triggers (schema-search.sql): it has the first 16 KB of each
+  fetched body's text by the time MailHub's `body` event fires, for bodies fetched ahead too; `searchText(store, id)`
+  (`hub/src/mail/cache.ts`) reads it. A row goes with its message (`ON DELETE CASCADE`) and under the cap.
+  `deleted` also fires for summaries the cap drops.
 - Classification (8): once `mail_message.class` is set, bodies ahead go by it; `mail_thread.listed = 1` keeps a
   thread in the live window.
 - Triage (9): a new personal message's body is fetched on arrival; its `body` event says when it is here.
@@ -340,8 +410,8 @@ others were asked, because an IMAP move is a removal there and an addition elsew
 ## Running it locally
 
 - A demo hub has a mail account of its own, on a fake server (`hub/src/mail/fake.ts`, seeded by `seedDemoMail` in
-  `hub/src/demo.ts`): a reply thread, a Cc'd thread with a file, list mail, and an HTML-only message with a tracker and
-  scripts.
+  `hub/src/demo.ts`): a reply thread, a Cc'd thread with a file, list mail, an HTML-only message with a tracker and
+  scripts, and an old receipt in a folder the hub does not follow, which only a search of the server finds.
 
       bun packages/hub/src/main.ts --demo --data /tmp/mail-demo --port 8700 --web <built web>
       bun scripts/verify-mail.ts http://127.0.0.1:8700 [screenshot dir]
@@ -408,5 +478,8 @@ others were asked, because an IMAP move is a removal there and an addition elsew
   `triageFacts(messageIds)` gives the fold triage's pushes and questions, and `isListed`/`input`/`view` read a
   thread's listing and attention. A thread's class is `mail_thread.class` (`MailThreadView.class`, `unknown`), its
   owed time `MailThreadView.owedSince`, its inbox score `Attention.view(<thread id>)`.
+- **Search** (slice 7): whatever stores a message, or a body's text in `mail_text`, is indexed by schema-search.sql's
+  triggers, with no call. `mailSearchOf(hub)` is the hub's `MailSearch`; `local(q)` is the hub's own search,
+  `search(q, { server })` adds the servers'. `mail_search.shut` marks messages only in Junk or Trash.
 - `protocol/src/mail-iface.ts` is a copy of dither-accounts' interface types; `bun scripts/accounts-sync.ts --check`
   says when it differs.

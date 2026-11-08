@@ -338,6 +338,50 @@ export interface MailSettings {
   markRead: 'view' | 'manual';
 }
 
+// ------------------------------------------------------------------ search (slice 7)
+
+/** One thread a mail search found. */
+export interface MailSearchHit {
+  thread: MailThreadView;
+  /** Its newest message that matched, and when that came. */
+  messageId: string;
+  at: number;
+  /** Matched text with \u0001 and \u0002 around each match, or the start of the message; null when only its subject or people matched. */
+  snippet: string | null;
+  /** How many of its messages matched here (1 for a server hit). */
+  matches: number;
+  /** Only a server found it: the hub did not hold it, or did not hold the text that matched. */
+  server?: boolean;
+}
+
+/** How one account's server search went. */
+export interface MailServerSearch {
+  accountId: string;
+  /** `skipped`: nothing a server can search for (only filters), or the account cannot be asked now. */
+  state: 'done' | 'failed' | 'offline' | 'skipped';
+  /** Messages it answered with. */
+  found: number;
+  error: string | null;
+  /** What this server cannot search, e.g. Proton: subjects and addresses only. */
+  note: string | null;
+}
+
+/** GET /api/mail/search?q=&cursor=&limit=&server=0|1|auto: the hub's own hits, newest first, then the servers'. */
+export interface MailSearchPage {
+  hits: MailSearchHit[];
+  next: string | null;
+  /** How the words matched: whole words, inside words (nothing matched as whole words), or no words, only filters. */
+  mode: 'fulltext' | 'substring' | 'filters';
+  /** Nothing matched as typed: these hits are for this query (misspelt words corrected). */
+  corrected?: string;
+  /** Asked of the servers (server=1, or server=auto and a first page under 20 hits): threads the hub's own search did not find, newest first. */
+  server?: { hits: MailSearchHit[]; accounts: MailServerSearch[] };
+}
+
+/** A search as a list key, so Mail's route shows it in place of a list: `s:<query>`. */
+export const searchList = (q: string): MailListKey => `s:${q}`;
+export const searchOfList = (key: string): string | null => (key.startsWith('s:') ? key.slice(2) : null);
+
 // ------------------------------------------------------------------ lists
 
 /** The views a list key can name. `people` and `updates` come with classification (slice 8). */

@@ -3,7 +3,7 @@
  * Starred, Sent) and each account's mailboxes, then the list. On a phone it is the list a thread opens over.
  */
 import type * as P from '@dither-chat/protocol';
-import { mailboxList, viewList } from '@dither-chat/protocol';
+import { mailboxList, searchList, searchOfList, viewList } from '@dither-chat/protocol';
 import { DEFAULT_LIST, listTitle, MAIL_VIEWS } from '../../mail/model.ts';
 import { db, go, mailRev } from '../../state.ts';
 import { openMenu, type MenuEntry } from '../ContextMenu.tsx';
@@ -11,6 +11,7 @@ import { Icon } from '../icons.tsx';
 import { ComposeButton, DraftsLine } from './Composer.tsx';
 import { MailAccessNote } from './MailAccounts.tsx';
 import { LIST_BARS } from './slots.tsx';
+import { MailSearch } from './MailSearch.tsx';
 import { ThreadList } from './ThreadList.tsx';
 
 /** The manager's page, or its account page. */
@@ -57,11 +58,17 @@ export function MailSidebar({ list, active }: { list?: string; active?: string }
   const scoped = key.startsWith('v:') ? key.split(':')[2] : '*';
   const view = key.startsWith('v:') ? key.split(':')[1] : null;
   const pick = (v: string, acc: string) => go({ view: 'mail', list: viewList(v as P.MailView, acc === '*' ? null : acc) });
+  const search = searchOfList(key);
   return (
     <div class="sidebar-inner mail-side">
       <header class="side-head">
         <h1>
           Mail
+          {accounts.length > 0 && (
+            <button class={`icon-btn small side-new mail-search-btn ${search !== null ? 'on' : ''}`} aria-label="Search mail" title="Search mail" onClick={() => go(search !== null ? { view: 'mail' } : { view: 'mail', list: searchList('') })}>
+              <Icon name="search" size={16} />
+            </button>
+          )}
           {accounts.length > 0 && (
             <button
               class={`icon-btn small side-new mail-boxes-btn ${key.startsWith('mb:') ? 'on' : ''}`}
@@ -77,11 +84,12 @@ export function MailSidebar({ list, active }: { list?: string; active?: string }
           )}
           <ComposeButton accountId={scoped === '*' ? null : scoped} />
         </h1>
-        <span class="side-sub">{key === DEFAULT_LIST ? (accounts.length === 1 ? (accounts[0].address ?? accounts[0].label) : accounts.length ? 'All accounts' : 'Through dither-accounts') : listTitle(s, key)}</span>
+        <span class="side-sub">{search !== null ? 'Search' : key === DEFAULT_LIST ? (accounts.length === 1 ? (accounts[0].address ?? accounts[0].label) : accounts.length ? 'All accounts' : 'Through dither-accounts') : listTitle(s, key)}</span>
       </header>
       <MailAccessNote />
       <ProblemStrips />
-      {accounts.length > 0 && (
+      {search !== null && <MailSearch q={search} active={active} />}
+      {search === null && accounts.length > 0 && (
         <div class="inbox-chips mail-chips" role="radiogroup" aria-label="Show">
           {/* Updates is Inbox's folded row; its chip shows while you are in it. */}
           {MAIL_VIEWS.filter((v) => v.view !== 'updates' || view === 'updates').map((v) => (
@@ -99,11 +107,12 @@ export function MailSidebar({ list, active }: { list?: string; active?: string }
           )}
         </div>
       )}
-      <DraftsLine />
-      {LIST_BARS.map((B) => (
-        <B list={key} />
-      ))}
-      <div class="side-scroll">{(accounts.length > 0 || db.mail.threads.size > 0) && <ThreadList list={key} active={active} />}</div>
+      {search === null && <DraftsLine />}
+      {search === null &&
+        LIST_BARS.map((B) => (
+          <B list={key} />
+        ))}
+      {search === null && <div class="side-scroll">{(accounts.length > 0 || db.mail.threads.size > 0) && <ThreadList list={key} active={active} />}</div>}
     </div>
   );
 }

@@ -1,9 +1,10 @@
 import type * as P from '@dither-chat/protocol';
-import { NETWORKS, parseSearch, searchOp, searchOps, setSearchOp, toggleSearchOp } from '@dither-chat/protocol';
+import { mailSearchable, NETWORKS, parseSearch, searchOp, searchOps, setSearchOp, toggleSearchOp } from '@dither-chat/protocol';
+import type { ComponentType } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { clock, dayLabel } from '../format.ts';
 import { allCommunities, authorName, communitiesOf, convLabel, convTitle, netName, people, plainBody, plainMarkdown, resolveTokens, visibleConv } from '../model.ts';
-import { api, back, db, go, openMessage, openProfile, rev, route } from '../state.ts';
+import { api, back, db, go, mailRev, openMessage, openProfile, rev, route } from '../state.ts';
 import { retention } from '../history.ts';
 import { Avatar, Empty, NetBadge, NetGlyph, Skeleton } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -11,6 +12,7 @@ import { homeRoute } from './Sidebar.tsx';
 import { Menuable } from './ContextMenu.tsx';
 import { conversationMenu, identityMenu, messageMenu, personMenu, spaceMenu } from './menus.tsx';
 import { readableSearch, recentSearches, rememberSearch, SearchBox } from './SearchBox.tsx';
+import { preloadMail } from './mail/lazy.tsx';
 
 /** Split a snippet into text and matches. It is plain text, so it stays out of innerHTML. */
 function Snippet({ text, network }: { text: string; network: P.Network }) {
@@ -208,6 +210,20 @@ function Results({ hits }: { hits: P.SearchHit[] }) {
   );
 }
 
+/**
+ * Mail's own top hits beside the chats' (ui/mail/MailSearch.tsx, docs/mail.md), when the hub has mail and the query
+ * means something there. A request of its own, drawn by Mail's chunk once loaded: the chats' results never wait for it.
+ */
+function MailGroup({ q }: { q: string }) {
+  mailRev.value;
+  const on = db.mail.access.state === 'granted' && db.mail.accounts.size > 0 && mailSearchable(q);
+  const [Group, setGroup] = useState<ComponentType<{ q: string }> | null>(null);
+  useEffect(() => {
+    if (on && !Group) preloadMail().then((m) => setGroup(() => m.MailSearchGroup), () => {});
+  }, [on]);
+  return on && Group ? <Group q={q} /> : null;
+}
+
 /** Up and Down walk the results; Up from the first goes back to the box. */
 function walk(e: KeyboardEvent, box: HTMLInputElement | null) {
   if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
@@ -328,6 +344,7 @@ export function SearchPane({ q }: { q: string }) {
             ))}
           </div>
         )}
+        <MailGroup q={q} />
         {loading && <Skeleton rows={4} />}
         {page && !loading && !visible.length && <Empty icon="search" title="No matching messages">Only what your accounts have fetched is stored here, so older messages may exist on the network.</Empty>}
         {page?.corrected && visible.length > 0 && (

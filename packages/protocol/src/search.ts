@@ -2,6 +2,9 @@
  * The search box's little language, shared by hub and PWA:
  *   rust "borrow checker" -async from:alice in:dev network:discord has:image mentions:me after:2026-01-01 before:2026-02-01 sort:relevance
  * Anything that is not a known operator is text, so "from:" alone or "http://x" still search as typed.
+ *
+ * Mail (docs/mail.md) reads the same language with its own operators: parseSearch(input, now, 'mail').
+ *   invoice from:sam to:jo with:alex subject:lease in:archive label:work has:attachment is:unread account:proton after:2026-01
  */
 export interface SearchQuery {
   terms: string[];
@@ -22,6 +25,11 @@ export interface SearchQuery {
   before: number | null;
   relevance: boolean;
   oldest: boolean;
+  /** Mail only: recipients (To or Cc), either side (From, To or Cc), words in the subject, labels. */
+  to: string[];
+  with: string[];
+  subject: string[];
+  label: string[];
 }
 
 export const SEARCH_HAS = ['attachment', 'image', 'video', 'audio', 'file', 'link', 'embed', 'sticker', 'reaction'] as const;
@@ -45,6 +53,25 @@ export const SEARCH_OPS: { op: string; hint: string }[] = [
   { op: 'sort', hint: 'newest, oldest, relevance' },
 ];
 
+/** What mail's is: takes (`flagged` is starred). */
+export const MAIL_SEARCH_IS = ['unread', 'read', 'starred'] as const;
+
+/** Mail's operators, in the order its box suggests them. */
+export const MAIL_SEARCH_OPS: { op: string; hint: string }[] = [
+  { op: 'from', hint: 'a sender' },
+  { op: 'to', hint: 'a recipient' },
+  { op: 'with', hint: 'anyone on it' },
+  { op: 'subject', hint: 'words in the subject' },
+  { op: 'in', hint: 'inbox, sent, archive, trash, a folder' },
+  { op: 'label', hint: 'a label' },
+  { op: 'has', hint: 'attachment' },
+  { op: 'is', hint: 'unread, read, starred' },
+  { op: 'account', hint: 'one of your mail accounts' },
+  { op: 'before', hint: 'a date' },
+  { op: 'during', hint: 'a day or a month' },
+  { op: 'after', hint: 'a date' },
+];
+
 /** A day (2026-01-15), a month (2026-01), today or yesterday: its start, or with `end` the start of the next. */
 export function searchDay(s: string, end: boolean, now = new Date()): number | null {
   const rel = { today: 0, yesterday: -1 }[s.toLowerCase()];
@@ -55,16 +82,18 @@ export function searchDay(s: string, end: boolean, now = new Date()): number | n
   return new Date(y, m - 1, d ?? 1).getTime();
 }
 
-export function parseSearch(input: string, now = new Date()): SearchQuery {
-  const q: SearchQuery = { terms: [], phrases: [], not: [], from: [], in: [], network: [], account: [], has: [], is: [], mentionsMe: false, mentions: [], after: null, before: null, relevance: false, oldest: false };
+export function parseSearch(input: string, now = new Date(), kind: 'chat' | 'mail' = 'chat'): SearchQuery {
+  const q: SearchQuery = { terms: [], phrases: [], not: [], from: [], in: [], network: [], account: [], has: [], is: [], mentionsMe: false, mentions: [], after: null, before: null, relevance: false, oldest: false, to: [], with: [], subject: [], label: [] };
   const day = (s: string, end: boolean) => searchDay(s, end, now);
+  const mail = kind === 'mail';
   for (const m of input.matchAll(/(-?)(?:(\w+):)?(?:"([^"]*)"|(\S+))/g)) {
     const [whole, neg, op, quoted, bare] = m;
     const val = quoted ?? bare ?? '';
     if (!val) continue;
     const key = op?.toLowerCase();
     const low = val.toLowerCase();
-    if (!neg && key) {
+    if (!neg && key && mail && mailOp(q, key, val, low)) continue;
+    if (!neg && key && !mail) {
       if (key === 'from') { q.from.push(val); continue; }
       if (key === 'in') { q.in.push(val); continue; }
       if (key === 'network' || key === 'on') { q.network.push(low); continue; }
@@ -75,6 +104,8 @@ export function parseSearch(input: string, now = new Date()): SearchQuery {
       if (key === 'pinned' && ['true', 'yes'].includes(low)) { q.is.push('pinned'); continue; }
       if (key === 'mentions' && low === 'me') { q.mentionsMe = true; continue; }
       if (key === 'mentions') { q.mentions.push(val); continue; }
+    }
+    if (!neg && key) {
       if (key === 'sort' && low === 'relevance') { q.relevance = true; continue; }
       if (key === 'sort' && low === 'oldest') { q.oldest = true; continue; }
       if (key === 'sort' && low === 'newest') continue;
@@ -88,6 +119,48 @@ export function parseSearch(input: string, now = new Date()): SearchQuery {
     else q.terms.push(text);
   }
   return q;
+}
+
+/** One of mail's operators into the query; false when it is not one (it is text then). */
+function mailOp(q: SearchQuery, key: string, val: string, low: string): boolean {
+  switch (key) {
+    case 'from':
+    case 'in':
+    case 'account':
+    case 'to':
+    case 'with':
+    case 'subject':
+    case 'label':
+      q[key].push(val);
+      return true;
+    case 'cc':
+      q.to.push(val);
+      return true;
+    case 'has':
+      if (!['attachment', 'attachments', 'file', 'files'].includes(low)) return false;
+      q.has.push('attachment');
+      return true;
+    case 'is': {
+      const is = low === 'flagged' ? 'starred' : low;
+      if (!(MAIL_SEARCH_IS as readonly string[]).includes(is)) return false;
+      q.is.push(is);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Whether a query from the app's search box means something in mail too: not when it names what only chats have
+ * (a network, a mention, a chat or community, pinned, edited, deleted, an image). The search page's Mail group runs
+ * only then.
+ */
+export function mailSearchable(input: string): boolean {
+  const q = parseSearch(input);
+  if (q.network.length && !q.network.includes('email')) return false;
+  if (q.mentionsMe || q.mentions.length || q.in.length || q.is.length) return false;
+  if (q.has.some((h) => h !== 'attachment' && h !== 'file')) return false;
+  return q.terms.length + q.phrases.length + q.from.length + q.has.length > 0 || q.after !== null || q.before !== null;
 }
 
 /** The query with one operator set, cleared or toggled, for the filter buttons. */
