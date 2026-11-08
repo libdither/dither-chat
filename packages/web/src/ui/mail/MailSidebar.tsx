@@ -10,6 +10,7 @@ import { openMenu, type MenuEntry } from '../ContextMenu.tsx';
 import { Icon } from '../icons.tsx';
 import { ComposeButton, DraftsLine } from './Composer.tsx';
 import { MailAccessNote } from './MailAccounts.tsx';
+import { LIST_BARS } from './slots.tsx';
 import { ThreadList } from './ThreadList.tsx';
 
 /** The manager's page, or its account page. */
@@ -98,6 +99,9 @@ export function MailSidebar({ list, active }: { list?: string; active?: string }
         </div>
       )}
       <DraftsLine />
+      {LIST_BARS.map((B) => (
+        <B list={key} />
+      ))}
       <div class="side-scroll">{(accounts.length > 0 || db.mail.threads.size > 0) && <ThreadList list={key} active={active} />}</div>
     </div>
   );

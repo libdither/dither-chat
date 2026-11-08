@@ -13,8 +13,8 @@ Email beside your chats, through dither-accounts' `mail` interface. The design, 
 - **The reader**: a thread's messages oldest first. Unread messages and the latest are open, the rest fold to a line.
   Each shows its sender with the address, To and Cc, and ▾ for the rest of the headers. The body is the message's
   text, with links, never Markdown; quoted text folds behind ···. An HTML-only message shows the text its HTML makes.
-- **Read here**: a thread that has been on screen for a second counts as read on the hub. The server is not told yet
-  (that is slice 4), so your other mail apps still show it unread.
+- **Read here**: a thread that has been on screen for a second counts as read on the hub. Slice 4 (below) tells the
+  server too, unless Settings says "only when I mark it".
 - **Accounts → Mail** and **Settings → Mail** list the mail accounts: online or not, what is wrong ("Sign in to Proton
   in the live view"), "Sending is off: …" when dither-accounts says so, and a link to the account on the manager's
   page. Accounts are added there, never here.
@@ -23,8 +23,7 @@ Email beside your chats, through dither-accounts' `mail` interface. The design, 
 - **Offline**: the page keeps the threads it was showing and the last threads and bodies it opened, so they show
   before the hub answers.
 
-Not yet: the HTML itself (slice 3), attachments (3), marking read, starring, archiving and moving on the server (4),
-search (7), mail in the one-list inbox (8), notifications (9). Only the newest
+Not yet: the HTML itself (slice 3), attachments (3), search (7), mail in the one-list inbox (8), notifications (9). Only the newest
 500 of Inbox and Sent are synced (older mail and other folders come with slice 2), and a thread shows the start of its
 last message only once you have opened it (slice 2 fetches bodies ahead).
 
@@ -117,6 +116,36 @@ answered a thread. `quotedHtml` in compose.ts is where slice 3's sanitiser plugs
 Not yet: the reply showing in its thread before Sent's copy arrives (the strip says "Sent" meanwhile); quoting a
 message's HTML (slice 3); a send with files made without the hub surviving a reload of the page (its draft does).
 
+## Filing (slice 4: shared read state, star, archive, move)
+
+- **Read on the server.** A thread on screen for a second is marked read on the server as well, so your other mail
+  apps agree (§14 Q3). Settings → Mail → "Mark read on the server" offers "only when I mark it": then it is read here
+  only until you choose Mark read. The setting is the hub's, so every device follows it.
+- **In the reader**: Archive (Move to Inbox when it is not in Inbox), Move to the trash, Star, and ⋯ for Mark unread,
+  Move to…, Mark as junk (Not junk in Junk). Each open message has its own Star. Filing it away goes back to the list.
+- **In a list**: on a phone, swipe a row right to archive it and left to mark it read or unread. A long press picks
+  a thread; then taps pick more, and a bar over the header archives, marks, stars, trashes or moves them all. On a
+  desktop the avatar or Ctrl/Shift-click picks, and right-click opens the same menu. "Archived · Undo" shows for a
+  few seconds after a move. Keys: `e` archive, `#` trash, `s` star, `u` unread, `!` junk, Escape lets the selection go.
+- **What moves.** Archive takes the thread's messages out of Inbox (into Archive, or All mail on Gmail). Trash, junk
+  and a folder take the whole thread except what you sent, which stays in Sent. Back to Inbox takes them out of the
+  folder they are in; an IMAP server's All mail is never emptied from here (Gmail would take that as a delete), so a
+  Gmail thread that is only in All mail cannot go back to Inbox from here yet. Nothing is ever deleted outright.
+- **At once, then for real.** A change shows at once and the hub keeps it as pending (the row's time is greyed) until
+  the server answers. It goes in batches of up to 1000 messages per account, op and value, at most one write call per
+  220 ms. A message's latest change is the one sent: undone before it left, it never leaves. If the manager or the
+  account is away, changes wait (through a hub restart too) and the list says how many; when it is back, what changed
+  there is fetched first, then they go. A change the page could not hand to the hub waits in the page and goes when
+  the connection is back, once.
+- **When the server says no** (§3.7): 404 drops the change and fetches what changed; 403 undoes every change waiting
+  for the account and makes it read only here; 501 undoes it and hides that button for the account from then on
+  (Proton's `answered`); 410 lists the mailbox again and tries again; anything else is tried again, from 2 s,
+  doubling, ten times, then undone. What failed shows above the list until you dismiss it.
+- **A read grant** keeps read state here only (as slice 1 did) and shows no filing buttons.
+
+Moved into Trash or Junk, a message keeps its new place here, but those mailboxes are not kept up by the hub (slice 2
+follows mailboxes you open), so what happens to it there later reaches the hub only once they are.
+
 ## Setting it up
 
 1. The hub runs with `DITHER_ACCOUNTS_URL` (docs/accounts.md). Set `DITHER_ACCOUNTS_PUBLIC_URL` too, for the links to
@@ -165,7 +194,9 @@ others were asked, because an IMAP move is a removal there and an addition elsew
   the HTML-only message's text. Use a fresh data dir each run: reading marks threads read.
 - Tests: `hub/test/mail-thread.test.ts` (threading, as a table), `mail-store.test.ts`, `mail-sync.test.ts` (the fake:
   first-sync order, `more`, 410, moves, Proton-like state, arrivals, gaps, the manager away, access ending, the delta
-  sync) and `web/test/mail-model.test.ts`, `mail-text.test.ts`.
+  sync), `mail-ops.test.ts` (writes on the fake: pending, batches of 1000, 404/403/501/410, a restart with changes
+  waiting, the manager away, read in view and its setting, a read grant) and `web/test/mail-model.test.ts`,
+  `mail-text.test.ts`, `mail-ops.test.ts`.
 - Sending: `hub/test/mail-compose.test.ts` (recipients, subjects, quotes, the HTML part) and `mail-send.test.ts` (the
   fake: held and undone, 501 turning sending off with the message kept, a read grant, a dry run, retries and a timeout,
   files by path and by their bytes, a forward's files, From, a clientId sent once, a restart mid-send).
@@ -183,7 +214,12 @@ others were asked, because an IMAP move is a removal there and an addition elsew
   one line there. A router runs once when `MailHub` is made, so it is also where a slice subscribes to the hub.
 - **MailHub's events** (`hub.on(…)`, `hub/src/mail/index.ts`): `ingested` (new messages, `live` for ones that just
   arrived), `deleted`, `opened`, `read` (threads read here), `body` (a body arrived), `account` (added, changed, ended,
-  deleted).
+  deleted). Slice 4 adds `filed` (`hub/src/mail/ops.ts`): a write made here as it shows, before the server confirms it
+  (`read`, `unread`, `star`, `unstar`, `archive`, `inbox`, `trash`, `junk`, `move`), and again with `undone` when the
+  server refused it. Changes made in other mail apps arrive through sync instead, as `mail.threads` with new `roles`
+  and `unread`.
+- **Writes**: `mailOps(hub)` (`hub/src/mail/ops.ts`) has `flag`, `move` and `settings()`; a slice that files mail
+  itself (Not a person → Updates) calls these rather than writing flags or locations.
 - **Tables**: a slice's own go in `hub/src/mail/schema-<name>.sql`, loaded after schema.sql.
 - **The page**: `web/src/ui/mail/slots.tsx` has `BODY_RENDERERS` (the first that answers draws a body; `TextBody` is
   last), `MESSAGE_ACTIONS` (under a message), `THREAD_ACTIONS` (the reader's header or bottom bar) and `ROW_WRAPPERS`

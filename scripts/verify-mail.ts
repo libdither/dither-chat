@@ -9,6 +9,9 @@
  *   - the reader: the latest and unread messages open, the quote folded behind ···, read here after a second;
  *   - an HTML-only message shows its text part, and none of its script;
  *   - the Accounts screen's Mail group;
+ *   - filing (slice 4): read in view reaches the server; on a phone a swipe right archives and Undo brings it back,
+ *     a swipe left marks unread and read, a long press picks threads and their bar stars them; on a desktop the
+ *     reader's star and archive, the `e` key, a row's right-click menu, Ctrl-click picking, and the read setting.
  *   - writing (slice 5), last, since it sends: on a phone, Reply from the reader's bar fills in To, the subject and the
  *     quote; a Cc typed in, a file attached; Send, "Sending… Undo", Undo brings the draft back, Send again, and the
  *     reply joins the thread with its file; on a desktop, ✎ docks a new message whose To completes from your mail, and
@@ -327,11 +330,139 @@ async function composerDesktop(themeName: string, full: boolean) {
   check(`${tag}: discarding it removes the draft`, !(await has('.mail-drafts-line')));
 }
 
+// ------------------------------------------------------------------ filing (slice 4)
+
+/** Slice 4 on the library's weekly digests (read, in Inbox), a pair per run, so the runs do not meet. */
+async function filing() {
+  const hubThread = async (id: string) => (await fetch(`${base}/api/mail/threads/${id}`).then((r) => r.json())) as { thread: any; messages: any[] };
+  const settled = (id: string, f: (t: any) => boolean, what: string) =>
+    (async () => {
+      const end = Date.now() + 8000;
+      for (;;) {
+        const t = (await hubThread(id)).thread;
+        if (!t.pending && f(t)) return true;
+        if (Date.now() > end) throw new Error(`the hub never had ${what}: ${JSON.stringify({ roles: t.roles, unread: t.unread, flagged: t.flagged, pending: t.pending })}`);
+        await Bun.sleep(100);
+      }
+    })();
+  const week = (n: number) => threads.find((t) => t.subject === `New arrivals, week ${n}`)!;
+  const row = (id: string) => `.sidebar .mail-row[data-thread="${id}"]`;
+  const box = async (sel: string) => {
+    await at(sel);
+    return page.eval<{ l: number; r: number; y: number }>(`(() => { const b = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { l: b.left, r: b.right, y: b.top + b.height / 2 }; })()`);
+  };
+  async function swipe(sel: string, dir: 1 | -1) {
+    const b = await box(sel);
+    const x0 = dir > 0 ? b.l + 30 : b.r - 30;
+    await touch('touchStart', [[x0, b.y]]);
+    for (let i = 1; i <= 10; i++) {
+      await touch('touchMove', [[x0 + dir * i * 22, b.y + i * 0.5]]);
+      await Bun.sleep(16);
+    }
+    await touch('touchEnd', []);
+    await Bun.sleep(600);
+  }
+  async function longPress(sel: string) {
+    const p = await at(sel);
+    await touch('touchStart', [p]);
+    await Bun.sleep(650);
+    await touch('touchEnd', []);
+    await Bun.sleep(300);
+  }
+  async function mouse(p: Pt, button: 'left' | 'right', modifiers = 0) {
+    for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased'])
+      await page.send('Input.dispatchMouseEvent', { type, x: p[0], y: p[1], modifiers, button: type === 'mouseMoved' ? 'none' : button, buttons: type === 'mousePressed' ? (button === 'left' ? 1 : 2) : 0, clickCount: type === 'mouseMoved' ? 0 : 1 });
+    await Bun.sleep(300);
+  }
+  const key = (k: string) => page.eval(`window.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true }))`);
+
+  // Read in view (the phone run opened Dinner for a second): the server has it read, not only the hub.
+  const dinnerNow = await hubThread(dinner.id);
+  check('filing: read in view reaches the server', dinnerNow.messages.every((m) => m.flags.seen), dinnerNow.messages.map((m) => m.flags));
+
+  for (const [themeName, n] of [['dither-dark', 40], ['dither-light', 38]] as const) {
+    const tag = `phone ${themeName}: filing`;
+    const a = week(n);
+    const b = week(n - 1);
+    await page.size(390, 844, true);
+    await theme(themeName, '#/mail');
+    await page.until(`document.querySelectorAll('.sidebar .mail-row').length >= 5`, 15000);
+    await swipe(row(a.id), 1);
+    await page.until(`!document.querySelector(${JSON.stringify(row(a.id))})`, 5000).catch(() => {});
+    check(`${tag}: a swipe right archives the row away`, !(await has(row(a.id))));
+    check(`${tag}: "Archived · Undo" shows`, (await page.eval<string>(`document.querySelector('.mail-undo')?.textContent ?? ''`)).includes('Archived'));
+    check(`${tag}: the hub archived it on the server`, await settled(a.id, (t) => t.roles.includes('archive') && !t.roles.includes('inbox'), 'it archived'));
+    check(`${tag}: no sideways overflow: Undo`, !(await overflow()).length, await overflow());
+    await shot(`mail-phone-${themeName}-archived`);
+    await tap(await at('.mail-undo .link-btn'));
+    await page.until(`!!document.querySelector(${JSON.stringify(row(a.id))})`, 5000).catch(() => {});
+    check(`${tag}: Undo brings it back`, (await has(row(a.id))) && (await settled(a.id, (t) => t.roles.includes('inbox'), 'it back in Inbox')));
+
+    await swipe(row(b.id), -1);
+    check(`${tag}: a swipe left marks it unread`, (await has(`${row(b.id)}.unread`)) && (await settled(b.id, (t) => t.unread === 1, 'it unread')));
+    await swipe(row(b.id), -1);
+    check(`${tag}: and again marks it read`, !(await has(`${row(b.id)}.unread`)) && (await settled(b.id, (t) => t.unread === 0, 'it read')));
+
+    await longPress(row(a.id));
+    const picked = () => page.eval<string[]>(`[...document.querySelectorAll('.mail-swipe.selected .mail-row')].map((r) => r.dataset.thread)`);
+    check(`${tag}: a long press picks that thread`, (await page.eval<string>(`document.querySelector('.mail-pickbar-n')?.textContent ?? ''`)) === '1' && (await picked()).join() === a.id, await picked());
+    await tap(await at(row(b.id)));
+    check(`${tag}: then a tap picks another, and does not open it`, (await picked()).sort().join() === [a.id, b.id].sort().join() && !(await hash()).includes('/t/'), await picked());
+    check(`${tag}: no sideways overflow: the selection's bar`, !(await overflow()).length, await overflow());
+    await shot(`mail-phone-${themeName}-picked`);
+    await tap(await at('.mail-pickbar .icon-btn[aria-label="Star"]'));
+    check(`${tag}: the bar stars both`, (await settled(a.id, (t) => t.flagged, 'a starred')) && (await settled(b.id, (t) => t.flagged, 'b starred')) && !(await has('.mail-pickbar')));
+    await fetch(`${base}/api/mail/flag`, { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: JSON.stringify({ threadIds: [a.id, b.id], flagged: false }) });
+  }
+
+  for (const [themeName, n] of [['dither-dark', 36], ['dither-light', 34]] as const) {
+    const tag = `desktop ${themeName}: filing`;
+    const c = week(n);
+    const d = week(n - 1);
+    await page.size(1400, 900);
+    await theme(themeName, '#/mail');
+    await page.until(`document.querySelectorAll('.sidebar .mail-row').length >= 5`, 15000);
+    await click(await at(row(c.id)));
+    await page.until(`!!document.querySelector('.mail-reader .mail-msg.open .mail-text')`, 15000);
+    const head = await page.eval<string[]>(`[...document.querySelectorAll('.mail-reader-head .hdr-btn')].map((b) => b.getAttribute('aria-label'))`);
+    check(`${tag}: the reader has Archive, Trash, Star and More`, ['Archive', 'Move to the trash', 'Star', 'More'].every((l) => head.includes(l)), head);
+    await click(await at('.mail-reader-head .hdr-btn[aria-label="Star"]'));
+    check(`${tag}: Star stars it`, (await has('.mail-reader-head .hdr-btn[aria-label="Unstar"]')) && (await settled(c.id, (t) => t.flagged, 'it starred')));
+    await click(await at('.mail-reader-head .hdr-btn[aria-label="Unstar"]'));
+    check(`${tag}: Unstar unstars it`, await settled(c.id, (t) => !t.flagged, 'it unstarred'));
+    await shot(`mail-desktop-${themeName}-reader`);
+    await key('e');
+    await Bun.sleep(400);
+    check(`${tag}: e archives the open thread and goes back to the list`, !(await hash()).includes('/t/') && !(await has(row(c.id))) && (await settled(c.id, (t) => !t.roles.includes('inbox'), 'it archived')));
+    await click(await at('.mail-undo .link-btn'));
+    check(`${tag}: Undo brings it back`, await settled(c.id, (t) => t.roles.includes('inbox'), 'it back'));
+    await page.until(`!!document.querySelector(${JSON.stringify(row(c.id))})`, 5000).catch(() => {});
+
+    await mouse(await at(row(d.id)), 'right');
+    const menu = await page.eval<string>(`document.querySelector('.cm')?.textContent ?? ''`);
+    check(`${tag}: a row's right-click menu files it`, ['Archive', 'Move to…', 'Mark as junk', 'Move to the trash', 'Select'].every((l) => menu.includes(l)), menu);
+    await page.eval(`document.querySelector('.cm')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+    await Bun.sleep(200);
+    await mouse(await at(row(c.id)), 'left', 2);
+    await mouse(await at(row(d.id)), 'left', 2);
+    check(`${tag}: Ctrl-click picks threads`, (await page.eval<string>(`document.querySelector('.mail-pickbar-n')?.textContent ?? ''`)) === '2');
+    check(`${tag}: no sideways overflow`, !(await overflow()).length, await overflow());
+    await key('Escape');
+    await Bun.sleep(200);
+    check(`${tag}: Escape lets them go`, !(await has('.mail-pickbar')));
+  }
+
+  await page.goto(`${base}/#/settings`);
+  await page.until(`!!document.querySelector('#set-mail .mail-read-set')`, 10000).catch(() => {});
+  check('filing: Settings → Mail has the read setting', (await page.eval<string>(`document.querySelector('#set-mail .mail-read-set')?.textContent ?? ''`)).includes('Only when I mark it'));
+}
+
 try {
   await phone('dither-dark', true);
   await phone('dither-light', false);
   await desktop('dither-dark');
   await desktop('dither-light');
+  await filing();
   // Last: it sends, which changes the demo world.
   await composer('dither-light', false);
   await composerDesktop('dither-light', false);

@@ -28,6 +28,13 @@ const json = <T>(s: string | null | undefined, fallback: T): T => {
 };
 const lc = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
 
+/**
+ * A location (`l`) its message (`m`) is being moved out of here, before the server confirms it: ops.ts's
+ * `pending.move` = { to, hide }, where `hide` lists the mailboxes it leaves (null: every one). Lists and threads show
+ * the message in `to` instead.
+ */
+const MOVED_OUT = `(json_type(m.pending, '$.move') IS 'object' AND (json_type(m.pending, '$.move.hide') IS NOT 'array' OR l.mailbox_id IN (SELECT value FROM json_each(m.pending, '$.move.hide'))))`;
+
 /** Inbox, Sent, and All mail where there is one, else Archive: kept up by the hub on its own (§3.3). */
 export function followedRoles(mailboxes: { role: string | null }[]): Set<string> {
   const roles = new Set(['inbox', 'sent']);
@@ -106,6 +113,8 @@ export class MailStore {
   whoIs: (addresses: string[]) => Map<string, { identityId: string; personId: string | null }> = () => new Map();
   /** The addresses a `w:` list is with (a person's, an identity's): set by mail/people.ts; else the address itself. */
   addressesOf: (who: string) => string[] = (who) => (who.includes('@') ? [lc(who)] : []);
+  /** An account's writes waiting for the server (ops.ts sets it). */
+  opsOf: (accountId: string) => P.MailAccountView['ops'] = () => undefined;
   private selfCache = new Map<string, Set<string>>();
 
   constructor(
@@ -588,6 +597,8 @@ export class MailStore {
     this.db.transaction(() => {
       for (const id of new Set(ids)) {
         if (this.one('SELECT 1 FROM mail_location WHERE message_id = ?', id)) continue;
+        // A move of ours is on its way: its answer says where it went (ops.ts).
+        if (this.one(`SELECT 1 FROM mail_message WHERE id = ? AND json_type(pending, '$.move') IS 'object'`, id)) continue;
         const m = this.one<{ thread_id: string }>('SELECT thread_id FROM mail_message WHERE id = ?', id);
         if (!m) continue;
         this.run('DELETE FROM mail_body WHERE message_id = ?', id);
@@ -643,8 +654,12 @@ export class MailStore {
       for (const a of [...json<M.MailAddress[]>(m.to_json, []), ...json<M.MailAddress[]>(m.cc_json, [])]) add(a.email, a.name, false, 0);
       for (const l of json<string[]>(m.labels, [])) labels.add(l);
     }
+    // Where its messages are, with moves made here and not confirmed yet already made.
     const boxes = this.all<{ id: string; role: string | null }>(
-      `SELECT DISTINCT b.id, b.role FROM mail_location l JOIN mailbox b ON b.id = l.mailbox_id JOIN mail_message m ON m.id = l.message_id WHERE m.thread_id = ? ORDER BY b.path`,
+      `SELECT b.id, b.role FROM mailbox b WHERE b.id IN (
+         SELECT l.mailbox_id FROM mail_location l JOIN mail_message m ON m.id = l.message_id WHERE m.thread_id = ? AND NOT ${MOVED_OUT}
+         UNION SELECT json_extract(m.pending, '$.move.to') FROM mail_message m WHERE m.thread_id = ? AND m.pending IS NOT NULL) ORDER BY b.path`,
+      threadId,
       threadId,
     );
     const subject = last.subject || [...ms].reverse().find((m) => m.subject)?.subject || '';
@@ -760,6 +775,7 @@ export class MailStore {
       sync: { phase: this.syncOf(r.id), synced: held?.n ?? 0, oldest: held?.oldest ?? null },
       managedUrl: this.managedUrl(r.id),
       deleteAt: r.gone_at ? r.gone_at + MAIL_LIMITS.goneMs : null,
+      ops: this.opsOf(r.id),
     };
   }
 
@@ -797,6 +813,7 @@ export class MailStore {
       lastFromMe: !!r.last_from_me,
       owedSince: null,
       muted: !!r.muted,
+      pending: !!this.one('SELECT 1 FROM mail_message WHERE thread_id = ? AND pending IS NOT NULL', r.id),
     };
   }
 
@@ -875,8 +892,11 @@ export class MailStore {
     } else if ('mailbox' in list) {
       const b = this.mailbox(list.mailbox);
       if (!b) return null;
-      where.push('t.id IN (SELECT m.thread_id FROM mail_location l JOIN mail_message m ON m.id = l.message_id WHERE l.mailbox_id = ?)');
-      args.push(b.id);
+      where.push(
+        `t.id IN (SELECT m.thread_id FROM mail_location l JOIN mail_message m ON m.id = l.message_id WHERE l.mailbox_id = ? AND NOT ${MOVED_OUT}
+          UNION SELECT m.thread_id FROM mail_message m WHERE m.pending IS NOT NULL AND json_extract(m.pending, '$.move.to') = ?)`,
+      );
+      args.push(b.id, b.id);
       scope = { accounts: b.account_id, role: null, mailbox: b.id };
     } else {
       if (list.view === 'people' || list.view === 'updates') return null;

@@ -18,6 +18,17 @@ they start with `dither-accounts/`.
   to the newest 500 of Inbox and Sent (backfill is slice 2).
 - The numbers in §2.5 and §3.3 are `MAIL_LIMITS` in `hub/src/mail/limits.ts`.
 
+**As built in slice 4** (`hub/src/mail/ops.ts`, `schema-ops.sql`):
+
+- `mail_op` gains `sent_at` (a call is out with it; cleared on restart, so it goes again). `mail_unsupported` keeps
+  the ops an account answered 501 to, and `mail_setting` the read setting (`GET/PUT /api/mail/settings`).
+- A move waiting for the server leaves `mail_location` alone: `pending.move = { to, hide }`, and threads and mailbox
+  lists show the message moved. The answer's ids replace the location it left; with a null id the next changes pass
+  finds it. A message whose move is on its way is not deleted as an orphan meanwhile.
+- Trash is a move into the Trash mailbox, never `mail.trash` (which deletes outright what is in the trash already).
+  Nothing is deleted from here. Back to Inbox never moves out of an IMAP server's All mail (Gmail).
+- MailHub gains the `filed` event; `MailThreadView.pending` and `MailAccountView.ops` are new.
+
 ## 0. In one page
 
 | Decision | Where |

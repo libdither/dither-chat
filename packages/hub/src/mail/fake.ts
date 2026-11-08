@@ -14,6 +14,11 @@
  * mail.send (slice 5) checks From against the account's addresses (422), answers a dry run as the manager does, keeps
  * what it got in `sent` (with the files' bytes, read from a path or base64), and puts a copy in Sent that threads to
  * the original by In-Reply-To and References, which it marks answered.
+ *
+ * The hub's own writes (mail.flag, mail.move, mail.trash) change it as the extractors do: at most 1000 ids a call, 403
+ * on a read grant, `{ dryRun: true }` and no change on a dry run (as the manager answers), mail.changed for every
+ * mailbox they touched (an extractor reports this app's own changes), Proton's 501 for `answered`, and a move answering
+ * the new ids (or nulls, as an IMAP server without UIDPLUS may).
  */
 import { readFileSync } from 'node:fs';
 import type * as P from '@dither-chat/protocol';
@@ -32,6 +37,8 @@ export interface FakeOpts {
   latencyMs?: number;
   /** How many changes one mail.changes answers before saying `more`. */
   changesPage?: number;
+  /** What mail.move answers for the moved messages: their new ids, or null (the server would not say). */
+  moveIds?: 'new' | 'null';
 }
 
 /** A message as the fake server keeps it. */
@@ -143,7 +150,7 @@ export class FakeMailBackend implements MailBackend {
   // ---------------------------------------------------------- the server's side, for tests and the demo
 
   addAccount(id: string, o: { kind?: string; label?: string; email: string; name?: string; addresses?: M.MailAccountAddress[]; level?: 'read' | 'write'; dryRun?: boolean; mailboxes?: M.Mailbox[]; opts?: FakeOpts; online?: boolean }) {
-    const opts: Required<FakeOpts> = { ids: 'imap', threadIds: false, refs: true, state: 'mailbox', events: 'inbox', send: 'ok', latencyMs: 0, changesPage: 200, ...this.defaults, ...o.opts };
+    const opts: Required<FakeOpts> = { ids: 'imap', threadIds: false, refs: true, state: 'mailbox', events: 'inbox', send: 'ok', latencyMs: 0, changesPage: 200, moveIds: 'new', ...this.defaults, ...o.opts };
     const online = o.online ?? true;
     const a: Account = {
       view: { id, kind: o.kind ?? (opts.ids === 'proton' ? 'proton' : 'imap'), label: o.label ?? o.email, level: o.level ?? 'write', dryRun: !!o.dryRun, online },
@@ -323,9 +330,10 @@ export class FakeMailBackend implements MailBackend {
     return a.opts.events === 'all' || a.mailboxes.find((b) => b.id === mailbox)?.role === 'inbox';
   }
 
-  private changedEvents(a: Account, mailboxes: string[]) {
+  /** `own`: the app's own writes, which the extractor reports in every mailbox they touched. */
+  private changedEvents(a: Account, mailboxes: string[], own = false) {
     const evs: MailBackendEvent[] = [];
-    for (const b of new Set(mailboxes)) if (this.watched(a, b)) evs.push({ t: 'mail.changed', mailboxId: b, state: this.stateOf(a, b) });
+    for (const b of new Set(mailboxes)) if (own || this.watched(a, b)) evs.push({ t: 'mail.changed', mailboxId: b, state: this.stateOf(a, b) });
     this.emit(a.view.id, evs);
   }
 
@@ -427,6 +435,25 @@ export class FakeMailBackend implements MailBackend {
       }
       case 'mail.changes':
         return this.changes(a, String(input.mailboxId), input.state as string | undefined, Number(input.limit) || a.opts.changesPage);
+      case 'mail.flag':
+        if (this.writeIds(a, input) && a.view.dryRun) return { dryRun: true };
+        return this.flag(a, input);
+      case 'mail.move':
+        if (this.writeIds(a, input) && a.view.dryRun) return { dryRun: true };
+        return this.moveTo(a, this.writeIds(a, input), String(input.mailboxId));
+      case 'mail.trash': {
+        const ids = this.writeIds(a, input);
+        if (a.view.dryRun) return { dryRun: true };
+        const trash = a.mailboxes.find((b) => b.role === 'trash')?.id;
+        // Already in the trash, or there is none: deleted outright.
+        for (const id of ids) {
+          const m = a.messages.get(id);
+          if (!m) continue;
+          if (!trash || m.mailboxId === trash) this.remove(a.view.id, id);
+          else this.moveTo(a, [id], trash);
+        }
+        return {};
+      }
       case 'mail.send':
         return this.send(a, input as M.OutgoingMail);
       case 'mail.attachment': {
@@ -480,6 +507,56 @@ export class FakeMailBackend implements MailBackend {
     if (original) this.setFlags(a.view.id, original.id, { answered: true });
     this.sent.push({ account: a.view.id, mail, files, messageId });
     return { messageId, sentId: copy.id };
+  }
+
+  /** A write's ids, as the manager checks them; a read grant may not write. */
+  private writeIds(a: Account, input: Record<string, any>): string[] {
+    if (a.view.level !== 'write') throw new MailCallError('dither-chat may read this account, not change it', 403, 'denied');
+    const ids = input.ids;
+    if (!Array.isArray(ids) || !ids.length || ids.length > 1000 || ids.some((x) => typeof x !== 'string')) throw new MailCallError('ids: 1 to 1000 strings', 400, 'invalid');
+    return ids;
+  }
+
+  private flag(a: Account, input: Record<string, any>): Record<string, never> {
+    const ids = this.writeIds(a, input);
+    if (a.opts.ids === 'proton' && input.answered !== undefined) throw new MailCallError('Proton marks a message answered itself when you reply to it; mail.flag cannot set or clear that', 501);
+    const set: Partial<M.MailFlags> = {};
+    for (const k of ['seen', 'flagged', 'answered'] as const) if (typeof input[k] === 'boolean') set[k] = input[k];
+    const touched: string[] = [];
+    let missing = 0;
+    for (const id of ids) {
+      const m = a.messages.get(id);
+      if (!m) {
+        missing++;
+        continue;
+      }
+      m.flags = { ...m.flags, ...set };
+      this.journal(a, m.mailboxId, 'changed', id);
+      touched.push(m.mailboxId);
+    }
+    this.changedEvents(a, touched, true);
+    // IMAP lets a STORE on a UID that is gone pass; Proton refuses those ids (404 when it found none of them).
+    if (missing && a.opts.ids === 'proton') throw new MailCallError(`Proton would not change ${missing} of them (code 2501)`, 404);
+    return {};
+  }
+
+  private moveTo(a: Account, ids: string[], to: string): { ids: (string | null)[] } {
+    if (!a.mailboxes.some((b) => b.id === to)) throw new MailCallError(`no mailbox ${to}`, 404);
+    const touched: string[] = [to];
+    const out = ids.map((id) => {
+      const m = a.messages.get(id);
+      if (!m) return null;
+      if (m.mailboxId === to) return id;
+      touched.push(m.mailboxId);
+      a.messages.delete(id);
+      this.journal(a, m.mailboxId, 'removed', id);
+      const moved = { ...m, mailboxId: to, id: a.opts.ids === 'imap' ? this.uid(a, to) : id };
+      a.messages.set(moved.id, moved);
+      this.journal(a, to, 'added', moved.id);
+      return a.opts.moveIds === 'null' ? null : moved.id;
+    });
+    this.changedEvents(a, touched, true);
+    return { ids: out };
   }
 
   private changes(a: Account, box: string, state: string | undefined, limit: number): M.MailChanges {

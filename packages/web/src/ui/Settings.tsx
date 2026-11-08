@@ -12,6 +12,7 @@ import { HistorySettings } from './HistorySettings.tsx';
 import { AdversarialSettings } from './Adversarial.tsx';
 import { DeskSettings } from './DeskSettings.tsx';
 import { MailAccessNote, MailAccountRows } from './mail/MailAccounts.tsx';
+import { MailReadSetting } from './mail/MailReadSetting.tsx';
 import { phone } from '../phone.ts';
 import { Sheet } from './Sheet.tsx';
 import { chosenTheme, followsSystem, Swatch, ThemeList } from './Themes.tsx';
@@ -160,6 +161,7 @@ function MailSettings() {
       <h3>Mail</h3>
       <MailAccessNote />
       <MailAccountRows />
+      {db.mail.access.state === 'granted' && <MailReadSetting />}
     </section>
   );
 }
