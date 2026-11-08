@@ -7,6 +7,8 @@
  *   refs       In-Reply-To and References on summaries (dither-accounts' §13 fields), or only from mail.get
  *   state      one per mailbox (IMAP), or one for the whole account (Proton's event loop)
  *   events     mail.changed for the inbox only (IMAP IDLE), or for every mailbox (Proton's event loop)
+ *   search     mail.search: each word in the sender, recipients, subject or text (IMAP; Gmail takes its own syntax,
+ *              and here only its plain words count), or in the subject and addresses only (Proton)
  *
  * Changes made "on the server" (deliver, move, setFlags, remove, rebuild) are what another mail client would do; they
  * reach the hub as events and through mail.changes. Calls can be made to fail (410, 503, 404, limited) or slow.
@@ -39,6 +41,8 @@ export interface FakeOpts {
   changesPage?: number;
   /** What mail.move answers for the moved messages: their new ids, or null (the server would not say). */
   moveIds?: 'new' | 'null';
+  /** What mail.search looks in (slice 7); by default as `ids`. */
+  search?: 'imap' | 'gmail' | 'proton';
 }
 
 /** A message as the fake server keeps it. */
@@ -156,7 +160,7 @@ export class FakeMailBackend implements MailBackend {
   // ---------------------------------------------------------- the server's side, for tests and the demo
 
   addAccount(id: string, o: { kind?: string; label?: string; email: string; name?: string; addresses?: M.MailAccountAddress[]; level?: 'read' | 'write'; dryRun?: boolean; mailboxes?: M.Mailbox[]; opts?: FakeOpts; online?: boolean }) {
-    const opts: Required<FakeOpts> = { ids: 'imap', threadIds: false, refs: true, state: 'mailbox', events: 'inbox', send: 'ok', latencyMs: 0, changesPage: 200, moveIds: 'new', ...this.defaults, ...o.opts };
+    const opts: Required<FakeOpts> = { ids: 'imap', threadIds: false, refs: true, state: 'mailbox', events: 'inbox', send: 'ok', latencyMs: 0, changesPage: 200, moveIds: 'new', search: (o.opts?.ids ?? this.defaults.ids) === 'proton' ? 'proton' : 'imap', ...this.defaults, ...o.opts };
     const online = o.online ?? true;
     const a: Account = {
       view: { id, kind: o.kind ?? (opts.ids === 'proton' ? 'proton' : 'imap'), label: o.label ?? o.email, level: o.level ?? 'write', dryRun: !!o.dryRun, online },
@@ -483,6 +487,8 @@ export class FakeMailBackend implements MailBackend {
         }
         return {};
       }
+      case 'mail.search':
+        return { messages: this.search(a, String(input.query ?? ''), input.mailboxId as string | undefined, Number(input.limit) || 50) };
       case 'mail.send':
         return this.send(a, input as M.OutgoingMail);
       case 'mail.attachment': {
@@ -588,6 +594,20 @@ export class FakeMailBackend implements MailBackend {
     });
     this.changedEvents(a, touched, true);
     return { ids: out };
+  }
+
+  private search(a: Account, query: string, mailbox: string | undefined, limit: number): M.MailSummary[] {
+    // Gmail's operators are its own business: here only its plain words count.
+    const words = query.split(/\s+/).filter((w) => w && (a.opts.search !== 'gmail' || !/^-|:|^\{/.test(w))).map((w) => w.replace(/"/g, '').toLowerCase());
+    if (!words.length) throw new MailCallError('search for what?', 400);
+    const skip = new Set(a.mailboxes.filter((b) => b.role === 'junk' || b.role === 'trash').map((b) => b.id));
+    const people = (m: FakeMessage) => [...m.from, ...m.to, ...m.cc].map((x) => `${x.name ?? ''} ${x.email}`).join(' ');
+    const text = (m: FakeMessage) => (a.opts.search === 'proton' ? `${m.subject} ${people(m)}` : `${m.subject} ${people(m)} ${m.text ?? (m.html ? htmlText(m.html) : '')}`).toLowerCase();
+    return [...a.messages.values()]
+      .filter((m) => (mailbox ? m.mailboxId === mailbox : !skip.has(m.mailboxId)) && words.every((w) => text(m).includes(w)))
+      .sort((x, y) => y.receivedAt - x.receivedAt)
+      .slice(0, Math.max(1, Math.min(limit, 200)))
+      .map((m) => this.summary(a, m));
   }
 
   private changes(a: Account, box: string, state: string | undefined, limit: number): M.MailChanges {

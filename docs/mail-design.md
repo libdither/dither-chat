@@ -684,6 +684,10 @@ phone" works. `delivery.ts` groups a thread's lines as a chat's. `public/sw.js` 
 - **Merge:** server hits are ingested as summaries (so they open like any other), deduplicated by hub id, newest first,
   and marked "from the server" when only the server had them.
 - **Where:** Mail's 🔍 searches mail; the app's search page gains a **Mail** group (local, top 5, "More in Mail").
+- **As built (slice 7):** `mail_fts` indexes `mail_search` (the text, and the account, thread, time and "only in Junk or
+  Trash" a search filters by), kept by triggers, with the body's text from slice 2's `mail_text` under its one cap. Hits
+  are threads; `server=auto` does the "under 20" rule, and the page asks the hub first, then the servers. docs/mail.md's
+  Search section has the rest and the timings.
 
 ## 12. Build slices
 

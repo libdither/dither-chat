@@ -14,6 +14,8 @@
  *   - filing (slice 4): read in view reaches the server; on a phone a swipe right archives and Undo brings it back,
  *     a swipe left marks unread and read, a long press picks threads and their bar stars them; on a desktop the
  *     reader's star and archive, the `e` key, a row's right-click menu, Ctrl-click picking, and the read setting.
+ *   - search (slice 7): Mail's search box, the hub's hits (marked) and what only the server has, a hit opening over the
+ *     results and back to them, the filter chips; the search page's Mail group and its way into Mail.
  *   - writing (slice 5), last, since it sends: on a phone, Reply from the reader's bar fills in To, the subject and the
  *     quote; a Cc typed in, a file attached; Send, "Sending… Undo", Undo brings the draft back, Send again, and the
  *     reply joins the thread with its file; on a desktop, ✎ docks a new message whose To completes from your mail, and
@@ -774,6 +776,72 @@ async function big(themeName: string, phoneSize: boolean, first: boolean) {
   await shot(`mail-${tag.replace(/ /g, '-')}-folder`);
 }
 
+/** Slice 7: searching mail, on a phone and a desktop, in both themes. Runs after the rest (it needs the bodies they opened). */
+async function search() {
+  // "warranty" is only in the text of an old receipt in a folder the hub does not follow (demo.ts): only the server finds
+  // it. Neither run opens it, so its text stays on the server.
+  for (const themeName of ['dither-dark', 'dither-light']) {
+    let tag = `phone ${themeName}`;
+    await page.size(390, 844, true);
+    await theme(themeName, '#/mail');
+    await page.until(`!!document.querySelector('.sidebar .mail-search-btn')`, 15000);
+    await tap(await at('.sidebar .mail-search-btn'));
+    await page.until(`!!document.querySelector('.mail-search-box input')`, 5000);
+    check(`${tag}: Mail's search opens in place of the list`, (await hash()).startsWith('#/mail/l/s%3A') && !(await has('.sidebar .mail-chips .chip-btn[role=radio]')), await hash());
+    const type = async (q: string) => {
+      await page.eval(`(() => { const i = document.querySelector('.mail-search-box input'); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event('input', { bubbles: true })); i.form.requestSubmit(); })()`);
+      await page.until(`location.hash.includes(${JSON.stringify(encodeURIComponent(`s:${q}`))})`, 5000);
+    };
+    // A subject the hub has: its own hit; the server finds the same thread, so nothing shows twice.
+    await type('lease');
+    await page.until(`!!document.querySelector('.mail-hit') && !document.querySelector('.mail-search .skeleton') && !/Searching the servers/.test(document.querySelector('.mail-search').textContent)`, 15000);
+    const leaseHits = await page.eval<string[]>(`[...document.querySelectorAll('.mail-search .mail-hit')].map((r) => r.dataset.thread)`);
+    check(`${tag}: the hub's hit, and the server's same thread not again`, leaseHits.length === 1 && leaseHits[0] === lease.id && !(await has('.mail-search-head')), leaseHits);
+    await tap(await at(`.mail-search .mail-hit[data-thread="${lease.id}"]`));
+    await page.until(`!!document.querySelector('.mail-reader .mail-msg.open .mail-text')`, 15000);
+    check(`${tag}: a hit opens over the results`, (await hash()).includes(`/t/${lease.id}`) && (await inView('.center .mail-reader')), await hash());
+    // A chat arriving meanwhile (the demo world's) shows a toast over the reader's header: out of the way first.
+    await page.eval(`document.querySelectorAll('.toasts .toast-x').forEach((b) => b.click())`);
+    await Bun.sleep(300);
+    await tap(await at('.mail-reader .icon-btn.back'));
+    await Bun.sleep(400);
+    check(`${tag}: back goes to the results`, !(await hash()).includes('/t/') && (await inView('.sidebar .mail-search .mail-hit')), await hash());
+    // Words in a body the hub holds: marked where they matched.
+    await type('signed');
+    await page.until(`!!document.querySelector('.mail-search .mail-hit mark')`, 15000);
+    check(`${tag}: the hub's hit is marked where it matched`, (await page.eval<string>(`document.querySelector('.mail-search .mail-hit mark').textContent`)).toLowerCase() === 'signed');
+    // Words only the server has: they come after the hub's own, under "On the server".
+    await type('warranty');
+    await page.until(`!!document.querySelector('.mail-search-head') && !/Searching the servers/.test(document.querySelector('.mail-search').textContent)`, 15000);
+    const mine = await page.eval<number>(`[...document.querySelectorAll('.mail-search .mail-hit')].filter((r) => !r.matches('.mail-search-head ~ .mail-hit')).length`);
+    const theirs = await page.eval<string[]>(`[...document.querySelectorAll('.mail-search-head ~ .mail-hit')].map((r) => r.querySelector('.mail-row-subject')?.textContent ?? '')`);
+    check(`${tag}: what only the server has shows under "On the server"`, mine === 0 && theirs.join() === 'Your receipt, order #4102', { mine, theirs });
+    check(`${tag}: no sideways overflow: search`, !(await overflow()).length, await overflow());
+    await shot(`mail-${tag.replace(' ', '-')}-search`);
+    await tap(await at('.mail-search-chips .chip-btn', `el => el.textContent === 'Unread'`));
+    await page.until(`location.hash.includes('is%3Aunread')`, 5000);
+    check(`${tag}: a chip narrows the search`, true);
+
+    tag = `desktop ${themeName}`;
+    await page.size(1400, 900);
+    await theme(themeName, '#/search?q=signed');
+    await page.until(`!!document.querySelector('.mail-search-group .mail-hit')`, 15000);
+    check(`${tag}: the search page has a Mail group`, (await page.eval<string>(`document.querySelector('.mail-search-group').textContent`)).includes('Lease renewal'));
+    check(`${tag}: its hit is marked where it matched`, (await page.eval<string>(`document.querySelector('.mail-search-group .mail-hit mark')?.textContent ?? ''`)).toLowerCase() === 'signed');
+    check(`${tag}: no sideways overflow: search page`, !(await overflow()).length, await overflow());
+    await shot(`mail-${tag.replace(' ', '-')}-search-page`);
+    await click(await at('.mail-search-group .mail-search-all'));
+    await page.until(`location.hash.startsWith('#/mail/l/s%3Asigned')`, 5000);
+    await page.until(`!!document.querySelector('.sidebar .mail-search .mail-hit')`, 15000);
+    check(`${tag}: "Open in Mail" shows the search in Mail`, (await page.eval<string>(`document.querySelector('.mail-search-box input').value`)) === 'signed');
+    await click(await at(`.sidebar .mail-hit[data-thread="${lease.id}"]`));
+    await page.until(`!!document.querySelector('.mail-reader .mail-msg.open .mail-text')`, 15000);
+    check(`${tag}: the results and the thread side by side`, (await inView('.sidebar .mail-search')) && (await inView('.center .mail-reader')) && (await has(`.sidebar .mail-hit.active[data-thread="${lease.id}"]`)));
+    check(`${tag}: no sideways overflow: Mail's search`, !(await overflow()).length, await overflow());
+    await shot(`mail-${tag.replace(' ', '-')}-search`);
+  }
+}
+
 try {
   if (bigRun) {
     const box = (await mailNow()).mailboxes.find((b) => b.role === 'archive');
@@ -793,6 +861,7 @@ try {
   await classification('dither-dark', false);
   await filing();
   if (withHtml) await htmlChecks();
+  await search();
   // Last: it sends, which changes the demo world.
   await composer('dither-light', false);
   await composerDesktop('dither-light', false);

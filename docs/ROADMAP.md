@@ -60,7 +60,8 @@ Built in slices from [mail-design.md](mail-design.md) (its §12); what works now
 | Sending, replies, drafts, undo (slice 5) | H | M | done | Composer, reply, reply all, forward with files, drafts on the hub, 10 s Undo, retries; a 501 turns sending off with the draft kept (Proton today). Verified through dither-accounts' SMTP sink and the fake, not a real account |
 | People: email identities and persons, merge search and hint, a profile's Mail card, all mail with someone (slice 6) | H | M | done | Never merged by name. Verified against the fake server and the demo world, not a real mailbox |
 | Classification and mail in the one-list inbox (slice 8) | H | M | done | §4's rules with your overrides; Inbox folds bulk into Updates, People view; threads from people rank among the chats by the same formula, tallies summed with chat. Verified on the fake and the demo world, not a real mailbox |
-| Search, triage and notifications (slices 7, 9) | H | M | later | Unknown senders reach the inbox only at Active or above: slice 9 plugs its rating into `mailAttention(hub).triage` |
+| Search: the hub's own index, then the servers' (slice 7) | H | M | done | Mail's operators in chat's language; Proton's server cannot search text, so the hub's index matters most there. A Mail group on the search page. Measured on a made-up 50,000-message mailbox (docs/mail.md) |
+| Triage and notifications (slice 9) | H | M | later | Unknown senders reach the inbox only at Active or above: slice 9 plugs its rating into `mailAttention(hub).triage` |
 
 ## Messaging
 

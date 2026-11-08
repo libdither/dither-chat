@@ -67,6 +67,9 @@ before and after each hit in its conversation; the web asks for one.
 - **Results**: hits in a row from the same conversation share a heading; each hit has its line before and after,
   dimmed. Click a hit or a line to jump there. Down from the box goes into the results.
 - **Ctrl+F** in a chat opens search in that chat; on the search page it goes to the box.
+- **Mail**: when the hub has mail, a Mail group sits above the results with mail's own top five threads and a way into
+  Mail's search (docs/mail.md). It is a request of its own, so the chats' results never wait for it, and it is left out
+  when the query is about chats (`network:`, `mentions:`, `in:`, `is:`, a kind of file: `mailSearchable`).
 - Recent searches live in `localStorage` (`dc.recentSearches`, eight), per device, cleared from the list.
 
 ## Left out
