@@ -33,8 +33,7 @@ import { PEEK, panel, usePager, type Rest } from './Pager.ts';
 import { Boot } from './Loader.tsx';
 import { applyUpdate, updateReady } from '../pwa.ts';
 import { counting, rendered } from '../perf.ts';
-import { MailSidebar } from './mail/MailSidebar.tsx';
-import { MailWelcome, Reader } from './mail/Reader.tsx';
+import { MailCenterLazy, MailSidebarLazy } from './mail/lazy.tsx';
 
 /** What the center pane shows, and whether a details pane is available. */
 function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'conv' | 'person'; id: string } } {
@@ -68,7 +67,7 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
     case 'search':
       return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <SearchPane q={r.q} /> };
     case 'mail':
-      return { pane: r.thread ? <Reader threadId={r.thread} onBack={back} /> : <MailWelcome /> };
+      return { pane: <MailCenterLazy thread={r.thread} onBack={back} /> };
   }
 }
 
@@ -102,7 +101,7 @@ function sidebarFor(r: Route, onAdd: () => void) {
     case 'search':
       return <InboxSidebar activeConv={r.conv} />;
     case 'mail':
-      return <MailSidebar list={r.list} active={r.thread} />;
+      return <MailSidebarLazy list={r.list} active={r.thread} />;
   }
 }
 

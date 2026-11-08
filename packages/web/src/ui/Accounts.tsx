@@ -11,8 +11,7 @@ import { AccountChip, Modal, NetBadge } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { ImportsSection } from './Imports.tsx';
 import { TelegramSignIns } from './TelegramSignIns.tsx';
-import { MailAccountRows } from './mail/MailAccounts.tsx';
-import { MailAccessNote } from './mail/MailSidebar.tsx';
+import { MailAccessNote, MailAccountRows } from './mail/MailAccounts.tsx';
 
 /** The add-account dialog, opened from the accounts list or from settings. */
 export const addingAccount = signal(false);

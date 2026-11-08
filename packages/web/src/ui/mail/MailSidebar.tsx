@@ -4,66 +4,15 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { mailboxList, viewList } from '@dither-chat/protocol';
-import { useState } from 'preact/hooks';
-import { askMailAgain } from '../../mail/api.ts';
 import { DEFAULT_LIST, listTitle, MAIL_VIEWS } from '../../mail/model.ts';
-import { db, go, mailRev, toast } from '../../state.ts';
+import { db, go, mailRev } from '../../state.ts';
 import { openMenu, type MenuEntry } from '../ContextMenu.tsx';
 import { Icon } from '../icons.tsx';
+import { MailAccessNote } from './MailAccounts.tsx';
 import { ThreadList } from './ThreadList.tsx';
 
 /** The manager's page, or its account page. */
 const managerLink = (s: typeof db.mail, account?: P.MailAccountView) => account?.managedUrl ?? s.access.managerUrl;
-
-/** What to do while mail is not shared (§6.6). Null once it is and an account is there. */
-export function MailAccessNote() {
-  mailRev.value;
-  const s = db.mail;
-  const [busy, setBusy] = useState(false);
-  const url = s.access.managerUrl;
-  const open = url ? (
-    <a class="link-btn" href={url} target="_blank" rel="noopener">
-      Open dither-accounts
-    </a>
-  ) : null;
-  switch (s.access.state) {
-    case 'off':
-      return <p class="mail-note">Mail comes through dither-accounts. Set DITHER_ACCOUNTS_URL on the hub to read it here.</p>;
-    case 'unreachable':
-      return <p class="mail-note">dither-accounts is not answering, so mail is not syncing. What is kept here still shows.</p>;
-    case 'pending':
-      return (
-        <p class="mail-note">
-          dither-chat asked dither-accounts for your email (read and send). Approve it on the manager's page. {open}
-        </p>
-      );
-    case 'denied':
-      return (
-        <p class="mail-note">
-          You declined mail access.{' '}
-          <button
-            class="link-btn"
-            disabled={busy}
-            onClick={() => {
-              setBusy(true);
-              askMailAgain()
-                .then(() => toast({ kind: 'info', title: 'Asked again', body: "Approve it on the dither-accounts page." }))
-                .catch((e) => toast({ kind: 'error', title: 'Could not ask', body: String(e.message) }))
-                .finally(() => setBusy(false));
-            }}
-          >
-            Ask again
-          </button>
-        </p>
-      );
-    default:
-      return s.accounts.size ? null : (
-        <p class="mail-note">
-          No mail accounts in dither-accounts. Add Email (IMAP) or Proton Mail there. {open}
-        </p>
-      );
-  }
-}
 
 function ProblemStrips() {
   const s = db.mail;

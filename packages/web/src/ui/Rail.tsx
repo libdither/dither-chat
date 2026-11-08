@@ -4,6 +4,7 @@ import { Fragment } from 'preact';
 import { accountsNeedingYou, convTitle, directsOf, folderConvs, people, pingedCount, placePref, railEntries, spaceUnread, sumUnread, netName, unreadOf, visibleConv, type RailEntry } from '../model.ts';
 import { db, go, mailRev, markAllRead, patchPlaces, rev, route, type Route } from '../state.ts';
 import { unreadInbox } from '../mail/model.ts';
+import { preloadMail } from './mail/lazy.tsx';
 import { AccountDots, Avatar, Count, NetBadge } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { DitherMark, Icon } from './icons.tsx';
@@ -200,7 +201,7 @@ function RailMail({ active }: { active: boolean }) {
   const unread = unreadInbox(s);
   return (
     <RailItem active={active} unread={unread > 0} title="Mail" sub={unread ? `${unread} unread ${unread === 1 ? 'thread' : 'threads'} in Inbox` : 'Your email, through dither-accounts'} onClick={() => go({ view: 'mail' })}>
-      <span class="rail-mail">
+      <span class="rail-mail" onPointerEnter={() => void preloadMail().catch(() => {})}>
         <Icon name="mail" size={21} />
         {unread > 0 && <span class="rail-mail-dot" />}
       </span>
