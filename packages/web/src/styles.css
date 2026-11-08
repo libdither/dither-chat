@@ -3356,6 +3356,195 @@ code {
   line-height: 1;
   margin: 8px 0;
 }
+
+/* Telegram: signed-in devices, and approving a sign-in by its QR code (TelegramSignIns.tsx). */
+.tg-signins .btn-row {
+  margin-bottom: 10px;
+}
+.tg-sessions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tg-session {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-raised);
+}
+.tg-session.current {
+  border-color: color-mix(in oklab, var(--accent) 40%, var(--border));
+}
+.tg-session-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.tg-session-main b {
+  color: var(--text);
+  font-size: 13.5px;
+}
+.tg-badge {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent);
+  padding: 3px 8px;
+  border-radius: 99px;
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+}
+.tg-session-ask {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  max-width: 55%;
+}
+.tg-approve {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tg-scan {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tg-camera {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  max-height: min(52vh, 420px);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #000;
+  display: grid;
+  place-items: center;
+}
+.tg-camera video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.tg-camera:not(.on) video {
+  visibility: hidden;
+}
+.tg-camera.denied,
+.tg-camera.none,
+.tg-camera.busy,
+.tg-camera.insecure,
+.tg-camera.error {
+  display: none;
+}
+.tg-finder {
+  position: absolute;
+  inset: 16%;
+  border: 2px solid rgb(255 255 255 / 0.85);
+  border-radius: 14px;
+  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.25);
+  pointer-events: none;
+}
+.tg-camera-note {
+  position: relative;
+  color: rgb(255 255 255 / 0.8);
+  font-size: 13px;
+  padding: 0 16px;
+  text-align: center;
+}
+.tg-scan .det-note {
+  margin: 0;
+}
+.tg-paste {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tg-paste .field-label {
+  margin-top: 0;
+}
+.tg-paste-row {
+  display: flex;
+  gap: 6px;
+}
+.tg-paste-row .input {
+  flex: 1;
+  min-width: 0;
+}
+.tg-picture {
+  align-self: flex-start;
+  cursor: pointer;
+}
+.tg-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in oklab, var(--danger) 40%, var(--border));
+  background: color-mix(in oklab, var(--danger) 7%, var(--bg-raised));
+  color: var(--danger);
+}
+.tg-confirm h3 {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.35;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+}
+.tg-confirm h3 svg {
+  flex: none;
+  color: var(--danger);
+  margin-top: 1px;
+}
+.tg-confirm p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.tg-confirm b {
+  color: var(--danger);
+}
+.tg-confirm .btn-row {
+  margin-top: 4px;
+}
+.tg-approved {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tg-approved-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-weight: 600;
+  color: var(--text);
+}
+.tg-approved .det-note {
+  margin: 0;
+}
 .qr-full {
   position: fixed;
   inset: 0;

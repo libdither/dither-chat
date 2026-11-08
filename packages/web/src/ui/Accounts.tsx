@@ -10,6 +10,7 @@ import { dropLayer, pushLayer, useLayer } from '../phone.ts';
 import { AccountChip, Modal, NetBadge } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { ImportsSection } from './Imports.tsx';
+import { TelegramSignIns } from './TelegramSignIns.tsx';
 
 /** The add-account dialog, opened from the accounts list or from settings. */
 export const addingAccount = signal(false);
@@ -788,6 +789,7 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
           </dl>
         </section>
         {a.network === 'matrix' && !a.demo && <EncryptionSection a={a} />}
+        {a.network === 'telegram' && !a.demo && <TelegramSignIns a={a} />}
         <ImportsSection a={a} />
         <section class="det-section">
           <h3>Controls</h3>

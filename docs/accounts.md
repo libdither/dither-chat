@@ -83,6 +83,32 @@ A hub registered before these kinds existed asks the manager on its next start t
 (`kindsToAsk` in remote.ts): approve that request on the manager's page. A request still open, or one you denied, is
 not asked again.
 
+## Approving a Telegram sign-in
+
+Telegram asks a device that is already signed in to approve each new sign-in: the new device shows a QR code, and the
+old one scans it. A Telegram account's page here can be that device, so the phone app is not needed. Its **Signed-in
+devices** section (`ui/TelegramSignIns.tsx`) uses three account actions of dither-accounts' Telegram extractor (its
+docs/telegram.md) through `POST /api/accounts/<id>/action`, and works only while the account is online:
+
+- **Approve a sign-in** opens a scanner: the camera, read by the browser's `BarcodeDetector` where it has one and by
+  jsQR (Apache-2.0, a chunk loaded only when a scanner opens) elsewhere; a field to paste the `tg://login?token=…`
+  link; or a picture of the code. Only `tg://login?token=` links go further (`tglogin.ts`); any other code is "not a
+  Telegram sign-in code". The camera stops when the scanner closes, when a code is read, and while the page is hidden.
+- A code read never approves by itself. It leads to a warning: only approve a code your own device is showing you,
+  because whoever gets you to scan their code gets your account. Telegram names the other device only after it is
+  approved, so the warning can only ask. While this hub's own session is under a day old it also says there is no
+  undo yet: Telegram lets only a session a day old sign others out. The approve button arms a second after the
+  warning shows, so a tap meant for the step before cannot land on it.
+- Approving (`approveLogin {link}`) shows the new session's device, app and place, with **That wasn't me: sign it
+  out** (`endSession {hash}`).
+- The list (`sessions`) shows each session's device, app, place and when it was last active, this hub's own first and
+  marked, with no sign-out. Every other row signs out after a short confirm.
+
+Refusals (expired, already used, not a sign-in, a session too new to end others) are shown as the extractor words
+them. `hash` is an opaque string: Telegram's 64-bit ids may be negative. On the Android app the WebView asks for the
+camera the way calls do (`MainActivity.onPermissionRequest`). `scripts/verify-telegram-approve.ts` runs all of it
+against a throwaway manager with the fake Telegram and a fake camera; never point it at a real account.
+
 ## Accounts the manager holds
 
 The page works the same for an account whatever runs it; for one the manager runs:
