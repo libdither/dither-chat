@@ -1806,7 +1806,7 @@ const ME = { name: 'Zyan', email: 'zyan@dither.example' };
  * (list headers), and an HTML-only message carrying a tracker and a script (which must never show or run).
  */
 export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
-  fake.addAccount(DEMO_MAIL_ACCOUNT, { kind: 'imap', label: 'Personal mail', email: ME.email, name: ME.name, opts: { ids: 'imap', threadIds: false, refs: true } });
+  fake.addAccount(DEMO_MAIL_ACCOUNT, { kind: 'imap', label: 'Personal mail', email: ME.email, name: ME.name, opts: { ids: 'imap', threadIds: false, refs: true, answer: 3_000 } });
   const H = 3_600_000;
   const D = 24 * H;
   const sam = { name: 'Sam Rivera', email: 'sam@rivera.example' };

@@ -10686,3 +10686,14 @@ button.msg-edited.link:hover {
 .inbox-mail-row:not(.unread) .row-subject {
   color: var(--text-muted);
 }
+
+/* Mail on the Triage board (slice 9): the envelope beside "by email", the subject before the start of the text. */
+.mail-ping .ping-where {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.mail-ping .ping-subject {
+  color: var(--text);
+  font-weight: 600;
+}

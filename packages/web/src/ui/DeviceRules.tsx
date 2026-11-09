@@ -9,6 +9,7 @@ import { deviceId, deviceRule, forgetDevice, setDeviceRule } from '../devices.ts
 import { ago } from '../format.ts';
 import { netName } from '../model.ts';
 import { db, rev, toast } from '../state.ts';
+import { mailRev } from '../versions.ts';
 import { AccountChip, NetBadge } from './bits.tsx';
 import { Icon } from './icons.tsx';
 
@@ -30,6 +31,10 @@ function DevicePicker({ value, inherited, onChange }: { value: P.DeviceLevel | n
 
 /** Place-level rules a device has, for listing under it. */
 function placeLabel(r: P.DeviceRuleView): { network: P.Network | null; text: string } {
+  if (r.scope === 'conversation' && r.target.startsWith('mth_')) {
+    const t = db.mail.threads.get(r.target);
+    return { network: 'email', text: t?.subject || 'a mail thread' };
+  }
   if (r.scope === 'conversation') {
     const c = db.conversations.get(r.target);
     return { network: c?.network ?? null, text: c?.name ?? (c ? 'a conversation' : 'a conversation no longer here') };
@@ -54,6 +59,9 @@ function DeviceBlock({ d, mine }: { d: P.DeviceView; mine: boolean }) {
   const accounts = [...db.accounts.values()];
   const networks = [...new Set(accounts.map((a) => a.network))];
   const places = d.rules.filter((r) => r.scope === 'conversation' || r.scope === 'space');
+  // Mail (slice 9): Email, and each mail account when there are several.
+  const mail = [...db.mail.accounts.values()];
+  const email = deviceRule(d, 'network', 'email');
   const phone = /Android|iPhone|iPad/.test(d.label);
   const where = [d.pushIds.length ? 'push on' : 'no push', d.lastSeenAt ? `last open ${ago(d.lastSeenAt)}` : 'not opened since push was turned on'].join(', ');
   return (
@@ -94,6 +102,28 @@ function DeviceBlock({ d, mine }: { d: P.DeviceView; mine: boolean }) {
           </>
         );
       })}
+      {mail.length > 0 && (
+        <>
+          <div class="set-rule" data-device-net="email">
+            <span class="set-rule-label">
+              <NetBadge network="email" size={18} /> {netName('email')}
+            </span>
+            <DevicePicker value={email} onChange={(l) => set('network', 'email', l)} />
+          </div>
+          {mail.length > 1 &&
+            mail.map((a) => (
+              <div class="set-rule sub">
+                <span class="set-rule-label">
+                  <span class="acc-chip small" title={`Mail account “${a.label}”`}>
+                    <span class="acc-dot" style={{ background: a.color }} />
+                    {a.address ?? a.label}
+                  </span>
+                </span>
+                <DevicePicker value={deviceRule(d, 'account', a.id)} inherited={email ?? undefined} onChange={(l) => set('account', a.id, l)} />
+              </div>
+            ))}
+        </>
+      )}
       {places.map((r) => {
         const l = placeLabel(r);
         return (
@@ -114,6 +144,7 @@ function DeviceBlock({ d, mine }: { d: P.DeviceView; mine: boolean }) {
 
 export function DeviceRules() {
   rev.value;
+  mailRev.value;
   const me = deviceId();
   const list = [...db.devices].filter((d) => d.id === me || d.pushIds.length || d.rules.length).sort((a, b) => +(b.id === me) - +(a.id === me));
   if (!list.length) return null;

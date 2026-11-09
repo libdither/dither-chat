@@ -59,10 +59,24 @@ const IMPLICIT_TTL = DAY;
 
 export type Vote = 'up' | 'down' | Level | null;
 
+/**
+ * What else triage decides on with the same model (mail/triage.ts): its votes are kept there, join these examples,
+ * and teach the same weights, so a vote on Sam's mail moves Sam's chats too.
+ */
+export interface OtherVotes {
+  examples(now: number): Example[];
+  /** A vote on one of its messages; undefined when the message is not one of its own. */
+  vote(messageId: string, v: Vote, now: number): Level | null | undefined;
+  /** Names for its conversations and spaces, in what was learned; null when the id is not its own. */
+  names?: { conversation?(id: string): string | null; space?(id: string): string | null };
+}
+
 export class TriageVotes {
   private state: State;
   private implicitCache: { at: number; examples: Example[] } | null = null;
   private shadowCache: { at: number; view: P.TriageShadowView } | null = null;
+  /** Mail's votes (mail/triage.ts). */
+  readonly others: OtherVotes[] = [];
 
   constructor(
     private store: Store,
@@ -112,6 +126,7 @@ export class TriageVotes {
       STOOD_PER_PLACE,
     );
     for (const r of stood) out.push({ facts: JSON.parse(r.facts), words: [], label: r.decision, weight: STOOD, vote: false, at: r.created_at });
+    for (const o of this.others) out.push(...o.examples(now));
     return out;
   }
 
@@ -120,6 +135,13 @@ export class TriageVotes {
    * the vote back. Up on Important, or down below the digest, says it was right.
    */
   vote(messageId: string, v: Vote, now = Date.now()): { feedback: Level | null; policy: P.TriagePolicyView } {
+    for (const o of this.others) {
+      const feedback = o.vote(messageId, v, now);
+      if (feedback === undefined) continue;
+      const ex = this.examples(now);
+      this.learn('a vote', now, ex);
+      return { feedback, policy: this.view(now, ex) };
+    }
     const s = this.store;
     const t = s.one<Row>('SELECT decision, feedback, facts FROM triage WHERE message_id = ?', messageId);
     if (!t) throw new Error('Triage never decided on this message');
@@ -244,15 +266,23 @@ export class TriageVotes {
     this.triage.namer ??= this.namer();
   }
 
+  private otherName(kind: 'conversation' | 'space', id: string): string | null {
+    for (const o of this.others) {
+      const n = o.names?.[kind]?.(id);
+      if (n) return n;
+    }
+    return null;
+  }
+
   namer(): Namer {
     const s = this.store;
     return {
       conversation: (id) => {
         const c = s.one<Row>('SELECT * FROM conversation WHERE id = ?', id);
-        if (!c) return 'a conversation';
+        if (!c) return this.otherName('conversation', id) ?? 'a conversation';
         return c.shape === 'direct' ? `your DM with ${this.triage.placeName(c)}` : this.triage.placeName(c);
       },
-      space: (id) => s.one<Row>('SELECT name FROM space WHERE id = ?', id)?.name ?? 'a server',
+      space: (id) => s.one<Row>('SELECT name FROM space WHERE id = ?', id)?.name ?? this.otherName('space', id) ?? 'a server',
       person: (id) =>
         s.one<Row>('SELECT name FROM person WHERE id = ?', id)?.name ??
         s.one<Row>('SELECT COALESCE(display_name, handle, native_id) AS n FROM identity WHERE id = ?', id)?.n ??

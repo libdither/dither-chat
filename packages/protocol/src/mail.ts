@@ -8,7 +8,7 @@
  * Built in slices (docs/mail-design.md §12). Fields a later slice fills are here already, with the value they have
  * until then: a seam, not a promise. Each says which slice fills it.
  */
-import type { IdentityView } from './api.ts';
+import type { IdentityView, TriageView } from './api.ts';
 import type { FileInfo } from './files.ts';
 import type { MailboxRole } from './mail-iface.ts';
 
@@ -113,6 +113,8 @@ export interface MailThreadView {
   muted: boolean;
   /** A change made here the server has not confirmed yet (slice 4). */
   pending?: boolean;
+  /** Triage's newest decision on a message in it from someone else (slice 9): the Triage board's mail row. */
+  triage?: MailTriageItem;
 }
 
 export interface MailMessageView {
@@ -138,6 +140,32 @@ export interface MailMessageView {
   preview: string | null;
   addressed: 'to' | 'cc' | 'hidden' | 'self';
   body: 'cached' | 'none' | 'loading' | 'failed';
+  /** Triage's decision on it, and your vote (slice 9); absent when it was not triaged (bulk, yours, older mail). */
+  triage?: TriageView;
+}
+
+/**
+ * A message triage decided on (slice 9, docs/mail.md "Triage and notifications"): the Triage board lists these beside
+ * chat's messages, by the same levels. Votes go to POST /api/messages/:id/feedback as chat's do.
+ */
+export interface MailTriageItem {
+  kind: 'mail';
+  /** The message (`mml_`). */
+  id: string;
+  threadId: string;
+  accountId: string;
+  from: MailAddressView;
+  subject: string;
+  preview: string | null;
+  /** When it reached the server. */
+  ts: number;
+  unread: boolean;
+  triage: TriageView;
+}
+
+/** GET /api/mail/triage?since=<ms>: the last week's, newest first. */
+export interface MailTriagePage {
+  items: MailTriageItem[];
 }
 
 export interface MailBodyView {

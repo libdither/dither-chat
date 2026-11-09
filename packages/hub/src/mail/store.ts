@@ -123,6 +123,8 @@ export class MailStore {
   window: ((ids: string[]) => { held: Set<string>; stale: string[] }) | null = null;
   /** What later slices add to a thread's view from their own tables (slice 8: `unknown`, `owedSince`). */
   readonly threadExtras: ((row: Row, view: P.MailThreadView) => void)[] = [];
+  /** What later slices add to a message's view (slice 9: its triage), from its mail_message row. */
+  readonly messageExtras: ((row: Row, view: P.MailMessageView) => void)[] = [];
   private selfCache = new Map<string, Set<string>>();
 
   constructor(
@@ -842,27 +844,31 @@ export class MailStore {
     );
     const who = this.whoIs([...new Set(rows.flatMap((m) => [m.from_addr, ...json<M.MailAddress[]>(m.to_json, []).map((a) => a.email), ...json<M.MailAddress[]>(m.cc_json, []).map((a) => a.email)].map(lc)))]);
     const addr = (a: M.MailAddress) => ({ name: a.name ?? null, email: a.email, ...whoView(who.get(lc(a.email))) });
-    return rows.map((m) => ({
-      id: m.id,
-      threadId: m.thread_id,
-      accountId: m.account_id,
-      messageId: m.message_id_hdr ?? null,
-      from: { name: m.from_name ?? null, email: m.from_addr ?? '', ...whoView(who.get(lc(m.from_addr))) },
-      to: json<M.MailAddress[]>(m.to_json, []).map(addr),
-      cc: json<M.MailAddress[]>(m.cc_json, []).map(addr),
-      subject: m.subject,
-      date: m.date,
-      receivedAt: m.received_at,
-      flags: { seen: !!m.seen, flagged: !!m.flagged, answered: !!m.answered, draft: !!m.draft },
-      seenHere: !!m.seen_local,
-      pending: !!m.pending,
-      labels: json(m.labels, []),
-      mailboxIds: json(m.boxes, []),
-      hasAttachments: !!m.has_attachments,
-      preview: m.preview ?? null,
-      addressed: m.addressed,
-      body: m.cached ? 'cached' : 'none',
-    }));
+    return rows.map((m) => {
+      const v: P.MailMessageView = {
+        id: m.id,
+        threadId: m.thread_id,
+        accountId: m.account_id,
+        messageId: m.message_id_hdr ?? null,
+        from: { name: m.from_name ?? null, email: m.from_addr ?? '', ...whoView(who.get(lc(m.from_addr))) },
+        to: json<M.MailAddress[]>(m.to_json, []).map(addr),
+        cc: json<M.MailAddress[]>(m.cc_json, []).map(addr),
+        subject: m.subject,
+        date: m.date,
+        receivedAt: m.received_at,
+        flags: { seen: !!m.seen, flagged: !!m.flagged, answered: !!m.answered, draft: !!m.draft },
+        seenHere: !!m.seen_local,
+        pending: !!m.pending,
+        labels: json(m.labels, []),
+        mailboxIds: json(m.boxes, []),
+        hasAttachments: !!m.has_attachments,
+        preview: m.preview ?? null,
+        addressed: m.addressed,
+        body: m.cached ? 'cached' : 'none',
+      };
+      for (const f of this.messageExtras) f(m, v);
+      return v;
+    });
   }
 
   bodyView(messageId: string): P.MailBodyView | null {

@@ -5,7 +5,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { useEffect } from 'preact/hooks';
-import { HEAD_LABEL, isTier, levelOf, loadPolicy, thresholds, TIER_LABEL, TIERS, tierDown, tierUp, triagePolicy, vote } from '../triage.ts';
+import { HEAD_LABEL, isTier, levelOf, loadPolicy, thresholds, TIER_LABEL, TIERS, tierDown, tierUp, triagePolicy, vote, type Votable } from '../triage.ts';
 import { Icon } from './icons.tsx';
 
 const WHAT: Record<P.NotifyTier, string> = {
@@ -16,7 +16,7 @@ const WHAT: Record<P.NotifyTier, string> = {
 };
 export const TIER_ICON: Record<P.NotifyTier, 'bell' | 'bellOff' | 'layers' | 'eyeOff'> = { push: 'bell', quiet: 'bellOff', digest: 'layers', drop: 'eyeOff' };
 
-export function TierVote({ m }: { m: P.MessageView }) {
+export function TierVote({ m }: { m: Votable }) {
   const t = m.triage;
   if (!t || !isTier(t.decision)) return null;
   const now = levelOf(t) as P.NotifyTier;
@@ -43,7 +43,7 @@ export function TierVote({ m }: { m: P.MessageView }) {
   );
 }
 
-export function TierPicker({ m, onDone }: { m: P.MessageView; onDone?: () => void }) {
+export function TierPicker({ m, onDone }: { m: Votable; onDone?: () => void }) {
   const t = m.triage;
   if (!t || !isTier(t.decision)) return null;
   const now = levelOf(t);

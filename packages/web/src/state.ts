@@ -37,6 +37,34 @@ export const timelines = new Map<string, Timeline>();
 /** Messages referenced by replies that are outside the loaded page. */
 export const quoted = new Map<string, P.MessageView>();
 export const inbox = signal<P.MessageView[]>([]);
+/** The Triage board's mail (docs/mail.md): what triage decided on new mail this week, newest first. */
+export const mailTriage = signal<P.MailTriageItem[]>([]);
+
+/** The board's mail afresh (the board asks when it opens: a page resumed from its snapshot holds an older list). */
+export async function loadMailTriage() {
+  if (db.mail.access.state === 'off') return;
+  const page = await api<P.MailTriagePage>('/api/mail/triage').catch(() => null);
+  if (!page) return;
+  mailTriage.value = page.items;
+  changed('list');
+}
+
+/** Thread views carry their newest decision: the board's mail follows them (new mail, a read, a vote elsewhere). */
+function mergeMailTriage(threads: P.MailThreadView[]) {
+  const fresh = threads.map((t) => t.triage).filter((x): x is P.MailTriageItem => !!x);
+  if (!fresh.length) return;
+  const by = new Map(mailTriage.value.map((x) => [x.id, x]));
+  let moved = false;
+  for (const x of fresh) {
+    const was = by.get(x.id);
+    if (was && was.unread === x.unread && was.triage.feedback === x.triage.feedback && was.triage.decision === x.triage.decision) continue;
+    by.set(x.id, x);
+    moved = true;
+  }
+  if (!moved) return;
+  mailTriage.value = [...by.values()].sort((a, b) => b.ts - a.ts);
+  changed('list');
+}
 
 export interface PendingSend {
   tempId: string;
@@ -361,6 +389,9 @@ export function applyEvents(events: P.ClientEvent[]) {
       case 'notify':
         onNotify(ev);
         break;
+      case 'mail.threads':
+        mergeMailTriage(ev.threads);
+        break;
       case 'typing':
         typing.value = applyTyping(typing.value, ev, Date.now(), isSelfIdentity);
         break;
@@ -412,7 +443,8 @@ function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
   // Active is a silent notification on a phone (the hub sends it there): here it is only a row in the inbox.
   if (quietHere(ev) || ev.level === 'quiet') return;
   const r = route.value;
-  const viewing = !!ev.conversationId && 'conv' in r && r.conv === ev.conversationId && document.visibilityState === 'visible';
+  const here = (!!ev.conversationId && 'conv' in r && r.conv === ev.conversationId) || (!!ev.mailThreadId && r.view === 'mail' && r.thread === ev.mailThreadId);
+  const viewing = here && document.visibilityState === 'visible';
   if (viewing) return;
   toast({ kind: 'notify', title: ev.title, body: ev.body, conversationId: ev.conversationId, reasons: ev.reasons, icon: ev.icon, network: ev.network }, 8000);
   if (!prefs.value.pushEnabled && prefs.value.notifications && 'Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
@@ -638,7 +670,7 @@ async function syncTimelines(list: Timeline[], posOf: (t: Timeline) => P.SyncPos
 }
 
 export async function loadInbox() {
-  const page = await api<P.InboxPage>('/api/inbox');
+  const [page] = await Promise.all([api<P.InboxPage>('/api/inbox'), loadMailTriage()]);
   page.identities.forEach(putIdentity);
   inbox.value = page.items.map((i) => i.message);
   // What pinged you is counted from the inbox, behind a memo keyed on the data version.

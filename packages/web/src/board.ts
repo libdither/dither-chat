@@ -14,22 +14,26 @@ export const BOARD_DAYS = 7;
 export const BELOW_DAYS = 2;
 export const BELOW_SHOWN = 30;
 
-export interface Board {
-  important: P.MessageView[];
-  active: P.MessageView[];
-  digest: P.MessageView[];
-  below: P.MessageView[];
+/** A chat message, or a mail message triage decided on (slice 9): the board lists both by the same levels. */
+export type BoardItem = P.MessageView | P.MailTriageItem;
+export const isMailItem = (m: BoardItem): m is P.MailTriageItem => (m as P.MailTriageItem).kind === 'mail';
+
+export interface Board<T extends { ts: number; triage?: P.TriageView | null } = BoardItem> {
+  important: T[];
+  active: T[];
+  digest: T[];
+  below: T[];
   /** Important messages you have not read: the badge. */
   importantUnread: number;
 }
 
-export function triageBoard(items: P.MessageView[], o: { now: number; shown: (m: P.MessageView) => boolean; unread: (m: P.MessageView) => boolean }): Board {
+export function triageBoard<T extends { ts: number; triage?: P.TriageView | null }>(items: T[], o: { now: number; shown: (m: T) => boolean; unread: (m: T) => boolean }): Board<T> {
   const week = o.now - BOARD_DAYS * 86_400_000;
   const recent = items.filter((m) => m.triage && m.triage.decision !== 'silent' && m.ts > week && o.shown(m));
   const at = (l: P.TriageDecision) => recent.filter((m) => levelOf(m.triage!) === l);
-  const newest = (a: P.MessageView, b: P.MessageView) => b.ts - a.ts;
+  const newest = (a: T, b: T) => b.ts - a.ts;
   // What matters most first, as the model sees it; then the newest.
-  const byScore = (a: P.MessageView, b: P.MessageView) => (b.triage!.score ?? 0) - (a.triage!.score ?? 0) || b.ts - a.ts;
+  const byScore = (a: T, b: T) => (b.triage!.score ?? 0) - (a.triage!.score ?? 0) || b.ts - a.ts;
   const important = at('push').sort(newest);
   const twoDays = o.now - BELOW_DAYS * 86_400_000;
   return {

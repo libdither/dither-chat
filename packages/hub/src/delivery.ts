@@ -48,8 +48,17 @@ interface Showing {
  * Important, or for a message to you; every other update changes it silently. Reading the conversation anywhere
  * takes it off the phones.
  */
+/** Threads that are not chat conversations (mail/triage.ts): their lines, and when they were read. */
+export interface OtherThreads {
+  gather(id: string, messageId: string): Omit<Grouped, 'alert'> | null;
+  /** Read up to this time (the newest shown at or before it counts as read); null: not one of its own. */
+  readTs(id: string): number | null;
+}
+
 export class Delivery {
   private showing = new Map<string, Showing>();
+  /** Mail threads (mail/triage.ts). */
+  other: OtherThreads | null = null;
 
   constructor(
     private store: Store,
@@ -88,8 +97,8 @@ export class Delivery {
   read(now = Date.now()): string[] {
     const out: string[] = [];
     for (const [cid, s] of this.showing) {
-      const r = this.store.one<Row>(`SELECT MAX(last_read_ts) AS ts FROM vantage WHERE target_kind = 'conversation' AND target_id = ?`, cid);
-      if ((r?.ts ?? 0) >= s.ts) out.push(cid);
+      const ts = this.other?.readTs(cid) ?? this.store.one<Row>(`SELECT MAX(last_read_ts) AS ts FROM vantage WHERE target_kind = 'conversation' AND target_id = ?`, cid)?.ts;
+      if ((ts ?? 0) >= s.ts) out.push(cid);
       else if (now - s.at > FORGET_MS) this.showing.delete(cid);
     }
     for (const cid of out) this.showing.delete(cid);
@@ -100,8 +109,9 @@ export class Delivery {
   gather(conversationId: string, messageId: string): Omit<Grouped, 'alert'> | null {
     const s = this.store;
     const c = s.one<Row>('SELECT * FROM conversation WHERE id = ?', conversationId);
+    if (!c) return this.other?.gather(conversationId, messageId) ?? null;
     const m = s.one<Row>('SELECT ts FROM message WHERE id = ?', messageId);
-    if (!c || !m) return null;
+    if (!m) return null;
     const via = s.vantageAccounts('conversation', c.id)[0] ?? null;
     const readTs = s.one<Row>(`SELECT MAX(last_read_ts) AS ts, MAX(unread) AS unread FROM vantage WHERE target_kind = 'conversation' AND target_id = ?`, c.id);
     const rows = s.raw<Row>(
@@ -164,7 +174,7 @@ export class Delivery {
 const small = (icon: string) => !icon.startsWith('data:') || icon.length < 1500;
 
 /** Under the budget: first the oldest lines go, then the pictures. */
-function fit<T extends Omit<Grouped, 'alert'>>(g: T): T {
+export function fit<T extends Omit<Grouped, 'alert'>>(g: T): T {
   const size = () => JSON.stringify(g).length;
   while (size() > BUDGET && g.lines.length > 1) {
     const gone = g.lines.shift()!;

@@ -43,6 +43,8 @@ export interface FakeOpts {
   moveIds?: 'new' | 'null';
   /** What mail.search looks in (slice 7); by default as `ids`. */
   search?: 'imap' | 'gmail' | 'proton';
+  /** Whoever you write to answers this many ms later, into Inbox (a demo world: something to notify about); 0: never. */
+  answer?: number;
 }
 
 /** A message as the fake server keeps it. */
@@ -160,7 +162,7 @@ export class FakeMailBackend implements MailBackend {
   // ---------------------------------------------------------- the server's side, for tests and the demo
 
   addAccount(id: string, o: { kind?: string; label?: string; email: string; name?: string; addresses?: M.MailAccountAddress[]; level?: 'read' | 'write'; dryRun?: boolean; mailboxes?: M.Mailbox[]; opts?: FakeOpts; online?: boolean }) {
-    const opts: Required<FakeOpts> = { ids: 'imap', threadIds: false, refs: true, state: 'mailbox', events: 'inbox', send: 'ok', latencyMs: 0, changesPage: 200, moveIds: 'new', search: (o.opts?.ids ?? this.defaults.ids) === 'proton' ? 'proton' : 'imap', ...this.defaults, ...o.opts };
+    const opts: Required<FakeOpts> = { ids: 'imap', threadIds: false, refs: true, state: 'mailbox', events: 'inbox', send: 'ok', latencyMs: 0, changesPage: 200, moveIds: 'new', search: (o.opts?.ids ?? this.defaults.ids) === 'proton' ? 'proton' : 'imap', answer: 0, ...this.defaults, ...o.opts };
     const online = o.online ?? true;
     const a: Account = {
       view: { id, kind: o.kind ?? (opts.ids === 'proton' ? 'proton' : 'imap'), label: o.label ?? o.email, level: o.level ?? 'write', dryRun: !!o.dryRun, online },
@@ -543,7 +545,30 @@ export class FakeMailBackend implements MailBackend {
     });
     if (original) this.setFlags(a.view.id, original.id, { answered: true });
     this.sent.push({ account: a.view.id, mail, files, messageId });
+    if (a.opts.answer) this.answerLater(a, copy);
     return { messageId, sentId: copy.id };
+  }
+
+  /** The first one it went to writes back (opts.answer). */
+  private answerLater(a: Account, sent: FakeMessage) {
+    const own = new Set((a.self.addresses ?? [{ email: a.self.email }]).map((x) => x.email.toLowerCase()));
+    const to = [...sent.to, ...sent.cc].find((x) => x.email && !own.has(x.email.toLowerCase()));
+    if (!to) return;
+    const t = setTimeout(() => {
+      if (this.accs.get(a.view.id) !== a) return;
+      const subject = /^re:/i.test(sent.subject) ? sent.subject : `Re: ${sent.subject}`;
+      const first = (to.name ?? to.email).split(/\s/)[0];
+      this.deliver(a.view.id, {
+        from: [to],
+        to: sent.from,
+        subject,
+        threadId: sent.threadId,
+        inReplyTo: sent.messageId,
+        references: [...sent.references, ...(sent.messageId ? [sent.messageId] : [])],
+        text: `Thanks, got it. Talk soon!\n\n${first}`,
+      });
+    }, a.opts.answer);
+    t.unref?.();
   }
 
   /** A write's ids, as the manager checks them; a read grant may not write. */

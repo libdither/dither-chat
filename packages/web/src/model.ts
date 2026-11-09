@@ -6,9 +6,9 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { categoryThreshold, NETWORK_META } from '@dither-chat/protocol';
-import { dataVersion, db, inbox, isSelfIdentity, prefs } from './state.ts';
+import { dataVersion, db, inbox, isSelfIdentity, mailTriage, prefs } from './state.ts';
 import { mailDataVersion } from './versions.ts';
-import { triageBoard, type Board } from './board.ts';
+import { isMailItem, triageBoard, type Board, type BoardItem } from './board.ts';
 import { mailInboxRows, mailNames } from './mail/model.ts';
 
 const memos = new Map<string, { rev: number; value: unknown }>();
@@ -657,16 +657,26 @@ export function messageUnread(m: P.MessageView): boolean {
   return !!c && c.vantages.some((v) => (v.lastReadTs ?? 0) < m.ts) && unreadOf(c).unread > 0;
 }
 
-/** The Triage board's lists and counts (board.ts), for what is shown here. */
+/** A mail message on the board you have not read: as its thread says, if held, else as the hub said. */
+function mailUnread(m: P.MailTriageItem): boolean {
+  const t = db.mail.threads.get(m.threadId);
+  return t ? t.unread > 0 && m.unread : m.unread;
+}
+
+/** A board card you have not read, chat or mail. */
+export const boardUnread = (m: BoardItem) => (isMailItem(m) ? mailUnread(m) : messageUnread(m));
+
+/** The Triage board's lists and counts (board.ts), for what is shown here: chat's messages and mail's. */
 export function board(): Board {
   return memo('board', () =>
-    triageBoard(inbox.value, {
+    triageBoard<BoardItem>([...inbox.value, ...mailTriage.value], {
       now: Date.now(),
       shown: (m) => {
+        if (isMailItem(m)) return db.mail.accounts.has(m.accountId);
         const c = db.conversations.get(m.conversationId);
         return !!c && visibleConv(c);
       },
-      unread: messageUnread,
+      unread: boardUnread,
     }),
   );
 }

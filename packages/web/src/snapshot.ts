@@ -14,7 +14,7 @@
  * the new code does not expect.
  */
 import type * as P from '@dither-chat/protocol';
-import { db, inbox, loaded, quoted, timelines, type Timeline } from './state.ts';
+import { db, inbox, loaded, mailTriage, quoted, timelines, type Timeline } from './state.ts';
 import { changed, dataVersion, mailChanged, timelineChanged } from './versions.ts';
 import { bodies as mailBodies, details as mailDetails } from './mail/held.ts';
 
@@ -53,6 +53,8 @@ export interface SnapshotRest {
   quoted: P.MessageView[];
   /** The last mail threads and bodies the reader opened. */
   mail?: { details: P.MailThreadDetail[]; bodies: P.MailBodyView[] };
+  /** The Triage board's mail, newest first (slice 9). */
+  mailTriage?: P.MailTriageItem[];
 }
 
 export interface Snapshot {
@@ -71,6 +73,7 @@ export function buildRest(input: {
   identities: Map<string, P.IdentityView>;
   quoted: Map<string, P.MessageView>;
   mail?: { details: P.MailThreadDetail[]; bodies: P.MailBodyView[] };
+  mailTriage?: P.MailTriageItem[];
 }): string {
   const out: SnapshotRest = { inbox: input.inbox.slice(0, MAX_INBOX), timelines: [], identities: [], quoted: [] };
   let size = JSON.stringify(out.inbox).length;
@@ -101,6 +104,7 @@ export function buildRest(input: {
     if (i) out.identities.push(i);
   }
   if (input.mail) out.mail = mailRest(input.mail);
+  if (input.mailTriage?.length) out.mailTriage = input.mailTriage.slice(0, MAX_INBOX);
   return JSON.stringify(out);
 }
 
@@ -236,6 +240,7 @@ export function restore(s: Snapshot, apply: (b: P.Bootstrap) => void, putIdentit
   putIdentities(rest.identities);
   rest.quoted.forEach((m) => quoted.set(m.id, m));
   inbox.value = rest.inbox;
+  mailTriage.value = rest.mailTriage ?? [];
   for (const d of rest.mail?.details ?? []) mailDetails.set(d.thread.id, d);
   for (const b of rest.mail?.bodies ?? []) mailBodies.set(b.messageId, b);
   fromSnapshot = true;
@@ -293,7 +298,7 @@ export async function persistNow() {
     })
     .filter((t): t is Timeline & { sync?: P.SyncPosition } => !!t);
   const mail = { details: [...mailDetails.values()].filter((d) => !d.loading && !d.error && d.messages.length), bodies: [...mailBodies.values()] };
-  const rest = buildRest({ inbox: inbox.value, timelines: live, identities: db.identities, quoted, mail });
+  const rest = buildRest({ inbox: inbox.value, timelines: live, identities: db.identities, quoted, mail, mailTriage: mailTriage.value });
   if (text === null) return void (await patchRest(rest));
   if (text.length > MAX_BOOTSTRAP_CHARS) {
     console.warn(`snapshot: the bootstrap is ${text.length} characters, over ${MAX_BOOTSTRAP_CHARS}; not kept`);

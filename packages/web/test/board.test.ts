@@ -1,6 +1,6 @@
 /** src/board.ts: the Triage board's lists, and the badge counted from them. */
 import { expect, test } from 'bun:test';
-import { BELOW_DAYS, BELOW_SHOWN, triageBoard } from '../src/board.ts';
+import { BELOW_DAYS, BELOW_SHOWN, isMailItem, triageBoard, type BoardItem } from '../src/board.ts';
 
 const DAY = 86_400_000;
 const now = 100 * DAY;
@@ -66,4 +66,26 @@ test('orders: newest first for Important and Active, what matters most first for
   const below = triageBoard(many, { now, shown: all, unread: all }).below;
   expect(below).toHaveLength(BELOW_SHOWN);
   expect(below[0].id).toBe(`x${BELOW_SHOWN + 4}`);
+});
+
+test('mail sits beside chat by the same levels, its unread counting in the badge (slice 9)', () => {
+  const mail = (id: string, decision: string, x: { feedback?: string | null; ts?: number; unread?: boolean } = {}): any => ({
+    kind: 'mail',
+    id,
+    threadId: 'mth_a',
+    accountId: 'acc_mail',
+    from: { name: 'Sam', email: 'sam@x.example' },
+    subject: 'Dinner',
+    preview: null,
+    ts: x.ts ?? now - 500,
+    unread: x.unread ?? true,
+    triage: { decision, feedback: x.feedback ?? null, score: 0.5, reasons: [], decidedBy: 'rules' },
+  });
+  const items: BoardItem[] = [msg('a', 'push'), mail('mml_1', 'push'), mail('mml_2', 'push', { feedback: 'quiet' }), mail('mml_3', 'digest', { unread: false })];
+  const b = triageBoard(items, { now, shown: all, unread: (m) => (isMailItem(m) ? m.unread : true) });
+  expect(ids(b.important)).toEqual(['mml_1', 'a']);
+  expect(ids(b.active)).toEqual(['mml_2']);
+  expect(ids(b.digest)).toEqual(['mml_3']);
+  expect(b.importantUnread).toBe(2);
+  expect(b.important.filter(isMailItem).map((m) => m.threadId)).toEqual(['mth_a']);
 });

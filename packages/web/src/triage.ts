@@ -6,7 +6,9 @@ import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { TIER_LABEL } from '@dither-chat/protocol';
 import { levelOf } from './board.ts';
-import { api, inbox, patchMessage, toast } from './state.ts';
+import { api, inbox, mailTriage, patchMessage, toast } from './state.ts';
+import { details } from './mail/held.ts';
+import { changed, mailChanged } from './versions.ts';
 
 export { levelOf };
 
@@ -27,7 +29,24 @@ export const thresholds = (): P.TriageProbs => triagePolicy.value?.thresholds ??
 /** The level each chance stands for, in the board's words. */
 export const HEAD_LABEL: Record<P.TriageHead, string> = { ping: 'Important', active: 'Active', interesting: 'Digest' };
 
+/** What can be voted on: a chat message, or a mail message (its id `mml_`, the board's mail rows, the reader's). */
+export interface Votable {
+  id: string;
+  triage?: P.TriageView | null;
+}
+
 function setFeedback(id: string, feedback: P.NotifyTier | null) {
+  if (id.startsWith('mml_')) {
+    mailTriage.value = mailTriage.value.map((m) => (m.id === id ? { ...m, triage: { ...m.triage, feedback } } : m));
+    // The reader's copy of the message too.
+    for (const d of details.values()) {
+      const i = d.messages.findIndex((m) => m.id === id);
+      if (i >= 0 && d.messages[i].triage) d.messages[i] = { ...d.messages[i], triage: { ...d.messages[i].triage!, feedback } };
+    }
+    changed('list');
+    mailChanged();
+    return;
+  }
   const patch = (m: P.MessageView): P.MessageView => (m.triage ? { ...m, triage: { ...m.triage, feedback } } : m);
   inbox.value = inbox.value.map((m) => (m.id === id ? patch(m) : m));
   patchMessage(id, patch);
@@ -35,9 +54,9 @@ function setFeedback(id: string, feedback: P.NotifyTier | null) {
 
 /**
  * Up or down a level, or straight to one; the same level again takes the vote back. Shown at once; a refusal puts it
- * back. Up on Important or down below the digest says it was right.
+ * back. Up on Important or down below the digest says it was right. Mail goes the same way (the hub tells its ids).
  */
-export async function vote(m: P.MessageView, v: 'up' | 'down' | P.NotifyTier | null) {
+export async function vote(m: Votable, v: 'up' | 'down' | P.NotifyTier | null) {
   const t = m.triage;
   if (!t || !isTier(t.decision)) return;
   const now = levelOf(t) as P.NotifyTier;
