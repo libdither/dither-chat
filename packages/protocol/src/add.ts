@@ -68,6 +68,12 @@ export interface AddResult {
   check?: AddCheck;
   /** Plain notes, shown after the action: "Joined; the admins must approve before you can post". */
   notes?: string[];
+  /**
+   * The network wants the owner to confirm first (Discord: "You must confirm the friend request to add this user."):
+   * its words. Nothing was done. The page shows them with "Accept anyway" or "Add anyway", which sends the same
+   * command again with `confirm: true`. An adapter confirms only when the command carries it, never on its own.
+   */
+  confirm?: string;
 }
 
 /** A request waiting on the owner. */
@@ -82,7 +88,36 @@ export interface RequestFact {
   target?: { kind: 'space' | 'conversation'; nativeId: string; name?: string; members?: number };
   ts: number;
   answers: RequestAnswer[];
+  /**
+   * The network's own words when it flagged the request, plain text for the card: "Discord filed this request as
+   * possible spam", "Discord says you share no server or friend with them".
+   */
+  warning?: string;
 }
+
+/** How you stand with someone that an account's list holds (capability 'relationships'). Incoming requests are RequestFacts. */
+export type LinkRelationship = Exclude<PersonRelationship, 'requesting' | 'stranger'>;
+
+/** One entry of an account's list: a friend, a request you sent, someone blocked, a contact, someone you follow. */
+export interface RelationshipFact {
+  /** Native identity id (identity fact first). */
+  identity: string;
+  /** 'stranger': gone from the list. */
+  relationship: LinkRelationship | 'stranger';
+  /** ms epoch, when the network says. */
+  since?: number;
+}
+
+export const LINK_RELATIONSHIPS: readonly LinkRelationship[] = ['friend', 'requested', 'blocked', 'contact', 'following'];
+
+/** The button that ends each (the `remove` command): unfriend, cancel the request you sent, unblock, delete the contact, unfollow. */
+export const REMOVE_LABEL: Record<LinkRelationship, string> = {
+  friend: 'Remove friend',
+  requested: 'Cancel request',
+  blocked: 'Unblock',
+  contact: 'Remove contact',
+  following: 'Unfollow',
+};
 
 export const ADD_ACTIONS: readonly AddAction[] = ['join', 'ask', 'friend', 'follow', 'contact', 'message'];
 export const REQUEST_ANSWERS: readonly RequestAnswer[] = ['accept', 'decline', 'block'];

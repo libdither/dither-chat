@@ -83,7 +83,7 @@ import { android } from '../android.ts';
 import { counting, markPainted, rendered } from '../perf.ts';
 import { memo } from './memo.ts';
 import { heldRequest } from '../requests.ts';
-import { RequestBar } from './Requests.tsx';
+import { LinkBanner, RequestBar } from './Requests.tsx';
 
 
 // ------------------------------------------------------------------ header
@@ -1212,6 +1212,7 @@ export function ConversationPane({ convId, onBack, focus }: { convId: string; on
   return (
     <section class="pane">
       <ConvHeader c={c} onBack={onBack} />
+      {!held && c.pending && <LinkBanner c={c} />}
       {c.variant === 'forum' ? (
         <ForumView c={c} />
       ) : (
@@ -1270,6 +1271,9 @@ export function PersonPane({ personId, onBack }: { personId: string; onBack?: ()
   return (
     <section class="pane">
       <PersonHeader person={person} onBack={onBack} />
+      {directs.filter((d) => d.pending).map((d) => (
+        <LinkBanner key={d.id} c={d} />
+      ))}
       <NotStartedNote c={via} />
       <Timeline tkey={timelineKey('p', personId)} convIds={directs.map((d) => d.id)} merged={directs.length > 1} onReply={setReply} firstUnreadTs={unreadAt} />
       <TypingBar convIds={directs.map((d) => d.id)} />

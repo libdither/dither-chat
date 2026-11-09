@@ -46,7 +46,8 @@ import { groups, type MenuSpec } from './ContextMenu.tsx';
 import { openAbout } from './About.tsx';
 import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapshot } from '../arrange.ts';
 import { inboxSnap, shownInbox } from '../inbox.ts';
-import { RequestsRow } from './Requests.tsx';
+import { PeopleLinks, RequestsRow } from './Requests.tsx';
+import { peopleFilters } from '../requests.ts';
 import { SortButton, useFlip } from './Reorganize.tsx';
 import { rememberSearch, SearchBox } from './SearchBox.tsx';
 import { counting, rendered } from '../perf.ts';
@@ -406,7 +407,10 @@ export const PersonRow = memo(function PersonRow({ person, directs, active, onCl
 
 export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
   rev.value;
-  const list = arrangedPeople(people());
+  // Friends, contacts and follows, where an account keeps such a list (docs/add.md "Relationships").
+  const chips = peopleFilters(db.accounts.values());
+  const filter = chips.find((f) => f.id === prefs.value.peopleFilter)?.id ?? 'chats';
+  const list = filter === 'chats' ? arrangedPeople(people()) : [];
   const starred = list.filter((x) => x.person.starred);
   const rest = list.filter((x) => !x.person.starred);
   return (
@@ -415,10 +419,20 @@ export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
         <h1>People<NewMessageButton /><GraphButton /><SortButton scope="people" class="side-sort" /></h1>
         <span class="side-sub">One thread per person, across every network</span>
       </header>
+      {chips.length > 0 && (
+        <div class="inbox-chips people-chips" role="radiogroup" aria-label="Show">
+          {chips.map((f) => (
+            <button class={`chip-btn ${filter === f.id ? 'on' : ''}`} role="radio" aria-checked={filter === f.id} data-filter={f.id} onClick={() => setPrefs({ peopleFilter: f.id })}>
+              {f.label}
+            </button>
+          ))}
+        </div>
+      )}
       <div class="side-scroll">
+        {filter !== 'chats' && <PeopleLinks relationship={filter} active={activePerson} />}
         {starred.length > 0 && <SectionHead id="people-star" label="Starred" count={starred.length} />}
         {!isCollapsed('people-star') && starred.map(({ person, directs }) => <PersonRow key={person.id} person={person} directs={directs} active={person.id === activePerson} onClick={opener(`people:${person.id}`, () => go({ view: 'people', person: person.id }))} />)}
-        <SectionHead id="people-all" label="Direct messages" count={rest.length} />
+        {filter === 'chats' && <SectionHead id="people-all" label="Direct messages" count={rest.length} />}
         {!isCollapsed('people-all') && rest.map(({ person, directs }) => <PersonRow key={person.id} person={person} directs={directs} active={person.id === activePerson} onClick={opener(`people:${person.id}`, () => go({ view: 'people', person: person.id }))} />)}
       </div>
     </div>

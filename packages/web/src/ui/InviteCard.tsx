@@ -118,9 +118,9 @@ function InviteCard({ f, seenVia }: { f: FoundInvite; seenVia: string[] }) {
       if (n === seq.current) setCard({ row, accountId, loading: false, error: String(e?.message ?? e) });
     }
   };
-  const act = async (c: Card, a: P.AddAction) => {
-    const r = await actOn(c, a, setCard, () => {});
-    if (!r || r.check) return;
+  const act = async (c: Card, a: P.AddAction, confirm?: boolean) => {
+    const r = await actOn(c, a, setCard, () => {}, confirm);
+    if (!r || r.check || r.confirm) return;
     // What the hub keeps now says joined, asked or added: every card for it shows that.
     await kept([f.ref]);
     if (!r.pending && (r.conversation || r.spaceId)) setCard(null);
@@ -147,7 +147,7 @@ function InviteCard({ f, seenVia }: { f: FoundInvite; seenVia: string[] }) {
           live={live}
           setLive={setLive}
           onAccount={(id) => void resolve(id)}
-          onAct={(a) => void act(shown, a)}
+          onAct={(a, confirm) => void act(shown, a, confirm)}
           onOpen={openAdded}
           onBack={() => (++seq.current, setCard(null))}
           onClose={() => setCard(shown.view ? { ...shown, done: undefined } : null)}

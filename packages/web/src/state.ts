@@ -134,6 +134,8 @@ export interface Prefs {
   callMode: 'bridge' | 'direct';
   /** The inbox's filter chip. */
   inboxFilter: InboxFilter;
+  /** People's filter chip: chats, or one kind of list (docs/add.md "Relationships"). */
+  peopleFilter?: 'chats' | 'friend' | 'contact' | 'following';
 }
 export type InboxFilter = 'all' | 'people' | 'groups' | 'unread';
 const PREFS_KEY = 'dither-chat:prefs';

@@ -50,6 +50,9 @@ Left:
 Right:
 - **Mutual friends** (Discord), or on your own page **Friends**: your Discord friends, Signal and WhatsApp
   contacts and Matrix direct chats, each person once. Click one for theirs.
+- **How you stand**: each of your accounts that has them on its list (friend, request sent, blocked, contact,
+  following), from the accounts' own lists, else what a profile said, with Remove friend, Cancel request, Unblock,
+  Remove contact or Unfollow where the account can; each asks first (docs/add.md, "Relationships").
 - **Accounts**: each identity, with Open on the network and Unmerge; a hint when someone elsewhere has the same name,
   saying where ("Alice Chen on Signal", "Alice Chen <alice@…>"), and the merge search, which finds people by any name
   or handle (an email address too) and email addresses no person holds yet (`GET /api/persons/candidates`).

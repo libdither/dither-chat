@@ -70,7 +70,7 @@ try {
 
   // A message request waits under Requests (slice B), never in the inbox.
   const req = boot.requests?.find((r: any) => r.kind === 'message');
-  check(boot.requests?.length === 3, 'the demo sends three requests after connecting', boot.requests?.map((r: any) => r.kind));
+  check(boot.requests?.length === 5, 'the demo sends five requests after connecting', boot.requests?.map((r: any) => r.kind));
   const rows = await p.eval<string[]>(`[...document.querySelectorAll('.sidebar .side-scroll [data-row]')].map((el) => el.dataset.row)`);
   check(req?.target?.id && rows.length > 3 && !rows.includes(req.target.id), 'the message request is not in the inbox', { rows: rows.length });
 

@@ -13,6 +13,7 @@ import { composeTo } from '../mail/people.ts';
 import { senderLine } from '../mail/model.ts';
 import { countText, countTitle } from '../msgcount.ts';
 import { communitiesOf, convLabel, convTitle, directsOf, identityName, kindLabel, netName, plainBody, rootCommunity } from '../model.ts';
+import { profileLinks } from '../requests.ts';
 import { api, db, go, isSelfIdentity, newMessage, openMessage, openProfile, rev, setRule, toast } from '../state.ts';
 import { Avatar, Empty, NetBadge, NetGlyph, Skeleton } from './bits.tsx';
 import { copy, groups, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
@@ -21,7 +22,7 @@ import { ActivityCard } from './ActivityCard.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
 import { identityMenu, personMenu } from './menus.tsx';
 import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, Tag } from './ProfileShell.tsx';
-import { ConnectActions } from './Requests.tsx';
+import { ConnectActions, ProfileLinks } from './Requests.tsx';
 import { openConv } from './Sidebar.tsx';
 
 /** What a network's profile holds at most, for when it says little. */
@@ -192,6 +193,16 @@ function OwnBio({ identity, about, account, label, onSaved }: { identity: P.Iden
   );
 }
 
+/** How each of your accounts stands with them, from the accounts' own lists, with Remove friend and the like. */
+function ProfileLinksCard({ ids, links, abouts, onEnded }: { ids: P.IdentityView[]; links: P.PersonLinkView[]; abouts: Record<string, P.PersonAboutView | undefined>; onEnded: (identityId: string, accountId: string) => void }) {
+  if (!profileLinks(ids, links, abouts).length) return null;
+  return (
+    <Card title="How you stand" icon="users" class="pf-standing">
+      <ProfileLinks identities={ids} links={links} abouts={abouts} onEnded={onEnded} />
+    </Card>
+  );
+}
+
 /** Mail with them: their newest threads, how many, and all of it in Mail (hub mail/people.ts). */
 function MailCard({ mail, list, name }: { mail: NonNullable<P.ProfileView['mail']>; list: string; name: string }) {
   const open = (t: P.MailThreadView) => {
@@ -230,6 +241,9 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   rev.value;
   const { profile, abouts, counts, learn, asking, refresh } = useProfile(personId, identityId);
   const [merging, setMerging] = useState(false);
+  // Links ended from this page (`account|identity`), until the profile is fetched again.
+  const [ended, setEnded] = useState<string[]>([]);
+  useEffect(() => setEnded([]), [personId, identityId]);
   const [filter, setFilter] = useState('');
   const person = personId ? db.persons.get(personId) : undefined;
   // The hub's merge search: people by any name or handle (an email address too), and email identities no person holds.
@@ -655,6 +669,19 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
               {people(mutualFriends)}
             </Card>
           )}
+
+      {!isSelf && (
+        <ProfileLinksCard
+          ids={ids}
+          links={(profile.links ?? []).filter((l) => !ended.includes(`${l.accountId}|${l.identityId}`))}
+          abouts={Object.fromEntries(Object.entries(abouts).map(([k, a]) => [k, a && ended.includes(`${a.accountId}|${k}`) ? { ...a, relationship: 'stranger' as const } : a]))}
+          onEnded={(identityId, accountId) => {
+            setEnded((x) => [...x, `${accountId}|${identityId}`]);
+            const a = abouts[identityId];
+            if (a && a.accountId === accountId) learn({ ...a, relationship: 'stranger' });
+          }}
+        />
+      )}
 
       <Card title="Accounts" icon="idBadge" count={ids.length > 1 ? ids.length : undefined}>
         {ids.map((i) => {

@@ -55,8 +55,8 @@ function request(account: string, f: Partial<P.RequestFact> & { nativeId: string
 }
 
 describe('who is known', () => {
-  test('after the demo connects: the room invite from a housemate notifies, the stranger and the message request do not', () => {
-    expect(requestViews(store)).toHaveLength(3);
+  test('after the demo connects: the room invite from a housemate notifies, the strangers and the message request do not', () => {
+    expect(requestViews(store)).toHaveLength(5);
     expect(notifier.due(clock)).toEqual([]);
     const out = notifier.due(settled());
     expect(out).toHaveLength(1);

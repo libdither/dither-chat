@@ -10,7 +10,7 @@ import { binsFor, estimateMessages, snowflakeTime, type ChannelInput } from './m
 import { Journal } from './journal.ts';
 import { infoFor } from './mediainfo.ts';
 import { TypingRelay, typingTtl } from './typing.ts';
-import { addTables, ingestRequests } from './add.ts';
+import { addTables, ingestRelationships, ingestRequests, pendingLinks } from './add.ts';
 
 type Row = Record<string, any>;
 
@@ -587,6 +587,10 @@ export class Store {
         case 'request':
         case 'requestGone':
           ingestRequests(this, acc, ev);
+          break;
+        case 'relationships':
+        case 'relationship':
+          ingestRelationships(this, acc, ev);
           break;
         case 'reply':
         case 'log':
@@ -1945,7 +1949,8 @@ export class Store {
     const parts = (this.db.query('SELECT identity_id FROM participant WHERE conversation_id = ?').all(id) as Row[]).map((x) => x.identity_id);
     const vs = this.db.query(`SELECT * FROM vantage WHERE target_kind = 'conversation' AND target_id = ?`).all(id) as Row[];
     const last = r.last_message_id ? (this.db.query('SELECT * FROM message WHERE id = ?').get(r.last_message_id) as Row) : null;
-    return this.assembleConversation(r, spaceIds, parts, vs, last, this.peerOf(r, parts));
+    const other = r.shape === 'direct' ? parts.find((p) => !this.isSelf(p)) : undefined;
+    return this.assembleConversation(r, spaceIds, parts, vs, last, this.peerOf(r, parts), other ? pendingLinks(this.db, [other]) : undefined);
   }
 
   /** Many conversations at once, as bootstrap() reads them: a handful of queries rather than five per conversation. */
@@ -1965,9 +1970,10 @@ export class Store {
     const lasts = new Map(
       q(`SELECT m.* FROM message m WHERE m.id IN (SELECT last_message_id FROM conversation WHERE id IN (SELECT value FROM json_each(?)))`).map((m) => [m.id as string, m]),
     );
+    const pending = rows.some((r) => r.shape === 'direct') ? pendingLinks(this.db) : undefined;
     return rows.map((r) => {
       const ps = (parts.get(r.id) ?? []).map((p) => p.identity_id as string);
-      return this.assembleConversation(r, (edges.get(r.id) ?? []).map((e) => e.parent_id), ps, vants.get(r.id) ?? [], lasts.get(r.last_message_id) ?? null, this.peerOf(r, ps));
+      return this.assembleConversation(r, (edges.get(r.id) ?? []).map((e) => e.parent_id), ps, vants.get(r.id) ?? [], lasts.get(r.last_message_id) ?? null, this.peerOf(r, ps), pending);
     });
   }
 
@@ -1978,8 +1984,11 @@ export class Store {
     return ((this.db.query('SELECT person_id FROM identity WHERE id = ?').get(peer) as Row) ?? {}).person_id ?? null;
   }
 
-  private assembleConversation(r: Row, spaceIds: string[], parts: string[], vs: Row[], last: Row | null, peer: string | null): P.ConversationView {
+  private assembleConversation(r: Row, spaceIds: string[], parts: string[], vs: Row[], last: Row | null, peer: string | null, links?: Map<string, P.PendingLinkView>): P.ConversationView {
     const via = vs[0]?.account_id ?? null;
+    // A DM: a friend request between one of its accounts and the other person, either way (add.ts pendingLinks).
+    const other = r.shape === 'direct' && links?.size ? parts.find((p) => !this.isSelf(p)) : undefined;
+    const pending = other ? vs.map((v) => links!.get(`${v.account_id}\0${other}`)).find((x) => !!x) : undefined;
     return {
       id: r.id,
       network: r.network,
@@ -1999,6 +2008,7 @@ export class Store {
       lastMessage: this.preview(last),
       lastMessageAt: r.last_message_at,
       nativeMute: json(vs.find((v) => v.native_mute)?.native_mute ?? null, null),
+      ...(pending ? { pending } : {}),
     };
   }
 
@@ -2831,6 +2841,7 @@ export class Store {
     const identities = this.identitiesByIds(identityIds);
     const personOf = new Map(identities.map((i) => [i.id, i.personId]));
 
+    const links = pendingLinks(db);
     const conversations = convRows.map((r) => {
       const ps = (P_.get(r.id) ?? []).map((p) => p.identity_id);
       const peer = r.shape === 'direct' ? (personOf.get(ps.find((p) => !this.isSelf(p)) ?? '') ?? null) : null;
@@ -2841,6 +2852,7 @@ export class Store {
         V.get(r.id) ?? [],
         r.last_message_id ? (lasts.get(r.last_message_id) ?? null) : null,
         peer,
+        links,
       );
     });
 

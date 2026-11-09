@@ -1,5 +1,6 @@
 /** Which accounts can start a direct conversation. No browser needed, so it can be tested alone. */
 import type * as P from '@dither-chat/protocol';
+import { directTarget } from '@dither-chat/protocol';
 
 /** Accounts on this network that can open a DM right now. Empty means no button, not a dead one. */
 export function openers(accounts: Iterable<P.AccountView>, network: P.Network): P.AccountView[] {
@@ -14,4 +15,13 @@ export function directNote(network: P.Network, name: string): string {
   if (network === 'telegram') return `This finds ${name} on Telegram and opens your chat with them, or the one you have. Nothing is sent until you write something.`;
   if (network === 'gmessages') return `This opens a conversation with that number through your phone. Your phone sends it as RCS where they have it, otherwise as SMS, and ${name} sees nothing until you send your first message.`;
   return `This opens a DM with ${name} through the Discord client, or finds the one you have. Nothing is sent until you write something.`;
+}
+
+/** The address openDirect takes for someone the hub knows: their native id, else their handle. */
+export function identityPeer(i: Pick<P.IdentityView, 'network' | 'nativeId' | 'handle'>): string | null {
+  for (const s of [i.nativeId, i.handle]) {
+    const t = s ? directTarget(i.network, s) : null;
+    if (t && 'peer' in t) return t.peer;
+  }
+  return null;
 }
