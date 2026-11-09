@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { parseAdd } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
-import { ADD_LIMITS, Adding, requestHeld, requestViews, takePace } from '../src/add.ts';
+import { ADD_LIMITS, Adding, PREVIEW_CACHE, requestHeld, requestViews, takePace } from '../src/add.ts';
 import { createDemoAccounts, demoFactory } from '../src/demo.ts';
 import { HubServer, mediaSigner } from '../src/server.ts';
 import { Store } from '../src/store.ts';
@@ -192,6 +192,84 @@ describe('add', () => {
   });
 });
 
+describe('previews kept for the hour', () => {
+  const paced = (id: string) => store.one<{ n: number }>(`SELECT COUNT(*) AS n FROM add_pace WHERE account_id = ? AND kind = 'resolve'`, id)!.n;
+  const resolves = () => sent.filter((s) => s.cmd.t === 'resolve').length;
+
+  test('a second look within the hour asks nobody and costs nothing', async () => {
+    const r = ref('https://t.me/+FilmSwap2026x');
+    const first = await resolve(TG, r);
+    expect(first.json).toMatchObject({ name: 'Film Photo Swap', actions: ['join'] });
+    const [n, used] = [resolves(), paced(TG)];
+    expect((await resolve(TG, ref('t.me/joinchat/FilmSwap2026x'))).json).toEqual(first.json);
+    expect([resolves(), paced(TG)]).toEqual([n, used]);
+  });
+
+  test('a kept preview is served past the pace; a new reading is not', async () => {
+    for (let i = paced(TG); i < ADD_LIMITS.resolve.max; i++) takePace(store.db, store.account(TG)!, 'resolve', clock);
+    expect((await resolve(TG, ref('t.me/+ClimbAsk2026'))).status).toBe(429);
+    expect((await resolve(TG, ref('t.me/+FilmSwap2026x'))).status).toBe(200);
+    store.db.query('DELETE FROM add_pace WHERE account_id = ?').run(TG);
+  });
+
+  test('kept per account: another account asks for itself, and the page gets each without asking', async () => {
+    const r = ref('discord.gg/pixelart');
+    const n = resolves();
+    expect(((await resolve(ALT, r)).json as P.AddPreviewView).accountId).toBe(ALT);
+    expect(resolves()).toBe(n + 1);
+    const got = await call('POST', '/api/add/cached', { refs: [r, ref('discord.gg/notlookedup'), { kind: 'invite', network: 'discord', code: 'x', url: 'https://evil.example/x' }] });
+    expect(got.status).toBe(200);
+    expect((got.json.previews as P.AddPreviewView[]).map((v) => `${v.accountId}:${v.name}`).sort()).toEqual([`${ALT}:Pixel Art Club`, `${MAIN}:Pixel Art Club`]);
+    expect(resolves()).toBe(n + 1);
+    expect((await call('POST', '/api/add/cached', { refs: 'discord.gg/pixelart' })).status).toBe(400);
+    expect((await call('POST', '/api/add/cached', { refs: Array(PREVIEW_CACHE.perRequest + 1).fill(r) })).status).toBe(400);
+  });
+
+  test('joined after a look: the kept preview says so from then on, and a server you are in shows from the hub', async () => {
+    const r = ref('https://chat.whatsapp.com/MapleGardenSwap26');
+    expect((await resolve(WA, r)).json).toMatchObject({ joined: null, actions: ['join'] });
+    const done = (await add(WA, r, 'join')).json as P.AddResultView;
+    const n = resolves();
+    expect((await resolve(WA, r)).json).toMatchObject({ joined: { conversation: done.conversation!.id }, actions: [] });
+    expect(resolves()).toBe(n);
+    // ALT never joined Pixel Art Club, but main did: the hub holds the server, so it is joined here.
+    expect(((await resolve(ALT, ref('discord.gg/pixelart'))).json as P.AddPreviewView).joined).toEqual({ space: hubId('spc', 'discord', store.one<{ native_id: string }>(`SELECT native_id FROM space WHERE name = 'Pixel Art Club'`)!.native_id) });
+  });
+
+  test('an hour on it asks again; errors are never kept; the least used goes first', async () => {
+    let t = clock;
+    const a = new Adding({ store, online: () => true, command, note() {}, flush: () => store.flush(), liveView: () => false, now: () => t });
+    const r = ref('t.me/+FilmSwap2026x');
+    const n = resolves();
+    await resolve(TG, r, a);
+    t += PREVIEW_CACHE.ttlMs - 1;
+    await resolve(TG, r, a);
+    expect(resolves()).toBe(n + 1);
+    t += 1;
+    await resolve(TG, r, a);
+    expect(resolves()).toBe(n + 2);
+    expect((await resolve(MAIN, ref('discord.gg/oldparty'), a)).status).toBe(502);
+    expect((await resolve(MAIN, ref('discord.gg/oldparty'), a)).status).toBe(502);
+    expect(resolves()).toBe(n + 4);
+    const max = PREVIEW_CACHE.max;
+    PREVIEW_CACHE.max = 2;
+    try {
+      await resolve(TG, ref('@dithernews'), a);
+      await resolve(TG, r, a); // used again: now the newest
+      await resolve(TG, ref('@lena_k'), a); // three kept: @dithernews, the oldest used, goes
+      const m = resolves();
+      await resolve(TG, r, a);
+      await resolve(TG, ref('@lena_k'), a);
+      expect(resolves()).toBe(m);
+      await resolve(TG, ref('@dithernews'), a);
+      expect(resolves()).toBe(m + 1);
+    } finally {
+      PREVIEW_CACHE.max = max;
+    }
+    store.db.query('DELETE FROM add_pace WHERE account_id IN (?, ?) AND at > ?').run(TG, MAIN, clock);
+  });
+});
+
 describe('pacing', () => {
   test('the limits are one constant', () => {
     expect(ADD_LIMITS.resolve).toMatchObject({ max: 60, networks: { whatsapp: 20 } });
@@ -202,7 +280,8 @@ describe('pacing', () => {
   test('past the limit: 429 with when it frees up, and a restart does not reset it', async () => {
     const r = ref('#nixos:nixos.org');
     const used = store.one<{ n: number }>(`SELECT COUNT(*) AS n FROM add_pace WHERE account_id = ? AND kind = 'resolve'`, MX)!.n;
-    for (let i = used; i < 60; i++) expect((await resolve(MX, r)).status).toBe(200);
+    // A different address each time: one looked up within the hour is answered again without the network.
+    for (let i = used; i < 60; i++) expect((await resolve(MX, ref(`#pace-${i}:nixos.org`))).status).toBe(502);
     const asked = sent.length;
     const over = await resolve(MX, r);
     expect(over.status).toBe(429);

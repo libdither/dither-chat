@@ -4,6 +4,7 @@
  * constructs below produce markup, and links are limited to http(s).
  */
 import type { Network } from '@dither-chat/protocol';
+import { BARE_INVITE } from './invites.ts';
 
 export interface MdContext {
   network: Network;
@@ -37,6 +38,8 @@ export function renderMarkdown(src: string, ctx: MdContext): string {
   );
   s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, text, url) => slot(`<a href="${esc(url)}" target="_blank" rel="noreferrer noopener">${esc(text)}</a>`));
   s = s.replace(/\bhttps?:\/\/[^\s<>()]+[^\s<>().,;:!?'"]/g, (url) => slot(`<a href="${esc(url)}" target="_blank" rel="noreferrer noopener">${esc(url)}</a>`));
+  // Invite links written without https:// (t.me/+…, discord.gg/…), linked as Telegram links them.
+  s = s.replace(BARE_INVITE, (url) => slot(`<a href="https://${esc(url)}" target="_blank" rel="noreferrer noopener">${esc(url)}</a>`));
 
   s = esc(s);
   s = s

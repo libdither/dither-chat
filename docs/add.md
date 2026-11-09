@@ -219,3 +219,41 @@ scripts/verify-qr.ts checks all of it against a demo hub: every demo account's c
 jsQR) back to the link under it in a dark and a light theme, the numbers stay hidden until tapped, a picture of
 `discord.gg/pixelart` lands on its preview, a Wi-Fi code shows the plain line, the Signal climbing group's invite QR
 decodes to its link, and My code fits a phone.
+
+## Invites in messages
+
+An invite link in a message gets a card under it, the way Discord shows invites: Discord, WhatsApp and Telegram
+invites, Signal group links, Matrix rooms by `matrix.to` link, and Telegram `t.me/name` links (a person, a group or a
+channel; the lookup says which). Links written without `https://` count (`t.me/+…`, `discord.gg/…`) and are linked in
+the text, as Telegram links them. A link inside code, a link to one message in a room or channel, and a link to a
+person get no card, and one message gets at most three. Mail is not covered.
+
+- **What it is at once, looked up only on a click.** The card shows the network, what kind of link it is ("Discord
+  server invite", "Matrix room") and a Preview button. Nothing is asked of a network while chats scroll by: each look
+  is a request from your account and counts against the pace. Preview asks the account the message came through, when
+  it can, and then the card shows what the New box shows (name, picture, members and online, description, who invited,
+  when it runs out, partial and other notes) with the same actions and the same check and pending screens, from the
+  New box's own components (`AddCard`, `actOn` in packages/web/src/ui/NewMessage.tsx). An expired or revoked invite
+  shows the network's sentence.
+- **Kept for an hour.** The hub keeps each preview it got, per account and reading, for an hour (`PREVIEW_CACHE` in
+  packages/hub/src/add.ts: in memory, up to 500, the least recently used out first; a restart forgets them, and errors
+  are never kept). Looking the same thing up again within the hour, from any page or device, gets the kept answer
+  without asking the network and without counting against the pace. A card asks the hub what it kept when it is drawn,
+  so reopening the chat, a reload or another device shows the preview without a click:
+
+  | Route | |
+  |---|---|
+  | POST /api/add/cached `{refs}` | `{ previews: AddPreviewView[] }`: what the hub kept of these readings (up to 50), one per account that looked. Never a request to a network, never paced |
+
+- **Joined.** After a join from a card or from the box, the kept preview says joined; after an ask, that you asked. A
+  preview of a server, group or room the hub already holds says joined too, and so does a Matrix room link by its
+  `!id`, without any lookup. The card then says Joined, with Open.
+- **A click on the link** opens the New box on it, as if it were pasted, instead of the browser or the desktop helper.
+  Its menu (right-click, or hold) has Preview Invite, Open in Browser and Copy Link. A click with Ctrl, Cmd, Shift or
+  the middle button opens it in a tab as before.
+- **No account can look it up:** the card still says what it is, with the plain line ("Joining from Discord invites
+  isn't built for this account yet", or "No connected Discord account here can join this.") and no button.
+
+Code: packages/web/src/invites.ts (which links get a card and what kind they are, tested alone),
+packages/web/src/ui/InviteCard.tsx (the card) and the cache in packages/hub/src/add.ts. scripts/verify-invites.ts tries
+it end to end on a demo hub, where the `addLog` account action says how many lookups each demo account was asked for.

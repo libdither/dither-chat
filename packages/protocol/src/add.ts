@@ -286,6 +286,12 @@ export function sameAddRef(a: AddRef, b: AddRef): boolean {
   }
 }
 
+/** One key per thing a reading names (Matrix via servers aside), as sameAddRef compares them: a cache key. */
+export function addRefKey(r: AddRef): string {
+  const what = r.kind === 'invite' ? r.code : r.kind === 'place' ? r.address : r.kind === 'name' ? r.name : r.handle;
+  return `${r.network}\u0000${r.kind}\u0000${what}`;
+}
+
 /** A reading that parseAdd itself would give, with nothing else in it. Anything a page sends goes through this. */
 export function validAddRef(x: unknown): x is AddRef {
   if (!x || typeof x !== 'object') return false;
