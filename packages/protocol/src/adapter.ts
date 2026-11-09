@@ -24,6 +24,7 @@
  */
 
 import type { AboutChange, AboutTarget } from './about.ts';
+import type { AddAction, AddRef, RequestAnswer, RequestFact } from './add.ts';
 import type { CallMode, CallState } from './call.ts';
 import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, ReactionStyle, Shape, SpaceKind, Variant } from './ontology.ts';
 
@@ -63,7 +64,15 @@ export type Capability =
    * Says who it sees as a member of a space (the `members` event). Only what the network's own client loaded anyway:
    * no request of its own.
    */
-  | 'members';
+  | 'members'
+  /** Says what an invite, address, name or handle is without acting on it (the `resolve` command, add.ts). */
+  | 'resolve'
+  /** Joins a space, group, channel or room, or asks to (the `add` command with join or ask). */
+  | 'join'
+  /** Adds someone: a friend request, a follow, a contact (the `add` command with friend, follow or contact). */
+  | 'connect'
+  /** Lists the requests waiting on you and answers them (the requests events, the `answer` command). */
+  | 'requests';
 
 // ---------------------------------------------------------------- facts
 
@@ -342,6 +351,15 @@ export type AdapterEvent =
   | { t: 'typing'; conversation: string; author: string; stop?: boolean; ttl?: number; name?: string }
   /** A call this hub started: bridge signalling for the device, the call's state, or its end. */
   | { t: 'call'; call: string; signal?: unknown; state?: CallState; ended?: string }
+  /**
+   * Requests waiting on you (capability 'requests', add.ts): the account's whole list, sent after connect. It replaces
+   * the hub's; until one comes the hub keeps what it had, so a network that knows its list only later loses nothing.
+   */
+  | { t: 'requests'; requests: RequestFact[] }
+  /** One request new or changed. */
+  | { t: 'request'; request: RequestFact }
+  /** A request answered here or elsewhere, withdrawn, or expired. */
+  | { t: 'requestGone'; nativeId: string }
   | { t: 'reply'; id: string; ok: true; result?: unknown }
   | { t: 'reply'; id: string; ok: false; error: string }
   | { t: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; msg: string; data?: unknown };
@@ -403,6 +421,18 @@ export type AdapterCommand =
   | { t: 'call'; id: string; call: string; op: 'leave' }
   | { t: 'call'; id: string; call: string; op: 'mute'; muted: boolean; deafened: boolean }
   | { t: 'call'; id: string; call: string; op: 'signal' | 'note'; data: unknown }
+  /**
+   * What an invite, address, name or handle is, without joining, following or telling anyone (capability 'resolve').
+   * Identity facts it names first, then reply.result: AddPreview. Not found or expired: an error sentence.
+   */
+  | { t: 'resolve'; id: string; ref: AddRef }
+  /**
+   * Act on a reading (capability 'join' for join and ask, 'connect' for friend, follow and contact). Space,
+   * conversation and identity facts first, then reply.result: AddResult. 'message' goes through openDirect.
+   */
+  | { t: 'add'; id: string; ref: AddRef; action: Exclude<AddAction, 'message'> }
+  /** Answer a request (capability 'requests'). reply.result: AddResult. */
+  | { t: 'answer'; id: string; request: string; answer: RequestAnswer }
   /** Account-specific actions, e.g. 'relogin', 'startLink', 'resync'. */
   | { t: 'action'; id: string; action: string; args?: unknown }
   | { t: 'shutdown' };

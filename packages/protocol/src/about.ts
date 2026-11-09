@@ -358,7 +358,8 @@ export const BIO_LIMIT: Partial<Record<Network, number>> = { discord: 190, signa
 export const bioLength = (s: string) => [...s].length;
 
 /** friend: accepted; requested: you asked them; requesting: they asked you; contact: in your address book. */
-export type PersonRelationship = 'friend' | 'requested' | 'requesting' | 'blocked' | 'contact' | 'stranger';
+/** following: you follow them (X, Instagram). */
+export type PersonRelationship = 'friend' | 'requested' | 'requesting' | 'blocked' | 'contact' | 'following' | 'stranger';
 
 export const RELATIONSHIP_LABEL: Record<PersonRelationship, string> = {
   friend: 'Friend',
@@ -366,5 +367,6 @@ export const RELATIONSHIP_LABEL: Record<PersonRelationship, string> = {
   requesting: 'Wants to be friends',
   blocked: 'Blocked',
   contact: 'In your contacts',
+  following: 'You follow them',
   stranger: 'Not a contact',
 };

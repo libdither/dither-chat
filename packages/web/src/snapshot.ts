@@ -147,6 +147,7 @@ export function currentBootstrap(): P.Bootstrap {
     devices: db.devices,
     reactionUsage: db.reactionUsage,
     attention: [...db.attention.values()],
+    requests: db.requests,
     now: Date.now(),
     ...(db.sync ? { sync: db.sync } : {}),
     ...(db.mail.access.state !== 'off' || db.mail.accounts.size

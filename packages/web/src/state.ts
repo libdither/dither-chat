@@ -320,7 +320,7 @@ export function patchMessage(id: string, patch: (m: P.MessageView) => P.MessageV
 /** Events that change nothing in `db`: typing, toasts and read progress have signals of their own. */
 const NOT_DB = new Set<P.ClientEvent['t']>(['typing', 'notify', 'sync', 'readProgress', 'resync']);
 /** Events that change what lists show but no names or settings: `metaRev` stays. */
-const LIST_ONLY = new Set<P.ClientEvent['t']>(['message', 'message.deleted', 'identity', 'attention', 'usage', 'arrange']);
+const LIST_ONLY = new Set<P.ClientEvent['t']>(['message', 'message.deleted', 'identity', 'attention', 'usage', 'arrange', 'requests']);
 
 /** Others react to events too (usage.ts: time spent in places, sort settings), without state.ts knowing them. */
 export const eventHooks = new Set<(ev: P.ClientEvent) => void>();
@@ -852,8 +852,11 @@ function settle() {
   if (gone.size) pending.value = pending.value.filter((p) => !gone.has(p.tempId));
 }
 
-/** The dialog for starting a direct conversation; open at a known identity when given one. */
-export const newMessage = signal<{ identityId?: string } | null>(null);
+/**
+ * The New box: start a direct conversation, join a server or group, add someone (docs/add.md). Open at a known
+ * identity when given one; `q` fills the box (a link resolves at once), `mode` says which of the three it is for.
+ */
+export const newMessage = signal<{ identityId?: string; q?: string; mode?: 'join' | 'add' } | null>(null);
 
 export async function openDirect(accountId: string, peer: string): Promise<P.OpenedDirect> {
   const r = await api<P.OpenedDirect>('/api/directs', { body: { accountId, peer } });

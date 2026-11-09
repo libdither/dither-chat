@@ -41,6 +41,8 @@ export function emptyDb() {
     sync: null as P.SyncPosition | null,
     /** Mail (mail/model.ts, docs/mail.md). */
     mail: emptyMail(),
+    /** Requests waiting on you (docs/add.md). */
+    requests: [] as P.RequestView[],
   };
 }
 export type Db = ReturnType<typeof emptyDb>;
@@ -152,6 +154,7 @@ export function applyBootstrapTo(db: Db, b: P.Bootstrap) {
   db.devices = b.devices ?? [];
   db.attention = new Map((b.attention ?? []).map((a) => [a.id, a]));
   db.sync = b.sync ?? null;
+  db.requests = b.requests ?? [];
   applyMailBootstrap(db.mail, b.mail);
   indexEdges(db, b.edges);
   indexThreads(db);
@@ -166,6 +169,7 @@ export function applyEventTo(db: Db, ev: P.ClientEvent): boolean {
       return false;
     case 'account.removed':
       db.accounts.delete(ev.id);
+      db.requests = db.requests.filter((r) => r.accountId !== ev.id);
       return false;
     case 'identity':
       putIdentity(db, ev.identity);
@@ -219,6 +223,9 @@ export function applyEventTo(db: Db, ev: P.ClientEvent): boolean {
       return false;
     case 'devices':
       db.devices = ev.devices;
+      return false;
+    case 'requests':
+      db.requests = ev.requests;
       return false;
     case 'attention':
       if (ev.replace) db.attention.clear();

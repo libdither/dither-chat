@@ -13,6 +13,7 @@ import type { Store } from './store.ts';
 import type { UsageStore } from './usage.ts';
 import type { Devices } from './devices.ts';
 import type { MailHub } from './mail/index.ts';
+import { requestViews } from './add.ts';
 
 type Row = Record<string, any>;
 
@@ -117,6 +118,7 @@ function changedSince(ctx: SyncContext, rows: ChangeRow[]): P.ClientEvent[] {
   if (list('categories')) out.push({ t: 'categories', categories: store.categories(), placeCategories: store.placeCategories() });
   if (list('rules')) out.push({ t: 'rules', rules: store.rules() });
   if (list('devices') && ctx.devices) out.push({ t: 'devices', devices: ctx.devices.list() });
+  if (list('requests')) out.push({ t: 'requests', requests: requestViews(store) });
 
   if (attention && list('attention')) {
     const xs = of('attention');

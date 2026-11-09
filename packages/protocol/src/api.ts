@@ -3,7 +3,8 @@
  * Every id here is a hub id; native ids are included for display and deep links only.
  */
 
-import type { About, AboutFields, PersonAbout } from './about.ts';
+import type { About, AboutFields, PersonAbout, PersonRelationship } from './about.ts';
+import type { AddAction, AddCheck, AddPreview, AddRef, RequestAnswer, RequestFact } from './add.ts';
 import type { Capability, NativeMute, ReceiptState } from './adapter.ts';
 import type {
   AccountStatus,
@@ -620,6 +621,68 @@ export interface OpenedDirect {
   startsAtFirstSend: boolean;
 }
 
+/** POST /api/add/resolve: what a reading is, as one account sees it (add.ts, docs/add.md). Ids are hub ids. */
+export interface AddPreviewView {
+  accountId: string;
+  ref: AddRef;
+  what: AddPreview['what'];
+  name: string;
+  /** The network will not say more without acting: a missing count or id is not "not found". */
+  partial?: true;
+  nativeId: string | null;
+  /** A person: their identity's id. */
+  identityId: string | null;
+  /** The hub's media URL, as other views carry one. */
+  avatar: string | null;
+  description: string | null;
+  members: number | null;
+  online: number | null;
+  /** Already in it: hub space and conversation ids. */
+  joined: { space?: string; conversation?: string } | null;
+  relationship: PersonRelationship | null;
+  /** What this account can do now, best first: the network's list, less what this account cannot do yet. */
+  actions: AddAction[];
+  expires: number | null;
+  /** Who made the invite: an identity id (its view is in `identities`). */
+  inviter: string | null;
+  notes: string[];
+  identities: IdentityView[];
+}
+
+/** POST /api/add and POST /api/requests/:id: what was done. Ids are hub ids. */
+export interface AddResultView {
+  accountId: string;
+  /** The conversation to open, when the network made or found one. */
+  conversation: ConversationView | null;
+  spaceId: string | null;
+  identityId: string | null;
+  relationship: PersonRelationship | null;
+  /** Asked; waiting on the other side. */
+  pending: boolean;
+  /** The network wants a check first, in the account's live view. Nothing was done. */
+  check: AddCheck | null;
+  notes: string[];
+  /** Where that check is done: this hub carries the account's live view, and/or its page on dither-accounts. */
+  liveView: boolean;
+  managerUrl: string | null;
+}
+
+/** A request waiting on you (GET /api/requests, the bootstrap's `requests`, the `requests` event). */
+export interface RequestView {
+  /** `req_`, per account. */
+  id: string;
+  accountId: string;
+  network: Network;
+  nativeId: string;
+  kind: RequestFact['kind'];
+  /** Who asked: an identity id. */
+  from: string | null;
+  /** id: the hub's space or conversation, when it holds it. */
+  target: { kind: 'space' | 'conversation'; id: string | null; name: string | null; members: number | null } | null;
+  ts: number;
+  answers: RequestAnswer[];
+}
+
 export interface SearchHit {
   message: MessageView;
   /** The matching text, with matches between \u0001 and \u0002. Plain text otherwise, not HTML. */
@@ -779,6 +842,8 @@ export interface Bootstrap {
   sync?: SyncPosition;
   /** Mail (docs/mail.md). Absent from hubs that predate it. */
   mail?: MailBootstrap;
+  /** Requests waiting on you (docs/add.md). Absent from hubs that predate them. */
+  requests?: RequestView[];
 }
 
 /**
@@ -852,6 +917,8 @@ export type ClientEvent =
   /** Time spent in places changed (usage.ts, docs/organize.md). `replace`: these are all of them. */
   | { t: 'usage'; places: UsageView[]; removed: { kind: UsageKind; id: string }[]; replace?: true }
   | { t: 'arrange'; arrange: ArrangeSettings }
+  /** Requests waiting on you changed (docs/add.md): the whole list. */
+  | { t: 'requests'; requests: RequestView[] }
   /** Mail (docs/mail.md, docs/mail-design.md §5). Whether the hub may read it, its accounts, their mailboxes. */
   | { t: 'mail.access'; access: MailAccess }
   | { t: 'mail.account'; account: MailAccountView }
