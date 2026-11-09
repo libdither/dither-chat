@@ -4,7 +4,6 @@ import { accountsNeedingYou, pingedCount, rootCommunity, totalUnread } from '../
 import { adoptEntry, api, connected, db, go, loaded, pending, prefs, previousRoute, readProgress, refresh, rev, route, setListUnder, unreachable, type Route } from '../state.ts';
 import { isPage, isTabRoot, listKey, listToWrite, ownList, restAfter, wayBack, type Places } from '../pages.ts';
 import { dropLayer, phone, pushLayer } from '../phone.ts';
-import { android } from '../android.ts';
 import { AccountPane, AccountsSidebar, AddAccount, addingAccount } from './Accounts.tsx';
 import { ConversationDetails, PersonDetails } from './Details.tsx';
 import { DirectoryPane } from './Directory.tsx';
@@ -23,7 +22,8 @@ import { MessageHistoryLayer } from './MessageHistory.tsx';
 import { Rail } from './Rail.tsx';
 import { TitleBar } from './TitleBar.tsx';
 import { FindShortcut, SearchPane } from './Search.tsx';
-import { SettingsPane } from './Settings.tsx';
+import { SECTIONS, SettingsPane } from './Settings.tsx';
+import { showSection } from './bits.tsx';
 import { FolderSidebar, homeRoute, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar } from './Sidebar.tsx';
 import { ConversationPane, PersonPane } from './Timeline.tsx';
 import { Switcher } from './Switcher.tsx';
@@ -122,22 +122,8 @@ function SettingsNav() {
         <span class="side-sub">Rules, triage and appearance</span>
       </header>
       <div class="side-scroll">
-        {[
-          ['Default notifications', 'bell', 'set-defaults'],
-          ['Smart triage', 'sparkles', 'set-triage'],
-          ['Push and quiet hours', 'bellOff', 'push'],
-          ['Each device', 'phone', 'set-devices'],
-          ['Keywords', 'at', 'set-keywords'],
-          ['Per-place overrides', 'layers', 'set-overrides'],
-          ['Privacy', 'lock', 'set-privacy'],
-          ['Message history', 'clock', 'set-history'],
-          ['Adversarial features', 'eyeOff', 'set-adversarial'],
-          ['Appearance', 'eye', 'set-appearance'],
-          ['Mail', 'mail', 'set-mail'],
-          // The phone app opens links and files in the phone's apps by itself.
-          ...(android ? [] : [['Desktop helper', 'monitor', 'set-desk']]),
-        ].map(([t, i, id]) => (
-          <button class="settings-nav-item" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+        {SECTIONS.map(([t, i, id]) => (
+          <button class="settings-nav-item" onClick={() => showSection(id)}>
             <Icon name={i} size={16} /> {t}
           </button>
         ))}

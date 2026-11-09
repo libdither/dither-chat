@@ -52,10 +52,22 @@ export function setSource(key: string, what: keyof P.KeepSettings, on: boolean |
   return saveRetention({ sources });
 }
 
-export async function eraseKept(what: 'deleted' | 'disappeared' | 'edits' | 'reactions' | 'receipts' | 'changes' | 'statuses' | 'presence' | 'members') {
+export async function eraseKept(what: P.KeptKind) {
   const r = await api<{ erased: number }>('/api/retention/erase', { body: { what } });
   toast({ kind: 'info', title: r.erased ? `Forgot ${r.erased}` : 'Nothing to forget', body: '' }, 2500);
+  void loadKept();
 }
+
+/** Which kinds have anything kept (GET /api/retention/kept); null until the hub has said. */
+export const kept = signal<Record<P.KeptKind, boolean> | null>(null);
+export function loadKept(): Promise<void> {
+  return api<Record<P.KeptKind, boolean>>('/api/retention/kept').then(
+    (k) => void (kept.value = k),
+    () => {},
+  );
+}
+
+export { ADVERSARIAL_KINDS, keeping } from './keeping.ts';
 
 const PRESENCE_LABEL: Record<P.PresenceView['state'], string> = { online: 'Online', idle: 'Idle', dnd: 'Do not disturb', offline: 'Offline' };
 

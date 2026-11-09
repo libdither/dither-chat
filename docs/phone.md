@@ -116,6 +116,8 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Quiet hours, daily digest | Settings | More tab | You tab; time fields at 16px |
 | Keywords that are always Important | Settings | More tab | You tab |
 | Theme, demo accounts, reset demo | Settings | More tab | You tab |
+| Any one Settings section (Message history, Adversarial features) without scrolling past the rest | Section list beside Settings | More tab, scrolled | Sections in Settings' header: a sheet of the sections, two taps |
+| Adversarial features' warning and its Yes | Dialog | Not there yet | Bottom sheet whose words scroll, Yes pinned at its bottom |
 | Toasts, open the conversation from one | Bottom right | Covered the composer | At the top; tap to open, flick to dismiss |
 | Unread and mention badges | Rail | None on the tabs | Rail, and the Home and Triage tabs; You has a dot when an account needs you |
 | Collapse sections and categories | Click | Tap, under 44px | Tap, 40-44px |

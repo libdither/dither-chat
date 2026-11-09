@@ -7,10 +7,11 @@
 import type * as P from '@dither-chat/protocol';
 import { ABOUT_RULES } from '@dither-chat/protocol';
 import { useEffect } from 'preact/hooks';
-import { eraseKept, keeps, loadRetention, retention, saveRetention, setSource } from '../history.ts';
+import { ADVERSARIAL_KINDS, eraseKept, keeping, kept, keeps, loadKept, loadRetention, retention, saveRetention, setSource } from '../history.ts';
 import { netName } from '../model.ts';
 import { db } from '../state.ts';
-import { NetGlyph } from './bits.tsx';
+import { NetGlyph, showSection } from './bits.tsx';
+import { Icon } from './icons.tsx';
 
 export type Kind = { key: keyof P.KeepSettings; label: string; short: string; help: string };
 
@@ -87,14 +88,52 @@ export function SourceTable({ kinds }: { kinds: Kind[] }) {
   );
 }
 
-export const forget = (what: Parameters<typeof eraseKept>[0], label: string) => () => confirm(`Forget all ${label}? This cannot be undone.`) && void eraseKept(what);
+export const forget = (what: P.KeptKind, label: string) => () => confirm(`Forget all ${label}? This cannot be undone.`) && void eraseKept(what);
+
+/** Each kind Forget erases: its button, and what the confirmation calls it. */
+const FORGET: [P.KeptKind, string, string][] = [
+  ['deleted', 'Deleted messages', 'kept deleted messages'],
+  ['disappeared', 'Disappeared messages', 'kept disappearing messages'],
+  ['edits', 'Edit history', 'earlier versions of edited messages'],
+  ['reactions', 'Reactions taken back', 'reactions taken back'],
+  ['receipts', 'Read receipts', 'read receipts'],
+  ['changes', 'Change log', 'logged changes'],
+  ['statuses', 'Status history', 'logged statuses'],
+  ['presence', 'Presence history', 'logged presence'],
+  ['members', 'Server members', 'recorded server members'],
+];
+
+const list = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
 
 export function HistorySettings() {
   useEffect(() => void loadRetention(), []);
   const r = retention.value;
+  // What is kept follows the settings, so ask again whenever they change.
+  useEffect(() => void loadKept(), [r]);
+  const had = kept.value;
+  // Nothing adversarial is being kept: hidden, or each of its switches off.
+  const notKept = !ADVERSARIAL_KINDS.some((w) => keeping(r, w));
+  const keptBefore = ADVERSARIAL_KINDS.some((w) => had?.[w]);
+  // Forget is for what is being kept or was kept; the rest have nothing to forget.
+  const forgettable = FORGET.filter(([w]) => keeping(r, w) || had?.[w] !== false);
+  const empty = FORGET.filter((f) => !forgettable.includes(f));
   return (
     <section class="set-block" id="set-history">
       <h3>Message history</h3>
+      {notKept && (
+        <div class="hist-off" role="note">
+          <Icon name="eyeOff" size={16} />
+          <div>
+            <p>
+              <b>Deleted and disappearing messages, statuses, presence and server members are not being kept.</b>
+              {keptBefore && ' Some were kept before; Forget, below, erases them.'}
+            </p>
+            <button class="btn ghost small" onClick={() => showSection('set-adversarial')}>
+              Turn them on in Adversarial features <Icon name="chevronRight" size={13} />
+            </button>
+          </div>
+        </div>
+      )}
       {KINDS.map((k) => (
         <label class="toggle-row">
           <input type="checkbox" checked={r[k.key]} onChange={(e) => void saveRetention({ [k.key]: (e.target as HTMLInputElement).checked })} />
@@ -117,35 +156,16 @@ export function HistorySettings() {
       <SourceTable kinds={KINDS} />
 
       <h4 class="hist-sub">Forget what was kept</h4>
-      <div class="btn-row">
-        <button class="btn ghost small danger" onClick={forget('deleted', 'kept deleted messages')}>
-          Deleted messages
-        </button>
-        <button class="btn ghost small danger" onClick={forget('disappeared', 'kept disappearing messages')}>
-          Disappeared messages
-        </button>
-        <button class="btn ghost small danger" onClick={forget('edits', 'earlier versions of edited messages')}>
-          Edit history
-        </button>
-        <button class="btn ghost small danger" onClick={forget('reactions', 'reactions taken back')}>
-          Reactions taken back
-        </button>
-        <button class="btn ghost small danger" onClick={forget('receipts', 'read receipts')}>
-          Read receipts
-        </button>
-        <button class="btn ghost small danger" onClick={forget('changes', 'logged changes')}>
-          Change log
-        </button>
-        <button class="btn ghost small danger" onClick={forget('statuses', 'logged statuses')}>
-          Status history
-        </button>
-        <button class="btn ghost small danger" onClick={forget('presence', 'logged presence')}>
-          Presence history
-        </button>
-        <button class="btn ghost small danger" onClick={forget('members', 'recorded server members')}>
-          Server members
-        </button>
-      </div>
+      {forgettable.length > 0 && (
+        <div class="btn-row hist-forget">
+          {forgettable.map(([w, label, what]) => (
+            <button class="btn ghost small danger" data-kind={w} onClick={forget(w, what)}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {empty.length > 0 && <p class="set-help hist-empty">Nothing kept, so nothing to forget: {list(empty.map(([, label]) => label.toLowerCase()))}.</p>}
     </section>
   );
 }

@@ -3,7 +3,7 @@ import { createHmac } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, directTarget, discordEmojiUrl, IMPORT_CHUNK, MAX_UPLOAD, NETWORK_META, NETWORKS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { ACCOUNT_COLORS, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
@@ -606,11 +606,11 @@ export class HubServer {
       }
       return ok(s.retention());
     }
+    if (path === '/api/retention/kept') return ok(s.keptKinds());
     if (path === '/api/retention/erase' && method === 'POST') {
       const b = await body<{ what?: string }>();
-      const kinds = ['deleted', 'disappeared', 'edits', 'reactions', 'receipts', 'changes', 'statuses', 'presence', 'members'] as const;
-      if (!kinds.includes(b.what as (typeof kinds)[number])) return bad(`what: ${kinds.join(', ')}`);
-      const n = s.eraseKept(b.what as (typeof kinds)[number]);
+      if (!(KEPT_KINDS as readonly string[]).includes(b.what as string)) return bad(`what: ${KEPT_KINDS.join(', ')}`);
+      const n = s.eraseKept(b.what as P.KeptKind);
       this.flush();
       return ok({ erased: n });
     }

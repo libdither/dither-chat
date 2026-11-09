@@ -140,11 +140,18 @@ describe('deleted and disappeared messages', () => {
     store.setRetention(ADV);
   });
 
-  test('forgetting what was kept', () => {
+  test('forgetting what was kept, and what is left to forget', () => {
+    expect(store.keptKinds()).toMatchObject({ deleted: true, disappeared: true, edits: true, presence: false, members: false });
+    // Hidden, what was kept from before is still there to forget.
+    store.setRetention({ ...ADV, adversarial: false });
+    expect(store.keptKinds()).toMatchObject({ deleted: true, disappeared: true });
+    store.setRetention(ADV);
     expect(store.eraseKept('deleted')).toBeGreaterThan(0);
     expect(store.one<{ n: number }>(`SELECT COUNT(*) AS n FROM message WHERE gone_how = 'deleted' AND body != ''`)!.n).toBe(0);
     expect(store.one<{ n: number }>(`SELECT COUNT(*) AS n FROM message WHERE gone_how = 'disappeared' AND body != ''`)!.n).toBe(1);
+    expect(store.keptKinds()).toMatchObject({ deleted: false, disappeared: true });
     expect(store.eraseKept('edits')).toBe(2);
+    expect(store.keptKinds().edits).toBe(false);
     expect(store.messageHistory(hubId('msg', 'signal', 'e1'))!.versions.length).toBe(1);
   });
 });
@@ -335,8 +342,10 @@ describe('adversarial features', () => {
     store.setRetention({ ...ADV, presence: true, adversarial: false });
     expect(presence()).toEqual([]);
     store.setRetention({ ...ADV, presence: true });
+    expect(store.keptKinds().presence).toBe(true);
     expect(store.eraseKept('presence')).toBe(3);
     expect(presence()).toEqual([]);
+    expect(store.keptKinds().presence).toBe(false);
     store.setRetention(ADV);
   });
 });

@@ -1067,6 +1067,10 @@ export interface PresenceView {
 /** The kinds kept only with adversarial features shown. */
 export const ADVERSARIAL_KEEPS = ['deleted', 'disappearing'] as const satisfies readonly (keyof KeepSettings)[];
 
+/** What Forget erases, one kind at a time (POST /api/retention/erase); GET /api/retention/kept says which have anything kept. */
+export const KEPT_KINDS = ['deleted', 'disappeared', 'edits', 'reactions', 'receipts', 'changes', 'statuses', 'presence', 'members'] as const;
+export type KeptKind = (typeof KEPT_KINDS)[number];
+
 /**
  * One thing that changed about a place or a person. `old` and `new` are the values themselves: text for names and
  * descriptions, a media path for pictures, a setting's own type (seconds, true or false, "admins"), `{ text, emoji }`
