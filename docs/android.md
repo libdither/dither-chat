@@ -24,6 +24,7 @@ Around the WebView:
 | Bridge | `WebViewCompat.addWebMessageListener` named `DitherAndroid`, with an allowed-origin rule of the hub's origin only, so no other page, frame or redirect target can post to it. Page side: `packages/web/src/android.ts` |
 | Calls | `CallService`: a `microphone` foreground service while the page says a call is live, with an ongoing notification (Hang up, Mute, Audio route) |
 | Audio route | `AudioManager.setCommunicationDevice` (Android 12+: speaker, earpiece, Bluetooth, wired, USB); speaker or earpiece before that. The notification's Audio button cycles; `android.setAudioRoute()` is there for the call UI. On the earpiece a proximity wake lock turns the screen off at the ear |
+| History uploads | The History section's upload buttons open the system picker from the app, which then uploads in a `dataSync` foreground service, so it goes on with the app closed. Files, or a whole folder, which a WebView's picker can't do. See [History uploads](#history-uploads) |
 | Push | UnifiedPush (below), registered from Settings → *Push on this device*. Tapping a notification opens its conversation; opening a conversation clears its notification; Reply in the notification goes through the hub's ordinary send, as `sw.js` does in a browser |
 
 Why not something else:
@@ -298,6 +299,36 @@ emulator image has no browser):
 | Through the shaper (80 ms, 20 Mbit/s): uncompressed / zstd | 2.3 s / 0.83 s |
 | Parse in the emulator's WebView | 32-36 ms |
 | The app on the deployed build over real HTTPS, no shaping (same machine) | 2,541 ms to content, in the page |
+
+## History uploads
+
+A backup or export is often gigabytes, and a WebView stops uploading soon after the app leaves the screen. So in the
+app the History section's buttons (account pane) don't use the page's file input. They ask the app over the bridge
+(`upload.pick`), and the app does the upload itself (`Uploads.kt`):
+
+1. The system picker: `ACTION_OPEN_DOCUMENT` for files, `ACTION_OPEN_DOCUMENT_TREE` for a whole folder, such as the
+   one Molly backs up to. The app keeps read access to what was picked (`takePersistableUriPermission`), so it can
+   read it again after a restart. It gives the access back when the job ends.
+2. `UploadService` starts at once, while the app is still in front, because Android 12+ refuses to start a foreground
+   service from the background. It lists the files (a folder recursively, with paths that start at the folder, as a
+   browser's folder pick gives them). Then it carries on the hub's unfinished upload of the same paths and sizes for
+   that account, or makes a new one (`POST /api/imports`).
+3. Three senders `PUT` 8 MB pieces at their offsets, each file from what the hub already has of it. A `409` with
+   `received` (a piece cut off midway) moves to the hub's count. A lost connection is tried again, with waits growing
+   to a minute, twelve times in a row before it pauses. A partial wake lock and a Wi-Fi lock are held while it runs.
+4. An ongoing notification shows the progress and has **Pause**. How it ended (uploaded, paused, stopped) is posted
+   under a separate id, because Android re-posts a foreground service's last notification after it leaves the
+   foreground, which would overwrite an outcome posted under the same id.
+
+The job is kept in `files/upload.json`. Pause, **Carry on** and **Stop** are on the page as well (Stop forgets the job
+on the phone; what reached the hub stays there). If Android stops the app, or Android 15's six-hour daily allowance for
+`dataSync` runs out (`onTimeout`), the next time the app is opened the upload goes on from the hub's count.
+
+Checked on the emulator (Android 15) against a demo hub, with the app on the home screen throughout: 400 MB at full
+speed. Through a 400 KB/s proxy: Pause from the notification and Carry on from the page, which resumed at the hub's
+16 MB. A force-stop partway through: the upload sat at 8 MB, then finished after the app was opened for 3 s. A folder
+of 8 files in nested folders, one of them empty. Every file arrived byte-identical. Older app builds don't announce
+`upload` in `opens`, so the page keeps its own upload for them.
 
 ## Building and installing
 

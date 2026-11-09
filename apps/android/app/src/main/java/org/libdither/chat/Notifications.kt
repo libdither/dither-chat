@@ -44,6 +44,7 @@ object Notifications {
     /** Active (docs/notifications.md): in the shade and on the lock screen, without sound or vibration. */
     const val QUIET = "messages-quiet"
     const val CALLS = "calls"
+    const val UPLOADS = "uploads"
     const val REPLY = "reply"
     private const val ID = 1
     /** Every conversation notification, under one summary. */
@@ -62,6 +63,7 @@ object Notifications {
             NotificationChannel(MESSAGES, "Important messages", NotificationManager.IMPORTANCE_HIGH),
             NotificationChannel(QUIET, "Active messages (silent)", NotificationManager.IMPORTANCE_LOW),
             NotificationChannel(CALLS, "Ongoing call", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) },
+            NotificationChannel(UPLOADS, "History uploads", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) },
         ))
     }
 

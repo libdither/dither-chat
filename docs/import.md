@@ -50,6 +50,8 @@ Ways in:
   backup by its plaintext header, and asks for the passphrase. With the passphrase, a worker reads the backup
   through, checking every frame's MAC, and reports counts only (messages, date range, attachments, rows hidden by
   keepmsg, deletes, edits). A wrong passphrase is detected on the first frame and forgotten.
+  In a browser the page has to stay open while it uploads. In the Android app (0.10 on) the app uploads by itself
+  instead, so it goes on with the app closed: see [android.md](android.md#history-uploads).
 - **Copy in** a folder: `raw/` plus a `source.json`. This is how the DiscordChatExporter exports arrived.
 
 API (tailnet-only, like the rest of `/api`): `GET /api/imports`, `POST /api/imports` `{accountId, name, size}`,
