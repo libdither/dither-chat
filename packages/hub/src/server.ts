@@ -1236,7 +1236,7 @@ export class HubServer {
     return bad('not found', 404);
   }
 
-  private async sendNow(conversationId: string, b: { body?: string; accountId?: string; replyTo?: string; attachments?: string[] }): Promise<Response> {
+  private async sendNow(conversationId: string, b: { body?: string; accountId?: string; replyTo?: string; attachments?: string[]; clientId?: string }): Promise<Response> {
     const s = this.store;
     const ok = (x: unknown) => Response.json(x);
     const bad = (msg: string, status = 400) => Response.json({ error: msg }, { status });
@@ -1264,6 +1264,11 @@ export class HubServer {
     // Message ids are derived from the network's, so this is the message's id whether or not it is stored yet.
     const native = (result as { nativeId?: unknown } | undefined)?.nativeId;
     const messageId = typeof native === 'string' && native ? hubId('msg', conv.network, native) : undefined;
+    // On the socket too, which on a slow link may beat this answer to the page that sent it (web outbox.ts).
+    if (messageId && typeof b.clientId === 'string' && b.clientId) {
+      s.dirty.extra.push({ t: 'sent', conversationId, clientId: b.clientId.slice(0, 64), messageId });
+      this.flush();
+    }
     return ok({ ok: true, accountId, result, ...(messageId ? { messageId } : {}) } satisfies P.SendResult);
   }
 

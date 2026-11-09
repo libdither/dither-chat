@@ -108,6 +108,14 @@ adapter announcing the same things again, and a send retried after a lost answer
   and the copy goes when that message arrives, live, in a sync or in a page, or at once if it is already here. Only an
   answer without an id (a network that did not say) falls back to the text, matched to the oldest message of ours
   there with the same text that no other copy took.
+- **Before the answer.** On a slow link the message comes back on the socket before the answer to the POST, and both
+  used to show until the answer came. Now the copy gives way as soon as its message is here: the hub says on the
+  socket which message a send became (`sent`, with the send's `clientId`, not journaled) as soon as the network names
+  it, and without that the page matches by itself, in send order, a copy that went to the hub to a message of ours
+  that came on the socket after it, from the same account, with exactly its text and number of files, no other copy
+  took. The copy is hidden, and its outbox entry kept, until the answer comes. If the answer is a failure but the
+  message came, it went out: no failed copy is shown, and nothing is kept to retry. Only a refusal (4xx: the hub
+  never handed it on) shows the copy again as failed. A copy whose message never comes keeps the 30 s rule.
 - `pwa.ts` used to fetch `sw.js` on every return. It now checks when the hub process changed (the sync says which
   process answered), at most every 10 minutes on a return, and hourly.
 
@@ -168,8 +176,9 @@ hub, a message sent while the browser was offline was on screen 100 ms after the
   send without the hub waits and goes out once; a cold start from the snapshot resumes with a delta; and a restarted
   hub is caught up from its journal.
 - `bun scripts/verify-sends.ts <demo hub> --stop "<cmd>" --start "<cmd>"`: one send is one message after its echo,
-  two identical sends stay two, and a send made with the hub stopped survives a reload and goes out once when it is
-  back. `bun test packages/web/test/outbox.test.ts` for the outbox and the matching.
+  two identical sends stay two; with the answer to a send held back 3 s (the socket not), never two on screen, by the
+  hub's `sent` event and by the page alone, for two identical quick sends too, and a 504 whose message came shows no
+  failed copy; and a send made with the hub stopped survives a reload and goes out once when it is back. `bun test packages/web/test/outbox.test.ts` for the outbox and the matching.
 - `bun scripts/measure-sync.ts <hub> [--open N]` for the table above.
 
 ## Limits

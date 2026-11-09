@@ -7,7 +7,9 @@
  *
  * The pending copy on screen goes once the real message is here. The hub's answer names it (`messageId`), so it is
  * matched by id; only an answer without one (a network that did not say) falls back to the text, and one message
- * never stands for two copies. Pure apart from the IndexedDB part, so it is tested without a browser.
+ * never stands for two copies. On a slow link the message can come back on the socket before the answer: a copy that
+ * went to the hub then takes a message of ours that came after it, with exactly its text and files, and is hidden
+ * until the answer is here. Pure apart from the IndexedDB part, so it is tested without a browser.
  */
 
 export interface OutboxFile {
@@ -105,10 +107,16 @@ export interface Sent {
   body: string;
   ts: number;
   files?: string[];
+  /** The account it goes out from, when you chose one. */
+  accountId?: string;
   /** The hub took it. */
   acked?: boolean;
-  /** The hub's id for the message it became, when its answer said. */
+  /** The hub's id for the message it became, when its answer (or its `sent` event) said. */
   messageId?: string;
+  /** When it last went to the hub, by this device's clock: from then on it may be out on the network. */
+  postedAt?: number;
+  /** Its message came before the hub's answer: hidden until the answer is here. */
+  echoed?: boolean;
 }
 
 /** A message of ours the client has. */
@@ -118,18 +126,40 @@ export interface Echo {
   body: string;
   ts: number;
   attachments: number;
+  /** The account of ours that wrote it, when it is one's own identity. */
+  accountId?: string;
+  /** When it came on the socket, by this device's clock; none for one read from a page. */
+  seen?: number;
+}
+
+/**
+ * Whether a send whose POST failed may be out on the network all the same: no answer, a 504 ("it may have been
+ * sent") or another error after the hub handed it on. Not when the hub refused it first (4xx): then a message that
+ * looks like it is another send's.
+ */
+export function mayBeOut(e: unknown): boolean {
+  const status = (e as { status?: unknown } | null)?.status;
+  return !(typeof status === 'number' && status >= 400 && status < 500);
 }
 
 /** How much earlier than the copy its message may be dated: the network's clock, not this device's. */
 export const ECHO_SKEW = 60_000;
 
 const sameContent = (s: Sent, m: Echo) => (s.files?.length ? m.attachments > 0 : s.body.trim() === m.body.trim());
+/** Before the answer, only what is plainly the same message: its text and as many files. */
+const sameExactly = (s: Sent, m: Echo) => s.body.trim() === m.body.trim() && (s.files?.length ?? 0) === m.attachments;
+const sameAccount = (s: Sent, m: Echo) => !s.accountId || !m.accountId || s.accountId === m.accountId;
+/** It came after the copy went to the hub: one that came before is another send (from another device, earlier). */
+const cameAfter = (s: Sent, m: Echo) => (m.seen === undefined ? !!s.acked : m.seen >= (s.postedAt ?? s.ts));
 
 /**
- * The copies the messages we have now stand for, by tempId. By id first; then, for copies the hub took without saying
- * which message they became, the oldest such message of ours in the same conversation with the same text (with files,
- * when it had files) dated no earlier than the copy. `claimed` holds the messages already matched, and grows: one
- * message never takes two copies, and a copy waiting for its id never takes another's message.
+ * The copies the messages we have now stand for, by tempId. By id first; then by text, in send order, each copy taking
+ * the oldest message of ours in the same conversation (from the same account) dated no earlier than the copy that no
+ * other copy took: for copies the hub took without saying which message they became, the same text (with files, when
+ * it had files); for copies that went to the hub and have no answer yet, exactly the same text and number of files,
+ * and only a message that came on the socket after the copy went. `claimed` holds the messages already matched, and
+ * grows: one message never takes two copies, and a copy waiting for its id never takes another's message. A copy
+ * already `echoed` is its own message's once the hub took it.
  */
 export function settled(sent: Sent[], echoes: Echo[], claimed: Set<string>): string[] {
   const out: string[] = [];
@@ -143,8 +173,22 @@ export function settled(sent: Sent[], echoes: Echo[], claimed: Set<string>): str
   const waitingIds = new Set(sent.filter((s) => s.messageId).map((s) => s.messageId!));
   const oldest = [...echoes].sort((a, b) => a.ts - b.ts);
   for (const s of [...sent].sort((a, b) => a.ts - b.ts)) {
-    if (!s.acked || s.messageId) continue;
-    const m = oldest.find((m) => !claimed.has(m.id) && !waitingIds.has(m.id) && m.conversationId === s.conversationId && m.ts >= s.ts - ECHO_SKEW && sameContent(s, m));
+    if (s.messageId) continue;
+    if (s.echoed) {
+      if (s.acked) out.push(s.tempId);
+      continue;
+    }
+    if (!s.acked && s.postedAt === undefined) continue;
+    const m = oldest.find(
+      (m) =>
+        !claimed.has(m.id) &&
+        !waitingIds.has(m.id) &&
+        m.conversationId === s.conversationId &&
+        m.ts >= s.ts - ECHO_SKEW &&
+        sameAccount(s, m) &&
+        cameAfter(s, m) &&
+        (s.acked ? sameContent(s, m) : sameExactly(s, m)),
+    );
     if (!m) continue;
     out.push(s.tempId);
     claimed.add(m.id);

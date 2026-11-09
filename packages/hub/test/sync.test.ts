@@ -548,4 +548,24 @@ describe('sends', () => {
     await call('POST', `/api/conversations/${conv}/send`, { body: 'hello', clientId: 'tmp-other' });
     expect(sent.filter((x) => x.t === 'send').length).toBe(before + 2);
   });
+
+  test('the socket says which message a send became, as soon as the network named it, and journals nothing for it', async () => {
+    const conv = cnv(d1, 'general');
+    const frames: P.ClientEvent[][] = [];
+    const sock = new WebSocket(`ws://127.0.0.1:${port}/api/live`);
+    await new Promise((r) => (sock.onopen = r));
+    sock.onmessage = (e) => frames.push(JSON.parse(String(e.data)));
+    await settle();
+    const seq = store.journal.position().seq;
+    const a = await call('POST', `/api/conversations/${conv}/send`, { body: 'quick', clientId: 'tmp-quick~1' });
+    // Without a clientId there is no page to tell.
+    await call('POST', `/api/conversations/${conv}/send`, { body: 'quick' });
+    // A retry gets the first answer, and no second event.
+    await call('POST', `/api/conversations/${conv}/send`, { body: 'quick', clientId: 'tmp-quick~1' });
+    await settle();
+    sock.close();
+    const told = frames.flat().filter((e) => e.t === 'sent');
+    expect(told).toEqual([{ t: 'sent', conversationId: conv, clientId: 'tmp-quick~1', messageId: a.messageId }]);
+    expect(store.journal.position().seq).toBe(seq);
+  });
 });

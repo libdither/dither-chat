@@ -6,7 +6,7 @@ import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snap
 import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, emptyDb, identityVersion, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
 import { changed, mailChanged, timelineChanged } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
-import { ECHO_SKEW, openOutbox, settled, type Echo, type OutboxEntry } from './outbox.ts';
+import { ECHO_SKEW, mayBeOut, openOutbox, settled, type Echo, type OutboxEntry } from './outbox.ts';
 import { hubTransport, UploadJob } from './upload.ts';
 import { href, parseHash, type Route } from './routes.ts';
 
@@ -81,8 +81,12 @@ export interface PendingSend {
   uploading?: boolean;
   /** The hub took it; the copy stays until its message is here (outbox.ts). */
   acked?: boolean;
-  /** The hub's id for the message it became, when its answer said. */
+  /** The hub's id for the message it became, when its answer (or its `sent` event) said. */
   messageId?: string;
+  /** When it last went to the hub: from then on it may be out on the network. */
+  postedAt?: number;
+  /** Its message is here before the hub's answer: not shown, and gone when the answer comes. */
+  echoed?: boolean;
 }
 export const pending = signal<PendingSend[]>([]);
 /** Who is typing where, live only (typing.ts). */
@@ -262,7 +266,7 @@ export function patchMessage(id: string, patch: (m: P.MessageView) => P.MessageV
 }
 
 /** Events that change nothing in `db`: typing, toasts and read progress have signals of their own. */
-const NOT_DB = new Set<P.ClientEvent['t']>(['typing', 'notify', 'sync', 'readProgress', 'resync']);
+const NOT_DB = new Set<P.ClientEvent['t']>(['typing', 'notify', 'sync', 'readProgress', 'resync', 'sent']);
 /** Events that change what lists show but no names or settings: `metaRev` stays. */
 const LIST_ONLY = new Set<P.ClientEvent['t']>(['message', 'message.deleted', 'identity', 'attention', 'usage', 'arrange', 'requests']);
 
@@ -339,6 +343,12 @@ export function applyEvents(events: P.ClientEvent[]) {
       case 'typing':
         typing.value = applyTyping(typing.value, ev, Date.now(), isSelfIdentity);
         break;
+      case 'sent': {
+        // Which message a send of this page's became, ahead of the answer to its POST: settled below by id.
+        const tempId = ev.clientId.replace(/~\d+$/, '');
+        if (pending.value.some((p) => p.tempId === tempId && !p.messageId)) setPending(tempId, { messageId: ev.messageId });
+        break;
+      }
       case 'resync':
         void bootstrap();
         break;
@@ -692,7 +702,11 @@ async function deliver(tempId: string) {
   };
   // clientId: a retry after a lost answer, or after a reload, goes out once (server.ts).
   const clientId = o.attempt ? `${tempId}~${o.attempt}` : tempId;
-  const post = () => api<P.SendResult>(`/api/conversations/${o.conversationId}/send`, { body: { body: o.body, accountId: o.accountId, replyTo: o.replyTo, attachments: o.attachments, clientId } });
+  const post = () => {
+    // A message of ours that comes after this may be this send's (settle).
+    setPending(tempId, { postedAt: Date.now() });
+    return api<P.SendResult>(`/api/conversations/${o.conversationId}/send`, { body: { body: o.body, accountId: o.accountId, replyTo: o.replyTo, attachments: o.attachments, clientId } });
+  };
   try {
     if (o.files?.length && !o.attachments) await uploadAll();
     let r: P.SendResult;
@@ -704,14 +718,20 @@ async function deliver(tempId: string) {
       await uploadAll(true);
       r = await post();
     }
-    outgoing.delete(tempId);
-    sendUploads.delete(tempId);
-    void outbox.remove(tempId);
-    setPending(tempId, { acked: true, messageId: r?.messageId });
+    forget(tempId);
+    setPending(tempId, { acked: true, ...(r?.messageId ? { messageId: r.messageId } : {}) });
     settle();
     // A message that never comes back (a network that does not echo it) leaves no copy behind for long.
     setTimeout(() => (pending.value = pending.value.filter((x) => x.tempId !== tempId)), 30_000);
   } catch (e: any) {
+    // The hub refused it before it reached the network: a message that looked like its own was another send.
+    if (!mayBeOut(e)) setPending(tempId, { postedAt: undefined, echoed: undefined });
+    // Its message is here, so it went out, whatever the answer says (504, or no answer at all): nothing to retry.
+    else if (pending.value.some((x) => x.tempId === tempId && x.echoed)) {
+      forget(tempId);
+      pending.value = pending.value.filter((x) => x.tempId !== tempId);
+      return;
+    }
     // No answer at all is the network, not a refusal: wait for the hub.
     if (e instanceof TypeError || !connected.value) {
       setPending(tempId, { queued: true });
@@ -726,6 +746,13 @@ async function deliver(tempId: string) {
   } finally {
     delivering.delete(tempId);
   }
+}
+
+/** A send that is through: nothing of it is kept any more but its copy, until its message is here. */
+function forget(tempId: string) {
+  outgoing.delete(tempId);
+  sendUploads.delete(tempId);
+  void outbox.remove(tempId);
 }
 
 function flushOutgoing() {
@@ -772,28 +799,46 @@ export async function restoreOutbox() {
 
 /** Messages already matched to a pending copy. */
 const claimed = new Set<string>();
-/** Our own messages that came lately, for a copy whose answer comes after its message. */
+/** Our own messages that came lately on the socket, and when, for a copy whose answer comes after its message. */
 let echoes: Echo[] = [];
-const echoOf = (m: P.MessageView): Echo => ({ id: m.id, conversationId: m.conversationId, body: m.body, ts: m.ts, attachments: m.attachments.length });
+const echoOf = (m: P.MessageView, seen?: number): Echo => ({ id: m.id, conversationId: m.conversationId, body: m.body, ts: m.ts, attachments: m.attachments.length, accountId: ownAccount(m)?.id, ...(seen ? { seen } : {}) });
 
 function noteEcho(m: P.MessageView) {
   const now = Date.now();
-  echoes = [...echoes.filter((e) => e.id !== m.id && now - e.ts < 5 * 60_000).slice(-99), echoOf(m)];
+  // An edit or a reaction brings it again: when it first came is what counts.
+  const seen = echoes.find((e) => e.id === m.id)?.seen ?? now;
+  echoes = [...echoes.filter((e) => e.id !== m.id && now - e.ts < 5 * 60_000).slice(-99), echoOf(m, seen)];
 }
 
-/** Drop the pending copies whose message is here now (outbox.ts says which). */
+/**
+ * The pending copies whose message is here now (outbox.ts says which). One the hub answered goes; one still waiting
+ * for its answer is hidden, and deliver lets it go when the answer comes; one that failed or waits for the hub went out
+ * after all, so it goes, and nothing of it is kept.
+ */
 function settle() {
-  const sent = pending.value.filter((p) => p.acked);
+  const sent = pending.value.filter((p) => p.acked || p.messageId || p.postedAt !== undefined);
   if (!sent.length) return;
   const ids = new Set(sent.map((p) => p.messageId).filter(Boolean));
   const convs = new Set(sent.map((p) => p.conversationId));
   const since = Math.min(...sent.map((p) => p.ts)) - ECHO_SKEW;
-  const known = new Map(echoes.map((e) => [e.id, e]));
+  const known = new Map<string, Echo>();
   for (const t of timelines.values())
     for (const m of t.messages) if (ids.has(m.id) || (m.ts >= since && convs.has(m.conversationId) && isSelfIdentity(m.authorId))) known.set(m.id, echoOf(m));
+  for (const e of echoes) known.set(e.id, e);
   const gone = new Set(settled(sent, [...known.values()], claimed));
   for (const id of claimed) if (claimed.size > 500) claimed.delete(id);
-  if (gone.size) pending.value = pending.value.filter((p) => !gone.has(p.tempId));
+  if (!gone.size) return;
+  const was = pending.value;
+  let next = was;
+  for (const p of was) {
+    if (!gone.has(p.tempId) || (p.echoed && !p.acked)) continue;
+    if (!p.acked && delivering.has(p.tempId)) next = next.map((x) => (x === p ? { ...p, echoed: true } : x));
+    else {
+      if (!p.acked) forget(p.tempId);
+      next = next.filter((x) => x !== p);
+    }
+  }
+  if (next !== was) pending.value = next;
 }
 
 /**

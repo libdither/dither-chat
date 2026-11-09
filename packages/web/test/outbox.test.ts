@@ -1,7 +1,7 @@
 /** src/outbox.ts: sends kept on the device across a reload, and which message replaces a pending copy. */
 import { expect, test } from 'bun:test';
 import { IDBFactory } from 'fake-indexeddb';
-import { ECHO_SKEW, openOutbox, settled, type Echo, type OutboxEntry, type Sent } from '../src/outbox.ts';
+import { ECHO_SKEW, mayBeOut, openOutbox, settled, type Echo, type OutboxEntry, type Sent } from '../src/outbox.ts';
 
 const entry = (tempId: string, x: Partial<OutboxEntry> = {}): OutboxEntry => ({ tempId, conversationId: 'cnv_a', body: 'hi', ts: 1000, ...x });
 
@@ -72,20 +72,88 @@ test('two identical sends are two copies: one message replaces one of them', () 
   expect(settled(ids, [echo('msg_4')], new Set())).toEqual(['t4']);
 });
 
-test('a copy the hub has not answered for yet is not matched by text', () => {
-  // Its answer may still name another message; an echo that came first is found when it does.
-  expect(settled([sent('t1', { acked: false })], [echo('msg_1')], new Set())).toEqual([]);
+test('a copy not yet sent to the hub is matched by nothing', () => {
+  // Waiting for the hub, or still uploading: no message can be its own yet.
+  expect(settled([sent('t1', { acked: false })], [echo('msg_1', { seen: 11_000 })], new Set())).toEqual([]);
   expect(settled([sent('t1', { messageId: 'msg_1' })], [echo('msg_1')], new Set())).toEqual(['t1']);
 });
 
-test('text matching: the same conversation, not older than the copy, files for files', () => {
-  expect(settled([sent('t1')], [echo('msg_1', { conversationId: 'cnv_b' })], new Set())).toEqual([]);
-  // "ok" sent yesterday is not today's "ok".
-  expect(settled([sent('t1')], [echo('msg_1', { ts: 10_000 - ECHO_SKEW - 1 })], new Set())).toEqual([]);
-  expect(settled([sent('t1')], [echo('msg_1', { ts: 10_000 - ECHO_SKEW + 1 })], new Set())).toEqual(['t1']);
-  expect(settled([sent('t1', { body: '', files: ['a.png'] })], [echo('msg_1', { body: '', attachments: 0 })], new Set())).toEqual([]);
-  expect(settled([sent('t1', { body: '', files: ['a.png'] })], [echo('msg_1', { body: '', attachments: 1 })], new Set())).toEqual(['t1']);
-  // A message another copy waits for by id is not taken by text.
-  expect(settled([sent('t1'), sent('t2', { messageId: 'msg_1', ts: 10_200 })], [echo('msg_1')], new Set())).toEqual(['t2']);
-  expect(settled([sent('t1'), sent('t2', { messageId: 'msg_2', ts: 10_200 })], [echo('msg_2')], new Set())).toEqual(['t2']);
+// ------------------------------------------------------------------ the message before the answer (a slow link)
+
+/** Sent to the hub at `postedAt`, no answer yet. */
+const posted = (tempId: string, x: Partial<Sent> = {}): Sent => sent(tempId, { acked: false, postedAt: 10_050, ...x });
+
+test('its message before the answer: the copy is matched at once, and is that message\'s when the answer comes', () => {
+  const claimed = new Set<string>();
+  const e = echo('msg_1', { seen: 10_400 });
+  expect(settled([posted('t1')], [e], claimed)).toEqual(['t1']);
+  expect([...claimed]).toEqual(['msg_1']);
+  // Hidden meanwhile (state.ts). The answer names it, or does not: either way it goes.
+  expect(settled([posted('t1', { echoed: true, acked: true, messageId: 'msg_1' })], [e], claimed)).toEqual(['t1']);
+  expect(settled([posted('t1', { echoed: true, acked: true })], [e], claimed)).toEqual(['t1']);
+  // Still waiting for its answer: nothing more to do.
+  expect(settled([posted('t1', { echoed: true })], [e], claimed)).toEqual([]);
+});
+
+test('the answer before its message: matched by id when the message comes, as before', () => {
+  const claimed = new Set<string>();
+  const s = posted('t1', { acked: true, messageId: 'msg_1' });
+  expect(settled([s], [], claimed)).toEqual([]);
+  // Another message of ours with the same text is not it.
+  expect(settled([s], [echo('msg_0', { seen: 10_300 })], claimed)).toEqual([]);
+  expect(settled([s], [echo('msg_0', { seen: 10_300 }), echo('msg_1', { seen: 10_600 })], claimed)).toEqual(['t1']);
+  // The hub's `sent` event names it before the answer: by id too.
+  expect(settled([posted('t2', { messageId: 'msg_2' })], [echo('msg_2', { seen: 10_600 })], new Set())).toEqual(['t2']);
+});
+
+test('two identical quick sends: each copy takes its own message, in send order', () => {
+  const claimed = new Set<string>();
+  const both = [posted('t1', { ts: 10_000, postedAt: 10_010 }), posted('t2', { ts: 10_100, postedAt: 10_110 })];
+  const first = echo('msg_1', { ts: 10_300, seen: 10_400 });
+  expect(settled(both, [first], claimed)).toEqual(['t1']);
+  // The first message again (an edit, a later frame) takes nothing more; the second takes the second copy.
+  expect(settled([both[1]], [first], claimed)).toEqual([]);
+  expect(settled([both[1]], [first, echo('msg_2', { ts: 10_350, seen: 10_450 })], claimed)).toEqual(['t2']);
+  // Both in one frame: one each.
+  expect(settled(both, [echo('msg_3', { ts: 10_300, seen: 10_400 }), echo('msg_4', { ts: 10_350, seen: 10_400 })], new Set())).toEqual(['t1', 't2']);
+});
+
+test('the same text sent earlier from another device does not take the copy', () => {
+  // "ok" from the laptop came on the socket before this "ok" went to the hub, dated within the skew.
+  const laptop = echo('msg_0', { body: 'ok', ts: 9_000, seen: 9_100 });
+  const s = posted('t1', { body: 'ok' });
+  expect(settled([s], [laptop], new Set())).toEqual([]);
+  // Nor once the hub took it without saying which message it became.
+  expect(settled([{ ...s, acked: true }], [laptop], new Set())).toEqual([]);
+  // Read from a page (when it came is not known): not before the answer.
+  expect(settled([s], [echo('msg_0', { body: 'ok', ts: 10_200 })], new Set())).toEqual([]);
+  // Dated well before the copy, even if it came after: not it either.
+  expect(settled([s], [echo('msg_0', { body: 'ok', ts: 10_000 - ECHO_SKEW - 1, seen: 10_400 })], new Set())).toEqual([]);
+  // Its own message after it: that one.
+  expect(settled([s], [laptop, echo('msg_1', { body: 'ok', seen: 10_400 })], new Set())).toEqual(['t1']);
+});
+
+test('before the answer, only plainly the same message: its text, its files, its account', () => {
+  const after = { seen: 10_400 };
+  expect(settled([posted('t1')], [echo('msg_1', { ...after, body: 'hi there' })], new Set())).toEqual([]);
+  // The network changed the text (an emoji, a mention): left to the answer's id.
+  expect(settled([posted('t1', { body: 'hi :)' })], [echo('msg_1', { ...after, body: 'hi 🙂' })], new Set())).toEqual([]);
+  expect(settled([posted('t1', { body: 'look', files: ['a.png', 'b.png'] })], [echo('msg_1', { ...after, body: 'look', attachments: 1 })], new Set())).toEqual([]);
+  expect(settled([posted('t1', { body: 'look', files: ['a.png', 'b.png'] })], [echo('msg_1', { ...after, body: 'look', attachments: 2 })], new Set())).toEqual(['t1']);
+  expect(settled([posted('t1')], [echo('msg_1', { ...after, attachments: 1 })], new Set())).toEqual([]);
+  expect(settled([posted('t1', { accountId: 'acc_a' })], [echo('msg_1', { ...after, accountId: 'acc_b' })], new Set())).toEqual([]);
+  expect(settled([posted('t1', { accountId: 'acc_a' })], [echo('msg_1', { ...after, accountId: 'acc_a' })], new Set())).toEqual(['t1']);
+  expect(settled([posted('t1')], [echo('msg_1', { ...after, conversationId: 'cnv_b' })], new Set())).toEqual([]);
+});
+
+test('a failed send whose message came anyway is matched; a refused one is not', () => {
+  // No answer, a 504 ("it may have been sent"), an error after the hub handed it on: it may be out, and keeps postedAt,
+  // so its message coming later means it went (state.ts then drops the copy and its outbox entry).
+  expect(mayBeOut(new TypeError('Failed to fetch'))).toBe(true);
+  expect(mayBeOut(Object.assign(new Error('The network did not answer in time'), { status: 504 }))).toBe(true);
+  expect(mayBeOut(Object.assign(new Error('adapter failed'), { status: 500 }))).toBe(true);
+  expect(settled([posted('t1')], [echo('msg_1', { seen: 20_000 })], new Set())).toEqual(['t1']);
+  // A refusal: the hub never sent it. postedAt is cleared, so a message like it is another send's.
+  for (const status of [400, 404, 409, 410, 413]) expect(mayBeOut(Object.assign(new Error('no'), { status }))).toBe(false);
+  expect(settled([sent('t1', { acked: false, postedAt: undefined })], [echo('msg_1', { seen: 20_000 })], new Set())).toEqual([]);
 });
