@@ -11,8 +11,8 @@ it yet**: the adapters live in dither-accounts and are built from this contract 
 (the capabilities below), the box says so in a plain line ("Joining from Discord invites isn't built for this account
 yet") and offers no button. Messaging someone by Matrix ID, phone or Telegram @name works as it always did.
 
-Slice B (next) shows requests in the inbox with Accept, Decline and Block, notifies them, and puts buttons on
-profiles. Slice C turns invite links in messages into cards with Join.
+Slice B shows requests in the inbox with Accept, Decline and Block, notifies them, and puts buttons on profiles
+("Requests on the page", below). Slice C turns invite links in messages into cards with Join.
 
 ## What the box reads
 
@@ -257,3 +257,52 @@ person get no card, and one message gets at most three. Mail is not covered.
 Code: packages/web/src/invites.ts (which links get a card and what kind they are, tested alone),
 packages/web/src/ui/InviteCard.tsx (the card) and the cache in packages/hub/src/add.ts. scripts/verify-invites.ts tries
 it end to end on a demo hub, where the `addLog` account action says how many lookups each demo account was asked for.
+
+## Requests on the page (slice B)
+
+What waits on you has one row in the inbox and a view of its own; a message request opens read-only; a request from
+someone you know notifies once; and a profile has the buttons for how you stand with them.
+
+- **The Requests row.** While anything waits, the one-list inbox has a **Requests** row at its top, under "Needs you",
+  whatever the filter: how many, who asked, and when the newest came. It counts on no badge: a request is not unread.
+  Opening it is the Requests view (`#/requests`; `#/requests/<id>` shows one card, outlined). On a desktop it is the
+  main pane, beside the inbox; on a phone a full-screen list over it, with Back.
+- **A card per request**, grouped in this order: friend requests, invites (to groups, servers and rooms), message
+  requests, follow requests, and people asking to join a group you run. A card says who (their picture with the
+  network's badge; the name opens their profile), what ("invited you to Nix Hackathon 2026", the place's member count
+  when the network says), the network and the account it came to, and when; then the buttons the request offers
+  (Accept, Decline, Block, from its `answers`). Block asks once more. An error from the network shows on the card. An
+  accepted invite or message request lands where it leads (the room, the server, the conversation), with the
+  network's notes as a note; an accepted friend request says so. A `check` result shows the same "Discord wants a
+  check first … Nothing was done" as the New box, with the live-view button (`CheckFirst` in NewMessage.tsx), and the
+  request stays.
+- **A message request opens read-only.** Its card shows the last thing they wrote and says plainly: accepting tells
+  them you saw it, and on Signal, Instagram, Messenger and X even opening it on another device does; here it does not,
+  since the hub sends that network no read receipts and no typing for it until Accept. "Read what they wrote" opens
+  the conversation with a bar in place of the composer: the same line and Accept, Decline, Block. Accepted, the
+  composer comes back; declined or blocked, the page goes back to Requests. The page marks it read on the hub as it
+  does any conversation, and the hub keeps that from the network (`requestHeld`). The hub also refuses to send there
+  ("Accept the message request first"), and the conversation stays out of People and of every unread total.
+- **Notifications.** A new request from someone you know notifies once, at the **Active** level: a silent
+  notification on phones, nothing on a computer (docs/notifications.md). Someone you know: they have a person here
+  (for a message request, one you named, starred or merged: its own conversation made one), or they share a
+  conversation or group with the account it came to, are a member of a server it sees, or wrote in a channel it sees.
+  Requests from strangers, message requests among them, only count on the row. Each request is judged once
+  (`add_request_seen`), 20 seconds after it arrives so the account's first sync has said who people are, and only
+  when it is under two days old (`REQUEST_NOTICE`, packages/hub/src/requestnotify.ts). Quiet hours hold it (starred
+  people through where you let them), a person, account, network or everything set to Nothing or Digest only keeps it
+  silent, and device rules for its account or network keep it off that device. The notification opens the Requests
+  view at its card (sw.js, the Android app, an ntfy topic's click). Requests the hub held before this was built are
+  not news.
+- **Profile buttons.** From what each network says about how you stand with them (`relationship`): a stranger gets
+  **Add friend** (Discord), **Follow** (X, Instagram) or **Add contact** (Telegram), through `POST /api/add` with a
+  reading made from their identity, as the account that asked about them where it can; someone who asked you gets
+  **Accept** and **Decline** for that open request; a request you sent says **Request sent**, someone you follow
+  **Following**. Nothing shows where no connected account has the capability (`connect`, `requests`) or the network
+  has no such way. The hub writes the new relationship into the profile it keeps, so a reload says the same until
+  the network is asked again. Code: packages/web/src/requests.ts (pure), ui/Requests.tsx.
+
+Checked by scripts/verify-requests.ts against a demo hub: the row with 3, the buttons on the requester and on a
+stranger (and none without `connect`), the view on a phone, grouped cards, the Matrix invite accepted into its room,
+the Signal message request opened with no read receipt to Signal (the demo account's `readLog` action) and accepted
+into a composer, and the Discord friend request declined, taking the row with it.

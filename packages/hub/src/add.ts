@@ -64,7 +64,24 @@ export function addTables(db: Database) {
     at         INTEGER NOT NULL
   )`);
   db.exec('CREATE INDEX IF NOT EXISTS add_pace_at ON add_pace(account_id, kind, at)');
+  // Requests the hub has judged for a notification, once each (requestnotify.ts). Kept a while after they go, so one
+  // that comes back is not news again.
+  const had = !!db.query(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'add_request_seen'`).get();
+  db.exec(`CREATE TABLE IF NOT EXISTS add_request_seen (
+    account_id TEXT NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    native_id  TEXT NOT NULL,
+    at         INTEGER NOT NULL,
+    PRIMARY KEY (account_id, native_id)
+  ) WITHOUT ROWID`);
+  // What the hub held before it notified any is not news.
+  if (!had) db.exec('INSERT OR IGNORE INTO add_request_seen (account_id, native_id, at) SELECT account_id, native_id, ts FROM add_request');
   made.add(db);
+}
+
+const heardBy = new WeakMap<Store, (accountId: string, nativeIds: string[]) => void>();
+/** Told of every request an adapter sends, new or not: requestnotify.ts decides which are news. */
+export function onRequestsHeard(store: Store, fn: (accountId: string, nativeIds: string[]) => void) {
+  heardBy.set(store, fn);
 }
 
 const requestId = (accountId: string, nativeId: string) =>
@@ -147,21 +164,28 @@ export function ingestRequests(store: Store, acc: AccountRow, ev: Extract<P.Adap
   const db = store.db;
   addTables(db);
   const held = new Set<string>();
+  const heard: string[] = [];
   if (ev.t === 'requests') {
     if (!Array.isArray(ev.requests)) return;
     for (const id of heldBy(db, acc.id)) held.add(id);
     db.query('DELETE FROM add_request WHERE account_id = ?').run(acc.id);
-    for (const f of ev.requests) if (validRequest(f)) held.add(putRequest(store, acc, f) ?? '');
+    for (const f of ev.requests) {
+      if (!validRequest(f)) continue;
+      held.add(putRequest(store, acc, f) ?? '');
+      heard.push(f.nativeId);
+    }
   } else if (ev.t === 'request') {
     if (!validRequest(ev.request)) return;
     for (const id of heldBy(db, acc.id, ev.request.nativeId)) held.add(id);
     held.add(putRequest(store, acc, ev.request) ?? '');
+    heard.push(ev.request.nativeId);
   } else {
     for (const id of heldBy(db, acc.id, ev.nativeId)) held.add(id);
     if (!db.query('DELETE FROM add_request WHERE account_id = ? AND native_id = ?').run(acc.id, ev.nativeId).changes) return;
   }
   held.delete('');
   requestsChanged(store, held);
+  if (heard.length) heardBy.get(store)?.(acc.id, heard);
 }
 
 // ------------------------------------------------------------------ pacing
@@ -428,14 +452,18 @@ export class Adding {
     const net = acc.network;
     const conversationId = str(r.conversation) ? hubId('cnv', net, r.conversation!) : null;
     if (conversationId && store.db.query('SELECT 1 FROM conversation WHERE id = ?').get(conversationId)) store.touchConversation(conversationId);
+    const identityId = str(r.identity) ? hubId('idn', net, r.identity!) : null;
+    const relationship = str(r.relationship) as P.PersonRelationship | null;
+    // Their profile, as last asked through this account, says how you stand now, until it is asked again (people.ts).
+    if (identityId && relationship) store.db.query(`UPDATE about SET data = json_set(data, '$.relationship', ?) WHERE target_id = ? AND account_id = ?`).run(relationship, identityId, acc.id);
     this.d.flush();
     const checks: P.AddCheck[] = ['captcha', 'verify', 'phone', 'rules'];
     return {
       accountId: acc.id,
       conversation: conversationId ? store.conversationView(conversationId) : null,
       spaceId: str(r.space) ? hubId('spc', net, r.space!) : null,
-      identityId: str(r.identity) ? hubId('idn', net, r.identity!) : null,
-      relationship: str(r.relationship) as P.PersonRelationship | null,
+      identityId,
+      relationship,
       pending: r.pending === true,
       check: checks.includes(r.check as P.AddCheck) ? r.check! : null,
       notes: Array.isArray(r.notes) ? r.notes.filter((n) => typeof n === 'string').slice(0, 8) : [],

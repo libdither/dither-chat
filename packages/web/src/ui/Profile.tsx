@@ -21,6 +21,7 @@ import { HistoryCard } from './HistoryCard.tsx';
 import { StatusCard } from './StatusCard.tsx';
 import { identityMenu, personMenu } from './menus.tsx';
 import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, Tag } from './ProfileShell.tsx';
+import { ConnectActions } from './Requests.tsx';
 import { openConv } from './Sidebar.tsx';
 
 /** What a network's profile holds at most, for when it says little. */
@@ -347,7 +348,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       return !seen.has(k) && seen.add(k);
     });
   const facts = said.flatMap((a) => (a.facts ?? []).map((f) => ({ ...f, network: a.network })));
-  const relations = said.filter((a) => a.relationship && a.relationship !== 'stranger');
+  // A sent request and following show as the buttons that say so (Requests.tsx ConnectActions).
+  const relations = said.filter((a) => a.relationship && a.relationship !== 'stranger' && (isSelf || (a.relationship !== 'requested' && a.relationship !== 'following')));
 
   // ---- merging
   const candidates = [...db.persons.values()].filter((x) => x.id !== person?.id && !x.isSelf);
@@ -468,6 +470,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       actions={
         <>
           {!isSelf && messageOptions > 0 && (messageOptions === 1 ? <Action primary icon="send" label="Message" onClick={message} /> : <Action primary icon="send" label="Message" menu={messageMenu} />)}
+          {!isSelf && <ConnectActions identities={ids} abouts={abouts} onChanged={learn} />}
           {!isSelf && <Action icon="star" label={person?.starred ? 'Starred' : 'Star'} on={person?.starred} title={person?.starred ? 'Starred: their messages always notify. Click to unstar' : 'Star: always notify for them, everywhere'} onClick={() => patch({ starred: !person?.starred })} />}
           {directs.length > 1 && person && <Action icon="merge" label="All chats" onClick={() => go({ view: 'people', person: person.id })} />}
           <Action icon="more" label="More" menu={moreMenu} />

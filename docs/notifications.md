@@ -234,6 +234,18 @@ write to who wrote to you, and a vote on someone's mail moves their chats once t
 never triaged. Mail is on the Triage board with an envelope, notifies one notification per thread, and quiet hours
 and device rules hold it as they hold chat.
 
+## Requests
+
+A new friend, follow or join request, an invite, or a message request, from someone you know (they have a person here,
+or share a conversation, group or server with the account it came to) notifies once, at **Active**: a silent
+notification on phones, none on a computer, and nothing in an open page (docs/add.md "Requests on the page"). It is
+not a message, so it has no level of its own to vote on and no votes on the notification. Strangers' requests only
+count on the inbox's Requests row. It goes through `deliverRequest` in main.ts, judged by
+`packages/hub/src/requestnotify.ts` 20 seconds after it arrives and only when under two days old; quiet hours, a
+person, account, network or everything set to Nothing or Digest only, and device rules for its account or network
+keep it quiet. The push carries `requestId` and no `conversationId`: its own notification (tag `request:<id>`) that
+opens `#/requests/<id>`. Its activity log kind is `request`.
+
 ## Elsewhere
 
 - The inbox ranking (docs/inbox.md) counts Active like Important: "pinged you" while unread.

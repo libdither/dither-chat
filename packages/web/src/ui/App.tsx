@@ -34,6 +34,7 @@ import { Boot } from './Loader.tsx';
 import { applyUpdate, updateReady } from '../pwa.ts';
 import { counting, rendered } from '../perf.ts';
 import { MailCenterLazy, MailComposerLazy, MailSidebarLazy } from './mail/lazy.tsx';
+import { RequestsPane } from './Requests.tsx';
 
 /** What the center pane shows, and whether a details pane is available. */
 function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'conv' | 'person'; id: string } } {
@@ -70,6 +71,8 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <SearchPane q={r.q} /> };
     case 'mail':
       return { pane: <MailCenterLazy thread={r.thread} onBack={back} /> };
+    case 'requests':
+      return { pane: <RequestsPane focus={r.request} onBack={back} /> };
   }
 }
 
@@ -104,6 +107,8 @@ function sidebarFor(r: Route, onAdd: () => void) {
       return <InboxSidebar activeConv={r.conv} />;
     case 'mail':
       return <MailSidebarLazy list={r.list} active={r.thread} />;
+    case 'requests':
+      return <InboxSidebar />;
   }
 }
 
@@ -187,6 +192,7 @@ function isDetail(r: Route): boolean {
       return !!r.thread;
     case 'profile':
     case 'directory':
+    case 'requests':
       return true;
     default:
       return false;
@@ -212,6 +218,7 @@ function listOf(r: Route): string {
     return home?.view === 'space' ? `space:${home.space}` : home ? 'inbox' : 'people';
   }
   if (r.view === 'directory') return 'spaces';
+  if (r.view === 'requests') return 'inbox';
   return r.view;
 }
 /** Where the back button goes from a page when there is no history to go back through. */
@@ -229,6 +236,8 @@ function listRoute(r: Route): Route {
       return { view: 'spaces' };
     case 'mail':
       return { view: 'mail', list: r.list };
+    case 'requests':
+      return { view: 'inbox' };
     default:
       return { view: r.view } as Route;
   }

@@ -245,6 +245,14 @@ test('a conversation shows its unread lines, and sounds only when the hub says s
   expect(w.shown.at(-1)!.o).toMatchObject({ body: 'hi', renotify: true, silent: false });
 });
 
+test('a request (docs/add.md): silent, a notification of its own, and a tap opens it under Requests', async () => {
+  const w = worker();
+  await w.push({ title: 'Jules invited you to Nix Hackathon 2026', body: 'On Matrix matrix.org. It waits under Requests.', requestId: 'req_abc', level: 'quiet', nid: 'n7', device: 'd' });
+  expect(w.shown.at(-1)!.o).toMatchObject({ tag: 'request:req_abc', silent: true, renotify: false, actions: [] });
+  await w.click(w.shown.at(-1)!.o.data);
+  expect(w.opened).toEqual(['/#/requests/req_abc?n=n7']);
+});
+
 test('a clear push closes the conversation and shows nothing', async () => {
   const w = worker();
   await w.push({ clear: 'cnv_9', device: 'd' });

@@ -51,7 +51,8 @@ as `nid`, with `device`, the push registration it was sent to, and in the in-app
 app at a hash carrying it (`#/inbox/c/<conv>?n=<nid>`), so the page knows which visit it led to and the address
 bar drops it.
 
-`notification` keeps the kind (`message`, `held` for the quiet-hours summary, `digest`), the message and
+`notification` keeps the kind (`message`, `held` for the quiet-hours summary, `digest`, `request` for a request
+waiting on you, docs/add.md), the message and
 conversation, when it was sent, how many registrations it went to and how many push servers took it, the first
 time any device said each outcome, and the visit the tap led to. `notification_event` keeps each device's word,
 once per device and outcome.

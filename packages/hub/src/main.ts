@@ -11,6 +11,7 @@ import { mailPeople } from './mail/people.ts';
 import { mailAttention } from './mail/attention.ts';
 import { mailTriage, type MailNotice } from './mail/triage.ts';
 import { Delivery } from './delivery.ts';
+import { RequestNotifier, requestChain, type RequestNotice } from './requestnotify.ts';
 import { Devices } from './devices.ts';
 import { Embeddings, Jev } from './embeddings.ts';
 import { PushService } from './push.ts';
@@ -76,6 +77,9 @@ attention.judge = ranker;
 const devices = new Devices(store, triage);
 // One notification per conversation, buzzing once a burst (docs/notifications.md).
 const delivery = new Delivery(store, triage);
+// New requests from someone you know notify once (docs/add.md "Requests").
+const requestNotices = new RequestNotifier(store);
+devices.otherChain = (id) => (id.startsWith('req_') ? requestChain(store.db, id) : null);
 attention.activity = activity;
 // Message embeddings and jev's answers as content features (docs/embeddings.md): made in the background, never blocking.
 const embeddings = flag('embeddings') ? new Embeddings(store.db, join(dataDir, 'embeddings.sqlite'), { jev: new Jev(process.env.DITHER_JEV_URL ?? 'http://127.0.0.1:7862') }) : null;
@@ -154,6 +158,21 @@ function deliverMail(n: MailNotice) {
     .catch((e) => console.error('push failed', e));
 }
 
+/**
+ * A new request from someone you know (requestnotify.ts, docs/add.md): Active, so a silent notification on phones and
+ * nothing on a computer, opening the request under Requests. Device rules for its account or network keep it off.
+ */
+function deliverRequest(n: RequestNotice) {
+  const nid = activity.notification({ kind: 'request' });
+  const quiet = devices.quietOn(n.requestId, false);
+  const look = { network: n.network, ...(n.icon ? { icon: n.icon } : {}) };
+  server.notify({ t: 'notify', requestId: n.requestId, title: n.title, body: n.body, reasons: [n.reason], level: 'quiet', ...look, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}) });
+  push
+    .notify(n.title, n.body, undefined, { ...look, requestId: n.requestId, level: 'quiet', ...(nid ? { nid } : {}) }, [...quiet, ...push.desktops()], 'quiet')
+    .then((r) => nid && activity.sent(nid, r))
+    .catch((e) => console.error('push failed', e));
+}
+
 /** About the inbox, not a conversation: a click opens the inbox. */
 function deliverDigest(title: string, body: string) {
   const nid = activity.notification({ kind: 'digest' });
@@ -164,9 +183,10 @@ function deliverDigest(title: string, body: string) {
     .catch((e) => console.error('push failed', e));
 }
 
-// Read anywhere since its notification went out: off the phones.
+// Read anywhere since its notification went out: off the phones. New requests that settled: judged, once each.
 setInterval(() => {
   for (const cid of delivery.read()) push.clear(cid).catch((e) => console.error('push clear failed', e));
+  for (const n of requestNotices.due()) deliverRequest(n);
 }, 5_000);
 
 // Upkeep (housekeeping.ts): a nightly copy of the database, the media cache under its size, logs rotated, and triage
@@ -252,7 +272,7 @@ mailAttention(mail)?.connect(store, attention);
 const mailTriaged = mailTriage(mail);
 if (mailTriaged) {
   mailTriaged.connect({ store, triage, votes, deliver: (n) => deliverMail(n) });
-  devices.otherChain = (id) => mailTriaged.chain(id);
+  devices.otherChain = (id) => (id.startsWith('req_') ? requestChain(store.db, id) : mailTriaged.chain(id));
   delivery.other = mailTriaged;
 }
 
