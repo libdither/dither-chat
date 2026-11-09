@@ -73,11 +73,11 @@ export function homeRoute(c: P.ConversationView): Route {
   return { view: 'inbox', conv: c.id };
 }
 
-/** Only there if some connected account can actually start a conversation. */
+/** Only there if some connected account can actually start a conversation, or join or add (docs/add.md). */
 function NewMessageButton() {
-  if (![...db.accounts.values()].some((a) => a.status === 'online' && a.capabilities.includes('openDirect'))) return null;
+  if (![...db.accounts.values()].some((a) => a.status === 'online' && (a.capabilities.includes('openDirect') || a.capabilities.includes('resolve')))) return null;
   return (
-    <button class="icon-btn small side-new" title="New message" aria-label="New message" onClick={() => (newMessage.value = {})}>
+    <button class="icon-btn small side-new" title="New message, join or add" aria-label="New message" onClick={() => (newMessage.value = {})}>
       <Icon name="plus" size={16} />
     </button>
   );

@@ -8,6 +8,7 @@
 
 import type * as P from '@dither-chat/protocol';
 import type { Store } from './store.ts';
+import { requestHeld } from './add.ts';
 
 /** Time between reads on one account, in ms. */
 export const READ_PACE: Record<P.Network, number> = { discord: 1500, matrix: 300, signal: 300, whatsapp: 1000, telegram: 500, gmessages: 500, messenger: 1000, instagram: 1000, x: 1000, email: 1000 };
@@ -84,7 +85,8 @@ export class ReadQueue {
     const conv = s.nativeOf('conversation', row.conversation_id);
     const acc = s.account(row.account_id);
     const del = () => s.db.query('DELETE FROM read_queue WHERE account_id = ? AND conversation_id = ?').run(row.account_id, row.conversation_id);
-    if (!conv || !acc) {
+    // An open message request tells the sender nothing until it is accepted (add.ts).
+    if (!conv || !acc || requestHeld(s.db, row.conversation_id)) {
       del();
       return this.report();
     }

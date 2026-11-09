@@ -1,5 +1,5 @@
 /**
- * Demo world: five in-process adapters (two Discord accounts, Signal, Matrix, WhatsApp)
+ * Demo world: six in-process adapters (two Discord accounts, Signal, Matrix, WhatsApp, Telegram)
  * that emit the same facts real adapters do, so the whole pipeline (dedupe,
  * person merging, triage, folders) runs on realistic data.
  *
@@ -18,7 +18,7 @@ import type { InprocAdapter } from './supervisor.ts';
 import { fillMailbox, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
 
-type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa';
+type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa' | 'tg';
 
 export const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label: string; color: string }[] = [
   { key: 'dmain', id: 'acc_demo-discord-main', network: 'discord', label: 'main', color: '#F2A541' },
@@ -26,6 +26,7 @@ export const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label
   { key: 'sig', id: 'acc_demo-signal', network: 'signal', label: 'personal', color: '#B794F6' },
   { key: 'mx', id: 'acc_demo-matrix', network: 'matrix', label: 'matrix.org', color: '#FF8C61' },
   { key: 'wa', id: 'acc_demo-whatsapp', network: 'whatsapp', label: 'personal', color: '#7FD1AE' },
+  { key: 'tg', id: 'acc_demo-telegram', network: 'telegram', label: 'personal', color: '#5CC8FF' },
 ];
 
 // ------------------------------------------------------------------ id shapes
@@ -62,6 +63,8 @@ const D = {
   gorb: did('gorb', 'gorb', 'Gorb'),
   pat: did('pat', 'pantheon_pat', 'Pat'),
   shade: did('shade', 'shade.skip', 'Shade'),
+  // Asks to be friends (docs/add.md).
+  nova: did('nova', 'nova.wav', 'Nova'),
 };
 const sid = (k: string, phone: string, displayName: string, contact = true): P.IdentityFact => ({ nativeId: uuid(k), handle: phone, displayName, contact });
 const S = {
@@ -75,6 +78,8 @@ const S = {
   theo: sid('theo', '+1 555 0122', 'Theo K'),
   quinn: sid('quinn', '+1 555 0190', 'Quinn'),
   lev: sid('lev', '+1 555 0118', 'Lev'),
+  // Not a contact: their first message waits as a message request (docs/add.md).
+  jamie: sid('jamie', '+1 555 0199', 'Jamie', false),
 };
 const wid = (phone: string, displayName: string, contact = true): P.IdentityFact => ({ nativeId: `${phone}@s.whatsapp.net`, handle: `+${phone}`, displayName, contact });
 const W = {
@@ -101,6 +106,15 @@ const M = {
   noor: mid('@noor:matrix.org', 'Noor'),
   ben: mid('@ben:matrix.org', 'Ben'),
 };
+/** Telegram: numeric user ids, @usernames as handles. */
+const tid = (k: string, username: string, displayName: string, contact = true): P.IdentityFact => ({ nativeId: String(100_000_000 + (h('t' + k).readUInt32BE(0) % 6_000_000_000)), handle: `@${username}`, displayName, contact });
+const TG = {
+  self: tid('self', 'zyansheep', 'zyan', false),
+  alice: tid('alice', 'alicechen', 'Alice Chen'),
+  noor: tid('noor', 'noor_h', 'Noor'),
+  lena: tid('lena', 'lena_k', 'Lena K', false),
+};
+const POOLS: Partial<Record<P.Network, Record<string, P.IdentityFact>>> = { discord: D, signal: S, whatsapp: W, matrix: M, telegram: TG };
 const at = (i: P.IdentityFact) => `<@${i.nativeId}>`;
 
 // ------------------------------------------------------------------ files
@@ -935,6 +949,31 @@ const CONVS: DemoConv[] = [
       [2 * DAY - 40, M.mira, 'not really, but task scopes are getting close'],
     ],
   },
+  // ---------------- Signal: a message request from someone not in your contacts (docs/add.md)
+  {
+    acc: ['sig'],
+    fact: sdm(S.jamie),
+    msgs: [[95, S.jamie, 'hi! got your number from the climbing gym list. are you still selling the 9.8 rope?']],
+    unread: 1,
+  },
+  // ---------------- Telegram
+  {
+    acc: ['tg'],
+    fact: { nativeId: `user:${TG.alice.nativeId}`, shape: 'direct', participants: [TG.self.nativeId, TG.alice.nativeId] },
+    msgs: [
+      [3 * DAY + 40, TG.alice, 'made a telegram finally. mostly for the film photo people'],
+      [3 * DAY + 32, TG.self, 'welcome to the fourth app 😅'],
+    ],
+  },
+  {
+    acc: ['tg'],
+    fact: { nativeId: `user:${TG.noor.nativeId}`, shape: 'direct', participants: [TG.self.nativeId, TG.noor.nativeId] },
+    msgs: [
+      [DAY + 70, TG.noor, 'the film swap group is t.me/+FilmSwap2026x if you want in'],
+      [DAY + 64, TG.noor, 'and t.me/dithernews has the release notes now'],
+    ],
+    unread: 1,
+  },
 ];
 
 // ------------------------------------------------------------------ live behaviour
@@ -980,6 +1019,7 @@ const ADMIN_IN: Record<AccKey, string[]> = {
   sig: [sgroup('climb', '', []).nativeId, sgroup('dithercore', '', []).nativeId],
   mx: [room('house', 'matrix.org')],
   wa: [wgroup('books')],
+  tg: [],
 };
 /** Matrix: your power level where it is not 100 or 0. */
 const MX_LEVEL: Record<string, number> = { [room('libdither-mx', 'matrix.org')]: 50 };
@@ -1092,11 +1132,317 @@ const WHATSAPP_ABOUT: Record<string, string> = {
   marco: 'Ciao!',
 };
 
+// ------------------------------------------------------------------ adding (docs/add.md)
+
+/** Places the demo's invites and addresses lead to: what joining them brings. */
+interface Joinable {
+  preview: Omit<P.AddPreview, 'actions' | 'joined'> & { actions: P.AddAction[] };
+  /** Facts a join emits: people, then the space and its sections, then conversations with a few messages. */
+  people?: P.IdentityFact[];
+  space?: P.SpaceFact;
+  sections?: P.SpaceFact[];
+  convs: { fact: P.ConversationFact; msgs: [minutesAgo: number, author: P.IdentityFact, body: string][] }[];
+  /** A join here asks first (a knock, a join request): nothing is joined. */
+  asks?: boolean;
+  /** The network wants a check first: nothing is done. */
+  check?: P.AddCheck;
+}
+
+const px = {
+  ink: did('px-ink', 'inkwell', 'inkwell'),
+  dot: did('px-dot', 'dotmatrix', 'dot matrix'),
+};
+const gp = { pixel: snow('g-pixel'), speed: snow('g-speed') };
+const gdev = mid('@gamedev-bot:matrix.org', 'gamedev bot', { isBot: true });
+const tgx = { film: tid('film-admin', 'filmswap_admin', 'Film Swap admin', false), news: tid('news', 'dithernews_bot', 'Dither News', false) };
+const hoa = W.hoa;
+
+/** Keyed by network, then by invite code, address or name. */
+const JOINABLE: Partial<Record<P.Network, Record<string, Joinable>>> = {
+  discord: {
+    pixelart: {
+      preview: { what: 'space', name: 'Pixel Art Club', nativeId: gp.pixel, description: 'Weekly challenges, palettes and critique. Be kind.', members: 5321, online: 802, inviter: D.pixelfox.nativeId, expires: 0, actions: ['join'] },
+      people: [px.ink, px.dot],
+      space: { nativeId: gp.pixel, kind: 'community', name: 'Pixel Art Club', topic: 'Weekly challenges, palettes and critique' },
+      sections: [{ nativeId: cat('px-start'), kind: 'section', name: 'Start here', parents: [{ nativeId: gp.pixel, position: pos(0) }] }],
+      convs: [
+        {
+          fact: { nativeId: ch('px-welcome'), shape: 'channel', name: 'welcome', spaces: [{ nativeId: cat('px-start'), position: pos(0) }] },
+          msgs: [
+            [600, px.ink, 'Welcome! This week\'s challenge: a 32x32 lighthouse, 8 colours max.'],
+            [420, px.dot, 'pinned the palette in #resources'],
+          ],
+        },
+        { fact: { nativeId: ch('px-general'), shape: 'channel', name: 'general', spaces: [{ nativeId: cat('px-start'), position: pos(1) }] }, msgs: [[90, px.dot, 'anyone tried dithering with only 4 colours? looks great on the lighthouse']] },
+      ],
+    },
+    speedrun: {
+      preview: { what: 'space', name: 'Speedrun Archive', nativeId: gp.speed, description: 'Runs, routes and VODs from every category.', members: 18240, online: 1310, actions: ['join'], notes: ['New members pass a captcha first'] },
+      check: 'captcha',
+      convs: [],
+    },
+  },
+  matrix: {
+    '#rust-gamedev:matrix.org': {
+      preview: { what: 'room', name: 'Rust Gamedev', nativeId: room('rust-gamedev', 'matrix.org'), description: 'Games and engines in Rust: Bevy, macroquad, Fyrox.', members: 412, actions: ['join'] },
+      people: [gdev],
+      convs: [
+        {
+          fact: { nativeId: room('rust-gamedev', 'matrix.org'), shape: 'channel', name: 'Rust Gamedev', topic: 'Games and engines in Rust: Bevy, macroquad, Fyrox.' },
+          msgs: [
+            [300, gdev, 'This week in Rust gamedev #142 is out'],
+            [40, M.ferrous, 'has anyone moved to the new bevy scheduler yet?'],
+          ],
+        },
+      ],
+    },
+    '#private-lab:matrix.org': {
+      preview: { what: 'room', name: 'Private Lab', nativeId: room('private-lab', 'matrix.org'), members: 9, actions: ['ask'], notes: ["Joining asks the room's admins first (a knock)"] },
+      asks: true,
+      convs: [],
+    },
+  },
+  telegram: {
+    FilmSwap2026x: {
+      preview: { what: 'group', name: 'Film Photo Swap', nativeId: 'chat:4471023', description: 'Swap rolls, share scans, meet up for walks.', members: 86, inviter: TG.noor.nativeId, actions: ['join'] },
+      people: [tgx.film],
+      convs: [
+        {
+          fact: { nativeId: 'chat:4471023', shape: 'group', name: 'Film Photo Swap', participants: [TG.self.nativeId, TG.noor.nativeId, tgx.film.nativeId] },
+          msgs: [
+            [800, tgx.film, 'Swap table is at the cafe on Saturday, bring what you have'],
+            [120, TG.noor, 'I have two rolls of Portra 400 to trade'],
+          ],
+        },
+      ],
+    },
+    ClimbAsk2026: {
+      preview: { what: 'group', name: 'Berlin Climbers', members: 241, actions: ['ask'], notes: ['The admins approve new members'] },
+      asks: true,
+      convs: [],
+    },
+    dithernews: {
+      preview: { what: 'channel', name: 'Dither News', nativeId: 'channel:1990311', description: 'Releases and notes from the dither project.', members: 2380, actions: ['join'] },
+      people: [tgx.news],
+      convs: [
+        {
+          fact: { nativeId: 'channel:1990311', shape: 'channel', variant: 'announcement', name: 'Dither News' },
+          msgs: [
+            [2000, tgx.news, 'dither 0.4 is out: coordinate routing is on by default.'],
+            [300, tgx.news, 'Notes from this week: the handshake got simpler.'],
+          ],
+        },
+      ],
+    },
+  },
+  whatsapp: {
+    MapleGardenSwap26: {
+      preview: { what: 'group', name: 'Maple St Garden Swap', nativeId: wgroup('garden'), description: 'Seeds, cuttings and surplus veg on Maple Street.', members: 34, inviter: hoa.nativeId, actions: ['join'] },
+      convs: [
+        {
+          fact: { nativeId: wgroup('garden'), shape: 'group', name: 'Maple St Garden Swap', participants: [W.self.nativeId, hoa.nativeId], encrypted: true },
+          msgs: [[200, hoa, 'Tomato seedlings by my gate, free to a good home 🍅']],
+        },
+      ],
+    },
+  },
+  signal: {
+    // Any signal.group link: signal-cli cannot preview one, so joining is the only way to learn its name.
+    '*': {
+      preview: { what: 'group', name: '', partial: true, actions: ['join'], notes: ["Signal shows a group link's name only once you join"] },
+      convs: [
+        {
+          fact: { ...sgroup('boardgames', 'Board Game Night', [S.priya, S.sam]) },
+          msgs: [[180, S.priya, 'Next one is Friday at mine. Bringing Wingspan!']],
+        },
+      ],
+    },
+  },
+};
+
+/** Places the demo accounts are in already, by what leads there. */
+const ALREADY_IN: Partial<Record<P.Network, Record<string, { preview: P.AddPreview }>>> = {
+  discord: { libdither: { preview: { what: 'space', name: 'libdither', nativeId: g.dither, description: 'Dither: a coordinate-routed p2p network', members: 1287, online: 214, inviter: D.lev.nativeId, joined: { space: g.dither }, actions: [], notes: ['You are in this server already'] } } },
+  matrix: { '#nixos:nixos.org': { preview: { what: 'space', name: 'NixOS', nativeId: room('nixos', 'nixos.org'), description: 'The NixOS community space', members: 9120, joined: { space: room('nixos', 'nixos.org') }, actions: [], notes: ['You are in this space already'] } } },
+  signal: { 'https://signal.group/#CjQKIDemoClimbingCrewLink': { preview: { what: 'group', name: 'Climbing crew', nativeId: sgroup('climb', '', []).nativeId, joined: { conversation: sgroup('climb', '', []).nativeId }, actions: [], notes: ['You are in this group already'] } } },
+};
+
+const EXPIRED = new Set(['oldparty', 'Expired2025xyz', 'OldSwapGroup2025']);
+
+/**
+ * The demo's side of Add: resolve, add and answer as an adapter would, and the requests it holds. What it joined and
+ * answered is kept in its account dir, so a restart neither forgets nor repeats it.
+ */
+class DemoAdd {
+  private state: { joined: string[]; answered: string[]; friends: string[] };
+  constructor(
+    private key: AccKey,
+    private network: P.Network,
+    private self: P.IdentityFact,
+    private dir: string,
+    private emit: (ev: P.AdapterEvent) => void,
+  ) {
+    const f = join(dir, 'added.json');
+    this.state = existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : { joined: [], answered: [], friends: [] };
+  }
+
+  private save() {
+    writeFileSync(join(this.dir, 'added.json'), JSON.stringify(this.state));
+  }
+
+  /** After connect: what was joined before, then the requests still waiting (identity facts first). */
+  start(epoch: number) {
+    for (const k of this.state.joined) this.emitPlace(k, Date.now());
+    this.emit({ t: 'requests', requests: this.requests(epoch).filter((r) => !this.state.answered.includes(r.nativeId)) });
+  }
+
+  private requests(now: number): P.RequestFact[] {
+    if (this.key === 'dmain') return [{ nativeId: `friend-${D.nova.nativeId}`, kind: 'friend', from: D.nova.nativeId, ts: now - 3 * 3_600_000, answers: ['accept', 'decline', 'block'] }];
+    if (this.key === 'mx') return [{ nativeId: room('nix-hack', 'matrix.org'), kind: 'invite', from: M.jules.nativeId, target: { kind: 'conversation', nativeId: room('nix-hack', 'matrix.org'), name: 'Nix Hackathon 2026', members: 23 }, ts: now - 26 * 3_600_000, answers: ['accept', 'decline'] }];
+    if (this.key === 'sig') return [{ nativeId: `msgreq-${S.jamie.nativeId}`, kind: 'message', from: S.jamie.nativeId, target: { kind: 'conversation', nativeId: sdm(S.jamie).nativeId }, ts: now - 95 * 60_000, answers: ['accept', 'decline', 'block'] }];
+    return [];
+  }
+
+  private keyOf(ref: P.AddRef): string {
+    return ref.kind === 'invite' ? ref.code : ref.kind === 'place' ? ref.address : ref.kind === 'name' ? ref.name : ref.handle;
+  }
+
+  private joinable(k: string): Joinable | undefined {
+    const all = JOINABLE[this.network] ?? {};
+    return all[k] ?? (this.network === 'signal' && k.startsWith('https://signal.group/#') && !ALREADY_IN.signal?.[k] ? all['*'] : undefined);
+  }
+
+  private emitPlace(k: string, now: number) {
+    const j = this.joinable(k);
+    if (!j) return;
+    for (const p of j.people ?? []) this.emit({ t: 'identity', identity: p });
+    if (j.space) this.emit({ t: 'space', space: j.space });
+    for (const s of j.sections ?? []) this.emit({ t: 'space', space: s });
+    for (const c of j.convs) {
+      this.emit({ t: 'conversation', conversation: { ...c.fact, lastMessageAt: now - Math.min(...c.msgs.map((m) => m[0])) * 60_000 } });
+      c.msgs.forEach(([min, author, body], i) => this.emit({ t: 'message', live: false, message: { nativeId: `${c.fact.nativeId}~add-${i}`, conversation: c.fact.nativeId, author: author.nativeId, ts: now - min * 60_000, body } }));
+    }
+  }
+
+  /** People by what was typed: an id, a handle, a username, a phone number. A signal.me link is Mei's. */
+  private person(handle: string): P.IdentityFact | undefined {
+    if (this.network === 'signal' && handle.startsWith('https://signal.me/')) return S.mei;
+    const pool = Object.values(POOLS[this.network] ?? {});
+    const digits = (s: string) => s.replace(/\D/g, '');
+    return pool.find((i) => i !== this.self && (i.nativeId === handle || i.handle === handle || i.handle === `@${handle}` || (handle.startsWith('+') && !!i.handle && digits(i.handle) === digits(handle)) || (this.network === 'signal' && /\.\d{2,9}$/.test(handle) && i.displayName?.toLowerCase() === handle.split('.')[0].toLowerCase())));
+  }
+
+  command(cmd: Extract<P.AdapterCommand, { t: 'resolve' | 'add' | 'answer' }>): unknown {
+    const now = Date.now();
+    if (cmd.t === 'answer') return this.answer(cmd.request, cmd.answer, now);
+    const ref = cmd.ref;
+    const k = this.keyOf(ref);
+    if (ref.kind === 'invite' && EXPIRED.has(k)) throw new Error('This invite has expired or was revoked');
+    const inAlready = ALREADY_IN[this.network]?.[k];
+    const j = this.joinable(k);
+    if (cmd.t === 'resolve') {
+      if (inAlready) return inAlready.preview;
+      if (j) {
+        const joined = this.state.joined.includes(k);
+        const first = j.convs[0]?.fact.nativeId;
+        const p = { ...j.preview, ...(j.preview.partial ? { name: ref.kind === 'invite' ? ref.url : k } : {}), ...(j.preview.expires === 0 ? { expires: now + 6 * 86_400_000 } : {}) };
+        return joined ? { ...p, partial: undefined, name: j.space?.name ?? j.convs[0]?.fact.name ?? p.name, joined: j.space ? { space: j.space.nativeId } : { conversation: first }, actions: [], notes: ['You are in it already'] } : p;
+      }
+      return this.resolvePerson(ref);
+    }
+    if (inAlready) return { ...(inAlready.preview.joined ?? {}) };
+    if (j) {
+      if (j.check) return { check: j.check };
+      if (j.asks) return { pending: true, notes: ['Asked; the admins decide'] };
+      if (!this.state.joined.includes(k)) {
+        this.state.joined.push(k);
+        this.save();
+        this.emitPlace(k, now);
+      }
+      return { ...(j.space ? { space: j.space.nativeId } : {}), conversation: j.convs[0]?.fact.nativeId, ...(this.network === 'telegram' && j.preview.what === 'channel' ? { notes: ['Joined; only its admins post here'] } : {}) };
+    }
+    return this.addPerson(ref, cmd.action);
+  }
+
+  private resolvePerson(ref: P.AddRef): P.AddPreview {
+    const net = NETWORK_META_NAME[this.network];
+    if (ref.kind === 'invite') throw new Error(`${net} does not know this invite: it may have expired or been revoked`);
+    if (ref.kind === 'place') throw new Error(`Matrix has no room called ${ref.address}`);
+    const handle = ref.kind === 'name' ? ref.name : ref.handle;
+    // Discord says who a username is only once the friend request is sent.
+    if (this.network === 'discord' && !/^\d{15,22}$/.test(handle)) return { what: 'person', name: handle, partial: true, actions: ['friend'], notes: ['Discord says who this is only once the friend request is sent'] };
+    const known = this.person(handle);
+    if (!known) {
+      if (this.network === 'telegram') throw new Error(`Nobody on Telegram is called @${handle}`);
+      if (this.network === 'discord') throw new Error('Discord does not know that user');
+      if (this.network === 'whatsapp' && handle.replace(/\D/g, '').startsWith('1555000')) throw new Error(`${handle} is not on WhatsApp`);
+      return { what: 'person', name: handle, ...(this.network === 'matrix' ? { nativeId: handle } : {}), actions: ['message'] };
+    }
+    const friend = known.contact || this.state.friends.includes(known.nativeId);
+    const actions: P.AddAction[] = ['message', ...(this.network === 'discord' && !friend ? (['friend'] as const) : []), ...(this.network === 'telegram' && !friend ? (['contact'] as const) : [])];
+    return {
+      what: 'person',
+      name: known.displayName ?? handle,
+      nativeId: known.nativeId,
+      relationship: friend ? (this.network === 'discord' ? 'friend' : 'contact') : 'stranger',
+      actions,
+      ...(this.network === 'telegram' && !friend ? { notes: ["Adding a contact on Telegram doesn't share your number"] } : {}),
+    };
+  }
+
+  private addPerson(ref: P.AddRef, action: Exclude<P.AddAction, 'message'>): P.AddResult {
+    const handle = ref.kind === 'name' ? ref.name : ref.kind === 'person' ? ref.handle : '';
+    if (action === 'join' || action === 'ask') throw new Error(`${NETWORK_META_NAME[this.network]} cannot join a person`);
+    const known = this.person(handle);
+    if (this.network === 'discord' && action === 'friend') {
+      const who = known ?? { nativeId: snow(`u-${handle}`), handle, displayName: handle };
+      if (!known) this.emit({ t: 'identity', identity: who });
+      return { identity: who.nativeId, relationship: 'requested', pending: true };
+    }
+    if (this.network === 'telegram' && action === 'contact' && known) {
+      this.state.friends.push(known.nativeId);
+      this.save();
+      this.emit({ t: 'identity', identity: { ...known, contact: true } });
+      return { identity: known.nativeId, relationship: 'contact' };
+    }
+    throw new Error(`${NETWORK_META_NAME[this.network]} cannot ${action} here`);
+  }
+
+  private answer(request: string, answer: P.RequestAnswer, now: number): P.AddResult {
+    const r = this.requests(now).find((x) => x.nativeId === request && !this.state.answered.includes(x.nativeId));
+    if (!r) throw new Error('That request is not waiting any more');
+    if (!r.answers.includes(answer)) throw new Error(`This request cannot be answered with ${answer}`);
+    this.state.answered.push(request);
+    this.save();
+    this.emit({ t: 'requestGone', nativeId: request });
+    if (r.kind === 'friend') {
+      const who = Object.values(D).find((i) => i.nativeId === r.from)!;
+      if (answer === 'accept') this.emit({ t: 'identity', identity: { ...who, contact: true } });
+      return { identity: r.from, relationship: answer === 'accept' ? 'friend' : answer === 'block' ? 'blocked' : 'stranger' };
+    }
+    if (r.kind === 'invite' && answer === 'accept') {
+      const nativeId = r.target!.nativeId;
+      this.emit({ t: 'conversation', conversation: { nativeId, shape: 'channel', name: r.target!.name, topic: 'Planning the winter hackathon', lastMessageAt: now } });
+      this.emit({ t: 'message', live: false, message: { nativeId: `${nativeId}~add-0`, conversation: nativeId, author: M.jules.nativeId, ts: now - 60_000, body: 'welcome! we are picking a date this week' } });
+      return { conversation: nativeId };
+    }
+    if (r.kind === 'message') {
+      const conv = r.target!.nativeId;
+      if (answer !== 'accept') this.emit({ t: 'leave', kind: 'conversation', nativeId: conv });
+      return answer === 'accept' ? { conversation: conv, relationship: 'stranger' } : { relationship: answer === 'block' ? 'blocked' : 'stranger' };
+    }
+    return {};
+  }
+}
+
 class DemoAdapter implements InprocAdapter {
   private emit!: (ev: P.AdapterEvent) => void;
   private timers = new Set<Timer>();
   private typingLog: { conversation: string; stop: boolean; at: number }[] = [];
   private self: P.IdentityFact;
+  private adds!: DemoAdd;
+  /** Capabilities a verify script took away (action 'capabilities'), to see the page without them. */
+  private without = new Set<P.Capability>();
   private network: P.Network;
 
   constructor(
@@ -1105,7 +1451,7 @@ class DemoAdapter implements InprocAdapter {
     private dir: string,
   ) {
     this.network = acc.network;
-    this.self = key === 'dmain' ? D.zyan : key === 'dalt' ? D.zyn : key === 'sig' ? S.self : key === 'wa' ? W.self : M.self;
+    this.self = key === 'dmain' ? D.zyan : key === 'dalt' ? D.zyn : key === 'sig' ? S.self : key === 'wa' ? W.self : key === 'tg' ? TG.self : M.self;
   }
 
   /** The demo plays a Nitro account on Discord, and a room image pack on Matrix, so every path can be tried. */
@@ -1166,7 +1512,7 @@ class DemoAdapter implements InprocAdapter {
   /** The same answers real adapters give, by each network's own rules. */
   /** What each network's profile shows for someone (docs/profile.md), as its adapter would say it. */
   private profile(who: string): P.PersonAbout {
-    const pool = this.network === 'discord' ? D : this.network === 'signal' ? S : this.network === 'whatsapp' ? W : M;
+    const pool = POOLS[this.network] ?? M;
     const key = (Object.entries(pool) as [string, P.IdentityFact][]).find(([, i]) => i.nativeId === who)?.[0];
     const me = who === this.self.nativeId;
     const contacts = Object.values(pool).filter((i) => i.contact && i !== this.self);
@@ -1226,7 +1572,7 @@ class DemoAdapter implements InprocAdapter {
     };
     const rules: P.AboutRule[] = [];
     const members: P.AboutMember[] = [];
-    const pool = Object.values(net === 'discord' ? D : net === 'signal' ? S : net === 'whatsapp' ? W : M);
+    const pool = Object.values(POOLS[net] ?? M);
     const ids = new Set<string>(conv?.fact.participants ?? []);
     if (!ids.size) {
       ids.add(this.self.nativeId);
@@ -1398,6 +1744,14 @@ class DemoAdapter implements InprocAdapter {
     return this.about(target);
   }
 
+  private hello() {
+    // Discord's demo accounts forward natively, as the real adapter does; the others leave it to the hub.
+    // Matrix has no bio, so its demo account cannot edit one.
+    const caps: P.Capability[] = ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect', 'typing', 'about', 'configure', 'profile', ...(this.network === 'matrix' ? [] : (['editProfile'] as const)), 'resolve', 'join', 'connect', 'requests'];
+    const all: P.Capability[] = this.network === 'discord' ? [...caps, 'forward', 'members'] : caps;
+    this.emit({ t: 'hello', network: this.network, version: 'demo', capabilities: all.filter((c) => !this.without.has(c)) });
+  }
+
   start(emit: (ev: P.AdapterEvent) => void) {
     this.emit = emit;
     running.set(this.key, this);
@@ -1406,15 +1760,15 @@ class DemoAdapter implements InprocAdapter {
     const firstRun = !existsSync(marker);
     const ago = (min: number) => epoch - min * 60_000;
 
-    // Discord's demo accounts forward natively, as the real adapter does; the others leave it to the hub.
-    // Matrix has no bio, so its demo account cannot edit one.
-    const caps: P.Capability[] = ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect', 'typing', 'about', 'configure', 'profile', ...(this.network === 'matrix' ? [] : (['editProfile'] as const))];
-    emit({ t: 'hello', network: this.network, version: 'demo', capabilities: this.network === 'discord' ? [...caps, 'forward', 'members'] : caps });
+    this.hello();
     emit({ t: 'status', status: 'online', self: { ...this.self, isSelf: true } });
-    const pool = this.network === 'discord' ? D : this.network === 'signal' ? S : this.network === 'whatsapp' ? W : M;
+    const pool = POOLS[this.network] ?? M;
     for (const i of Object.values(pool)) if (i !== this.self && !(this.network === 'discord' && (i === D.zyan || i === D.zyn))) emit({ t: 'identity', identity: i });
     if (this.key === 'dmain') emit({ t: 'identity', identity: D.zyn });
     if (this.key === 'dalt') emit({ t: 'identity', identity: D.zyan });
+    // Joining, adding and requests (docs/add.md): what it joined before, and the requests waiting.
+    this.adds = new DemoAdd(this.key, this.network, this.self, this.dir, emit);
+    this.adds.start(epoch);
 
     for (const s of SPACES) if (s.acc.includes(this.key)) emit({ t: 'space', space: s.fact });
     // Members the client loaded anyway (passive), with Discord's counts: kept only with the adversarial members setting.
@@ -1522,13 +1876,14 @@ class DemoAdapter implements InprocAdapter {
   private openDirect(peer: string): P.OpenDirectResult {
     const signal = this.network === 'signal';
     if (this.network === 'whatsapp') return this.openWhatsApp(peer);
-    const pool = Object.values(this.network === 'discord' ? D : signal ? S : M);
+    const pool = Object.values(POOLS[this.network] ?? M);
     const known = pool.find((i) => i.nativeId === peer || i.handle === peer);
     if (signal && peer.startsWith('+') && !known && peer.endsWith('00')) throw new Error(`${peer} is not on Signal`);
+    if (this.network === 'telegram' && peer.startsWith('@') && !known) throw new Error(`Nobody on Telegram is called ${peer}`);
     const nativeId = known?.nativeId ?? (signal && peer.startsWith('+') ? `d0000000-0000-4000-8000-${peer.slice(1).padStart(12, '0').slice(-12)}` : peer);
     const existing = CONVS.find((c) => c.acc.includes(this.key) && c.fact.shape === 'direct' && c.fact.participants?.includes(nativeId));
     if (existing) return { conversation: existing.fact.nativeId, existed: true, ...(signal ? { startsAtFirstSend: true } : {}) };
-    const conversation = signal ? `dm:${this.self.nativeId}:${nativeId}` : this.network === 'matrix' ? `!direct-${nativeId.replace(/\W/g, '')}:demo` : snow(`dm-${this.key}-${nativeId}`);
+    const conversation = signal ? `dm:${this.self.nativeId}:${nativeId}` : this.network === 'matrix' ? `!direct-${nativeId.replace(/\W/g, '')}:demo` : this.network === 'telegram' ? `user:${nativeId}` : snow(`dm-${this.key}-${nativeId}`);
     const existed = this.opened.has(conversation);
     this.opened.set(conversation, nativeId);
     if (!known) this.emit({ t: 'identity', identity: { nativeId, handle: peer } });
@@ -1624,6 +1979,15 @@ class DemoAdapter implements InprocAdapter {
         reply({ nativeId });
         break;
       }
+      case 'resolve':
+      case 'add':
+      case 'answer':
+        try {
+          reply(this.adds.command(cmd));
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
+        break;
       case 'openDirect':
         try {
           reply(this.openDirect(cmd.peer));
@@ -1702,6 +2066,13 @@ class DemoAdapter implements InprocAdapter {
           reply({ ok: true });
           break;
         }
+        // capabilities: say hello again without these (scripts/verify-add.ts), or with everything when none are given.
+        if (cmd.action === 'capabilities') {
+          this.without = new Set(((cmd.args as { without?: P.Capability[] } | undefined)?.without ?? []).filter((c) => typeof c === 'string'));
+          this.hello();
+          reply({ ok: true });
+          break;
+        }
         reply(cmd.action === 'typingLog' ? { typing: this.typingLog } : { note: 'demo adapters have no actions' });
         break;
       default:
@@ -1742,7 +2113,7 @@ export function applyDemoOverlay(store: Store) {
     store.updatePerson(first, { name, starred });
     return first;
   };
-  const alice = merge('Alice Chen', true, ['signal', S.alice], ['discord', D.alice], ['matrix', M.alice], ['whatsapp', W.alice]);
+  const alice = merge('Alice Chen', true, ['signal', S.alice], ['discord', D.alice], ['matrix', M.alice], ['whatsapp', W.alice], ['telegram', TG.alice]);
   const sam = merge('Sam Rivera', false, ['signal', S.sam], ['matrix', M.sam]);
   merge('Theo', false, ['signal', S.theo], ['discord', D.theo]);
   merge('Quinn', false, ['discord', D.quinn], ['signal', S.quinn]);

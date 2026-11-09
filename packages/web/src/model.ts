@@ -603,12 +603,20 @@ function unscored(c: P.ConversationView): ConvInboxRow {
 }
 
 /** The conversations' rows. */
+/** Conversations an open message request is about: they wait under Requests, not in the inbox (docs/add.md). */
+export function heldByRequest(): Set<string> {
+  const out = new Set<string>();
+  for (const r of db.requests) if (r.kind === 'message' && r.target?.kind === 'conversation' && r.target.id) out.add(r.target.id);
+  return out;
+}
+
 function convRows(): ConvInboxRow[] {
   return memo('inboxConvRows', () => {
     const out: ConvInboxRow[] = [];
+    const held = heldByRequest();
     for (const c of db.conversations.values()) {
       const a = db.attention.get(c.id);
-      if ((!a && !inboxShape(c)) || !visibleConv(c)) continue;
+      if ((!a && !inboxShape(c)) || !visibleConv(c) || held.has(c.id)) continue;
       const row: ConvInboxRow = a ? { kind: 'conv', key: c.id, conv: c, score: a.score, needs: a.needs, reasons: a.reasons, owedSince: a.owedSince } : unscored(c);
       if (!row.needs && c.shape !== 'self' && placePref('conversation', c.id).hidden) continue;
       out.push(row);

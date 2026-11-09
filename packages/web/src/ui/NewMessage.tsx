@@ -1,12 +1,19 @@
-/** Start a direct conversation: with someone known, or an address typed in. */
+/**
+ * New: start a conversation, join a server or group, or add someone (docs/add.md). Someone known, or anything typed
+ * or pasted: an invite link, an address, an @username, a phone number.
+ */
 import type * as P from '@dither-chat/protocol';
-import { directTarget, guessDirectNetwork, guessDirectNetworks } from '@dither-chat/protocol';
+import { directTarget, RELATIONSHIP_LABEL } from '@dither-chat/protocol';
+import type { JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { ACTION_LABEL, addRows, CHECK_LINE, expiresIn, isLink, messagePeer, offlineNetworks, partialLine, previewCounts, previewKind, type AddRow } from '../add.ts';
 import { directNote, openers } from '../direct.ts';
 import { directsOf, identityName, netName } from '../model.ts';
-import { db, go, newMessage, openDirect, rev } from '../state.ts';
+import { api, applyEvents, db, go, newMessage, openDirect, rev, toast } from '../state.ts';
+import { LiveView } from './Accounts.tsx';
 import { AccountChip, Avatar, NetBadge, useDialog } from './bits.tsx';
 import { Icon } from './icons.tsx';
+import { homeRoute } from './Sidebar.tsx';
 import { fuzzyScore } from './Switcher.tsx';
 
 interface Target {
@@ -23,6 +30,18 @@ interface Row {
   identities: P.IdentityView[];
 }
 
+/** A reading being looked up, its preview, and what acting on it did. */
+interface Card {
+  row: AddRow;
+  accountId: string;
+  loading: boolean;
+  view?: P.AddPreviewView;
+  error?: string;
+  acting?: P.AddAction;
+  actError?: string;
+  done?: P.AddResultView;
+}
+
 const identityTarget = (i: P.IdentityView): Target => ({ network: i.network, peer: i.nativeId, name: identityName(i.id) });
 const isMine = (i: P.IdentityView) => [...db.accounts.values()].some((a) => a.selfIdentityId === i.id);
 
@@ -37,35 +56,66 @@ function knownPeople(): Row[] {
   return rows;
 }
 
+const TITLE = { join: 'Join a server or group', add: 'Add someone' } as const;
+
 export function NewMessage() {
   rev.value;
-  return newMessage.value ? <NewMessageBox identityId={newMessage.value.identityId} /> : null;
+  const v = newMessage.value;
+  return v ? <NewMessageBox identityId={v.identityId} q={v.q} mode={v.mode} /> : null;
 }
 
-function NewMessageBox({ identityId }: { identityId?: string }) {
-  const given = identityId ? db.identities.get(identityId) : undefined;
-  const [q, setQ] = useState('');
-  const [target, setTarget] = useState<Target | null>(given ? identityTarget(given) : null);
+function NewMessageBox({ identityId, q: given, mode }: { identityId?: string; q?: string; mode?: 'join' | 'add' }) {
+  const known = identityId ? db.identities.get(identityId) : undefined;
+  const [q, setQ] = useState(given ?? '');
+  const [target, setTarget] = useState<Target | null>(known ? identityTarget(known) : null);
+  const [card, setCard] = useState<Card | null>(null);
+  const [live, setLive] = useState(false);
   const [accountId, setAccountId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const box = useRef<HTMLInputElement>(null);
+  const pasted = useRef(false);
+  const asked = useRef(0);
   const close = () => (newMessage.value = null);
   const dialog = useDialog(close);
-  useEffect(() => box.current?.focus(), [target]);
+  useEffect(() => box.current?.focus(), [target, card]);
 
   const needle = q.trim();
   const accounts = [...db.accounts.values()];
   const canStart = (n: P.Network) => openers(accounts, n).length > 0;
-  // A phone number fits Signal and WhatsApp: offer the one an account here can start.
-  const typed = guessDirectNetworks(needle).find(canStart) ?? guessDirectNetwork(needle);
-  const rows = knownPeople()
+  const readings = addRows(needle, accounts);
+  const offline = readings.length ? [] : offlineNetworks(needle, accounts);
+  const people = knownPeople()
     .filter((r) => r.identities.some((i) => canStart(i.network)))
     .map((r) => ({ r, s: fuzzyScore(`${r.name} ${r.identities.map((i) => i.handle ?? '').join(' ')}`, needle) }))
     .filter((x) => x.s !== null)
     .sort((a, b) => b.s! - a.s! || a.r.name.localeCompare(b.r.name))
     .slice(0, 8)
     .map((x) => x.r);
+
+  /** Ask an account what a reading is. Only from a click, a paste or Enter: never per keystroke. */
+  const resolve = async (row: AddRow, via?: string) => {
+    if (row.state.kind !== 'resolve') return;
+    const acc = row.state.accounts.find((a) => a.id === via) ?? row.state.accounts[0];
+    const n = ++asked.current;
+    setCard({ row, accountId: acc.id, loading: true });
+    try {
+      const v = await api<P.AddPreviewView>('/api/add/resolve', { body: { accountId: acc.id, ref: row.ref } });
+      if (v.identities.length) applyEvents(v.identities.map((identity) => ({ t: 'identity', identity }) as P.ClientEvent));
+      if (n === asked.current) setCard({ row, accountId: acc.id, loading: false, view: v });
+    } catch (e: any) {
+      if (n === asked.current) setCard({ row, accountId: acc.id, loading: false, error: String(e?.message ?? e) });
+    }
+  };
+  /** A link resolves at once; anything else waits for its row to be clicked. */
+  const resolveLink = (text: string) => {
+    if (!isLink(text)) return;
+    const row = addRows(text.trim(), accounts).find((r) => r.state.kind === 'resolve');
+    if (row) void resolve(row);
+  };
+  useEffect(() => {
+    if (given) resolveLink(given);
+  }, []);
 
   /** Someone you already have a DM with on this network: go there, nothing to create. */
   const choose = (i: P.IdentityView) => {
@@ -99,13 +149,47 @@ function NewMessageBox({ identityId }: { identityId?: string }) {
     }
   };
 
+  /** Where something joined or found lives. */
+  const open = (conversationId?: string | null, spaceId?: string | null) => {
+    const c = conversationId ? db.conversations.get(conversationId) : undefined;
+    close();
+    if (c) go(homeRoute(c));
+    else if (spaceId) go({ view: 'space', space: spaceId });
+  };
+
+  const act = async (c: Card, action: P.AddAction) => {
+    const v = c.view!;
+    setCard({ ...c, acting: action, actError: undefined });
+    try {
+      if (action === 'message') {
+        const peer = messagePeer(v);
+        if (!peer) throw new Error(`${netName(v.ref.network)} did not say how to reach them.`);
+        const r = await openDirect(c.accountId, peer);
+        if (!r.conversation) throw new Error('The network did not say which conversation it opened.');
+        close();
+        return go({ view: 'inbox', conv: r.conversation.id });
+      }
+      const r = await api<P.AddResultView>('/api/add', { body: { accountId: c.accountId, ref: v.ref, action } });
+      if (r.conversation) applyEvents([{ t: 'conversation', conversation: r.conversation }]);
+      if (!r.check && !r.pending && (r.conversation || r.spaceId)) {
+        open(r.conversation?.id, r.spaceId);
+        if (r.notes.length) toast({ kind: 'info', title: v.name, body: r.notes.join(' ') });
+        return;
+      }
+      setCard({ ...c, acting: undefined, done: r });
+    } catch (e: any) {
+      setCard({ ...c, acting: undefined, actError: String(e?.message ?? e) });
+    }
+  };
+
   const from = target ? openers(accounts, target.network) : [];
+  const title = target ? `Message ${target.name} on ${netName(target.network)}` : card ? card.row.label : mode ? TITLE[mode] : 'New';
   return (
     <div class="modal-backdrop" onClick={(e) => e.target === e.currentTarget && dialog.dismiss()}>
-      <div class="modal new-message" role="dialog" aria-label="New message" ref={dialog.box}>
+      <div class="modal new-message" role="dialog" aria-label={mode ? TITLE[mode] : 'New'} ref={dialog.box}>
         <div class="sheet-grip" aria-hidden="true" />
         <header class="modal-head">
-          <h2>{target ? `Message ${target.name} on ${netName(target.network)}` : 'New message'}</h2>
+          <h2>{title}</h2>
           <button class="icon-btn small" onClick={close} aria-label="Close">
             <Icon name="x" size={15} />
           </button>
@@ -132,27 +216,51 @@ function NewMessageBox({ identityId }: { identityId?: string }) {
                 <button class="btn small" disabled={busy || !from.length} onClick={start}>
                   <Icon name="send" size={13} /> {busy ? 'Opening…' : 'Open conversation'}
                 </button>
-                {!given && (
+                {!known && (
                   <button class="btn ghost small" onClick={() => setTarget(null)}>
                     Back
                   </button>
                 )}
               </div>
             </>
+          ) : card ? (
+            <AddCard card={card} live={live} setLive={setLive} onAccount={(id) => resolve(card.row, id)} onAct={(a) => act(card, a)} onOpen={open} onBack={() => (++asked.current, setCard(null), setLive(false))} onClose={close} />
           ) : (
             <>
-              <input ref={box} class="input" placeholder="A name, @name:server.org, or +15551234567" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} />
+              <input
+                ref={box}
+                class="input"
+                placeholder="Name, invite link, @username or phone"
+                value={q}
+                onPaste={() => (pasted.current = true)}
+                onInput={(e) => {
+                  const value = (e.target as HTMLInputElement).value;
+                  setQ(value);
+                  if (pasted.current) {
+                    pasted.current = false;
+                    resolveLink(value);
+                  }
+                }}
+                onKeyDown={(e) => e.key === 'Enter' && resolveLink(q)}
+              />
               <div class="new-message-list">
-                {typed && (
-                  canStart(typed) ? (
-                    <button class="link-row" onClick={() => setTarget({ network: typed, peer: needle, name: needle })}>
-                      <NetBadge network={typed} size={20} /> Message <b>{needle}</b> <small>on {netName(typed)}</small>
+                {readings.map((r) =>
+                  r.state.kind === 'resolve' ? (
+                    <button class="link-row add-reading" data-network={r.ref.network} data-kind={r.ref.kind} onClick={() => resolve(r)}>
+                      <NetBadge network={r.ref.network} size={20} /> <span class="add-reading-label">{r.label}</span> <small>Look it up</small>
+                    </button>
+                  ) : r.state.kind === 'direct' ? (
+                    <button class="link-row add-reading" data-network={r.ref.network} data-kind={r.ref.kind} onClick={() => setTarget({ network: r.ref.network, peer: (r.state as { peer: string }).peer, name: needle })}>
+                      <NetBadge network={r.ref.network} size={20} /> Message <b>{needle}</b> <small>on {netName(r.ref.network)}</small>
                     </button>
                   ) : (
-                    <p class="set-help">No connected {netName(typed)} account here can start a conversation.</p>
-                  )
+                    <p class="set-help add-unbuilt" data-network={r.ref.network}>
+                      <NetBadge network={r.ref.network} size={16} /> {r.state.line}
+                    </p>
+                  ),
                 )}
-                {rows.map((r) => (
+                {offline.length > 0 && <p class="set-help">No connected {netName(offline[0])} account here can do this.</p>}
+                {people.map((r) => (
                   <div class="new-message-row">
                     <Avatar id={r.key} name={r.name} url={r.avatar} size={28} />
                     <span class="new-message-name">{r.name}</span>
@@ -163,11 +271,148 @@ function NewMessageBox({ identityId }: { identityId?: string }) {
                     ))}
                   </div>
                 ))}
-                {!typed && !rows.length && <p class="set-help">Nobody by that name. On Matrix, type their ID. On Signal or WhatsApp, their phone number with its country code. On Discord, they have to be someone your account has seen.</p>}
+                {!readings.length && !offline.length && !people.length && (
+                  <p class="set-help">Nobody by that name. Paste an invite link to join a server or group, or type an @username, a Matrix ID, or a phone number with its country code. On Discord, someone your account has seen, or their username.</p>
+                )}
               </div>
             </>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function AddCard({ card, live, setLive, onAccount, onAct, onOpen, onBack, onClose }: { card: Card; live: boolean; setLive: (on: boolean) => void; onAccount: (id: string) => void; onAct: (a: P.AddAction) => void; onOpen: (conversationId?: string | null, spaceId?: string | null) => void; onBack: () => void; onClose: () => void }) {
+  const { row, view: v, done } = card;
+  const net = row.ref.network;
+  const accounts = row.state.kind === 'resolve' ? row.state.accounts : [];
+  const account = db.accounts.get(card.accountId);
+  const counts = v ? previewCounts(v) : null;
+  const back = (
+    <button class="btn ghost small" onClick={onBack}>
+      Back
+    </button>
+  );
+  return (
+    <div class="add-card-wrap">
+      {accounts.length > 1 && (
+        <div class="new-message-from">
+          <span>As</span>
+          <div class="level-picker">
+            {accounts.map((a) => (
+              <button class={`chip-btn ${card.accountId === a.id ? 'on' : ''}`} disabled={card.loading || !!card.acting} onClick={() => card.accountId !== a.id && onAccount(a.id)}>
+                <AccountChip account={a} small />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {card.loading && <p class="set-help add-loading">Asking {netName(net)}…</p>}
+      {card.error && (
+        <>
+          <p class="new-message-error add-error" role="alert">
+            <Icon name="alert" size={13} /> {card.error}
+          </p>
+          <div class="btn-row">{back}</div>
+        </>
+      )}
+      {v && (
+        <div class="add-card">
+          <div class="add-card-head">
+            <Avatar id={v.nativeId ?? row.key} name={v.name} url={v.avatar} size={48} square={v.what !== 'person'} network={net} />
+            <div class="add-card-title">
+              <b class="add-card-name">{v.name}</b>
+              <small>
+                {previewKind(v, net)}
+                {counts ? ` · ${counts}` : ''}
+              </small>
+            </div>
+          </div>
+          {v.partial && (
+            <p class="set-help add-partial">
+              <Icon name="info" size={13} /> {partialLine(v.actions)}
+            </p>
+          )}
+          {v.description && <p class="add-card-desc">{v.description}</p>}
+          {v.inviter && <p class="set-help">Invited by {identityName(v.inviter)}</p>}
+          {v.expires !== null && <p class="set-help">{expiresIn(v.expires)}</p>}
+          {v.relationship && v.relationship !== 'stranger' && <p class="set-help">{RELATIONSHIP_LABEL[v.relationship]}</p>}
+          {v.notes.map((n) => (
+            <p class="set-help add-note">{n}</p>
+          ))}
+        </div>
+      )}
+      {v && !done && (
+        <>
+          {!v.actions.length && !v.joined && <p class="set-help add-none">There is nothing {account?.label ?? 'this account'} can do with this yet.</p>}
+          {card.actError && (
+            <p class="new-message-error add-error" role="alert">
+              <Icon name="alert" size={13} /> {card.actError}
+            </p>
+          )}
+          <div class="btn-row add-actions">
+            {v.joined && (
+              <button class="btn small" onClick={() => onOpen(v.joined!.conversation, v.joined!.space)}>
+                Open
+              </button>
+            )}
+            {v.actions.map((a, i) => (
+              <button class={`btn small ${i ? 'ghost' : 'primary'}`} data-action={a} disabled={!!card.acting} onClick={() => onAct(a)}>
+                {card.acting === a ? `${ACTION_LABEL[a]}…` : ACTION_LABEL[a]}
+              </button>
+            ))}
+            {back}
+          </div>
+        </>
+      )}
+      {done && <AddDone card={card} result={done} setLive={setLive} onClose={onClose} back={back} />}
+      {live && account && <LiveView account={account} onClose={() => setLive(false)} />}
+    </div>
+  );
+}
+
+/** After an action that did not land somewhere to open: asked, a check first, or someone added. */
+function AddDone({ card, result: r, setLive, onClose, back }: { card: Card; result: P.AddResultView; setLive: (on: boolean) => void; onClose: () => void; back: JSX.Element }) {
+  const net = netName(card.row.ref.network);
+  if (r.check) {
+    return (
+      <div class="add-done add-check">
+        <p class="set-help">
+          <Icon name="alert" size={13} /> {net} wants a check first: {CHECK_LINE[r.check]}, in the account's live view. Nothing was done.
+        </p>
+        <div class="btn-row">
+          {r.liveView ? (
+            <button class="btn small add-live" onClick={() => setLive(true)}>
+              <Icon name="monitor" size={13} /> Open live view
+            </button>
+          ) : r.managerUrl ? (
+            <a class="btn small add-live" href={r.managerUrl} target="_blank" rel="noopener">
+              <Icon name="external" size={13} /> Open it on dither-accounts
+            </a>
+          ) : (
+            <button class="btn small add-live" onClick={() => (onClose(), go({ view: 'accounts', account: r.accountId }))}>
+              <Icon name="monitor" size={13} /> Open the account
+            </button>
+          )}
+          {back}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div class="add-done">
+      <p class="set-help add-done-line">
+        <Icon name="check" size={13} /> {r.pending ? 'Asked; waiting on them.' : r.relationship ? `Done: ${RELATIONSHIP_LABEL[r.relationship].toLowerCase()}.` : 'Done.'}
+      </p>
+      {r.notes.map((n) => (
+        <p class="set-help add-note">{n}</p>
+      ))}
+      <div class="btn-row">
+        <button class="btn small" onClick={onClose}>
+          Close
+        </button>
+        {back}
       </div>
     </div>
   );

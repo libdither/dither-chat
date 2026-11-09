@@ -31,6 +31,7 @@ import { describeActivity, type ActivityStore, type Features } from './activity.
 import { describeWeight, emptyModel, importance, levelFrom, predict, prior, TIER_NAME, words, type Facts, type Level, type Model, type Namer } from './learn.ts';
 import { InteractionLog } from './interact.ts';
 import { explore, exploreCounts, EXPLORE_DOWN_REASON, EXPLORE_UP_REASON } from './shadow.ts';
+import { requestHeld } from './add.ts';
 
 type Row = Record<string, any>;
 
@@ -493,6 +494,10 @@ export class Triage {
 
     if (eff.level === 'none') {
       reasons.push(`Silenced: ${eff.source}`);
+      return done('silent');
+    }
+    if (requestHeld(s.db, c.id)) {
+      reasons.push('A message request: it waits under Requests until you accept it');
       return done('silent');
     }
 

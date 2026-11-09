@@ -118,6 +118,11 @@ export class Supervisor {
   /** The hub renamed an account. remote.ts tells the manager, so its page and the adapter's label follow. */
   async renamed(_id: string, _label: string) {}
 
+  /** Something the owner did through the account (add.ts: a join, a friend request), in its log on the hub. */
+  note(id: string, line: string) {
+    appendFileSync(join(this.accountDir(id), 'adapter.log'), `--- ${new Date().toISOString()} ${line}\n`);
+  }
+
   /** The end of an account's adapter log. remote.ts asks the manager, which keeps the log where the account lives. */
   async log(id: string): Promise<string> {
     const p = join(this.opts.dataDir, 'accounts', id, 'adapter.log');

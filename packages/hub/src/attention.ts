@@ -15,6 +15,7 @@ import { decayed, USAGE_HALF_LIFE } from '@dither-chat/protocol';
 import type { Store } from './store.ts';
 import type { Triage } from './triage.ts';
 import type { ActivityStore } from './activity.ts';
+import { requestHeld } from './add.ts';
 
 type Row = Record<string, any>;
 
@@ -792,7 +793,8 @@ export class Attention {
   private input(cid: string, now: number): (ScoreInput & { listed: boolean }) | null {
     const db = this.store.db;
     const c = db.query(`SELECT c.id, c.shape, c.last_message_at, ${LISTED} AS listed FROM conversation c WHERE c.id = ?`).get(cid) as Row | null;
-    if (!c) return null;
+    // An open message request waits under Requests, not in the inbox (add.ts).
+    if (!c || requestHeld(db, cid)) return null;
     const v = db.query(`SELECT MAX(unread) AS unread, MAX(mentions) AS mentions, MIN(COALESCE(last_read_ts, 0)) AS read FROM vantage WHERE target_kind = 'conversation' AND target_id = ?`).get(cid) as Row;
     const unread = v?.unread ?? 0;
     const mentions = v?.mentions ?? 0;

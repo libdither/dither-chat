@@ -6,7 +6,7 @@ import { allCommunities, communitiesOf, convLabel, convTitle, directsOf, netName
 import { shownInbox } from '../inbox.ts';
 import { switcherOrder } from '../ordering.ts';
 import { db, go, newMessage, type Route } from '../state.ts';
-import { mailboxList, viewList } from '@dither-chat/protocol';
+import { describeAddRef, joinsSomething, mailboxList, parseAdd, viewList } from '@dither-chat/protocol';
 import { MAIL_VIEWS } from '../mail/model.ts';
 import { useLayer } from '../phone.ts';
 import { Avatar, NetGlyph } from './bits.tsx';
@@ -68,6 +68,11 @@ function items(): Item[] {
     }
   }
   if ([...db.accounts.values()].some((a) => a.status === 'online' && a.capabilities.includes('openDirect'))) out.push({ key: 'a:new', label: 'New message', sub: 'Start a direct conversation', icon: <Icon name="plus" size={18} />, to: { view: 'inbox' }, last: 0, act: () => (newMessage.value = {}) });
+  // Joining and adding (docs/add.md): the same box, which says plainly what each account cannot do yet.
+  if ([...db.accounts.values()].some((a) => a.status === 'online')) {
+    out.push({ key: 'a:join', label: 'Join a server or group', sub: 'From an invite link or address', icon: <Icon name="link" size={18} />, to: { view: 'inbox' }, last: 0, act: () => (newMessage.value = { mode: 'join' }) });
+    out.push({ key: 'a:add', label: 'Add someone', sub: 'By username, handle or phone', icon: <Icon name="user" size={18} />, to: { view: 'inbox' }, last: 0, act: () => (newMessage.value = { mode: 'add' }) });
+  }
   for (const { person, last } of people())
     out.push({ key: person.id, label: person.name, sub: 'Person', icon: <Avatar id={person.id} name={person.name} url={person.avatar} size={24} />, to: { view: 'people', person: person.id }, last, score: scoreOf(directsOf(person.id).map((d) => d.id)) });
   for (const s of allCommunities()) out.push({ key: s.id, label: s.name, sub: `${netName(s.network)} community`, icon: <Avatar id={s.id} name={s.name} url={s.icon} size={24} square network={s.network} />, to: { view: 'space', space: s.id }, last: 0 });
@@ -123,6 +128,9 @@ function SwitcherBox() {
       })
     : [];
   const found = needle ? switcherOrder(matched).slice(0, 9).map((k) => byKey.get(k)!) : first;
+  // An invite link or address typed or pasted here: Join it, first, so Enter takes it. Read here only; the box asks the network.
+  const invite = parseAdd(needle).find(joinsSomething);
+  if (invite) found.unshift({ key: 'join', label: `Join ${describeAddRef(invite)}`, sub: 'Join', icon: <Icon name="link" size={18} />, to: { view: 'inbox' }, last: 0, act: () => (newMessage.value = { q: needle, mode: 'join' }) });
   const rows: Item[] = needle ? [...found, { key: 'search', label: `Search messages for “${needle}”`, sub: 'Search', icon: <Icon name="search" size={18} />, to: { view: 'search', q: needle }, last: 0 }] : [...found];
   const at = Math.min(sel, rows.length - 1);
   const pick = (i: Item | undefined) => {

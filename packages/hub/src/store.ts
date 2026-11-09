@@ -9,6 +9,7 @@ import { binsFor, estimateMessages, snowflakeTime, type ChannelInput } from './m
 import { Journal } from './journal.ts';
 import { infoFor } from './mediainfo.ts';
 import { TypingRelay, typingTtl } from './typing.ts';
+import { ingestRequests } from './add.ts';
 
 type Row = Record<string, any>;
 
@@ -581,6 +582,11 @@ export class Store {
           this.dirty.extra.push({ t: 'typing', conversationId: cid, identityId: iid, ttl, ...(name ? { name } : {}) });
           break;
         }
+        case 'requests':
+        case 'request':
+        case 'requestGone':
+          ingestRequests(this, acc, ev);
+          break;
         case 'reply':
         case 'log':
           break;

@@ -36,6 +36,7 @@ import { People } from './people.ts';
 import { peopleGraph } from './graph.ts';
 import type { MailHub } from './mail/index.ts';
 import { mailPeople } from './mail/people.ts';
+import { Adding, requestHeld, requestViews } from './add.ts';
 
 
 type ClientData = { kind: 'client' };
@@ -148,6 +149,8 @@ export class HubServer {
   readonly calls: Calls;
   readonly abouts: Abouts;
   readonly people: People;
+  /** Joining, adding people, and requests waiting on you (add.ts, docs/add.md). */
+  readonly adding: Adding;
   /** This process. A client that sees it change knows the hub restarted, and may have a new web build. */
   readonly boot = Buffer.from(crypto.getRandomValues(new Uint8Array(6))).toString('base64url');
   /** Sends by the client's id for them, so one retried after a lost answer goes out once (state.ts queues sends). */
@@ -181,6 +184,7 @@ export class HubServer {
       pickAccount: (c, a) => this.pickAccount(c, a),
     });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
+    this.adding = new Adding({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), liveView: (a) => !!sup.liveViewUrl?.(a) || !!store.account(a)?.live_view });
     sup.calls = this.calls;
     this.usage = new UsageStore(store.db, (changed, removed, all) => {
       const a = this.opts.attention;
@@ -485,13 +489,15 @@ export class HubServer {
     if (path === '/api/bootstrap') {
       // Everything changed so far is in the journal, so the position below covers what this reads.
       this.flush();
-      return ok({ ...s.bootstrap(), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), ...(this.opts.mail ? { mail: this.opts.mail.bootstrap() } : {}), sync: s.journal.position() } satisfies P.Bootstrap);
+      return ok({ ...s.bootstrap(), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), ...(this.opts.mail ? { mail: this.opts.mail.bootstrap() } : {}), requests: requestViews(s), sync: s.journal.position() } satisfies P.Bootstrap);
     }
     if (path === '/api/sync' && method === 'POST') {
       const b = await body<P.SyncRequest>();
       this.flush();
       return ok(syncResponse({ store: s, attention: this.opts.attention, usage: this.usage, devices: this.opts.devices, mail: this.opts.mail, boot: this.boot }, b));
     }
+    // Joining and adding, and requests (add.ts).
+    if (path === '/api/add' || path.startsWith('/api/add/') || path.startsWith('/api/requests')) return (await this.adding.route(req, url, path))!;
     // Mail (mail/routes.ts).
     if (path === '/api/mail' || path.startsWith('/api/mail/')) {
       const r = this.opts.mail ? await this.opts.mail.route(req, url) : null;
@@ -819,7 +825,8 @@ export class HubServer {
       const b = await body<{ upToTs?: number }>();
       const targets = s.markRead(m[1], b.upToTs ?? Date.now());
       const conv = s.nativeOf('conversation', m[1]);
-      for (const t of targets) {
+      // An open message request: reading it here tells the sender nothing until it is accepted (add.ts).
+      for (const t of requestHeld(s.db, m[1]) ? [] : targets) {
         if (conv && t.upTo && this.sup.online(t.accountId))
           this.sup.command(t.accountId, { t: 'markRead', conversation: conv.nativeId, upTo: t.upTo }).catch(() => {});
       }
@@ -1266,6 +1273,7 @@ export class HubServer {
    */
   typing(conversationId: string, requested: string | undefined, stop: boolean): { sent: boolean; accountId?: string; why?: string } {
     if (!stop && !this.store.privacy().shareTyping) return { sent: false, why: 'off' };
+    if (requestHeld(this.store.db, conversationId)) return { sent: false, why: 'a message request' };
     const conv = this.store.nativeOf('conversation', conversationId);
     const accountId = conv && this.pickAccount(conversationId, requested);
     if (!conv || !accountId || !this.sup.online(accountId)) return { sent: false, why: 'no connected account' };

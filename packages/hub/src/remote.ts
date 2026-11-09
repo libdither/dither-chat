@@ -472,7 +472,9 @@ export class RoutedSupervisor extends Supervisor {
     if (!this.remote.has(id)) return super.log(id);
     if (!this.client) throw new Error('dither-accounts is not reachable');
     const r = (await this.client.admin({ do: 'log', account: id, lines: 400 })) as { lines: string[] };
-    return r.lines.join('\n').slice(-20_000);
+    // What the owner did through it from here (Supervisor.note) is in the hub's own log for it.
+    const mine = (await super.log(id)).split('\n').filter((l) => / \[add\] /.test(l));
+    return [...r.lines, ...mine].join('\n').slice(-20_000);
   }
 
   /** The manager's socket for it, on this hub's token: the hub carries it on to the page's live view. */

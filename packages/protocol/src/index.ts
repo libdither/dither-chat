@@ -9,6 +9,7 @@ export * from './usage.ts';
 export * from './typing.ts';
 export * from './activity.ts';
 export * from './about.ts';
+export * from './add.ts';
 export * from './imports.ts';
 export * from './files.ts';
 export * from './mail.ts';

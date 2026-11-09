@@ -38,7 +38,7 @@ export interface ChangeRow {
 }
 
 /** Lists the client holds whole. Their journal id is '*'. */
-const LISTS: Partial<Record<P.ClientEvent['t'], string>> = { folders: 'folders', placePrefs: 'placePrefs', categories: 'categories', rules: 'rules', devices: 'devices', arrange: 'arrange', 'mail.access': 'mailAccess' };
+const LISTS: Partial<Record<P.ClientEvent['t'], string>> = { folders: 'folders', placePrefs: 'placePrefs', categories: 'categories', rules: 'rules', devices: 'devices', arrange: 'arrange', 'mail.access': 'mailAccess', requests: 'requests' };
 
 /** What a broadcast changed, in journal terms. Typing, notifications and progress are of the moment and not kept. */
 export function changesOf(events: P.ClientEvent[]): Change[] {

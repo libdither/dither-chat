@@ -6247,6 +6247,69 @@ body.dragging * {
 .new-message .btn-row {
   margin-top: 12px;
 }
+/* Joining and adding (docs/add.md): readings of what was typed, then a preview card. */
+.add-reading-label {
+  color: var(--text);
+}
+.add-reading small {
+  margin-left: auto;
+}
+.add-unbuilt {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 8px;
+  margin: 0;
+}
+.add-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.add-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.add-card-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.add-card-name {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.add-card-title small {
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+.add-card-desc {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+.add-card .set-help,
+.add-done .set-help {
+  margin: 0;
+}
+.add-actions,
+.add-done .btn-row {
+  flex-wrap: wrap;
+}
+.add-done {
+  margin-top: 10px;
+}
+.add-done > .set-help:first-child {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.add-done > .set-help:first-child svg {
+  flex: none;
+  margin-top: 2px;
+}
 
 /* ---------------------------------------------------------------- calls
 
