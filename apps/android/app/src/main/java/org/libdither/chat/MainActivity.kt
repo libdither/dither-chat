@@ -57,6 +57,7 @@ class MainActivity : Activity() {
         private const val REQ_FILES = 1
         private const val REQ_MEDIA = 2
         private const val REQ_NOTIFY = 3
+        private const val REQ_UPLOAD = 4
 
         /** The activity on screen, if any: a push for what the page is showing needs no notification. */
         @Volatile
@@ -325,6 +326,7 @@ class MainActivity : Activity() {
 
     @Deprecated("Activity result API", level = DeprecationLevel.WARNING)
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == REQ_UPLOAD) return onUploadPicked(resultCode, data)
         if (requestCode != REQ_FILES) return super.onActivityResult(requestCode, resultCode, data)
         val cb = files ?: return
         files = null
@@ -380,6 +382,7 @@ class MainActivity : Activity() {
         resumed = this
         web?.onResume()
         bridge?.resumed()
+        UploadService.resumeIfStopped(this)
     }
 
     override fun onPause() {
@@ -428,6 +431,55 @@ class MainActivity : Activity() {
     }
 
     fun changeHub() = showSetup(hub?.toString(), null)
+
+    // ---------------------------------------------------------------- history uploads (Uploads.kt)
+
+    private var uploadFor: Pair<String, String>? = null
+
+    /** The system picker for an upload that goes on with the app closed: files ("files"), or a whole folder ("folder"). */
+    fun pickUpload(accountId: String, mode: String) {
+        val b = bridge ?: return
+        if (accountId.isEmpty()) return
+        if (Uploads.load(this)?.state == "running") return b.send(JSONObject().put("t", "upload.error").put("error", "An upload is already running."))
+        val i = if (mode == "folder") Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+        else Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*").putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        uploadFor = accountId to mode
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(i, REQ_UPLOAD)
+        } catch (e: ActivityNotFoundException) {
+            uploadFor = null
+            b.send(JSONObject().put("t", "upload.error").put("error", "This phone has no file picker."))
+        }
+    }
+
+    private fun onUploadPicked(resultCode: Int, data: Intent?) {
+        val (account, mode) = uploadFor ?: return
+        uploadFor = null
+        val uris = if (resultCode != RESULT_OK || data == null) emptyList()
+        else data.clipData?.let { c -> List(c.itemCount) { c.getItemAt(it).uri } } ?: listOfNotNull(data.data)
+        if (uris.isEmpty()) return bridge?.send(JSONObject().put("t", "upload.error").put("error", "cancelled")) ?: Unit
+        bridge?.send(JSONObject().put("t", "upload").put("state", "listing").put("accountId", account))
+        Uploads.begin(this, account, if (mode == "folder") emptyList() else uris, if (mode == "folder") uris[0] else null)
+        // Without notifications Android still runs the upload; it only can't show how far it got.
+        ensureNotifications { }
+    }
+
+    fun resumeUpload() {
+        val j = Uploads.load(this) ?: return
+        if (j.state == "error") return
+        j.state = "running"
+        Uploads.save(this, j)
+        UploadService.start(this)
+    }
+
+    /** Stop and forget the upload on this phone. What the hub has of it stays there, to delete or carry on from. */
+    fun forgetUpload() {
+        UploadService.pause(this)
+        Uploads.clear(this)
+        getSystemService(android.app.NotificationManager::class.java).cancel(UploadService.OUTCOME)
+        bridge?.send(Uploads.state(this))
+    }
 
     /** A file from a message, with the name and type the page knows. Only the hub's own files. */
     fun openFileForPage(url: String, name: String?, mime: String?) {

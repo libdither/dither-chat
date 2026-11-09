@@ -7,6 +7,7 @@
 import type * as P from '@dither-chat/protocol';
 import { IMPORT_CHUNK } from '@dither-chat/protocol';
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { android, onNativeUpload } from '../android.ts';
 import { ago } from '../format.ts';
 import { netName } from '../model.ts';
 import { api, toast } from '../state.ts';
@@ -208,7 +209,12 @@ function SourceRow({ s, account, onChange, importing }: { s: P.ImportSourceView;
         {s.sha256 ? ` · ${s.sha256.slice(0, 12)}` : ''}
       </p>
       {pct !== null && <progress class="import-progress" value={pct} max={1} />}
-      {s.status === 'uploading' && <p class="det-note">Not all here yet ({bytes(s.received)} of {bytes(s.size)}). Pick the same file or folder again to carry on.</p>}
+      {s.status === 'uploading' &&
+        (android?.upload.value?.source === s.id ? (
+          <p class="det-note">Uploading from this phone ({bytes(s.received)} of {bytes(s.size)}).</p>
+        ) : (
+          <p class="det-note">Not all here yet ({bytes(s.received)} of {bytes(s.size)}). Pick the same file or folder again to carry on.</p>
+        ))}
       {s.error && <p class="det-note import-error">{s.error}</p>}
       {s.census && <CensusLine c={s.census} />}
       {run && <RunLine r={run} />}
@@ -355,13 +361,25 @@ export function ImportsSection({ a }: { a: P.AccountView }) {
   const zipInput = useRef<HTMLInputElement>(null);
   const load = () => api<{ sources: P.ImportSourceView[] }>('/api/imports').then((r) => setSources(r.sources), () => setSources([]));
   const importing = !!sources?.some((s) => s.run && !s.run.finishedAt);
-  const busy = !!upload || importing || !!sources?.some((s) => s.status === 'checking' || s.status === 'counting');
+  // On the Android app, the app itself uploads, so it goes on with the app closed (android.ts, Uploads.kt).
+  const native = !!android?.uploads();
+  const job = native && android!.upload.value?.accountId === a.id ? android!.upload.value : null;
+  const busy = !!upload || job?.state === 'running' || job?.state === 'listing' || importing || !!sources?.some((s) => s.status === 'checking' || s.status === 'counting');
   useEffect(() => {
     load();
     const t = setInterval(load, busy ? 1500 : 15_000);
     return () => clearInterval(t);
   }, [a.id, busy]);
   useEffect(() => () => void (cancel.current = true), []);
+  useEffect(
+    () =>
+      onNativeUpload((u) => {
+        if (u?.state === 'done' && u.accountId === a.id) toast({ kind: 'info', title: 'Uploaded', body: `${u.name} is on the hub.` });
+        if (u?.state === 'failed' && u.error !== 'cancelled') toast({ kind: 'error', title: 'Upload did not start', body: u.error ?? '' });
+        if (u?.state !== 'listing') load();
+      }),
+    [a.id],
+  );
   useEffect(() => folderInput.current?.setAttribute('webkitdirectory', ''), [folderInput.current]);
 
   const mine = (sources ?? []).filter((s) => s.accountId === a.id || (!s.accountId && (s.network === a.network || !s.network)));
@@ -425,7 +443,37 @@ export function ImportsSection({ a }: { a: P.AccountView }) {
             : `${netName(a.network)} gives a linked device little or no history.`}{' '}
         Bring older messages in from {help?.what ?? 'an export.'} What you upload stays on the hub, in its data directory, and an import only adds what the hub lacks.
       </p>
-      {upload ? (
+      {job && job.state !== 'done' && job.state !== 'failed' ? (
+        <div class="import-upload">
+          <p class="det-note">
+            {job.state === 'listing'
+              ? `Finding the files${job.name ? ` in ${job.name}` : ''}…`
+              : job.state === 'running'
+                ? `Uploading ${job.name}: ${bytes(job.received)} of ${bytes(job.size)}. It goes on with the app closed, and the notification shows how far it got.`
+                : job.state === 'paused'
+                  ? `${job.name} paused at ${bytes(job.received)} of ${bytes(job.size)}.${job.error ? ` ${job.error}` : ''}`
+                  : `${job.name ?? 'The upload'} stopped: ${job.error ?? 'the upload failed'}`}
+          </p>
+          {job.state !== 'listing' && <progress class="import-progress" value={job.received / Math.max(1, job.size)} max={1} />}
+          <div class="btn-row">
+            {job.state === 'running' && (
+              <button class="btn ghost" onClick={() => android!.pauseUpload()}>
+                Pause
+              </button>
+            )}
+            {job.state === 'paused' && (
+              <button class="btn" onClick={() => android!.resumeUpload()}>
+                Carry on
+              </button>
+            )}
+            {(job.state === 'paused' || job.state === 'error') && (
+              <button class="btn ghost" title="What reached the hub stays there" onClick={() => android!.forgetUpload()}>
+                {job.state === 'error' ? 'Dismiss' : 'Stop'}
+              </button>
+            )}
+          </div>
+        </div>
+      ) : upload ? (
         <div class="import-upload">
           <p class="det-note">
             Uploading {upload.name}: {bytes(upload.received)} of {bytes(upload.size)}. Keep this page open.
@@ -440,16 +488,16 @@ export function ImportsSection({ a }: { a: P.AccountView }) {
       ) : (
         <div class="btn-row">
           {help?.folder && (
-            <button class="btn ghost" onClick={() => folderInput.current?.click()}>
+            <button class="btn ghost" onClick={() => (native ? android!.pickUpload(a.id, 'folder') : folderInput.current?.click())}>
               <Icon name="folder" size={14} /> {help.folder}
             </button>
           )}
           {help?.zip && (
-            <button class="btn ghost" onClick={() => zipInput.current?.click()}>
+            <button class="btn ghost" onClick={() => (native ? android!.pickUpload(a.id, 'files') : zipInput.current?.click())}>
               <Icon name="paperclip" size={14} /> {help.zip}
             </button>
           )}
-          <button class="btn ghost" onClick={() => fileInput.current?.click()}>
+          <button class="btn ghost" onClick={() => (native ? android!.pickUpload(a.id, 'files') : fileInput.current?.click())}>
             <Icon name="paperclip" size={14} /> Upload files
           </button>
           <input ref={fileInput} type="file" multiple hidden onChange={onPick} />

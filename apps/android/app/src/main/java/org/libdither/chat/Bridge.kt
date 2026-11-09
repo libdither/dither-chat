@@ -28,6 +28,7 @@ class Bridge(private val activity: MainActivity, private val origin: Uri) : WebV
                 proxy = replyProxy
                 send(info())
                 send(Push.status(activity))
+                send(Uploads.state(activity))
                 queue.forEach(replyProxy::postMessage)
                 queue.clear()
             }
@@ -46,6 +47,11 @@ class Bridge(private val activity: MainActivity, private val origin: Uri) : WebV
             "theme" -> activity.onTheme(m.optString("bg"))
             "hub.change" -> activity.changeHub()
             "open" -> activity.openForPage(m.optString("what"), m.optString("pkg").ifEmpty { null })
+            "upload.pick" -> activity.pickUpload(m.optString("accountId"), m.optString("mode"))
+            "upload.pause" -> UploadService.pause(activity)
+            "upload.resume" -> activity.resumeUpload()
+            "upload.forget" -> activity.forgetUpload()
+            "upload.status" -> send(Uploads.state(activity))
             "file" -> activity.openFileForPage(m.optString("url"), m.optString("name").ifEmpty { null }, m.optString("mime").ifEmpty { null })
         }
     }
@@ -68,7 +74,7 @@ class Bridge(private val activity: MainActivity, private val origin: Uri) : WebV
             .put("distributors", distributors)
             .put("current", UnifiedPush.getAckDistributor(activity) ?: UnifiedPush.getSavedDistributor(activity) ?: JSONObject.NULL)
             .put("notifications", activity.getSystemService(NotificationManager::class.java).areNotificationsEnabled())
-            .put("opens", JSONArray(listOf("app", "appInfo", "notifications", "file")))
+            .put("opens", JSONArray(listOf("app", "appInfo", "notifications", "file", "upload")))
     }
 
     /** To the page, or held until it says hello. */

@@ -10,6 +10,8 @@
     <!-- A call keeps running with the screen off inside a microphone foreground service. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- A history upload (a backup, an export) goes on with the app closed, in a dataSync foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
@@ -40,6 +42,11 @@
             android:name=".CallService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <service
+            android:name=".UploadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- UnifiedPush: the distributor (e.g. the ntfy app) hands messages to the connector, which calls this. -->
         <service

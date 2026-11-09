@@ -30,6 +30,21 @@ export interface NativePush {
   auth: string;
 }
 
+/**
+ * A history upload the app runs itself, so it goes on with the app closed (apps/android Uploads.kt). `listing`: the
+ * picked files are being listed; `running`, `paused`, `error`: the job; `done` and `failed` are said once.
+ */
+export interface NativeUpload {
+  state: 'listing' | 'running' | 'paused' | 'error' | 'done' | 'failed';
+  accountId: string;
+  source?: string;
+  name?: string;
+  received: number;
+  size: number;
+  files?: number;
+  error: string | null;
+}
+
 /** A UnifiedPush distributor app on the phone, as the app sees it. Older builds of the app report package names only. */
 export interface Distributor {
   pkg: string;
@@ -56,6 +71,17 @@ export const android = port
       audio: signal<{ routes: AudioRoute[]; current: number | null } | null>(null),
       /** This app's push registration, once known. */
       push: signal<NativePush | null | undefined>(undefined),
+      /** The history upload this app is running or holds paused, if any. */
+      upload: signal<NativeUpload | null>(null),
+      /** True when this app uploads history itself, with the app closed (older builds do not). */
+      uploads: () => !!android!.info.value?.opens.includes('upload'),
+      /** The phone's picker, for files or a whole folder; the app then uploads what was picked. */
+      pickUpload(accountId: string, mode: 'files' | 'folder') {
+        android!.send({ t: 'upload.pick', accountId, mode });
+      },
+      pauseUpload: () => android!.send({ t: 'upload.pause' }),
+      resumeUpload: () => android!.send({ t: 'upload.resume' }),
+      forgetUpload: () => android!.send({ t: 'upload.forget' }),
       send(msg: Record<string, unknown>) {
         port.postMessage(JSON.stringify(msg));
       },
@@ -90,6 +116,13 @@ export const android = port
   : null;
 
 const waiters = new Map<string, (d: any) => void>();
+const uploadListeners = new Set<(u: NativeUpload | null) => void>();
+
+/** Hear every upload report, the one-off `done` and `failed` included. Returns the way to stop. */
+export function onNativeUpload(fn: (u: NativeUpload | null) => void): () => void {
+  uploadListeners.add(fn);
+  return () => void uploadListeners.delete(fn);
+}
 
 function receive(d: any) {
   const t = String(d.t ?? '');
@@ -108,6 +141,16 @@ function receive(d: any) {
         notifications: d.notifications,
         opens: d.opens ?? [],
       };
+      break;
+    case 'upload':
+      android!.upload.value =
+        d.state === 'none'
+          ? null
+          : { state: d.state, accountId: d.accountId ?? '', source: d.source, name: d.name, received: d.received ?? 0, size: d.size ?? 0, files: d.files, error: d.error ?? null };
+      for (const fn of uploadListeners) fn(android!.upload.value);
+      break;
+    case 'upload.error':
+      for (const fn of uploadListeners) fn({ state: 'failed', accountId: '', received: 0, size: 0, error: d.error ?? 'Failed' });
       break;
     case 'audio':
       android!.audio.value = { routes: d.routes ?? [], current: d.current ?? null };
