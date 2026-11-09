@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
-import { type AddRef, addCapability, describeAddRef, parseAdd, validAddRef } from '../src/add.ts';
+import { type AddRef, addCapability, describeAddRef, LINK_RELATIONSHIPS, parseAdd, REMOVE_LABEL, validAddRef } from '../src/add.ts';
+import { RELATIONSHIP_LABEL } from '../src/about.ts';
 
 const inv = (network: AddRef['network'], code: string, url: string): AddRef => ({ kind: 'invite', network, code, url });
 const per = (network: AddRef['network'], handle: string): AddRef => ({ kind: 'person', network, handle });
@@ -147,4 +148,9 @@ test('each reading says what it is in a few words', () => {
 
 test('join and ask need join, friend follow and contact need connect, message needs openDirect', () => {
   expect(['join', 'ask', 'friend', 'follow', 'contact', 'message'].map((a) => addCapability(a as never))).toEqual(['join', 'join', 'connect', 'connect', 'connect', 'openDirect']);
+});
+
+test("a list holds every relationship but the two that are not one: someone asking you, and nobody", () => {
+  expect([...LINK_RELATIONSHIPS].sort()).toEqual(Object.keys(RELATIONSHIP_LABEL).filter((r) => r !== 'requesting' && r !== 'stranger').sort());
+  expect(LINK_RELATIONSHIPS.map((r) => REMOVE_LABEL[r])).toEqual(['Remove friend', 'Cancel request', 'Unblock', 'Remove contact', 'Unfollow']);
 });

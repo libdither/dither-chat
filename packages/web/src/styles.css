@@ -11519,3 +11519,174 @@ button.msg-edited.link:hover {
     margin: 0 8px calc(8px + env(safe-area-inset-bottom, 0px));
   }
 }
+/* People links (docs/add.md "Relationships"): the account a request came to, the network's warning and its confirm
+   step, a DM's friend-request banner, how you stand on a profile, and People's lists. */
+.request-avatar {
+  flex: none;
+  padding: 0;
+  border-radius: 50%;
+}
+.request-avatar:disabled {
+  cursor: default;
+}
+.request-to {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.request-to .acc-dot,
+.pf-link-what .acc-dot,
+.plink-acc .acc-dot,
+.people-accounts .acc-dot {
+  width: 7px;
+  height: 7px;
+  box-shadow: none;
+}
+.request-handle {
+  color: var(--text-faint);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.request-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--warn) 14%, transparent);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.request-warning svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--warn);
+}
+.request-card.warned {
+  border-color: color-mix(in oklab, var(--warn) 45%, var(--border));
+}
+.add-confirm .request-warning {
+  margin-bottom: 6px;
+}
+.add-confirm .btn-row {
+  flex-wrap: wrap;
+}
+.link-banner {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 16px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-raised);
+}
+.link-banner-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.link-banner-head > svg {
+  flex: none;
+  color: var(--accent);
+}
+.link-banner-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+.link-banner-text b {
+  color: var(--text);
+}
+.people-accounts .chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.link-banner-acc {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.link-banner .request-answers .btn-row {
+  flex-wrap: wrap;
+}
+.pf-links-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pf-link-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.pf-link-what {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pf-link-what small {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-dim);
+}
+.pf-link-row .btn {
+  flex: none;
+}
+.remove-link p {
+  margin: 0 0 8px;
+}
+.plink-row {
+  padding: 0 6px 0 0;
+}
+.plink-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0 8px 10px;
+  text-align: left;
+  color: inherit;
+}
+.plink-main .row-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+.plink-acc {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.plink-since {
+  color: var(--text-faint);
+}
+.plink-end {
+  flex: none;
+  opacity: 0.55;
+}
+.plink-row:hover .plink-end,
+.plink-end:focus-visible {
+  opacity: 1;
+}
+@media (pointer: coarse) {
+  .plink-end {
+    opacity: 1;
+  }
+}
+@media (max-width: 820px) {
+  .link-banner {
+    margin: 6px 8px 0;
+  }
+}

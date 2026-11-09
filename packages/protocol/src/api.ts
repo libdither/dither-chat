@@ -4,7 +4,7 @@
  */
 
 import type { About, AboutFields, PersonAbout, PersonRelationship } from './about.ts';
-import type { AddAction, AddCheck, AddPreview, AddRef, RequestAnswer, RequestFact } from './add.ts';
+import type { AddAction, AddCheck, AddPreview, AddRef, LinkRelationship, RequestAnswer, RequestFact } from './add.ts';
 import type { Capability, NativeMute, ReceiptState } from './adapter.ts';
 import type {
   AccountStatus,
@@ -130,6 +130,35 @@ export interface ConversationView {
   lastMessage: MessagePreview | null;
   lastMessageAt: number | null;
   nativeMute: NativeMute | null;
+  /** direct: a friend request between one of your accounts here and the other person, waiting on one side (docs/add.md). */
+  pending?: PendingLinkView;
+}
+
+/**
+ * A friend or follow request between an account and someone, not yet answered. incoming: they asked; the request
+ * to answer is `requestId`. Outgoing: the account asked (its list says 'requested'); Cancel removes it.
+ */
+export interface PendingLinkView {
+  accountId: string;
+  identityId: string;
+  incoming: boolean;
+  requestId: string | null;
+}
+
+/** One entry of an account's list (capability 'relationships', the hub's person_link). */
+export interface PersonLinkView {
+  accountId: string;
+  identityId: string;
+  personId: string | null;
+  relationship: LinkRelationship;
+  /** ms epoch, when the network said. */
+  since: number | null;
+}
+
+/** GET /api/people?relationship=friend&account=acc_…: who is on your accounts' lists, newest first. */
+export interface PeopleLinksView {
+  links: PersonLinkView[];
+  identities: IdentityView[];
 }
 
 export interface AttachmentView {
@@ -559,6 +588,8 @@ export interface ProfileView {
   firstSeenTs: number | null;
   /** What each network said last, kept by the hub; ask `GET /api/identities/:id/about` for a fresh one. */
   abouts: PersonAboutView[];
+  /** How each of your accounts stands with them, from the accounts' own lists (capability 'relationships'). */
+  links?: PersonLinkView[];
   /**
    * Spaces your accounts' clients have seen them as a member of, last seen first. Only with the adversarial `members`
    * setting on; not every space they are in.
@@ -716,6 +747,8 @@ export interface AddResultView {
   pending: boolean;
   /** The network wants a check first, in the account's live view. Nothing was done. */
   check: AddCheck | null;
+  /** The network wants you to confirm first: its words. Nothing was done; send it again with confirm: true. */
+  confirm: string | null;
   notes: string[];
   /** Where that check is done: this hub carries the account's live view, and/or its page on dither-accounts. */
   liveView: boolean;
@@ -736,6 +769,8 @@ export interface RequestView {
   target: { kind: 'space' | 'conversation'; id: string | null; name: string | null; members: number | null } | null;
   ts: number;
   answers: RequestAnswer[];
+  /** The network flagged it, in its words: possible spam, or someone you share nothing with. */
+  warning: string | null;
 }
 
 export interface SearchHit {

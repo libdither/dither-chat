@@ -6,6 +6,7 @@
 import type * as P from '@dither-chat/protocol';
 import { BIO_LIMIT, bioLength, NETWORK_META } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
+import { linkOf } from './add.ts';
 import type { Store } from './store.ts';
 
 type Row = Record<string, any>;
@@ -178,8 +179,11 @@ export class People {
     });
     const mf = mutualFriends?.map(ident);
     const fr = friends?.map(ident);
+    // The account's own list says how you stand, when it has them on it (add.ts person_link); else the profile.
+    const listed = accountId ? linkOf(s.db, accountId, identityId) : null;
     return {
       ...rest,
+      ...(listed ? { relationship: listed } : {}),
       identityId,
       network,
       accountId,

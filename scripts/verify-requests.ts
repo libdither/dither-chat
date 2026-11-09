@@ -1,6 +1,6 @@
 /**
  * Requests waiting on you (docs/add.md "Requests"), end to end against a demo hub in headless Chromium: the inbox's
- * Requests row counts the demo's three; profile buttons on the requester (Accept, Decline) and on a stranger (Add
+ * Requests row counts the demo's five; profile buttons on the requester (Accept, Decline) and on a stranger (Add
  * friend, then "Request sent", still so after a reload), and none where no account can; the Requests view groups a
  * card per request and a link to one focuses it; accepting the Matrix invite lands in the room; the Signal message
  * request opens read-only, the bar in place of the composer, with no read receipt sent to the network, and accepting
@@ -59,6 +59,8 @@ const nova = discord('nova.wav');
 const selves = new Set(boot.accounts.map((a: any) => a.selfIdentityId));
 const [tim, bea] = boot.identities.filter((i: any) => i.network === 'discord' && !i.personId && !selves.has(i.id) && i.handle && i.id !== nova?.id).sort((a: any, b: any) => a.handle.localeCompare(b.handle));
 const held = boot.requests?.find((r: any) => r.kind === 'message');
+// The alt account's two requests Discord flagged (verify-people-links.ts answers them).
+const flagged = boot.requests?.filter((r: any) => r.warning).length ?? 0;
 if (!nova || !tim || !bea || !held?.target?.id) throw new Error('the demo world lacks its requesters and strangers');
 
 try {
@@ -66,9 +68,9 @@ try {
   await open('#/inbox', '.side-new');
 
   // 1. The inbox's Requests row: one row, with the count.
-  check(boot.requests.length === 3, 'the demo has three requests', boot.requests.map((r: any) => r.kind));
+  check(boot.requests.length === 5 && flagged === 2, 'the demo has five requests, two of them flagged', boot.requests.map((r: any) => r.kind));
   await p.until(`!!document.querySelector('.requests-row')`, 5000);
-  check((await text('.requests-row .requests-count')) === '3', 'the inbox has a Requests row with 3', await text('.requests-row'));
+  check((await text('.requests-row .requests-count')) === '5', 'the inbox has a Requests row with 5', await text('.requests-row'));
   check((await text('.requests-row .row-preview')).includes('Nova'), 'it says who asked', await text('.requests-row .row-preview'));
   const rows = await p.eval<string[]>(`[...document.querySelectorAll('.sidebar .side-scroll [data-row]')].map((el) => el.dataset.row)`);
   check(!rows.includes(held.target.id), 'the message request is not a row of its own');
@@ -110,7 +112,7 @@ try {
   await open('#/inbox', '.side-new');
   await p.until(`!!document.querySelector('.requests-row')`, 5000);
   await click('.requests-row');
-  await p.until(`location.hash.startsWith('#/requests') && document.querySelectorAll('.request-card').length === 3`, 8000);
+  await p.until(`location.hash.startsWith('#/requests') && document.querySelectorAll('.request-card').length === 5`, 8000);
   const fit = await p.eval<{ w: number; scroll: number; pane: number }>(
     `(() => ({ w: innerWidth, scroll: document.documentElement.scrollWidth, pane: document.querySelector('.requests-pane').getBoundingClientRect().width }))()`,
   );
@@ -126,7 +128,8 @@ try {
   const inv = await text(card('invite'));
   check(inv.includes('Jules') && inv.includes('invited you to Nix Hackathon 2026') && inv.includes('23 members') && inv.includes('Matrix'), 'the invite card: who, the room, its members, the network', inv);
   check(await has(`${card('invite')}.focused`), 'a link to a request focuses its card');
-  check((await text(`${card('friend')} [data-answer]`)) === 'Accept | Decline | Block', 'the buttons the request offers', await text(`${card('friend')} [data-answer]`));
+  const nova1 = `.request-card[data-request="${boot.requests.find((r: any) => r.from === nova.id).id}"]`;
+  check((await text(`${nova1} [data-answer]`)) === 'Accept | Decline | Block | Message', 'the buttons the request offers, and Message', await text(`${nova1} [data-answer]`));
   check((await text(card('message'))).includes('got your number from the climbing gym list'), 'the message request shows what they wrote');
   await shot('requests-05-view');
 
@@ -158,12 +161,14 @@ try {
   await p.until(`!!document.querySelector('.composer') && !document.querySelector('.request-bar')`, 8000);
   check(true, 'accepting brings the composer');
 
-  // 7. Decline the Discord friend request: its card goes, and the row with the last one.
+  // 7. Decline the Discord friend requests: their cards go, and the row with the last one.
   await open('#/requests', '.request-card');
-  check((await p.eval<number>(`document.querySelectorAll('.request-card').length`)) === 1, 'one request left');
-  await click(`${card('friend')} [data-answer="decline"]`);
-  await p.until(`!document.querySelector('.request-card')`, 8000);
-  check((await text('.requests-pane')).includes('Nothing waiting on you'), 'declined, its card is gone');
+  check((await p.eval<number>(`document.querySelectorAll('.request-card').length`)) === 3, 'three requests left: the friend requests');
+  for (let left = 3; left > 0; left--) {
+    await click(`${card('friend')} [data-answer="decline"]`);
+    await p.until(`document.querySelectorAll('.request-card').length === ${left - 1}`, 8000);
+  }
+  check((await text('.requests-pane')).includes('Nothing waiting on you'), 'declined, their cards are gone');
   check(!(await has('.requests-row')) && !(await bootstrap()).requests.length, 'and the Requests row with it');
   await shot('requests-07-empty');
 

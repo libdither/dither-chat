@@ -39,6 +39,25 @@ export function requestLine(r: Pick<P.RequestView, 'kind' | 'network' | 'target'
   }
 }
 
+/** Which of your accounts it came to, plainly: "to your Discord account main". */
+export function accountLine(network: P.Network, label: string | null | undefined): string {
+  const net = NETWORK_META[network].name;
+  return label && label !== net ? `to your ${net} account ${label}` : `to your ${net} account`;
+}
+
+/** A line the network gave, ending as a sentence does. */
+export const sentence = (s: string) => (/[.!?…]$/.test(s.trim()) ? s.trim() : `${s.trim()}.`);
+
+/**
+ * Said under the network's words before "Accept anyway" or "Add anyway": reads right after a warning on the card
+ * ("Discord filed this request as possible spam") and after the network asked for a confirm.
+ */
+export function confirmNext(verb: 'accept' | 'add', canMessage: boolean): string {
+  const first = verb === 'accept' ? 'Nothing is accepted yet.' : 'No friend request has gone out yet.';
+  const then = verb === 'accept' ? 'Accept it anyway' : 'Add them anyway';
+  return canMessage ? `${first} ${then}, or message them first to see who they are.` : `${first} ${then} only if you know who they are.`;
+}
+
 /** "23 members", for an invite or a join request whose place says. */
 export function targetMembers(r: Pick<P.RequestView, 'target'>): string | null {
   const n = r.target?.members;
@@ -129,3 +148,97 @@ export function relation(
       return null;
   }
 }
+
+// ------------------------------------------------------------------ relationships
+
+/** The question before ending one: "Remove Nova as a friend on your Discord account main?" */
+export function removeQuestion(rel: P.LinkRelationship, name: string, network: P.Network, label: string | null | undefined): string {
+  const where = accountLine(network, label).replace(/^to /, 'on ');
+  switch (rel) {
+    case 'friend':
+      return `Remove ${name} as a friend ${where}?`;
+    case 'requested':
+      return `Cancel your friend request to ${name} ${where}?`;
+    case 'blocked':
+      return `Unblock ${name} ${where}?`;
+    case 'contact':
+      return `Remove ${name} from your contacts ${where}?`;
+    case 'following':
+      return `Unfollow ${name} ${where}?`;
+  }
+}
+
+/** What ending it does, said under the question. */
+export function removeNote(rel: P.LinkRelationship, network: P.Network): string {
+  const net = NETWORK_META[network].name;
+  switch (rel) {
+    case 'friend':
+      return `You stay in your DMs and servers with them; to be friends again, one of you sends a new request on ${net}.`;
+    case 'requested':
+      return 'They no longer see your request. You can send another later.';
+    case 'blocked':
+      return `They can find you and message you on ${net} again, as anyone can.`;
+    case 'contact':
+      return `They leave your ${net} contacts. Your chats with them stay.`;
+    case 'following':
+      return `Their posts leave your ${net} feed.`;
+  }
+}
+
+
+/** The People list's filters: chats with people, or one kind of list across your accounts. */
+export const PEOPLE_FILTERS: { id: 'chats' | 'friend' | 'contact' | 'following'; label: string }[] = [
+  { id: 'chats', label: 'Chats' },
+  { id: 'friend', label: 'Friends' },
+  { id: 'contact', label: 'Contacts' },
+  { id: 'following', label: 'Following' },
+];
+export type PeopleFilter = (typeof PEOPLE_FILTERS)[number]['id'];
+
+/** Where each kind of list is: friends on Discord, address books, follows on X and Instagram. */
+const LIST_NETWORKS: Record<Exclude<PeopleFilter, 'chats'>, readonly P.Network[]> = {
+  friend: ['discord'],
+  contact: ['telegram', 'signal', 'whatsapp', 'gmessages'],
+  following: ['x', 'instagram'],
+};
+
+/** The filters worth a chip: chats, and each kind some account here keeps a list of. None but chats: no chips. */
+export function peopleFilters(accounts: Iterable<Pick<P.AccountView, 'network' | 'capabilities'>>): typeof PEOPLE_FILTERS {
+  const nets = new Set([...accounts].filter((a) => a.capabilities.includes('relationships')).map((a) => a.network));
+  const shown = PEOPLE_FILTERS.filter((f) => f.id === 'chats' || LIST_NETWORKS[f.id].some((n) => nets.has(n)));
+  return shown.length > 1 ? shown : [];
+}
+
+/** One row per person (or identity with no person) on the lists, in the hub's order, each with its accounts' links. */
+export function linkRows(links: readonly P.PersonLinkView[]): { key: string; personId: string | null; identityId: string; links: P.PersonLinkView[] }[] {
+  const rows = new Map<string, { key: string; personId: string | null; identityId: string; links: P.PersonLinkView[] }>();
+  for (const l of links) {
+    const key = l.personId ?? l.identityId;
+    const row = rows.get(key) ?? rows.set(key, { key, personId: l.personId, identityId: l.identityId, links: [] }).get(key)!;
+    row.links.push(l);
+  }
+  return [...rows.values()];
+}
+
+/**
+ * How each of your accounts stands with them, for a profile: the accounts' own lists, else what a network's profile
+ * said through the account that asked. Someone asking you is a request, not a list entry: the hero has Accept.
+ */
+export function profileLinks(
+  identities: readonly Pick<P.IdentityView, 'id' | 'network'>[],
+  links: readonly P.PersonLinkView[],
+  abouts: Record<string, Pick<P.PersonAboutView, 'accountId' | 'relationship'> | undefined>,
+): { identityId: string; network: P.Network; accountId: string; relationship: P.LinkRelationship }[] {
+  const out: { identityId: string; network: P.Network; accountId: string; relationship: P.LinkRelationship }[] = [];
+  for (const i of identities) {
+    const listed = links.filter((l) => l.identityId === i.id);
+    for (const l of listed) out.push({ identityId: i.id, network: i.network, accountId: l.accountId, relationship: l.relationship });
+    const a = abouts[i.id];
+    const rel = a?.relationship;
+    if (a?.accountId && rel && rel !== 'stranger' && rel !== 'requesting' && !listed.some((l) => l.accountId === a.accountId)) out.push({ identityId: i.id, network: i.network, accountId: a.accountId, relationship: rel });
+  }
+  return out;
+}
+
+/** Who can end it: the account itself, connected, with the capability. */
+export const canRemove = (account: Pick<P.AccountView, 'status' | 'capabilities'> | undefined) => !!account && account.status === 'online' && account.capabilities.includes('disconnect');

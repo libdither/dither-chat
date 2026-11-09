@@ -12,7 +12,9 @@ it yet**: the adapters live in dither-accounts and are built from this contract 
 yet") and offers no button. Messaging someone by Matrix ID, phone or Telegram @name works as it always did.
 
 Slice B shows requests in the inbox with Accept, Decline and Block, notifies them, and puts buttons on profiles
-("Requests on the page", below). Slice C turns invite links in messages into cards with Join.
+("Requests on the page", below). Slice C turns invite links in messages into cards with Join. Relationships (2026-11-09,
+below) adds the network's warning and confirm to requests, each account's list of friends, contacts and follows, a
+DM's friend-request banner, and Remove friend and the like.
 
 ## What the box reads
 
@@ -59,6 +61,7 @@ else.
   | looking up (`resolve`) | 60 an hour | 20 an hour (its +phone lookup is a watched usync query) |
   | joining and asking to join | 10 a day | 5 a day |
   | friend, follow, contact | 20 a day | 20 a day |
+  | removing: unfriend, cancel a request, unblock, remove a contact, unfollow | 20 a day | 20 a day |
 
   Past it the hub answers 429 with a sentence that says when the next frees up. A network's own flood wait comes back
   as its error sentence, saying when, and is shown as it is.
@@ -68,6 +71,10 @@ else.
   verified phone, Discord's server rules), the card says "Discord wants a check first … Nothing was done", with a
   button to the account's live view: on this hub when it carries one, else the account's page on dither-accounts,
   else the account here.
+- **A confirm is the owner's.** When the network wants a confirm first (Discord: "You must confirm the friend request
+  to add this user."), nothing was done: the card shows its words and Accept anyway or Add anyway, which sends the
+  same thing again with `confirm: true`. An adapter confirms only when the command says so. Such a slot is given back
+  to the pace.
 - **Logged.** What you joined, asked, added or answered goes in the account's log on the hub (`--- <time> [add] …`),
   shown with the account's adapter log, also for accounts dither-accounts runs.
 
@@ -90,21 +97,28 @@ without being a contact (Signal, Instagram, Messenger, X), or asks to join a gro
 
 Additive; `PROTOCOL_VERSION` stays 1.
 
-- Capabilities: `resolve` (look it up), `join` (join and ask), `connect` (friend, follow, contact), `requests`.
-- Commands: `resolve { ref }` → `AddPreview`; `add { ref, action }` → `AddResult` (Message goes through `openDirect`);
-  `answer { request, answer }` → `AddResult`. Facts first (identities, spaces, conversations), then the reply.
-- Events: `requests { requests }`, `request { request }`, `requestGone { nativeId }`.
-- `AddPreview.partial`, `AddResult.check` (`captcha`, `verify`, `phone`, `rules`), `AddResult.notes`.
-- `PersonRelationship` gains `following` (you follow them: X, Instagram).
+- Capabilities: `resolve` (look it up), `join` (join and ask), `connect` (friend, follow, contact), `requests`,
+  `relationships` (the account's list), `disconnect` (remove).
+- Commands: `resolve { ref }` → `AddPreview`; `add { ref, action, confirm? }` → `AddResult` (Message goes through
+  `openDirect`); `answer { request, answer, confirm? }` → `AddResult`; `remove { identity, relationship }` →
+  `AddResult`. Facts first (identities, spaces, conversations), then the reply.
+- Events: `requests { requests }`, `request { request }`, `requestGone { nativeId }`, `relationships { list }`,
+  `relationship { fact }`.
+- `AddPreview.partial`, `AddResult.check` (`captcha`, `verify`, `phone`, `rules`), `AddResult.confirm` (the network's
+  words), `AddResult.notes`, `RequestFact.warning` (the network's words when it flagged a request).
+- `PersonRelationship` gains `following` (you follow them: X, Instagram). `RelationshipFact { identity, relationship,
+  since? }`, where relationship is friend, requested, blocked, contact, following, or stranger for gone.
 
 ## API
 
 | Route | |
 |---|---|
 | POST /api/add/resolve `{accountId, ref}` | `AddPreviewView`: hub ids, the hub's media URL for the picture, the inviter as an identity (its view in `identities`), `joined` as hub ids, and only the actions this account can do (Message needs `openDirect`, Join and Ask `join`, the rest `connect`) |
-| POST /api/add `{accountId, ref, action}` | `AddResultView`: the conversation to open (its view), the space, the identity, `pending`, `check`, `notes`, and where the check is done (`liveView`, `managerUrl`). Message is refused here: it is POST /api/directs |
-| GET /api/requests | `{ requests: RequestView[] }` |
-| POST /api/requests/:id `{answer}` | `AddResultView` |
+| POST /api/add `{accountId, ref, action, confirm?}` | `AddResultView`: the conversation to open (its view), the space, the identity, `pending`, `check`, `notes`, and where the check is done (`liveView`, `managerUrl`). Message is refused here: it is POST /api/directs |
+| GET /api/requests | `{ requests: RequestView[] }` (each with `warning`) |
+| POST /api/requests/:id `{answer, confirm?}` | `AddResultView` (with `confirm`, the network's words, when it wants one first) |
+| GET /api/people `?relationship=&account=` | `PeopleLinksView`: the accounts' list entries (friend, requested, blocked, contact, following), by name, with their identities |
+| POST /api/people/:identityId/remove `{relationship, accountId?}` | `AddResultView` with the relationship after. Only from the page (a browser's Origin, same-origin); without accountId, the one account whose list says so |
 
 Refusals: 400 for a reading `parseAdd` would not give or one from another network, 404 for no such account or request,
 409 for an account that cannot (with the plain line) or is not connected, 429 past the pace, 502 with the network's
@@ -152,9 +166,14 @@ What each network will do once its adapter has it. **None of the real adapters d
 | `chat.whatsapp.com/MapleGardenSwap26` | a WhatsApp group: Join |
 | any `signal.group/#…` link | partial; Join adds a group |
 
-After connecting, the demo sends three requests: a Discord friend request, a Matrix room invite, and a Signal message
-request whose conversation stays out of the inbox. A demo account's `capabilities` action (`{ without: [...] }`) says
-hello again without some, to see the page without them.
+After connecting, the demo sends five requests: a Discord friend request to main, two to alt that Discord flagged (one
+as possible spam, one from someone it shares nothing with: Accept without confirm comes back with Discord's confirm
+sentence, and Message to the spam one is refused), a Matrix room invite, and a Signal message request whose
+conversation stays out of the inbox. The Discord and Telegram accounts send their lists: main's friends and a block,
+alt's friends and a request it sent (Mara), Telegram's contacts and a block; each can be removed. Add friend on a
+Discord username nobody in the demo has (`kestrel.dev`) wants a confirm first. A demo account's `capabilities` action
+(`{ without: [...] }`) says hello again without some, to see the page without them, and `relate` (`{ who,
+relationship }`) puts someone on its list, for a kind no demo network has (following).
 
 ## QR codes
 
@@ -302,7 +321,49 @@ someone you know notifies once; and a profile has the buttons for how you stand 
   has no such way. The hub writes the new relationship into the profile it keeps, so a reload says the same until
   the network is asked again. Code: packages/web/src/requests.ts (pure), ui/Requests.tsx.
 
-Checked by scripts/verify-requests.ts against a demo hub: the row with 3, the buttons on the requester and on a
+Checked by scripts/verify-requests.ts against a demo hub: the row with 5, the buttons on the requester and on a
 stranger (and none without `connect`), the view on a phone, grouped cards, the Matrix invite accepted into its room,
 the Signal message request opened with no read receipt to Signal (the demo account's `readLog` action) and accepted
-into a composer, and the Discord friend request declined, taking the row with it.
+into a composer, and the Discord friend requests declined, taking the row with them.
+
+## Relationships
+
+How each of your accounts stands with someone, and ending it (2026-11-09). An incoming request is still a request
+(above); everything else is the account's list.
+
+- **The list.** An adapter with `relationships` sends its whole list after it connects and each change after. The hub
+  keeps it in `person_link (account_id, identity_id, relationship, since)`: a `relationships` event replaces the
+  account's rows, a `relationship` event changes one, and `stranger` removes it. A request accepted, an Add friend
+  and a remove write their result there at once when the account has a list. A profile's relationship comes from it
+  when the account has them on it, else from the network's profile (people.ts).
+- **Flagged requests.** A request the network flagged carries its words (`warning`): Discord's "Discord filed this
+  request as possible spam" or "Discord says you share no server or friend with them". The card shows them above the
+  buttons, and Accept takes a second click: the step repeats the words and says "Nothing is accepted yet. Accept it
+  anyway, or message them first to see who they are." Accept anyway sends `confirm: true`. An answer that comes back
+  with `confirm` shows the same step with the network's sentence.
+- **The card** also says plainly which account it came to ("to your Discord account main"), and its avatar and name
+  open the profile. **Message** opens the DM with them on that account, or starts it through POST /api/directs; a
+  network that will not open it says why, on the card.
+- **A DM's banner.** A direct conversation's view carries `pending` when a friend or follow request waits between one
+  of its accounts and the other person: theirs (from `add_request`, with the request to answer) or yours (the list
+  says `requested`). The page shows it under the header, as Discord does: "Wren wants to be friends" with Accept,
+  Decline and Block (and the warning), or "Friend request sent" with Cancel.
+- **Removing.** POST /api/people/:identityId/remove asks the adapter (`remove`) to end what the owner saw: friend →
+  unfriend, requested → cancel, blocked → unblock, contact → remove the contact, following → unfollow. The adapter
+  refuses when the network says otherwise now ("That changed; look again"). Only on a click on the hub's own page,
+  paced on its own at 20 a day per account. Every button asks first, naming the account.
+- **Where.** A profile's **How you stand** card lists each account's entry with its button. People has chips for
+  Friends, Contacts and Following, each shown where an account here keeps that kind of list (Discord friends;
+  Telegram, Signal, WhatsApp and Google Messages contacts; X and Instagram follows): one row per person, the accounts
+  that have them, and since when; by account when several have any; a row's × removes it there, after asking.
+
+| Network | List | Remove |
+|---|---|---|
+| Discord | friend, requested, blocked | unfriend, cancel, unblock (the client's own actions, dither-accounts) |
+| Telegram | contact, blocked | delete the contact, unblock |
+| X, Instagram | following, later | unfollow |
+
+Code: packages/hub/src/add.ts (person_link, the routes), packages/web/src/requests.ts (pure: the lines, the rows),
+ui/Requests.tsx (`Answers`, `LinkBanner`, `ProfileLinks`, `PeopleLinks`, `RemoveDialog`), ConfirmFirst in
+ui/NewMessage.tsx. Tested by packages/hub/test/links.test.ts and scripts/verify-people-links.ts, which drives every
+screen at a desktop and a phone width on a demo hub.

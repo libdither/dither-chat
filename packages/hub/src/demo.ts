@@ -65,6 +65,9 @@ const D = {
   shade: did('shade', 'shade.skip', 'Shade'),
   // Asks to be friends (docs/add.md).
   nova: did('nova', 'nova.wav', 'Nova'),
+  // Ask the alt account to be friends, flagged by Discord: one as possible spam, one who shares nothing with it.
+  drops: did('drops', 'free.nitro.drops', 'Nitro Drops'),
+  wren: did('wren', 'wren.fm', 'Wren'),
 };
 const sid = (k: string, phone: string, displayName: string, contact = true): P.IdentityFact => ({ nativeId: uuid(k), handle: phone, displayName, contact });
 const S = {
@@ -113,6 +116,8 @@ const TG = {
   alice: tid('alice', 'alicechen', 'Alice Chen'),
   noor: tid('noor', 'noor_h', 'Noor'),
   lena: tid('lena', 'lena_k', 'Lena K', false),
+  // Blocked (docs/add.md "Relationships").
+  spam: tid('spam', 'crypto_signals_vip', 'Crypto Signals VIP', false),
 };
 const POOLS: Partial<Record<P.Network, Record<string, P.IdentityFact>>> = { discord: D, signal: S, whatsapp: W, matrix: M, telegram: TG };
 const at = (i: P.IdentityFact) => `<@${i.nativeId}>`;
@@ -1269,14 +1274,28 @@ const ALREADY_IN: Partial<Record<P.Network, Record<string, { preview: P.AddPrevi
 
 const EXPIRED = new Set(['oldparty', 'Expired2025xyz', 'OldSwapGroup2025']);
 
+/** Networks whose demo accounts keep a list of who they stand with (capabilities 'relationships' and 'disconnect'). */
+const LISTED = new Set<P.Network>(['discord', 'telegram']);
+
+/** How the demo accounts stand with people from the start, over the contacts in their pools. */
+const DEMO_LINKS: Partial<Record<AccKey, Record<string, P.LinkRelationship>>> = {
+  dmain: { [D.owl.nativeId]: 'blocked' },
+  dalt: { [D.mara.nativeId]: 'requested' },
+  tg: { [TG.spam.nativeId]: 'blocked' },
+};
+
+/** What Discord says when a request must be confirmed first. */
+const CONFIRM_LINE = 'You must confirm the friend request to add this user.';
+
 /**
  * The demo's side of Add: resolve, add and answer as an adapter would, and the requests it holds. What it joined and
  * answered is kept in its account dir, so a restart neither forgets nor repeats it.
  */
 class DemoAdd {
-  private state: { joined: string[]; answered: string[]; friends: string[]; requested?: string[]; blocked?: string[] };
+  /** links: how the account stands with someone since the demo began, over DEMO_LINKS and the pool's contacts. */
+  private state: { joined: string[]; answered: string[]; friends: string[]; requested?: string[]; blocked?: string[]; links?: Record<string, P.PersonRelationship> };
   /** How many of each command this account was sent, for verify scripts (action addLog): a kept preview is none. */
-  readonly counts = { resolve: 0, add: 0, answer: 0 };
+  readonly counts = { resolve: 0, add: 0, answer: 0, remove: 0 };
   constructor(
     private key: AccKey,
     private network: P.Network,
@@ -1292,23 +1311,80 @@ class DemoAdd {
     writeFileSync(join(this.dir, 'added.json'), JSON.stringify(this.state));
   }
 
-  /** After connect: what was joined before, then the requests still waiting (identity facts first). */
+  /** After connect: what was joined before, then the requests still waiting and the account's list (identity facts first). */
   start(epoch: number) {
     for (const k of this.state.joined) this.emitPlace(k, Date.now());
     this.emit({ t: 'requests', requests: this.requests(epoch).filter((r) => !this.state.answered.includes(r.nativeId)) });
+    if (LISTED.has(this.network)) this.emit({ t: 'relationships', list: this.list(epoch) });
+  }
+
+  /** The account's list: friends, requests sent and blocks on Discord; contacts and blocks on Telegram. */
+  private list(epoch: number): P.RelationshipFact[] {
+    const out = new Map<string, P.RelationshipFact>();
+    const pool = Object.values(POOLS[this.network] ?? {}).filter((i) => i !== this.self && i !== D.zyan && i !== D.zyn);
+    pool.forEach((i, n) => {
+      const rel = this.current(i.nativeId);
+      if (rel !== 'stranger' && rel !== 'requesting') out.set(i.nativeId, { identity: i.nativeId, relationship: rel, since: epoch - (40 + n * 23) * 86_400_000 });
+    });
+    for (const [who, rel] of Object.entries(this.state.links ?? {})) if (!out.has(who) && rel !== 'stranger' && rel !== 'requesting') out.set(who, { identity: who, relationship: rel });
+    return [...out.values()];
+  }
+
+  /** How you stand with someone now: what happened here, else the demo world's start. */
+  current(who: string): P.PersonRelationship {
+    const known = Object.values(POOLS[this.network] ?? {}).find((i) => i.nativeId === who);
+    return this.relationship(who) ?? (known?.contact ? (this.network === 'discord' ? 'friend' : 'contact') : 'stranger');
+  }
+
+  /** Now so, and the account's list says it (a relationship event). */
+  private setLink(who: string, rel: P.PersonRelationship) {
+    this.state.links = { ...this.state.links, [who]: rel };
+    this.save();
+    if (LISTED.has(this.network) && rel !== 'requesting') this.emit({ t: 'relationship', fact: { identity: who, relationship: rel, since: Date.now() } });
+  }
+
+  /** Ends how you stand with someone, as the `remove` command does: only when it is what the owner saw. */
+  remove(who: string, rel: P.PersonRelationship): P.AddResult {
+    if (this.current(who) !== rel) throw new Error('That changed; look again');
+    if (rel === 'requesting' || rel === 'stranger') throw new Error('There is nothing to remove');
+    this.state.friends = this.state.friends.filter((x) => x !== who);
+    this.state.requested = this.state.requested?.filter((x) => x !== who);
+    this.state.blocked = this.state.blocked?.filter((x) => x !== who);
+    this.setLink(who, 'stranger');
+    const known = Object.values(POOLS[this.network] ?? {}).find((i) => i.nativeId === who);
+    if (known?.contact && (rel === 'friend' || rel === 'contact')) this.emit({ t: 'identity', identity: { ...known, contact: false } });
+    return { identity: who, relationship: 'stranger' };
+  }
+
+  /** A verify script's way to a relationship no demo network has (following): action relate. */
+  relate(who: string, rel: P.PersonRelationship) {
+    this.setLink(who, rel);
   }
 
   /** How you stand with someone after what was asked and answered here, over what the demo world starts with. */
   relationship(who: string): P.PersonRelationship | undefined {
+    const set = this.state.links?.[who];
+    if (set && set !== 'stranger') return set;
+    if (set === 'stranger') return this.asking(who) ? 'requesting' : 'stranger';
     if (this.state.blocked?.includes(who)) return 'blocked';
     if (this.state.friends.includes(who)) return this.network === 'discord' ? 'friend' : 'contact';
-    if (this.requests(Date.now()).some((r) => r.from === who && (r.kind === 'friend' || r.kind === 'follow') && !this.state.answered.includes(r.nativeId))) return 'requesting';
+    if (this.asking(who)) return 'requesting';
     if (this.state.requested?.includes(who)) return 'requested';
-    return undefined;
+    return DEMO_LINKS[this.key]?.[who];
+  }
+
+  private asking(who: string): boolean {
+    return this.requests(Date.now()).some((r) => r.from === who && (r.kind === 'friend' || r.kind === 'follow') && !this.state.answered.includes(r.nativeId));
   }
 
   private requests(now: number): P.RequestFact[] {
     if (this.key === 'dmain') return [{ nativeId: `friend-${D.nova.nativeId}`, kind: 'friend', from: D.nova.nativeId, ts: now - 3 * 3_600_000, answers: ['accept', 'decline', 'block'] }];
+    // Flagged by Discord: accepting them takes a confirm.
+    if (this.key === 'dalt')
+      return [
+        { nativeId: `friend-${D.drops.nativeId}`, kind: 'friend', from: D.drops.nativeId, ts: now - 40 * 60_000, answers: ['accept', 'decline', 'block'], warning: 'Discord filed this request as possible spam' },
+        { nativeId: `friend-${D.wren.nativeId}`, kind: 'friend', from: D.wren.nativeId, ts: now - 5 * 3_600_000, answers: ['accept', 'decline', 'block'], warning: 'Discord says you share no server or friend with them' },
+      ];
     if (this.key === 'mx') return [{ nativeId: room('nix-hack', 'matrix.org'), kind: 'invite', from: M.jules.nativeId, target: { kind: 'conversation', nativeId: room('nix-hack', 'matrix.org'), name: 'Nix Hackathon 2026', members: 23 }, ts: now - 26 * 3_600_000, answers: ['accept', 'decline'] }];
     if (this.key === 'sig') return [{ nativeId: `msgreq-${S.jamie.nativeId}`, kind: 'message', from: S.jamie.nativeId, target: { kind: 'conversation', nativeId: sdm(S.jamie).nativeId }, ts: now - 95 * 60_000, answers: ['accept', 'decline', 'block'] }];
     return [];
@@ -1343,10 +1419,11 @@ class DemoAdd {
     return pool.find((i) => i !== this.self && (i.nativeId === handle || i.handle === handle || i.handle === `@${handle}` || (handle.startsWith('+') && !!i.handle && digits(i.handle) === digits(handle)) || (this.network === 'signal' && /\.\d{2,9}$/.test(handle) && i.displayName?.toLowerCase() === handle.split('.')[0].toLowerCase())));
   }
 
-  command(cmd: Extract<P.AdapterCommand, { t: 'resolve' | 'add' | 'answer' }>): unknown {
+  command(cmd: Extract<P.AdapterCommand, { t: 'resolve' | 'add' | 'answer' | 'remove' }>): unknown {
     this.counts[cmd.t]++;
     const now = Date.now();
-    if (cmd.t === 'answer') return this.answer(cmd.request, cmd.answer, now);
+    if (cmd.t === 'remove') return this.remove(cmd.identity, cmd.relationship);
+    if (cmd.t === 'answer') return this.answer(cmd.request, cmd.answer, now, cmd.confirm === true);
     const ref = cmd.ref;
     const k = this.keyOf(ref);
     if (ref.kind === 'invite' && EXPIRED.has(k)) throw new Error('This invite has expired or was revoked');
@@ -1373,7 +1450,7 @@ class DemoAdd {
       }
       return { ...(j.space ? { space: j.space.nativeId } : {}), conversation: j.convs[0]?.fact.nativeId, ...(this.network === 'telegram' && j.preview.what === 'channel' ? { notes: ['Joined; only its admins post here'] } : {}) };
     }
-    return this.addPerson(ref, cmd.action);
+    return this.addPerson(ref, cmd.action, cmd.confirm === true);
   }
 
   private resolvePerson(ref: P.AddRef): P.AddPreview {
@@ -1402,32 +1479,38 @@ class DemoAdd {
     };
   }
 
-  private addPerson(ref: P.AddRef, action: Exclude<P.AddAction, 'message'>): P.AddResult {
+  private addPerson(ref: P.AddRef, action: Exclude<P.AddAction, 'message'>, confirm: boolean): P.AddResult {
     const handle = ref.kind === 'name' ? ref.name : ref.kind === 'person' ? ref.handle : '';
     if (action === 'join' || action === 'ask') throw new Error(`${NETWORK_META_NAME[this.network]} cannot join a person`);
     const known = this.person(handle);
     if (this.network === 'discord' && action === 'friend') {
+      // Someone the demo world has never seen shares nothing with you: Discord wants a confirm first.
+      if (!known && !confirm) return { confirm: CONFIRM_LINE };
       const who = known ?? { nativeId: snow(`u-${handle}`), handle, displayName: handle };
       if (!known) this.emit({ t: 'identity', identity: who });
       if (!this.state.requested?.includes(who.nativeId)) {
         this.state.requested = [...(this.state.requested ?? []), who.nativeId];
         this.save();
       }
+      this.setLink(who.nativeId, 'requested');
       return { identity: who.nativeId, relationship: 'requested', pending: true };
     }
     if (this.network === 'telegram' && action === 'contact' && known) {
       this.state.friends.push(known.nativeId);
       this.save();
       this.emit({ t: 'identity', identity: { ...known, contact: true } });
+      this.setLink(known.nativeId, 'contact');
       return { identity: known.nativeId, relationship: 'contact' };
     }
     throw new Error(`${NETWORK_META_NAME[this.network]} cannot ${action} here`);
   }
 
-  private answer(request: string, answer: P.RequestAnswer, now: number): P.AddResult {
+  private answer(request: string, answer: P.RequestAnswer, now: number, confirm: boolean): P.AddResult {
     const r = this.requests(now).find((x) => x.nativeId === request && !this.state.answered.includes(x.nativeId));
     if (!r) throw new Error('That request is not waiting any more');
     if (!r.answers.includes(answer)) throw new Error(`This request cannot be answered with ${answer}`);
+    // A request Discord flagged is accepted only once the owner confirms; nothing is done before.
+    if (r.warning && answer === 'accept' && !confirm) return { confirm: CONFIRM_LINE };
     this.state.answered.push(request);
     this.save();
     this.emit({ t: 'requestGone', nativeId: request });
@@ -1436,6 +1519,7 @@ class DemoAdd {
       if (answer === 'accept') this.state.friends.push(who.nativeId);
       if (answer === 'block') this.state.blocked = [...(this.state.blocked ?? []), who.nativeId];
       this.save();
+      this.setLink(who.nativeId, answer === 'accept' ? 'friend' : answer === 'block' ? 'blocked' : 'stranger');
       if (answer === 'accept') this.emit({ t: 'identity', identity: { ...who, contact: true } });
       return { identity: r.from, relationship: answer === 'accept' ? 'friend' : answer === 'block' ? 'blocked' : 'stranger' };
     }
@@ -1770,7 +1854,7 @@ class DemoAdapter implements InprocAdapter {
   private hello() {
     // Discord's demo accounts forward natively, as the real adapter does; the others leave it to the hub.
     // Matrix has no bio, so its demo account cannot edit one.
-    const caps: P.Capability[] = ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect', 'typing', 'about', 'configure', 'profile', ...(this.network === 'matrix' ? [] : (['editProfile'] as const)), 'resolve', 'join', 'connect', 'requests'];
+    const caps: P.Capability[] = ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect', 'typing', 'about', 'configure', 'profile', ...(this.network === 'matrix' ? [] : (['editProfile'] as const)), 'resolve', 'join', 'connect', 'requests', ...(LISTED.has(this.network) ? (['relationships', 'disconnect'] as const) : [])];
     const all: P.Capability[] = this.network === 'discord' ? [...caps, 'forward', 'members'] : caps;
     this.emit({ t: 'hello', network: this.network, version: 'demo', capabilities: all.filter((c) => !this.without.has(c)) });
   }
@@ -1941,6 +2025,8 @@ class DemoAdapter implements InprocAdapter {
   /** The same answers real adapters give, with the Signal rule that nothing exists until the first send. */
   private openDirect(peer: string): P.OpenDirectResult {
     const signal = this.network === 'signal';
+    // The request Discord filed as spam comes from someone who takes messages only from friends.
+    if (this.network === 'discord' && peer === D.drops.nativeId) throw new Error('Discord will not deliver a message to them: they take direct messages only from friends.');
     if (this.network === 'whatsapp') return this.openWhatsApp(peer);
     const pool = Object.values(POOLS[this.network] ?? M);
     const known = pool.find((i) => i.nativeId === peer || i.handle === peer);
@@ -2048,6 +2134,7 @@ class DemoAdapter implements InprocAdapter {
       case 'resolve':
       case 'add':
       case 'answer':
+      case 'remove':
         try {
           reply(this.adds.command(cmd));
         } catch (e) {
@@ -2138,6 +2225,17 @@ class DemoAdapter implements InprocAdapter {
         if (cmd.action === 'capabilities') {
           this.without = new Set(((cmd.args as { without?: P.Capability[] } | undefined)?.without ?? []).filter((c) => typeof c === 'string'));
           this.hello();
+          reply({ ok: true });
+          break;
+        }
+        // relate: stand with someone this way (scripts and tests: following has no demo network of its own).
+        if (cmd.action === 'relate') {
+          const a = cmd.args as { who?: string; relationship?: P.PersonRelationship };
+          if (typeof a?.who !== 'string' || typeof a.relationship !== 'string') {
+            this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'relate: { who, relationship }' });
+            break;
+          }
+          this.adds.relate(a.who, a.relationship);
           reply({ ok: true });
           break;
         }

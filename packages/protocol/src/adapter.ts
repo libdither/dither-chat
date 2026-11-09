@@ -23,8 +23,8 @@
  * native ID on the adapter's own network.
  */
 
-import type { AboutChange, AboutTarget } from './about.ts';
-import type { AddAction, AddRef, RequestAnswer, RequestFact } from './add.ts';
+import type { AboutChange, AboutTarget, PersonRelationship } from './about.ts';
+import type { AddAction, AddRef, RelationshipFact, RequestAnswer, RequestFact } from './add.ts';
 import type { CallMode, CallState } from './call.ts';
 import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, ReactionStyle, Shape, SpaceKind, Variant } from './ontology.ts';
 
@@ -72,7 +72,11 @@ export type Capability =
   /** Adds someone: a friend request, a follow, a contact (the `add` command with friend, follow or contact). */
   | 'connect'
   /** Lists the requests waiting on you and answers them (the requests events, the `answer` command). */
-  | 'requests';
+  | 'requests'
+  /** Says who the account is friends with, has asked, blocked, has as a contact or follows (the relationships events). */
+  | 'relationships'
+  /** Ends one of those: unfriend, cancel a request you sent, unblock, remove a contact, unfollow (the `remove` command). */
+  | 'disconnect';
 
 // ---------------------------------------------------------------- facts
 
@@ -360,6 +364,13 @@ export type AdapterEvent =
   | { t: 'request'; request: RequestFact }
   /** A request answered here or elsewhere, withdrawn, or expired. */
   | { t: 'requestGone'; nativeId: string }
+  /**
+   * The account's friends, requests it sent, blocks, contacts and follows (capability 'relationships', add.ts), sent
+   * after connect: the whole list, replacing the hub's. Incoming requests are not in it; they are RequestFacts.
+   */
+  | { t: 'relationships'; list: RelationshipFact[] }
+  /** One changed; relationship 'stranger': it is gone. */
+  | { t: 'relationship'; fact: RelationshipFact }
   | { t: 'reply'; id: string; ok: true; result?: unknown }
   | { t: 'reply'; id: string; ok: false; error: string }
   | { t: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; msg: string; data?: unknown };
@@ -430,9 +441,16 @@ export type AdapterCommand =
    * Act on a reading (capability 'join' for join and ask, 'connect' for friend, follow and contact). Space,
    * conversation and identity facts first, then reply.result: AddResult. 'message' goes through openDirect.
    */
-  | { t: 'add'; id: string; ref: AddRef; action: Exclude<AddAction, 'message'> }
+  | { t: 'add'; id: string; ref: AddRef; action: Exclude<AddAction, 'message'>; /** The owner confirmed what the network asked (AddResult.confirm). */ confirm?: true }
   /** Answer a request (capability 'requests'). reply.result: AddResult. */
-  | { t: 'answer'; id: string; request: string; answer: RequestAnswer }
+  | { t: 'answer'; id: string; request: string; answer: RequestAnswer; /** The owner confirmed what the network asked (AddResult.confirm). */ confirm?: true }
+  /**
+   * End how you stand with someone (capability 'disconnect'): friend → unfriend, requested → cancel the request,
+   * blocked → unblock, contact → remove the contact, following → unfollow. `identity` is native; `relationship` is
+   * what the owner saw, and the adapter refuses when it is not what the network says now ("That changed; look
+   * again"). reply.result: AddResult with the relationship after; a relationship event follows.
+   */
+  | { t: 'remove'; id: string; identity: string; relationship: PersonRelationship }
   /** Account-specific actions, e.g. 'relogin', 'startLink', 'resync'. */
   | { t: 'action'; id: string; action: string; args?: unknown }
   | { t: 'shutdown' };

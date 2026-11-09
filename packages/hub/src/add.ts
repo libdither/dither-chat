@@ -7,7 +7,7 @@
  */
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
-import { ADD_ACTIONS, addCapability, addRefKey, describeAddRef, NETWORK_META, notBuiltLine, REQUEST_ANSWERS, validAddRef } from '@dither-chat/protocol';
+import { ADD_ACTIONS, addCapability, addRefKey, describeAddRef, LINK_RELATIONSHIPS, NETWORK_META, notBuiltLine, REQUEST_ANSWERS, validAddRef } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
 
@@ -16,7 +16,7 @@ type Row = Record<string, any>;
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 
-export type PaceKind = 'resolve' | 'join' | 'connect';
+export type PaceKind = 'resolve' | 'join' | 'connect' | 'disconnect';
 
 /** How much each account may do, per window. Past it the hub answers 429 with when it frees up. */
 export const ADD_LIMITS: Record<PaceKind, { windowMs: number; max: number; networks: Partial<Record<P.Network, number>> }> = {
@@ -24,10 +24,12 @@ export const ADD_LIMITS: Record<PaceKind, { windowMs: number; max: number; netwo
   resolve: { windowMs: HOUR, max: 60, networks: { whatsapp: 20 } },
   join: { windowMs: DAY, max: 10, networks: { whatsapp: 5 } },
   connect: { windowMs: DAY, max: 20, networks: {} },
+  // Unfriending, cancelling a request, unblocking, removing a contact, unfollowing.
+  disconnect: { windowMs: DAY, max: 20, networks: {} },
 };
 
 /** How long the hub waits for the network. A join may wait on it (a Discord guild's first sync, a Matrix knock). */
-export const ADD_TIMEOUTS = { resolve: 30_000, add: 90_000, answer: 90_000 };
+export const ADD_TIMEOUTS = { resolve: 30_000, add: 90_000, answer: 90_000, remove: 90_000 };
 
 /**
  * Previews kept in memory per account and reading, so an invite in a message that was looked up once shows again
@@ -58,6 +60,18 @@ export function addTables(db: Database) {
     UNIQUE (account_id, native_id)
   )`);
   db.exec('CREATE INDEX IF NOT EXISTS add_request_target ON add_request(target_id)');
+  // The network's words when it flagged a request (added after the table was).
+  if (!(db.query(`SELECT 1 FROM pragma_table_info('add_request') WHERE name = 'warning'`).get())) db.exec('ALTER TABLE add_request ADD COLUMN warning TEXT');
+  // Each account's list: friends, requests it sent, blocks, contacts, follows (the relationships events). Replaced
+  // by a `relationships` event, changed by a `relationship` one; 'stranger' is no row.
+  db.exec(`CREATE TABLE IF NOT EXISTS person_link (
+    account_id   TEXT NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    identity_id  TEXT NOT NULL,
+    relationship TEXT NOT NULL,
+    since        INTEGER,
+    PRIMARY KEY (account_id, identity_id)
+  ) WITHOUT ROWID`);
+  db.exec('CREATE INDEX IF NOT EXISTS person_link_identity ON person_link(identity_id)');
   db.exec(`CREATE TABLE IF NOT EXISTS add_pace (
     account_id TEXT NOT NULL REFERENCES account(id) ON DELETE CASCADE,
     kind       TEXT NOT NULL,
@@ -112,15 +126,21 @@ export function requestViews(store: Store): P.RequestView[] {
     target: r.target_kind ? { kind: r.target_kind, id: has(r.target_kind, r.target_id) ? r.target_id : null, name: r.target_name, members: r.target_members } : null,
     ts: r.ts,
     answers: JSON.parse(r.answers),
+    warning: r.warning ?? null,
   }));
 }
 
 /** The requests list changed: one `requests` event goes with the next flush, and the places they hold are scored again. */
-function requestsChanged(store: Store, held: Iterable<string>) {
+function requestsChanged(store: Store, held: Iterable<string>, accountId: string, people: Iterable<string>) {
   for (const id of held) if (store.db.query('SELECT 1 FROM conversation WHERE id = ?').get(id)) store.dirty.conversations.add(id);
+  dmsChanged(store, accountId, people);
   store.dirty.extra = store.dirty.extra.filter((e) => e.t !== 'requests');
   store.dirty.extra.push({ t: 'requests', requests: requestViews(store) });
 }
+
+/** Who asked this account to be friends or to follow it, for the DMs that show it. */
+const askersOf = (db: Database, accountId: string, nativeId?: string): string[] =>
+  (db.query(`SELECT from_id FROM add_request WHERE account_id = ? AND (? IS NULL OR native_id = ?) AND kind IN ('friend', 'follow') AND from_id IS NOT NULL`).all(accountId, nativeId ?? null, nativeId ?? null) as Row[]).map((r) => r.from_id);
 
 const heldBy = (db: Database, accountId: string, nativeId?: string): string[] =>
   (db.query(`SELECT target_id FROM add_request WHERE account_id = ? AND (? IS NULL OR native_id = ?) AND kind = 'message' AND target_kind = 'conversation'`).all(accountId, nativeId ?? null, nativeId ?? null) as Row[]).map((r) => r.target_id);
@@ -128,7 +148,7 @@ const heldBy = (db: Database, accountId: string, nativeId?: string): string[] =>
 /** A fact the adapter sent, if it is one: anything else is dropped. */
 function validRequest(f: unknown): f is P.RequestFact {
   const r = f as P.RequestFact;
-  return !!r && typeof r.nativeId === 'string' && !!r.nativeId && REQUEST_KINDS.includes(r.kind) && typeof r.ts === 'number' && Array.isArray(r.answers) && (r.from === undefined || typeof r.from === 'string') &&
+  return !!r && typeof r.nativeId === 'string' && !!r.nativeId && REQUEST_KINDS.includes(r.kind) && typeof r.ts === 'number' && Array.isArray(r.answers) && (r.from === undefined || typeof r.from === 'string') && (r.warning === undefined || typeof r.warning === 'string') &&
     (r.target === undefined || ((r.target.kind === 'space' || r.target.kind === 'conversation') && typeof r.target.nativeId === 'string'));
 }
 
@@ -137,10 +157,11 @@ function putRequest(store: Store, acc: AccountRow, f: P.RequestFact) {
   const targetId = t ? hubId(t.kind === 'space' ? 'spc' : 'cnv', acc.network, t.nativeId) : null;
   store.db
     .query(
-      `INSERT INTO add_request (id, account_id, native_id, kind, from_id, target_kind, target_native, target_id, target_name, target_members, ts, answers)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO add_request (id, account_id, native_id, kind, from_id, target_kind, target_native, target_id, target_name, target_members, ts, answers, warning)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO UPDATE SET kind = excluded.kind, from_id = excluded.from_id, target_kind = excluded.target_kind, target_native = excluded.target_native,
-         target_id = excluded.target_id, target_name = excluded.target_name, target_members = excluded.target_members, ts = excluded.ts, answers = excluded.answers`,
+         target_id = excluded.target_id, target_name = excluded.target_name, target_members = excluded.target_members, ts = excluded.ts, answers = excluded.answers,
+         warning = excluded.warning`,
     )
     .run(
       requestId(acc.id, f.nativeId),
@@ -155,6 +176,7 @@ function putRequest(store: Store, acc: AccountRow, f: P.RequestFact) {
       typeof t?.members === 'number' ? t.members : null,
       f.ts,
       JSON.stringify(f.answers.filter((a) => REQUEST_ANSWERS.includes(a))),
+      f.warning?.trim() ? f.warning.trim().slice(0, 300) : null,
     );
   return targetId;
 }
@@ -164,28 +186,140 @@ export function ingestRequests(store: Store, acc: AccountRow, ev: Extract<P.Adap
   const db = store.db;
   addTables(db);
   const held = new Set<string>();
+  const people = new Set<string>();
   const heard: string[] = [];
   if (ev.t === 'requests') {
     if (!Array.isArray(ev.requests)) return;
     for (const id of heldBy(db, acc.id)) held.add(id);
+    for (const id of askersOf(db, acc.id)) people.add(id);
     db.query('DELETE FROM add_request WHERE account_id = ?').run(acc.id);
     for (const f of ev.requests) {
       if (!validRequest(f)) continue;
       held.add(putRequest(store, acc, f) ?? '');
       heard.push(f.nativeId);
     }
+    for (const id of askersOf(db, acc.id)) people.add(id);
   } else if (ev.t === 'request') {
     if (!validRequest(ev.request)) return;
     for (const id of heldBy(db, acc.id, ev.request.nativeId)) held.add(id);
+    for (const id of askersOf(db, acc.id, ev.request.nativeId)) people.add(id);
     held.add(putRequest(store, acc, ev.request) ?? '');
+    for (const id of askersOf(db, acc.id, ev.request.nativeId)) people.add(id);
     heard.push(ev.request.nativeId);
   } else {
     for (const id of heldBy(db, acc.id, ev.nativeId)) held.add(id);
+    for (const id of askersOf(db, acc.id, ev.nativeId)) people.add(id);
     if (!db.query('DELETE FROM add_request WHERE account_id = ? AND native_id = ?').run(acc.id, ev.nativeId).changes) return;
   }
   held.delete('');
-  requestsChanged(store, held);
+  requestsChanged(store, held, acc.id, people);
   if (heard.length) heardBy.get(store)?.(acc.id, heard);
+}
+
+// ------------------------------------------------------------------ relationships
+
+/** Direct conversations an account has with these people: their view says whether a request waits (`pending`). */
+function dmsChanged(store: Store, accountId: string, identityIds: Iterable<string>) {
+  const ids = [...identityIds];
+  if (!ids.length) return;
+  const rows = store.db
+    .query(
+      `SELECT DISTINCT p.conversation_id AS id FROM participant p JOIN conversation c ON c.id = p.conversation_id AND c.shape = 'direct'
+       JOIN vantage v ON v.target_kind = 'conversation' AND v.target_id = c.id AND v.account_id = ?
+       WHERE p.identity_id IN (SELECT value FROM json_each(?))`,
+    )
+    .all(accountId, JSON.stringify(ids)) as Row[];
+  for (const r of rows) store.dirty.conversations.add(r.id);
+}
+
+const validLink = (x: unknown): x is P.LinkRelationship => LINK_RELATIONSHIPS.includes(x as P.LinkRelationship);
+
+/** One entry of an account's list, or none for 'stranger' (and for 'requesting': incoming requests are add_request). */
+export function setLink(store: Store, accountId: string, identityId: string, relationship: P.PersonRelationship | null, since?: number | null) {
+  addTables(store.db);
+  if (relationship && validLink(relationship))
+    store.db
+      .query(
+        `INSERT INTO person_link (account_id, identity_id, relationship, since) VALUES (?, ?, ?, ?)
+         ON CONFLICT (account_id, identity_id) DO UPDATE SET relationship = excluded.relationship, since = COALESCE(excluded.since, person_link.since)`,
+      )
+      .run(accountId, identityId, relationship, since ?? null);
+  else if (relationship === 'stranger') store.db.query('DELETE FROM person_link WHERE account_id = ? AND identity_id = ?').run(accountId, identityId);
+  else return;
+  dmsChanged(store, accountId, [identityId]);
+}
+
+/** The relationships events, inside the store's ingest. The list stays as it is until the adapter sends one. */
+export function ingestRelationships(store: Store, acc: AccountRow, ev: Extract<P.AdapterEvent, { t: 'relationships' | 'relationship' }>) {
+  const db = store.db;
+  addTables(db);
+  const ok = (f: unknown): f is P.RelationshipFact => {
+    const r = f as P.RelationshipFact;
+    return !!r && typeof r.identity === 'string' && !!r.identity && (validLink(r.relationship) || r.relationship === 'stranger') && (r.since === undefined || typeof r.since === 'number');
+  };
+  if (ev.t === 'relationship') {
+    if (!ok(ev.fact)) return;
+    setLink(store, acc.id, store.ensureIdentity(acc, ev.fact.identity), ev.fact.relationship, ev.fact.since);
+    return;
+  }
+  if (!Array.isArray(ev.list)) return;
+  const before = (db.query('SELECT identity_id, relationship FROM person_link WHERE account_id = ?').all(acc.id) as Row[]).map((r) => [r.identity_id as string, r.relationship as string] as const);
+  db.query('DELETE FROM person_link WHERE account_id = ?').run(acc.id);
+  const put = db.query('INSERT OR REPLACE INTO person_link (account_id, identity_id, relationship, since) VALUES (?, ?, ?, ?)');
+  for (const f of ev.list) if (ok(f) && f.relationship !== 'stranger') put.run(acc.id, store.ensureIdentity(acc, f.identity), f.relationship, f.since ?? null);
+  // Only a request sent shows on a DM; a list that changed none of those changes no DM.
+  const after = (db.query(`SELECT identity_id FROM person_link WHERE account_id = ? AND relationship = 'requested'`).all(acc.id) as Row[]).map((r) => r.identity_id as string);
+  const was = before.filter(([, r]) => r === 'requested').map(([id]) => id);
+  dmsChanged(store, acc.id, [...was.filter((id) => !after.includes(id)), ...after.filter((id) => !was.includes(id))]);
+}
+
+/** How this account stands with them by its own list, when it has one for them. */
+export function linkOf(db: Database, accountId: string, identityId: string): P.LinkRelationship | null {
+  addTables(db);
+  return ((db.query('SELECT relationship FROM person_link WHERE account_id = ? AND identity_id = ?').get(accountId, identityId) as Row | null)?.relationship as P.LinkRelationship) ?? null;
+}
+
+const linkView = (r: Row): P.PersonLinkView => ({ accountId: r.account_id, identityId: r.identity_id, personId: r.person_id ?? null, relationship: r.relationship, since: r.since ?? null });
+
+/** Every account's list entries for these identities (a profile). */
+export function linksOf(db: Database, identityIds: string[]): P.PersonLinkView[] {
+  addTables(db);
+  return (
+    db
+      .query(`SELECT l.*, i.person_id FROM person_link l JOIN identity i ON i.id = l.identity_id WHERE l.identity_id IN (SELECT value FROM json_each(?)) ORDER BY l.account_id`)
+      .all(JSON.stringify(identityIds)) as Row[]
+  ).map(linkView);
+}
+
+/**
+ * Friend and follow requests waiting between an account and someone, keyed `account\0identity`: theirs to you
+ * (incoming, from add_request) or yours to them (the account's list says 'requested'). Only for these identities
+ * when given. Incoming wins when both are there.
+ */
+export function pendingLinks(db: Database, identityIds?: string[]): Map<string, P.PendingLinkView> {
+  addTables(db);
+  const out = new Map<string, P.PendingLinkView>();
+  const only = identityIds ? JSON.stringify(identityIds) : null;
+  const outgoing = db.query(`SELECT account_id, identity_id FROM person_link WHERE relationship = 'requested' AND (?1 IS NULL OR identity_id IN (SELECT value FROM json_each(?1)))`).all(only) as Row[];
+  for (const r of outgoing) out.set(`${r.account_id}\0${r.identity_id}`, { accountId: r.account_id, identityId: r.identity_id, incoming: false, requestId: null });
+  const incoming = db.query(`SELECT id, account_id, from_id FROM add_request WHERE kind IN ('friend', 'follow') AND from_id IS NOT NULL AND (?1 IS NULL OR from_id IN (SELECT value FROM json_each(?1))) ORDER BY ts`).all(only) as Row[];
+  for (const r of incoming) out.set(`${r.account_id}\0${r.from_id}`, { accountId: r.account_id, identityId: r.from_id, incoming: true, requestId: r.id });
+  return out;
+}
+
+/** GET /api/people: who is on your accounts' lists, by name; one relationship and one account when given. */
+export function peopleLinks(store: Store, relationship: string | null, accountId: string | null): P.PeopleLinksView {
+  const db = store.db;
+  addTables(db);
+  const rows = db
+    .query(
+      `SELECT l.*, i.person_id FROM person_link l JOIN identity i ON i.id = l.identity_id LEFT JOIN person p ON p.id = i.person_id
+       WHERE (?1 IS NULL OR l.relationship = ?1) AND (?2 IS NULL OR l.account_id = ?2)
+       ORDER BY COALESCE(p.name, i.display_name, i.handle, i.native_id) COLLATE NOCASE, l.account_id`,
+    )
+    .all(relationship, accountId) as Row[];
+  const links = rows.map(linkView);
+  return { links, identities: store.identitiesByIds([...new Set(links.map((l) => l.identityId))]) };
 }
 
 // ------------------------------------------------------------------ pacing
@@ -199,8 +333,8 @@ function inWords(ms: number): string {
   return `${h} hour${h === 1 ? '' : 's'}`;
 }
 
-const DID: Record<PaceKind, string> = { resolve: 'looked up', join: 'joined or asked to join', connect: 'added' };
-const WHAT: Record<PaceKind, string> = { resolve: 'links and names', join: 'places', connect: 'people' };
+const DID: Record<PaceKind, string> = { resolve: 'looked up', join: 'joined or asked to join', connect: 'added', disconnect: 'removed or unblocked' };
+const WHAT: Record<PaceKind, string> = { resolve: 'links and names', join: 'places', connect: 'people', disconnect: 'people' };
 
 /** Count one more for this account, or say when the next frees up. */
 export function takePace(db: Database, acc: Pick<AccountRow, 'id' | 'network' | 'label'>, kind: PaceKind, now = Date.now()): { ok: true } | { ok: false; error: string; retryAt: number } {
@@ -221,6 +355,11 @@ export function takePace(db: Database, acc: Pick<AccountRow, 'id' | 'network' | 
   }
   db.query('INSERT INTO add_pace (account_id, kind, at) VALUES (?, ?, ?)').run(acc.id, kind, now);
   return { ok: true };
+}
+
+/** Give one back: the network asked for a confirm first and nothing was done. */
+export function givePace(db: Database, accountId: string, kind: PaceKind, at: number) {
+  db.query('DELETE FROM add_pace WHERE rowid = (SELECT rowid FROM add_pace WHERE account_id = ? AND kind = ? AND at = ? LIMIT 1)').run(accountId, kind, at);
 }
 
 // ------------------------------------------------------------------ routes
@@ -259,7 +398,7 @@ export class Adding {
 
   private now = () => this.d.now?.() ?? Date.now();
 
-  /** /api/add/* and /api/requests*, or null for any other path. */
+  /** /api/add/*, /api/requests*, GET /api/people and POST /api/people/:id/remove, or null for any other path. */
   async route(req: Request, url: URL, path: string): Promise<Response | null> {
     const method = req.method;
     const body = async <T>() => (await req.json().catch(() => ({}))) as T;
@@ -270,11 +409,23 @@ export class Adding {
       if (path === '/api/add' && method === 'POST') return Response.json(await this.add(await body()));
       if (path === '/api/requests' && method === 'GET') return Response.json({ requests: requestViews(this.d.store) });
       if ((m = path.match(/^\/api\/requests\/([\w-]+)$/)) && method === 'POST') return Response.json(await this.answer(m[1], await body()));
+      if (path === '/api/people' && method === 'GET') {
+        const rel = url.searchParams.get('relationship');
+        if (rel && !LINK_RELATIONSHIPS.includes(rel as P.LinkRelationship)) throw new AddError(`relationship: ${LINK_RELATIONSHIPS.join(', ')}`, 400);
+        return Response.json(peopleLinks(this.d.store, rel, url.searchParams.get('account')));
+      }
+      if ((m = path.match(/^\/api\/people\/([\w-]+)\/remove$/)) && method === 'POST') {
+        // A click on the hub's own page: a browser sends Origin, and the server has refused any other site's.
+        if (!req.headers.get('origin')) throw new AddError('Removing people is done from the app itself', 403);
+        return Response.json(await this.remove(m[1], await body()));
+      }
     } catch (e) {
       if (e instanceof AddError) return Response.json({ error: e.message, ...e.extra }, { status: e.status });
       throw e;
     }
-    return path === '/api/add' || path.startsWith('/api/add/') || path.startsWith('/api/requests') ? Response.json({ error: 'not found' }, { status: 404 }) : null;
+    return path === '/api/add' || path.startsWith('/api/add/') || path.startsWith('/api/requests') || path === '/api/people' || /^\/api\/people\/[\w-]+\/remove$/.test(path)
+      ? Response.json({ error: 'not found' }, { status: 404 })
+      : null;
   }
 
   /** The account, the reading checked against it, and the account connected and able to do this; or why not. */
@@ -289,9 +440,12 @@ export class Adding {
     return [acc, ref];
   }
 
-  private pace(acc: AccountRow, kind: PaceKind) {
-    const p = takePace(this.d.store.db, acc, kind, this.now());
+  /** Count one, or refuse past the limit. Returns when it was counted, to give it back if nothing was done. */
+  private pace(acc: AccountRow, kind: PaceKind): number {
+    const at = this.now();
+    const p = takePace(this.d.store.db, acc, kind, at);
     if (!p.ok) throw new AddError(p.error, 429, { retryAt: p.retryAt });
+    return at;
   }
 
   /** The network's own sentence, or what a timeout means for this step. */
@@ -362,10 +516,10 @@ export class Adding {
     return { previews };
   }
 
-  /** A kept preview after acting on it: in it now, asked, or added. A check did nothing, so it stays as it was. */
+  /** A kept preview after acting on it: in it now, asked, or added. A check or a confirm did nothing, so it stays as it was. */
   private acted(acc: AccountRow, ref: P.AddRef, action: P.AddAction, r: P.AddResult) {
     const hit = this.previews.get(this.cacheKey(acc.id, ref));
-    if (!hit || r.check) return;
+    if (!hit || r.check || str(r.confirm)) return;
     const p = { ...hit.raw, actions: (Array.isArray(hit.raw.actions) ? hit.raw.actions : []).filter((a) => a !== action) };
     // The space when it is one, else the conversation: as a fresh look would say.
     if ((action === 'join' || action === 'ask') && !r.pending && (str(r.space) || str(r.conversation))) p.joined = str(r.space) ? { space: r.space } : { conversation: r.conversation };
@@ -419,19 +573,22 @@ export class Adding {
     };
   }
 
-  async add(b: { accountId?: unknown; ref?: unknown; action?: unknown }): Promise<P.AddResultView> {
+  async add(b: { accountId?: unknown; ref?: unknown; action?: unknown; confirm?: unknown }): Promise<P.AddResultView> {
     const action = b.action as P.AddAction;
     if (!ADD_ACTIONS.includes(action)) throw new AddError('Join, ask, friend, follow or contact?', 400);
     if (action === 'message') throw new AddError('A message starts with POST /api/directs', 400);
     const [acc, ref] = this.account(b.accountId, b.ref, (r) => [addCapability(action), builtFor(r, action)]);
-    this.pace(acc, paceOf(action));
-    const r = (await this.ask<P.AddResult>(acc, { t: 'add', ref, action }, ADD_TIMEOUTS.add, true)) ?? {};
-    this.d.note(acc.id, `[add] ${VERB[action]} ${describeAddRef(ref)}${outcome(r)}`);
+    const kind = paceOf(action);
+    const at = this.pace(acc, kind);
+    // Only when the owner pressed "Add anyway" after the network asked.
+    const r = (await this.ask<P.AddResult>(acc, { t: 'add', ref, action, ...(b.confirm === true ? { confirm: true as const } : {}) }, ADD_TIMEOUTS.add, true)) ?? {};
+    this.d.note(acc.id, `[add] ${VERB[action]} ${describeAddRef(ref)}${b.confirm === true ? ', confirmed' : ''}${outcome(r)}`);
+    if (str(r.confirm)) givePace(this.d.store.db, acc.id, kind, at);
     this.acted(acc, ref, action, r);
     return this.result(acc, r);
   }
 
-  async answer(id: string, b: { answer?: unknown }): Promise<P.AddResultView> {
+  async answer(id: string, b: { answer?: unknown; confirm?: unknown }): Promise<P.AddResultView> {
     const db = this.d.store.db;
     const row = db.query('SELECT r.*, a.network FROM add_request r JOIN account a ON a.id = r.account_id WHERE r.id = ?').get(id) as Row | null;
     if (!row) throw new AddError('That request is not waiting any more', 404);
@@ -440,11 +597,51 @@ export class Adding {
     const acc = this.d.store.account(row.account_id)!;
     if (!caps(acc).includes('requests')) throw new AddError(`Answering ${NETWORK_META[acc.network].name} requests isn't built for this account yet`, 409);
     if (!this.d.online(acc.id)) throw new AddError(`${NETWORK_META[acc.network].name} ${acc.label} is not connected`, 409);
-    const r = (await this.ask<P.AddResult>(acc, { t: 'answer', request: row.native_id, answer }, ADD_TIMEOUTS.answer, true)) ?? {};
-    this.d.note(acc.id, `[add] ${answer === 'accept' ? 'accepted' : answer === 'decline' ? 'declined' : 'blocked'} the ${row.kind} request${row.target_name ? ` (${row.target_name})` : ''}${outcome(r)}`);
-    // Answered: gone here now, whether or not the adapter says so too. A check did nothing, so it stays.
-    if (!r.check) ingestRequests(this.d.store, acc, { t: 'requestGone', nativeId: row.native_id });
-    return this.result(acc, r);
+    // Only when the owner pressed "Accept anyway": after the network asked, or after its warning on the card.
+    const confirm = b.confirm === true;
+    const r = (await this.ask<P.AddResult>(acc, { t: 'answer', request: row.native_id, answer, ...(confirm ? { confirm: true as const } : {}) }, ADD_TIMEOUTS.answer, true)) ?? {};
+    this.d.note(acc.id, `[add] ${answer === 'accept' ? 'accepted' : answer === 'decline' ? 'declined' : 'blocked'} the ${row.kind} request${row.target_name ? ` (${row.target_name})` : ''}${confirm ? ', confirmed' : ''}${outcome(r)}`);
+    // Answered: gone here now, whether or not the adapter says so too. A check or a confirm did nothing, so it stays.
+    if (!r.check && !str(r.confirm)) ingestRequests(this.d.store, acc, { t: 'requestGone', nativeId: row.native_id });
+    return this.result(acc, { ...r, identity: r.identity ?? (row.from_id ? (this.d.store.nativeOf('identity', row.from_id)?.nativeId ?? undefined) : undefined) });
+  }
+
+  /**
+   * POST /api/people/:identityId/remove { relationship, accountId? }: end how an account stands with them, on the
+   * owner's click. `relationship` is what the page showed; the adapter refuses if the network says otherwise now.
+   * Without accountId, the one account whose list says so, else the only one on that network that can.
+   */
+  async remove(identityId: string, b: { relationship?: unknown; accountId?: unknown }): Promise<P.AddResultView> {
+    const store = this.d.store;
+    const who = store.nativeOf('identity', identityId);
+    if (!who) throw new AddError('Nobody by that id', 404);
+    const rel = b.relationship as P.LinkRelationship;
+    if (!LINK_RELATIONSHIPS.includes(rel)) throw new AddError('Remove a friend, a request you sent, a block, a contact or a follow?', 400);
+    const net = NETWORK_META[who.network].name;
+    let acc: AccountRow | null = null;
+    if (b.accountId !== undefined) {
+      acc = typeof b.accountId === 'string' ? store.account(b.accountId) : null;
+      if (!acc) throw new AddError('no such account', 404);
+      if (acc.network !== who.network) throw new AddError(`They are on ${net}, and ${acc.label} is a ${NETWORK_META[acc.network].name} account`, 400);
+    } else {
+      const listed = (store.db.query('SELECT account_id FROM person_link WHERE identity_id = ? AND relationship = ?').all(identityId, rel) as Row[]).map((r) => r.account_id as string);
+      const able = (store.db.query('SELECT id FROM account WHERE network = ?').all(who.network) as Row[]).map((r) => r.id as string).filter((id) => caps(store.account(id)!).includes('disconnect'));
+      const one = listed.length === 1 ? listed[0] : !listed.length && able.length === 1 ? able[0] : null;
+      if (!one) throw new AddError(`Which ${net} account?`, 400);
+      acc = store.account(one);
+    }
+    if (!acc) throw new AddError('no such account', 404);
+    if (acc.self_identity === identityId) throw new AddError('That is this account', 400);
+    if (!caps(acc).includes('disconnect')) throw new AddError(`Removing people on ${net} isn't built for this account yet`, 409);
+    if (!this.d.online(acc.id)) throw new AddError(`${net} ${acc.label} is not connected`, 409);
+    const at = this.pace(acc, 'disconnect');
+    const r = (await this.ask<P.AddResult>(acc, { t: 'remove', identity: who.nativeId, relationship: rel }, ADD_TIMEOUTS.remove, true)) ?? {};
+    const name = store.identitiesByIds([identityId])[0];
+    this.d.note(acc.id, `[add] ${REMOVED[rel]} ${name?.handle ?? name?.displayName ?? who.nativeId}${outcome(r)}`);
+    const nothing = !!r.check || !!str(r.confirm);
+    if (nothing) givePace(store.db, acc.id, 'disconnect', at);
+    // The adapter says how they stand now; ended, unless it said otherwise.
+    return this.result(acc, { ...r, identity: r.identity ?? who.nativeId, ...(nothing ? {} : { relationship: (str(r.relationship) as P.PersonRelationship | null) ?? 'stranger' }) });
   }
 
   private result(acc: AccountRow, r: P.AddResult): P.AddResultView {
@@ -456,6 +653,8 @@ export class Adding {
     const relationship = str(r.relationship) as P.PersonRelationship | null;
     // Their profile, as last asked through this account, says how you stand now, until it is asked again (people.ts).
     if (identityId && relationship) store.db.query(`UPDATE about SET data = json_set(data, '$.relationship', ?) WHERE target_id = ? AND account_id = ?`).run(relationship, identityId, acc.id);
+    // And the account's list, when it keeps one: its relationship event says the same soon after.
+    if (identityId && relationship && caps(acc).includes('relationships')) setLink(store, acc.id, identityId, relationship);
     this.d.flush();
     const checks: P.AddCheck[] = ['captcha', 'verify', 'phone', 'rules'];
     return {
@@ -466,6 +665,7 @@ export class Adding {
       relationship,
       pending: r.pending === true,
       check: checks.includes(r.check as P.AddCheck) ? r.check! : null,
+      confirm: str(r.confirm)?.slice(0, 300) ?? null,
       notes: Array.isArray(r.notes) ? r.notes.filter((n) => typeof n === 'string').slice(0, 8) : [],
       liveView: this.d.liveView(acc.id),
       managerUrl: store.accountView(acc).managedBy?.url ?? null,
@@ -474,7 +674,8 @@ export class Adding {
 }
 
 const VERB: Record<Exclude<P.AddAction, 'message'>, string> = { join: 'joined', ask: 'asked to join', friend: 'sent a friend request to', follow: 'followed', contact: 'added as a contact' };
-const outcome = (r: P.AddResult) => (r.check ? ` - ${r.check} check wanted first, nothing done` : r.pending ? ' - waiting on them' : '');
+const outcome = (r: P.AddResult) => (r.check ? ` - ${r.check} check wanted first, nothing done` : str(r.confirm) ? ' - the network wants a confirm first, nothing done' : r.pending ? ' - waiting on them' : '');
+const REMOVED: Record<P.LinkRelationship, string> = { friend: 'removed the friend', requested: 'cancelled the friend request to', blocked: 'unblocked', contact: 'removed the contact', following: 'unfollowed' };
 
 function builtFor(ref: P.AddRef, action: P.AddAction): string {
   return action === 'join' || action === 'ask' ? `Joining on ${NETWORK_META[ref.network].name} isn't built for this account yet` : `Adding people on ${NETWORK_META[ref.network].name} isn't built for this account yet`;

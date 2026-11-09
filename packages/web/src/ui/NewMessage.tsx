@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { ACTION_LABEL, addRows, CHECK_LINE, expiresIn, isLink, messagePeer, offlineNetworks, partialLine, previewCounts, previewKind, type AddRow } from '../add.ts';
 import { directNote, openers } from '../direct.ts';
 import { directsOf, identityName, netName } from '../model.ts';
+import { confirmNext, sentence } from '../requests.ts';
 import { api, applyEvents, db, go, newMessage, openDirect, rev, toast } from '../state.ts';
 import { LiveView } from './Accounts.tsx';
 import { MyCodes, ScanCode } from './QrCodes.tsx';
@@ -41,6 +42,8 @@ export interface Card {
   acting?: P.AddAction;
   actError?: string;
   done?: P.AddResultView;
+  /** The action `done` answers: what "Add anyway" sends again. */
+  doneAction?: P.AddAction;
 }
 
 const identityTarget = (i: P.IdentityView): Target => ({ network: i.network, peer: i.nativeId, name: identityName(i.id) });
@@ -160,7 +163,7 @@ function NewMessageBox({ identityId, q: given, mode }: { identityId?: string; q?
   };
 
   const open = (conversationId?: string | null, spaceId?: string | null) => (close(), openAdded(conversationId, spaceId));
-  const act = (c: Card, action: P.AddAction) => void actOn(c, action, setCard, close);
+  const act = (c: Card, action: P.AddAction, confirm?: boolean) => void actOn(c, action, setCard, close, confirm);
 
   const from = target ? openers(accounts, target.network) : [];
   const title = target ? `Message ${target.name} on ${netName(target.network)}` : card ? card.row.label : qr ? QR_TITLE[qr] : mode ? TITLE[mode] : 'New';
@@ -204,7 +207,7 @@ function NewMessageBox({ identityId, q: given, mode }: { identityId?: string; q?
               </div>
             </>
           ) : card ? (
-            <AddCard card={card} live={live} setLive={setLive} onAccount={(id) => resolve(card.row, id)} onAct={(a) => act(card, a)} onOpen={open} onBack={() => (++asked.current, setCard(null), setLive(false))} onClose={close} />
+            <AddCard card={card} live={live} setLive={setLive} onAccount={(id) => resolve(card.row, id)} onAct={(a, confirm) => act(card, a, confirm)} onOpen={open} onBack={() => (++asked.current, setCard(null), setLive(false))} onClose={close} />
           ) : qr ? (
             <>
               {qr === 'scan' ? <ScanCode onLink={scanned} /> : <MyCodes />}
@@ -289,9 +292,10 @@ export function openAdded(conversationId?: string | null, spaceId?: string | nul
 
 /**
  * Act on a preview, from the New box or a card under a message (InviteCard.tsx): the same steps either way. `set` shows
- * the card's progress; `leave` closes what it is in before going where it landed. What was done, or null.
+ * the card's progress; `leave` closes what it is in before going where it landed. `confirm`: the owner pressed "Add
+ * anyway" after the network asked. What was done, or null.
  */
-export async function actOn(c: Card, action: P.AddAction, set: (c: Card) => void, leave: () => void): Promise<P.AddResultView | null> {
+export async function actOn(c: Card, action: P.AddAction, set: (c: Card) => void, leave: () => void, confirm = false): Promise<P.AddResultView | null> {
   const v = c.view!;
   set({ ...c, acting: action, actError: undefined });
   try {
@@ -304,24 +308,24 @@ export async function actOn(c: Card, action: P.AddAction, set: (c: Card) => void
       go({ view: 'inbox', conv: r.conversation.id });
       return null;
     }
-    const r = await api<P.AddResultView>('/api/add', { body: { accountId: c.accountId, ref: v.ref, action } });
+    const r = await api<P.AddResultView>('/api/add', { body: { accountId: c.accountId, ref: v.ref, action, ...(confirm ? { confirm: true } : {}) } });
     if (r.conversation) applyEvents([{ t: 'conversation', conversation: r.conversation }]);
-    if (!r.check && !r.pending && (r.conversation || r.spaceId)) {
+    if (!r.check && !r.confirm && !r.pending && (r.conversation || r.spaceId)) {
       leave();
       openAdded(r.conversation?.id, r.spaceId);
       if (r.notes.length) toast({ kind: 'info', title: v.name, body: r.notes.join(' ') });
       return r;
     }
-    set({ ...c, acting: undefined, done: r });
+    set({ ...c, acting: undefined, done: r, doneAction: action });
     return r;
   } catch (e: any) {
-    set({ ...c, acting: undefined, actError: String(e?.message ?? e) });
+    set({ ...c, acting: undefined, done: undefined, actError: String(e?.message ?? e) });
     return null;
   }
 }
 
 /** A preview and what can be done with it. `inline`: a card under a message, which has no Back to the box. */
-export function AddCard({ card, live, setLive, onAccount, onAct, onOpen, onBack, onClose, inline }: { card: Card; live: boolean; setLive: (on: boolean) => void; onAccount: (id: string) => void; onAct: (a: P.AddAction) => void; onOpen: (conversationId?: string | null, spaceId?: string | null) => void; onBack: () => void; onClose: () => void; inline?: boolean }) {
+export function AddCard({ card, live, setLive, onAccount, onAct, onOpen, onBack, onClose, inline }: { card: Card; live: boolean; setLive: (on: boolean) => void; onAccount: (id: string) => void; onAct: (a: P.AddAction, confirm?: boolean) => void; onOpen: (conversationId?: string | null, spaceId?: string | null) => void; onBack: () => void; onClose: () => void; inline?: boolean }) {
   const { row, view: v, done } = card;
   const net = row.ref.network;
   const accounts = row.state.kind === 'resolve' ? row.state.accounts : [];
@@ -404,7 +408,7 @@ export function AddCard({ card, live, setLive, onAccount, onAct, onOpen, onBack,
           </div>
         </>
       )}
-      {done && <AddDone card={card} result={done} setLive={setLive} onClose={onClose} back={inline ? null : back} />}
+      {done && <AddDone card={card} result={done} setLive={setLive} onClose={onClose} onConfirm={() => card.doneAction && onAct(card.doneAction, true)} back={inline ? null : back} />}
       {live && account && <LiveView account={account} onClose={() => setLive(false)} />}
     </div>
   );
@@ -441,9 +445,32 @@ export function CheckFirst({ network, result: r, setLive, onLeave, back }: { net
   );
 }
 
-/** After an action that did not land somewhere to open: asked, a check first, or someone added. */
-function AddDone({ card, result: r, setLive, onClose, back }: { card: Card; result: P.AddResultView; setLive: (on: boolean) => void; onClose: () => void; back: JSX.Element | null }) {
+/**
+ * The network wants you to confirm first, or flagged what you are about to accept: its words, that nothing is done
+ * yet, and the button that sends it with confirm (`data-confirm`). Also on request cards and DM banners (Requests.tsx).
+ */
+export function ConfirmFirst({ words, verb, busy, onConfirm, canMessage, children }: { words: string; verb: 'accept' | 'add'; busy: boolean; onConfirm: () => void; canMessage: boolean; children?: JSX.Element | (JSX.Element | null | false)[] | null }) {
+  const label = verb === 'accept' ? 'Accept anyway' : 'Add anyway';
+  return (
+    <div class="add-done add-confirm">
+      <p class="request-warning" role="alert">
+        <Icon name="alert" size={13} /> <span>{sentence(words)}</span>
+      </p>
+      <p class="set-help">{confirmNext(verb, canMessage)}</p>
+      <div class="btn-row">
+        <button class="btn small" data-confirm={verb} disabled={busy} onClick={onConfirm}>
+          {busy ? `${label}…` : label}
+        </button>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** After an action that did not land somewhere to open: asked, a check first, a confirm first, or someone added. */
+function AddDone({ card, result: r, setLive, onClose, onConfirm, back }: { card: Card; result: P.AddResultView; setLive: (on: boolean) => void; onClose: () => void; onConfirm: () => void; back: JSX.Element | null }) {
   if (r.check) return <CheckFirst network={card.row.ref.network} result={r} setLive={setLive} onLeave={onClose} back={back} />;
+  if (r.confirm) return <ConfirmFirst words={r.confirm} verb="add" busy={!!card.acting} onConfirm={onConfirm} canMessage={false}>{back}</ConfirmFirst>;
   return (
     <div class="add-done">
       <p class="set-help add-done-line">

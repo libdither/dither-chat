@@ -37,7 +37,7 @@ import { People } from './people.ts';
 import { peopleGraph } from './graph.ts';
 import type { MailHub } from './mail/index.ts';
 import { mailPeople } from './mail/people.ts';
-import { Adding, requestHeld, requestViews } from './add.ts';
+import { Adding, linksOf, requestHeld, requestViews } from './add.ts';
 
 
 type ClientData = { kind: 'client' };
@@ -498,7 +498,7 @@ export class HubServer {
       return ok(syncResponse({ store: s, attention: this.opts.attention, usage: this.usage, devices: this.opts.devices, mail: this.opts.mail, boot: this.boot }, b));
     }
     // Joining and adding, and requests (add.ts).
-    if (path === '/api/add' || path.startsWith('/api/add/') || path.startsWith('/api/requests')) return (await this.adding.route(req, url, path))!;
+    if (path === '/api/add' || path.startsWith('/api/add/') || path.startsWith('/api/requests') || path === '/api/people' || /^\/api\/people\/[\w-]+\/remove$/.test(path)) return (await this.adding.route(req, url, path))!;
     // Mail (mail/routes.ts).
     if (path === '/api/mail' || path.startsWith('/api/mail/')) {
       const r = this.opts.mail ? await this.opts.mail.route(req, url) : null;
@@ -536,7 +536,7 @@ export class HubServer {
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/profile$/)) || (m = path.match(/^\/api\/identities\/([\w-]+)\/profile$/))) {
       const p = s.profile(path.startsWith('/api/persons/') ? { personId: m[1] } : { identityId: m[1] });
       const mail = p && mailPeople(this.opts.mail)?.profile(p.identityIds);
-      return p ? ok({ ...p, abouts: this.people.kept(p.identityIds), ...(mail ? { mail } : {}) }) : bad('nobody by that id', 404);
+      return p ? ok({ ...p, abouts: this.people.kept(p.identityIds), links: linksOf(s.db, p.identityIds), ...(mail ? { mail } : {}) }) : bad('nobody by that id', 404);
     }
     // Their message count per server, estimated from what the hub holds (msgcount.ts, docs/profile.md).
     if ((m = path.match(/^\/api\/(persons|identities)\/([\w-]+)\/activity$/))) {

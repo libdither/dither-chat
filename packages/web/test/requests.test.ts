@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
-import { groupRequests, heldRequest, identityRef, messageRequestNote, relation, requestLine, requestsRow, targetMembers } from '../src/requests.ts';
+import { accountLine, canRemove, peopleFilters, confirmNext, groupRequests, heldRequest, identityRef, linkRows, messageRequestNote, profileLinks, relation, removeQuestion, requestLine, requestsRow, sentence, targetMembers } from '../src/requests.ts';
+import { identityPeer } from '../src/direct.ts';
 
 const req = (id: string, kind: P.RequestView['kind'], ts: number, x: Partial<P.RequestView> = {}): P.RequestView => ({
   id,
@@ -12,6 +13,7 @@ const req = (id: string, kind: P.RequestView['kind'], ts: number, x: Partial<P.R
   target: null,
   ts,
   answers: ['accept', 'decline'],
+  warning: null,
   ...x,
 });
 const acc = (id: string, network: P.Network, capabilities: P.Capability[], status: P.AccountStatus = 'online') => ({ id, network, status, capabilities }) as P.AccountView;
@@ -87,4 +89,70 @@ test('nothing where no account can: no capability, offline, no way on that netwo
   expect(relation({ network: 'discord', relationship: 'requesting', accountId: 'acc_d' }, nova, [acc('acc_d', 'discord', ['connect', 'requests'])], [])).toBeNull();
   // Asked through an account that cannot answer requests.
   expect(relation({ network: 'discord', relationship: 'requesting', accountId: 'acc_d' }, nova, [acc('acc_d', 'discord', ['connect'])], [req('f', 'friend', 1, { from: nova.id })])).toBeNull();
+});
+
+test('which account it came to, plainly', () => {
+  expect(accountLine('discord', 'main')).toBe('to your Discord account main');
+  expect(accountLine('matrix', 'matrix.org')).toBe('to your Matrix account matrix.org');
+  // A label that only names the network says nothing more.
+  expect(accountLine('telegram', 'Telegram')).toBe('to your Telegram account');
+  expect(accountLine('signal', null)).toBe('to your Signal account');
+});
+
+test("the confirm step reads right after either of Discord's warnings and after its confirm sentence", () => {
+  expect(sentence('Discord filed this request as possible spam')).toBe('Discord filed this request as possible spam.');
+  expect(sentence('You must confirm the friend request to add this user.')).toBe('You must confirm the friend request to add this user.');
+  for (const w of ['Discord filed this request as possible spam', 'Discord says you share no server or friend with them', 'You must confirm the friend request to add this user.'])
+    expect(`${sentence(w)} ${confirmNext('accept', true)}`).toMatch(/^[A-Z][^]*\. Nothing is accepted yet\. Accept it anyway, or message them first to see who they are\.$/);
+  expect(confirmNext('accept', false)).toBe('Nothing is accepted yet. Accept it anyway only if you know who they are.');
+  expect(confirmNext('add', false)).toBe('No friend request has gone out yet. Add them anyway only if you know who they are.');
+});
+
+test('the question before ending each kind, naming the account', () => {
+  expect(removeQuestion('friend', 'Nova', 'discord', 'main')).toBe('Remove Nova as a friend on your Discord account main?');
+  expect(removeQuestion('requested', 'Mara', 'discord', 'alt')).toBe('Cancel your friend request to Mara on your Discord account alt?');
+  expect(removeQuestion('blocked', 'owl', 'discord', 'main')).toBe('Unblock owl on your Discord account main?');
+  expect(removeQuestion('contact', 'Noor', 'telegram', 'personal')).toBe('Remove Noor from your contacts on your Telegram account personal?');
+  expect(removeQuestion('following', 'Lena', 'x', 'me')).toBe('Unfollow Lena on your X account me?');
+});
+
+const link = (accountId: string, identityId: string, relationship: P.LinkRelationship, personId: string | null = null): P.PersonLinkView => ({ accountId, identityId, personId, relationship, since: null });
+
+test("People's rows: one per person across accounts, in the hub's order", () => {
+  const rows = linkRows([link('a1', 'i1', 'friend', 'p1'), link('a1', 'i2', 'friend'), link('a2', 'i3', 'friend', 'p1')]);
+  expect(rows.map((r) => [r.key, r.links.map((l) => l.accountId)])).toEqual([
+    ['p1', ['a1', 'a2']],
+    ['i2', ['a1']],
+  ]);
+});
+
+test("a profile's standing: the lists first, then what a profile said through an account with no list entry", () => {
+  const ids = [{ id: 'i1', network: 'discord' as const }, { id: 'i2', network: 'telegram' as const }];
+  const out = profileLinks(ids, [link('main', 'i1', 'friend')], {
+    i1: { accountId: 'alt', relationship: 'requested' },
+    i2: { accountId: 'tg', relationship: 'requesting' },
+  });
+  expect(out).toEqual([
+    { identityId: 'i1', network: 'discord', accountId: 'main', relationship: 'friend' },
+    { identityId: 'i1', network: 'discord', accountId: 'alt', relationship: 'requested' },
+  ]);
+  // The same account's list wins over its profile.
+  expect(profileLinks(ids, [link('main', 'i1', 'friend')], { i1: { accountId: 'main', relationship: 'blocked' } })).toHaveLength(1);
+  expect(canRemove(acc('a', 'discord', ['disconnect']))).toBe(true);
+  expect(canRemove(acc('a', 'discord', ['disconnect'], 'offline'))).toBe(false);
+  expect(canRemove(acc('a', 'discord', ['connect']))).toBe(false);
+});
+
+test('a DM opens to someone by their native id, else their handle', () => {
+  expect(identityPeer({ network: 'discord', nativeId: '123456789012345678', handle: 'nova.wav' })).toBe('123456789012345678');
+  expect(identityPeer({ network: 'telegram', nativeId: 'x', handle: '@lena_k' })).toBe('@lena_k');
+  expect(identityPeer({ network: 'discord', nativeId: 'nope', handle: null })).toBeNull();
+});
+
+test("People's chips: chats, and each kind of list an account here keeps", () => {
+  const ids = (xs: { id: string }[]) => xs.map((x) => x.id);
+  expect(ids(peopleFilters([acc('d', 'discord', ['relationships']), acc('t', 'telegram', ['relationships'])]))).toEqual(['chats', 'friend', 'contact']);
+  expect(ids(peopleFilters([acc('x', 'x', ['relationships'])]))).toEqual(['chats', 'following']);
+  // No account keeps a list: no chips at all.
+  expect(peopleFilters([acc('d', 'discord', ['connect']), acc('m', 'matrix', ['relationships'])])).toEqual([]);
 });

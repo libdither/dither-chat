@@ -330,12 +330,15 @@ describe('pacing', () => {
 describe('requests', () => {
   const ids = () => requestViews(store).map((r) => `${r.accountId}:${r.kind}`).sort();
 
-  test('the demo says what waits after connect: a friend, a room invite, a message request', async () => {
-    expect(ids()).toEqual([`${MX}:invite`, `${SIG}:message`, `${MAIN}:friend`].sort());
+  test('the demo says what waits after connect: friends, a room invite, a message request', async () => {
+    expect(ids()).toEqual([`${MX}:invite`, `${SIG}:message`, `${MAIN}:friend`, `${ALT}:friend`, `${ALT}:friend`].sort());
     const list = (await call('GET', '/api/requests')).json.requests as P.RequestView[];
-    const friend = list.find((r) => r.kind === 'friend')!;
+    const friend = list.find((r) => r.kind === 'friend' && r.accountId === MAIN)!;
     expect(friend.id).toStartWith('req_');
     expect(friend.from).toBe(store.one<{ id: string }>(`SELECT id FROM identity WHERE handle = 'nova.wav'`)!.id);
+    expect(friend.warning).toBeNull();
+    // Discord's flags, in its words: on the alt account.
+    expect(list.filter((r) => r.accountId === ALT).map((r) => r.warning).sort()).toEqual(['Discord filed this request as possible spam', 'Discord says you share no server or friend with them']);
     const invite = list.find((r) => r.kind === 'invite')!;
     expect(invite.target).toEqual({ kind: 'conversation', id: null, name: 'Nix Hackathon 2026', members: 23 });
     const msg = list.find((r) => r.kind === 'message')!;
@@ -352,7 +355,7 @@ describe('requests', () => {
     store.ingest(acc, { t: 'requestGone', nativeId: 'w2' });
     expect(ids().filter((x) => x.startsWith(WA))).toEqual([`${WA}:join`]);
     store.ingest(acc, { t: 'requests', requests: [] });
-    expect(ids()).toEqual([`${MX}:invite`, `${SIG}:message`, `${MAIN}:friend`].sort());
+    expect(ids()).toEqual([`${MX}:invite`, `${SIG}:message`, `${MAIN}:friend`, `${ALT}:friend`, `${ALT}:friend`].sort());
     const events = store.flush();
     expect(events.filter((e) => e.t === 'requests')).toHaveLength(1);
   });
@@ -411,7 +414,7 @@ describe('requests', () => {
   });
 
   test('an account without the capability cannot answer', async () => {
-    const friend = requestViews(store).find((r) => r.kind === 'friend')!;
+    const friend = requestViews(store).find((r) => r.kind === 'friend' && r.accountId === MAIN)!;
     const acc = store.account(MAIN)!;
     store.updateAccount(MAIN, { capabilities: JSON.stringify((JSON.parse(acc.capabilities) as string[]).filter((c) => c !== 'requests')) });
     const r = await call('POST', `/api/requests/${friend.id}`, { answer: 'accept' });
