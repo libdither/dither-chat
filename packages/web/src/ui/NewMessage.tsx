@@ -11,6 +11,7 @@ import { directNote, openers } from '../direct.ts';
 import { directsOf, identityName, netName } from '../model.ts';
 import { api, applyEvents, db, go, newMessage, openDirect, rev, toast } from '../state.ts';
 import { LiveView } from './Accounts.tsx';
+import { MyCodes, ScanCode } from './QrCodes.tsx';
 import { AccountChip, Avatar, NetBadge, useDialog } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { homeRoute } from './Sidebar.tsx';
@@ -57,6 +58,7 @@ function knownPeople(): Row[] {
 }
 
 const TITLE = { join: 'Join a server or group', add: 'Add someone' } as const;
+const QR_TITLE = { scan: 'Scan a code', mine: 'My code' } as const;
 
 export function NewMessage() {
   rev.value;
@@ -73,12 +75,14 @@ function NewMessageBox({ identityId, q: given, mode }: { identityId?: string; q?
   const [accountId, setAccountId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Scanning a code, or showing your own (docs/add.md, "QR codes"). */
+  const [qr, setQr] = useState<'scan' | 'mine' | null>(null);
   const box = useRef<HTMLInputElement>(null);
   const pasted = useRef(false);
   const asked = useRef(0);
   const close = () => (newMessage.value = null);
   const dialog = useDialog(close);
-  useEffect(() => box.current?.focus(), [target, card]);
+  useEffect(() => box.current?.focus(), [target, card, qr]);
 
   const needle = q.trim();
   const accounts = [...db.accounts.values()];
@@ -116,6 +120,12 @@ function NewMessageBox({ identityId, q: given, mode }: { identityId?: string; q?
   useEffect(() => {
     if (given) resolveLink(given);
   }, []);
+  /** A scanned code fills the box as a paste would: a link is looked up, nothing is acted on. */
+  const scanned = (text: string) => {
+    setQr(null);
+    setQ(text);
+    resolveLink(text);
+  };
 
   /** Someone you already have a DM with on this network: go there, nothing to create. */
   const choose = (i: P.IdentityView) => {
@@ -183,7 +193,7 @@ function NewMessageBox({ identityId, q: given, mode }: { identityId?: string; q?
   };
 
   const from = target ? openers(accounts, target.network) : [];
-  const title = target ? `Message ${target.name} on ${netName(target.network)}` : card ? card.row.label : mode ? TITLE[mode] : 'New';
+  const title = target ? `Message ${target.name} on ${netName(target.network)}` : card ? card.row.label : qr ? QR_TITLE[qr] : mode ? TITLE[mode] : 'New';
   return (
     <div class="modal-backdrop" onClick={(e) => e.target === e.currentTarget && dialog.dismiss()}>
       <div class="modal new-message" role="dialog" aria-label={mode ? TITLE[mode] : 'New'} ref={dialog.box}>
@@ -225,6 +235,15 @@ function NewMessageBox({ identityId, q: given, mode }: { identityId?: string; q?
             </>
           ) : card ? (
             <AddCard card={card} live={live} setLive={setLive} onAccount={(id) => resolve(card.row, id)} onAct={(a) => act(card, a)} onOpen={open} onBack={() => (++asked.current, setCard(null), setLive(false))} onClose={close} />
+          ) : qr ? (
+            <>
+              {qr === 'scan' ? <ScanCode onLink={scanned} /> : <MyCodes />}
+              <div class="btn-row">
+                <button class="btn ghost small qr-back" onClick={() => setQr(null)}>
+                  Back
+                </button>
+              </div>
+            </>
           ) : (
             <>
               <input
@@ -243,6 +262,14 @@ function NewMessageBox({ identityId, q: given, mode }: { identityId?: string; q?
                 }}
                 onKeyDown={(e) => e.key === 'Enter' && resolveLink(q)}
               />
+              <div class="new-message-qr">
+                <button class="btn ghost small qr-scan-btn" onClick={() => setQr('scan')}>
+                  <Icon name="scan" size={13} /> Scan a code
+                </button>
+                <button class="btn ghost small qr-mine-btn" onClick={() => setQr('mine')}>
+                  <Icon name="qr" size={13} /> My code
+                </button>
+              </div>
               <div class="new-message-list">
                 {readings.map((r) =>
                   r.state.kind === 'resolve' ? (

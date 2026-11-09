@@ -14,6 +14,7 @@ import { Avatar } from './bits.tsx';
 import { Menuable } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import { identityMenu } from './menus.tsx';
+import { QrImage } from './QrCodes.tsx';
 
 export type AboutTarget = { kind: 'conversation' | 'space'; id: string };
 
@@ -274,22 +275,32 @@ export function SettingRow({ network, k, s, busy, onChange }: { network: P.Netwo
 
 export function InviteSection({ inv, busy, onChange }: { inv: P.AboutInvite; busy: boolean; onChange: (op: 'create' | 'revoke') => void }) {
   const [copied, setCopied] = useState(false);
+  // The same link as a code (docs/add.md, "QR codes"); it never makes or changes the link.
+  const [qr, setQr] = useState(false);
   return (
     <section class="about-section about-invite">
       <h3>Invite link</h3>
       {inv.link ? (
-        <button
-          class="native-id about-link"
-          title="Copy"
-          onClick={() => {
-            navigator.clipboard?.writeText(inv.link!);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1200);
-          }}
-        >
-          <code>{inv.link}</code>
-          <Icon name={copied ? 'check' : 'copy'} size={12} />
-        </button>
+        <>
+          <div class="about-invite-link">
+            <button
+              class="native-id about-link"
+              title="Copy"
+              onClick={() => {
+                navigator.clipboard?.writeText(inv.link!);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1200);
+              }}
+            >
+              <code>{inv.link}</code>
+              <Icon name={copied ? 'check' : 'copy'} size={12} />
+            </button>
+            <button class="btn ghost small about-qr" aria-expanded={qr} onClick={() => setQr(!qr)}>
+              <Icon name="qr" size={13} /> {qr ? 'Hide QR' : 'Show QR'}
+            </button>
+          </div>
+          {qr && <QrImage text={inv.link} label="The invite link as a QR code" />}
+        </>
       ) : (
         <p class="det-note">{inv.canCreate ? 'There is no link yet.' : 'No link you can see.'}</p>
       )}

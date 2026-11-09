@@ -10760,3 +10760,109 @@ button.msg-edited.link:hover {
   color: var(--text);
   font-weight: 600;
 }
+
+/* QR codes (docs/add.md, "QR codes"): Scan and My code in the New box, and a place's invite link as a code. A code is
+   always black on white with its quiet zone, whatever the theme: scanners need the contrast. */
+.new-message-qr {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.qr-code {
+  width: min(100%, 264px);
+  aspect-ratio: 1;
+  flex: none;
+  background: #fff;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.qr-code svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.qr-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.qr-link {
+  max-width: 100%;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: center;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.new-message .qr-actions {
+  margin-top: 0;
+  justify-content: center;
+}
+.qr-mine,
+.qr-scan {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.qr-mine .set-help,
+.qr-scan .set-help {
+  margin: 0;
+}
+.qr-mine > .qr-what {
+  text-align: center;
+}
+.qr-mine > .qr-unreveal {
+  align-self: center;
+}
+.qr-hidden {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+.qr-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.qr-warning svg {
+  flex: none;
+  margin-top: 2px;
+}
+.qr-camera {
+  max-height: min(46vh, 360px);
+}
+.qr-picture {
+  align-self: flex-start;
+}
+.qr-other-text {
+  margin: 0;
+  padding: 10px;
+  max-height: 200px;
+  overflow: auto;
+  background: var(--bg-input);
+  border-radius: 8px;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.about-invite-link {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.about-invite-link .about-link {
+  margin-bottom: 0;
+  min-width: 0;
+}
+.about-invite .qr-code {
+  width: min(100%, 220px);
+  margin-bottom: 10px;
+}
