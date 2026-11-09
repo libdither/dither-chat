@@ -155,3 +155,67 @@ What each network will do once its adapter has it. **None of the real adapters d
 After connecting, the demo sends three requests: a Discord friend request, a Matrix room invite, and a Signal message
 request whose conversation stays out of the inbox. A demo account's `capabilities` action (`{ without: [...] }`) says
 hello again without some, to see the page without them.
+
+## QR codes
+
+The New box has **Scan a code** and **My code** under its input, and a place's invite link has **Show QR** beside it.
+The code is in packages/web/src/qr.ts (pure: the links, what a scan is, drawing) and ui/QrCodes.tsx.
+
+### Scan
+
+Scan opens the camera (packages/web/src/qrscan.ts: the browser's BarcodeDetector where it has one, else jsQR). Where
+there is no camera, as on most desktops, or it is not allowed, the box says so; a picture of the code works
+everywhere: choose one, paste one (Ctrl+V) or drop one on the box.
+
+- A code that holds a link or an address `parseAdd` reads goes into the box exactly as a paste would: a link is
+  looked up at once and lands on its preview card; an `@name`, `+phone` or `#alias:server` shows its readings. So a
+  Signal group code, a WhatsApp group or contact link, a `t.me` link, a `matrix.to` link and a Discord invite code all
+  work, and so does every code in My code below.
+- **A scan never acts.** It only fills the box: joining, asking, adding and messaging stay buttons on the card.
+- Anything else (a Wi-Fi code, a plain web page, a bare word) is shown as text with "This code isn't an invite or a
+  profile link". A Telegram sign-in code (`tg://login`) also says to approve sign-ins only from the Telegram account's
+  page (docs/accounts.md), never from here.
+- The camera runs only while Scan is open and the page is in view.
+
+### My code
+
+One code per account, picked by its chip, for the link that adds or messages you on that network. It is built from
+the account's own identity as the hub knows it (its native id and handle), without asking the network. Every link is
+kept only if `parseAdd` reads it back as you on that network, so our own Scan understands each one; a phone's camera
+opens it in the app, which is the point for networks with no QR codes of their own.
+
+| Network | The code holds | Notes |
+|---|---|---|
+| Matrix | `https://matrix.to/#/@you:server` | matrix.to hands it to their Matrix app |
+| Telegram | `https://t.me/<username>` | without a username: `https://t.me/+<number>`, hidden until tapped, which Telegram opens only for people your privacy settings let find you by number |
+| WhatsApp | `https://wa.me/<number>` | always a number: hidden until tapped. An account known only by its LID has none |
+| Discord | `https://discord.com/users/<id>` | opens your profile, where they can send a friend request |
+| Signal | `https://signal.me/#p/+<number>` | hidden until tapped. A username code needs the adapter: Signal makes username links (`signal.me/#eu/…`) on its servers, and the box says so |
+| X | `https://x.com/<handle>` | |
+| Instagram | `https://instagram.com/<username>` | |
+| Messenger | `https://m.me/<username>`, else `https://www.facebook.com/profile.php?id=<id>` | |
+| Google Messages | none | people reach you by your phone number |
+
+Each code has its link under it, Copy, and Share where the device has a share sheet (`navigator.share`).
+
+**Privacy.** A phone number is never drawn or written until you tap "Show my number's code", under a warning that
+anyone who sees or scans the code gets your number. It is hidden again whenever My code opens or you pick another
+account, and "Hide my number" hides it at once. A profile link says who you are on that network to anyone who scans
+it; that is what it is for, so show it to the people you mean to.
+
+### A place's code
+
+Where a place's About shows its invite link (InviteSection in ui/About.tsx: Discord servers, Signal and WhatsApp
+groups, Matrix rooms' `matrix.to` links), **Show QR** draws the same link. It never makes, resets or turns off a link;
+those stay the buttons below it.
+
+### Drawing
+
+Codes are always black on white with a four-module quiet zone and square edges (`qrSvg`, uqr, error correction M), on
+a white tile whatever the theme: phone scanners need the contrast. They are at most 264 px wide in the box (220 px in
+About), and fit a phone's sheet.
+
+scripts/verify-qr.ts checks all of it against a demo hub: every demo account's code decodes (from a screenshot, with
+jsQR) back to the link under it in a dark and a light theme, the numbers stay hidden until tapped, a picture of
+`discord.gg/pixelart` lands on its preview, a Wi-Fi code shows the plain line, the Signal climbing group's invite QR
+decodes to its link, and My code fits a phone.

@@ -2,9 +2,9 @@ import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, NETWORKS } from '@dither-chat/protocol';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { renderSVG } from 'uqr';
 import { ago } from '../format.ts';
 import { netName } from '../model.ts';
+import { qrSvg } from '../qr.ts';
 import { api, db, go, mailRev, prefs, rev, toast } from '../state.ts';
 import { dropLayer, pushLayer, useLayer } from '../phone.ts';
 import { AccountChip, Modal, NetBadge } from './bits.tsx';
@@ -86,11 +86,6 @@ export function AccountsSidebar({ active, onAdd }: { active?: string; onAdd: () 
       </div>
     </div>
   );
-}
-
-/** Black on white with a four-module quiet zone and square edges, the way phone scanners want it. */
-function qrSvg(text: string) {
-  return renderSVG(text, { ecc: 'M', border: 4, whiteColor: '#ffffff', blackColor: '#000000' }).replace('<svg ', '<svg shape-rendering="crispEdges" ');
 }
 
 const coarsePointer = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
