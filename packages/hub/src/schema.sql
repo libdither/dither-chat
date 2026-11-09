@@ -396,6 +396,23 @@ CREATE TABLE IF NOT EXISTS arrange_setting (
   value TEXT NOT NULL
 );
 
+-- ------------------------------------------------------------------ button counts (clicks.ts, docs/button-counts.md)
+-- Presses of the app's controls per day, from devices that switched it on. Keys and pages are strings from the
+-- app's code ("inbox: row (DM, unread)", "conversation"): no names, text or ids.
+CREATE TABLE IF NOT EXISTS click_count (
+  day    TEXT NOT NULL,             -- the device's date, YYYY-MM-DD
+  key    TEXT NOT NULL,
+  page   TEXT NOT NULL,
+  device TEXT NOT NULL CHECK (device IN ('phone', 'desktop')),
+  n      INTEGER NOT NULL,
+  PRIMARY KEY (day, key, page, device)
+) WITHOUT ROWID;
+-- Batches already counted, so a resent one is not counted twice.
+CREATE TABLE IF NOT EXISTS click_batch (
+  id TEXT PRIMARY KEY,
+  at INTEGER NOT NULL
+);
+
 -- ------------------------------------------------------------------ the inbox's attention score (attention.ts, docs/inbox.md)
 -- What each conversation's message metadata says about you there, folded in message order up to a cursor
 -- (ts, rowid). Authors, times, replies, mentions and triage decisions only: never what was said.

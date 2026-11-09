@@ -3,7 +3,7 @@ import { createHmac } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { ACCOUNT_COLORS, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
@@ -24,6 +24,7 @@ import { clampDays, parseZone } from './activitychart.ts';
 import { compress } from './compress.ts';
 import { forwardMessage } from './forward.ts';
 import { UsageStore } from './usage.ts';
+import { ClickCounts } from './clicks.ts';
 import type { Attention } from './attention.ts';
 import type { ActivityStore } from './activity.ts';
 import { Devices } from './devices.ts';
@@ -147,6 +148,8 @@ export class HubServer {
   readonly mediaInfo: MediaInfo;
   private typingGate = new TypingGate();
   private usage: UsageStore;
+  /** Button counts (clicks.ts). */
+  private clicks: ClickCounts;
   readonly calls: Calls;
   readonly abouts: Abouts;
   readonly people: People;
@@ -187,6 +190,7 @@ export class HubServer {
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.adding = new Adding({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), liveView: (a) => !!sup.liveViewUrl?.(a) || !!store.account(a)?.live_view });
     sup.calls = this.calls;
+    this.clicks = new ClickCounts(store.db);
     this.usage = new UsageStore(store.db, (changed, removed, all) => {
       const a = this.opts.attention;
       // Where you have been moves the inbox (docs/inbox.md): the chat you were just in stays near the top.
@@ -1031,6 +1035,33 @@ export class HubServer {
         u.reset(b.kind && b.id ? { kind: b.kind, id: b.id } : undefined);
         return ok();
       }
+    }
+    // Button counts (clicks.ts, docs/button-counts.md). Cross-site writes are refused above, like every write.
+    if (path === '/api/usage/clicks') {
+      if (method === 'GET') {
+        const days = Math.min(Math.max(Math.floor(num('days') ?? 7) || 7, 1), 365);
+        const by = url.searchParams.get('by');
+        const limit = Math.min(Math.max(Math.floor(num('limit') ?? 200) || 200, 1), 1000);
+        return ok(this.clicks.totals(days, by === 'device' || by === 'page' ? by : null, limit));
+      }
+      if (method === 'POST') {
+        if (Number(req.headers.get('content-length') ?? 0) > CLICK_BODY_MAX) return bad('too many counts at once', 413);
+        const text = await req.text();
+        if (text.length > CLICK_BODY_MAX) return bad('too many counts at once', 413);
+        let b: { batch?: unknown; counts?: unknown };
+        try {
+          b = JSON.parse(text);
+        } catch {
+          return bad('that is not JSON');
+        }
+        if (!Array.isArray(b?.counts)) return bad('counts: a list');
+        return ok({ applied: this.clicks.apply(typeof b.batch === 'string' ? b.batch.slice(0, 64) : undefined, b.counts) });
+      }
+      if (method === 'DELETE') {
+        this.clicks.forget();
+        return ok();
+      }
+      return bad('GET, POST or DELETE', 405);
     }
     if (path.startsWith('/api/push')) {
       const push = this.opts.push;

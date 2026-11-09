@@ -110,5 +110,6 @@ Built in slices from [mail-design.md](mail-design.md) (its §12); what works now
 | Login, beyond tailnet membership | M | M | next | Anyone on the tailnet can read everything today |
 | Fast on a big hub | H | M | next | [perf.md](perf.md): a harness with a baseline, and the quick wins done. Next: a switch that renders only the timeline, long timelines windowed, a smaller bootstrap |
 | Offline reading of recent messages | M | M | later | The shell works offline; data does not |
+| Count which buttons you press, for the redesign | M | L | done | [button-counts.md](button-counts.md): opt-in per device in Settings → Usage; per day, key, page and phone or desktop, kept on the hub only; `bun scripts/clicks.ts` prints the top. Not yet run on a real phone |
 | Backups of `.data` | M | L | done | A nightly `VACUUM INTO`, the newest seven kept, and a copy before any schema change ([deploy.md](deploy.md#backups-and-upkeep)) |
 | Names the hub answers to, media from public addresses only | H | L | done | A Host allowlist against DNS rebinding, and the media proxy refuses private addresses and caps sizes ([deploy.md](deploy.md#who-can-reach-it)) |

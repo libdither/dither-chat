@@ -36,6 +36,7 @@ import { applyUpdate, updateReady } from '../pwa.ts';
 import { counting, rendered } from '../perf.ts';
 import { MailCenterLazy, MailComposerLazy, MailSidebarLazy } from './mail/lazy.tsx';
 import { RequestsPane } from './Requests.tsx';
+import { countKey } from '../clicklog.ts';
 
 /** What the center pane shows, and whether a details pane is available. */
 function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'conv' | 'person'; id: string } } {
@@ -123,11 +124,11 @@ function SettingsNav() {
       </header>
       <div class="side-scroll">
         {SECTIONS.map(([t, i, id]) => (
-          <button class="settings-nav-item" onClick={() => showSection(id)}>
+          <button class="settings-nav-item" data-track={`settings: section ${t}`} onClick={() => showSection(id)}>
             <Icon name={i} size={16} /> {t}
           </button>
         ))}
-        <button class="settings-nav-item" onClick={() => go({ view: 'accounts' })}>
+        <button class="settings-nav-item" data-track="settings: section Accounts" onClick={() => go({ view: 'accounts' })}>
           <Icon name="power" size={16} /> Accounts
         </button>
       </div>
@@ -209,7 +210,7 @@ function TabBar({ r }: { r: Route }) {
   return (
     <nav class="tabbar" aria-label="Sections">
       {tabs.map((t) => (
-        <button class={`tab ${tab === t.id ? 'active' : ''}`} aria-current={tab === t.id ? 'page' : undefined} onClick={() => go(t.to())}>
+        <button class={`tab ${tab === t.id ? 'active' : ''}`} data-track={`tabs: ${t.label}`} aria-current={tab === t.id ? 'page' : undefined} onClick={() => go(t.to())}>
           <span class="tab-icon">
             <Icon name={t.icon} size={22} />
             {!!t.badge && <span class="tab-badge">{t.badge > 99 ? '99+' : t.badge}</span>}
@@ -281,9 +282,9 @@ export function App() {
     rest,
     back: backRest,
     details: !!detail,
-    onBack: () => leave(r),
-    onDetails: (open) => (panel.value = open ? 'details' : 'main'),
-    onForward: () => lastDetail && go(lastDetail),
+    onBack: () => (countKey('pager: swipe back'), leave(r)),
+    onDetails: (open) => (countKey(open ? 'pager: swipe to details' : 'pager: swipe from details'), (panel.value = open ? 'details' : 'main')),
+    onForward: () => (countKey('pager: swipe forward'), lastDetail && go(lastDetail)),
     onRefresh: refresh,
   });
 
@@ -331,6 +332,7 @@ export function App() {
         {p && (rest === 'peek' || rest === 'details') && (
           <button
             class="card-shield"
+            data-track={rest === 'peek' ? 'pager: back to the page' : 'pager: close details'}
             aria-label={rest === 'peek' ? 'Back to the conversation' : 'Close the details'}
             onClick={() => (rest === 'peek' ? lastDetail && go(lastDetail) : (panel.value = 'main'))}
           />

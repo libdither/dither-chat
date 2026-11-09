@@ -22,7 +22,7 @@ function PingCard({ m }: { m: P.MessageView }) {
   const unread = messageUnread(m);
   return (
     <div class={`ping ${unread ? 'unread' : ''}`} data-mid={m.id} {...ctx}>
-      <button class="ping-main" onClick={() => go({ view: 'inbox', conv: c.id })}>
+      <button class="ping-main" data-track={unread ? 'card (unread)' : 'card'} onClick={() => go({ view: 'inbox', conv: c.id })}>
         <Avatar id={person?.id ?? m.authorId ?? m.id} name={authorName(m.authorId)} url={person?.avatar ?? author?.avatar} size={34} network={c.network} accountIds={m.seenVia} />
         <span class="ping-text">
           <span class="ping-top">
@@ -57,7 +57,7 @@ function MailPingCard({ m }: { m: P.MailTriageItem }) {
   const t = m.triage;
   return (
     <div class={`ping mail-ping ${boardUnread(m) ? 'unread' : ''}`} data-mid={m.id} data-mail="1">
-      <button class="ping-main" onClick={() => go({ view: 'inbox', conv: m.threadId })}>
+      <button class="ping-main" data-track={boardUnread(m) ? 'card (mail, unread)' : 'card (mail)'} onClick={() => go({ view: 'inbox', conv: m.threadId })}>
         <Avatar id={person?.id ?? m.from.email} name={name} url={person?.avatar} size={34} network="email" />
         <span class="ping-text">
           <span class="ping-top">
@@ -97,7 +97,7 @@ function Cards({ ms }: { ms: BoardItem[] }) {
     <>
       {(all ? ms : ms.slice(0, SHOWN)).map((m) => (isMailItem(m) ? <MailPingCard key={m.id} m={m} /> : <PingCard key={m.id} m={m} />))}
       {!all && ms.length > SHOWN && (
-        <button class="btn ghost small" onClick={() => setAll(true)}>
+        <button class="btn ghost small" data-track="show all" onClick={() => setAll(true)}>
           Show all {ms.length}
         </button>
       )}
@@ -112,13 +112,13 @@ export function InboxBoard() {
   const { important, active, digest, below, importantUnread } = board();
   const s = { attention: accountsNeedingYou() };
   return (
-    <section class="pane board">
+    <section class="pane board" data-track-area="triage">
       <header class="board-head">
         <div>
           <h2>Triage</h2>
           <p>Every message from every account goes through the same decision model. Here is where each landed, and why. Vote one up or down a level and it learns from that.</p>
         </div>
-        <button class="btn ghost small" title="Mark every conversation read, here and on the networks" onClick={() => markAllRead([...db.conversations.values()].filter(visibleConv), 'all your accounts')}>
+        <button class="btn ghost small" data-track="mark all read" title="Mark every conversation read, here and on the networks" onClick={() => markAllRead([...db.conversations.values()].filter(visibleConv), 'all your accounts')}>
           <Icon name="check" size={14} /> Mark all read
         </button>
         <div class="board-stats">
@@ -143,7 +143,7 @@ export function InboxBoard() {
               <Icon name="alert" size={15} /> Accounts that need you
             </h3>
             {s.attention.map((a) => (
-              <button key={a.id} class="attention-card" onClick={() => go({ view: 'accounts', account: a.id })}>
+              <button key={a.id} class="attention-card" data-track="account needs you" onClick={() => go({ view: 'accounts', account: a.id })}>
                 <SourceChip network={a.network} accountIds={[a.id]} />
                 <b>{a.label}</b>
                 <span>{a.attention?.message}</span>
@@ -178,7 +178,7 @@ export function InboxBoard() {
         </div>
         {below.length > 0 && (
           <details class="board-block below">
-            <summary>
+            <summary data-track="not interesting (open)">
               <Icon name="eyeOff" size={15} /> Not interesting{' '}
               <span class="muted">
                 · the closest {below.length} from the last {BELOW_DAYS === 2 ? 'two days' : `${BELOW_DAYS} days`}
@@ -254,7 +254,7 @@ function Learned() {
           <span class="rule-votes" title="Votes it was part of">
             {f.votes} vote{f.votes === 1 ? '' : 's'}
           </span>
-          <button class="icon-btn small" disabled={busy} title="Forget this, and never learn it again" onClick={act(() => forgetFactor(f.key, true))}>
+          <button class="icon-btn small" disabled={busy} data-track="forget a learned rule" title="Forget this, and never learn it again" onClick={act(() => forgetFactor(f.key, true))}>
             <Icon name="x" size={13} />
           </button>
         </div>
@@ -265,7 +265,7 @@ function Learned() {
           {p.rejected.map((r) => (
             <div key={r.key} class="rule-row">
               <span class="rule-text">{r.text}</span>
-              <button class="btn ghost small" disabled={busy} onClick={act(() => forgetFactor(r.key, false))}>
+              <button class="btn ghost small" disabled={busy} data-track="learn a forgotten rule again" onClick={act(() => forgetFactor(r.key, false))}>
                 Learn again
               </button>
             </div>
@@ -273,7 +273,7 @@ function Learned() {
         </details>
       )}
       <div class="learned-foot">
-        <button class="btn ghost small" disabled={busy} onClick={act(relearn)}>
+        <button class="btn ghost small" disabled={busy} data-track="learn again now" onClick={act(relearn)}>
           <Icon name="refresh" size={13} /> Learn again now
         </button>
         {p.prompt && (

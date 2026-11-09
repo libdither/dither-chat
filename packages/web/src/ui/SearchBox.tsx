@@ -7,6 +7,7 @@ import { allCommunities, communitiesOf, convLabel, convTitle, netName, people, v
 import { db } from '../state.ts';
 import { Avatar, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
+import { countAt } from '../clicklog.ts';
 
 // ------------------------------------------------------------------ recent searches, on this device
 
@@ -170,12 +171,14 @@ export function SearchBox({
       onSubmit={(e) => {
         e.preventDefault();
         setOpen(false);
+        countAt(e.currentTarget as HTMLElement, 'search (Enter)');
         submit(value.trim());
       }}
     >
       <Icon name="search" size={15} />
       <input
         ref={inputRef}
+        data-track="search"
         aria-label="Search"
         aria-autocomplete="list"
         aria-expanded={open && items.length > 0}
@@ -215,6 +218,7 @@ export function SearchBox({
               <button
                 type="button"
                 class="link-btn"
+                data-track="search (clear recent)"
                 onClick={() => {
                   forgetSearches();
                   setSel(-1);
@@ -226,7 +230,7 @@ export function SearchBox({
             </div>
           )}
           {items.map((s, i) => (
-            <button type="button" role="option" aria-selected={i === cur} class={`search-suggest-row ${i === cur ? 'active' : ''}`} onClick={(e) => take(s, (e.currentTarget as HTMLElement).closest('form')!.querySelector('input')!)}>
+            <button type="button" role="option" aria-selected={i === cur} data-track="search (suggestion)" class={`search-suggest-row ${i === cur ? 'active' : ''}`} onClick={(e) => take(s, (e.currentTarget as HTMLElement).closest('form')!.querySelector('input')!)}>
               <span class="search-suggest-icon">{s.icon}</span>
               <span class="search-suggest-label">{s.label}</span>
               {s.sub && <small>{s.sub}</small>}

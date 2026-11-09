@@ -13,6 +13,7 @@ import { Menuable } from './ContextMenu.tsx';
 import { conversationMenu, identityMenu, messageMenu, personMenu, spaceMenu } from './menus.tsx';
 import { readableSearch, recentSearches, rememberSearch, SearchBox } from './SearchBox.tsx';
 import { preloadMail } from './mail/lazy.tsx';
+import { countKey } from '../clicklog.ts';
 
 /** Split a snippet into text and matches. It is plain text, so it stays out of innerHTML. */
 function Snippet({ text, network }: { text: string; network: P.Network }) {
@@ -295,7 +296,7 @@ export function SearchPane({ q, onBack }: { q: string; onBack?: () => void }) {
   return (
     <section class="pane search-pane">
       <header class="conv-head search-head">
-        <button class="icon-btn search-back" onClick={onBack ?? (() => back({ view: 'inbox' }))} aria-label="Back" title="Back">
+        <button class="icon-btn search-back" data-track="pager: back button" onClick={onBack ?? (() => back({ view: 'inbox' }))} aria-label="Back" title="Back">
           <Icon name="back" />
         </button>
         <SearchBox
@@ -371,6 +372,7 @@ export function FindShortcut() {
     const k = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'f') return;
       e.preventDefault();
+      countKey('keys: Ctrl+F (search)');
       const r = route.value;
       const input = document.querySelector<HTMLInputElement>('.search-pane .search-main input');
       if (r.view === 'search' && !r.conv && input) return (input.focus(), input.select());

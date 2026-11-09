@@ -19,12 +19,13 @@ import { OrganizeView, SortIcon, sortEntries, startOrganize, useFlip } from './R
 import { startInbox } from '../inbox.ts';
 import { openMenu } from './ContextMenu.tsx';
 
-function RailItem({ active, unread, badge, title, sub, onClick, children, dnd, menu, class: cls }: { active: boolean; unread?: boolean; badge?: number; title: string; sub?: string; onClick: () => void; children: any; dnd?: Record<string, unknown>; menu?: () => MenuSpec | null; class?: string }) {
+/** `track`: its key for button counts (clicks.ts), never the title, which may be a name. */
+function RailItem({ active, unread, badge, title, sub, onClick, children, dnd, menu, class: cls, track }: { active: boolean; unread?: boolean; badge?: number; title: string; sub?: string; onClick: () => void; children: any; dnd?: Record<string, unknown>; menu?: () => MenuSpec | null; class?: string; track: string }) {
   const ctx = useMenu(menu ?? (() => null));
   return (
     <div class={`rail-item ${active ? 'active' : ''} ${cls ?? ''}`} {...dnd}>
       <span class={`rail-pill ${active ? 'active' : unread ? 'unread' : ''}`} />
-      <button class="rail-btn" {...tipProps(title, sub)} onClick={onClick} {...(menu ? ctx : {})}>
+      <button class="rail-btn" data-track={track} {...tipProps(title, sub)} onClick={onClick} {...(menu ? ctx : {})}>
         {children}
       </button>
       {!!badge && (
@@ -105,6 +106,7 @@ function RailSpace({ space: s, route: r, folder }: { space: P.SpaceView; route: 
       title={s.name}
       sub={[`${netName(s.network)} ${NETWORK_META[s.network].spaceNoun}`, mentions(u.badge)].filter(Boolean).join(' · ')}
       onClick={() => go({ view: 'space', space: s.id })}
+      track={folder ? 'community (in a folder)' : 'community'}
       dnd={dnd(key, folder, !folder)}
       class={dropClass(key, folder)}
     >
@@ -124,6 +126,7 @@ function RailConv({ conv: c, route: r, folder }: { conv: P.ConversationView; rou
       title={convTitle(c)}
       sub={[`${netName(c.network)} ${c.shape === 'group' ? 'group' : c.shape}`, mentions(u.badge)].filter(Boolean).join(' · ')}
       onClick={() => go(folder ? { view: 'folder', folder, conv: c.id } : { view: 'inbox', conv: c.id })}
+      track={folder ? 'chat (in a folder)' : 'chat'}
       dnd={dnd(key, folder, !folder)}
       class={dropClass(key, folder)}
     >
@@ -141,7 +144,7 @@ function RailPerson({ id, route: r, folder }: { id: string; route: Route; folder
   const u = sumUnread(directsOf(id));
   const key = `person:${id}`;
   return (
-    <RailItem active={r.view === 'folder' && r.person === id} unread={u.unread > 0} badge={u.badge} title={p.name} onClick={() => go({ view: 'folder', folder, person: id })} dnd={dnd(key, folder)} class={dropClass(key, folder)}>
+    <RailItem active={r.view === 'folder' && r.person === id} unread={u.unread > 0} badge={u.badge} title={p.name} track="person (in a folder)" onClick={() => go({ view: 'folder', folder, person: id })} dnd={dnd(key, folder)} class={dropClass(key, folder)}>
       <Avatar id={p.id} name={p.name} url={p.avatar} size={44} />
     </RailItem>
   );
@@ -164,6 +167,7 @@ function RailEntryView({ entry: e, route: r }: { entry: RailEntry; route: Route 
         title={f.name}
         sub={folderNames(f)}
         onClick={() => patchPlaces([{ kind: 'folder', id: f.id, open: !open }])}
+        track={open ? 'folder (close)' : 'folder (open)'}
         dnd={dnd(e.key, undefined, true)}
         class={dropClass(e.key)}
       >
@@ -200,7 +204,7 @@ function RailMail({ active }: { active: boolean }) {
   if (s.access.state === 'off') return null;
   const unread = unreadInbox(s);
   return (
-    <RailItem active={active} unread={unread > 0} title="Mail" sub={unread ? `${unread} unread ${unread === 1 ? 'thread' : 'threads'} in Inbox` : 'Your email, through dither-accounts'} onClick={() => go({ view: 'mail' })}>
+    <RailItem active={active} unread={unread > 0} title="Mail" track="mail" sub={unread ? `${unread} unread ${unread === 1 ? 'thread' : 'threads'} in Inbox` : 'Your email, through dither-accounts'} onClick={() => go({ view: 'mail' })}>
       <span class="rail-mail" onPointerEnter={() => void preloadMail().catch(() => {})}>
         <Icon name="mail" size={21} />
         {unread > 0 && <span class="rail-mail-dot" />}
@@ -225,13 +229,13 @@ export function Rail() {
   useFlip(scroll, snapshot.value.v);
 
   return (
-    <nav class="rail" aria-label="Places">
-      <RailItem active={is((r) => r.view === 'inbox' || r.view === 'triage')} title="Inbox" badge={priorityCount} onClick={() => go({ view: 'inbox' })} menu={inboxMenu}>
+    <nav class="rail" aria-label="Places" data-track-area="rail">
+      <RailItem active={is((r) => r.view === 'inbox' || r.view === 'triage')} title="Inbox" track="inbox" badge={priorityCount} onClick={() => go({ view: 'inbox' })} menu={inboxMenu}>
         <span class="rail-logo">
           <DitherMark size={26} />
         </span>
       </RailItem>
-      <RailItem active={is((r) => r.view === 'people')} title="People" sub="Every DM, merged per person" badge={peopleBadge} onClick={() => go({ view: 'people' })}>
+      <RailItem active={is((r) => r.view === 'people')} title="People" track="people" sub="Every DM, merged per person" badge={peopleBadge} onClick={() => go({ view: 'people' })}>
         <Icon name="users" size={22} />
       </RailItem>
       <RailMail active={r.view === 'mail'} />
@@ -243,11 +247,12 @@ export function Rail() {
             {placePref(e.kind, entryId(e)).pinned && !placePref(all[i + 1]?.kind ?? 'space', all[i + 1] ? entryId(all[i + 1]) : '').pinned && <div class="rail-sep small" />}
           </Fragment>
         ))}
-        <RailItem active={r.view === 'directory'} title="All communities" sub="Browse, sort and categorise" onClick={() => go({ view: 'directory' })}>
+        <RailItem active={r.view === 'directory'} title="All communities" track="all communities" sub="Browse, sort and categorise" onClick={() => go({ view: 'directory' })}>
           <Icon name="grid" size={20} />
         </RailItem>
         <RailItem
           class="rail-sort"
+          track="order"
           active={false}
           title={`Order: ${SORT_LABELS[sortOf('rail')]}`}
           sub="Change the order, or organize servers"
@@ -261,13 +266,13 @@ export function Rail() {
       </div>
       <OrganizeView />
       <div class="rail-sep rail-foot" />
-      <RailItem class="rail-foot" active={is((r) => r.view === 'accounts')} title="Accounts and connections" onClick={() => go({ view: 'accounts' })} menu={accountsMenu}>
+      <RailItem class="rail-foot" active={is((r) => r.view === 'accounts')} title="Accounts and connections" track="accounts" onClick={() => go({ view: 'accounts' })} menu={accountsMenu}>
         <span class="rail-acc">
           <Icon name="power" size={20} />
           {attention && <span class="rail-alert" />}
         </span>
       </RailItem>
-      <RailItem class="rail-foot" active={is((r) => r.view === 'settings')} title="Settings" sub="Notification rules and everything else" onClick={() => go({ view: 'settings' })}>
+      <RailItem class="rail-foot" active={is((r) => r.view === 'settings')} title="Settings" track="settings" sub="Notification rules and everything else" onClick={() => go({ view: 'settings' })}>
         <Icon name="settings" size={20} />
       </RailItem>
     </nav>

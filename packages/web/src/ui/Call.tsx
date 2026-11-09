@@ -16,6 +16,7 @@ export function JoinCallButton({ c }: { c: P.ConversationView }) {
   return (
     <button
       class={`hdr-btn call-join ${here ? 'on' : ''}`}
+      data-track={here ? 'leave call' : 'join call'}
       title={here ? 'Leave the call' : 'Join the call'}
       aria-label={here ? 'Leave the call' : 'Join the call'}
       onClick={() => (here ? leaveCall() : void startCall(c.id, accountId, prefs.value.callMode))}

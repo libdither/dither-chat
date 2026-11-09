@@ -734,7 +734,7 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
     <section class="pane account-pane">
       <header class="conv-head">
         {onBack && (
-          <button class="icon-btn back" onClick={onBack} aria-label="Back">
+          <button class="icon-btn back" data-track="pager: back button" onClick={onBack} aria-label="Back">
             <Icon name="back" />
           </button>
         )}

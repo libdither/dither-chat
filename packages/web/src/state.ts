@@ -136,6 +136,8 @@ export interface Prefs {
   inboxFilter: InboxFilter;
   /** People's filter chip: chats, or one kind of list (docs/add.md "Relationships"). */
   peopleFilter?: 'chats' | 'friend' | 'contact' | 'following';
+  /** This device counts which buttons are pressed (clicklog.ts, docs/button-counts.md). Off unless switched on here. */
+  countClicks?: boolean;
 }
 export type InboxFilter = 'all' | 'people' | 'groups' | 'unread';
 const PREFS_KEY = 'dither-chat:prefs';
