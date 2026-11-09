@@ -20,7 +20,7 @@ import { changedFacts, messageEvents, newState, openedDirect, translateDispatch,
 import { duePins, PIN_HOLD_MS } from './changes.ts';
 import { customEmoji, DISCORD_EPOCH, guildIconUrl, mapUser } from './map.ts';
 import { BridgeServer, PaceQueue } from './server.ts';
-import { Sandbox, pickDisplay } from './sandbox.ts';
+import { Sandbox, pickDisplay, vncSocketPath } from './sandbox.ts';
 
 const CAPABILITIES: P.Capability[] = ['send', 'history', 'react', 'edit', 'redact', 'markRead', 'typing', 'threads', 'media', 'liveView', 'sendMedia', 'openDirect', 'calls', 'forward', 'about', 'configure', 'profile'];
 const WIDTH = 1280;
@@ -38,7 +38,9 @@ interface RawReactionContext {
 }
 
 // -------------------------------------------------------------------- state
-const { display, vncPort } = pickDisplay(hub.accountId, hub.config);
+const { display } = pickDisplay(hub.accountId, hub.config);
+/** The live view's Unix socket (the sandbox's x11vnc listens there and on no port); the hub carries it. */
+const vncSocket = vncSocketPath(hub.accountDir);
 const adapterPort = Number(hub.config.adapterPort ?? process.env.DITHER_ADAPTER_WS_PORT ?? 8700 + display);
 const startUrl: string = hub.config.startUrl ?? 'https://discord.com/app';
 
@@ -57,7 +59,7 @@ function pushStatus(extra: Partial<Extract<P.AdapterEvent, { t: 'status' }>> = {
     t: 'status',
     status,
     attention,
-    liveView: { vncPort, width: WIDTH, height: HEIGHT },
+    liveView: { vncSocket, width: WIDTH, height: HEIGHT },
     ...(selfUser ? { self: mapUser(selfUser, { isSelf: true }) } : {}),
     ...extra,
   });
@@ -97,7 +99,6 @@ async function boot() {
   sandbox = new Sandbox({
     accountDir: hub.accountDir,
     display,
-    vncPort,
     width: WIDTH,
     height: HEIGHT,
     wsUrl,

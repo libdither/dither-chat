@@ -1,7 +1,8 @@
 /**
  * Per-account sandbox: a private Xvfb display, a NON-headless Chromium running the
  * real Discord web client with a persistent profile and our unpacked extension,
- * and an x11vnc server bound to localhost so the hub can proxy a live view.
+ * and an x11vnc server on a Unix socket in the account's directory (and on no TCP
+ * port) so the hub can proxy a live view.
  *
  * Deliberately NOT automation: no Playwright/Puppeteer, no --enable-automation, no
  * --remote-debugging-port, no --headless. It is an ordinary browser window that
@@ -14,8 +15,10 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Subprocess } from 'bun';
 
@@ -26,7 +29,6 @@ const LAB_SRC = join(HERE, 'lab');
 export interface SandboxOptions {
   accountDir: string;
   display: number; //    X display number, e.g. 91 -> :91
-  vncPort: number; //    localhost VNC port, e.g. 5991
   width: number;
   height: number;
   wsUrl: string; //      ws://127.0.0.1:<adapterPort>/
@@ -89,10 +91,13 @@ export class Sandbox {
   private stopped = false;
   readonly profileDir: string;
   readonly extensionDir: string;
+  /** The live view: x11vnc's Unix socket (vnc.sock in the account directory). */
+  readonly vncSocket: string;
 
   constructor(private opts: SandboxOptions) {
     this.profileDir = join(opts.accountDir, 'profile');
     this.extensionDir = join(opts.accountDir, 'extension');
+    this.vncSocket = vncSocketPath(opts.accountDir);
   }
 
   /** Copy the extension template and stamp this account's config into it. */
@@ -187,23 +192,13 @@ export class Sandbox {
     if (this.opts.noSandbox) flags.push('--no-sandbox');
     this.spawn('chromium', [bins.chromium, ...flags, this.opts.startUrl], { DISPLAY: d });
 
-    // 3. Live view: VNC on localhost only, no password (localhost + tailnet-gated hub).
-    // -forever so it survives client disconnects; -shared for multiple viewers.
-    this.spawn('x11vnc', [
-      bins.x11vnc,
-      '-display',
-      d,
-      '-rfbport',
-      String(this.opts.vncPort),
-      '-localhost',
-      '-nopw',
-      '-forever',
-      '-shared',
-      '-noxdamage',
-      '-quiet',
-    ]);
+    // 3. Live view: VNC on the account's own Unix socket and no TCP port, no password (the hub carries it, behind its
+    // login). -forever so it survives client disconnects; -shared for multiple viewers.
+    prepareVncSocket(this.vncSocket);
+    const vnc = this.spawn('x11vnc', x11vncArgs(bins.x11vnc, d, this.vncSocket));
+    await waitForVncSocket(this.vncSocket, vnc, 10_000);
 
-    this.opts.log('info', `sandbox up: display ${d}, vnc 127.0.0.1:${this.opts.vncPort}`, { chromium: bins.chromium });
+    this.opts.log('info', `sandbox up: display ${d}, vnc on ${this.vncSocket}`, { chromium: bins.chromium });
     return bins;
   }
 
@@ -241,6 +236,7 @@ export class Sandbox {
     await Promise.all(this.procs.map((p) => p.proc.exited.catch(() => {})));
     clearTimeout(killer);
     this.procs = [];
+    rmSync(this.vncSocket, { force: true });
     this.opts.log('info', 'sandbox stopped');
   }
 
@@ -251,19 +247,67 @@ export class Sandbox {
   }
 }
 
-/** Read {display, vncPort} from config/env, else derive a stable slot in :91-:99 / 5991-5999. */
-export function pickDisplay(accountId: string, config: Record<string, any>): { display: number; vncPort: number } {
+/** Read the display from config/env, else derive a stable slot in :91-:99. Its live view is a socket, not a port. */
+export function pickDisplay(accountId: string, config: Record<string, any>): { display: number } {
   const envD = process.env.DITHER_DISPLAY ? Number(process.env.DITHER_DISPLAY) : undefined;
-  const envP = process.env.DITHER_VNC_PORT ? Number(process.env.DITHER_VNC_PORT) : undefined;
-  if (config.display || envD) {
-    const display = Number(config.display ?? envD);
-    return { display, vncPort: Number(config.vncPort ?? envP ?? 5900 + display) };
-  }
+  if (config.display || envD) return { display: Number(config.display ?? envD) };
   // derive from account id hash into 91..99
   let hc = 0;
   for (const ch of accountId) hc = (hc * 31 + ch.charCodeAt(0)) >>> 0;
-  const display = 91 + (hc % 9);
-  return { display, vncPort: 5900 + display };
+  return { display: 91 + (hc % 9) };
+}
+
+// ------------------------------------------------------------------ live view
+// x11vnc on a Unix socket in the account's own directory and on no TCP port (dither-accounts'
+// packages/browser/src/vnc.ts, where each flag is explained). A VNC without a password on 127.0.0.1
+// let in every local process and any web page in a browser here (libvncserver takes a WebSocket
+// upgrade on its port from any Origin). x11vnc 0.9.17: -rfbport 0 alone still leaves [::]:5900, hence
+// -rfbportv6 -1 and -no6; -localhost would turn the socket's clients away.
+
+/** A Unix socket's path is at most 107 bytes (sun_path, less its NUL). */
+const SOCKET_PATH_MAX = 107;
+
+/** vnc.sock in the account directory, or one named for it in the runtime directory when that path is too long. */
+export function vncSocketPath(dir: string): string {
+  const own = join(resolve(dir), 'vnc.sock');
+  if (Buffer.byteLength(own) <= SOCKET_PATH_MAX) return own;
+  const runtime = process.env.XDG_RUNTIME_DIR;
+  const base = runtime && existsSync(runtime) ? join(runtime, 'dither-vnc') : join(tmpdir(), `dither-vnc-${process.getuid?.() ?? 'user'}`);
+  return join(base, `${createHash('sha1').update(resolve(dir)).digest('hex').slice(0, 16)}.sock`);
+}
+
+export function x11vncArgs(x11vnc: string, display: string, socket: string): string[] {
+  return [x11vnc, '-display', display, '-unixsock', socket, '-rfbport', '0', '-rfbportv6', '-1', '-no6', '-nopw', '-forever', '-shared', '-noxdamage', '-quiet'];
+}
+
+/** The socket's directory 0700 and this user's own; a socket left from an earlier run removed. */
+function prepareVncSocket(socket: string) {
+  if (Buffer.byteLength(socket) > SOCKET_PATH_MAX) throw new Error(`the live view's socket path is too long (${socket})`);
+  const dir = dirname(socket);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const st = lstatSync(dir);
+  const uid = process.getuid?.();
+  if (!st.isDirectory() || (uid !== undefined && st.uid !== uid)) throw new Error(`the live view's directory ${dir} is not this user's own`);
+  if (st.mode & 0o077) chmodSync(dir, 0o700);
+  rmSync(socket, { force: true });
+}
+
+/** Wait until x11vnc listens on the socket, then make it 0600; fail at once if x11vnc gave up. */
+async function waitForVncSocket(socket: string, x11vnc: Subprocess, timeoutMs: number) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (x11vnc.exitCode !== null) throw new Error(`x11vnc exited (${x11vnc.exitCode}) before its live view socket came up`);
+    try {
+      if (lstatSync(socket).isSocket()) {
+        chmodSync(socket, 0o600);
+        return;
+      }
+    } catch {
+      // not there yet
+    }
+    await Bun.sleep(50);
+  }
+  throw new Error(`x11vnc's live view socket did not come up within ${timeoutMs}ms`);
 }
 
 export function readConfigFile<T = any>(path: string, fallback: T): T {

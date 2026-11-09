@@ -291,8 +291,12 @@ export type AdapterEvent =
       attention?: Omit<Attention, 'since'> | null;
       /** The account's own identity, once known. */
       self?: IdentityFact;
-      /** Live view endpoint for the hub to proxy (Discord sandbox VNC). */
-      liveView?: { vncPort: number; width: number; height: number } | null;
+      /**
+       * Live view endpoint for the hub (or dither-accounts' manager) to proxy: the sandbox's VNC, on a Unix socket owned
+       * by this user and on no TCP port (a VNC without a password on 127.0.0.1 is open to every local process and to
+       * any web page in a browser on the machine). Whoever proxies it never passes the path on.
+       */
+      liveView?: { vncSocket: string; width: number; height: number } | null;
       /** Non-secret facts about the session, for the account's page in dither-accounts (the hub ignores them). */
       details?: Record<string, string | number | boolean | null>;
       /**

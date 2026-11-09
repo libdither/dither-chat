@@ -1,6 +1,6 @@
 import type { Server, ServerWebSocket, Socket, WebSocketHandler } from 'bun';
 import { createHmac } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
@@ -42,8 +42,22 @@ import { Adding, linksOf, requestHeld, requestViews } from './add.ts';
 
 
 type ClientData = { kind: 'client' };
-/** A browser's live view, carried to the account's VNC port here, or (remote accounts) to dither-accounts' socket for it. */
-type LiveViewData = { kind: 'liveview'; accountId: string; port?: number; url?: string; tcp?: Socket<unknown>; up?: WebSocket; queue: Uint8Array[]; closed?: boolean };
+/** A browser's live view, carried to the account's VNC socket here, or (remote accounts) to dither-accounts' socket for it. */
+type LiveViewData = { kind: 'liveview'; accountId: string; socket?: string; url?: string; vnc?: Socket<unknown>; up?: WebSocket; queue: Uint8Array[]; closed?: boolean };
+
+/**
+ * Whether a local adapter's live view is one to connect to: a Unix socket owned by this user (its sandbox's x11vnc,
+ * which listens on no TCP port). Anything else (gone, a file, someone else's socket) is not.
+ */
+function ownSocket(path: string): boolean {
+  try {
+    const st = lstatSync(path);
+    const uid = process.getuid?.();
+    return st.isSocket() && (uid === undefined || st.uid === uid);
+  } catch {
+    return false;
+  }
+}
 type WsData = ClientData | LiveViewData | AdapterSocketData | CallSocketData | VoiceSocketData;
 
 export interface ServerOpts {
@@ -231,7 +245,7 @@ export class HubServer {
           else if (d.kind === 'voice') self.calls.voiceMessage(ws as ServerWebSocket<VoiceSocketData>, msg);
           else if (d.kind === 'liveview') {
             const buf = typeof msg === 'string' ? new TextEncoder().encode(msg) : new Uint8Array(msg);
-            if (d.tcp) d.tcp.write(buf);
+            if (d.vnc) d.vnc.write(buf);
             else if (d.up?.readyState === WebSocket.OPEN) d.up.send(buf);
             else d.queue.push(buf);
           }
@@ -244,7 +258,7 @@ export class HubServer {
           else if (d.kind === 'voice') self.calls.voiceClose(ws as ServerWebSocket<VoiceSocketData>);
           else {
             d.closed = true;
-            d.tcp?.end();
+            d.vnc?.end();
             d.up?.close();
           }
         },
@@ -350,12 +364,12 @@ export class HubServer {
       };
       return;
     }
+    if (!d.socket || !ownSocket(d.socket)) return void ws.close(1011, 'vnc unreachable');
     Bun.connect({
-      hostname: '127.0.0.1',
-      port: d.port!,
+      unix: d.socket,
       socket: {
         open(sock) {
-          d.tcp = sock;
+          d.vnc = sock;
           for (const b of d.queue) sock.write(b);
           d.queue = [];
         },
@@ -454,14 +468,15 @@ export class HubServer {
     }
     if ((m = path.match(/^\/api\/call\/([\w-]+)\/voice$/))) return this.calls.upgradeVoice(req, server, m[1], url);
     if ((m = path.match(/^\/api\/liveview\/([\w-]+)$/))) {
-      // A remote account's live view comes through dither-accounts on this hub's token; a local one from its VNC port.
+      // A remote account's live view comes through dither-accounts on this hub's token; a local one from its VNC socket
+      // (a Unix socket; a TCP port is never connected to).
       const url = this.sup.liveViewUrl?.(m[1]) ?? null;
       const acc = this.store.account(m[1]);
-      const lv = !url && acc?.live_view ? (JSON.parse(acc.live_view) as { vncPort: number }) : null;
-      if (!url && !lv) return new Response('no live view for this account', { status: 404 });
+      const lv = !url && acc?.live_view ? (JSON.parse(acc.live_view) as { vncSocket?: unknown }) : null;
+      if (!url && (typeof lv?.vncSocket !== 'string' || !lv.vncSocket.startsWith('/'))) return new Response('no live view for this account', { status: 404 });
       const proto = req.headers.get('sec-websocket-protocol');
       const headers = proto?.split(',').map((s) => s.trim()).includes('binary') ? { 'Sec-WebSocket-Protocol': 'binary' } : undefined;
-      const data: LiveViewData = url ? { kind: 'liveview', accountId: m[1], url, queue: [] } : { kind: 'liveview', accountId: m[1], port: lv!.vncPort, queue: [] };
+      const data: LiveViewData = url ? { kind: 'liveview', accountId: m[1], url, queue: [] } : { kind: 'liveview', accountId: m[1], socket: lv!.vncSocket as string, queue: [] };
       if (server.upgrade(req, { data, headers })) return undefined;
       return new Response('upgrade failed', { status: 400 });
     }
