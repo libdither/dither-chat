@@ -27,7 +27,7 @@ the desktop is unchanged apart from the fixes listed below.
 
 | Gesture | Where | What it does |
 |---|---|---|
-| Swipe right | Any page, from the edge or anywhere | Back. The page follows the finger and settles beside its list with its edge showing, as in Discord |
+| Swipe right | Any page, from the edge or anywhere | Back to the page's own list (below), never to whatever was open before it. The page follows the finger and settles beside the list with its edge showing, as in Discord |
 | Swipe left, or tap the edge | A page left peeking beside the list | Brings it back |
 | Swipe left | A page with details (conversation, person) | The details panel: source, accounts, notifications, members, threads |
 | Swipe right, tap the page, or back | The details panel | Closes it |
@@ -49,9 +49,20 @@ on a pull crossing its line, and nowhere else.
 
 **Back.** Every sheet, menu, dialog, viewer and the details panel is a layer with a history entry of its own,
 so Android's back button (or `history.back()`) closes the top one before it leaves the page. Navigating from
-inside one takes over its entry instead of stacking a new one. Back buttons in the app go back through
-history where there is some, and to the page's list where there is none (a page opened from a link or a
-notification). Installed iOS apps have no back gesture of their own; the swipe right is it.
+inside one takes over its entry instead of stacking a new one. Installed iOS apps have no back gesture of their
+own; the swipe right is it.
+
+Leaving a page, as in Discord, shows the list it belongs to: a channel's server, the inbox for a conversation
+opened there (a notification opens one there too) and for Requests, People for a person, Mail's list for a
+thread, and for a conversation opened from search the list it lives in. The swipe, the page's back button and the phone's back
+button all do this. A list's page keeps its list right under it in history: opening one from anywhere else (a
+search hit, a link, a notification, another server's channel) writes the list's entry and then the page's, and
+the entry the app opened on gets the same. So the phone's back from the page shows the list with the page
+peeking, and back once more goes to whatever was open before. Where the entry before a page is not its list
+(history from a wider window), the swipe puts the list in the page's place. A profile, a place's About page, a
+search in one conversation, an account page and All communities open on top of the page you were on, as
+Discord opens a profile or a search over the channel: back closes them onto that page, or goes to their list
+when they were opened directly. `src/pages.ts` decides all of this and is unit tested.
 
 **Keyboard.** The viewport asks Chromium to resize the layout for the keyboard
 (`interactive-widget=resizes-content`). Where only the visual viewport shrinks (iOS Safari), the app is
@@ -138,10 +149,13 @@ swipes a message to reply; long-presses for the sheet, checks what it carries, a
 on afterwards does not drag the page under it; long-presses a reaction for who reacted; drags sheets and dialogs
 away and lets a short drag spring back; walks the back button through a sheet, then out of the conversation,
 then forward; pinches, double-taps and swipes away the image viewer; swipes back from a profile, an account
-and a scoped search; shrinks the layout (Android) and the visual viewport (iOS) under a focused composer;
-pulls a list to refresh and waits for the hub; flicks a toast; and on every main screen, scrolled top to
-bottom, checks nothing scrolls sideways or runs off the right edge; and that touch targets in the tab bar,
-rail, lists, conversation header, composer and settings are 40px or more.
+and a scoped search; goes back from pages that used to land elsewhere (a search hit, a channel in another
+server opened by a link, a DM opened by a notification while the app was open and one the app started on) by
+swipe, back button and `history.back()`, and checks each shows the page's own list with the card sent to peek;
+shrinks the layout (Android) and the visual viewport (iOS) under a focused composer; pulls a list to refresh
+and waits for the hub; flicks a toast; and on every main screen, scrolled top to bottom, checks nothing scrolls
+sideways or runs off the right edge; and that touch targets in the tab bar, rail, lists, conversation header,
+composer and settings are 40px or more.
 
 **What headless cannot show.** It is Chromium on Linux pretending: not iOS Safari, which handles the
 keyboard, the visual viewport, `100%` heights and installed apps in its own way, and was only imitated here by

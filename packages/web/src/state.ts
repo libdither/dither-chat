@@ -8,6 +8,7 @@ import { changed, mailChanged, timelineChanged } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
 import { ECHO_SKEW, openOutbox, settled, type Echo, type OutboxEntry } from './outbox.ts';
 import { hubTransport, UploadJob } from './upload.ts';
+import { href, parseHash, type Route } from './routes.ts';
 
 // ------------------------------------------------------------------ data
 
@@ -141,103 +142,7 @@ export function setPrefs(p: Partial<Prefs>) {
 
 // ------------------------------------------------------------------ routing
 
-export type Route =
-  | { view: 'inbox'; conv?: string; msg?: string }
-  /** The triage board. On a desktop it is the inbox with nothing open; a phone gives it a tab of its own. */
-  | { view: 'triage' }
-  /** graph: the people graph (graph/GraphView.tsx) in place of a thread. */
-  | { view: 'people'; person?: string; graph?: boolean }
-  /** A profile page (docs/profile.md): a person, an identity not merged into one, or a conversation or space. */
-  | { view: 'profile'; person?: string; identity?: string; conv?: string; space?: string }
-  | { view: 'spaces' }
-  | { view: 'space'; space: string; conv?: string }
-  | { view: 'folder'; folder: string; conv?: string; person?: string }
-  | { view: 'accounts'; account?: string }
-  | { view: 'settings' }
-  | { view: 'directory' }
-  | { view: 'search'; q: string; conv?: string; msg?: string }
-  /** Mail (docs/mail.md): a list (a view or a mailbox, mail/model.ts keys), and the thread open beside it. */
-  | { view: 'mail'; list?: string; thread?: string }
-  /** Requests waiting on you (docs/add.md), `request` the one to show. */
-  | { view: 'requests'; request?: string };
-
-export function parseHash(h = location.hash): Route {
-  const [path, query] = h.replace(/^#\/?/, '').split('?');
-  const p = path.split('/').filter(Boolean).map(decodeURIComponent);
-  const q = new URLSearchParams(query ?? '');
-  switch (p[0]) {
-    case 'people':
-      return p[1] === 'graph' && !p[2] ? { view: 'people', graph: true } : { view: 'people', person: p[1] };
-    case 'p':
-      return { view: 'profile', person: p[1] };
-    case 'i':
-      return { view: 'profile', identity: p[1] };
-    case 'about':
-      return p[1] === 's' ? { view: 'profile', space: p[2] } : { view: 'profile', conv: p[2] };
-    // The Groups list joined the inbox; its links still open the same conversation there.
-    case 'groups':
-      return { view: 'inbox', conv: p[1] === 'c' ? p[2] : undefined };
-    case 'spaces':
-      return { view: 'spaces' };
-    case 's':
-      return { view: 'space', space: p[1], conv: p[2] === 'c' ? p[3] : undefined };
-    case 'f':
-      return { view: 'folder', folder: p[1], conv: p[2] === 'c' ? p[3] : undefined, person: p[2] === 'p' ? p[3] : undefined };
-    case 'accounts':
-      return { view: 'accounts', account: p[1] };
-    case 'settings':
-      return { view: 'settings' };
-    case 'triage':
-      return { view: 'triage' };
-    case 'directory':
-      return { view: 'directory' };
-    case 'search':
-      return { view: 'search', q: q.get('q') ?? '', conv: p[1] === 'c' ? p[2] : undefined, msg: q.get('m') ?? undefined };
-    case 'c':
-      return { view: 'inbox', conv: p[1], msg: q.get('m') ?? undefined };
-    case 'requests':
-      return { view: 'requests', request: p[1] };
-    case 'mail':
-      // #/mail, #/mail/l/<list>, #/mail/t/<thread>, #/mail/l/<list>/t/<thread>
-      return p[1] === 'l' ? { view: 'mail', list: p[2], thread: p[3] === 't' ? p[4] : undefined } : { view: 'mail', thread: p[1] === 't' ? p[2] : undefined };
-    default:
-      return { view: 'inbox', conv: p[1] === 'c' ? p[2] : undefined, msg: q.get('m') ?? undefined };
-  }
-}
-
-export function href(r: Route): string {
-  const e = encodeURIComponent;
-  switch (r.view) {
-    case 'inbox':
-      return r.conv ? `#/inbox/c/${e(r.conv)}${r.msg ? `?m=${e(r.msg)}` : ''}` : '#/inbox';
-    case 'people':
-      return r.person ? `#/people/${e(r.person)}` : r.graph ? '#/people/graph' : '#/people';
-    case 'profile':
-      if (r.conv) return `#/about/c/${e(r.conv)}`;
-      if (r.space) return `#/about/s/${e(r.space)}`;
-      return r.person ? `#/p/${e(r.person)}` : `#/i/${e(r.identity ?? '')}`;
-    case 'spaces':
-      return '#/spaces';
-    case 'space':
-      return `#/s/${e(r.space)}${r.conv ? `/c/${e(r.conv)}` : ''}`;
-    case 'folder':
-      return `#/f/${e(r.folder)}${r.conv ? `/c/${e(r.conv)}` : r.person ? `/p/${e(r.person)}` : ''}`;
-    case 'accounts':
-      return r.account ? `#/accounts/${e(r.account)}` : '#/accounts';
-    case 'settings':
-      return '#/settings';
-    case 'triage':
-      return '#/triage';
-    case 'directory':
-      return '#/directory';
-    case 'search':
-      return `#/search${r.conv ? `/c/${e(r.conv)}` : ''}?q=${e(r.q)}${r.msg ? `&m=${e(r.msg)}` : ''}`;
-    case 'mail':
-      return `#/mail${r.list ? `/l/${e(r.list)}` : ''}${r.thread ? `/t/${e(r.thread)}` : ''}`;
-    case 'requests':
-      return `#/requests${r.request ? `/${e(r.request)}` : ''}`;
-  }
-}
+export { href, parseHash, type Route };
 
 export const route = signal<Route>(parseHash());
 /** An old link (`#/groups/…`) shows its new address, in place. */
@@ -246,13 +151,38 @@ function canonicalHash() {
   if (location.hash.startsWith('#/groups') && h !== location.hash) history.replaceState(history.state, '', h);
 }
 canonicalHash();
-window.addEventListener('hashchange', () => {
+// The entry the app opened on. adoptEntry shapes it once the app has its data, as a page's list may need it.
+if (history.state === null) history.replaceState({ prev: null, opened: true }, '');
+window.addEventListener('hashchange', (e) => {
+  // An address from outside go() (typed, or a script's) makes an entry with no state yet.
+  if (history.state === null) adoptEntry(new URL(e.oldURL).hash || null);
   route.value = parseHash();
   canonicalHash();
 });
+
+let listUnder: (to: Route, from: Route | null) => Route | null = () => null;
+/** Which list to write under a page in history, going there `from` a route: App says, from pages.ts, on a phone. */
+export const setListUnder = (f: (to: Route, from: Route | null) => Route | null) => void (listUnder = f);
+/** Told of a list entry put under page `page`, which no route change announces (activity.ts keeps a trail of entries). */
+export const listUnderHooks = new Set<(list: string, page: string) => void>();
+
+/** Writes an entry for `h`, over the current one or after it, with the list it keeps under it first if it needs one. */
+function write(h: string, prev: string | null, replace: boolean, from: Route | null) {
+  const list = listUnder(parseHash(h), from);
+  const under = list && href(list);
+  if (under) {
+    if (replace) history.replaceState({ prev }, '', under);
+    else history.pushState({ prev }, '', under);
+    for (const f of listUnderHooks) f(under, h);
+    history.pushState({ prev: under }, '', h);
+  } else if (replace) history.replaceState({ prev }, '', h);
+  else history.pushState({ prev }, '', h);
+}
+
 /**
  * Each entry remembers the one before it, so a back button can tell going back from opening the list fresh.
- * Navigating closes any open sheet or panel, and takes over its history entry rather than stacking on it.
+ * Navigating closes any open sheet or panel, and takes over its history entry rather than stacking on it. On a
+ * phone a list's page goes on top of that list, so back from it, by any way, shows the list (pages.ts).
  */
 export function go(r: Route, replace = false) {
   const h = href(r);
@@ -262,9 +192,17 @@ export function go(r: Route, replace = false) {
     return void (route.value = parseHash(h));
   }
   if (replace) history.replaceState({ prev: history.state?.prev ?? null }, '', h);
-  else if (layered) history.replaceState({ prev: location.hash }, '', h);
-  else history.pushState({ prev: location.hash }, '', h);
+  else write(h, location.hash, layered, parseHash());
   route.value = parseHash(h);
+}
+
+/**
+ * An entry made outside go(): the one the app opened on (from a link or a notification), or one an address typed
+ * in made. It gets what go() would have written: the entry before it remembered, and a page's list under it.
+ */
+export function adoptEntry(prev: string | null = null) {
+  if (history.state !== null && !history.state.opened) return;
+  write(location.hash, prev, true, null);
 }
 
 /** Back where you came from, or to `fallback` when this page was opened directly. */

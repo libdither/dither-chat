@@ -1,7 +1,8 @@
-import { searchOp } from '@dither-chat/protocol';
+import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { accountsNeedingYou, pingedCount, rootCommunity, totalUnread } from '../model.ts';
-import { api, back, connected, db, go, loaded, pending, prefs, previousRoute, readProgress, refresh, rev, route, unreachable, type Route } from '../state.ts';
+import { adoptEntry, api, connected, db, go, loaded, pending, prefs, previousRoute, readProgress, refresh, rev, route, setListUnder, unreachable, type Route } from '../state.ts';
+import { isPage, isTabRoot, listKey, listToWrite, ownList, restAfter, wayBack, type Places } from '../pages.ts';
 import { dropLayer, phone, pushLayer } from '../phone.ts';
 import { android } from '../android.ts';
 import { AccountPane, AccountsSidebar, AddAccount, addingAccount } from './Accounts.tsx';
@@ -23,7 +24,7 @@ import { Rail } from './Rail.tsx';
 import { TitleBar } from './TitleBar.tsx';
 import { FindShortcut, SearchPane } from './Search.tsx';
 import { SettingsPane } from './Settings.tsx';
-import { FolderSidebar, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar } from './Sidebar.tsx';
+import { FolderSidebar, homeRoute, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar } from './Sidebar.tsx';
 import { ConversationPane, PersonPane } from './Timeline.tsx';
 import { Switcher } from './Switcher.tsx';
 import { Toasts } from './Toasts.tsx';
@@ -66,9 +67,9 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
     case 'settings':
       return { pane: <SettingsPane /> };
     case 'directory':
-      return { pane: <DirectoryPane /> };
+      return { pane: <DirectoryPane onBack={back} /> };
     case 'search':
-      return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <SearchPane q={r.q} /> };
+      return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <SearchPane q={r.q} onBack={isPage(r) ? back : undefined} /> };
     case 'mail':
       return { pane: <MailCenterLazy thread={r.thread} onBack={back} /> };
     case 'requests':
@@ -76,7 +77,7 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
   }
 }
 
-function sidebarFor(r: Route, onAdd: () => void) {
+function sidebarFor(r: Route, onAdd: () => void): ComponentChildren {
   switch (r.view) {
     case 'triage':
       return <InboxSidebar />;
@@ -104,7 +105,8 @@ function sidebarFor(r: Route, onAdd: () => void) {
     case 'directory':
       return <SpacesSidebar />;
     case 'search':
-      return <InboxSidebar activeConv={r.conv} />;
+      // On a phone a conversation opened from search sits on the list it lives in, which a swipe shows (pages.ts).
+      return phone.value && isPage(r) ? sidebarFor(ownList(r, places), onAdd) : <InboxSidebar activeConv={r.conv} />;
     case 'mail':
       return <MailSidebarLazy list={r.list} active={r.thread} />;
     case 'requests':
@@ -173,31 +175,6 @@ function WelcomePane({ view, id }: { view: string; id?: string }) {
 
 // ------------------------------------------------------------------ the phone's layout
 
-/** A page that slides in over the lists, with somewhere to go back to. */
-function isDetail(r: Route): boolean {
-  switch (r.view) {
-    case 'search':
-      // Searching one conversation is a page of that conversation, with the way back to it.
-      return !!r.conv || !!searchOp(r.q, 'in');
-    case 'inbox':
-    case 'space':
-      return !!r.conv;
-    case 'people':
-      return !!r.person || !!r.graph;
-    case 'folder':
-      return !!(r.conv || r.person);
-    case 'accounts':
-      return !!r.account;
-    case 'mail':
-      return !!r.thread;
-    case 'profile':
-    case 'directory':
-    case 'requests':
-      return true;
-    default:
-      return false;
-  }
-}
 /** Where a place's profile page lives: the space it is in (or is), else the inbox. Null for a person's. */
 function placeHome(r: Extract<Route, { view: 'profile' }>): Route | null {
   if (r.space) return { view: 'space', space: rootCommunity(r.space)?.id ?? r.space };
@@ -207,40 +184,22 @@ function placeHome(r: Extract<Route, { view: 'profile' }>): Route | null {
   return root ? { view: 'space', space: root.id } : { view: 'inbox' };
 }
 
-/** A tab's own page: full screen, with the tab bar under it. */
-const isTabRoot = (r: Route) => r.view === 'triage' || r.view === 'settings' || (r.view === 'search' && !isDetail(r));
-/** The list a page belongs to. The list shows that page peeking at its edge. */
-function listOf(r: Route): string {
-  if (r.view === 'space') return `space:${r.space}`;
-  if (r.view === 'folder') return `folder:${r.folder}`;
-  if (r.view === 'profile') {
-    const home = placeHome(r);
-    return home?.view === 'space' ? `space:${home.space}` : home ? 'inbox' : 'people';
-  }
-  if (r.view === 'directory') return 'spaces';
-  if (r.view === 'requests') return 'inbox';
-  return r.view;
-}
-/** Where the back button goes from a page when there is no history to go back through. */
-function listRoute(r: Route): Route {
-  switch (r.view) {
-    case 'space':
-      return { view: 'space', space: r.space };
-    case 'folder':
-      return { view: 'folder', folder: r.folder };
-    case 'search':
-      return { view: 'search', q: r.conv ? r.q : '' };
-    case 'profile':
-      return placeHome(r) ?? { view: 'people' };
-    case 'directory':
-      return { view: 'spaces' };
-    case 'mail':
-      return { view: 'mail', list: r.list };
-    case 'requests':
-      return { view: 'inbox' };
-    default:
-      return { view: r.view } as Route;
-  }
+/** Where things live, for pages.ts. */
+const places: Places = {
+  home: (id) => {
+    const c = db.conversations.get(id);
+    return c ? homeRoute(c) : { view: 'inbox', conv: id };
+  },
+  placeHome,
+};
+// A list's page keeps its list under it in history, so the phone's back button shows the list as the swipe does.
+setListUnder((to, from) => (phone.value ? listToWrite(to, from, places) : null));
+
+/** Back from page `r`, by a swipe or its back button: to its list, or off the page it was opened over (pages.ts). */
+function leave(r: Route) {
+  const way = wayBack(r, previousRoute(), places);
+  if (way.how === 'back') history.back();
+  else go(way.to, true);
 }
 
 type Tab = 'home' | 'triage' | 'search' | 'you';
@@ -289,7 +248,7 @@ function AppBadge() {
 
 /**
  * Reads no `rev`: each pane, list and layer below reads what it shows, so a change to one conversation does not
- * draw the whole app again (docs/perf.md). Only a place's profile page asks `db` where it lives.
+ * draw the whole app again (docs/perf.md). Only a place's profile page follows `db` for where it lives.
  */
 export function App() {
   if (counting) rendered('App');
@@ -300,18 +259,22 @@ export function App() {
   useEffect(() => {
     api<{ pending: number }>('/api/read-all').then((p) => (readProgress.value = { pending: p.pending, failed: 0 })).catch(() => {});
   }, []);
+  // The entry the app opened on takes go()'s shape once there is data to say where its page lives (state.ts).
+  useEffect(() => {
+    if (loaded.value) adoptEntry();
+  }, [loaded.value]);
 
   // On a phone the page you are on is a card over the lists; see Pager.ts.
-  const detailRoute = isDetail(r);
+  const detailRoute = isPage(r);
   const tabRoot = isTabRoot(r);
   if (detailRoute) lastDetail = r;
   else if (!tabRoot && tabOf(r) === 'home') lastHome = r;
   const shown = p && !detailRoute && !tabRoot && lastDetail ? lastDetail : r;
-  const { pane, detail } = centerFor(shown, () => back(listRoute(shown)));
+  const { pane, detail } = centerFor(shown, () => leave(shown));
   const details = p ? panel.value === 'details' && !!detail : prefs.value.details && !!detail;
-  const rest: Rest = !p ? 'open' : detailRoute || tabRoot ? (details ? 'details' : 'open') : lastDetail && listOf(lastDetail) === listOf(r) ? 'peek' : 'away';
-  const after = previousRoute() ?? listRoute(r);
-  const backRest: Rest | null = !detailRoute ? null : isDetail(after) || isTabRoot(after) ? 'open' : listOf(after) === listOf(r) ? 'peek' : 'away';
+  const rest: Rest = !p ? 'open' : detailRoute || tabRoot ? (details ? 'details' : 'open') : lastDetail && listKey(lastDetail, places) === listKey(r, places) ? 'peek' : 'away';
+  // Exactly where leave(r) will land, so the card goes the way the page does.
+  const backRest: Rest | null = detailRoute ? restAfter(r, wayBack(r, previousRoute(), places).to, places) : null;
 
   // The details panel is a layer: back closes it before it leaves the page.
   const detailsOpen = p && panel.value === 'details';
@@ -332,7 +295,7 @@ export function App() {
     rest,
     back: backRest,
     details: !!detail,
-    onBack: () => back(listRoute(r)),
+    onBack: () => leave(r),
     onDetails: (open) => (panel.value = open ? 'details' : 'main'),
     onForward: () => lastDetail && go(lastDetail),
     onRefresh: refresh,

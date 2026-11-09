@@ -10,7 +10,7 @@
 import { effect, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { placeConv, rootCommunity } from './model.ts';
-import { api, apiHooks, db, eventHooks, href, parseHash, quietHere, route, type Route } from './state.ts';
+import { api, apiHooks, db, eventHooks, href, listUnderHooks, parseHash, quietHere, route, type Route } from './state.ts';
 import { NEW_VISIT_AFTER } from './tracker.ts';
 import { inUse } from './usage.ts';
 import { VisitLog, samePlace, type Arrival, type Place } from './visits.ts';
@@ -259,6 +259,11 @@ export function startActivity() {
     },
     true,
   );
+  // A list put under a page in history is an entry too, so back from the page onto it counts as back.
+  listUnderHooks.add((list, page) => {
+    if (trail[trail.length - 1] === page) trail.splice(trail.length - 1, 0, list);
+    else trail.push(list);
+  });
   window.addEventListener('popstate', () => {
     const back = trail.length > 1 && trail[trail.length - 2] === location.hash;
     if (back) trail.pop();

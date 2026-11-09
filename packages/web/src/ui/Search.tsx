@@ -236,7 +236,8 @@ function walk(e: KeyboardEvent, box: HTMLInputElement | null) {
   else if (e.key === 'ArrowUp') box?.focus();
 }
 
-export function SearchPane({ q }: { q: string }) {
+/** `onBack` when searching is a page (one conversation's): App knows where that goes back to. */
+export function SearchPane({ q, onBack }: { q: string; onBack?: () => void }) {
   rev.value;
   const [page, setPage] = useState<P.SearchPage | null>(null);
   const [hits, setHits] = useState<P.SearchHit[]>([]);
@@ -294,7 +295,7 @@ export function SearchPane({ q }: { q: string }) {
   return (
     <section class="pane search-pane">
       <header class="conv-head search-head">
-        <button class="icon-btn search-back" onClick={() => back({ view: 'inbox' })} aria-label="Back" title="Back">
+        <button class="icon-btn search-back" onClick={onBack ?? (() => back({ view: 'inbox' }))} aria-label="Back" title="Back">
           <Icon name="back" />
         </button>
         <SearchBox
