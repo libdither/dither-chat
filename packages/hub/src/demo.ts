@@ -1877,6 +1877,49 @@ class DemoAdapter implements InprocAdapter {
     msg(`${climb.nativeId}~h-mine`, S.self, 54, 'I can drive, leaving at 6');
     for (const [who, state, min] of [[S.alice, 'delivered', 53], [S.alice, 'read', 52], [S.priya, 'delivered', 53], [S.priya, 'read', 50]] as const)
       emit({ t: 'receipt', conversation: climb.nativeId, messages: [`${climb.nativeId}~h-mine`], who: who.nativeId, state, ts: ago(min) });
+    this.seedActivity();
+  }
+
+  /**
+   * Weeks of Sam writing in the evenings, with your replies and their reactions, and their presence and status over
+   * those weeks (kept only with adversarial features), for a profile's Activity chart (docs/profile.md). All of it is
+   * over a week old, so the inbox and the chats' newest messages stay as they were.
+   */
+  private seedActivity() {
+    const emit = this.emit;
+    const dm = sdm(S.sam).nativeId;
+    let seed = 11;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const local = (daysAgo: number, hour: number, minute: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() - daysAgo);
+      d.setHours(hour, minute, 0, 0);
+      return d.getTime();
+    };
+    const theirs = ['gym tonight?', 'that crimp is evil', 'my fingers are wrecked', 'did you try the new set?', 'ok one more session', 'sent it!!', 'rest day for me', 'see you at 7'];
+    const yours = ['in', 'nice', 'maybe tomorrow', 'haha same', 'on my way'];
+    let k = 0;
+    for (let d = 45; d >= 9; d--) {
+      if (rnd() < 0.3) continue;
+      const n = 1 + Math.floor(rnd() * 6);
+      for (let i = 0; i < n; i++) {
+        const mine = rnd() < 0.35;
+        const nativeId = `${dm}~a${k++}`;
+        const body = mine ? yours[Math.floor(rnd() * yours.length)] : theirs[Math.floor(rnd() * theirs.length)];
+        emit({ t: 'message', live: false, message: { nativeId, conversation: dm, author: (mine ? S.self : S.sam).nativeId, ts: local(d, 19 + Math.floor(rnd() * 6), Math.floor(rnd() * 60)), body } });
+        if (mine && rnd() < 0.4) emit({ t: 'reaction', conversation: dm, message: nativeId, author: S.sam.nativeId, key: '👍' });
+      }
+    }
+    // Presence each day of the last three weeks: on in the evening, idle or busy some days, off at night.
+    for (let d = 21; d >= 2; d--) {
+      if (d % 6 === 0) emit({ t: 'presence', who: S.sam.nativeId, state: 'dnd', devices: ['desktop'], ts: local(d, 9, 30) });
+      if (d % 6 === 0) emit({ t: 'presence', who: S.sam.nativeId, state: 'offline', devices: [], ts: local(d, 12, 0) });
+      emit({ t: 'presence', who: S.sam.nativeId, state: 'online', devices: ['mobile'], ts: local(d, 18, Math.floor(rnd() * 50)) });
+      if (rnd() < 0.5) emit({ t: 'presence', who: S.sam.nativeId, state: 'idle', devices: ['mobile'], ts: local(d, 21, Math.floor(rnd() * 50)) });
+      emit({ t: 'presence', who: S.sam.nativeId, state: 'offline', devices: [], ts: local(d, 23, 30 + Math.floor(rnd() * 25)) });
+    }
+    for (const [text, emoji, d] of [['projecting the cave route', '🧗', 25], ['rest week', '', 13], ['trip planning', '⛺', 5]] as const)
+      emit({ t: 'customStatus', who: S.sam.nativeId, text, emoji: emoji || undefined, ts: local(d, 12, 0) });
   }
 
   /** What this adapter sent since it started, for forwarding it. */

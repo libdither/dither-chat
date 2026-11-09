@@ -1,7 +1,7 @@
 /**
  * History on a profile page (docs/history.md): what changed about a place (name, description, picture, settings,
  * who joined and left) or a person (names, pictures, bio, pronouns on each network), newest first. A person's status
- * and presence over time are in their Status section (StatusCard.tsx) instead.
+ * and presence over time are in their Activity section (ActivityCard.tsx) instead.
  */
 import type * as P from '@dither-chat/protocol';
 import { ABOUT_KEYS, ABOUT_LABEL } from '@dither-chat/protocol';

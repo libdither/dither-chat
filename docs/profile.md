@@ -41,9 +41,10 @@ Left:
   accounts, how many, and All mail with them. A thread opens in Mail.
 - **Recent messages**: each with the place's picture (the server's icon for a channel), the place, and when. Not
   shown for someone known only by mail.
-- **Status**, collapsed until opened (ui/StatusCard.tsx): the current status and since when, and with adversarial
-  features shown (docs/history.md) the logged status history and presence (now, and each stretch with how long it
-  lasted). Absent when there is no status and nothing logged.
+- **Activity** (ui/ActivityCard.tsx): the current status and since when, and their presence now when it is logged; then
+  the activity chart (below, "Activity"); then, with adversarial features shown (docs/history.md), the logged status
+  history and presence history (each stretch with how long it lasted), each collapsed until opened. Absent when there
+  is no status, nothing logged and no message or conversation with them.
 - **History**: what changed about them, except statuses and presence (ui/HistoryCard.tsx).
 
 Right:
@@ -116,6 +117,41 @@ fetches nothing (hub msgcount.ts). It never claims more than the data supports:
 
 The profile's In common tiles show it ("≥120 seen; ~1,400 estimated, 900–2,100", rounded to two figures), with the
 share, the server's own estimated total and what it rests on in the tooltip.
+
+### Activity
+
+When someone is around, from what the hub already holds; it asks no network. `GET /api/people/:id/activity?days=30&tz=<zone>`
+(`:id` a person, all their identities, or one identity; `days` 1 to 365, 30 when missing; `tz` the page's IANA zone, or
+`offset` in minutes east of UTC) answers an `ActivityChartView` (hub activitychart.ts). Hours are the owner's local
+wall-clock hours, so a day always has 24: the hour a clock skips at a DST change stays empty and the hour it repeats
+holds both. The zone's offset is found where it changes, and each piece of the range is counted in SQL with its own
+offset, along `message_author_ts`: about 5 to 20 ms for someone with thousands of messages a year, on a hub holding
+hundreds of thousands.
+
+The page offers 7, 30 and 90 days (the choice is remembered on the device) and shows:
+
+- **A summary in words**: "Usually around 9pm–12am; 412 messages and 37 reactions in 30 days, mostly in DMs. You sent
+  230 messages where they are." The usual hours are the shortest run of hours holding half their messages (at most 8),
+  said only from 8 messages up.
+- **Bars of their messages** per hour or per few hours (7 days) or per day (30 and 90 days): every message they wrote
+  that the hub holds, deleted and imported ones too, not system lines (joins), counted by where (a DM with you, a group,
+  a server) and network.
+- **Your messages mirrored under the axis**, in grey, on the same scale: what you wrote in DMs and groups they are in
+  (not servers). Not on your own page.
+- **Reactions they gave**, in the summary, the tooltip and the table, placed at the message they reacted to: the hub
+  keeps who reacted, not when.
+- **Their presence as a band under the bars**: online, idle, do not disturb, offline, merged across their identities
+  (online wins, then do not disturb, then idle, then offline), from the logged presence changes. The states differ by
+  height as well as colour, and do not disturb has a bar through it.
+- **Status changes as marks above the bars**, with the status on hover.
+- **When they're around**: a weekday-by-hour grid of their messages, yours, or the share of the logged time they were
+  online or do not disturb.
+- Hover, a tap or the arrow keys give the numbers for a bar, a mark or a cell; Numbers by day lists them as a table.
+
+The presence band, the status marks and the grid's Online need adversarial features (docs/history.md): the hub sends
+`presence` only while presence is logged and `statuses` only while statuses are (shown, and their switches on), and
+leaves the fields out otherwise rather than sending zeros. Until then a line under the chart says they appear once
+those are turned on, with a link to Settings → Adversarial features. The rest needs nothing turned on.
 
 ## A place
 

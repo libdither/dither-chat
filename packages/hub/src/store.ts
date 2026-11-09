@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
 import { ADVERSARIAL_KEEPS, canonicalReactionKey, DEFAULT_RETENTION, parseSearch, PROTOCOL_VERSION, REACTION_RULES } from '@dither-chat/protocol';
+import { activityChart, type Zone } from './activitychart.ts';
 import { binsFor, estimateMessages, snowflakeTime, type ChannelInput } from './msgcount.ts';
 import { Journal } from './journal.ts';
 import { infoFor } from './mediainfo.ts';
@@ -1638,6 +1639,27 @@ export class Store {
       spaces.push({ spaceId: sid, ...estimateMessages(channels, { from, now }), asOf: newest || null, networks: [network] });
     }
     return { spaces };
+  }
+
+  /**
+   * When someone is around, for a profile's Activity section (activitychart.ts, docs/profile.md): a person (all their
+   * identities) or one identity. Presence and status changes only while they are logged.
+   */
+  activityChart(ref: { personId?: string; identityId?: string }, days: number, zone: Zone, now = Date.now()): P.ActivityChartView | null {
+    const person = ref.personId ? (this.db.query('SELECT id, is_self FROM person WHERE id = ?').get(ref.personId) as Row | null) : null;
+    if (ref.personId && !person) return null;
+    const ids = person
+      ? (this.db.query('SELECT id FROM identity WHERE person_id = ?').all(person.id) as Row[]).map((r) => r.id as string)
+      : ref.identityId && this.db.query('SELECT 1 FROM identity WHERE id = ?').get(ref.identityId)
+        ? [ref.identityId]
+        : [];
+    if (!person && !ids.length) return null;
+    // Your own page has no back-and-forth to show.
+    const own = (this.db.query('SELECT i.id FROM identity i JOIN person p ON p.id = i.person_id WHERE p.is_self = 1').all() as Row[]).map((r) => r.id as string);
+    const selves = [...new Set([...this.selfIdentities, ...own])];
+    const self = !!person?.is_self || ids.some((id) => selves.includes(id));
+    const r = this.retention();
+    return activityChart(this.db, { ids, selfIds: self ? [] : selves, days, zone, now, presence: this.logsPresence(), statuses: r.adversarial && r.statuses && r.changes });
   }
 
   /** The top-level community a conversation is in (through sections, and a thread's channel), or null. */

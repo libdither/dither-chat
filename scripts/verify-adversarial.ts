@@ -141,7 +141,7 @@ try {
   check(labels.join() === 'Keep deleted messages,Keep disappearing messages,Log statuses,Log presence (online/idle/offline),Record server members (passive)', 'its switches', labels);
   const where = await p.eval<string[]>(`[...document.querySelectorAll('#set-adversarial .toggle-row .adv-where')].map((s) => s.textContent.trim())`);
   check(
-    where.length === 5 && where.slice(0, 2).every((w) => w === 'Where it shows: a collapsed line in the chat') && where.slice(2, 4).every((w) => w === 'Where it shows: the Status section of a profile') && /About/.test(where[4]),
+    where.length === 5 && where.slice(0, 2).every((w) => w === 'Where it shows: a collapsed line in the chat') && where.slice(2, 4).every((w) => w === 'Where it shows: the Activity section of a profile') && /About/.test(where[4]),
     'each switch says where it shows',
     where,
   );
@@ -175,13 +175,16 @@ try {
   check(!(await p.eval<boolean>(`!!document.querySelector('#set-adversarial .adv-body')`)), 'and the section closes');
   check(/not being kept/.test((await historyState()).note), 'and Message history says so again');
 
-  // A profile's Status section without them: the current status, no history.
+  // A profile's Activity section without them: the current status, no history, no presence band or status marks.
   await p.goto(`${hub}/#/p/${alice.id}`);
-  await p.until(`!!document.querySelector('.pf-status-card')`, 10000);
-  await p.eval(`document.querySelector('.pf-status-card summary').click()`);
+  await p.until(`!!document.querySelector('.pf-activity-card .act-timeline svg')`, 10000);
   await Bun.sleep(200);
-  const st = await p.eval<string>(`document.querySelector('.pf-status-card').innerText`);
-  check(st.includes('🧗') && st.includes('since') && !/HISTORY/i.test(st) && !st.includes('Online'), 'the Status section shows the current status and no history', st.split('\n'));
+  const st = await p.eval<string>(`document.querySelector('.pf-activity-card').innerText`);
+  check(st.includes('🧗') && st.includes('since') && !/HISTORY/i.test(st) && !st.includes('Online'), 'the Activity section shows the current status and no history', st.split('\n'));
+  const drawn = await p.eval<{ band: number; marks: number; note: string }>(
+    `({ band: document.querySelectorAll('.pf-activity-card .act-pres').length, marks: document.querySelectorAll('.pf-activity-card .act-mark-dot').length, note: document.querySelector('.pf-activity-card .act-gate')?.innerText ?? '' })`,
+  );
+  check(!drawn.band && !drawn.marks && /Settings → Adversarial features/.test(drawn.note), 'its chart draws no presence or status changes, and says where to turn them on', drawn);
 
   // A phone: Sections in the header, the warning's Yes on screen, the switches in view, rows a finger wide.
   await p.size(390, 844, true);

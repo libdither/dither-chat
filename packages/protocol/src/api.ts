@@ -613,6 +613,61 @@ export interface ActivityView {
   spaces: MessageCountEstimate[];
 }
 
+/** Where a message was: a DM with you, a group, or a server's channel or thread. */
+export type ActivityWhere = 'dm' | 'group' | 'server';
+export type PresenceState = PresenceView['state'];
+
+/** Messages per local hour from one kind of place on one network: `hours[i]` is hour i of the range. */
+export interface ActivitySeries {
+  where: ActivityWhere;
+  network: Network;
+  count: number;
+  hours: number[];
+}
+
+/**
+ * GET /api/people/:id/activity?days=30&tz=Europe/Berlin (or &offset=<minutes east of UTC>), :id a person or an
+ * identity (hub activitychart.ts, docs/profile.md "Activity"): when someone is around, from what the hub holds. The
+ * range is whole local days ending today; hour i is local hour i % 24 of day floor(i / 24), so a day is always 24
+ * hours (the hour a clock skips is empty, the hour it repeats holds both).
+ */
+export interface ActivityChartView {
+  /** The zone the hours are in: an IANA name, or "UTC+05:30" for an offset. */
+  zone: string;
+  /** The first day, local, YYYY-MM-DD; `days` days from it, today last. */
+  firstDay: string;
+  days: number;
+  /** The first day's weekday, 0 Monday to 6 Sunday. */
+  firstWeekday: number;
+  /** The hour holding now; the hours after it are still to come. */
+  nowHour: number;
+  /** ms epoch: the first day's local midnight, and now. */
+  from: number;
+  to: number;
+  /** Their messages (not system lines), by where and network. Only series with any. */
+  sent: ActivitySeries[];
+  /** Your messages in DMs and groups they are in, by where and network. Absent on your own page. */
+  mine?: ActivitySeries[];
+  /** Reactions they gave, at the hour of the message they reacted to (the hub does not keep when a reaction came). */
+  reactions: { count: number; hours: number[] };
+  /**
+   * Weekday by hour, 7 × 24, Monday first (index weekday * 24 + hour): their messages, yours, and with presence the
+   * seconds they were online or do not disturb (`online`) out of the seconds their presence was known (`known`).
+   */
+  week: { sent: number[]; mine?: number[]; online?: number[]; known?: number[] };
+  /**
+   * Their presence, only while presence is logged (an adversarial feature): merged across their identities (online,
+   * then do not disturb, then idle, then offline wins). Stretches in hours from the range's start, fractional; per
+   * hour, seconds in each state, only hours where it was known.
+   */
+  presence?: {
+    stretches: [from: number, to: number, state: PresenceState][];
+    hours: [hour: number, online: number, idle: number, dnd: number, offline: number][];
+  };
+  /** Their status changes in the range, only while statuses are logged (an adversarial feature). null text and emoji: cleared. */
+  statuses?: { at: number; hour: number; text: string | null; emoji: string | null; network: Network }[];
+}
+
 /** POST /api/directs: a direct conversation, opened or found. */
 export interface OpenedDirect {
   conversation: ConversationView | null;

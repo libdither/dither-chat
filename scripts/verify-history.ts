@@ -2,7 +2,7 @@
  * Message history (docs/history.md), end to end against a demo hub in headless Chromium: a deleted and a disappeared
  * message kept as collapsed lines that open; an edited message's earlier versions; a pinned message marked, a reaction
  * taken back, read ticks and who read it; a group's History card with a description change, a member joining and a
- * role given; a person's Status section with their status changing and their presence over time; hiding kept messages completely from Settings; a network turned off; and
+ * role given; a person's Activity section with their status changing and their presence over time; hiding kept messages completely from Settings; a network turned off; and
  * forgetting what was kept.
  *
  *   bun scripts/verify-history.ts http://127.0.0.1:8499 [/tmp/shots]
@@ -77,19 +77,19 @@ try {
   check((await p.eval<string>(`document.querySelector('.hist-diff .was')?.textContent ?? ''`)) === 'Tuesdays at Mesa', 'a description change shows before and after');
   if (shots) await p.shot(`${shots}/history-card.png`);
 
-  // A person's Status section: collapsed, then their status changing and their presence over time.
+  // A person's Activity section: the status at the top, then its history and their presence over time, each opening.
   const alice = boot.persons.find((x: any) => x.name === 'Alice Chen');
   await p.goto(`${hub}/#/p/${alice.id}`);
-  await p.until(`!!document.querySelector('.pf-status-card .presence-dot')`, 10000);
-  check(await p.eval<boolean>(`!document.querySelector('.pf-status-card').open`), 'the Status section starts collapsed');
-  const peek = await p.eval<string>(`document.querySelector('.pf-status-card summary').innerText`);
-  const current = await p.eval<string>(`document.querySelector('.pf-status')?.innerText ?? ''`);
-  check(current.includes('🧗') && peek.includes(current.replace('🧗', '').trim()), 'collapsed, it still shows the current status (the one in the hero)', { peek, current });
-  await p.eval(`document.querySelector('.pf-status-card summary').click()`);
+  await p.until(`!!document.querySelector('.pf-activity-card .presence-dot')`, 10000);
+  const current = await p.eval<string>(`document.querySelector('.pf-activity-card .pf-status')?.innerText ?? ''`);
+  const hero = await p.eval<string>(`document.querySelector('.pf-hero .pf-status')?.innerText ?? ''`);
+  check(current.includes('🧗') && hero.includes(current.replace('🧗', '').replace(/since.*$/s, '').trim()), 'the current status at the top of Activity (the one in the hero)', { hero, current });
+  check(await p.eval<boolean>(`!document.querySelector('.pf-status-history').open && !document.querySelector('.pf-presence-history').open`), 'its status and presence history start collapsed');
+  await p.eval(`document.querySelector('.pf-status-history summary').click(); document.querySelector('.pf-presence-history summary').click()`);
   await Bun.sleep(200);
-  const st = await p.eval<string>(`document.querySelector('.pf-status-card').innerText`);
+  const st = await p.eval<string>(`document.querySelector('.pf-activity-card').innerText`);
   check(st.includes('since') && /STATUS HISTORY/i.test(st) && st.includes('out climbing') && st.includes('on the wall, back at 8') && !/→ 🧗\n/.test(st), 'opened: the current status, and its history once', st.split('\n').slice(0, 8));
-  const pres = await p.eval<string[]>(`[...document.querySelectorAll('.pf-status-card .hist-list')].at(-1)?.innerText.split('\\n').filter(Boolean) ?? []`);
+  const pres = await p.eval<string[]>(`document.querySelector('.pf-presence-history .hist-list')?.innerText.split('\\n').filter(Boolean) ?? []`);
   check(/PRESENCE HISTORY/i.test(st) && /Do not disturb on desktop and mobile/.test(st) && pres.some((l) => /Offline for 2h/.test(l)) && pres.some((l) => /Idle on desktop for 30m/.test(l)), 'presence now, and each stretch with how long', pres);
   const ah = await p.eval<string>(`[...document.querySelectorAll('.pf-card')].find((c) => c.querySelector('h3')?.textContent.startsWith('History'))?.innerText ?? ''`);
   check(!ah.includes('out climbing') && !ah.includes('Presence'), 'the History card no longer lists statuses or presence', ah.split('\n').slice(0, 6));
