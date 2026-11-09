@@ -3,7 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { LEVEL_LABEL, netName } from '../model.ts';
 import { api, db, go, mailRev, prefs, rev, setPrefs, setRule, toast } from '../state.ts';
 import { STATUS, addingAccount } from './Accounts.tsx';
-import { AccountChip, NetBadge, NetGlyph, levelIcon } from './bits.tsx';
+import { AccountChip, NetBadge, NetGlyph, levelIcon, showSection } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { DeviceRules } from './DeviceRules.tsx';
 import { PushSettings } from './Push.tsx';
@@ -14,11 +14,63 @@ import { DeskSettings } from './DeskSettings.tsx';
 import { MailAccessNote, MailAccountRows } from './mail/MailAccounts.tsx';
 import { MailReadSetting } from './mail/MailReadSetting.tsx';
 import { phone } from '../phone.ts';
+import { android } from '../android.ts';
 import { Sheet } from './Sheet.tsx';
 import { chosenTheme, followsSystem, Swatch, ThemeList } from './Themes.tsx';
 import { themeById } from '../themes.ts';
 
 const LEVELS: P.NotifyLevel[] = ['all', 'smart', 'mentions', 'digest', 'none'];
+
+/** Settings' sections: listed beside them on a desktop, and in a sheet from their header on a phone. */
+export const SECTIONS: [title: string, icon: string, id: string][] = [
+  ['Default notifications', 'bell', 'set-defaults'],
+  ['Smart triage', 'sparkles', 'set-triage'],
+  ['Push and quiet hours', 'bellOff', 'push'],
+  ['Each device', 'phone', 'set-devices'],
+  ['Keywords', 'at', 'set-keywords'],
+  ['Per-place overrides', 'layers', 'set-overrides'],
+  ['Privacy', 'lock', 'set-privacy'],
+  ['Message history', 'clock', 'set-history'],
+  ['Adversarial features', 'eyeOff', 'set-adversarial'],
+  ['Appearance', 'eye', 'set-appearance'],
+  ['Mail', 'mail', 'set-mail'],
+  // The phone app opens links and files in the phone's apps by itself.
+  ...(android ? [] : ([['Desktop helper', 'monitor', 'set-desk']] as [string, string, string][])),
+];
+
+/** A phone's way to any section without scrolling past the rest: a button in the header, and the sections in a sheet. */
+function SectionsButton() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button class="btn ghost small set-jump" aria-haspopup="dialog" onClick={() => setOpen(true)}>
+        <Icon name="list" size={15} /> Sections
+      </button>
+      {open && (
+        <Sheet onClose={() => setOpen(false)} label="Settings sections">
+          <div class="sheet-menu set-sections">
+            <div class="menu-title">Go to</div>
+            {[['Accounts', 'power', 'set-accounts'] as const, ...SECTIONS]
+              // Per-place overrides are there only once there are some.
+              .filter(([, , id]) => document.getElementById(id))
+              .map(([t, i, id]) => (
+                <button
+                  class="menu-item"
+                  data-section={id}
+                  onClick={() => {
+                    setOpen(false);
+                    showSection(id);
+                  }}
+                >
+                  <Icon name={i} size={18} /> {t}
+                </button>
+              ))}
+          </div>
+        </Sheet>
+      )}
+    </>
+  );
+}
 
 function LevelPicker({ value, onChange }: { value: P.NotifyLevel; onChange: (l: P.NotifyLevel) => void }) {
   return (
@@ -204,7 +256,10 @@ export function SettingsPane() {
     <section class="pane settings">
       <header class="board-head">
         <div>
-          <h2>Settings</h2>
+          <div class="set-title">
+            <h2>Settings</h2>
+            {phone.value && <SectionsButton />}
+          </div>
           <p>Notification rules apply to every account at once. The most specific rule always wins.</p>
         </div>
       </header>

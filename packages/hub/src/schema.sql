@@ -164,6 +164,8 @@ CREATE INDEX IF NOT EXISTS message_conv_ts ON message(conversation_id, ts);
 -- The inbox, outcomes and embeddings read by time across conversations, and "what you wrote" by author.
 CREATE INDEX IF NOT EXISTS message_ts ON message(ts);
 CREATE INDEX IF NOT EXISTS message_author_ts ON message(author_id, ts);
+-- Deleted and disappeared messages, for Settings → Message history's Forget (docs/history.md).
+CREATE INDEX IF NOT EXISTS message_gone ON message(gone_how) WHERE gone_how IS NOT NULL;
 
 -- Full-text search over bodies, kept current by triggers. Store backfills it once for older databases.
 -- It follows message.rowid, so after a VACUUM run: INSERT INTO message_fts(message_fts) VALUES ('rebuild');

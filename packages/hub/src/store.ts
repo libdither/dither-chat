@@ -1765,8 +1765,26 @@ export class Store {
     return { versions, events, receipts, identities: this.identitiesByIds(ids) };
   }
 
+  /** Which kinds have anything kept that Forget would erase. Each looks for one row (message_gone indexes the deleted). */
+  keptKinds(): Record<P.KeptKind, boolean> {
+    const any = (sql: string, ...args: string[]) => (this.db.query(`SELECT EXISTS (${sql}) AS hit`).get(...args) as Row).hit === 1;
+    const gone = `SELECT 1 FROM message WHERE gone_how = ? AND deleted = 1 AND (body != '' OR EXISTS (SELECT 1 FROM attachment a WHERE a.message_id = message.id))`;
+    const logged = `SELECT 1 FROM change_log WHERE target_kind = 'identity' AND field = ?`;
+    return {
+      deleted: any(gone, 'deleted'),
+      disappeared: any(gone, 'disappeared'),
+      edits: any(`SELECT 1 FROM message_event WHERE kind = 'edit'`),
+      reactions: any(`SELECT 1 FROM message_event WHERE kind = 'unreact'`),
+      receipts: any('SELECT 1 FROM receipt'),
+      changes: any('SELECT 1 FROM change_log') || any(`SELECT 1 FROM message_event WHERE kind IN ('pin', 'unpin')`),
+      statuses: any(logged, 'status'),
+      presence: any(logged, 'presence'),
+      members: any('SELECT 1 FROM membership'),
+    };
+  }
+
   /** Forget what was kept: deleted or disappeared messages' words and files, edits, reactions taken back, receipts, the change log, logged statuses or presence, or server members seen. */
-  eraseKept(what: 'deleted' | 'disappeared' | 'edits' | 'reactions' | 'receipts' | 'changes' | 'statuses' | 'presence' | 'members'): number {
+  eraseKept(what: P.KeptKind): number {
     if (what === 'members') {
       this.db.query('DELETE FROM member_coverage').run();
       return this.db.query('DELETE FROM membership').run().changes;

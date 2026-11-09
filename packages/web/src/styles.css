@@ -2876,6 +2876,7 @@ code {
   align-items: flex-start;
 }
 .toggle-row input {
+  flex: none;
   margin-top: 3px;
   accent-color: var(--accent);
   width: 16px;
@@ -3733,10 +3734,21 @@ code {
   border-radius: 8px;
   font-size: 13px;
 }
+/* Settings' title, with a phone's Sections button beside it. */
+.set-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.set-jump {
+  flex: none;
+}
 .set-block {
   margin-bottom: 26px;
   padding-bottom: 20px;
   border-bottom: 1px solid var(--border-soft);
+  scroll-margin-top: 14px;
 }
 .set-block h3 {
   font-size: 14px;
@@ -4457,6 +4469,11 @@ code {
   }
   .toggle-row {
     min-height: 44px;
+  }
+  .toggle-row input {
+    width: 20px;
+    height: 20px;
+    margin-top: 1px;
   }
   .rail-btn {
     -webkit-tap-highlight-color: transparent;
@@ -8970,6 +8987,16 @@ button.msg-edited.link:hover {
 .hist-cell.own {
   outline: 1.5px solid var(--accent);
 }
+@media (max-width: 820px), (pointer: coarse) {
+  .hist-cell {
+    width: 44px;
+    height: 44px;
+  }
+  .hist-cell input {
+    width: 20px;
+    height: 20px;
+  }
+}
 .hist-none { color: var(--text-faint); }
 .msg-pin {
   display: inline-flex;
@@ -9084,7 +9111,7 @@ button.msg-edited.link:hover {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: 16px;
+  min-height: 44px;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -9092,9 +9119,95 @@ button.msg-edited.link:hover {
   font-weight: 600;
 }
 .adv-confirm input {
-  width: 16px;
-  height: 16px;
+  flex: none;
+  width: 20px;
+  height: 20px;
   accent-color: var(--danger);
+}
+/* The words scroll; Yes stays at the bottom, on screen from the start (a phone's sheet included). */
+.modal-body:has(> .adv-warning) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+.adv-warning {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.adv-text {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.adv-text > :first-child {
+  margin-top: 0;
+}
+.adv-foot {
+  flex: none;
+  padding: 12px 0 16px;
+  border-top: 1px solid var(--border-soft);
+}
+.adv-foot small {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+/* Right after the warning: what to do next. */
+.adv-next {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--accent) 14%, var(--bg-raised));
+  font-size: 13px;
+  font-weight: 600;
+}
+.adv-next .icon {
+  flex: none;
+}
+.toggle-row .adv-where {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  color: var(--text-dim);
+}
+.adv-where .icon {
+  flex: none;
+}
+/* Message history, while adversarial features keep nothing. */
+.hist-off {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.hist-off > .icon {
+  flex: none;
+  margin-top: 2px;
+}
+.hist-off p {
+  margin: 0 0 8px;
+  line-height: 1.45;
+}
+.hist-off b {
+  color: var(--text);
+  font-weight: 600;
+}
+.hist-empty {
+  margin-top: 6px;
 }
 .adv-confirm.waiting {
   cursor: not-allowed;

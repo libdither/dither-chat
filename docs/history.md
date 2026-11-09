@@ -11,12 +11,22 @@ first two, statuses, presence and server members, Adversarial features), everywh
 | **Reactions taken back** | who took back which reaction; reactions a moderator cleared | Message History in the message's menu |
 | **Read receipts** | who got, read and played your messages, and when (Signal, WhatsApp, Matrix) | ticks beside your messages; click for who |
 | **Changes** (one switch) | names, descriptions, pictures, settings, members and roles of conversations and spaces; pins; people's names, usernames, pictures, bios, pronouns and banners | History on the profile page (docs/profile.md); a pin mark on pinned messages |
-| **Statuses** (adversarial) | each change to people's custom statuses (the About on Signal and WhatsApp); the current one is kept either way | the Status section of the profile page |
-| **Presence** (adversarial) | each time people you follow come online, go idle or do not disturb, or go offline, and on which devices; nothing at all while off | the Status section of the profile page |
+| **Statuses** (adversarial) | each change to people's custom statuses (the About on Signal and WhatsApp); the current one is kept either way | the Status section of a profile |
+| **Presence** (adversarial) | each time people you follow come online, go idle or do not disturb, or go offline, and on which devices; nothing at all while off | the Status section of a profile |
 | **Server members** (adversarial, passive) | who your accounts' clients saw as a member of each server, with nick, roles and when they joined, and the server's member and online counts: only what the client loaded anyway (message authors, the member list in view), never a walk of the list | "Members seen: 5 of 1,287 listed" on a server's About; the server under In common on a profile; its links in the people graph (docs/people-graph.md) |
 
-"Deleted and disappeared messages in chats" picks a collapsed line or nothing at all (they are still kept, and come
-back with the setting). Forget what was kept erases each kind for good.
+Each adversarial switch says where what it keeps shows, in the words of the last column ("Where it shows: a collapsed
+line in the chat"). "Deleted and disappeared messages in chats" picks a collapsed line or nothing at all (they are
+still kept, and come back with the setting).
+
+Forget what was kept erases each kind for good. It offers a red button for each kind that is kept now, or has
+anything kept from before (`GET /api/retention/kept`, which looks for one row of each); the rest are listed as
+"Nothing kept, so nothing to forget". While nothing adversarial is kept (hidden, or each of their switches off),
+Message history says so at its top: "Deleted and disappearing messages, statuses, presence and server members are not
+being kept", with a button to Adversarial features.
+
+On a desktop, Settings' sections are listed beside it. On a phone, Sections in Settings' header opens them in a sheet,
+so any section, Adversarial features included, is two taps from anywhere in Settings.
 
 Code: `packages/hub/src/store.ts` (`gone`, `logChange`, `logChanges`, `messageEvent`, `receipt`, `setStatus`, `setPresence`, `keeps`,
 `changes`, `messageHistory`, `eraseKept`), `about.ts` (settings), `people.ts` (profiles); adapters emit `pin`, `role`,
@@ -29,12 +39,16 @@ Keeping what others deleted, keeping what a disappearing timer was meant to eras
 and presence over time, and recording who is in which server all work against what the people on the other end expect. They are off by default (`adversarial: false`),
 and the hub does none of them, whatever their own switches or per-source overrides say, until Settings →
 Adversarial features → "Show adversarial features" has been through its warning: a popup saying why, whose "Yes, I
-really want to do this" stays greyed for 15 seconds, and ticking it shows the switches (each still off). "Hide
-adversarial features" turns them all off again. While hidden, what was kept stays in the database but out of sight:
+really want to do this" stays greyed for 15 seconds. Its words scroll and the Yes stays at the bottom, so a phone's
+sheet has it on screen from the start, with "This shows their switches. Each starts off." under it. Ticking it shows
+the switches, each still off: Settings scrolls to them and says "Next, turn on the ones you want. Each starts off."
+(also whenever they are first seen all off). Finishing the warning alone keeps nothing. "Hide adversarial features"
+turns them all off again. While hidden, what was kept stays in the database but out of sight:
 kept deleted messages are served empty, status and presence history are left out of the profile, server members and
 coverage are left out of About and profiles. Message history → Forget erases it.
 
-`ui/Adversarial.tsx`; `ADVERSARIAL_KEEPS` in packages/protocol. A demo hub started with `--adversarial` shows them
+`ui/Adversarial.tsx`, `keeping.ts` (what is kept now, for Message history's note and Forget); `ADVERSARIAL_KEEPS` and
+`KEPT_KINDS` in packages/protocol. A demo hub started with `--adversarial` shows them
 from the start (scripts/verify-history.ts); scripts/verify-adversarial.ts checks the gate.
 
 ## Storage
@@ -42,7 +56,8 @@ from the start (scripts/verify-history.ts); scripts/verify-adversarial.ts checks
 Three tables, by what they hang off:
 
 - **`message`** itself for deleted and disappeared messages: `deleted`, `gone_how` (`deleted` or `disappeared`),
-  `gone_at`, and the body and attachments left in place when kept. Timelines, search and counts need nothing special.
+  `gone_at`, and the body and attachments left in place when kept. Timelines, search and counts need nothing special;
+  `message_gone`, a partial index on `gone_how`, finds them for Forget without reading every message.
 - **`message_event`** (message_id → message, ON DELETE CASCADE): `kind` (`edit`, `unreact`, `pin`, `unpin`), `data`
   (JSON: an edit's previous `{ body }`, an unreact's `{ key, style, cleared? }`), `actor_id`, `at`, `account_id`. It
   goes with its message, so leaving a conversation leaves nothing behind.

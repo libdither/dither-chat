@@ -151,6 +151,11 @@ export function Modal({ title, onClose, children, wide }: { title: ComponentChil
   );
 }
 
+/** Scrolls Settings to one of its sections (`set-adversarial`). */
+export function showSection(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 /** Small anchored menu that closes on outside click. */
 export function Menu({ trigger, children, align = 'left', up }: { trigger: (open: () => void) => ComponentChildren; children: (close: () => void) => ComponentChildren; align?: 'left' | 'right'; up?: boolean }) {
   const [open, setOpen] = useState(false);
