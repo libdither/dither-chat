@@ -17,6 +17,7 @@ import { groups, onMenu, openMenu, type MenuEntry, type MenuSpec } from '../Cont
 import { Icon } from '../icons.tsx';
 import type { MessageAction, RowWrapper, ThreadAction } from './slots.tsx';
 import { personItems } from './Classify.tsx';
+import { countKey } from '../../clicklog.ts';
 
 const acc = (t: P.MailThreadView) => db.mail.accounts.get(t.accountId);
 const inInbox = (t: P.MailThreadView) => t.roles.includes('inbox');
@@ -360,5 +361,6 @@ addEventListener('keydown', (e) => {
     default:
       return;
   }
+  countKey(`keys: mail ${e.key}`);
   e.preventDefault();
 });

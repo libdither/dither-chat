@@ -14,7 +14,7 @@ export function ProfilePage({ title, onBack, children, label }: { title: string;
   return (
     <section class="pane profile-page" aria-label={label}>
       <header class="conv-head pf-head">
-        <button class="icon-btn back-btn profile-back" onClick={onBack} aria-label="Back">
+        <button class="icon-btn back-btn profile-back" data-track="pager: back button" onClick={onBack} aria-label="Back">
           <Icon name="back" />
         </button>
         <div class="conv-head-text">

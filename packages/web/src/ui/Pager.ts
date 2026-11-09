@@ -10,6 +10,7 @@ import { clampDrag, commits, lockAxis, rubber, settleMs, velocity } from '../ges
 import { haptic, layerCount, phone, reducedMotion } from '../phone.ts';
 import { prefs, setPrefs } from '../state.ts';
 import { drag } from './dnd.tsx';
+import { countKey } from '../clicklog.ts';
 
 /** Where the card rests. `peek` leaves its edge showing beside the lists, `away` takes it off screen. */
 export type Rest = 'open' | 'details' | 'peek' | 'away';
@@ -335,7 +336,10 @@ export function usePager(app: { current: HTMLElement | null }, card: { current: 
         msg.style.transition = reducedMotion() ? 'none' : 'transform 180ms cubic-bezier(.2,.8,.2,1)';
         msg.style.transform = '';
         cur.icon!.remove();
-        if (cur.armed) swipeReply.get(msg)?.();
+        if (cur.armed) {
+          countKey('pager: swipe to reply');
+          swipeReply.get(msg)?.();
+        }
       } else if (cur.mode === 'pull') {
         const el = pull.current;
         if (!el) return;
@@ -349,6 +353,7 @@ export function usePager(app: { current: HTMLElement | null }, card: { current: 
           el.style.transition = 'transform 160ms';
           el.style.transform = 'translate(-50%, 16px)';
           el.classList.add('busy');
+          countKey('pager: pull to refresh');
           m.current.onRefresh().finally(() => setTimeout(reset, 250));
         } else reset();
       }

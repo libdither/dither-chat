@@ -73,7 +73,7 @@ export function RequestsRow() {
   const row = requestsRow(db.requests, (id) => (id ? identityName(id) : 'Someone'));
   if (!row) return null;
   return (
-    <button class="row requests-row" onClick={() => go({ view: 'requests' })} title="Friend requests, invites and message requests waiting on you">
+    <button class="row requests-row" data-track="requests row" onClick={() => go({ view: 'requests' })} title="Friend requests, invites and message requests waiting on you">
       <span class="row-avatar">
         <span class="requests-icon">
           <Icon name="userPlus" size={18} />
@@ -108,7 +108,7 @@ export function RequestsPane({ focus, onBack }: { focus?: string; onBack?: () =>
     <section class="pane requests-pane" aria-label="Requests">
       <header class="conv-head">
         {onBack && (
-          <button class="icon-btn back" onClick={onBack} aria-label="Back">
+          <button class="icon-btn back" data-track="pager: back button" onClick={onBack} aria-label="Back">
             <Icon name="back" />
           </button>
         )}
@@ -630,11 +630,11 @@ export function PeopleLinks({ relationship, active }: { relationship: P.LinkRela
     <div class="people-links" data-relationship={relationship}>
       {accounts.length > 1 && (
         <div class="inbox-chips people-accounts" role="radiogroup" aria-label="Which account">
-          <button class={`chip-btn ${!accountId ? 'on' : ''}`} role="radio" aria-checked={!accountId} onClick={() => setAccountId(null)}>
+          <button class={`chip-btn ${!accountId ? 'on' : ''}`} role="radio" aria-checked={!accountId} data-track="account chip (all)" onClick={() => setAccountId(null)}>
             All
           </button>
           {accounts.map((a) => (
-            <button class={`chip-btn ${accountId === a.id ? 'on' : ''}`} role="radio" aria-checked={accountId === a.id} data-account={a.id} title={`${netName(a.network)} ${a.label}`} onClick={() => setAccountId(a.id)}>
+            <button class={`chip-btn ${accountId === a.id ? 'on' : ''}`} role="radio" aria-checked={accountId === a.id} data-account={a.id} data-track="account chip" title={`${netName(a.network)} ${a.label}`} onClick={() => setAccountId(a.id)}>
               <NetGlyph network={a.network} size={11} /> <span class="acc-dot" style={{ background: a.color }} /> {a.label}
             </button>
           ))}
@@ -655,7 +655,7 @@ export function PeopleLinks({ relationship, active }: { relationship: P.LinkRela
         const since = Math.min(...row.links.map((l) => l.since ?? Infinity));
         return (
           <div class={`row conv-row plink-row ${active && (active === row.personId || active === row.identityId) ? 'active' : ''}`} data-plink={row.identityId}>
-            <button class="plink-main" onClick={() => openProfile(row.identityId)} title={`${name}'s profile`}>
+            <button class="plink-main" data-track={`row (${relationship})`} onClick={() => openProfile(row.identityId)} title={`${name}'s profile`}>
               <span class="row-avatar">
                 <Avatar id={row.personId ?? row.identityId} name={name} url={person?.avatar ?? i?.avatar} size={36} network={i?.network} />
               </span>
@@ -691,7 +691,7 @@ export function PeopleLinks({ relationship, active }: { relationship: P.LinkRela
 /** A row's button that ends it: straight to the question for one account, a choice of account for several. */
 function LinkEnd({ links, label, name, onPick }: { links: P.PersonLinkView[]; label: string; name: string; onPick: (l: P.PersonLinkView) => void }) {
   const button = (onClick: () => void) => (
-    <button class="icon-btn small plink-end" data-remove={links[0].relationship} title={`${label}: ${name}`} aria-label={`${label}: ${name}`} onClick={onClick}>
+    <button class="icon-btn small plink-end" data-remove={links[0].relationship} data-track={`remove (${links[0].relationship})`} title={`${label}: ${name}`} aria-label={`${label}: ${name}`} onClick={onClick}>
       <Icon name="x" size={14} />
     </button>
   );
@@ -703,7 +703,7 @@ function LinkEnd({ links, label, name, onPick }: { links: P.PersonLinkView[]; la
           {links.map((l) => {
             const a = db.accounts.get(l.accountId);
             return (
-              <button class="menu-item" onClick={() => (close(), onPick(l))}>
+              <button class="menu-item" data-track={`remove (${l.relationship}, one account)`} onClick={() => (close(), onPick(l))}>
                 {label} on {a ? `${netName(a.network)} ${a.label}` : 'that account'}
               </button>
             );

@@ -252,7 +252,7 @@ export function DirectoryPane({ onBack }: { onBack: () => void }) {
   return (
     <section class="pane directory">
       <header class="board-head dir-head">
-        <button class="icon-btn dir-back" onClick={onBack} aria-label="Back">
+        <button class="icon-btn dir-back" data-track="pager: back button" onClick={onBack} aria-label="Back">
           <Icon name="back" />
         </button>
         <div>

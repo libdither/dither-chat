@@ -52,6 +52,7 @@ import { SortButton, useFlip } from './Reorganize.tsx';
 import { rememberSearch, SearchBox } from './SearchBox.tsx';
 import { counting, rendered } from '../perf.ts';
 import { memo } from './memo.ts';
+import { convKind, rowTrack } from '../clicks.ts';
 
 // ------------------------------------------------------------------ navigation helpers
 
@@ -79,7 +80,7 @@ export function homeRoute(c: P.ConversationView): Route {
 function NewMessageButton() {
   if (![...db.accounts.values()].some((a) => a.status === 'online' && (a.capabilities.includes('openDirect') || a.capabilities.includes('resolve')))) return null;
   return (
-    <button class="icon-btn small side-new" title="New message, join or add" aria-label="New message" onClick={() => (newMessage.value = {})}>
+    <button class="icon-btn small side-new" data-track="new message" title="New message, join or add" aria-label="New message" onClick={() => (newMessage.value = {})}>
       <Icon name="plus" size={16} />
     </button>
   );
@@ -89,7 +90,7 @@ function NewMessageButton() {
 function GraphButton() {
   const on = route.value.view === 'people' && !!route.value.graph;
   return (
-    <button class={`icon-btn small side-graph ${on ? 'on' : ''}`} title="Who shares what" aria-label="People graph" aria-pressed={on} onClick={() => go(on ? { view: 'people' } : { view: 'people', graph: true })}>
+    <button class={`icon-btn small side-graph ${on ? 'on' : ''}`} data-track="people graph" title="Who shares what" aria-label="People graph" aria-pressed={on} onClick={() => go(on ? { view: 'people' } : { view: 'people', graph: true })}>
       <Icon name="graph" size={16} />
     </button>
   );
@@ -158,6 +159,7 @@ export const ConvRow = memo(function ConvRow({ c, active, onClick, showPlace = t
       onClick={onClick}
       title={why?.length ? why.join('\n') : undefined}
       data-row={c.id}
+      data-track={rowTrack(convKind(c.shape), !!u.unread, !!owedSince)}
       {...ctx}
     >
       {isChannel && com ? (
@@ -232,6 +234,7 @@ export const MailRow = memo(function MailRow({ id, active, why, owedSince }: { i
       onClick={opener(`inbox:${id}`, () => go({ view: 'inbox', conv: id }))}
       title={why?.length ? why.join('\n') : undefined}
       data-row={id}
+      data-track={rowTrack('mail', !!t.unread, !!owedSince)}
       {...ctx}
     >
       <span class="row-avatar">
@@ -261,7 +264,7 @@ function SectionHead({ id, label, count, actions }: { id: string; label: string;
   const collapsed = !!prefs.value.collapsed[id];
   return (
     <div class="section-head">
-      <button class="section-toggle" onClick={() => setPrefs({ collapsed: { ...prefs.value.collapsed, [id]: !collapsed } })}>
+      <button class="section-toggle" data-track="section toggle" onClick={() => setPrefs({ collapsed: { ...prefs.value.collapsed, [id]: !collapsed } })}>
         <Icon name={collapsed ? 'chevronRight' : 'chevronDown'} size={12} />
         <span>{label}</span>
         {count ? <span class="section-count">{count}</span> : null}
@@ -298,7 +301,7 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
   const scroll = useRef<HTMLDivElement>(null);
   useFlip(scroll, snap.v, '[data-row]');
   return (
-    <div class="sidebar-inner">
+    <div class="sidebar-inner" data-track-area="inbox">
       <header class="side-head">
         <h1>Inbox<NewMessageButton /></h1>
         <span class="side-sub">Everything that wants you, from every network</span>
@@ -315,7 +318,7 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
       />
       <div class="inbox-chips" role="radiogroup" aria-label="Show">
         {FILTERS.map((f) => (
-          <button class={`chip-btn ${filter === f.id ? 'on' : ''}`} role="radio" aria-checked={filter === f.id} onClick={() => setPrefs({ inboxFilter: f.id })}>
+          <button class={`chip-btn ${filter === f.id ? 'on' : ''}`} role="radio" aria-checked={filter === f.id} data-track={`filter (${f.label})`} onClick={() => setPrefs({ inboxFilter: f.id })}>
             {f.label}
           </button>
         ))}
@@ -326,7 +329,7 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
             <SectionHead id="inbox-att" label="Needs you" count={accounts.length} />
             {!isCollapsed('inbox-att') &&
               accounts.map((a) => (
-                <button class="row attention-row" onClick={() => go({ view: 'accounts', account: a.id })} onContextMenu={onMenu(() => accountMenu(a))}>
+                <button class="row attention-row" data-track="row (account needs you)" onClick={() => go({ view: 'accounts', account: a.id })} onContextMenu={onMenu(() => accountMenu(a))}>
                   <span class="row-avatar">
                     <span class="attention-icon">
                       <Icon name={a.attention?.kind === 'link_device' ? 'qr' : a.attention?.liveView ? 'monitor' : 'alert'} size={18} />
@@ -370,7 +373,7 @@ export const PersonRow = memo(function PersonRow({ person, directs, active, onCl
   const nets = [...new Set(directs.map((d) => d.network))];
   const ctx = useMenu(() => personMenu(person));
   return (
-    <button class={`row conv-row ${active ? 'active' : ''} ${u.unread ? 'unread' : ''}`} onClick={onClick} {...ctx}>
+    <button class={`row conv-row ${active ? 'active' : ''} ${u.unread ? 'unread' : ''}`} data-track={rowTrack('person', !!u.unread)} onClick={onClick} {...ctx}>
       <span class="row-avatar">
         <Avatar id={person.id} name={person.name} url={person.avatar} size={36} />
         <RowTyping convIds={directs.map((d) => d.id)} />
@@ -414,7 +417,7 @@ export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
   const starred = list.filter((x) => x.person.starred);
   const rest = list.filter((x) => !x.person.starred);
   return (
-    <div class="sidebar-inner">
+    <div class="sidebar-inner" data-track-area="people">
       <header class="side-head">
         <h1>People<NewMessageButton /><GraphButton /><SortButton scope="people" class="side-sort" /></h1>
         <span class="side-sub">One thread per person, across every network</span>
@@ -422,7 +425,7 @@ export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
       {chips.length > 0 && (
         <div class="inbox-chips people-chips" role="radiogroup" aria-label="Show">
           {chips.map((f) => (
-            <button class={`chip-btn ${filter === f.id ? 'on' : ''}`} role="radio" aria-checked={filter === f.id} data-filter={f.id} onClick={() => setPrefs({ peopleFilter: f.id })}>
+            <button class={`chip-btn ${filter === f.id ? 'on' : ''}`} role="radio" aria-checked={filter === f.id} data-filter={f.id} data-track={`chip (${f.id})`} onClick={() => setPrefs({ peopleFilter: f.id })}>
               {f.label}
             </button>
           ))}

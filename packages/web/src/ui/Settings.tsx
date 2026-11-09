@@ -10,6 +10,7 @@ import { PushSettings } from './Push.tsx';
 import { PrivacySettings } from './Privacy.tsx';
 import { HistorySettings } from './HistorySettings.tsx';
 import { AdversarialSettings } from './Adversarial.tsx';
+import { UsageSettings } from './ButtonCounts.tsx';
 import { DeskSettings } from './DeskSettings.tsx';
 import { MailAccessNote, MailAccountRows } from './mail/MailAccounts.tsx';
 import { MailReadSetting } from './mail/MailReadSetting.tsx';
@@ -32,6 +33,7 @@ export const SECTIONS: [title: string, icon: string, id: string][] = [
   ['Privacy', 'lock', 'set-privacy'],
   ['Message history', 'clock', 'set-history'],
   ['Adversarial features', 'eyeOff', 'set-adversarial'],
+  ['Usage', 'activity', 'set-usage'],
   ['Appearance', 'eye', 'set-appearance'],
   ['Mail', 'mail', 'set-mail'],
   // The phone app opens links and files in the phone's apps by itself.
@@ -43,7 +45,7 @@ function SectionsButton() {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button class="btn ghost small set-jump" aria-haspopup="dialog" onClick={() => setOpen(true)}>
+      <button class="btn ghost small set-jump" data-track="settings: sections" aria-haspopup="dialog" onClick={() => setOpen(true)}>
         <Icon name="list" size={15} /> Sections
       </button>
       {open && (
@@ -57,6 +59,7 @@ function SectionsButton() {
                 <button
                   class="menu-item"
                   data-section={id}
+                  data-track={`settings: section ${t}`}
                   onClick={() => {
                     setOpen(false);
                     showSection(id);
@@ -393,6 +396,7 @@ export function SettingsPane() {
         <PrivacySettings />
         <HistorySettings />
         <AdversarialSettings />
+        <UsageSettings />
 
         <section class="set-block" id="set-appearance">
           <h3>Appearance</h3>

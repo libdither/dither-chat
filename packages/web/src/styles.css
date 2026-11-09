@@ -7665,6 +7665,10 @@ html[data-theme='light'] .acc-dot {
   font-weight: 500;
   border-bottom: 1px solid var(--border-soft);
 }
+/* Settings → Usage: button counts (ButtonCounts.tsx) */
+.clicks-table td:first-child {
+  max-width: 340px;
+}
 /* ================================================================== end activity log */
 
 /* Settings → Each device (DeviceRules.tsx) */

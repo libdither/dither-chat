@@ -84,6 +84,7 @@ import { counting, markPainted, rendered } from '../perf.ts';
 import { memo } from './memo.ts';
 import { heldRequest } from '../requests.ts';
 import { LinkBanner, RequestBar } from './Requests.tsx';
+import { countKey } from '../clicklog.ts';
 
 
 // ------------------------------------------------------------------ header
@@ -102,11 +103,11 @@ function Crumbs({ c }: { c: P.ConversationView }) {
               <NetGlyph network={c.network} size={11} /> {x.label}
             </span>
           ) : x.kind === 'space' && x.id ? (
-            <button class="crumb link" onClick={() => go({ view: 'space', space: x.id! })}>
+            <button class="crumb link" data-track="crumb (community)" onClick={() => go({ view: 'space', space: x.id! })}>
               {x.label}
             </button>
           ) : x.kind === 'conversation' && x.id && x.id !== c.id ? (
-            <button class="crumb link" onClick={() => openConv(db.conversations.get(x.id!)!)}>
+            <button class="crumb link" data-track="crumb (parent)" onClick={() => openConv(db.conversations.get(x.id!)!)}>
               {x.label}
             </button>
           ) : (
@@ -126,7 +127,7 @@ export function LevelMenu({ c }: { c: P.ConversationView }) {
     <Menu
       align="right"
       trigger={(toggle) => (
-        <button class={`hdr-btn level ${eff.level}`} onClick={toggle} title={`Notifications: ${LEVEL_LABEL[eff.level]} (${eff.source})`} aria-label={`Notifications: ${LEVEL_LABEL[eff.level]}`}>
+        <button class={`hdr-btn level ${eff.level}`} data-track="notification level" onClick={toggle} title={`Notifications: ${LEVEL_LABEL[eff.level]} (${eff.source})`} aria-label={`Notifications: ${LEVEL_LABEL[eff.level]}`}>
           <Icon name={levelIcon(eff.level)} size={16} />
           <span class="hdr-btn-label">{LEVEL_LABEL[eff.level]}</span>
         </button>
@@ -137,6 +138,7 @@ export function LevelMenu({ c }: { c: P.ConversationView }) {
           <div class="menu-title">Notify me about {convLabel(c)}</div>
           {levels.map((l) => (
             <button
+              data-track={`notification level (${l})`}
               class={`menu-item ${eff.explicit && eff.scope === 'conversation' && eff.level === l ? 'on' : ''}`}
               onClick={() => {
                 setRule('conversation', c.id, l);
@@ -153,6 +155,7 @@ export function LevelMenu({ c }: { c: P.ConversationView }) {
           <div class="menu-sep" />
           <button
             class="menu-item"
+            data-track="notification level (inherit)"
             onClick={() => {
               setRule('conversation', c.id, null);
               close();
@@ -170,6 +173,7 @@ export function LevelMenu({ c }: { c: P.ConversationView }) {
               {(['mentions', 'digest', 'none'] as const).map((l) => (
                 <button
                   class="chip-btn"
+                  data-track={`notification level (whole community, ${l})`}
                   onClick={() => {
                     const root = db.spaces.get(com);
                     const top = root?.kind === 'section' ? (db.parents.get(com)?.[0]?.parentId ?? com) : com;
@@ -203,14 +207,14 @@ function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void 
   const whoTitle = person && isDirect ? `${person.name}'s profile` : `About ${convTitle(c)}`;
   const openWho = () => go(person && isDirect ? { view: 'profile', person: person.id } : { view: 'profile', conv: c.id });
   return (
-    <header class="conv-head" onContextMenu={onMenu(() => conversationMenu(c))}>
+    <header class="conv-head" data-track-area="chat header" onContextMenu={onMenu(() => conversationMenu(c))}>
       {onBack && (
-        <button class="icon-btn back" onClick={onBack} aria-label="Back">
+        <button class="icon-btn back" data-track="pager: back button" onClick={onBack} aria-label="Back">
           <Icon name="back" />
         </button>
       )}
       {/* The picture and the name open its profile page: theirs for a DM, the place's otherwise. */}
-      <button class="conv-head-icon conv-head-who" tabIndex={-1} title={whoTitle} onClick={openWho}>
+      <button class="conv-head-icon conv-head-who" tabIndex={-1} data-track="picture" title={whoTitle} onClick={openWho}>
         {isDirect || c.shape === 'group' || c.shape === 'self' ? (
           <Avatar id={person?.id ?? c.id} name={convTitle(c)} url={person?.avatar ?? c.avatar} size={34} square={!isDirect} network={c.network} />
         ) : (
@@ -221,7 +225,7 @@ function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void 
       </button>
       <div class="conv-head-text">
         <h2>
-          <button class="conv-head-name" title={whoTitle} onClick={openWho}>
+          <button class="conv-head-name" data-track="name" title={whoTitle} onClick={openWho}>
             {convTitle(c)}
           </button>
           {c.encrypted && (
@@ -245,10 +249,10 @@ function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void 
       <div class="conv-head-actions">
         {person && isDirect && (
           <>
-            <button class="hdr-btn phone-hide" title="Profile" aria-label="Profile" onClick={() => go({ view: 'profile', person: person.id })}>
+            <button class="hdr-btn phone-hide" data-track="profile" title="Profile" aria-label="Profile" onClick={() => go({ view: 'profile', person: person.id })}>
               <Icon name="info" size={16} />
             </button>
-            <button class="hdr-btn phone-hide" title="Open the merged thread with this person" aria-label="All chats with this person" onClick={() => go({ view: 'people', person: person.id })}>
+            <button class="hdr-btn phone-hide" data-track="all chats" title="Open the merged thread with this person" aria-label="All chats with this person" onClick={() => go({ view: 'people', person: person.id })}>
               <Icon name="user" size={16} />
               <span class="hdr-btn-label">All chats</span>
             </button>
@@ -256,15 +260,15 @@ function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void 
         )}
         <JoinCallButton c={c} />
         {!isDirect && (
-          <button class="hdr-btn" title="About and settings" aria-label="About and settings" onClick={() => openAbout('conversation', c.id)}>
+          <button class="hdr-btn" data-track="about" title="About and settings" aria-label="About and settings" onClick={() => openAbout('conversation', c.id)}>
             <Icon name="info" size={16} />
           </button>
         )}
-        <button class="hdr-btn" title="Search in this conversation" aria-label="Search in this conversation" onClick={() => go({ view: 'search', q: `in:${c.id}` })}>
+        <button class="hdr-btn" data-track="search here" title="Search in this conversation" aria-label="Search in this conversation" onClick={() => go({ view: 'search', q: `in:${c.id}` })}>
           <Icon name="search" size={16} />
         </button>
         <LevelMenu c={c} />
-        <button class={`hdr-btn ${detailsShown() ? 'on' : ''}`} onClick={() => showDetails(!detailsShown())} title="Details" aria-label="Details">
+        <button class={`hdr-btn ${detailsShown() ? 'on' : ''}`} data-track="details" onClick={() => showDetails(!detailsShown())} title="Details" aria-label="Details">
           <Icon name="panel" size={16} />
         </button>
       </div>
@@ -275,18 +279,18 @@ function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void 
 function PersonHeader({ person, onBack }: { person: P.PersonView; onBack?: () => void }) {
   const directs = directsOf(person.id);
   return (
-    <header class="conv-head" onContextMenu={onMenu(() => personMenu(person))}>
+    <header class="conv-head" data-track-area="chat header" onContextMenu={onMenu(() => personMenu(person))}>
       {onBack && (
-        <button class="icon-btn back" onClick={onBack} aria-label="Back">
+        <button class="icon-btn back" data-track="pager: back button" onClick={onBack} aria-label="Back">
           <Icon name="back" />
         </button>
       )}
-      <button class="conv-head-icon conv-head-who" tabIndex={-1} title={`${person.name}'s profile`} onClick={() => go({ view: 'profile', person: person.id })}>
+      <button class="conv-head-icon conv-head-who" tabIndex={-1} data-track="picture" title={`${person.name}'s profile`} onClick={() => go({ view: 'profile', person: person.id })}>
         <Avatar id={person.id} name={person.name} url={person.avatar} size={34} />
       </button>
       <div class="conv-head-text">
         <h2>
-          <button class="conv-head-name" title={`${person.name}'s profile`} onClick={() => go({ view: 'profile', person: person.id })}>
+          <button class="conv-head-name" data-track="name" title={`${person.name}'s profile`} onClick={() => go({ view: 'profile', person: person.id })}>
             {person.name}
           </button>
           {person.starred && <Icon name="star" size={13} class="row-star" />}
@@ -297,7 +301,7 @@ function PersonHeader({ person, onBack }: { person: P.PersonView; onBack?: () =>
               const peer = d.participantIds.find((p) => !isSelfIdentity(p));
               const ident = peer ? db.identities.get(peer) : null;
               return (
-                <button class="ident-chip" style={{ '--net': NETWORK_META[d.network].color } as any} title={`Open only the ${netName(d.network)} chat`} onClick={() => go({ view: 'inbox', conv: d.id })}>
+                <button class="ident-chip" data-track="network chip" style={{ '--net': NETWORK_META[d.network].color } as any} title={`Open only the ${netName(d.network)} chat`} onClick={() => go({ view: 'inbox', conv: d.id })}>
                   <NetGlyph network={d.network} size={11} />
                   {ident?.handle ?? ident?.displayName ?? netName(d.network)}
                   <AccountDots network={d.network} accountIds={d.vantages.map((v) => v.accountId)} size={6} />
@@ -308,7 +312,7 @@ function PersonHeader({ person, onBack }: { person: P.PersonView; onBack?: () =>
         </div>
       </div>
       <div class="conv-head-actions">
-        <button class={`hdr-btn ${detailsShown() ? 'on' : ''}`} onClick={() => showDetails(!detailsShown())} title="Details" aria-label="Details">
+        <button class={`hdr-btn ${detailsShown() ? 'on' : ''}`} data-track="details" onClick={() => showDetails(!detailsShown())} title="Details" aria-label="Details">
           <Icon name="panel" size={16} />
         </button>
       </div>
@@ -527,6 +531,7 @@ function TriageNote({ m }: { m: P.MessageView }) {
   return (
     <button
       class="icon-btn small"
+      data-track="triage note"
       title={`${label}: why, and vote it up or down a level`}
       aria-label={`Notification: ${label}`}
       onClick={(e) => {
@@ -677,28 +682,29 @@ const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuot
           </button>
         )}
       </div>
-      <div class="msg-actions">
+      <div class="msg-actions" data-track-area="message">
         <HoverReactions m={m} />
         {canEdit(m) && (
-          <button class="icon-btn small" title="Edit" onClick={() => startEditing(m)}>
+          <button class="icon-btn small" data-track="edit" title="Edit" onClick={() => startEditing(m)}>
             <Icon name="pencil" size={14} />
           </button>
         )}
         {canDelete(m) && (
-          <button class="icon-btn small" title="Delete" onClick={() => deleteMessage(m)}>
+          <button class="icon-btn small" data-track="delete" title="Delete" onClick={() => deleteMessage(m)}>
             <Icon name="trash" size={14} />
           </button>
         )}
-        <button class="icon-btn small" title="Reply" onClick={() => onReply(m)}>
+        <button class="icon-btn small" data-track="reply" title="Reply" onClick={() => onReply(m)}>
           <Icon name="reply" size={15} />
         </button>
         {!m.deleted && m.kind !== 'encrypted' && (
-          <button class="icon-btn small" title="Forward" aria-label="Forward" onClick={() => (forwarding.value = m)}>
+          <button class="icon-btn small" data-track="forward" title="Forward" aria-label="Forward" onClick={() => (forwarding.value = m)}>
             <Icon name="forward" size={15} />
           </button>
         )}
         <button
           class="icon-btn small"
+          data-track="more"
           title="More"
           aria-label="More"
           onClick={(e) => {
@@ -1041,6 +1047,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   return (
     <div
       class={`composer ${dropping ? 'dropping' : ''}`}
+      data-track-area="composer"
       onDragOver={(e) => {
         if (!e.dataTransfer?.types.includes('Files')) return;
         e.preventDefault();
@@ -1057,7 +1064,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       {edit && (
         <div class="composer-reply">
           <Icon name="pencil" size={13} /> Editing your message
-          <button class="icon-btn small" onClick={cancelEdit} aria-label="Cancel editing">
+          <button class="icon-btn small" data-track="cancel edit" onClick={cancelEdit} aria-label="Cancel editing">
             <Icon name="x" size={13} />
           </button>
         </div>
@@ -1066,7 +1073,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
         <div class="composer-reply">
           <Icon name="reply" size={13} /> Replying to <b>{isSelfIdentity(reply.authorId) ? 'yourself' : authorName(reply.authorId)}</b>
           <span>{plainBody(reply.body, reply.network).slice(0, 80)}</span>
-          <button class="icon-btn small" onClick={clearReply} aria-label="Cancel reply">
+          <button class="icon-btn small" data-track="cancel reply" onClick={clearReply} aria-label="Cancel reply">
             <Icon name="x" size={13} />
           </button>
         </div>
@@ -1076,7 +1083,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
         {canAttach && !edit && !disabledReason && (
           <>
-            <button class="icon-btn attach-btn" onClick={() => picker.current?.click()} title={`Attach files, up to ${conv ? ATTACHMENT_LIMITS[conv.network].bytes / 1024 / 1024 : 0} MB each`} aria-label="Attach files">
+            <button class="icon-btn attach-btn" data-track="attach" onClick={() => picker.current?.click()} title={`Attach files, up to ${conv ? ATTACHMENT_LIMITS[conv.network].bytes / 1024 / 1024 : 0} MB each`} aria-label="Attach files">
               <Icon name="paperclip" size={17} />
             </button>
             <input
@@ -1096,7 +1103,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           <Menu
             up
             trigger={(toggle) => (
-              <button class="send-as" onClick={toggle} title={sendAs.label} aria-label={sendAs.label}>
+              <button class="send-as" data-track="send as" onClick={toggle} title={sendAs.label} aria-label={sendAs.label}>
                 {sendAs.options.find((o) => o.id === sendAs.value)?.label ?? sendAs.options[0].label}
                 <Icon name="chevronDown" size={12} />
               </button>
@@ -1108,6 +1115,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
                 {sendAs.options.map((o) => (
                   <button
                     class={`menu-item ${o.id === sendAs.value ? 'on' : ''}`}
+                    data-track="send as (pick)"
                     onClick={() => {
                       sendAs.onChange(o.id);
                       close();
@@ -1122,6 +1130,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
         )}
         <textarea
           ref={ta}
+          data-track="text box"
           rows={1}
           value={text}
           placeholder={disabledReason ?? placeholder}
@@ -1144,14 +1153,16 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
             // A phone keyboard has no Shift+Enter, so there Enter is a new line and the button sends.
             if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && (!touchKeyboard() || e.ctrlKey || e.metaKey)) {
               e.preventDefault();
+              countKey('composer: send (Enter)');
               submit();
             } else if (e.key === 'Escape') {
+              if (edit || reply) countKey(`composer: cancel ${edit ? 'edit' : 'reply'} (Esc)`);
               if (edit) cancelEdit();
               else clearReply();
             }
           }}
         />
-        <button class="send-btn" disabled={(!text.trim() && !files.length) || !!disabledReason || (att.failed && !edit)} onClick={submit} aria-label="Send" title={att.failed && !edit ? 'A file did not upload: try it again or remove it' : undefined}>
+        <button class="send-btn" data-track="send" disabled={(!text.trim() && !files.length) || !!disabledReason || (att.failed && !edit)} onClick={submit} aria-label="Send" title={att.failed && !edit ? 'A file did not upload: try it again or remove it' : undefined}>
           <Icon name="send" size={17} />
         </button>
       </div>

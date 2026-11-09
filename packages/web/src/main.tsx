@@ -3,6 +3,7 @@ import { render } from 'preact';
 import { App } from './ui/App.tsx';
 import { reportContent, reportFresh, startAndroid } from './android.ts';
 import { startActivity } from './activity.ts';
+import { startClickLog } from './clicklog.ts';
 import { startDevices } from './devices.ts';
 import { installDeskLinks } from './desk.ts';
 import { trackViewport } from './phone.ts';
@@ -19,6 +20,7 @@ void restoreOutbox();
 trackViewport();
 startAndroid();
 startActivity();
+startClickLog();
 startDevices();
 installDeskLinks();
 

@@ -7,7 +7,9 @@ import { signal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { phone, useLayer } from '../phone.ts';
-import { rev, toast } from '../state.ts';
+import { rev, route, toast } from '../state.ts';
+import { countKey } from '../clicklog.ts';
+import { fullKey, pageOf } from '../clicks.ts';
 import { Icon } from './icons.tsx';
 import { useLongPress } from './Reactions.tsx';
 import { Sheet } from './Sheet.tsx';
@@ -26,6 +28,8 @@ export type MenuEntry =
       radio?: boolean;
       sub?: MenuEntry[];
       run?: () => void;
+      /** Its key for button counts (clicks.ts): a fixed string, never the label, which may hold a name. */
+      track?: string;
     }
   | { kind: 'sep' }
   | { kind: 'label'; label: string }
@@ -41,6 +45,8 @@ export interface MenuSpec {
   /** Below the items, in the sheet only. */
   foot?: ComponentChildren;
   label?: string;
+  /** The area its items' keys count under (clicks.ts), such as "message menu". */
+  track?: string;
 }
 
 /** Groups of items with a line between each; empty groups and stray lines go. */
@@ -119,7 +125,7 @@ export function place(x: number, y: number, w: number, h: number, vw: number, vh
   return { left, top };
 }
 
-function Panel({ items, x, y, flipX, depth, onClose, onBack, autoFocus }: { items: MenuEntry[]; x: number; y: number; flipX?: number; depth: number; onClose: () => void; onBack?: () => void; autoFocus: 'first' | 'none' }) {
+function Panel({ items, x, y, flipX, depth, onClose, onBack, autoFocus, track }: { items: MenuEntry[]; x: number; y: number; flipX?: number; depth: number; onClose: () => void; onBack?: () => void; autoFocus: 'first' | 'none'; track?: string }) {
   const box = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(autoFocus === 'first' ? items.findIndex(selectable) : -1);
   const [open, setOpen] = useState<{ index: number; x: number; y: number; flipX: number; focus: 'first' | 'none' } | null>(null);
@@ -175,7 +181,11 @@ function Panel({ items, x, y, flipX, depth, onClose, onBack, autoFocus }: { item
     const name = e.key === 'Delete' || e.key === 'Backspace' ? 'del' : e.key.length === 1 ? e.key.toLowerCase() : null;
     if (name && !e.ctrlKey && !e.metaKey && !e.altKey) {
       const i = items.findIndex((x) => selectable(x) && (x as Item).hint?.toLowerCase() === name);
-      if (i >= 0) return stop(), activate(i);
+      if (i >= 0) {
+        const it = items[i] as Item;
+        if (it.track) countKey(`${fullKey(it.track, track ?? null, pageOf(route.value))} (key ${it.hint})`);
+        return stop(), activate(i);
+      }
     }
   };
   const sub = open ? items[open.index] : null;
@@ -189,6 +199,7 @@ function Panel({ items, x, y, flipX, depth, onClose, onBack, autoFocus }: { item
           return (
             <button
               data-i={i}
+              data-track={e.track}
               class={`cm-item ${e.danger ? 'danger' : ''} ${i === active ? 'active' : ''}`}
               role={e.checked !== undefined ? (e.radio ? 'menuitemradio' : 'menuitemcheckbox') : 'menuitem'}
               aria-checked={e.checked}
@@ -221,6 +232,7 @@ function Panel({ items, x, y, flipX, depth, onClose, onBack, autoFocus }: { item
           flipX={open.flipX}
           depth={depth + 1}
           autoFocus={open.focus}
+          track={track}
           onClose={onClose}
           onBack={() => {
             setOpen(null);
@@ -254,8 +266,8 @@ function DesktopMenu({ spec, onClose }: { spec: MenuSpec & { x: number; y: numbe
     };
   }, []);
   return (
-    <div class="cm-root" ref={root} aria-label={spec.label}>
-      <Panel items={spec.items} x={spec.x} y={spec.y} depth={0} onClose={onClose} autoFocus="none" />
+    <div class="cm-root" ref={root} aria-label={spec.label} data-track-area={spec.track}>
+      <Panel items={spec.items} x={spec.x} y={spec.y} depth={0} onClose={onClose} autoFocus="none" track={spec.track} />
     </div>
   );
 }
@@ -275,13 +287,14 @@ function SheetMenu({ spec, onClose }: { spec: MenuSpec; onClose: () => void }) {
       ) : (
         spec.head
       )}
-      <div class="sheet-actions" role="menu">
+      <div class="sheet-actions" role="menu" data-track-area={spec.track}>
         {items.map((e) => {
           if (e.kind === 'sep') return <div class="cm-sep" role="separator" />;
           if (e.kind === 'label') return <div class="cm-label">{e.label}</div>;
           if (e.kind === 'row') return e.render(onClose, true);
           return (
             <button
+              data-track={e.track}
               class={`sheet-action ${e.danger ? 'danger' : ''}`}
               role="menuitem"
               aria-checked={e.checked}

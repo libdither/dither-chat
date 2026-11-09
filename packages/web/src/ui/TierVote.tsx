@@ -29,14 +29,14 @@ export function TierVote({ m }: { m: Votable }) {
   };
   return (
     <span class="tier-vote">
-      <button class={`icon-btn small ${!up && t.feedback === 'push' ? 'on' : ''}`} title={up ? `Should be ${TIER_LABEL[up]}: ${WHAT[up]}` : 'Right call: Important'} onClick={stop(() => vote(m, 'up'))}>
+      <button class={`icon-btn small ${!up && t.feedback === 'push' ? 'on' : ''}`} data-track="vote up" title={up ? `Should be ${TIER_LABEL[up]}: ${WHAT[up]}` : 'Right call: Important'} onClick={stop(() => vote(m, 'up'))}>
         <Icon name="chevronUp" size={15} />
       </button>
       <span class={`tier-chip ${now} ${moved ? 'moved' : ''}`} title={moved ? `You moved it here from ${TIER_LABEL[t.decision]}` : t.feedback ? 'You said this was right' : `Triage put it here: ${WHAT[now]}`}>
         {TIER_LABEL[now]}
         {t.feedback === t.decision && <Icon name="check" size={10} />}
       </span>
-      <button class={`icon-btn small ${!down && t.feedback === 'drop' ? 'on' : ''}`} title={down ? `Should be ${TIER_LABEL[down]}: ${WHAT[down]}` : 'Right call: not interesting'} onClick={stop(() => vote(m, 'down'))}>
+      <button class={`icon-btn small ${!down && t.feedback === 'drop' ? 'on' : ''}`} data-track="vote down" title={down ? `Should be ${TIER_LABEL[down]}: ${WHAT[down]}` : 'Right call: not interesting'} onClick={stop(() => vote(m, 'down'))}>
         <Icon name="chevronDown" size={15} />
       </button>
     </span>
@@ -53,6 +53,7 @@ export function TierPicker({ m, onDone }: { m: Votable; onDone?: () => void }) {
         <button
           role="radio"
           aria-checked={now === l}
+          data-track={`vote (${TIER_LABEL[l]})`}
           class={`chip-btn tier-${l} ${now === l ? 'on' : ''}`}
           title={`${TIER_LABEL[l]}: ${WHAT[l]}${l === t.decision ? ' (where triage put it)' : ''}`}
           onClick={() => {

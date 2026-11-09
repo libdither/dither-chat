@@ -52,7 +52,7 @@ export function Reader({ threadId, onBack }: { threadId: string; onBack: () => v
   return (
     <section class="pane mail-reader" aria-label={thread?.subject || 'Mail'}>
       <header class="conv-head mail-reader-head">
-        <button class="icon-btn back" onClick={onBack} aria-label="Back">
+        <button class="icon-btn back" data-track="pager: back button" onClick={onBack} aria-label="Back">
           <Icon name="back" />
         </button>
         <div class="conv-head-text">

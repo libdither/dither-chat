@@ -12,6 +12,7 @@ import { useLayer } from '../phone.ts';
 import { Avatar, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { homeRoute } from './Sidebar.tsx';
+import { countKey } from '../clicklog.ts';
 
 export const switcherOpen = signal(false);
 
@@ -100,6 +101,7 @@ export function Switcher() {
     const k = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
+        if (!switcherOpen.value) countKey('keys: Ctrl+K (switcher)');
         switcherOpen.value = !switcherOpen.value;
       }
     };

@@ -52,13 +52,14 @@ function QuickReactions({ m, close, sheet }: { m: P.MessageView; close: () => vo
   return (
     <div class={sheet ? 'sheet-quick' : 'cm-quick'}>
       {quickReactions(m.network, sheet ? 6 : 4).map((k) => (
-        <button class={swap?.key === k ? 'on' : ''} aria-label={`React ${k}`} title={swap ? (swap.key === k ? `Take back your ${k}` : `Replace your reaction with ${k}`) : `React ${k}`} onClick={pick(k)}>
+        <button class={swap?.key === k ? 'on' : ''} data-track="quick reaction" aria-label={`React ${k}`} title={swap ? (swap.key === k ? `Take back your ${k}` : `Replace your reaction with ${k}`) : `React ${k}`} onClick={pick(k)}>
           {k}
         </button>
       ))}
       {sheet && (
         <button
           class="more"
+          data-track="add reaction (other)"
           aria-label="More reactions"
           onClick={() => {
             close();
@@ -135,43 +136,45 @@ function messageEntries(m: P.MessageView, onReply?: () => void): MenuEntry[] {
         scope === 'all' && {
           label: replacing(m) ? 'Change Reaction' : 'Add Reaction',
           icon: addLook(m).icon,
+          track: 'add reaction',
           sub: [
-            ...quickReactions(m.network, 6).map((k): MenuEntry => ({ label: k, run: () => void toggleReaction(m, { key: k }) })),
+            ...quickReactions(m.network, 6).map((k): MenuEntry => ({ label: k, track: 'add reaction (quick)', run: () => void toggleReaction(m, { key: k }) })),
             { kind: 'sep' },
-            { label: 'Other Reactions…', icon: 'smilePlus', run: () => (pickerFor.value = { message: m, anchor: menuPoint() }) },
+            { label: 'Other Reactions…', icon: 'smilePlus', track: 'add reaction (other)', run: () => (pickerFor.value = { message: m, anchor: menuPoint() }) },
           ],
         },
       m.reactions.length > 0 && {
         label: 'View Reactions',
         icon: 'smile',
-        sub: m.reactions.map((r): MenuEntry => ({ label: `${r.emoji ? `:${r.emoji.name}:` : r.key.match(/^(.+):\d+$/) ? `:${r.key.split(':')[0]}:` : r.key}  ${r.count}${r.style === 'super' ? ' ⚡' : ''}`, run: () => (reactorsFor.value = { message: m, key: r.key, style: r.style, anchor: menuPoint() }) })),
+        track: 'view reactions',
+        sub: m.reactions.map((r): MenuEntry => ({ track: 'view reactions (one)', label: `${r.emoji ? `:${r.emoji.name}:` : r.key.match(/^(.+):\d+$/) ? `:${r.key.split(':')[0]}:` : r.key}  ${r.count}${r.style === 'super' ? ' ⚡' : ''}`, run: () => (reactorsFor.value = { message: m, key: r.key, style: r.style, anchor: menuPoint() }) })),
       },
     ],
     [
-      canEdit(m) && { label: 'Edit Message', icon: 'pencil', hint: 'E', run: () => startEditing(m) },
-      live && onReply && { label: 'Reply', icon: 'reply', hint: 'R', run: onReply },
-      forwardable(m) && { label: 'Forward', icon: 'forward', hint: 'F', run: () => (forwarding.value = m) },
-      thread && { label: 'Open Thread', icon: 'thread', run: () => openConv(thread) },
-      !!text.trim() && !m.deleted && m.kind !== 'encrypted' && { label: 'Copy Text', icon: 'copy', hint: 'C', run: () => copy(plainBody(text, m.network), 'Text copied') },
-      { label: 'Copy Message Link', icon: 'link', run: () => copy(messageLink(m), 'Link copied') },
+      canEdit(m) && { label: 'Edit Message', icon: 'pencil', hint: 'E', track: 'edit', run: () => startEditing(m) },
+      live && onReply && { label: 'Reply', icon: 'reply', hint: 'R', track: 'reply', run: onReply },
+      forwardable(m) && { label: 'Forward', icon: 'forward', hint: 'F', track: 'forward', run: () => (forwarding.value = m) },
+      thread && { label: 'Open Thread', icon: 'thread', track: 'open thread', run: () => openConv(thread) },
+      !!text.trim() && !m.deleted && m.kind !== 'encrypted' && { label: 'Copy Text', icon: 'copy', hint: 'C', track: 'copy text', run: () => copy(plainBody(text, m.network), 'Text copied') },
+      { label: 'Copy Message Link', icon: 'link', track: 'copy link', run: () => copy(messageLink(m), 'Link copied') },
     ],
     [
-      m.replyToId && { label: 'Go to Replied Message', icon: 'chevronUp', run: () => document.getElementById(`m-${m.replyToId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }) },
-      original && { label: 'Go to Original Message', icon: 'external', run: () => go({ view: 'inbox', conv: original.conversationId!, msg: original.messageId! }) },
-      m.authorId && { label: self ? 'Your Profile' : 'Profile', icon: 'user', run: () => openProfile(m.authorId) },
-      hasHistory(m) && { label: 'Message History', icon: 'clock', run: () => (historyOf.value = m) },
+      m.replyToId && { label: 'Go to Replied Message', icon: 'chevronUp', track: 'go to replied', run: () => document.getElementById(`m-${m.replyToId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }) },
+      original && { label: 'Go to Original Message', icon: 'external', track: 'go to original', run: () => go({ view: 'inbox', conv: original.conversationId!, msg: original.messageId! }) },
+      m.authorId && { label: self ? 'Your Profile' : 'Profile', icon: 'user', track: 'profile', run: () => openProfile(m.authorId) },
+      hasHistory(m) && { label: 'Message History', icon: 'clock', track: 'history', run: () => (historyOf.value = m) },
     ],
     // Google Messages has no unsend: a delete only takes it off your phone.
-    [canDelete(m) && { label: m.network === 'gmessages' ? 'Delete From Your Phone' : 'Delete Message', icon: 'trash', hint: 'Del', danger: true, run: () => deleteMessage(m) }],
+    [canDelete(m) && { label: m.network === 'gmessages' ? 'Delete From Your Phone' : 'Delete Message', icon: 'trash', hint: 'Del', danger: true, track: 'delete', run: () => deleteMessage(m) }],
     [
-      { label: 'Copy Message ID', icon: 'idBadge', run: () => copy(m.nativeId, 'Message ID copied') },
-      { label: 'Copy dither-chat ID', icon: 'idBadge', run: () => copy(m.id, 'ID copied') },
+      { label: 'Copy Message ID', icon: 'idBadge', track: 'copy message id', run: () => copy(m.nativeId, 'Message ID copied') },
+      { label: 'Copy dither-chat ID', icon: 'idBadge', track: 'copy dither-chat id', run: () => copy(m.id, 'ID copied') },
     ],
   );
 }
 
 export function messageMenu(m: P.MessageView, onReply?: () => void): MenuSpec {
-  return { label: 'Message actions', items: messageEntries(m, onReply), head: <MessageHead m={m} />, foot: <TriageFoot m={m} /> };
+  return { label: 'Message actions', track: 'message menu', items: messageEntries(m, onReply), head: <MessageHead m={m} />, foot: <TriageFoot m={m} /> };
 }
 
 // ------------------------------------------------------------------ attachments and links
@@ -216,7 +219,7 @@ export function attachmentMenu(a: P.AttachmentView, m: P.MessageView | null, ima
     ],
     m ? messageEntries(m, onReply) : [],
   );
-  return { label: `${noun} actions`, items, head: m ? <MessageHead m={m} /> : undefined };
+  return { label: `${noun} actions`, track: 'attachment menu', items, head: m ? <MessageHead m={m} /> : undefined };
 }
 
 export function imageMenu(url: string, name: string | null | undefined, m: P.MessageView | null, onReply?: () => void): MenuSpec {
@@ -229,6 +232,7 @@ export function linkMenu(url: string, m: P.MessageView | null, onReply?: () => v
   const invite = !!inviteRef(url);
   return {
     label: 'Link actions',
+    track: 'link menu',
     items: groups(
       [
         ...(invite ? [{ label: 'Preview Invite', icon: 'eye', run: () => void (newMessage.value = { q: url, mode: 'join' }) } as MenuEntry] : []),
