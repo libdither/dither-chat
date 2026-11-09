@@ -25,6 +25,7 @@ import { openConv } from './Sidebar.tsx';
 import { viewer, type ViewerImage } from './Viewer.tsx';
 import { openAttachment, openWith, save } from './fileopen.tsx';
 import { fileKind, fileMime, openFileViewer, VIEWABLE } from '../files.ts';
+import { inviteRef } from '../invites.ts';
 
 export { openAttachment };
 
@@ -223,11 +224,15 @@ export function imageMenu(url: string, name: string | null | undefined, m: P.Mes
 }
 
 export function linkMenu(url: string, m: P.MessageView | null, onReply?: () => void): MenuSpec {
+  const open = () => void openLink(url).then((ok) => ok || window.open(url, '_blank', 'noopener,noreferrer'));
+  // An invite: a click opens the New box on it (InviteCard.tsx), so the browser is one entry down.
+  const invite = !!inviteRef(url);
   return {
     label: 'Link actions',
     items: groups(
       [
-        { label: 'Open Link', icon: 'external', run: () => void openLink(url).then((ok) => ok || window.open(url, '_blank', 'noopener,noreferrer')) },
+        ...(invite ? [{ label: 'Preview Invite', icon: 'eye', run: () => void (newMessage.value = { q: url, mode: 'join' }) } as MenuEntry] : []),
+        { label: invite ? 'Open in Browser' : 'Open Link', icon: 'external', run: open },
         { label: 'Copy Link', icon: 'link', run: () => copy(url, 'Link copied') },
       ],
       m ? messageEntries(m, onReply) : [],

@@ -1275,6 +1275,8 @@ const EXPIRED = new Set(['oldparty', 'Expired2025xyz', 'OldSwapGroup2025']);
  */
 class DemoAdd {
   private state: { joined: string[]; answered: string[]; friends: string[] };
+  /** How many of each command this account was sent, for verify scripts (action addLog): a kept preview is none. */
+  readonly counts = { resolve: 0, add: 0, answer: 0 };
   constructor(
     private key: AccKey,
     private network: P.Network,
@@ -1333,6 +1335,7 @@ class DemoAdd {
   }
 
   command(cmd: Extract<P.AdapterCommand, { t: 'resolve' | 'add' | 'answer' }>): unknown {
+    this.counts[cmd.t]++;
     const now = Date.now();
     if (cmd.t === 'answer') return this.answer(cmd.request, cmd.answer, now);
     const ref = cmd.ref;
@@ -2073,7 +2076,7 @@ class DemoAdapter implements InprocAdapter {
           reply({ ok: true });
           break;
         }
-        reply(cmd.action === 'typingLog' ? { typing: this.typingLog } : { note: 'demo adapters have no actions' });
+        reply(cmd.action === 'typingLog' ? { typing: this.typingLog } : cmd.action === 'addLog' ? this.adds.counts : { note: 'demo adapters have no actions' });
         break;
       default:
         if ('id' in cmd) reply();

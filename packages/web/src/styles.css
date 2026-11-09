@@ -10866,3 +10866,89 @@ button.msg-edited.link:hover {
   width: min(100%, 220px);
   margin-bottom: 10px;
 }
+
+/* Invites in messages (docs/add.md): a card under the message for each invite link, like Discord's. What kind of
+   link it is at once; the preview and its actions (the New box's own card) after Preview. */
+.invite-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+.invite-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 432px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-raised);
+}
+.invite-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.invite-kind {
+  flex: none;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.invite-joined {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  color: var(--good);
+}
+.invite-url {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font-weight: 400;
+}
+.invite-card .btn-row {
+  margin: 0;
+}
+.invite-card .add-card-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.invite-card .new-message-from {
+  margin: 0;
+}
+.invite-card .add-card-head {
+  margin: 0;
+}
+.invite-card .add-done {
+  margin: 0;
+}
+.invite-card .new-message-error {
+  margin: 0;
+}
+.invite-unbuilt {
+  margin: 0;
+}
+/* A phone: the link is right above in the message, so its kind gets the line. */
+@media (max-width: 560px) {
+  .invite-url {
+    display: none;
+  }
+  .invite-kind {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

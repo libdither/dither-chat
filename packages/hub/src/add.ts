@@ -7,7 +7,7 @@
  */
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
-import { ADD_ACTIONS, addCapability, describeAddRef, NETWORK_META, notBuiltLine, REQUEST_ANSWERS, validAddRef } from '@dither-chat/protocol';
+import { ADD_ACTIONS, addCapability, addRefKey, describeAddRef, NETWORK_META, notBuiltLine, REQUEST_ANSWERS, validAddRef } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
 
@@ -28,6 +28,12 @@ export const ADD_LIMITS: Record<PaceKind, { windowMs: number; max: number; netwo
 
 /** How long the hub waits for the network. A join may wait on it (a Discord guild's first sync, a Matrix knock). */
 export const ADD_TIMEOUTS = { resolve: 30_000, add: 90_000, answer: 90_000 };
+
+/**
+ * Previews kept in memory per account and reading, so an invite in a message that was looked up once shows again
+ * (another page, a reload, another device) without asking the network or counting against the pace. Errors are not kept.
+ */
+export const PREVIEW_CACHE = { ttlMs: HOUR, max: 500, perRequest: 50 };
 
 const REQUEST_KINDS: readonly P.RequestFact['kind'][] = ['friend', 'follow', 'invite', 'message', 'join'];
 
@@ -236,6 +242,7 @@ export class Adding {
     let m: RegExpMatchArray | null;
     try {
       if (path === '/api/add/resolve' && method === 'POST') return Response.json(await this.resolve(await body()));
+      if (path === '/api/add/cached' && method === 'POST') return Response.json(this.cachedPreviews(await body()));
       if (path === '/api/add' && method === 'POST') return Response.json(await this.add(await body()));
       if (path === '/api/requests' && method === 'GET') return Response.json({ requests: requestViews(this.d.store) });
       if ((m = path.match(/^\/api\/requests\/([\w-]+)$/)) && method === 'POST') return Response.json(await this.answer(m[1], await body()));
@@ -279,10 +286,78 @@ export class Adding {
 
   async resolve(b: { accountId?: unknown; ref?: unknown }): Promise<P.AddPreviewView> {
     const [acc, ref] = this.account(b.accountId, b.ref, (r) => ['resolve', notBuiltLine(r)]);
+    // Looked up within the hour: the same answer, without asking the network or counting against the pace.
+    const kept = this.kept(acc.id, ref);
+    if (kept) return this.preview(acc, ref, kept.raw);
     this.pace(acc, 'resolve');
-    const r = await this.ask<P.AddPreview>(acc, { t: 'resolve', ref }, ADD_TIMEOUTS.resolve, false);
+    const r = (await this.ask<P.AddPreview>(acc, { t: 'resolve', ref }, ADD_TIMEOUTS.resolve, false)) ?? ({} as P.AddPreview);
+    this.keep(acc.id, ref, r);
     this.d.flush();
-    return this.preview(acc, ref, r ?? ({} as P.AddPreview));
+    return this.preview(acc, ref, r);
+  }
+
+  // Previews kept for the hour (PREVIEW_CACHE), in insertion order: the least recently used goes first.
+  private previews = new Map<string, { at: number; raw: P.AddPreview }>();
+  private cacheKey = (accountId: string, ref: P.AddRef) => `${accountId}\u0000${addRefKey(ref)}`;
+
+  private kept(accountId: string, ref: P.AddRef): { at: number; raw: P.AddPreview } | null {
+    const k = this.cacheKey(accountId, ref);
+    const hit = this.previews.get(k);
+    if (!hit) return null;
+    this.previews.delete(k);
+    if (hit.at <= this.now() - PREVIEW_CACHE.ttlMs) return null;
+    this.previews.set(k, hit);
+    return hit;
+  }
+
+  private keep(accountId: string, ref: P.AddRef, raw: P.AddPreview) {
+    const k = this.cacheKey(accountId, ref);
+    this.previews.delete(k);
+    this.previews.set(k, { at: this.now(), raw });
+    for (const old of this.previews.keys()) {
+      if (this.previews.size <= PREVIEW_CACHE.max) break;
+      this.previews.delete(old);
+    }
+  }
+
+  /**
+   * POST /api/add/cached: what the hub already knows of these readings, from any account's look within the hour.
+   * Nothing is asked of a network and nothing counts against the pace, so a page may call it for every invite it shows.
+   */
+  cachedPreviews(b: { refs?: unknown }): { previews: P.AddPreviewView[] } {
+    if (!Array.isArray(b.refs) || b.refs.length > PREVIEW_CACHE.perRequest) throw new AddError(`refs: a list of up to ${PREVIEW_CACHE.perRequest} readings`, 400);
+    const refs = b.refs.filter(validAddRef);
+    const accounts = this.d.store.accounts();
+    const previews: P.AddPreviewView[] = [];
+    for (const ref of refs)
+      for (const acc of accounts) {
+        if (acc.network !== ref.network) continue;
+        const hit = this.kept(acc.id, ref);
+        if (hit) previews.push(this.preview(acc, ref, hit.raw));
+      }
+    return { previews };
+  }
+
+  /** A kept preview after acting on it: in it now, asked, or added. A check did nothing, so it stays as it was. */
+  private acted(acc: AccountRow, ref: P.AddRef, action: P.AddAction, r: P.AddResult) {
+    const hit = this.previews.get(this.cacheKey(acc.id, ref));
+    if (!hit || r.check) return;
+    const p = { ...hit.raw, actions: (Array.isArray(hit.raw.actions) ? hit.raw.actions : []).filter((a) => a !== action) };
+    // The space when it is one, else the conversation: as a fresh look would say.
+    if ((action === 'join' || action === 'ask') && !r.pending && (str(r.space) || str(r.conversation))) p.joined = str(r.space) ? { space: r.space } : { conversation: r.conversation };
+    if (str(r.relationship)) p.relationship = r.relationship;
+    if (r.pending) p.notes = [...(Array.isArray(p.notes) ? p.notes : []), ...(Array.isArray(r.notes) && r.notes.length ? r.notes : ['Asked; waiting on them'])];
+    hit.raw = p;
+  }
+
+  /** In it already by the hub's own spaces and conversations, when the network's id for it is the one the hub keeps. */
+  private joinedHere(net: P.Network, what: P.AddPreview['what'], nativeId: string | null): { space?: string; conversation?: string } | null {
+    if (!nativeId || what === 'person') return null;
+    const space = hubId('spc', net, nativeId);
+    if (this.d.store.one('SELECT 1 FROM space WHERE id = ?', space)) return { space };
+    const conversation = hubId('cnv', net, nativeId);
+    if (this.d.store.one('SELECT 1 FROM conversation WHERE id = ?', conversation)) return { conversation };
+    return null;
   }
 
   private preview(acc: AccountRow, ref: P.AddRef, r: P.AddPreview): P.AddPreviewView {
@@ -293,7 +368,10 @@ export class Adding {
     const nativeId = str(r.nativeId);
     const identityId = what === 'person' && nativeId ? hubId('idn', net, nativeId) : null;
     const inviter = str(r.inviter) ? hubId('idn', net, r.inviter!) : null;
-    const joined = r.joined && (str(r.joined.space) || str(r.joined.conversation)) ? { ...(str(r.joined.space) ? { space: hubId('spc', net, r.joined.space!) } : {}), ...(str(r.joined.conversation) ? { conversation: hubId('cnv', net, r.joined.conversation!) } : {}) } : null;
+    const joined =
+      r.joined && (str(r.joined.space) || str(r.joined.conversation))
+        ? { ...(str(r.joined.space) ? { space: hubId('spc', net, r.joined.space!) } : {}), ...(str(r.joined.conversation) ? { conversation: hubId('cnv', net, r.joined.conversation!) } : {}) }
+        : this.joinedHere(net, what, nativeId);
     const actions = (Array.isArray(r.actions) ? r.actions : []).filter((a, i, all) => ADD_ACTIONS.includes(a) && all.indexOf(a) === i && have.includes(addCapability(a)));
     return {
       accountId: acc.id,
@@ -325,6 +403,7 @@ export class Adding {
     this.pace(acc, paceOf(action));
     const r = (await this.ask<P.AddResult>(acc, { t: 'add', ref, action }, ADD_TIMEOUTS.add, true)) ?? {};
     this.d.note(acc.id, `[add] ${VERB[action]} ${describeAddRef(ref)}${outcome(r)}`);
+    this.acted(acc, ref, action, r);
     return this.result(acc, r);
   }
 

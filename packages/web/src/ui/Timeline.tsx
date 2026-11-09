@@ -5,6 +5,7 @@ import type { ComponentChildren } from 'preact';
 import { ago, bytes, clock, dayLabel, fullTime, sameDay } from '../format.ts';
 import { retention } from '../history.ts';
 import { isJumbo, renderMarkdown } from '../markdown.ts';
+import { inviteRef } from '../invites.ts';
 import {
   LEVEL_LABEL,
   authorName,
@@ -34,6 +35,7 @@ import {
   prefs,
   quoted,
   metaRev,
+  newMessage,
   rev,
   route,
   send,
@@ -73,6 +75,7 @@ import { TypingBar } from './Typing.tsx';
 import { composerDone, composerTyped } from '../typing.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { ForwardCard, forwarding } from './Forward.tsx';
+import { InviteCards } from './InviteCard.tsx';
 import { attachmentMenu, conversationMenu, identityMenu, imageMenu, linkMenu, messageMenu, openAttachment, personMenu } from './menus.tsx';
 import { fileFacts, fileIcon, fileKind, openFileViewer, VIEWABLE } from '../files.ts';
 import { desk } from '../desk.ts';
@@ -345,6 +348,12 @@ function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
     if (el.classList?.contains('spoiler')) el.classList.add('shown');
     const user = el.dataset?.user;
     if (user) openProfile(db.identityByNative.get(`${m.network}:${user}`));
+    // An invite link opens the New box on it, not the browser; the link's menu still opens it there.
+    const a = el.closest?.('a[href]') as HTMLAnchorElement | null;
+    if (a && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && inviteRef(a.href)) {
+      e.preventDefault();
+      newMessage.value = { q: a.href, mode: 'join' };
+    }
   };
   if (tail)
     return (
@@ -640,12 +649,14 @@ const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuot
             <Body m={m.forward.text !== undefined ? { ...m, body: m.forward.text } : m} tail={ticks} />
             <Attachments m={m} />
             <Embeds m={m} />
+            <InviteCards m={m} body={m.forward.text ?? m.body} />
           </ForwardCard>
         ) : (
           <>
             <Body m={m} tail={ticks} />
             <Attachments m={m} />
             <Embeds m={m} />
+            <InviteCards m={m} body={m.body} />
           </>
         )}
         {ticks && (!m.body || m.deleted) && <span class="msg-marks">{ticks}</span>}

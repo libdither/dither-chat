@@ -32,7 +32,7 @@ interface Row {
 }
 
 /** A reading being looked up, its preview, and what acting on it did. */
-interface Card {
+export interface Card {
   row: AddRow;
   accountId: string;
   loading: boolean;
@@ -159,38 +159,8 @@ function NewMessageBox({ identityId, q: given, mode }: { identityId?: string; q?
     }
   };
 
-  /** Where something joined or found lives. */
-  const open = (conversationId?: string | null, spaceId?: string | null) => {
-    const c = conversationId ? db.conversations.get(conversationId) : undefined;
-    close();
-    if (c) go(homeRoute(c));
-    else if (spaceId) go({ view: 'space', space: spaceId });
-  };
-
-  const act = async (c: Card, action: P.AddAction) => {
-    const v = c.view!;
-    setCard({ ...c, acting: action, actError: undefined });
-    try {
-      if (action === 'message') {
-        const peer = messagePeer(v);
-        if (!peer) throw new Error(`${netName(v.ref.network)} did not say how to reach them.`);
-        const r = await openDirect(c.accountId, peer);
-        if (!r.conversation) throw new Error('The network did not say which conversation it opened.');
-        close();
-        return go({ view: 'inbox', conv: r.conversation.id });
-      }
-      const r = await api<P.AddResultView>('/api/add', { body: { accountId: c.accountId, ref: v.ref, action } });
-      if (r.conversation) applyEvents([{ t: 'conversation', conversation: r.conversation }]);
-      if (!r.check && !r.pending && (r.conversation || r.spaceId)) {
-        open(r.conversation?.id, r.spaceId);
-        if (r.notes.length) toast({ kind: 'info', title: v.name, body: r.notes.join(' ') });
-        return;
-      }
-      setCard({ ...c, acting: undefined, done: r });
-    } catch (e: any) {
-      setCard({ ...c, acting: undefined, actError: String(e?.message ?? e) });
-    }
-  };
+  const open = (conversationId?: string | null, spaceId?: string | null) => (close(), openAdded(conversationId, spaceId));
+  const act = (c: Card, action: P.AddAction) => void actOn(c, action, setCard, close);
 
   const from = target ? openers(accounts, target.network) : [];
   const title = target ? `Message ${target.name} on ${netName(target.network)}` : card ? card.row.label : qr ? QR_TITLE[qr] : mode ? TITLE[mode] : 'New';
@@ -310,7 +280,48 @@ function NewMessageBox({ identityId, q: given, mode }: { identityId?: string; q?
   );
 }
 
-function AddCard({ card, live, setLive, onAccount, onAct, onOpen, onBack, onClose }: { card: Card; live: boolean; setLive: (on: boolean) => void; onAccount: (id: string) => void; onAct: (a: P.AddAction) => void; onOpen: (conversationId?: string | null, spaceId?: string | null) => void; onBack: () => void; onClose: () => void }) {
+/** Where something joined or found lives. */
+export function openAdded(conversationId?: string | null, spaceId?: string | null) {
+  const c = conversationId ? db.conversations.get(conversationId) : undefined;
+  if (c) go(homeRoute(c));
+  else if (spaceId) go({ view: 'space', space: spaceId });
+}
+
+/**
+ * Act on a preview, from the New box or a card under a message (InviteCard.tsx): the same steps either way. `set` shows
+ * the card's progress; `leave` closes what it is in before going where it landed. What was done, or null.
+ */
+export async function actOn(c: Card, action: P.AddAction, set: (c: Card) => void, leave: () => void): Promise<P.AddResultView | null> {
+  const v = c.view!;
+  set({ ...c, acting: action, actError: undefined });
+  try {
+    if (action === 'message') {
+      const peer = messagePeer(v);
+      if (!peer) throw new Error(`${netName(v.ref.network)} did not say how to reach them.`);
+      const r = await openDirect(c.accountId, peer);
+      if (!r.conversation) throw new Error('The network did not say which conversation it opened.');
+      leave();
+      go({ view: 'inbox', conv: r.conversation.id });
+      return null;
+    }
+    const r = await api<P.AddResultView>('/api/add', { body: { accountId: c.accountId, ref: v.ref, action } });
+    if (r.conversation) applyEvents([{ t: 'conversation', conversation: r.conversation }]);
+    if (!r.check && !r.pending && (r.conversation || r.spaceId)) {
+      leave();
+      openAdded(r.conversation?.id, r.spaceId);
+      if (r.notes.length) toast({ kind: 'info', title: v.name, body: r.notes.join(' ') });
+      return r;
+    }
+    set({ ...c, acting: undefined, done: r });
+    return r;
+  } catch (e: any) {
+    set({ ...c, acting: undefined, actError: String(e?.message ?? e) });
+    return null;
+  }
+}
+
+/** A preview and what can be done with it. `inline`: a card under a message, which has no Back to the box. */
+export function AddCard({ card, live, setLive, onAccount, onAct, onOpen, onBack, onClose, inline }: { card: Card; live: boolean; setLive: (on: boolean) => void; onAccount: (id: string) => void; onAct: (a: P.AddAction) => void; onOpen: (conversationId?: string | null, spaceId?: string | null) => void; onBack: () => void; onClose: () => void; inline?: boolean }) {
   const { row, view: v, done } = card;
   const net = row.ref.network;
   const accounts = row.state.kind === 'resolve' ? row.state.accounts : [];
@@ -389,18 +400,18 @@ function AddCard({ card, live, setLive, onAccount, onAct, onOpen, onBack, onClos
                 {card.acting === a ? `${ACTION_LABEL[a]}…` : ACTION_LABEL[a]}
               </button>
             ))}
-            {back}
+            {!inline && back}
           </div>
         </>
       )}
-      {done && <AddDone card={card} result={done} setLive={setLive} onClose={onClose} back={back} />}
+      {done && <AddDone card={card} result={done} setLive={setLive} onClose={onClose} back={inline ? null : back} />}
       {live && account && <LiveView account={account} onClose={() => setLive(false)} />}
     </div>
   );
 }
 
 /** After an action that did not land somewhere to open: asked, a check first, or someone added. */
-function AddDone({ card, result: r, setLive, onClose, back }: { card: Card; result: P.AddResultView; setLive: (on: boolean) => void; onClose: () => void; back: JSX.Element }) {
+function AddDone({ card, result: r, setLive, onClose, back }: { card: Card; result: P.AddResultView; setLive: (on: boolean) => void; onClose: () => void; back: JSX.Element | null }) {
   const net = netName(card.row.ref.network);
   if (r.check) {
     return (
