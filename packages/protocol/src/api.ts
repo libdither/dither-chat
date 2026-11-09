@@ -903,6 +903,11 @@ export type ClientEvent =
    * and a client that reconnects simply does not see it. `name` only when the hub knows no name for the identity.
    */
   | { t: 'typing'; conversationId: string; identityId: string; ttl?: number; stop?: true; name?: string }
+  /**
+   * A send went out, and the network named the message it became: the page that sent it (`clientId`) can match its
+   * pending copy by id before the answer to its POST arrives. Of the moment, like `typing`: not journaled.
+   */
+  | { t: 'sent'; conversationId: string; clientId: string; messageId: string }
   | { t: 'folders'; folders: FolderView[] }
   | { t: 'placePrefs'; prefs: PlacePrefView[] }
   | { t: 'categories'; categories: CategoryView[]; placeCategories: PlaceCategoryView[] }

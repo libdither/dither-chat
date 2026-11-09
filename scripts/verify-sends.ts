@@ -5,6 +5,10 @@
  *   - a send shows one pending copy, and then exactly one message: the hub's answer names it (messageId), and the
  *     copy goes when that message is here, not when some message with the same text is;
  *   - two identical sends in a row are two messages, each copy replaced by its own;
+ *   - on a slow link (the answer to a send held back here, the socket not), the message comes first and the copy
+ *     gives way to it at once: never two on screen, by the hub's `sent` event and, with that event dropped, by the
+ *     page's own match; two identical quick sends likewise; and a send whose answer is a 504 but whose message came
+ *     shows no failed copy, and none comes back after a reload;
  *   - with the hub stopped, a send waits; it survives a reload (the app comes from its cache), and goes out once
  *     when the hub is back; a reload after that does not bring it back.
  *
@@ -44,6 +48,39 @@ const stored = async (body: string) => (await hub(`/api/conversations/${conv.id}
 const { page, close } = await launch();
 await page.size(1200, 800);
 
+// A slow link, made here: the answer to a send is held back (or turned into a 504) while the socket is not. And with
+// `__dropSent` the hub's `sent` events are taken out of the socket's frames, so the page matches by itself.
+await page.send('Page.addScriptToEvaluateOnNewDocument', {
+  source: `(() => {
+    const d = Object.getOwnPropertyDescriptor(WebSocket.prototype, 'onmessage');
+    window.__sentSeen = 0;
+    Object.defineProperty(WebSocket.prototype, 'onmessage', {
+      configurable: true,
+      get() { return d.get.call(this); },
+      set(fn) {
+        d.set.call(this, fn && function (e) {
+          if (typeof e.data !== 'string' || e.data[0] !== '[') return fn.call(this, e);
+          const f = JSON.parse(e.data);
+          window.__sentSeen += f.filter((x) => x.t === 'sent').length;
+          if (!window.__dropSent) return fn.call(this, e);
+          return fn.call(this, new MessageEvent('message', { data: JSON.stringify(f.filter((x) => x.t !== 'sent')) }));
+        });
+      },
+    });
+  })()`,
+});
+let hold: { ms: number; status?: number } | null = null;
+page.on('Fetch.requestPaused', async (p) => {
+  const h = hold;
+  try {
+    if (h) await Bun.sleep(h.ms);
+    if (h?.status) {
+      const body = JSON.stringify({ error: 'The network did not answer in time. It may have been sent: look before sending it again.', unknown: true });
+      await page.send('Fetch.fulfillRequest', { requestId: p.requestId, responseCode: h.status, responseHeaders: [{ name: 'content-type', value: 'application/json' }], body: Buffer.from(body).toString('base64') });
+    } else await page.send('Fetch.continueRequest', { requestId: p.requestId });
+  } catch {}
+});
+
 // The answers to sends, as the app got them.
 const sendReqs = new Set<string>();
 const answers: any[] = [];
@@ -57,12 +94,24 @@ page.on('Network.loadingFinished', (p) => {
 });
 
 const counts = (text: string) =>
-  page.eval<{ real: number; pending: number; queued: number }>(`(() => {
+  page.eval<{ real: number; pending: number; queued: number; failed: number }>(`(() => {
     const t = ${JSON.stringify(text)};
     const real = [...document.querySelectorAll('.timeline-scroll .msg:not(.pending) .msg-body')].filter(e => e.textContent.trim() === t).length;
     const ps = [...document.querySelectorAll('.timeline-scroll .msg.pending')].filter(e => e.querySelector('.msg-body')?.textContent.trim() === t);
-    return { real, pending: ps.length, queued: ps.filter(e => e.classList.contains('queued')).length };
+    return { real, pending: ps.length, queued: ps.filter(e => e.classList.contains('queued')).length, failed: ps.filter(e => e.classList.contains('failed')).length };
   })()`);
+/** What the screen shows of `text` every 100 ms for `ms`, and from when. */
+const watch = async (text: string, ms: number) => {
+  const out: { at: number; real: number; pending: number; failed: number }[] = [];
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    const c = await counts(text);
+    out.push({ at: Date.now() - t0, real: c.real, pending: c.pending, failed: c.failed });
+    await Bun.sleep(100);
+  }
+  return out;
+};
+const shown = (xs: { real: number; pending: number }[]) => xs.map((c) => c.real + c.pending).join('');
 const typeAndSend = async (text: string) => {
   await page.eval(`document.querySelector('.composer textarea').focus()`);
   await page.send('Input.insertText', { text });
@@ -87,7 +136,7 @@ try {
   const last = seen[seen.length - 1];
   check('a send shows its copy at once', seen.slice(0, 3).some((c) => c.pending + c.real === 1), seen.slice(0, 3));
   check('…then exactly one message, and no copy', last.real === 1 && last.pending === 0, last);
-  check('…never two of it at once for more than a moment', seen.filter((c) => c.real + c.pending > 1).length <= 2, seen.filter((c) => c.real + c.pending > 1).length);
+  check('…never two of it at once', seen.every((c) => c.real + c.pending <= 1), shown(seen));
   const answer = answers.find((a) => a?.ok);
   const msgId = await page.eval<string | null>(`[...document.querySelectorAll('.timeline-scroll .msg:not(.pending)')].find(e => e.querySelector('.msg-body')?.textContent.trim() === ${JSON.stringify(one)})?.id?.replace(/^m-/, '') ?? null`);
   check("the hub's answer names the message it became", !!answer?.messageId && answer.messageId === msgId, { answer: answer?.messageId, shown: msgId });
@@ -112,6 +161,48 @@ try {
     async () => check('two identical sends are two messages, each copy replaced by its own', false, await counts(twice)),
   );
   check('…stored twice', (await stored(twice)) === 2);
+
+  // ------------------------------------------------------------------ a slow link: the message before the answer
+
+  await page.send('Fetch.enable', { patterns: [{ urlPattern: '*/api/conversations/*/send', requestStage: 'Response' }] });
+  const HELD = 3000;
+  for (const by of ['the hub\'s sent event', 'the page alone'] as const) {
+    await page.eval(`window.__dropSent = ${by === 'the page alone'}, window.__sentSeen = 0`);
+    hold = { ms: HELD };
+    const slow = `slow link ${by === 'the page alone' ? 'page' : 'hub'} ${Date.now().toString(36)}`;
+    await typeAndSend(slow);
+    const w = await watch(slow, HELD + 2500);
+    const early = w.find((c) => c.real === 1 && c.pending === 0);
+    check(`slow answer, by ${by}: never two on screen`, w.every((c) => c.real + c.pending <= 1), shown(w));
+    check('…the message replaces the copy before the answer comes', !!early && early.at < HELD - 500, early?.at ?? shown(w));
+    check('…and stays one after it', w.at(-1)!.real === 1 && w.at(-1)!.pending === 0, w.at(-1));
+    check('…stored once', (await stored(slow)) === 1);
+    const told = await page.eval<number>('window.__sentSeen');
+    if (by === 'the hub\'s sent event') check('…the hub said which message it became, on the socket', told > 0, told);
+  }
+
+  // Two identical quick sends, matched by the page alone: one message each, never three on screen.
+  await page.eval(`window.__dropSent = true`);
+  hold = { ms: HELD };
+  const okok = `ok ${Date.now().toString(36)}`;
+  await typeAndSend(okok);
+  await typeAndSend(okok);
+  const w2 = await watch(okok, HELD + 3000);
+  const from2 = w2.findIndex((c) => c.real + c.pending === 2);
+  check('two identical quick sends on a slow link: two on screen all along, never three', from2 >= 0 && w2.slice(from2).every((c) => c.real + c.pending === 2), shown(w2));
+  check('…both messages before the answers come', w2.some((c) => c.at < HELD - 500 && c.real === 2 && c.pending === 0), shown(w2));
+  check('…two messages, no copies, stored twice', w2.at(-1)!.real === 2 && w2.at(-1)!.pending === 0 && (await stored(okok)) === 2, w2.at(-1));
+
+  // The answer is a 504 ("it may have been sent") but the message came: no failed copy beside it.
+  hold = { ms: 1500, status: 504 };
+  const unsure = `came despite a 504 ${Date.now().toString(36)}`;
+  await typeAndSend(unsure);
+  const w3 = await watch(unsure, 4000);
+  check('a 504 whose message came: never a failed copy, never two', w3.every((c) => c.failed === 0 && c.real + c.pending <= 1), w3.map((c) => `${c.real}${c.pending}${c.failed}`).join(' '));
+  check('…one message at the end, stored once', w3.at(-1)!.real === 1 && w3.at(-1)!.pending === 0 && (await stored(unsure)) === 1, w3.at(-1));
+  hold = null;
+  await page.eval(`window.__dropSent = false`);
+  await page.send('Fetch.disable');
 
   // ------------------------------------------------------------------ the hub stopped: kept across a reload
 
@@ -149,6 +240,8 @@ try {
   await Bun.sleep(1500);
   const after = await counts(kept);
   check('a reload after that does not bring it back', after.pending === 0 && after.real === 1, after);
+  const after504 = await counts(unsure);
+  check('…nor the send whose answer was a 504', after504.pending === 0 && after504.real === 1, after504);
   check('…and nothing went out twice', (await stored(kept)) === 1 && (await stored(one)) === 1 && (await stored(twice)) === 2);
 
   const errors = page.errors.filter((e) => !/ERR_INTERNET_DISCONNECTED|ERR_CONNECTION_REFUSED|WebSocket connection|Failed to load resource/.test(e));

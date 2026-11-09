@@ -831,7 +831,8 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
     return () => clearTimeout(id);
   });
 
-  const mine = pending.value.filter((p) => convIds.includes(p.conversationId));
+  // A copy whose message came before the hub's answer is not shown: the message is (outbox.ts).
+  const mine = pending.value.filter((p) => convIds.includes(p.conversationId) && !p.echoed);
   useLayoutEffect(() => {
     const a = anchor.current;
     if (!a || t?.loading || (a.edge === 'first' ? first?.id : last?.id) === a.id) return;
