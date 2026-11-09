@@ -4,7 +4,7 @@ import { NETWORK_META, NETWORKS } from '@dither-chat/protocol';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { ago } from '../format.ts';
 import { activityOfSpace, allCommunities, categoriesOf, convsUnder, convTitle, folderConvs, kindLabel, memberOf, netName, placePref, railEntries, spaceUnread, sumUnread, unreadOf, visibleConv, type RailEntry } from '../model.ts';
-import { api, back, db, go, prefs, rev, setPrefs, toast, type DirectorySort } from '../state.ts';
+import { api, db, go, prefs, rev, setPrefs, toast, type DirectorySort } from '../state.ts';
 import { AccountChip, Avatar, Count, Empty, Modal, NetBadge } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
@@ -207,7 +207,7 @@ function ManageCategories({ onClose }: { onClose: () => void }) {
   );
 }
 
-export function DirectoryPane() {
+export function DirectoryPane({ onBack }: { onBack: () => void }) {
   rev.value;
   const sort = prefs.value.directorySort;
   const [q, setQ] = useState('');
@@ -252,7 +252,7 @@ export function DirectoryPane() {
   return (
     <section class="pane directory">
       <header class="board-head dir-head">
-        <button class="icon-btn dir-back" onClick={() => back({ view: 'spaces' })} aria-label="Back">
+        <button class="icon-btn dir-back" onClick={onBack} aria-label="Back">
           <Icon name="back" />
         </button>
         <div>

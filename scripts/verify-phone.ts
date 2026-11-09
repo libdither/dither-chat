@@ -1,7 +1,8 @@
 /**
  * The phone layout, exercised with real touch input in a 390x844 mobile emulation: the panel pager, swipe to
- * reply, long-press and its sheet, dragging sheets away, the back button, the keyboard, the image viewer, pull
- * to refresh, and no sideways overflow on any main screen. Run it against a demo hub, never a real one:
+ * reply, long-press and its sheet, dragging sheets away, the back button and where back goes from each kind of
+ * page (its own list, as in Discord), the keyboard, the image viewer, pull to refresh, and no sideways overflow on
+ * any main screen. Run it against a demo hub, never a real one:
  *
  *   bun scripts/verify-phone.ts http://127.0.0.1:8470 [docs/screenshots]
  *
@@ -69,6 +70,21 @@ const state = () => page.eval<{ hash: string; cls: string; transform: string; la
   `({ hash: location.hash, cls: document.querySelector('.app').className.replace(/\\s+/g, ' ').trim(), transform: document.querySelector('.center').style.transform, layer: history.state?.layer, under: document.querySelector('.app').dataset.under })`,
 );
 const has = (sel: string) => page.eval<boolean>(`!!document.querySelector(${JSON.stringify(sel)})`);
+/**
+ * After a page load, wait until touches reach the page: headless Chromium can drop the first ones while the new
+ * page has no frame yet. A touch at the top edge, cancelled, does nothing in the app.
+ */
+async function touchReady(): Promise<number> {
+  await page.eval(`(() => { window.__touched = false; addEventListener('touchstart', () => (window.__touched = true), { capture: true, once: true }); })()`);
+  let tries = 0;
+  while (tries < 30 && !(await page.eval<boolean>('window.__touched'))) {
+    tries++;
+    await touch('touchStart', [[195, 4]]);
+    await touch('touchCancel', []);
+    await Bun.sleep(150);
+  }
+  return tries;
+}
 const back = async () => {
   await page.eval('history.back()');
   await Bun.sleep(500);
@@ -383,6 +399,139 @@ try {
   await Bun.sleep(100);
   check('Enter on a touch keyboard makes a new line instead of sending', (await page.eval<string>(`document.querySelector('.composer textarea').value`)).includes('\n'));
   await page.eval(`(() => { const t = document.querySelector('.composer textarea'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true })); t.blur(); })()`);
+
+  // Back from a page always shows that page's own list, as in Discord, never whatever was open before it: by a swipe,
+  // by its back button, and by the phone's back button (history.back() here), which finds the list under the page.
+  const boot = (await fetch(`${base}/api/bootstrap`).then((r) => r.json())) as any;
+  const up = (id: string): string | undefined => boot.edges.find((x: any) => x.childKind === 'space' && x.childId === id)?.parentId;
+  const rootOf = (id: string) => {
+    while (up(id)) id = up(id)!;
+    return id;
+  };
+  const server = (name: string): string => boot.spaces.find((x: any) => x.network === 'discord' && x.kind === 'community' && x.name === name).id;
+  const channel = (srv: string, name: string): string => boot.conversations.find((c: any) => c.shape === 'channel' && c.name === name && c.spaceIds.some((x: string) => rootOf(x) === srv)).id;
+  const libdither = server('libdither');
+  const rust = server('Rust Programming Language');
+  const devHash = `#/s/${libdither}/c/${channel(libdither, 'dev')}`;
+  const helpHash = `#/s/${rust}/c/${channel(rust, 'help')}`;
+  const dm: string = boot.conversations.find((c: any) => c.network === 'discord' && c.shape === 'direct' && c.peerPersonId).id;
+  const sideTitle = () => page.eval<string>(`document.querySelector('.sidebar h1')?.textContent.trim() ?? ''`);
+  /** A swipe right from the edge, and where the card was sent the moment the finger let go. */
+  const PEEK_X = `translateX(${390 - 56}px)`;
+  async function swipeBack(): Promise<string> {
+    await touch('touchStart', [[10, 420]]);
+    for (let i = 1; i <= 14; i++) {
+      await touch('touchMove', [[10 + (290 * i) / 14, 420 + i / 3]]);
+      await Bun.sleep(16);
+    }
+    await touch('touchEnd', []);
+    const sent = await page.eval<string>(`document.querySelector('.center').style.transform`);
+    await Bun.sleep(600);
+    return sent;
+  }
+  const settle = async (hash: string) => {
+    await page.until(`location.hash === ${JSON.stringify(hash)}`, 3000).catch(() => {});
+    await Bun.sleep(400);
+    return state();
+  };
+
+  // A message found by search: back goes to its server's channel list, not to the results.
+  await page.goto(`${base}/#/search?q=fixed`);
+  await page.until(`[...document.querySelectorAll('.search-group')].some(g => g.querySelector('.search-group-head').textContent.includes('libdither') && g.querySelector('.search-hit'))`, 6000);
+  const results = (await state()).hash;
+  await tap(await at('.search-group .search-hit', `el => el.closest('.search-group').querySelector('.search-group-head').textContent.includes('libdither')`));
+  await page.until(`location.hash.startsWith('#/search/c/')`);
+  await Bun.sleep(500);
+  const hit = (await state()).hash;
+  check('a search hit opens as a page, over its server\'s channel list', (await state()).cls.includes('rest-open') && (await sideTitle()) === 'libdither', await sideTitle());
+  let sent = await swipeBack();
+  s = await state();
+  check('swipe right from a search hit shows its server\'s channels, not the results', s.hash === `#/s/${libdither}` && s.cls.includes('rest-peek') && (await sideTitle()) === 'libdither', s);
+  check('…and the card was sent to peek, where it ended', sent === PEEK_X, sent);
+  await swipe([300, 500], [40, 500]);
+  s = await state();
+  check('swipe left brings the same search hit back', s.hash === hit && s.cls.includes('rest-open'), s);
+  await back();
+  s = await state();
+  check('the phone\'s back from it shows the server\'s channels too', s.hash === `#/s/${libdither}` && s.cls.includes('rest-peek'), s);
+  await back();
+  s = await state();
+  check('…and back again reaches the results', s.hash === results && s.cls.includes('tab-root'), s);
+
+  // Channel A, then channel B in another server opened by a link: back from B goes to B's server, by every way.
+  await page.goto(`${base}/#/s/${libdither}`);
+  await Bun.sleep(400);
+  await tap(await at('.sidebar .chan', `el => el.querySelector('.chan-name')?.textContent.trim() === 'dev'`));
+  s = await settle(devHash);
+  check('a tap opens channel A', s.hash === devHash && s.cls.includes('rest-open'), s);
+  await page.eval(`location.hash = ${JSON.stringify(helpHash)}`);
+  s = await settle(helpHash);
+  check('a link opens channel B in another server, over that server\'s list', s.hash === helpHash && (await sideTitle()) === 'Rust Programming Language', s);
+  await back();
+  s = await state();
+  check('the phone\'s back from B shows B\'s server, not A', s.hash === `#/s/${rust}` && s.cls.includes('rest-peek') && (await sideTitle()) === 'Rust Programming Language', s);
+  await page.eval('history.forward()');
+  s = await settle(helpHash);
+  sent = await swipeBack();
+  s = await state();
+  check('swipe right from B shows B\'s server, not A', s.hash === `#/s/${rust}` && s.cls.includes('rest-peek') && sent === PEEK_X, { ...s, sent });
+  await swipe([300, 500], [40, 500]);
+  s = await state();
+  check('swipe left brings B back', s.hash === helpHash && s.cls.includes('rest-open'), s);
+  await tap(await at('.conv-head .icon-btn.back'));
+  s = await state();
+  check('B\'s back button goes where the swipe does', s.hash === `#/s/${rust}` && s.cls.includes('rest-peek'), s);
+  await back();
+  s = await state();
+  check('then the phone\'s back returns to A, the page before', s.hash === devHash && s.cls.includes('rest-open'), s);
+
+  // A notification tapped while the app is open on a channel opens the DM there; back goes to the inbox, not the channel.
+  await page.eval(`navigator.serviceWorker.dispatchEvent(new MessageEvent('message', { data: { t: 'open', hash: '/inbox/c/${dm}?n=verify-open' } }))`);
+  s = await settle(`#/inbox/c/${dm}`);
+  check('a notification opens its DM in the inbox', s.hash === `#/inbox/c/${dm}` && s.cls.includes('rest-open'), s);
+  sent = await swipeBack();
+  s = await state();
+  check('swipe right from that DM shows the inbox, not the channel it was opened over', s.hash === '#/inbox' && s.cls.includes('rest-peek') && sent === PEEK_X, { ...s, sent });
+  await back();
+  s = await state();
+  check('…and the phone\'s back from the inbox returns to the channel', s.hash === devHash && s.cls.includes('rest-open'), s);
+
+  // The app started by a notification: the DM has the inbox under it, though nothing came before.
+  await page.goto('about:blank');
+  await page.goto(`${base}/#/inbox/c/${dm}?n=verify-cold`);
+  await page.until(`!!document.querySelector('.app.phone')`, 15000);
+  await touchReady();
+  s = await settle(`#/inbox/c/${dm}`);
+  check('a notification starts the app on its DM', s.hash === `#/inbox/c/${dm}` && s.cls.includes('rest-open'), s);
+  await back();
+  s = await state();
+  check('the phone\'s back from it shows the inbox', s.hash === '#/inbox' && s.cls.includes('rest-peek'), s);
+  await swipe([300, 500], [40, 500]);
+  s = await state();
+  check('swipe left brings the DM back', s.hash === `#/inbox/c/${dm}` && s.cls.includes('rest-open'), s);
+  sent = await swipeBack();
+  s = await state();
+  check('swipe right from it shows the inbox', s.hash === '#/inbox' && s.cls.includes('rest-peek') && sent === PEEK_X, { ...s, sent });
+  // An entry whose one before is not its list (history from before this, or from a wider window): the swipe puts the
+  // list in the page's place rather than stepping back to that other page.
+  await swipe([300, 500], [40, 500]);
+  await settle(`#/inbox/c/${dm}`);
+  await page.eval(`history.replaceState({ prev: ${JSON.stringify(devHash)} }, '')`);
+  const entries = await page.eval<number>('history.length');
+  sent = await swipeBack();
+  s = await state();
+  check('a page with another page before it still swipes back to its own list', s.hash === '#/inbox' && s.cls.includes('rest-peek') && sent === PEEK_X, { ...s, sent });
+  check('…in its place, not on top', (await page.eval<number>('history.length')) === entries);
+
+  // Requests is a row in the inbox, and goes back to it.
+  if (await has('.sidebar .requests-row')) {
+    await tap(await at('.sidebar .requests-row'));
+    s = await settle('#/requests');
+    check('the inbox\'s Requests row opens Requests as a page', s.hash === '#/requests' && s.cls.includes('rest-open'), s);
+    sent = await swipeBack();
+    s = await state();
+    check('swipe right from Requests shows the inbox', s.hash === '#/inbox' && s.cls.includes('rest-peek') && sent === PEEK_X, { ...s, sent });
+  } else check('the demo inbox has a Requests row', false);
 
   // Pull to refresh on a list.
   await page.goto(`${base}/#/people`);

@@ -103,7 +103,7 @@ Built in slices from [mail-design.md](mail-design.md) (its §12); what works now
 | Feature | Value | Cost | Status | Notes |
 |---|---|---|---|---|
 | Installable PWA over HTTPS | H | M | done | [deploy.md](deploy.md). A private CA remains as the fallback without DNS-01 |
-| Phone layout with Discord's panels and gestures | H | M | done | [phone.md](phone.md): swipe back and to the details, swipe to reply, sheets, back closes layers, image viewer, keyboard, parity audit. Emulated only |
+| Phone layout with Discord's panels and gestures | H | M | done | [phone.md](phone.md): swipe back to the page's own list (and the back buttons with it) and to the details, swipe to reply, sheets, back closes layers, image viewer, keyboard, parity audit. Emulated only |
 | Links and files open in your own apps | M | M | done | Desktop: dither-desk, a paired loopback helper, sends links to the default browser and files to their apps, with Open With… ([desktop.md](desktop.md#opening-links-and-files-in-your-own-apps)). Android: a file is downloaded and offered with the system chooser. Run against a recording opener and the emulator only, not yet in the installed PWA with Floorp |
 | Updates reach installed apps | H | L | done | Reload bar, or automatic when the app is out of sight |
 | Public certificate through DNS-01 | M | L | done | Let's Encrypt wildcard through a Caddy on the hub's machine. No per-device step |
