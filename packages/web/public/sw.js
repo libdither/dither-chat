@@ -225,7 +225,8 @@ function grouped(d) {
 
 /** Shows a notification from the hub's payload (webpush.ts pushPayload, or a page's notify event). Returns its tag. */
 async function show(d) {
-  const tag = d.conversationId ?? (d.inbox ? 'dither-digest' : 'dither');
+  // A request waiting on you (docs/add.md) has one of its own, and opens under Requests.
+  const tag = d.conversationId ?? (d.requestId ? `request:${d.requestId}` : d.inbox ? 'dither-digest' : 'dither');
   const look = await looks(d);
   // Active (docs/notifications.md): shown, but without sound or vibration.
   const quiet = d.level === 'quiet';
@@ -244,7 +245,7 @@ async function show(d) {
     silent: !alert,
     icon: look.icon,
     badge: look.badge,
-    data: { conversationId: d.conversationId, inbox: d.inbox, test: d.test, replyTo: d.replyTo, nid: d.nid, device: d.device, messageId: d.messageId },
+    data: { conversationId: d.conversationId, request: d.requestId, inbox: d.inbox, test: d.test, replyTo: d.replyTo, nid: d.nid, device: d.device, messageId: d.messageId },
     actions: actions.slice(0, self.Notification?.maxActions ?? 2),
   });
   return tag;
@@ -325,7 +326,8 @@ self.addEventListener('notificationclick', (e) => {
   e.notification.close();
   // The push's id rides in the hash, so the page can say which visit the tap led to (activity.ts).
   const nid = e.notification.data?.nid;
-  const target = (conv ? `/#/inbox/c/${conv}` : inbox ? '/#/inbox' : '/') + (nid && (conv || inbox) ? `?n=${encodeURIComponent(nid)}` : '');
+  const request = e.notification.data?.request;
+  const target = (conv ? `/#/inbox/c/${conv}` : request ? `/#/requests/${request}` : inbox ? '/#/inbox' : '/') + (nid && (conv || request || inbox) ? `?n=${encodeURIComponent(nid)}` : '');
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (cs) => {
       await outcome(e.notification.data, 'tapped');

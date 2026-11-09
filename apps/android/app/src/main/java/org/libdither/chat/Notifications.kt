@@ -81,10 +81,12 @@ object Notifications {
         // The page is on screen and raises its own toast from the live socket.
         if (!test && MainActivity.resumed != null) return outcome(c, nid, device, "suppressed")
         if (!nm(c).areNotificationsEnabled()) return outcome(c, nid, device, "blocked")
-        val tag = conv ?: if (inbox) DIGEST else "dither"
+        // A request waiting on you (docs/add.md): a notification of its own, opening it under Requests.
+        val request = d.optString("requestId").ifEmpty { null }
+        val tag = conv ?: request?.let { "request:$it" } ?: if (inbox) DIGEST else "dither"
         // The push's id rides in the hash, so the page can say which visit the tap led to (docs/activity.md).
         val n = if (nid != null) "?n=$nid" else ""
-        val hash = if (conv != null) "/inbox/c/$conv$n" else if (inbox) "/inbox$n" else null
+        val hash = if (conv != null) "/inbox/c/$conv$n" else if (request != null) "/requests/$request$n" else if (inbox) "/inbox$n" else null
         val title = d.optString("title", "dither-chat")
         val app = c.applicationContext
         val canReply = conv != null && d.optBoolean("canReply")
@@ -96,7 +98,7 @@ object Notifications {
                 conversation(app, conv, d, hash, replyTo, canReply, nid, device, vote)
             } else {
                 val look = Looks.of(app, d.optString("network"), d.optString("icon").ifEmpty { null }, title)
-                post(app, tag, title, d.optString("body"), hash, null, false, nid = nid, device = device, look = look, vote = vote, group = if (inbox) DIGEST else null)
+                post(app, tag, title, d.optString("body"), hash, null, false, nid = nid, device = device, look = look, vote = vote, group = if (inbox) DIGEST else null, level = d.optString("level").ifEmpty { null })
             }
             outcome(app, nid, device, "shown")
         }.start()
@@ -258,8 +260,9 @@ object Notifications {
     }
 
     /** A notification that is not a conversation's: the digest, a test, a reply that did not go. */
-    fun post(c: Context, tag: String, title: String, body: String, hash: String?, replyTo: String?, canReply: Boolean, sticky: Boolean = false, nid: String? = null, device: String? = null, look: Looks.Look? = null, vote: Vote? = null, group: String? = null) {
-        val quiet = vote?.level == "quiet"
+    fun post(c: Context, tag: String, title: String, body: String, hash: String?, replyTo: String?, canReply: Boolean, sticky: Boolean = false, nid: String? = null, device: String? = null, look: Looks.Look? = null, vote: Vote? = null, group: String? = null, level: String? = null) {
+        // Active: the silent channel, with or without votes (a request's has none).
+        val quiet = (vote?.level ?: level) == "quiet"
         val b = Notification.Builder(c, if (quiet) QUIET else MESSAGES)
             .setSmallIcon(look?.small ?: R.drawable.ic_notification)
             .setColor(look?.color ?: c.getColor(R.color.accent))

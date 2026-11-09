@@ -87,8 +87,10 @@ async function mailPeople() {
     if (shots) await p.shot(`${shots}/profile-mail-${w < 500 ? 'phone' : 'desktop'}.png`);
   }
 
-  // The thread opens in Mail, and its sender's name opens theirs.
-  await click('.pf-mail-row');
+  // The thread opens in Mail, and its sender's name opens theirs. The demo has two threads with her (the newest is hers
+  // alone); the lease one ends with Jo's message.
+  await p.eval(`[...document.querySelectorAll('.pf-mail-row')].find((r) => r.innerText.includes('Re: Lease renewal'))?.setAttribute('data-pick', '')`);
+  await click('.pf-mail-row[data-pick]');
   await p.until(`location.hash.startsWith('#/mail') && !!document.querySelector('.mail-msg.open')`, 8000);
   check((await text('.mail-subject')) === 'Re: Lease renewal', 'a Mail card row opens the thread', await text('.mail-subject'));
   await click('.mail-msg.open .mail-msg-person');
@@ -101,7 +103,7 @@ async function mailPeople() {
   await click('.pf-mail-all');
   await p.until(`!!document.querySelector('.mail-list .mail-row')`, 8000);
   const list = await p.eval<{ label: string; rows: number }>(`({ label: document.querySelector('.mail-list')?.getAttribute('aria-label') ?? '', rows: document.querySelectorAll('.mail-list .mail-row').length })`);
-  check(list.label === 'Mail with Alice Chen' && list.rows === 1 && decodeURIComponent(await p.eval<string>('location.hash')).includes(`w:${mail.personId}`), 'all mail with them lists their threads', list);
+  check(list.label === 'Mail with Alice Chen' && list.rows === 2 && decodeURIComponent(await p.eval<string>('location.hash')).includes(`w:${mail.personId}`), 'all mail with them lists their threads', list);
 
   // On the other Alice's page: the hint says who, and merging carries the mail.
   await p.goto(`${hub}/#/p/${alice.id}`);

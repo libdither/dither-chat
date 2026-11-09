@@ -46,6 +46,7 @@ import { groups, type MenuSpec } from './ContextMenu.tsx';
 import { openAbout } from './About.tsx';
 import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapshot } from '../arrange.ts';
 import { inboxSnap, shownInbox } from '../inbox.ts';
+import { RequestsRow } from './Requests.tsx';
 import { SortButton, useFlip } from './Reorganize.tsx';
 import { rememberSearch, SearchBox } from './SearchBox.tsx';
 import { counting, rendered } from '../perf.ts';
@@ -344,6 +345,7 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
               ))}
           </>
         )}
+        <RequestsRow />
         {rows.map((r) =>
           r.kind === 'mail' ? (
             <MailRow key={r.key} id={r.key} active={r.key === activeConv} why={r.reasons} owedSince={r.needs ? r.owedSince : null} />

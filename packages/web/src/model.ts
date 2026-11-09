@@ -489,9 +489,15 @@ export function sumUnread(convs: P.ConversationView[]): Unread {
   return { unread, mentions, badge, muted: false };
 }
 
-/** Everything shown, summed: the app's badge and the Home tab's. Once per `rev`. */
+/**
+ * Everything shown, summed: the app's badge and the Home tab's. Once per `rev`. Not an open message request's: that
+ * waits under Requests, on no badge (docs/add.md).
+ */
 export function totalUnread(): Unread {
-  return memo('totalUnread', () => sumUnread([...db.conversations.values()].filter(visibleConv)));
+  return memo('totalUnread', () => {
+    const held = heldByRequest();
+    return sumUnread([...db.conversations.values()].filter((c) => visibleConv(c) && !held.has(c.id)));
+  });
 }
 
 export function spaceUnread(id: string): Unread {
@@ -535,11 +541,13 @@ export function directsOf(personId: string): P.ConversationView[] {
 }
 
 export function people(): { person: P.PersonView; directs: P.ConversationView[]; last: number }[] {
+  // An open message request waits under Requests, not among the people you talk with.
+  const held = heldByRequest();
   return memo('people', () =>
     [...db.persons.values()]
       .filter((p) => !p.isSelf)
       .map((person) => {
-        const directs = directsOf(person.id);
+        const directs = held.size ? directsOf(person.id).filter((d) => !held.has(d.id)) : directsOf(person.id);
         return { person, directs, last: Math.max(0, ...directs.map((d) => d.lastMessageAt ?? 0)) };
       })
       .filter((x) => x.directs.length)

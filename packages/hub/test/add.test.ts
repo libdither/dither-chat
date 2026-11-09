@@ -190,6 +190,13 @@ describe('add', () => {
     const v = (await add(MX, ref('#rust-gamedev:matrix.org'), 'join')).json as P.AddResultView;
     expect(v.conversation).toMatchObject({ name: 'Rust Gamedev', network: 'matrix' });
   });
+
+  test('a profile already asked says how you stand now, its other answers kept', async () => {
+    const tim = store.one<{ id: string; native_id: string }>(`SELECT id, native_id FROM identity WHERE network = 'discord' AND handle = 'tokio_tim'`)!;
+    store.db.query('INSERT INTO about (target_id, account_id, data, fetched_at) VALUES (?, ?, ?, ?)').run(tim.id, MAIN, JSON.stringify({ relationship: 'stranger', bio: 'rust learner' }), 1);
+    expect((await add(MAIN, ref(tim.native_id, 'discord'), 'friend')).json).toMatchObject({ identityId: tim.id, relationship: 'requested', pending: true });
+    expect(JSON.parse(store.one<{ data: string }>('SELECT data FROM about WHERE target_id = ? AND account_id = ?', tim.id, MAIN)!.data)).toEqual({ relationship: 'requested', bio: 'rust learner' });
+  });
 });
 
 describe('previews kept for the hour', () => {
@@ -376,7 +383,11 @@ describe('requests', () => {
       const read = await fetch(`http://127.0.0.1:${port}/api/conversations/${cid}/read`, { method: 'POST', body: JSON.stringify({ upToTs: Date.now() }) });
       expect(read.status).toBe(200);
       expect(hub.typing(cid, undefined, false)).toEqual({ sent: false, why: 'a message request' });
-      expect(told.filter(([, c]) => c.t === 'markRead' || c.t === 'typing')).toEqual([]);
+      // Writing would answer it: refused until it is accepted.
+      const send = await fetch(`http://127.0.0.1:${port}/api/conversations/${cid}/send`, { method: 'POST', body: JSON.stringify({ body: 'hi' }) });
+      expect(send.status).toBe(409);
+      expect((await send.json()).error).toBe('Accept the message request first');
+      expect(told.filter(([, c]) => c.t === 'markRead' || c.t === 'typing' || c.t === 'send')).toEqual([]);
       // Any other conversation still is.
       const other = store.one<{ id: string }>(`SELECT c.id FROM conversation c JOIN vantage v ON v.target_id = c.id WHERE v.account_id = ? AND c.shape = 'direct' AND c.id != ? AND c.last_message_id IS NOT NULL`, SIG, cid)!.id;
       await fetch(`http://127.0.0.1:${port}/api/conversations/${other}/read`, { method: 'POST', body: JSON.stringify({ upToTs: Date.now() }) });

@@ -474,7 +474,7 @@ CREATE INDEX IF NOT EXISTS visit_push ON visit(push_id) WHERE push_id IS NOT NUL
 -- The *_at columns are the first time any device said so; notification_event has each device's word.
 CREATE TABLE IF NOT EXISTS notification (
   id              TEXT PRIMARY KEY,
-  kind            TEXT NOT NULL,             -- message, held (quiet hours summary), digest
+  kind            TEXT NOT NULL,             -- message, held (quiet hours summary), digest, request (docs/add.md)
   message_id      TEXT,
   conversation_id TEXT,
   sent_at         INTEGER NOT NULL,

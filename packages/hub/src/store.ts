@@ -9,7 +9,7 @@ import { binsFor, estimateMessages, snowflakeTime, type ChannelInput } from './m
 import { Journal } from './journal.ts';
 import { infoFor } from './mediainfo.ts';
 import { TypingRelay, typingTtl } from './typing.ts';
-import { ingestRequests } from './add.ts';
+import { addTables, ingestRequests } from './add.ts';
 
 type Row = Record<string, any>;
 
@@ -2779,11 +2779,14 @@ export class Store {
     const VS = group(vants.filter((v) => v.target_kind === 'space'), (v) => v.target_id);
     const E = group(edges.filter((e) => e.childKind === 'conversation'), (e) => e.childId);
 
-    // Identities: participants, account selves, last-message authors, and everyone with a person.
+    // Identities: participants, account selves, last-message authors, everyone with a person, and who asked you
+    // something (docs/add.md).
     const identityIds = new Set<string>();
     for (const p of parts) identityIds.add(p.identity_id);
     for (const m of lasts.values()) if (m.author_id) identityIds.add(m.author_id);
     for (const r of db.query('SELECT id FROM identity WHERE person_id IS NOT NULL').all() as Row[]) identityIds.add(r.id);
+    addTables(db);
+    for (const r of db.query('SELECT from_id FROM add_request WHERE from_id IS NOT NULL').all() as Row[]) identityIds.add(r.from_id);
     for (const s of this.selfIdentities) identityIds.add(s);
     const identities = this.identitiesByIds(identityIds);
     const personOf = new Map(identities.map((i) => [i.id, i.personId]));

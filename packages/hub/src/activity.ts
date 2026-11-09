@@ -206,7 +206,7 @@ export function describeActivity(f: P.PlaceActivity): string | null {
 
 // ------------------------------------------------------------------ the store
 
-export type NotificationKind = 'message' | 'held' | 'digest';
+export type NotificationKind = 'message' | 'held' | 'digest' | 'request';
 
 export interface Features {
   conversation: P.PlaceActivity;

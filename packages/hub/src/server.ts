@@ -1286,6 +1286,8 @@ export class HubServer {
   }
 
   private sendRefusal(conversationId: string, accountId: string | null): string | null {
+    // Writing to an open message request would answer it: Accept first, under Requests (docs/add.md).
+    if (requestHeld(this.store.db, conversationId)) return 'Accept the message request first';
     const c = this.store.conversationView(conversationId);
     const acc = accountId ? this.store.account(accountId) : null;
     return c ? sendBlocker(c, acc ? this.store.accountView(acc) : null) : 'No such conversation';

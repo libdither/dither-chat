@@ -20,8 +20,10 @@ export type VisitView =
   | 'accounts'
   | 'directory'
   /** Mail (docs/mail.md): the list or a thread, with no ids yet. */
-  | 'mail';
-export const VISIT_VIEWS: readonly VisitView[] = ['inbox', 'triage', 'conversation', 'space', 'person', 'people', 'profile', 'folder', 'spaces', 'search', 'settings', 'accounts', 'directory', 'mail'];
+  | 'mail'
+  /** Requests waiting on you (docs/add.md). */
+  | 'requests';
+export const VISIT_VIEWS: readonly VisitView[] = ['inbox', 'triage', 'conversation', 'space', 'person', 'people', 'profile', 'folder', 'spaces', 'search', 'settings', 'accounts', 'directory', 'mail', 'requests'];
 
 /**
  * How the user got there. `notification`: a tap on a push (sw.js, the Android app); `toast`: on the in-app

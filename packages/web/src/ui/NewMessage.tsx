@@ -410,34 +410,40 @@ export function AddCard({ card, live, setLive, onAccount, onAct, onOpen, onBack,
   );
 }
 
+/**
+ * The network wants a check only you can do (a captcha, proving it is you, Discord's rules): where to do it, and that
+ * nothing was done. Also on request cards (Requests.tsx). `onLeave`: before going to the account's page.
+ */
+export function CheckFirst({ network, result: r, setLive, onLeave, back }: { network: P.Network; result: P.AddResultView; setLive: (on: boolean) => void; onLeave: () => void; back: JSX.Element | null }) {
+  if (!r.check) return null;
+  return (
+    <div class="add-done add-check">
+      <p class="set-help">
+        <Icon name="alert" size={13} /> {netName(network)} wants a check first: {CHECK_LINE[r.check]}, in the account's live view. Nothing was done.
+      </p>
+      <div class="btn-row">
+        {r.liveView ? (
+          <button class="btn small add-live" onClick={() => setLive(true)}>
+            <Icon name="monitor" size={13} /> Open live view
+          </button>
+        ) : r.managerUrl ? (
+          <a class="btn small add-live" href={r.managerUrl} target="_blank" rel="noopener">
+            <Icon name="external" size={13} /> Open it on dither-accounts
+          </a>
+        ) : (
+          <button class="btn small add-live" onClick={() => (onLeave(), go({ view: 'accounts', account: r.accountId }))}>
+            <Icon name="monitor" size={13} /> Open the account
+          </button>
+        )}
+        {back}
+      </div>
+    </div>
+  );
+}
+
 /** After an action that did not land somewhere to open: asked, a check first, or someone added. */
 function AddDone({ card, result: r, setLive, onClose, back }: { card: Card; result: P.AddResultView; setLive: (on: boolean) => void; onClose: () => void; back: JSX.Element | null }) {
-  const net = netName(card.row.ref.network);
-  if (r.check) {
-    return (
-      <div class="add-done add-check">
-        <p class="set-help">
-          <Icon name="alert" size={13} /> {net} wants a check first: {CHECK_LINE[r.check]}, in the account's live view. Nothing was done.
-        </p>
-        <div class="btn-row">
-          {r.liveView ? (
-            <button class="btn small add-live" onClick={() => setLive(true)}>
-              <Icon name="monitor" size={13} /> Open live view
-            </button>
-          ) : r.managerUrl ? (
-            <a class="btn small add-live" href={r.managerUrl} target="_blank" rel="noopener">
-              <Icon name="external" size={13} /> Open it on dither-accounts
-            </a>
-          ) : (
-            <button class="btn small add-live" onClick={() => (onClose(), go({ view: 'accounts', account: r.accountId }))}>
-              <Icon name="monitor" size={13} /> Open the account
-            </button>
-          )}
-          {back}
-        </div>
-      </div>
-    );
-  }
+  if (r.check) return <CheckFirst network={card.row.ref.network} result={r} setLive={setLive} onLeave={onClose} back={back} />;
   return (
     <div class="add-done">
       <p class="set-help add-done-line">

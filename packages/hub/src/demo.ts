@@ -1274,7 +1274,7 @@ const EXPIRED = new Set(['oldparty', 'Expired2025xyz', 'OldSwapGroup2025']);
  * answered is kept in its account dir, so a restart neither forgets nor repeats it.
  */
 class DemoAdd {
-  private state: { joined: string[]; answered: string[]; friends: string[] };
+  private state: { joined: string[]; answered: string[]; friends: string[]; requested?: string[]; blocked?: string[] };
   /** How many of each command this account was sent, for verify scripts (action addLog): a kept preview is none. */
   readonly counts = { resolve: 0, add: 0, answer: 0 };
   constructor(
@@ -1296,6 +1296,15 @@ class DemoAdd {
   start(epoch: number) {
     for (const k of this.state.joined) this.emitPlace(k, Date.now());
     this.emit({ t: 'requests', requests: this.requests(epoch).filter((r) => !this.state.answered.includes(r.nativeId)) });
+  }
+
+  /** How you stand with someone after what was asked and answered here, over what the demo world starts with. */
+  relationship(who: string): P.PersonRelationship | undefined {
+    if (this.state.blocked?.includes(who)) return 'blocked';
+    if (this.state.friends.includes(who)) return this.network === 'discord' ? 'friend' : 'contact';
+    if (this.requests(Date.now()).some((r) => r.from === who && (r.kind === 'friend' || r.kind === 'follow') && !this.state.answered.includes(r.nativeId))) return 'requesting';
+    if (this.state.requested?.includes(who)) return 'requested';
+    return undefined;
   }
 
   private requests(now: number): P.RequestFact[] {
@@ -1400,6 +1409,10 @@ class DemoAdd {
     if (this.network === 'discord' && action === 'friend') {
       const who = known ?? { nativeId: snow(`u-${handle}`), handle, displayName: handle };
       if (!known) this.emit({ t: 'identity', identity: who });
+      if (!this.state.requested?.includes(who.nativeId)) {
+        this.state.requested = [...(this.state.requested ?? []), who.nativeId];
+        this.save();
+      }
       return { identity: who.nativeId, relationship: 'requested', pending: true };
     }
     if (this.network === 'telegram' && action === 'contact' && known) {
@@ -1420,6 +1433,9 @@ class DemoAdd {
     this.emit({ t: 'requestGone', nativeId: request });
     if (r.kind === 'friend') {
       const who = Object.values(D).find((i) => i.nativeId === r.from)!;
+      if (answer === 'accept') this.state.friends.push(who.nativeId);
+      if (answer === 'block') this.state.blocked = [...(this.state.blocked ?? []), who.nativeId];
+      this.save();
       if (answer === 'accept') this.emit({ t: 'identity', identity: { ...who, contact: true } });
       return { identity: r.from, relationship: answer === 'accept' ? 'friend' : answer === 'block' ? 'blocked' : 'stranger' };
     }
@@ -1442,6 +1458,8 @@ class DemoAdapter implements InprocAdapter {
   private emit!: (ev: P.AdapterEvent) => void;
   private timers = new Set<Timer>();
   private typingLog: { conversation: string; stop: boolean; at: number }[] = [];
+  /** What the hub told this account to mark read (action readLog): a message request's must stay empty (docs/add.md). */
+  private readLog: { conversation: string; upTo: string; at: number }[] = [];
   private self: P.IdentityFact;
   private adds!: DemoAdd;
   /** Capabilities a verify script took away (action 'capabilities'), to see the page without them. */
@@ -1530,7 +1548,7 @@ class DemoAdapter implements InprocAdapter {
         ...(p.status ? { status: p.status } : {}),
         accent: p.accent ?? '#5865F2',
         createdAt: Date.UTC(2017 + (who.length % 6), (who.charCodeAt(3) ?? 0) % 12, 9),
-        relationship: me ? undefined : pool[key as keyof typeof pool]?.contact ? 'friend' : 'stranger',
+        relationship: me ? undefined : (this.adds.relationship(who) ?? (pool[key as keyof typeof pool]?.contact ? 'friend' : 'stranger')),
         ...(me ? { friends: contacts.map((i) => i.nativeId) } : {
           mutualSpaces: (p.servers ?? []).map((k) => ({ k, id: g[k] })).filter((x) => mine.includes(x.id)).map((x) => ({ id: x.id, ...(p.nick?.[x.k] ? { nick: p.nick[x.k] } : {}), roles: p.roles?.[x.k] ?? [] })),
           mutualFriends: contacts.filter((i) => i.nativeId !== who && (p.friends ?? []).includes(Object.entries(D).find(([, x]) => x === i)?.[0] ?? '')).map((i) => i.nativeId),
@@ -1558,7 +1576,9 @@ class DemoAdapter implements InprocAdapter {
         ...(me ? { friends: contacts.map((i) => i.nativeId) } : {}),
       };
     }
-    return { ...(key === 'kai' ? { pronouns: 'they/them', facts: [{ label: 'Local time', value: 'Europe/Berlin' }] } : {}) };
+    // Telegram says whether they are in your contacts.
+    const tg = this.network === 'telegram' && !me ? { relationship: this.adds.relationship(who) ?? (me_?.contact ? 'contact' : 'stranger') } : {};
+    return { ...(key === 'kai' ? { pronouns: 'they/them', facts: [{ label: 'Local time', value: 'Europe/Berlin' }] } : {}), ...tg };
   }
 
   private about(target: P.AboutTarget): P.About {
@@ -2046,6 +2066,8 @@ class DemoAdapter implements InprocAdapter {
         reply({ count: 0, done: true });
         break;
       case 'markRead':
+        this.readLog.push({ conversation: cmd.conversation, upTo: cmd.upTo, at: Date.now() });
+        if (this.readLog.length > 200) this.readLog.shift();
         reply();
         break;
       case 'typing':
@@ -2076,7 +2098,7 @@ class DemoAdapter implements InprocAdapter {
           reply({ ok: true });
           break;
         }
-        reply(cmd.action === 'typingLog' ? { typing: this.typingLog } : cmd.action === 'addLog' ? this.adds.counts : { note: 'demo adapters have no actions' });
+        reply(cmd.action === 'typingLog' ? { typing: this.typingLog } : cmd.action === 'addLog' ? this.adds.counts : cmd.action === 'readLog' ? { reads: this.readLog } : { note: 'demo adapters have no actions' });
         break;
       default:
         if ('id' in cmd) reply();

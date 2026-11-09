@@ -157,7 +157,9 @@ export type Route =
   | { view: 'directory' }
   | { view: 'search'; q: string; conv?: string; msg?: string }
   /** Mail (docs/mail.md): a list (a view or a mailbox, mail/model.ts keys), and the thread open beside it. */
-  | { view: 'mail'; list?: string; thread?: string };
+  | { view: 'mail'; list?: string; thread?: string }
+  /** Requests waiting on you (docs/add.md), `request` the one to show. */
+  | { view: 'requests'; request?: string };
 
 export function parseHash(h = location.hash): Route {
   const [path, query] = h.replace(/^#\/?/, '').split('?');
@@ -193,6 +195,8 @@ export function parseHash(h = location.hash): Route {
       return { view: 'search', q: q.get('q') ?? '', conv: p[1] === 'c' ? p[2] : undefined, msg: q.get('m') ?? undefined };
     case 'c':
       return { view: 'inbox', conv: p[1], msg: q.get('m') ?? undefined };
+    case 'requests':
+      return { view: 'requests', request: p[1] };
     case 'mail':
       // #/mail, #/mail/l/<list>, #/mail/t/<thread>, #/mail/l/<list>/t/<thread>
       return p[1] === 'l' ? { view: 'mail', list: p[2], thread: p[3] === 't' ? p[4] : undefined } : { view: 'mail', thread: p[1] === 't' ? p[2] : undefined };
@@ -230,6 +234,8 @@ export function href(r: Route): string {
       return `#/search${r.conv ? `/c/${e(r.conv)}` : ''}?q=${e(r.q)}${r.msg ? `&m=${e(r.msg)}` : ''}`;
     case 'mail':
       return `#/mail${r.list ? `/l/${e(r.list)}` : ''}${r.thread ? `/t/${e(r.thread)}` : ''}`;
+    case 'requests':
+      return `#/requests${r.request ? `/${e(r.request)}` : ''}`;
   }
 }
 

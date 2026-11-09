@@ -82,6 +82,8 @@ import { desk } from '../desk.ts';
 import { android } from '../android.ts';
 import { counting, markPainted, rendered } from '../perf.ts';
 import { memo } from './memo.ts';
+import { heldRequest } from '../requests.ts';
+import { RequestBar } from './Requests.tsx';
 
 
 // ------------------------------------------------------------------ header
@@ -1159,6 +1161,8 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
 const touchKeyboard = () => matchMedia('(pointer: coarse)').matches;
 
 function composerBlocker(c: P.ConversationView, accountId?: string): string | null {
+  // An open message request is read-only until accepted (docs/add.md).
+  if (heldRequest(db.requests, c.id)) return 'Accept the message request first, under Requests';
   const vs = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a);
   return sendBlocker(c, (accountId && vs.find((a) => a.id === accountId)) || vs.find((a) => a.status === 'online') || vs[0]);
 }
@@ -1203,6 +1207,7 @@ export function ConversationPane({ convId, onBack, focus }: { convId: string; on
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && visibleAccount(a.id));
   const sendAsValue = prefs.value.sendAs[c.id] ?? accounts.find((a) => a.status === 'online')?.id ?? accounts[0]?.id;
   const voice = c.variant === 'voice' || c.variant === 'stage';
+  const held = heldRequest(db.requests, c.id);
   return (
     <section class="pane">
       <ConvHeader c={c} onBack={onBack} />
@@ -1216,23 +1221,27 @@ export function ConversationPane({ convId, onBack, focus }: { convId: string; on
         </>
       )}
       <TypingBar convIds={[c.id]} />
-      <Composer
-        targets={{ convId: c.id, accountId: sendAsValue }}
-        placeholder={`Message ${c.shape === 'direct' ? convTitle(c) : convLabel(c)}`}
-        reply={reply}
-        clearReply={() => setReply(null)}
-        disabledReason={composerBlocker(c, sendAsValue)}
-        sendAs={
-          accounts.length > 1
-            ? {
-                label: `Send as which ${netName(c.network)} account?`,
-                value: sendAsValue!,
-                onChange: (v) => setPrefs({ sendAs: { ...prefs.value.sendAs, [c.id]: v } }),
-                options: accounts.map((a) => ({ id: a.id, label: <AccountChip account={a} small /> })),
-              }
-            : undefined
-        }
-      />
+      {held ? (
+        <RequestBar r={held} />
+      ) : (
+        <Composer
+          targets={{ convId: c.id, accountId: sendAsValue }}
+          placeholder={`Message ${c.shape === 'direct' ? convTitle(c) : convLabel(c)}`}
+          reply={reply}
+          clearReply={() => setReply(null)}
+          disabledReason={composerBlocker(c, sendAsValue)}
+          sendAs={
+            accounts.length > 1
+              ? {
+                  label: `Send as which ${netName(c.network)} account?`,
+                  value: sendAsValue!,
+                  onChange: (v) => setPrefs({ sendAs: { ...prefs.value.sendAs, [c.id]: v } }),
+                  options: accounts.map((a) => ({ id: a.id, label: <AccountChip account={a} small /> })),
+                }
+              : undefined
+          }
+        />
+      )}
     </section>
   );
 }
