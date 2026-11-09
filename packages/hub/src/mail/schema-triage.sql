@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS mail_triage (
   words       TEXT,                             -- JSON string[]: the model's words of it, kept for learning
   probs       TEXT,                             -- JSON { ping, active, interesting }
   delivered   INTEGER NOT NULL DEFAULT 0,       -- a notification went out
+  quiet       INTEGER NOT NULL DEFAULT 0,       -- rated after a sync found it, not as it arrived: never notifies, never a line
   feedback    TEXT,                             -- your vote: push | quiet | digest | drop
   feedback_at INTEGER,
   created_at  INTEGER NOT NULL

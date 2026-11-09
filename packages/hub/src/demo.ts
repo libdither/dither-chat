@@ -1799,6 +1799,8 @@ export function applyDemoOverlay(store: Store) {
 
 /** The demo world's mail account: plain IMAP with the threading headers on summaries (dither-accounts' §13). */
 export const DEMO_MAIL_ACCOUNT = 'acc_demo-mail';
+/** A second mail account like Proton's (DITHER_DEMO_MAIL_PROTON=1, scripts/verify-mail.ts --proton). */
+export const DEMO_PROTON_ACCOUNT = 'acc_demo-proton';
 const ME = { name: 'Zyan', email: 'zyan@dither.example' };
 
 /**
@@ -1904,4 +1906,28 @@ export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
     // As slow as a server far away, so the backfill can be watched.
     fake.setOpts(DEMO_MAIL_ACCOUNT, { latencyMs: 250 });
   }
+  if (process.env.DITHER_DEMO_MAIL_PROTON) seedDemoProton(fake, now);
+}
+
+/**
+ * An account whose summaries carry no headers, as Proton's (docs/mail.md "Summaries without headers"): an unread
+ * newsletter that says it is one only in its body, a receipt Proton sorted into Transactions, and a stranger's note.
+ */
+function seedDemoProton(fake: FakeMailBackend, now: number) {
+  const D = 24 * 3_600_000;
+  const me = { name: ME.name, email: 'zyan@proton.example' };
+  fake.addAccount(DEMO_PROTON_ACCOUNT, { kind: 'proton', label: 'Proton mail', email: me.email, name: me.name, opts: { ids: 'proton', threadIds: true, refs: false, state: 'account', events: 'all' } });
+  const id = (k: string) => `<demo-proton-${k}@dither.example>`;
+  const put = (i: FakeInput) => fake.put(DEMO_PROTON_ACCOUNT, { to: [me], ...i });
+  put({
+    messageId: id('garden'),
+    from: [{ name: 'Garden Club Weekly', email: 'hello@gardenclub.example' }],
+    subject: 'Garden Club Weekly: the seed swap is back',
+    // Past the 14 days of personal mail fetched ahead, inside the inbox's 30: only the window brings its body.
+    receivedAt: now - 20 * D,
+    text: 'This Saturday at the library: bring seeds, take seeds. Tomatoes, beans and a lot of marigolds.',
+    bulk: { listId: '<weekly.gardenclub.example>', unsubscribe: '<https://gardenclub.example/leave>', precedence: null, autoSubmitted: null },
+  });
+  put({ messageId: id('statement'), from: [{ name: 'Nimbus Bank', email: 'statements@nimbus-bank.example' }], subject: 'Your November statement is ready', receivedAt: now - 3 * D, labels: ['Category/Transactions'], text: 'Sign in to see your statement.' });
+  put({ messageId: id('scarf'), from: [{ name: 'Rowan', email: 'rowan@example.org' }], subject: 'Found your scarf', receivedAt: now - 4 * D, text: 'You left a green scarf at the reading group. Shall I bring it next week?' });
 }

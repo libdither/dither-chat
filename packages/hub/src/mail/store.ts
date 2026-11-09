@@ -133,7 +133,19 @@ export class MailStore {
   ) {
     this.db.transaction(() => {
       for (const sql of mailSchemas()) this.db.exec(sql);
+      // Before summary_headers: bulk was only ever stored from summaries, so an account with some had headers there.
+      if (this.addColumns('mail_account', { summary_headers: 'INTEGER', headers_seen: 'INTEGER' }).includes('headers_seen')) {
+        this.run('UPDATE mail_account SET headers_seen = 1 WHERE id IN (SELECT DISTINCT account_id FROM mail_message WHERE bulk IS NOT NULL)');
+      }
     })();
+  }
+
+  /** Columns added since a table was first made (new databases have them from the schema). Returns those it added. */
+  addColumns(table: string, cols: Record<string, string>): string[] {
+    const have = this.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name);
+    const added = Object.keys(cols).filter((c) => !have.includes(c));
+    for (const c of added) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${c} ${cols[c]}`);
+    return added;
   }
 
   one<T = Row>(sql: string, ...args: any[]): T | null {
@@ -189,6 +201,17 @@ export class MailStore {
     return r.changes > 0;
   }
 
+  /**
+   * Its summaries carry no threading or bulk headers (Proton: only mail.get has them), so a message's class and thread
+   * may change once its body comes. The extractor's status says so (`details.summaryHeaders`); when it does not, no
+   * summary of the account has carried In-Reply-To, References or bulk headers yet.
+   */
+  headerless(accountId: string): boolean {
+    const a = this.account(accountId);
+    if (!a) return false;
+    return a.summary_headers === null || a.summary_headers === undefined ? !a.headers_seen : !a.summary_headers;
+  }
+
   /** Accounts whose access ended before `t`. */
   goneBefore(t: number): string[] {
     return this.all<{ id: string }>('SELECT id FROM mail_account WHERE gone_at IS NOT NULL AND gone_at <= ?', t).map((r) => r.id);
@@ -231,10 +254,11 @@ export class MailStore {
     const addresses = Array.isArray(self.addresses) ? JSON.stringify(self.addresses) : was.addresses;
     const online = st.status === 'online' ? 1 : 0;
     const syncMode = typeof details.sync === 'string' ? details.sync : was.sync_mode;
-    const next = [JSON.stringify(problem), JSON.stringify(send), address, name, addresses, online, syncMode];
-    const prev = [was.problem, was.send, was.address, was.display_name, was.addresses, was.online, was.sync_mode];
+    const headers = typeof details.summaryHeaders === 'boolean' ? (details.summaryHeaders ? 1 : 0) : (was.summary_headers ?? null);
+    const next = [JSON.stringify(problem), JSON.stringify(send), address, name, addresses, online, syncMode, headers];
+    const prev = [was.problem, was.send, was.address, was.display_name, was.addresses, was.online, was.sync_mode, was.summary_headers ?? null];
     if (next.every((v, i) => v === prev[i])) return false;
-    this.run('UPDATE mail_account SET problem = ?, send = ?, address = ?, display_name = ?, addresses = ?, online = ?, sync_mode = ? WHERE id = ?', ...next, id);
+    this.run('UPDATE mail_account SET problem = ?, send = ?, address = ?, display_name = ?, addresses = ?, online = ?, sync_mode = ?, summary_headers = ? WHERE id = ?', ...next, id);
     this.dirty.accounts.add(id);
     const selfChanged = address !== was.address || addresses !== was.addresses;
     if (selfChanged) this.selfChanged(id);
@@ -398,6 +422,7 @@ export class MailStore {
     if (!list.length) return out;
     const self = this.selfAddresses(accountId);
     this.db.transaction(() => {
+      if (list.some((s) => s.bulk || s.inReplyTo || s.references?.length)) this.run('UPDATE mail_account SET headers_seen = 1 WHERE id = ? AND headers_seen IS NULL', accountId);
       for (const s of list) {
         const key = s.messageId ? `m:${s.messageId}` : `x:${mailbox.native_id}/${s.id}`;
         const id = mailId('mml', accountId, key);
@@ -728,7 +753,10 @@ export class MailStore {
     return this.one('SELECT * FROM mail_body WHERE message_id = ?', messageId);
   }
 
-  /** mail.get's answer: the body kept, the preview made, threading headers filled in (and the thread fixed). */
+  /**
+   * mail.get's answer: the body kept, the preview made, threading and bulk headers filled in (the thread fixed, and
+   * classified again: Proton's summaries have neither, so a newsletter is known as one only from its body).
+   */
   putBody(messageId: string, msg: M.MailMessage) {
     const m = this.one('SELECT * FROM mail_message WHERE id = ?', messageId);
     if (!m) return;
@@ -754,6 +782,8 @@ export class MailStore {
       );
       const hasFiles = (msg.attachments ?? []).some((a) => !a.inline) ? 1 : m.has_attachments;
       this.run('UPDATE mail_message SET preview = ?, has_attachments = ? WHERE id = ?', mailPreview(text) ?? m.preview, hasFiles, messageId);
+      const bulk = msg.bulk ? JSON.stringify(msg.bulk) : null;
+      if (bulk && bulk !== m.bulk) this.run('UPDATE mail_message SET bulk = ? WHERE id = ?', bulk, messageId);
       const refs = msg.references ?? [];
       if ((msg.inReplyTo && msg.inReplyTo !== m.in_reply_to) || refs.length > json<string[]>(m.refs, []).length) {
         this.run('UPDATE mail_message SET in_reply_to = ?, refs = ? WHERE id = ?', msg.inReplyTo ?? m.in_reply_to, JSON.stringify(refs.length ? refs : json(m.refs, [])), messageId);

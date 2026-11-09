@@ -31,7 +31,12 @@
  * folder lists its first page when opened and the server's older pages as it is scrolled past what the hub holds,
  * back past the year the hub keeps; nothing off the side.
  *
- *   bun scripts/verify-mail.ts http://127.0.0.1:8700 [screenshot dir] [--html] [--big]
+ * With --proton (a hub started with DITHER_DEMO_MAIL_PROTON=1: a second account whose summaries carry no headers, as
+ * Proton's), only that account's run: its newsletter, which says it is one only in its body, reaches Updates once
+ * its body was fetched ahead and is never in Inbox; the receipt Proton sorted into Transactions is in Updates; the
+ * stranger's note stays in Inbox; on a phone and a desktop, both themes, nothing off the side.
+ *
+ *   bun scripts/verify-mail.ts http://127.0.0.1:8700 [screenshot dir] [--html] [--big] [--proton]
  * The hub must be a fresh demo hub (--demo) with its own data dir: reading marks threads read.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -42,8 +47,9 @@ import { launch, type Page } from './browser.ts';
 const args = process.argv.slice(2);
 const withHtml = args.includes('--html');
 const bigRun = args.includes('--big');
-const [base, shots] = args.filter((a) => a !== '--html' && a !== '--big');
-if (!base) throw new Error('usage: bun scripts/verify-mail.ts <hub url> [screenshot dir] [--html] [--big]');
+const protonRun = args.includes('--proton');
+const [base, shots] = args.filter((a) => !a.startsWith('--'));
+if (!base) throw new Error('usage: bun scripts/verify-mail.ts <hub url> [screenshot dir] [--html] [--big] [--proton]');
 if (shots) mkdirSync(shots, { recursive: true });
 
 const boot = (await fetch(`${base}/api/bootstrap`).then((r) => r.json())) as any;
@@ -355,6 +361,41 @@ async function composerDesktop(themeName: string, full: boolean) {
   await click(await at('.mc-discard'));
   await page.until(`!document.querySelector('.mail-drafts-line')`, 8000).catch(() => {});
   check(`${tag}: discarding it removes the draft`, !(await has('.mail-drafts-line')));
+}
+
+// ------------------------------------------------------------------ summaries without headers (--proton)
+
+const PROTON = 'acc_demo-proton';
+
+/** The Proton-like account: its newsletter in Updates once its body came, never in Inbox; the stranger's note in Inbox. */
+async function headerless(themeName: string, onPhone: boolean, first: boolean) {
+  const tag = `${onPhone ? 'phone' : 'desktop'} ${themeName}: no headers on summaries`;
+  const subjectsOf = async (list: string) => (await page1(list)).map((t) => t.subject as string);
+  if (first) {
+    if (!(await mailNow()).accounts?.some((a: any) => a.id === PROTON)) throw new Error('no Proton-like account: start the hub with DITHER_DEMO_MAIL_PROTON=1 for --proton');
+    // Nothing on its summaries says it is a newsletter: only its body, fetched ahead (bodies.ts), does.
+    let upd: string[] = [];
+    for (let i = 0; i < 60 && !upd.some((s) => s.startsWith('Garden Club Weekly')); i++) {
+      if (i) await Bun.sleep(500);
+      upd = await subjectsOf(`v:updates:${PROTON}`);
+    }
+    const inbox = await subjectsOf(`v:inbox:${PROTON}`);
+    check(`${tag}: the newsletter is in Updates once its body came`, upd.some((s) => s.startsWith('Garden Club Weekly')), upd);
+    check(`${tag}: the receipt Proton sorted into Transactions is in Updates`, upd.includes('Your November statement is ready'), upd);
+    check(`${tag}: Inbox keeps the stranger's note and neither of those`, inbox.includes('Found your scarf') && !inbox.some((s) => s.startsWith('Garden Club') || s.startsWith('Your November')), inbox);
+  }
+  if (onPhone) await page.size(390, 844, true);
+  else await page.size(1400, 900);
+  const rows = () => page.eval<string[]>(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].map((r) => r.textContent)`);
+  await theme(themeName, UPDATES);
+  await page.until(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].some((r) => r.textContent.includes('Garden Club Weekly'))`, 15000);
+  check(`${tag}: Updates shows the newsletter`, (await rows()).some((r) => r.includes('Garden Club Weekly')));
+  check(`${tag}: no sideways overflow: Updates`, !(await overflow()).length, await overflow());
+  await shot(`mail-${onPhone ? 'phone' : 'desktop'}-${themeName}-proton-updates`);
+  await page.eval(`location.hash = '#/mail'`);
+  await page.until(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].some((r) => r.textContent.includes('Found your scarf'))`, 15000);
+  check(`${tag}: Inbox shows the stranger's note, not the newsletter`, !(await rows()).some((r) => r.includes('Garden Club Weekly')));
+  check(`${tag}: no sideways overflow: Inbox`, !(await overflow()).length, await overflow());
 }
 
 // ------------------------------------------------------------------ from a person (slice 8)
@@ -843,30 +884,35 @@ async function search() {
 }
 
 try {
-  if (bigRun) {
-    const box = (await mailNow()).mailboxes.find((b) => b.role === 'archive');
-    if (!box || (box.total ?? 0) < 1000) throw new Error('no big Archive: start the hub with DITHER_DEMO_MAIL_BIG=1 for --big');
-    await big('dither-dark', true, true);
-    await big('dither-light', true, false);
-    await big('dither-dark', false, false);
-    await big('dither-light', false, false);
+  if (protonRun) {
+    await headerless('dither-dark', false, true);
+    await headerless('dither-light', true, false);
+  } else {
+    if (bigRun) {
+      const box = (await mailNow()).mailboxes.find((b) => b.role === 'archive');
+      if (!box || (box.total ?? 0) < 1000) throw new Error('no big Archive: start the hub with DITHER_DEMO_MAIL_BIG=1 for --big');
+      await big('dither-dark', true, true);
+      await big('dither-light', true, false);
+      await big('dither-dark', false, false);
+      await big('dither-light', false, false);
+    }
+    await phone('dither-dark', true);
+    await phone('dither-light', false);
+    await desktop('dither-dark');
+    await desktop('dither-light');
+    await classification('dither-dark', true);
+    await classification('dither-light', true);
+    await classification('dither-light', false);
+    await classification('dither-dark', false);
+    await filing();
+    if (withHtml) await htmlChecks();
+    await search();
+    // Last: it sends, which changes the demo world.
+    await composer('dither-light', false);
+    await composerDesktop('dither-light', false);
+    await composerDesktop('dither-dark', true);
+    await composer('dither-dark', true);
   }
-  await phone('dither-dark', true);
-  await phone('dither-light', false);
-  await desktop('dither-dark');
-  await desktop('dither-light');
-  await classification('dither-dark', true);
-  await classification('dither-light', true);
-  await classification('dither-light', false);
-  await classification('dither-dark', false);
-  await filing();
-  if (withHtml) await htmlChecks();
-  await search();
-  // Last: it sends, which changes the demo world.
-  await composer('dither-light', false);
-  await composerDesktop('dither-light', false);
-  await composerDesktop('dither-dark', true);
-  await composer('dither-dark', true);
   check('no errors on the page', !page.errors.length, page.errors.slice(0, 5));
 } catch (e) {
   failed++;

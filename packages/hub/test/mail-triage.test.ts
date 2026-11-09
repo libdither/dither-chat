@@ -20,7 +20,7 @@ import { mailClassifier } from '../src/mail/classify.ts';
 import { FakeMailBackend, type FakeInput } from '../src/mail/fake.ts';
 import { MailHub } from '../src/mail/index.ts';
 import { mailPeople } from '../src/mail/people.ts';
-import { mailTriage, type MailNotice } from '../src/mail/triage.ts';
+import { mailTriage, QUIET_REASON, type MailNotice } from '../src/mail/triage.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
 import { TriageVotes } from '../src/votes.ts';
@@ -299,6 +299,64 @@ describe('votes', () => {
     mailClassifier(w.hub)!.person(thread, false);
     expect(w.row('<theo-1@x>')!.feedback).toBe('digest');
     await until(() => !listed(), 2000, 'Theo out of the inbox');
+  });
+
+  test('what a sync found from a stranger is rated quietly: listed at Active, not at Digest, and nobody is notified', async () => {
+    const at = Date.now() - 3 * DAY;
+    const w = await world((put) => {
+      put({ messageId: '<theo-old1@x>', from: [THEO], to: [ME], subject: 'Climbing on Sunday?', text: 'Gym at 10? I can bring the spare harness.', receivedAt: at });
+      put({ messageId: '<kit-old1@x>', from: [{ name: 'Kit', email: 'kit@example.org' }], to: [ME], subject: 'Old photos', text: 'Found these in a drawer.', receivedAt: at + 1000 });
+      put({ messageId: '<sam-old1@x>', from: [SAM], to: [ME], subject: 'Climbing too?', text: 'Are you going?', receivedAt: at + 2000 });
+      put({ messageId: '<theo-gone@x>', from: [THEO], to: [ME], subject: 'Climbing last year', receivedAt: Date.now() - 90 * DAY });
+    });
+    // What the model learned: a climbing trip is worth seeing.
+    w.triage.learned = { w: { ping: {}, active: { 'w:climbing': 40 }, interesting: { 'w:climbing': 40 } } };
+    w.mt.quietWaitMs = 300;
+    const thread = (m: string) => w.tid(m);
+    const listed = () => {
+      w.attention.sync([]);
+      return new Set(w.attention.list().map((v) => v.id));
+    };
+    expect(w.row('<theo-old1@x>')).toBeNull();
+    expect(listed().has(thread('<theo-old1@x>'))).toBe(false);
+    w.mt.sweep();
+    await until(() => w.row('<theo-old1@x>') && w.row('<kit-old1@x>'), 3000, 'the quiet ratings');
+    const theo = w.row('<theo-old1@x>')!;
+    expect(theo).toMatchObject({ decision: 'quiet', level: 'quiet', delivered: 0, quiet: 1, decided_by: 'learned' });
+    expect(JSON.parse(theo.reasons)).toContain(QUIET_REASON);
+    // Its body was waited for: the model read the text.
+    expect(JSON.parse(theo.words)).toContain('harness');
+    const kit = w.row('<kit-old1@x>')!;
+    expect(['digest', 'drop']).toContain(kit.decision);
+    expect(kit).toMatchObject({ delivered: 0, quiet: 1 });
+    await until(() => listed().has(thread('<theo-old1@x>')), 2000, 'Theo in the inbox');
+    expect(listed().has(thread('<kit-old1@x>'))).toBe(false);
+    // Someone you write to needs no rating to be listed; mail outside the window is never rated.
+    expect(w.row('<sam-old1@x>')).toBeNull();
+    expect(w.row('<theo-gone@x>')).toBeNull();
+    expect(w.sent).toHaveLength(0);
+    expect(w.chat.quietHeld()).toBeNull();
+    // The board shows it with why; a second pass rates nothing again.
+    expect(w.mt.items(0).find((i) => i.id === w.mid('<theo-old1@x>'))!.triage.reasons).toContain(QUIET_REASON);
+    expect(w.mt.sweep()).toBe(0);
+    // A vote moves it as any other: down to Digest, out of the inbox.
+    w.votes.vote(w.mid('<theo-old1@x>'), 'down');
+    await until(() => !listed().has(thread('<theo-old1@x>')), 2000, 'Theo out of the inbox');
+    expect(w.sent).toHaveLength(0);
+  });
+
+  test('a quiet rating is never a line of a later notification', async () => {
+    const w = await world((put) => put({ messageId: '<theo-old2@x>', from: [THEO], to: [ME], subject: 'Climbing on Sunday?', text: 'Gym at 10?', receivedAt: Date.now() - 2 * DAY }));
+    w.triage.learned = { w: { ping: { 'w:climbing': 40 }, active: { 'w:climbing': 40 }, interesting: { 'w:climbing': 40 } } };
+    w.mt.quietWaitMs = 300;
+    w.mt.sweep();
+    await until(() => w.row('<theo-old2@x>'), 3000, 'the quiet rating');
+    expect(w.row('<theo-old2@x>')).toMatchObject({ decision: 'push', delivered: 0, quiet: 1 });
+    const r = await w.arrive({ messageId: '<theo-new2@x>', from: [THEO], subject: 'Re: Climbing on Sunday?', inReplyTo: '<theo-old2@x>', references: ['<theo-old2@x>'], text: 'Still on for climbing?' });
+    expect(r).toMatchObject({ delivered: 1, quiet: 0 });
+    const g = w.mt.gather(w.tid('<theo-new2@x>'), w.mid('<theo-new2@x>'))!;
+    expect(g.lines).toHaveLength(1);
+    expect(g.lines[0].body).toContain('Still on');
   });
 
   test('the routes: the board’s list, and a vote by id as /api/messages/:id/feedback takes it', async () => {

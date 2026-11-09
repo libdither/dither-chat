@@ -333,7 +333,7 @@ Each message gets a `class`, decided by the first rule that matches, and the rul
 | 5 | The address is an identity in a person who also has a chat identity (you merged them) | personal |
 | 6 | In a `junk` mailbox | bulk (never surfaces) |
 | 7 | Bulk hints, when the extractor gives them (§13): List-Id, List-Unsubscribe, `Precedence: bulk/list/junk`, `Auto-Submitted` other than `no` | bulk |
-| 8 | Category labels: Gmail `CATEGORY_PROMOTIONS/SOCIAL/UPDATES/FORUMS`, or Proton's category labels if `labels` names them | bulk |
+| 8 | Category labels: Gmail `CATEGORY_PROMOTIONS/SOCIAL/UPDATES/FORUMS`, or Proton's `Category/Social/Promotions/Updates/Newsletters/Transactions` | bulk |
 | 9 | The local part looks automated: `no-?reply`, `do-?not-?reply`, `notifications?`, `alerts?`, `news(letter)?`, `mailer-daemon`, `postmaster`, `bounce`, `marketing`, `updates?`, `digest` | bulk |
 | 10 | More than 10 recipients and you only in Bcc or undisclosed | bulk |
 | 11 | Anything else (an unknown sender who looks human) | personal, `unknown` |

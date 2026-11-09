@@ -8,6 +8,14 @@
  * waited for (it is fetched on arrival, bodies.ts) at most MAIL_TRIAGE.bodyWaitMs; then the model reads the subject
  * and the start of the text.
  *
+ * **Quietly, what a sync found** (`sweep`): a thread from a sender nobody knows that the one-list inbox could list
+ * (MailAttention.candidates: its window, never a year of mail) but whose newest message was never rated, because it
+ * came by a sync (it was there when the account was added). Its body first (fetched ahead, waited for at most
+ * MAIL_TRIAGE.quietWaitMs), then the same facts and model as live mail, at most MAIL_TRIAGE.quietPerPass an account a
+ * pass. Such a decision is `quiet`: it never notifies, is never held for quiet hours, and is never a line of another
+ * notification; it only decides the listing (§14 Q4), and the board shows it with why. On an account whose summaries
+ * carry no headers it waits for headerless.ts (`settled`), so a newsletter is not rated as a person.
+ *
  * **The facts** are learn.ts's, from mail: network `email`, shape `mail`, the thread as the conversation, the mail
  * account as the space, the author (their person, else identity: the same feature chat uses, so a vote on Sam's mail
  * moves Sam on Signal too once you merged them), you in To as a mention, Cc or a list as `everyone`, a reply to one
@@ -36,6 +44,8 @@ import type { Store } from '../store.ts';
 import { inQuietHours, URGENT, type Triage } from '../triage.ts';
 import type { OtherVotes, TriageVotes, Vote } from '../votes.ts';
 import { mailAttention, type MailTriageFacts } from './attention.ts';
+import { bigOf } from './backfill.ts';
+import { settled } from './headerless.ts';
 import type { MailHub } from './index.ts';
 import { mailPeople, type MailSender } from './people.ts';
 import { P1 } from './queue.ts';
@@ -60,7 +70,15 @@ export const MAIL_TRIAGE = {
   belowDays: 2,
   /** Lines in a notification, as chat's. */
   lines: 6,
+  /** Mail a sync found, rated quietly: at most this many an account a pass, its body waited for at most this long. */
+  quietPerPass: 30,
+  quietWaitMs: 60_000,
+  /** How often the quiet pass looks again, besides after a sync brought mail. */
+  quietEveryMs: 5 * MIN,
 };
+
+/** The reason a quiet decision gives. */
+export const QUIET_REASON = 'Rated after a sync found it: no notification';
 
 /** A notification main.ts sends (`deliverMail`). */
 export interface MailNotice {
@@ -100,6 +118,11 @@ interface Decided {
   hold: string | null;
 }
 
+/** Mail rated after a sync found it (`sweep`): never notifies. */
+interface DecideOpts {
+  quiet?: boolean;
+}
+
 const json = <T>(s: string | null | undefined, fallback: T): T => {
   if (!s) return fallback;
   try {
@@ -123,10 +146,18 @@ export class MailTriage {
   private now: () => number = Date.now;
   /** How long a new message waits for its body (tests shorten it). */
   bodyWaitMs = MAIL_TRIAGE.bodyWaitMs;
+  /** The quiet pass (`sweep`): messages whose body it asked for, and when. */
+  private asked = new Map<string, number>();
+  private sweepTimer: Timer | null = null;
+  private sweepEvery: Timer | null = null;
+  /** How long the quiet pass waits for a body (tests shorten it). */
+  quietWaitMs = MAIL_TRIAGE.quietWaitMs;
 
   constructor(private hub: MailHub) {
+    hub.store.addColumns('mail_triage', { quiet: 'INTEGER NOT NULL DEFAULT 0' });
     hub.on('ingested', (e) => {
       if (e.live) this.arrived(e.messageIds);
+      else this.sweepSoon();
     });
     hub.on('body', (e) => this.bodyCame(e.messageId));
     hub.on('deleted', (e) => this.forget(e.messageIds));
@@ -173,6 +204,11 @@ export class MailTriage {
       names: { conversation: (id) => this.threadName(id), space: (id) => this.accountName(id) },
     };
     deps.votes?.others.push(v);
+    this.sweepSoon(5_000);
+    if (!this.sweepEvery) {
+      this.sweepEvery = setInterval(() => this.sweepSoon(0), MAIL_TRIAGE.quietEveryMs);
+      this.sweepEvery.unref?.();
+    }
   }
 
   /** The chat votes it learns with, once connected. */
@@ -183,6 +219,9 @@ export class MailTriage {
   stop() {
     for (const t of this.waiting.values()) clearTimeout(t);
     this.waiting.clear();
+    if (this.sweepTimer) clearTimeout(this.sweepTimer);
+    if (this.sweepEvery) clearInterval(this.sweepEvery);
+    this.sweepTimer = this.sweepEvery = null;
   }
 
   // ---------------------------------------------------------- arrival
@@ -222,6 +261,7 @@ export class MailTriage {
   }
 
   private bodyCame(id: string) {
+    if (this.asked.delete(id)) return this.run(id, { quiet: true });
     const t = this.waiting.get(id);
     if (!t) return;
     clearTimeout(t);
@@ -229,17 +269,85 @@ export class MailTriage {
     this.run(id);
   }
 
-  private run(id: string) {
+  private run(id: string, o: DecideOpts = {}) {
     try {
-      this.decide(id);
+      this.decide(id, this.now(), o);
     } catch (e) {
       // A closed database (the hub stopping), or a message gone meanwhile.
       console.warn(`mail triage: ${(e as Error)?.message ?? e}`);
     }
   }
 
+  // ---------------------------------------------------------- what a sync found, quietly
+
+  /** The quiet pass, soon (once for a run of syncs). */
+  sweepSoon(ms = 3_000) {
+    if (this.sweepTimer || !this.deps) return;
+    this.sweepTimer = setTimeout(() => {
+      this.sweepTimer = null;
+      try {
+        this.sweep();
+      } catch (e) {
+        // A closed database (the hub stopping).
+        console.warn(`mail triage: ${(e as Error)?.message ?? e}`);
+      }
+    }, ms);
+    this.sweepTimer.unref?.();
+  }
+
+  /**
+   * Threads the one-list inbox could list, from a sender nobody knows, whose newest message (from someone else) was
+   * never rated: rated now, quietly, once its body is here (asked for, and waited for at most quietWaitMs). At most
+   * quietPerPass an account; the rest wait for the next pass. Returns how many it rated.
+   */
+  sweep(now = this.now()): number {
+    const st = this.hub.store;
+    const a = mailAttention(this.hub);
+    if (!this.deps || !a) return 0;
+    const threads = a.candidates(now);
+    if (!threads.length) return 0;
+    const rows = st.all<{ account_id: string; mid: string | null; cached: number }>(
+      `SELECT x.account_id, x.mid, EXISTS (SELECT 1 FROM mail_body WHERE message_id = x.mid) AS cached FROM (
+         SELECT t.account_id, t.last_at, (SELECT m.id FROM mail_message m WHERE m.thread_id = t.id AND m.class = 'personal' AND m.addressed != 'self' AND m.draft = 0
+                                          ORDER BY m.received_at DESC, m.id DESC LIMIT 1) AS mid
+         FROM mail_thread t JOIN mail_feature f ON f.thread_id = t.id
+         WHERE t.id IN (SELECT value FROM json_each(?)) AND f.unknown = 1) x
+       WHERE x.mid IS NOT NULL AND NOT EXISTS (SELECT 1 FROM mail_triage WHERE message_id = x.mid)
+       ORDER BY x.last_at DESC`,
+      JSON.stringify(threads),
+    );
+    const per = new Map<string, number>();
+    const want: string[] = [];
+    let rated = 0;
+    let more = false;
+    for (const r of rows) {
+      if (!r.mid || this.waiting.has(r.mid)) continue;
+      // Not before its labels and headers are in, and not on a subject alone while its body cannot come.
+      if (!settled(st, r.account_id) || (!r.cached && !this.hub.sync(r.account_id)?.workable)) continue;
+      const n = per.get(r.account_id) ?? 0;
+      if (n >= MAIL_TRIAGE.quietPerPass) {
+        more = true;
+        continue;
+      }
+      per.set(r.account_id, n + 1);
+      const asked = this.asked.get(r.mid);
+      if (r.cached || (asked !== undefined && now - asked >= this.quietWaitMs)) {
+        this.asked.delete(r.mid);
+        if (this.decide(r.mid, now, { quiet: true })) rated++;
+      } else if (asked === undefined) {
+        this.asked.set(r.mid, now);
+        want.push(r.mid);
+        more = true;
+      } else more = true;
+    }
+    if (want.length) bigOf(this.hub)?.prefetch(want);
+    // What waits for its body (or a pass's cap) is looked at again a little after its wait.
+    if (more) this.sweepSoon(Math.min(this.quietWaitMs, 30_000) + 100);
+    return rated;
+  }
+
   /** Decide on one message, keep it, and notify. Returns what was decided; null when it is not one to triage. */
-  decide(id: string, now = this.now()): (Decided & { delivered: boolean }) | null {
+  decide(id: string, now = this.now(), o: DecideOpts = {}): (Decided & { delivered: boolean }) | null {
     const d = this.deps;
     const st = this.hub.store;
     if (!d) return null;
@@ -247,12 +355,13 @@ export class MailTriage {
     if (!m || m.class !== 'personal' || m.addressed === 'self' || m.draft || st.one('SELECT 1 FROM mail_triage WHERE message_id = ?', id)) return null;
     const t = st.thread(m.thread_id);
     if (!t) return null;
-    const x = this.judge(m, t, now);
-    const ok = x.hold === null && (x.decision === 'push' || x.decision === 'quiet');
+    const quiet = !!o.quiet;
+    const x = this.judge(m, t, now, quiet);
+    const ok = !quiet && x.hold === null && (x.decision === 'push' || x.decision === 'quiet');
     st.db
       .query(
-        `INSERT INTO mail_triage (message_id, thread_id, account_id, address, decision, level, score, reasons, decided_by, facts, words, probs, delivered, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO mail_triage (message_id, thread_id, account_id, address, decision, level, score, reasons, decided_by, facts, words, probs, delivered, quiet, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -268,6 +377,7 @@ export class MailTriage {
         JSON.stringify(x.words),
         x.probs ? JSON.stringify(x.probs) : null,
         ok ? 1 : 0,
+        quiet ? 1 : 0,
         now,
       );
     // The rating moves the listing (a sender nobody knows, at Active) and the fold (what was pushed).
@@ -276,8 +386,8 @@ export class MailTriage {
     return { ...x, delivered: ok };
   }
 
-  /** The decision, from the facts and the live model, then what keeps it from notifying. */
-  private judge(m: Row, t: Row, now: number): Decided {
+  /** The decision, from the facts and the live model, then what keeps it from notifying (`quiet`: everything). */
+  private judge(m: Row, t: Row, now: number, quiet = false): Decided {
     const d = this.deps!;
     const st = this.hub.store;
     const from = lc(m.from_addr);
@@ -366,7 +476,11 @@ export class MailTriage {
     }
     let decision: P.TriageDecision = level;
     let hold: string | null = null;
-    if (level === 'push' || level === 'quiet') {
+    if (quiet) {
+      // Found by a sync: it decides the listing only, so quiet hours have nothing to hold.
+      hold = QUIET_REASON;
+      reasons.push(hold);
+    } else if (level === 'push' || level === 'quiet') {
       const q = d.store.quietHours();
       if (inQuietHours(q, now) && !(q!.allowStarred && starred)) {
         decision = 'digest';
@@ -485,7 +599,7 @@ export class MailTriage {
     const m = st.one<Row>('SELECT received_at FROM mail_message WHERE id = ?', messageId);
     if (!t || !m) return null;
     const rows = st.all<Row>(
-      `SELECT m.id, m.received_at, m.from_addr, m.from_name, m.subject, m.preview, m.addressed, m.seen, m.seen_local, tr.decision
+      `SELECT m.id, m.received_at, m.from_addr, m.from_name, m.subject, m.preview, m.addressed, m.seen, m.seen_local, tr.decision, tr.quiet
        FROM mail_message m LEFT JOIN mail_triage tr ON tr.message_id = m.id
        WHERE m.thread_id = ? AND m.draft = 0 AND m.received_at <= ? ORDER BY m.received_at DESC, m.id DESC LIMIT 40`,
       threadId,
@@ -499,7 +613,8 @@ export class MailTriage {
       const own = r.id === messageId;
       if (!own && (r.addressed === 'self' || r.seen || r.seen_local)) break;
       others++;
-      if (!own && !['push', 'quiet', 'digest'].includes(r.decision)) continue;
+      // What was rated quietly (a sync found it) is never a line.
+      if (!own && (r.quiet || !['push', 'quiet', 'digest'].includes(r.decision))) continue;
       if (lines.length >= MAIL_TRIAGE.lines && !own) continue;
       const w = this.who(lc(r.from_addr));
       const author = w.name ?? r.from_name ?? r.from_addr ?? 'Someone';

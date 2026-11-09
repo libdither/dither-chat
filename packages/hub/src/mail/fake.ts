@@ -4,7 +4,8 @@
  *
  *   ids        'imap': a message gets a new id when it moves (a new UID); 'proton': ids survive moves
  *   threadIds  the server's thread on summaries (Gmail, Proton), or none (plain IMAP)
- *   refs       In-Reply-To and References on summaries (dither-accounts' §13 fields), or only from mail.get
+ *   refs       In-Reply-To, References and bulk headers on summaries (dither-accounts' §13 fields), or only from
+ *              mail.get (Proton); the status's `details.summaryHeaders` says which, as the extractors' do
  *   state      one per mailbox (IMAP), or one for the whole account (Proton's event loop)
  *   events     mail.changed for the inbox only (IMAP IDLE), or for every mailbox (Proton's event loop)
  *   search     mail.search: each word in the sender, recipients, subject or text (IMAP; Gmail takes its own syntax,
@@ -45,6 +46,8 @@ export interface FakeOpts {
   search?: 'imap' | 'gmail' | 'proton';
   /** Whoever you write to answers this many ms later, into Inbox (a demo world: something to notify about); 0: never. */
   answer?: number;
+  /** The status's `details.summaryHeaders`: as `refs` unless set; null leaves it out (an extractor from before it). */
+  summaryHeaders?: boolean | null;
 }
 
 /** A message as the fake server keeps it. */
@@ -162,7 +165,22 @@ export class FakeMailBackend implements MailBackend {
   // ---------------------------------------------------------- the server's side, for tests and the demo
 
   addAccount(id: string, o: { kind?: string; label?: string; email: string; name?: string; addresses?: M.MailAccountAddress[]; level?: 'read' | 'write'; dryRun?: boolean; mailboxes?: M.Mailbox[]; opts?: FakeOpts; online?: boolean }) {
-    const opts: Required<FakeOpts> = { ids: 'imap', threadIds: false, refs: true, state: 'mailbox', events: 'inbox', send: 'ok', latencyMs: 0, changesPage: 200, moveIds: 'new', search: (o.opts?.ids ?? this.defaults.ids) === 'proton' ? 'proton' : 'imap', answer: 0, ...this.defaults, ...o.opts };
+    const opts: Required<FakeOpts> = {
+      ids: 'imap',
+      threadIds: false,
+      refs: true,
+      state: 'mailbox',
+      events: 'inbox',
+      send: 'ok',
+      latencyMs: 0,
+      changesPage: 200,
+      moveIds: 'new',
+      search: (o.opts?.ids ?? this.defaults.ids) === 'proton' ? 'proton' : 'imap',
+      answer: 0,
+      summaryHeaders: o.opts?.refs ?? this.defaults.refs ?? true,
+      ...this.defaults,
+      ...o.opts,
+    };
     const online = o.online ?? true;
     const a: Account = {
       view: { id, kind: o.kind ?? (opts.ids === 'proton' ? 'proton' : 'imap'), label: o.label ?? o.email, level: o.level ?? 'write', dryRun: !!o.dryRun, online },
@@ -340,7 +358,12 @@ export class FakeMailBackend implements MailBackend {
       status: online ? 'online' : 'offline',
       attention: null,
       self: a.self,
-      details: { sync: a.opts.state === 'account' ? 'events' : 'QRESYNC', canSend: sendOk, sendNote: sendOk ? null : "Sending is not supported here (the extractor answered 501)." },
+      details: {
+        sync: a.opts.state === 'account' ? 'events' : 'QRESYNC',
+        canSend: sendOk,
+        sendNote: sendOk ? null : 'Sending is not supported here (the extractor answered 501).',
+        ...(a.opts.summaryHeaders === null ? {} : { summaryHeaders: a.opts.summaryHeaders }),
+      },
       layers: [
         { name: 'server', state: online ? 'ok' : 'failed', ...(online ? {} : { note: 'not reachable' }) },
         { name: 'signed in', state: online ? 'ok' : 'waiting' },

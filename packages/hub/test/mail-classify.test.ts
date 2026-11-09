@@ -49,6 +49,8 @@ describe('each rule', () => {
     ['7 Auto-Submitted', { bulk: { ...LIST, listId: null, autoSubmitted: 'auto-generated' } }, 'bulk', 'list'],
     ['8 a Gmail category', { labels: ['\\Inbox', 'CATEGORY_PROMOTIONS'] }, 'bulk', 'category'],
     ['8 the same, spelled another way', { labels: ['Category/Social'] }, 'bulk', 'category'],
+    ['8 Proton’s newsletters', { labels: ['Category/Newsletters'] }, 'bulk', 'category'],
+    ['8 Proton’s transactions: receipts and sign-in codes', { labels: ['Category/Transactions'] }, 'bulk', 'category'],
     ['9 no-reply', { fromAddr: 'no-reply@shop.example' }, 'bulk', 'automated'],
     ['9 notifications+tag', { fromAddr: 'notifications+abc@github.example' }, 'bulk', 'automated'],
     ['9 mailer-daemon', { fromAddr: 'MAILER-DAEMON@mx.example' }, 'bulk', 'automated'],
