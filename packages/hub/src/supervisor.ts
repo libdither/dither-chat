@@ -132,7 +132,7 @@ export class Supervisor {
     return (await f.slice(Math.max(0, f.size - 24_000)).text()).slice(-20_000);
   }
 
-  /** Where an account's live view is when another process runs it (remote.ts: the manager's socket); null: its VNC port here. */
+  /** Where an account's live view is when another process runs it (remote.ts: the manager's socket); null: its VNC socket here. */
   liveViewUrl(_id: string): string | null {
     return null;
   }

@@ -66,7 +66,8 @@ beforeAll(async () => {
   const { createManager } = await import(join(ACCOUNTS, 'packages/manager/src/index.ts'));
   router = await import(join(ACCOUNTS, 'packages/manager/src/router.ts'));
   mkdirSync(join(dir, 'manager'), { recursive: true });
-  m = await createManager({ dataDir: join(dir, 'manager'), port: 0 });
+  // openPage: the manager's page and its API without a login (the manager's page has one now), as this test drives them.
+  m = await createManager({ dataDir: join(dir, 'manager'), port: 0, openPage: true });
   store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
   store.createAccount({ id: REMOTE, network: 'matrix', label: 'remote', color: '#5CC8FF', adapter: 'chat-fake' });
   store.createAccount({ id: LOCAL, network: 'matrix', label: 'local', color: '#F2A541', adapter: 'inproc-fake' });
@@ -196,14 +197,16 @@ describe('remote accounts through dither-accounts', () => {
   test('an account the manager made: its log, renames both ways, its live view through the manager', async () => {
     const id = 'acc_madeThere001';
     const atVnc: string[] = [];
-    const vnc = Bun.listen({ hostname: '127.0.0.1', port: 0, socket: { open: (s) => void s.write('RFB 003.008\n'), data: (_s, d) => void atVnc.push(Buffer.from(d).toString()) } });
+    // A stand-in VNC server on a Unix socket, as a sandbox's x11vnc is.
+    const vncSocket = join(dir, 'vnc-made-there.sock');
+    const vnc = Bun.listen({ unix: vncSocket, socket: { open: (s) => void s.write('RFB 003.008\n'), data: (_s, d) => void atVnc.push(Buffer.from(d).toString()) } });
     const port = 19460 + Math.floor(Math.random() * 1000);
     const hub = new HubServer(store, sup, new Triage(store), { port, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
     hub.start();
     try {
       store.createAccount({ id, network: 'matrix', label: 'made there', color: '#B794F6', adapter: 'chat-fake' });
       const app = JSON.parse(readFileSync(join(dir, 'accounts-app.json'), 'utf8')).app;
-      await m.router.admin(app, { do: 'create', id, kind: 'chat-fake', label: 'made there', config: { vncPort: vnc.port } });
+      await m.router.admin(app, { do: 'create', id, kind: 'chat-fake', label: 'made there', config: { vncSocket } });
       await until(() => sup.isRemote(id) && sup.online(id) && !!sup.liveViewUrl(id), 10_000, 'remote, online, with a live view');
       // Its view says the manager runs it and that this hub made it; the imported one says so too.
       store.accountManaged = (x) => sup.managed(x);
@@ -218,7 +221,7 @@ describe('remote accounts through dither-accounts', () => {
       await until(() => m.store.account(id)?.label === 'renamed in the hub', 3000, 'the rename there');
       await fetch(`${m.url}/api/accounts/${id}`, { method: 'PATCH', body: JSON.stringify({ label: 'renamed on the page' }) });
       await until(() => store.account(id)?.label === 'renamed on the page', 3000, 'the rename back');
-      // The page's live view socket on the hub, carried through the manager's socket to the VNC port.
+      // The page's live view socket on the hub, carried through the manager's socket to the VNC socket.
       const ws = new WebSocket(`ws://127.0.0.1:${port}/api/liveview/${id}`, ['binary']);
       ws.binaryType = 'arraybuffer';
       const first = await new Promise<string>((res, rej) => {
@@ -227,7 +230,7 @@ describe('remote accounts through dither-accounts', () => {
       });
       expect(first).toBe('RFB 003.008\n');
       ws.send(new TextEncoder().encode('RFB 003.008\n'));
-      await until(() => atVnc.join('').includes('RFB 003.008'), 3000, 'the reply at the VNC port');
+      await until(() => atVnc.join('').includes('RFB 003.008'), 3000, 'the reply at the VNC socket');
       ws.close();
     } finally {
       hub.stop();
