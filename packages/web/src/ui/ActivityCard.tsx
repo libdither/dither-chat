@@ -1,21 +1,23 @@
 /**
- * Status on a person's profile page (docs/history.md, docs/profile.md): their current status, and, with adversarial
- * features shown, how it changed and their presence (online, idle, do not disturb, offline) over time when those are
- * logged. Collapsed until opened; absent when there is nothing to show.
+ * Activity on a person's profile page (docs/profile.md "Activity", docs/history.md): their current status and presence
+ * at the top, then a chart of when they're around (ActivityChart.tsx), then, with adversarial features shown, how their
+ * status changed and their presence (online, idle, do not disturb, offline) over time when those are logged, each
+ * collapsed until opened. Absent when there is nothing to show.
  */
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { ago, fullTime, since } from '../format.ts';
-import { loadChanges, presenceText, retention } from '../history.ts';
+import { keeping, loadChanges, presenceText, retention } from '../history.ts';
 import { netName } from '../model.ts';
 import { db, rev } from '../state.ts';
+import { ActivityChart } from './ActivityChart.tsx';
 import { NetGlyph } from './bits.tsx';
 import { Change } from './HistoryCard.tsx';
 import { Icon } from './icons.tsx';
 
 const SHOWN = 8;
 
-export function StatusCard({ path, status, at }: { path: string; status?: { text?: string; emoji?: string } | null; at?: number }) {
+export function ActivityCard({ path, chartPath, self, chart, status, at }: { path: string; chartPath: string; self: boolean; chart: boolean; status?: { text?: string; emoji?: string } | null; at?: number }) {
   rev.value;
   const r = retention.value;
   const [statuses, setStatuses] = useState<P.ChangeView[]>([]);
@@ -34,29 +36,17 @@ export function StatusCard({ path, status, at }: { path: string; status?: { text
   }, [path, r.adversarial]);
 
   const hasStatus = !!(status?.text || status?.emoji);
-  if (!hasStatus && !statuses.length && !presence.length) return null;
+  if (!chart && !hasStatus && !statuses.length && !presence.length) return null;
   const now = presence[0];
   const shownStatuses = all.statuses ? statuses : statuses.slice(0, SHOWN);
   const shownPresence = all.presence ? presence : presence.slice(0, SHOWN);
 
   return (
-    <details class="pf-card pf-status-card">
-      <summary>
-        <h3>
-          <Icon name="smile" size={14} />
-          <span>Status</span>
-          {statuses.length + presence.length > 0 && <span class="pf-count">{statuses.length + presence.length}</span>}
-          <span class="pf-card-extra pf-status-peek">
-            {now && r.presence && <span class={`presence-dot ${(now.new as P.PresenceView | null)?.state ?? 'offline'}`} title={presenceText(now.new as P.PresenceView)} />}
-            {hasStatus && (
-              <span class="pf-status-peek-text">
-                {status!.emoji} {status!.text}
-              </span>
-            )}
-          </span>
-          <Icon name="chevronDown" size={12} class="pf-status-chevron" />
-        </h3>
-      </summary>
+    <section class="pf-card pf-activity-card">
+      <h3>
+        <Icon name="activity" size={14} />
+        <span>Activity</span>
+      </h3>
 
       <div class="pf-status-now">
         {hasStatus ? (
@@ -75,9 +65,15 @@ export function StatusCard({ path, status, at }: { path: string; status?: { text
         {now && <PresenceNow c={now} logging={r.presence} />}
       </div>
 
+      {chart && <ActivityChart path={chartPath} self={self} statusesKept={keeping(r, 'statuses')} presenceKept={keeping(r, 'presence')} />}
+
       {r.adversarial && (statuses.length > 0 || r.statuses) && (
-        <>
-          <h4 class="hist-sub">Status history</h4>
+        <details class="act-sub pf-status-history">
+          <summary>
+            <Icon name="chevronRight" size={12} class="act-sub-chevron" />
+            Status history
+            {statuses.length > 0 && <span class="pf-count">{statuses.length}</span>}
+          </summary>
           {!statuses.length ? (
             <p class="pf-empty">No changes logged yet. Each change to their status shows here as it happens.</p>
           ) : (
@@ -93,12 +89,16 @@ export function StatusCard({ path, status, at }: { path: string; status?: { text
             </button>
           )}
           {!r.statuses && statuses.length > 0 && <p class="set-help">Logging statuses is off; this is what was logged before.</p>}
-        </>
+        </details>
       )}
 
       {r.adversarial && (presence.length > 0 || r.presence) && (
-        <>
-          <h4 class="hist-sub">Presence history</h4>
+        <details class="act-sub pf-presence-history">
+          <summary>
+            <Icon name="chevronRight" size={12} class="act-sub-chevron" />
+            Presence history
+            {presence.length > 0 && <span class="pf-count">{presence.length}</span>}
+          </summary>
           {!presence.length ? (
             <p class="pf-empty">Nothing logged yet. Each time they come online, go idle or leave shows here.</p>
           ) : (
@@ -113,9 +113,9 @@ export function StatusCard({ path, status, at }: { path: string; status?: { text
               Show all {presence.length}
             </button>
           )}
-        </>
+        </details>
       )}
-    </details>
+    </section>
   );
 }
 

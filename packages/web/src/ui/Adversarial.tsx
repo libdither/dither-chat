@@ -37,14 +37,14 @@ const SWITCHES: { key: 'deleted' | 'disappearing' | 'statuses' | 'presence' | 'm
     key: 'statuses',
     label: 'Log statuses',
     help: "Each change to people's custom statuses (or About, on Signal and WhatsApp), with when. Their current status shows either way.",
-    where: 'the Status section of a profile',
+    where: 'the Activity section of a profile',
   },
   {
     key: 'presence',
     label: 'Log presence (online/idle/offline)',
     help:
       'Each time people you follow (friends, contacts, people you have a DM with) come online, go idle or do not disturb, or go offline, and on which devices, where the network says. Nothing of it is kept while this is off.',
-    where: 'the Status section of a profile',
+    where: 'the Activity section of a profile',
   },
   {
     key: 'members',

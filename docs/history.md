@@ -11,8 +11,8 @@ first two, statuses, presence and server members, Adversarial features), everywh
 | **Reactions taken back** | who took back which reaction; reactions a moderator cleared | Message History in the message's menu |
 | **Read receipts** | who got, read and played your messages, and when (Signal, WhatsApp, Matrix) | ticks beside your messages; click for who |
 | **Changes** (one switch) | names, descriptions, pictures, settings, members and roles of conversations and spaces; pins; people's names, usernames, pictures, bios, pronouns and banners | History on the profile page (docs/profile.md); a pin mark on pinned messages |
-| **Statuses** (adversarial) | each change to people's custom statuses (the About on Signal and WhatsApp); the current one is kept either way | the Status section of a profile |
-| **Presence** (adversarial) | each time people you follow come online, go idle or do not disturb, or go offline, and on which devices; nothing at all while off | the Status section of a profile |
+| **Statuses** (adversarial) | each change to people's custom statuses (the About on Signal and WhatsApp); the current one is kept either way | the Activity section of a profile: a list, and marks above its chart (docs/profile.md) |
+| **Presence** (adversarial) | each time people you follow come online, go idle or do not disturb, or go offline, and on which devices; nothing at all while off | the Activity section of a profile: a list, and a band under its chart (docs/profile.md) |
 | **Server members** (adversarial, passive) | who your accounts' clients saw as a member of each server, with nick, roles and when they joined, and the server's member and online counts: only what the client loaded anyway (message authors, the member list in view), never a walk of the list | "Members seen: 5 of 1,287 listed" on a server's About; the server under In common on a profile; its links in the people graph (docs/people-graph.md) |
 
 Each adversarial switch says where what it keeps shows, in the words of the last column ("Where it shows: a collapsed
@@ -31,7 +31,7 @@ so any section, Adversarial features included, is two taps from anywhere in Sett
 Code: `packages/hub/src/store.ts` (`gone`, `logChange`, `logChanges`, `messageEvent`, `receipt`, `setStatus`, `setPresence`, `keeps`,
 `changes`, `messageHistory`, `eraseKept`), `about.ts` (settings), `people.ts` (profiles); adapters emit `pin`, `role`,
 `customStatus`, `presence`, `receipt` and `members` (packages/protocol/src/adapter.ts); `packages/web/src/history.ts`,
-`ui/HistorySettings.tsx`, `ui/HistoryCard.tsx`, `ui/StatusCard.tsx`, `ui/MessageHistory.tsx`, `ui/Timeline.tsx` (`Gone`, `Edited`, `Marks`).
+`ui/HistorySettings.tsx`, `ui/HistoryCard.tsx`, `ui/ActivityCard.tsx`, `ui/MessageHistory.tsx`, `ui/Timeline.tsx` (`Gone`, `Edited`, `Marks`).
 
 ## Adversarial features
 

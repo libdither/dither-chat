@@ -8350,55 +8350,16 @@ html[data-theme='light'] .acc-dot {
   letter-spacing: 0;
   font-weight: 500;
 }
-/* The Status section: a card that opens (StatusCard.tsx). */
-.pf-status-card > summary {
-  list-style: none;
-  cursor: pointer;
-}
-.pf-status-card > summary::-webkit-details-marker {
-  display: none;
-}
-.pf-status-card > summary > h3 {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 11.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-faint);
-  margin: 0;
-  min-width: 0;
-}
-.pf-status-peek {
-  display: flex;
-  margin-left: auto;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  color: var(--text-dim);
-}
-.pf-status-peek-text {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.pf-status-chevron {
-  flex: none;
-  margin-left: auto;
-  transition: transform 0.15s;
-}
-.pf-status-card:not([open]) .pf-status-peek + .pf-status-chevron {
-  margin-left: 0;
-}
-.pf-status-card[open] .pf-status-chevron {
-  transform: rotate(180deg);
-}
-.pf-status-card[open] .pf-status-peek {
-  display: none;
-}
-.pf-status-card:not([open]) {
-  gap: 0;
+/* The Activity section (ActivityCard.tsx, ActivityChart.tsx): status and presence now, a chart of when they're
+   around, and the logged history in sections that open. Presence colours are the chart's own status steps, the same in
+   light and dark; the bars take the theme's accent, your side a quiet grey. */
+.pf-activity-card {
+  --act-them: var(--accent);
+  --act-you: color-mix(in srgb, var(--text-faint) 80%, var(--bg-raised));
+  --act-online: #0ca30c;
+  --act-idle: #fab219;
+  --act-dnd: #d03b3b;
+  --act-offline: color-mix(in srgb, var(--text-faint) 60%, var(--bg-raised));
 }
 .pf-status-now {
   display: flex;
@@ -8410,12 +8371,357 @@ html[data-theme='light'] .acc-dot {
   flex-wrap: wrap;
 }
 /* Rows stay on one line: the words wrap, the time stays at the end. */
-.pf-status-card .hist-item {
+.pf-activity-card .hist-item {
   flex-wrap: nowrap;
 }
-.pf-status-card .hist-item > span:not([class]) {
+.pf-activity-card .hist-item > span:not([class]) {
   flex: 1 1 auto;
   min-width: 0;
+}
+.act {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+/* Fetching another range: the last one stays, dimmed, so nothing jumps. */
+.act-loading .act-timeline,
+.act-loading .act-week,
+.act-loading .act-summary {
+  opacity: 0.5;
+  transition: opacity 0.15s;
+}
+.act-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.act-range .chip-btn,
+.act-week-head .chip-btn {
+  padding: 3px 9px;
+  font-size: 11.5px;
+}
+.act-summary {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.act-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.act-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.act-key {
+  display: inline-block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.act-key.them {
+  background: var(--act-them);
+}
+.act-key.you {
+  background: var(--act-you);
+}
+.act-key.band {
+  width: 12px;
+  border-radius: 1px;
+}
+.act-key.band.online {
+  height: 10px;
+  background: var(--act-online);
+}
+.act-key.band.dnd {
+  height: 10px;
+  background: linear-gradient(var(--act-dnd) 0 4px, var(--bg-raised) 4px 6px, var(--act-dnd) 6px);
+}
+.act-key.band.idle {
+  height: 6px;
+  background: var(--act-idle);
+}
+.act-key.band.offline {
+  height: 2px;
+  background: var(--act-offline);
+}
+.act-key.mark {
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  transform: rotate(45deg);
+  background: var(--text-dim);
+}
+.act-plot {
+  position: relative;
+}
+.act-ymax {
+  text-align: right;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: -4px;
+}
+.act-plot svg {
+  display: block;
+  overflow: visible;
+  touch-action: pan-y;
+  outline: none;
+}
+.act-plot svg:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.act-bar.them {
+  fill: var(--act-them);
+}
+.act-bar.you {
+  fill: var(--act-you);
+}
+.act-grid,
+.act-track {
+  stroke: var(--border-soft);
+  stroke-width: 1;
+}
+.act-axis {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.act-hover {
+  fill: color-mix(in srgb, var(--text-faint) 16%, transparent);
+}
+.act-pres.online {
+  fill: var(--act-online);
+}
+.act-pres.idle {
+  fill: var(--act-idle);
+}
+.act-pres.dnd {
+  fill: var(--act-dnd);
+}
+.act-pres.offline {
+  fill: var(--act-offline);
+}
+.act-notch {
+  fill: var(--bg-raised);
+}
+.act-mark-dot {
+  fill: var(--text-dim);
+  stroke: var(--bg-raised);
+  stroke-width: 2;
+  paint-order: stroke;
+}
+.act-mark.on .act-mark-dot {
+  fill: var(--text);
+}
+.act-mark-line {
+  stroke: var(--text-faint);
+  stroke-width: 1;
+}
+.act-mark-hit {
+  fill: transparent;
+  cursor: pointer;
+}
+.act-tick {
+  fill: var(--text-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.act-tip {
+  position: absolute;
+  z-index: 3;
+  width: 200px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-center);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  color: var(--text-dim);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.act-tip-when {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.act-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.act-tip-row b {
+  color: var(--text);
+  font-weight: 650;
+}
+.act-tip-row .act-key {
+  width: 10px;
+  height: 2px;
+  border-radius: 1px;
+}
+.act-tip-row .act-key.mark {
+  width: 6px;
+  height: 6px;
+}
+.act-tip-sub {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.act-gate {
+  display: flex;
+  gap: 7px;
+  align-items: flex-start;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.45;
+}
+.act-gate > svg {
+  flex: none;
+  margin-top: 2px;
+}
+.act-gate .link-btn {
+  font-size: inherit;
+  padding: 0;
+  display: inline;
+}
+.act-week-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0 6px;
+}
+.act-week-head .hist-sub {
+  margin: 0;
+}
+.act-cell {
+  fill: color-mix(in srgb, var(--text-faint) 13%, var(--bg-raised));
+}
+/* Nothing logged then: an outline, not a value. */
+.act-cell.none {
+  fill: none;
+  stroke: color-mix(in srgb, var(--text-faint) 22%, var(--bg-raised));
+  stroke-width: 1;
+}
+.act-heat .act-cell.l1,
+.act-heat .act-cell.l2,
+.act-heat .act-cell.l3,
+.act-heat .act-cell.l4,
+.act-heat .act-cell.l5 {
+  fill: color-mix(in srgb, var(--heat) var(--p), var(--bg-raised));
+}
+.act-heat.sent,
+.act-week:has(.act-heat.sent) .act-scale {
+  --heat: var(--act-them);
+}
+.act-heat.mine,
+.act-week:has(.act-heat.mine) .act-scale {
+  --heat: var(--text-dim);
+}
+.act-heat.online,
+.act-week:has(.act-heat.online) .act-scale {
+  --heat: var(--act-online);
+}
+.pf-activity-card .l1 {
+  --p: 24%;
+}
+.pf-activity-card .l2 {
+  --p: 42%;
+}
+.pf-activity-card .l3 {
+  --p: 60%;
+}
+.pf-activity-card .l4 {
+  --p: 80%;
+}
+.pf-activity-card .l5 {
+  --p: 100%;
+}
+.act-cell.on {
+  stroke: var(--text);
+  stroke-width: 1.5;
+}
+.act-scale {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+.act-scale span {
+  margin: 0 3px;
+}
+.act-cell-key {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--heat) var(--p), var(--bg-raised));
+}
+.act-sub > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  padding: 4px 0;
+}
+.act-sub > summary::-webkit-details-marker {
+  display: none;
+}
+.act-sub-chevron {
+  transition: transform 0.15s;
+}
+.act-sub[open] > summary .act-sub-chevron {
+  transform: rotate(90deg);
+}
+.act-table-wrap {
+  max-height: 320px;
+  overflow: auto;
+}
+.act-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.act-table th {
+  text-align: right;
+  font-weight: 600;
+  color: var(--text-faint);
+  position: sticky;
+  top: 0;
+  background: var(--bg-raised);
+  padding: 3px 6px;
+}
+.act-table td {
+  text-align: right;
+  padding: 3px 6px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--text-dim);
+}
+.act-table th:first-child,
+.act-table td:first-child {
+  text-align: left;
 }
 .presence-dot {
   flex: none;

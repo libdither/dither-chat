@@ -4,7 +4,7 @@ import type * as P from '@dither-chat/protocol';
 import { GLYPH } from '../brand.ts';
 import { hueOf, initials } from '../format.ts';
 import { annotateAccounts, netColor, netName } from '../model.ts';
-import { db } from '../state.ts';
+import { db, go } from '../state.ts';
 import { phone, slideAway, useLayer, useSheetDrag } from '../phone.ts';
 import { Icon } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
@@ -154,6 +154,12 @@ export function Modal({ title, onClose, children, wide }: { title: ComponentChil
 /** Scrolls Settings to one of its sections (`set-adversarial`). */
 export function showSection(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/** Opens Settings at Adversarial features. */
+export function openAdversarial() {
+  go({ view: 'settings' });
+  setTimeout(() => document.getElementById('set-adversarial')?.scrollIntoView({ block: 'start' }), 120);
 }
 
 /** Small anchored menu that closes on outside click. */

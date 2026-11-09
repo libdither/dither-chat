@@ -8,7 +8,7 @@ import { signal, type Signal } from '@preact/signals';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { convTitle, netName } from '../model.ts';
 import { api, db, go, type Route } from '../state.ts';
-import { Empty, NetBadge } from '../ui/bits.tsx';
+import { Empty, NetBadge, openAdversarial } from '../ui/bits.tsx';
 import { Icon } from '../ui/icons.tsx';
 import { Engine } from './engine.ts';
 import { DEFAULT_FILTERS, index, neighbours, sharesWith, visible, type Filters, type Index } from './model.ts';
@@ -78,11 +78,6 @@ export default function GraphView({ onBack }: { onBack: () => void }) {
       )}
     </section>
   );
-}
-
-function openAdversarial() {
-  go({ view: 'settings' });
-  setTimeout(() => document.getElementById('set-adversarial')?.scrollIntoView({ block: 'start' }), 120);
 }
 
 /** Nothing to draw yet: what fills it in. */

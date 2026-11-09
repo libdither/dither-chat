@@ -20,6 +20,7 @@ import { genericType } from './fileinfo.ts';
 import { mediaHeaders, SAFE_HEADERS, sniffMime } from './mediaheaders.ts';
 import { ImportSources } from './imports/sources.ts';
 import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } from './calls.ts';
+import { clampDays, parseZone } from './activitychart.ts';
 import { compress } from './compress.ts';
 import { forwardMessage } from './forward.ts';
 import { UsageStore } from './usage.ts';
@@ -540,6 +541,14 @@ export class HubServer {
     // Their message count per server, estimated from what the hub holds (msgcount.ts, docs/profile.md).
     if ((m = path.match(/^\/api\/(persons|identities)\/([\w-]+)\/activity$/))) {
       const v = s.messageActivity(m[1] === 'persons' ? { personId: m[2] } : { identityId: m[2] }, url.searchParams.get('space') || undefined);
+      return v ? ok(v) : bad('nobody by that id', 404);
+    }
+    // When someone is around: their messages, yours to them, presence and statuses by local hour (activitychart.ts, docs/profile.md).
+    if ((m = path.match(/^\/api\/people\/([\w-]+)\/activity$/)) && method === 'GET') {
+      const zone = parseZone(url.searchParams.get('tz'), url.searchParams.get('offset'));
+      if (!zone) return bad('unknown time zone');
+      const days = clampDays(url.searchParams.get('days'));
+      const v = s.activityChart(m[1].startsWith('idn_') ? { identityId: m[1] } : { personId: m[1] }, days, zone);
       return v ? ok(v) : bad('nobody by that id', 404);
     }
     // What changed (docs/history.md): a place's name, description, settings and members; a person's names, pictures
