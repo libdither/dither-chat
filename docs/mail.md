@@ -192,7 +192,9 @@ follows mailboxes you open), so what happens to it there later reaches the hub o
 - **Each message gets a class** by the first of §4's rules that matches (`hub/src/mail/classify.ts`): your override;
   yours; in a thread you wrote in; from someone you wrote to (or who wrote in a thread of yours); from someone you
   merged with a chat contact or know by another address; in Junk; list or machine headers (List-Id,
-  List-Unsubscribe, Precedence bulk/list/junk, Auto-Submitted); a Gmail category label; an automated address
+  List-Unsubscribe, Precedence bulk/list/junk, Auto-Submitted, from a summary or, on Proton, from the body); a
+  category label (Gmail's, or Proton's `Category/Social`, `Promotions`, `Updates`, `Newsletters` and `Transactions`:
+  receipts and sign-in codes are a machine's mail); an automated address
   (no-reply, notifications, …); more than 10 recipients with you in neither To nor Cc; anything else is from a
   person nobody knows yet (`unknown`). People come before the bulk rules, so a newsletter's author you write to is a
   person. A thread is from a person if any message in it is. The rule that decided is kept (`class_why`).
@@ -303,8 +305,9 @@ Tests: `hub/test/mail-classify.test.ts`, `mail-attention.test.ts`, `web/test/inb
 
 - **New mail from a person is triaged** like a chat message (`hub/src/mail/triage.ts`): one of the four levels
   (Important, Active, Digest, Not interesting), from chat's own decision model and chat's votes
-  ([notifications.md](notifications.md)). Only mail that arrives (`ingested` with `live`): never what a sync, a
-  backfill or a search lists. Bulk is never triaged: no notification, no digest. Yours and drafts are not either.
+  ([notifications.md](notifications.md)). Mail that arrives (`ingested` with `live`) is triaged and may notify; what a
+  sync, a backfill or a search lists never notifies (but see "quietly" below). Bulk is never triaged: no
+  notification, no digest. Yours and drafts are not either.
 - **Where it starts.** Someone you correspond with (you wrote to them, they wrote in a thread of yours, or you merged
   them with a chat contact) who wrote to you (To): Important. The same in Cc: Active. A list or Bcc from them, and
   anything from a sender nobody knows: the digest, if it says enough ("to you", a question, a reply to you, urgency),
@@ -340,6 +343,15 @@ Tests: `hub/test/mail-classify.test.ts`, `mail-attention.test.ts`, `web/test/inb
   down on the thread's newest decision.
 - **A sender nobody knows** reaches the one-list inbox only when triage rates the thread's newest message Active or
   above, by the model or your vote (§14 Q4, `mailAttention(hub).triage`).
+- **Quietly, what a sync found** (`MailTriage.sweep`). A stranger's thread that was already there when the account was
+  added never arrived live, so it would never be rated and never listed. So the threads the one-list inbox could list
+  (its window: unread within 30 days, mail in the last week, opened, owed; never a year of mail) from a sender
+  nobody knows, whose newest message has no decision, are rated with the same facts and model, once their body is
+  here (asked for, waited for at most a minute), 30 an account a pass, after a sync brings mail and every 5
+  minutes. Such a decision has `quiet = 1` and says "Rated after a sync found it: no notification": it never
+  notifies, is never held by quiet hours, is never a line of a later notification, and never counts as a
+  notification you let stand; it only decides the listing, and shows on the board and in the reader so you can vote
+  on it. On an account whose summaries carry no headers it waits until the steps below are done.
 
 How: `mail_triage` (`schema-triage.sql`) keeps each decision with its facts, words, chances, whether it notified and
 your vote; a message the server no longer has keeps its row only if you voted on it, and an account's mail going
@@ -348,9 +360,39 @@ board's mail (`MailTriageItem`); each thread's view carries its newest decision 
 message's its own (`MailMessageView.triage`), so the board follows new mail and reads live. The daily digest
 notification still counts chat only.
 Tests: `hub/test/mail-triage.test.ts` (bulk, a known sender in To, quiet hours, "Email off", a vote on Sam's mail
-and Sam on Signal, the inbox for strangers, spoofing, late and read mail, lines and reads, the routes);
+and Sam on Signal, the inbox for strangers, what a sync found rated quietly, spoofing, late and read mail, lines and
+reads, the routes);
 `verify-notifications.ts`'s mail run (a demo person answers what you send; the toast, the board, a vote, the reader,
 Email off, a phone and the light theme).
+
+## Summaries without headers (Proton)
+
+Proton's lists, events and searches give a message's metadata only: In-Reply-To, References and the list headers
+(List-Id, List-Unsubscribe, Precedence, Auto-Submitted) come only with its body (`mail.get`). Until then a newsletter
+looks like a stranger's mail. What the hub does about it (`hub/src/mail/headerless.ts`):
+
+- **Which accounts.** The status's `details.summaryHeaders` (dither-accounts: false for Proton, true for IMAP); without
+  it, an account none of whose summaries has carried any of those headers yet (`MailStore.headerless`,
+  `mail_account.summary_headers` and `headers_seen`).
+- **The body's headers count.** `MailStore.putBody` keeps mail.get's list headers in `mail_message.bulk` (threading
+  headers it already took), and the thread is classified again in the same transaction.
+- **Proton's own sorting.** Its summaries carry Proton's categories as labels (`Category/Newsletters`, also for a
+  newsletter subscription, `Category/Transactions`, `Category/Promotions`, `Category/Social`, `Category/Updates`),
+  which classify as bulk (§4 rule 8), body or not. Whether an account has Proton's categories turned on is Proton's
+  rollout; a newsletter subscription gives `Category/Newsletters` regardless.
+- **Once, for mail stored before.** On the first start after this (when the account can work), its mail is listed
+  again from the newest, Inbox and then All mail (or Archive), down to the oldest held, at most 5,000 a mailbox
+  (`MAIL_LIMITS.relabelMax`), as background pages in the budget: it only refreshes labels and flags, and removes
+  nothing. Then the bodies kept before their list headers were, of Inbox mail inside the window still classed
+  `unknown`, are fetched again. Each step is marked in `mail_setting` (`relabeled:<account>`, `rebodied:<account>`);
+  an account added later lists its mail with the labels already, so it is marked done at once.
+- **Bodies ahead for the window.** Besides the 14 days of personal mail, such an account's Inbox mail inside the
+  one-list inbox's window (30 days) still from a sender nobody knows has its body fetched ahead, in the same budget
+  and the same 300 at most, so its headers say whether it came from a list or answers you. Then triage rates what is
+  left, quietly (above).
+
+Tests: `hub/test/mail-headerless.test.ts` (a newsletter leaving the inbox once its body comes, which accounts, the
+one-time steps on a restart and not on the next, an account added later, an account with headers).
 
 ## Setting it up
 
@@ -385,7 +427,8 @@ plus all of Inbox), `DITHER_MAIL_MAX` (150,000 summaries an account), `DITHER_MA
   scroll. From then on the hub keeps it up like the others, every minute while a page shows it.
 - **Bodies ahead**: the newest 300 personal messages of the last 14 days (once the sync reaches back past those 14
   days in every mailbox it follows, so mail still on its way does not push more in), new personal mail as it arrives,
-  and the first 20 rows of each list you open, so their previews show. "Personal" is the message's class once slice 8 sets it;
+  and the first 20 rows of each list you open, so their previews show. On an account whose summaries carry no
+  headers, also its Inbox mail of the last 30 days still from a sender nobody knows ("Summaries without headers"). "Personal" is the message's class once slice 8 sets it;
   until then, mail to you or Cc'd to you, without list headers, from an address that does not look automated.
 - **The body cache**: 500 MB (`DITHER_MAIL_CACHE_MB`); past it, the least recently read go first, down to 90%. Starred
   mail stays, and so does a body an outbox item needs (`mail_body.keep = 1`). A body over 2 MB is kept only while it is

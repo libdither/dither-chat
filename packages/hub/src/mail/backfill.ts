@@ -24,6 +24,7 @@ import type * as M from '@dither-chat/protocol/mail-iface';
 import { asMailError } from './backend.ts';
 import { Bodies } from './bodies.ts';
 import { BodyCache } from './cache.ts';
+import { Headerless } from './headerless.ts';
 import type { MailHub } from './index.ts';
 import { MAIL_LIMITS, syncHorizon } from './limits.ts';
 import { P0, P2, P3, type MailQueue, type Priority } from './queue.ts';
@@ -395,6 +396,10 @@ export interface BigMail {
   window: LiveWindow;
   /** A list's first rows: their bodies, ahead. */
   rows(threads: P.MailThreadView[]): void;
+  /** These messages' bodies, in the background (P2): `body` fires as each comes. */
+  prefetch(messageIds: string[]): void;
+  /** Accounts whose summaries carry no headers: their one-time steps (headerless.ts). */
+  headerless: Headerless;
 }
 
 const BIG = new WeakMap<MailHub, BigMail>();
@@ -409,7 +414,8 @@ export const bigRoutes = (hub: MailHub): [] => {
   const window = new LiveWindow(hub.store);
   const cache = new BodyCache(hub.store);
   const bodies = new Bodies(hub, cache);
-  setBig(hub, { window, rows: (t) => bodies.rows(t) });
+  const headerless = new Headerless(hub, bodies);
+  setBig(hub, { window, rows: (t) => bodies.rows(t), prefetch: (ids) => bodies.prefetch(ids), headerless });
   hub.store.window = (ids) => window.split(ids);
   hub.on('ingested', (e) => (e.live ? bodies.arrived(e.messageIds) : bodies.later(e.accountId)));
   hub.on('body', () => cache.stored());
@@ -428,6 +434,7 @@ export const bigRoutes = (hub: MailHub): [] => {
     clearInterval(sweep);
     cache.stop();
     bodies.stop();
+    headerless.stop();
   });
   return [];
 };

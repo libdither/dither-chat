@@ -35,6 +35,8 @@ export const MAIL_LIMITS = {
   prefetchDays: 14,
   prefetchMax: 300,
   prefetchRows: 20,
+  /** An account whose summaries carry no headers is listed again once for its labels: this many a mailbox at most (headerless.ts). */
+  relabelMax: 5_000,
   /** A body over this is kept only while it is read; the search text keeps the first `textBytes` of each. */
   bodyMaxBytes: 2 * 1024 * 1024,
   textBytes: 16 * 1024,

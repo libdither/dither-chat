@@ -11,7 +11,8 @@
  *   6  in a junk mailbox                                   bulk     junk
  *   7  list or machine headers (List-Id, List-Unsubscribe, bulk     list
  *      Precedence bulk/list/junk, Auto-Submitted but `no`)
- *   8  a category label (Gmail's CATEGORY_PROMOTIONS, …)   bulk     category
+ *   8  a category label (Gmail's CATEGORY_PROMOTIONS,     bulk     category
+ *      Proton's Category/Newsletters, …)
  *   9  an automated local part (no-reply, notifications, …) bulk    automated
  *  10  more than 10 recipients, you in none of To and Cc   bulk     crowd
  *  11  anything else: someone who looks human              personal unknown
@@ -67,8 +68,12 @@ export interface ClassifyFacts {
 
 /** Local parts that send for a machine, not a person (rule 9). */
 const AUTOMATED = /^(?:no[-_.]?reply|do[-_.]?not[-_.]?reply|notifications?|notify|alerts?|news(?:letters?)?|mailer-daemon|postmaster|bounces?|marketing|updates?|digest)(?:$|[-_.+])/i;
-/** Gmail's category labels (and the same names as other clients spell them). */
-const CATEGORY = /^\\?(?:category[_/ :-]?)(?:promotions|social|updates|forums)$/i;
+/**
+ * Category labels: Gmail's (CATEGORY_PROMOTIONS, …), and Proton's own sorting, which its extractor spells
+ * `Category/Social`, `Category/Promotions`, `Category/Updates`, `Category/Newsletters` and `Category/Transactions`
+ * (receipts and sign-in codes: a machine's mail, not a person's).
+ */
+const CATEGORY = /^\\?(?:category[_/ :-]?)(?:promotions|social|updates|forums|newsletters?|transactions?)$/i;
 const PRECEDENCE = /^(?:bulk|list|junk)$/i;
 
 export function automatedAddress(address: string | null | undefined): boolean {

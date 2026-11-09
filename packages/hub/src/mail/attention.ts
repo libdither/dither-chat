@@ -6,7 +6,8 @@
  * **Listed** (mail_thread.listed): a thread from a person (classify.ts), not muted, in Inbox, and unread, or you owe a
  * reply, or its last message is under a week old, or you opened it in the last two days (MAIL_INBOX). A thread from a
  * sender nobody knows (§4's rule 11) also needs triage to rate it Active or above (§14 Q4): `MailAttention.triage`,
- * which says no until slice 9 plugs its rating in. Archiving it (it leaves Inbox) takes it out.
+ * which says no until slice 9 plugs its rating in (mail a sync found is rated too, quietly: triage.ts `sweep`).
+ * Archiving it (it leaves Inbox) takes it out.
  *
  * **The score**: each listed thread's messages fold with attention.ts's `foldMessage` (you and one other is `direct`,
  * else a `group` of everyone on it; you in To is a mention; a reply to one of yours replies to you), and
@@ -323,7 +324,7 @@ export class MailAttention implements AttentionSource {
   }
 
   /** Threads that may be listed now: the SQL side of isListed, so a year of mail is not read every few minutes. */
-  private candidates(now: number): string[] {
+  candidates(now: number): string[] {
     const W = MAIL_INBOX;
     return this.hub.store
       .all<{ id: string }>(

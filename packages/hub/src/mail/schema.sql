@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS mail_account (
   send         TEXT,                            -- JSON {ok, why, at}
   sync_mode    TEXT,                            -- status.details.sync (imap)
   synced_at    INTEGER,                         -- the first sync finished
+  summary_headers INTEGER,                      -- status.details.summaryHeaders: 1 its summaries carry threading and bulk headers, 0 not (Proton); NULL: not said
+  headers_seen INTEGER,                         -- 1 once a summary of it carried In-Reply-To, References or bulk headers
   hidden       INTEGER NOT NULL DEFAULT 0,
   gone_at      INTEGER,                         -- access ended: everything of it goes 24 h later
   created_at   INTEGER NOT NULL

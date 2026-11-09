@@ -4,6 +4,9 @@
  *
  *   - personal mail of the last MAIL_LIMITS.prefetchDays, newest first, at most MAIL_LIMITS.prefetchMax an account,
  *     once a sync has brought it;
+ *   - on an account whose summaries carry no headers (Proton, MailStore.headerless), also Inbox mail inside the
+ *     one-list inbox's window (MAIL_INBOX.unread) still classed `unknown`: only its body says whether it came from a
+ *     list, or answers one of yours. After headerless.ts relabelled the account, so its labels decide first;
  *   - new mail that looks personal, as it arrives (triage, slice 9, reads its text);
  *   - the first MAIL_LIMITS.prefetchRows rows of a list a page opens, so their previews show.
  *
@@ -11,8 +14,10 @@
  * from an address that does not look automated (§4 rules 7 and 9). Each body that arrives is MailHub's `body` event.
  */
 import type * as P from '@dither-chat/protocol';
+import { MAIL_INBOX } from './attention.ts';
 import { asMailError } from './backend.ts';
 import type { BodyCache } from './cache.ts';
+import { relabeled } from './headerless.ts';
 import type { MailHub } from './index.ts';
 import { DAY, MAIL_LIMITS } from './limits.ts';
 import { P2 } from './queue.ts';
@@ -39,14 +44,25 @@ export class Bodies {
 
   /** Fetches these bodies in the background, those not here or on their way already. */
   prefetch(messageIds: string[]) {
+    void this.fetch(messageIds, false);
+  }
+
+  /** Fetches these again, here or not (headerless.ts: bodies kept before their headers were). Done when all settled. */
+  again(messageIds: string[]): Promise<unknown> {
+    return this.fetch(messageIds, true);
+  }
+
+  private fetch(messageIds: string[], again: boolean): Promise<unknown> {
     const st = this.hub.store;
+    const going: Promise<unknown>[] = [];
     for (const id of messageIds) {
-      if (this.queued.has(id) || st.one('SELECT 1 FROM mail_body WHERE message_id = ?', id)) continue;
+      if (this.queued.has(id) || (!again && st.one('SELECT 1 FROM mail_body WHERE message_id = ?', id))) continue;
       const m = st.one<{ account_id: string }>('SELECT account_id FROM mail_message WHERE id = ?', id);
       const s = m && this.hub.sync(m.account_id);
       if (!s?.workable) continue;
       this.queued.add(id);
-      s.fetchBody(id, P2)
+      const one = s
+        .fetchBody(id, P2)
         .then(
           () => {
             this.cache.stored();
@@ -59,7 +75,9 @@ export class Bodies {
           },
         )
         .finally(() => this.queued.delete(id));
+      going.push(one);
     }
+    return Promise.all(going);
   }
 
   /**
@@ -76,12 +94,31 @@ export class Bodies {
       since,
       MAIL_LIMITS.prefetchMax * 2,
     );
-    this.prefetch(
-      rows
-        .filter((r) => this.looksPersonal(r.from_addr))
-        .slice(0, MAIL_LIMITS.prefetchMax)
-        .map((r) => r.id),
-    );
+    const ids = rows.filter((r) => this.looksPersonal(r.from_addr)).map((r) => r.id);
+    this.prefetch([...new Set([...ids.slice(0, MAIL_LIMITS.prefetchMax), ...this.window(accountId, false)])].slice(0, MAIL_LIMITS.prefetchMax));
+  }
+
+  /**
+   * An account without headers on its summaries: Inbox mail in the one-list inbox's window from a sender nobody knows
+   * (`unknown`, or not classified yet), whose body would say whether it came from a list or answers you. `fetched`:
+   * those whose body is here (headerless.ts fetches them again once, as they were kept before their headers were);
+   * else those whose body is not. Empty for any other account, and until its labels are in (headerless.ts).
+   */
+  window(accountId: string, fetched: boolean, now = Date.now()): string[] {
+    const st = this.hub.store;
+    if (!st.headerless(accountId) || !relabeled(st, accountId)) return [];
+    return st
+      .all<{ id: string }>(
+        `SELECT m.id FROM mail_message m
+         WHERE m.account_id = ? AND m.received_at >= ? AND m.addressed != 'self' AND m.draft = 0 AND m.bulk IS NULL AND (m.class IS NULL OR m.class_why = 'unknown')
+           AND ${fetched ? '' : 'NOT'} EXISTS (SELECT 1 FROM mail_body WHERE message_id = m.id)
+           AND EXISTS (SELECT 1 FROM mail_location l JOIN mailbox b ON b.id = l.mailbox_id WHERE l.message_id = m.id AND b.role = 'inbox')
+         ORDER BY m.received_at DESC LIMIT ?`,
+        accountId,
+        now - MAIL_INBOX.unread,
+        MAIL_LIMITS.prefetchMax,
+      )
+      .map((r) => r.id);
   }
 
   /** After a sync brought mail: `recent`, a few seconds later, once for a run of pages. */
