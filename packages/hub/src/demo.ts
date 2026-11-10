@@ -20,13 +20,21 @@ import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
 
 type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa' | 'tg';
 
+/**
+ * DITHER_DEMO_SCENARIO=multiaccount adds Kit, one person on seven accounts across five networks, talking with several
+ * of yours (eight pairs), and names your demo accounts by their usernames. Off by default: the default world's counts
+ * are what the tests and perf baselines expect.
+ */
+export const MULTI_ACCOUNT = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('multiaccount');
+const named = (plain: string, username: string) => (MULTI_ACCOUNT ? username : plain);
+
 export const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label: string; color: string }[] = [
-  { key: 'dmain', id: 'acc_demo-discord-main', network: 'discord', label: 'main', color: '#F2A541' },
-  { key: 'dalt', id: 'acc_demo-discord-alt', network: 'discord', label: 'alt', color: '#E86A92' },
-  { key: 'sig', id: 'acc_demo-signal', network: 'signal', label: 'personal', color: '#B794F6' },
-  { key: 'mx', id: 'acc_demo-matrix', network: 'matrix', label: 'matrix.org', color: '#FF8C61' },
-  { key: 'wa', id: 'acc_demo-whatsapp', network: 'whatsapp', label: 'personal', color: '#7FD1AE' },
-  { key: 'tg', id: 'acc_demo-telegram', network: 'telegram', label: 'personal', color: '#5CC8FF' },
+  { key: 'dmain', id: 'acc_demo-discord-main', network: 'discord', label: named('main', 'zyansheep'), color: '#F2A541' },
+  { key: 'dalt', id: 'acc_demo-discord-alt', network: 'discord', label: named('alt', 'zyn.alt'), color: '#E86A92' },
+  { key: 'sig', id: 'acc_demo-signal', network: 'signal', label: named('personal', 'zyan.01'), color: '#B794F6' },
+  { key: 'mx', id: 'acc_demo-matrix', network: 'matrix', label: named('matrix.org', '@zyansheep'), color: '#FF8C61' },
+  { key: 'wa', id: 'acc_demo-whatsapp', network: 'whatsapp', label: named('personal', 'zyan'), color: '#7FD1AE' },
+  { key: 'tg', id: 'acc_demo-telegram', network: 'telegram', label: named('personal', '@zyansheep'), color: '#5CC8FF' },
 ];
 
 // ------------------------------------------------------------------ id shapes
@@ -119,6 +127,22 @@ const TG = {
   // Blocked (docs/add.md "Relationships").
   spam: tid('spam', 'crypto_signals_vip', 'Crypto Signals VIP', false),
 };
+/** Kit (MULTI_ACCOUNT): three Discord accounts, Signal, two Matrix accounts on different servers, Telegram. */
+const KIT = {
+  exe: did('kit', 'kit.exe', 'kit', { contact: true }),
+  alt: did('kit-alt', 'kit_alt', 'kit (raid)', { contact: true }),
+  work: did('kit-work', 'kit.work', 'Kit Okafor', { contact: true }),
+  sig: sid('kit', '+1 555 0144', 'Kit'),
+  mx: mid('@kit:matrix.org', 'kit', { contact: true }),
+  nix: mid('@kit:nixos.dev', 'kit (nixos)', { contact: true }),
+  tg: tid('kit', 'kitkat', 'Kit', true),
+};
+if (MULTI_ACCOUNT) {
+  Object.assign(D, { kit: KIT.exe, kitAlt: KIT.alt, kitWork: KIT.work });
+  Object.assign(S, { kit: KIT.sig });
+  Object.assign(M, { kit: KIT.mx, kitNix: KIT.nix });
+  Object.assign(TG, { kit: KIT.tg });
+}
 const POOLS: Partial<Record<P.Network, Record<string, P.IdentityFact>>> = { discord: D, signal: S, whatsapp: W, matrix: M, telegram: TG };
 const at = (i: P.IdentityFact) => `<@${i.nativeId}>`;
 
@@ -981,6 +1005,93 @@ const CONVS: DemoConv[] = [
   },
 ];
 
+/**
+ * Kit's eight pairs over three days: a cabin trip that starts on Discord, moves to Signal, a work PR on the work
+ * account and Matrix, a message to the wrong one of your Discord accounts, a map sent on Matrix and asked about on
+ * Discord. Minutes ago, newest last.
+ */
+const KIT_CONVS: DemoConv[] = [
+  {
+    acc: ['dmain'],
+    fact: { nativeId: snow('dm-kit-main'), shape: 'direct', participants: [D.zyan.nativeId, KIT.exe.nativeId] },
+    msgs: [
+      [3 * DAY + 300, KIT.exe, 'you around the weekend after next? thinking cabin trip'],
+      [3 * DAY + 290, D.zyan, 'maybe! who is going'],
+      [3 * DAY + 288, KIT.exe, 'me, ravi, maybe theo. the one by the lake with the bad wifi'],
+      [DAY + 100, KIT.exe, 'did you get my signal msg?'],
+      [DAY + 95, D.zyan, 'yes, friday 4pm works'],
+    ],
+  },
+  {
+    acc: ['dmain'],
+    fact: { nativeId: snow('dm-kitwork-main'), shape: 'direct', participants: [D.zyan.nativeId, KIT.work.nativeId] },
+    msgs: [
+      [3 * DAY + 200, KIT.work, 'unrelated, but can you review my sync PR when you get a sec'],
+      [3 * DAY + 150, D.zyan, 'yep, tomorrow morning'],
+      [120, KIT.work, 'PR is green now, merge whenever'],
+    ],
+    unread: 1,
+  },
+  {
+    acc: ['dalt'],
+    fact: { nativeId: snow('dm-kit-alt'), shape: 'direct', participants: [D.zyn.nativeId, KIT.exe.nativeId] },
+    msgs: [
+      [2 * DAY + 400, KIT.exe, 'cabin: fri to sun, $60 each. you in?'],
+      [2 * DAY + 390, D.zyn, 'this is my alt 😅 but yes, count me in'],
+      [2 * DAY + 385, KIT.exe, 'lol both your accounts are called zyan something, how am I supposed to know'],
+      [20, KIT.exe, 'sent the map on matrix, did it arrive?'],
+    ],
+    unread: 1,
+  },
+  {
+    acc: ['dalt'],
+    fact: { nativeId: snow('dm-kitalt-alt'), shape: 'direct', participants: [D.zyn.nativeId, KIT.alt.nativeId] },
+    msgs: [
+      [2 * DAY + 380, KIT.alt, 'raid alt checking in: are you healing saturday?'],
+      [2 * DAY + 370, D.zyn, 'yes, 8pm'],
+    ],
+  },
+  {
+    acc: ['sig'],
+    fact: sdm(KIT.sig),
+    msgs: [
+      [2 * DAY + 100, KIT.sig, 'moving cabin stuff to signal, discord keeps eating my messages'],
+      [2 * DAY + 95, S.self, '👍'],
+      [2 * DAY + 90, KIT.sig, 'carpool from mine at 4pm friday?'],
+      [300, KIT.sig, 'bring the speaker'],
+      [250, KIT.sig, 'and snacks, ravi is bringing nothing as usual'],
+    ],
+    unread: 2,
+  },
+  {
+    acc: ['mx'],
+    fact: { nativeId: room('dm-kit', 'matrix.org'), shape: 'direct', participants: [M.self.nativeId, KIT.mx.nativeId], encrypted: true },
+    msgs: [
+      [3 * DAY + 120, KIT.mx, 'the PR, for when you look: https://github.com/libdither/dither-chat/pull/418'],
+      [3 * DAY + 60, M.self, 'left two comments'],
+      [60, KIT.mx, 'cabin map, the parking is the bit circled in red: https://maps.example.org/cabin-lake'],
+    ],
+    unread: 1,
+  },
+  {
+    acc: ['mx'],
+    fact: { nativeId: room('dm-kit-nix', 'nixos.dev'), shape: 'direct', participants: [M.self.nativeId, KIT.nix.nativeId], encrypted: true },
+    msgs: [
+      [DAY + 500, KIT.nix, 'btw the flake for the cabin wifi thing: https://github.com/kit/cabin-router'],
+      [DAY + 480, M.self, 'of course you put nixos on the cabin router'],
+    ],
+  },
+  {
+    acc: ['tg'],
+    fact: { nativeId: `user:${KIT.tg.nativeId}`, shape: 'direct', participants: [TG.self.nativeId, KIT.tg.nativeId] },
+    msgs: [
+      [DAY + 300, KIT.tg, 'made a telegram for the film photo group, adding you'],
+      [DAY + 290, TG.self, 'app number five'],
+    ],
+  },
+];
+if (MULTI_ACCOUNT) CONVS.push(...KIT_CONVS);
+
 // ------------------------------------------------------------------ live behaviour
 
 /** Background chatter so the review instance stays alive. One line every ~1.5-3 minutes. */
@@ -1003,6 +1114,9 @@ const CHATTER: [AccKey, string, P.IdentityFact, string][] = [
 const REPLIES: Record<string, string[]> = {
   [S.alice.nativeId]: ['haha ok', 'sounds good!', 'omw', '👍', 'you are the best'],
   [D.alice.nativeId]: ['lol', 'ok ok', 'sending it on signal'],
+  [KIT.exe.nativeId]: ['wait which account is this', 'ok cool', 'lol'],
+  [KIT.sig.nativeId]: ['perfect', 'see you friday', '🚗'],
+  [KIT.work.nativeId]: ['thanks!', 'merging'],
   [M.alice.nativeId]: ['let me know what you think of section 3'],
   [S.mom.nativeId]: ['Ok sweetie', 'Love you! See you Sunday', '❤️'],
   [W.nana.nativeId]: ['❤️', 'Good. Eat vegetables too'],
@@ -2340,6 +2454,7 @@ export function applyDemoOverlay(store: Store) {
   const sam = merge('Sam Rivera', ['signal', S.sam], ['matrix', M.sam]);
   merge('Theo', ['signal', S.theo], ['discord', D.theo]);
   merge('Quinn', ['discord', D.quinn], ['signal', S.quinn]);
+  if (MULTI_ACCOUNT) merge('Kit', ['discord', KIT.exe], ['discord', KIT.alt], ['discord', KIT.work], ['signal', KIT.sig], ['matrix', KIT.mx], ['matrix', KIT.nix], ['telegram', KIT.tg]);
 
   const cnv = (net: P.Network, nativeId: string) => hubId('cnv', net, nativeId);
   const spc = (net: P.Network, nativeId: string) => hubId('spc', net, nativeId);

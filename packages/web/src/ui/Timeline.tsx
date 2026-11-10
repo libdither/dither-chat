@@ -89,6 +89,7 @@ import { memo } from './memo.ts';
 import { heldRequest } from '../requests.ts';
 import { LinkBanner, RequestBar } from './Requests.tsx';
 import { countKey } from '../clicklog.ts';
+import { design, focusedPair, focusPair, myName, pairOf, PairIcons, PairLead, PairMark, PairRail, theirName } from './Pairs.tsx';
 
 
 // ------------------------------------------------------------------ header
@@ -554,7 +555,7 @@ function sourceTitle(m: P.MessageView): string | undefined {
  * each message: `target`, the message it replies to (a map per render, not a search per message); `thread`, its
  * thread's conversation; `src`, where it came from in a merged timeline. `onQuote` shows the quoted message.
  */
-const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuote, highlight, target, thread }: { m: P.MessageView; grouped: boolean; src?: string; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null }) {
+const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuote, highlight, target, thread, mark, onPick }: { m: P.MessageView; grouped: boolean; src?: string; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; mark?: ComponentChildren; onPick?: () => void }) {
   if (counting) rendered('MessageItem');
   metaRev.value;
   const author = m.authorId ? db.identities.get(m.authorId) : null;
@@ -597,10 +598,19 @@ const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuot
   const ticks = m.receipts && isSelfIdentity(m.authorId) ? <Ticks m={m} /> : null;
   return (
     <div
-      class={`msg ${grouped ? 'grouped' : ''} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''}`}
+      class={`msg ${grouped ? 'grouped' : ''} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''} ${onPick ? 'pair-pick' : ''}`}
       id={`m-${m.id}`}
       ref={(el) => void (el && swipeReply.set(el, () => onReply(m)))}
       {...menuProps}
+      // Design study (ui/Pairs.tsx): a click on a message of another pair sends through that pair, unless it selects text or hits a control.
+      onClick={
+        onPick &&
+        ((e: MouseEvent) => {
+          if (getSelection()?.toString()) return;
+          if ((e.target as HTMLElement).closest('a, button, img, video, audio, input, textarea, [data-att], [role="link"]')) return;
+          onPick();
+        })
+      }
     >
       <div class="msg-gutter">
         {grouped ? (
@@ -614,6 +624,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuot
         )}
       </div>
       <div class="msg-main">
+        {mark}
         {target && (
           <button class="reply-quote" onClick={() => onQuote(target.id)}>
             <Icon name="reply" size={12} />
@@ -730,7 +741,7 @@ interface Drawn {
   to: string | null;
 }
 
-function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tkey: string; convIds: string[]; merged: boolean; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string }) {
+function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus, pairs }: { tkey: string; convIds: string[]; merged: boolean; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; pairs?: { focus: string; onFocus: (convId: string) => void } }) {
   if (counting) rendered('Timeline');
   timelineRev(tkey).value;
   const scroller = useRef<HTMLDivElement>(null);
@@ -882,7 +893,9 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
   for (let i = start; i < end; i++) {
     const m = all[i];
     if (!prev || !sameDay(prev.ts, m.ts)) items.push(<div class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
-    if (merged && prev && prev.conversationId !== m.conversationId) {
+    // Design study (ui/Pairs.tsx): where the pair changes, a picture at the right of the message instead of a divider.
+    const runStart = !!pairs && (!prev || prev.conversationId !== m.conversationId);
+    if (merged && !pairs && prev && prev.conversationId !== m.conversationId) {
       const c = db.conversations.get(m.conversationId);
       items.push(
         <div class="net-switch" style={{ '--net': NETWORK_META[m.network].color } as any}>
@@ -897,7 +910,15 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
     const grouped = !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId;
     const target = m.replyToId ? (byId.get(m.replyToId) ?? quoted.get(m.replyToId) ?? null) : null;
     const thread = m.threadId ? (db.conversations.get(m.threadId) ?? null) : null;
-    items.push(<MessageItem key={m.id} m={m} grouped={grouped} src={merged ? sourceTitle(m) : undefined} onReply={onReply} onQuote={onQuote} highlight={m.id === flash} target={target} thread={thread} />);
+    let mark: ComponentChildren = undefined;
+    let onPick: (() => void) | undefined;
+    if (pairs) {
+      const c = db.conversations.get(m.conversationId);
+      const focused = m.conversationId === pairs.focus;
+      if (c && !focused) onPick = () => pairs.onFocus(c.id);
+      if (c && runStart) mark = <PairMark p={pairOf(c)} directs={convIds.map((id) => db.conversations.get(id)).filter((x): x is P.ConversationView => !!x)} focused={focused} onPick={() => pairs.onFocus(c.id)} />;
+    }
+    items.push(<MessageItem key={m.id} m={m} grouped={pairs ? grouped && !runStart : grouped} src={merged && !pairs ? sourceTitle(m) : undefined} onReply={onReply} onQuote={onQuote} highlight={m.id === flash} target={target} thread={thread} mark={mark} onPick={onPick} />);
     prev = m;
   }
 
@@ -957,9 +978,11 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
 
 // ------------------------------------------------------------------ composer
 
-function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, disabledReason }: {
+function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, disabledReason, lead }: {
   targets: { convId: string; accountId?: string };
   placeholder: string;
+  /** Design study (ui/Pairs.tsx): a line in place of the placeholder that can be clicked; it moves to the box's edge once typed in. */
+  lead?: ComponentChildren;
   sendAs?: { options: { id: string; label: any }[]; value: string; onChange: (v: string) => void; label: string };
   onSendAs?: never;
   reply: P.MessageView | null;
@@ -1102,7 +1125,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       data-track="text box"
       rows={1}
       value={text}
-      placeholder={disabledReason ?? placeholder}
+      placeholder={disabledReason ?? (lead ? '' : placeholder)}
       disabled={!!disabledReason}
       onInput={(e) => onText((e.target as HTMLTextAreaElement).value)}
       onBlur={composerDone}
@@ -1222,7 +1245,14 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           )}
           <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
             {sendAsMenu}
-            {box}
+            {lead ? (
+              <div class={`pair-lead ${text ? 'raised' : ''}`}>
+                <div class="pair-lead-slot">{lead}</div>
+                {box}
+              </div>
+            ) : (
+              box
+            )}
             {attaching && (
               <button class="icon-btn composer-camera" data-track="camera" onClick={openCamera} aria-label="Take a photo or video">
                 <Icon name="camera" size={20} />
@@ -1239,7 +1269,14 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
             </button>
           )}
           {sendAsMenu}
-          {box}
+          {lead ? (
+            <div class={`pair-lead ${text ? 'raised' : ''}`}>
+              <div class="pair-lead-slot">{lead}</div>
+              {box}
+            </div>
+          ) : (
+            box
+          )}
           {sendBtn}
         </div>
       )}
@@ -1371,6 +1408,7 @@ export function PersonPane({ personId, onBack }: { personId: string; onBack?: ()
   const unreadAt = useMemo(() => firstUnread(directs), [personId]);
   if (!person) return <Empty icon="user" title="Person not found" />;
   if (!directs.length) return <Empty icon="user" title={`No chats with ${person.name}`} />;
+  if (design.value !== 'current' && directs.length > 1) return <PairsPersonPane person={person} directs={directs} onBack={onBack} reply={reply} setReply={setReply} unreadAt={unreadAt} />;
   const viaId = (reply && directs.find((d) => d.id === reply.conversationId)?.id) || prefs.value.via[personId] || directs[0].id;
   const via = directs.find((d) => d.id === viaId) ?? directs[0];
   const label = (d: P.ConversationView) => {
@@ -1404,6 +1442,61 @@ export function PersonPane({ personId, onBack }: { personId: string; onBack?: ()
           onChange: (v) => setPrefs({ via: { ...prefs.value.via, [personId]: v } }),
           options: directs.map((d) => ({ id: d.id, label: label(d) })),
         }}
+      />
+    </section>
+  );
+}
+
+/** Design study (ui/Pairs.tsx): the person page as pairs of your account and theirs. */
+function PairsPersonPane({ person, directs, onBack, reply, setReply, unreadAt }: { person: P.PersonView; directs: P.ConversationView[]; onBack?: () => void; reply: P.MessageView | null; setReply: (m: P.MessageView | null) => void; unreadAt: number | null }) {
+  const rail = design.value === 'pairs-rail';
+  const picked = focusedPair(person.id, directs);
+  // Replying to a message sends through the pair it came from.
+  const focus = (reply && directs.find((d) => d.id === reply.conversationId)) || picked;
+  const onFocus = (id: string) => {
+    if (reply && reply.conversationId !== id) setReply(null);
+    focusPair(person.id, focus.id, id);
+  };
+  const cur = pairOf(focus);
+  return (
+    <section class={`pane pairs-pane ${rail ? 'pairs-pane-rail' : ''}`}>
+      <header class="conv-head" data-track-area="chat header" onContextMenu={onMenu(() => personMenu(person))}>
+        {onBack && (
+          <button class="icon-btn back" data-track="pager: back button" onClick={onBack} aria-label="Back">
+            <Icon name="back" />
+          </button>
+        )}
+        <button class="conv-head-icon conv-head-who" tabIndex={-1} title={`${person.name}'s profile`} onClick={() => go({ view: 'profile', person: person.id })}>
+          <Avatar id={person.id} name={person.name} url={person.avatar} size={34} />
+        </button>
+        <div class="conv-head-text">
+          <h2>
+            <button class="conv-head-name" title={`${person.name}'s profile`} onClick={() => go({ view: 'profile', person: person.id })}>
+              {person.name}
+            </button>
+            {person.starred && <Icon name="star" size={13} class="row-star" />}
+          </h2>
+          <div class="conv-head-sub">{rail ? <PairRail personId={person.id} directs={directs} focus={focus} /> : <PairIcons personId={person.id} directs={directs} focus={focus} />}</div>
+        </div>
+        <div class="conv-head-actions">
+          <button class={`hdr-btn ${detailsShown() ? 'on' : ''}`} data-track="details" onClick={() => showDetails(!detailsShown())} title="Details" aria-label="Details">
+            <Icon name="panel" size={16} />
+          </button>
+        </div>
+      </header>
+      {directs.filter((d) => d.pending).map((d) => (
+        <LinkBanner key={d.id} c={d} />
+      ))}
+      <NotStartedNote c={focus} />
+      <Timeline tkey={timelineKey('p', person.id)} convIds={directs.map((d) => d.id)} merged onReply={setReply} firstUnreadTs={unreadAt} pairs={{ focus: focus.id, onFocus }} />
+      <TypingBar convIds={directs.map((d) => d.id)} />
+      <Composer
+        targets={{ convId: focus.id }}
+        placeholder={`Message ${theirName(cur)} from ${myName(cur)} on ${netName(cur.conv.network)}`}
+        reply={reply}
+        clearReply={() => setReply(null)}
+        disabledReason={composerBlocker(focus)}
+        lead={rail ? undefined : <PairLead person={person} personId={person.id} directs={directs} focus={focus} />}
       />
     </section>
   );

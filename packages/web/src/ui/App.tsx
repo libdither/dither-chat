@@ -27,6 +27,7 @@ import { SECTIONS, SettingsPane } from './Settings.tsx';
 import { showSection } from './bits.tsx';
 import { FolderSidebar, homeRoute, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar } from './Sidebar.tsx';
 import { ConversationPane, PersonPane } from './Timeline.tsx';
+import { DesignPicker } from './Pairs.tsx';
 import { Switcher } from './Switcher.tsx';
 import { Toasts } from './Toasts.tsx';
 import { CallDock } from './Call.tsx';
@@ -355,6 +356,7 @@ export function App() {
       <ReactionLayer />
       <MessageHistoryLayer />
       <Toasts />
+      <DesignPicker />
       <DragLayer />
       <ContextMenuLayer />
       <TooltipLayer />
