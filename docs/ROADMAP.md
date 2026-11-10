@@ -96,7 +96,7 @@ Built in slices from [mail-design.md](mail-design.md) (its §12); what works now
 | Unread badge on the app icon | M | L | done | Where the platform supports it |
 | ntfy, fully self-hosted | M | L | done | The Android app pushes through ntfy (UnifiedPush): ntfy.sh by default, your own server allowed with one tap. The older plain-text `DITHER_NTFY_URL` topic still works |
 | Reply from the notification | M | M | done | A Chromium extension, not in the Notifications standard: `type: 'text'` actions and `event.reply` confirmed in Chromium 155 on desktop, and documented for Android. Firefox has actions but no `reply`, iOS Safari has no actions, so there the notification opens the conversation. Uses the normal send, which now enforces the composer's refusals on the hub. Not offered through ntfy, where it would need an endpoint outside the same-origin check. Never tried with a real typed reply: headless Chromium shows no notification UI |
-| Quiet hours | M | L | done | Holds pushes on a daily schedule, optionally letting starred people through, with one summary when they end |
+| Quiet hours | M | L | done | Holds pushes on a daily schedule, optionally letting people set to always notify through, with one summary when they end |
 | Daily digest delivered as one notification | M | M | done | Off by default, at a local time. Counts and the busiest places since the last one, and nothing on a day with nothing. Quiet hours hold it until they end, and it replaces their summary. Catches up once after downtime |
 
 ## Hosting

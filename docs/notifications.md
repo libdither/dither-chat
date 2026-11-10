@@ -47,7 +47,8 @@ Each chance starts from a **prior**, set by where the message would land without
   mention, a reply to you or `@everyone` where it notifies on mentions. The rest starts as Digest. Signal does not
   say which groups you muted in the app (signal-cli keeps no group mutes), so Signal groups notify on every message
   until you vote them down.
-- Starred people and keywords: Important. Bots, unless they mention you or the place notifies on everything: Digest.
+- People set to always notify (a person rule `all`) and keywords: Important. Bots, unless they mention you or the
+  place notifies on everything: Digest.
 
 Important starts at ping 0.9, Active at ping 0.2 and active 0.85; Digest at ping 0.03 and active 0.1, with
 interesting 0.2 plus how addressed to you it is (the Smart score: mentions you +0.5, `@everyone` +0.2, replies to you
@@ -148,8 +149,8 @@ estimates become possible later:
   becomes **Active** with probability 5%, at most once there a day: how much does the buzz itself matter?
 
 The live hub runs with `up`: it only ever adds a silent notification.
-- **Never** during quiet hours, for starred people or keywords, for a mention of you or a reply to you, for a DM's
-  first message after 5 quiet minutes, or in a place set to Nothing.
+- **Never** during quiet hours, for people set to always notify or keywords, for a mention of you or a reply to you,
+  for a DM's first message after 5 quiet minutes, or in a place set to Nothing.
 
 `propensity` is the chance of what was done when the draw happened (2% or 98% up, 5% or 95% down) and NULL when no
 draw could happen.

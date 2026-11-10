@@ -216,7 +216,7 @@ export function PersonDetails({ personId }: { personId: string }) {
   if (!p) return null;
   const directs = directsOf(p.id);
   const ids = p.identityIds.map((id) => db.identities.get(id)).filter((i): i is P.IdentityView => !!i);
-  const always = p.starred || db.rules.some((r) => r.scope === 'person' && r.target === p.id && r.level === 'all');
+  const always = db.rules.some((r) => r.scope === 'person' && r.target === p.id && r.level === 'all');
   const others = [...db.persons.values()].filter((x) => x.id !== p.id && !x.isSelf).sort((a, b) => a.name.localeCompare(b.name));
   return (
     <aside class="details">
@@ -280,12 +280,7 @@ export function PersonDetails({ personId }: { personId: string }) {
             <input
               type="checkbox"
               checked={always}
-              onChange={(e) => {
-                const on = (e.target as HTMLInputElement).checked;
-                setRule('person', p.id, on ? 'all' : null);
-                // A star set before stars left the app means the same to the hub, so turning this off clears it too.
-                if (!on && p.starred) api(`/api/persons/${p.id}`, { method: 'PATCH', body: { starred: false } });
-              }}
+              onChange={(e) => setRule('person', p.id, (e.target as HTMLInputElement).checked ? 'all' : null)}
             />
             <span>
               <b>Always notify</b>

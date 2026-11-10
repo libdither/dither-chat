@@ -57,8 +57,8 @@ Right:
 - **Accounts**: each identity, with Open on the network and Unmerge; a hint when someone elsewhere has the same name,
   saying where ("Alice Chen on Signal", "Alice Chen <alice@…>"), and the merge search, which finds people by any name
   or handle (an email address too) and email addresses no person holds yet (`GET /api/persons/candidates`).
-- **Notifications**: Always notify. A star set before stars left the app (2026-11-10) shows here as on, and turning
-  it off clears the star too; the hub still stores `starred` and treats it like Always notify.
+- **Notifications**: Always notify, a person rule `all`. Stars left the app on 2026-11-10 and the hub cleared the old
+  ones once (`clearStars`, packages/hub/src/store.ts), so Always notify is the only way to have someone always push.
 - **Note**: yours only, kept on the hub.
 
 ### Your own bio

@@ -88,13 +88,13 @@ describe('triage', () => {
     store.setQuietHours({ ...night, enabled: false });
     expect((await triage.decide(say('ann'), NIGHT))?.decision).toBe('push');
   });
-  test('starred people break through only when allowed', async () => {
+  test('people set to always notify break through only when allowed', async () => {
     const person = store.one<{ person_id: string }>(`SELECT person_id FROM identity WHERE native_id = 'ann'`)!.person_id;
-    store.updatePerson(person, { starred: true });
+    store.setRule('person', person, 'all');
     expect((await triage.decide(say('ann'), NIGHT))?.decision).toBe('push');
     store.setQuietHours({ ...night, allowStarred: false });
     expect((await triage.decide(say('ann'), NIGHT))?.decision).toBe('digest');
-    store.updatePerson(person, { starred: false });
+    store.setRule('person', person, null);
   });
   test('what was held is summed up once, after the hours end', async () => {
     await triage.decide(say('ann'), NIGHT);

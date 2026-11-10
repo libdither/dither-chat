@@ -740,12 +740,10 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           <label class="toggle-row">
             <input
               type="checkbox"
-              checked={rule?.level === 'all' || !!person?.starred}
+              checked={rule?.level === 'all'}
               onChange={async (e) => {
                 const on = (e.target as HTMLInputElement).checked;
                 setRule('person', await ensure(), on ? 'all' : null);
-                // A star set before stars left the app means the same to the hub, so turning this off clears it too.
-                if (!on && person?.starred) patch({ starred: false });
               }}
             />
             <span>

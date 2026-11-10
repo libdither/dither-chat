@@ -130,7 +130,7 @@ describe('the exploration draw', () => {
     level: 'digest',
     probs: { ping: 0.05, active: 0.3, interesting: 0.6 },
     facts: facts({ base: 'digest' }),
-    starred: false,
+    alwaysNotify: false,
     keyword: false,
     quietHours: false,
     dmAfterLull: false,
@@ -160,9 +160,9 @@ describe('the exploration draw', () => {
     expect(explore(ctx({ ...push, pingsHere: 12, upOnly: true }), yes)).toEqual({ level: 'push', explore: null, propensity: null });
   });
 
-  test('never: quiet hours, starred, keywords, mentions and replies to you, a DM after a lull', () => {
+  test('never: quiet hours, always notify, keywords, mentions and replies to you, a DM after a lull', () => {
     const push = { level: 'push' as const, probs: { ping: 0.9, active: 0.97, interesting: 0.99 }, pingsHere: 20 };
-    for (const c of [{ quietHours: true }, { starred: true }, { keyword: true }, { dmAfterLull: true }, { facts: facts({ mention: true }) }, { facts: facts({ reply: true }) }]) {
+    for (const c of [{ quietHours: true }, { alwaysNotify: true }, { keyword: true }, { dmAfterLull: true }, { facts: facts({ mention: true }) }, { facts: facts({ reply: true }) }]) {
       expect(explore(ctx(c), yes)).toEqual({ level: 'digest', explore: null, propensity: null });
       expect(explore(ctx({ ...push, ...c }), yes).explore).toBeNull();
     }

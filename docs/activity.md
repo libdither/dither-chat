@@ -138,7 +138,7 @@ The model that would replace triage's smart score (`askModel` in `triage.ts`, Ol
 3. **Evaluation before trusting it.** Run the model over the exported examples (decisions made before the model
    existed) and compare with the labels: how many pushes it would have dropped that you opened within minutes, and
    how many unprompted opens it would have pushed. Only then let its answers change decisions, and keep the rules'
-   floor (starred people, keywords, "Nothing").
+   floor (people set to always notify, keywords, "Nothing").
 
 The simplest first use needs no model at all: a place with 20+ pushes and an open rate under 10% could be suggested
 for Digest, and one with a high unprompted rate for Smart or All, as suggestions in Settings, never silent changes.
@@ -151,8 +151,9 @@ Both are JSON lines, downloadable from Settings → Privacy.
   visit `{type: 'visit', ...}` and every notification `{type: 'notification', ..., events: [{device, event, at}]}`.
 - **`GET /api/activity/examples`**: one line per triaged message within retention, for training and evaluating the
   model. Its metadata (conversation, network, shape, variant, members, kind, mentions you, replies to you, in a
-  thread, bot, starred, author's person), triage's decision, score, reasons (a model's reason is replaced by
-  "Model", since it may paraphrase the message), and your feedback; `inputs`, what triage knew from the log then (if
+  thread, bot, starred (`authorStarred`: false for everyone since stars were cleared on 2026-11-10), author's
+  person), triage's decision, score, reasons (a model's reason is replaced by "Model", since it may paraphrase the
+  message), and your feedback; `inputs`, what triage knew from the log then (if
   kept); and `outcome`: notified, delivered, shown, suppressed, in-app, tapped, time to tap, dismissed, replied from
   the notification, seen live, opened after, dwell, replied after, and how long it was observed (up to a day). Then a
   `label`:

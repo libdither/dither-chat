@@ -12,8 +12,8 @@
  *  - down: in a conversation with 10 or more pings a day, 5% of Important ones become Active, at most once there a
  *    day, to measure what the buzz itself is worth.
  * Each logs `explore` and the chance of what was done (`propensity`), so off-policy estimates are possible later.
- * Never in a place set to Nothing, during quiet hours, for starred people or keywords, for a mention of you or a
- * reply to you, or for a DM's first message after a lull.
+ * Never in a place set to Nothing, during quiet hours, for people set to always notify or keywords, for a mention of
+ * you or a reply to you, or for a DM's first message after a lull.
  */
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
@@ -45,8 +45,8 @@ export interface ExploreContext {
   /** The shadow model's chances, if it ran. */
   shadow?: P.TriageProbs;
   facts: Facts;
-  /** From a starred person, or matched a keyword. */
-  starred: boolean;
+  /** From a person set to always notify. */
+  alwaysNotify: boolean;
   keyword: boolean;
   quietHours: boolean;
   /** A DM's first message after a lull. */
@@ -68,8 +68,8 @@ export interface Explored {
 }
 
 /** May this message be explored at all? */
-export function explorable(c: Pick<ExploreContext, 'facts' | 'starred' | 'keyword' | 'quietHours' | 'dmAfterLull'>): boolean {
-  return !c.quietHours && !c.starred && !c.keyword && !c.facts.mention && !c.facts.reply && !c.dmAfterLull;
+export function explorable(c: Pick<ExploreContext, 'facts' | 'alwaysNotify' | 'keyword' | 'quietHours' | 'dmAfterLull'>): boolean {
+  return !c.quietHours && !c.alwaysNotify && !c.keyword && !c.facts.mention && !c.facts.reply && !c.dmAfterLull;
 }
 
 /** The draw: what to do with one decision, and with what chance. `rng` is Math.random but for tests. */

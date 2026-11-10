@@ -139,7 +139,7 @@ const PRESENCE_STATES = new Set<string>(['online', 'idle', 'dnd', 'offline']);
 const PRESENCE_DEVICES = new Set<string>(['desktop', 'mobile', 'web']);
 
 /** Bump when a migration step changes without schema.sql changing, so the database is copied before it runs. */
-const MIGRATIONS = 1;
+const MIGRATIONS = 2;
 
 export class Store {
   readonly db: Database;
@@ -193,6 +193,7 @@ export class Store {
       if (oldLog) this.adoptOldChangeLog();
       if (broadcastsUnknown) this.markBroadcasts();
       this.adoptOldReactions(reactionsBefore);
+      this.clearStars();
       this.db.query(`INSERT INTO meta (key, value) VALUES ('schema_sig', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(sig);
     })();
     timer.step('migrations');
@@ -216,6 +217,17 @@ export class Store {
     } catch {
       return '';
     }
+  }
+
+  /**
+   * Stars left the app on 2026-11-10 (#86), and the stars set before then are cleared, once, rather than kept as Always
+   * notify: a person rule `all` is the only way to always notify now. The column stays, so nothing is dropped.
+   */
+  private clearStars() {
+    if (this.db.query(`SELECT 1 FROM meta WHERE key = 'stars_cleared'`).get()) return;
+    const n = this.db.query('UPDATE person SET starred = 0 WHERE starred != 0').run().changes;
+    if (n) console.log(`stars left the app: cleared ${n} star${n === 1 ? '' : 's'}`);
+    this.db.query(`INSERT INTO meta (key, value) VALUES ('stars_cleared', ?)`).run(String(Date.now()));
   }
 
   /** backups/pre-migrate-<time>.sqlite next to the database, the newest five kept. Not for an in-memory database. */
@@ -1259,8 +1271,7 @@ export class Store {
     if (intoId === fromId) return;
     const tx = this.db.transaction(() => {
       this.db.query('UPDATE identity SET person_id = ? WHERE person_id = ?').run(intoId, fromId);
-      const from = this.db.query('SELECT starred FROM person WHERE id = ?').get(fromId) as Row | null;
-      this.db.query('UPDATE person SET manual = 1, starred = MAX(starred, ?) WHERE id = ?').run(from?.starred ?? 0, intoId);
+      this.db.query('UPDATE person SET manual = 1 WHERE id = ?').run(intoId);
       this.db.query(`UPDATE OR IGNORE folder_item SET item_id = ? WHERE item_kind = 'person' AND item_id = ?`).run(intoId, fromId);
       this.db.query(`DELETE FROM folder_item WHERE item_kind = 'person' AND item_id = ?`).run(fromId);
       this.db.query(`UPDATE OR IGNORE notify_rule SET target = ? WHERE scope = 'person' AND target = ?`).run(intoId, fromId);
@@ -1305,9 +1316,9 @@ export class Store {
     return pid;
   }
 
-  updatePerson(id: string, patch: { name?: string; starred?: boolean; note?: string }) {
+  /** `starred`, which clients from before stars left the app may still send, is ignored: Always notify is a person rule. */
+  updatePerson(id: string, patch: { name?: string; note?: string }) {
     if (patch.name !== undefined) this.db.query('UPDATE person SET name = ?, manual = 1 WHERE id = ?').run(patch.name, id);
-    if (patch.starred !== undefined) this.db.query('UPDATE person SET starred = ? WHERE id = ?').run(patch.starred ? 1 : 0, id);
     if (patch.note !== undefined) this.db.query('UPDATE person SET note = ? WHERE id = ?').run(patch.note, id);
     this.dirty.persons.add(id);
   }
@@ -1974,7 +1985,7 @@ export class Store {
 
   personView(r: Row, identityIds?: string[]): P.PersonView {
     const ids = identityIds ?? (this.db.query('SELECT id FROM identity WHERE person_id = ?').all(r.id) as Row[]).map((x) => x.id);
-    return { id: r.id, name: r.name, avatar: r.avatar_url ? this.media(r.avatar_url, null) : null, starred: !!r.starred, isSelf: !!r.is_self, identityIds: ids };
+    return { id: r.id, name: r.name, avatar: r.avatar_url ? this.media(r.avatar_url, null) : null, starred: false, isSelf: !!r.is_self, identityIds: ids };
   }
 
   spaceView(r: Row, accountIds?: string[], mute?: string | null): P.SpaceView {
