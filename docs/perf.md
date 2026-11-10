@@ -75,8 +75,8 @@ and at most 250 messages drawn on a reopen. An `--update` over one of them fails
 
 ## In CI (`--ci`)
 
-CI's `boot` job runs a small version on every push and pull request that changes code (docs/testing.md), in the
-runner's browser, after the boot check:
+CI's `perf` job runs a small version on every push and pull request that changes code (docs/testing.md), in the
+runner's browser, beside the other jobs:
 
 ```sh
 bun scripts/verify-perf.ts --ci                          # what CI runs: compared with scripts/perf-baseline-ci.json
@@ -84,25 +84,41 @@ bun scripts/verify-perf.ts --ci --update --runs 5        # a new CI baseline, an
 ```
 
 It seeds the same world at a tenth of the size (`--scale 0.1`: 574 conversations, 150 with messages, 22k messages,
-the biggest 8,000), then does a warm-up run that is not counted and three runs at 1×, with five older pages. Only
+the biggest 8,000), then does a warm-up run that is not counted and one run at 1×, with five older pages. Only
 counts, renders, layouts and bytes are judged, by the rules above, with one difference: a count of the page's
 structure may go 1% (at least two) over its baseline, not none. Each run's arriving message moves the long timeline's
-window of 150 by one message, so `long.reopen.nodes` comes down by about five a run (8214, 8209, 8205, 8199, 8194); the
-median is the same every time, but a change that only moves which message falls out of the window should not fail.
-A new part on every message (about 750 nodes on that timeline) or a list row (rows are in `cold.nodes`) still does.
+window of 150 by one message, so `long.reopen.nodes` comes down by about five a run (8214, 8209, 8205, 8199, 8194): CI's
+one run reads 8214 against the baseline's median of five, 8205, and a change that only moves which message falls out
+of the window should not fail. A new part on every message (about 750 nodes on that timeline) or a list row (rows are
+in `cold.nodes`) still does.
 
 Of those, only the ones the CI baseline marks `"gate": true` are judged. `--ci --update` sets that from the spread of
 its runs (it wants five): steady when the runs spread over at most half what the number may go over by (a tally,
 within one), so that noise alone cannot fail it. Every time, and anything not steady, is printed with its runs and goes
 in the job's summary (`GITHUB_STEP_SUMMARY`), never compared: a shared runner's times say little, and a time gate would
-fail at random. No run is tried again in CI. It takes about two minutes.
+fail at random. No run is tried again in CI. The script takes about 50 s on a runner, the job about a minute.
+
+The warm-up also stands in for the wait until the hub's journal stands still: the demo world settles about five
+seconds after its accounts come online, while the warm-up runs, and the hub's own numbers (`hub.*`) are taken after
+it. Without a warm-up (the local default) the script waits.
 
 What made the warm-up necessary (2026-11-10, five runs on this world): the first run on a fresh hub drew more than
 the rest, as at full size (474 against 354 message renders at 1×, not at 4×, which runs after): 428 against 308
 message renders for the six first opens, 13 against 9 inbox list renders, 36 against 19 layouts, and the reopens
-too. Its first answers are slower, so pages come in two renders rather than one. After a warm-up every tally in the
-CI world is steady: renders the same in every run but a cold load's and a relaunch's App renders (2 or 3), layouts
-within one.
+too. It is not that the hub's first answers are slow. A warm-up that hurried (100 ms without a render before each
+step, not 500) drew 308 itself on a fresh hub, and left the excess to the run after it: 436 message renders and 13
+inbox list renders. A conversation open for less than 300 ms is never marked read, and the first run at the real pace
+marks the six read: marking them read through the API after the hurried warm-up took away the first opens' excess,
+though not the reopens' (368 against 308). So the warm-up has to be a whole run at the real pace: it leaves the hub
+as the runs after it find it.
+
+Why one run after it is enough (2026-11-10, RUNS_N runs of `--ci` on GitHub's runners): every gated number stayed within
+its baseline in every run, and RUNS_SAME of the 30 came out the same as the baseline every time. The seven that moved
+moved as much when CI took three runs and their median: App renders on a cold load 2 or 3; layouts on a cold load 8 or
+9, on the six first opens 15 to 18 and on the six after a relaunch 17 or 18, all within the two a tally may go over;
+`long.reopen.nodes` 8214 (the first run's, above); and the bootstrap's bytes, by an arriving message or so
+(`hub.bootstrap.bytes`, taken after the warm-up now, 539,634 against 539,665; `cold.bootstrapBytes` 539,733 against
+539,932).
 
 ## Baselines and when to update them
 

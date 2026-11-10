@@ -36,8 +36,9 @@ const PORT = Number(opt('port', '8620'));
 /** Measured runs at each throttle; their medians are what counts. CI's are steady after the warm-up, so it takes one. */
 const RUNS = Number(opt('runs', CI ? '1' : '3'));
 /**
- * Runs first that are not counted. The first run on a fresh hub draws more than the rest (its first answers are
- * slower, so pages come in two renders, not one): 1.4 times the message renders, twice the layouts.
+ * Runs first that are not counted. The first run on a fresh hub draws more than the rest, 1.4 times the message
+ * renders and twice the layouts: it marks the six read and leaves the hub as later runs find it. So a warm-up is a
+ * whole run at the real pace; a hurried one leaves that to the first counted run (docs/perf.md).
  */
 const WARMUP = Number(opt('warmup', CI ? '1' : '0'));
 const CPUS = opt('cpu', CI ? '1' : '1,4').split(',').map(Number);
@@ -80,11 +81,17 @@ async function main() {
   mkdirSync(work, { recursive: true });
   // ------------------------------------------------------------------ the app, the world, the hub
   let web = opt('web', '');
+  let built = Promise.resolve();
   if (!web) {
     web = join(work, 'web');
     console.log('building the web app…');
-    const b = Bun.spawnSync(['bunx', '--bun', 'vite', 'build', '--outDir', web, '--emptyOutDir'], { cwd: join(root, 'packages/web'), stdout: 'pipe', stderr: 'pipe' });
-    if (b.exitCode !== 0) throw new Error('web build failed:\n' + b.stderr.toString());
+    // While the world is seeded and the hub starts: the hub reads it only when a page is asked for.
+    const b = Bun.spawn(['bunx', '--bun', 'vite', 'build', '--outDir', web, '--emptyOutDir'], { cwd: join(root, 'packages/web'), stdout: 'ignore', stderr: 'pipe' });
+    const err = new Response(b.stderr).text();
+    built = b.exited.then(async (code) => {
+      if (code !== 0) throw new Error('web build failed:\n' + (await err));
+    });
+    built.catch(() => {}); // awaited below; not an unhandled rejection meanwhile
   }
   const data = join(work, 'data');
   const world = seedWorld(data, { scale: SCALE });
@@ -101,6 +108,7 @@ async function main() {
   await until(async () => (await getJson('/api/bootstrap')).accounts.every((a: any) => a.status === 'online'), 30_000, 'demo accounts not online');
   const boot = await getJson('/api/bootstrap');
   if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
+  await built;
   // Then until its journal stands still (it moves for about five seconds): a first run that meets the demo world still
   // settling counts its renders. A warm-up run stands in for the wait: the world settles while it runs, uncounted.
   if (!WARMUP) {
