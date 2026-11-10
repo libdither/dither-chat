@@ -6,12 +6,14 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { ABOUT_LABEL, ABOUT_RULES, NETWORK_META } from '@dither-chat/protocol';
+import { useState } from 'preact/hooks';
 import { fullTime } from '../format.ts';
 import { convTitle, deepLink, effectiveLevel, LEVEL_LABEL, netName, unreadOf } from '../model.ts';
 import { db, go, href, isSelfIdentity, markRead, openMessage, rev, setRule } from '../state.ts';
 import { AccountChip, Empty, variantIcon } from './bits.tsx';
 import { copy } from './ContextMenu.tsx';
 import { EditableText, InviteSection, MembersSection, PinnedSection, RulesList, SettingRow, settingKeys, useAbout, valueText, type AboutTarget } from './About.tsx';
+import { AddMembersDialog } from './AddMembers.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
 import { Icon } from './icons.tsx';
 import { conversationMenu, spaceMenu } from './menus.tsx';
@@ -41,7 +43,8 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
   rev.value;
   const conv = kind === 'conversation' ? db.conversations.get(id) : undefined;
   const space = kind === 'space' ? db.spaces.get(id) : undefined;
-  const { view, error, busy, as, setAs, change } = useAbout({ kind, id });
+  const { view, error, busy, as, setAs, change, replace } = useAbout({ kind, id });
+  const [addingPeople, setAddingPeople] = useState(false);
   const network = (conv ?? space)?.network;
   if (!network)
     return (
@@ -93,6 +96,7 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
           {conv && <Action primary icon="send" label={conv.shape === 'direct' ? 'Open chat' : 'Open'} onClick={() => openConv(conv)} />}
           {space && <Action primary icon="layers" label={`Open ${noun.toLowerCase()}`} onClick={() => go({ view: 'space', space: space.id })} />}
           {peer && <Action icon="user" label="Their profile" onClick={() => go({ view: 'profile', person: peer.id })} />}
+          {conv && view?.adding?.can && <Action icon="userPlus" label={view.adding.mode === 'invite' ? 'Invite people' : 'Add people'} onClick={() => setAddingPeople(true)} />}
           {conv && unread > 0 && <Action icon="check" label="Mark read" onClick={() => markRead(conv.id)} />}
           <Action icon={ruleOf === 'none' ? 'bell' : 'bellOff'} label={ruleOf === 'none' ? 'Unmute' : 'Mute'} onClick={() => setRule(kind, id, ruleOf === 'none' ? null : 'none')} />
           {conv && <Action icon="search" label="Search" onClick={() => go({ view: 'search', q: `in:${conv.id}` })} />}
@@ -159,8 +163,11 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
 
       {view?.members && (
         <div class="pf-card pf-embed">
-          <MembersSection m={view.members} />
+          <MembersSection m={view.members} adding={view.adding} onAdd={() => setAddingPeople(true)} />
         </div>
+      )}
+      {addingPeople && view && kind === 'conversation' && (
+        <AddMembersDialog conversationId={id} accountId={view.accountId} network={network} title={title} onClose={() => setAddingPeople(false)} onDone={replace} />
       )}
       <HistoryCard path={`/api/${kind === 'space' ? 'spaces' : 'conversations'}/${id}/changes`} network={network} />
     </>

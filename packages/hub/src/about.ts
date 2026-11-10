@@ -4,17 +4,30 @@
  * account may make it.
  */
 import type * as P from '@dither-chat/protocol';
-import { ABOUT_LABEL, aboutChangeProblem, NETWORK_META } from '@dither-chat/protocol';
+import { ABOUT_LABEL, aboutChangeProblem, ADD_MEMBERS_MAX, addMembersNotBuilt, NETWORK_META } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
+import { addTables, givePace, takePace } from './add.ts';
 import type { Store } from './store.ts';
 
 export interface AboutDeps {
   store: Store;
   online: (accountId: string) => boolean;
-  command: <T>(accountId: string, cmd: { t: 'about'; target: P.AboutTarget } | { t: 'configure'; target: P.AboutTarget; change: P.AboutChange }, timeoutMs?: number) => Promise<T>;
+  command: <T>(
+    accountId: string,
+    cmd: { t: 'about'; target: P.AboutTarget } | { t: 'configure'; target: P.AboutTarget; change: P.AboutChange } | { t: 'addMembers'; target: P.AboutTarget; people: string[] },
+    timeoutMs?: number,
+  ) => Promise<T>;
   /** Which account speaks for a conversation (the one that would send), honouring a request. */
   pickAccount: (conversationId: string, requested?: string) => string | null;
+  /** A line in the account's log on the hub. */
+  note?: (accountId: string, line: string) => void;
+  now?: () => number;
 }
+
+/** How long the hub waits for people to be added: each is its own request on some networks. */
+export const ADD_MEMBERS_TIMEOUT = 90_000;
+/** At most this many people offered to pick from. */
+const CANDIDATES_MAX = 400;
 
 type Kind = P.AboutTarget['kind'];
 
@@ -93,6 +106,142 @@ export class Abouts {
     return this.view(kind, id, t.network, accountId, about, Date.now(), undefined, true);
   }
 
+  /**
+   * GET /api/conversations/:id/members/candidates: whom this account could add here, by the About it last gave (asked
+   * again only when none is kept): its friends where the network adds only friends, else its contacts and the people
+   * it has a direct conversation with, else also everyone in its other groups. People it talked with lately first;
+   * nobody in it already, nobody whose request still waits on you, and never the account itself or a bot.
+   */
+  async candidates(id: string, requested?: string): Promise<P.MemberCandidatesView> {
+    const t = this.target('conversation', id);
+    if (!t) throw new AboutError('no such conversation', 404);
+    const accountId = this.account('conversation', id, requested);
+    if (!accountId) throw new AboutError('None of your accounts is in this conversation.', 409);
+    const acc = this.d.store.account(accountId)!;
+    let about = this.kept(id, accountId)?.about ?? null;
+    if (!about && this.d.online(accountId) && caps(this.d.store, accountId).includes('about')) {
+      about = await this.d.command<P.About>(accountId, { t: 'about', target: { kind: 'conversation', nativeId: t.nativeId } }, 30_000).catch(() => null);
+      if (about) this.keep(id, accountId, about);
+    }
+    const adding = about?.adding;
+    const who: P.AddWho = adding?.who ?? 'known';
+    const db = this.d.store.db;
+    addTables(db);
+    const inIt = new Set((db.query('SELECT identity_id FROM participant WHERE conversation_id = ?').all(id) as { identity_id: string }[]).map((r) => r.identity_id));
+    for (const m of about?.members?.list ?? []) inIt.add(hubId('idn', t.network, m.id));
+    const links = new Map((db.query(`SELECT identity_id, relationship FROM person_link WHERE account_id = ? AND relationship IN ('friend', 'contact')`).all(accountId) as { identity_id: string; relationship: P.PersonRelationship }[]).map((r) => [r.identity_id, r.relationship]));
+    // When this account last had a message with each person in a direct conversation.
+    const talked = new Map(
+      (
+        db
+          .query(
+            `SELECT p.identity_id AS id, MAX(c.last_message_at) AS at FROM vantage v JOIN conversation c ON c.id = v.target_id AND c.shape = 'direct'
+             JOIN participant p ON p.conversation_id = c.id WHERE v.account_id = ? AND v.target_kind = 'conversation' GROUP BY p.identity_id`,
+          )
+          .all(accountId) as { id: string; at: number | null }[]
+      ).map((r) => [r.id, r.at ?? 0]),
+    );
+    const pool = new Set<string>(who === 'friends' ? [...links].filter(([, r]) => r === 'friend').map(([i]) => i) : [...links.keys(), ...talked.keys()]);
+    if (who === 'known')
+      for (const r of db
+        .query(`SELECT DISTINCT p.identity_id AS id FROM vantage v JOIN conversation c ON c.id = v.target_id AND c.shape = 'group' JOIN participant p ON p.conversation_id = c.id WHERE v.account_id = ? AND v.target_kind = 'conversation'`)
+        .all(accountId) as { id: string }[])
+        pool.add(r.id);
+    // Nobody whose request is still waiting on you (a message request, a friend request): adding them would answer it.
+    const asking = new Set((db.query('SELECT from_id FROM add_request WHERE account_id = ? AND from_id IS NOT NULL').all(accountId) as { from_id: string }[]).map((r) => r.from_id));
+    const ids = [...pool].filter((i) => !inIt.has(i) && !asking.has(i) && i !== acc.self_identity && !this.d.store.isSelf(i));
+    const rows = this.d.store.identitiesByIds(ids).filter((i) => i.network === t.network && !i.isBot);
+    const name = (i: P.IdentityView) => (i.personId ? this.d.store.one<{ name: string }>('SELECT name FROM person WHERE id = ?', i.personId)?.name : null) ?? i.displayName ?? i.handle ?? i.nativeId;
+    const named = rows.map((i) => ({ i, at: talked.get(i.id) ?? 0, name: name(i).toLocaleLowerCase() }));
+    named.sort((a, b) => b.at - a.at || a.name.localeCompare(b.name));
+    const shown = named.slice(0, CANDIDATES_MAX);
+    return {
+      accountId,
+      who,
+      mode: adding?.mode ?? 'add',
+      ...(adding?.room !== undefined ? { room: adding.room } : {}),
+      candidates: shown.map(({ i, at }) => ({ identityId: i.id, ...(links.get(i.id) ? { relationship: links.get(i.id) } : {}), ...(at ? { lastTalked: at } : {}) })),
+      identities: shown.map((x) => x.i),
+    };
+  }
+
+  /**
+   * POST /api/conversations/:id/members { identities, accountId? }: add these people through the account whose view
+   * this is, when a fresh About says it may and there is room. Each person counts once against the account's day.
+   */
+  async addMembers(id: string, b: { identities?: unknown; accountId?: unknown }): Promise<P.AddMembersView> {
+    const t = this.target('conversation', id);
+    if (!t) throw new AboutError('no such conversation', 404);
+    const wanted = Array.isArray(b.identities) ? [...new Set(b.identities)] : [];
+    if (!wanted.length || wanted.length > ADD_MEMBERS_MAX || !wanted.every((x) => typeof x === 'string' && x)) throw new AboutError(`Pick 1 to ${ADD_MEMBERS_MAX} people`, 400);
+    const accountId = this.account('conversation', id, typeof b.accountId === 'string' ? b.accountId : undefined);
+    if (!accountId) throw new AboutError('None of your accounts is in this conversation.', 409);
+    const acc = this.d.store.account(accountId)!;
+    const net = NETWORK_META[t.network].name;
+    const people: { identityId: string; nativeId: string }[] = [];
+    for (const identityId of wanted as string[]) {
+      const n = this.d.store.nativeOf('identity', identityId);
+      if (!n) throw new AboutError('Nobody by that id', 404);
+      if (n.network !== t.network) throw new AboutError(`Only ${net} people can be added to a ${net} group`, 400);
+      if (identityId === acc.self_identity) throw new AboutError('That is this account', 400);
+      people.push({ identityId, nativeId: n.nativeId });
+    }
+    if (!caps(this.d.store, accountId).includes('addMembers')) throw new AboutError(addMembersNotBuilt(t.network), 409);
+    if (!this.d.online(accountId)) throw new AboutError(`${net} · ${acc.label} is not connected`, 409);
+    const target = { kind: 'conversation' as const, nativeId: t.nativeId };
+    // Never on a stale answer: who may add, and how many fit, can have changed since the panel opened.
+    const fresh = await this.d.command<P.About>(accountId, { t: 'about', target }, 30_000).catch((e: Error) => {
+      throw new AboutError(`Could not ask ${net}: ${e.message}`, 502);
+    });
+    this.keep(id, accountId, fresh);
+    const adding = fresh.adding;
+    if (!adding?.can) throw new AboutError(adding?.reason ?? 'You cannot add people here.', 403);
+    const inIt = new Set((fresh.members?.list ?? []).map((m) => m.id));
+    const todo = people.filter((p) => !inIt.has(p.nativeId));
+    if (!todo.length) throw new AboutError(people.length === 1 ? 'They are in it already' : 'They are all in it already', 409);
+    if (adding.room !== undefined && todo.length > adding.room) throw new AboutError(adding.room ? `Only ${adding.room} more fit here` : 'There is no room for anyone else', 409);
+    // One slot each, all or none.
+    const db = this.d.store.db;
+    const at = this.d.now?.() ?? Date.now();
+    let taken = 0;
+    for (; taken < todo.length; taken++) {
+      const p = takePace(db, acc, 'members', at);
+      if (!p.ok) {
+        for (let i = 0; i < taken; i++) givePace(db, acc.id, 'members', at);
+        throw new AboutError(taken ? `${p.error} (${taken} of the ${todo.length} would fit)` : p.error, 429);
+      }
+    }
+    let r: P.AddMembersResult;
+    try {
+      r = (await this.d.command<P.AddMembersResult>(accountId, { t: 'addMembers', target, people: todo.map((p) => p.nativeId) }, ADD_MEMBERS_TIMEOUT)) ?? { added: [] };
+    } catch (e) {
+      const msg = String((e as Error)?.message ?? e);
+      if (/timed out/i.test(msg)) throw new AboutError(`${net} did not answer in ${ADD_MEMBERS_TIMEOUT / 1000} seconds. It may still have gone through: look again in a minute.`, 504);
+      // Refused before anything went out (the adapter's own check): the slots are given back.
+      if (!/disconnected|not connected/i.test(msg)) for (let i = 0; i < taken; i++) givePace(db, acc.id, 'members', at);
+      throw new AboutError(msg, 502);
+    }
+    const byNative = new Map(todo.map((p) => [p.nativeId, p.identityId]));
+    const ids = (xs: unknown) => (Array.isArray(xs) ? xs : []).map((x) => byNative.get(String(x))).filter((x): x is string => !!x);
+    const added = ids(r.added);
+    const invited = ids(r.invited);
+    const failed = (Array.isArray(r.failed) ? r.failed : [])
+      .map((f) => ({ identityId: byNative.get(String(f?.id)) ?? '', reason: typeof f?.reason === 'string' && f.reason ? f.reason.slice(0, 300) : `${net} refused` }))
+      .filter((f) => f.identityId);
+    const group = this.d.store.one<{ name: string | null }>('SELECT name FROM conversation WHERE id = ?', id)?.name ?? 'a group';
+    const names = (xs: string[]) => this.d.store.identitiesByIds(xs).map((i) => i.handle ?? i.displayName ?? i.nativeId).join(', ');
+    this.d.note?.(
+      accountId,
+      `[add] ${[added.length && `added ${names(added)}`, invited.length && `invited ${names(invited)}`, failed.length && `could not add ${names(failed.map((f) => f.identityId))}`].filter(Boolean).join('; ') || 'added nobody'} (${group})`,
+    );
+    let about: P.AboutView | null = null;
+    if (r.about && typeof r.about === 'object' && 'fields' in r.about) {
+      this.keep(id, accountId, r.about);
+      about = this.view('conversation', id, t.network, accountId, r.about, Date.now(), undefined, caps(this.d.store, accountId).includes('configure'));
+    }
+    return { accountId, added, invited, failed, about };
+  }
+
   private keep(targetId: string, accountId: string, about: P.About) {
     // Settings that changed since this account last said (docs/history.md). Name, description and picture come with
     // the conversation itself and are logged there.
@@ -167,6 +316,7 @@ export class Abouts {
       pinned = { messages: found, missing: about.pinned.messages.length - found.length, canEdit: about.pinned.canEdit, ...(about.pinned.reason ? { reason: about.pinned.reason } : {}) };
     }
     const coverage = kind === 'space' && s.one<{ n: number }>(`SELECT 1 AS n FROM space WHERE id = ? AND kind = 'community'`, id) ? s.memberCoverage(id) : undefined;
+    const adding = addingOf(s, kind, id, network, accountId, about.adding, stale);
     const canConfigure =
       configurable && !stale && (Object.values(fields).some((f) => f?.canEdit) || !!about.invite?.canCreate || !!about.invite?.canRevoke || !!about.pinned?.canEdit);
     return {
@@ -175,6 +325,7 @@ export class Abouts {
       members,
       identities: s.identitiesByIds(members?.list.map((m) => m.identityId) ?? []),
       pinned,
+      ...(adding ? { adding } : { adding: undefined }),
       ...(coverage ? { coverage } : {}),
       target: { kind, id },
       network,
@@ -208,5 +359,24 @@ export function readOnly(about: P.About, reason: string): P.About {
     fields,
     ...(about.invite ? { invite: { ...about.invite, canCreate: false, canRevoke: false, reason } } : {}),
     ...(about.pinned ? { pinned: { ...about.pinned, canEdit: false, reason } } : {}),
+    ...(about.adding ? { adding: { ...about.adding, can: false, reason } } : {}),
   };
+}
+
+/**
+ * Adding people, as this view may offer it: what the adapter said, locked while stale or when the account cannot
+ * (an adapter without 'addMembers'); for a group whose adapter says nothing, why not, so the panel never offers a
+ * button nothing is behind and never leaves the reader guessing.
+ */
+function addingOf(s: Store, kind: Kind, id: string, network: P.Network, accountId: string | null, adding: P.AboutAdding | undefined, stale: string | undefined): P.AboutAdding | undefined {
+  const able = !!accountId && caps(s, accountId).includes('addMembers');
+  if (adding && typeof adding === 'object') {
+    const a: P.AboutAdding = { can: !!adding.can, who: adding.who ?? 'known', mode: adding.mode === 'invite' ? 'invite' : 'add', ...(typeof adding.reason === 'string' ? { reason: adding.reason } : {}), ...(typeof adding.room === 'number' ? { room: adding.room } : {}) };
+    if (stale) return { ...a, can: false, reason: stale };
+    if (!able) return { ...a, can: false, reason: addMembersNotBuilt(network) };
+    return a;
+  }
+  if (able || kind !== 'conversation') return undefined;
+  const group = s.one<{ shape: string }>('SELECT shape FROM conversation WHERE id = ?', id)?.shape === 'group';
+  return group ? { can: false, reason: addMembersNotBuilt(network), who: 'known', mode: 'add' } : undefined;
 }

@@ -20,6 +20,7 @@ it but do not yet, **w** the network allows the change but we do not offer it, *
 | Description / topic | R W (channels); server description R | R W | R W | R W |
 | Picture | R w | R w | R w | R w |
 | Members | R: the ones the client has loaded (up to 200), with their top role and its colour; group DM recipients | R, with admin | R (`joined_members`, up to 500), with power level | R, with admin / owner |
+| Adding people | W: group DMs, friends only, 10 in all | W (as `addMembers` allows) | W: an invite (power level `invite`) | w: left out on purpose |
 | Roles | R (server roles by position) | admin / member | Owner (room v12 creators) / Admin / Moderator / Level N | owner / admin / member |
 | Who may do what | R (the client's own permission check, failing closed) | R W (`editInfo`, `addMembers`) | R (power levels) | R W (`editInfo` = locked, `addMembers` = add mode) |
 | Invite link | r w | R W (make, reset, turn off) | R (matrix.to: the alias, else the room id with `via`) | R W (admins: see it, make a new one; WhatsApp has no "off") |
@@ -37,8 +38,9 @@ it but do not yet, **w** the network allows the change but we do not offer it, *
 panel opens, and writes nobody has tried on a live account yet); Signal and WhatsApp keep no list of pins to read
 (one would have to be built from pin events); and pictures upload differently on every network (JPEG only on
 WhatsApp, a file path on Signal, a data URI on Discord, an upload then a state event on Matrix), so they could
-only be checked against fakes. Adding people, removing them, changing roles and banning are not offered
-anywhere: on WhatsApp, adding people is the kind of thing its enforcement looks for.
+only be checked against fakes. Adding people to a group is offered where the network's own client offers it to
+you (below, "Adding people"), except on WhatsApp, whose enforcement looks for it. Removing people, changing roles
+and banning are not offered anywhere.
 
 ## Discord
 
@@ -164,6 +166,39 @@ Notes:
 4. Settings changes come back as `events.GroupInfo`; the bridge forwards `group_change` and the adapter
    re-reads the group, so the hub hears of changes made elsewhere.
 
+## Adding people
+
+**Add people** (Invite people on Matrix) is on a group's page: the Members card and the row of actions under its name.
+It shows only where the account may add someone now; where it may not, the Members card says why (only admins add
+here, a Discord group is full, WhatsApp is left out). It opens a picker of the people this account could add, as the
+network allows, people you talked with lately first: you pick a few, and who could not be added stays listed with the
+network's own reason.
+
+| Network | Where | Who can be picked | What adding does | Gated by |
+|---|---|---|---|---|
+| Discord | group DMs (not servers, which have invites; not a 1:1 DM, where adding makes a new group) | your friends | `PUT /channels/{id}/recipients/{user}` through the client's REST module, one person at a time | any member; 10 people in all |
+| Signal | groups | anyone the account knows | one `updateGroup {groupId, member: [...]}`; someone whose profile key it lacks comes in invited | `permissionAddMember`: admins, or every member |
+| Matrix | rooms you have joined | anyone the account knows | `POST /rooms/{id}/invite` per person: in once they accept | power level `invite` (0 by default) |
+| Telegram | groups, supergroups, channels | anyone the account knows (their privacy settings may refuse) | `messages.addChatUser` per person (basic groups, 200 in all), one `channels.inviteToChannel` | admins with Invite Users, or members where the group allows it |
+| WhatsApp | — | — | left out: adding people (especially strangers, or in bulk) matches its enforcement patterns, and the bridge has a test that it never calls `UpdateGroupParticipants` | — |
+
+The rules the hub keeps:
+
+- **Only from a click** on the hub's page (the route wants a browser's Origin), a few at a time: at most 10 people in
+  one go (`ADD_MEMBERS_MAX`), never more than the group has room for.
+- **A fresh look first.** The hub asks the network for the group's About again and refuses (403, with the network's
+  reason) unless it says this account may add people there now.
+- **Paced per account**, one slot per person, in `add_pace` like joining (docs/add.md): 30 a day, 15 on Telegram,
+  whose PEER_FLOOD comes early. Past it the whole add is refused with when the next slot frees up and how many would
+  fit; nothing goes out. A refusal by the adapter's own check gives the slots back.
+- **Who is offered** (GET `/api/conversations/:id/members/candidates`): where the network adds only friends, the
+  account's friends (`person_link`); otherwise its friends and contacts, the people it has a direct conversation with
+  and, where anyone it knows can be added, the people in its other groups. Never someone in it already, the account
+  itself, a bot, or someone whose request still waits on you (adding them would answer it).
+- **Logged** in the account's log: `[add] added …; invited …; could not add … (group)`.
+- One person refused (privacy settings, not a friend, banned) does not stop the others: each comes back with its
+  sentence. A timeout may still have gone through, and the panel says so.
+
 ## The protocol
 
 ```ts
@@ -181,6 +216,10 @@ interface About {
 }
 // { t: 'configure', target, change } changes one thing and answers with the new About
 type AboutChange = { key: AboutKey; value } | { key: 'invite'; op: 'create' | 'revoke' } | { key: 'pin'; message; remove? };
+// About.adding: whether this account may add people here now, whom, and how (capability 'addMembers')
+interface AboutAdding { can: boolean; reason?: string; who: 'friends' | 'contacts' | 'known'; mode: 'add' | 'invite'; room?: number }
+// { t: 'addMembers', target, people } adds them (native ids, at most ADD_MEMBERS_MAX) and answers with
+interface AddMembersResult { added: string[]; invited?: string[]; failed?: { id; reason }[]; about?: About }
 ```
 
 The settings (`AboutValues`) are one vocabulary: `name`, `topic`, `avatar`, `disappearing` (seconds),
@@ -209,6 +248,10 @@ still gets a panel: the hub builds it from what it stores (name, topic, picture,
   `configure` and keeps the answer. Every refusal is in words, shown under the control.
 - Members come back as identity ids (the adapter emits identity facts first, as for `reactors`); pinned messages
   as the messages the hub has, plus a count of the ones it has not.
+- `adding` comes back as the adapter said it, locked while the answer is stale; for a group whose account has no
+  `addMembers`, the hub says why (`addMembersNotBuilt`: on WhatsApp, that it is left out on purpose).
+- GET `/api/conversations/:id/members/candidates` (`?account=`) and POST `/api/conversations/:id/members`
+  `{ identities, accountId? }` (answers `{ added, invited, failed, about }`, identity ids): "Adding people", above.
 
 ## The panel
 
@@ -233,9 +276,15 @@ Checked:
 - The panel, end to end on a demo hub: `scripts/verify-about.ts` (opening it from the header, the menu and a
   space; renaming; changing a timer; a member's locked view with reasons; two accounts' views of one server;
   pins; strangers named; the phone sheet).
+- Adding people: the hub's rules in `packages/hub/test/add-members.test.ts` (who is offered, the fresh look, room,
+  pace, Discord's friends-only, Matrix's invites, WhatsApp's line); the picker end to end in
+  `scripts/verify-add-members.ts`; each adapter against its fake (dither-accounts).
 
 Not checked against a real network, and worth a look before relying on it:
 
+- **Adding people**, on every network: no add has gone to a real one. Discord's recipient PUT and its refusal for
+  someone who is not a friend; Signal's `updateGroup` with `member` (which of them come back pending); Matrix's invite
+  errors; Telegram's privacy refusals and how early PEER_FLOOD comes.
 - **Discord**: the store field names the hook reads (`rateLimitPerUser`, `nsfw`, `permissionOverwrites`, the role
   and member-count stores) against the current client build, and any change. Only on the throwaway account, in
   its own test server: rename a channel, set slow mode, flip NSFW, rename the server.

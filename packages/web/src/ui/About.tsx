@@ -109,7 +109,7 @@ export function useAbout(target: AboutTarget) {
       setBusy(null);
     }
   };
-  return { view, error, busy, as, setAs, change };
+  return { view, error, busy, as, setAs, change, replace: show };
 }
 
 /** The settings a network has here, beyond name, description and picture, that this About carries. */
@@ -358,7 +358,7 @@ export function PinnedSection({ p, network, onOpen, onUnpin }: { p: NonNullable<
 
 const SHOWN = 120;
 
-export function MembersSection({ m }: { m: NonNullable<P.AboutView['members']> }) {
+export function MembersSection({ m, adding, onAdd }: { m: NonNullable<P.AboutView['members']>; adding?: P.AboutAdding; onAdd?: () => void }) {
   const [all, setAll] = useState(false);
   // Grouped by role, highest first, as Discord's member list does.
   const sorted = [...m.list].sort((a, b) => (b.rank ?? 0) - (a.rank ?? 0) || identityName(a.identityId).localeCompare(identityName(b.identityId)));
@@ -373,7 +373,15 @@ export function MembersSection({ m }: { m: NonNullable<P.AboutView['members']> }
   const total = m.total ?? m.list.length;
   return (
     <section class="about-section about-members">
-      <h3>Members ({total})</h3>
+      <div class="about-members-head">
+        <h3>Members ({total})</h3>
+        {adding?.can && onAdd && (
+          <button class="btn ghost small about-add-people" onClick={onAdd} title={adding.reason}>
+            <Icon name="userPlus" size={13} /> {adding.mode === 'invite' ? 'Invite people' : 'Add people'}
+          </button>
+        )}
+      </div>
+      {adding && !adding.can && adding.reason && <Locked s={{ value: null, canEdit: false, reason: adding.reason }} />}
       {!m.complete && <p class="det-note">Showing the {m.list.length} the network has loaded.</p>}
       {groups.map((g) => (
         <div class="about-role">

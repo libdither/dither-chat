@@ -200,6 +200,7 @@ export class HubServer {
       online: (a) => sup.online(a),
       command: (a, c, t) => sup.command(a, c, t),
       pickAccount: (c, a) => this.pickAccount(c, a),
+      note: (a, line) => sup.note(a, line),
     });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.adding = new Adding({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), liveView: (a) => !!sup.liveViewUrl?.(a) || !!store.account(a)?.live_view });
@@ -682,6 +683,22 @@ export class HubServer {
         const v = await this.abouts.get(kind, m[2], url.searchParams.get('account') ?? undefined);
         this.flush();
         return ok(v);
+      } catch (e) {
+        if (e instanceof AboutError) return bad(e.message, e.status);
+        throw e;
+      }
+    }
+    // Adding people to a group (about.ts, docs/group-settings.md): whom this account could add, and adding them.
+    if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/members(\/candidates)?$/))) {
+      try {
+        if (m[2] && method === 'GET') return ok(await this.abouts.candidates(m[1], url.searchParams.get('account') ?? undefined));
+        if (!m[2] && method === 'POST') {
+          // A click on the hub's own page: a browser sends Origin, and the server has refused any other site's.
+          if (!req.headers.get('origin')) return bad('People are added from the app itself', 403);
+          const v = await this.abouts.addMembers(m[1], await body<{ identities?: unknown; accountId?: unknown }>());
+          this.flush();
+          return ok(v);
+        }
       } catch (e) {
         if (e instanceof AboutError) return bad(e.message, e.status);
         throw e;

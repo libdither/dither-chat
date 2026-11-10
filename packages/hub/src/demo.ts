@@ -1078,6 +1078,7 @@ interface DemoPlace {
 const demoPlaces = new Map<string, DemoPlace>();
 
 const lc = (s: string) => s[0].toUpperCase() + s.slice(1);
+const ADDS_MEMBERS = new Set<P.Network>(['discord', 'signal', 'matrix']);
 const NETWORK_META_NAME: Record<P.Network, string> = Object.fromEntries(Object.entries(NETWORK_META).map(([k, m]) => [k, m.name])) as Record<P.Network, string>;
 
 const running = new Map<AccKey, DemoAdapter>();
@@ -1680,7 +1681,7 @@ class DemoAdapter implements InprocAdapter {
     const rules: P.AboutRule[] = [];
     const members: P.AboutMember[] = [];
     const pool = Object.values(POOLS[net] ?? M);
-    const ids = new Set<string>(conv?.fact.participants ?? []);
+    const ids = new Set<string>([...(conv?.fact.participants ?? []), ...(this.addedTo.get(target.nativeId) ?? [])]);
     if (!ids.size) {
       ids.add(this.self.nativeId);
       for (const c of conv ? [conv] : CONVS.filter((c) => c.acc.includes(this.key) && c.fact.spaces?.some((sp) => sp.nativeId === target.nativeId || SPACES.some((x) => x.fact.nativeId === sp.nativeId && x.fact.parents?.some((pp) => pp.nativeId === target.nativeId)))))
@@ -1688,6 +1689,7 @@ class DemoAdapter implements InprocAdapter {
     }
     const pic = 'Changing the picture is not supported yet.';
     let noun = 'Group';
+    let adding: P.AboutAdding | undefined;
     if (net === 'discord') {
       const guild = space?.fact.kind === 'community' ? space.fact.nativeId : where;
       const roles = guild ? DISCORD_ROLES[guild] ?? [] : [];
@@ -1710,6 +1712,8 @@ class DemoAdapter implements InprocAdapter {
         set('name', true);
         set('avatar', false, pic);
         rules.push({ what: 'Rename, change the icon, add people', who: 'Everyone in the group', you: true }, { what: 'Remove people', who: 'The group owner', you: false });
+        // As the real adapter says it: a group DM holds 10 people, and only friends can be added.
+        adding = ids.size < 10 ? { can: true, reason: 'Only your friends, up to 10 people in all.', who: 'friends', mode: 'add', room: 10 - ids.size } : { can: false, reason: 'A Discord group holds at most 10 people.', who: 'friends', mode: 'add', room: 0 };
       } else {
         noun = shape === 'thread' ? 'Thread' : 'Channel';
         const need = 'You need the Manage Channels permission.';
@@ -1733,6 +1737,7 @@ class DemoAdapter implements InprocAdapter {
         members: { list: members, total: space || where ? Math.max(members.length, 1200) : members.length, complete: !(space || where) },
         ...(roles.length ? { roles } : {}),
         rules,
+        ...(adding ? { adding } : {}),
         you: { role: admin ? 'Maintainer' : 'Member', rank: admin ? 100 : 0 },
         ...(space?.fact.kind === 'community' ? { invite: { link: place.invite, canCreate: true, canRevoke: admin && !!place.invite, ...(admin ? {} : { reason: 'Only people with Manage Server can turn invites off.' }) } } : {}),
         ...(conv && shape !== 'thread' ? { pinned: { messages: place.pinned, canEdit: admin || shape === 'direct' || shape === 'group', reason: 'You need the Pin Messages permission.' } } : {}),
@@ -1782,6 +1787,7 @@ class DemoAdapter implements InprocAdapter {
           { id: 'member', name: 'Member', rank: 0, count: members.filter((m) => !m.rank).length },
         ],
         rules,
+        ...(wa ? {} : { adding: { can: admin || v.addMembers === 'everyone', ...(admin || v.addMembers === 'everyone' ? {} : { reason: 'Only admins can add members.' }), who: 'known' as const, mode: 'add' as const } }),
         you: { role: admin ? 'Admin' : 'Member', rank: admin ? 100 : 0 },
         invite: { link: admin ? place.invite : wa ? null : place.invite, canCreate: admin, canRevoke: admin && !!place.invite, ...(admin ? {} : { reason: 'Only admins can change the invite link.' }) },
         ...(wa && conv ? { facts: [{ label: 'Created', value: '2024-03-02' }] } : []),
@@ -1820,6 +1826,7 @@ class DemoAdapter implements InprocAdapter {
         { id: '0', name: 'Member', rank: 0 },
       ],
       rules,
+      ...(net === 'matrix' && conv && shape !== 'direct' && shape !== 'self' ? { adding: { can: true, who: 'known' as const, mode: 'invite' as const } } : {}),
       you: { role: lc(level >= 100 ? 'admin' : level >= 50 ? 'moderator' : 'member'), rank: level },
       invite: { link: `https://matrix.to/#/${encodeURIComponent(alias ?? target.nativeId)}`, canCreate: false, derived: true, reason: 'Matrix links are made from the room’s address, not issued.' },
       ...(conv ? { pinned: { messages: place.pinned, canEdit: pl(50), reason: need(50) } } : {}),
@@ -1851,11 +1858,47 @@ class DemoAdapter implements InprocAdapter {
     return this.about(target);
   }
 
+  /**
+   * Add people as each network would: Discord only friends, Signal adds (someone whose profile it lacks, Dad here,
+   * comes in as invited), Matrix invites. Their conversation fact goes out again with the new participants.
+   */
+  private addedTo = new Map<string, Set<string>>();
+  private addMembers(target: P.AboutTarget, people: string[]): P.AddMembersResult {
+    const { conv } = this.place(target);
+    if (!conv || conv.fact.shape !== 'group' && this.network !== 'matrix') throw new Error('People are added to groups only');
+    const before = this.about(target).adding;
+    if (!before?.can) throw new Error(before?.reason ?? 'You cannot add people here.');
+    const added: string[] = [];
+    const invited: string[] = [];
+    const failed: { id: string; reason: string }[] = [];
+    const known = Object.values(POOLS[this.network] ?? {});
+    for (const id of people) {
+      if (!known.some((i) => i.nativeId === id)) failed.push({ id, reason: `${NETWORK_META_NAME[this.network]} does not know them.` });
+      else if (this.network === 'discord' && this.adds.current(id) !== 'friend') failed.push({ id, reason: 'Discord adds only your friends to a group.' });
+      else if (this.network === 'matrix' || (this.network === 'signal' && id === S.dad.nativeId)) invited.push(id);
+      else added.push(id);
+    }
+    if (added.length) {
+      // This account's own: the demo world's conversations are shared by every demo hub in the process.
+      const mine = this.addedTo.get(target.nativeId) ?? new Set<string>();
+      for (const id of added) mine.add(id);
+      this.addedTo.set(target.nativeId, mine);
+      this.emit({ t: 'conversation', conversation: { ...conv.fact, participants: [...new Set([...(conv.fact.participants ?? []), ...mine])] } });
+    }
+    if (this.network === 'signal' && (added.length || invited.length)) {
+      const names = [...added, ...invited].map((id) => known.find((i) => i.nativeId === id)?.displayName ?? id).join(', ');
+      this.emit({ t: 'message', live: false, message: { nativeId: `${target.nativeId}~add-${Date.now()}`, conversation: target.nativeId, author: this.self.nativeId, ts: Date.now(), kind: 'system', body: `You added ${names}.` } });
+    }
+    return { added, ...(invited.length ? { invited } : {}), ...(failed.length ? { failed } : {}), about: this.about(target) };
+  }
+
   private hello() {
     // Discord's demo accounts forward natively, as the real adapter does; the others leave it to the hub.
     // Matrix has no bio, so its demo account cannot edit one.
     const caps: P.Capability[] = ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect', 'typing', 'about', 'configure', 'profile', ...(this.network === 'matrix' ? [] : (['editProfile'] as const)), 'resolve', 'join', 'connect', 'requests', ...(LISTED.has(this.network) ? (['relationships', 'disconnect'] as const) : [])];
-    const all: P.Capability[] = this.network === 'discord' ? [...caps, 'forward', 'members'] : caps;
+    // Adding people to groups on Discord, Signal and Matrix; WhatsApp's adapter leaves it out on purpose
+    // (docs/group-settings.md), and the demo Telegram has no group About of its own.
+    const all: P.Capability[] = [...caps, ...(this.network === 'discord' ? (['forward', 'members'] as const) : []), ...(ADDS_MEMBERS.has(this.network) ? (['addMembers'] as const) : [])];
     this.emit({ t: 'hello', network: this.network, version: 'demo', capabilities: all.filter((c) => !this.without.has(c)) });
   }
 
@@ -2185,6 +2228,13 @@ class DemoAdapter implements InprocAdapter {
       case 'configure':
         try {
           reply(cmd.t === 'about' ? this.about(cmd.target) : this.configure(cmd.target, cmd.change));
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
+        break;
+      case 'addMembers':
+        try {
+          reply(this.addMembers(cmd.target, cmd.people));
         } catch (e) {
           this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
         }
