@@ -463,6 +463,13 @@ describe('the hub learns from your opens', () => {
     off.rescoreAll(NOW);
     for (const id of ids) expect(off.view(id)!.score).toBe((off.explain(id)!.learned as any).points);
     expect(r.view().explore).toMatchObject({ on: true, sampling: true, epochMinutes: 30, zClip: Z_CLIP });
+    // A model saved before the curve and the covariance: due at once, so the first check after start fits them.
+    const soon = new InboxRanker(store, triage, 'model', undefined, () => saved.fitAt! + MIN);
+    expect(soon.due()).toBe(false);
+    soon.model = { ...saved, cov: undefined };
+    expect(soon.due()).toBe(true);
+    soon.model = { ...saved, curve: undefined };
+    expect(soon.due()).toBe(true);
     // Much doubt about a row: a draw lifts it, and its why says so, first.
     const doubt = new InboxRanker(store, triage, 'model', undefined, () => NOW);
     const free = saved.cov!.features;

@@ -149,6 +149,8 @@ export class InboxRanker implements AttentionJudge {
   due(now = this.now()): boolean {
     const fitAt = this.model.fitAt;
     if (this.model.moments > 0 && !(this.store.db.query('SELECT 1 FROM visit LIMIT 1').get() as Row | null)) return true;
+    // Saved before the hub fitted its examination curve and how sure it is: fit again at start.
+    if (this.model.moments > 0 && (!this.model.cov || (FIT.curve && !this.model.curve))) return true;
     if (fitAt === null) return this.maturedSince(-Infinity, now) > 0;
     return now - fitAt >= DAY || this.maturedSince(fitAt, now) >= REFIT_AFTER;
   }

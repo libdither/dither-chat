@@ -421,8 +421,8 @@ prior's two weights, 30 for the rest), so a few days of opens move the order a l
 - It keeps every conversation you opened within the next 3 hours, the 40 with the latest message or stay, and
   40 drawn from the rest, each counting for as many as it stands for. Then it fits both chances again from the
   prior, with the examination curve ([Seeing a row](#seeing-a-row)), and saves the result in `meta`.
-- It refits at start if it has never learned, a day after the last refit, and after 10 more opens have had their
-  3 hours.
+- It refits at start if it has never learned or its saved model predates the fitted curve and exploring, a day after
+  the last refit, and after 10 more opens have had their 3 hours.
 - The work runs on a read-only connection of its own, at most about 25 ms at a time. Measured on a copy of the
   real hub (184 opens, 675K messages): the longest the hub was held was 86 ms, and the whole refit took about 10 s
   in the background. Scoring all 484 listed conversations took 185 ms with the model, the same as without. On a
