@@ -8,7 +8,7 @@
  *
  * Without --port the OS picks a free one. Everything it makes is in a temp dir, removed afterwards (--keep keeps it).
  */
-import { mkdirSync, mkdtempSync, openSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { findBrowser, launch, type Page } from './browser.ts';
@@ -115,8 +115,12 @@ async function main() {
 
   // ------------------------------------------------------------------ the browser, at two sizes
   const browserPath = findBrowser();
-  console.log(`browser: ${Bun.spawnSync([browserPath, '--version']).stdout.toString().trim() || browserPath}`);
+  const version = Bun.spawnSync([browserPath, '--version']).stdout.toString().trim() || browserPath;
   browser = await launch();
+  // Slow on a fresh CI runner (a cold disk), half a second after: worth seeing, not judging.
+  const started = `browser: ${version} (${browserPath}), started in ${(browser.startMs / 1000).toFixed(1)} s`;
+  console.log(started);
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `boot check: ${started}\n`);
   const page = browser.page;
   watch(page, base);
   for (const [size, w, h, phone] of [

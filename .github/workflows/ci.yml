@@ -103,6 +103,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # A fresh runner's first browser start reads its 670 MB from a cold disk (11 to 35 s, then half a second): read
+      # them in the background while the rest installs. scripts/browser.ts waits up to 90 s for it either way.
+      - run: b=$(command -v chromium || command -v google-chrome) && (find -L "$(dirname "$(readlink -f "$b")")" -type f -print0 | xargs -0 cat > /dev/null 2>&1 &) || true
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
