@@ -143,6 +143,11 @@ export class MailClassifier {
   /** After a thread's class or `unknown` changed (mail/attention.ts listens). */
   readonly changed: ((c: ClassChange) => void)[] = [];
 
+  /** Nothing waits for a background step. */
+  get idle(): boolean {
+    return !this.timer && !this.recheck.size && !this.backlog.length;
+  }
+
   constructor(private hub: MailHub) {
     hub.store.recomputed.push((id, ms) => this.recomputed(id, ms));
     hub.store.threadExtras.push((r, v) => {

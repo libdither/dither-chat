@@ -66,6 +66,11 @@ export class MailPeople {
   private rebuild: string[] = [];
   private timer: Timer | null = null;
 
+  /** Nothing waits for a background step. */
+  get idle(): boolean {
+    return !this.timer && !this.rebuild.length && !this.pending.size;
+  }
+
   constructor(private hub: MailHub) {
     const s = hub.store;
     s.recomputed.push((id, ms) => this.party(id, ms));
