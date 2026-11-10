@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
-import { analyze, bytesSource, HEAD, LIST_MAX, textEncoding, TEXT_MAX, type Source } from '../src/fileinfo.ts';
+import { analyze, bytesSource, gunzipHead, HEAD, LIST_MAX, textEncoding, TEXT_MAX, type Source } from '../src/fileinfo.ts';
 import { infoFor, mediaKey, MediaInfo } from '../src/mediainfo.ts';
 import { storedZip } from '../src/demo.ts';
 import { HubServer, mediaSigner } from '../src/server.ts';
@@ -287,12 +287,14 @@ describe('reads are bounded', () => {
     expect(i.lines).toBe(TEXT_MAX / 32);
     expect(src.bytes).toBeLessThanOrEqual(HEAD + TEXT_MAX);
   });
-  test('a gzip bomb stops at the cap, quickly', async () => {
+  test('a gzip bomb stops at the cap', async () => {
     const bomb = new Uint8Array(Bun.gzipSync(new Uint8Array(96 * 1024 * 1024)));
-    const t = performance.now();
     const i = await of(bomb, 'zeros.bin.gz');
-    expect(performance.now() - t).toBeLessThan(5000);
     expect(i).toMatchObject({ kind: 'archive', entries: 1, list: [{ name: 'zeros.bin', size: 96 * 1024 * 1024 }] });
+    // 8 MiB out, not 96: counted, not timed.
+    const head = await gunzipHead(bytesSource(bomb));
+    expect(head.complete).toBe(false);
+    expect(head.out.length).toBe(8 * 1024 * 1024);
   });
   test('a big PDF is read at its two ends only', async () => {
     const body = pdf(5);

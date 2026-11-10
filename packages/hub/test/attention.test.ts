@@ -326,9 +326,14 @@ describe('incremental features in the hub', () => {
   };
   const cid = (native: string) => store.one<{ id: string }>('SELECT id FROM conversation WHERE native_id = ?', native)!.id;
   const state = (native: string) => JSON.parse(store.one<{ state: string }>('SELECT state FROM conv_feature WHERE conversation_id = ?', cid(native))!.state) as ConvState;
-  const flush = () => {
+  /** The store's changes, then syncs until nothing waits (a sync scores for 20 ms at most), as one event. */
+  const flush = (): P.ClientEvent[] => {
     const evs = store.flush();
-    return att.sync(evs.flatMap((e) => (e.t === 'conversation' ? [e.conversation.id] : [])));
+    const out = att.sync(evs.flatMap((e) => (e.t === 'conversation' ? [e.conversation.id] : [])));
+    while (att.busy) out.push(...att.sync([]));
+    const items = out.flatMap((e) => (e.t === 'attention' ? e.items : []));
+    const removed = out.flatMap((e) => (e.t === 'attention' ? e.removed : []));
+    return items.length || removed.length ? [{ t: 'attention', items, removed }] : [];
   };
   /** The same conversation's features folded from nothing, in one go. */
   function fromScratch(native: string): ConvState {
@@ -468,6 +473,30 @@ describe('incremental features in the hub', () => {
     usage.apply('b2', [{ kind: 'person', id: sam!, seconds: 40, visits: 1, at: clock, lastVisit: clock }], clock);
     const dm = (att.visited([{ kind: 'person', id: sam! }])[0] as Extract<P.ClientEvent, { t: 'attention' }>).items.map((i) => i.id);
     expect(dm).toEqual([cid('dm')]);
+  });
+
+  test('out of time, a pump still folds one and a sync still scores one: nothing waits for good', () => {
+    clock += HOUR;
+    // Every look at this clock is a second later: each budget is spent before its first step.
+    let ms = 0;
+    att.budgetClock = () => (ms += 1000);
+    try {
+      say('dm', 'sam', clock - MIN);
+      say('trio', 'kim', clock - MIN);
+      store.flush();
+      expect(att.pump()).toBe(1);
+      expect(att.pump()).toBe(1);
+      expect(att.pump()).toBe(0);
+      expect(att.busy).toBe(true);
+      const first = att.sync([]);
+      expect(first).toHaveLength(1);
+      expect(att.busy).toBe(true);
+      att.sync([]);
+      expect(att.busy).toBe(false);
+      expect([state('dm').lastReceived, state('trio').lastReceived]).toEqual([clock - MIN, clock - MIN]);
+    } finally {
+      att.budgetClock = () => performance.now();
+    }
   });
 
   test('reacting to what they wrote answers it: the conversation folds again, and owes nothing', () => {
