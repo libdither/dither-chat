@@ -6,8 +6,8 @@
  */
 import { effect, signal } from '@preact/signals';
 import { isInteracting } from './arrange.ts';
-import { inboxRows, mailRowsWaiting, rowDirect, rowLast, rowMuted, rowUnread, type InboxRow } from './model.ts';
-import { chipKeeps, inboxChanged, inboxSnapshot, inboxView, shouldResort, type Hold, type InboxSnapshot, type Ranked, type ResortReason } from './ordering.ts';
+import { inboxRows, mailRowsWaiting, rowDirect, rowLast, rowMuted, rowUnread, rowWaiting, type InboxRow } from './model.ts';
+import { filterKeeps, inboxChanged, inboxSections, inboxSnapshot, inboxView, sameInbox, shouldResort, type Hold, type InboxSection, type InboxSnapshot, type Ranked, type ResortReason } from './ordering.ts';
 import { loaded, mailRev, rev, route, type InboxFilter } from './state.ts';
 import { onForeground } from './usage.ts';
 
@@ -33,6 +33,8 @@ const hold = (): Hold | undefined => {
 
 /** Chats and mail from people rank as one (docs/mail.md); notes to self rank like any other row. */
 const ranked = (rows: InboxRow[]): Ranked[] => rows.map((r) => ({ key: r.key, score: r.score, last: rowLast(r), muted: rowMuted(r) }));
+/** The same, with what decides each row's section. */
+const sectioned = (rows: InboxRow[]) => rows.map((r) => ({ key: r.key, score: r.score, last: rowLast(r), muted: rowMuted(r), unread: rowUnread(r), waiting: rowWaiting(r) }));
 
 let waiting: ReturnType<typeof setTimeout> | undefined;
 /** Take a new snapshot if now is a good moment; otherwise as soon as it is. */
@@ -43,31 +45,31 @@ export function resortInbox(reason: ResortReason) {
     if (reason !== 'timer') waiting = setTimeout(() => resortInbox(reason), 1500);
     return;
   }
-  const rows = inboxRows();
-  const snap = inboxSnapshot(
-    ranked(rows).map((x, i) => ({ ...x, unread: rowUnread(rows[i]) })),
-    hold(),
-  );
+  const snap = inboxSnapshot(sectioned(inboxRows()), hold());
   const prev = inboxSnap.value;
-  const same = !!prev.snap && prev.snap.keys.join('\n') === snap.keys.join('\n');
+  const same = sameInbox(prev.snap, snap);
   inboxSnap.value = { v: same ? prev.v : prev.v + 1, at: now, snap };
   try {
     localStorage.setItem(KEY, JSON.stringify(snap));
   } catch {}
 }
 
-/** The rows a filter chip shows, in order. */
-export function shownInbox(filter: InboxFilter): InboxRow[] {
+/**
+ * The rows the filter shows, in order, by section. A row stays in the section it was in when the order was taken
+ * until the next one (ordering.ts inboxSections), so reading it does not pull it out from under you.
+ */
+export function shownInbox(filter: InboxFilter): Record<InboxSection, InboxRow[]> {
   const rows = inboxRows();
   const byId = new Map(rows.map((r) => [r.key, r]));
   const snap = inboxSnap.value.snap;
-  // What was unread when the order was taken stays under Unread until the next one, so reading it does not pull it out from under you.
-  const wasUnread = new Set(snap?.unread ?? []);
   const keep = (id: string) => {
     const r = byId.get(id)!;
-    return chipKeeps(filter, { key: id, direct: rowDirect(r), unread: rowUnread(r) }, wasUnread);
+    return filterKeeps(filter, { mail: r.kind === 'mail', direct: rowDirect(r) });
   };
-  return inboxView(snap, ranked(rows), keep).map((k) => byId.get(k)!);
+  const keys = inboxView(snap, ranked(rows), keep);
+  const parts = inboxSections(keys, snap, (k) => ({ unread: rowUnread(byId.get(k)!), waiting: rowWaiting(byId.get(k)!) }));
+  const of = (ks: string[]) => ks.map((k) => byId.get(k)!);
+  return { waiting: of(parts.waiting), new: of(parts.new), earlier: of(parts.earlier) };
 }
 
 let started = false;
@@ -85,7 +87,7 @@ export function startInbox() {
     if (mailRowsWaiting()) mailRev.value;
     if (!loaded.value) return;
     clearTimeout(soon);
-    soon = setTimeout(() => inboxChanged(inboxSnap.value.snap, ranked(inboxRows()), hold()) && resortInbox('activity'), 600);
+    soon = setTimeout(() => inboxChanged(inboxSnap.value.snap, sectioned(inboxRows()), hold()) && resortInbox('activity'), 600);
   });
   // Leaving a conversation lets it settle where it now belongs, once nothing is in use.
   let open = openHere();

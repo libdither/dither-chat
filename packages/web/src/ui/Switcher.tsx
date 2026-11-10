@@ -89,7 +89,8 @@ function items(): Item[] {
 /** With nothing typed: the top of the inbox as it is on screen, a DM as its person; then the rest by the latest message. */
 function opening(all: Item[]): Item[] {
   const byKey = new Map(all.map((i) => [i.key, i]));
-  const keys = new Set(shownInbox('all').map((r) => (r.kind === 'mail' ? r.key : r.conv.shape === 'direct' && r.conv.peerPersonId ? r.conv.peerPersonId : r.conv.id)));
+  const inbox = shownInbox('all');
+  const keys = new Set([...inbox.waiting, ...inbox.new, ...inbox.earlier].map((r) => (r.kind === 'mail' ? r.key : r.conv.shape === 'direct' && r.conv.peerPersonId ? r.conv.peerPersonId : r.conv.id)));
   const top = [...keys].map((k) => byKey.get(k)).filter((i): i is Item => !!i);
   const rest = all.filter((i) => !keys.has(i.key)).sort((a, b) => b.last - a.last);
   return [...top, ...rest].slice(0, 9);

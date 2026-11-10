@@ -29,9 +29,11 @@ import {
   threadsOf,
   unreadOf,
   visibleConv,
+  type InboxRow,
   type RailEntry,
 } from '../model.ts';
 import { db, go, mailRev, metaRev, newMessage, prefs, rev, route, setPrefs, type InboxFilter, type Route } from '../state.ts';
+import { INBOX_FILTERS, INBOX_SECTIONS } from '../ordering.ts';
 import { senderLine } from '../mail/model.ts';
 import { personItems } from './mail/Classify.tsx';
 import { RowTyping } from './Typing.tsx';
@@ -40,7 +42,7 @@ import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
 import { phone } from '../phone.ts';
 import { dropPlace, openPlaceMenu, placeLabel } from './Organize.tsx';
-import { Menuable, onMenu, useMenu } from './ContextMenu.tsx';
+import { contextMenu, Menuable, onMenu, openMenu, useMenu, type MenuEntry } from './ContextMenu.tsx';
 import { accountMenu, conversationMenu, folderMenuSpec, personMenu, spaceMenu, WhyHere } from './menus.tsx';
 import { groups, type MenuSpec } from './ContextMenu.tsx';
 import { openAbout } from './About.tsx';
@@ -260,11 +262,12 @@ export const MailRow = memo(function MailRow({ id, active, why, owedSince }: { i
   );
 });
 
+/** A list's section, folded or open on this device. Its click counts as "section toggle (label)": labels are fixed words. */
 function SectionHead({ id, label, count, actions }: { id: string; label: string; count?: number; actions?: any }) {
   const collapsed = !!prefs.value.collapsed[id];
   return (
-    <div class="section-head">
-      <button class="section-toggle" data-track="section toggle" onClick={() => setPrefs({ collapsed: { ...prefs.value.collapsed, [id]: !collapsed } })}>
+    <div class="section-head" data-section={id}>
+      <button class="section-toggle" aria-expanded={!collapsed} data-track={`section toggle (${label})`} onClick={() => setPrefs({ collapsed: { ...prefs.value.collapsed, [id]: !collapsed } })}>
         <Icon name={collapsed ? 'chevronRight' : 'chevronDown'} size={12} />
         <span>{label}</span>
         {count ? <span class="section-count">{count}</span> : null}
@@ -277,16 +280,50 @@ const isCollapsed = (id: string) => !!prefs.value.collapsed[id];
 
 // ------------------------------------------------------------------ inbox
 
-const FILTERS: { id: InboxFilter; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'people', label: 'People' },
-  { id: 'groups', label: 'Groups' },
-  { id: 'unread', label: 'Unread' },
-];
+const FILTER_MENU = 'Show in the inbox';
+
+/**
+ * Beside the search box: what the inbox shows, as a menu. With a filter on it says which, so a shorter list is never
+ * a surprise. Mail is there with a mail account.
+ */
+function InboxFilterButton({ filter }: { filter: InboxFilter }) {
+  const choices = INBOX_FILTERS.filter((f) => f.id !== 'mail' || db.mail.accounts.size > 0 || filter === 'mail');
+  const on = INBOX_FILTERS.find((f) => f.id === filter)!;
+  const open = (e: MouseEvent) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    openMenu(
+      { x: r.right, y: r.bottom + 4 },
+      {
+        label: FILTER_MENU,
+        track: 'inbox',
+        head: <div class="cm-sheet-title">Show</div>,
+        items: choices.map((f): MenuEntry => ({ label: f.label, checked: f.id === filter, radio: true, track: `filter (${f.label})`, run: () => setPrefs({ inboxFilter: f.id }) })),
+      },
+    );
+  };
+  const label = filter === 'all' ? 'Show: all conversations' : `Showing only ${on.label.toLowerCase()}`;
+  return (
+    <button
+      class={`icon-btn small inbox-filter-btn ${filter !== 'all' ? 'on' : ''}`}
+      aria-haspopup="menu"
+      aria-expanded={contextMenu.value?.label === FILTER_MENU}
+      aria-label={label}
+      title={label}
+      data-track="filter"
+      onClick={open}
+    >
+      <Icon name="filter" size={16} />
+      {filter !== 'all' && <span class="inbox-filter-name">{on.short}</span>}
+    </button>
+  );
+}
+
+const EMPTY: Record<InboxFilter, string> = { all: 'No conversations yet.', direct: 'No direct messages here.', groups: 'No groups here.', mail: 'No mail from people here.' };
 
 /**
  * One list: DMs, group chats, rooms outside a space and notes to self, plus anything else while it has something
- * for you, and mail from people (docs/mail.md), ranked by how likely you are to want each now (docs/inbox.md).
+ * for you, and mail from people (docs/mail.md), in three sections: what waits on a reply from you, what is new, and
+ * the rest. Each goes by how likely you are to want it now (docs/inbox.md).
  */
 export function InboxSidebar({ activeConv }: { activeConv?: string }) {
   if (counting) rendered('InboxSidebar');
@@ -295,33 +332,35 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
   if (mailRowsWaiting()) mailRev.value;
   const snap = inboxSnap.value;
   const accounts = accountsNeedingYou();
-  const filter = FILTERS.some((f) => f.id === prefs.value.inboxFilter) ? prefs.value.inboxFilter : 'all';
-  const rows = shownInbox(filter);
+  let filter = prefs.value.inboxFilter;
+  if (filter === 'mail' && !db.mail.accounts.size) filter = 'all';
+  const parts = shownInbox(filter);
   const [q, setQ] = useState('');
   const scroll = useRef<HTMLDivElement>(null);
   useFlip(scroll, snap.v, '[data-row]');
+  const row = (r: InboxRow) =>
+    r.kind === 'mail' ? (
+      <MailRow key={r.key} id={r.key} active={r.key === activeConv} why={r.reasons} owedSince={r.needs ? r.owedSince : null} />
+    ) : (
+      <ConvRow key={r.conv.id} c={r.conv} active={r.conv.id === activeConv} onClick={opener(`inbox:${r.conv.id}`, () => go({ view: 'inbox', conv: r.conv.id }))} why={r.reasons} owedSince={r.needs ? r.owedSince : null} />
+    );
   return (
-    <div class="sidebar-inner" data-track-area="inbox">
+    <div class="sidebar-inner inbox-side" data-track-area="inbox">
       <header class="side-head">
         <h1>Inbox<NewMessageButton /></h1>
-        <span class="side-sub">Everything that wants you, from every network</span>
       </header>
-      <SearchBox
-        value={q}
-        setValue={setQ}
-        placeholder={phone.value ? 'Search all messages' : 'Search all messages (Ctrl+K to jump)'}
-        submit={(t) => {
-          if (!t) return;
-          rememberSearch(t);
-          go({ view: 'search', q: t });
-        }}
-      />
-      <div class="inbox-chips" role="radiogroup" aria-label="Show">
-        {FILTERS.map((f) => (
-          <button class={`chip-btn ${filter === f.id ? 'on' : ''}`} role="radio" aria-checked={filter === f.id} data-track={`filter (${f.label})`} onClick={() => setPrefs({ inboxFilter: f.id })}>
-            {f.label}
-          </button>
-        ))}
+      <div class="inbox-search">
+        <SearchBox
+          value={q}
+          setValue={setQ}
+          placeholder={phone.value || filter !== 'all' ? 'Search all messages' : 'Search all messages (Ctrl+K)'}
+          submit={(t) => {
+            if (!t) return;
+            rememberSearch(t);
+            go({ view: 'search', q: t });
+          }}
+        />
+        <InboxFilterButton filter={filter} />
       </div>
       <div class="side-scroll" ref={scroll}>
         {accounts.length > 0 && (
@@ -350,14 +389,17 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
           </>
         )}
         <RequestsRow />
-        {rows.map((r) =>
-          r.kind === 'mail' ? (
-            <MailRow key={r.key} id={r.key} active={r.key === activeConv} why={r.reasons} owedSince={r.needs ? r.owedSince : null} />
-          ) : (
-            <ConvRow key={r.conv.id} c={r.conv} active={r.conv.id === activeConv} onClick={opener(`inbox:${r.conv.id}`, () => go({ view: 'inbox', conv: r.conv.id }))} why={r.reasons} owedSince={r.needs ? r.owedSince : null} />
-          ),
-        )}
-        {!rows.length && <p class="inbox-empty">{filter === 'unread' ? 'Nothing unread.' : filter === 'all' ? 'No conversations yet.' : 'None here.'}</p>}
+        {INBOX_SECTIONS.map(({ id, label }) => {
+          const rows = parts[id];
+          if (!rows.length) return null;
+          return (
+            <>
+              <SectionHead id={`inbox-${id}`} label={label} count={rows.length} />
+              {!isCollapsed(`inbox-${id}`) && rows.map(row)}
+            </>
+          );
+        })}
+        {!parts.waiting.length && !parts.new.length && !parts.earlier.length && <p class="inbox-empty">{EMPTY[filter]}</p>}
       </div>
     </div>
   );

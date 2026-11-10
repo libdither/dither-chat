@@ -7,18 +7,34 @@ stay on top. The hub scores every conversation by how much it needs you and by w
 formula, below), then a model learned from what you open reorders it ([A learned order](#a-learned-order)); the
 list goes by that score, with muted places last. Unread rows keep their bold title and badge wherever they land.
 
+The list has three sections, each in that order, each folding with a count (2026-11-09):
+
+- **Waiting on you**: a turn you owe that the hub still counts: they wrote last (the row's `owedSince`) and it needs
+  you (`needs`). The row keeps its ↩ and how long it has waited. An unanswered message from long ago, or from someone
+  you rarely answer, has faded below `needs` and is not here; on a real hub that leaves out most of the 200 or so
+  conversations whose last word is someone else's.
+- **New**: something unread, and not waiting.
+- **Earlier**: everything else, with the chat you were just in at its top.
+
+Accounts that need you and the Requests row stay above the sections. A section with nothing in it is not shown.
+
 Until 2026-11-07 a line, **Caught up**, split the list: above it what needed you, by score; below it everything
 else by the latest message. A chat you had just answered no longer needed you, so it fell below the line, often
 far down, about 45 minutes after you last wrote. Now there is one order, and the chat you were just in stays near
 the top for a few hours ([You were here](#you-were-here)).
 
-Filter chips: **All**, **People** (DMs), **Groups** (everything else), **Unread**. The choice is kept per device.
+A filter button beside the search box opens a menu: **All**, **Direct messages** (DMs), **Groups** (the other
+chats: groups, rooms, notes to self), **Mail** (with a mail account). With a filter on, the button is tinted and
+says which (DMs, Groups, Mail). The choice is kept per device. Until 2026-11-09 these were chips under the search
+box, with People and Unread: a stored People became Direct messages, and Unread became All, since the New section
+is what it showed.
 
 **Mail from people** is in the same list (docs/mail.md, slice 8): a thread in Inbox from someone you know that is
 unread, owes a reply, is recent or you just opened. It is scored by this formula on its own fold
 (`hub/src/mail/attention.ts`: you and one other is a DM, you in To a mention), and how you answer someone sums their
-mail and their chats. Its `AttentionView` has `kind: 'mail'` and the thread's id. People includes a thread between you
-and one other; tapping it opens the reader beside the inbox. With no mail account nothing here changes.
+mail and their chats. Its `AttentionView` has `kind: 'mail'` and the thread's id. The Mail filter shows only these;
+Direct messages and Groups only chats. Tapping one opens the reader beside the inbox. With no mail account nothing
+here changes.
 
 The score uses metadata only: who wrote, when, who replied to whom, mentions, the conversation's shape and member
 count, unread state, triage's decisions and time spent and where you were (`usage.ts`). It never reads message text. "Asks a question"
@@ -26,7 +42,7 @@ comes from triage's stored decision, not from the text.
 
 Code: `packages/hub/src/attention.ts` (features and score), `rank.ts`, `rankhistory.ts` and `ranker.ts` (the
 learned order), `packages/web/src/inbox.ts` (the order on screen), `ordering.ts` (the snapshot rules, shared with
-the sidebar), `ui/Sidebar.tsx` (`InboxSidebar`).
+the sidebar, and the sections and the filter: `inboxSections`, `filterKeeps`), `ui/Sidebar.tsx` (`InboxSidebar`).
 
 ## The score
 
@@ -219,8 +235,11 @@ reading or answering it changes its score, and it should not jump away while you
 snapshot, so it settles where it now belongs once nothing is in use: with what `visited` adds, near the top.
 
 Between snapshots rows keep their places. A new conversation goes at the end until the next one. Rows that are no longer listed go. Rows slide to their new
-places when the order changes (`useFlip`). Under **Unread**, a row that was unread at the snapshot stays until
-the next, so reading it does not pull it out from under you. Before the hub has scored a conversation, or with
+places when the order changes (`useFlip`). Sections are the snapshot's too: it keeps which rows were unread and
+which waited on you, and a row stays in the section it was in until the next snapshot, so reading or answering it
+does not pull it out from under you. A change of section alone (a row read, with the order the same) also asks for
+a new snapshot. The conversation you have open keeps its section with its place. A row newer than the snapshot goes
+by what it is now, at the end of its section. Before the hub has scored a conversation, or with
 a hub that predates scores, it ranks unread first, then by recency.
 
 The inbox button and the phone's Triage tab count the messages in the Triage board's Important list that you have not

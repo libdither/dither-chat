@@ -1,13 +1,15 @@
 /**
  * The one-list inbox with mail in it (docs/mail.md, slice 8): the mail rows the page makes of the hub's attention
- * (mail/model.ts mailInboxRows), ranked with the chats as one (ordering.ts), the filter chips on both kinds (chipKeeps),
+ * (mail/model.ts mailInboxRows), ranked with the chats as one (ordering.ts), the filter on both kinds (filterKeeps),
  * and the open thread keeping its place. model.ts and inbox.ts put these together; scripts/verify-inbox.ts checks that
  * in a browser.
  */
 import { expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
 import { emptyMail, mailInboxRows } from '../src/mail/model.ts';
-import { chipKeeps, inboxSnapshot, inboxView, rank, type Chipped, type Ranked } from '../src/ordering.ts';
+import { filterKeeps, inboxSections, inboxSnapshot, inboxView, rank, type Ranked } from '../src/ordering.ts';
+
+type Chipped = { direct: boolean; unread: boolean; mail: boolean };
 
 const NOW = 1_800_000_000_000;
 const thread = (id: string, at: number, o: Partial<P.MailThreadView> = {}): P.MailThreadView => ({
@@ -47,11 +49,11 @@ function world(mail: boolean) {
   }
   const attention = [score('cnv_dm', 50), score('cnv_group', 10), score('mth_sam', 70, 'mail'), score('mth_lease', 30, 'mail'), score('mth_other', 90, 'mail'), score('mth_later', 95, 'mail')];
   const chats: (Ranked & Chipped)[] = [
-    { key: 'cnv_dm', score: 50, last: NOW - 60_000, direct: true, unread: true },
-    { key: 'cnv_group', score: 10, last: NOW - 120_000, direct: false, unread: false },
+    { key: 'cnv_dm', score: 50, last: NOW - 60_000, direct: true, unread: true, mail: false },
+    { key: 'cnv_group', score: 10, last: NOW - 120_000, direct: false, unread: false, mail: false },
   ];
   const mailRows = mailInboxRows(attention, s);
-  const rows: (Ranked & Chipped)[] = [...chats, ...mailRows.map((r) => ({ key: r.key, score: r.score, last: r.thread.lastAt, muted: r.thread.muted, direct: r.thread.participants <= 2, unread: r.thread.unread > 0 }))];
+  const rows: (Ranked & Chipped)[] = [...chats, ...mailRows.map((r) => ({ key: r.key, score: r.score, last: r.thread.lastAt, muted: r.thread.muted, direct: r.thread.participants <= 2, unread: r.thread.unread > 0, mail: true }))];
   return { s, attention, mailRows, rows };
 }
 
@@ -77,15 +79,15 @@ test('chats and mail rank as one by the hub’s score; muted mail sinks with mut
   expect(rank(muted)).toEqual(['cnv_dm', 'mth_lease', 'cnv_group', 'mth_sam']);
 });
 
-test('the chips: People is one other person (a DM, a thread of two), Groups the rest, Unread both kinds', () => {
+test('the filter: Direct messages and Groups are chats, Mail is mail; New holds what is unread of both kinds', () => {
   const w = world(true);
-  const shown = (chip: 'all' | 'people' | 'groups' | 'unread', was = new Set<string>()) => inboxView(null, w.rows, (k) => chipKeeps(chip, w.rows.find((r) => r.key === k)!, was));
+  const shown = (f: 'all' | 'direct' | 'groups' | 'mail') => inboxView(null, w.rows, (k) => filterKeeps(f, w.rows.find((r) => r.key === k)!));
   expect(shown('all')).toEqual(['mth_sam', 'cnv_dm', 'mth_lease', 'cnv_group']);
-  expect(shown('people')).toEqual(['mth_sam', 'cnv_dm']);
-  expect(shown('groups')).toEqual(['mth_lease', 'cnv_group']);
-  expect(shown('unread')).toEqual(['mth_sam', 'cnv_dm']);
-  // Read since the order was taken: still under Unread until the next one.
-  expect(shown('unread', new Set(['mth_lease']))).toEqual(['mth_sam', 'cnv_dm', 'mth_lease']);
+  expect(shown('direct')).toEqual(['cnv_dm']);
+  expect(shown('groups')).toEqual(['cnv_group']);
+  expect(shown('mail')).toEqual(['mth_sam', 'mth_lease']);
+  const snap = inboxSnapshot(w.rows);
+  expect(inboxSections(inboxView(snap, w.rows), snap, () => ({ unread: false, waiting: false })).new).toEqual(['mth_sam', 'cnv_dm']);
 });
 
 test('a mail thread open in the inbox keeps its place while it is open; new rows go after the order taken', () => {

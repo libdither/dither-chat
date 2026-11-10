@@ -45,6 +45,12 @@ async function tap(selector: string) {
   await touch('touchEnd', []);
   await Bun.sleep(400);
 }
+/** The inbox's filter: its button, then a choice in its menu. */
+async function pickFilter(label: string) {
+  await click('.inbox-filter-btn');
+  await p.until(`!!document.querySelector('.cm [role="menuitemradio"]')`, 3000);
+  await click('.cm [role="menuitemradio"]', `el => el.innerText.trim() === '${label}'`);
+}
 const key = async (k: string, code: string, modifiers = 0) => {
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, modifiers, windowsVirtualKeyCode: k.toUpperCase().charCodeAt(0) });
   await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code, modifiers });
@@ -66,8 +72,8 @@ try {
 
   // Off by default: clicking around counts nothing and sends nothing.
   check((await p.eval(`JSON.parse(localStorage.getItem('dither-chat:prefs') || '{}').countClicks`)) === undefined, 'off on a new device');
-  await click('.inbox-chips .chip-btn', `el => el.textContent.trim() === 'Unread'`);
-  await click('.inbox-chips .chip-btn', `el => el.textContent.trim() === 'All'`);
+  await pickFilter('Groups');
+  await pickFilter('All');
   await putAway();
   check((await waiting()) === 0, 'off: nothing held on the device');
   check((await totals()).total === 0, 'off: nothing reached the hub');
@@ -79,12 +85,14 @@ try {
   await click('#set-usage input[type=checkbox]');
   check(await p.eval(`JSON.parse(localStorage.getItem('dither-chat:prefs')).countClicks === true`), 'switched on for this device');
 
-  // The inbox: chips, a row, search; Ctrl+K.
+  // The inbox: the filter, a section, a row, search; Ctrl+K.
   await click('.rail [data-track="inbox"]');
   await p.until(`document.querySelectorAll('.sidebar [data-row]').length > 3`, 5000);
-  await click('.inbox-chips .chip-btn', `el => el.textContent.trim() === 'Unread'`);
-  await click('.inbox-chips .chip-btn', `el => el.textContent.trim() === 'Unread'`);
-  await click('.inbox-chips .chip-btn', `el => el.textContent.trim() === 'All'`);
+  await pickFilter('Groups');
+  await pickFilter('Groups');
+  await pickFilter('All');
+  await click('.sidebar [data-section="inbox-earlier"] .section-toggle');
+  await click('.sidebar [data-section="inbox-earlier"] .section-toggle');
   const dmRow = await p.eval<string>(`document.querySelector('.sidebar [data-track^="row (DM"]')?.dataset.track ?? ''`);
   check(!!dmRow, 'an inbox row says its kind and state', dmRow);
   // On the row's text, not the button itself: still the row.
@@ -128,8 +136,10 @@ try {
   await p.until(`[...document.querySelectorAll('#set-usage .clicks-table td:first-child')].some((td) => td.textContent === 'settings: section Usage')`, 8000);
   const v = await totals();
   const want: [string, number][] = [
-    ['inbox: filter (Unread)', 2],
+    ['inbox: filter', 3],
+    ['inbox: filter (Groups)', 2],
     ['inbox: filter (All)', 1],
+    ['inbox: section toggle (Earlier)', 2],
     [`inbox: ${dmRow}`, 1],
     ['chat header: details', 2],
     ['composer: text box', 1],
@@ -144,7 +154,7 @@ try {
   for (const [k, n] of want) check((count(v, k)?.n ?? 0) >= n && count(v, k)?.desktop === count(v, k)?.n, `${k}: ${n}, on the desktop`, count(v, k));
   check(!!v.keys.find((k) => k.key.startsWith('people: row (person')), 'People: a row');
   if (card) check(!!v.keys.find((k) => k.key.startsWith('triage: card')), 'triage: a card');
-  // Nothing before switching on: the first chips were not counted.
+  // Nothing before switching on: the first filter choices were not counted.
   check(count(v, 'inbox: filter (All)')?.n === 1, 'nothing from before it was switched on');
   // Keys and pages are fixed strings: no ids or names.
   const ids = new Set([...boot.conversations.map((c: any) => c.id), ...boot.persons.map((x: any) => x.id)]);
@@ -182,7 +192,8 @@ try {
   check((await p.eval(`JSON.parse(localStorage.getItem('dither-chat:prefs')).countClicks`)) === false, 'switched off');
   const before = (await totals()).total;
   await click('.rail [data-track="inbox"]');
-  await click('.inbox-chips .chip-btn', `el => el.textContent.trim() === 'Unread'`);
+  await pickFilter('Groups');
+  await pickFilter('All');
   await putAway();
   check((await waiting()) === 0 && (await totals()).total === before, 'off: nothing more counted or sent');
 

@@ -591,6 +591,11 @@ export interface MailInboxRow extends InboxScore {
 export const rowLast = (r: InboxRow) => (r.kind === 'conv' ? (r.conv.lastMessageAt ?? 0) : r.thread.lastAt);
 /** Something in it you have not read. */
 export const rowUnread = (r: InboxRow) => (r.kind === 'conv' ? unreadOf(r.conv).unread > 0 : r.thread.unread > 0);
+/**
+ * A turn you owe that the hub still counts: they wrote last and it needs you (the row's ↩). An unanswered message
+ * from long ago, or one you rarely answer, has faded below `needs` and is not waiting on you.
+ */
+export const rowWaiting = (r: InboxRow) => r.needs && r.owedSince !== null;
 /** One other person: a DM, or a mail thread between you and one other. */
 export const rowDirect = (r: InboxRow) => (r.kind === 'conv' ? r.conv.shape === 'direct' : r.thread.participants <= 2);
 /** Muted here or on its network: below everything else. Notes to self notify nobody, which is not the same. */

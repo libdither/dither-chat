@@ -1,8 +1,9 @@
 /**
- * The one ranked inbox (docs/inbox.md), end to end against a demo hub in headless Chromium: one list in the hub's
- * order with muted places last, reasons on hover and in the row's menu, the chat you were just in near the top once
- * you leave it, no reshuffle while the pointer is on the list and a new order once it leaves, the filter chips, the
- * switcher (Ctrl+K) ranked the same way, and old Groups links. Mixed rows (docs/mail.md, slice 8): the demo's mail
+ * The one ranked inbox (docs/inbox.md), end to end against a demo hub in headless Chromium: three sections (Waiting
+ * on you, New, Earlier), each in the hub's order with muted places last, reasons on hover and in the row's menu, the
+ * chat you were just in near the top once you leave it, no reshuffle while the pointer is on the list and a new order
+ * once it leaves (a row read meanwhile changes section only then), the filter menu, the switcher (Ctrl+K) ranked the
+ * same way, and old Groups links. Mixed rows (docs/mail.md, slice 8): the demo's mail
  * from people ranks among the chats, a mail row says why, opens the reader beside the inbox, and leaves when archived;
  * newsletters and senders nobody knows stay out.
  *
@@ -22,7 +23,7 @@ const boot = (await fetch(`${hub}/api/bootstrap`).then((r) => r.json())) as any;
 if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
 if (!boot.attention) throw new Error('this hub does not rank the inbox');
 const shapeOf = new Map<string, string>(boot.conversations.map((c: any) => [c.id, c.shape]));
-// Mail threads in the inbox (slice 8): you and one other is the chips' "direct".
+// Mail threads in the inbox (slice 8): you and one other is "direct" (the filter keeps mail apart: isMail).
 const mailThreads = new Map<string, any>((boot.mail?.threads ?? []).map((t: any) => [t.id, t]));
 for (const t of mailThreads.values()) shapeOf.set(t.id, t.participants <= 2 ? 'direct' : 'group');
 const isMail = (k: string) => k.startsWith('mth_');
@@ -52,11 +53,23 @@ const center = async (sel: string, pick = 'el => true'): Promise<[number, number
   if (!r) throw new Error(`nothing matches ${sel}`);
   return r;
 };
-/** The rows on screen, in order, and whether anything still draws a line between them. */
+type Sections = { waiting: string[]; new: string[]; earlier: string[] };
+/** The rows on screen, in order, each section's, and whether anything still draws a line between them. */
 const shown = () =>
-  p.eval<{ keys: string[]; lines: number }>(`(() => {
-    const keys = [...document.querySelectorAll('.sidebar .side-scroll [data-row]')].map((el) => el.dataset.row);
-    return { keys, lines: document.querySelectorAll('.sidebar .caught-up').length + (/Caught up|Nothing needs you/i.test(document.querySelector('.sidebar .side-scroll').innerText) ? 1 : 0) };
+  p.eval<{ keys: string[]; lines: number; sections: Sections; heads: string[] }>(`(() => {
+    const scroll = document.querySelector('.sidebar .side-scroll');
+    const keys = [];
+    const sections = { waiting: [], new: [], earlier: [] };
+    let at = null;
+    for (const el of scroll.querySelectorAll('.section-head, [data-row]')) {
+      if (el.classList.contains('section-head')) at = el.dataset.section.replace(/^inbox-/, '');
+      else {
+        keys.push(el.dataset.row);
+        if (sections[at]) sections[at].push(el.dataset.row);
+      }
+    }
+    const heads = [...scroll.querySelectorAll('.section-head')].map((e) => e.innerText.replace(/\\s+/g, ' ').trim());
+    return { keys, sections, heads, lines: document.querySelectorAll('.sidebar .caught-up').length + (/Caught up|Nothing needs you/i.test(scroll.innerText) ? 1 : 0) };
   })()`);
 const attention = async () => new Map<string, any>(((await fetch(`${hub}/api/attention`).then((r) => r.json())) as any).items.map((a: any) => [a.id, a]));
 /** In the hub's order: by score, muted places (about -50) last; a point of slack for scores that moved since. The first pair out of order, or -1. */
@@ -72,6 +85,17 @@ const disorder = (keys: string[], scores: Map<string, any>) => {
   const i = outOfOrder(keys, scores);
   return i < 0 ? null : { at: i, scores: keys.slice(Math.max(0, i - 1), i + 1).map((k) => [scores.get(k)?.score ?? null, shapeOf.get(k)]) };
 };
+/** Each section in the hub's order. */
+const sectionsInOrder = (x: Sections, scores: Map<string, any>) => inOrder(x.waiting, scores) && inOrder(x.new, scores) && inOrder(x.earlier, scores);
+const sectionsDisorder = (x: Sections, scores: Map<string, any>) => disorder(x.waiting, scores) ?? disorder(x.new, scores) ?? disorder(x.earlier, scores);
+/** Which section a row is in, and where in it. */
+const within = (x: Sections, k: string) => {
+  const [section, ks] = Object.entries(x).find(([, ks]) => ks.includes(k)) ?? ['none', []];
+  return { section, at: ks.indexOf(k) };
+};
+/** What decides a row's section, as the hub and the page see it now. */
+const waitingNow = (k: string, scores: Map<string, any>) => !!scores.get(k)?.needs && scores.get(k)?.owedSince != null;
+const unreadNow = (keys: string[]) => p.eval<string[]>(`${JSON.stringify(keys)}.filter((k) => document.querySelector('[data-row="' + k + '"]')?.classList.contains('unread'))`);
 const away = () => mouse('mouseMoved', 900, 450);
 
 /** Mail from people among the chats (slice 8). Last but one: it archives a thread. */
@@ -84,7 +108,7 @@ async function mixed() {
   const mail = s.keys.filter(isMail);
   const subjectOf = (k: string) => mailThreads.get(k)?.subject ?? '';
   check(mail.length >= 2 && s.keys.some((k) => !isMail(k)), 'mixed rows: mail threads among the chats', mail.map(subjectOf));
-  check(inOrder(s.keys, scores), 'mixed rows in the hub’s order', disorder(s.keys, scores) ?? '');
+  check(sectionsInOrder(s.sections, scores), 'mixed rows in the hub’s order, section by section', sectionsDisorder(s.sections, scores) ?? '');
   check(mail.every((k) => scores.get(k)?.kind === 'mail'), 'each mail row is the hub’s mail attention');
   // Only mail from people: the newsletters, the notification and the sender nobody knows stay in Mail.
   const subjects = mail.map(subjectOf);
@@ -145,12 +169,23 @@ try {
   const model = (await fetch(`${hub}/api/attention/model`).then((r) => r.json())) as any;
   check(model.mode === 'model' && model.moments === 0, 'the learned order is on, at its prior', { mode: model.mode, moments: model.moments });
 
-  // One list, in the hub's order.
+  // Three sections, each in the hub's order.
   let scores = await attention();
   let s = await shown();
   check(!(await p.eval(`!!document.querySelector('.rail [aria-label^="Groups"]')`)), 'the rail has no Groups entry');
-  check(s.lines === 0 && s.keys.length > 3, 'one list, no "caught up" line', { rows: s.keys.length, lines: s.lines });
-  check(inOrder(s.keys, scores), 'in the hub’s order, muted places last', disorder(s.keys, scores) ?? '');
+  check(!(await p.eval(`!!document.querySelector('.sidebar .side-sub, .sidebar .inbox-chips')`)), 'no subtitle and no row of chips');
+  check(s.lines === 0 && s.keys.length > 3, 'no "caught up" line', { rows: s.keys.length, lines: s.lines });
+  check(s.sections.waiting.length > 0 && s.sections.new.length > 0 && s.sections.earlier.length > 0, 'Waiting on you, New and Earlier', s.heads);
+  check(s.heads.join() === `WAITING ON YOU ${s.sections.waiting.length},NEW ${s.sections.new.length},EARLIER ${s.sections.earlier.length}`, 'each head counts its rows', s.heads);
+  check(sectionsInOrder(s.sections, scores), 'each section in the hub’s order, muted places last', sectionsDisorder(s.sections, scores) ?? '');
+  const unread0 = new Set(await unreadNow(s.keys));
+  check(s.sections.waiting.every((k) => waitingNow(k, scores)), 'Waiting on you: a turn you owe that needs you', s.sections.waiting.filter((k) => !waitingNow(k, scores)));
+  check(s.sections.new.every((k) => unread0.has(k) && !waitingNow(k, scores)), 'New: unread, not waiting');
+  check(s.sections.earlier.every((k) => !unread0.has(k) && !waitingNow(k, scores)), 'Earlier: the rest');
+  check(
+    await p.eval(`[...document.querySelectorAll('.sidebar [data-section="inbox-waiting"] ~ [data-row]')].some((el) => el.querySelector('.row-owed'))`),
+    'a waiting row keeps its ↩ and how long ago',
+  );
   check(s.keys.some((k) => shapeOf.get(k) === 'group') && s.keys.some((k) => shapeOf.get(k) === 'direct') && s.keys.some((k) => shapeOf.get(k) === 'self'), 'DMs, groups and notes to self in one list');
   await shot('inbox-01-desktop');
 
@@ -171,6 +206,7 @@ try {
   const low = [...s.keys].reverse().find((k) => !isMail(k) && shapeOf.get(k) === 'group' && (scores.get(k)?.score ?? 0) > -30 && !scores.get(k)?.reasons.some((r: string) => r.startsWith('You were here')));
   check(low, 'a quiet group far down the list');
   const lowFrom = s.keys.indexOf(low!);
+  const lowWas = within(s.sections, low!);
   await click(...(await center(`[data-row="${low}"]`)));
   await away();
   let here: any = null;
@@ -180,14 +216,15 @@ try {
   }
   check(here?.reasons.some((r: string) => r.startsWith('You were here')), 'the hub hears you are there within seconds', { was: scores.get(low!)?.score, now: here?.score, reasons: here?.reasons });
   await Bun.sleep(1500);
-  check((await shown()).keys.indexOf(low!) === lowFrom, 'while it is open it keeps its place', { from: lowFrom });
+  check((await shown()).keys.indexOf(low!) === lowFrom && within((await shown()).sections, low!).section === lowWas.section, 'while it is open it keeps its place and its section', { from: lowFrom, ...lowWas });
   await p.eval(`location.hash = '#/inbox'`);
   await away();
   await Bun.sleep(3000);
   s = await shown();
   scores = await attention();
-  const lowTo = s.keys.indexOf(low!);
-  check(lowTo < lowFrom && inOrder(s.keys, scores), 'once you leave, it moves up to where its new score puts it', { from: lowFrom, to: lowTo, of: s.keys.length, disorder: disorder(s.keys, scores) });
+  // Read now, it may have left New for Earlier: up within whichever section it is in.
+  const lowNow = within(s.sections, low!);
+  check(lowNow.at < lowWas.at && sectionsInOrder(s.sections, scores), 'once you leave, it moves up to where its new score puts it', { from: lowWas, to: lowNow, disorder: sectionsDisorder(s.sections, scores) });
   await shot('inbox-03-just-left');
 
   // Answering a group that needs you makes it a conversation going on, at its new score, but not while the pointer
@@ -215,33 +252,67 @@ try {
   check(live(now), 'the hub now counts it as a conversation going on', { was, now: now?.score, reasons: now?.reasons });
   await Bun.sleep(2500);
   s = await shown();
-  check(s.keys.join() === before.keys.join(), 'nothing moves while the pointer is on the list');
+  check(s.keys.join() === before.keys.join() && JSON.stringify(s.sections) === JSON.stringify(before.sections), 'nothing moves while the pointer is on the list');
   await away();
   await Bun.sleep(3000);
   s = await shown();
   scores = await attention();
-  check(inOrder(s.keys, scores), 'once it leaves, the list takes the new order', { from: before.keys.indexOf(target), to: s.keys.indexOf(target), disorder: disorder(s.keys, scores) });
+  check(sectionsInOrder(s.sections, scores), 'once it leaves, the list takes the new order', { from: before.keys.indexOf(target), to: s.keys.indexOf(target), disorder: sectionsDisorder(s.sections, scores) });
+  check(!before.sections.waiting.includes(target) || !s.sections.waiting.includes(target), 'answered, it no longer waits on you', { was: before.sections.waiting.includes(target) });
   await shot('inbox-04-after-answer');
 
-  // Filters.
-  const chip = async (label: string) => {
-    await click(...(await center('.inbox-chips .chip-btn', `el => el.textContent.trim() === '${label}'`)));
+  // Reading a new row with the pointer on the list: it stays under New until the pointer leaves.
+  const fresh = s.sections.new.find((k) => !isMail(k) && !waitingNow(k, scores));
+  check(fresh, 'a new row to read');
+  if (fresh) {
+    await mouse('mouseMoved', ...(await center('.sidebar .conv-row', `el => el.dataset.row !== ${JSON.stringify(fresh)}`)));
+    const r = await fetch(`${hub}/api/conversations/${fresh}/read`, { method: 'POST', headers: { 'content-type': 'application/json', origin: hub }, body: '{}' });
+    check(r.ok, 'read it through the hub');
+    await p.until(`!document.querySelector('[data-row="${fresh}"]').classList.contains('unread')`, 5000).catch(() => {});
+    await Bun.sleep(2000);
+    s = await shown();
+    check(s.sections.new.includes(fresh) && !(await unreadNow([fresh])).length, 'read, it stays under New while the pointer is on the list');
+    await away();
+    await Bun.sleep(3000);
+    s = await shown();
+    check(!s.sections.new.includes(fresh) && s.keys.includes(fresh), 'once the pointer leaves, it moves out of New', Object.entries(s.sections).find(([, ks]) => ks.includes(fresh))?.[0]);
+  }
+
+  // The filter: a menu beside the search box; the button says which is on.
+  const filter = async (label: string) => {
+    await click(...(await center('.inbox-filter-btn')));
+    await p.until(`!!document.querySelector('.cm[role="menu"]')`, 3000);
+    const items = await p.eval<string[]>(`[...document.querySelectorAll('.cm[role="menu"] [role="menuitemradio"]')].map((el) => el.innerText.trim())`);
+    await click(...(await center('.cm[role="menu"] [role="menuitemradio"]', `el => el.innerText.trim() === '${label}'`)));
     await away();
     await Bun.sleep(400);
-    return shown();
+    return { ...(await shown()), items, on: await p.eval<string>(`document.querySelector('.inbox-filter-btn .inbox-filter-name')?.textContent ?? ''`) };
   };
   const all = s.keys.length;
-  const people = await chip('People');
-  check(people.keys.length > 0 && people.keys.every((k) => shapeOf.get(k) === 'direct'), 'People: only DMs and mail between you and one other', people.keys.length);
-  check(people.keys.some(isMail), 'People has mail in it', people.keys.filter(isMail));
-  await shot('inbox-05-people');
-  const groups = await chip('Groups');
-  check(groups.keys.length > 0 && groups.keys.every((k) => shapeOf.get(k) !== 'direct') && people.keys.length + groups.keys.length === all, 'Groups: everything else');
-  const unread = await chip('Unread');
-  const bold = await p.eval<number>(`document.querySelectorAll('.sidebar .conv-row.unread').length`);
-  check(unread.keys.length > 0 && unread.keys.length === bold, 'Unread: only unread rows', { rows: unread.keys.length, bold });
-  await shot('inbox-06-unread');
-  await chip('All');
+  const direct = await filter('Direct messages');
+  check(direct.items.join() === 'All,Direct messages,Groups,Mail', 'the menu: All, Direct messages, Groups, Mail', direct.items);
+  check(direct.keys.length > 0 && direct.keys.every((k) => !isMail(k) && shapeOf.get(k) === 'direct'), 'Direct messages: only DMs', direct.keys.length);
+  check(direct.on === 'DMs', 'the button says a filter is on', direct.on);
+  await shot('inbox-05-direct');
+  const groups = await filter('Groups');
+  check(groups.keys.length > 0 && groups.keys.every((k) => !isMail(k) && shapeOf.get(k) !== 'direct'), 'Groups: the other chats');
+  const mailOnly = await filter('Mail');
+  check(mailOnly.keys.length > 0 && mailOnly.keys.every(isMail) && direct.keys.length + groups.keys.length + mailOnly.keys.length === all, 'Mail: the mail; the three make up All', { direct: direct.keys.length, groups: groups.keys.length, mail: mailOnly.keys.length, all });
+  check(mailOnly.heads.length === Object.values(mailOnly.sections).filter((ks) => ks.length).length, 'an empty section is not shown', mailOnly.heads);
+  await click(...(await center('.inbox-filter-btn')));
+  await Bun.sleep(400);
+  await shot('inbox-06-filter-menu');
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await Bun.sleep(300);
+  const back = await filter('All');
+  check(back.keys.length === all && back.on === '', 'All again: the button is plain');
+  // A section folds and keeps its count.
+  await click(...(await center('.sidebar [data-section="inbox-earlier"] .section-toggle')));
+  await Bun.sleep(300);
+  const folded = await shown();
+  check(folded.sections.earlier.length === 0 && folded.heads.includes(`EARLIER ${back.sections.earlier.length}`), 'Earlier folds and keeps its count', folded.heads);
+  await click(...(await center('.sidebar [data-section="inbox-earlier"] .section-toggle')));
+  await away();
 
   // The switcher: with nothing typed, the top of the inbox (a DM as its person); typed, the match times the score.
   const ctrlK = () => p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'k', code: 'KeyK', modifiers: 2, windowsVirtualKeyCode: 75 });

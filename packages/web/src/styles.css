@@ -500,8 +500,52 @@ code {
 .row.unread .row-title {
   color: var(--unread);
 }
-/* The inbox (docs/inbox.md): filter chips, the line where what needs you ends, and an unanswered message. */
-/* They wrap rather than scroll: beside a peeking card on a phone the list is narrow. */
+/* The inbox (docs/inbox.md): the search box with the filter beside it, and an unanswered message. */
+.inbox-search {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin: 10px 12px 4px;
+}
+.inbox-search .search {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+/* Three classes: over .icon-btn.small, which comes later. */
+.inbox-search .icon-btn.inbox-filter-btn {
+  position: relative;
+  flex: none;
+  width: auto;
+  min-width: 36px;
+  height: auto;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+}
+.inbox-search .icon-btn.inbox-filter-btn:hover {
+  background: var(--bg-hover);
+}
+.inbox-search .icon-btn.inbox-filter-btn.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.inbox-filter-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+@media (pointer: coarse) {
+  .inbox-filter-btn::after {
+    content: '';
+    position: absolute;
+    inset: -5px -4px;
+  }
+}
+/* Filter chips elsewhere (People, Mail). They wrap rather than scroll: beside a peeking card on a phone the list is narrow. */
 .inbox-chips {
   display: flex;
   flex-wrap: wrap;

@@ -115,10 +115,12 @@ export function rank(items: readonly Ranked[]): string[] {
     .map((x) => x.key);
 }
 
-/** The inbox's order as last taken: the keys, and which were unread then. */
+/** The inbox's order as last taken: the keys, which were unread then, and which waited on a reply from you. */
 export interface InboxSnapshot {
   keys: string[];
   unread: string[];
+  /** Absent in a snapshot from before the sections: none. */
+  waiting?: string[];
 }
 
 /** The open conversation and the snapshot it was shown in: it keeps that place until you leave it. */
@@ -128,52 +130,100 @@ export interface Hold {
 }
 
 /**
- * The order to show now. `hold` keeps the conversation you have open where it was: reading it or answering it
- * changes its score, and it should not jump away while you are in it. It settles at the first snapshot after you
- * leave.
+ * The order to show now. `hold` keeps the conversation you have open where it was, in the section it was in:
+ * reading it or answering it changes its score, and it should not jump away while you are in it. It settles at the
+ * first snapshot after you leave.
  */
-export function inboxSnapshot(items: readonly (Ranked & { unread: boolean })[], hold?: Hold): InboxSnapshot {
+export function inboxSnapshot(items: readonly (Ranked & { unread: boolean; waiting?: boolean })[], hold?: Hold): InboxSnapshot {
   let keys = rank(items);
+  let unread = items.filter((x) => x.unread).map((x) => x.key);
+  let waiting = items.filter((x) => x.waiting).map((x) => x.key);
   const was = hold?.prev ? hold.prev.keys.indexOf(hold.key) : -1;
   if (hold && was >= 0 && items.some((x) => x.key === hold.key)) {
     keys = keys.filter((k) => k !== hold.key);
     keys.splice(Math.min(was, keys.length), 0, hold.key);
+    const keep = (now: string[], before: string[] | undefined) => [...now.filter((k) => k !== hold.key), ...(before?.includes(hold.key) ? [hold.key] : [])];
+    unread = keep(unread, hold.prev!.unread);
+    waiting = keep(waiting, hold.prev!.waiting);
   }
-  return { keys, unread: items.filter((x) => x.unread).map((x) => x.key) };
+  return { keys, unread, waiting };
 }
 
-/** Whether a fresh ranking would show a different order from the snapshot. */
-export function inboxChanged(snap: InboxSnapshot | null, fresh: readonly Ranked[], hold?: Hold): boolean {
-  if (!snap) return true;
-  return inboxSnapshot(fresh.map((x) => ({ ...x, unread: false })), hold).keys.join('\n') !== snap.keys.join('\n');
+/** Two snapshots show the same: the same order, and each row in the same section. */
+export function sameInbox(a: InboxSnapshot | null, b: InboxSnapshot): boolean {
+  const set = (x: string[] | undefined) => [...(x ?? [])].sort().join('\n');
+  return !!a && a.keys.join('\n') === b.keys.join('\n') && set(a.unread) === set(b.unread) && set(a.waiting) === set(b.waiting);
+}
+
+/** Whether a fresh ranking would show a different order from the snapshot, or move a row to another section. */
+export function inboxChanged(snap: InboxSnapshot | null, fresh: readonly (Ranked & { unread?: boolean; waiting?: boolean })[], hold?: Hold): boolean {
+  return !sameInbox(snap, inboxSnapshot(fresh.map((x) => ({ ...x, unread: !!x.unread })), hold));
 }
 
 /**
  * The inbox on screen: the snapshot's order for what it knows and anything new after it (as `stabilize`). `keep`
- * is a filter chip; it hides rows without moving any.
+ * is the filter; it hides rows without moving any.
  */
 export function inboxView(snap: InboxSnapshot | null, fresh: readonly Ranked[], keep: (key: string) => boolean = () => true): string[] {
   const order = rank(fresh);
   return (snap ? stabilize(snap.keys, order) : order).filter(keep);
 }
 
-/** What a filter chip asks of an inbox row (docs/inbox.md): one other person on it, and something unread. */
-export interface Chipped {
-  key: string;
-  /** A DM, or a mail thread between you and one other (docs/mail.md). */
-  direct: boolean;
-  unread: boolean;
+/** The inbox's filter (docs/inbox.md): everything, chats with one other person, the other chats, or mail. */
+export type InboxFilter = 'all' | 'direct' | 'groups' | 'mail';
+export const INBOX_FILTERS: { id: InboxFilter; label: string; short: string }[] = [
+  { id: 'all', label: 'All', short: 'All' },
+  { id: 'direct', label: 'Direct messages', short: 'DMs' },
+  { id: 'groups', label: 'Groups', short: 'Groups' },
+  { id: 'mail', label: 'Mail', short: 'Mail' },
+];
+
+/** A stored filter, from before the menu too: People was the DMs, and Unread is now the New section. */
+export function inboxFilterOf(stored: unknown): InboxFilter {
+  if (stored === 'people') return 'direct';
+  return INBOX_FILTERS.some((f) => f.id === stored) ? (stored as InboxFilter) : 'all';
 }
 
-/**
- * Whether a filter chip shows a row: People one other person, Groups the rest, Unread what is unread or was when the
- * order was taken (`wasUnread`), so reading it does not pull it out from under you.
- */
-export function chipKeeps(chip: 'all' | 'people' | 'groups' | 'unread', r: Chipped, wasUnread: ReadonlySet<string>): boolean {
-  if (chip === 'people') return r.direct;
-  if (chip === 'groups') return !r.direct;
-  if (chip === 'unread') return r.unread || wasUnread.has(r.key);
+/** What the filter asks of an inbox row. */
+export interface Filtered {
+  /** A thread of mail (docs/mail.md), not a chat. */
+  mail: boolean;
+  /** A DM: one other person. */
+  direct: boolean;
+}
+
+/** Whether the filter shows a row: Direct messages the DMs, Groups the other chats, Mail the mail. */
+export function filterKeeps(filter: InboxFilter, r: Filtered): boolean {
+  if (filter === 'mail') return r.mail;
+  if (filter === 'direct') return !r.mail && r.direct;
+  if (filter === 'groups') return !r.mail && !r.direct;
   return true;
+}
+
+/** The inbox's sections, top to bottom (docs/inbox.md). */
+export type InboxSection = 'waiting' | 'new' | 'earlier';
+export const INBOX_SECTIONS: { id: InboxSection; label: string }[] = [
+  { id: 'waiting', label: 'Waiting on you' },
+  { id: 'new', label: 'New' },
+  { id: 'earlier', label: 'Earlier' },
+];
+
+/**
+ * Splits rows shown in order into the sections, each keeping that order. A row the snapshot knows goes where it was
+ * when the order was taken, so reading it or answering it moves it at the next snapshot, never under you; a row
+ * newer than the snapshot goes by what it is `now`. Waiting on you: a turn you owe (the row's ↩). New: unread, and
+ * not waiting. Earlier: the rest.
+ */
+export function inboxSections(keys: readonly string[], snap: InboxSnapshot | null, now: (key: string) => { unread: boolean; waiting: boolean }): Record<InboxSection, string[]> {
+  const out: Record<InboxSection, string[]> = { waiting: [], new: [], earlier: [] };
+  const known = new Set(snap?.keys ?? []);
+  const unread = new Set(snap?.unread ?? []);
+  const waiting = new Set(snap?.waiting ?? []);
+  for (const k of keys) {
+    const x = known.has(k) ? { unread: unread.has(k), waiting: waiting.has(k) } : now(k);
+    out[x.waiting ? 'waiting' : x.unread ? 'new' : 'earlier'].push(k);
+  }
+  return out;
 }
 
 /**
