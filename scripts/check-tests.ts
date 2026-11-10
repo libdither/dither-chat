@@ -138,7 +138,8 @@ const COUNTERS: Record<Kind, (code: string) => number> = {
   sleep: (code) => [...code.matchAll(/\bBun\.sleep(?:Sync)?\(\s*([^),]*)/g)].filter((m) => m[1].trim() !== '0').length,
   setTimeout: (code) => {
     let n = 0;
-    for (const m of code.matchAll(/\bsetTimeout\(\s*([^,]*?)\s*,/g)) {
+    // The global setTimeout only: a fake clock's clock.setTimeout(…) moves when the test moves it, so it is no wait.
+    for (const m of code.matchAll(/(?<![\w$.])setTimeout\(\s*([^,]*?)\s*,/g)) {
       const arg = m[1];
       // A resolver handed over (setTimeout(r, 20)), or a timer inside a new Promise on the same line.
       if (/^[A-Za-z_$][\w$]*$/.test(arg) || /\bnew Promise\b/.test(code)) n++;
