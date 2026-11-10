@@ -2,7 +2,8 @@
 
 `scripts/verify-perf.ts` times what the app feels like on a hub the size of the real one, and fails when a change
 makes it slower. It runs on a machine with Chromium; CI has none, so run it before and after a change that touches
-rendering, the sync model or the hub's hot queries.
+rendering, the sync model or the hub's hot queries. What CI does check on every push is sizes and counts: see
+[Budgets](#budgets-sizes-and-counts-in-every-test-run).
 
 ```sh
 bun scripts/verify-perf.ts                 # 3 runs each at 1× and 4× CPU, compared with scripts/perf-baseline.json
@@ -197,6 +198,89 @@ of the same code; runs alternated, origin/main between two of the branch. Render
 and 6 for the six opens, message renders 354; sidebar renders 13 to 15 either way). Times of the same build bracketed
 main's: a cold load at 4× took 3,692 ms on main, 2,533 and 3,777 ms on the branch; a first open 1,113 ms on main,
 710 and 1,050 ms. Nothing there says mail slows chat, and nothing that noisy could show a few percent.
+
+## Budgets: sizes and counts in every test run
+
+Times are too noisy to fail CI on; sizes and counts are not. Two ordinary tests measure what a cold start costs and
+hold each number to a budget in `budgets.json` at the repo root, so a change that makes startup or a page fetch heavier
+fails `bun run test`, locally and in CI. Each takes about a second.
+
+**What the hub sends** (`packages/hub/test/budgets.test.ts`). The perf world at a tenth of the size (`seedWorld` at
+scale 0.1: 574 conversations, 22k messages, a week of triage), the demo's mail account, and a hub wired like main.ts's
+for what it sends (attention with the learned order's prior, devices, activity, mail, the read queue). The clock is
+stopped at 2026-11-10 12:00 UTC and the sync journal's epoch fixed, so every number is the same on every run, machine
+and time zone. Through the same HTTP and socket paths the web app uses on a cold start, in its order:
+
+| key | what |
+|---|---|
+| `bootstrap.*` | `/api/bootstrap`: bytes, zstd bytes (what Chromium is sent), fields, and its rows: conversations, identities, persons, spaces, edges, attention, mail threads |
+| `inbox.*` | `/api/inbox`: bytes, zstd, fields, items |
+| `coldStart.*` | everything a cold start fetches, added up: health, activity, devices/hello, bootstrap, read-all, inbox, mail triage, usage, retention |
+| `page.first.*`, `page.older.*` | the biggest conversation's first page of 60 and the one before it |
+| `live.message.*`, `live.triaged.*` | the live socket's frame for one message arriving, and the one for its triage |
+| `sync.missed.*` | `/api/sync` for a device that was away for that message (a relaunch from its snapshot) |
+
+`fields` counts every field of every object in a payload. A field added to each conversation is about 1.5% of the
+bootstrap's bytes, inside their headroom, but hundreds of fields, and fields have none.
+
+**What the web build weighs** (`packages/web/test/bundle.test.ts`). It runs `vite build` with vite.config.ts into a temp
+dir, then measures bytes and gzip bytes (level 6, as vite prints them) of every chunk, the stylesheet and the workers,
+and of the startup set: what index.html loads before the app runs (its script, its modulepreloads and the stylesheet),
+added up, and how many files that is. Chunks are named by what they stand for, not their hashed file names: `js/entry`,
+a lazy chunk by its module (`js/src/ui/files/PdfView.tsx`, `js/jsqr/dist/jsQR.js`), a shared chunk by the name rolldown
+gave it (`js/shared/Accounts`).
+
+**Passing.** A value over its budget fails. Bytes have 2% of headroom; counts and fields none. A value well under its
+budget, a measure with no budget yet (a new chunk), or a budget nothing measures any more prints a hint; only the
+new measure fails, until it has a budget.
+
+```sh
+bun scripts/budgets.ts                                   # both tests
+bun scripts/budgets.ts --update                          # write measured values, lower budgets, add new ones, drop old ones
+bun scripts/budgets.ts --update --reason "why it grew"   # also raise the ones that went over
+```
+
+One test alone: `BUDGETS_UPDATE=1` (and `BUDGETS_REASON=…`) with `bun test test/budgets.test.ts` in packages/hub or
+`bun test test/bundle.test.ts` in packages/web. Commit `budgets.json` with the change.
+
+**Raising a budget** needs a reason beside it in `budgets.json`; `--update` will not raise one without `--reason`, and
+the tests fail when a budget went up since the base commit without a new reason (on GitHub Actions the base is `HEAD^1`,
+main's head for a pull request, so the checkout fetches two commits; locally the merge base with origin/main, or
+`BUDGETS_BASE=<ref>`). Nobody reviews a pull request before it merges, so the reason is the record. Raise when the
+bytes are what the change is for and cannot be had cheaper: a field the app reads on most rows, a screen that is on the
+first screen. Not when a default could be left out (send a field only when it is not null, false or its default), when
+a screen that is not on the first screen joins the startup set through a static import (import it lazily, as Mail's
+screens and the people graph are), or to make a red check green without looking at why it went red. Lower budgets
+whenever a hint says so: a budget that sits well above its value lets a regression through unseen.
+
+On GitHub Actions both tests add a table of measured against budget to the job summary. Two pull requests that each
+stay inside a budget can, merged together, go over it; main's next run then fails, and the next change there lowers
+something or raises the budget with a reason.
+
+### The startup set (2026-11-10)
+
+907 KB (278 KB gzip) in ten files: the entry (269 KB), `shared/Accounts` (353 KB), `shared/state` (72 KB), the
+stylesheet (182 KB), and six small ones. The chunk called Accounts is not Accounts.tsx: rolldown made it of the 72
+modules the entry shares with the lazy chunks (Mail's screens, the people graph, `lazy`), Sidebar, Requests, model.ts,
+icons and menus among them, and named it after one. It is in the startup set because the entry imports from it.
+
+What making one import lazy would take out of the startup JS (725 KB, 243 KB gzip), estimated from each module's share
+of it, everything only it imports included:
+
+| lazy | saves | gzip |
+|---|---|---|
+| Settings.tsx (Push, themes, Adversarial) | 55 KB | 18 KB |
+| Accounts.tsx (Imports, Telegram sign-ins, QR codes) | 54 KB | 18 KB |
+| Profile.tsx (the activity card and chart) | 44 KB | 15 KB |
+| Requests.tsx | 20 KB | 7 KB |
+| Reorganize.tsx | 19 KB | 6 KB |
+| CatchUp.tsx | 18 KB | 6 KB |
+| NewMessage.tsx | 14 KB | 5 KB |
+| PlaceProfile.tsx | 13 KB | 4 KB |
+| HowItSorts.tsx, Search.tsx, Directory.tsx, Details.tsx | 9–11 KB each | 3–4 KB each |
+
+Those twelve together are about 280 KB (93 KB gzip), more than a third of the startup JS. The emoji data (429 KB, 82 KB
+gzip) is not in the set: Reactions.tsx loads it four seconds after a conversation opens.
 
 ## Next
 
