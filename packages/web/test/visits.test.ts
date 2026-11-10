@@ -92,3 +92,17 @@ test('a snapshot sent while the stay lasts is a copy: later changes do not alter
   expect(log.current!.active).toBe(9);
   expect(snap.id).toBe(log.current!.id);
 });
+
+test('how far down the inbox was on screen: the deepest row of the stay, none when the list was not there', () => {
+  const log = fresh();
+  log.enter(T0, dm, { source: 'inbox', rank: 3 }, true);
+  log.saw(null);
+  expect(log.current!.depth).toBeNull();
+  log.saw(9);
+  log.saw(4);
+  log.saw(null);
+  expect(log.current!.depth).toBe(9);
+  // A new stay starts over.
+  log.enter(T0 + 10 * S, { view: 'inbox' }, { source: 'rail' }, true);
+  expect(log.current!.depth).toBeNull();
+});

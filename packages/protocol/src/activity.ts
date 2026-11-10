@@ -58,6 +58,8 @@ export interface VisitRecord {
   rank?: number | null;
   score?: number | null;
   needs?: boolean | null;
+  /** The deepest inbox row on screen during the stay (0 = top), when the inbox's list was on screen: how far you looked. */
+  depth?: number | null;
   /** The latest message on screen when the conversation was marked read here. */
   readToId?: string | null;
   readToTs?: number | null;

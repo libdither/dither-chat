@@ -88,6 +88,7 @@ export class VisitLog {
       rank: a.rank ?? null,
       score: a.score ?? null,
       needs: a.needs ?? null,
+      depth: null,
       readToId: null,
       readToTs: null,
       sent: 0,
@@ -115,6 +116,12 @@ export class VisitLog {
     const v = this.current;
     if (!v || (conversationId && v.conversationId !== conversationId)) return;
     v[action]++;
+  }
+
+  /** The inbox's list is on screen down to this row (0 = top): the stay keeps the deepest. */
+  saw(depth: number | null) {
+    const v = this.current;
+    if (v && depth != null && depth > (v.depth ?? -1)) v.depth = depth;
   }
 
   /** The conversation open was marked read, up to this message. */

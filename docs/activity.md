@@ -28,6 +28,7 @@ Devices only send to it.
 | `source` | how you got there (below) |
 | `push_id` | the notification tapped, for `notification` and `toast` |
 | `rank`, `score`, `needs` | from an inbox row: its position (0 = top), its attention score, and whether it needed you (before 2026-11-07, whether it was above the "caught up" line: the same thing) |
+| `depth` | the deepest inbox row on screen during the stay (0 = top, counted as `rank` is), when the inbox's list was on screen: how far down you could have looked. A number, never which rows (since 2026-11-10) |
 | `read_to_id`, `read_to_ts` | the latest message when the conversation was marked read during the stay |
 | `sent`, `reactions`, `history`, `threads`, `attachments` | messages sent, reactions added, older pages loaded, threads and attachments opened |
 | `next_view` | where you went next; null while it lasts or when the app went away |

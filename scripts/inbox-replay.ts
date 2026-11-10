@@ -6,6 +6,7 @@
  *   bun scripts/inbox-replay.ts --db <scratch dir>/hub-copy.sqlite --out <scratch dir>   (reuse a copy)
  *   bun scripts/inbox-replay.ts ... --grid      (also: the "you were here" weight and half-life)
  *   bun scripts/inbox-replay.ts ... --model-grid   (also: the learned order's regularisation, position correction and its cap, horizon and window)
+ *   bun scripts/inbox-replay.ts ... --curve        (also: the examination curve fitted to your opens; --model-grid has it too)
  *   bun scripts/inbox-replay.ts ... --calibrate    (the learned order's prior: open chance against the formula alone)
  *
  * It never opens the live database for writing: it copies it with VACUUM INTO (read-only) and works on the copy. It
@@ -25,7 +26,7 @@ import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { scoreConversation, WEIGHTS } from '../packages/hub/src/attention.ts';
-import { EXAMINATION_ETA, FEATURES, fitRank, HORIZON, LAMBDA, MAX_IPW, predict, PRIOR, rankFeatures, type Feature, type Features, type FitOptions, type Moment, type RankModel } from '../packages/hub/src/rank.ts';
+import { EXAM_AT, EXAMINATION_ETA, FEATURES, FIT, fitRank, GUESSED_CURVE, HORIZON, LAMBDA, MAX_IPW, predict, PRIOR, rankFeatures, type Feature, type Features, type FitOptions, type Moment, type RankModel } from '../packages/hub/src/rank.ts';
 import { isChoice, loadWorld, momentOf, mutedBy, Rebuild, seenAt, type Seen, type World } from '../packages/hub/src/rankhistory.ts';
 import { Store } from '../packages/hub/src/store.ts';
 import { Triage } from '../packages/hub/src/triage.ts';
@@ -254,6 +255,13 @@ function learned(ms: Moment[], opens: Open[], snaps: Snap[], id: string, o: Sett
 
 // ------------------------------------------------------------------ the report
 
+/** How far down the inbox's list was on screen in the stays that say (`visit.depth`, recorded since 2026-11-10). */
+function onScreen(db: Database): string {
+  const rows = db.query('SELECT depth FROM visit WHERE depth IS NOT NULL').all() as Row[];
+  if (!rows.length) return '- on screen: no stay has recorded how far down the list was yet';
+  return `- on screen in ${rows.length} stays, by first position: ${EXAM_AT.map((p) => `${p + 1}: ${(rows.filter((r) => r.depth >= p).length / rows.length).toFixed(2)}`).join(', ')}`;
+}
+
 const fmt = (x: number) => x.toFixed(3);
 
 /** The difference in MRR between two orderings on the same opens, with a 95% interval from resampling the opens. */
@@ -301,14 +309,15 @@ if (import.meta.main) {
   const days = [...new Set(opens.map((o) => o.day))].sort((a, b) => a - b);
   const holdout = new Set(days.slice(-holdoutDays));
   // The learned order, as shipped; and with --model-grid, other settings to choose from on the choosing days.
-  const shipped: Setting = { eta: EXAMINATION_ETA, cap: MAX_IPW, horizon: HORIZON };
+  const shipped: Setting = { ...FIT, cap: MAX_IPW, horizon: HORIZON };
   const models = learned(moments, opens, snaps, 'learned', shipped, 'sectioned');
   policies.push({ id: 'learned', what: 'the learned order (rank.ts) as shipped, refitted daily on the days before', order: () => [] });
   policies.push({ id: 'sectioned', what: 'the learned order in the sections of 2026-11-09: a reply you owe that needs you, then unread, then the rest', order: () => [] });
   const at = (lam: number): Record<Feature, number> => Object.fromEntries(FEATURES.map((f) => [f, f === 'bias' || f === 'formula' ? LAMBDA.formula : lam])) as Record<Feature, number>;
   const gridIds: string[] = [];
+  const fitted: Record<string, Record<number, RankModel>> = { learned: models };
   const tryIt = (id: string, what: string, o: Setting, ms = moments) => {
-    learned(ms, opens, snaps, id, { ...shipped, ...o });
+    fitted[id] = learned(ms, opens, snaps, id, { ...shipped, ...o });
     policies.push({ id, what, order: () => [] });
     gridIds.push(id);
   };
@@ -320,6 +329,10 @@ if (import.meta.main) {
     for (const cap of [2, 3, 10, 30]) tryIt(`cap-${cap}`, `learned, an open from far down counts at most ${cap} times`, { cap });
     for (const d of [2, 3, 5]) tryIt(`window-${d}d`, `learned from the last ${d} days only`, { window: d * DAY });
   }
+  if (grid || flag('curve')) {
+    tryIt('guess', 'learned with the guessed examination curve, (1 + position)^-0.5, as until 2026-11-10', { curve: undefined });
+    tryIt('curve-em', 'learned with the curve fitted by regression-EM: a row not opened may be one you did not see', { curve: 'em' });
+  }
   if (flag('calibrate')) {
     const ms = moments.filter((m) => !holdout.has(dayOf(m.at)));
     const only = Object.fromEntries(FEATURES.map((f) => [f, f === 'bias' || f === 'formula' ? 0 : 1e9])) as Record<Feature, number>;
@@ -327,11 +340,16 @@ if (import.meta.main) {
   }
   const val = opens.filter((o) => !holdout.has(o.day));
   const hold = opens.filter((o) => holdout.has(o.day));
-  const gridGaps = gridIds.length
-    ? ['Each setting minus the learned order as shipped, MRR on the same opens (choosing days; held-out days):', '', ...gridIds.map((id) => `- \`${id}\`: ${gapText(val, id, 'learned')}; ${gapText(hold, id, 'learned')}`), '']
-    : [];
   const fromInbox = (o: Open) => o.source === 'inbox';
   const later = opens.filter((o) => o.day > days[0]);
+  const gridGaps = gridIds.length
+    ? [
+        'Each setting minus the learned order as shipped, MRR on the same opens (choosing days; held-out days; every day after the first; held out, opened from elsewhere):',
+        '',
+        ...gridIds.map((id) => `- \`${id}\`: ${gapText(val, id, 'learned')}; ${gapText(hold, id, 'learned')}; ${gapText(later, id, 'learned')}; ${gapText(hold.filter((o) => !fromInbox(o)), id, 'learned')}`),
+        '',
+      ]
+    : [];
   const report = [
     '# Inbox replay',
     '',
@@ -382,6 +400,15 @@ if (import.meta.main) {
       const d = FEATURES.map((f) => [f, (m[k][f] ?? 0) - (PRIOR[k][f] ?? 0)] as const).filter(([, v]) => Math.abs(v) >= 0.01).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
       return `- ${k} (from ${m.moments} opens): ${d.map(([f, v]) => `${f} ${v > 0 ? '+' : ''}${v.toFixed(2)}`).join(', ') || 'the prior'}`;
     }),
+    '',
+    ...Object.entries(fitted)
+      .filter(([, ms]) => ms[days[days.length - 1]]?.curve)
+      .map(([id, ms]) => {
+        const m = ms[days[days.length - 1]];
+        return `- \`${id}\` examination curve at the start of the last day (from ${m.curveFrom} rows opened from the inbox), by first position: ${EXAM_AT.map((p, b) => `${p + 1}: ${m.curve![b].toFixed(2)}`).join(', ')}`;
+      }),
+    `- the guess, (1 + position)^-${EXAMINATION_ETA}: ${EXAM_AT.map((p, b) => `${p + 1}: ${GUESSED_CURVE[b].toFixed(2)}`).join(', ')}`,
+    onScreen(l.db),
     '',
     'Orderings:',
     ...policies.map((p) => `- \`${p.id}\`: ${p.what}`),

@@ -129,6 +129,10 @@ describe('cleaning what devices send', () => {
     // A clock far in the future is pulled back.
     expect(cleanVisit(v({ start: T0 + 10 * DAY, end: T0 + 10 * DAY }), T0 + HOUR)!.start).toBe(T0 + HOUR + MIN);
     expect(cleanVisit(v({ sent: -3, rank: 2.7 }), T0 + HOUR)).toMatchObject({ sent: 0, rank: 2 });
+    // How far down the inbox was on screen: a row number or nothing.
+    expect(cleanVisit(v({ depth: 12.4 }), T0 + HOUR)!.depth).toBe(12);
+    expect(cleanVisit(v({ depth: -5 }), T0 + HOUR)!.depth).toBe(0);
+    expect(cleanVisit(v(), T0 + HOUR)!.depth).toBeNull();
   });
 });
 
@@ -203,11 +207,11 @@ describe('the log on the hub', () => {
     a.visits([v], NOW);
     expect(store.db.query('SELECT * FROM visit').all()).toEqual(once);
     // The stay goes on: more time, a reaction, it ends and names where the user went.
-    a.visits([{ ...v, active: 50, end: T0 + 2 * MIN, reactions: 1, next: 'inbox', closed: true, readToId: 'm9', readToTs: T0 + MIN }], NOW);
+    a.visits([{ ...v, active: 50, end: T0 + 2 * MIN, reactions: 1, next: 'inbox', closed: true, readToId: 'm9', readToTs: T0 + MIN, depth: 14 }], NOW);
     // An older snapshot arriving late takes nothing back.
-    a.visits([v], NOW);
+    a.visits([{ ...v, depth: 6 }], NOW);
     const r = store.db.query('SELECT * FROM visit').get() as any;
-    expect(r).toMatchObject({ active: 50, end_at: T0 + 2 * MIN, sent: 1, reactions: 1, next_view: 'inbox', closed: 1, read_to_id: 'm9', read_to_ts: T0 + MIN, source: 'inbox' });
+    expect(r).toMatchObject({ active: 50, end_at: T0 + 2 * MIN, sent: 1, reactions: 1, next_view: 'inbox', closed: 1, read_to_id: 'm9', read_to_ts: T0 + MIN, source: 'inbox', depth: 14 });
     expect(a.info().visits).toBe(1);
   });
 

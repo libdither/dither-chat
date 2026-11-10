@@ -97,6 +97,33 @@ export function arrivalOf(el: Element | null): Arrival {
   return { source: 'other' };
 }
 
+/**
+ * The deepest inbox row on screen now (0 = top, counted as an inbox row's `rank` is), or null when the inbox's list
+ * is not on screen. Numbers only: no row is named.
+ */
+export function inboxDepth(): number | null {
+  if (document.visibilityState !== 'visible') return null;
+  const list = document.querySelector('.sidebar-inner.inbox-side');
+  const scroll = list?.querySelector('.side-scroll');
+  if (!list || !scroll) return null;
+  const box = scroll.getBoundingClientRect();
+  const bottom = Math.min(box.bottom, window.innerHeight);
+  if (box.height <= 0 || box.right <= 0 || box.left >= window.innerWidth || box.top >= bottom) return null;
+  const rows = list.querySelectorAll('[data-row]');
+  // The last row whose top is above the list's bottom edge.
+  let lo = 0;
+  let hi = rows.length - 1;
+  let deepest = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (rows[mid].getBoundingClientRect().top < bottom) {
+      deepest = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return deepest >= 0 ? deepest : null;
+}
+
 // ------------------------------------------------------------------ state
 
 let log: VisitLog | null = null;
@@ -169,6 +196,8 @@ function onRoute(r: Route) {
   const cur = log.current;
   if (cur?.conversationId && place.conversationId && cur.conversationId !== place.conversationId && db.conversations.get(place.conversationId)?.shape === 'thread') log.note('threads');
   if (log.enter(now, place, arrival, inUse())) pending = null;
+  // The list as the stay begins, once it has drawn.
+  requestAnimationFrame(() => log?.saw(inboxDepth()));
   if (trail[trail.length - 1] !== location.hash) trail.push(location.hash);
   if (trail.length > 100) trail.splice(0, trail.length - 100);
   collect();
@@ -308,7 +337,24 @@ export function startActivity() {
     if (document.visibilityState === 'visible') event(ev.nid, 'inapp');
   });
 
-  const tick = () => log?.update(Date.now(), inUse());
+  const tick = () => {
+    log?.update(Date.now(), inUse());
+    log?.saw(inboxDepth());
+  };
+  // How far down the inbox you looked: its list scrolled.
+  let looking = false;
+  document.addEventListener(
+    'scroll',
+    (e) => {
+      if (looking || !(e.target as Element)?.closest?.('.inbox-side')) return;
+      looking = true;
+      requestAnimationFrame(() => {
+        looking = false;
+        log?.saw(inboxDepth());
+      });
+    },
+    true,
+  );
   let hiddenAt: number | null = null;
   document.addEventListener('visibilitychange', () => {
     tick();
