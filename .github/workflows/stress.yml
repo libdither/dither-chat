@@ -1,0 +1,36 @@
+# The hub's suite many times over on parallel workers, once a day, to find the tests that fail now and then
+# (docs/testing.md "Flaky tests"). Any failure fails the job, and its summary lists each failing test with how many
+# of its runs failed. Nothing else: no issue, no notification beyond GitHub's own. The same locally:
+# bun scripts/stress.ts (--rerun-each=N --parallel=N).
+name: Stress
+
+on:
+  schedule:
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: Runs of each hub test file
+        default: '15'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stress
+  cancel-in-progress: false
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    # A pass of the hub's suite is about 40 s on 4 workers, so 15 are about 10 min. Past 25 it is a hang, and fails.
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - env:
+          RUNS: ${{ inputs.runs || '15' }}
+        run: bun scripts/stress.ts --rerun-each="$RUNS" --parallel=4

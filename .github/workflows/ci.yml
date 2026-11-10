@@ -54,6 +54,8 @@ jobs:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+      # No .only, retries or bare skips, and no new real-time waits in tests (scripts/check-tests.ts, docs/testing.md).
+      - run: bun run check:tests
 
   # The hub's suite is the longest; its files run on --parallel workers (scripts/test-all.ts).
   test-hub:
