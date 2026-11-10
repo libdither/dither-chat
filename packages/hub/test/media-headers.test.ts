@@ -80,8 +80,8 @@ describe('file names in Content-Disposition', () => {
 
 describe('the media route', () => {
   const dir = mkdtempSync(join(tmpdir(), 'dither-mh-'));
-  const port = 20460 + Math.floor(Math.random() * 500);
-  const url = `http://127.0.0.1:${port}`;
+  let port = 0;
+  let url = '';
   const sign = mediaSigner('s');
   const served: Record<string, { mime: string; body: string }> = {
     'mxc://hs/html': { mime: 'text/html', body: '<script>alert(1)</script>' },
@@ -111,8 +111,9 @@ describe('the media route', () => {
       created: async () => {},
       log: async () => '<script>alert(1)</script>',
     } as any;
-    hub = new HubServer(store, sup, new Triage(store), { port, hostname: '127.0.0.1', dataDir: join(dir, 'data'), webDist: dir, secret: 's' });
-    hub.start();
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: join(dir, 'data'), webDist: dir, secret: 's' });
+    port = hub.start().port!;
+    url = `http://127.0.0.1:${port}`;
     acc = store.createAccount({ network: 'matrix', label: 'x', color: '#000', adapter: 'matrix' }).id;
     mkdirSync(join(dir, 'data'), { recursive: true });
   });

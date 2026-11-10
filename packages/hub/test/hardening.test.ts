@@ -197,8 +197,8 @@ describe('the store', () => {
 });
 
 describe('the server', () => {
-  const port = 19460 + Math.floor(Math.random() * 500);
-  const url = `http://127.0.0.1:${port}`;
+  let port = 0;
+  let url = '';
   let hub: HubServer;
   let store: Store;
   let answer: 'ok' | 'timeout' = 'ok';
@@ -216,8 +216,9 @@ describe('the server', () => {
       },
       created: async () => {},
     } as any;
-    hub = new HubServer(store, sup, new Triage(store), { port, hostname: '127.0.0.1', dataDir: join(dir, 'srv'), webDist: dir, secret: 's' });
-    hub.start();
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: join(dir, 'srv'), webDist: dir, secret: 's' });
+    port = hub.start().port!;
+    url = `http://127.0.0.1:${port}`;
     const acc = store.createAccount({ network: 'discord', label: 'x', color: '#000', adapter: 'discord' });
     store.ingest(acc, { t: 'hello', network: 'discord', version: '1', capabilities: ['send'] });
     store.ingest(acc, { t: 'status', status: 'online' });

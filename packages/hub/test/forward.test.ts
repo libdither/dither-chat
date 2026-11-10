@@ -57,8 +57,8 @@ describe('what a re-sent forward says', () => {
 
 describe('forwarding through the hub', () => {
   const dir = mkdtempSync(join(tmpdir(), 'dither-fwd-'));
-  const port = 19460 + Math.floor(Math.random() * 500);
-  const url = `http://127.0.0.1:${port}`;
+  let port = 0;
+  let url = '';
   const sent: { account: string; cmd: any; files?: string[] }[] = [];
   let answer: (account: string, cmd: any) => unknown = () => ({ nativeId: `n${sent.length}` });
   let store: Store;
@@ -78,8 +78,9 @@ describe('forwarding through the hub', () => {
         return answer(account, cmd);
       },
     } as any;
-    hub = new HubServer(store, sup, new Triage(store), { port, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
-    hub.start();
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    port = hub.start().port!;
+    url = `http://127.0.0.1:${port}`;
     const acc = (network: 'discord' | 'matrix' | 'signal', label: string, caps: string[], self: string) => {
       const a = store.createAccount({ network, label, color: '#000', adapter: network });
       store.ingest(a, { t: 'hello', network, version: '1', capabilities: caps as any });

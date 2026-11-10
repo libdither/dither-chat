@@ -167,7 +167,7 @@ describe('estimateMessages', () => {
 
 describe('the store and the endpoint', () => {
   const dir = mkdtempSync(join(tmpdir(), 'dither-msgcount-'));
-  const port = 19460 + Math.floor(Math.random() * 1000);
+  let port = 0;
   let store: Store;
   let hub: HubServer;
   const GUILD = sf(NOW - 400 * DAY);
@@ -195,8 +195,8 @@ describe('the store and the endpoint', () => {
     }
     for (let i = 0; i < 30; i++) store.ingest(m, { t: 'message', message: { nativeId: `$e${i}`, conversation: ROOM, author: i < 3 ? '@ann:x.org' : '@bob:x.org', ts: now - i * DAY, body: 'y' } });
     store.flush();
-    hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
-    hub.start();
+    hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    port = hub.start().port!;
   });
   afterAll(() => {
     hub.stop();

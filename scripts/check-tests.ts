@@ -5,6 +5,9 @@
  * - no `.only` (test.only, it.only, describe.only, under any name they are imported as);
  * - no retries: `{ retry: N }` in a test, `retry` in a bunfig.toml, `--retry` in a package.json, a workflow or a script;
  * - a `.skip` needs `// quarantine: <reason or issue>` on its line or the line above; skipIf(cond) is fine;
+ * - no port for a server the test starts picked with Math.random() or written as a number (1024 and up): a port-named
+ *   key or variable set to one (`port: 18460`, `const IMAP_PORT = 18580`), `.listen(8080)`, `'--port', '8494'`. Listen
+ *   on port 0 and read the port it got; `// fixed-port: <reason>` on its line or the line above lets one through;
  * - a ratchet on real-time waits and wall-clock measurement, per file and kind, against scripts/test-waits.json:
  *     sleep        Bun.sleep(…) and Bun.sleepSync(…), but not Bun.sleep(0)
  *     setTimeout   setTimeout used as a wait: a resolver handed to it, or inside a new Promise
@@ -57,9 +60,10 @@ const bunfigs = ['bunfig.toml', ...all.filter((p) => /(^|\/)bunfig\.toml$/.test(
 
 /**
  * The code with comments and the insides of strings blanked out (template literals keep their `${…}`), line breaks
- * kept, so a match's line is the line it is on and nothing in a comment or a string counts.
+ * kept, so a match's line is the line it is on and nothing in a comment or a string counts. With `strings`, the insides
+ * of strings stay and only comments go.
  */
-export function codeOnly(src: string): string {
+export function codeOnly(src: string, strings = false): string {
   const out = src.split('');
   // What we are inside of: code (and how many braces deep), or a template literal.
   const stack: ('code' | 'tpl')[] = ['code'];
@@ -67,12 +71,13 @@ export function codeOnly(src: string): string {
   const blank = (from: number, to: number) => {
     for (let k = from; k < to; k++) if (out[k] !== '\n') out[k] = ' ';
   };
+  const blankString = strings ? () => {} : blank;
   let i = 0;
   while (i < src.length) {
     const c = src[i];
     if (stack[stack.length - 1] === 'tpl') {
       if (c === '\\') {
-        blank(i, i + 2);
+        blankString(i, i + 2);
         i += 2;
       } else if (c === '`') {
         stack.pop();
@@ -83,7 +88,7 @@ export function codeOnly(src: string): string {
         depth.push(0);
         i += 2;
       } else {
-        blank(i, i + 1);
+        blankString(i, i + 1);
         i++;
       }
       continue;
@@ -101,7 +106,7 @@ export function codeOnly(src: string): string {
     } else if (c === '"' || c === "'") {
       let j = i + 1;
       while (j < src.length && src[j] !== c && src[j] !== '\n') j += src[j] === '\\' ? 2 : 1;
-      blank(i + 1, j);
+      blankString(i + 1, j);
       i = j + 1;
     } else if (c === '`') {
       stack.push('tpl');
@@ -153,6 +158,29 @@ const COUNTERS: Record<Kind, (code: string) => number> = {
     (code.match(/\bDate\.now\(\)\s*[<>]=?\s*[a-z_$]/g)?.length ?? 0),
 };
 
+/** A name for a port: port, ports, hubPort, IMAP_PORT, PORT2 (not report, transport or REPORT). */
+const PORT_NAME = /^(?:ports?|PORTS?|[\w$]*[a-z\d]Ports?|[\w$]*_PORTS?)\d*$/;
+/** A number a server could listen on without root: a lower one (port 1) stands for one where nothing listens. */
+const listenable = (n: string) => +n >= 1024 && +n <= 65535;
+
+/**
+ * Why this line picks the port of a server the test starts, or null: by Math.random(), which two test files running
+ * side by side can pick alike, or as a fixed number, which another test or a hub on the machine may hold. `code` has
+ * comments and strings blanked, `text` comments only.
+ */
+export function portPick(code: string, text: string): string | null {
+  const names = code.match(/[A-Za-z_$][\w$]*/g) ?? [];
+  if (/\bMath\.random\(\)/.test(code) && (names.some((n) => PORT_NAME.test(n)) || /\b\d{4,5}\s*\+\s*Math\.\w+\(\s*Math\.random\(\)|Math\.random\(\)[^;]*\)\s*\+\s*\d{4,5}\b/.test(code)))
+    return 'a port picked with Math.random(): listen on port 0 and read the port it got (docs/testing.md "Ports")';
+  for (const m of code.matchAll(/([A-Za-z_$][\w$]*)\s*(?::|=(?![=>]))\s*(\d+)\b(?![.\w])/g))
+    if (PORT_NAME.test(m[1]) && listenable(m[2])) return `a fixed port (${m[1]} ${m[2]}): listen on port 0 and read the port it got (docs/testing.md "Ports")`;
+  const listen = code.match(/\.listen\(\s*(\d+)\b/);
+  if (listen && listenable(listen[1])) return `a fixed port (listen(${listen[1]})): listen on port 0 and read the port it got (docs/testing.md "Ports")`;
+  const flag = text.match(/--[\w-]*port['"`]?\s*[,=]\s*['"`]?(\d+)\b/);
+  if (flag && listenable(flag[1])) return `a fixed port (--port ${flag[1]}): ask the OS for one (freePorts, packages/hub/test/fixtures/port.ts; docs/testing.md "Ports")`;
+  return null;
+}
+
 interface Problem {
   file: string;
   line: number;
@@ -165,15 +193,19 @@ export function scan(file: string, src: string): { problems: Problem[]; counts: 
   const counts: Counts = {};
   const raw = src.split('\n');
   const code = codeOnly(src).split('\n');
+  const text = codeOnly(src, true).split('\n');
   const names = testNames(src).map((n) => n.replace(/\$/g, '\\$')).join('|');
   const only = new RegExp(`\\b(?:${names})\\s*\\.\\s*only\\b`);
   const skip = new RegExp(`\\b(?:${names})\\s*\\.\\s*skip\\b(?!If)`);
   const quarantined = (i: number) => [raw[i], raw[i - 1] ?? ''].some((l) => /\/\/\s*quarantine:\s*\S/.test(l));
+  const fixedPort = (i: number) => [raw[i], raw[i - 1] ?? ''].some((l) => /\/\/\s*fixed-port:\s*\S/.test(l));
   for (let i = 0; i < code.length; i++) {
     const line = code[i];
     if (only.test(line)) problems.push({ file, line: i + 1, what: '.only: it would run this test alone and skip the rest' });
     if (skip.test(line) && !quarantined(i)) problems.push({ file, line: i + 1, what: '.skip without a `// quarantine: <reason or issue>` comment (on its line or the line above)' });
     if (/\bretry\s*:\s*[^\s,}]/.test(line)) problems.push({ file, line: i + 1, what: 'a retry: fix the test, or quarantine it' });
+    const port = portPick(line, text[i]);
+    if (port && !fixedPort(i)) problems.push({ file, line: i + 1, what: `${port}, or \`// fixed-port: <reason>\` on its line or the line above` });
     if (/\/\/\s*wall-clock:\s*\S/.test(raw[i])) continue;
     for (const k of KINDS) {
       const n = COUNTERS[k](line);

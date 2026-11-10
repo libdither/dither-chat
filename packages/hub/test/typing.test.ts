@@ -55,8 +55,8 @@ describe('the outgoing gate', () => {
 // ------------------------------------------------------------------ a hub
 
 const dir = mkdtempSync(join(tmpdir(), 'dither-typing-'));
-const port = 20460 + Math.floor(Math.random() * 1000);
-const base = `http://127.0.0.1:${port}`;
+let port = 0;
+let base = '';
 let store: Store;
 let hub: HubServer;
 let d1: AccountRow;
@@ -94,8 +94,9 @@ beforeAll(async () => {
       return {};
     },
   } as any;
-  hub = new HubServer(store, sup, new Triage(store), { port, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
-  hub.start();
+  hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+  port = hub.start().port!;
+  base = `http://127.0.0.1:${port}`;
   d1 = store.createAccount({ network: 'discord', label: 'one', color: '#111', adapter: 'discord' });
   d2 = store.createAccount({ network: 'discord', label: 'two', color: '#222', adapter: 'discord' });
   mx = store.createAccount({ network: 'matrix', label: 'mx', color: '#333', adapter: 'matrix' });

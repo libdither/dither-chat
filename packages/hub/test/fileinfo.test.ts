@@ -386,8 +386,8 @@ describe('looking at every kept file', () => {
 
 describe('serving and asking for a file once the hub knows what it is', () => {
   const dir = mkdtempSync(join(tmpdir(), 'dither-fileinfo-hub-'));
-  const port = 19960 + Math.floor(Math.random() * 30);
-  const url = `http://127.0.0.1:${port}`;
+  let port = 0;
+  let url = '';
   const files: Record<string, { mime: string; bytes: Uint8Array }> = {
     'att:pic': { mime: 'application/octet-stream', bytes: png(4, 3) },
     'att:page': { mime: 'application/octet-stream', bytes: enc('<!doctype html><script>alert(1)</script>') },
@@ -404,8 +404,9 @@ describe('serving and asking for a file once the hub knows what it is', () => {
       online: () => true,
       command: async (_a: string, c: any) => (c.t === 'fetchMedia' && files[c.url] ? { mime: files[c.url].mime, base64: Buffer.from(files[c.url].bytes).toString('base64') } : null),
     } as any;
-    hub = new HubServer(store, sup, new Triage(store), { port, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
-    hub.start();
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    port = hub.start().port!;
+    url = `http://127.0.0.1:${port}`;
     const a = store.createAccount({ network: 'matrix', label: 'mx', color: '#000', adapter: 'matrix' });
     store.ingest(a, { t: 'hello', network: 'matrix', version: '1', capabilities: [] });
     store.ingest(a, { t: 'conversation', conversation: { nativeId: '!r:x.org', shape: 'group', name: 'Room' } });

@@ -202,9 +202,8 @@ describe('remote accounts through dither-accounts', () => {
     // A stand-in VNC server on a Unix socket, as a sandbox's x11vnc is.
     const vncSocket = join(dir, 'vnc-made-there.sock');
     const vnc = Bun.listen({ unix: vncSocket, socket: { open: (s) => void s.write('RFB 003.008\n'), data: (_s, d) => void atVnc.push(Buffer.from(d).toString()) } });
-    const port = 19460 + Math.floor(Math.random() * 1000);
-    const hub = new HubServer(store, sup, new Triage(store), { port, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
-    hub.start();
+    const hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    const port = hub.start().port;
     try {
       store.createAccount({ id, network: 'matrix', label: 'made there', color: '#B794F6', adapter: 'chat-fake' });
       const app = JSON.parse(readFileSync(join(dir, 'accounts-app.json'), 'utf8')).app;
@@ -262,9 +261,8 @@ describe('remote accounts through dither-accounts', () => {
     // Another hub process on the same data, whose manager never answers: it knows the accounts the manager ran.
     const down = new RoutedSupervisor(store, supOpts(), { url: 'http://127.0.0.1:1', dataDir: dir, repoRoot: REPO, publicUrl: 'https://accounts.example/' });
     expect(down.managed(REMOTE)).toEqual({ url: `https://accounts.example/#/accounts/${REMOTE}`, origin: null });
-    const port = 19460 + Math.floor(Math.random() * 1000);
-    const hub = new HubServer(store, down, new Triage(store), { port, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
-    hub.start();
+    const hub = new HubServer(store, down, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    const port = hub.start().port;
     try {
       const before = store.accounts().length;
       const r = await fetch(`http://127.0.0.1:${port}/api/accounts`, { method: 'POST', body: JSON.stringify({ network: 'discord', label: 'refused' }) });

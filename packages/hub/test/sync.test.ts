@@ -36,8 +36,8 @@ import {
 } from '../../web/src/syncmodel.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'dither-sync-'));
-const port = 19460 + Math.floor(Math.random() * 1000);
-const base = `http://127.0.0.1:${port}`;
+let port = 0;
+let base = '';
 let store: Store;
 let hub: HubServer;
 let attention: Attention;
@@ -231,8 +231,9 @@ beforeAll(async () => {
       return { nativeId: 'x' };
     },
   } as any;
-  hub = new HubServer(store, sup, triage, { port, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', attention });
-  hub.start();
+  hub = new HubServer(store, sup, triage, { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', attention });
+  port = hub.start().port!;
+  base = `http://127.0.0.1:${port}`;
   hub.broadcast([{ t: 'attention', items: attention.list(), removed: [], replace: true }]);
 
   d1 = store.createAccount({ network: 'discord', label: 'one', color: '#111', adapter: 'discord' });

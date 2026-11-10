@@ -88,21 +88,21 @@ describe('the table', () => {
 
 describe('the API', () => {
   const dir = mkdtempSync(join(tmpdir(), 'dither-clicks-api-'));
-  const port = 19960 + Math.floor(Math.random() * 400);
+  let port = 0;
   let server: HubServer;
   let store: Store;
   const url = (p: string) => `http://127.0.0.1:${port}${p}`;
-  const self = { 'content-type': 'application/json', origin: `http://127.0.0.1:${port}` };
+  const self = () => ({ 'content-type': 'application/json', origin: `http://127.0.0.1:${port}` });
   const now = Date.now();
   const day = localDay(now);
-  const post = (body: unknown, headers: Record<string, string> = self) => fetch(url('/api/usage/clicks'), { method: 'POST', headers, body: typeof body === 'string' ? body : JSON.stringify(body) });
+  const post = (body: unknown, headers: Record<string, string> = self()) => fetch(url('/api/usage/clicks'), { method: 'POST', headers, body: typeof body === 'string' ? body : JSON.stringify(body) });
   const get = (q = '') => fetch(url(`/api/usage/clicks${q}`)).then((r) => r.json() as Promise<ClicksView>);
 
   beforeAll(() => {
     store = new Store(join(dir, 'hub.sqlite'), mediaSigner('s'));
     const sup = { authorize: () => null, online: () => false } as any;
-    server = new HubServer(store, sup, new Triage(store), { port, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
-    server.start();
+    server = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    port = server.start().port!;
   });
   afterAll(() => {
     server.stop();
@@ -155,7 +155,7 @@ describe('the API', () => {
   });
 
   test('DELETE forgets it all', async () => {
-    expect((await fetch(url('/api/usage/clicks'), { method: 'DELETE', headers: self })).status).toBe(200);
+    expect((await fetch(url('/api/usage/clicks'), { method: 'DELETE', headers: self() })).status).toBe(200);
     expect(await get('?days=365')).toMatchObject({ total: 0, keys: [] });
   });
 });

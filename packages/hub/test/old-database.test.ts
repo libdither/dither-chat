@@ -9,6 +9,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Store } from '../src/store.ts';
+import { freePorts } from './fixtures/port.ts';
 
 const fixtures = join(import.meta.dir, 'fixtures/old-db');
 const main = resolve(import.meta.dir, '../src/main.ts');
@@ -25,14 +26,6 @@ interface Fixture {
 function currentSig(): string {
   const s = new Store(':memory:', () => null);
   return (s.db.query(`SELECT value FROM meta WHERE key = 'schema_sig'`).get() as { value: string }).value;
-}
-
-/** A port nothing listens on now (the OS picks it, so never one of the ports people run hubs on). */
-function freePort(): number {
-  const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response() });
-  const port = s.port!;
-  s.stop(true);
-  return port;
 }
 
 async function within<T>(ms: number, what: string, fn: () => Promise<T | null | undefined | false>): Promise<T> {
@@ -54,7 +47,7 @@ for (const name of readdirSync(fixtures).filter((f) => f.endsWith('.json')).map(
       const data = join(work, 'data');
       mkdirSync(data, { mode: 0o700 });
       writeFileSync(join(data, 'hub.sqlite'), Bun.gunzipSync(readFileSync(join(fixtures, `${name}.sqlite.gz`))), { mode: 0o600 });
-      const port = freePort();
+      const [port] = freePorts();
       const base = `http://127.0.0.1:${port}`;
       // None of the caller's hub settings (a manager's address, a model): a demo hub on the fixture alone.
       const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('DITHER_')));

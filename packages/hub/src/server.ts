@@ -144,7 +144,8 @@ const unknownOutcome = (e: unknown) => /timed out|disconnected mid/i.test(String
 
 export class HubServer {
   server!: Server<WsData>;
-  private plain?: Server<WsData>;
+  /** The plain HTTP listener beside TLS (plainPort), for adapters and the CA download; its port is the one it got when plainPort is 0. */
+  plain?: Server<WsData>;
   /** Listeners on the other addresses of a comma-separated `hostname` (DITHER_HOST), e.g. loopback and the tailnet IP. */
   private extra: Server<WsData>[] = [];
   /** The names a request's Host may carry (hosts.ts): DNS rebinding gets nowhere. */
@@ -279,7 +280,7 @@ export class HubServer {
     this.server = serve(first);
     this.extra = rest.map(serve);
     // Adapters on this machine still speak ws://, and a device has to fetch the CA before it can trust HTTPS.
-    if (tls && this.opts.plainPort) {
+    if (tls && this.opts.plainPort !== undefined) {
       const plain = (hostname: string) =>
         Bun.serve<WsData, never>({
           ...common,
@@ -404,7 +405,7 @@ export class HubServer {
     if (url.pathname === '/api/health') return Response.json({ ok: true, now: Date.now() });
     if (url.pathname === '/trust') return new Response(this.trustPage(req), { headers: { 'content-type': 'text/html; charset=utf-8' } });
     const host = (req.headers.get('host') ?? url.host).replace(/:\d+$/, '');
-    return Response.redirect(`https://${host}:${this.opts.port}${url.pathname}${url.search}${url.hash}`, 307);
+    return Response.redirect(`https://${host}:${this.server.port}${url.pathname}${url.search}${url.hash}`, 307);
   }
 
   private caCert(): Response {
@@ -419,7 +420,7 @@ export class HubServer {
     return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Trust dither-chat</title>
 <style>body{font:16px system-ui;max-width:40em;margin:2em auto;padding:0 1em;line-height:1.5}code{word-break:break-all}</style>
 <h1>Trust this hub</h1><p>Installing dither-chat needs HTTPS, and this hub uses a private certificate authority limited to the tailnet.</p>
-<ol><li><a href="/ca.crt">Download the certificate</a></li><li>Install it as a trusted CA on this device (steps below)</li><li><a href="https://${host}:${this.opts.port}/">Open dither-chat</a> and install it</li></ol>
+<ol><li><a href="/ca.crt">Download the certificate</a></li><li>Install it as a trusted CA on this device (steps below)</li><li><a href="https://${host}:${this.server.port}/">Open dither-chat</a> and install it</li></ol>
 <p>SHA-256 fingerprint:<br><code>${fp}</code></p>
 <ul><li><b>Android:</b> Settings → Security → More security settings → Install from device storage → CA certificate. The exact path varies by vendor; search settings for "CA certificate".</li>
 <li><b>iOS:</b> open the download in Safari, Settings → Profile Downloaded → Install, then Settings → General → About → Certificate Trust Settings → enable it. Install with Share → Add to Home Screen.</li>

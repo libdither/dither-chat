@@ -124,7 +124,7 @@ describe('presence', () => {
 
 describe('the store and the endpoint', () => {
   const dir = mkdtempSync(join(tmpdir(), 'dither-activitychart-'));
-  const port = 20460 + Math.floor(Math.random() * 1000);
+  let port = 0;
   let store: Store;
   let hub: HubServer;
   let sig: AccountRow;
@@ -139,41 +139,44 @@ describe('the store and the endpoint', () => {
 
   beforeAll(() => {
     store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
-    sig = store.createAccount({ network: 'signal', label: 's', color: '#000', adapter: 'signal' });
-    dc = store.createAccount({ network: 'discord', label: 'd', color: '#111', adapter: 'discord' });
-    store.ingest(sig, { t: 'status', status: 'online', self: { nativeId: 'me', displayName: 'Me', isSelf: true } });
-    store.ingest(dc, { t: 'status', status: 'online', self: { nativeId: 'dme', displayName: 'Me', isSelf: true } });
-    store.setRetention(ON);
-    store.ingest(sig, { t: 'identity', identity: { nativeId: 'ann', displayName: 'Ann' } });
-    store.ingest(dc, { t: 'identity', identity: { nativeId: 'ann-d', displayName: 'Ann' } });
-    store.ingest(sig, { t: 'conversation', conversation: { nativeId: 'dm-ann', shape: 'direct', participants: ['me', 'ann'] } });
-    store.ingest(sig, { t: 'conversation', conversation: { nativeId: 'g1', shape: 'group', name: 'Climbing', participants: ['me', 'ann', 'bob'] } });
-    store.ingest(dc, { t: 'space', space: { nativeId: 'guild', kind: 'community', name: 'Guild' } });
-    store.ingest(dc, { t: 'conversation', conversation: { nativeId: 'general', shape: 'channel', name: 'general', spaces: [{ nativeId: 'guild' }] } });
-    // One person on two networks.
-    store.mergePersons(store.ensurePerson(hubId('idn', 'signal', 'ann')), store.ensurePerson(hubId('idn', 'discord', 'ann-d')));
-    // Sunday 1 November: 1:30 EDT (05:30 UTC) and 1:30 EST (06:30 UTC) are the same hour of the clock; 3:10 EST.
-    say(sig, 'dm-ann', 'ann', Date.UTC(2026, 10, 1, 5, 30));
-    say(sig, 'dm-ann', 'ann', Date.UTC(2026, 10, 1, 6, 30));
-    say(sig, 'dm-ann', 'ann', Date.UTC(2026, 10, 1, 8, 10));
-    say(sig, 'g1', 'ann', Date.UTC(2026, 10, 3, 1)); // Monday 2 November, 8pm EST
-    say(dc, 'general', 'ann-d', Date.UTC(2026, 10, 3, 2)); // 9pm
-    say(dc, 'general', 'ann-d', Date.UTC(2026, 10, 3, 2, 30));
-    say(sig, 'dm-ann', 'me', Date.UTC(2026, 10, 3, 1, 5)); // you, back
-    say(sig, 'g1', 'me', Date.UTC(2026, 10, 3, 1, 6));
-    say(dc, 'general', 'dme', Date.UTC(2026, 10, 3, 2, 1)); // a server: not to them
-    say(sig, 'dm-ann', 'ann', Date.UTC(2026, 9, 1)); // long before the range
-    store.ingest(sig, { t: 'message', message: { nativeId: 'sys', conversation: 'g1', author: 'ann', ts: Date.UTC(2026, 10, 3, 1), body: 'Ann joined', kind: 'system' } });
-    store.ingest(dc, { t: 'reaction', conversation: 'general', message: `m${n - 4}`, author: 'ann-d', key: '👍' });
-    // Presence on both networks, and two statuses.
-    store.ingest(dc, { t: 'presence', who: 'ann-d', state: 'online', ts: Date.UTC(2026, 10, 3, 1) });
-    store.ingest(sig, { t: 'presence', who: 'ann', state: 'idle', ts: Date.UTC(2026, 10, 3, 1, 30) });
-    store.ingest(dc, { t: 'presence', who: 'ann-d', state: 'offline', ts: Date.UTC(2026, 10, 3, 3) });
-    store.ingest(dc, { t: 'customStatus', who: 'ann-d', text: 'climbing', ts: Date.UTC(2026, 10, 2, 12) });
-    store.ingest(dc, { t: 'customStatus', who: 'ann-d', text: 'back', emoji: '🧗', ts: Date.UTC(2026, 10, 3, 12) });
+    // One transaction: one write to disk, not one per event (seconds on a busy disk).
+    store.db.transaction(() => {
+      sig = store.createAccount({ network: 'signal', label: 's', color: '#000', adapter: 'signal' });
+      dc = store.createAccount({ network: 'discord', label: 'd', color: '#111', adapter: 'discord' });
+      store.ingest(sig, { t: 'status', status: 'online', self: { nativeId: 'me', displayName: 'Me', isSelf: true } });
+      store.ingest(dc, { t: 'status', status: 'online', self: { nativeId: 'dme', displayName: 'Me', isSelf: true } });
+      store.setRetention(ON);
+      store.ingest(sig, { t: 'identity', identity: { nativeId: 'ann', displayName: 'Ann' } });
+      store.ingest(dc, { t: 'identity', identity: { nativeId: 'ann-d', displayName: 'Ann' } });
+      store.ingest(sig, { t: 'conversation', conversation: { nativeId: 'dm-ann', shape: 'direct', participants: ['me', 'ann'] } });
+      store.ingest(sig, { t: 'conversation', conversation: { nativeId: 'g1', shape: 'group', name: 'Climbing', participants: ['me', 'ann', 'bob'] } });
+      store.ingest(dc, { t: 'space', space: { nativeId: 'guild', kind: 'community', name: 'Guild' } });
+      store.ingest(dc, { t: 'conversation', conversation: { nativeId: 'general', shape: 'channel', name: 'general', spaces: [{ nativeId: 'guild' }] } });
+      // One person on two networks.
+      store.mergePersons(store.ensurePerson(hubId('idn', 'signal', 'ann')), store.ensurePerson(hubId('idn', 'discord', 'ann-d')));
+      // Sunday 1 November: 1:30 EDT (05:30 UTC) and 1:30 EST (06:30 UTC) are the same hour of the clock; 3:10 EST.
+      say(sig, 'dm-ann', 'ann', Date.UTC(2026, 10, 1, 5, 30));
+      say(sig, 'dm-ann', 'ann', Date.UTC(2026, 10, 1, 6, 30));
+      say(sig, 'dm-ann', 'ann', Date.UTC(2026, 10, 1, 8, 10));
+      say(sig, 'g1', 'ann', Date.UTC(2026, 10, 3, 1)); // Monday 2 November, 8pm EST
+      say(dc, 'general', 'ann-d', Date.UTC(2026, 10, 3, 2)); // 9pm
+      say(dc, 'general', 'ann-d', Date.UTC(2026, 10, 3, 2, 30));
+      say(sig, 'dm-ann', 'me', Date.UTC(2026, 10, 3, 1, 5)); // you, back
+      say(sig, 'g1', 'me', Date.UTC(2026, 10, 3, 1, 6));
+      say(dc, 'general', 'dme', Date.UTC(2026, 10, 3, 2, 1)); // a server: not to them
+      say(sig, 'dm-ann', 'ann', Date.UTC(2026, 9, 1)); // long before the range
+      store.ingest(sig, { t: 'message', message: { nativeId: 'sys', conversation: 'g1', author: 'ann', ts: Date.UTC(2026, 10, 3, 1), body: 'Ann joined', kind: 'system' } });
+      store.ingest(dc, { t: 'reaction', conversation: 'general', message: `m${n - 4}`, author: 'ann-d', key: '👍' });
+      // Presence on both networks, and two statuses.
+      store.ingest(dc, { t: 'presence', who: 'ann-d', state: 'online', ts: Date.UTC(2026, 10, 3, 1) });
+      store.ingest(sig, { t: 'presence', who: 'ann', state: 'idle', ts: Date.UTC(2026, 10, 3, 1, 30) });
+      store.ingest(dc, { t: 'presence', who: 'ann-d', state: 'offline', ts: Date.UTC(2026, 10, 3, 3) });
+      store.ingest(dc, { t: 'customStatus', who: 'ann-d', text: 'climbing', ts: Date.UTC(2026, 10, 2, 12) });
+      store.ingest(dc, { t: 'customStatus', who: 'ann-d', text: 'back', emoji: '🧗', ts: Date.UTC(2026, 10, 3, 12) });
+    })();
     store.flush();
-    hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
-    hub.start();
+    hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    port = hub.start().port!;
   });
   afterAll(() => {
     hub.stop();
