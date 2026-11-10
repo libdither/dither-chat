@@ -2325,22 +2325,21 @@ export function createDemoAccounts(store: Store): AccountRow[] {
   return DEMO_ACCOUNTS.map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
 }
 
-/** Hub-side organisation for the demo: merged people, stars, folders, rules. Applied once. */
+/** Hub-side organisation for the demo: merged people, folders, rules. Applied once. */
 export function applyDemoOverlay(store: Store) {
   if (store.one(`SELECT 1 FROM meta WHERE key = 'demo_overlay'`)) return;
   const idn = (net: P.Network, i: P.IdentityFact) => hubId('idn', net, i.nativeId);
   const personOf = (net: P.Network, i: P.IdentityFact) => store.ensurePerson(idn(net, i));
-  const merge = (name: string, starred: boolean, ...ids: [P.Network, P.IdentityFact][]) => {
+  const merge = (name: string, ...ids: [P.Network, P.IdentityFact][]) => {
     const [first, ...rest] = ids.map(([n, i]) => personOf(n, i));
     for (const r of rest) store.mergePersons(first, r);
-    store.updatePerson(first, { name, starred });
+    store.updatePerson(first, { name });
     return first;
   };
-  const alice = merge('Alice Chen', true, ['signal', S.alice], ['discord', D.alice], ['matrix', M.alice], ['whatsapp', W.alice], ['telegram', TG.alice]);
-  const sam = merge('Sam Rivera', false, ['signal', S.sam], ['matrix', M.sam]);
-  merge('Theo', false, ['signal', S.theo], ['discord', D.theo]);
-  merge('Quinn', false, ['discord', D.quinn], ['signal', S.quinn]);
-  store.updatePerson(personOf('signal', S.mom), { starred: true });
+  const alice = merge('Alice Chen', ['signal', S.alice], ['discord', D.alice], ['matrix', M.alice], ['whatsapp', W.alice], ['telegram', TG.alice]);
+  const sam = merge('Sam Rivera', ['signal', S.sam], ['matrix', M.sam]);
+  merge('Theo', ['signal', S.theo], ['discord', D.theo]);
+  merge('Quinn', ['discord', D.quinn], ['signal', S.quinn]);
 
   const cnv = (net: P.Network, nativeId: string) => hubId('cnv', net, nativeId);
   const spc = (net: P.Network, nativeId: string) => hubId('spc', net, nativeId);

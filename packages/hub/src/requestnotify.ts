@@ -7,8 +7,8 @@
  * request came to. A message request's own conversation makes a person and a shared conversation, which say nothing.
  *
  * Each request is judged once (add_request_seen), a little after it arrives, so an account's first sync has said who
- * people are. Quiet hours hold it as they hold chat (starred people through, where you let them), and a place set to
- * Nothing or the digest, for the person, the account, the network or everything, keeps it silent.
+ * people are. Quiet hours hold it as they hold chat (people set to always notify through, where you let them), and a
+ * place set to Nothing or the digest, for the person, the account, the network or everything, keeps it silent.
  */
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
@@ -44,13 +44,14 @@ export interface RequestNotice {
 export function knownTo(db: Database, accountId: string, identityId: string, held: string | null): boolean {
   const i = db
     .query(
-      `SELECT i.person_id, p.manual, p.starred, p.is_self, (SELECT COUNT(*) FROM identity o WHERE o.person_id = i.person_id) AS ids
+      `SELECT i.person_id, p.manual, p.is_self, (SELECT COUNT(*) FROM identity o WHERE o.person_id = i.person_id) AS ids,
+              EXISTS (SELECT 1 FROM notify_rule n WHERE n.scope = 'person' AND n.target = i.person_id AND n.level = 'all') AS always
        FROM identity i LEFT JOIN person p ON p.id = i.person_id WHERE i.id = ?`,
     )
     .get(identityId) as Row | null;
   if (!i || i.is_self) return false;
-  // A message request's conversation made their person: only one you named, starred or merged counts then.
-  if (i.person_id && (!held || i.manual || i.starred || i.ids > 1)) return true;
+  // A message request's conversation made their person: only one you named, set to always notify or merged counts then.
+  if (i.person_id && (!held || i.manual || i.always || i.ids > 1)) return true;
   const other = held ?? '';
   const shares =
     db
@@ -103,7 +104,7 @@ export function judgeRequest(store: Store, accountId: string, nativeId: string, 
   addTables(db);
   const r = db
     .query(
-      `SELECT r.*, a.network, a.label, i.display_name, i.handle, i.avatar_url, i.seen_via, i.person_id, p.name AS person_name, p.starred
+      `SELECT r.*, a.network, a.label, i.display_name, i.handle, i.avatar_url, i.seen_via, i.person_id, p.name AS person_name
        FROM add_request r JOIN account a ON a.id = r.account_id LEFT JOIN identity i ON i.id = r.from_id LEFT JOIN person p ON p.id = i.person_id
        WHERE r.account_id = ? AND r.native_id = ?`,
     )
@@ -115,7 +116,7 @@ export function judgeRequest(store: Store, accountId: string, nativeId: string, 
   if (!knownTo(db, accountId, r.from_id, held)) return null;
   if (silenced(store, accountId, r.network, r.person_id)) return null;
   const q = store.quietHours();
-  if (inQuietHours(q, now) && !(q!.allowStarred && r.starred)) return null;
+  if (inQuietHours(q, now) && !(q!.allowStarred && r.person_id && store.rules().some((x) => x.scope === 'person' && x.target === r.person_id && x.level === 'all'))) return null;
   const net = NETWORK_META[r.network as P.Network].name;
   const who = r.person_name ?? r.display_name ?? r.handle ?? 'Someone';
   const icon = r.avatar_url ? store.media(r.avatar_url, r.seen_via ?? accountId) : null;

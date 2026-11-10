@@ -145,6 +145,35 @@ describe('the store', () => {
     expect(readdirSync(join(d, 'backups')).length).toBe(1);
   });
 
+  test('stars set before stars left the app are cleared once, the column kept; a star sent since is ignored', () => {
+    const d = join(dir, 'stars');
+    mkdirSync(d);
+    const path = join(d, 'hub.sqlite');
+    let s = new Store(path, mediaSigner('s'));
+    const acc = s.createAccount({ network: 'signal', label: 'a', color: '#000', adapter: 'signal' });
+    s.ingest(acc, { t: 'identity', identity: { nativeId: 'ann', displayName: 'Ann' } });
+    const pid = s.ensurePerson(s.one<{ id: string }>(`SELECT id FROM identity WHERE native_id = 'ann'`)!.id);
+    s.db.close();
+    // As if an older hub starred her and never cleared anything.
+    const db = new Database(path);
+    db.exec(`UPDATE person SET starred = 1; DELETE FROM meta WHERE key = 'stars_cleared'; UPDATE meta SET value = 'old' WHERE key = 'schema_sig'`);
+    db.close();
+    s = new Store(path, mediaSigner('s'));
+    expect(s.one<{ starred: number }>('SELECT starred FROM person WHERE id = ?', pid)!.starred).toBe(0);
+    expect(readdirSync(join(d, 'backups')).length).toBe(1);
+    // Once: a star written later (by hand, say) is not cleared on the next start.
+    s.db.exec('UPDATE person SET starred = 1');
+    s.db.close();
+    s = new Store(path, mediaSigner('s'));
+    expect(s.one<{ starred: number }>('SELECT starred FROM person WHERE id = ?', pid)!.starred).toBe(1);
+    expect(s.personView(s.one('SELECT * FROM person WHERE id = ?', pid)!).starred).toBe(false);
+    s.db.exec('UPDATE person SET starred = 0');
+    // An old client's PATCH still works, and its star is ignored.
+    s.updatePerson(pid, { name: 'Ann B.', starred: true } as { name: string });
+    expect(s.one<{ starred: number; name: string }>('SELECT starred, name FROM person WHERE id = ?', pid)).toEqual({ starred: 0, name: 'Ann B.' });
+    s.db.close();
+  });
+
   describe('triage', () => {
     let store: Store;
     let acc: AccountRow;

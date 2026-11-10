@@ -12,7 +12,7 @@
  * With none of those set, the network's own: what Discord, Signal, WhatsApp or Matrix would notify you about
  * (its per-channel, per-category and per-server settings and mutes) is Important, the rest goes by how addressed to
  * you it is. A native mute caps the level at 'digest' unless you set a hub rule on the conversation or one of its
- * spaces. Starred people and keywords raise a message to 'push'; 'none' is absolute.
+ * spaces. People set to always notify and keywords raise a message to 'push'; 'none' is absolute.
  *
  * Quiet hours come last: a push decided during them becomes a digest entry with the reason attached, and one
  * summary push goes out when they end.
@@ -48,8 +48,8 @@ export interface Decision {
   /** A local model's chances, which stand in for the rules' as the starting point. */
   llm?: P.TriageProbs;
   body: string;
-  /** From a starred person or one set to always notify: may get through quiet hours. */
-  starred?: boolean;
+  /** From a person set to always notify: may get through quiet hours. */
+  alwaysNotify?: boolean;
   /** What the activity log said about this place when deciding (DITHER_ACTIVITY_FEATURES), kept for training. */
   features?: Features;
   /** Matched one of your keywords. */
@@ -299,7 +299,7 @@ export class Triage {
     }
     if (d?.decision !== 'push' && d?.decision !== 'quiet') return d;
     const q = this.store.quietHours();
-    if (!inQuietHours(q, now) || (q!.allowStarred && d.starred)) return d;
+    if (!inQuietHours(q, now) || (q!.allowStarred && d.alwaysNotify)) return d;
     d.decision = 'digest';
     d.reasons.unshift(`Held by quiet hours until ${q!.end}`);
     const held = this.store.quietHeld();
@@ -340,7 +340,7 @@ export class Triage {
     const m = s.one<Row>('SELECT m.conversation_id, m.ts, c.shape FROM message m JOIN conversation c ON c.id = m.conversation_id WHERE m.id = ?', messageId);
     if (!m || !d.facts || !d.probs || !isLevel(d.decision)) return;
     const counts = exploreCounts(s.db, m.conversation_id, m.shape, m.ts, now);
-    const e = explore({ upOnly: this.exploring === 'up', level: d.decision, probs: d.probs, shadow: d.shadow, facts: d.facts, starred: !!d.starred, keyword: !!d.keyword, quietHours: inQuietHours(s.quietHours(), now), ...counts }, this.rng);
+    const e = explore({ upOnly: this.exploring === 'up', level: d.decision, probs: d.probs, shadow: d.shadow, facts: d.facts, alwaysNotify: !!d.alwaysNotify, keyword: !!d.keyword, quietHours: inQuietHours(s.quietHours(), now), ...counts }, this.rng);
     d.propensity = e.propensity;
     if (!e.explore) return;
     d.decision = e.level;
@@ -517,9 +517,9 @@ export class Triage {
       .find((r) => new RegExp(`\\b${r.target!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(plain));
     const personRule = person ? s.rules().find((r) => r.scope === 'person' && r.target === person.id) : null;
 
-    if (person?.starred || personRule?.level === 'all') {
-      reasons.push(`From ${authorName}, who is starred`);
-      return { ...done('push'), starred: true };
+    if (personRule?.level === 'all') {
+      reasons.push(`From ${authorName}, who is set to always notify`);
+      return { ...done('push'), alwaysNotify: true };
     }
     if (keyword) {
       reasons.push(`Matches keyword “${keyword.target}”`);

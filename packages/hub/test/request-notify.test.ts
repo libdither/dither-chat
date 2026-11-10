@@ -145,7 +145,7 @@ describe('when not', () => {
     expect(notifier.due(settled())).toHaveLength(1);
   });
 
-  test('quiet hours hold it; a starred person gets through where you let them', () => {
+  test('quiet hours hold it; a person set to always notify gets through where you let them', () => {
     const d = new Date(clock);
     const hhmm = (m: number) => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
     const now = d.getUTCHours() * 60 + d.getUTCMinutes();
@@ -153,10 +153,10 @@ describe('when not', () => {
     request(MAIN, { nativeId: 'friend-quiet', from: alice().native_id });
     expect(notifier.due(settled())).toEqual([]);
     const pid = store.one<{ person_id: string }>('SELECT person_id FROM identity WHERE id = ?', alice().id)!.person_id;
-    store.db.query('UPDATE person SET starred = 1 WHERE id = ?').run(pid);
-    request(MAIN, { nativeId: 'friend-starred', from: alice().native_id });
+    store.setRule('person', pid, 'all');
+    request(MAIN, { nativeId: 'friend-always', from: alice().native_id });
     expect(notifier.due(settled())).toHaveLength(1);
-    store.db.query('UPDATE person SET starred = 0 WHERE id = ?').run(pid);
+    store.setRule('person', pid, null);
     store.setQuietHours({ enabled: false, start: '22:00', end: '07:00', timezone: 'UTC', allowStarred: true });
   });
 

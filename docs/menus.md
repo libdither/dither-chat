@@ -80,7 +80,7 @@ Folder** (red; what is in it stays).
 Profile · Message (their merged chat, or a new conversation where an account can start one) · Mark As Read ·
 Copy, a submenu: Copy Username, Copy User ID and Copy Profile Link (where the network has a profile page: Discord,
 Matrix, WhatsApp), or with several identities one submenu per network (with the handle when two share a network)
-holding those. No Star: stars left the app on 2026-11-10 (the hub keeps the field; Always notify does its job). Left out:
+holding those. No Star: stars left the app on 2026-11-10 and the hub cleared them (Always notify does their job). Left out:
 Mention (the composer has no way in from outside it yet), Call, Add Note, Block.
 
 ### An account (the accounts button in the rail lists all of them; account chips; "Needs you" rows)

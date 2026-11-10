@@ -80,8 +80,9 @@ numeric features `x` keeps. Give a new kind of numeric feature its regularisatio
 
 ## How to read it: the biases
 
-- **Facts before 2026-11-04 are rebuilt by today's rules**: what the networks would notify, your rules, starred
-  people. Those were not the rules of the day, so P0 and P1 decide by today's settings throughout, and L differs.
+- **Facts before 2026-11-04 are rebuilt by today's rules**: what the networks would notify, your rules (stars,
+  cleared on 2026-11-10, no longer count). Those were not the rules of the day, so P0 and P1 decide by today's
+  settings throughout, and L differs.
 - **The logging policy shapes the labels.** Taps and push opens exist only for what was pushed: reported, not
   optimised alone. Answers, reactions and unprompted opens exist either way. Messages a new policy would ping that
   were not pinged carry labels from a world where you saw them later, so its precision is *under*estimated; messages

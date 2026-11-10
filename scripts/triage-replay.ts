@@ -415,7 +415,7 @@ function metrics(test: ReplayExample[], run: Run, nDays: number, events: number[
   test.forEach((e, i) => run.levels[i] === 'push' && pingsPerConvDay.set(`${e.conv}/${e.day}`, (pingsPerConvDay.get(`${e.conv}/${e.day}`) ?? 0) + 1));
   test.forEach((e, i) => {
     const p = run.probs[i];
-    if (!p || !explorable({ facts: e.facts, starred: false, keyword: false, quietHours: false, dmAfterLull: e.facts.shape === 'direct' && e.outcome.lullFirst })) return;
+    if (!p || !explorable({ facts: e.facts, alwaysNotify: false, keyword: false, quietHours: false, dmAfterLull: e.facts.shape === 'direct' && e.outcome.lullFirst })) return;
     if ((run.levels[i] === 'digest' || run.levels[i] === 'drop') && p.active >= EXPLORE.upBand && p.active < THRESHOLDS.active) upEligible++;
     if (run.levels[i] === 'push' && (pingsPerConvDay.get(`${e.conv}/${e.day}`) ?? 0) >= EXPLORE.downBusy) downEligible++;
   });
