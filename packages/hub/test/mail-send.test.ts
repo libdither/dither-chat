@@ -307,7 +307,7 @@ describe('when it does not go', () => {
     const req = reply(w, { to: [sam], cc: [{ name: null, email: 'SAM@LEE.EXAMPLE' }, jo], bcc: [kim], text: 'All of you.' });
     const { outboxId } = await w.hub.outbox.accept(req);
     await until(() => state(w, outboxId) === 'failed');
-    expect(w.hub.outbox.item(outboxId)!.error).toBe(`Recipient ${kim.email} has a pinned key in your Proton contacts, so send this one from Proton.`);
+    expect(w.hub.outbox.item(outboxId)!.error).toBe(`${kim.email} has a pinned key in your Proton contacts, so send this one from Proton.`);
     expect(w.hub.outbox.draft(req.draftKey!)!.draft).toMatchObject({ text: 'All of you.', to: [sam], cc: [{ email: 'SAM@LEE.EXAMPLE' }, jo], bcc: [kim] });
     // Only this message: the account can still send, and one to Sam alone goes.
     expect(w.hub.store.accountView(w.hub.store.account(ACC)!).send.ok).toBe(true);
@@ -318,20 +318,22 @@ describe('when it does not go', () => {
 
   test('recipient N in the sentence: To, Cc, Bcc in order, each address once; a number past the last stays', () => {
     const out = { to: [sam], cc: [{ name: null, email: 'Sam@Lee.Example' }, jo], bcc: [kim, { name: null, email: 'JO@park.example' }] };
-    expect(recipientsRefused('Recipient 1 has a pinned key in your Proton contacts, so send this one from Proton.', out)).toBe(`Recipient ${sam.email} has a pinned key in your Proton contacts, so send this one from Proton.`);
-    expect(recipientsRefused('Proton has no key it trusts for recipient 2 or recipient 3, so send this one from Proton', out)).toBe(`Proton has no key it trusts for recipient ${jo.email} or recipient ${kim.email}, so send this one from Proton.`);
+    expect(recipientsRefused('Recipient 1 has a pinned key in your Proton contacts, so send this one from Proton.', out)).toBe(`${sam.email} has a pinned key in your Proton contacts, so send this one from Proton.`);
+    expect(recipientsRefused('Proton has no key it trusts for recipient 2 or recipient 3, so send this one from Proton', out)).toBe(`Proton has no key it trusts for ${jo.email} or ${kim.email}, so send this one from Proton.`);
     expect(recipientsRefused('Recipient 4 has a pinned key in your Proton contacts, so send this one from Proton..', out)).toBe('Recipient 4 has a pinned key in your Proton contacts, so send this one from Proton.');
     expect(recipientsRefused('recipient 0 and recipient 12 are not on it', out)).toBe('Recipient 0 and recipient 12 are not on it.');
   });
 
-  test('422 by its code: no code, from and the manager’s failed are the From; settings and others are the extractor’s words', async () => {
+  test('422 by its code: no code and from are the From; failed, settings and others are the extractor’s words, recipients named', async () => {
     const w = await world();
     saysItCan(w);
     const SETTINGS = "Your Proton settings sign mail to outside addresses or attach your public key, which dither-chat can't do yet, so send this one from Proton.";
     const cases: [MailCallError, string][] = [
       [new MailCallError("from is not one of this account's addresses", 422), FROM_REFUSED],
       [new MailCallError("from is not one of this account's addresses", 422, 'from'), FROM_REFUSED],
-      [new MailCallError("from is not one of this account's addresses", 422, 'failed'), FROM_REFUSED],
+      [new MailCallError("from is not one of this account's addresses", 422, 'failed'), "From is not one of this account's addresses."],
+      // The manager's 'failed' (it passes no extractor code on yet): still the extractor's words, the recipient named.
+      [new MailCallError('Recipient 1 has a pinned key in your Proton contacts, so send this one from Proton', 422, 'failed'), `${sam.email} has a pinned key in your Proton contacts, so send this one from Proton.`],
       [new MailCallError(SETTINGS, 422, 'settings'), SETTINGS],
       [new MailCallError('the subject is too long for this account', 422, 'something-new'), 'The subject is too long for this account.'],
     ];

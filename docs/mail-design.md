@@ -615,9 +615,9 @@ a 501 keeps sending off until you ask again, the outbox event carries the whole 
   timeout retries; a timeout after the call reached the extractor says "may have been sent", as chat does. 501 fails the
   item, keeps its draft and sets the account's `send` to `{ ok: false, why: <the extractor's message> }`. 403 means a read
   grant. 422 fails the item by its code: `from` or none is "That From is not one of this account's addresses.";
-  `recipients` is the extractor's sentence with each "recipient N" as that address (To, then Cc, then Bcc, an address
-  once; a number past the last stays); `settings` (Proton signs outside mail or attaches your key) and any other code
-  are the extractor's words. A 422 leaves `send` as it was: only that message is refused.
+  any other code is the extractor's sentence with each "recipient N" replaced by that address (To, then Cc, then Bcc,
+  an address once; a number past the last stays): `recipients`, `settings` (Proton signs outside mail or attaches your
+  key), and the manager's `failed`, which is all an extractor's 422 carries until the manager passes its code on. A 422 leaves `send` as it was: only that message is refused.
 - **Before any attempt**, `send.ok` is false when a status layer matching `send path` or `SMTP` has failed, true after a
   success, else null (sending allowed). §13's `canSend` would replace the name matching.
 
