@@ -1015,13 +1015,19 @@ export class Store {
    * data always wins; a message the hub lacks goes in through the same path as backfill (`message`, not live), so it
    * looks exactly like one the network sent. Nothing notifies, and unread counts are left as they were. Where the
    * source says something else than the hub, the hub's version stays and the difference is kept (import_conflict).
+   *
+   * Deleted and disappeared (docs/history.md): a fact with `gone` is a message the network took back whose words or
+   * files the source kept (Molly's keepmsg). It goes in, or the hub's copy is marked, as a kept deleted or disappeared
+   * message, as live sync keeps one, so it stays out of sight until adversarial features are shown. A message the hub
+   * has as deleted and emptied takes the source's words the same way. Never one you wrote and it was deleted: you
+   * meant that.
    */
   importBatch(
     acc: AccountRow,
-    b: { conversation: P.ConversationFact; identities: P.IdentityFact[]; messages: P.MessageFact[] },
+    b: { conversation: P.ConversationFact; identities: P.IdentityFact[]; messages: (P.MessageFact & { gone?: { how: 'deleted' | 'disappeared'; at?: number } })[] },
     o: { sourceSha: string; runId: string; dryRun: boolean; archiveNew: boolean; first: boolean },
   ): P.ImportCounts {
-    const counts: P.ImportCounts = { conversations: o.first ? 1 : 0, conversationsNew: 0, messages: b.messages.length, new: 0, same: 0, filled: 0, conflicts: 0, duplicates: 0 };
+    const counts: P.ImportCounts = { conversations: o.first ? 1 : 0, conversationsNew: 0, messages: b.messages.length, new: 0, same: 0, filled: 0, conflicts: 0, duplicates: 0, kept: 0 };
     const cid = hubId('cnv', acc.network, b.conversation.nativeId);
     const convExisted = !!this.db.query('SELECT 1 FROM conversation WHERE id = ?').get(cid);
     if (o.first && !convExisted) counts.conversationsNew = 1;
@@ -1044,13 +1050,23 @@ export class Store {
       let newest = 0;
       for (const f of b.messages) {
         const mid = hubId('msg', acc.network, f.nativeId);
-        const row = this.db.query('SELECT body, kind, deleted, reply_to_id, (SELECT COUNT(*) FROM attachment WHERE message_id = m.id) AS atts FROM message m WHERE id = ?').get(mid) as Row | null;
+        const row = this.db.query('SELECT body, kind, deleted, gone_how, author_id, edited_ts, reply_to_id, (SELECT COUNT(*) FROM attachment WHERE message_id = m.id) AS atts FROM message m WHERE id = ?').get(mid) as Row | null;
+        const g = f.gone;
+        const mine = this.isSelf(hubId('idn', acc.network, f.author));
+        const hasContent = !!f.body || !!f.attachments?.length;
         if (!row) {
+          // Something you deleted yourself is not brought back; the reader leaves those out too.
+          if (g && (!hasContent || (g.how === 'deleted' && mine))) {
+            counts.same++;
+            continue;
+          }
           counts.new++;
-          newest = Math.max(newest, f.ts);
+          if (g) counts.kept!++;
+          else newest = Math.max(newest, f.ts);
           if (o.dryRun) continue;
           this.message(acc, f, false);
           this.db.query('UPDATE message SET imported = 1 WHERE id = ?').run(mid);
+          if (g) this.db.query('UPDATE message SET deleted = 1, gone_how = ?, gone_at = ? WHERE id = ?').run(g.how, g.at ?? null, mid);
           this.db.query('INSERT OR IGNORE INTO import_origin (message_id, source_sha, run_id) VALUES (?, ?, ?)').run(mid, o.sourceSha, o.runId);
           continue;
         }
@@ -1063,9 +1079,25 @@ export class Store {
             .query('INSERT OR IGNORE INTO import_conflict (message_id, kind, source_sha, run_id, source_value, detected_at) VALUES (?, ?, ?, ?, ?, ?)')
             .run(mid, kind, o.sourceSha, o.runId, JSON.stringify(value), Date.now());
         };
+        // Taken back, and the hub kept nothing of it (or never heard): what the source kept fills it in, kept as gone.
+        if ((row.deleted || g) && hasContent && !this.isSelf(row.author_id)) {
+          const empty = !row.body && !row.atts;
+          if (row.deleted && !empty) {
+            counts.same++;
+            continue;
+          }
+          counts.filled++;
+          counts.kept!++;
+          if (o.dryRun) continue;
+          const how = row.gone_how ?? g?.how ?? 'deleted';
+          this.db.query('UPDATE message SET deleted = 1, gone_how = ?, gone_at = COALESCE(gone_at, ?) WHERE id = ?').run(how, g?.at ?? null, mid);
+          if (!row.body && f.body) this.db.query('UPDATE message SET body = ? WHERE id = ?').run(f.body, mid);
+          if (!row.atts && f.attachments?.length) this.insertAttachments(acc, mid, f.nativeId, f.attachments);
+          this.dirty.messages.set(mid, false);
+          continue;
+        }
         if (row.deleted) {
-          if (f.body && !row.body) conflict('deleted');
-          else counts.same++;
+          counts.same++;
           continue;
         }
         // A system or call line ("… started a call") is worded by whoever rendered it: the same event either way.
@@ -1084,15 +1116,26 @@ export class Store {
           if (!o.dryRun) this.db.query('UPDATE message SET body = ? WHERE id = ?').run(f.body, mid);
           filled = true;
         } else if (f.body && normalizeForCompare(row.body) !== normalizeForCompare(f.body)) {
-          conflict('body');
-          continue;
+          // A later edit than the hub has: the hub missed it. Taken, with the hub's words kept as an earlier version.
+          if (!f.editedTs || (row.edited_ts && f.editedTs <= row.edited_ts)) {
+            conflict('body');
+            continue;
+          }
+          if (!o.dryRun) {
+            if (row.body && this.keeps('edits', acc)) this.messageEvent(mid, 'edit', { body: row.body }, row.author_id, acc.id, f.editedTs);
+            this.db.query('UPDATE message SET body = ?, edited_ts = ? WHERE id = ?').run(f.body, f.editedTs, mid);
+          }
+          filled = true;
         }
         if (!row.reply_to_id && f.replyTo) {
           if (!o.dryRun) this.db.query('UPDATE message SET reply_to_id = ? WHERE id = ?').run(hubId('msg', acc.network, f.replyTo), mid);
           filled = true;
         }
         if (!row.atts && f.attachments?.length) {
-          if (!o.dryRun) this.insertAttachments(acc, mid, f.nativeId, f.attachments);
+          if (!o.dryRun) {
+            this.insertAttachments(acc, mid, f.nativeId, f.attachments);
+            if (row.kind === 'text') this.db.query(`UPDATE message SET kind = 'media' WHERE id = ?`).run(mid);
+          }
           filled = true;
         }
         if (filled) {

@@ -3,9 +3,10 @@
 signal-cli is a linked device, so the hub only has Signal messages from the day it was linked. The rest of the
 history is on the phone, in Molly, and the only way to get it off the phone is a backup. This is the design for
 reading one and merging it into the hub; the shared pipeline (sources, readers, plan, conflicts, apply) is
-`docs/import.md`. Built so far: uploading a backup from the Signal account's History section, and a census that reads
-its structure and counts (`packages/hub/src/imports/signal-backup.ts`, also `scripts/signal-backup-probe.ts`). Nothing
-has been imported yet.
+`docs/import.md`. Built: uploading a backup from the Signal account's History section, a census that reads its
+structure and counts (`packages/hub/src/imports/signal-backup.ts`, also `scripts/signal-backup-probe.ts`), and readers
+for both formats: new-format snapshots (`signal-v2.ts`, *Reading it* below) and legacy `.backup` files
+(`signal-legacy.ts`, *Reading a .backup*), which also brings in what Molly keepmsg kept (*Kept content*).
 
 ## Sources
 
@@ -113,6 +114,24 @@ No native library: the derivations are ported and checked against libsignal-clie
   ACI, and updates the hub has no line for (profile changes, safety numbers, pins, …).
 - The newest snapshot is read; older ones in the same folder are ignored.
 
+### Reading a .backup (built: `packages/hub/src/imports/signal-legacy.ts`, reader `signal-legacy@1`)
+
+1. **Unpack.** Every frame is decrypted and its MAC checked. Only the tables an import reads are replayed into a
+   private SQLite file: message, recipient, thread, attachment, reaction, mention, groups, group_membership and the
+   poll tables. Keys, sessions, settings and key-value frames are never written. The file is
+   `<data>/imports/work/<source>/legacy.sqlite` (0600), stamped with the source's hash in `legacy.json` so a new
+   mapping doesn't decrypt again, and it goes when the source is removed. Each attachment's bytes go to the media store
+   under their SHA-256, the same name the new-format reader gives the same file, so files both formats hold are stored
+   once. Avatars and stickers' own blobs are skipped.
+2. **Map.** SQL rows become the same facts as the table above. Old edit revisions (`latest_revision_id` set) are left
+   out. The latest revision gives the words and the original's `date_sent` names the message. Reactions on either are
+   kept. Quote thumbnails (`attachment.quote = 1`) go into `extra.quote`, and long text (`text/x-signal-plain`)
+   becomes the body. Left out and counted: SMS (no secure/push bit), SMS-only chats and MMS groups ("chat not kept"),
+   stories, safety-number and session lines, and updates the hub has no line for.
+
+On a real backup (72k rows, 6.9 GB), the unpack and the mapping together take about 20 s. Attachments the new-format
+import had already stored hash to the same files.
+
 ## Existing tools
 
 - **signalbackup-tools** (bepaald, C++, in nixpkgs as `signalbackup-tools`). The most complete tool: it decrypts
@@ -192,16 +211,23 @@ empty fields.
 ### Kept content (keepmsg)
 
 A legacy backup from the fork contains messages the user's own phone hides: disappeared ones
-(`keepmsg_expired = 1`) and the content of deleted ones (`deleted_by` set). The hub's own semantics are stock:
-a live delete blanks the body and drops attachments (`store.ts` `case 'delete'`). The importer should:
+(`keepmsg_expired = 1`, gone at `expire_started + expires_in`) and the content of deleted ones (`deleted_by` set,
+gone at `keepmsg_deleted_at` from keepmsg.6). The hub already keeps these from live sync as an adversarial feature
+(docs/history.md: `deleted`, `gone_how`, `gone_at` on the message, body and files left in place). An import keeps
+the backup's the same way: a fact with `gone: { how, at }` goes in as a kept deleted or disappeared message.
 
-- **By default import neither.** Skip `keepmsg_expired` rows, and import deleted messages as empty, deleted
-  placeholders, which is what the hub already shows for live deletes.
-- Offer an explicit opt-in (`--keep-disappeared`, `--keep-deleted`) that stores them flagged
-  (`extra.keepmsg = 'expired' | 'deleted'`). Then the web client can hide them behind a reveal, the way the fork
-  does. That's a UI change and out of scope here.
-- Leave out entirely any chat the user set to "stop keeping", even though the backup doesn't carry that flag.
-  The importer takes a `--skip-conversation` list for this.
+- **The same gate as live sync.** While adversarial features are hidden, kept messages are served empty
+  ("Deleted message", nothing to Show). Turning on Settings → Adversarial features shows them, collapsed, and
+  `is:deleted` finds them. Message history → Forget erases them like any other kept message.
+- **Not your own deletes.** A message you deleted yourself keeps nothing, as live sync does ("deleted by you" in the
+  run's left-out counts, and the hub's copy isn't filled either).
+- **Filling the hub.** A message the hub has as deleted and emptied (it heard the delete while not keeping deleted
+  messages) gets the backup's words and files, still deleted. A message the hub has as normal and the backup has as
+  disappeared or deleted (the timer ran out on the phone, or the hub missed the delete) is marked gone, and keeps the
+  hub's words. Both count as `filled`. A run's `kept` counts every message that is now kept as gone, new or filled.
+- **Nothing kept, nothing imported.** A stock-deleted message (empty) isn't brought in ("deleted, nothing kept").
+- The per-chat "stop keeping" opt-out doesn't travel in a backup. A chat that was set to stop keeping has nothing
+  kept in it, so nothing comes in from it.
 
 ### Attachments
 
@@ -224,7 +250,7 @@ hub, in a worker:
   2. passphrase / recovery key → census                                 done; a wrong secret is forgotten
      (.backup: counts, date range, keepmsg rows; snapshots: chats, items, months)
   3. read → facts                                                       snapshots: done (signal-v2@1);
-                                                                         .backup: not yet
+                                                                         .backup: done (signal-legacy@1)
   4. plan: new / same / fill / conflict / skip, per conversation         dry run, shown in the History section
   5. apply, fill-only, inside the hub                                    conflicts wait for review (docs/import.md)
 ```

@@ -4,11 +4,12 @@
  * <data>/imports/media/<sha256[0:2]>/<sha256><ext>: hardlinked from the source when it can be (no extra space),
  * copied otherwise. The facts' file:// URLs point at the store, so deleting a source never breaks an attachment.
  *
- * In: { kind, rawDir, selfId, mediaDir, out }. Out: { progress }, then { done, stats } or { error }.
+ * In: { kind, rawDir, selfId, mediaDir, out, backupKey?, legacy? }. Out: { progress }, then { done, stats } or { error }.
  */
 import { copyFileSync, existsSync, linkSync, mkdirSync, openSync, closeSync, readSync, renameSync, writeSync } from 'node:fs';
-import { extname, join } from 'node:path';
+import { dirname, extname, join } from 'node:path';
 import { authorIndex, readFile } from './discord-html.ts';
+import { readSignalLegacy } from './signal-legacy.ts';
 import { readSignalV2 } from './signal-v2.ts';
 import { readdirSync } from 'node:fs';
 
@@ -23,6 +24,8 @@ export interface ReadStats {
   files: { linked: number; missing: number };
   /** What a reader left out, by why (Signal: sms, deleted, updates the hub has no line for). */
   skipped?: Record<string, number>;
+  /** Signal .backup: messages kept after the network took them back, by how. */
+  gone?: { deleted: number; disappeared: number };
 }
 
 function hashFile(path: string): string {
@@ -37,9 +40,19 @@ function hashFile(path: string): string {
   return h.digest('hex');
 }
 
-self.onmessage = (e: MessageEvent<{ kind: string; rawDir: string; selfId: string; mediaDir: string; out: string; backupKey?: string }>) => {
-  const { kind, rawDir, selfId, mediaDir, out, backupKey } = e.data;
+self.onmessage = (e: MessageEvent<{ kind: string; rawDir: string; selfId: string; mediaDir: string; out: string; backupKey?: string; legacy?: { file: string; passphrase: string; sourceSha: string } }>) => {
+  const { kind, rawDir, selfId, mediaDir, out, backupKey, legacy } = e.data;
   try {
+    if (kind === 'signal-backup') {
+      if (!legacy) throw new Error('give the passphrase first');
+      const tmp = out + '.tmp';
+      const fd = openSync(tmp, 'w', 0o600);
+      const stats = readSignalLegacy({ ...legacy, workDir: dirname(out), selfId, mediaDir, progress: (p) => postMessage({ progress: p }) }, (x) => writeSync(fd, JSON.stringify(x) + '\n'));
+      closeSync(fd);
+      renameSync(tmp, out);
+      postMessage({ done: true, stats });
+      return;
+    }
     if (kind === 'signal-folder') {
       const tmp = out + '.tmp';
       const fd = openSync(tmp, 'w', 0o600);

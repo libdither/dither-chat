@@ -117,7 +117,7 @@ function RunLine({ r }: { r: P.ImportRunView }) {
     <p class="det-note">
       {r.dryRun ? 'Dry run' : 'Import'} {r.finishedAt ? `${ago(r.finishedAt)}: ${STAGE_TEXT[r.stage].toLowerCase()}` : `· ${STAGE_TEXT[r.stage]}`}
       {c
-        ? ` · ${count(c.messages, 'message')} in ${count(c.conversations, 'conversation')}: ${c.new.toLocaleString()} ${r.dryRun ? 'would be new' : 'new'}, ${c.same.toLocaleString()} already here${c.filled ? `, ${c.filled.toLocaleString()} filled in` : ''}${c.conflicts ? `, ${count(c.conflicts, 'difference')}` : ''}${c.conversationsNew ? ` · ${count(c.conversationsNew, 'conversation')} the hub didn’t have (archived)` : ''}${c.duplicates ? ` · ${c.duplicates.toLocaleString()} duplicates skipped` : ''}`
+        ? ` · ${count(c.messages, 'message')} in ${count(c.conversations, 'conversation')}: ${c.new.toLocaleString()} ${r.dryRun ? 'would be new' : 'new'}, ${c.same.toLocaleString()} already here${c.filled ? `, ${c.filled.toLocaleString()} filled in` : ''}${c.conflicts ? `, ${count(c.conflicts, 'difference')}` : ''}${c.kept ? ` · ${c.kept.toLocaleString()} of them deleted or disappeared, kept (shown with adversarial features)` : ''}${c.conversationsNew ? ` · ${count(c.conversationsNew, 'conversation')} the hub didn’t have (archived)` : ''}${c.duplicates ? ` · ${c.duplicates.toLocaleString()} duplicates skipped` : ''}`
         : ''}
       {r.files ? ` · ${count(r.files.linked, 'file')} kept${r.files.missing ? `, ${r.files.missing} missing from the export` : ''}` : ''}
       {r.skipped && Object.keys(r.skipped).length ? ` · left out: ${Object.entries(r.skipped).map(([k, n]) => `${n.toLocaleString()} ${k}`).join(', ')}` : ''}

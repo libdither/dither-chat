@@ -91,3 +91,52 @@ export function syntheticV2(): Buffer {
   const item = pb(4, Buffer.concat([pb(1, 1), pb(2, 2), pb(3, Date.UTC(2025, 0, 1)), std]));
   return Buffer.concat([info, self, contact, chat, item].map(delim));
 }
+
+/** A writer for made-up legacy backups: statements with typed parameters, attachment blobs, then the end frame. */
+export function legacyWriter(passphrase = SYNTHETIC_PASSPHRASE) {
+  const iv = randomBytes(16);
+  const salt = randomBytes(32);
+  const { cipherKey, macKey } = streamKeys(passphrase, salt);
+  let counter = iv.readUInt32BE(0);
+  const nextIv = () => (iv.writeUInt32BE(counter++ >>> 0, 0), Buffer.from(iv));
+  const chunks: Buffer[] = [];
+  const header = pb(1, Buffer.concat([pb(1, iv), pb(2, salt), pb(3, 1)]));
+  const hl = Buffer.alloc(4);
+  hl.writeUInt32BE(header.length);
+  chunks.push(hl, header);
+  const frame = (plain: Buffer) => {
+    const c = createCipheriv('aes-256-ctr', cipherKey, nextIv());
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(plain.length + 10);
+    const encLen = c.update(len);
+    const ct = Buffer.concat([c.update(plain), c.final()]);
+    chunks.push(encLen, ct, createHmac('sha256', macKey).update(encLen).update(ct).digest().subarray(0, 10));
+  };
+  type V = string | number | Uint8Array | null;
+  const param = (v: V) => pb(2, v === null ? pb(5, 1) : typeof v === 'string' ? pb(1, v) : typeof v === 'number' ? pb(2, v) : pb(4, v));
+  frame(pb(5, pb(1, 321)));
+  return {
+    sql(sql: string) {
+      frame(pb(2, pb(1, sql)));
+    },
+    /** INSERT INTO table VALUES (…) with these values, in column order. */
+    insert(table: string, values: V[]) {
+      frame(pb(2, Buffer.concat([pb(1, `INSERT INTO ${table} VALUES (${values.map(() => '?').join(',')})`), ...values.map(param)])));
+    },
+    /** An attachment's bytes, after its row, as the exporter writes them. */
+    attachment(rowId: number, data: Buffer) {
+      frame(pb(4, Buffer.concat([pb(1, rowId), pb(2, rowId), pb(3, data.length)])));
+      const v = nextIv();
+      const c = createCipheriv('aes-256-ctr', cipherKey, v);
+      const ct = Buffer.concat([c.update(data), c.final()]);
+      chunks.push(ct, createHmac('sha256', macKey).update(v).update(ct).digest().subarray(0, 10));
+    },
+    keyValue(key: string) {
+      frame(pb(9, Buffer.concat([pb(1, key), pb(7, 'x')])));
+    },
+    done(): Buffer {
+      frame(pb(6, 1));
+      return Buffer.concat(chunks);
+    },
+  };
+}

@@ -12,18 +12,19 @@ import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import type { Store } from '../store.ts';
 import { DCE_HTML_READER } from './discord-html.ts';
+import { SIGNAL_LEGACY_READER } from './signal-legacy.ts';
 import { SIGNAL_V2_READER } from './signal-v2.ts';
 import type { ReadStats } from './read-worker.ts';
 import type { ImportSources } from './sources.ts';
 
 const SLICE = 150;
-const READERS: Partial<Record<P.ImportSourceKind, string>> = { 'dce-html': DCE_HTML_READER, 'signal-folder': SIGNAL_V2_READER };
+const READERS: Partial<Record<P.ImportSourceKind, string>> = { 'dce-html': DCE_HTML_READER, 'signal-folder': SIGNAL_V2_READER, 'signal-backup': SIGNAL_LEGACY_READER };
 
 export const importable = (kind: P.ImportSourceKind) => kind in READERS;
 
-const zero = (): P.ImportCounts => ({ conversations: 0, conversationsNew: 0, messages: 0, new: 0, same: 0, filled: 0, conflicts: 0, duplicates: 0 });
+const zero = (): P.ImportCounts => ({ conversations: 0, conversationsNew: 0, messages: 0, new: 0, same: 0, filled: 0, conflicts: 0, duplicates: 0, kept: 0 });
 const add = (a: P.ImportCounts, b: P.ImportCounts) => {
-  for (const k of Object.keys(a) as (keyof P.ImportCounts)[]) a[k] += b[k];
+  for (const k of Object.keys(a) as (keyof P.ImportCounts)[]) a[k] = (a[k] ?? 0) + (b[k] ?? 0);
 };
 
 export class ImportRunner {
@@ -109,6 +110,8 @@ export class ImportRunner {
     const rawDir = this.sources.contentDir(sourceId)!;
     const backupKey = this.sources.backupKey(sourceId);
     if (v.kind === 'signal-folder' && !backupKey) throw new Error('give the recovery key first');
+    const legacy = v.kind === 'signal-backup' ? this.sources.legacyBackup(sourceId) : null;
+    if (v.kind === 'signal-backup' && !legacy?.passphrase) throw new Error('give the passphrase first');
     const mediaDir = join(this.dataDir, 'imports', 'media');
     mkdirSync(mediaDir, { recursive: true, mode: 0o700 });
     const stats = await new Promise<ReadStats>((resolve, reject) => {
@@ -121,7 +124,7 @@ export class ImportRunner {
         else if (e.data.error) (w.terminate(), reject(new Error(e.data.error)));
       };
       w.onerror = (e) => (w.terminate(), reject(new Error(e.message || 'reader failed')));
-      w.postMessage({ kind: v.kind, rawDir, selfId: self, mediaDir, out, backupKey: backupKey?.toString('hex') });
+      w.postMessage({ kind: v.kind, rawDir, selfId: self, mediaDir, out, backupKey: backupKey?.toString('hex'), legacy: legacy ? { ...legacy, sourceSha: v.sha256 } : undefined });
     });
     if (!stats.selfMessages) throw new Error('this account wrote nothing in this export: it looks like someone else’s history');
     run.files = stats.files;
