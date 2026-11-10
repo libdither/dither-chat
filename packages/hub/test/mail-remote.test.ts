@@ -36,7 +36,7 @@ function dovecot(): string | null {
 }
 const DOVECOT = dovecot();
 const have = existsSync(join(ACCOUNTS, 'packages/manager/src/index.ts')) && existsSync(IMAP_KIT) && !!DOVECOT;
-const describe = have ? describeAll : describeAll.skip;
+const describe = describeAll.skipIf(!have);
 const REPO = resolve(import.meta.dir, '../../..');
 
 const IMAP_PORT = 18580;

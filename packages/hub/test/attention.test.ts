@@ -479,6 +479,7 @@ describe('incremental features in the hub', () => {
     clock += HOUR;
     // Every look at this clock is a second later: each budget is spent before its first step.
     let ms = 0;
+    const real = att.budgetClock;
     att.budgetClock = () => (ms += 1000);
     try {
       say('dm', 'sam', clock - MIN);
@@ -495,7 +496,7 @@ describe('incremental features in the hub', () => {
       expect(att.busy).toBe(false);
       expect([state('dm').lastReceived, state('trio').lastReceived]).toEqual([clock - MIN, clock - MIN]);
     } finally {
-      att.budgetClock = () => performance.now();
+      att.budgetClock = real;
     }
   });
 

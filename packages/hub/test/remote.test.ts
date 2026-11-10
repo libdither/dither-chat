@@ -17,7 +17,7 @@ import { Triage } from '../src/triage.ts';
 
 const ACCOUNTS = process.env.DITHER_ACCOUNTS_REPO ?? resolve(import.meta.dir, '../../../../dither-accounts');
 const have = existsSync(join(ACCOUNTS, 'packages/manager/src/index.ts'));
-const describe = have ? describeAll : describeAll.skip;
+const describe = describeAll.skipIf(!have);
 const REPO = resolve(import.meta.dir, '../../..');
 
 const until = async (f: () => boolean | Promise<boolean>, ms = 8000, what = 'condition') => {
