@@ -27,7 +27,7 @@ import { fromSignal } from '../../../adapter-signal/src/markdown.ts';
 import { groupIdFromMasterKey } from './signal-keys.ts';
 import { BadPassphrase, type Field, fields, normalizePassphrase, streamKeys } from './signal-backup.ts';
 
-export const SIGNAL_LEGACY_READER = 'signal-legacy@1';
+export const SIGNAL_LEGACY_READER = 'signal-legacy@2';
 /** The unpacked database's own version: a new one unpacks again, a new mapping alone does not. */
 export const LEGACY_UNPACK = 1;
 
@@ -272,6 +272,10 @@ const CALLS: Record<number, { video: boolean; dir: 'Incoming' | 'Outgoing' | 'Mi
   8: { video: true, dir: 'Missed' }, 10: { video: true, dir: 'Incoming' }, 11: { video: true, dir: 'Outgoing' },
 };
 const GROUP_CALL = 12;
+/** MMS PDU types (message.m_type): sent, a notice of one not yet downloaded, received. */
+const MMS_SEND = 128;
+const MMS_NOTIFICATION = 130;
+const MMS_RETRIEVED = 132;
 const OUTGOING = new Set([21, 22, 23, 24, 25, 26, 28, 2, 11]);
 /** Base types with no line in the hub, by name. */
 const QUIET: Record<number, string> = {
@@ -308,6 +312,13 @@ function describeTimer(seconds: number): string {
   return `${seconds} seconds`;
 }
 
+/** Someone without an ACI, by the number or email SMS reached them at. Short codes stay as they are (no "+"). */
+function smsAddress(r: Row): string | null {
+  if (typeof r.e164 === 'string' && r.e164.trim()) return `tel:${r.e164.trim()}`;
+  if (typeof r.email === 'string' && r.email.trim()) return `mailto:${r.email.trim().toLowerCase()}`;
+  return null;
+}
+
 const aciText = (s: unknown): string | null => {
   if (typeof s !== 'string' || !s) return null;
   const v = s.replace(/^ACI:/i, '').toLowerCase();
@@ -339,15 +350,19 @@ export function mapLegacy(dbPath: string, o: { selfId: string; mediaDir: string;
     if (!has('message') || !has('recipient') || !has('thread')) throw new Error('this backup has no messages, people or chats in it');
     const mcols = cols('message');
 
-    // People and groups.
+    // People and groups. Someone with no ACI (an SMS contact) is known by number or email: "tel:<number>", "mailto:<email>".
     const aciOf = new Map<number, string>();
+    const idOf = new Map<number, string>();
     const identities = new Map<string, P.IdentityFact>();
     const names = new Map<string, string>();
     for (const r of db.query('SELECT * FROM recipient').all() as Row[]) {
+      if (r.type !== 0 && r.type != null) continue;
       const aci = aciText(r.aci);
-      if (!aci) continue;
-      aciOf.set(r._id, aci);
-      const idf: P.IdentityFact = { nativeId: aci };
+      const id = aci ?? smsAddress(r);
+      if (!id) continue;
+      if (aci) aciOf.set(r._id, aci);
+      idOf.set(r._id, id);
+      const idf: P.IdentityFact = { nativeId: id };
       const name =
         joinName(r.nickname_given_name, r.nickname_family_name) ??
         joinName(r.system_nickname) ??
@@ -356,11 +371,12 @@ export function mapLegacy(dbPath: string, o: { selfId: string; mediaDir: string;
         joinName(r.profile_given_name, r.profile_family_name) ??
         joinName(r.username);
       if (name) idf.displayName = name;
-      if (typeof r.e164 === 'string' && r.e164) idf.handle = r.e164.startsWith('+') ? r.e164 : `+${r.e164}`;
+      if (typeof r.e164 === 'string' && r.e164) idf.handle = aci ? (r.e164.startsWith('+') ? r.e164 : `+${r.e164}`) : r.e164;
       else if (r.username) idf.handle = `@${r.username}`;
-      if (aci === self) idf.isSelf = true;
-      else if (name) names.set(aci, name);
-      identities.set(aci, idf);
+      else if (typeof r.email === 'string' && r.email) idf.handle = r.email;
+      if (id === self) idf.isSelf = true;
+      else if (name) names.set(id, name);
+      identities.set(id, idf);
     }
     const nameOf = (aci: string | null) => (aci === self ? 'You' : (aci && names.get(aci)) || 'Someone');
 
@@ -370,8 +386,8 @@ export function mapLegacy(dbPath: string, o: { selfId: string; mediaDir: string;
     const members = new Map<string, string[]>();
     if (has('group_membership'))
       for (const m of db.query('SELECT group_id, recipient_id FROM group_membership').all() as Row[]) {
-        const aci = aciOf.get(m.recipient_id);
-        if (aci) (members.get(m.group_id) ?? members.set(m.group_id, []).get(m.group_id)!).push(aci);
+        const id = idOf.get(m.recipient_id);
+        if (id) (members.get(m.group_id) ?? members.set(m.group_id, []).get(m.group_id)!).push(id);
       }
     for (const r of db.query('SELECT _id, type, aci, group_id FROM recipient').all() as Row[]) {
       const aci = aciText(r.aci);
@@ -380,6 +396,20 @@ export function mapLegacy(dbPath: string, o: { selfId: string; mediaDir: string;
           r._id,
           aci === self ? { nativeId: `dm:${self}:${self}`, shape: 'self', name: 'Note to Self', participants: [self], encrypted: true } : { nativeId: `dm:${self}:${aci}`, shape: 'direct', participants: [self, aci], encrypted: true },
         );
+      } else if (r.type === 0 && idOf.has(r._id)) {
+        // SMS with someone not on Signal. Not a conversation Signal can send to: the adapter refuses anything but dm: and group:.
+        const peer = idOf.get(r._id)!;
+        conversations.set(r._id, { nativeId: `sms:${self}:${peer}`, shape: 'direct', participants: [self, peer], encrypted: false });
+      } else if (r.type === 1) {
+        // An MMS group: SMS to several people at once.
+        const g = groups.get(r._id);
+        const hex = typeof r.group_id === 'string' ? r.group_id.match(/^__signal_mms_group__!([0-9a-f]+)$/i)?.[1] : undefined;
+        if (!hex) continue;
+        const conv: P.ConversationFact = { nativeId: `mms:${hex.toLowerCase()}`, shape: 'group', encrypted: false };
+        if (g?.title) conv.name = g.title;
+        const ms = g ? members.get(g.group_id) : undefined;
+        if (ms?.length) conv.participants = [...new Set([self, ...ms])];
+        conversations.set(r._id, conv);
       } else if (r.type === 3) {
         const g = groups.get(r._id);
         const mk = g?.master_key instanceof Uint8Array && g.master_key.length === 32 ? g.master_key : null;
@@ -507,19 +537,21 @@ export function mapLegacy(dbPath: string, o: { selfId: string; mediaDir: string;
       const base = type & BASE;
       const special = Math.floor(type / 0x100000000) & 0xf;
       if (row.story_type) return (skip('story'), null);
-      if (base >= 20 && base <= 28 && !(type & (SECURE | PUSH)) && !(type & GROUP_UPDATE) && !(type & TIMER_UPDATE)) return (skip('sms'), null);
+      const sms = base >= 20 && base <= 28 && !(type & (SECURE | PUSH)) && !(type & GROUP_UPDATE) && !(type & TIMER_UPDATE);
+      if (row.m_type === MMS_NOTIFICATION) return (skip('mms never downloaded'), null);
       if (QUIET[base]) return (skip(QUIET[base]), null);
       if (type & END_SESSION || type & KEY_EXCHANGE_MASK || type & ENCRYPTION_FAILED) return (skip('session or safety number'), null);
       if (special && special !== 0x2 && special !== 0x3) return (skip(SPECIAL[special] ?? 'other update'), null);
 
       const outgoing = OUTGOING.has(base);
-      const author = outgoing ? self : (aciOf.get(row.from_recipient_id) ?? null);
-      if (!author) return (skip('author without an ACI'), null);
+      const author = outgoing ? self : (idOf.get(row.from_recipient_id) ?? null);
+      if (!author) return (skip('author without an ACI or number'), null);
       const orig = row.original_message_id ? (byId.get(row.original_message_id) as Row | null) : null;
       const ts = Number(orig?.date_sent ?? row.date_sent ?? 0);
       const m: ImportMessageFact = { nativeId: `${author}:${ts}`, conversation: '', author, ts, body: '' };
       if (orig && Number(row.date_sent) !== ts) m.editedTs = Number(row.date_sent);
       const extra: Record<string, unknown> = {};
+      if (sms) extra.sms = row.m_type === MMS_SEND || row.m_type === MMS_RETRIEVED ? 'mms' : 'sms';
       if (row.expires_in) extra.expiresInSeconds = Math.round(Number(row.expires_in) / 1000);
       const who = nameOf(author);
 
