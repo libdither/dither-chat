@@ -101,7 +101,7 @@ or compared with one. Comments and strings don't count.
 - A wait that has to be real (a test of a real timer, a script against a live server) ends its line with
   `// wall-clock: <reason>`, so the reason shows in review.
 
-At the start (2026-11-10): 104 sleeps, 0 setTimeout waits, 6 performance.now() and 26 Date.now() deltas, most of them
+At the start (2026-11-10): 105 sleeps, 0 setTimeout waits, 6 performance.now() and 27 Date.now() deltas, most of them
 in the mail tests' `until` helpers and the adapters' tests.
 
 ### The stress run

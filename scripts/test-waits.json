@@ -30,6 +30,7 @@
     "packages/hub/test/mail-send.test.ts": {"sleep": 5, "dateNow": 1},
     "packages/hub/test/mail-sync.test.ts": {"sleep": 5, "dateNow": 1},
     "packages/hub/test/mail-triage.test.ts": {"sleep": 4, "dateNow": 1},
+    "packages/hub/test/old-database.test.ts": {"sleep": 1, "dateNow": 1},
     "packages/hub/test/remote.test.ts": {"sleep": 5, "dateNow": 1},
     "packages/hub/test/server.test.ts": {"sleep": 2},
     "packages/hub/test/signal-legacy.test.ts": {"sleep": 1},
