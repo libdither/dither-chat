@@ -47,9 +47,9 @@ their label, which can hold a name ("Message Ann").
 
 | Area | Keys |
 |---|---|
-| `inbox` | `row (DM\|group\|notes\|channel\|thread\|mail[, unread\|, owes a reply])`, `filter (All\|People\|Groups\|Unread)`, `search`, `search (Enter)`, `search (suggestion)`, `requests row`, `new message`, `row (account needs you)`, `section toggle` |
+| `inbox` | `row (DM\|group\|notes\|channel\|thread\|mail[, unread\|, owes a reply])`, `filter` (the button), `filter (All\|Direct messages\|Groups\|Mail)` (its menu; until 2026-11-09 chips `filter (All\|People\|Groups\|Unread)`), `search`, `search (Enter)`, `search (suggestion)`, `requests row`, `new message`, `row (account needs you)`, `section toggle (Needs you\|Waiting on you\|New\|Earlier)` (until 2026-11-09 `section toggle`, in every list) |
 | `triage` | `card`, `card (unread)`, `card (mail[, unread])`, `vote up`, `vote down`, `mark all read`, `show all`, `account needs you`, `not interesting (open)`, the learned rules' buttons |
-| `people` | `chip (chats\|friend\|contact\|following)`, `account chip`, `account chip (all)`, `row (person[, unread])`, `row (friend\|contact\|following)`, `remove (…)`, `people graph`, `new message` |
+| `people` | `chip (chats\|friend\|contact\|following)`, `account chip`, `account chip (all)`, `row (person[, unread])`, `row (friend\|contact\|following)`, `remove (…)`, `people graph`, `new message`, `section toggle (Starred\|Direct messages)` |
 | `chat header` | `picture`, `name`, `crumb (community\|parent)`, `profile`, `all chats`, `join call`, `about`, `search here`, `notification level` and its choices, `details`, `network chip` |
 | `message` | the hover actions: `edit`, `delete`, `reply`, `forward`, `more`, `triage note` |
 | `message menu` (and `attachment menu`, `link menu`) | `reply`, `edit`, `forward`, `copy text`, `copy link`, `add reaction`, `quick reaction`, `view reactions`, `open thread`, `go to replied`, `go to original`, `profile`, `history`, `delete`, `copy message id`, `copy dither-chat id`; `… (key R)` when picked by its letter |

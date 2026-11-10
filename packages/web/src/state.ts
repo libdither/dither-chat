@@ -9,6 +9,7 @@ import { applyTyping, type TypingState } from './typers.ts';
 import { ECHO_SKEW, mayBeOut, openOutbox, settled, type Echo, type OutboxEntry } from './outbox.ts';
 import { hubTransport, UploadJob } from './upload.ts';
 import { href, parseHash, type Route } from './routes.ts';
+import { inboxFilterOf, type InboxFilter } from './ordering.ts';
 
 // ------------------------------------------------------------------ data
 
@@ -132,17 +133,22 @@ export interface Prefs {
   pushEnabled: boolean;
   /** How this device carries calls: through the account's own client (bridge), or by itself (direct). */
   callMode: 'bridge' | 'direct';
-  /** The inbox's filter chip. */
+  /** The inbox's filter (its menu beside the search box). */
   inboxFilter: InboxFilter;
   /** People's filter chip: chats, or one kind of list (docs/add.md "Relationships"). */
   peopleFilter?: 'chats' | 'friend' | 'contact' | 'following';
   /** This device counts which buttons are pressed (clicklog.ts, docs/button-counts.md). Off unless switched on here. */
   countClicks?: boolean;
 }
-export type InboxFilter = 'all' | 'people' | 'groups' | 'unread';
+export type { InboxFilter };
 const PREFS_KEY = 'dither-chat:prefs';
 const defaults: Prefs = { theme: 'dither-dark', themeDark: 'dither-dark', themeLight: 'dither-light', details: false, collapsed: {}, sendAs: {}, via: {}, notifications: false, skinTone: 0, directorySort: 'recency', pushEnabled: false, callMode: 'bridge', inboxFilter: 'all' };
-export const prefs = signal<Prefs>({ ...defaults, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') });
+function storedPrefs(): Prefs {
+  const p = { ...defaults, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') };
+  // The chips before the filter menu: People became Direct messages, and Unread is the New section, under All.
+  return { ...p, inboxFilter: inboxFilterOf(p.inboxFilter) };
+}
+export const prefs = signal<Prefs>(storedPrefs());
 export function setPrefs(p: Partial<Prefs>) {
   prefs.value = { ...prefs.value, ...p };
   localStorage.setItem(PREFS_KEY, JSON.stringify(prefs.value));

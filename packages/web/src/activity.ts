@@ -83,8 +83,8 @@ export function arrivalOf(el: Element | null): Arrival {
   if (el.closest('.board')) return { source: 'triage' };
   const row = el.closest('[data-row]');
   const list = row?.closest('.sidebar-inner');
-  // The inbox's list is the one with the filter chips.
-  if (row && list?.querySelector('.inbox-chips')) {
+  // The inbox's list: its rank counts across the sections, top to bottom.
+  if (row && list?.classList.contains('inbox-side')) {
     const id = row.getAttribute('data-row')!;
     const a = db.attention.get(id);
     return { source: 'inbox', rank: [...list.querySelectorAll('[data-row]')].indexOf(row), score: a ? Math.round(a.score * 10) / 10 : null, needs: a?.needs ?? null };

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { inboxChanged, inboxLift, inboxSnapshot, inboxView, rank, RESORT_EVERY, sameSnapshot, shouldResort, sortKeys, stabilize, switcherOrder, type Candidate, type Ranked, type Sortable } from '../src/ordering.ts';
+import { filterKeeps, inboxChanged, inboxFilterOf, inboxLift, inboxSections, inboxSnapshot, inboxView, rank, RESORT_EVERY, sameSnapshot, shouldResort, sortKeys, stabilize, switcherOrder, type Candidate, type Ranked, type Sortable } from '../src/ordering.ts';
 import { IDLE_AFTER, Tracker, VISIT_AFTER } from '../src/tracker.ts';
 
 const p = (key: string, o: Partial<Sortable> = {}): Sortable => ({ key, name: key.split(':')[1], pinned: false, position: null, last: 0, score: 0, ...o });
@@ -131,7 +131,7 @@ describe('the inbox', () => {
 
   test('between snapshots nothing moves: new scores wait, new rows go at the end', () => {
     const snap = inboxSnapshot([{ ...r('a', 50), unread: true }, u(r('b', 30)), u(r('c', 5))]);
-    expect(snap).toEqual({ keys: ['a', 'b', 'c'], unread: ['a'] });
+    expect(snap).toEqual({ keys: ['a', 'b', 'c'], unread: ['a'], waiting: [] });
     // a was read and sank, c got a message and rose, d is new.
     const fresh = [r('a', 3), r('b', 30), r('c', 60), r('d', 70)];
     expect(inboxView(snap, fresh)).toEqual(['a', 'b', 'c', 'd']);
@@ -149,7 +149,7 @@ describe('the inbox', () => {
     // You opened b and answered it: its score changed.
     const fresh = [r('a', 60), r('b', 12), r('c', 40), r('d', 5), r('e', 70)];
     const held = inboxSnapshot(fresh.map(u), { key: 'b', prev });
-    expect(held).toEqual({ keys: ['e', 'b', 'a', 'c', 'd'], unread: [] });
+    expect(held).toEqual({ keys: ['e', 'b', 'a', 'c', 'd'], unread: [], waiting: [] });
     expect(inboxChanged(held, fresh, { key: 'b', prev: held })).toBe(false);
     // However high it scores now.
     const low = inboxSnapshot([r('a', 60), r('b', 50), r('d', 5)].map(u));
@@ -164,6 +164,89 @@ describe('the inbox', () => {
     const fresh = [r('dm1', 50), r('g1', 40), r('dm2', 10), r('g2', 5)];
     expect(inboxView(snap, fresh, (k) => k.startsWith('g'))).toEqual(['g1', 'g2']);
     expect(inboxView(snap, fresh, (k) => k.startsWith('dm'))).toEqual(['dm1', 'dm2']);
+  });
+});
+
+describe('the inbox sections', () => {
+  const r = (key: string, score: number, x: { unread?: boolean; waiting?: boolean } = {}) => ({ key, score, unread: !!x.unread, waiting: !!x.waiting });
+  const now = (rows: ReturnType<typeof r>[]) => (k: string) => rows.find((x) => x.key === k)!;
+
+  test('waiting on you, then new, then earlier, each in the learned order', () => {
+    const rows = [r('a', 90, { unread: true }), r('b', 80, { waiting: true }), r('c', 70), r('d', 60, { waiting: true, unread: true }), r('e', 50, { unread: true }), r('f', 40)];
+    const snap = inboxSnapshot(rows);
+    expect(snap.waiting).toEqual(['b', 'd']);
+    // Unread and waiting is waiting: the turn you owe says more than the badge.
+    expect(inboxSections(inboxView(snap, rows), snap, now(rows))).toEqual({ waiting: ['b', 'd'], new: ['a', 'e'], earlier: ['c', 'f'] });
+  });
+
+  test('reading or answering a row moves it at the next snapshot, not before', () => {
+    const rows = [r('a', 90, { unread: true }), r('b', 80, { waiting: true }), r('c', 70)];
+    const snap = inboxSnapshot(rows);
+    // a was read, b answered, c got a message: until the next snapshot each stays where it was.
+    const fresh = [r('a', 20), r('b', 30), r('c', 85, { unread: true })];
+    expect(inboxSections(inboxView(snap, fresh), snap, now(fresh))).toEqual({ waiting: ['b'], new: ['a'], earlier: ['c'] });
+    expect(inboxChanged(snap, fresh)).toBe(true);
+    const next = inboxSnapshot(fresh);
+    expect(inboxSections(inboxView(next, fresh), next, now(fresh))).toEqual({ waiting: [], new: ['c'], earlier: ['b', 'a'] });
+    expect(inboxChanged(next, fresh)).toBe(false);
+  });
+
+  test('a row read in place, with the order unchanged, still asks for a new snapshot', () => {
+    const rows = [r('a', 50, { unread: true }), r('b', 40)];
+    const snap = inboxSnapshot(rows);
+    expect(inboxChanged(snap, [r('a', 50), r('b', 40)])).toBe(true);
+    expect(inboxChanged(snap, rows)).toBe(false);
+  });
+
+  test('a row newer than the snapshot goes by what it is now, at the end of its section', () => {
+    const rows = [r('a', 90, { waiting: true }), r('b', 50)];
+    const snap = inboxSnapshot(rows);
+    const fresh = [...rows, r('n', 99, { unread: true }), r('w', 98, { waiting: true })];
+    expect(inboxSections(inboxView(snap, fresh), snap, now(fresh))).toEqual({ waiting: ['a', 'w'], new: ['n'], earlier: ['b'] });
+  });
+
+  test('the open conversation keeps its section as well as its place', () => {
+    const prev = inboxSnapshot([r('a', 90, { waiting: true }), r('b', 80, { unread: true }), r('c', 70)]);
+    // You opened b and read it: still under New while it is open.
+    const fresh = [r('a', 90, { waiting: true }), r('b', 20), r('c', 70)];
+    const held = inboxSnapshot(fresh, { key: 'b', prev });
+    expect(held.unread).toEqual(['b']);
+    expect(inboxSections(inboxView(held, fresh), held, now(fresh))).toEqual({ waiting: ['a'], new: ['b'], earlier: ['c'] });
+    expect(inboxChanged(held, fresh, { key: 'b', prev: held })).toBe(false);
+    // Opened a, answered it: still waiting while it is open; once you leave, it goes.
+    const answered = [r('a', 40), r('b', 20), r('c', 70)];
+    expect(inboxSnapshot(answered, { key: 'a', prev }).waiting).toEqual(['a']);
+    expect(inboxSnapshot(answered).waiting).toEqual([]);
+  });
+
+  test('a snapshot from before the sections has nothing waiting', () => {
+    const old = { keys: ['a', 'b'], unread: ['b'] };
+    expect(inboxSections(['a', 'b'], old, () => ({ unread: true, waiting: true }))).toEqual({ waiting: [], new: ['b'], earlier: ['a'] });
+  });
+});
+
+describe('the inbox filter', () => {
+  const dm = { mail: false, direct: true };
+  const group = { mail: false, direct: false };
+  const mailOne = { mail: true, direct: true };
+  const mailMany = { mail: true, direct: false };
+  test('direct messages, groups and mail split everything between them', () => {
+    for (const x of [dm, group, mailOne, mailMany]) {
+      expect(filterKeeps('all', x)).toBe(true);
+      expect([filterKeeps('direct', x), filterKeeps('groups', x), filterKeeps('mail', x)].filter(Boolean).length).toBe(1);
+    }
+    expect(filterKeeps('direct', dm)).toBe(true);
+    expect(filterKeeps('direct', mailOne)).toBe(false);
+    expect(filterKeeps('groups', group)).toBe(true);
+    expect(filterKeeps('mail', mailMany)).toBe(true);
+  });
+  test('a stored chip from before the menu: People is the DMs, Unread is all (the New section)', () => {
+    expect(inboxFilterOf('people')).toBe('direct');
+    expect(inboxFilterOf('unread')).toBe('all');
+    expect(inboxFilterOf('groups')).toBe('groups');
+    expect(inboxFilterOf('mail')).toBe('mail');
+    expect(inboxFilterOf(undefined)).toBe('all');
+    expect(inboxFilterOf('nonsense')).toBe('all');
   });
 });
 
