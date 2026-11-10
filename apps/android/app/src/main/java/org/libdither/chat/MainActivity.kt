@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Process
 import android.os.SystemClock
+import android.provider.MediaStore
 import android.text.InputType
 import android.util.Log
 import android.util.TypedValue
@@ -91,6 +92,8 @@ class MainActivity : Activity() {
     private var hub: Uri? = null
     private var bg = 0
     private var files: ValueCallback<Array<Uri>>? = null
+    /** Where the camera app is writing the photo a page's `capture` input asked for. */
+    private var captured: Uri? = null
     private var mediaRequest: PermissionRequest? = null
     private var afterNotify: ((Boolean) -> Unit)? = null
     private val createdAt = SystemClock.uptimeMillis()
@@ -281,12 +284,22 @@ class MainActivity : Activity() {
         override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
             files?.onReceiveValue(null)
             files = callback
-            val intent = params.createIntent().putExtra(Intent.EXTRA_ALLOW_MULTIPLE, params.mode == FileChooserParams.MODE_OPEN_MULTIPLE)
+            captured = null
+            val intent = chooserIntent(params)
             try {
                 startActivityForResult(intent, REQ_FILES)
-            } catch (e: ActivityNotFoundException) {
-                files = null
-                callback.onReceiveValue(null)
+            } catch (e: Exception) {
+                // No app for it, or the camera app refused us: the plain picker, else nothing.
+                Log.w(TAG, "could not open ${intent.action}", e)
+                captured = null
+                val plain = params.createIntent().putExtra(Intent.EXTRA_ALLOW_MULTIPLE, params.mode == FileChooserParams.MODE_OPEN_MULTIPLE)
+                try {
+                    if (intent.action == plain.action) throw e
+                    startActivityForResult(plain, REQ_FILES)
+                } catch (e: Exception) {
+                    files = null
+                    callback.onReceiveValue(null)
+                }
             }
             return true
         }
@@ -297,6 +310,43 @@ class MainActivity : Activity() {
             if (debuggable || m.message().startsWith("[dither]")) Log.i("DitherWeb", "${m.messageLevel()}: ${m.message()}")
             return true
         }
+    }
+
+    /**
+     * What the page's file input asks for (docs/uploads.md, "On a phone"). WebView's own intent keeps only the first
+     * of its types and ignores `capture`, so an input for photos and videos would offer photos alone. Instead:
+     * - `capture` on an image input: the camera app, writing to a file of ours (Captures). Only with the camera
+     *   allowed, since Android refuses that intent to an app that declares CAMERA without holding it; a page asks
+     *   for this after the camera was refused, so then it is the photo picker.
+     * - Photos and videos: the system photo picker (Android 13+), which reads them without any permission of ours.
+     *   Before 13, the documents picker for both kinds.
+     * - Anything else: WebView's own, several at once where the input allows.
+     */
+    private fun chooserIntent(params: WebChromeClient.FileChooserParams): Intent {
+        val multiple = params.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE
+        val types = params.acceptTypes.flatMap { it.split(',') }.map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+        val images = types.isNotEmpty() && types.all { it.startsWith("image/") }
+        val videos = types.isNotEmpty() && types.all { it.startsWith("video/") }
+        val media = types.isNotEmpty() && types.all { it.startsWith("image/") || it.startsWith("video/") }
+        if (params.isCaptureEnabled && images && checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            val uri = Captures.newPhoto(this)
+            captured = uri
+            return Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+                .putExtra(MediaStore.EXTRA_OUTPUT, uri)
+                .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        if (media && Build.VERSION.SDK_INT >= 33) {
+            return Intent(MediaStore.ACTION_PICK_IMAGES).apply {
+                if (images) type = "image/*" else if (videos) type = "video/*"
+                if (multiple) putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, MediaStore.getPickImagesMaxLimit())
+            }
+        }
+        if (media) {
+            return Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+                .putExtra(Intent.EXTRA_MIME_TYPES, types.toTypedArray())
+                .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple)
+        }
+        return params.createIntent().putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple)
     }
 
     private fun permissionFor(resource: String) = when (resource) {
@@ -330,7 +380,11 @@ class MainActivity : Activity() {
         if (requestCode != REQ_FILES) return super.onActivityResult(requestCode, resultCode, data)
         val cb = files ?: return
         files = null
-        val picked = if (resultCode != RESULT_OK || data == null) null
+        val photo = captured
+        captured = null
+        // The camera app wrote to our file and says nothing more.
+        val picked = if (photo != null) photo.takeIf { resultCode == RESULT_OK && Captures.taken(this, it) }?.let { arrayOf(it) }
+        else if (resultCode != RESULT_OK || data == null) null
         else data.clipData?.let { c -> Array(c.itemCount) { c.getItemAt(it).uri } } ?: data.data?.let { arrayOf(it) }
         cb.onReceiveValue(picked)
     }

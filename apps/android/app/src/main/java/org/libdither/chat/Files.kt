@@ -82,14 +82,44 @@ object HubFiles {
     }
 }
 
-/** Serves HubFiles' cache folder, read-only, to apps an intent granted a URI to. Not exported. */
+/**
+ * A photo the camera app takes for a page's `<input capture>` (MainActivity.chooserIntent): an empty file in the cache
+ * that the camera app may write once, as content://org.libdither.chat.files/capture/<name>, then handed to the page.
+ */
+object Captures {
+    private const val KEEP_MS = 24 * 3600 * 1000L
+
+    fun dir(c: Context) = File(c.cacheDir, "capture").apply { mkdirs() }
+
+    fun newPhoto(c: Context): Uri {
+        val dir = dir(c)
+        dir.listFiles()?.forEach { if (System.currentTimeMillis() - it.lastModified() > KEEP_MS) it.delete() }
+        val stamp = java.text.SimpleDateFormat("yyyy-MM-dd-HHmmss", java.util.Locale.ROOT).format(java.util.Date())
+        val f = File(dir, "photo-$stamp.jpg")
+        f.delete()
+        f.createNewFile()
+        return FilesProvider.captureUri(c, f)
+    }
+
+    /** The camera app wrote something: a cancelled capture leaves the file empty. */
+    fun taken(c: Context, uri: Uri) = File(dir(c), uri.lastPathSegment ?: "").let { it.isFile && it.length() > 0 }
+}
+
+/**
+ * Serves HubFiles' cache folder, read-only, to apps an intent granted a URI to; and Captures' folder, which the camera
+ * app granted a URI may also write. Not exported.
+ */
 class FilesProvider : ContentProvider() {
     companion object {
         fun uri(c: Context, f: File): Uri = Uri.Builder().scheme("content").authority("${c.packageName}.files").appendPath(f.name).build()
+        fun captureUri(c: Context, f: File): Uri = Uri.Builder().scheme("content").authority("${c.packageName}.files").appendPath("capture").appendPath(f.name).build()
     }
 
+    private fun isCapture(uri: Uri) = uri.pathSegments.size == 2 && uri.pathSegments[0] == "capture"
+
     private fun file(uri: Uri): File? {
-        val dir = HubFiles.dir(context ?: return null).canonicalFile
+        val c = context ?: return null
+        val dir = (if (isCapture(uri)) Captures.dir(c) else HubFiles.dir(c)).canonicalFile
         val f = File(dir, uri.lastPathSegment ?: return null).canonicalFile
         return f.takeIf { it.parentFile == dir && it.isFile }
     }
@@ -97,8 +127,10 @@ class FilesProvider : ContentProvider() {
     override fun onCreate() = true
 
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
-        if (mode != "r") throw SecurityException("read only")
-        return ParcelFileDescriptor.open(file(uri) ?: throw FileNotFoundException(), ParcelFileDescriptor.MODE_READ_ONLY)
+        val f = file(uri) ?: throw FileNotFoundException()
+        if (mode == "r") return ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY)
+        if (!isCapture(uri)) throw SecurityException("read only")
+        return ParcelFileDescriptor.open(f, ParcelFileDescriptor.parseMode(mode))
     }
 
     override fun getType(uri: Uri): String =

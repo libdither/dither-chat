@@ -15,7 +15,7 @@ Around the WebView:
 | Need | How |
 |---|---|
 | Microphone, camera | `WebChromeClient.onPermissionRequest`, only for the hub's origin, mapped to `RECORD_AUDIO` / `CAMERA` runtime permissions, asked when the page asks |
-| Attachments | `onShowFileChooser` with the system picker, several files where the page allows it |
+| Attachments | `onShowFileChooser` with the system picker, several files where the page allows it. Photos and videos open the system photo picker (Android 13+), and `capture` the camera app writing to a file of the app's own when the camera is allowed ([uploads.md](uploads.md#on-a-phone)) |
 | Links | Anything that is not the app's own page (other sites, downloads from elsewhere) opens in the system browser |
 | Files | The hub's `/media/` and `/emoji/` files are downloaded into the app's cache and offered with the system chooser, as `content://org.libdither.chat.files/<name>` (Files.kt). The page passes the file's name and type; older pages fall back to the hub's headers |
 | Back | Walks the page's history: its routes, and the sheets and panels that push entries (`phone.ts`). At the start the app goes to the background and stays alive, so the next open is instant |

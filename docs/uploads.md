@@ -22,6 +22,40 @@ on the hub's disk until it is sent, and through a restart of either end.
 - **Send while files are still uploading**, and the message goes to the outbox as any send does (docs/sync.md) and
   waits for them. Its pending copy says "Uploading…", with each file's percentage. The composer is free at once.
 
+## On a phone
+
+The row is Signal's and Discord's: **+** on the left, the message box with a **camera** button inside it on the
+right, and send (`ui/Attach.tsx`, pure parts in `camera.ts`). The desktop keeps its paperclip, paste and drop.
+
+- **+** opens a sheet with **Photos & videos** (`accept="image/*,video/*"`, several at once) and **File** (any kind,
+  several). On Android 13 and later the app opens the system photo picker for the first, which needs no permission
+  to read photos. Signal's sheet also has a grid of recent photos; that would need the app to read every photo on
+  the phone, so the system picker stands in for it.
+- **The camera button** opens a full-screen camera in the app (`getUserMedia`), the rear camera first: tap the
+  shutter for a photo (a JPEG from the preview's frame, 1920×1080 where the camera gives it), hold it for a video
+  (`MediaRecorder`, MP4 where the browser records it, else WebM; with sound once the microphone is allowed, asked
+  the first time you hold), flip where there is another camera (to the one facing the other way, not the next one
+  on the same side), the torch where the camera has one, the gallery beside the shutter, and close.
+  Where the browser has no camera API (plain HTTP, an old browser), or the camera is refused, it falls back to
+  `<input type="file" accept="image/*" capture="environment">`, the system's camera: at once while the tap that
+  opened it still counts as one, else from a button on the camera screen.
+- **The send screen.** A photo or video taken, or photos and videos picked, open a full-screen preview: the media
+  large, a strip of thumbnails when there are several (tap one to see it, × on each to remove it, + to add more), a
+  caption box, which is the message's text, and send. × goes back to the composer with the files and the text still
+  there. A picked file that is not a photo or video goes to the composer's row as on a desktop.
+- **The files are the composer's own.** Each starts uploading as soon as it is attached, before the send screen
+  shows, so send is quick. A refused file says why on the send screen as it does in the row (`refusalOf`); a failed
+  upload has Retry, and send waits for it.
+
+The Android app (`MainActivity.chooserIntent`): WebView's own picker intent keeps only the first of an input's types
+and ignores `capture`, so the app builds its own. Photos and videos: `MediaStore.ACTION_PICK_IMAGES` on Android 13+
+(several at once where the input allows), the documents picker with both types before that. `capture`: the camera
+app (`ACTION_IMAGE_CAPTURE`) writing to a file in the app's cache, served to it by `FilesProvider` under
+`capture/` and writable only there; but only with the camera allowed, since Android refuses that intent to an app
+that declares `CAMERA` without holding it, and the page asks for it after the camera was refused, so then it is the
+photo picker. `getUserMedia` gets the camera through `onPermissionRequest`, which asks for `CAMERA` (and
+`RECORD_AUDIO` for a video's sound) when the page first asks.
+
 ## Uploading in pieces
 
 ```
@@ -76,6 +110,14 @@ limit, and streaming in the adapters (dither-accounts' extractors).
   cap, a dropped connection, a hub restarted between upload and send.
 - `packages/web/test/upload.test.ts`: pieces and progress against a fake hub, carrying on after a drop and after a
   reload, refusals, cancel and retry, and why a file is refused.
+- `packages/web/test/camera.test.ts`: where a flip goes, what a recording is saved as, names, which picks open the
+  send screen.
+- `scripts/verify-attach.ts`: the phone's attaching at 390x844 against a demo hub of its own, with Chromium's fake
+  cameras: + → Photos & videos → the send screen → a caption → send, as exactly one message with the image, its
+  upload begun before send; three photos with the strip, pick, remove and × back; a file over the limit; the camera's
+  flip, shutter and a held video, each sent; the fallback when the camera is refused or missing. The file chooser is
+  answered over DevTools. Not run on a phone, nor inside the Android app: the photo picker and the camera app were
+  only built for (the APK compiles), not tapped through.
 - `scripts/verify-uploads.ts`: in headless Chromium against a demo hub of its own. Refused files are shown with
   their reasons, progress is seen and a cancel leaves nothing behind. A message is sent while a file uploads, and the
   hub is restarted midway. The upload carries on from the offset it reached, with nothing uploaded again, and the

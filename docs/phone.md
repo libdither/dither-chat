@@ -118,7 +118,7 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Reaction picker, skin tone, super reactions, search | Popover | Sheet without drag | Sheet that drags away |
 | Reply, edit, cancel either | Hover bar; Escape | Sheet; X | Swipe or sheet; X |
 | New line in a message | Shift+Enter | **None**: Enter always sent | Enter |
-| Attach files: pick, paste, drop | Button, paste, drop | Button, paste | Button, paste (dropping files is desktop only) |
+| Attach files: pick, paste, drop | Button, paste, drop | Button, paste | + for Photos & videos (the system photo picker) or File; a camera in the box; a send screen with the media large and a caption, as in Signal ([uploads.md](uploads.md#on-a-phone)); paste (dropping files is desktop only) |
 | Images | Opened a new tab | Left the installed app | Viewer: zoom, pan, page, swipe down; "Open the original" |
 | Threads, forums, voice text chat, jump to latest, older history | Click; scroll | Reachable | Reachable; older history loads as you scroll, with a skeleton |
 | Accounts: status, add, restart, disable, log, remove | Rail button | **Unreachable** except through a "needs you" row | You tab: accounts first, Add account |
@@ -176,6 +176,9 @@ composer and settings are 40px or more.
 `bun scripts/verify-composer.ts [--port 8690]` checks the message box's size on a demo hub of its own: typed,
 pasted, deleted, sent, restored from a draft and with files attached, with the keyboard imitated for Android (a
 smaller layout) and iOS (a smaller visual viewport), at 390x844, 360x330 and on a desktop.
+
+`bun scripts/verify-attach.ts [--port 8700]` drives the + sheet, the camera (Chromium's fake cameras) and the send
+screen on a demo hub of its own, and the camera's fallback when it is refused or missing.
 
 **What headless cannot show.** It is Chromium on Linux pretending: not iOS Safari, which handles the
 keyboard, the visual viewport, `100%` heights and installed apps in its own way, and was only imitated here by
