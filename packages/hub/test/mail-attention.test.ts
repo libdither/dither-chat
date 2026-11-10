@@ -12,6 +12,7 @@ import type * as P from '@dither-chat/protocol';
 import { hubId, mailId } from '@dither-chat/protocol/ids';
 import { Attention } from '../src/attention.ts';
 import { mailAttention, MAIL_INBOX } from '../src/mail/attention.ts';
+import { mailClassifier } from '../src/mail/classify.ts';
 import { FakeMailBackend, type FakeInput } from '../src/mail/fake.ts';
 import { MailHub } from '../src/mail/index.ts';
 import { mailOps } from '../src/mail/ops.ts';
@@ -60,7 +61,8 @@ async function world(seed: (put: (i: FakeInput) => void) => void, at = T0 + 10 *
   mailAttention(hub)!.connect(chat, attention, () => clock.now);
   hub.start();
   await hub.sync(ACC)!.whenSynced();
-  await Bun.sleep(20);
+  // Who you wrote to makes their other mail from a person: the classifier's and people's background steps finish.
+  while (!mailClassifier(hub)!.idle || !mailPeople(hub)!.idle) await new Promise((r) => setImmediate(r));
   attention.rescoreAll();
   cleanup = () => {
     mailPeople(hub)?.stop();
@@ -68,9 +70,13 @@ async function world(seed: (put: (i: FakeInput) => void) => void, at = T0 + 10 *
     chat.db.close();
     rmSync(dir, { recursive: true, force: true });
   };
-  /** What the inbox lists of mail now, after the changes so far (a flush). */
+  /**
+   * What the inbox lists of mail now, after the changes so far. A flush scores for 15 ms at most and leaves the rest
+   * for the next (the server flushes every 80 ms), so this flushes until nothing waits.
+   */
   const mail = () => {
     attention.sync([]);
+    while (mailAttention(hub)!.busy) attention.sync([]);
     return new Map(attention.list().filter((v) => v.kind === 'mail').map((v) => [v.id, v]));
   };
   return { chat, fake, hub, attention, clock, mail };
@@ -100,6 +106,26 @@ describe('owed and unread', () => {
     w.fake.deliver(ACC, { mailboxId: 'INBOX', messageId: '<s2@x>', inReplyTo: '<s1@x>', references: ['<s1@x>'], from: [ME], to: [SAM], subject: 'Re: Dinner?', receivedAt: w.clock.now, flags: { seen: true } });
     await until(() => w.mail().get(t)?.owedSince === null, 3000, 'the answer');
     expect(w.hub.store.threadView(w.hub.store.thread(t)!).owedSince).toBeNull();
+  });
+
+  test('a flush out of time leaves the read for the next one, which shows it', async () => {
+    const w = await world((put) => put({ messageId: '<s1@x>', from: [SAM], to: [ME], subject: 'Dinner?', receivedAt: T0 + 10 * DAY - 2 * H, flags: { seen: false } }));
+    const t = tid(w.hub, '<s1@x>');
+    expect(w.mail().get(t)!.reasons).toContain('1 unread message');
+    // Each fold takes 20 ms by this clock: the read thread's fold spends the flush's 15, and its score waits.
+    const src = mailAttention(w.hub)!;
+    let ms = 0;
+    src.budgetClock = () => ms;
+    const facts = src.triageFacts;
+    src.triageFacts = (ids) => ((ms += 20), facts(ids));
+    w.hub.readHere([t]);
+    w.attention.sync([]);
+    expect(src.busy).toBe(true);
+    expect(src.view(t)!.reasons).toContain('1 unread message');
+    w.attention.sync([]);
+    expect(src.busy).toBe(false);
+    expect(src.view(t)!.reasons).not.toContain('1 unread message');
+    expect(src.view(t)!.owedSince).toBe(T0 + 10 * DAY - 2 * H);
   });
 
   test('an answer sent from here pays what you owe at once, before Sent’s copy comes; a dry run does not', async () => {

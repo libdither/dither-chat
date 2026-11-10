@@ -78,6 +78,8 @@ export class MailAttention implements AttentionSource {
   private tallies = false;
   /** The background fold's next step. */
   private timer: Timer | null = null;
+  /** The clock a flush's time budget is kept by, in ms (a test's stands in for it). */
+  budgetClock: () => number = () => performance.now();
 
   /**
    * Slice 9's seam for §14 Q4: whether triage rates this thread (its latest message from someone else) Active or
@@ -346,21 +348,26 @@ export class MailAttention implements AttentionSource {
     const removed: string[] = [];
     if (!all && !this.pending.size && !this.refold.size) return { items, removed };
     const ids = all ? new Set([...this.views.keys(), ...this.candidates(now), ...this.pending, ...this.refold]) : new Set([...this.pending, ...this.refold]);
-    const start = performance.now();
+    const start = this.budgetClock();
+    // Out of time: the rest waits for the next flush. At least one step each, however slow the machine is.
+    let steps = 0;
+    const outOfTime = () => !all && steps > 0 && this.budgetClock() - start > BUDGET_MS;
     const listed = new Map<string, boolean>();
     // Folded first: how you answer someone counts every thread of theirs, so none is scored on tallies not made yet.
     let refolded = false;
     for (const id of ids) {
       if (!this.refold.has(id)) continue;
-      if (!all && performance.now() - start > BUDGET_MS) break;
+      if (outOfTime()) break;
       this.refold.delete(id);
       this.fold(id);
       refolded = true;
+      steps++;
     }
     for (const id of ids) {
       if (this.refold.has(id)) continue;
-      if (!all && performance.now() - start > BUDGET_MS) break;
+      if (outOfTime()) break;
       this.pending.delete(id);
+      steps++;
       const v = this.compute(id, now);
       const prev = this.views.get(id);
       listed.set(id, !!v);
@@ -406,6 +413,11 @@ export class MailAttention implements AttentionSource {
 
   list(): P.AttentionView[] {
     return [...this.views.values()];
+  }
+
+  /** Whether threads wait to be folded or scored (the next flush has them). */
+  get busy(): boolean {
+    return this.pending.size > 0 || this.refold.size > 0;
   }
 
   /** GET /api/attention/:id for a mail thread. */
