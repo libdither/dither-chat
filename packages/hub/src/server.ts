@@ -1449,6 +1449,28 @@ export class HubServer {
     return res.ok;
   }
 
+  /**
+   * A push's pictures, signed paths as mediaSigner writes them, fetched into the media cache before the push goes, so
+   * the phone, which waits only seconds for them while it draws the notification, finds them there. Waits at most
+   * `ms`; what is not in by then keeps coming in the background.
+   */
+  async warm(paths: (string | undefined | null)[], ms = 3000): Promise<void> {
+    const jobs: Promise<unknown>[] = [];
+    for (const p of new Set(paths)) {
+      const m = p?.match(/^\/media\/([^/?]+)\/([^/?]+)(?:\?a=([^&]+))?$/);
+      if (!m) continue;
+      const raw = Buffer.from(m[2], 'base64url').toString('utf8');
+      const acc = m[3] ? decodeURIComponent(m[3]) : null;
+      const expect = createHmac('sha256', this.opts.secret).update(`${raw}|${acc ?? ''}`).digest('base64url').slice(0, 16);
+      if (m[1] !== expect) continue;
+      jobs.push(this.archiveOne(raw, acc).catch(() => false));
+    }
+    if (!jobs.length) return;
+    let timer: Timer | undefined;
+    await Promise.race([Promise.all(jobs), new Promise((r) => (timer = setTimeout(r, ms)))]);
+    clearTimeout(timer);
+  }
+
   /** The bytes behind a stored media URL, for sending them on. */
   private async mediaBytes(raw: string, accountId: string | null): Promise<{ bytes: Uint8Array; mime: string } | null> {
     const data = raw.match(/^data:([^;,]+)?(;base64)?,(.*)$/s);

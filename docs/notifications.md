@@ -233,6 +233,9 @@ unread lines, so the notification grows instead of being replaced by the latest 
   letter of the title on a grey disc. A Discord group without a picture of its own has the default one Discord's
   client shows for it (the extractor reads it from the client).
 - **On Android**: a conversation notification, see docs/android.md.
+- **Pictures arrive first.** Before a push goes, the hub fetches the pictures it names into its media cache, waiting
+  3 s at most, since the device fetches them while it draws the notification and a busy hub could take longer than
+  that for one it had never seen. The Android app keeps the last 300 on disk, fetches a push's at once, and waits 8 s.
 
 The burst state is kept in memory: after a restart, the next message in each conversation sounds.
 
