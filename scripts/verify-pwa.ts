@@ -5,7 +5,7 @@ const [url, ca] = process.argv.slice(2);
 const { page, close } = await launch({ caCert: ca });
 try {
   await page.goto(url);
-  await page.until(`document.querySelector('.app, .loading-screen') !== null`);
+  await page.until(`document.querySelector('.app, .boot-screen') !== null`, 30000);
   await page.until(`navigator.serviceWorker && navigator.serviceWorker.getRegistration().then(r => !!r && !!r.active)`, 15000);
   const report = {
     isSecureContext: await page.eval('window.isSecureContext'),
