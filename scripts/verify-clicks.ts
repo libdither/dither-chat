@@ -1,6 +1,6 @@
 /**
  * Button counts (docs/button-counts.md) end to end against a demo hub in headless Chromium: off by default, nothing
- * is counted or sent; switched on in Settings → Usage, clicks on the inbox, the triage board, People, a chat's header
+ * is counted or sent; switched on in Settings → Usage, clicks on the inbox, Catch up, People, a chat's header
  * and composer, the rail, Ctrl+K and an untagged control reach the hub under their keys, by kind of device; the
  * table under the switch lists them; at phone size they count as phone; off again, nothing more is counted; Forget
  * empties it.
@@ -107,16 +107,18 @@ try {
   await key('Escape', 'Escape');
   await click('.sidebar [data-track="search"]');
 
-  // The triage board.
+  // Catch up: a card put Later, and one opened.
   await click('.rail [data-track="inbox"]');
-  await p.until(`!!document.querySelector('.board')`, 5000);
-  const card = await p.eval<boolean>(`!!document.querySelector('.board [data-track^="card"]')`);
+  await p.until(`!!document.querySelector('.catchup')`, 5000);
+  await p.until(`!!document.querySelector('.catchup .cu-card')`, 5000).catch(() => {});
+  const card = await p.eval<boolean>(`!!document.querySelector('.catchup [data-track="later"]')`);
   if (card) {
-    await click('.board [data-track^="card"]');
+    await click('.catchup [data-track="later"]');
+    await click('.catchup [data-track="open"]');
     await click('.rail [data-track="inbox"]');
-    await p.until(`!!document.querySelector('.board')`, 5000);
+    await p.until(`!!document.querySelector('.catchup')`, 5000);
   }
-  check(card, 'the board has cards to press');
+  check(card, 'Catch up has cards to press');
 
   // People: a chip if there are any, a row.
   await click('.rail [data-track="people"]');
@@ -153,7 +155,7 @@ try {
   ];
   for (const [k, n] of want) check((count(v, k)?.n ?? 0) >= n && count(v, k)?.desktop === count(v, k)?.n, `${k}: ${n}, on the desktop`, count(v, k));
   check(!!v.keys.find((k) => k.key.startsWith('people: row (person')), 'People: a row');
-  if (card) check(!!v.keys.find((k) => k.key.startsWith('triage: card')), 'triage: a card');
+  if (card) check(!!count(v, 'catch up: later') && !!count(v, 'catch up: open'), 'catch up: later, and open', [count(v, 'catch up: later'), count(v, 'catch up: open')]);
   // Nothing before switching on: the first filter choices were not counted.
   check(count(v, 'inbox: filter (All)')?.n === 1, 'nothing from before it was switched on');
   // Keys and pages are fixed strings: no ids or names.
@@ -173,7 +175,7 @@ try {
   await p.goto(`${hub}/#/inbox`);
   await p.until(`!!document.querySelector('.tabbar')`, 10000);
   await Bun.sleep(600);
-  await tap('.tabbar [data-track="tabs: Triage"]');
+  await tap('.tabbar [data-track="tabs: Catch up"]');
   await tap('.tabbar [data-track="tabs: Home"]');
   await tap('.sidebar [data-track^="row (DM"]');
   await p.until(`!!document.querySelector('.app.rest-open .conv-head [data-track="pager: back button"]')`, 5000);
@@ -181,7 +183,7 @@ try {
   await tap('.conv-head [data-track="pager: back button"]');
   await putAway();
   const phone = await totals();
-  check(count(phone, 'tabs: Triage')?.phone === 1 && count(phone, 'tabs: Triage')?.desktop === 0, 'phone taps count as phone', count(phone, 'tabs: Triage'));
+  check(count(phone, 'tabs: Catch up')?.phone === 1 && count(phone, 'tabs: Catch up')?.desktop === 0, 'phone taps count as phone', count(phone, 'tabs: Catch up'));
   check(count(phone, 'pager: back button')?.phone === 1, "the pager's back button, on the phone", count(phone, 'pager: back button'));
 
   // Off again: nothing more.

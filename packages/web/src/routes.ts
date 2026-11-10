@@ -2,8 +2,10 @@
 
 export type Route =
   | { view: 'inbox'; conv?: string; msg?: string }
-  /** The triage board. On a desktop it is the inbox with nothing open; a phone gives it a tab of its own. */
+  /** Catch up (docs/inbox.md#catch-up). On a desktop it is the inbox with nothing open; a phone gives it a tab of its own. */
   | { view: 'triage' }
+  /** How it sorts (docs/notifications.md#voting): where triage put each conversation's messages this week, and why. */
+  | { view: 'model' }
   /** graph: the people graph (graph/GraphView.tsx) in place of a thread. */
   | { view: 'people'; person?: string; graph?: boolean }
   /** A profile page (docs/profile.md): a person, an identity not merged into one, or a conversation or space. */
@@ -48,6 +50,8 @@ export function parseHash(h = location.hash): Route {
       return { view: 'settings' };
     case 'triage':
       return { view: 'triage' };
+    case 'model':
+      return { view: 'model' };
     case 'directory':
       return { view: 'directory' };
     case 'search':
@@ -87,6 +91,8 @@ export function href(r: Route): string {
       return '#/settings';
     case 'triage':
       return '#/triage';
+    case 'model':
+      return '#/model';
     case 'directory':
       return '#/directory';
     case 'search':

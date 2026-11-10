@@ -21,6 +21,7 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Full-screen list with seven orderings | H | M | done | Recent, active, unread, name, network, your order, category |
 | Categories as yes/no questions, with overrides | M | M | done | Keywords by default, local Ollama optional, no hosted provider |
 | Full-text search with filters, snippets, jump to message | H | M | done | FTS5 and a query language. Only searches what the hub has stored |
+| Catch up: the conversations that need you, a card each | H | M | done | Owed replies first, then unread, in the inbox's order and steady while you work through it; reply from the card through the composer's send path, Done, Later, Open, j/k/e/l/r keys. Replaces the Triage board; its decision view is How it sorts ([inbox.md](inbox.md#catch-up)). Verified on the demo world, not the live hub |
 | Quick switcher (Ctrl+K) | H | L | done | Ranked by how well the name matches times the inbox's score; opens on the top of the inbox (docs/inbox.md) |
 | Search inside one conversation, from its header | M | L | done | A button in the header, or Ctrl+F, scopes search by conversation id |
 | Discord-style search: suggestions as you type, recent searches, grouped results with context, sort, more operators | H | M | done | docs/search.md. Also typo correction and arrow keys through results |

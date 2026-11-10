@@ -53,7 +53,7 @@ export interface SnapshotRest {
   quoted: P.MessageView[];
   /** The last mail threads and bodies the reader opened. */
   mail?: { details: P.MailThreadDetail[]; bodies: P.MailBodyView[] };
-  /** The Triage board's mail, newest first (slice 9). */
+  /** The week's mail decisions (How it sorts' mail), newest first (slice 9). */
   mailTriage?: P.MailTriageItem[];
 }
 

@@ -1172,7 +1172,8 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
 
 const touchKeyboard = () => matchMedia('(pointer: coarse)').matches;
 
-function composerBlocker(c: P.ConversationView, accountId?: string): string | null {
+/** Why the composer cannot send here, or null. Catch up's reply box asks the same (ui/CatchUp.tsx). */
+export function composerBlocker(c: P.ConversationView, accountId?: string): string | null {
   // An open message request is read-only until accepted (docs/add.md).
   if (heldRequest(db.requests, c.id)) return 'Accept the message request first, under Requests';
   const vs = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a);

@@ -34,15 +34,17 @@ export interface Timeline {
   fetchedAt?: number;
   /** A copy kept on this device: the journal position it is current to, until the hub has caught it up. */
   from?: P.SyncPosition;
+  /** Loaded for a glance (Catch up's cards) from what the hub stored: opening it asks the network, as a first open does. */
+  glance?: boolean;
 }
 export const timelines = new Map<string, Timeline>();
 /** Messages referenced by replies that are outside the loaded page. */
 export const quoted = new Map<string, P.MessageView>();
 export const inbox = signal<P.MessageView[]>([]);
-/** The Triage board's mail (docs/mail.md): what triage decided on new mail this week, newest first. */
+/** How it sorts' mail (docs/mail.md): what triage decided on new mail this week, newest first. */
 export const mailTriage = signal<P.MailTriageItem[]>([]);
 
-/** The board's mail afresh (the board asks when it opens: a page resumed from its snapshot holds an older list). */
+/** The week's mail decisions afresh (asked when Catch up or How it sorts opens: a page resumed from its snapshot holds an older list). */
 export async function loadMailTriage() {
   if (db.mail.access.state === 'off') return;
   const page = await api<P.MailTriagePage>('/api/mail/triage').catch(() => null);
@@ -51,7 +53,7 @@ export async function loadMailTriage() {
   changed('list');
 }
 
-/** Thread views carry their newest decision: the board's mail follows them (new mail, a read, a vote elsewhere). */
+/** Thread views carry their newest decision: the week's mail decisions follow them (new mail, a read, a vote elsewhere). */
 function mergeMailTriage(threads: P.MailThreadView[]) {
   const fresh = threads.map((t) => t.triage).filter((x): x is P.MailTriageItem => !!x);
   if (!fresh.length) return;
@@ -436,10 +438,35 @@ export function timelineKey(kind: 'c' | 'p', id: string) {
   return `${kind}:${id}`;
 }
 
-export async function loadTimeline(key: string, older = false): Promise<void> {
+/** Glances still loading, so that opening one meanwhile can go on once it is in. */
+const glancing = new Map<string, Promise<void>>();
+
+/**
+ * `glance`: for a look at the newest messages without opening it (Catch up's cards): what the hub stored, not asking
+ * the network for more, and not a timeline this device keeps for its next start. Opening it later does both.
+ */
+export function loadTimeline(key: string, older = false, o: { glance?: boolean } = {}): Promise<void> {
+  const t = timelines.get(key);
+  if (t?.loading && t.glance && !o.glance && !older) return (glancing.get(key) ?? Promise.resolve()).then(() => loadTimeline(key));
+  const p = fillTimeline(key, older, o);
+  if (o.glance && !t) {
+    glancing.set(key, p);
+    void p.finally(() => glancing.delete(key));
+  }
+  return p;
+}
+
+async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }): Promise<void> {
   let t = timelines.get(key);
   if (t?.loading) return;
-  if (t && !older) return;
+  if (t && !older) {
+    if (t.glance && !o.glance) {
+      t.glance = false;
+      touchTimeline(key);
+      if (key.startsWith('c:')) void fromNetwork(t, key.slice(2)).then(() => timelineChanged(key));
+    }
+    return;
+  }
   let stale: Set<string> | null = null;
   if (!t) {
     // What this device kept from last time shows at once; the hub brings it up to date.
@@ -447,7 +474,8 @@ export async function loadTimeline(key: string, older = false): Promise<void> {
     stale = c ? new Set(c.messages.map((m) => m.id)) : null;
     t = { key, messages: c?.messages ?? [], hasMore: true, loading: false, conversationIds: c?.conversationIds, from: c?.sync };
     timelines.set(key, t);
-    touchTimeline(key);
+    if (o.glance) t.glance = true;
+    else touchTimeline(key);
   }
   if (older && !t.hasMore) return;
   t.loading = true;
@@ -491,8 +519,10 @@ export async function loadTimeline(key: string, older = false): Promise<void> {
       if (!t.hasMore) t.hasMore = await fromNetwork(t, id, t.messages[0]?.ts);
     } else if (kind === 'c') {
       // Large Discord servers push live messages only for channels open in the client, so what is stored may be
-      // stale: ask for the latest on open. Show what we have meanwhile, unless that is nothing.
-      if (got) {
+      // stale: ask for the latest on open. Show what we have meanwhile, unless that is nothing. A glance asks only
+      // when nothing is stored.
+      if (got && t.glance) t.hasMore = true;
+      else if (got) {
         t.hasMore = true;
         void fromNetwork(t, id).then(() => timelineChanged(key));
       } else t.hasMore = await fromNetwork(t, id);
@@ -563,7 +593,8 @@ function reload(key: string) {
   const t = timelines.get(key);
   if (!t) return Promise.resolve();
   timelines.delete(key);
-  return loadTimeline(key).then(() => {
+  // A glance stays one: only opening it asks the network.
+  return loadTimeline(key, false, { glance: t.glance }).then(() => {
     const fresh = timelines.get(key);
     if (fresh) for (const m of t.messages) if (!fresh.messages.some((x) => x.id === m.id)) upsertInto(fresh.messages, m);
     timelineChanged(key);

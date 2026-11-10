@@ -1,14 +1,14 @@
-/** src/board.ts: the Triage board's lists, and the badge counted from them. */
+/** src/board.ts: How it sorts' lists, its lines per conversation, and the badge counted from them. */
 import { expect, test } from 'bun:test';
-import { BELOW_DAYS, BELOW_SHOWN, isMailItem, triageBoard, type BoardItem } from '../src/board.ts';
+import { BELOW_DAYS, BELOW_SHOWN, isMailItem, lineKey, linesOf, reasonsOf, topLevel, triageBoard, type BoardItem } from '../src/board.ts';
 
 const DAY = 86_400_000;
 const now = 100 * DAY;
-const msg = (id: string, decision: string, x: { feedback?: string | null; ts?: number; score?: number; conv?: string } = {}): any => ({
+const msg = (id: string, decision: string, x: { feedback?: string | null; ts?: number; score?: number; conv?: string; reasons?: string[] } = {}): any => ({
   id,
   conversationId: x.conv ?? 'cnv_a',
   ts: x.ts ?? now - 1000,
-  triage: { decision, feedback: x.feedback ?? null, score: x.score ?? 0.5, reasons: [] },
+  triage: { decision, feedback: x.feedback ?? null, score: x.score ?? 0.5, reasons: x.reasons ?? [] },
 });
 const all = () => true;
 const ids = (ms: { id: string }[]) => ms.map((m) => m.id);
@@ -88,4 +88,48 @@ test('mail sits beside chat by the same levels, its unread counting in the badge
   expect(ids(b.digest)).toEqual(['mml_3']);
   expect(b.importantUnread).toBe(2);
   expect(b.important.filter(isMailItem).map((m) => m.threadId)).toEqual(['mth_a']);
+});
+
+test('one line per conversation: where its first message in the list is, its vote on its newest', () => {
+  const b = triageBoard(
+    [
+      msg('g1', 'push', { conv: 'cnv_g', ts: now - 4000 }),
+      msg('d1', 'push', { conv: 'cnv_d', ts: now - 3000 }),
+      msg('g2', 'push', { conv: 'cnv_g', ts: now - 2000 }),
+      msg('g3', 'push', { conv: 'cnv_g', ts: now - 1000 }),
+      msg('g4', 'quiet', { conv: 'cnv_g', ts: now - 500 }),
+    ],
+    { now, shown: all, unread: all },
+  );
+  const lines = linesOf(b.important, lineKey);
+  expect(lines.map((l) => [l.key, ids(l.items), l.newest.id])).toEqual([
+    ['cnv_g', ['g3', 'g2', 'g1'], 'g3'],
+    ['cnv_d', ['d1'], 'd1'],
+  ]);
+  // Its newest at Active is on a line of its own there.
+  expect(linesOf(b.active, lineKey).map((l) => [l.key, l.newest.id])).toEqual([['cnv_g', 'g4']]);
+  // By score in the digest: the newest is still the newest, wherever it sits in the line.
+  const d = linesOf([msg('a', 'digest', { ts: now - 10 }), msg('b', 'digest', { ts: now - 5 })], lineKey);
+  expect(d[0].newest.id).toBe('b');
+});
+
+test('a mail thread is a line of its own', () => {
+  const m: any = { kind: 'mail', id: 'mml_1', threadId: 'mth_a', ts: now, triage: { decision: 'push', feedback: null, score: 0.5, reasons: [] } };
+  expect(linesOf([msg('a', 'push'), m], lineKey).map((l) => l.key)).toEqual(['cnv_a', 'mth_a']);
+});
+
+test("a line's reasons are each said once, the commonest first", () => {
+  const items = [msg('a', 'push', { reasons: ['A DM', 'Mentions you'] }), msg('b', 'push', { reasons: ['A DM'] }), msg('c', 'push', { reasons: ['A DM', 'Late at night', 'A DM'] })];
+  expect(reasonsOf(items)).toEqual([
+    { text: 'A DM', n: 3 },
+    { text: 'Mentions you', n: 1 },
+    { text: 'Late at night', n: 1 },
+  ]);
+});
+
+test('the highest level among messages, by where each is now', () => {
+  expect(topLevel([msg('a', 'digest'), msg('b', 'quiet')])).toBe('quiet');
+  expect(topLevel([msg('a', 'push', { feedback: 'digest' }), msg('b', 'digest')])).toBe('digest');
+  expect(topLevel([msg('a', 'silent')])).toBe(null);
+  expect(topLevel([])).toBe(null);
 });

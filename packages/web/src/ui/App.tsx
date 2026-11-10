@@ -12,7 +12,8 @@ import { Icon } from './icons.tsx';
 import { ContextMenuLayer } from './ContextMenu.tsx';
 import { TooltipLayer } from './Tooltip.tsx';
 import { ForwardLayer } from './Forward.tsx';
-import { InboxBoard } from './Inbox.tsx';
+import { CatchUp } from './CatchUp.tsx';
+import { HowItSorts } from './HowItSorts.tsx';
 import { NewMessage } from './NewMessage.tsx';
 import { ReactionLayer } from './Reactions.tsx';
 import { ProfilePane } from './Profile.tsx';
@@ -42,11 +43,13 @@ import { countKey } from '../clicklog.ts';
 function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'conv' | 'person'; id: string } } {
   switch (r.view) {
     case 'triage':
-      return { pane: <InboxBoard /> };
+      return { pane: <CatchUp /> };
+    case 'model':
+      return { pane: <HowItSorts onBack={back} /> };
     case 'inbox':
       // A mail thread from the inbox opens in the reader, beside the inbox (docs/mail.md).
       if (r.conv?.startsWith('mth_')) return { pane: <MailCenterLazy thread={r.conv} onBack={back} /> };
-      return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <InboxBoard /> };
+      return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <CatchUp /> };
     case 'people':
       if (r.graph) return { pane: <GraphPane onBack={back} /> };
       return r.person ? { pane: <PersonPane personId={r.person} onBack={back} />, detail: { kind: 'person', id: r.person } } : { pane: <WelcomePane view="people" /> };
@@ -81,6 +84,7 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
 function sidebarFor(r: Route, onAdd: () => void): ComponentChildren {
   switch (r.view) {
     case 'triage':
+    case 'model':
       return <InboxSidebar />;
     case 'inbox':
       return <InboxSidebar activeConv={r.conv} />;
@@ -190,7 +194,7 @@ function leave(r: Route) {
 }
 
 type Tab = 'home' | 'triage' | 'search' | 'you';
-const tabOf = (r: Route): Tab => (r.view === 'triage' ? 'triage' : r.view === 'search' ? 'search' : r.view === 'settings' || r.view === 'accounts' ? 'you' : 'home');
+const tabOf = (r: Route): Tab => (r.view === 'triage' || r.view === 'model' ? 'triage' : r.view === 'search' ? 'search' : r.view === 'settings' || r.view === 'accounts' ? 'you' : 'home');
 
 /** The last page and the last list on the Home tab, which a phone keeps while you look elsewhere. */
 let lastDetail: Route | null = null;
@@ -203,7 +207,8 @@ function TabBar({ r }: { r: Route }) {
   const attention = [...db.accounts.values()].some((a) => a.attention);
   const tabs: { id: Tab; label: string; icon: string; to: () => Route; badge?: number; dot?: boolean }[] = [
     { id: 'home', label: 'Home', icon: 'home', to: () => lastHome, badge: all },
-    { id: 'triage', label: 'Triage', icon: 'bell', to: () => ({ view: 'triage' }), badge: pingedCount() + accountsNeedingYou().length },
+    // Its badge is what the push counts as Important and unread, and accounts that need you.
+    { id: 'triage', label: 'Catch up', icon: 'checks', to: () => ({ view: 'triage' }), badge: pingedCount() + accountsNeedingYou().length },
     { id: 'search', label: 'Search', icon: 'search', to: () => ({ view: 'search', q: '' }) },
     { id: 'you', label: 'You', icon: 'user', to: () => ({ view: 'settings' }), dot: attention },
   ];

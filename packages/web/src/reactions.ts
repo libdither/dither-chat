@@ -47,11 +47,15 @@ export function reactionContext(conversationId: string): Promise<P.ReactionConte
   if (hit && Date.now() - hit.at < CONTEXT_TTL) return hit.value;
   // Not knowing is no reason to stop someone: the network still has the last word.
   const value = api<P.ReactionContextView>(`/api/conversations/${conversationId}/reaction-context${account ? `?account=${account.id}` : ''}`).catch((): P.ReactionContextView => ({ accountId: account?.id ?? null, canReact: true, custom: [] }));
-  const entry: { at: number; value: Promise<P.ReactionContextView>; known?: P.ReactionContextView } = { at: Date.now(), value };
+  // What was known goes on meaning the same until the answer comes.
+  const entry: { at: number; value: Promise<P.ReactionContextView>; known?: P.ReactionContextView } = { at: Date.now(), value, known: hit?.known };
   contexts.set(cacheKey, entry);
+  const drawn = scopeOf(hit?.known);
   value.then((v) => {
     entry.known = v;
-    changed('meta');
+    // The messages redraw only when what their reaction row offers changes (reactionScope); the picker asks for
+    // the context itself. So a conversation already in memory is not drawn twice as it opens.
+    if (scopeOf(v) !== drawn) changed('meta');
   });
   return value;
 }
@@ -63,10 +67,9 @@ export function knownReactionContext(conversationId: string): P.ReactionContextV
 
 /** What the row over a message may offer: everything, only reactions already there, or nothing. Until we know, assume everything. */
 export function reactionScope(conversationId: string): 'all' | 'existing' | 'none' {
-  const ctx = knownReactionContext(conversationId);
-  if (!ctx) return 'all';
-  return !ctx.canReact ? 'none' : ctx.existingOnly ? 'existing' : 'all';
+  return scopeOf(knownReactionContext(conversationId));
 }
+const scopeOf = (ctx: P.ReactionContextView | null | undefined): 'all' | 'existing' | 'none' => (!ctx ? 'all' : !ctx.canReact ? 'none' : ctx.existingOnly ? 'existing' : 'all');
 
 // ------------------------------------------------------------------ the local copy
 

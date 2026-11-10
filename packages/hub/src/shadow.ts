@@ -2,7 +2,7 @@
  * Shadow mode and safe exploration (docs/notifications.md, docs/research/notification-design.md §4 and §6).
  *
  * Shadow: a candidate model (votes.ts) predicts next to the live one for every decision, and its chances are kept
- * (`triage.shadow`); it never decides. The Triage board says what it would have done differently.
+ * (`triage.shadow`); it never decides. How it sorts (the web app's model page) says what it would have done differently.
  *
  * Exploration, behind DITHER_TRIAGE_EXPLORE=1 and only ever silent:
  *  - up: with probability 2%, at most 3 a day, a Digest or Not-interesting message whose Active chance is just under

@@ -242,10 +242,65 @@ a new snapshot. The conversation you have open keeps its section with its place.
 by what it is now, at the end of its section. Before the hub has scored a conversation, or with
 a hub that predates scores, it ranks unread first, then by recency.
 
-The inbox button and the phone's Triage tab count the messages in the Triage board's Important list that you have not
-read, by where each is now (one you voted down to Active no longer counts), plus accounts that need you. The board's
-own "important, N unread" is the same number, from the same lists (`packages/web/src/board.ts`). A turn you owe does not
-raise a badge you cannot clear by reading.
+The inbox button and the phone's Catch up tab count the Important messages of the last week that you have not read, by
+where each is now (one you voted down to Active no longer counts), plus accounts that need you: the same count as the
+push's. How it sorts' own "buzzed you (N unread)" is the same number, from the same lists (`packages/web/src/board.ts`).
+A turn you owe does not raise a badge you cannot clear by reading.
+
+## Catch up
+
+What the right pane shows with no conversation open, and the phone's Catch up tab (`#/triage`, so old links land
+here): the conversations that need you, to answer or read one after another without leaving the list
+(`packages/web/src/ui/CatchUp.tsx`, the queue in `catchup.ts`).
+
+**The queue.** The inbox's rows that need you, in the inbox's own order (the snapshot the list shows): first those
+with a reply you owe (`owedSince`, the list's Waiting on you), then the others with something unread (New, those that
+need you). Mail threads from people are rows like any
+other. It is taken when the pane opens and then stays steady while you work through it: nothing reorders when scores
+change, and a card that no longer needs you (read on another device, answered) stays where it is until the pane opens
+again. Something that newly needs you joins the end, with a small "N new" note that jumps to it. For the first 3
+seconds after opening, before you act, late arrivals (mail views, scores) are still part of the first queue, in order.
+
+**A session.** Closing the pane and coming back within 30 minutes carries on: Later stays where you put it, what was
+handled goes, what is new joins the end. Closed longer (or after a reload) the queue is taken afresh. Done is kept on
+the device (`localStorage`, `dither-chat:catch-up-done`) with the conversation's latest message then: Done on a reply
+you owe marks it read but leaves it owed, so it comes back only once a newer message arrives. Later keeps no state
+anywhere.
+
+**A card**, one per conversation: the picture with the network badge and account dots, the name (and community), "waiting
+3h" when you owe a reply, and the level its messages landed on since you last read it (Important, Active or Digest:
+the highest, by where each is now). Under it the messages since you last read it (or since the message you owe an answer,
+whichever came first), the last 5 with "and N earlier" to show the rest, pictures as thumbnails that open the viewer.
+Then a one-line reply box that grows, and Done, Later and Open. A mail card shows the subject and the newest snippet,
+with Open and Done, and no reply box.
+
+- **Done** marks it read (a mail thread too) and takes it off the queue.
+- **Later** moves it to the end of the queue.
+- **Open** opens the conversation (or the thread in the reader).
+- **A reply** goes out through the conversation's own send path (`state.ts` `send`, as the composer's: the account
+  the conversation sends as, the outbox, the same `clientId` and echo matching), and marks the conversation read. Its
+  draft is the composer's, so a half-written reply is there when you open the conversation. The card stays, marked
+  Replied, with the message in it (pending until it is sent, then the message, once), and focus moves to the next card.
+  Where the composer cannot send (an open message request, an encrypted room without keys) the card says why in
+  place of the box.
+
+Opening the pane or looking at a card marks nothing read: only Done, a reply, or opening the conversation does. The
+messages load lazily, for the cards on screen or near it and the 3 after the focused one, into the conversation's own
+timeline (`loadTimeline` with `glance`): what the hub stored, without asking the network for newer history and
+without taking a place in the device's start-up snapshot. Opening the conversation then shows them at once and asks
+the network as a first open does.
+
+**Keys** (desktop, with a hint line under the cards): `j` and `k` move between cards, `Enter` opens the focused one,
+`e` is Done, `l` is Later, `r` puts you in its reply box, and `Esc` leaves the box. No key does anything while you type,
+or with a menu, sheet or dialog open.
+
+**The header**: "Catch up · N waiting" (cards not yet answered), Mark all read (with its confirm; for 10 seconds after
+it, the cards that no longer need you leave as the reads come in, and replies you owe stay), and How it sorts
+([notifications.md](notifications.md#voting)). Accounts that need you (a sign-in, a QR) are one line under it, each
+name a link to its page. With nothing waiting: "All caught up", when the last message came, and How it sorts.
+
+`scripts/verify-catchup.ts` drives it on a fresh demo hub: the queue and its order, j/k/e/l, a reply from a card
+(exactly one message in the conversation), Done marking read, a new arrival, the empty state and the phone's tab.
 
 ## Jump to (Ctrl+K)
 

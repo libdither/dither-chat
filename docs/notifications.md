@@ -6,7 +6,7 @@ Triage puts every message at one of four levels, or silences it:
 | --- | --- | --- | --- |
 | **Important** | `push` | buzzes (the *Important messages* channel) | a notification, and a toast in an open page |
 | **Active** | `quiet` | a silent notification (the *Active messages (silent)* channel, a `silent` web notification) | nothing: it is a row in the inbox |
-| **Digest** | `digest` | nothing; counted in the daily digest, listed on the Triage board by how much it matters | nothing |
+| **Digest** | `digest` | nothing; counted in the daily digest, listed on How it sorts by how much it matters | nothing |
 | **Not interesting** | `drop` | nothing; unread in its chat, nowhere else | |
 | silent | `silent` | the unread badge only (the place is set to Nothing) | |
 
@@ -17,8 +17,9 @@ Code: `packages/hub/src/triage.ts` (where a message starts, the decision), `lear
 (votes, training, the policy view, the shadow model), `labels.ts` (labels from what you did), `interact.ts`
 (interaction features), `shadow.ts` (exploration, the shadow summary), `main.ts` `deliver` (who gets what);
 `scripts/triage-replay.ts` (the offline replay, docs/triage-replay.md); `packages/web/src/triage.ts`,
-`ui/TierVote.tsx`, `ui/Inbox.tsx` (the Triage board), `board.ts` (its lists and counts, and the badge), `public/sw.js`;
-`apps/android/.../Notifications.kt`. `scripts/verify-triage.ts` checks the board's counts, a vote and the words in a browser.
+`ui/TierVote.tsx`, `ui/HowItSorts.tsx` (How it sorts), `board.ts` (its lists, lines and counts, and the badge),
+`public/sw.js`; `apps/android/.../Notifications.kt`. `scripts/verify-triage.ts` checks How it sorts' counts, a vote and the
+words in a browser.
 
 ## The three chances
 
@@ -82,7 +83,7 @@ Counted:
   conversation from the last 30 days, at 0.05 each, as "that was fine". A digest entry that stood says nothing: it was
   likely never looked at.
 
-**The backtest**: the model against every vote, and the priors alone against them, shown on the board. **Forget**
+**The backtest**: the model against every vote, and the priors alone against them, shown on How it sorts. **Forget**
 (× beside a learned weight) leaves that feature out of training for good; *Learn again* undoes it.
 
 ### The shadow model
@@ -130,7 +131,7 @@ Numeric features from elsewhere (content: embeddings, local-model answers) are a
 `Example.x` and the `x` argument of `predict`, and a kind in `NUMERIC` for their regularisation and words.
 
 The candidate learns at every vote and once a day, from your votes and from what you did over the last two weeks
-(read again at most every 6 hours, a pass over two weeks of messages). On the Triage board, under what the live model
+(read again at most every 6 hours, a pass over two weeks of messages). On How it sorts, under what the live model
 learned, one line says what it would have done over the last week: "would have pinged 40 fewer (120 instead of 160),
 missed 1 message you answered within 15 minutes, and caught 2 more" (`GET /api/triage/shadow`, counts only).
 
@@ -163,8 +164,8 @@ only about messages in conversations you wrote or reacted in during the last 30 
 ### The decision prompt
 
 Each time it learns, a prompt for a local model is written (`writePrompt`): the three questions, the strongest
-weights in words, and up to six votes it still gets wrong, described by their features (never their text). The board
-shows it under *Decision prompt*, with or without a model.
+weights in words, and up to six votes it still gets wrong, described by their features (never their text). How it
+sorts shows it under *Decision prompt*, with or without a model.
 
 ## Voting
 
@@ -173,11 +174,19 @@ the decision). Up on Important, or down on Not interesting, says it was right: t
 it already has takes the vote back. A vote's labels for the three chances: Important is worth a ping (so also Active and
 the digest); Active is not worth a ping but worth a notification; Digest only interesting; Not interesting none.
 
-- **The Triage board** (Inbox → Triage, the phone's Triage tab): Important and Active for the last week, newest first;
-  the Digest, what matters most first; *Not interesting*, the closest 30 of the last two days, to vote up. Each message
-  with ▲ and ▼ around its level; a vote moves it to the other list at once. The counts at the top are the lists'
-  lengths, and the Triage button's badge is the Important list's unread messages (`packages/web/src/board.ts`), so a
-  vote changes them together.
+- **How it sorts** (`#/model`; from Catch up's header, the inbox button's menu, and Settings → Smart triage):
+  Important and Active for the last week, newest first; the Digest, what matters most first; *Not interesting*, the
+  closest 30 of the last two days, to vote up. One line per conversation (or mail thread) at each level, where its first
+  message in that list is: its name, how many of its messages landed there, ▲ and ▼ around the level, and *Why*. The
+  line's arrows vote on its newest message at that level, the same vote as anywhere else: the model learns per message,
+  from that message's facts (the place, the person, the network, what it said), so it reads "messages like this one
+  belong a level up". The voted message moves to the other level's line at once, and the next newest takes the line's
+  arrows. *Why* shows the line's reasons, each once with how many of its messages gave it, and every message with its
+  own arrows. The counts at the top say what they count ("26 messages buzzed you (3 unread), 30 came as silent
+  notifications, and 50 waited for the digest"); the badge on the inbox button and the phone's Catch up tab is the
+  Important list's unread messages plus accounts that need you (`packages/web/src/board.ts`), so a vote changes them
+  together. Accounts that need you are a line on Catch up ([inbox.md](inbox.md#catch-up)), not a count here. What it
+  learned (the weights, the backtest, the shadow line, the prompt) stays at the bottom.
 - **The three chances** are shown under the same names: Important (ping), Active (active) and Digest (interesting), each
   bar marked at the hub's own threshold (`GET /api/triage/policy`'s `thresholds`). A place's notification setting that
   sends everything to the digest is called *Digest only*, to keep it apart from a message's Digest level.
@@ -231,7 +240,7 @@ The burst state is kept in memory: after a restart, the next message in each con
 New mail from people goes through the same model, with the same votes and levels (docs/mail.md "Triage and
 notifications"): its facts are chat's with network `email` and shape `mail`, it starts at Important for someone you
 write to who wrote to you, and a vote on someone's mail moves their chats once they are one person. Bulk mail is
-never triaged. Mail is on the Triage board with an envelope, notifies one notification per thread, and quiet hours
+never triaged. Mail is on How it sorts with an envelope, notifies one notification per thread, and quiet hours
 and device rules hold it as they hold chat.
 
 ## Requests

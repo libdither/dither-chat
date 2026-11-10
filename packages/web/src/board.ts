@@ -1,7 +1,7 @@
 /**
- * The Triage board's lists, and every count shown from them: the board's own numbers and the badge on the inbox
- * button and the phone's Triage tab. One place, so they cannot disagree (docs/notifications.md#voting). Pure:
- * model.ts and ui/Inbox.tsx hand it what they know.
+ * Where triage put each message this week, and every count shown from that: How it sorts (ui/HowItSorts.tsx), its
+ * numbers, and the badge on the inbox button and the phone's Catch up tab. One place, so they cannot disagree
+ * (docs/notifications.md#voting). Pure: model.ts and the page hand it what they know.
  */
 import type * as P from '@dither-chat/protocol';
 
@@ -14,7 +14,7 @@ export const BOARD_DAYS = 7;
 export const BELOW_DAYS = 2;
 export const BELOW_SHOWN = 30;
 
-/** A chat message, or a mail message triage decided on (slice 9): the board lists both by the same levels. */
+/** A chat message, or a mail message triage decided on (slice 9): both are listed by the same levels. */
 export type BoardItem = P.MessageView | P.MailTriageItem;
 export const isMailItem = (m: BoardItem): m is P.MailTriageItem => (m as P.MailTriageItem).kind === 'mail';
 
@@ -46,4 +46,46 @@ export function triageBoard<T extends { ts: number; triage?: P.TriageView | null
       .slice(0, BELOW_SHOWN),
     importantUnread: important.filter(o.unread).length,
   };
+}
+
+/** One line of How it sorts: a conversation's (or a mail thread's) messages at one level. */
+export interface BoardLine<T extends { ts: number } = BoardItem> {
+  key: string;
+  /** In the list's order. */
+  items: T[];
+  /** The newest of them: the line's vote is on it. */
+  newest: T;
+}
+
+/** A list's messages, one line per conversation, each where its first message in the list is. */
+export function linesOf<T extends { ts: number }>(items: T[], keyOf: (m: T) => string): BoardLine<T>[] {
+  const by = new Map<string, BoardLine<T>>();
+  for (const m of items) {
+    const k = keyOf(m);
+    const l = by.get(k);
+    if (!l) by.set(k, { key: k, items: [m], newest: m });
+    else {
+      l.items.push(m);
+      if (m.ts > l.newest.ts) l.newest = m;
+    }
+  }
+  return [...by.values()];
+}
+
+/** Where a board item belongs: its conversation, or its mail thread. */
+export const lineKey = (m: BoardItem) => (isMailItem(m) ? m.threadId : m.conversationId);
+
+/** A line's reasons, each once, with how many of its messages gave it: the commonest first, then as they came. */
+export function reasonsOf(items: { triage?: P.TriageView | null }[]): { text: string; n: number }[] {
+  const out = new Map<string, number>();
+  for (const m of items) for (const r of new Set(m.triage?.reasons ?? [])) out.set(r, (out.get(r) ?? 0) + 1);
+  return [...out].map(([text, n]) => ({ text, n })).sort((a, b) => b.n - a.n);
+}
+
+/** The highest level among these messages, by where each is now; null for none. */
+export function topLevel(items: { triage?: P.TriageView | null }[]): P.NotifyTier | null {
+  const order: P.TriageDecision[] = ['drop', 'digest', 'quiet', 'push'];
+  let best = -1;
+  for (const m of items) if (m.triage && m.triage.decision !== 'silent') best = Math.max(best, order.indexOf(levelOf(m.triage)));
+  return best < 0 ? null : (order[best] as P.NotifyTier);
 }

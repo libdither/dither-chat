@@ -176,7 +176,7 @@ try {
   check('no sideways overflow: home', !(await overflow()).length, await overflow());
   check('tap targets: tab bar and rail', !(await smallTargets('.tabbar, .rail')).length, await smallTargets('.tabbar, .rail'));
   check('tap targets: list rows', !(await smallTargets('.sidebar')).length, await smallTargets('.sidebar'));
-  check('the Home and Triage tabs carry their counts', await page.until(`document.querySelectorAll('.tab .tab-badge').length >= 2`, 4000).then(() => true, () => false));
+  check('the Home and Catch up tabs carry their counts', await page.until(`document.querySelectorAll('.tab .tab-badge').length >= 2`, 4000).then(() => true, () => false));
   await shot('36-phone-home');
 
   // Open a conversation with a tap.
@@ -555,13 +555,13 @@ try {
   await back();
   check('back closes it', !(await has('.sheet-layer')));
 
-  // Tabs: triage, search, you; and the account page from there.
-  await tap(await at('.tab', `el => el.textContent.includes('Triage')`));
+  // Tabs: Catch up, search, you; and the account page from there.
+  await tap(await at('.tab', `el => el.textContent.includes('Catch up')`));
   s = await state();
-  check('the Triage tab shows the board with the tab bar', s.hash === '#/triage' && s.cls.includes('tab-root') && s.cls.includes('tabs'), s);
-  check('no sideways overflow: triage', !(await overflowThrough('.board-scroll')).length, await overflowThrough('.board-scroll'));
-  check('mark all read is reachable on a phone', await page.eval(`[...document.querySelectorAll('.board-head .btn')].some(b => b.textContent.includes('Mark all read') && b.getBoundingClientRect().right <= innerWidth)`));
-  await shot('44-phone-triage');
+  check('the Catch up tab shows Catch up with the tab bar', s.hash === '#/triage' && s.cls.includes('tab-root') && s.cls.includes('tabs') && (await has('.catchup .cu-card')), s);
+  check('no sideways overflow: Catch up', !(await overflowThrough('.catchup-scroll')).length, await overflowThrough('.catchup-scroll'));
+  check('mark all read is reachable on a phone', await page.eval(`[...document.querySelectorAll('.catchup-head .btn')].some(b => b.textContent.includes('Mark all read') && b.getBoundingClientRect().right <= innerWidth)`));
+  await shot('44-phone-catchup');
   await tap(await at('.tab', `el => el.textContent.includes('Search')`));
   check('the Search tab shows search with its filters', (await state()).hash.startsWith('#/search') && (await has('.search-filters')));
   await page.eval(`document.querySelector('.search-main input').focus()`);
