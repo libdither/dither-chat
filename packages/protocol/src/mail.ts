@@ -27,7 +27,7 @@ export interface MailAccess {
 export interface MailAccountView {
   /** The manager's account id. */
   id: string;
-  /** dither-accounts' kind: `imap`, `proton`. */
+  /** dither-accounts' kind: `imap`, `proton`, `google` (Gmail on the web). */
   kind: string;
   label: string;
   /** The address it receives at, once the account has said. */
@@ -53,6 +53,13 @@ export interface MailAccountView {
   deleteAt: number | null;
   /** Writes made here (slice 4): how many messages wait for the server, the last that failed, ops it refused (501). */
   ops?: MailOpsView;
+  /**
+   * The most bytes of files, together, one message from it may carry (a send over it is refused, 413): what its
+   * extractor says (`details.sendCap`), else 25 MB on Proton and 35 MB elsewhere.
+   */
+  sendCap?: number;
+  /** The most recipients, To, Cc and Bcc together, on one message: `details.maxRecipients`, else 100 on Proton and 500 elsewhere. */
+  maxRecipients?: number;
 }
 
 /** An account's writes (slice 4). */

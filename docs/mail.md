@@ -85,9 +85,11 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
   answering a thread that has one opens it) or `new:<uuid>`. "N drafts" under the views opens them. A draft's files
   stay on the hub an hour after it was last saved or opened (the uploads' own limit).
 - **Undo.** Send gives the message to the hub's outbox (`hub/src/mail/outbox.ts`), once per `clientId`, after checking
-  it: someone to send to (at most 500; 100 on Proton), From one of the account's addresses (422 otherwise), 25 MB a
-  file and 35 MB together (25 MB on Proton). It is held 10 s (`DITHER_MAIL_HOLD_MS`) while a strip says "Sending …
-  in 10 s · Undo"; Undo brings it back into the composer as it was, files and all.
+  it: someone to send to (To, Cc and Bcc together at most the account's `details.maxRecipients`, else 500, 100 on
+  Proton), From one of the account's addresses (422 otherwise), 25 MB a file and the files together at most its
+  `details.sendCap` (else 35 MB, 25 MB on Proton; over it is 413, and the composer's count says the same cap). It is
+  held 10 s (`DITHER_MAIL_HOLD_MS`) while a strip says "Sending … in 10 s · Undo"; Undo brings it back into the
+  composer as it was, files and all.
 - **Going out.** Then its files move from the uploads into `<data>/mail-outbox/<id>/` and it goes to `mail.send` ahead
   of background work: files by `path` when the manager is on this machine (DITHER_ACCOUNTS_URL on loopback), else as
   base64; a forward's files are fetched from the server (`mail.attachment`) then. What the account answers:
@@ -192,9 +194,10 @@ As built, where it differs from §7: "Always from" is its own table, `mail_sende
   few seconds after a move. Keys: `e` archive, `#` trash, `s` star, `u` unread, `!` junk, Escape lets the selection go.
 - **What moves.** Archive takes the thread's messages out of Inbox (into Archive, or All mail on Gmail). Trash, junk
   and a folder take the whole thread except what you sent, which stays in Sent. Back to Inbox takes them out of the
-  folder they are in; an IMAP server's All mail is never emptied from here (Gmail would take that as a delete). On
-  Gmail, Inbox, and a label for a thread only in All Mail, are a copy from All Mail instead, so the thread stays there
-  and keeps its labels; a Gmail archive is held back until its Undo is over ("Gmail" below). Nothing is ever deleted
+  folder they are in; an IMAP server's All mail is never emptied from here (Gmail would take that as a delete), while
+  where ids are the message's (Proton) it moves out of All mail by its id. On Gmail, Inbox, and a label for a thread
+  only in All Mail, only put the label on (over IMAP a copy from All Mail), so the thread stays there and keeps its
+  labels; an archive on Gmail over IMAP is held back until its Undo is over ("Gmail" below). Nothing is ever deleted
   outright.
 - **At once, then for real.** A change shows at once and the hub keeps it as pending (the row's time is greyed) until
   the server answers. It goes in batches of up to 1000 messages per account, op and value, at most one write call per
@@ -293,7 +296,7 @@ Tests: `hub/test/mail-classify.test.ts`, `mail-attention.test.ts`, `web/test/inb
 - **The servers.** `GET /api/mail/search?q=&cursor=&limit=&server=0|1|auto`. The page shows the hub's own hits at once,
   then asks the servers (`server=1`) when those are under 20 threads, or when you ask ("Search the servers too");
   `auto` is the same rule on the hub. Each account gets `mail.search` at P0, 50 at most, 20 s at most. Gmail gets the
-  query in its own syntax (X-GM-RAW; an account is Gmail by its address or its `[Gmail]` folders); other IMAP servers
+  query in its own syntax (X-GM-RAW over IMAP; an account is Gmail as `MailStore.gmail` says, below); other IMAP servers
   and Proton get the words, with the values of `from:`, `to:`, `with:` and `subject:` as words. What they answer is
   stored as listed summaries (so it opens like any other, and `ingested` goes out), the query's other operators are
   checked here, and only threads the hub's own search had not found (with what it held before) show, after its own,
@@ -419,11 +422,36 @@ looks like a stranger's mail. What the hub does about it (`hub/src/mail/headerle
 Tests: `hub/test/mail-headerless.test.ts` (a newsletter leaving the inbox once its body comes, which accounts, the
 one-time steps on a restart and not on the next, an account added later, an account with headers).
 
+## What the hub reads of an account's server
+
+The extractor's `status` event says what its server is, in `details` (dither-accounts' extractors). The hub
+keeps each in `mail_account` (store.ts `setStatus`); a status that leaves one out keeps what an earlier one said, and
+until one says, the hub goes by the account's kind as it did before they existed:
+
+| detail | column | what it changes | until it is said |
+| --- | --- | --- | --- |
+| `idPerMessage: true` | `id_per_message` | a message has one id in every mailbox (Proton, Gmail on the web): a move keeps it, and a move out of All mail goes by it (`MailStore.idPerMessage`) | true on Proton, false elsewhere |
+| `sendCap` | `send_cap` | the most bytes of files one message may carry, checked before a send is held (413) and shown by the composer | 25 MB on Proton, 35 MB elsewhere |
+| `maxRecipients` | `max_recipients` | the most recipients, To, Cc and Bcc together | 100 on Proton, 500 elsewhere |
+| `provider: 'Gmail'` | `provider` | the account is Gmail (`MailStore.gmail`), whatever its address or mailboxes | its address or its `[Gmail]` mailboxes |
+| `summaryHeaders` | `summary_headers` | "Summaries without headers" above | a summary that carried them |
+
+The account view carries the caps as `sendCap` and `maxRecipients` (protocol `MailAccountView`); Proton says all three
+of the first now (`idPerMessage`, 25 MB, 100). Proton's search stays by its kind: that is how its server searches, not
+how its ids are.
+
 ## Gmail
 
-A Gmail account reaches the hub as dither-accounts' **Email (IMAP)** account with the provider `gmail` (its
-`extractors/imap`, with an app password), so its kind is `imap`. The hub knows it is Gmail by its address or by its
-`[Gmail]` (or `[Google Mail]`) mailboxes (`MailStore.gmail`), so a Workspace address works too.
+A Gmail account reaches the hub in one of two ways. As dither-accounts' **Email (IMAP)** account with the provider
+`gmail` (its `extractors/imap`, with an app password), its kind is `imap` and a message has an id per mailbox (below).
+As its **google** kind, Gmail read through the signed-in browser ("Gmail on the web", further below), a message has one
+id in every mailbox. The hub knows it is Gmail by the status's `details.provider` ('Gmail', which both say), by its
+address, or by its `[Gmail]` (or `[Google Mail]`) mailboxes (`MailStore.gmail`), so a Workspace address works too.
+
+What is Gmail the server's holds either way: its search syntax, Important as a view, a move out of All Mail that only
+puts a label on, a sent message that is one message in Sent and All Mail (trash leaves it where it is), Trash and Spam
+holding a message alone. What comes of an id per mailbox holds only over IMAP (`MailStore.gmailPerMailbox`): the label
+put back on a summary, and the archive held for Undo.
 
 **What comes in** (read from the extractor's code, `extractors/imap/src/{imap,ids,config,smtp}.ts` there, and modelled
 by `fake.ts`'s `ids: 'gmail'`):
@@ -485,6 +513,31 @@ hub copes either way), that MOVE from Inbox to All Mail answers the All Mail id 
 replace it), that a MOVE out of All Mail deletes (the extractor copies instead), and that a COPY into a mailbox the
 message is in already answers the id it has there (a new one would be found by the next changes pass, as the same
 message).
+
+### Gmail on the web
+
+dither-accounts' google kind reads Gmail through the signed-in browser. Its status says `provider` 'Gmail',
+`idPerMessage`, `summaryHeaders`, `sendCap` and `maxRecipients`; its kind is `google`. Modelled by `fake.ts`'s
+`ids: 'gmail-web'` (its header says how), from what dither-accounts said it will send, before it shipped:
+
+- **Mailboxes** are labels with Gmail's ids: INBOX, SENT, DRAFT, TRASH, SPAM (`junk`), IMPORTANT (`important`), an All
+  Mail made up from them (`all`: every message not in Trash or Spam) and each label of yours (`Label_<n>`, by path).
+- **One message, one id** in each mailbox that lists it. The hub keeps a location per mailbox all the same, each with
+  that id; nothing is put back on its labels (they come whole, from every mailbox).
+- **Filing** is a label change. `mail.move` names no mailbox it comes from, so it goes by the destination: its label on,
+  Inbox's off unless it goes to Inbox (archive is into All Mail), Trash's and Spam's off unless it goes there. Into
+  Inbox, and into a label from All Mail alone, it only adds the label: the hub keeps it where it was (ops.ts
+  `copyFrom`, no copy made), so an archive undone after it went is as it was. Into a label from Inbox, Inbox comes off;
+  the labels it has stay, and the hub does not take it out of them either. An archive goes at once (no hold: undoing it
+  is putting \Inbox back). Trash and Spam hold it alone, so the hub drops its other places when the move is answered,
+  and what you sent is not moved.
+
+**Checked**: `hub/test/mail-gmail-web.test.ts` (what the hub reads of the status, with a Workspace address and no
+`[Gmail]` mailbox; one message and one id through the first sync, the backfill and an opened label, also without a
+Message-ID; Move to Inbox from All Mail, into a label from Inbox; archive and Undo, not held; trash and Undo; star,
+read and unread; changes made in Gmail itself; search in Gmail's syntax; the send caps from the status). **Not
+checked**: a real google-kind account. Whether `mail.move` takes off Inbox (as here) or the label of the mailbox the
+hub moved from is dither-accounts' to settle; the hub copes with either after the next changes pass.
 
 **Adding one** (on the owner's side; nothing is added from here):
 

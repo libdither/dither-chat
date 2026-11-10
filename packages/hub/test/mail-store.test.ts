@@ -284,6 +284,35 @@ describe('accounts', () => {
     expect(st.accountView(st.account(ACC)!).send).toEqual({ ok: false, why: 'login refused' });
   });
 
+  test('what its server is: what the status says, kept until it says otherwise; until it says, by the kind', () => {
+    const MB = 1024 * 1024;
+    const view = (id: string) => st.accountView(st.account(id)!);
+    // IMAP that has said nothing: an id per mailbox, 35 MB of files and 500 recipients, not Gmail.
+    expect([st.idPerMessage(ACC), st.gmail(ACC)]).toEqual([false, false]);
+    expect(view(ACC)).toMatchObject({ sendCap: 35 * MB, maxRecipients: 500 });
+    // Proton that has said nothing: one id a message, 25 MB and 100, by its kind.
+    st.upsertAccount({ id: 'acc_proton01', kind: 'proton', label: 'Proton', level: 'write', dryRun: false, online: true });
+    expect(st.idPerMessage('acc_proton01')).toBe(true);
+    expect(view('acc_proton01')).toMatchObject({ sendCap: 25 * MB, maxRecipients: 100 });
+    // Gmail on the web: Gmail by its provider alone (a Workspace address, no `[Gmail]` mailboxes).
+    const G = 'acc_google01';
+    st.upsertAccount({ id: G, kind: 'google', label: 'Work mail', level: 'write', dryRun: false, online: true });
+    const self = { email: 'me@workspace.example' };
+    expect([st.gmail(G), st.idPerMessage(G)]).toEqual([false, false]);
+    st.setStatus(G, { status: 'online', self, details: { provider: 'Gmail', idPerMessage: true, sendCap: 20 * MB, maxRecipients: 300 }, layers: [] });
+    expect([st.gmail(G), st.idPerMessage(G), st.gmailPerMailbox(G)]).toEqual([true, true, false]);
+    expect(view(G)).toMatchObject({ sendCap: 20 * MB, maxRecipients: 300 });
+    expect(st.flush(() => ({ state: 'granted', managerUrl: null })).find((e) => e.t === 'mail.account' && e.account.id === G)).toMatchObject({ account: { sendCap: 20 * MB, maxRecipients: 300 } });
+    // A status without them keeps what the last said; nonsense is not read; a new value is.
+    expect(st.setStatus(G, { status: 'online', self, layers: [] })).toBe(false);
+    st.setStatus(G, { status: 'online', self, details: { sendCap: 'big', maxRecipients: 0, provider: '' }, layers: [] });
+    expect([st.gmail(G), st.idPerMessage(G)]).toEqual([true, true]);
+    expect(view(G)).toMatchObject({ sendCap: 20 * MB, maxRecipients: 300 });
+    st.setStatus(G, { status: 'online', self, details: { idPerMessage: false, maxRecipients: 50 }, layers: [] });
+    expect([st.idPerMessage(G), st.gmailPerMailbox(G)]).toEqual([false, true]);
+    expect(view(G)).toMatchObject({ sendCap: 20 * MB, maxRecipients: 50 });
+  });
+
   test('access ended: kept for a day, then deleted with everything of it', () => {
     st.ingest(ACC, box('INBOX'), [sum({ id: 'INBOX.1.1' })]);
     expect(st.accessEnded(ACC, now)).toBe(true);

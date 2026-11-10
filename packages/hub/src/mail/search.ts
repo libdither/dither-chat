@@ -397,7 +397,10 @@ export class MailSearch {
     return [...out];
   }
 
-  /** How this account's server takes a query. */
+  /**
+   * How this account's server takes a query: Proton's search by its kind (what its server searches, not how its ids
+   * are), Gmail's syntax on Gmail over IMAP (X-GM-RAW) and on the web alike, words elsewhere.
+   */
   serverForm(a: Row): ServerForm {
     if (a.kind === 'proton') return 'proton';
     return this.store.gmail(a.id) ? 'gmail' : 'imap';

@@ -32,14 +32,14 @@ they start with `dither-accounts/`.
 
 **As built for Gmail** (docs/mail.md "Gmail", `hub/test/mail-gmail.test.ts`, fake.ts `ids: 'gmail'`):
 
-- An account is Gmail by its address or its `[Gmail]`/`[Google Mail]` mailboxes (`MailStore.gmail`); its kind stays
-  `imap`. One message is in several mailboxes with an id in each; the (account, Message-ID) key keeps it one message,
+- An account is Gmail by its status's `details.provider` ('Gmail'), its address or its `[Gmail]`/`[Google Mail]`
+  mailboxes (`MailStore.gmail`); over IMAP its kind stays `imap`. One message is in several mailboxes with an id in each; the (account, Message-ID) key keeps it one message,
   and without a Message-ID the summary's `emailId` (X-GM-MSGID) does (store.ts `identify`, below).
 - §2.4: labels are stored as the summary gives them with the listing mailbox's own label put back (Gmail leaves it
   out), and views leave out those starting with `\` (`shownLabels`). Rule 8's `CATEGORY_*` never comes from the imap
   extractor: Gmail's IMAP has no categories (only a Gmail API extractor could give them).
 - §3.7: into Trash or Junk, the move's answer drops the message's other locations (Gmail shows it there alone), and a
-  message in Sent or Drafts is not moved there (its All Mail copy is the same message). An archive waits
+  message in Sent or Drafts is not moved there (its All Mail copy is the same message). An archive over IMAP waits
   `gmailArchiveHoldMs` (7.5 s), so the page's Undo calls it off before it goes.
 - §3.7, copies: dither-accounts (5e8079a) makes `mail.move` out of Gmail's All Mail into anything but Trash or Spam a
   COPY, answering the copy's id. `copyFrom` plans one: into Inbox whenever the message is in All Mail (so its labels
@@ -58,6 +58,19 @@ they start with `dither-accounts/`.
   the page's mailbox menu and Ctrl+K leave out mailboxes with no counts that hold others (web `holdsOnlyMailboxes`).
 - §11: `in:archive` is Archive, else All mail without Inbox, Sent or Drafts; Gmail's server query says
   `-in:inbox -in:sent -in:drafts`.
+
+**What the status says, not the kind** (docs/mail.md "What the hub reads of an account's server"): the hub keeps the
+status's `details.idPerMessage`, `sendCap`, `maxRecipients` and `provider` in `mail_account` (nullable columns added in
+place) and reads them where it once asked whether the kind was `proton`: `MailStore.idPerMessage` (a move out of All mail
+by the message's id, ops.ts `leaves`), `sendCapOf` and `maxRecipientsOf` (the outbox's checks, `MailAccountView.sendCap`
+and `maxRecipients` for the composer), and `gmail()` by its provider. Until a status says, each is what the kind gave
+before: Proton one id a message, 25 MB, 100; elsewhere an id per mailbox, 35 MB, 500. Proton's server search stays by
+its kind. Gmail splits in two: what is the server's (search syntax, Important, All Mail left by a move only into Trash
+or Spam, a sent message staying out of the trash, Trash and Spam holding a message alone) holds for both ways in;
+`gmailPerMailbox` (Gmail and not `idPerMessage`) keeps the X-GM-LABELS put-back and the archive hold to Gmail over IMAP.
+Gmail on the web (dither-accounts' google kind, fake.ts `ids: 'gmail-web'`, `hub/test/mail-gmail-web.test.ts`) files
+by label: a move into Inbox, or into a label from All Mail alone, keeps every place it had (`copyFrom`, nothing copied),
+and into a label it leaves Inbox only, as its `mail.move` names no source.
 
 **As built in slice 8** (`hub/src/mail/classify.ts`, `attention.ts`, `schema-inbox.sql`):
 
@@ -147,6 +160,8 @@ mail_account (id PK  -- the manager's account id
   , dry_run, online, problem JSON   -- {layer, message}: attention, else the first layer not ok
   , send JSON        -- {ok: bool|null, why, at}
   , sync_mode        -- status.details.sync (imap) or 'events' (proton)
+  , summary_headers, headers_seen   -- status.details.summaryHeaders, or a summary that carried them
+  , id_per_message, send_cap, max_recipients, provider   -- status.details: NULL until it says (then by kind)
   , hidden, gone_at, created_at)
 
 mailbox (id PK, account_id FK, native_id, name, path, parent_id, role, unread, total
@@ -656,8 +671,8 @@ a 501 keeps sending off until you ask again, the outbox event carries the whole 
   `> ` lines, and in HTML a `blockquote type=cite` around the sanitised original without images. Forward: `Fwd: `, a
   header block, the original's text and HTML, and its attachments (fetched into the cache, attached by `path`).
 - **The outbox:** `POST /api/mail/send` saves a row (once per `clientId`), `held` 10 s, then `queued` for `mail.send`.
-  Uploads go as `path`s when the manager is on loopback, else base64; 25 MB a file, 35 MB total (imap) or 25 MB (proton),
-  checked before queueing.
+  Uploads go as `path`s when the manager is on loopback, else base64; 25 MB a file, and the files together at most the
+  status's `details.sendCap` (else 35 MB, 25 MB on Proton), checked before queueing.
 - **Answers:** success links the row to Sent's copy by `messageId` (a local "Sent" message shows until then). 503 or a
   timeout retries; a timeout after the call reached the extractor says "may have been sent", as chat does. 501 fails the
   item, keeps its draft and sets the account's `send` to `{ ok: false, why: <the extractor's message> }`. 403 means a read
@@ -780,8 +795,9 @@ part of the inbox.
 
 - **`FakeMailBackend`** (`hub/src/mail/fake.ts`, slice 1) implements `MailBackend`, not the wire, so hub tests are fast
   and `--demo` can seed a mail account (a few people, a newsletter, an HTML message with a tracker and a hostile script,
-  an attachment). Options: ids that change on a move (imap), not (proton), or one per mailbox a Gmail message is in
-  (gmail: its labels, CONDSTORE, MOVE and search as Gmail has them), `threadIds` on or off, an account-wide
+  an attachment). Options: ids that change on a move (imap), not (proton), one per mailbox a Gmail message is in
+  (gmail: its labels, CONDSTORE, MOVE and search as Gmail has them), or one for the message in every label (gmail-web:
+  dither-accounts' google kind), the status's `details`, `threadIds` on or off, an account-wide
   state, `send: 'ok' | 501`, `refuseRecipient` (422 `recipients`), status layers, and failures per op (410, 503, 404,
   `limited`, latency). It emits
   `mail.arrived`/`mail.changed` IDLE-like (inbox only) or event-loop-like (every mailbox).

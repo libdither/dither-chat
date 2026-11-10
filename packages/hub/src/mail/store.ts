@@ -144,6 +144,8 @@ export class MailStore {
       if (this.addColumns('mail_account', { summary_headers: 'INTEGER', headers_seen: 'INTEGER' }).includes('headers_seen')) {
         this.run('UPDATE mail_account SET headers_seen = 1 WHERE id IN (SELECT DISTINCT account_id FROM mail_message WHERE bulk IS NOT NULL)');
       }
+      // What the extractor's status says of the account (setStatus): empty until it says, and from one that never does.
+      this.addColumns('mail_account', { id_per_message: 'INTEGER', send_cap: 'INTEGER', max_recipients: 'INTEGER', provider: 'TEXT' });
       // The server's emailId (Gmail's X-GM-MSGID): empty on rows from before it, and on Proton's, which have none.
       this.addColumns('mail_message', { email_id: 'TEXT' });
       this.db.exec('CREATE INDEX IF NOT EXISTS mail_message_email ON mail_message(account_id, email_id) WHERE email_id IS NOT NULL');
@@ -234,7 +236,9 @@ export class MailStore {
 
   /**
    * The extractor's `status` event: online or not, what is wrong, its own addresses, how it syncs, whether it can
-   * send (details.canSend, else a failed layer named like sending). Returns whether its addresses changed.
+   * send (details.canSend, else a failed layer named like sending), and what its server is (idPerMessage, sendCap,
+   * maxRecipients, provider: a status without one keeps what an earlier one said). Returns whether its addresses
+   * changed.
    */
   setStatus(id: string, st: Record<string, any>): boolean {
     const was = this.account(id);
@@ -264,11 +268,21 @@ export class MailStore {
     const addresses = Array.isArray(self.addresses) ? JSON.stringify(self.addresses) : was.addresses;
     const online = st.status === 'online' ? 1 : 0;
     const syncMode = typeof details.sync === 'string' ? details.sync : was.sync_mode;
-    const headers = typeof details.summaryHeaders === 'boolean' ? (details.summaryHeaders ? 1 : 0) : (was.summary_headers ?? null);
-    const next = [JSON.stringify(problem), JSON.stringify(send), address, name, addresses, online, syncMode, headers];
-    const prev = [was.problem, was.send, was.address, was.display_name, was.addresses, was.online, was.sync_mode, was.summary_headers ?? null];
+    const bit = (v: unknown, had: number | null | undefined) => (typeof v === 'boolean' ? (v ? 1 : 0) : (had ?? null));
+    const count = (v: unknown, had: number | null | undefined) => (typeof v === 'number' && Number.isFinite(v) && v >= 1 ? Math.floor(v) : (had ?? null));
+    const headers = bit(details.summaryHeaders, was.summary_headers);
+    const perMessage = bit(details.idPerMessage, was.id_per_message);
+    const sendCap = count(details.sendCap, was.send_cap);
+    const maxRecipients = count(details.maxRecipients, was.max_recipients);
+    const provider = typeof details.provider === 'string' && details.provider.trim() ? details.provider.trim() : (was.provider ?? null);
+    const next = [JSON.stringify(problem), JSON.stringify(send), address, name, addresses, online, syncMode, headers, perMessage, sendCap, maxRecipients, provider];
+    const prev = [was.problem, was.send, was.address, was.display_name, was.addresses, was.online, was.sync_mode, was.summary_headers ?? null, was.id_per_message ?? null, was.send_cap ?? null, was.max_recipients ?? null, was.provider ?? null];
     if (next.every((v, i) => v === prev[i])) return false;
-    this.run('UPDATE mail_account SET problem = ?, send = ?, address = ?, display_name = ?, addresses = ?, online = ?, sync_mode = ?, summary_headers = ? WHERE id = ?', ...next, id);
+    this.run(
+      'UPDATE mail_account SET problem = ?, send = ?, address = ?, display_name = ?, addresses = ?, online = ?, sync_mode = ?, summary_headers = ?, id_per_message = ?, send_cap = ?, max_recipients = ?, provider = ? WHERE id = ?',
+      ...next,
+      id,
+    );
     this.dirty.accounts.add(id);
     const selfChanged = address !== was.address || addresses !== was.addresses;
     if (selfChanged) this.selfChanged(id);
@@ -320,22 +334,48 @@ export class MailStore {
   }
 
   /**
-   * A Gmail account (docs/mail.md "Gmail"): its address is Gmail's, or its mailboxes sit under `[Gmail]` (`[Google Mail]`
-   * in some countries; a Workspace address says nothing). On Gmail a label is a mailbox, so one message is in several
-   * at once, and a move takes a label off and puts one on.
+   * A Gmail account (docs/mail.md "Gmail"): the extractor says so (`details.provider` 'Gmail': the imap extractor's
+   * gmail preset, and dither-accounts' google kind), its address is Gmail's, or its mailboxes sit under `[Gmail]`
+   * (`[Google Mail]` in some countries; a Workspace address says nothing). On Gmail a label is a mailbox, so one message
+   * is in several at once, and a move takes a label off and puts one on. What is Gmail the server's holds whichever way
+   * the extractor reaches it: its search syntax, a move out of All Mail that only adds a label, a sent message in Sent
+   * and All Mail at once, Trash and Spam holding a message alone. What comes of an id per mailbox is gmailPerMailbox's.
    */
   gmail(accountId: string): boolean {
-    if (/@(gmail|googlemail)\.com$/i.test(this.account(accountId)?.address ?? '')) return true;
+    const a = this.account(accountId);
+    if (lc(a?.provider) === 'gmail') return true;
+    if (/@(gmail|googlemail)\.com$/i.test(a?.address ?? '')) return true;
     return !!this.one(`SELECT 1 FROM mailbox WHERE account_id = ? AND (path LIKE '[Gmail]%' OR path LIKE '[Google Mail]%')`, accountId);
   }
 
   /**
-   * Gmail leaves the label of the mailbox a message was listed from out of its labels (X-GM-LABELS): listed from Work
-   * it has no `Work`, from Inbox no `\Inbox`. That label, to put back, so a message's labels are the same whichever
-   * mailbox listed it last. All Mail, Trash, Spam and the other mailboxes under `[Gmail]` have none.
+   * A message has one id in every mailbox it is in, so a move keeps it (Proton; Gmail on the web, dither-accounts'
+   * google kind), rather than an id per mailbox (IMAP, Gmail over IMAP among them). The extractor's status says so
+   * (`details.idPerMessage`); until it does, Proton's ids are the message's and every other kind's are per mailbox.
+   */
+  idPerMessage(accountId: string): boolean {
+    const a = this.account(accountId);
+    if (!a) return false;
+    return a.id_per_message === null || a.id_per_message === undefined ? a.kind === 'proton' : !!a.id_per_message;
+  }
+
+  /**
+   * Gmail with an id per mailbox (over IMAP): a message is a copy in each mailbox its labels put it in, each with an id
+   * of its own. Its labels come without the one of the mailbox that listed it (ownLabel), and an archive waits for the
+   * page's Undo (ops.ts gmailArchiveHoldMs). Gmail on the web has neither.
+   */
+  gmailPerMailbox(accountId: string): boolean {
+    return this.gmail(accountId) && !this.idPerMessage(accountId);
+  }
+
+  /**
+   * Gmail over IMAP leaves the label of the mailbox a message was listed from out of its labels (X-GM-LABELS): listed
+   * from Work it has no `Work`, from Inbox no `\Inbox`. That label, to put back, so a message's labels are the same
+   * whichever mailbox listed it last. All Mail, Trash, Spam and the other mailboxes under `[Gmail]` have none. Gmail on
+   * the web gives a message's labels whole, the same from every mailbox: nothing to put back.
    */
   private ownLabel(accountId: string, b: Row): string | null {
-    if (!this.gmail(accountId)) return null;
+    if (!this.gmailPerMailbox(accountId)) return null;
     const byRole: Record<string, string> = { inbox: '\\Inbox', sent: '\\Sent', drafts: '\\Draft', flagged: '\\Starred', important: '\\Important' };
     if (b.role) return byRole[b.role] ?? null;
     return /^\[(gmail|google mail)\]/i.test(b.path) ? null : b.path;
@@ -880,6 +920,8 @@ export class MailStore {
       managedUrl: this.managedUrl(r.id),
       deleteAt: r.gone_at ? r.gone_at + MAIL_LIMITS.goneMs : null,
       ops: this.opsOf(r.id),
+      sendCap: sendCapOf(r),
+      maxRecipients: maxRecipientsOf(r),
     };
   }
 
@@ -1115,6 +1157,17 @@ export class MailStore {
     return out;
   }
 }
+
+const MB = 1024 * 1024;
+
+/**
+ * The most bytes of files (attachments, together) one message from this account may carry: its extractor's
+ * `details.sendCap`, else dither-accounts' limits before it said, 25 MB on Proton and 35 MB elsewhere.
+ */
+export const sendCapOf = (a: Row | null | undefined): number => a?.send_cap ?? (a?.kind === 'proton' ? 25 * MB : 35 * MB);
+
+/** The most recipients, To, Cc and Bcc together, on one message: `details.maxRecipients`, else 100 on Proton and 500 elsewhere. */
+export const maxRecipientsOf = (a: Row | null | undefined): number => a?.max_recipients ?? (a?.kind === 'proton' ? 100 : 500);
 
 const whoView = (w: { identityId: string; personId: string | null } | undefined) => (w ? { identityId: w.identityId, ...(w.personId ? { personId: w.personId } : {}) } : {});
 
