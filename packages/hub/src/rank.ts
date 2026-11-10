@@ -50,6 +50,12 @@ export const FEATURES = [
   'group',
   'self',
   'muted',
+  'important',
+  'active',
+  'digest',
+  'notInteresting',
+  'votedUp',
+  'votedDown',
 ] as const;
 export type Feature = (typeof FEATURES)[number];
 export type Features = Record<Feature, number>;
@@ -83,6 +89,13 @@ export function rankFeatures(x: ScoreInput, s: Scored): Features {
     group: x.shape === 'group' ? 1 : 0,
     self: x.shape === 'self' ? 1 : 0,
     muted: x.muted ? 1 : 0,
+    // Where triage put the newest unread message, and your votes here lately (votes.ts): TRIAGE_FEATURES.
+    important: x.level === 'push' ? 1 : 0,
+    active: x.level === 'quiet' ? 1 : 0,
+    digest: x.level === 'digest' ? 1 : 0,
+    notInteresting: x.level === 'drop' ? 1 : 0,
+    votedUp: Math.log1p(x.votes?.up ?? 0),
+    votedDown: Math.log1p(x.votes?.down ?? 0),
   };
 }
 
@@ -111,8 +124,16 @@ export interface RankModel {
  */
 export const PRIOR: RankModel = { open: { bias: -5.1, formula: 0.66 }, send: { bias: -1.6 }, fitAt: null, moments: 0, rows: 0 };
 
-/** How hard each weight is pulled back to the prior: the formula's two little, everything else more. */
-export const LAMBDA: Record<Feature, number> = Object.fromEntries(FEATURES.map((f) => [f, f === 'bias' || f === 'formula' ? 1 : 30])) as Record<Feature, number>;
+/**
+ * What triage knows of importance: where it put the newest unread message, and your votes lately. Measured in the
+ * replay (2026-11-10) they did not help, so the hub keeps them at the prior's 0 (`--triage` tries them again).
+ */
+export const TRIAGE_FEATURES: readonly Feature[] = ['important', 'active', 'digest', 'notInteresting', 'votedUp', 'votedDown'];
+
+/** How hard each weight is pulled back to the prior: the formula's two little, everything else more; Infinity keeps it there. */
+export const LAMBDA: Record<Feature, number> = Object.fromEntries(
+  FEATURES.map((f) => [f, f === 'bias' || f === 'formula' ? 1 : TRIAGE_FEATURES.includes(f) ? Infinity : 30]),
+) as Record<Feature, number>;
 
 const sigmoid = (z: number) => 1 / (1 + Math.exp(-z));
 const logit = (p: number) => Math.log(p / (1 - p));
@@ -198,6 +219,7 @@ export function* fitSteps(rows: readonly RankRow[], prior: Weights, lambda: Reco
     let moved = 0;
     for (let j = 0; j < FEATURES.length; j++) {
       const lam = lambda[FEATURES[j]];
+      if (lam === Infinity) continue;
       let g = lam * (w[j] - p0[j]);
       let H = lam;
       for (let i = 0; i < rows.length; i++) {
