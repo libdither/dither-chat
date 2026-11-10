@@ -116,8 +116,23 @@ limit, and streaming in the adapters (dither-accounts' extractors).
   cameras: + → Photos & videos → the send screen → a caption → send, as exactly one message with the image, its
   upload begun before send; three photos with the strip, pick, remove and × back; a file over the limit; the camera's
   flip, shutter and a held video, each sent; the fallback when the camera is refused or missing. The file chooser is
-  answered over DevTools. Not run on a phone, nor inside the Android app: the photo picker and the camera app were
-  only built for (the APK compiles), not tapped through.
+  answered over DevTools.
+- **In the Android app, on the Android 15 emulator** (AVD `dither35`, run `-read-only`, a debug build installed
+  under its own id beside the real one, the page driven over its WebView's DevTools and the system screens with
+  `adb input`, against a demo hub through `adb reverse`), 2026-11-10:
+  - + → Photos & videos opens the system photo picker ("This app can only access the photos you select"); two
+    photos picked arrive on the send screen and upload.
+  - The camera button asks for the camera with Android's own prompt. Refused, and answered after the tap stopped
+    counting, the camera screen offers the system camera; with the camera refused that opens the photo picker,
+    whose photo reaches the send screen.
+  - Allowed: the emulated rear camera first, the torch on, flip to the front (mirrored), a real tap on the shutter,
+    the photo on the send screen. Held, a video (WebM: that WebView records no MP4).
+  - `capture` with the camera allowed opens the camera app, which writes the photo through `FilesProvider`; sent
+    with a caption it arrives as one message with that photo.
+  - Once, on the very first pick after the app was installed, both photos came back unreadable and showed
+    "Cannot be read". It did not happen again in five more tries, with the picker's process killed first or the
+    app installed afresh. The send screen says so and the file can be picked again; the cause is not known.
+  Not tried on a real phone.
 - `scripts/verify-uploads.ts`: in headless Chromium against a demo hub of its own. Refused files are shown with
   their reasons, progress is seen and a cancel leaves nothing behind. A message is sent while a file uploads, and the
   hub is restarted midway. The upload carries on from the offset it reached, with nothing uploaded again, and the
