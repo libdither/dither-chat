@@ -209,7 +209,10 @@ export function peopleFilters(accounts: Iterable<Pick<P.AccountView, 'network' |
   return shown.length > 1 ? shown : [];
 }
 
-/** One row per person (or identity with no person) on the lists, in the hub's order, each with its accounts' links. */
+/**
+ * One row per person (or identity with no person) on the lists, in the hub's order, each with its accounts' links: a
+ * friend on two accounts is one row with two links, as is a person whose two identities are each on one.
+ */
 export function linkRows(links: readonly P.PersonLinkView[]): { key: string; personId: string | null; identityId: string; links: P.PersonLinkView[] }[] {
   const rows = new Map<string, { key: string; personId: string | null; identityId: string; links: P.PersonLinkView[] }>();
   for (const l of links) {
@@ -218,6 +221,54 @@ export function linkRows(links: readonly P.PersonLinkView[]): { key: string; per
     row.links.push(l);
   }
   return [...rows.values()];
+}
+
+/** How a list of people is ordered (People's lists, docs/add.md): whom you talked with last first, or by name. */
+export type LinkSort = 'recent' | 'az';
+
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+/**
+ * The rows in order. Last talked: the latest message in your DMs with them first; people you never talked with after,
+ * by name. A to Z: by name. Ties go by key, so the order never flickers.
+ */
+export function sortLinkRows<T extends { key: string }>(rows: readonly T[], mode: LinkSort, last: (r: T) => number | null, name: (r: T) => string): T[] {
+  const byName = (a: T, b: T) => collator.compare(name(a), name(b)) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+  if (mode === 'az') return [...rows].sort(byName);
+  return [...rows].sort((a, b) => (last(b) ?? -1) - (last(a) ?? -1) || byName(a, b));
+}
+
+/** The filter box: each word typed is somewhere in the name, whatever the case or accents. */
+export function nameMatches(name: string, q: string): boolean {
+  const fold = (x: string) => x.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+  const n = fold(name);
+  return fold(q).split(/\s+/).filter(Boolean).every((w) => n.includes(w));
+}
+
+/** A row's second line: when you last talked, from your DMs with them ("talked 3 days ago"). */
+export function talkedLine(at: number | null | undefined, now = Date.now()): string {
+  if (!at) return '';
+  const d = Math.max(0, now - at);
+  const MIN = 60_000;
+  const HOUR = 60 * MIN;
+  const DAY = 24 * HOUR;
+  const n = (x: number, one: string) => `${Math.floor(x)} ${one}${Math.floor(x) === 1 ? '' : 's'} ago`;
+  if (d < 2 * MIN) return 'talked just now';
+  if (d < HOUR) return `talked ${n(d / MIN, 'minute')}`;
+  if (d < DAY) return `talked ${n(d / HOUR, 'hour')}`;
+  if (d < 2 * DAY) return 'talked yesterday';
+  if (d < 14 * DAY) return `talked ${n(d / DAY, 'day')}`;
+  if (d < 60 * DAY) return `talked ${n(d / (7 * DAY), 'week')}`;
+  if (d < 730 * DAY) return `talked ${n(d / (30 * DAY), 'month')}`;
+  return `talked ${n(d / (365 * DAY), 'year')}`;
+}
+
+/** A row's tooltip: since when, on which accounts ("Friends since Mar 2023 on Discord main and alt"). */
+export function linkSinceLine(rel: P.LinkRelationship, since: number | null, accounts: string[]): string {
+  const what = { friend: 'Friends', contact: 'In your contacts', following: 'Following', requested: 'Request sent', blocked: 'Blocked' }[rel];
+  const when = since !== null && Number.isFinite(since) ? ` since ${new Date(since).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}` : '';
+  const on = accounts.length ? ` on ${accounts.length > 1 ? `${accounts.slice(0, -1).join(', ')} and ${accounts[accounts.length - 1]}` : accounts[0]}` : '';
+  return `${what}${when}${on}`;
 }
 
 /**

@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
-import { accountLine, canRemove, peopleFilters, confirmNext, groupRequests, heldRequest, identityRef, linkRows, messageRequestNote, profileLinks, relation, removeQuestion, requestLine, requestsRow, sentence, targetMembers } from '../src/requests.ts';
+import { accountLine, canRemove, peopleFilters, confirmNext, groupRequests, heldRequest, identityRef, linkRows, linkSinceLine, messageRequestNote, nameMatches, profileLinks, relation, removeQuestion, requestLine, requestsRow, sentence, sortLinkRows, talkedLine, targetMembers } from '../src/requests.ts';
 import { identityPeer } from '../src/direct.ts';
 
 const req = (id: string, kind: P.RequestView['kind'], ts: number, x: Partial<P.RequestView> = {}): P.RequestView => ({
@@ -124,6 +124,53 @@ test("People's rows: one per person across accounts, in the hub's order", () => 
     ['p1', ['a1', 'a2']],
     ['i2', ['a1']],
   ]);
+});
+
+test('each person once: a friend on two accounts is one row with both, the same identity or two of one person', () => {
+  // The same Discord user on main and alt: one identity (unique per network and id), two links.
+  const same = linkRows([link('main', 'i1', 'friend', 'p1'), link('alt', 'i1', 'friend', 'p1')]);
+  expect(same.map((r) => [r.key, r.links.map((l) => l.accountId)])).toEqual([['p1', ['main', 'alt']]]);
+  // Without a person yet: still one row, by identity.
+  expect(linkRows([link('main', 'i9', 'friend'), link('alt', 'i9', 'friend')]).map((r) => r.links.length)).toEqual([2]);
+  // Two identities of one person, each a friend on one account.
+  expect(linkRows([link('main', 'i1', 'friend', 'p1'), link('alt', 'i2', 'friend', 'p1')]).map((r) => r.key)).toEqual(['p1']);
+});
+
+test('a list sorts by when you last talked (never after, by name), or A to Z', () => {
+  const rows = [
+    { key: 'a', name: 'Zoe', last: 100 },
+    { key: 'b', name: 'adam', last: null },
+    { key: 'c', name: 'Mia', last: 300 },
+    { key: 'd', name: 'Bea', last: null },
+    { key: 'e', name: 'Ann', last: 300 },
+  ];
+  const keys = (mode: 'recent' | 'az') => sortLinkRows(rows, mode, (r) => r.last, (r) => r.name).map((r) => r.key);
+  expect(keys('recent')).toEqual(['e', 'c', 'a', 'b', 'd']);
+  expect(keys('az')).toEqual(['b', 'e', 'd', 'c', 'a']);
+});
+
+test('the filter box: every word somewhere in the name, any case or accents', () => {
+  expect(nameMatches('Inês Duarte', 'ines')).toBe(true);
+  expect(nameMatches('Inês Duarte', 'DU in')).toBe(true);
+  expect(nameMatches('Inês Duarte', 'ines x')).toBe(false);
+  expect(nameMatches('Ravi', '  ')).toBe(true);
+});
+
+test("a row's second line says when you last talked, and its tooltip since when and where", () => {
+  const now = Date.UTC(2026, 10, 9, 12);
+  const H = 3_600_000;
+  expect(talkedLine(null, now)).toBe('');
+  expect(talkedLine(now - 30_000, now)).toBe('talked just now');
+  expect(talkedLine(now - 5 * 60_000, now)).toBe('talked 5 minutes ago');
+  expect(talkedLine(now - H, now)).toBe('talked 1 hour ago');
+  expect(talkedLine(now - 30 * H, now)).toBe('talked yesterday');
+  expect(talkedLine(now - 3 * 24 * H, now)).toBe('talked 3 days ago');
+  expect(talkedLine(now - 20 * 24 * H, now)).toBe('talked 2 weeks ago');
+  expect(talkedLine(now - 100 * 24 * H, now)).toBe('talked 3 months ago');
+  expect(talkedLine(now - 800 * 24 * H, now)).toBe('talked 2 years ago');
+  expect(linkSinceLine('friend', null, ['Discord main'])).toBe('Friends on Discord main');
+  expect(linkSinceLine('friend', Date.UTC(2023, 2, 10), ['Discord main', 'Discord alt'])).toMatch(/^Friends since .*2023 on Discord main and Discord alt$/);
+  expect(linkSinceLine('contact', null, [])).toBe('In your contacts');
 });
 
 test("a profile's standing: the lists first, then what a profile said through an account with no list entry", () => {

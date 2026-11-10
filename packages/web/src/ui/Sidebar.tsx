@@ -48,9 +48,9 @@ import { groups, type MenuSpec } from './ContextMenu.tsx';
 import { openAbout } from './About.tsx';
 import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapshot } from '../arrange.ts';
 import { inboxSnap, shownInbox } from '../inbox.ts';
-import { PeopleLinks, RequestsRow } from './Requests.tsx';
-import { peopleFilters } from '../requests.ts';
-import { SortButton, useFlip } from './Reorganize.tsx';
+import { linkAccounts, PeopleAccountPicker, PeopleLinks, RequestsRow, usePeopleLinks } from './Requests.tsx';
+import { nameMatches, peopleFilters, type PeopleFilter } from '../requests.ts';
+import { SortButton, SortIcon, useFlip } from './Reorganize.tsx';
 import { rememberSearch, SearchBox } from './SearchBox.tsx';
 import { counting, rendered } from '../perf.ts';
 import { memo } from './memo.ts';
@@ -450,19 +450,84 @@ export const PersonRow = memo(function PersonRow({ person, directs, active, onCl
   );
 });
 
+const LINK_SORTS: { id: 'recent' | 'az'; label: string }[] = [
+  { id: 'recent', label: 'Last talked' },
+  { id: 'az', label: 'A to Z' },
+];
+
+/** The order of a list of friends, contacts or follows: the same button as the Chats order, two choices, kept per device. */
+function LinkSortButton() {
+  const mode = prefs.value.peopleLinkSort ?? 'recent';
+  const on = LINK_SORTS.find((m) => m.id === mode)!;
+  const label = `Order: ${on.label}. Click to change`;
+  return (
+    <button
+      class={`icon-btn small sort-btn side-sort ${mode !== 'recent' ? 'on' : ''}`}
+      title={label}
+      aria-label={label}
+      aria-haspopup="menu"
+      data-track="order"
+      onClick={(e) => {
+        const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        openMenu(
+          { x: r.left, y: r.bottom + 4 },
+          {
+            label: 'Order',
+            track: 'people',
+            head: <div class="cm-sheet-title">Order</div>,
+            items: [
+              { kind: 'label', label: 'Order by' },
+              ...LINK_SORTS.map((m): MenuEntry => ({ label: m.label, radio: true, checked: m.id === mode, track: `order (${m.label})`, run: () => setPrefs({ peopleLinkSort: m.id }) })),
+            ],
+          },
+        );
+      }}
+    >
+      <SortIcon size={15} />
+    </button>
+  );
+}
+
+/** Narrows the list by name, here on the page. Esc empties it. */
+function FindBox({ value, set, placeholder }: { value: string; set: (v: string) => void; placeholder: string }) {
+  return (
+    <label class="search people-find">
+      <Icon name="search" size={15} />
+      <input
+        type="search"
+        data-track="filter box"
+        aria-label={placeholder}
+        placeholder={placeholder}
+        value={value}
+        enterkeyhint="search"
+        onInput={(e) => set((e.target as HTMLInputElement).value)}
+        onKeyDown={(e) => e.key === 'Escape' && value && (e.preventDefault(), e.stopPropagation(), set(''))}
+      />
+    </label>
+  );
+}
+
+const FIND: Record<PeopleFilter, string> = { chats: 'Filter people', friend: 'Filter friends', contact: 'Filter contacts', following: 'Filter follows' };
+
 export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
   rev.value;
   // Friends, contacts and follows, where an account keeps such a list (docs/add.md "Relationships").
   const chips = peopleFilters(db.accounts.values());
   const filter = chips.find((f) => f.id === prefs.value.peopleFilter)?.id ?? 'chats';
-  const list = filter === 'chats' ? arrangedPeople(people()) : [];
+  const relationship = filter === 'chats' ? null : filter;
+  const links = usePeopleLinks(relationship);
+  const [accountId, setAccountId] = useState<string | null>(null);
+  const [q, setQ] = useState('');
+  const accounts = relationship && links.view ? linkAccounts(links.view) : [];
+  const scoped = accountId && accounts.some((a) => a.id === accountId) ? accountId : null;
+  const list = filter === 'chats' ? arrangedPeople(people()).filter((x) => !q.trim() || nameMatches(x.person.name, q)) : [];
   const starred = list.filter((x) => x.person.starred);
   const rest = list.filter((x) => !x.person.starred);
   return (
     <div class="sidebar-inner" data-track-area="people">
       <header class="side-head">
-        <h1>People<NewMessageButton /><GraphButton /><SortButton scope="people" class="side-sort" /></h1>
-        <span class="side-sub">One thread per person, across every network</span>
+        <h1>People<NewMessageButton /><GraphButton />{relationship ? <LinkSortButton /> : <SortButton scope="people" class="side-sort" />}</h1>
+        {accounts.length > 1 && <PeopleAccountPicker accounts={accounts} current={scoped} pick={setAccountId} />}
       </header>
       {chips.length > 0 && (
         <div class="inbox-chips people-chips" role="radiogroup" aria-label="Show">
@@ -473,12 +538,14 @@ export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
           ))}
         </div>
       )}
+      <FindBox value={q} set={setQ} placeholder={FIND[filter]} />
       <div class="side-scroll">
-        {filter !== 'chats' && <PeopleLinks relationship={filter} active={activePerson} />}
+        {relationship && <PeopleLinks relationship={relationship} links={links} accountId={scoped} dots={accounts.length > 1 && !scoped} q={q} sort={prefs.value.peopleLinkSort ?? 'recent'} active={activePerson} />}
         {starred.length > 0 && <SectionHead id="people-star" label="Starred" count={starred.length} />}
         {!isCollapsed('people-star') && starred.map(({ person, directs }) => <PersonRow key={person.id} person={person} directs={directs} active={person.id === activePerson} onClick={opener(`people:${person.id}`, () => go({ view: 'people', person: person.id }))} />)}
         {filter === 'chats' && <SectionHead id="people-all" label="Direct messages" count={rest.length} />}
         {!isCollapsed('people-all') && rest.map(({ person, directs }) => <PersonRow key={person.id} person={person} directs={directs} active={person.id === activePerson} onClick={opener(`people:${person.id}`, () => go({ view: 'people', person: person.id }))} />)}
+        {filter === 'chats' && q.trim() && !list.length && <p class="inbox-empty">Nobody here matches “{q.trim()}”.</p>}
       </div>
     </div>
   );

@@ -11677,8 +11677,7 @@ button.msg-edited.link:hover {
 }
 .request-to .acc-dot,
 .pf-link-what .acc-dot,
-.plink-acc .acc-dot,
-.people-accounts .acc-dot {
+.plink-dots .acc-dot {
   width: 7px;
   height: 7px;
   box-shadow: none;
@@ -11746,11 +11745,6 @@ button.msg-edited.link:hover {
 .link-banner-text b {
   color: var(--text);
 }
-.people-accounts .chip-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
 .link-banner-acc {
   color: var(--text-dim);
   font-size: 12px;
@@ -11787,44 +11781,22 @@ button.msg-edited.link:hover {
 .remove-link p {
   margin: 0 0 8px;
 }
-.plink-row {
-  padding: 0 6px 0 0;
-}
-.plink-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 0 8px 10px;
-  text-align: left;
-  color: inherit;
-}
-.plink-main .row-preview {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 8px;
-}
-.plink-acc {
+/* People's lists (docs/add.md "Relationships"): a dot per account a person is on, and when you last talked. */
+.plink-dots {
+  flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
+  margin-left: 6px;
 }
-.plink-since {
-  color: var(--text-faint);
+.plink-talked:empty::before {
+  content: '\00a0';
 }
-.plink-end {
-  flex: none;
-  opacity: 0.55;
+.people-find {
+  margin: 8px 12px 2px;
 }
-.plink-row:hover .plink-end,
-.plink-end:focus-visible {
-  opacity: 1;
-}
-@media (pointer: coarse) {
-  .plink-end {
-    opacity: 1;
-  }
+.people-find input::-webkit-search-cancel-button {
+  cursor: pointer;
 }
 @media (max-width: 820px) {
   .link-banner {

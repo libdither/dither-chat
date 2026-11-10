@@ -4,8 +4,9 @@
  * opens the profile from the avatar, and says what Discord answered when Message is refused; Accept takes a second
  * click there ("Accept anyway"), which confirms; Message on the other opens the DM on that account, whose banner
  * answers it; a request you sent shows on its DM with Cancel; a profile says how each account stands with them and
- * Remove friend asks first; People lists friends and contacts by account, each with its own Remove; and Add friend
- * on someone Discord wants confirmed comes back with "Add anyway".
+ * Remove friend asks first; People lists friends and contacts once per person, with a dot for each account and when
+ * you last talked, an account menu under "People", Remove per account in the row's menu (right-click, long press), a
+ * filter box and the order; and Add friend on someone Discord wants confirmed comes back with "Add anyway".
  *
  *   bun scripts/verify-people-links.ts http://127.0.0.1:8870 [/tmp/shots]
  * It answers and removes things: point it at a fresh demo hub (--demo) with its own data dir.
@@ -37,12 +38,51 @@ const answers = async () => (await action(DALT, 'addLog')).result?.answer as num
 
 const { page: p, close } = await launch();
 const click = async (sel: string) => {
-  const r = await p.eval<{ x: number; y: number } | null>(
-    `(() => { const e = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => x.getBoundingClientRect().width > 0); if (!e) return null; e.scrollIntoView({ block: 'nearest' }); const b = e.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; })()`,
-  );
+  const at = () =>
+    p.eval<{ x: number; y: number } | null>(
+      `(() => { const e = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => x.getBoundingClientRect().width > 0); if (!e) return null; e.scrollIntoView({ block: 'nearest' }); const b = e.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; })()`,
+    );
+  // Where it has come to rest: a phone's sheet slides up for a moment, and a click aimed mid-slide misses.
+  let r = await at();
+  for (let i = 0; i < 20 && r; i++) {
+    await Bun.sleep(60);
+    const next = await at();
+    if (next && Math.abs(next.x - r.x) < 1 && Math.abs(next.y - r.y) < 1) break;
+    r = next;
+  }
   if (!r) throw new Error(`nothing matches ${sel}`);
   for (const type of ['mousePressed', 'mouseReleased']) await p.send('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', clickCount: 1 });
 };
+/** The first visible element matching `sel` whose text is `label`. */
+const clickText = async (sel: string, label: string) => {
+  const r = await p.eval<{ x: number; y: number } | null>(
+    `(() => { const e = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => x.getBoundingClientRect().width > 0 && x.innerText.trim() === ${JSON.stringify(label)}); if (!e) return null; const b = e.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; })()`,
+  );
+  if (!r) throw new Error(`nothing matches ${sel} "${label}"`);
+  for (const type of ['mousePressed', 'mouseReleased']) await p.send('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', clickCount: 1 });
+};
+const centerOf = async (sel: string) => {
+  const r = await p.eval<{ x: number; y: number } | null>(
+    `(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null; e.scrollIntoView({ block: 'nearest' }); const b = e.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; })()`,
+  );
+  if (!r) throw new Error(`nothing matches ${sel}`);
+  return r;
+};
+const rightClick = async (sel: string) => {
+  const r = await centerOf(sel);
+  await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x, y: r.y, button: 'none', buttons: 0, clickCount: 0 });
+  await p.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: r.x, y: r.y, button: 'right', buttons: 2, clickCount: 1 });
+  await p.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: r.x, y: r.y, button: 'right', buttons: 0, clickCount: 1 });
+  await Bun.sleep(300);
+};
+const longPress = async (sel: string) => {
+  const r = await centerOf(sel);
+  await p.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: r.x, y: r.y }] });
+  await Bun.sleep(650);
+  await p.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await Bun.sleep(400);
+};
+const escape = () => p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
 const text = (sel: string) => p.eval<string>(`[...document.querySelectorAll(${JSON.stringify(sel)})].map((e) => e.innerText).join(' | ')`);
 const has = (sel: string) => p.eval<boolean>(`!!document.querySelector(${JSON.stringify(sel)})`);
 const count = (sel: string) => p.eval<number>(`document.querySelectorAll(${JSON.stringify(sel)}).length`);
@@ -208,35 +248,98 @@ try {
   check((await get(`/api/people?relationship=friend&account=${DALT}`)).links.some((l: any) => l.identityId === ravi.id), 'Keep keeps it');
   await desktop();
 
-  // 7. People: friends across accounts, by account, each with its Remove; contacts.
+  // 7. People: friends once per person across accounts, a dot for each account, when you last talked; the account
+  // menu; Remove in the row's menu, per account; the filter box and the order; contacts.
   await open('#/people', '.people-chips');
   await click('.people-chips [data-filter="friend"]');
   await p.until(`!!document.querySelector('.plink-row')`, 8000);
   const names = await p.eval<string[]>(`[...document.querySelectorAll('.plink-row .row-title')].map((e) => e.textContent.trim())`);
   check(names.includes('Alice Chen') && names.includes('Nitro Drops') && names.includes('Ravi'), 'Friends lists everyone your accounts are friends with', names);
-  check((await count('.people-accounts .chip-btn')) === 3 && (await has(`.people-accounts [data-account="${DMAIN}"]`)) && (await has(`.people-accounts [data-account="${DALT}"]`)), 'by account', await text('.people-accounts'));
+  check(new Set(names).size === names.length, 'each person once', names);
+  check(!(await has('.sidebar .side-sub')) && !(await has('.people-accounts')) && !(await has('.plink-end')), 'one row of chips, no subtitle, no × on the rows');
   check((await text('.people-chips')).replace(/\s+/g, ' ') === 'Chats Friends Contacts', 'chips for the lists these accounts keep: no X or Instagram here, so no Following', await text('.people-chips'));
-  await shot('links-08-people-desktop');
-  await click(`.people-accounts [data-account="${DALT}"]`);
-  await p.until(`![...document.querySelectorAll('.plink-row .plink-acc')].some((e) => e.title.includes('main'))`, 5000);
-  check(true, 'one account at a time');
   const theoRow = `.plink-row[data-plink="${theo.id}"]`;
-  await click(`${theoRow} .plink-end`);
+  const raviRow = `.plink-row[data-plink="${ravi.id}"]`;
+  const dotsOf = (row: string) => p.eval<string>(`document.querySelector(${JSON.stringify(`${row} .plink-dots`)})?.dataset.accounts ?? ''`);
+  check((await dotsOf(theoRow)) === `${DMAIN} ${DALT}`, 'a friend on both Discord accounts: one row, a dot for each', await dotsOf(theoRow));
+  check((await p.eval<string>(`document.querySelector(${JSON.stringify(`${theoRow} .plink-dots`)}).title`)) === 'Discord main, Discord alt', 'the dots name the accounts');
+  const theoTip = await p.eval<string>(`document.querySelector(${JSON.stringify(theoRow)}).title`);
+  check(/^Friends since \w+ \d{4} on Discord main and Discord alt$/.test(theoTip), 'since when moves to the tooltip', theoTip);
+  check(/^talked .+/.test(await text(`${raviRow} .plink-talked`)), 'the second line says when you last talked', await text(`${raviRow} .plink-talked`));
+  // The account menu, under "People".
+  check((await text('.people-acc-btn')).trim() === 'All accounts', 'an account menu under "People"', await text('.people-acc-btn'));
+  await click('.people-acc-btn');
+  await p.until(`!!document.querySelector('.cm [role="menuitemradio"]')`, 3000);
+  const accItems = await p.eval<string[]>(`[...document.querySelectorAll('.cm [role="menuitemradio"]')].map((e) => e.innerText.trim())`);
+  check(accItems.join() === 'All accounts,Discord main,Discord alt' && (await count('.cm .cm-dot')) === 3, 'its menu: all accounts and each, each with its colour', accItems);
+  await shot('links-08-people-desktop');
+  await clickText('.cm [role="menuitemradio"]', 'Discord alt');
+  await p.until(`document.querySelector('.people-acc-btn').innerText.includes('Discord alt')`, 3000);
+  const altFriends = (await get(`/api/people?relationship=friend&account=${DALT}`)).links.length;
+  check((await count('.plink-row')) === altFriends && !(await has('.plink-dots')), 'one account at a time, without dots', { rows: await count('.plink-row'), altFriends });
+  await click('.people-acc-btn');
+  await p.until(`!!document.querySelector('.cm [role="menuitemradio"]')`, 3000);
+  await clickText('.cm [role="menuitemradio"]', 'All accounts');
+  await p.until(`!!document.querySelector(${JSON.stringify(`${theoRow} .plink-dots`)})`, 3000);
+  // Remove is in the row's menu, one item per account it is on.
+  await rightClick(theoRow);
+  await p.until(`!!document.querySelector('.cm[role="menu"]')`, 3000);
+  const theoMenu = await p.eval<string[]>(`[...document.querySelectorAll('.cm[role="menu"] [role^="menuitem"]')].map((e) => e.innerText.trim())`);
+  check(theoMenu.includes('Profile') && theoMenu.includes('Remove friend on Discord main') && theoMenu.includes('Remove friend on Discord alt'), "the row's menu: the person's items and Remove on each account", theoMenu);
+  await shot('links-10-row-menu-desktop');
+  await clickText('.cm[role="menu"] [role="menuitem"]', 'Remove friend on Discord alt');
   await p.until(`!!document.querySelector('[data-remove-dialog="friend"]')`, 5000);
-  check((await text('[data-remove-dialog]')).includes('on your Discord account alt?'), 'a row ends it on that account, after asking', await text('[data-remove-dialog]'));
+  check((await text('[data-remove-dialog]')).includes('on your Discord account alt?'), 'it asks first, naming the account', await text('[data-remove-dialog]'));
   await click('[data-confirm-remove="friend"]');
-  await p.until(`!document.querySelector(${JSON.stringify(theoRow)})`, 8000);
-  check(!(await get(`/api/people?relationship=friend&account=${DALT}`)).links.some((l: any) => l.identityId === theo.id), 'removed, and gone from the list');
+  await p.until(`document.querySelector(${JSON.stringify(`${theoRow} .plink-dots`)})?.dataset.accounts === ${JSON.stringify(DMAIN)}`, 8000);
+  check(!(await get(`/api/people?relationship=friend&account=${DALT}`)).links.some((l: any) => l.identityId === theo.id), 'removed on alt; still a friend on main, one row with one dot');
+  // The filter box, and the order.
+  await p.eval(`document.querySelector('.people-find input').focus()`);
+  await p.send('Input.insertText', { text: 'ra' });
+  await Bun.sleep(300);
+  const found = await p.eval<string[]>(`[...document.querySelectorAll('.plink-row .row-title')].map((e) => e.textContent.trim())`);
+  check(found.length > 0 && found.length < names.length && found.every((n) => /ra/i.test(n)) && found.includes('Ravi'), 'the filter box narrows the list by name', found);
+  await escape();
+  await Bun.sleep(200);
+  check((await count('.plink-row')) === names.length, 'Esc empties it');
+  const talked = await p.eval<boolean[]>(`[...document.querySelectorAll('.plink-row .plink-talked')].map((e) => !!e.textContent)`);
+  check(talked.indexOf(false) === -1 || talked.slice(talked.indexOf(false)).every((x) => !x), 'by default, whom you talked with last first', talked);
+  await click('.side-sort');
+  await p.until(`!!document.querySelector('.cm [role="menuitemradio"]')`, 3000);
+  check((await p.eval<string[]>(`[...document.querySelectorAll('.cm [role="menuitemradio"]')].map((e) => e.innerText.trim())`)).join() === 'Last talked,A to Z', 'the order: Last talked or A to Z');
+  await clickText('.cm [role="menuitemradio"]', 'A to Z');
+  await Bun.sleep(300);
+  const az = await p.eval<string[]>(`[...document.querySelectorAll('.plink-row .row-title')].map((e) => e.textContent.trim())`);
+  check(az.join() === [...az].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })).join(), 'A to Z', az);
+  await click('.side-sort');
+  await p.until(`!!document.querySelector('.cm [role="menuitemradio"]')`, 3000);
+  await clickText('.cm [role="menuitemradio"]', 'Last talked');
+  // Contacts: one Telegram account, so no menu and no dots.
   await click('.people-chips [data-filter="contact"]');
   await p.until(`[...document.querySelectorAll('.plink-row .row-title')].some((e) => e.textContent.includes('Noor'))`, 8000);
-  const where = await p.eval<string[]>(`[...document.querySelectorAll('.plink-row .plink-acc')].map((e) => e.title)`);
-  check(where.length === 2 && where.every((t) => t === 'Telegram personal'), 'Contacts: Telegram contacts', { names: await text('.plink-row .row-title'), where });
+  const where = await p.eval<string[]>(`[...document.querySelectorAll('.plink-row')].map((e) => e.title)`);
+  check(where.length === 2 && where.every((t) => t.endsWith('on Telegram personal')) && !(await has('.people-acc-btn')) && !(await has('.plink-dots')), 'Contacts: Telegram contacts', { names: await text('.plink-row .row-title'), where });
+  // On a phone: the same list, the account menu as a sheet, and a long press for the row's menu.
   await phone();
   await open('#/people', '.people-chips');
   await click('.people-chips [data-filter="friend"]');
   await p.until(`!!document.querySelector('.plink-row')`, 8000);
   await fits('People');
   await shot('links-08-people-phone');
+  await click('.people-acc-btn');
+  await p.until(`!!document.querySelector('.cm-sheet')`, 3000);
+  await shot('links-09-accounts-phone');
+  await escape();
+  await p.until(`!document.querySelector('.cm-sheet')`, 3000).catch(() => {});
+  // Someone still a friend of both accounts (Ravi and Theo are not, by now).
+  const both = await p.eval<string>(`[...document.querySelectorAll('.plink-row')].find((e) => e.querySelector('.plink-dots')?.dataset.accounts === ${JSON.stringify(`${DMAIN} ${DALT}`)})?.dataset.plink ?? ''`);
+  check(both, 'someone on both accounts');
+  await longPress(`.plink-row[data-plink="${both}"]`);
+  await p.until(`!!document.querySelector('.cm-sheet')`, 3000);
+  const sheet = await p.eval<string[]>(`[...document.querySelectorAll('.cm-sheet .sheet-action')].map((b) => b.innerText.trim())`);
+  check(sheet.includes('Remove friend on Discord main') && sheet.includes('Remove friend on Discord alt'), 'a long press opens the menu, with Remove per account', sheet);
+  await shot('links-10-row-menu-phone');
+  await escape();
   await desktop();
   await open('#/people', '.people-chips');
   await click('.people-chips [data-filter="chats"]');

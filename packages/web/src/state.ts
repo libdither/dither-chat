@@ -137,6 +137,8 @@ export interface Prefs {
   inboxFilter: InboxFilter;
   /** People's filter chip: chats, or one kind of list (docs/add.md "Relationships"). */
   peopleFilter?: 'chats' | 'friend' | 'contact' | 'following';
+  /** How People's friends, contacts and follows sort: when you last talked (the default), or by name. */
+  peopleLinkSort?: 'recent' | 'az';
   /** This device counts which buttons are pressed (clicklog.ts, docs/button-counts.md). Off unless switched on here. */
   countClicks?: boolean;
 }
