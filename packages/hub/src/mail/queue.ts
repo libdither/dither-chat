@@ -12,6 +12,7 @@
  * manager's `limited` answer puts the work back and holds the queue, from 2 s, doubling. Slice 2's budgets plug in as
  * `gate`.
  */
+import { type Clock, realClock } from '../clock.ts';
 import { asMailError } from './backend.ts';
 
 export type Priority = 0 | 1 | 2 | 3;
@@ -31,7 +32,7 @@ export class MailQueue {
   private running = new Set<Task>();
   private holdUntil = 0;
   private backoff = 0;
-  private timer: Timer | null = null;
+  private timer: unknown = null;
   private stopped = false;
   /**
    * How long work of this priority must wait before it may start (0: now). Slice 2 sets it for its budgets: P2 and P3
@@ -46,6 +47,7 @@ export class MailQueue {
   constructor(
     private concurrency = 2,
     private now: () => number = Date.now,
+    private clock: Pick<Clock, 'setTimeout' | 'clearTimeout'> = realClock,
   ) {}
 
   get size() {
@@ -81,14 +83,14 @@ export class MailQueue {
 
   stop() {
     this.stopped = true;
-    if (this.timer) clearTimeout(this.timer);
+    if (this.timer) this.clock.clearTimeout(this.timer);
     for (const q of this.waiting) for (const t of q.splice(0)) t.reject(asMailError(new Error('the account stopped syncing')));
   }
 
   private pump() {
     if (this.stopped) return;
     if (this.timer) {
-      clearTimeout(this.timer);
+      this.clock.clearTimeout(this.timer);
       this.timer = null;
     }
     let wait = Infinity;
@@ -112,7 +114,7 @@ export class MailQueue {
       if (!next) break;
       this.start(next);
     }
-    if (wait < Infinity && this.size > this.running.size) this.timer = setTimeout(() => this.pump(), Math.max(10, wait));
+    if (wait < Infinity && this.size > this.running.size) this.timer = this.clock.setTimeout(() => this.pump(), Math.max(10, wait));
   }
 
   private start(t: Task) {

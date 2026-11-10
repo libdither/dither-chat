@@ -21,6 +21,7 @@
 import type * as P from '@dither-chat/protocol';
 import { mailboxList, parseMailList, viewList } from '@dither-chat/protocol';
 import type * as M from '@dither-chat/protocol/mail-iface';
+import { sleep } from '../clock.ts';
 import { asMailError } from './backend.ts';
 import { Bodies } from './bodies.ts';
 import { BodyCache } from './cache.ts';
@@ -249,8 +250,6 @@ function sources(hub: MailHub, key: string): Row[] {
   return hub.store.all(`SELECT b.* FROM mailbox b JOIN mail_account a ON a.id = b.account_id WHERE b.role = ? AND a.hidden = 0 ${l.accountId ? 'AND a.id = ?' : ''}`, l.view, ...(l.accountId ? [l.accountId] : []));
 }
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
 /**
  * GET /api/mail/threads (§3.3): a page of a list from what the hub holds. When it runs short and a mailbox behind the
  * list has more on the server, the next page of that mailbox is fetched first, at user priority, for up to
@@ -262,7 +261,7 @@ export async function pageOnDemand(hub: MailHub, key: string, before: string | n
   let page = st.listThreads(key, before, limit);
   if (!page) return null;
   const boxes = sources(hub, key);
-  const now = Date.now();
+  const now = hub.clock.now();
   for (const b of boxes) if (b.id && key.startsWith('mb:')) st.db.query('UPDATE mailbox SET opened_at = ? WHERE id = ?').run(now, b.id);
   if (!before) bigOf(hub)?.rows(page.threads);
   if (page.next || page.complete) return page;
@@ -278,7 +277,7 @@ export async function pageOnDemand(hub: MailHub, key: string, before: string | n
       ),
     );
   if (!fetch.length) return page;
-  const done = await Promise.race([Promise.all(fetch).then(() => true), sleep(MAIL_LIMITS.pageWaitMs).then(() => false)]);
+  const done = await Promise.race([Promise.all(fetch).then(() => true), sleep(hub.clock, MAIL_LIMITS.pageWaitMs).then(() => false)]);
   page = st.listThreads(key, before, limit) ?? page;
   return done ? page : { ...page, next: null, complete: false, pending: true };
 }

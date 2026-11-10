@@ -14,6 +14,7 @@
  * from an address that does not look automated (§4 rules 7 and 9). Each body that arrives is MailHub's `body` event.
  */
 import type * as P from '@dither-chat/protocol';
+import { unref } from '../clock.ts';
 import { MAIL_INBOX } from './attention.ts';
 import { asMailError } from './backend.ts';
 import type { BodyCache } from './cache.ts';
@@ -31,7 +32,7 @@ const PERSONAL = `(m.class = 'personal' OR (m.class IS NULL AND m.bulk IS NULL A
 export class Bodies {
   /** Queued here and not arrived yet. */
   private queued = new Set<string>();
-  private soon = new Map<string, Timer>();
+  private soon = new Map<string, unknown>();
 
   constructor(
     private hub: MailHub,
@@ -86,7 +87,7 @@ export class Bodies {
    * pass would fetch more than the cap. The next run of pages asks again.
    */
   recent(accountId: string) {
-    const since = Date.now() - MAIL_LIMITS.prefetchDays * DAY;
+    const since = this.hub.clock.now() - MAIL_LIMITS.prefetchDays * DAY;
     if (this.hub.store.one(`SELECT 1 FROM mailbox WHERE account_id = ? AND follow = 'always' AND complete = 0 AND (horizon IS NULL OR horizon > ?) LIMIT 1`, accountId, since)) return;
     const rows = this.hub.store.all<{ id: string; from_addr: string | null }>(
       `SELECT m.id, m.from_addr FROM mail_message m WHERE m.account_id = ? AND m.received_at >= ? AND ${PERSONAL} ORDER BY m.received_at DESC LIMIT ?`,
@@ -104,7 +105,7 @@ export class Bodies {
    * those whose body is here (headerless.ts fetches them again once, as they were kept before their headers were);
    * else those whose body is not. Empty for any other account, and until its labels are in (headerless.ts).
    */
-  window(accountId: string, fetched: boolean, now = Date.now()): string[] {
+  window(accountId: string, fetched: boolean, now = this.hub.clock.now()): string[] {
     const st = this.hub.store;
     if (!st.headerless(accountId) || !relabeled(st, accountId)) return [];
     return st
@@ -124,17 +125,17 @@ export class Bodies {
   /** After a sync brought mail: `recent`, a few seconds later, once for a run of pages. */
   later(accountId: string) {
     if (this.soon.has(accountId)) return;
-    const timer = setTimeout(() => {
+    const timer = this.hub.clock.setTimeout(() => {
       this.soon.delete(accountId);
       if (this.hub.sync(accountId)) this.recent(accountId);
     }, 3_000);
-    timer.unref?.();
+    unref(timer);
     this.soon.set(accountId, timer);
   }
 
   /** The hub stopped (MailHub.stopping). */
   stop() {
-    for (const t of this.soon.values()) clearTimeout(t);
+    for (const t of this.soon.values()) this.hub.clock.clearTimeout(t);
     this.soon.clear();
   }
 

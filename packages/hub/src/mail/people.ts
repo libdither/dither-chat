@@ -64,7 +64,7 @@ export class MailPeople {
   private pending = new Set<string>();
   /** Threads to work out mail_party for, from before it existed. */
   private rebuild: string[] = [];
-  private timer: Timer | null = null;
+  private timer: unknown = null;
 
   /** Nothing waits for a background step. */
   get idle(): boolean {
@@ -93,7 +93,7 @@ export class MailPeople {
   }
 
   stop() {
-    if (this.timer) clearTimeout(this.timer);
+    if (this.timer) this.hub.clock.clearTimeout(this.timer);
     this.timer = null;
   }
 
@@ -146,7 +146,7 @@ export class MailPeople {
 
   private schedule() {
     if (this.timer || !this.chat) return;
-    this.timer = setTimeout(() => this.drain(), 0);
+    this.timer = this.hub.clock.setTimeout(() => this.drain(), 0);
   }
 
   /** In the background: old threads' rows first, then the people of threads that changed, a step at a time. */

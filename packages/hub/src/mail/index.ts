@@ -19,6 +19,7 @@
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
 import type * as M from '@dither-chat/protocol/mail-iface';
+import { type Clock, realClock } from '../clock.ts';
 import { asMailError, MailCallError, type MailBackend, type MailBackendAccount, type MailBackendEvent } from './backend.ts';
 import { MAIL_LIMITS } from './limits.ts';
 import { MailOutbox } from './outbox.ts';
@@ -44,7 +45,10 @@ export interface MailHubOpts {
   /** The manager's page as the browser reaches it, for links to it. */
   managerUrl?: string | null;
   log?: (msg: string) => void;
+  /** The time the store records (default: the clock's). */
   now?: () => number;
+  /** Timers and pacing: the queues' budgets and backoffs, retries, pauses (tests pass a fake one). */
+  clock?: Clock;
   /** The hub's data dir: the outbox keeps files there until they are sent (slice 5). */
   dataDir?: string;
   /** How long a send waits for Undo (MAIL_LIMITS.holdMs). */
@@ -80,9 +84,12 @@ export class MailHub {
   private started = false;
   private log: (msg: string) => void;
   private now: () => number;
+  /** What the slices pace their work and set their timers by. */
+  readonly clock: Clock;
 
   constructor(private opts: MailHubOpts) {
-    this.now = opts.now ?? Date.now;
+    this.clock = opts.clock ?? realClock;
+    this.now = opts.now ?? (() => this.clock.now());
     this.log = opts.log ?? ((m) => console.warn(`mail: ${m}`));
     this.store = new MailStore(opts.db, this.now);
     this.backend = opts.backend;
@@ -168,6 +175,7 @@ export class MailHub {
           deleted: (accountId, messageIds) => this.emit('deleted', { accountId, messageIds }),
           log: this.log,
           now: this.now,
+          clock: this.clock,
         });
         this.syncs.set(a.id, s);
         s.start();

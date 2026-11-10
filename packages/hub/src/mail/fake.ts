@@ -50,6 +50,7 @@
 import { readFileSync } from 'node:fs';
 import type * as P from '@dither-chat/protocol';
 import type * as M from '@dither-chat/protocol/mail-iface';
+import { type Clock, realClock, sleep } from '../clock.ts';
 import { MailCallError, type MailBackend, type MailBackendAccount, type MailBackendEvent } from './backend.ts';
 import { htmlText } from './store.ts';
 
@@ -193,6 +194,8 @@ export class FakeMailBackend implements MailBackend {
   readonly sent: FakeSent[] = [];
   /** As a manager on this machine: attachments may come as paths. */
   localFiles = true;
+  /** When calls are made and answered: a test's clock runs the hub's pacing in no time. */
+  clock: Clock = realClock;
 
   constructor(private defaults: FakeOpts = {}) {}
 
@@ -227,11 +230,11 @@ export class FakeMailBackend implements MailBackend {
   }
 
   async call<T>(account: string, op: string, input: Record<string, any> = {}): Promise<T> {
-    this.calls.push({ account, op, input, at: Date.now() });
+    this.calls.push({ account, op, input, at: this.clock.now() });
     const a = this.accs.get(account);
     const latency = a?.opts.latencyMs ?? this.defaults.latencyMs ?? 0;
-    // An answer comes back later, as over a socket: never in the same turn.
-    if (latency) await Bun.sleep(latency);
+    // An answer comes back later, as over a socket: never in the same turn (on a test's clock, a timer of its own).
+    if (latency || this.clock !== realClock) await sleep(this.clock, latency);
     else await new Promise((r) => setImmediate(r));
     if (!this.connected) throw new MailCallError('the manager is not reachable', 503, 'offline');
     if (!a) throw new MailCallError(`no account ${account}`, 404, 'unknown-account');
