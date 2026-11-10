@@ -30,7 +30,7 @@ export class MailCallError extends Error {
 }
 
 /** The manager's error codes as HTTP-ish statuses, for errors that came without one. */
-const CODE_STATUS: Record<string, number> = { denied: 403, limited: 429, offline: 503, timeout: 504, invalid: 400, 'unknown-op': 501, 'unknown-account': 404 };
+const CODE_STATUS: Record<string, number> = { denied: 403, limited: 429, offline: 503, timeout: 504, invalid: 400, 'unknown-op': 501, 'unknown-account': 404, from: 422, recipients: 422, settings: 422 };
 
 export function asMailError(e: unknown): MailCallError {
   if (e instanceof MailCallError) return e;
