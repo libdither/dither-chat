@@ -44,6 +44,12 @@ export interface ImportCounts {
   conflicts: number;
   /** In this source more than once. */
   duplicates: number;
+  /**
+   * Of the new and filled: messages the network took back (deleted or disappeared) whose words or files the source
+   * kept, now in the hub as kept deleted or disappeared messages, out of sight until adversarial features are shown.
+   * Missing from runs before it was counted.
+   */
+  kept?: number;
 }
 
 export interface ImportRunView {

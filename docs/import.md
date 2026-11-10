@@ -14,10 +14,10 @@ Goals:
   disagreement, and lets you review and decide it. A decision is remembered and replayed on every rerun.
 - **Raw sources are kept.** The bytes you gave the hub are never modified, so a better reader can come back to them.
 
-Status: built for Discord. Sources (upload of files or folders, rsync, hash, census), the DiscordChatExporter HTML
-reader, the fill-only apply with provenance, conflicts and undo, the review UI, the gap fill through the account and
-the media archive are in. Signal has upload and census only: no reader yet. Where the code differs from the design
-below, the code section at the end says so.
+Status: built for Discord and Signal. Sources (upload of files or folders, rsync, hash, census), the
+DiscordChatExporter HTML reader, Signal's new-format and legacy `.backup` readers (docs/import-signal.md), the
+fill-only apply with provenance, conflicts and undo, the review UI, the gap fill through the account and the media
+archive are in. Where the code differs from the design below, the code section at the end says so.
 
 ## Stages
 
@@ -210,8 +210,9 @@ the source and everything before the failed stage intact.
    dry run, import, review of differences, undo. Tested on a copy of the live database with both real exports:
    390k messages in about 3½ minutes, unread counts untouched, a second run changing nothing.
 3. ✅ Gap fill through the Discord account (`imports/gapfill.ts`) and the media archive (`mediaarchive.ts`).
-4. Signal: a reader for the new Molly folder (`SignalBackups/` plus the "Include kept messages" `.backup`), then the
-   same import path. Kept content goes in through the hub's own kept-message mechanism (docs/history.md).
+4. ✅ Signal: readers for new-format snapshots (`signal-v2.ts`) and a `.backup` uploaded alone (`signal-legacy.ts`),
+   through the same import path. Kept content (Molly keepmsg) goes in through the hub's own kept-message mechanism
+   (docs/history.md): a run counts it as `kept`. A folder holding both still reads only its snapshots.
 5. Automatic pipeline on upload; decisions as rules; DCE JSON and the Discord data package.
 
 ## What the code does (and where it is simpler than the design)

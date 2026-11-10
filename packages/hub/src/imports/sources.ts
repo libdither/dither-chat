@@ -435,6 +435,13 @@ export class ImportSources {
     });
   }
 
+  /** A .backup source's file and passphrase, for its reader. */
+  legacyBackup(id: string): { file: string; passphrase: string | null } | null {
+    const src = this.readSource(id);
+    const file = src ? this.uploadPath(id, src) : null;
+    return file && existsSync(file) ? { file, passphrase: this.passphrase(id) } : null;
+  }
+
   private passphrase(id: string): string | null {
     const p = join(this.root, id, 'passphrase');
     return existsSync(p) ? readFileSync(p, 'utf8').trim() : null;
@@ -502,6 +509,8 @@ export class ImportSources {
     this.workers.get(id)?.terminate();
     this.workers.delete(id);
     rmSync(d, { recursive: true, force: true });
+    // What readers made of it: facts, and for a .backup its unpacked database, which is as private as the source.
+    rmSync(join(this.root, '..', 'work', id), { recursive: true, force: true });
   }
 
   /** Where an import reads a source from. */
