@@ -39,7 +39,11 @@ const WORDS =
     ' ',
   );
 
-export function seedWorld(dir: string, opts: { scale?: number } = {}): World {
+/**
+ * `scale` multiplies every count (1, the default, is the live hub's size; packages/hub/test/budgets.test.ts seeds a
+ * small one). `anchor` is when the newest message was sent, for a world that is the same whatever the day.
+ */
+export function seedWorld(dir: string, opts: { scale?: number; anchor?: number } = {}): World {
   const scale = opts.scale ?? 1;
   const t0 = performance.now();
   if (existsSync(join(dir, 'hub.sqlite'))) throw new Error(`${dir} already has a hub: seed a fresh dir`);
@@ -62,7 +66,7 @@ export function seedWorld(dir: string, opts: { scale?: number } = {}): World {
   // The last midnight, less a minute: the newest seeded message is "yesterday, 23:59" whenever this runs.
   const midnight = new Date();
   midnight.setHours(0, 0, 0, 0);
-  const anchor = midnight.getTime() - 60_000;
+  const anchor = opts.anchor ?? midnight.getTime() - 60_000;
 
   const ingest = (acc: typeof disc, ev: P.AdapterEvent) => store.ingest(acc, ev);
   const self = { disc: 'self-d', sig: 'self-s' };
@@ -117,21 +121,27 @@ export function seedWorld(dir: string, opts: { scale?: number } = {}): World {
     return { channels, dms };
   })();
 
-  // Who gets messages: the long tail first, then a few hundred mid-sized and a thousand small ones.
+  // Who gets messages: the long tail first, then a few hundred mid-sized and a thousand small ones. A smaller scale
+  // puts fewer of each at the same places relative to the whole, and never two in one channel.
   const sizes: { at: Place; n: number; span: number }[] = [];
   const ch = places.channels;
+  const off = (i: number) => Math.round(i * scale) % ch.length;
+  const used = new Set<string>();
+  const channel = (i: number, count: () => number, span: number) => {
+    const c = ch[i % ch.length];
+    if (used.has(c.id)) return;
+    used.add(c.id);
+    sizes.push({ at: { acc: disc, conv: c.id, members: c.members, rooms: c.rooms }, n: count(), span });
+  };
   const BIG = [80_000, 40_000, 20_000, 14_000, 12_000, 10_000];
-  BIG.forEach((s, i) => sizes.push({ at: { acc: disc, conv: ch[i * 31].id, members: ch[i * 31].members, rooms: ch[i * 31].rooms }, n: n(s), span: 8 * DAY }));
+  BIG.forEach((s, i) => channel(i * Math.max(1, Math.round(31 * scale)), () => n(s), 8 * DAY));
   const group = places.dms.find((d) => d.conv.startsWith('pp'))!;
   sizes.push({ at: places.dms[1], n: n(6_000), span: 60 * DAY });
   sizes.push({ at: group, n: n(4_000), span: 60 * DAY });
-  for (let i = 0; i < 50; i++) sizes.push({ at: { acc: disc, conv: ch[400 + i].id, members: ch[400 + i].members, rooms: ch[400 + i].rooms }, n: n(1_000 + int(4_000)), span: 40 * DAY });
-  for (let i = 0; i < 150; i++) sizes.push({ at: { acc: disc, conv: ch[600 + i].id, members: ch[600 + i].members, rooms: ch[600 + i].rooms }, n: n(250 + int(700)), span: 90 * DAY });
+  for (let i = 0; i < n(50); i++) channel(off(400) + i, () => n(1_000 + int(4_000)), 40 * DAY);
+  for (let i = 0; i < n(150); i++) channel(off(600) + i, () => n(250 + int(700)), 90 * DAY);
   for (const d of places.dms.slice(2)) if (d !== group) sizes.push({ at: d, n: n(5 + int(80)), span: 120 * DAY });
-  for (let i = 0; i < 800; i++) {
-    const c = ch[(1000 + i * 3) % ch.length];
-    sizes.push({ at: { acc: disc, conv: c.id, members: c.members, rooms: c.rooms }, n: n(2 + int(30)), span: 200 * DAY });
-  }
+  for (let i = 0; i < n(800); i++) channel(off(1000) + i * 3, () => n(2 + int(30)), 200 * DAY);
 
   const conv = (acc: typeof disc, native: string) => hubId('cnv', acc.network, native);
   const idn = (acc: typeof disc, native: string) => hubId('idn', acc.network, native);
@@ -213,7 +223,7 @@ export function seedWorld(dir: string, opts: { scale?: number } = {}): World {
   };
   const opened = (s: (typeof sizes)[number]): WorldConv => ({ id: conv(s.at.acc, s.at.conv), nativeId: s.at.conv, accountId: s.at.acc.id, messages: s.n, member: s.at.members[s.at.members.length - 1] });
   const world: World = {
-    open: [sizes[0], sizes[1], sizes[6], sizes[7], sizes[8], sizes.find((s) => s.at.conv.startsWith('pd') && s.n >= 30 && s.n <= 60)!].map(opened),
+    open: [sizes[0], sizes[1], sizes[6], sizes[7], sizes[8], (sizes.find((s) => s.at.conv.startsWith('pd') && s.n >= 30 && s.n <= 60) ?? sizes.find((s) => s.at.conv.startsWith('pd'))!)].map(opened),
     counts,
     ms: Math.round(performance.now() - t0),
   };

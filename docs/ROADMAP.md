@@ -109,7 +109,7 @@ Built in slices from [mail-design.md](mail-design.md) (its §12); what works now
 | Updates reach installed apps | H | L | done | Reload bar, or automatic when the app is out of sight |
 | Public certificate through DNS-01 | M | L | done | Let's Encrypt wildcard through a Caddy on the hub's machine. No per-device step |
 | Login, beyond tailnet membership | M | M | next | Anyone on the tailnet can read everything today |
-| Fast on a big hub | H | M | next | [perf.md](perf.md): a harness with a baseline, and the quick wins done. Next: a switch that renders only the timeline, long timelines windowed, a smaller bootstrap |
+| Fast on a big hub | H | M | next | [perf.md](perf.md): a harness with a baseline, the quick wins done, and the bytes and rows of a cold start, pages and the web build held to budgets in CI. Next: a switch that renders only the timeline, long timelines windowed, a smaller bootstrap |
 | Offline reading of recent messages | M | M | later | The shell works offline; data does not |
 | Count which buttons you press, for the redesign | M | L | done | [button-counts.md](button-counts.md): opt-in per device in Settings → Usage; per day, key, page and phone or desktop, kept on the hub only; `bun scripts/clicks.ts` prints the top. Not yet run on a real phone |
 | Backups of `.data` | M | L | done | A nightly `VACUUM INTO`, the newest seven kept, and a copy before any schema change ([deploy.md](deploy.md#backups-and-upkeep)) |

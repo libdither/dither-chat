@@ -12,6 +12,7 @@
     "web:build": "cd packages/web && bunx --bun vite build",
     "typecheck": "bunx tsc -p packages/hub --noEmit && bunx tsc -p packages/web --noEmit && bunx tsc -p packages/adapter-discord --noEmit && bunx tsc -p packages/adapter-matrix --noEmit && bunx tsc -p packages/adapter-signal --noEmit && bunx tsc -p packages/adapter-whatsapp --noEmit && bunx tsc -p packages/desk --noEmit && bunx tsc -p scripts --noEmit",
     "test": "bun scripts/test-all.ts",
+    "budgets": "bun scripts/budgets.ts",
     "accounts:check": "bun scripts/accounts-sync.ts --check"
   },
   "devDependencies": {
