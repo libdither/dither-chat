@@ -16,7 +16,7 @@ type Row = Record<string, any>;
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 
-export type PaceKind = 'resolve' | 'join' | 'connect' | 'disconnect';
+export type PaceKind = 'resolve' | 'join' | 'connect' | 'disconnect' | 'members';
 
 /** How much each account may do, per window. Past it the hub answers 429 with when it frees up. */
 export const ADD_LIMITS: Record<PaceKind, { windowMs: number; max: number; networks: Partial<Record<P.Network, number>> }> = {
@@ -26,6 +26,8 @@ export const ADD_LIMITS: Record<PaceKind, { windowMs: number; max: number; netwo
   connect: { windowMs: DAY, max: 20, networks: {} },
   // Unfriending, cancelling a request, unblocking, removing a contact, unfollowing.
   disconnect: { windowMs: DAY, max: 20, networks: {} },
+  // People added to groups, one each (about.ts addMembers). Telegram limits adding (PEER_FLOOD) well before Signal does.
+  members: { windowMs: DAY, max: 30, networks: { telegram: 15 } },
 };
 
 /** How long the hub waits for the network. A join may wait on it (a Discord guild's first sync, a Matrix knock). */
@@ -333,8 +335,8 @@ function inWords(ms: number): string {
   return `${h} hour${h === 1 ? '' : 's'}`;
 }
 
-const DID: Record<PaceKind, string> = { resolve: 'looked up', join: 'joined or asked to join', connect: 'added', disconnect: 'removed or unblocked' };
-const WHAT: Record<PaceKind, string> = { resolve: 'links and names', join: 'places', connect: 'people', disconnect: 'people' };
+const DID: Record<PaceKind, string> = { resolve: 'looked up', join: 'joined or asked to join', connect: 'added', disconnect: 'removed or unblocked', members: 'added' };
+const WHAT: Record<PaceKind, string> = { resolve: 'links and names', join: 'places', connect: 'people', disconnect: 'people', members: 'people to groups' };
 
 /** Count one more for this account, or say when the next frees up. */
 export function takePace(db: Database, acc: Pick<AccountRow, 'id' | 'network' | 'label'>, kind: PaceKind, now = Date.now()): { ok: true } | { ok: false; error: string; retryAt: number } {

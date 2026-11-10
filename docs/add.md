@@ -6,6 +6,9 @@ paste or type what you have from elsewhere: an invite link, a Matrix address, an
 says what it could be, an account on that network looks it up, and you get a preview card with what you can do:
 Join, Ask to join, Add friend, Follow, Add contact, Message.
 
+Adding someone to a group you are already in is not here: it is **Add people** on the group's page
+(docs/group-settings.md, "Adding people").
+
 Status (2026-11-08): the protocol, the hub, the page and the demo adapters are done (slice A). **No real adapter has
 it yet**: the adapters live in dither-accounts and are built from this contract next. Until an account says it can
 (the capabilities below), the box says so in a plain line ("Joining from Discord invites isn't built for this account

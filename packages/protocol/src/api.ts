@@ -3,7 +3,7 @@
  * Every id here is a hub id; native ids are included for display and deep links only.
  */
 
-import type { About, AboutFields, PersonAbout, PersonRelationship } from './about.ts';
+import type { About, AboutFields, AddWho, PersonAbout, PersonRelationship } from './about.ts';
 import type { AddAction, AddCheck, AddPreview, AddRef, LinkRelationship, RequestAnswer, RequestFact } from './add.ts';
 import type { Capability, NativeMute, ReceiptState } from './adapter.ts';
 import type {
@@ -333,6 +333,33 @@ export interface AboutView extends Omit<About, 'members' | 'pinned' | 'fields'> 
     canEdit: boolean;
     reason?: string;
   };
+}
+
+/** GET /api/conversations/:id/members/candidates: whom this account could add here, people it talked with first. */
+export interface MemberCandidatesView {
+  accountId: string;
+  /** Whom the network lets it add, from its last About. */
+  who: AddWho;
+  mode: 'add' | 'invite';
+  room?: number;
+  candidates: {
+    identityId: string;
+    /** On this account's list: friend, contact. */
+    relationship?: PersonRelationship;
+    /** When this account last had a message with them in a direct conversation. */
+    lastTalked?: number;
+  }[];
+  identities: IdentityView[];
+}
+
+/** POST /api/conversations/:id/members { identities, accountId? }: who is in now, who was invited, who was refused and why. */
+export interface AddMembersView {
+  accountId: string;
+  added: string[];
+  invited: string[];
+  failed: { identityId: string; reason: string }[];
+  /** The About as it now stands, when the network said. */
+  about: AboutView | null;
 }
 
 /**

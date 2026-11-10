@@ -7786,6 +7786,44 @@ html[data-theme='light'] .acc-dot {
   color: var(--text);
 }
 
+/* Add people to a group (AddMembers.tsx): the Forward dialog's list, with who could not be added and why. */
+.add-mem-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--danger);
+  font-size: 13px;
+}
+.fwd-row.refused .fwd-row-text small {
+  color: var(--danger);
+  white-space: normal;
+}
+.add-mem-send {
+  align-items: center;
+  justify-content: space-between;
+}
+.add-mem-count {
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+.add-mem-send .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.about-members-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.about-members-head .about-add-people {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
 /* a forward in a timeline */
 .fwd-card {
   margin-top: 2px;

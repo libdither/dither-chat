@@ -10,7 +10,7 @@
  * how reactions work there. What is allowed in one place comes from the adapter, as ReactionContext does.
  */
 import type { MediaUrl } from './adapter.ts';
-import type { Network } from './ontology.ts';
+import { NETWORK_META, type Network } from './ontology.ts';
 
 /** Who may do something, as far as the networks agree. */
 export type Who = 'everyone' | 'admins';
@@ -112,6 +112,50 @@ export interface AboutPinned {
   reason?: string;
 }
 
+/**
+ * Whom the network lets this account add to a group. friends: only its friends (Discord group DMs). contacts: people
+ * it has as contacts or a chat with. known: anyone the account knows (Signal, Matrix, Telegram); the network may still
+ * refuse someone, as their privacy settings say.
+ */
+export type AddWho = 'friends' | 'contacts' | 'known';
+
+/**
+ * Adding people to a group (capability 'addMembers', the `addMembers` command): whether this account may here, and
+ * how. What its own client offers as "Add members", "Add people" or "Invite".
+ */
+export interface AboutAdding {
+  /** This account may add people here now. */
+  can: boolean;
+  /** Why not, in words. When it may, a limit worth knowing ("Only your friends", "Up to 10 people in all"). */
+  reason?: string;
+  who: AddWho;
+  /** add: they are in at once. invite: they get an invite and are in once they accept (Matrix). */
+  mode: 'add' | 'invite';
+  /** How many more fit, when the network caps the group (Discord: 10 people in all). */
+  room?: number;
+}
+
+/** What `addMembers` answers, in native ids. */
+export interface AddMembersResult {
+  /** In it now. */
+  added: string[];
+  /** Invited: in once they accept (Matrix; Signal when it does not have their profile yet). */
+  invited?: string[];
+  /** Refused by the network, each with its sentence ("Their privacy settings don't let you add them"). */
+  failed?: { id: string; reason: string }[];
+  /** The About as it now stands. */
+  about?: About;
+}
+
+/** At most this many people in one `addMembers`: a few at a time, as a person would pick them. */
+export const ADD_MEMBERS_MAX = 10;
+
+/** What a network that has groups but no `addMembers` for this account says instead. */
+export function addMembersNotBuilt(network: Network): string {
+  if (network === 'whatsapp') return 'Adding people from here is left out on WhatsApp, which watches for it: share the invite link, or add them on your phone.';
+  return `Adding people on ${NETWORK_META[network].name} isn't built for this account yet.`;
+}
+
 /** What `about` answers, in native ids. */
 export interface About {
   /** The network's word for it: "Group", "Server", "Room", "Channel", "Community". */
@@ -123,6 +167,8 @@ export interface About {
     total?: number;
     complete: boolean;
   };
+  /** Adding people here, for an adapter with 'addMembers'. Left out where nobody adds people (DMs, servers, channels). */
+  adding?: AboutAdding;
   roles?: AboutRole[];
   rules?: AboutRule[];
   /** This account's own standing here. */

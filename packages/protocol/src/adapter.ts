@@ -76,7 +76,9 @@ export type Capability =
   /** Says who the account is friends with, has asked, blocked, has as a contact or follows (the relationships events). */
   | 'relationships'
   /** Ends one of those: unfriend, cancel a request you sent, unblock, remove a contact, unfollow (the `remove` command). */
-  | 'disconnect';
+  | 'disconnect'
+  /** Adds people to a group the account is in (the `addMembers` command), where its About's `adding` says it may. */
+  | 'addMembers';
 
 // ---------------------------------------------------------------- facts
 
@@ -455,6 +457,12 @@ export type AdapterCommand =
    * again"). reply.result: AddResult with the relationship after; a relationship event follows.
    */
   | { t: 'remove'; id: string; identity: string; relationship: PersonRelationship }
+  /**
+   * Add people to a group (capability 'addMembers'): `people` are native identity ids, at most ADD_MEMBERS_MAX, none in
+   * it yet. The hub has checked a fresh About's `adding` and paced it. One person refused does not stop the rest.
+   * Identity and conversation facts first (its new participants), then reply.result: AddMembersResult.
+   */
+  | { t: 'addMembers'; id: string; target: AboutTarget; people: string[] }
   /** Account-specific actions, e.g. 'relogin', 'startLink', 'resync'. */
   | { t: 'action'; id: string; action: string; args?: unknown }
   | { t: 'shutdown' };
