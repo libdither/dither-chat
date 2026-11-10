@@ -602,6 +602,8 @@ export interface AttentionSource {
   view(id: string): P.AttentionView | undefined;
   list(): P.AttentionView[];
   explain?(id: string, now: number): unknown;
+  /** Whether it has changes waiting for the next rescore. */
+  readonly busy?: boolean;
 }
 
 // ------------------------------------------------------------------ kept in the database
@@ -642,6 +644,8 @@ export class Attention {
   readonly sources: AttentionSource[] = [];
   /** How you answer an author elsewhere (their mail, mail/attention.ts), summed with their chat tallies. */
   otherTallies?: (authorKey: string) => Tally[];
+  /** The clock the pump's and a sync's time budgets are kept by, in ms (a test's stands in for it). */
+  budgetClock: () => number = () => performance.now();
 
   constructor(
     private store: Store,
@@ -776,7 +780,7 @@ export class Attention {
    * the hub keeps answering while millions of imported messages fold. Returns how many it folded; 0 when idle.
    */
   pump(budget = 5000, maxMs = 30): number {
-    const start = performance.now();
+    const start = this.budgetClock();
     const db = this.store.db;
     const now = this.now();
     this.refreshSelf();
@@ -789,9 +793,12 @@ export class Attention {
       )
       .all() as Row[];
     let spent = 0;
+    let folded = 0;
     for (const r of behind) {
-      if (spent >= budget || performance.now() - start > maxMs) break;
+      // At least one each call, however slow the machine: 0 says there was nothing to fold.
+      if (spent >= budget || (folded > 0 && this.budgetClock() - start > maxMs)) break;
       spent += this.fold(r.id, Math.min(500, budget - spent));
+      folded++;
       this.pending.add(r.id);
     }
     return spent;
@@ -973,6 +980,11 @@ export class Attention {
     }
   }
 
+  /** Whether conversations (or a source's rows) wait to be scored again: the next sync has them. */
+  get busy(): boolean {
+    return this.pending.size > 0 || this.sources.some((s) => s.busy);
+  }
+
   /** One conversation's score as last sent, if the inbox lists it. */
   view(id: string): P.AttentionView | undefined {
     if (!this.scored) this.rescoreAll();
@@ -1012,9 +1024,11 @@ export class Attention {
     if (this.sources.length) this.fromSources(now, false, items, gone);
     if (!this.pending.size) return this.event(items, gone);
     this.refreshSelf();
-    const start = performance.now();
+    const start = this.budgetClock();
+    let steps = 0;
     for (const id of this.pending) {
-      if (performance.now() - start > budgetMs) break;
+      // At least one each sync, however slow the machine.
+      if (steps++ > 0 && this.budgetClock() - start > budgetMs) break;
       this.pending.delete(id);
       const stale = this.store.db.query('SELECT stale_at FROM conv_feature WHERE conversation_id = ?').get(id) as Row | null;
       // More than this is a backlog: the pump has it.

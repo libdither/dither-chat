@@ -14,6 +14,7 @@
     "test": "bun scripts/test-all.ts",
     "budgets": "bun scripts/budgets.ts",
     "check:boot": "bun scripts/check-boot.ts",
+    "check:tests": "bun scripts/check-tests.ts",
     "accounts:check": "bun scripts/accounts-sync.ts --check"
   },
   "devDependencies": {

@@ -108,13 +108,14 @@ describe('the model', () => {
     expect(p).toContain('Less likely to ping: In #c1');
   });
 
-  test('fits twenty thousand examples quickly', () => {
+  test('fits twenty thousand examples, in work that grows with their features', () => {
     const ex = Array.from({ length: 20_000 }, (_, i) =>
       i % 50 ? stood({ conversation: `c${i % 2000}`, author: `p${i % 700}`, spaces: [`s${i % 40}`] }) : vote({ conversation: `c${i % 2000}` }, 'quiet', ['alpha', 'beta']),
     );
-    const t = performance.now();
-    train(ex);
-    expect(performance.now() - t).toBeLessThan(3000);
+    // A fit is at most 12 sweeps × 3 heads × every example's features: kept small by count, not by a clock.
+    expect(ex.reduce((n, e) => Math.max(n, features(e.facts, e.words, e.x).length), 0)).toBeLessThanOrEqual(20);
+    const m = train(ex);
+    expect(Object.keys(m.w.ping).length).toBeGreaterThan(0);
   });
 });
 

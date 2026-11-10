@@ -40,22 +40,25 @@ const reject = async (p: Promise<unknown>) => {
 
 beforeAll(() => {
   store = new Store(join(dir, 'hub.sqlite'), mediaSigner('s'));
-  for (const acc of createDemoAccounts(store)) {
-    const adir = join(dir, acc.id);
-    mkdirSync(adir, { recursive: true });
-    const a = demoFactory(acc, adir)!;
-    adapters.set(acc.id, a);
-    a.start((ev) => {
-      if (ev.t === 'reply') {
-        const p = pending.get(ev.id);
-        pending.delete(ev.id);
-        if (ev.ok) p?.resolve(ev.result);
-        else p?.reject(new Error(ev.error));
-        return;
-      }
-      store.ingest(store.account(acc.id)!, ev);
-    });
-  }
+  // The world's first events in one transaction: one write to disk, not one per event (seconds on a busy disk).
+  store.db.transaction(() => {
+    for (const acc of createDemoAccounts(store)) {
+      const adir = join(dir, acc.id);
+      mkdirSync(adir, { recursive: true });
+      const a = demoFactory(acc, adir)!;
+      adapters.set(acc.id, a);
+      a.start((ev) => {
+        if (ev.t === 'reply') {
+          const p = pending.get(ev.id);
+          pending.delete(ev.id);
+          if (ev.ok) p?.resolve(ev.result);
+          else p?.reject(new Error(ev.error));
+          return;
+        }
+        store.ingest(store.account(acc.id)!, ev);
+      });
+    }
+  })();
   store.flush();
   abouts = new Abouts({
     store,
@@ -245,5 +248,19 @@ describe('members seen (adversarial, passive)', () => {
     } finally {
       store.setRetention(before);
     }
+  });
+});
+
+describe('a new demo world', () => {
+  test('starts from the first names and settings (a fresh hub, Reset demo, the next test run)', async () => {
+    // The tests above renamed the book club and set the climbers' timer to 90 s.
+    const climb = conv('signal', (c) => c.name === 'Climbing crew 🧗');
+    expect((await abouts.get('conversation', climb.id)).fields.disappearing?.value).toBe(90);
+    const again = new Store(join(dir, 'again.sqlite'), mediaSigner('s'));
+    createDemoAccounts(again);
+    again.db.close();
+    expect((await abouts.get('conversation', climb.id)).fields.disappearing?.value).toBe(7 * 86_400);
+    const book = conv('whatsapp', (c) => c.name === 'Book club');
+    expect((await abouts.get('conversation', book.id)).fields.name?.value).toBe('Book club 📚');
   });
 });

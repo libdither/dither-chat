@@ -351,15 +351,15 @@ describe('the embedder on a hub', () => {
     const id = store.one<{ id: string }>('SELECT id FROM message WHERE native_id = ?', 'n4')!.id;
     jev.hang = () => {};
     const before = jev.embedded;
-    let t = performance.now();
+    // It gives up after its own wait, with the request still out.
     await emb.prepare([id], 40);
-    expect(performance.now() - t).toBeLessThan(500);
-    t = performance.now();
-    await emb.prepare([id], 5_000);
-    expect(performance.now() - t).toBeLessThan(50);
+    expect(jev.embedded).toBe(before);
+    // Then it does not wait at all: it is done before anything queued after it runs.
+    const second = await Promise.race([emb.prepare([id], 5_000).then(() => 'returned'), new Promise((r) => setImmediate(() => r('waited')))]);
+    expect(second).toBe('returned');
     jev.hang();
     jev.hang = null;
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setImmediate(r));
     expect(jev.embedded - before).toBe(1);
   });
 });

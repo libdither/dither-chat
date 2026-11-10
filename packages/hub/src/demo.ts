@@ -1069,13 +1069,16 @@ const DISCORD_STAFF: Record<string, string> = {
   [D.hannah.nativeId]: 'role-helper',
 };
 
-/** A demo place's settings, changed in memory by `configure` until the hub restarts. */
+/** A demo place's settings, changed in memory by `configure` until the hub restarts or the demo world is made again. */
 interface DemoPlace {
   values: Partial<P.AboutValues>;
   pinned: string[];
   invite: string | null;
 }
 const demoPlaces = new Map<string, DemoPlace>();
+/** The facts as the world starts: `configure` replaces a renamed place's, and a new world puts them back. */
+const FIRST_CONVS = new Map(CONVS.map((c) => [c, c.fact]));
+const FIRST_SPACES = new Map(SPACES.map((x) => [x, x.fact]));
 
 const lc = (s: string) => s[0].toUpperCase() + s.slice(1);
 const ADDS_MEMBERS = new Set<P.Network>(['discord', 'signal', 'matrix']);
@@ -2314,6 +2317,10 @@ export function demoFactory(acc: AccountRow, dir: string): InprocAdapter | null 
 }
 
 export function createDemoAccounts(store: Store): AccountRow[] {
+  // A new world (a fresh hub, Reset demo, each test): names and settings changed in the last one start over.
+  demoPlaces.clear();
+  for (const [c, f] of FIRST_CONVS) c.fact = f;
+  for (const [x, f] of FIRST_SPACES) x.fact = f;
   const epoch = Date.now();
   return DEMO_ACCOUNTS.map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
 }

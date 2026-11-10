@@ -27,22 +27,25 @@ const identityOf = (net: P.Network) => store.one<{ id: string }>('SELECT id FROM
 
 beforeAll(() => {
   store = new Store(join(dir, 'hub.sqlite'), mediaSigner('s'));
-  for (const acc of createDemoAccounts(store)) {
-    const adir = join(dir, acc.id);
-    mkdirSync(adir, { recursive: true });
-    const a = demoFactory(acc, adir)!;
-    adapters.set(acc.id, a);
-    a.start((ev) => {
-      if (ev.t === 'reply') {
-        const p = pending.get(ev.id);
-        pending.delete(ev.id);
-        if (ev.ok) p?.resolve(ev.result);
-        else p?.reject(new Error(ev.error));
-        return;
-      }
-      store.ingest(store.account(acc.id)!, ev);
-    });
-  }
+  // The world's first events in one transaction: one write to disk, not one per event (seconds on a busy disk).
+  store.db.transaction(() => {
+    for (const acc of createDemoAccounts(store)) {
+      const adir = join(dir, acc.id);
+      mkdirSync(adir, { recursive: true });
+      const a = demoFactory(acc, adir)!;
+      adapters.set(acc.id, a);
+      a.start((ev) => {
+        if (ev.t === 'reply') {
+          const p = pending.get(ev.id);
+          pending.delete(ev.id);
+          if (ev.ok) p?.resolve(ev.result);
+          else p?.reject(new Error(ev.error));
+          return;
+        }
+        store.ingest(store.account(acc.id)!, ev);
+      });
+    }
+  })();
   store.flush();
   people = new People({
     store,

@@ -70,11 +70,20 @@ describe('the inbox query', () => {
     expect(pick(`${at} = 'digest' AND t.score IS NOT NULL`, 300, 'm.ts DESC').length).toBeLessThan(300);
   });
 
-  test('in a few milliseconds', () => {
-    store.inbox(since, now);
-    const t0 = performance.now();
-    for (let i = 0; i < 5; i++) store.inbox(since, now);
-    // About 20 ms; one query per pick sorting the week took about 100 ms here (1.5 s on the live hub).
-    expect((performance.now() - t0) / 5).toBeLessThan(50);
+  test('only a few rows are ever sorted whole: the notified, never the week', () => {
+    // Sorting the week took 1.5 s on the live hub. Counted, not timed: a pick whose plan sorts all it finds is the
+    // notified one (push and quiet), and what it finds is a small part of the window.
+    const week = store.one<{ n: number }>('SELECT COUNT(*) AS n FROM message WHERE ts >= ?', since)!.n;
+    let sorted = 0;
+    for (const q of Store.inboxQueries(since, now)) {
+      const plan = (store.db.query('EXPLAIN QUERY PLAN ' + q.sql).all(q.since, q.limit) as { detail: string }[]).map((r) => r.detail);
+      if (!plan.includes('USE TEMP B-TREE FOR ORDER BY')) continue;
+      expect(q.pick).toBe('notified');
+      const n = store.one<{ n: number }>(`SELECT COUNT(*) AS n FROM (${q.sql.replace(/ ORDER BY [^]*$/, '')})`, q.since)!.n;
+      expect(n).toBeGreaterThan(0);
+      expect(n).toBeLessThan(week / 20);
+      sorted++;
+    }
+    expect(sorted).toBe(1);
   });
 });

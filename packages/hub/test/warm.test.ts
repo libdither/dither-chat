@@ -13,6 +13,8 @@ import { Triage } from '../src/triage.ts';
 const dir = mkdtempSync(join(tmpdir(), 'dither-warm-'));
 const sign = mediaSigner('s');
 const asked: string[] = [];
+/** The slow picture's answer, which never comes. */
+const never = new Promise<void>(() => {});
 let store: Store;
 let hub: HubServer;
 
@@ -23,7 +25,7 @@ beforeAll(() => {
     online: () => true,
     command: async (_a: string, c: any) => {
       asked.push(c.url);
-      if (c.url === 'mxc://x/slow') await new Promise((r) => setTimeout(r, 2000));
+      if (c.url === 'mxc://x/slow') await never;
       return { mime: 'image/png', base64: Buffer.from('pic').toString('base64') };
     },
   } as any;
@@ -46,8 +48,8 @@ test('fetches each signed picture once into the cache, and leaves alone what it 
 });
 
 test('waits no longer than it was given', async () => {
-  const t = Date.now();
+  // The picture never comes: warm returns after its own 100 ms (or the test times out), with nothing cached.
   await hub.warm([sign('mxc://x/slow', 'acc_1')], 100);
-  expect(Date.now() - t).toBeLessThan(1000);
+  expect(asked).toContain('mxc://x/slow');
   expect(cached('mxc://x/slow')).toBe(false);
 });
