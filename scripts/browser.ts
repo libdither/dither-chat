@@ -3,7 +3,7 @@
  * screenshots. It has its own throwaway profile and HOME; pass caCert to trust the hub's private CA.
  * Uses no dependency beyond chromium itself (and nix for certutil).
  */
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -20,6 +20,14 @@ export interface Page {
   evalWorker<T = any>(url: string, expr: string): Promise<T>;
 }
 
+const readFileOr = (path: string) => {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return '';
+  }
+};
+
 /** args: extra Chromium flags, e.g. a fake microphone for call tests. */
 export async function launch(opts: { caCert?: string; host?: string; args?: string[] } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'dither-browser-'));
@@ -31,16 +39,20 @@ export async function launch(opts: { caCert?: string; host?: string; args?: stri
     const r = run('-A', '-d', `sql:${nss}`, '-t', 'C,,', '-n', 'dither-chat', '-i', opts.caCert);
     if (r.exitCode !== 0) throw new Error('certutil failed: ' + r.stderr.toString());
   }
-  const port = 9300 + Math.floor(Math.random() * 500);
-  const proc = Bun.spawn(['chromium', '--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${join(home, 'profile')}`, '--no-first-run', '--no-sandbox', '--disable-gpu', ...(opts.args ?? []), 'about:blank'], {
+  // Port 0: Chromium takes a free port itself and writes it to DevToolsActivePort in its own profile, so this never
+  // attaches to another browser that happens to hold a port it guessed (other agents run headless Chromium too).
+  const profile = join(home, 'profile');
+  const proc = Bun.spawn(['chromium', '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-sandbox', '--disable-gpu', ...(opts.args ?? []), 'about:blank'], {
     env: { ...process.env, HOME: home },
     stdout: 'ignore',
     stderr: 'ignore',
   });
+  let port = 0;
   let targets: any[] = [];
   for (let i = 0; i < 100 && !targets.length; i++) {
     await Bun.sleep(200);
-    targets = await fetch(`http://127.0.0.1:${port}/json`).then((r) => r.json() as Promise<any[]>).catch(() => []);
+    if (!port) port = Number(readFileOr(join(profile, 'DevToolsActivePort')).split('\n')[0]) || 0;
+    if (port) targets = await fetch(`http://127.0.0.1:${port}/json`).then((r) => r.json() as Promise<any[]>).catch(() => []);
   }
   const target = targets.find((t) => t.type === 'page');
   if (!target) throw new Error('chromium did not start');
