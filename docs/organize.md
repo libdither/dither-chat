@@ -60,7 +60,8 @@ People have no manual order to keep, so "Manual" there is not offered. Group cha
 scope of their own; they are in the inbox now, which has one order, by how much each conversation needs you
 ([inbox.md](inbox.md)). A `groups` scope an older hub stored is ignored.
 
-In every mode **pinned places stay first, in your manual order** (starred people in the People list).
+In every mode **pinned places stay first, in your manual order**. The People list has no pinned section: starred
+people sort with everyone else since stars left the app (2026-11-10).
 A **folder sorts as one unit by its best member** (highest score, latest message), and its contents sort
 the same way inside. Manual mode keeps the folder's own order.
 

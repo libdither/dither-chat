@@ -112,10 +112,10 @@ export function Tag({ icon, children, tone, title }: { icon?: string; children: 
 }
 
 /** An action in the hero's row. `menu`: it opens a menu under itself instead. `kind`: its data-action, for scripts. */
-export function Action({ icon, label, onClick, menu, primary, on, title, disabled, kind }: { icon: string; label: string; onClick?: () => void; menu?: () => MenuSpec | null; primary?: boolean; on?: boolean; title?: string; disabled?: boolean; kind?: string }) {
+export function Action({ icon, label, onClick, menu, primary, title, disabled, kind }: { icon: string; label: string; onClick?: () => void; menu?: () => MenuSpec | null; primary?: boolean; title?: string; disabled?: boolean; kind?: string }) {
   return (
     <button
-      class={`pf-action ${primary ? 'primary' : ''} ${on ? 'on' : ''}`}
+      class={`pf-action ${primary ? 'primary' : ''}`}
       title={title ?? label}
       disabled={disabled}
       data-action={kind}

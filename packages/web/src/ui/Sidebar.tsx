@@ -415,7 +415,6 @@ export const PersonRow = memo(function PersonRow({ person, directs, active, onCl
         <span class="row-top">
           <span class="row-title">
             {person.name}
-            {person.starred && <Icon name="star" size={11} class="row-star" />}
           </span>
           <span class="row-nets">
             {directs.map((d) => (
@@ -512,8 +511,6 @@ export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
   const accounts = relationship && links.view ? linkAccounts(links.view) : [];
   const scoped = accountId && accounts.some((a) => a.id === accountId) ? accountId : null;
   const list = filter === 'chats' ? arrangedPeople(people()).filter((x) => !q.trim() || nameMatches(x.person.name, q)) : [];
-  const starred = list.filter((x) => x.person.starred);
-  const rest = list.filter((x) => !x.person.starred);
   return (
     <div class="sidebar-inner" data-track-area="people">
       <header class="side-head">
@@ -532,10 +529,8 @@ export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
       <FindBox value={q} set={setQ} placeholder={FIND[filter]} />
       <div class="side-scroll">
         {relationship && <PeopleLinks relationship={relationship} links={links} accountId={scoped} dots={accounts.length > 1 && !scoped} q={q} sort={prefs.value.peopleLinkSort ?? 'recent'} active={activePerson} />}
-        {starred.length > 0 && <SectionHead id="people-star" label="Starred" count={starred.length} />}
-        {!isCollapsed('people-star') && starred.map(({ person, directs }) => <PersonRow key={person.id} person={person} directs={directs} active={person.id === activePerson} onClick={opener(`people:${person.id}`, () => go({ view: 'people', person: person.id }))} />)}
-        {filter === 'chats' && <SectionHead id="people-all" label="Direct messages" count={rest.length} />}
-        {!isCollapsed('people-all') && rest.map(({ person, directs }) => <PersonRow key={person.id} person={person} directs={directs} active={person.id === activePerson} onClick={opener(`people:${person.id}`, () => go({ view: 'people', person: person.id }))} />)}
+        {filter === 'chats' && <SectionHead id="people-all" label="Direct messages" count={list.length} />}
+        {!isCollapsed('people-all') && list.map(({ person, directs }) => <PersonRow key={person.id} person={person} directs={directs} active={person.id === activePerson} onClick={opener(`people:${person.id}`, () => go({ view: 'people', person: person.id }))} />)}
         {filter === 'chats' && q.trim() && !list.length && <p class="inbox-empty">Nobody here matches “{q.trim()}”.</p>}
       </div>
     </div>

@@ -105,7 +105,7 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Per-place overrides list, clear one | Settings | More tab | You tab |
 | Conversation header: where it is, via which account, search in it, profile, all chats, details | Header | Wrapped to four lines | One line that fades; "via" is in the details panel; Profile and All chats in the details panel |
 | Details panel: source, accounts, native id, open in the network's app, level, members, threads | Toggle in the header | Full-screen overlay | Swipe left, or the header button; a panel with the page peeking |
-| Person details: identities, split, merge, star, chats | Details panel | Full-screen overlay | Panel |
+| Person details: identities, split, merge, always notify, chats | Details panel | Full-screen overlay | Panel |
 | Profile and the merge flow | Avatar, member or mention | Reachable | Reachable; swipe back |
 | New message (start a DM), send-as account | Plus in the Inbox and People headers; dialog | Centered dialog | Plus in the headers; bottom sheet |
 | Quick switcher | Ctrl+K | **Keyboard only** | Search tab: searching a name lists people, communities and channels to jump to |

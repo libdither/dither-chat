@@ -167,8 +167,23 @@ try {
   await Bun.sleep(150);
   await click('.pf-action[title="More"]');
   const more = await menu();
-  check(more.some((m) => m.startsWith('Copy')) && more.includes('Merge Another Identity In') && more.includes('Open on Discord'), 'More holds the copies, merging and opening on a network', more);
-  check(!more.some((m) => ['Profile', 'Message', 'Star', 'Unstar'].includes(m)), 'but not what the page already has a button for');
+  check(more.filter((m) => m.startsWith('Copy')).length === 1 && more.includes('Copy') && more.includes('Merge Another Identity In'), 'More holds one Copy entry and merging', more);
+  check(!more.some((m) => ['Profile', 'Message', 'Star', 'Unstar'].includes(m) || m.startsWith('Open on')), 'but not what the page already has a button for, a star or opening on a network');
+  // Copy holds a menu per network, each with its own: a submenu inside a submenu.
+  await click('.cm-item[aria-haspopup="menu"]');
+  await p.until(`document.querySelectorAll('.cm').length === 2`, 3000).catch(() => {});
+  const nets = await p.eval<string[]>(`[...document.querySelectorAll('.cm.cm-sub .cm-item')].map((b) => b.textContent.trim())`);
+  check(nets.includes('Discord') && nets.includes('Signal'), 'Copy lists each network', nets);
+  const discordAt = await p.eval<string | null>(`[...document.querySelectorAll('.cm.cm-sub .cm-item')].find((b) => b.textContent.trim() === 'Discord')?.dataset.i ?? null`);
+  await click(`.cm.cm-sub .cm-item[data-i="${discordAt}"]`);
+  await p.until(`document.querySelectorAll('.cm').length === 3`, 3000).catch(() => {});
+  const copies = await p.eval<string[]>(`[...[...document.querySelectorAll('.cm.cm-sub')].at(-1)?.querySelectorAll('.cm-item') ?? []].map((b) => b.textContent.trim())`);
+  check(copies.includes('Copy User ID') && copies.includes('Copy Profile Link'), "and Discord's own menu opens beside it, with the profile link", copies);
+  // Close them all.
+  for (let i = 0; i < 2; i++) {
+    await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+    await Bun.sleep(150);
+  }
   await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
   await Bun.sleep(150);
 

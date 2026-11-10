@@ -164,7 +164,7 @@ export function ConversationDetails({ convId }: { convId: string }) {
                 <li>{o}</li>
               ))}
             </ol>
-            <p>The most specific rule wins. A mute set in the native app caps inherited levels at Digest. Starred people and keywords can still push.</p>
+            <p>The most specific rule wins. A mute set in the native app caps inherited levels at Digest. People set to always notify, and keywords, can still push.</p>
           </details>
         </Section>
 
@@ -216,6 +216,7 @@ export function PersonDetails({ personId }: { personId: string }) {
   if (!p) return null;
   const directs = directsOf(p.id);
   const ids = p.identityIds.map((id) => db.identities.get(id)).filter((i): i is P.IdentityView => !!i);
+  const always = p.starred || db.rules.some((r) => r.scope === 'person' && r.target === p.id && r.level === 'all');
   const others = [...db.persons.values()].filter((x) => x.id !== p.id && !x.isSelf).sort((a, b) => a.name.localeCompare(b.name));
   return (
     <aside class="details">
@@ -276,10 +277,19 @@ export function PersonDetails({ personId }: { personId: string }) {
         </Section>
         <Section title="Notifications">
           <label class="toggle-row">
-            <input type="checkbox" checked={p.starred} onChange={(e) => api(`/api/persons/${p.id}`, { method: 'PATCH', body: { starred: (e.target as HTMLInputElement).checked } })} />
+            <input
+              type="checkbox"
+              checked={always}
+              onChange={(e) => {
+                const on = (e.target as HTMLInputElement).checked;
+                setRule('person', p.id, on ? 'all' : null);
+                // A star set before stars left the app means the same to the hub, so turning this off clears it too.
+                if (!on && p.starred) api(`/api/persons/${p.id}`, { method: 'PATCH', body: { starred: false } });
+              }}
+            />
             <span>
-              <b>Starred</b>
-              <small>Always push messages from {p.name}, on every network, even in busy groups.</small>
+              <b>Always notify</b>
+              <small>Push messages from {p.name}, on every network, even in busy groups.</small>
             </span>
           </label>
         </Section>

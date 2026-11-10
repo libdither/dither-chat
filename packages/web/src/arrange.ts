@@ -129,9 +129,9 @@ export function arrangedFolderItems(f: P.FolderView): P.FolderView['items'] {
 }
 
 type PersonEntry = { person: P.PersonView; directs: P.ConversationView[]; last: number };
-const personSortable = (x: PersonEntry): Sortable => ({ key: `person:${x.person.id}`, name: x.person.name, pinned: x.person.starred, position: null, last: x.last, score: score('person', x.person.id, sumUnread(x.directs).badge) });
+const personSortable = (x: PersonEntry): Sortable => ({ key: `person:${x.person.id}`, name: x.person.name, pinned: false, position: null, last: x.last, score: score('person', x.person.id, sumUnread(x.directs).badge) });
 
-/** The People list; starred people stay first, like pinned places. */
+/** The People list. */
 export function arrangedPeople(list: PersonEntry[]): PersonEntry[] {
   const mode = sortOf('people');
   if (mode === 'recent') return list;

@@ -297,7 +297,6 @@ function PersonHeader({ person, onBack }: { person: P.PersonView; onBack?: () =>
           <button class="conv-head-name" data-track="name" title={`${person.name}'s profile`} onClick={() => go({ view: 'profile', person: person.id })}>
             {person.name}
           </button>
-          {person.starred && <Icon name="star" size={13} class="row-star" />}
         </h2>
         <div class="conv-head-sub">
           <span class="ident-chips">
