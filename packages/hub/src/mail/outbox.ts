@@ -10,8 +10,9 @@
  *   503, limited      tried again later (2 s, doubling to 15 min), for up to a day
  *   timeout (504)     `failed`, "may have been sent": look in Sent before sending it again
  *   501               `failed`, and sending is off for the account with the extractor's words (Proton today)
- *   422 recipients    `failed` with the extractor's sentence, its "recipient N" named by address; sending stays on
- *   403, 422, other   `failed` with why (a read grant; a From that is not the account's; the extractor's words)
+ *   422 from          `failed`, "That From is not one of this account's addresses" (also with no code)
+ *   422, other codes  `failed` with the extractor's sentence, each "recipient N" in it the address; sending stays on
+ *   403, other        `failed` with why (a read grant; the extractor's words)
  *
  * Whatever fails goes back to the drafts, files and all: a failed send is never a lost message. A send the hub stopped
  * in the middle of may have gone, and says so.
@@ -85,8 +86,8 @@ const sentence = (msg: string) => {
 };
 
 /**
- * An extractor's recipient refusal (422 'recipients') with each "recipient N" named: N counts To, then Cc, then Bcc,
- * an address once whatever its case, from 1. A number past the last stays a number.
+ * An extractor's refusal (422) as one sentence, each "recipient N" in it replaced by that address: N counts To, then
+ * Cc, then Bcc, an address once whatever its case, from 1. A number past the last stays as it was.
  */
 export function recipientsRefused(msg: string, out: Partial<Pick<M.OutgoingMail, 'to' | 'cc' | 'bcc'>>): string {
   const seen = new Set<string>();
@@ -97,7 +98,8 @@ export function recipientsRefused(msg: string, out: Partial<Pick<M.OutgoingMail,
     seen.add(e);
     list.push(a.email.trim());
   }
-  return sentence(msg.replace(/\b([Rr]ecipient) (\d+)\b/g, (all, word: string, n: string) => (list[Number(n) - 1] ? `${word} ${list[Number(n) - 1]}` : all)));
+  // A sentence first, so an address that now starts it keeps its case.
+  return sentence(msg).replace(/\b[Rr]ecipient (\d+)\b/g, (all, n: string) => list[Number(n) - 1] ?? all);
 }
 /** A type the extractors take (`type/subtype`), else the generic one. */
 const cleanMime = (m: unknown) => (typeof m === 'string' && /^[\w.+-]+\/[\w.+-]+$/.test(m) ? m : 'application/octet-stream');
@@ -544,11 +546,11 @@ export class MailOutbox {
     const s = e.status;
     const msg = e.message.replace(/[.\s]+$/, '');
     if (s === 422) {
-      // A recipient the extractor won't send to: this message only, so sending stays on for the account.
-      if (e.code === 'recipients') return this.fail(r, recipientsRefused(e.message, json(r.outgoing, {})));
-      // A From that is not the account's: 'from', or no code of the extractor's ('failed' is the manager's own).
-      if (!e.code || e.code === 'from' || e.code === 'failed') return this.fail(r, FROM_REFUSED);
-      return this.fail(r, sentence(msg));
+      // A From that is not the account's: 'from', or no code at all (an older extractor).
+      if (!e.code || e.code === 'from') return this.fail(r, FROM_REFUSED);
+      // Anything else is the extractor's sentence for a person: 'recipients', 'settings', or 'failed' while the manager
+      // does not pass an extractor's code on. This message only, so sending stays on for the account.
+      return this.fail(r, recipientsRefused(e.message, json(r.outgoing, {})));
     }
     if (s === 501) {
       // Not supported by the extractor (Proton today): off for the account, until you ask again.

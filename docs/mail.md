@@ -92,10 +92,13 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
   - 501: sending is off for the account, with the extractor's words (Proton today). It stays off while the account's
     status still says it can send, until "Try sending again";
   - 422 `recipients`: the extractor won't send to someone on it (Proton: a pinned key in your contacts, say). Its
-    sentence shows, each "recipient N" named by address (counted To, then Cc, then Bcc, an address once);
+    sentence shows, each "recipient N" replaced by the address (counted To, then Cc, then Bcc, an address once);
   - 422 `settings`: your Proton settings sign mail to outside addresses or attach your public key, which dither-chat
     can't do yet. The extractor's sentence shows;
-  - 403 (a read grant), 422 `from` or no code (From), anything else: why.
+  - 422 `from` or no code: "That From is not one of this account's addresses.";
+  - 422 with the manager's `failed` (it passes no extractor code on before dither-accounts' Proton send change): the
+    extractor's sentence, recipients replaced as for `recipients`;
+  - 403 (a read grant), anything else: why.
 
   A 422 fails only that message: sending stays on for the account.
 
