@@ -91,7 +91,13 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
   - no answer in time: "it may have been sent: look in Sent before sending it again";
   - 501: sending is off for the account, with the extractor's words (Proton today). It stays off while the account's
     status still says it can send, until "Try sending again";
-  - 403 (a read grant), 422 (From), anything else: why.
+  - 422 `recipients`: the extractor won't send to someone on it (Proton: a pinned key in your contacts, say). Its
+    sentence shows, each "recipient N" named by address (counted To, then Cc, then Bcc, an address once);
+  - 422 `settings`: your Proton settings sign mail to outside addresses or attach your public key, which dither-chat
+    can't do yet. The extractor's sentence shows;
+  - 403 (a read grant), 422 `from` or no code (From), anything else: why.
+
+  A 422 fails only that message: sending stays on for the account.
 
   Whatever does not go out goes back to the drafts, with its files: a failed send is never a lost message. A send the
   hub stopped in the middle of says it may have been sent. The strip shows failures on every device until dismissed,
@@ -532,7 +538,8 @@ others were asked, because an IMAP move is a removal there and an addition elsew
   headers) and `mail-parts.test.ts` (the routes on the fake).
 - Sending: `hub/test/mail-compose.test.ts` (recipients, subjects, quotes, the HTML part) and `mail-send.test.ts` (the
   fake: held and undone, 501 turning sending off with the message kept, a read grant, a dry run, retries and a timeout,
-  files by path and by their bytes, a forward's files, From, a clientId sent once, a restart mid-send).
+  files by path and by their bytes, a forward's files, From, a recipient or settings refused (422), a clientId sent
+  once, a restart mid-send).
   `mail-remote.test.ts` sends a reply through the SMTP sink and checks its headers and its copy in the thread.
   `verify-mail.ts` writes, undoes and sends on a phone and docks a new message on a desktop, last, since it sends.
 - `hub/test/mail-remote.test.ts` runs against a real manager with an `imap` account on dither-accounts' Dovecot and

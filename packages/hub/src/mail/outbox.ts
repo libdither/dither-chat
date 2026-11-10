@@ -10,7 +10,8 @@
  *   503, limited      tried again later (2 s, doubling to 15 min), for up to a day
  *   timeout (504)     `failed`, "may have been sent": look in Sent before sending it again
  *   501               `failed`, and sending is off for the account with the extractor's words (Proton today)
- *   403, 422, other   `failed` with why (a read grant; a From that is not the account's)
+ *   422 recipients    `failed` with the extractor's sentence, its "recipient N" named by address; sending stays on
+ *   403, 422, other   `failed` with why (a read grant; a From that is not the account's; the extractor's words)
  *
  * Whatever fails goes back to the drafts, files and all: a failed send is never a lost message. A send the hub stopped
  * in the middle of may have gone, and says so.
@@ -77,6 +78,27 @@ const json = <T>(s: string | null | undefined, fallback: T): T => {
 };
 const lc = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
 const bad = (msg: string, status = 400) => new MailCallError(msg, status);
+/** A message as one sentence: a capital first, one full stop at the end. */
+const sentence = (msg: string) => {
+  const m = msg.replace(/[.\s]+$/, '');
+  return `${m[0]?.toUpperCase() ?? ''}${m.slice(1)}.`;
+};
+
+/**
+ * An extractor's recipient refusal (422 'recipients') with each "recipient N" named: N counts To, then Cc, then Bcc,
+ * an address once whatever its case, from 1. A number past the last stays a number.
+ */
+export function recipientsRefused(msg: string, out: Partial<Pick<M.OutgoingMail, 'to' | 'cc' | 'bcc'>>): string {
+  const seen = new Set<string>();
+  const list: string[] = [];
+  for (const a of [...(out.to ?? []), ...(out.cc ?? []), ...(out.bcc ?? [])]) {
+    const e = lc(a?.email);
+    if (!e || seen.has(e)) continue;
+    seen.add(e);
+    list.push(a.email.trim());
+  }
+  return sentence(msg.replace(/\b([Rr]ecipient) (\d+)\b/g, (all, word: string, n: string) => (list[Number(n) - 1] ? `${word} ${list[Number(n) - 1]}` : all)));
+}
 /** A type the extractors take (`type/subtype`), else the generic one. */
 const cleanMime = (m: unknown) => (typeof m === 'string' && /^[\w.+-]+\/[\w.+-]+$/.test(m) ? m : 'application/octet-stream');
 
@@ -521,16 +543,22 @@ export class MailOutbox {
   private refused(r: Row, e: MailCallError) {
     const s = e.status;
     const msg = e.message.replace(/[.\s]+$/, '');
+    if (s === 422) {
+      // A recipient the extractor won't send to: this message only, so sending stays on for the account.
+      if (e.code === 'recipients') return this.fail(r, recipientsRefused(e.message, json(r.outgoing, {})));
+      // A From that is not the account's: 'from', or no code of the extractor's ('failed' is the manager's own).
+      if (!e.code || e.code === 'from' || e.code === 'failed') return this.fail(r, FROM_REFUSED);
+      return this.fail(r, sentence(msg));
+    }
     if (s === 501) {
       // Not supported by the extractor (Proton today): off for the account, until you ask again.
       this.setSend(r.account_id, { ok: false, why: e.message, refused: true });
       return this.fail(r, `Sending is off for this account: ${msg}.`);
     }
     if (s === 403 || e.code === 'denied') return this.fail(r, READ_ONLY);
-    if (s === 422) return this.fail(r, FROM_REFUSED);
     if (s === 504 || e.code === 'timeout') return this.fail(r, MAYBE_SENT, { unsure: true });
     if (!s || s === 503 || s === 429 || e.code === 'limited' || e.code === 'offline') return this.later(r, msg);
-    return this.fail(r, `${msg[0]?.toUpperCase() ?? ''}${msg.slice(1)}.`);
+    return this.fail(r, sentence(msg));
   }
 
   /** Not now: again a little later, then less often, for up to a day. */

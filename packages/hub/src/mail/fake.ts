@@ -14,7 +14,8 @@
  * Changes made "on the server" (deliver, move, setFlags, remove, rebuild) are what another mail client would do; they
  * reach the hub as events and through mail.changes. Calls can be made to fail (410, 503, 404, limited) or slow.
  *
- * mail.send (slice 5) checks From against the account's addresses (422), answers a dry run as the manager does, keeps
+ * mail.send (slice 5) checks From against the account's addresses (422, code 'from'), can refuse a recipient as
+ * Proton's extractor does (422, code 'recipients': `refuseRecipient`), answers a dry run as the manager does, keeps
  * what it got in `sent` (with the files' bytes, read from a path or base64), and puts a copy in Sent that threads to
  * the original by In-Reply-To and References, which it marks answered.
  *
@@ -37,6 +38,11 @@ export interface FakeOpts {
   events?: 'inbox' | 'all';
   /** What mail.send would answer (slice 5). */
   send?: 'ok' | 501;
+  /**
+   * mail.send refuses this recipient (1-based: To, then Cc, then Bcc, each address once) with 422 'recipients', as
+   * Proton's extractor does for one it can't send to safely; 0, or a number past the last, refuses none.
+   */
+  refuseRecipient?: number;
   latencyMs?: number;
   /** How many changes one mail.changes answers before saying `more`. */
   changesPage?: number;
@@ -172,6 +178,7 @@ export class FakeMailBackend implements MailBackend {
       state: 'mailbox',
       events: 'inbox',
       send: 'ok',
+      refuseRecipient: 0,
       latencyMs: 0,
       changesPage: 200,
       moveIds: 'new',
@@ -537,8 +544,12 @@ export class FakeMailBackend implements MailBackend {
     if (a.opts.send === 501) throw new MailCallError("Proton's send path was not found in the page", 501, 'failed');
     const own = a.self.addresses ?? [{ email: a.self.email, name: a.self.displayName ?? null }];
     const from = mail.from === undefined ? own[0] : own.find((x) => x.email.toLowerCase() === String(mail.from).trim().toLowerCase());
-    if (!from) throw new MailCallError("from is not one of this account's addresses (its status's self.addresses)", 422);
+    if (!from) throw new MailCallError("from is not one of this account's addresses (its status's self.addresses)", 422, 'from');
     if (!mail.to?.length && !mail.cc?.length && !mail.bcc?.length) throw new MailCallError('to whom?', 400);
+    // Numbered as the extractor numbers them: To, then Cc, then Bcc, an address counted once whatever its case.
+    const everyone = new Set([...mail.to, ...(mail.cc ?? []), ...(mail.bcc ?? [])].map((x) => x.email.trim().toLowerCase()));
+    const n = a.opts.refuseRecipient;
+    if (n > 0 && n <= everyone.size) throw new MailCallError(`Recipient ${n} has a pinned key in your Proton contacts, so send this one from Proton.`, 422, 'recipients');
     const files = (mail.attachments ?? []).map((f) => {
       if (typeof f.path === 'string') {
         if (!this.localFiles) throw new MailCallError('attachments by path only on the same machine', 400);

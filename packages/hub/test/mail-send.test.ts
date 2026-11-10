@@ -1,7 +1,8 @@
 /**
  * Sending (mail/outbox.ts, docs/mail-design.md §8) against FakeMailBackend: held and undone, sent and threaded, a 501
  * that turns sending off and keeps the message, a read grant, a dry run, retries and a timeout, files by path and by
- * their bytes, a forward's files, a From that is not the account's, a clientId sent once, and a restart mid-send.
+ * their bytes, a forward's files, a From that is not the account's, a recipient or settings the extractor won't send
+ * with, a clientId sent once, and a restart mid-send.
  */
 import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
@@ -13,7 +14,7 @@ import { mailId } from '@dither-chat/protocol/ids';
 import { MailCallError } from '../src/mail/backend.ts';
 import { FakeMailBackend, fakeBytes, type FakeOpts } from '../src/mail/fake.ts';
 import { MailHub } from '../src/mail/index.ts';
-import { FROM_REFUSED, MAYBE_SENT, READ_ONLY, STOPPED_SENDING } from '../src/mail/outbox.ts';
+import { FROM_REFUSED, MAYBE_SENT, READ_ONLY, recipientsRefused, STOPPED_SENDING } from '../src/mail/outbox.ts';
 import { Uploads } from '../src/uploads.ts';
 
 const ACC = 'acc_sendTest01';
@@ -21,6 +22,7 @@ const ME = 'me@example.com';
 const ALIAS = 'me@alias.example';
 const sam = { name: 'Sam Lee', email: 'sam@lee.example' };
 const jo = { name: 'Jo', email: 'jo@park.example' };
+const kim = { name: null, email: 'kim@north.example' };
 const H = 3_600_000;
 
 const until = async (f: () => unknown, ms = 4000, what = 'condition') => {
@@ -296,6 +298,52 @@ describe('when it does not go', () => {
     const second = await w.hub.outbox.accept(reply(w, { from: ALIAS }));
     await until(() => state(w, second.outboxId) === 'failed');
     expect(w.hub.outbox.item(second.outboxId)!.error).toBe(FROM_REFUSED);
+  });
+
+  test('the extractor refuses a recipient (422 recipients): named by address, the draft kept, sending stays on', async () => {
+    const w = await world({ opts: { refuseRecipient: 3, ids: 'proton', state: 'account', events: 'all', threadIds: true } });
+    saysItCan(w);
+    // Sam again in Cc, in capitals: counted once, so Jo is 2 and Kim (in Bcc) is 3.
+    const req = reply(w, { to: [sam], cc: [{ name: null, email: 'SAM@LEE.EXAMPLE' }, jo], bcc: [kim], text: 'All of you.' });
+    const { outboxId } = await w.hub.outbox.accept(req);
+    await until(() => state(w, outboxId) === 'failed');
+    expect(w.hub.outbox.item(outboxId)!.error).toBe(`Recipient ${kim.email} has a pinned key in your Proton contacts, so send this one from Proton.`);
+    expect(w.hub.outbox.draft(req.draftKey!)!.draft).toMatchObject({ text: 'All of you.', to: [sam], cc: [{ email: 'SAM@LEE.EXAMPLE' }, jo], bcc: [kim] });
+    // Only this message: the account can still send, and one to Sam alone goes.
+    expect(w.hub.store.accountView(w.hub.store.account(ACC)!).send.ok).toBe(true);
+    const next = await w.hub.outbox.accept(reply(w, { text: 'Just you.' }));
+    await until(() => state(w, next.outboxId) === 'sent');
+    expect(w.fake.sent.map((x) => x.mail.to.map((a) => a.email))).toEqual([[sam.email]]);
+  });
+
+  test('recipient N in the sentence: To, Cc, Bcc in order, each address once; a number past the last stays', () => {
+    const out = { to: [sam], cc: [{ name: null, email: 'Sam@Lee.Example' }, jo], bcc: [kim, { name: null, email: 'JO@park.example' }] };
+    expect(recipientsRefused('Recipient 1 has a pinned key in your Proton contacts, so send this one from Proton.', out)).toBe(`Recipient ${sam.email} has a pinned key in your Proton contacts, so send this one from Proton.`);
+    expect(recipientsRefused('Proton has no key it trusts for recipient 2 or recipient 3, so send this one from Proton', out)).toBe(`Proton has no key it trusts for recipient ${jo.email} or recipient ${kim.email}, so send this one from Proton.`);
+    expect(recipientsRefused('Recipient 4 has a pinned key in your Proton contacts, so send this one from Proton..', out)).toBe('Recipient 4 has a pinned key in your Proton contacts, so send this one from Proton.');
+    expect(recipientsRefused('recipient 0 and recipient 12 are not on it', out)).toBe('Recipient 0 and recipient 12 are not on it.');
+  });
+
+  test('422 by its code: no code, from and the manager’s failed are the From; settings and others are the extractor’s words', async () => {
+    const w = await world();
+    saysItCan(w);
+    const SETTINGS = "Your Proton settings sign mail to outside addresses or attach your public key, which dither-chat can't do yet, so send this one from Proton.";
+    const cases: [MailCallError, string][] = [
+      [new MailCallError("from is not one of this account's addresses", 422), FROM_REFUSED],
+      [new MailCallError("from is not one of this account's addresses", 422, 'from'), FROM_REFUSED],
+      [new MailCallError("from is not one of this account's addresses", 422, 'failed'), FROM_REFUSED],
+      [new MailCallError(SETTINGS, 422, 'settings'), SETTINGS],
+      [new MailCallError('the subject is too long for this account', 422, 'something-new'), 'The subject is too long for this account.'],
+    ];
+    for (const [e, why] of cases) {
+      w.fake.fail('mail.send', e);
+      const { outboxId } = await w.hub.outbox.accept(reply(w));
+      await until(() => state(w, outboxId) === 'failed');
+      expect(w.hub.outbox.item(outboxId)!.error).toBe(why);
+    }
+    // None of them turns sending off for the account.
+    expect(w.hub.store.accountView(w.hub.store.account(ACC)!).send.ok).toBe(true);
+    expect(sends(w)).toBe(cases.length);
   });
 
   test('checked before it is held: recipients, sizes, a file the hub no longer has', async () => {
