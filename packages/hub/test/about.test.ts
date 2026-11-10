@@ -247,3 +247,17 @@ describe('members seen (adversarial, passive)', () => {
     }
   });
 });
+
+describe('a new demo world', () => {
+  test('starts from the first names and settings (a fresh hub, Reset demo, the next test run)', async () => {
+    // The tests above renamed the book club and set the climbers' timer to 90 s.
+    const climb = conv('signal', (c) => c.name === 'Climbing crew 🧗');
+    expect((await abouts.get('conversation', climb.id)).fields.disappearing?.value).toBe(90);
+    const again = new Store(join(dir, 'again.sqlite'), mediaSigner('s'));
+    createDemoAccounts(again);
+    again.db.close();
+    expect((await abouts.get('conversation', climb.id)).fields.disappearing?.value).toBe(7 * 86_400);
+    const book = conv('whatsapp', (c) => c.name === 'Book club');
+    expect((await abouts.get('conversation', book.id)).fields.name?.value).toBe('Book club 📚');
+  });
+});
