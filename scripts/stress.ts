@@ -31,8 +31,11 @@ const start = performance.now();
 const proc = Bun.spawn(['sh', '-c', 'exec "$@" 2>&1', 'sh', ...cmd], { cwd, stdout: 'pipe' });
 let out = '';
 const dec = new TextDecoder();
-for await (const chunk of proc.stdout as ReadableStream<Uint8Array>) {
-  const s = dec.decode(chunk, { stream: true });
+const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+for (;;) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  const s = dec.decode(value, { stream: true });
   process.stdout.write(s);
   out += s;
 }
