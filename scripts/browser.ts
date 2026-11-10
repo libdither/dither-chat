@@ -3,7 +3,7 @@
  * screenshots. It has its own throwaway profile and HOME; pass caCert to trust the hub's private CA.
  * Uses no dependency beyond chromium itself (and nix for certutil). Which browser: findBrowser().
  */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -56,24 +56,42 @@ export async function launch(opts: { caCert?: string; host?: string; args?: stri
   // Port 0: Chromium takes a free port itself and writes it to DevToolsActivePort in its own profile, so this never
   // attaches to another browser that happens to hold a port it guessed (other agents run headless Chromium too).
   const profile = join(home, 'profile');
+  // Its stderr in a file of its own: when it does not start, that is the only account of why.
+  const log = join(home, 'chromium.log');
+  const err = openSync(log, 'w');
+  const t0 = performance.now();
   const proc = Bun.spawn([findBrowser(), '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-sandbox', '--disable-gpu', ...(opts.args ?? []), 'about:blank'], {
     env: { ...process.env, HOME: home },
     stdout: 'ignore',
-    stderr: 'ignore',
+    stderr: err,
   });
+  closeSync(err);
   let port = 0;
   let targets: any[] = [];
-  for (let i = 0; i < 100 && !targets.length; i++) {
+  // A fresh CI runner reads the browser's 670 MB from a cold disk on its first start: 11 to 35 s there, then half a
+  // second. So it gets 90 s ($DITHER_CHROMIUM_START_MS) before it counts as not starting.
+  const deadline = Date.now() + (Number(process.env.DITHER_CHROMIUM_START_MS) || 90_000);
+  while (Date.now() < deadline && !targets.length && proc.exitCode === null) {
     await Bun.sleep(200);
     if (!port) port = Number(readFileOr(join(profile, 'DevToolsActivePort')).split('\n')[0]) || 0;
     if (port) targets = await fetch(`http://127.0.0.1:${port}/json`).then((r) => r.json() as Promise<any[]>).catch(() => []);
   }
   const target = targets.find((t) => t.type === 'page');
-  if (!target) throw new Error('chromium did not start');
+  if (!target) {
+    const after = ((performance.now() - t0) / 1000).toFixed(1);
+    const state = proc.exitCode !== null ? `it exited with ${proc.exitCode}` : port ? `DevTools on ${port} but no page` : existsSync(profile) ? 'no DevToolsActivePort' : 'no profile dir';
+    proc.kill('SIGKILL');
+    await proc.exited;
+    const tail = readFileOr(log).trim().split('\n').slice(-25).join('\n');
+    rmSync(home, { recursive: true, force: true });
+    throw new Error(`chromium did not start in ${after} s (${state}); its stderr ends:\n${tail || '(nothing)'}`);
+  }
   const first = await attach(target.webSocketDebuggerUrl, port);
   const pages = [first];
   return {
     page: first.page,
+    /** How long it took to start, to the first page's DevTools target. */
+    startMs: Math.round(performance.now() - t0),
     /** The browser's own directory: every one of its processes has it on the command line. */
     profileDir: home,
     /** The DevTools port, for targets of its own (service workers, other pages). */
