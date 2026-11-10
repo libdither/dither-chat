@@ -3,7 +3,8 @@
  * swipe down to put it away. With a mouse: the wheel zooms, the arrows page, Escape closes.
  *
  * Other files open here too (docs/files.md): text and code, Markdown, JSON, CSV, PDF and archives, each shown by a
- * viewer in a chunk of its own (files/), loaded when such a file is first opened. The header always has Download; with
+ * viewer in a chunk of its own (files/), loaded when such a file is first opened. On a phone they fill the screen; on a
+ * wider screen they open in a box over the app, which a click beside it closes. The header always has Download; with
  * the desktop helper or the Android app it can open the file in an app as well.
  */
 import { signal } from '@preact/signals';
@@ -89,8 +90,16 @@ function FileBox({ att }: { att: FileSource }) {
   }, [asked, kind]);
   const name = att.name ?? 'file';
   const apps = !!desk.value?.files || !!android?.opensFiles();
+  // A click beside the box closes it, but not the end of a text selection dragged out of it.
+  const pressedOutside = useRef(false);
   return (
-    <div class="fviewer" role="dialog" aria-modal="true" aria-label={name} data-kind={asked ? kind : 'unknown'}>
+    <div
+      class="fviewer"
+      data-kind={asked ? kind : 'unknown'}
+      onPointerDown={(e) => (pressedOutside.current = e.target === e.currentTarget)}
+      onClick={(e) => pressedOutside.current && e.target === e.currentTarget && close()}
+    >
+      <div class="fviewer-card" role="dialog" aria-modal="true" aria-label={name}>
       <div class="fviewer-bar">
         <Icon name={fileIcon(kind, info?.language)} size={20} />
         <span class="fviewer-name">
@@ -125,6 +134,7 @@ function FileBox({ att }: { att: FileSource }) {
         ) : (
           <NoView a={a} />
         )}</div>
+      </div>
     </div>
   );
 }
