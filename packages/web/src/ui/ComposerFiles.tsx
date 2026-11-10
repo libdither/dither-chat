@@ -10,6 +10,7 @@ import { bytes } from '../format.ts';
 import { netName } from '../model.ts';
 import { connected, startUpload, uploadsOf } from '../state.ts';
 import { readable, refusalOf, type UploadJob } from '../upload.ts';
+import { isMedia } from '../camera.ts';
 import { Icon } from './icons.tsx';
 
 export interface Attached {
@@ -38,7 +39,7 @@ export function useAttached(network: P.Network | undefined, convId: string) {
       const refused = refusalOf({ size: file.size, readable }, n, net);
       if (refused) return { key: keys++, file, url: null, refused };
       n++;
-      return { key: keys++, file, url: file.type.startsWith('image/') ? URL.createObjectURL(file) : null, job: startUpload(file) };
+      return { key: keys++, file, url: isMedia(file) ? URL.createObjectURL(file) : null, job: startUpload(file) };
     });
     setFiles((c) => [...c, ...added]);
   };
@@ -81,14 +82,11 @@ export function AttachedFiles({ files, remove }: { files: Attached[]; remove: (k
 }
 
 function AttachedFile({ f, remove }: { f: Attached; remove: () => void }) {
-  const p = f.job?.progress.value;
-  const status = f.refused ? 'refused' : (p?.status ?? 'done');
-  const pct = p && f.file.size ? Math.min(100, Math.floor((p.sent / f.file.size) * 100)) : 0;
-  const why = f.refused ?? (p?.status === 'failed' ? (p.offline ? 'Waiting for the hub' : `Upload failed: ${p.error}`) : null);
+  const { status, why, pct } = statusOf(f);
   const name = f.file.name || 'file';
   return (
     <div class={`composer-file ${status}`} data-status={status} title={why ? `${name}: ${why}` : name}>
-      {f.url ? <img src={f.url} alt="" /> : <Icon name="file" size={22} />}
+      <Thumb f={f} />
       <div class="composer-file-text">
         <span class="composer-file-name">{name}</span>
         {why ? (
@@ -113,6 +111,21 @@ function AttachedFile({ f, remove }: { f: Attached; remove: () => void }) {
       </button>
     </div>
   );
+}
+
+/** A photo or a video's first frame where there is one, else the file's icon. */
+export function Thumb({ f, size = 22 }: { f: Attached; size?: number }) {
+  if (!f.url) return <Icon name="file" size={size} />;
+  return f.file.type.startsWith('video/') ? <video src={f.url} muted playsInline preload="metadata" aria-hidden="true" /> : <img src={f.url} alt="" />;
+}
+
+/** Where an attached file has got, in words: why it cannot go, that it failed, or how far it is. */
+export function statusOf(f: Attached): { status: string; why: string | null; pct: number } {
+  const p = f.job?.progress.value;
+  const status = f.refused ? 'refused' : (p?.status ?? 'done');
+  const pct = p && f.file.size ? Math.min(100, Math.floor((p.sent / f.file.size) * 100)) : 0;
+  const why = f.refused ?? (p?.status === 'failed' ? (p.offline ? 'Waiting for the hub' : `Upload failed: ${p.error}`) : null);
+  return { status, why, pct };
 }
 
 /** How far one file of a sent message has uploaded, on its pending copy. */

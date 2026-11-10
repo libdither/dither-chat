@@ -73,6 +73,9 @@ import { EmojiComplete } from './EmojiComplete.tsx';
 import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
 import { TypingBar } from './Typing.tsx';
 import { useGrow } from './grow.ts';
+import { AttachSheet, CameraView, SendScreen } from './Attach.tsx';
+import { CAPTURE_ACCEPT, MEDIA_ACCEPT, opensSendScreen } from '../camera.ts';
+import { phone } from '../phone.ts';
 import { composerDone, composerTyped } from '../typing.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { ForwardCard, forwarding } from './Forward.tsx';
@@ -979,11 +982,28 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   const att = useAttached(conv?.network, targets.convId);
   const [dropping, setDropping] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
-  const addFiles = (list: File[]) => {
+  // A phone's attaching (ui/Attach.tsx): the + sheet, the camera, the send screen, and their inputs.
+  const onPhone = phone.value;
+  const photos = useRef<HTMLInputElement>(null);
+  const capture = useRef<HTMLInputElement>(null);
+  const [sheet, setSheet] = useState(false);
+  const [camera, setCamera] = useState(false);
+  const [review, setReview] = useState(false);
+  const addFiles = async (list: File[]) => {
     if (!list.length || !conv) return;
     if (!canAttach) return toast({ kind: 'error', title: 'Cannot send files here', body: conv.encrypted ? 'Set up encryption on the account\'s page to send files in encrypted Matrix rooms.' : `${netName(conv.network)} is not set up to send files.` });
-    void att.add(list);
+    await att.add(list);
   };
+  /** Photos and videos, picked or taken on a phone, go to the send screen; other files to the row. */
+  const addMedia = async (list: File[]) => {
+    await addFiles(list);
+    if (onPhone && canAttach && opensSendScreen(list)) setReview(true);
+  };
+  useEffect(() => {
+    setSheet(false);
+    setCamera(false);
+    setReview(false);
+  }, [targets.convId]);
   const files = att.sendable;
   const draftKey = `dither-chat:draft:${targets.convId}`;
   const [text, setText] = useState(() => localStorage.getItem(draftKey) ?? '');
@@ -1039,7 +1059,87 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
     type('');
     att.clear(true);
     clearReply();
+    setReview(false);
   };
+  const canSend = !((!text.trim() && !files.length) || !!disabledReason || (att.failed && !edit));
+  const sendTitle = att.failed && !edit ? 'A file did not upload: try it again or remove it' : undefined;
+  const onText = (v: string) => {
+    type(v);
+    // Editing a sent message is not typing a new one.
+    if (!edit) composerTyped({ conversationId: targets.convId, accountId: sender?.id }, v);
+  };
+  const limit = conv ? `up to ${ATTACHMENT_LIMITS[conv.network].bytes / 1024 / 1024} MB each` : '';
+  const attaching = canAttach && !edit && !disabledReason;
+  const openCamera = () => {
+    // No camera API at all: the system's camera, from this tap.
+    if (!navigator.mediaDevices?.getUserMedia) return capture.current?.click();
+    setCamera(true);
+  };
+  const sendAsMenu = sendAs && sendAs.options.length > 1 && (
+    <Menu
+      up
+      trigger={(toggle) => (
+        <button class="send-as" data-track="send as" onClick={toggle} title={sendAs.label} aria-label={sendAs.label}>
+          {sendAs.options.find((o) => o.id === sendAs.value)?.label ?? sendAs.options[0].label}
+          <Icon name="chevronDown" size={12} />
+        </button>
+      )}
+    >
+      {(close) => (
+        <div class="level-menu">
+          <div class="menu-title">{sendAs.label}</div>
+          {sendAs.options.map((o) => (
+            <button
+              class={`menu-item ${o.id === sendAs.value ? 'on' : ''}`}
+              data-track="send as (pick)"
+              onClick={() => {
+                sendAs.onChange(o.id);
+                close();
+              }}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </Menu>
+  );
+  const box = (
+    <textarea
+      ref={ta}
+      data-track="text box"
+      rows={1}
+      value={text}
+      placeholder={disabledReason ?? placeholder}
+      disabled={!!disabledReason}
+      onInput={(e) => onText((e.target as HTMLTextAreaElement).value)}
+      onBlur={composerDone}
+      onPaste={(e) => {
+        const pasted = [...(e.clipboardData?.files ?? [])];
+        if (!pasted.length) return;
+        e.preventDefault();
+        void addFiles(pasted);
+      }}
+      enterkeyhint={touchKeyboard() ? 'enter' : 'send'}
+      onKeyDown={(e) => {
+        // A phone keyboard has no Shift+Enter, so there Enter is a new line and the button sends.
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && (!touchKeyboard() || e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          countKey('composer: send (Enter)');
+          submit();
+        } else if (e.key === 'Escape') {
+          if (edit || reply) countKey(`composer: cancel ${edit ? 'edit' : 'reply'} (Esc)`);
+          if (edit) cancelEdit();
+          else clearReply();
+        }
+      }}
+    />
+  );
+  const sendBtn = (
+    <button class="send-btn" data-track="send" disabled={!canSend} onClick={submit} aria-label="Send" title={sendTitle}>
+      <Icon name="send" size={17} />
+    </button>
+  );
   return (
     <div
       class={`composer ${dropping ? 'dropping' : ''}`}
@@ -1054,7 +1154,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
         if (!e.dataTransfer?.files.length) return;
         e.preventDefault();
         setDropping(false);
-        addFiles([...e.dataTransfer.files]);
+        void addFiles([...e.dataTransfer.files]);
       }}
     >
       {edit && (
@@ -1076,92 +1176,107 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       )}
       <AttachedFiles files={att.files} remove={att.remove} />
       <EmojiComplete ta={ta} convId={targets.convId} network={conv?.network} />
-      <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
-        {canAttach && !edit && !disabledReason && (
-          <>
-            <button class="icon-btn attach-btn" data-track="attach" onClick={() => picker.current?.click()} title={`Attach files, up to ${conv ? ATTACHMENT_LIMITS[conv.network].bytes / 1024 / 1024 : 0} MB each`} aria-label="Attach files">
-              <Icon name="paperclip" size={17} />
+      {attaching && (
+        <>
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              const el = e.target as HTMLInputElement;
+              void addFiles([...(el.files ?? [])]);
+              el.value = '';
+            }}
+          />
+          {onPhone && (
+            <>
+              <input
+                ref={photos}
+                class="attach-photos"
+                type="file"
+                accept={MEDIA_ACCEPT}
+                multiple
+                hidden
+                onChange={(e) => {
+                  const el = e.target as HTMLInputElement;
+                  void addMedia([...(el.files ?? [])]);
+                  el.value = '';
+                }}
+              />
+              <input
+                ref={capture}
+                class="attach-capture"
+                type="file"
+                accept={CAPTURE_ACCEPT}
+                capture="environment"
+                hidden
+                onChange={(e) => {
+                  const el = e.target as HTMLInputElement;
+                  void addMedia([...(el.files ?? [])]);
+                  el.value = '';
+                }}
+              />
+            </>
+          )}
+        </>
+      )}
+      {onPhone ? (
+        <div class="composer-row">
+          {attaching && (
+            <button class="icon-btn composer-plus" data-track="plus" onClick={() => setSheet(true)} aria-label="Attach photos, videos or files">
+              <Icon name="plus" size={22} />
             </button>
-            <input
-              ref={picker}
-              type="file"
-              multiple
-              hidden
-              onChange={(e) => {
-                const el = e.target as HTMLInputElement;
-                addFiles([...(el.files ?? [])]);
-                el.value = '';
-              }}
-            />
-          </>
-        )}
-        {sendAs && sendAs.options.length > 1 && (
-          <Menu
-            up
-            trigger={(toggle) => (
-              <button class="send-as" data-track="send as" onClick={toggle} title={sendAs.label} aria-label={sendAs.label}>
-                {sendAs.options.find((o) => o.id === sendAs.value)?.label ?? sendAs.options[0].label}
-                <Icon name="chevronDown" size={12} />
+          )}
+          <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
+            {sendAsMenu}
+            {box}
+            {attaching && (
+              <button class="icon-btn composer-camera" data-track="camera" onClick={openCamera} aria-label="Take a photo or video">
+                <Icon name="camera" size={20} />
               </button>
             )}
-          >
-            {(close) => (
-              <div class="level-menu">
-                <div class="menu-title">{sendAs.label}</div>
-                {sendAs.options.map((o) => (
-                  <button
-                    class={`menu-item ${o.id === sendAs.value ? 'on' : ''}`}
-                    data-track="send as (pick)"
-                    onClick={() => {
-                      sendAs.onChange(o.id);
-                      close();
-                    }}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </Menu>
-        )}
-        <textarea
-          ref={ta}
-          data-track="text box"
-          rows={1}
-          value={text}
-          placeholder={disabledReason ?? placeholder}
-          disabled={!!disabledReason}
-          onInput={(e) => {
-            const v = (e.target as HTMLTextAreaElement).value;
-            type(v);
-            // Editing a sent message is not typing a new one.
-            if (!edit) composerTyped({ conversationId: targets.convId, accountId: sender?.id }, v);
-          }}
-          onBlur={composerDone}
-          onPaste={(e) => {
-            const pasted = [...(e.clipboardData?.files ?? [])];
-            if (!pasted.length) return;
-            e.preventDefault();
-            addFiles(pasted);
-          }}
-          enterkeyhint={touchKeyboard() ? 'enter' : 'send'}
-          onKeyDown={(e) => {
-            // A phone keyboard has no Shift+Enter, so there Enter is a new line and the button sends.
-            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && (!touchKeyboard() || e.ctrlKey || e.metaKey)) {
-              e.preventDefault();
-              countKey('composer: send (Enter)');
-              submit();
-            } else if (e.key === 'Escape') {
-              if (edit || reply) countKey(`composer: cancel ${edit ? 'edit' : 'reply'} (Esc)`);
-              if (edit) cancelEdit();
-              else clearReply();
-            }
+          </div>
+          {sendBtn}
+        </div>
+      ) : (
+        <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
+          {attaching && (
+            <button class="icon-btn attach-btn" data-track="attach" onClick={() => picker.current?.click()} title={`Attach files, ${limit}`} aria-label="Attach files">
+              <Icon name="paperclip" size={17} />
+            </button>
+          )}
+          {sendAsMenu}
+          {box}
+          {sendBtn}
+        </div>
+      )}
+      {sheet && <AttachSheet limit={limit} onClose={() => setSheet(false)} onPhotos={() => photos.current?.click()} onFile={() => picker.current?.click()} />}
+      {camera && (
+        <CameraView
+          onClose={() => setCamera(false)}
+          onFallback={() => capture.current?.click()}
+          onGallery={() => photos.current?.click()}
+          onShot={(f) => {
+            setCamera(false);
+            void addMedia([f]);
           }}
         />
-        <button class="send-btn" data-track="send" disabled={(!text.trim() && !files.length) || !!disabledReason || (att.failed && !edit)} onClick={submit} aria-label="Send" title={att.failed && !edit ? 'A file did not upload: try it again or remove it' : undefined}>
-          <Icon name="send" size={17} />
-        </button>
-      </div>
+      )}
+      {review && onPhone && (
+        <SendScreen
+          files={att.files}
+          remove={att.remove}
+          text={text}
+          onText={onText}
+          canSend={canSend}
+          sendTitle={sendTitle}
+          onSend={submit}
+          onAddMore={() => photos.current?.click()}
+          onClose={() => setReview(false)}
+          enterSends={() => !touchKeyboard()}
+        />
+      )}
     </div>
   );
 }

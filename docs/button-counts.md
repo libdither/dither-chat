@@ -54,7 +54,10 @@ their label, which can hold a name ("Message Ann").
 | `chat header` | `picture`, `name`, `crumb (community\|parent)`, `profile`, `all chats`, `join call`, `about`, `search here`, `notification level` and its choices, `details`, `network chip` |
 | `message` | the hover actions: `edit`, `delete`, `reply`, `forward`, `more`, `triage note` |
 | `message menu` (and `attachment menu`, `link menu`) | `reply`, `edit`, `forward`, `copy text`, `copy link`, `add reaction`, `quick reaction`, `view reactions`, `open thread`, `go to replied`, `go to original`, `profile`, `history`, `delete`, `copy message id`, `copy dither-chat id`; `… (key R)` when picked by its letter |
-| `composer` | `text box`, `send`, `send (Enter)`, `attach`, `send as`, `cancel reply`, `cancel edit`, `cancel … (Esc)` |
+| `composer` | `text box`, `send`, `send (Enter)`, `attach`, `send as`, `cancel reply`, `cancel edit`, `cancel … (Esc)`; on a phone `plus` and `camera` (from 2026-11-10) |
+| `attach` (the phone's + sheet) | `photos`, `file` |
+| `camera` | `shutter` (a tap or a hold), `flip`, `torch`, `photos` (the gallery beside the shutter), `close`, `system camera` (after a refusal) |
+| `send screen` | `send`, `back`, `caption`, `thumbnail`, `remove`, `add more` |
 | `rail` | `inbox`, `people`, `mail`, `community`, `chat`, `folder (open\|close)`, `all communities`, `order`, `accounts`, `settings` |
 | `inbox menu` (the inbox button's) | `mark everything read`, `how it sorts` |
 | `tabs` (phone) | `Home`, `Catch up`, `Search`, `You` |
