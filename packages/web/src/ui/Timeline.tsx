@@ -89,7 +89,7 @@ import { memo } from './memo.ts';
 import { heldRequest } from '../requests.ts';
 import { LinkBanner, RequestBar } from './Requests.tsx';
 import { countKey } from '../clicklog.ts';
-import { design, focusedPair, focusPair, myName, Nickname, pairOf, PairIcons, PairLead, PairMark, PairRail, PairSliders, theirName } from './Pairs.tsx';
+import { ChunkHead, design, focusedPair, focusPair, myName, Nickname, pairOf, PairDropdown, PairIcons, PairLead, PairMark, PairRail, PairSliders, theirName, viewOf } from './Pairs.tsx';
 
 
 // ------------------------------------------------------------------ header
@@ -555,7 +555,7 @@ function sourceTitle(m: P.MessageView): string | undefined {
  * each message: `target`, the message it replies to (a map per render, not a search per message); `thread`, its
  * thread's conversation; `src`, where it came from in a merged timeline. `onQuote` shows the quoted message.
  */
-const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuote, highlight, target, thread, mark, onPick, via, viaOn }: { m: P.MessageView; grouped: boolean; src?: string; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; mark?: ComponentChildren; onPick?: () => void; via?: string; viaOn?: boolean }) {
+const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuote, highlight, target, thread, mark, onPick, via, viaOn, chunk }: { m: P.MessageView; grouped: boolean; src?: string; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; mark?: ComponentChildren; onPick?: () => void; via?: string; viaOn?: boolean; chunk?: 'on' | 'off' }) {
   if (counting) rendered('MessageItem');
   metaRev.value;
   const author = m.authorId ? db.identities.get(m.authorId) : null;
@@ -598,7 +598,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuot
   const ticks = m.receipts && isSelfIdentity(m.authorId) ? <Ticks m={m} /> : null;
   return (
     <div
-      class={`msg ${grouped ? 'grouped' : ''} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''} ${onPick ? 'pair-pick' : ''}`}
+      class={`msg ${grouped ? 'grouped' : ''} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''} ${onPick ? 'pair-pick' : ''} ${chunk ? `pair-chunk ${chunk}` : ''}`}
       id={`m-${m.id}`}
       ref={(el) => void (el && swipeReply.set(el, () => onReply(m)))}
       {...menuProps}
@@ -753,7 +753,7 @@ interface Drawn {
   to: string | null;
 }
 
-function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus, pairs }: { tkey: string; convIds: string[]; merged: boolean; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; pairs?: { focus: string; onFocus: (convId: string) => void; inline?: boolean } }) {
+function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus, pairs }: { tkey: string; convIds: string[]; merged: boolean; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; pairs?: { focus: string; onFocus: (convId: string) => void; inline?: boolean; chunks?: boolean } }) {
   if (counting) rendered('Timeline');
   timelineRev(tkey).value;
   const scroller = useRef<HTMLDivElement>(null);
@@ -906,7 +906,7 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus, pairs 
     const m = all[i];
     if (!prev || !sameDay(prev.ts, m.ts)) items.push(<div class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
     // Design study (ui/Pairs.tsx): where the pair changes, a picture at the right of the message instead of a divider.
-    const runStart = !!pairs && (!prev || prev.conversationId !== m.conversationId);
+    const runStart = !!pairs && (!prev || prev.conversationId !== m.conversationId || (!!pairs.chunks && !sameDay(prev.ts, m.ts)));
     if (merged && !pairs && prev && prev.conversationId !== m.conversationId) {
       const c = db.conversations.get(m.conversationId);
       items.push(
@@ -925,14 +925,22 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus, pairs 
     let mark: ComponentChildren = undefined;
     let onPick: (() => void) | undefined;
     let via: string | undefined;
-    if (pairs) {
+    let chunk: 'on' | 'off' | undefined;
+    if (pairs?.chunks) {
+      const c = db.conversations.get(m.conversationId);
+      const focused = m.conversationId === pairs.focus;
+      if (c && convIds.length > 1) {
+        chunk = focused ? 'on' : 'off';
+        if (runStart) items.push(<ChunkHead key={`ch-${m.id}`} p={pairOf(c)} focused={focused} onPick={() => pairs.onFocus(c.id)} />);
+      }
+    } else if (pairs) {
       const c = db.conversations.get(m.conversationId);
       const focused = m.conversationId === pairs.focus;
       if (c && !focused) onPick = () => pairs.onFocus(c.id);
       if (c && pairs.inline) via = isSelfIdentity(m.authorId) ? myName(pairOf(c)) : theirName(pairOf(c));
       else if (c && runStart) mark = <PairMark p={pairOf(c)} directs={convIds.map((id) => db.conversations.get(id)).filter((x): x is P.ConversationView => !!x)} focused={focused} onPick={() => pairs.onFocus(c.id)} />;
     }
-    items.push(<MessageItem key={m.id} m={m} grouped={pairs ? grouped && !runStart : grouped} src={merged && !pairs ? sourceTitle(m) : undefined} onReply={onReply} onQuote={onQuote} highlight={m.id === flash} target={target} thread={thread} mark={mark} onPick={onPick} via={via} viaOn={!!pairs && m.conversationId === pairs.focus} />);
+    items.push(<MessageItem key={m.id} m={m} grouped={pairs ? grouped && !runStart : grouped} src={merged && !pairs ? sourceTitle(m) : undefined} onReply={onReply} onQuote={onQuote} highlight={m.id === flash} target={target} thread={thread} mark={mark} onPick={onPick} via={via} viaOn={!!pairs && m.conversationId === pairs.focus} chunk={chunk} />);
     prev = m;
   }
 
@@ -1465,16 +1473,20 @@ export function PersonPane({ personId, onBack }: { personId: string; onBack?: ()
 function PairsPersonPane({ person, directs, onBack, reply, setReply, unreadAt }: { person: P.PersonView; directs: P.ConversationView[]; onBack?: () => void; reply: P.MessageView | null; setReply: (m: P.MessageView | null) => void; unreadAt: number | null }) {
   const rail = design.value === 'pairs-rail';
   const sliders = design.value === 'sliders';
+  const chunks = design.value === 'chunks';
   const picked = focusedPair(person.id, directs);
   // Replying to a message sends through the pair it came from.
   const focus = (reply && directs.find((d) => d.id === reply.conversationId)) || picked;
+  // Showing one pair's history follows the pair you send through, so switching it in the message box switches both.
+  const view = chunks && viewOf(person.id, directs) !== 'all' ? focus.id : 'all';
+  const shown = view === 'all' ? directs : directs.filter((d) => d.id === view);
   const onFocus = (id: string) => {
     if (reply && reply.conversationId !== id) setReply(null);
     focusPair(person.id, focus.id, id);
   };
   const cur = pairOf(focus);
   return (
-    <section class={`pane pairs-pane ${rail ? 'pairs-pane-rail' : ''} ${sliders ? 'pairs-pane-sliders' : ''}`}>
+    <section class={`pane pairs-pane ${rail ? 'pairs-pane-rail' : ''} ${sliders ? 'pairs-pane-sliders' : ''} ${chunks ? 'pairs-pane-chunks' : ''}`}>
       <header class="conv-head" data-track-area="chat header" onContextMenu={onMenu(() => personMenu(person))}>
         {onBack && (
           <button class="icon-btn back" data-track="pager: back button" onClick={onBack} aria-label="Back">
@@ -1486,16 +1498,21 @@ function PairsPersonPane({ person, directs, onBack, reply, setReply, unreadAt }:
         </button>
         <div class="conv-head-text">
           <h2>
-            {sliders ? (
+            {chunks ? (
+              <>
+                <Nickname person={person} onOpen={() => go({ view: 'profile', person: person.id })} />
+                <PairDropdown personId={person.id} directs={directs} focus={focus} />
+              </>
+            ) : sliders ? (
               <Nickname person={person} onOpen={() => go({ view: 'profile', person: person.id })} />
             ) : (
               <button class="conv-head-name" title={`${person.name}'s profile`} onClick={() => go({ view: 'profile', person: person.id })}>
                 {person.name}
               </button>
             )}
-            {person.starred && <Icon name="star" size={13} class="row-star" />}
+            {person.starred && !chunks && <Icon name="star" size={13} class="row-star" />}
           </h2>
-          <div class="conv-head-sub">{sliders ? <PairSliders personId={person.id} directs={directs} focus={focus} /> : rail ? <PairRail personId={person.id} directs={directs} focus={focus} /> : <PairIcons personId={person.id} directs={directs} focus={focus} />}</div>
+          <div class="conv-head-sub">{chunks ? null : sliders ? <PairSliders personId={person.id} directs={directs} focus={focus} /> : rail ? <PairRail personId={person.id} directs={directs} focus={focus} /> : <PairIcons personId={person.id} directs={directs} focus={focus} />}</div>
         </div>
         <div class="conv-head-actions">
           <button class={`hdr-btn ${detailsShown() ? 'on' : ''}`} data-track="details" onClick={() => showDetails(!detailsShown())} title="Details" aria-label="Details">
@@ -1507,7 +1524,7 @@ function PairsPersonPane({ person, directs, onBack, reply, setReply, unreadAt }:
         <LinkBanner key={d.id} c={d} />
       ))}
       <NotStartedNote c={focus} />
-      <Timeline tkey={timelineKey('p', person.id)} convIds={directs.map((d) => d.id)} merged onReply={setReply} firstUnreadTs={unreadAt} pairs={{ focus: focus.id, onFocus, inline: sliders }} />
+      <Timeline key={view} tkey={view === 'all' ? timelineKey('p', person.id) : timelineKey('c', view)} convIds={shown.map((d) => d.id)} merged={shown.length > 1} onReply={setReply} firstUnreadTs={unreadAt} pairs={{ focus: focus.id, onFocus, inline: sliders, chunks }} />
       <TypingBar convIds={directs.map((d) => d.id)} />
       <Composer
         targets={{ convId: focus.id }}

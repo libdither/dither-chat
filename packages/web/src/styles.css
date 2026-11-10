@@ -13130,3 +13130,142 @@ html.kb-open .ss-foot {
 .msg-via-mine.on {
   color: var(--text-dim);
 }
+
+/* Chunks (ui/Pairs.tsx): a dropdown on the name's line; each run of one pair a chunk with a label and a side bar. */
+.pairs-pane-chunks .conv-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.pair-dd {
+  position: relative;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 400;
+}
+.pair-dd-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 2px 6px 2px 8px;
+  border-radius: 7px;
+  color: var(--text-dim);
+  touch-action: none;
+  user-select: none;
+}
+.pair-dd-btn:hover,
+.pair-dd-btn.open {
+  background: var(--bg-raised);
+  color: var(--text);
+}
+.pair-dd-caret {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.pair-dd-count {
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  background: var(--bg-raised);
+}
+.pair-dd-menu {
+  position: fixed;
+  z-index: 400;
+  min-width: 300px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--bg-elev, var(--bg-raised));
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+}
+.pair-dd-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  color: var(--text-dim);
+  text-align: left;
+  white-space: nowrap;
+}
+.pair-dd-row:hover,
+.pair-dd-row.hover {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.pair-dd-row.on {
+  color: var(--text);
+  font-weight: 600;
+}
+.pair-dd-row .pair-dd-count,
+.pair-dd-row .pair-dd-net {
+  margin-left: auto;
+}
+.pair-dd-net {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-weight: 400;
+}
+.pair-line-arrow {
+  color: var(--text-faint);
+}
+.pair-line-theirs,
+.pair-line-mine {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pair-chunk-head {
+  margin: 10px 0 0 56px;
+  padding-left: 8px;
+}
+.pair-chunk-head button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px 2px 4px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.pair-chunk-head.on button {
+  color: var(--text-dim);
+}
+.pair-chunk-head.off .avatar {
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+.pair-chunk-head button:hover {
+  background: var(--bg-raised);
+  color: var(--text);
+}
+.pair-chunk-head button:hover .avatar {
+  filter: none;
+  opacity: 1;
+}
+.pair-chunk-sending {
+  margin-left: 4px;
+  color: var(--accent);
+  font-size: 10.5px;
+}
+/* The bar down a chunk's side, in the gap between the pictures and the text (narrower on a phone). */
+.msg.pair-chunk .msg-main {
+  position: relative;
+}
+.msg.pair-chunk .msg-main::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--border);
+}
+.msg.pair-chunk.on .msg-main::before {
+  background: var(--accent);
+}
