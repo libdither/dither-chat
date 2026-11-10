@@ -144,10 +144,16 @@ function deliver(title: string, body: string, conversationId: string, messageId:
   const vote = kind === 'message' ? { messageId, level } : {};
   const grouped = kind === 'message' ? delivery.plan(conversationId, messageId, level, addressed) : null;
   server.notify({ t: 'notify', messageId, conversationId, title, body, reasons, ...look, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(level === 'quiet' ? { level } : {}) });
-  push
-    .notify(title, body, conversationId, { ...pushExtra, ...look, ...vote, ...grouped, ...(nid ? { nid } : {}) }, skip, level)
+  server
+    .warm(pictures(look, grouped))
+    .then(() => push.notify(title, body, conversationId, { ...pushExtra, ...look, ...vote, ...grouped, ...(nid ? { nid } : {}) }, skip, level))
     .then((r) => nid && activity.sent(nid, r))
     .catch((e) => console.error('push failed', e));
+}
+
+/** The pictures a push names: the phone fetches each from the hub while it draws the notification. */
+function pictures(look: { icon?: string } | undefined, g: { conv?: { icon?: string }; sender?: { icon?: string }; icons?: Record<string, string> } | null): (string | undefined)[] {
+  return [look?.icon, g?.conv?.icon, g?.sender?.icon, ...Object.values(g?.icons ?? {})];
 }
 
 /**
@@ -162,8 +168,9 @@ function deliverMail(n: MailNotice) {
   const grouped = delivery.plan(n.threadId, n.messageId, n.level, n.addressed);
   const mail = { mailThreadId: n.threadId };
   server.notify({ t: 'notify', messageId: n.messageId, conversationId: n.threadId, title: n.title, body: n.body, reasons: n.reasons, ...n.look, ...mail, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(n.level === 'quiet' ? { level: n.level } : {}) });
-  push
-    .notify(n.title, n.body, n.threadId, { ...n.look, ...mail, messageId: n.messageId, level: n.level, ...grouped, ...(nid ? { nid } : {}) }, skip, n.level)
+  server
+    .warm(pictures(n.look, grouped))
+    .then(() => push.notify(n.title, n.body, n.threadId, { ...n.look, ...mail, messageId: n.messageId, level: n.level, ...grouped, ...(nid ? { nid } : {}) }, skip, n.level))
     .then((r) => nid && activity.sent(nid, r))
     .catch((e) => console.error('push failed', e));
 }

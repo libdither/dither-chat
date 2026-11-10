@@ -32,6 +32,8 @@ import android.text.Spanned
 import android.text.style.StyleSpan
 import android.util.Base64
 import org.json.JSONObject
+import java.io.File
+import java.security.MessageDigest
 
 /**
  * Message notifications, from the hub's push payload (webpush.ts pushPayload), as the web app's sw.js shows them.
@@ -147,6 +149,14 @@ object Notifications {
 
         val pictures = HashMap<String, Bitmap?>()
         fun picture(src: String?): Bitmap? = src?.let { pictures.getOrPut(it) { runCatching { Looks.picture(c, it) }.getOrNull() } }
+        // All of them at once first: one at a time, a slow hub ran out the wait.
+        val wanted = buildList {
+            icons?.keys()?.forEach { k -> icons.optString(k).ifEmpty { null }?.let(::add) }
+            sender?.optString("icon")?.ifEmpty { null }?.let(::add)
+            cv?.optString("icon")?.ifEmpty { null }?.let(::add)
+            d.optString("icon").ifEmpty { null }?.let(::add)
+        }
+        pictures.putAll(Looks.pictures(c, wanted))
         fun iconOf(key: String): String? =
             icons?.optString(key)?.ifEmpty { null }
                 ?: (if (key == senderKey) sender?.optString("icon")?.ifEmpty { null } else null)
@@ -367,9 +377,30 @@ object Looks {
     /** The network's mark and colour, or the app's. */
     fun badge(c: Context, network: String): Pair<Int, Int> = NETWORKS[network] ?: (R.drawable.ic_notification to c.getColor(R.color.accent))
 
+    /**
+     * A picture by its hub path, kept on disk: the same people and servers come back, and the hub can be slow to
+     * fetch one it has not seen (it warms the push's pictures first, but waits for them only so long).
+     */
     fun picture(c: Context, src: String): Bitmap? {
-        val bytes = if (src.startsWith("data:")) Base64.decode(src.substringAfter(","), Base64.DEFAULT) else Hub.bytes(c, src, 4_000) ?: return null
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        if (src.startsWith("data:")) return Base64.decode(src.substringAfter(","), Base64.DEFAULT).let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+        val dir = File(c.cacheDir, "pictures").apply { mkdirs() }
+        val file = File(dir, MessageDigest.getInstance("SHA-256").digest(src.toByteArray()).joinToString("") { "%02x".format(it) })
+        if (file.isFile) BitmapFactory.decodeFile(file.path)?.let { file.setLastModified(System.currentTimeMillis()); return it }
+        val bytes = Hub.bytes(c, src, 8_000) ?: return null
+        val pic = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+        runCatching {
+            file.writeBytes(bytes)
+            // Keeps the newest 300.
+            dir.listFiles()?.takeIf { it.size > 300 }?.sortedByDescending { it.lastModified() }?.drop(300)?.forEach { it.delete() }
+        }
+        return pic
+    }
+
+    /** Several pictures at once, each fetched on its own thread, so a slow one does not hold up the others. */
+    fun pictures(c: Context, srcs: Collection<String>): Map<String, Bitmap?> {
+        val out = java.util.Collections.synchronizedMap(HashMap<String, Bitmap?>())
+        srcs.toSet().map { src -> Thread { out[src] = runCatching { picture(c, src) }.getOrNull() }.apply { start() } }.forEach { it.join(10_000) }
+        return synchronized(out) { HashMap(out) }
     }
 
     /**
