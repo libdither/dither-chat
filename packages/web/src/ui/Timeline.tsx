@@ -89,7 +89,7 @@ import { memo } from './memo.ts';
 import { heldRequest } from '../requests.ts';
 import { LinkBanner, RequestBar } from './Requests.tsx';
 import { countKey } from '../clicklog.ts';
-import { ChunkHead, design, focusedPair, focusPair, myName, Nickname, pairOf, PairDropdown, PairIcons, PairLead, PairMark, PairRail, PairSliders, theirName, viewOf } from './Pairs.tsx';
+import { ChunkHead, design, focusedPair, focusPair, hasNickname, myName, Nickname, pairOf, PairDropdown, PairIcons, PairLead, PairMark, PairRail, PairSliders, theirName, viewOf } from './Pairs.tsx';
 
 
 // ------------------------------------------------------------------ header
@@ -555,13 +555,13 @@ function sourceTitle(m: P.MessageView): string | undefined {
  * each message: `target`, the message it replies to (a map per render, not a search per message); `thread`, its
  * thread's conversation; `src`, where it came from in a merged timeline. `onQuote` shows the quoted message.
  */
-const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuote, highlight, target, thread, mark, onPick, via, viaOn, chunk }: { m: P.MessageView; grouped: boolean; src?: string; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; mark?: ComponentChildren; onPick?: () => void; via?: string; viaOn?: boolean; chunk?: 'on' | 'off' }) {
+const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuote, highlight, target, thread, mark, onPick, via, viaOn, chunk, alias, netPic }: { m: P.MessageView; grouped: boolean; src?: string; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; mark?: ComponentChildren; onPick?: () => void; via?: string; viaOn?: boolean; chunk?: 'on' | 'off'; alias?: string; netPic?: boolean }) {
   if (counting) rendered('MessageItem');
   metaRev.value;
   const author = m.authorId ? db.identities.get(m.authorId) : null;
   const person = personOf(m.authorId);
   const self = isSelfIdentity(m.authorId);
-  const name = self ? (identityName(m.authorId) || 'You') : authorName(m.authorId);
+  const name = alias ?? (self ? identityName(m.authorId) || 'You' : authorName(m.authorId));
   const reply = () => onReply(m);
   // Right-click or hold: the innermost thing that has a menu of its own (a file, a link, a person), else the message.
   const menuAt = (target: EventTarget | null): MenuSpec | null => {
@@ -619,7 +619,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuot
           </span>
         ) : (
           <button class="avatar-btn" data-identity={m.authorId ?? undefined} onClick={() => openProfile(m.authorId)} aria-label={`Profile of ${name}`}>
-            <Avatar id={person?.id ?? m.authorId ?? m.id} name={name} url={person?.avatar ?? author?.avatar} size={36} />
+            {netPic ? <NetBadge network={m.network} size={36} /> : <Avatar id={person?.id ?? m.authorId ?? m.id} name={name} url={person?.avatar ?? author?.avatar} size={36} />}
           </button>
         )}
       </div>
@@ -926,9 +926,17 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus, pairs 
     let onPick: (() => void) | undefined;
     let via: string | undefined;
     let chunk: 'on' | 'off' | undefined;
+    let alias: string | undefined;
     if (pairs?.chunks) {
       const c = db.conversations.get(m.conversationId);
       const focused = m.conversationId === pairs.focus;
+      // Names as the network has them (your account's, their username), unless you gave them a nickname.
+      if (c) {
+        const pr = pairOf(c);
+        if (isSelfIdentity(m.authorId)) alias = myName(pr);
+        else if (hasNickname(personOf(m.authorId))) via = theirName(pr);
+        else alias = theirName(pr);
+      }
       if (c && convIds.length > 1) {
         chunk = focused ? 'on' : 'off';
         if (runStart) items.push(<ChunkHead key={`ch-${m.id}`} p={pairOf(c)} focused={focused} onPick={() => pairs.onFocus(c.id)} />);
@@ -940,7 +948,7 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus, pairs 
       if (c && pairs.inline) via = isSelfIdentity(m.authorId) ? myName(pairOf(c)) : theirName(pairOf(c));
       else if (c && runStart) mark = <PairMark p={pairOf(c)} directs={convIds.map((id) => db.conversations.get(id)).filter((x): x is P.ConversationView => !!x)} focused={focused} onPick={() => pairs.onFocus(c.id)} />;
     }
-    items.push(<MessageItem key={m.id} m={m} grouped={pairs ? grouped && !runStart : grouped} src={merged && !pairs ? sourceTitle(m) : undefined} onReply={onReply} onQuote={onQuote} highlight={m.id === flash} target={target} thread={thread} mark={mark} onPick={onPick} via={via} viaOn={!!pairs && m.conversationId === pairs.focus} chunk={chunk} />);
+    items.push(<MessageItem key={m.id} m={m} grouped={pairs ? grouped && !runStart : grouped} src={merged && !pairs ? sourceTitle(m) : undefined} onReply={onReply} onQuote={onQuote} highlight={m.id === flash} target={target} thread={thread} mark={mark} onPick={onPick} via={via} viaOn={!!pairs && m.conversationId === pairs.focus} chunk={chunk} alias={alias} netPic={!!pairs?.chunks} />);
     prev = m;
   }
 

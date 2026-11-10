@@ -95,7 +95,12 @@ export function pairOf(conv: P.ConversationView): Pair {
   return { conv, acc, mine, theirs };
 }
 
-export const theirName = (p: Pair) => p.theirs?.handle ?? p.theirs?.displayName ?? netName(p.conv.network);
+/** Their name on the network: the username, or the profile name where the handle is a phone number (Signal, WhatsApp). */
+export const theirName = (p: Pair) => {
+  const h = p.theirs?.handle;
+  if (h && /^\+?[\d\s()-]{6,}$/.test(h) && p.theirs?.displayName) return p.theirs.displayName;
+  return h ?? p.theirs?.displayName ?? netName(p.conv.network);
+};
 export const myName = (p: Pair) => p.acc?.label || identityName(p.mine?.id) || 'you';
 export const pairTitle = (p: Pair) => `${myName(p)} ⇄ ${theirName(p)} on ${netName(p.conv.network)}`;
 
@@ -235,7 +240,8 @@ export function PairRail({ personId, directs, focus }: { personId: string; direc
 /** A name in the message box's line that changes the pair: cycles between two, lists more. */
 function Token({ label, options, onPick, picture }: { label: string; options: { id: string; label: string; picture?: ComponentChildren }[]; onPick: (id: string) => void; picture?: ComponentChildren }) {
   const cur = options.findIndex((o) => o.label === label);
-  if (options.length < 2)
+  // On a phone the line only says where it goes: a tap in the box is for typing, not for switching accounts.
+  if (options.length < 2 || phone.value)
     return (
       <span class="pair-token fixed">
         {picture}
@@ -521,8 +527,17 @@ export const viewOf = (personId: string, directs: P.ConversationView[]) => {
   return v && directs.some((d) => d.id === v) ? v : 'all';
 };
 
-/** A pair as a line: their picture and account, ⇄, yours. */
-function PairLine({ p, size = 16 }: { p: Pair; size?: number }) {
+/** A pair as a line: their picture and account, ⇄, yours; or, with `net`, the network's icon and the two names. */
+function PairLine({ p, size = 16, net }: { p: Pair; size?: number; net?: boolean }) {
+  if (net)
+    return (
+      <>
+        <NetBadge network={p.conv.network} size={size} />
+        <span class="pair-line-theirs">{theirName(p)}</span>
+        <span class="pair-line-arrow">⇄</span>
+        <span class="pair-line-mine">{myName(p)}</span>
+      </>
+    );
   return (
     <>
       <Avatar id={p.theirs?.id ?? p.conv.id} name={theirName(p)} url={p.theirs?.avatar} size={size} network={p.conv.network} />
@@ -618,7 +633,7 @@ export function PairDropdown({ personId, directs, focus }: { personId: string; d
         }}
       >
         {cur ? (
-          <PairLine p={cur} size={16} />
+          <PairLine p={cur} size={16} net />
         ) : (
           <span class="pair-dd-all">
             All chats <span class="pair-dd-count">{directs.length}</span>
@@ -638,7 +653,7 @@ export function PairDropdown({ personId, directs, focus }: { personId: string; d
             const unread = p.conv.vantages.reduce((n, x) => n + x.unread, 0);
             return (
               <button role="option" aria-selected={v === p.conv.id} data-pair-row={p.conv.id} class={`pair-dd-row ${v === p.conv.id ? 'on' : ''} ${hover === p.conv.id ? 'hover' : ''}`} onClick={() => pick(p.conv.id)}>
-                <PairLine p={p} size={18} />
+                <PairLine p={p} size={18} net />
                 <span class="pair-dd-net">{netName(p.conv.network)}</span>
                 {unread > 0 && <span class="pair-item-unread">{unread}</span>}
               </button>
@@ -655,10 +670,22 @@ export function ChunkHead({ p, focused, onPick }: { p: Pair; focused: boolean; o
   return (
     <div class={`pair-chunk-head ${focused ? 'on' : 'off'}`}>
       <button title={focused ? `Sending as ${myName(p)} to ${theirName(p)}` : `Send as ${myName(p)} to ${theirName(p)}`} onClick={onPick}>
-        <PairLine p={p} size={16} />
-        <span class="pair-dd-net">{netName(p.conv.network)}</span>
+        <PairLine p={p} size={16} net />
         {focused && <span class="pair-chunk-sending">sending here</span>}
       </button>
     </div>
   );
+}
+
+/**
+ * Whether you gave them a name of your own. The hub keeps one flag for "merged or renamed by you", so for this study
+ * a name counts as yours when none of their accounts goes by it.
+ */
+export function hasNickname(person: P.PersonView | null | undefined): boolean {
+  if (!person || person.isSelf) return false;
+  const n = person.name.trim().toLowerCase();
+  return !person.identityIds.some((id) => {
+    const i = db.identities.get(id);
+    return [i?.displayName, i?.handle].some((x) => x && x.trim().toLowerCase().replace(/^@/, '') === n.replace(/^@/, ''));
+  });
 }
