@@ -100,4 +100,12 @@ What is missing and why: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## License
 
-TBD.
+dither-chat is free software under the **GNU Affero General Public License, version 3 or later**
+([LICENSE](LICENSE)): if you run a changed version for others over a network, offer them its source. Within it:
+
+- The WhatsApp bridge (`packages/adapter-whatsapp/bridge`) links whatsmeow (MPL-2.0) and go.mau.fi/libsignal
+  (GPL-3.0), so a built bridge binary is GPL-3.0, which the AGPL (section 13) lets it be combined with.
+- `apps/android/gradle/wrapper/gradle-wrapper.jar` is Gradle's (Apache-2.0).
+- Discord's libdave is not in this repository: `scripts/dave` fetches it from Discord's public assets on the machine
+  that runs it ([scripts/dave/README.md](scripts/dave/README.md)).
+- The networks' names and logos belong to their owners.
