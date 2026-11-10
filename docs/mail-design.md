@@ -441,9 +441,10 @@ so `SYNC_VERSION` stays.
 
 ```
 ┌──┬───────────────────────────────┐
-│◉ │ Mail        All accounts ▾  ✎ │
-│✉•│ [Inbox] People Unread ★ Sent ⋯│
-│👤│───────────────────────────────│
+│◉ │ Mail                        ✎ │
+│✉•│ ● All accounts ▾              │
+│👤│ [Inbox] People Unread Starre  │
+│  │───────────────────────────────│
 │▣ │ (S) Sam Lee             10:42 │
 │▣ │     Dinner on Friday?      📎 │
 │  │     Are you free after 7? I…  │
@@ -462,7 +463,10 @@ so `SYNC_VERSION` stays.
 ```
 
 In Inbox, bulk threads fold into one **Updates** row; opening it is the `updates` view. Bold means unread. Each row
-carries an account colour dot when more than one account shows. **Swipes:** right archives, left marks read or unread.
+carries an account colour dot when more than one account shows. The views are one row of chips that scrolls sideways
+(no scrollbar, its edge fading while more lies past it, the chosen one scrolled into view). With several accounts the
+line under "Mail" picks the account: a menu of All accounts and each account with its dot's colour, which also says
+what the dot is. Single-line text in a row ends in an ellipsis. **Swipes:** right archives, left marks read or unread.
 **Long-press** opens the menu: Archive, Move to…, Star, Not a person, Mute, Trash. ⋯ opens the mailbox tree per
 account. Pull down refreshes.
 
@@ -470,9 +474,9 @@ account. Pull down refreshes.
 
 ```
 ┌──────────────────────────────────┐
-│ ‹  Dinner on Friday?   ⤓  🗑  ★ ⋯│
+│ ‹  Re: Dinner on Friday?     ⤓  ⋯│
 │──────────────────────────────────│
-│ (S) Sam Lee            Tue 18:02 │  ← older messages fold to one line
+│ (S) Sam Lee  Hey! Are… Tue 18:02 │  ← older messages fold to one line
 │──────────────────────────────────│
 │ (S) Sam Lee <sam@lee.example>    │
 │     to me, Jo · 10:42          ▾ │
@@ -489,12 +493,16 @@ account. Pull down refreshes.
 └──────────────────────────────────┘
 ```
 
-- **Folding:** unread messages and the latest are open; the rest are one line each. **Headers** always show the address
-  beside the name; ▾ adds To, Cc, Reply-To and labels, and `warnings` show there in amber.
+- **The header** on a phone: the subject on up to two lines, then an ellipsis; Archive (or Move to Inbox) and ⋯ beside
+  it, with Trash and Star in ⋯. On a desktop Trash and Star are buttons too, and the subject one line.
+- **Folding:** unread messages and the latest are open; the rest are one line each: who and the start of the text (the
+  reader asks for the bodies of folded messages without a preview when the thread opens, so yours have one too).
+  **Headers** always show the address beside the name; ▾ adds To, Cc, Reply-To and labels, and `warnings` show there
+  in amber.
 - **Quoted text** folds behind ···: `quoteAt` for text, the hub's `dc-quote` markers for HTML (`blockquote[type=cite]`,
   `.gmail_quote`, `.protonmail_quote`, `#divRplyFwdMsg`, `.yahoo_quoted`).
 - **Plain text** renders as text with links, never Markdown. **HTML** renders in the frame (§7) on a white sheet in every
-  theme, scaled down to fit the width.
+  theme, scaled down to fit the width, unless it is plain and the mail has a text part: then the text shows (§7).
 - **Attachments** are chat's file cards, opened by `openAttachment` or the in-app viewers through a `FileSource { url,
   infoUrl, name, mime, size }` (a small refactor of `files.ts`/`fileopen.tsx` off `/api/attachments/:id`).
 - **Swipe back** works over a body: the page forwards the frame's touch events to `Pager.ts` (it is same-origin).
@@ -581,6 +589,15 @@ The page loads it in `<iframe sandbox="allow-same-origin" referrerpolicy="no-ref
 neither `sandbox` grants `allow-scripts`, and the CSP forbids script. `allow-same-origin` is there only so the **page**
 can reach in to size the frame, fold quotes, forward touches and catch clicks. The media player already uses the same
 pairing (`PLAYER_CSP`). Opened on its own in a tab, the URL is still sandboxed by its CSP.
+
+**Plain HTML shows as text.** The sanitiser also says whether the HTML is plain (`Sanitized.plain`): only text,
+paragraphs, line breaks, links, lists, blockquotes, bold and italic; no images, tables, headings, colours, backgrounds,
+fonts, alignment or style sheets (margins, how lines wrap and a quote's left bar are allowed). When it is, and the mail
+has a text part of its own (not the text the hub made from the HTML, and not a stub much shorter than it: parts.ts
+`hasTextPart`), the body view says `html.plain` and the reader shows the text part (TextBody, with its quote fold) in
+the app's theme, so a reply sent from here does not open as a white sheet among dark text. Anything styled keeps the
+sheet. This only chooses which part to show: the frame, its sandbox, its CSP and the allowlist are as above, and the
+HTML is still served for anyone who asks.
 
 **Links.** The page listens for clicks on the frame's document in the capture phase, prevents the default, and passes
 the href to the same opener chat links use (`desk.ts`: the desk helper, `window.open`, or Android's system browser).

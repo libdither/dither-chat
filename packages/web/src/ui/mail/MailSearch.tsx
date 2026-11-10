@@ -117,7 +117,7 @@ function HitRow({ hit, list, active, showAccount }: { hit: P.MailSearchHit; list
         <span class="row-top">
           <span class="row-title">
             {showAccount && account && <span class="mail-acc-dot" style={{ background: account.color }} title={account.address ?? account.label} />}
-            {senderLine(t)}
+            <span class="mail-row-who">{senderLine(t)}</span>
             {t.count > 1 && <span class="mail-count">{t.count}</span>}
           </span>
           {t.flagged && <Icon name="star" size={12} class="mail-star" />}

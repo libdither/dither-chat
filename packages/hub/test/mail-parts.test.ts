@@ -86,7 +86,7 @@ describe('the frame’s document', () => {
   test('sanitised, with the CSP, nosniff and no referrer', async () => {
     const { get } = await world([NEWSLETTER]);
     const body = (await (await get(`/api/mail/messages/${mid('<news@x>')}/body`)).json()) as P.MailBodyView;
-    expect(body.html).toEqual({ url: `/api/mail/messages/${mid('<news@x>')}/html?images=0&v=1`, remoteImages: 1, trackers: 1, imagesShown: false });
+    expect(body.html).toEqual({ url: `/api/mail/messages/${mid('<news@x>')}/html?images=0&v=1`, remoteImages: 1, trackers: 1, imagesShown: false, plain: false });
     expect(body.warnings).toEqual(['A link that shows shop.example goes to evil.example.']);
     const r = await get(body.html!.url);
     expect(r.status).toBe(200);
@@ -150,6 +150,21 @@ describe('the frame’s document', () => {
     const body = (await (await get(`/api/mail/messages/${mid('<plain@x>')}/body`)).json()) as P.MailBodyView;
     expect(body.html).toBeNull();
     expect((await get(`/api/mail/messages/${mid('<plain@x>')}/html`)).status).toBe(404);
+  });
+
+  test('plain HTML with a text part is marked plain (the reader shows the text); styled or HTML-only is not', async () => {
+    const reply = '<div dir="auto">See you at 7:30!</div><br><blockquote type="cite" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">Are you free after 7?</blockquote>';
+    const { get } = await world([
+      { messageId: '<reply@x>', html: reply, text: 'See you at 7:30!\n\n> Are you free after 7?' },
+      { messageId: '<only@x>', html: reply, text: null },
+      NEWSLETTER,
+    ]);
+    const html = async (hdr: string) => ((await (await get(`/api/mail/messages/${mid(hdr)}/body`)).json()) as P.MailBodyView).html!;
+    expect((await html('<reply@x>')).plain).toBe(true);
+    // The frame still serves it, as it is: only the part the reader picks changed.
+    expect((await get(`/api/mail/messages/${mid('<reply@x>')}/html`)).status).toBe(200);
+    expect((await html('<only@x>')).plain).toBe(false);
+    expect((await html('<news@x>')).plain).toBe(false);
   });
 });
 

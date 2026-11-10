@@ -174,8 +174,12 @@ export interface MailBodyView {
   text: string | null;
   /** Where quoted text starts in `text` (quoteStart). */
   quoteAt: number | null;
-  /** The sanitised HTML (slice 3; null until then). */
-  html: { url: string; remoteImages: number; trackers: number; imagesShown: boolean } | null;
+  /**
+   * The sanitised HTML (slice 3; null until then). `plain`: it is only text, paragraphs, links, lists, quotes, bold
+   * and italic, and the mail has a text part saying as much, so the reader shows `text` in the app's theme rather
+   * than this on a white sheet (hub sanitize.ts `plain`, parts.ts `hasTextPart`).
+   */
+  html: { url: string; remoteImages: number; trackers: number; imagesShown: boolean; plain?: boolean } | null;
   bcc: MailAddressView[];
   replyTo: MailAddressView[];
   /** Slice 3. */

@@ -27,6 +27,8 @@ export type MenuEntry =
       checked?: boolean;
       radio?: boolean;
       sub?: MenuEntry[];
+      /** A dot of this colour (any CSS background) before the label: a mail account's colour. */
+      dot?: string;
       run?: () => void;
       /** Its key for button counts (clicks.ts): a fixed string, never the label, which may hold a name. */
       track?: string;
@@ -215,6 +217,7 @@ function Panel({ items, x, y, flipX, depth, onClose, onBack, autoFocus, track }:
               }}
               onClick={() => activate(i)}
             >
+              {e.dot && <span class="cm-dot" style={{ background: e.dot }} aria-hidden="true" />}
               <span class="cm-text">{e.label}</span>
               {e.hint && <kbd class="cm-hint">{e.hint}</kbd>}
               {e.checked !== undefined && <span class={`cm-check ${e.radio ? 'radio' : ''} ${e.checked ? 'on' : ''}`} aria-hidden="true">{!e.radio && e.checked && <Icon name="check" size={13} />}</span>}
@@ -306,6 +309,7 @@ function SheetMenu({ spec, onClose }: { spec: MenuSpec; onClose: () => void }) {
               }}
             >
               <Icon name={e.sub ? 'chevronRight' : e.checked ? 'check' : (e.icon ?? 'chevronRight')} size={20} class={e.checked === false || (!e.icon && !e.sub && !e.checked) ? 'cm-blank' : ''} />
+              {e.dot && <span class="cm-dot" style={{ background: e.dot }} aria-hidden="true" />}
               <span class="cm-text">{e.label}</span>
             </button>
           );
