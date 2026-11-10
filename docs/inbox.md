@@ -7,16 +7,20 @@ stay on top. The hub scores every conversation by how much it needs you and by w
 formula, below), then a model learned from what you open reorders it ([A learned order](#a-learned-order)); the
 list goes by that score, with muted places last. Unread rows keep their bold title and badge wherever they land.
 
-The list has three sections, each in that order, each folding with a count (2026-11-09):
+What needs you shows on the row, not in a section. A reply you owe that the hub still counts (they wrote last, the
+row's `owedSince`, and it needs you, `needs`) has ↩ and how long it has waited, in the accent colour, beside the
+unread count when there is one. An unanswered message from long ago, or from someone you rarely answer, has faded
+below `needs` and has no ↩. Accounts that need you and the Requests row stay above the list.
 
-- **Waiting on you**: a turn you owe that the hub still counts: they wrote last (the row's `owedSince`) and it needs
-  you (`needs`). The row keeps its ↩ and how long it has waited. An unanswered message from long ago, or from someone
-  you rarely answer, has faded below `needs` and is not here; on a real hub that leaves out most of the 200 or so
-  conversations whose last word is someone else's.
-- **New**: something unread, and not waiting.
-- **Earlier**: everything else, with the chat you were just in at its top.
-
-Accounts that need you and the Requests row stay above the sections. A section with nothing in it is not shown.
+**Sections, tried and removed.** From 2026-11-09 to 2026-11-10 the list had three sections, each in the learned order:
+Waiting on you (a reply you owe that needs you), New (unread) and Earlier (the rest). They were removed because hard
+sections override the learned order: every owed row sat above every unread row, and every unread row above the rest,
+whatever the model said. The order should be one: likeliest first, with what is new found as you scroll, weighted by
+how likely you are to open it and answer. In the replay ([below](#the-replay); 7 days, 354 opens, the last 2 days
+held out with 118), the learned order put in those sections had a held-out MRR of 0.280 against 0.438 for the learned
+order alone: a paired difference of −0.158 (95% interval −0.207 to −0.096), lower for 82 opens and higher for 11.
+Against the formula's one list (0.449) it was −0.169 (−0.244 to −0.105). The median position of what you opened went
+from 3rd to 11th.
 
 Until 2026-11-07 a line, **Caught up**, split the list: above it what needed you, by score; below it everything
 else by the latest message. A chat you had just answered no longer needed you, so it fell below the line, often
@@ -26,8 +30,8 @@ the top for a few hours ([You were here](#you-were-here)).
 A filter button beside the search box opens a menu: **All**, **Direct messages** (DMs), **Groups** (the other
 chats: groups, rooms, notes to self), **Mail** (with a mail account). With a filter on, the button is tinted and
 says which (DMs, Groups, Mail). The choice is kept per device. Until 2026-11-09 these were chips under the search
-box, with People and Unread: a stored People became Direct messages, and Unread became All, since the New section
-is what it showed.
+box, with People and Unread: a stored People became Direct messages, and Unread became All, where unread rows are
+bold.
 
 **Mail from people** is in the same list (docs/mail.md, slice 8): a thread in Inbox from someone you know that is
 unread, owes a reply, is recent or you just opened. It is scored by this formula on its own fold
@@ -42,7 +46,7 @@ comes from triage's stored decision, not from the text.
 
 Code: `packages/hub/src/attention.ts` (features and score), `rank.ts`, `rankhistory.ts` and `ranker.ts` (the
 learned order), `packages/web/src/inbox.ts` (the order on screen), `ordering.ts` (the snapshot rules, shared with
-the sidebar, and the sections and the filter: `inboxSections`, `filterKeeps`), `ui/Sidebar.tsx` (`InboxSidebar`).
+the sidebar, and the filter: `filterKeeps`), `ui/Sidebar.tsx` (`InboxSidebar`).
 
 ## The score
 
@@ -186,7 +190,8 @@ the row's tooltip and at the top of its right-click menu (a sheet on a phone):
 | visited | You were here 5 minutes ago |
 | none of the above | Last message 3 days ago |
 
-A row that needs you with nothing unread but a turn you owe shows a small ↩ with how long it has waited.
+A row that needs you with a turn you owe shows a small ↩ with how long it has waited, beside its unread count if it
+has one (until 2026-11-10 only with nothing unread).
 
 ## Features, kept incrementally
 
@@ -235,11 +240,7 @@ reading or answering it changes its score, and it should not jump away while you
 snapshot, so it settles where it now belongs once nothing is in use: with what `visited` adds, near the top.
 
 Between snapshots rows keep their places. A new conversation goes at the end until the next one. Rows that are no longer listed go. Rows slide to their new
-places when the order changes (`useFlip`). Sections are the snapshot's too: it keeps which rows were unread and
-which waited on you, and a row stays in the section it was in until the next snapshot, so reading or answering it
-does not pull it out from under you. A change of section alone (a row read, with the order the same) also asks for
-a new snapshot. The conversation you have open keeps its section with its place. A row newer than the snapshot goes
-by what it is now, at the end of its section. Before the hub has scored a conversation, or with
+places when the order changes (`useFlip`). Before the hub has scored a conversation, or with
 a hub that predates scores, it ranks unread first, then by recency.
 
 The inbox button and the phone's Catch up tab count the Important messages of the last week that you have not read, by
@@ -253,10 +254,10 @@ What the right pane shows with no conversation open, and the phone's Catch up ta
 here): the conversations that need you, to answer or read one after another without leaving the list
 (`packages/web/src/ui/CatchUp.tsx`, the queue in `catchup.ts`).
 
-**The queue.** The inbox's rows that need you, in the inbox's own order (the snapshot the list shows): first those
-with a reply you owe (`owedSince`, the list's Waiting on you), then the others with something unread (New, those that
-need you). Mail threads from people are rows like any
-other. It is taken when the pane opens and then stays steady while you work through it: nothing reorders when scores
+**The queue.** The inbox's rows that need you (`needs`) with a reply you owe (`owedSince`) or something unread, in the
+inbox's own order (the snapshot the list shows): one learned order, so a reply you owe sits where the list has it.
+From 2026-11-09 to 11-10 replies you owed came first, as the list's sections did (above). Mail threads from people are
+rows like any other. It is taken when the pane opens and then stays steady while you work through it: nothing reorders when scores
 change, and a card that no longer needs you (read on another device, answered) stays where it is until the pane opens
 again. Something that newly needs you joins the end, with a small "N new" note that jumps to it. For the first 3
 seconds after opening, before you act, late arrivals (mail views, scores) are still part of the first queue, in order.
@@ -385,7 +386,9 @@ difference was +0.139 (0.027 to 0.289). On the choosing days, where its first re
 was about even: +0.025 (−0.006 to 0.058). Every regularisation from 3 to 300 and position correction from 0 to 1
 did better than the formula on the held-out days (`--model-grid`: MRR 0.42 to 0.52). The choosing days could not
 tell them apart, so the shipped ones were fixed before looking. Two held-out days is little; the hub keeps
-learning, and the replay can be run again as the log grows.
+learning, and the replay can be run again as the log grows. Run again on 2026-11-09 (7 days, 354 opens, 118 held
+out), the two were even on the held-out days: −0.011 (−0.057 to 0.028), higher for 48 opens and lower
+for 33; on opens from elsewhere the formula did better, −0.063 (−0.140 to −0.002).
 
 What it learned on the real hub, in short: the time since the latest message counts much more than the formula's
 `recency` gives it, mentions and relationship a little more, and "you were here" a little less than `visited`'s
@@ -423,6 +426,18 @@ screen then (the two parts), so the replay also reports opens from elsewhere (no
 there the latest message does best, since a notification is about the latest message. `--grid` tries weights 15 to
 60 and half-lives of 1 to 4 hours for `visited`: more weight helps "back" on the choosing days and does nothing
 for the held-out ones, so it stays at 30 and 2 hours.
+
+Run again on 2026-11-09, to weigh the sections (11-03 to 11-09, 354 opens; 118 held out, the last two days).
+`sectioned` is the learned order inside the three sections of 2026-11-09:
+
+| | choosing days, all (236) | held out, all (118) | held out, from the inbox (82) | held out, elsewhere (36) |
+|---|---|---|---|---|
+| one list, the formula | MRR 0.336 · R@5 0.47 · median 6th | 0.449 · 0.58 · 4th | 0.494 · 0.65 · 2.5th | 0.346 · 0.42 · 7.5th |
+| learned order | 0.353 · 0.47 · 6th | 0.438 · 0.60 · 3rd | 0.506 · 0.68 · 2nd | 0.283 · 0.42 · 7th |
+| sectioned | 0.275 · 0.34 · 13th | 0.280 · 0.28 · 11th | 0.302 · 0.31 · 11th | 0.229 · 0.22 · 14.5th |
+
+Sectioned minus the learned order: −0.078 (−0.120 to −0.046) on the choosing days, −0.158 (−0.207 to −0.096) held
+out, and −0.054 (−0.121 to 0.019) on held-out opens from elsewhere.
 
 ## Seams for what comes next
 

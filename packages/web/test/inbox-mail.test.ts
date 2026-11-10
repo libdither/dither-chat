@@ -7,7 +7,7 @@
 import { expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
 import { emptyMail, mailInboxRows } from '../src/mail/model.ts';
-import { filterKeeps, inboxSections, inboxSnapshot, inboxView, rank, type Ranked } from '../src/ordering.ts';
+import { filterKeeps, inboxSnapshot, inboxView, rank, type Ranked } from '../src/ordering.ts';
 
 type Chipped = { direct: boolean; unread: boolean; mail: boolean };
 
@@ -79,22 +79,19 @@ test('chats and mail rank as one by the hub’s score; muted mail sinks with mut
   expect(rank(muted)).toEqual(['cnv_dm', 'mth_lease', 'cnv_group', 'mth_sam']);
 });
 
-test('the filter: Direct messages and Groups are chats, Mail is mail; New holds what is unread of both kinds', () => {
+test('the filter: Direct messages and Groups are chats, Mail is mail', () => {
   const w = world(true);
   const shown = (f: 'all' | 'direct' | 'groups' | 'mail') => inboxView(null, w.rows, (k) => filterKeeps(f, w.rows.find((r) => r.key === k)!));
   expect(shown('all')).toEqual(['mth_sam', 'cnv_dm', 'mth_lease', 'cnv_group']);
   expect(shown('direct')).toEqual(['cnv_dm']);
   expect(shown('groups')).toEqual(['cnv_group']);
   expect(shown('mail')).toEqual(['mth_sam', 'mth_lease']);
-  const snap = inboxSnapshot(w.rows);
-  expect(inboxSections(inboxView(snap, w.rows), snap, () => ({ unread: false, waiting: false })).new).toEqual(['mth_sam', 'cnv_dm']);
 });
 
 test('a mail thread open in the inbox keeps its place while it is open; new rows go after the order taken', () => {
   const w = world(true);
   const snap = inboxSnapshot(w.rows.map((r) => ({ ...r })));
   expect(snap.keys[0]).toBe('mth_sam');
-  expect(snap.unread).toEqual(['cnv_dm', 'mth_sam']);
   // Read: its score falls under the DM's, but it stays first while it is open.
   const read = w.rows.map((r) => (r.key === 'mth_sam' ? { ...r, score: 20, unread: false } : r));
   expect(inboxSnapshot(read, { key: 'mth_sam', prev: snap }).keys).toEqual(['mth_sam', 'cnv_dm', 'mth_lease', 'cnv_group']);

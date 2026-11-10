@@ -17,7 +17,9 @@
  * `--holdout` days to report.
  *
  * The learned order (rank.ts) is replayed as the hub runs it: refitted each day on the opens before that day whose
- * horizon had passed, starting from the prior, and asked at every open of the day.
+ * horizon had passed, starting from the prior, and asked at every open of the day. `sectioned` is the same model in the
+ * three sections the inbox had on 2026-11-09 (a reply you owe that needs you, then unread, then the rest), to measure
+ * what hard sections cost against the one order.
  */
 import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -141,7 +143,8 @@ interface Snap {
   t: number;
   targets: string[];
   sent: boolean;
-  cands: { id: string; x: Features; muted: boolean }[];
+  /** `section`: where the sectioned inbox put it: 0 a reply you owe that needs you, 1 unread, 2 the rest. */
+  cands: { id: string; x: Features; muted: boolean; section: number }[];
 }
 
 export interface Summary {
@@ -196,7 +199,10 @@ function measure(l: ReturnType<typeof load>, policies: Policy[]): { opens: Open[
         t,
         targets: stay.targets.filter((x) => ids.has(x)),
         sent: stay.sent > 0,
-        cands: seen.map((s) => ({ id: s.conv.id, x: rankFeatures(s.input, scoreConversation(s.input)), muted: !!s.input.muted && s.conv.shape !== 'self' })),
+        cands: seen.map((s) => {
+          const r = scoreConversation(s.input);
+          return { id: s.conv.id, x: rankFeatures(s.input, r), muted: !!s.input.muted && s.conv.shape !== 'self', section: r.needs && r.owedSince !== null ? 0 : s.input.unread > 0 ? 1 : 2 };
+        }),
       });
       // As the hub learns: a sample of the candidates (rankhistory.ts).
       moments.push(momentOf(w, stay, t, seen)!);
@@ -207,24 +213,33 @@ function measure(l: ReturnType<typeof load>, policies: Policy[]): { opens: Open[
 
 // ------------------------------------------------------------------ the learned order
 
-/** Where a model puts what you opened, muted places last as on screen. */
-function modelRank(m: RankModel, s: Snap): number {
+/**
+ * Where a model puts what you opened, muted places last as on screen. `sectioned`: in the sections of 2026-11-09 first
+ * (ordering.ts inboxSections then), each in the model's order.
+ */
+function modelRank(m: RankModel, s: Snap, sectioned = false): number {
   const order = s.cands
-    .map((c) => ({ id: c.id, v: predict(m, c.x).value, muted: c.muted }))
-    .sort((a, b) => Number(a.muted) - Number(b.muted) || b.v - a.v || (a.id < b.id ? -1 : 1))
+    .map((c) => ({ id: c.id, v: predict(m, c.x).value, muted: c.muted, section: sectioned ? c.section : 0 }))
+    .sort((a, b) => a.section - b.section || Number(a.muted) - Number(b.muted) || b.v - a.v || (a.id < b.id ? -1 : 1))
     .map((c) => c.id);
   return Math.min(...s.targets.map((x) => order.indexOf(x)).filter((r) => r >= 0));
 }
 
-/** Replay the learned order as the hub runs it: refitted each day on what had matured before it. Adds `ranks[id]`. */
-function learned(ms: Moment[], opens: Open[], snaps: Snap[], id: string, o: { eta: number; lambda?: Record<Feature, number> }): Record<number, RankModel> {
+/**
+ * Replay the learned order as the hub runs it: refitted each day on what had matured before it. Adds `ranks[id]`, and
+ * with `sectionedId` the same models in the old sections as `ranks[sectionedId]`.
+ */
+function learned(ms: Moment[], opens: Open[], snaps: Snap[], id: string, o: { eta: number; lambda?: Record<Feature, number> }, sectionedId?: string): Record<number, RankModel> {
   const models: Record<number, RankModel> = {};
   for (const d of [...new Set(opens.map((x) => x.day))]) {
     const cut = dayStart(d);
     const known = ms.filter((m) => m.at + HORIZON <= cut);
     models[d] = known.length ? fitRank(known, cut, o) : PRIOR;
   }
-  opens.forEach((x, i) => (x.ranks[id] = modelRank(models[x.day], snaps[i])));
+  opens.forEach((x, i) => {
+    x.ranks[id] = modelRank(models[x.day], snaps[i]);
+    if (sectionedId) x.ranks[sectionedId] = modelRank(models[x.day], snaps[i], true);
+  });
   return models;
 }
 
@@ -243,8 +258,8 @@ export function mrrGap(opens: Open[], a: string, b: string, draws = 4000): { gap
   means.sort((x, y) => x - y);
   return { gap: mean(d), lo: means[Math.floor(draws * 0.025)], hi: means[Math.floor(draws * 0.975)], better: d.filter((x) => x > 1e-9).length, worse: d.filter((x) => x < -1e-9).length };
 }
-const gapLine = (what: string, o: Open[]) => {
-  const g = mrrGap(o, 'learned', 'one-list');
+const gapLine = (what: string, o: Open[], a = 'learned', b = 'one-list') => {
+  const g = mrrGap(o, a, b);
   return `- ${what} (n=${o.length}): ${g.gap >= 0 ? '+' : ''}${fmt(g.gap)}, 95% interval ${fmt(g.lo)} to ${fmt(g.hi)}; higher for ${g.better} opens, lower for ${g.worse}`;
 };
 
@@ -272,8 +287,9 @@ if (import.meta.main) {
   const days = [...new Set(opens.map((o) => o.day))].sort((a, b) => a - b);
   const holdout = new Set(days.slice(-holdoutDays));
   // The learned order, as shipped; and with --model-grid, other settings to choose from on the choosing days.
-  const models = learned(moments, opens, snaps, 'learned', { eta: 0.5 });
+  const models = learned(moments, opens, snaps, 'learned', { eta: 0.5 }, 'sectioned');
   policies.push({ id: 'learned', what: 'the learned order (rank.ts) as shipped, refitted daily on the days before', order: () => [] });
+  policies.push({ id: 'sectioned', what: 'the learned order in the sections of 2026-11-09: a reply you owe that needs you, then unread, then the rest', order: () => [] });
   const at = (lam: number): Record<Feature, number> => Object.fromEntries(FEATURES.map((f) => [f, f === 'bias' || f === 'formula' ? 1 : lam])) as Record<Feature, number>;
   if (flag('model-grid'))
     for (const lam of [3, 10, 30, 100, 300])
@@ -311,6 +327,17 @@ if (import.meta.main) {
     gapLine('choosing days', val),
     gapLine('held-out days', hold),
     gapLine('held out, opened from elsewhere', hold.filter((o) => !fromInbox(o))),
+    '',
+    'Sectioned minus the learned order (what hard sections cost), MRR on the same opens:',
+    '',
+    gapLine('choosing days', val, 'sectioned', 'learned'),
+    gapLine('held-out days', hold, 'sectioned', 'learned'),
+    gapLine('held out, opened from elsewhere', hold.filter((o) => !fromInbox(o)), 'sectioned', 'learned'),
+    '',
+    'Sectioned minus one list (the formula), MRR on the same opens:',
+    '',
+    gapLine('choosing days', val, 'sectioned', 'one-list'),
+    gapLine('held-out days', hold, 'sectioned', 'one-list'),
     '',
     'The learned order as it stood at the start of the last day, change from the prior in log-odds (positive: likelier):',
     '',

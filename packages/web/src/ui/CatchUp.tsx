@@ -88,11 +88,9 @@ function markDone(key: string, last: number) {
 }
 
 type Row = QueueRow & { row: InboxRow };
-/** The inbox's rows in its own order, the snapshot its list shows (inbox.ts): Waiting on you, New, then Earlier. */
-const queueRows = (): Row[] => {
-  const s = shownInbox('all');
-  return [...s.waiting, ...s.new, ...s.earlier].map((r) => ({ key: r.key, needs: r.needs, owedSince: r.owedSince, unread: rowUnread(r), last: rowLast(r), row: r }));
-};
+/** The inbox's rows in its own order, the snapshot its list shows (inbox.ts). */
+const queueRows = (): Row[] =>
+  shownInbox('all').map((r) => ({ key: r.key, needs: r.needs, owedSince: r.owedSince, unread: rowUnread(r), last: rowLast(r), row: r }));
 
 /** Where a card's messages start: the earliest unread, or the message you owe an answer, whichever came first. */
 function sinceOf(r: InboxRow): number {
