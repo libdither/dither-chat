@@ -73,7 +73,9 @@ beforeAll(async () => {
   store.createAccount({ id: LOCAL, network: 'matrix', label: 'local', color: '#F2A541', adapter: 'inproc-fake' });
   // The account's session directory, imported in place.
   mkdirSync(join(dir, 'accounts', REMOTE), { recursive: true });
-  const r = await fetch(`${m.url}/api/accounts/import`, { method: 'POST', body: JSON.stringify({ accounts: [{ id: REMOTE, kind: 'chat-fake', label: 'remote', dir: join(dir, 'accounts', REMOTE) }] }) });
+  // Importing takes the manager's CLI token (its data dir's cli.token), as dither-accounts' own tool sends it.
+  const cli = readFileSync(join(dir, 'manager', 'cli.token'), 'utf8').trim();
+  const r = await fetch(`${m.url}/api/accounts/import`, { method: 'POST', headers: { 'x-dither-accounts-cli': cli }, body: JSON.stringify({ accounts: [{ id: REMOTE, kind: 'chat-fake', label: 'remote', dir: join(dir, 'accounts', REMOTE) }] }) });
   expect(r.status).toBe(200);
   sup = new RoutedSupervisor(store, supOpts(), { url: m.url, dataDir: dir, repoRoot: REPO, firstListMs: 5000 });
   await sup.connect();
