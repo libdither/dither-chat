@@ -78,10 +78,12 @@ const work = args.includes('--work') ? opt('work', '') : mkdtempSync(join(tmpdir
 const running: { hub?: ReturnType<typeof Bun.spawn> } = {};
 
 async function main() {
+  const t0 = performance.now();
+  const secs = () => ((performance.now() - t0) / 1000).toFixed(1);
   mkdirSync(work, { recursive: true });
   // ------------------------------------------------------------------ the app, the world, the hub
   let web = opt('web', '');
-  let built = Promise.resolve();
+  let built = Promise.resolve('');
   if (!web) {
     web = join(work, 'web');
     console.log('building the web app…');
@@ -90,6 +92,7 @@ async function main() {
     const err = new Response(b.stderr).text();
     built = b.exited.then(async (code) => {
       if (code !== 0) throw new Error('web build failed:\n' + (await err));
+      return secs();
     });
     built.catch(() => {}); // awaited below; not an unhandled rejection meanwhile
   }
@@ -108,7 +111,7 @@ async function main() {
   await until(async () => (await getJson('/api/bootstrap')).accounts.every((a: any) => a.status === 'online'), 30_000, 'demo accounts not online');
   const boot = await getJson('/api/bootstrap');
   if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
-  await built;
+  console.log(`hub up, its demo accounts online, at ${secs()} s; web build done at ${(await built) || '-'} s`);
   // Then until its journal stands still (it moves for about five seconds): a first run that meets the demo world still
   // settling counts its renders. A warm-up run stands in for the wait: the world settles while it runs, uncounted.
   if (!WARMUP) {

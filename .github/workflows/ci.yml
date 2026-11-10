@@ -134,20 +134,26 @@ jobs:
   # Load and chat switching on a tenth-size world in the runner's browser, a warm-up and then one run: renders, DOM
   # nodes and bytes against scripts/perf-baseline-ci.json; its times go in the job's summary and are never judged
   # (docs/perf.md, "In CI").
+  # The longest job, so it does not wait the 10 s or so for `changes`: it starts at once, asks the same script, and
+  # skips its steps when `changes` would skip it (then it passes, where the others read as skipped).
   perf:
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       # The browser's files from a cold disk in the background, as in boot.
       - run: b=$(command -v chromium || command -v google-chrome) && (find -L "$(dirname "$(readlink -f "$b")")" -type f -print0 | xargs -0 cat > /dev/null 2>&1 &) || true
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - run: bun install --frozen-lockfile
-      - run: bun scripts/verify-perf.ts --ci
+      - id: changes
+        run: bun scripts/ci-changes.ts --github
+      - if: steps.changes.outputs.code == 'true'
+        run: bun install --frozen-lockfile
+      - if: steps.changes.outputs.code == 'true'
+        run: bun scripts/verify-perf.ts --ci
 
   # Branch protection requires this job by name. It passes only when every job passed, or was skipped because
   # `changes` said the pull request does not need it. It runs on failure and cancellation too, so it never reads as
