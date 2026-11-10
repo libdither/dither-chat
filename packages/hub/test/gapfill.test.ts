@@ -7,10 +7,11 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { GapFill } from '../src/imports/gapfill.ts';
+import { GapFill, PAUSE_MS } from '../src/imports/gapfill.ts';
 import { MediaArchiver } from '../src/mediaarchive.ts';
 import { mediaSigner } from '../src/server.ts';
 import { Store } from '../src/store.ts';
+import { FakeClock } from './fixtures/clock.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'dither-gap-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -38,15 +39,23 @@ describe('gap fill', () => {
     store.importBatch(acc, { conversation: { nativeId: 'dm1', shape: 'direct', participants: [ME, PEER] }, identities: [], messages: channel.slice(0, 21) }, { sourceSha: 'sha', runId: 'r', dryRun: false, archiveNew: false, first: true });
     for (const m of channel.slice(90)) store.ingest(acc, { t: 'message', message: m, live: false });
     const asked: number[] = [];
-    const gaps = new GapFill(store, async (_acc, cmd) => {
-      asked.push(cmd.beforeTs!);
-      const page = channel.filter((m) => m.ts < cmd.beforeTs!).slice(-cmd.limit).slice(-30);
-      for (const m of page) store.ingest(acc, { t: 'message', message: m, live: false });
-      return { count: page.length, done: page.length < 30 && page[0]?.ts === channel[0].ts };
-    });
+    const at: number[] = [];
+    const clock = new FakeClock();
+    const gaps = new GapFill(
+      store,
+      async (_acc, cmd) => {
+        asked.push(cmd.beforeTs!);
+        at.push(clock.now());
+        const page = channel.filter((m) => m.ts < cmd.beforeTs!).slice(-cmd.limit).slice(-30);
+        for (const m of page) store.ingest(acc, { t: 'message', message: m, live: false });
+        return { count: page.length, done: page.length < 30 && page[0]?.ts === channel[0].ts };
+      },
+      () => {},
+      clock,
+    );
     const v = gaps.start('acc_dc');
     expect(v.conversations).toBe(1);
-    for (let i = 0; i < 200 && gaps.status('acc_dc').running; i++) await Bun.sleep(50);
+    await clock.until(() => !gaps.status('acc_dc').running, 60_000, 'the gap fill');
     const s = gaps.status('acc_dc');
     expect(s).toMatchObject({ running: false, done: 1, failed: 0 });
     expect((store.db.query('SELECT COUNT(*) AS n FROM message').get() as any).n).toBe(100);
@@ -54,7 +63,10 @@ describe('gap fill', () => {
     expect(asked[0]).toBe(T0 + 90 * minute);
     expect(Math.min(...asked)).toBeGreaterThan(T0 + 20 * minute);
     expect(s.fetched).toBe(69);
-  }, 20_000);
+    // A page every 1.5 s at most, on top of the extractor's own pacing.
+    expect(PAUSE_MS).toBe(1500);
+    expect(at.slice(1).map((t, i) => t - at[i])).toEqual(asked.slice(1).map(() => PAUSE_MS));
+  });
 
   test('a conversation nothing was imported into goes back to its start; channels only when asked', async () => {
     const { store, acc } = world('gap2');
@@ -62,16 +74,22 @@ describe('gap fill', () => {
     store.ingest(acc, { t: 'message', message: msg(5, T0 + 5 * minute, 'chan'), live: false });
     const channel = Array.from({ length: 10 }, (_, i) => msg(100 + i, T0 + i * minute, 'dm2'));
     store.ingest(acc, { t: 'message', message: channel[9], live: false });
-    const gaps = new GapFill(store, async (_acc, cmd) => {
-      const page = channel.filter((m) => m.ts < cmd.beforeTs!).slice(-4);
-      for (const m of page) store.ingest(acc, { t: 'message', message: m, live: false });
-      return { count: page.length, done: page.length < 4 };
-    });
+    const clock = new FakeClock();
+    const gaps = new GapFill(
+      store,
+      async (_acc, cmd) => {
+        const page = channel.filter((m) => m.ts < cmd.beforeTs!).slice(-4);
+        for (const m of page) store.ingest(acc, { t: 'message', message: m, live: false });
+        return { count: page.length, done: page.length < 4 };
+      },
+      () => {},
+      clock,
+    );
     gaps.start('acc_dc');
-    for (let i = 0; i < 200 && gaps.status('acc_dc').running; i++) await Bun.sleep(50);
+    await clock.until(() => !gaps.status('acc_dc').running, 60_000, 'the gap fill');
     expect(gaps.status('acc_dc')).toMatchObject({ conversations: 1, done: 1 });
     expect((store.db.query(`SELECT COUNT(*) AS n FROM message WHERE conversation_id = (SELECT id FROM conversation WHERE native_id = 'dm2')`).get() as any).n).toBe(10);
-  }, 20_000);
+  });
 });
 
 describe('media archive', () => {

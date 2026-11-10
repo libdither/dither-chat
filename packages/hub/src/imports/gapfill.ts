@@ -10,11 +10,15 @@
  * carries on. Direct and group chats always; server channels only where an import reached, unless asked.
  */
 import type * as P from '@dither-chat/protocol';
+import { type Clock, realClock, sleep } from '../clock.ts';
 import type { Store } from '../store.ts';
 
 const PAGE = 100;
 /** Between pages, on top of the extractor's own pacing. */
-const PAUSE_MS = 1500;
+export const PAUSE_MS = 1500;
+/** A page's messages may land just after its answer (remote accounts): looked for this often, this many times. */
+const LAND_MS = 500;
+const LAND_TRIES = 6;
 
 type Row = Record<string, any>;
 
@@ -30,6 +34,7 @@ export class GapFill {
     private store: Store,
     private command: (accountId: string, cmd: { t: 'history'; conversation: string; beforeTs?: number; limit: number }) => Promise<{ count: number; done: boolean } | null>,
     private log: (msg: string) => void = () => {},
+    private clock: Clock = realClock,
   ) {}
 
   /** Conversations still to do, and done, for an account. */
@@ -97,7 +102,7 @@ export class GapFill {
       if ((c.shape === 'channel' || c.shape === 'thread') && gapEnd === null && !o.allChannels) continue;
       this.store.db
         .query(`INSERT INTO gap_fill (account_id, conversation_id, gap_end, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT DO UPDATE SET gap_end = MAX(COALESCE(gap_end, 0), COALESCE(excluded.gap_end, 0))`)
-        .run(accountId, c.id, gapEnd, Date.now());
+        .run(accountId, c.id, gapEnd, this.clock.now());
     }
   }
 
@@ -114,13 +119,13 @@ export class GapFill {
       const native = this.store.nativeOf('conversation', g.conversation_id)?.nativeId;
       if (!native) continue;
       const gapEnd = (g.gap_end as number | null) ?? 0;
-      let cursor = this.top(g.conversation_id, gapEnd) ?? Date.now();
+      let cursor = this.top(g.conversation_id, gapEnd) ?? this.clock.now();
       let pages = g.pages as number;
       let fetched = g.fetched as number;
       const save = (patch: { done?: boolean; error?: string | null }) =>
         this.store.db
           .query('UPDATE gap_fill SET pages = ?, fetched = ?, done = ?, error = ?, updated_at = ? WHERE account_id = ? AND conversation_id = ?')
-          .run(pages, fetched, patch.done ? 1 : 0, patch.error ?? null, Date.now(), accountId, g.conversation_id);
+          .run(pages, fetched, patch.done ? 1 : 0, patch.error ?? null, this.clock.now(), accountId, g.conversation_id);
       try {
         for (;;) {
           if (state.stop) return save({});
@@ -130,8 +135,8 @@ export class GapFill {
           pages++;
           // The page's messages may land just after the answer (remote accounts): give them a moment.
           let next = this.top(g.conversation_id, gapEnd);
-          for (let i = 0; i < 6 && r && r.count && (next === null || next >= cursor); i++) {
-            await Bun.sleep(500);
+          for (let i = 0; i < LAND_TRIES && r && r.count && (next === null || next >= cursor); i++) {
+            await sleep(this.clock, LAND_MS);
             next = this.top(g.conversation_id, gapEnd);
           }
           fetched += Math.max(0, count() - before);
@@ -142,7 +147,7 @@ export class GapFill {
           }
           cursor = next;
           save({});
-          await Bun.sleep(PAUSE_MS);
+          await sleep(this.clock, PAUSE_MS);
         }
       } catch (e: any) {
         this.log(`gap fill ${accountId} ${g.conversation_id}: ${e?.message ?? e}`);

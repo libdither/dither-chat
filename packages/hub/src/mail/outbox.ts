@@ -151,7 +151,7 @@ export class MailOutbox {
   /** Waits between tries while the account cannot be reached (tests make them short). */
   retryMs = RETRY_MS;
   private dirty = false;
-  private timer: Timer | null = null;
+  private timer: unknown = null;
   private running = new Set<string>();
   private started = false;
   private log: (msg: string) => void;
@@ -191,7 +191,7 @@ export class MailOutbox {
 
   stop() {
     this.started = false;
-    if (this.timer) clearTimeout(this.timer);
+    if (this.timer) this.hub.clock.clearTimeout(this.timer);
     this.timer = null;
   }
 
@@ -413,7 +413,7 @@ export class MailOutbox {
   // ---------------------------------------------------------- going out
 
   private pump() {
-    if (this.timer) clearTimeout(this.timer);
+    if (this.timer) this.hub.clock.clearTimeout(this.timer);
     this.timer = null;
     if (!this.started) return;
     const now = this.now();
@@ -435,7 +435,7 @@ export class MailOutbox {
       }
       void this.attempt(r.id);
     }
-    if (next < Infinity) this.timer = setTimeout(() => this.pump(), Math.max(10, next - now));
+    if (next < Infinity) this.timer = this.hub.clock.setTimeout(() => this.pump(), Math.max(10, next - now));
   }
 
   private folder(id: string) {

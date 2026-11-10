@@ -14,6 +14,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 import type * as M from '@dither-chat/protocol/mail-iface';
+import { type Clock, realClock } from '../clock.ts';
 import { asMailError, type MailBackend } from './backend.ts';
 import { Backfill, Budget } from './backfill.ts';
 import { storeBody } from './cache.ts';
@@ -32,6 +33,8 @@ export interface SyncContext {
   deleted(accountId: string, messageIds: string[]): void;
   log(msg: string): void;
   now?: () => number;
+  /** Timers: the queue's waits, the retry of a first sync (default: the real ones). */
+  clock?: Clock;
 }
 
 export class AccountSync {
@@ -44,13 +47,15 @@ export class AccountSync {
   private orphans = new Set<string>();
   private settling: Promise<void> | null = null;
   private timer: Timer | null = null;
-  private retry: Timer | null = null;
+  private retry: unknown = null;
+  private clock: Clock;
 
   constructor(
     readonly accountId: string,
     private ctx: SyncContext,
   ) {
-    this.queue = new MailQueue(2, ctx.now);
+    this.clock = ctx.clock ?? realClock;
+    this.queue = new MailQueue(2, ctx.now ?? (() => this.clock.now()), this.clock);
     new Budget(this.queue);
     this.backfill = new Backfill(this);
   }
@@ -89,7 +94,7 @@ export class AccountSync {
   stop() {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
-    if (this.retry) clearTimeout(this.retry);
+    if (this.retry) this.clock.clearTimeout(this.retry);
     this.queue.stop();
   }
 
@@ -116,7 +121,7 @@ export class AccountSync {
       .catch((e) => {
         this.setPhase('idle');
         this.ctx.log(`[${this.accountId}] first sync stopped: ${asMailError(e).message}; trying again in a minute`);
-        if (!this.stopped) this.retry = setTimeout(() => ((this.first = null), this.start()), 60_000);
+        if (!this.stopped) this.retry = this.clock.setTimeout(() => ((this.first = null), this.start()), 60_000);
       });
     return this.first;
   }

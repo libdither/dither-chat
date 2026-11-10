@@ -575,9 +575,12 @@ fake server: Inbox 12,000, Sent 6,000 and Archive 42,000, each spread over three
 
 The test prints these on every run. Bodies' sizes depend on the mail, so the body cache was measured only by count.
 
-**Running it.** `bun test packages/hub/test/mail-load.test.ts` takes about 30 s. A demo hub with a big mailbox:
-`DITHER_DEMO_MAIL_BIG=1` adds 40,000 Archive messages over three years, 400 older Inbox messages and an unsynced
-"Projects" folder of 1,000, on a fake server that answers in 250 ms. `bun scripts/verify-mail.ts <hub> [shots] --big`
+**Running it.** `bun test packages/hub/test/mail-load.test.ts` takes about 30 s, nearly all of it SQLite storing and
+indexing the summaries. It runs on a clock of its own (`test/fixtures/clock.ts`, each call answered 20 ms later in that
+clock's time), so the horizon, the progress line and the bodies ahead come out the same on every run.
+
+A demo hub with a big mailbox: `DITHER_DEMO_MAIL_BIG=1` adds 40,000 Archive messages over three years, 400 older Inbox
+messages and an unsynced "Projects" folder of 1,000, on a fake server that answers in 250 ms. `bun scripts/verify-mail.ts <hub> [shots] --big`
 then checks endless scroll, the progress line, a folder opened for the first time, and older mail fetched past what the
 hub holds, at 390 px and on a desktop in both themes, before its usual checks.
 

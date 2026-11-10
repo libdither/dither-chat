@@ -17,6 +17,7 @@ import { relabeled, settled } from '../src/mail/headerless.ts';
 import { MailHub } from '../src/mail/index.ts';
 import { mailPeople } from '../src/mail/people.ts';
 import { Store } from '../src/store.ts';
+import { FakeClock } from './fixtures/clock.ts';
 
 const ACC = 'acc_headerless1';
 const ME = { name: 'Me', email: 'me@example.com' };
@@ -27,14 +28,9 @@ const DAY = 86_400_000;
 const PROTON: FakeOpts = { ids: 'proton', threadIds: true, refs: false, state: 'account', events: 'all' };
 const UNSUB = { listId: null, unsubscribe: '<https://rust-weekly.example/leave>', precedence: null, autoSubmitted: null };
 
-const until = async (f: () => unknown, ms = 4000, what = 'condition') => {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    if (await f()) return;
-    await Bun.sleep(5);
-  }
-  throw new Error(`timed out waiting for ${what}`);
-};
+/** Each test's clock (place() makes one, for every hub on its database): the budget and the fake server run on it. */
+let clock = new FakeClock();
+const until = (f: () => unknown, ms = 4000, what = 'condition') => clock.until(f, ms, what);
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -45,6 +41,7 @@ const mid = (messageId: string, acc = ACC) => mailId('mml', acc, `m:${messageId}
 
 /** A database, and a hub on it (a second hub on the same database is the hub starting again). */
 function place() {
+  clock = new FakeClock();
   const dir = mkdtempSync(join(tmpdir(), 'dither-mail-headerless-'));
   const chat = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
   cleanups.push(() => {
@@ -52,11 +49,12 @@ function place() {
     rmSync(dir, { recursive: true, force: true });
   });
   const start = async (fake: FakeMailBackend) => {
-    const hub = new MailHub({ db: chat.db, backend: fake, log: () => {} });
+    fake.clock = clock;
+    const hub = new MailHub({ db: chat.db, backend: fake, log: () => {}, clock });
     mailPeople(hub)!.connect(chat);
     hub.start();
-    for (const a of fake.accountsList()) await hub.sync(a.id)!.whenSynced();
-    await Bun.sleep(20);
+    for (const a of fake.accountsList()) await clock.wait(hub.sync(a.id)!.whenSynced());
+    await clock.settle();
     let stopped = false;
     const stop = () => {
       if (stopped) return;
@@ -94,8 +92,8 @@ describe('headers from bodies', () => {
     // The summaries said nothing: both look like a stranger's mail, and both could be listed.
     expect(cls(hub, '<news-1@x>')).toMatchObject({ class: 'personal', class_why: 'unknown', bulk: null });
     expect(candidates()).toContain(threadOf(hub, '<news-1@x>'));
-    await hub.body(mid('<news-1@x>'));
-    await hub.body(mid('<theo-1@x>'));
+    await clock.wait(hub.body(mid('<news-1@x>')));
+    await clock.wait(hub.body(mid('<theo-1@x>')));
     expect(cls(hub, '<news-1@x>')).toMatchObject({ class: 'bulk', class_why: 'list' });
     expect(JSON.parse(cls(hub, '<news-1@x>')!.bulk!)).toEqual(UNSUB);
     expect(hub.store.thread(threadOf(hub, '<news-1@x>'))!.class).toBe('bulk');
@@ -146,7 +144,7 @@ describe('once, on the start after this', () => {
     const p = place();
     // The hub before this fix: mail without Proton's labels, one body kept without its list headers.
     const first = await p.start(fake);
-    await first.hub.body(mid('<list-1@x>'));
+    await clock.wait(first.hub.body(mid('<list-1@x>')));
     first.stop();
     p.chat.db.exec(`DELETE FROM mail_setting WHERE key LIKE 'relabeled:%' OR key LIKE 'rebodied:%'`);
     p.chat.db.query('UPDATE mail_message SET bulk = NULL WHERE id = ?').run(mid('<list-1@x>'));
@@ -160,7 +158,7 @@ describe('once, on the start after this', () => {
     const { hub, stop } = await p.start(fake);
     expect(relabeled(hub.store, ACC)).toBe(false);
     expect(cls(hub, '<news-1@x>')!.class_why).toBe('unknown');
-    await bigOf(hub)!.headerless.run(ACC);
+    await clock.wait(bigOf(hub)!.headerless.run(ACC));
     expect(settled(hub.store, ACC)).toBe(true);
     // Inbox, then Archive: listed again, the labels in.
     expect(lists(fake)).toBe(2);
@@ -171,7 +169,7 @@ describe('once, on the start after this', () => {
     expect(cls(hub, '<list-1@x>')).toMatchObject({ class: 'bulk', class_why: 'list' });
     // Then what is still a stranger's in the window comes ahead; nothing a label settled, nothing older than the window.
     await until(() => gets(fake).length >= 2, 3000, 'the window’s bodies');
-    await Bun.sleep(50);
+    await clock.settle();
     const ids = new Map(fake.messages(ACC).map((m) => [m.id, m.messageId]));
     expect(gets(fake).map((id) => ids.get(id)).sort()).toEqual(['<list-1@x>', '<theo-1@x>']);
     expect(cls(hub, '<theo-1@x>')).toMatchObject({ class: 'personal', class_why: 'unknown' });
@@ -180,7 +178,7 @@ describe('once, on the start after this', () => {
     // Once: the next start lists nothing again.
     fake.calls.length = 0;
     const again = await p.start(fake);
-    await bigOf(again.hub)!.headerless.run(ACC);
+    await clock.wait(bigOf(again.hub)!.headerless.run(ACC));
     expect(lists(fake)).toBe(0);
     expect(gets(fake)).toEqual([]);
   });
@@ -191,7 +189,7 @@ describe('once, on the start after this', () => {
     expect(cls(hub, '<news-1@x>')).toMatchObject({ class: 'bulk', class_why: 'category' });
     expect(settled(hub.store, ACC)).toBe(true);
     const n = lists(fake);
-    await bigOf(hub)!.headerless.run(ACC);
+    await clock.wait(bigOf(hub)!.headerless.run(ACC));
     expect(lists(fake)).toBe(n);
   });
 
@@ -204,7 +202,7 @@ describe('once, on the start after this', () => {
     fake.calls.length = 0;
     const { hub } = await p.start(fake);
     expect(settled(hub.store, ACC)).toBe(true);
-    await bigOf(hub)!.headerless.run(ACC);
+    await clock.wait(bigOf(hub)!.headerless.run(ACC));
     expect(lists(fake)).toBe(0);
     // Twenty days old: outside bodies.ts's fourteen, and not fetched for the window either.
     expect(bigOf(hub) && gets(fake)).toEqual([]);

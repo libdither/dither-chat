@@ -11,20 +11,16 @@ import { MailCallError } from '../src/mail/backend.ts';
 import { FakeMailBackend, type FakeOpts } from '../src/mail/fake.ts';
 import { MailHub } from '../src/mail/index.ts';
 import { MAIL_LIMITS } from '../src/mail/limits.ts';
+import { FakeClock } from './fixtures/clock.ts';
 
 const ACC = 'acc_syncTest01';
 const ME = 'me@example.com';
 const T0 = Date.UTC(2026, 10, 1, 12);
 const H = 3_600_000;
 
-const until = async (f: () => unknown, ms = 4000, what = 'condition') => {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    if (await f()) return;
-    await Bun.sleep(5);
-  }
-  throw new Error(`timed out waiting for ${what}`);
-};
+/** Each test's clock (world() makes one): the hub's timers and the fake server's answers run on it. */
+let clock = new FakeClock();
+const until = (f: () => unknown, ms = 4000, what = 'condition') => clock.until(f, ms, what);
 
 let hub: MailHub | null = null;
 afterEach(() => {
@@ -32,17 +28,19 @@ afterEach(() => {
   hub = null;
 });
 
-function world(opts: FakeOpts = {}, seed: (f: FakeMailBackend) => void = () => {}, now = () => Date.now()) {
+function world(opts: FakeOpts = {}, seed: (f: FakeMailBackend) => void = () => {}, now?: () => number) {
+  clock = new FakeClock();
   const fake = new FakeMailBackend();
+  fake.clock = clock;
   fake.addAccount(ACC, { email: ME, opts });
   seed(fake);
   const db = new Database(':memory:', { strict: true });
   db.exec('PRAGMA foreign_keys = ON');
-  hub = new MailHub({ db, backend: fake, log: () => {}, now });
+  hub = new MailHub({ db, backend: fake, log: () => {}, now, clock });
   const ingested: string[] = [];
   hub.on('ingested', (e) => ingested.push(...e.messageIds));
   hub.start();
-  return { fake, hub, st: hub.store, ingested, synced: () => hub!.sync(ACC)!.whenSynced() };
+  return { fake, hub, st: hub.store, ingested, synced: () => clock.wait(hub!.sync(ACC)!.whenSynced()) };
 }
 
 const msgId = (hdr: string) => mailId('mml', ACC, `m:${hdr}`);
@@ -100,7 +98,7 @@ describe('keeping up', () => {
     // mail.arrived is applied without waiting for a call.
     expect(held(st, m.id)).toBe(msgId('<new@x>'));
     await until(() => fake.calls.some((c) => c.op === 'mail.changes' && c.input.mailboxId === 'INBOX' && c.input.state), 2000, 'the changes pass');
-    await Bun.sleep(30);
+    await clock.settle();
     expect(ingested.length).toBe(n + 1);
     expect(st.one<{ n: number }>('SELECT COUNT(*) AS n FROM mail_location')!.n).toBe(1);
   });
@@ -122,7 +120,7 @@ describe('keeping up', () => {
     });
     await synced();
     const id0 = msgId('<r0@x>');
-    await hub!.body(id0);
+    await clock.wait(hub!.body(id0));
     expect(st.body(id0)).not.toBeNull();
     // A message deleted on the server just before the rebuild, without the hub hearing.
     const gone = fake.messages(ACC, 'INBOX').find((m) => m.messageId === '<r4@x>')!;
@@ -140,14 +138,14 @@ describe('keeping up', () => {
     const { fake, st, synced } = world({ ids: 'imap', events: 'inbox' }, (f) => f.put(ACC, { messageId: '<mv@x>', text: 'keep me', receivedAt: T0 }));
     await synced();
     const id = msgId('<mv@x>');
-    await hub!.body(id);
+    await clock.wait(hub!.body(id));
     const t = st.one<{ thread_id: string }>('SELECT thread_id FROM mail_message WHERE id = ?', id)!.thread_id;
     const old = fake.messages(ACC, 'INBOX')[0].id;
     // IDLE reports the inbox only: the Archive side is found when the hub asks before deleting.
     const moved = fake.move(ACC, old, 'Archive');
     expect(moved).not.toBe(old);
     await until(() => held(st, moved) === id, 3000, 'the new location');
-    await Bun.sleep(30);
+    await clock.settle();
     expect(held(st, old)).toBeNull();
     expect(st.one('SELECT thread_id FROM mail_message WHERE id = ?', id)).toEqual({ thread_id: t });
     expect(st.body(id)).not.toBeNull();
@@ -194,9 +192,9 @@ describe('keeping up', () => {
     fake.setConnected(false);
     expect(hub!.access().state).toBe('unreachable');
     fake.deliver(ACC, { messageId: '<while-away@x>', receivedAt: T0 });
-    await Bun.sleep(30);
+    await clock.settle();
     expect(st.one('SELECT 1 FROM mail_message')).toBeNull();
-    await expect(hub!.body(msgId('<while-away@x>'))).rejects.toThrow();
+    await expect(clock.wait(hub!.body(msgId('<while-away@x>')))).rejects.toThrow();
     fake.setConnected(true);
     await until(() => st.one('SELECT 1 FROM mail_message WHERE id = ?', msgId('<while-away@x>')), 3000, 'the catch-up');
     expect(hub!.access().state).toBe('granted');
@@ -207,7 +205,7 @@ describe('keeping up', () => {
     await synced();
     fake.fail('mail.changes', new MailCallError('Service Unavailable', 503));
     fake.deliver(ACC, { messageId: '<a@x>', receivedAt: T0, flags: { seen: false } });
-    await Bun.sleep(30);
+    await clock.settle();
     fake.setFlags(ACC, fake.messages(ACC)[0].id, { seen: true });
     await until(() => st.one<{ seen: number }>('SELECT seen FROM mail_message')?.seen === 1, 3000, 'the flag');
   });
@@ -216,12 +214,16 @@ describe('keeping up', () => {
     const { fake, st, synced } = world();
     await synced();
     fake.fail('mail.get', new MailCallError('rate limited', 429, 'limited'));
+    fake.fail('mail.get', new MailCallError('rate limited', 429, 'limited'));
     fake.put(ACC, { messageId: '<b@x>', text: 'slowly', receivedAt: T0 });
     fake.gap(ACC);
     await until(() => st.one('SELECT 1 FROM mail_message'), 3000, 'the message');
-    const v = await hub!.body(msgId('<b@x>'));
+    const v = await clock.wait(hub!.body(msgId('<b@x>')));
     expect(v.text).toBe('slowly');
-  }, 10_000);
+    // The queue held it 2 s, then twice that.
+    const at = fake.calls.filter((c) => c.op === 'mail.get').map((c) => c.at);
+    expect(at.slice(1).map((t, i) => t - at[i])).toEqual([2_000, 4_000]);
+  });
 });
 
 describe('the page', () => {
@@ -242,10 +244,10 @@ describe('the page', () => {
     ]);
     expect(d.thread.unread).toBe(2);
     // An HTML-only message: its text part, made from the HTML.
-    const b = await hub!.body(msgId('<q3@x>'));
+    const b = await clock.wait(hub!.body(msgId('<q3@x>')));
     expect(b.text).toBe('Great, see you.');
     expect(fake.calls.filter((c) => c.op === 'mail.get')).toHaveLength(1);
-    await hub!.body(msgId('<q3@x>'));
+    await clock.wait(hub!.body(msgId('<q3@x>')));
     expect(fake.calls.filter((c) => c.op === 'mail.get')).toHaveLength(1);
     const read: string[][] = [];
     hub!.on('read', (e) => read.push(e.threadIds));
@@ -261,7 +263,7 @@ describe('the page', () => {
     const { synced } = world({}, (f) => f.put(ACC, { messageId: '<r@x>', receivedAt: T0, subject: 'Routed' }));
     await synced();
     const get = async (path: string, method = 'GET') => {
-      const res = await hub!.route(new Request(`http://hub${path}`, { method }), new URL(`http://hub${path}`));
+      const res = await clock.wait(hub!.route(new Request(`http://hub${path}`, { method }), new URL(`http://hub${path}`)));
       return { status: res?.status ?? 0, json: res ? await res.json() : null };
     };
     const all = await get('/api/mail');
@@ -273,7 +275,7 @@ describe('the page', () => {
     expect((await get('/api/mail/threads/mth_nope')).status).toBe(404);
     expect((await get('/api/mail/threads?list=v:nonsense:*')).status).toBe(404);
     expect((await get(`/api/mail/accounts/${ACC}`, 'DELETE')).status).toBe(409);
-    expect(await hub!.route(new Request('http://hub/api/mail/nothing'), new URL('http://hub/api/mail/nothing'))).toBeNull();
+    expect(await clock.wait(hub!.route(new Request('http://hub/api/mail/nothing'), new URL('http://hub/api/mail/nothing')))).toBeNull();
   });
 });
 
@@ -319,12 +321,14 @@ describe('a page that comes back (the journal, docs/sync.md)', () => {
     const { syncResponse } = await import('../src/sync.ts');
     const { applyMailBootstrap, applyMailEvent, emptyMail } = await import('../../web/src/mail/model.ts');
     const store = new Store(':memory:', (raw) => raw ?? null);
+    clock = new FakeClock();
     const fake = new FakeMailBackend();
+    fake.clock = clock;
     fake.addAccount(ACC, { email: ME });
     fake.put(ACC, { messageId: '<one@x>', subject: 'First', receivedAt: T0 });
-    hub = new MailHub({ db: store.db, backend: fake, log: () => {} });
+    hub = new MailHub({ db: store.db, backend: fake, log: () => {}, clock });
     hub.start();
-    await hub.sync(ACC)!.whenSynced();
+    await clock.wait(hub.sync(ACC)!.whenSynced());
     const record = () => store.journal.record(changesOf(hub!.flush()));
     record();
     const client = emptyMail();

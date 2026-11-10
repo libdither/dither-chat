@@ -11,6 +11,7 @@ import { MailCallError } from '../src/mail/backend.ts';
 import { FakeMailBackend, type FakeOpts } from '../src/mail/fake.ts';
 import { MailHub } from '../src/mail/index.ts';
 import { mailOps } from '../src/mail/ops.ts';
+import { FakeClock } from './fixtures/clock.ts';
 
 const ACC = 'acc_opsTest01';
 const ME = 'me@example.com';
@@ -18,14 +19,9 @@ const T0 = Date.UTC(2026, 10, 1, 12);
 const H = 3_600_000;
 const sam = { name: 'Sam', email: 'sam@example.net' };
 
-const until = async (f: () => unknown, ms = 4000, what = 'condition') => {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    if (await f()) return;
-    await Bun.sleep(5);
-  }
-  throw new Error(`timed out waiting for ${what}`);
-};
+/** Each test's clock (world() makes one): the writer's pacing and the fake server's answers run on it. */
+let clock = new FakeClock();
+const until = (f: () => unknown, ms = 4000, what = 'condition') => clock.until(f, ms, what);
 
 const hubs: MailHub[] = [];
 afterEach(() => {
@@ -33,7 +29,8 @@ afterEach(() => {
 });
 
 function start(db: Database, fake: FakeMailBackend) {
-  const hub = new MailHub({ db, backend: fake, log: () => {} });
+  fake.clock = clock;
+  const hub = new MailHub({ db, backend: fake, log: () => {}, clock });
   hubs.push(hub);
   const ops = mailOps(hub);
   ops.coalesceMs = 0;
@@ -45,13 +42,14 @@ function start(db: Database, fake: FakeMailBackend) {
 }
 
 async function world(o: { opts?: FakeOpts; level?: 'read' | 'write'; seed?: (f: FakeMailBackend) => void } = {}) {
+  clock = new FakeClock();
   const fake = new FakeMailBackend();
   fake.addAccount(ACC, { email: ME, opts: o.opts, level: o.level });
   o.seed?.(fake);
   const db = new Database(':memory:', { strict: true });
   db.exec('PRAGMA foreign_keys = ON');
   const w = start(db, fake);
-  await w.hub.sync(ACC)!.whenSynced();
+  await clock.wait(w.hub.sync(ACC)!.whenSynced());
   return { fake, db, ...w };
 }
 
@@ -92,7 +90,7 @@ describe('shown at once, pending until the server answers', () => {
 
     ops.coalesceMs = 0;
     st.db.query('UPDATE mail_op SET next_at = 0').run();
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(writes(fake).map((c) => [c.op, c.input.ids.length, c.input.mailboxId])).toEqual([['mail.move', 2, 'Archive']]);
     const there = onServer(fake, '<a2@x>');
     expect(there.mailboxId).toBe('Archive');
@@ -104,7 +102,7 @@ describe('shown at once, pending until the server answers', () => {
     expect(thread(st, '<a1@x>').roles).not.toContain('inbox');
     // The changes passes the move set off keep it so.
     await until(() => fake.calls.filter((c) => c.op === 'mail.changes' && c.input.mailboxId === 'Archive' && c.input.state).length >= 1, 2000, 'changes on Archive');
-    await Bun.sleep(50);
+    await clock.settle();
     expect(st.all('SELECT 1 FROM mail_location WHERE message_id = ?', mid('<a2@x>')).length).toBe(1);
     expect(st.accountView(st.account(ACC)!).ops!.waiting).toBe(0);
   });
@@ -120,7 +118,7 @@ describe('shown at once, pending until the server answers', () => {
     expect(thread(st, '<a1@x>')).toMatchObject({ flagged: true, unread: 0, pending: true });
     expect(JSON.parse(msg(st, '<a2@x>').pending)).toMatchObject({ seen: { v: 1, was: 0 } });
     st.db.query('UPDATE mail_op SET next_at = 0').run();
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(writes(fake).map((c) => [c.op, c.input.flagged ?? c.input.seen, c.input.ids.length])).toEqual([
       ['mail.flag', true, 1],
       ['mail.flag', true, 1],
@@ -157,7 +155,7 @@ describe('shown at once, pending until the server answers', () => {
     ops.flag({ threadIds: [t.id], flagged: true });
     ops.flag({ threadIds: [t.id], flagged: false });
     st.db.query('UPDATE mail_op SET next_at = 0').run();
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(writes(fake).filter((c) => c.op === 'mail.move')).toEqual([]);
     // The unstar still goes, so a star already on its way cannot win; the server ends unstarred.
     expect(onServer(fake, '<n1@x>').flags.flagged).toBe(false);
@@ -169,21 +167,21 @@ describe('shown at once, pending until the server answers', () => {
     const t = thread(st, '<a1@x>');
     ops.move({ threadIds: [t.id], to: 'trash' });
     expect(thread(st, '<a1@x>').roles.sort()).toEqual(['sent', 'trash']);
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(onServer(fake, '<a1@x>').mailboxId).toBe('Trash');
     expect(onServer(fake, '<a3@x>').mailboxId).toBe('Sent');
     ops.move({ threadIds: [t.id], to: 'inbox' });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(onServer(fake, '<a1@x>').mailboxId).toBe('INBOX');
     expect(thread(st, '<a1@x>').roles.sort()).toEqual(['inbox', 'sent']);
     const n = thread(st, '<n1@x>');
     ops.move({ threadIds: [n.id], to: 'junk' });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(onServer(fake, '<n1@x>').mailboxId).toBe('Junk');
     expect(thread(st, '<n1@x>').roles).toEqual(['junk']);
     // A mailbox of its own, by id.
     ops.move({ threadIds: [n.id], to: boxOf(st, 'archive') });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(onServer(fake, '<n1@x>').mailboxId).toBe('Archive');
     expect(st.all('SELECT 1 FROM mail_location WHERE message_id = ?', mid('<n1@x>')).length).toBe(1);
   });
@@ -192,7 +190,7 @@ describe('shown at once, pending until the server answers', () => {
     const { fake, st, ops } = await world({ seed, opts: { moveIds: 'null' } });
     const before = msg(st, '<n1@x>');
     ops.move({ threadIds: [before.thread_id], to: 'archive' });
-    await ops.idle();
+    await clock.wait(ops.idle());
     const archive = boxOf(st, 'archive');
     await until(() => st.one('SELECT 1 FROM mail_location WHERE mailbox_id = ? AND message_id = ?', archive, before.id), 3000, 'the Archive location');
     expect(msg(st, '<n1@x>').id).toBe(before.id);
@@ -203,7 +201,7 @@ describe('shown at once, pending until the server answers', () => {
     const { fake, st, ops } = await world({ seed, opts: { ids: 'proton', state: 'account', events: 'all' } });
     const id = onServer(fake, '<n1@x>').id;
     ops.move({ threadIds: [thread(st, '<n1@x>').id], to: 'archive' });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(onServer(fake, '<n1@x>')).toMatchObject({ id, mailboxId: 'Archive' });
     expect(st.all('SELECT native_id FROM mail_location WHERE message_id = ?', mid('<n1@x>'))).toEqual([{ native_id: id }]);
   });
@@ -215,7 +213,7 @@ describe('shown at once, pending until the server answers', () => {
     fake.move(ACC, onServer(fake, '<n1@x>').id, 'Trash');
     await until(() => !st.one(`SELECT 1 FROM mail_location l JOIN mailbox b ON b.id = l.mailbox_id WHERE l.message_id = ? AND b.role = 'inbox'`, mid('<n1@x>')), 2000, 'the inbox location gone');
     st.db.query('UPDATE mail_op SET next_at = 0').run();
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(writes(fake)).toEqual([]);
     expect(onServer(fake, '<n1@x>').mailboxId).toBe('Trash');
   });
@@ -240,14 +238,17 @@ describe('batches', () => {
     ops.flag({ messageIds: ids.slice(700), seen: true });
     expect(st.all('SELECT json_array_length(message_ids) AS n FROM mail_op ORDER BY created_at, rowid').map((r) => r.n)).toEqual([1000, 1000, 500]);
     st.db.query('UPDATE mail_op SET next_at = 0').run();
-    await ops.idle(10_000);
+    await clock.wait(ops.idle(10_000));
     expect(writes(fake).map((c) => c.input.ids.length)).toEqual([1000, 1000, 500]);
+    // One write to an account every 220 ms at most.
+    const at = writes(fake).map((c) => c.at);
+    expect(at.slice(1).map((t, i) => t - at[i])).toEqual([220, 220]);
     expect(fake.messages(ACC, 'INBOX').every((m) => m.flags.seen)).toBe(true);
     fake.calls.length = 0;
     const threads = st.all<{ id: string }>('SELECT id FROM mail_thread').map((r) => r.id);
     ops.coalesceMs = 0;
     ops.move({ threadIds: threads, to: 'archive' });
-    await ops.idle(10_000);
+    await clock.wait(ops.idle(10_000));
     expect(writes(fake).map((c) => [c.op, c.input.ids.length])).toEqual([
       ['mail.move', 1000],
       ['mail.move', 1000],
@@ -265,7 +266,7 @@ describe('what the server answers', () => {
     ops.flag({ messageIds: [mid('<n1@x>')], flagged: true });
     expect(msg(st, '<n1@x>').flagged).toBe(1);
     const before = fake.calls.length;
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(msg(st, '<n1@x>')).toMatchObject({ flagged: 0, pending: null });
     expect(st.one<{ n: number }>('SELECT COUNT(*) AS n FROM mail_op')!.n).toBe(0);
     expect(st.accountView(st.account(ACC)!).ops!.error?.message).toBe('Could not star a message: no such message');
@@ -280,7 +281,7 @@ describe('what the server answers', () => {
     ops.move({ threadIds: [thread(st, '<n1@x>').id], to: 'archive' });
     ops.flag({ messageIds: [mid('<a1@x>')], flagged: true });
     st.db.query('UPDATE mail_op SET next_at = 0').run();
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(thread(st, '<n1@x>').roles).toEqual(['inbox']);
     expect(msg(st, '<a1@x>')).toMatchObject({ flagged: 0, pending: null });
     expect(st.account(ACC)!.level).toBe('read');
@@ -293,14 +294,14 @@ describe('what the server answers', () => {
     const { fake, st, ops } = await world({ seed, opts: { ids: 'proton' } });
     fake.fail('mail.flag', new MailCallError('Proton cannot star from here', 501));
     ops.flag({ messageIds: [mid('<n1@x>')], flagged: true });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(msg(st, '<n1@x>').flagged).toBe(0);
     expect(st.accountView(st.account(ACC)!).ops!.unsupported).toEqual(['flag.flagged']);
     const calls = writes(fake).length;
     expect(() => ops.flag({ messageIds: [mid('<n1@x>')], flagged: true })).toThrow(expect.objectContaining({ status: 501, message: 'Proton cannot star from here' }));
     // Read still works.
     ops.flag({ messageIds: [mid('<n1@x>')], seen: true });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(writes(fake).length).toBe(calls + 1);
     expect(onServer(fake, '<n1@x>').flags.seen).toBe(true);
   });
@@ -310,12 +311,12 @@ describe('what the server answers', () => {
     fake.fail('mail.flag', new MailCallError('the mailbox was rebuilt (its UIDVALIDITY changed): list it again', 410));
     const at = fake.calls.length;
     ops.flag({ messageIds: [mid('<n1@x>')], flagged: true });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(st.one('SELECT attempts FROM mail_op')).toEqual({ attempts: 1 });
     expect(msg(st, '<n1@x>').flagged).toBe(1);
     await until(() => fake.calls.slice(at).some((c) => c.op === 'mail.changes' && c.input.state), 2000, 'a changes pass');
     st.db.query('UPDATE mail_op SET next_at = 0').run();
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(onServer(fake, '<n1@x>').flags.flagged).toBe(true);
     expect(msg(st, '<n1@x>').pending).toBeNull();
   });
@@ -330,7 +331,7 @@ describe('what the server answers', () => {
     const fresh = onServer(fake, '<n1@x>').id;
     await until(() => st.one('SELECT 1 FROM mail_location WHERE native_id = ?', fresh), 3000, 'the relist');
     st.db.query('UPDATE mail_op SET next_at = 0').run();
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(writes(fake).map((c) => c.input.ids)).toEqual([[fresh]]);
     expect(fresh).not.toBe(stale);
     expect(onServer(fake, '<n1@x>').flags.flagged).toBe(true);
@@ -343,7 +344,7 @@ describe('what the server answers', () => {
     ops.flag({ messageIds: [mid('<n1@x>')], flagged: true });
     ops.move({ threadIds: [thread(st, '<a1@x>').id], to: 'archive' });
     expect(msg(st, '<n1@x>').flagged).toBe(1);
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(msg(st, '<n1@x>')).toMatchObject({ flagged: 0, pending: null });
     expect(thread(st, '<a1@x>').roles).toContain('inbox');
     expect(onServer(fake, '<a2@x>').mailboxId).toBe('INBOX');
@@ -354,12 +355,12 @@ describe('what the server answers', () => {
     const { fake, st, ops } = await world({ seed });
     fake.fail('mail.flag', new MailCallError('the account is busy', 503));
     ops.flag({ messageIds: [mid('<n1@x>')], flagged: true });
-    await ops.idle();
+    await clock.wait(ops.idle());
     const op = st.one('SELECT * FROM mail_op')!;
     expect(op).toMatchObject({ attempts: 1, error: 'the account is busy' });
     expect(msg(st, '<n1@x>').flagged).toBe(1);
     st.db.query('UPDATE mail_op SET next_at = 0').run();
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(onServer(fake, '<n1@x>').flags.flagged).toBe(true);
     expect(st.one<{ n: number }>('SELECT COUNT(*) AS n FROM mail_op')!.n).toBe(0);
   });
@@ -370,7 +371,7 @@ describe('offline and restarts', () => {
     const { fake, st, ops } = await world({ seed });
     fake.setConnected(false);
     ops.move({ threadIds: [thread(st, '<n1@x>').id], to: 'archive' });
-    await ops.idle(300);
+    await clock.wait(ops.idle(300));
     expect(thread(st, '<n1@x>')).toMatchObject({ roles: ['archive'], pending: true });
     expect(writes(fake)).toEqual([]);
     const at = fake.calls.length;
@@ -395,7 +396,7 @@ describe('offline and restarts', () => {
     expect(thread(again.st, '<a1@x>').flagged).toBe(true);
     fake.setConnected(true);
     await until(() => onServer(fake, '<n1@x>').mailboxId === 'Archive' && onServer(fake, '<a3@x>').flags.flagged, 4000, 'both changes on the server');
-    await again.ops.idle();
+    await clock.wait(again.ops.idle());
     expect(db.query('SELECT COUNT(*) AS n FROM mail_op').get()).toEqual({ n: 0 });
     expect(thread(again.st, '<n1@x>').pending).toBe(false);
   });
@@ -405,7 +406,7 @@ describe('offline and restarts', () => {
     fake.setOnline(ACC, false);
     await until(() => !st.account(ACC)!.online, 2000, 'offline');
     ops.flag({ messageIds: [mid('<n1@x>')], seen: true });
-    await ops.idle(200);
+    await clock.wait(ops.idle(200));
     expect(writes(fake)).toEqual([]);
     fake.setOnline(ACC, true);
     await until(() => onServer(fake, '<n1@x>').flags.seen, 4000, 'read on the server');
@@ -428,24 +429,24 @@ describe('read state', () => {
     const { fake, st, ops, hub } = await world({ seed });
     const t = thread(st, '<a1@x>');
     hub.readHere([t.id]);
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(onServer(fake, '<a2@x>').flags.seen).toBe(true);
     expect(writes(fake).map((c) => [c.op, c.input.seen, c.input.ids.length])).toEqual([['mail.flag', true, 1]]);
 
     expect(ops.setSettings({ markRead: 'manual' })).toEqual({ markRead: 'manual' });
     const n = thread(st, '<n1@x>');
     hub.readHere([n.id]);
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(thread(st, '<n1@x>').unread).toBe(0);
     expect(onServer(fake, '<n1@x>').flags.seen).toBe(false);
     // Marking it read yourself does.
     ops.flag({ threadIds: [n.id], seen: true });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(onServer(fake, '<n1@x>').flags.seen).toBe(true);
     // Unread: its latest message, on the server too.
     ops.flag({ threadIds: [n.id], seen: false });
     expect(thread(st, '<n1@x>').unread).toBe(1);
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(onServer(fake, '<n1@x>').flags.seen).toBe(false);
   });
 
@@ -454,7 +455,7 @@ describe('read state', () => {
     const t = thread(st, '<a1@x>');
     hub.readHere([t.id]);
     ops.flag({ threadIds: [thread(st, '<n1@x>').id], seen: true });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(thread(st, '<a1@x>').unread).toBe(0);
     expect(thread(st, '<n1@x>').unread).toBe(0);
     expect(msg(st, '<n1@x>')).toMatchObject({ seen: 0, seen_local: 1, pending: null });
@@ -466,7 +467,7 @@ describe('read state', () => {
 
 describe('routes', () => {
   const call = (hub: MailHub, method: string, path: string, body?: unknown) =>
-    hub.route(new Request(`http://hub${path}`, { method, body: body === undefined ? undefined : JSON.stringify(body), headers: { 'content-type': 'application/json' } }), new URL(`http://hub${path}`)).then(async (r) => ({ status: r!.status, body: await r!.json() }));
+    clock.wait(hub.route(new Request(`http://hub${path}`, { method, body: body === undefined ? undefined : JSON.stringify(body), headers: { 'content-type': 'application/json' } }), new URL(`http://hub${path}`))).then(async (r) => ({ status: r!.status, body: await r!.json() }));
 
   test('flag, move and the setting; a clientId sent twice is made once; bad input is refused', async () => {
     const { fake, st, hub, ops } = await world({ seed });
@@ -494,13 +495,14 @@ describe('routes', () => {
   });
 
   test('an account with no Junk mailbox says so', async () => {
+    clock = new FakeClock();
     const fake = new FakeMailBackend();
     fake.addAccount(ACC, { email: ME, mailboxes: [{ id: 'INBOX', name: 'Inbox', path: 'INBOX', parentId: null, role: 'inbox', unread: null, total: null }] });
     seed(fake);
     const db = new Database(':memory:', { strict: true });
     db.exec('PRAGMA foreign_keys = ON');
     const { hub, ops, st } = start(db, fake);
-    await hub.sync(ACC)!.whenSynced();
+    await clock.wait(hub.sync(ACC)!.whenSynced());
     expect(() => ops.move({ threadIds: [thread(st, '<n1@x>').id], to: 'junk' })).toThrow(expect.objectContaining({ status: 409, message: `${ME} has no Junk mailbox` }));
   });
 });

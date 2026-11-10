@@ -19,6 +19,7 @@ import { demoPng } from '../src/mail/demo-html.ts';
 import { FakeMailBackend, fillMailbox, type FakeOpts } from '../src/mail/fake.ts';
 import { MailHub } from '../src/mail/index.ts';
 import { MAIL_LIMITS, syncHorizon } from '../src/mail/limits.ts';
+import { FakeClock } from './fixtures/clock.ts';
 
 const ACC = 'acc_loadTest01';
 const ME = 'me@example.com';
@@ -63,8 +64,9 @@ function seed(f: FakeMailBackend, s: Seed) {
   fillMailbox(f, ACC, 'Junk', s.junk ?? 0, at);
 }
 
-function world(s: Seed, o: { opts?: FakeOpts; file?: boolean; now?: () => number } = {}) {
+function world(s: Seed, o: { opts?: FakeOpts; file?: boolean; now?: () => number; clock?: FakeClock } = {}) {
   const fake = new FakeMailBackend();
+  if (o.clock) fake.clock = o.clock;
   fake.addAccount(ACC, { email: ME, opts: { ids: 'imap', ...o.opts } });
   seed(fake, s);
   let db: Database;
@@ -77,7 +79,7 @@ function world(s: Seed, o: { opts?: FakeOpts; file?: boolean; now?: () => number
     db = new Database(':memory:', { strict: true });
     db.exec('PRAGMA foreign_keys = ON');
   }
-  hub = new MailHub({ db, backend: fake, log: () => {}, now: o.now });
+  hub = new MailHub({ db, backend: fake, log: () => {}, now: o.now, clock: o.clock });
   return { fake, hub, st: hub.store, db, start: () => (hub!.start(), hub!.sync(ACC)!) };
 }
 
@@ -87,7 +89,7 @@ const box = (h: MailHub, native: string) => h.store.mailboxByNative(ACC, native)
 /** The backfill has nothing left and has stopped. */
 const backfilled = (h: MailHub) => {
   const s = h.sync(ACC)!;
-  return s.backfill.legs().length === 0 && s.phase === 'idle';
+  return s.phase === 'idle' && s.backfill.legs().length === 0;
 };
 const background = (c: { op: string }) => c.op === 'mail.list' || c.op === 'mail.get';
 const heapMb = () => {
@@ -100,43 +102,46 @@ describe('60k messages', () => {
     // The budget lifted: as fast as the fake answers (the budget itself is the next test's).
     Object.assign(MAIL_LIMITS, { backgroundPerSec: 100_000, userPauseMs: 0 });
     const S = { inbox: 12_000, sent: 6_000, archive: 42_000 };
-    const { fake, st, db, start } = world(S, { file: true });
+    // On a clock of its own, each call answered 20 ms later: the same steps in the same order every run.
+    const clock = new FakeClock(NOW);
+    const { fake, st, db, start } = world(S, { file: true, clock, opts: { latencyMs: 20 } });
     const t0 = performance.now();
     let first: { calls: number; ms: number } | null = null;
+    // The heap as the summaries come in, every 5k.
+    const heap: { held: number; mb: number }[] = [];
+    let next = 5_000;
     hub!.on('ingested', () => {
       first ??= { calls: fake.calls.length, ms: performance.now() - t0 };
+      const n = count(hub!, 'mail_message');
+      if (n >= next) {
+        heap.push({ held: n, mb: heapMb() });
+        next += 5_000;
+      }
     });
     // The server flushes every 80 ms: what goes to pages.
     const sentThreads = new Set<string>();
     const stale = new Set<string>();
     const progress: P.MailAccountView['sync'][] = [];
-    const flusher = setInterval(() => {
+    let flushing = true;
+    const flush = () => {
       for (const e of hub!.flush()) {
         if (e.t === 'mail.threads') for (const t of e.threads) sentThreads.add(t.id);
         if (e.t === 'mail.lists') for (const k of e.stale) stale.add(k);
         if (e.t === 'mail.progress') progress.push(e.sync);
       }
-    }, 80);
+      if (flushing) clock.setTimeout(flush, 80);
+    };
+    clock.setTimeout(flush, 80);
     const s = start();
-    await s.whenSynced();
+    await clock.wait(s.whenSynced());
     const synced = performance.now() - t0;
-    const heap: { held: number; mb: number }[] = [];
     try {
-      let next = 5_000;
-      await until(
-        () => {
-          const n = count(hub!, 'mail_message');
-          if (n >= next) {
-            heap.push({ held: n, mb: heapMb() });
-            next += 5_000;
-          }
-          return backfilled(hub!);
-        },
-        110_000,
-        'the backfill',
-      );
+      await clock.until(() => backfilled(hub!), 60_000, 'the backfill');
+      // The bodies ahead: asked for a few seconds after the last page, then fetched.
+      await clock.advance(5_000);
+      await clock.until(() => s.queue.size === 0, 60_000, 'the bodies ahead');
     } finally {
-      clearInterval(flusher);
+      flushing = false;
     }
     const ms = performance.now() - t0;
     heap.push({ held: count(hub!, 'mail_message'), mb: heapMb() });
@@ -144,13 +149,15 @@ describe('60k messages', () => {
     // The first screen: mailboxes, Inbox's state, Inbox's newest page.
     expect(first!.calls).toBeLessThanOrEqual(3);
 
-    // The horizon: all of Inbox; Sent and Archive back a year, not further (one message's slack at each end of the
-    // run, as the horizon moves with the clock).
-    const h = syncHorizon();
-    const within = (native: string) => fake.messages(ACC, native).filter((m) => m.receivedAt >= h).length;
+    // The horizon: all of Inbox; Sent and Archive back a year, not further (the year back from where the clock was
+    // at the start, and at the end).
+    const h = syncHorizon(clock.now());
+    const within = (native: string, from: number) => fake.messages(ACC, native).filter((m) => m.receivedAt >= from).length;
     expect(heldIn(hub!, 'INBOX')).toBe(S.inbox);
-    expect(Math.abs(heldIn(hub!, 'Sent') - within('Sent'))).toBeLessThanOrEqual(1);
-    expect(Math.abs(heldIn(hub!, 'Archive') - within('Archive'))).toBeLessThanOrEqual(1);
+    for (const native of ['Sent', 'Archive']) {
+      expect(heldIn(hub!, native)).toBeGreaterThanOrEqual(within(native, h));
+      expect(heldIn(hub!, native)).toBeLessThanOrEqual(within(native, syncHorizon(NOW)));
+    }
     expect(count(hub!, `mail_message m WHERE m.received_at < ? AND NOT EXISTS (SELECT 1 FROM mail_location l JOIN mailbox b ON b.id = l.mailbox_id WHERE l.message_id = m.id AND b.role = 'inbox')`, h - 3_600_000)).toBe(0);
     expect(box(hub!, 'INBOX').complete).toBe(1);
     expect(box(hub!, 'Archive').complete).toBe(0);
@@ -175,7 +182,7 @@ describe('60k messages', () => {
     )!;
     const before = fake.calls.length;
     const asked = performance.now();
-    const page = (await pageOnDemand(hub!, mailboxList(box(hub!, 'Archive').id), `${oldest.last_at}:${oldest.id}`, 50))!;
+    const page = (await clock.wait(pageOnDemand(hub!, mailboxList(box(hub!, 'Archive').id), `${oldest.last_at}:${oldest.id}`, 50)))!;
     const pageMs = performance.now() - asked;
     expect(page.pending).toBe(false);
     expect(page.threads.length).toBe(50);
@@ -201,38 +208,42 @@ describe('60k messages', () => {
 
 describe('the budget', () => {
   test('background work (prefetch and backfill) starts at most two calls a second', async () => {
-    const { fake, start } = world({ inbox: 3_000, sent: 600, archive: 3_000 });
+    const clock = new FakeClock(NOW);
+    const { fake, start } = world({ inbox: 3_000, sent: 600, archive: 3_000 }, { clock });
     const s = start();
-    await s.whenSynced();
-    const from = Date.now();
-    await Bun.sleep(2_600);
-    const bg = fake.calls.filter((c) => c.at >= from && background(c));
+    await clock.wait(s.whenSynced());
+    const from = fake.calls.length;
+    await clock.advance(2_600);
+    const bg = fake.calls.slice(from).filter(background);
     expect(bg.length).toBeGreaterThanOrEqual(4);
-    // In any second (less a little for the hop from the queue to the call), at most two.
-    for (const c of bg) expect(bg.filter((x) => x.at >= c.at && x.at < c.at + 950).length).toBeLessThanOrEqual(MAIL_LIMITS.backgroundPerSec);
+    // In any second, at most two.
+    expect(MAIL_LIMITS.backgroundPerSec).toBe(2);
+    for (const c of bg) expect(bg.filter((x) => x.at >= c.at && x.at < c.at + 1_000).length).toBeLessThanOrEqual(MAIL_LIMITS.backgroundPerSec);
   }, 10_000);
 
   test('P0 overtakes P2 and P3: a body a page waits for goes first, and the background pauses after it', async () => {
+    expect(MAIL_LIMITS.userPauseMs).toBe(10_000);
     MAIL_LIMITS.userPauseMs = 1_500;
-    const { fake, st, start } = world({ inbox: 3_000, sent: 600, archive: 3_000 });
+    const clock = new FakeClock(NOW);
+    const { fake, st, start } = world({ inbox: 3_000, sent: 600, archive: 3_000 }, { clock });
     const s = start();
-    await s.whenSynced();
+    await clock.wait(s.whenSynced());
     // Recent personal mail's bodies are queued ahead (P2) a few seconds after the sync, behind the budget.
-    await until(() => s.queue.size >= 10, 6_000, 'the prefetch');
+    await clock.until(() => s.queue.size >= 10, 6_000, 'the prefetch');
     const waiting = s.queue.size;
     // A message no prefetch wants: a hundred days old.
-    const old = st.one<{ id: string }>('SELECT id FROM mail_message WHERE received_at < ? ORDER BY received_at DESC LIMIT 1', Date.now() - 100 * DAY)!.id;
-    const asked = Date.now();
-    const v = await hub!.body(old);
+    const old = st.one<{ id: string }>('SELECT id FROM mail_message WHERE received_at < ? ORDER BY received_at DESC LIMIT 1', clock.now() - 100 * DAY)!.id;
+    const asked = clock.now();
+    const v = await clock.wait(hub!.body(old));
     expect(v.text).toBeNull();
     const call = fake.calls.find((c) => c.op === 'mail.get' && c.at >= asked && st.nativeOf(old)?.id === c.input.id)!;
     expect(call.at - asked).toBeLessThan(400);
     expect(s.queue.size).toBeGreaterThanOrEqual(waiting - 2);
     // Nothing in the background for MAIL_LIMITS.userPauseMs after it.
-    await Bun.sleep(1_900);
-    const next = fake.calls.find((c) => c.at > call.at && c !== call && background(c));
+    await clock.advance(1_900);
+    const next = fake.calls.slice(fake.calls.indexOf(call) + 1).find(background);
     expect(next).toBeDefined();
-    expect(next!.at - call.at).toBeGreaterThanOrEqual(MAIL_LIMITS.userPauseMs - 50);
+    expect(next!.at - call.at).toBeGreaterThanOrEqual(MAIL_LIMITS.userPauseMs);
   }, 15_000);
 });
 
@@ -263,16 +274,20 @@ describe('pages on demand', () => {
   });
 
   test('a slow server: the answer says pending, and the threads come as mail.threads', async () => {
-    const { fake, start } = world({ inbox: 20, junk: 60 });
+    const clock = new FakeClock(NOW);
+    const { fake, start } = world({ inbox: 20, junk: 60 }, { clock });
     const s = start();
-    await s.whenSynced();
+    await clock.wait(s.whenSynced());
     hub!.flush();
-    MAIL_LIMITS.pageWaitMs = 50;
-    fake.setOpts(ACC, { latencyMs: 200 });
-    const page = (await pageOnDemand(hub!, mailboxList(box(hub!, 'Junk').id), null, 50))!;
+    // Its state and its first page take 5 s each: past the 8 s an answer waits.
+    expect(MAIL_LIMITS.pageWaitMs).toBe(8_000);
+    fake.setOpts(ACC, { latencyMs: 5_000 });
+    const asked = clock.now();
+    const page = (await clock.wait(pageOnDemand(hub!, mailboxList(box(hub!, 'Junk').id), null, 50)))!;
+    expect(clock.now() - asked).toBe(8_000);
     expect(page).toMatchObject({ pending: true, next: null, complete: false });
     let got: string[] = [];
-    await until(
+    await clock.until(
       () => {
         for (const e of hub!.flush()) if (e.t === 'mail.threads') got.push(...e.threads.filter((t) => t.mailboxIds.includes(box(hub!, 'Junk').id)).map((t) => t.id));
         return got.length >= 20;

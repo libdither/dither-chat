@@ -28,6 +28,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 import type * as M from '@dither-chat/protocol/mail-iface';
+import { unref } from '../clock.ts';
 import type { Store } from '../store.ts';
 import type { MailHub } from './index.ts';
 import { mailPeople, type MailSender } from './people.ts';
@@ -139,7 +140,7 @@ export class MailClassifier {
   private recheck = new Set<string>();
   /** Threads from before this existed, to classify in the background. */
   private backlog: string[] = [];
-  private timer: Timer | null = null;
+  private timer: unknown = null;
   /** After a thread's class or `unknown` changed (mail/attention.ts listens). */
   readonly changed: ((c: ClassChange) => void)[] = [];
 
@@ -170,7 +171,7 @@ export class MailClassifier {
   }
 
   stop() {
-    if (this.timer) clearTimeout(this.timer);
+    if (this.timer) this.hub.clock.clearTimeout(this.timer);
     this.timer = null;
   }
 
@@ -269,8 +270,8 @@ export class MailClassifier {
 
   private schedule() {
     if (this.timer) return;
-    this.timer = setTimeout(() => this.drain(), 0);
-    this.timer.unref?.();
+    this.timer = this.hub.clock.setTimeout(() => this.drain(), 0);
+    unref(this.timer);
   }
 
   /** In the background: senders whose standing moved, then mail from before, a step at a time. */
