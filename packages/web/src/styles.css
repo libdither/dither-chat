@@ -12994,3 +12994,139 @@ html.kb-open .ss-foot {
     font-size: 11px;
   }
 }
+
+/* Header, sliders (ui/Pairs.tsx): their accounts, then yours that talk with the one picked. */
+.pair-sliders {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  min-width: 0;
+}
+.pair-slider {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: calc(var(--slot) + 6px);
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--bg-raised);
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  /* Grows and shrinks with a little overshoot as accounts come and go. */
+  transition: width 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.pair-slider:active {
+  cursor: grabbing;
+}
+.pair-slider.single {
+  cursor: default;
+}
+.pair-slider:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.pair-slider-thumb {
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  margin-top: calc(var(--slot) / -2);
+  width: var(--slot);
+  height: var(--slot);
+  border-radius: 50%;
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1.5px var(--accent);
+  will-change: transform;
+}
+.pair-slider-item {
+  position: relative;
+  flex: none;
+  width: var(--slot);
+  height: var(--slot);
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.pair-slider-item.off .avatar {
+  filter: grayscale(1);
+  opacity: 0.5;
+}
+.pair-slider:hover .pair-slider-item.off .avatar {
+  opacity: 0.75;
+}
+.pair-slider-item .avatar-net {
+  box-shadow: 0 0 0 1.5px var(--bg-raised);
+}
+.pair-sliders-arrow {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.pair-sliders-text {
+  margin-left: 4px;
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.pair-sliders-text b {
+  font-weight: 600;
+  color: var(--text);
+}
+/* A phone: the sliders need the room the picture and the words would take. */
+@media (max-width: 700px) {
+  .pairs-pane-sliders .conv-head-icon,
+  .pair-sliders-text {
+    display: none;
+  }
+}
+.pairs-pane-sliders .conv-head {
+  height: auto;
+  min-height: 0;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+/* Nickname: the person's name with a pencil that shows on hover. */
+.pair-nick-edit {
+  margin-left: 4px;
+  padding: 0 4px;
+  color: var(--text-faint);
+  font-size: 13px;
+  opacity: 0;
+}
+.conv-head h2:hover .pair-nick-edit,
+.pair-nick-edit:focus-visible {
+  opacity: 1;
+}
+.pair-nick-input {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 0 6px;
+  width: 12em;
+}
+
+/* Messages, sliders: their account in a pill beside the name; yours in grey, "sent from". */
+.msg-via-their {
+  color: var(--text-dim);
+}
+.msg-via-their:not(.on) {
+  color: var(--text-faint);
+}
+.msg-via-mine {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.msg-via-mine.on {
+  color: var(--text-dim);
+}

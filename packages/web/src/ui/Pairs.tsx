@@ -8,21 +8,26 @@
  *   its text wrapping around it; pairs you are not sending through are grey. The header's pictures and the names in
  *   the message box switch the pair.
  * - pairs-rail: the same history, with every pair in a scrolling row under the name.
+ * - sliders: two sliders under the name, theirs then yours (only your accounts that talk with the one of theirs
+ *   picked); drag between pictures or click to step, with a spring. Their messages name their account in a pill
+ *   beside the name; yours say "sent from" which of yours, in grey. No pictures at the right.
  */
 import type * as P from '@dither-chat/protocol';
 import { signal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { hueOf, initials } from '../format.ts';
 import { identityName, netName } from '../model.ts';
 import { phone } from '../phone.ts';
-import { db, isSelfIdentity } from '../state.ts';
+import { api, db, isSelfIdentity, toast } from '../state.ts';
 import { Avatar, Menu, NetBadge } from './bits.tsx';
 
-export type Design = 'current' | 'pairs' | 'pairs-rail';
+export type Design = 'current' | 'pairs' | 'pairs-rail' | 'sliders';
 const DESIGNS: { id: Design; label: string }[] = [
   { id: 'current', label: 'Current' },
   { id: 'pairs', label: 'Pairs' },
   { id: 'pairs-rail', label: 'Pairs rail' },
+  { id: 'sliders', label: 'Sliders' },
 ];
 const KEY = 'dither-chat:design';
 
@@ -281,5 +286,202 @@ export function PairLead({ person, personId, directs, focus }: { person: P.Perso
         onPick={(id) => focusPair(personId, focus.id, id)}
       />
     </span>
+  );
+}
+
+// ------------------------------------------------------------------ sliders
+
+const PAD = 3;
+/** A picture's width in the track: smaller on a phone, where both sliders share the header with the back button. */
+const slotWidth = () => (phone.value ? 26 : 30);
+
+/**
+ * Pictures in a track with a thumb on the picked one. Drag the thumb (or anywhere on the track) and let go near a
+ * picture; a click without a drag steps to the next. The thumb moves on a spring that overshoots a little, starting
+ * from the speed it was let go at; the track's width springs too as pictures come and go.
+ */
+function Slider({ items, index, onPick, label }: { items: { id: string; picture: ComponentChildren; title: string }[]; index: number; onPick: (i: number) => void; label: string }) {
+  const SLOT = slotWidth();
+  const thumb = useRef<HTMLSpanElement>(null);
+  const track = useRef<HTMLDivElement>(null);
+  const s = useRef({ x: index * SLOT, v: 0, target: index * SLOT, raf: 0, last: 0, drag: null as null | { id: number; x0: number; pos0: number; moved: boolean; lastX: number; lastT: number } });
+  const n = items.length;
+  const draw = () => {
+    if (thumb.current) thumb.current.style.transform = `translateX(${s.current.x}px)`;
+  };
+  const run = () => {
+    const st = s.current;
+    if (st.raf) return;
+    st.last = performance.now();
+    const step = (t: number) => {
+      const dt = Math.min(0.032, (t - st.last) / 1000);
+      st.last = t;
+      if (!st.drag) {
+        // Underdamped: settles in about half a second with one small overshoot.
+        const a = -420 * (st.x - st.target) - 21 * st.v;
+        st.v += a * dt;
+        st.x += st.v * dt;
+      }
+      draw();
+      if (st.drag || Math.abs(st.x - st.target) > 0.2 || Math.abs(st.v) > 2) st.raf = requestAnimationFrame(step);
+      else {
+        st.x = st.target;
+        st.v = 0;
+        st.raf = 0;
+        draw();
+      }
+    };
+    st.raf = requestAnimationFrame(step);
+  };
+  useLayoutEffect(() => {
+    s.current.target = index * SLOT;
+    run();
+  }, [index, n, SLOT]);
+  useEffect(() => () => cancelAnimationFrame(s.current.raf), []);
+  const max = (n - 1) * SLOT;
+  const onDown = (e: PointerEvent) => {
+    if (n < 2) return;
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {}
+    s.current.drag = { id: e.pointerId, x0: e.clientX, pos0: s.current.x, moved: false, lastX: e.clientX, lastT: performance.now() };
+  };
+  const onMove = (e: PointerEvent) => {
+    const d = s.current.drag;
+    if (!d || d.id !== e.pointerId) return;
+    if (Math.abs(e.clientX - d.x0) > 4) d.moved = true;
+    if (!d.moved) return;
+    let x = d.pos0 + e.clientX - d.x0;
+    // Past either end it gives, a third as far.
+    if (x < 0) x /= 3;
+    if (x > max) x = max + (x - max) / 3;
+    const t = performance.now();
+    if (t > d.lastT) s.current.v = ((e.clientX - d.lastX) / (t - d.lastT)) * 1000;
+    d.lastX = e.clientX;
+    d.lastT = t;
+    s.current.x = x;
+    run();
+  };
+  const onUp = (e: PointerEvent) => {
+    const d = s.current.drag;
+    if (!d || d.id !== e.pointerId) return;
+    s.current.drag = null;
+    if (!d.moved) {
+      onPick((index + 1) % n);
+      return;
+    }
+    // Where it would coast to, so a flick goes further than a slow drag.
+    const coast = s.current.x + s.current.v * 0.05;
+    const i = Math.max(0, Math.min(n - 1, Math.round(coast / SLOT)));
+    s.current.target = i * SLOT;
+    run();
+    if (i !== index) onPick(i);
+  };
+  const onKey = (e: KeyboardEvent) => {
+    const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+    if (!step) return;
+    e.preventDefault();
+    onPick((index + step + n) % n);
+  };
+  return (
+    <div
+      ref={track}
+      class={`pair-slider ${n < 2 ? 'single' : ''}`}
+      style={{ width: `${n * SLOT + 2 * PAD}px`, '--slot': `${SLOT}px` } as Record<string, string>}
+      role="slider"
+      tabIndex={0}
+      aria-label={label}
+      aria-valuemin={1}
+      aria-valuemax={n}
+      aria-valuenow={index + 1}
+      aria-valuetext={items[index]?.title}
+      title={n < 2 ? items[0]?.title : `${items[index]?.title}. Drag, or click for the next`}
+      onPointerDown={onDown}
+      onPointerMove={onMove}
+      onPointerUp={onUp}
+      onPointerCancel={onUp}
+      onKeyDown={onKey}
+    >
+      <span class="pair-slider-thumb" ref={thumb} style={{ transform: `translateX(${s.current.x}px)` }} />
+      {items.map((it, i) => (
+        <span key={it.id} class={`pair-slider-item ${i === index ? 'on' : 'off'}`}>
+          {it.picture}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Under the name: their accounts, then yours that talk with the one picked, then the pair in words. */
+export function PairSliders({ personId, directs, focus }: { personId: string; directs: P.ConversationView[]; focus: P.ConversationView }) {
+  const pairs = directs.map(pairOf);
+  const cur = pairOf(focus);
+  const theirs: Pair[] = [];
+  for (const p of [...pairs].sort((a, b) => a.conv.network.localeCompare(b.conv.network) || theirName(a).localeCompare(theirName(b)))) if (!theirs.some((x) => x.theirs?.id === p.theirs?.id)) theirs.push(p);
+  const mine = pairs.filter((p) => p.theirs?.id === cur.theirs?.id).sort((a, b) => myName(a).localeCompare(myName(b)));
+  const ti = Math.max(0, theirs.findIndex((p) => p.theirs?.id === cur.theirs?.id));
+  const mi = Math.max(0, mine.findIndex((p) => p.conv.id === focus.id));
+  const pickTheirs = (i: number) => {
+    const id = theirs[i]?.theirs?.id;
+    const withThem = pairs.filter((p) => p.theirs?.id === id);
+    const next = withThem.find((p) => p.acc?.id === cur.acc?.id) ?? withThem.sort((a, b) => (b.conv.lastMessageAt ?? 0) - (a.conv.lastMessageAt ?? 0))[0];
+    if (next) focusPair(personId, focus.id, next.conv.id);
+  };
+  return (
+    <span class="pair-sliders">
+      <Slider
+        label="Their account"
+        items={theirs.map((p) => ({ id: p.theirs?.id ?? p.conv.id, title: `${theirName(p)} on ${netName(p.conv.network)}`, picture: <Avatar id={p.theirs?.id ?? p.conv.id} name={theirName(p)} url={p.theirs?.avatar} size={22} network={p.conv.network} /> }))}
+        index={ti}
+        onPick={pickTheirs}
+      />
+      <span class="pair-sliders-arrow" aria-hidden="true">
+        ⇄
+      </span>
+      <Slider label="Your account" items={mine.map((p) => ({ id: p.conv.id, title: myName(p), picture: <MyPicture p={p} size={22} /> }))} index={mi} onPick={(i) => mine[i] && focusPair(personId, focus.id, mine[i].conv.id)} />
+      <span class="pair-sliders-text">
+        <b>{theirName(cur)}</b> ⇄ {myName(cur)}
+      </span>
+    </span>
+  );
+}
+
+/** The person's name, which is your nickname for them: click the pencil to change it (this hub only). */
+export function Nickname({ person, onOpen }: { person: P.PersonView; onOpen: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const save = async (name: string) => {
+    setEditing(false);
+    const v = name.trim();
+    if (!v || v === person.name) return;
+    await api(`/api/persons/${person.id}`, { method: 'PATCH', body: { name: v } }).catch((e) => toast({ kind: 'error', title: 'Could not save that', body: e.message }));
+  };
+  if (editing)
+    return (
+      <input
+        class="pair-nick-input"
+        value={person.name}
+        aria-label="Nickname"
+        ref={(el) => {
+          if (el && document.activeElement !== el) {
+            el.focus();
+            el.select();
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') void save((e.target as HTMLInputElement).value);
+          if (e.key === 'Escape') setEditing(false);
+        }}
+        onBlur={(e) => void save((e.target as HTMLInputElement).value)}
+      />
+    );
+  return (
+    <>
+      <button class="conv-head-name" title={`${person.name}'s profile`} onClick={onOpen}>
+        {person.name}
+      </button>
+      <button class="pair-nick-edit" title="Nickname (only you see it)" aria-label="Change nickname" onClick={() => setEditing(true)}>
+        ✎
+      </button>
+    </>
   );
 }

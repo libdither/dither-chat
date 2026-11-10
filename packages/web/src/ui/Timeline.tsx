@@ -89,7 +89,7 @@ import { memo } from './memo.ts';
 import { heldRequest } from '../requests.ts';
 import { LinkBanner, RequestBar } from './Requests.tsx';
 import { countKey } from '../clicklog.ts';
-import { design, focusedPair, focusPair, myName, pairOf, PairIcons, PairLead, PairMark, PairRail, theirName } from './Pairs.tsx';
+import { design, focusedPair, focusPair, myName, Nickname, pairOf, PairIcons, PairLead, PairMark, PairRail, PairSliders, theirName } from './Pairs.tsx';
 
 
 // ------------------------------------------------------------------ header
@@ -555,7 +555,7 @@ function sourceTitle(m: P.MessageView): string | undefined {
  * each message: `target`, the message it replies to (a map per render, not a search per message); `thread`, its
  * thread's conversation; `src`, where it came from in a merged timeline. `onQuote` shows the quoted message.
  */
-const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuote, highlight, target, thread, mark, onPick }: { m: P.MessageView; grouped: boolean; src?: string; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; mark?: ComponentChildren; onPick?: () => void }) {
+const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuote, highlight, target, thread, mark, onPick, via, viaOn }: { m: P.MessageView; grouped: boolean; src?: string; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; mark?: ComponentChildren; onPick?: () => void; via?: string; viaOn?: boolean }) {
   if (counting) rendered('MessageItem');
   metaRev.value;
   const author = m.authorId ? db.identities.get(m.authorId) : null;
@@ -638,6 +638,18 @@ const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuot
               {name}
             </span>
             {author?.isBot && <span class="bot-tag">BOT</span>}
+            {/* Design study (ui/Pairs.tsx, sliders): which of their accounts, or which of yours it was sent from. */}
+            {via !== undefined &&
+              (self ? (
+                <span class={`msg-via-mine ${viaOn ? 'on' : ''}`}>
+                  sent from <NetGlyph network={m.network} size={11} /> {via}
+                </span>
+              ) : (
+                <span class={`msg-src msg-via-their ${viaOn ? 'on' : ''}`} title={`${via} on ${netName(m.network)}`}>
+                  <NetGlyph network={m.network} size={11} />
+                  {via}
+                </span>
+              ))}
             {src !== undefined && (
               <span class="msg-src" title={src}>
                 <NetGlyph network={m.network} size={11} />
@@ -741,7 +753,7 @@ interface Drawn {
   to: string | null;
 }
 
-function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus, pairs }: { tkey: string; convIds: string[]; merged: boolean; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; pairs?: { focus: string; onFocus: (convId: string) => void } }) {
+function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus, pairs }: { tkey: string; convIds: string[]; merged: boolean; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; pairs?: { focus: string; onFocus: (convId: string) => void; inline?: boolean } }) {
   if (counting) rendered('Timeline');
   timelineRev(tkey).value;
   const scroller = useRef<HTMLDivElement>(null);
@@ -912,13 +924,15 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus, pairs 
     const thread = m.threadId ? (db.conversations.get(m.threadId) ?? null) : null;
     let mark: ComponentChildren = undefined;
     let onPick: (() => void) | undefined;
+    let via: string | undefined;
     if (pairs) {
       const c = db.conversations.get(m.conversationId);
       const focused = m.conversationId === pairs.focus;
       if (c && !focused) onPick = () => pairs.onFocus(c.id);
-      if (c && runStart) mark = <PairMark p={pairOf(c)} directs={convIds.map((id) => db.conversations.get(id)).filter((x): x is P.ConversationView => !!x)} focused={focused} onPick={() => pairs.onFocus(c.id)} />;
+      if (c && pairs.inline) via = isSelfIdentity(m.authorId) ? myName(pairOf(c)) : theirName(pairOf(c));
+      else if (c && runStart) mark = <PairMark p={pairOf(c)} directs={convIds.map((id) => db.conversations.get(id)).filter((x): x is P.ConversationView => !!x)} focused={focused} onPick={() => pairs.onFocus(c.id)} />;
     }
-    items.push(<MessageItem key={m.id} m={m} grouped={pairs ? grouped && !runStart : grouped} src={merged && !pairs ? sourceTitle(m) : undefined} onReply={onReply} onQuote={onQuote} highlight={m.id === flash} target={target} thread={thread} mark={mark} onPick={onPick} />);
+    items.push(<MessageItem key={m.id} m={m} grouped={pairs ? grouped && !runStart : grouped} src={merged && !pairs ? sourceTitle(m) : undefined} onReply={onReply} onQuote={onQuote} highlight={m.id === flash} target={target} thread={thread} mark={mark} onPick={onPick} via={via} viaOn={!!pairs && m.conversationId === pairs.focus} />);
     prev = m;
   }
 
@@ -1450,6 +1464,7 @@ export function PersonPane({ personId, onBack }: { personId: string; onBack?: ()
 /** Design study (ui/Pairs.tsx): the person page as pairs of your account and theirs. */
 function PairsPersonPane({ person, directs, onBack, reply, setReply, unreadAt }: { person: P.PersonView; directs: P.ConversationView[]; onBack?: () => void; reply: P.MessageView | null; setReply: (m: P.MessageView | null) => void; unreadAt: number | null }) {
   const rail = design.value === 'pairs-rail';
+  const sliders = design.value === 'sliders';
   const picked = focusedPair(person.id, directs);
   // Replying to a message sends through the pair it came from.
   const focus = (reply && directs.find((d) => d.id === reply.conversationId)) || picked;
@@ -1459,7 +1474,7 @@ function PairsPersonPane({ person, directs, onBack, reply, setReply, unreadAt }:
   };
   const cur = pairOf(focus);
   return (
-    <section class={`pane pairs-pane ${rail ? 'pairs-pane-rail' : ''}`}>
+    <section class={`pane pairs-pane ${rail ? 'pairs-pane-rail' : ''} ${sliders ? 'pairs-pane-sliders' : ''}`}>
       <header class="conv-head" data-track-area="chat header" onContextMenu={onMenu(() => personMenu(person))}>
         {onBack && (
           <button class="icon-btn back" data-track="pager: back button" onClick={onBack} aria-label="Back">
@@ -1471,12 +1486,16 @@ function PairsPersonPane({ person, directs, onBack, reply, setReply, unreadAt }:
         </button>
         <div class="conv-head-text">
           <h2>
-            <button class="conv-head-name" title={`${person.name}'s profile`} onClick={() => go({ view: 'profile', person: person.id })}>
-              {person.name}
-            </button>
+            {sliders ? (
+              <Nickname person={person} onOpen={() => go({ view: 'profile', person: person.id })} />
+            ) : (
+              <button class="conv-head-name" title={`${person.name}'s profile`} onClick={() => go({ view: 'profile', person: person.id })}>
+                {person.name}
+              </button>
+            )}
             {person.starred && <Icon name="star" size={13} class="row-star" />}
           </h2>
-          <div class="conv-head-sub">{rail ? <PairRail personId={person.id} directs={directs} focus={focus} /> : <PairIcons personId={person.id} directs={directs} focus={focus} />}</div>
+          <div class="conv-head-sub">{sliders ? <PairSliders personId={person.id} directs={directs} focus={focus} /> : rail ? <PairRail personId={person.id} directs={directs} focus={focus} /> : <PairIcons personId={person.id} directs={directs} focus={focus} />}</div>
         </div>
         <div class="conv-head-actions">
           <button class={`hdr-btn ${detailsShown() ? 'on' : ''}`} data-track="details" onClick={() => showDetails(!detailsShown())} title="Details" aria-label="Details">
@@ -1488,7 +1507,7 @@ function PairsPersonPane({ person, directs, onBack, reply, setReply, unreadAt }:
         <LinkBanner key={d.id} c={d} />
       ))}
       <NotStartedNote c={focus} />
-      <Timeline tkey={timelineKey('p', person.id)} convIds={directs.map((d) => d.id)} merged onReply={setReply} firstUnreadTs={unreadAt} pairs={{ focus: focus.id, onFocus }} />
+      <Timeline tkey={timelineKey('p', person.id)} convIds={directs.map((d) => d.id)} merged onReply={setReply} firstUnreadTs={unreadAt} pairs={{ focus: focus.id, onFocus, inline: sliders }} />
       <TypingBar convIds={directs.map((d) => d.id)} />
       <Composer
         targets={{ convId: focus.id }}
@@ -1496,7 +1515,7 @@ function PairsPersonPane({ person, directs, onBack, reply, setReply, unreadAt }:
         reply={reply}
         clearReply={() => setReply(null)}
         disabledReason={composerBlocker(focus)}
-        lead={rail ? undefined : <PairLead person={person} personId={person.id} directs={directs} focus={focus} />}
+        lead={rail || sliders ? undefined : <PairLead person={person} personId={person.id} directs={directs} focus={focus} />}
       />
     </section>
   );

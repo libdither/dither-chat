@@ -36,7 +36,7 @@
     "sync.missed.events": { "measured": 2, "budget": 2 }
   },
   "web": {
-    "startup.bytes": { "measured": 918694, "budget": 925211 },
+    "startup.bytes": { "measured": 925325, "budget": 943832, "reason": "design study: person page as pairs of accounts (ui/Pairs.tsx), on a branch for comparing" },
     "startup.gzip": { "measured": 280699, "budget": 283342 },
     "startup.files": { "measured": 10, "budget": 10 },
     "html/index.html.bytes": { "measured": 3774, "budget": 3850 },
