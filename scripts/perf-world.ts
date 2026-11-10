@@ -223,12 +223,17 @@ export function seedWorld(dir: string, opts: { scale?: number; anchor?: number }
   };
   const opened = (s: (typeof sizes)[number]): WorldConv => ({ id: conv(s.at.acc, s.at.conv), nativeId: s.at.conv, accountId: s.at.acc.id, messages: s.n, member: s.at.members[s.at.members.length - 1] });
   const world: World = {
-    open: [sizes[0], sizes[1], sizes[6], sizes[7], sizes[8], (sizes.find((s) => s.at.conv.startsWith('pd') && s.n >= 30 && s.n <= 60) ?? sizes.find((s) => s.at.conv.startsWith('pd'))!)].map(opened),
+    // A small world (scale) has no direct of a few dozen: its biggest other one then (sizes[6] is opened already).
+    open: [sizes[0], sizes[1], sizes[6], sizes[7], sizes[8], sizes.find((s) => s.at.conv.startsWith('pd') && s.n >= 30 && s.n <= 60) ?? biggestDirect(sizes.slice(8))].map(opened),
     counts,
     ms: Math.round(performance.now() - t0),
   };
   store.db.close();
   return world;
+}
+
+function biggestDirect<T extends { at: { conv: string }; n: number }>(sizes: T[]): T {
+  return sizes.filter((s) => s.at.conv.startsWith('pd')).reduce((a, b) => (b.n > a.n ? b : a));
 }
 
 if (import.meta.main) {
