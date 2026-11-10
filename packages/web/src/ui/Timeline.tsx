@@ -72,6 +72,7 @@ import { JoinCallButton } from './Call.tsx';
 import { EmojiComplete } from './EmojiComplete.tsx';
 import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
 import { TypingBar } from './Typing.tsx';
+import { useGrow } from './grow.ts';
 import { composerDone, composerTyped } from '../typing.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { ForwardCard, forwarding } from './Forward.tsx';
@@ -1020,12 +1021,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
     editing.value = null;
     setText(localStorage.getItem(draftKey) ?? '');
   };
-  useLayoutEffect(() => {
-    const el = ta.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = Math.min(220, el.scrollHeight) + 'px';
-  }, [text]);
+  useGrow(ta, text);
   useEffect(() => {
     if (reply) ta.current?.focus();
   }, [reply]);

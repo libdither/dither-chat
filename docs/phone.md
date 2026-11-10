@@ -71,6 +71,19 @@ so iOS does not zoom into them. The notch and the home indicator are kept clear 
 while the keyboard is up the bottom inset is dropped and the tab bar steps aside. On a touch keyboard Enter makes a new line (there
 is no Shift+Enter) and the send button sends; Ctrl+Enter also sends.
 
+**The message box** grows with the text, as Discord's does, up to about five lines on a phone and never more than
+40% of what is visible above the keyboard; past that it scrolls inside. It shrinks as text is deleted and is one
+line again after a send. The desktop keeps its ten lines (220px), also held to 40% of a short window. The cap is CSS
+(`max-height` against `100dvh`, which the keyboard resizes, or phone.ts's `--app-h` on iOS), so the keyboard opening
+or the window changing needs no measuring. Chromium sizes the box to its text by itself (`field-sizing: content`);
+other browsers measure it as the text changes, never while it is empty (`ui/grow.ts`). Catch up's reply box works
+the same way.
+
+Before, the box was measured to its text and held at a fixed 220px, about nine lines at a phone's 16px. With the
+keyboard up that was half of what was visible, so a long message, a pasted one or a long draft restored from Catch
+up or a reload pushed the timeline to nothing; with files or a reply above it on a small phone the send button went
+under the keyboard. It happened only with long text and the keyboard up, hence "sometimes".
+
 ## Parity: everything the desktop does, on a 390x844 touch screen
 
 "Before" is the phone layout as it was before this work: five tabs (Inbox, People, Groups, Spaces, More),
@@ -159,6 +172,10 @@ shrinks the layout (Android) and the visual viewport (iOS) under a focused compo
 and waits for the hub; flicks a toast; and on every main screen, scrolled top to bottom, checks nothing scrolls
 sideways or runs off the right edge; and that touch targets in the tab bar, rail, lists, conversation header,
 composer and settings are 40px or more.
+
+`bun scripts/verify-composer.ts [--port 8690]` checks the message box's size on a demo hub of its own: typed,
+pasted, deleted, sent, restored from a draft and with files attached, with the keyboard imitated for Android (a
+smaller layout) and iOS (a smaller visual viewport), at 390x844, 360x330 and on a desktop.
 
 **What headless cannot show.** It is Chromium on Linux pretending: not iOS Safari, which handles the
 keyboard, the visual viewport, `100%` heights and installed apps in its own way, and was only imitated here by
