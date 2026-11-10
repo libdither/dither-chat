@@ -4,6 +4,7 @@
  * Under them, what it learned. Reached from Catch up, the inbox's menu and Settings → Smart triage.
  */
 import type * as P from '@dither-chat/protocol';
+import { EXPLORE_REASON } from '@dither-chat/protocol';
 import { ago, fullTime } from '../format.ts';
 import { BELOW_DAYS, isMailItem, lineKey, linesOf, reasonsOf, type BoardItem, type BoardLine } from '../board.ts';
 import { authorName, board, boardUnread, communitiesOf, convLabel, convTitle, plainBody } from '../model.ts';
@@ -85,8 +86,15 @@ function Why({ l }: { l: BoardLine }) {
   const [all, setAll] = useState(false);
   const reasons = reasonsOf(l.items);
   const items = all ? l.items : l.items.slice(0, WHY_SHOWN);
+  // The inbox's learned order lifted it for now, to learn about it (docs/inbox.md, "Exploring").
+  const lifted = !isMailItem(l.newest) && !!db.attention.get(l.key)?.reasons.includes(EXPLORE_REASON);
   return (
     <div class="model-why" data-track-area="how it sorts (why)">
+      {lifted && (
+        <div class="model-reasons">
+          <span class="reason">In the inbox: {EXPLORE_REASON}</span>
+        </div>
+      )}
       {reasons.length > 0 && (
         <div class="model-reasons">
           {reasons.map((r) => (

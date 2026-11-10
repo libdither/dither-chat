@@ -319,8 +319,8 @@ in the order on screen, a DM as its person, then the rest by the latest message.
 | bootstrap `attention` | `AttentionView[]`: `{ id, score, needs, reasons, owedSince, at }` for every listed conversation, and `kind: 'mail'` with a mail thread's id for each listed thread |
 | event `{ t: 'attention', items, removed }` | changed scores, and conversations no longer listed |
 | `GET /api/attention` | `{ now, items }` |
-| `GET /api/attention/:conversationId` | everything about one score: the formula's parts, noise, relationship, reply rate, usual reply time; `learned`: the model's open and send chances and points |
-| `GET /api/attention/model` | the learned order: its mode, when it last learned and from how many opens, its prior, what it learned as changes to weights on named features, and the examination curve (fitted, the guess, and how often the list was on screen down to each row) |
+| `GET /api/attention/:conversationId` | everything about one score: the formula's parts, noise, relationship, reply rate, usual reply time; `learned`: the model's open and send chances and points, and the sampled points the inbox sorts by while exploring |
+| `GET /api/attention/model` | the learned order: its mode, when it last learned and from how many opens, its prior, what it learned as changes to weights on named features, the examination curve (fitted, the guess, and how often the list was on screen down to each row), and exploring (`explore`) |
 | `POST /api/attention/rebuild` | `{ conversations?: string[] }`: fold these, or all, again from the start |
 
 The bootstrap's and the events' `score` is the learned order's when it is on (the default), the formula's otherwise.
@@ -427,11 +427,55 @@ prior's two weights, 30 for the rest), so a few days of opens move the order a l
   real hub (184 opens, 675K messages): the longest the hub was held was 86 ms, and the whole refit took about 10 s
   in the background. Scoring all 484 listed conversations took 185 ms with the model, the same as without. On a
   later copy (2026-11-10, 346 opens, 30,172 rows) the refit took 17.3 s with the fitted curve and 16.7 s with the
-  guess; the longest hold was about 125 ms either way.
+  guess; the longest hold was about 125 ms either way. Working out how sure it is ([Exploring](#exploring)) adds
+  about half a second in the same steps (17.5 to 18.0 s, 348 opens) and nothing to the longest hold; the model
+  saved in `meta` grows to about 10 KB.
 - Clearing the activity log puts it back to the prior at the next check (every 30 minutes).
 
 `DITHER_INBOX_RANK`: `model` (the default) sorts by it; `shadow` works it out and shows it in
-`GET /api/attention/:id` without sorting by it; `off` does neither.
+`GET /api/attention/:id` without sorting by it; `off` does neither. `DITHER_INBOX_EXPLORE`: `1` (the default) sorts
+by a sample of it ([Exploring](#exploring)); `0` sorts by its mean, exactly as before exploring.
+
+### Exploring
+
+An order that only ever shows what it already believes in learns little about the rest: a conversation it ranks low
+is seldom opened from the inbox, so it stays low. So the order is a Thompson sample of the model, not its mean
+(`rank.ts`: `posteriorSteps`, `drawZ`, `predict` with a draw; `ranker.ts`):
+
+- **How sure it is.** At each refit, the uncertainty of each chance's weights, by the Laplace approximation: the pull
+  to the prior is a Gaussian prior, so near the fit the weights are about Gaussian, with covariance the inverse of the
+  Hessian there (the rows' `w·p(1 − p)·xxᵀ` plus the pulls). An open is a row of every moment in the 3 hours before
+  it, about 7 on the real hub, so the rows say each open several times over; the open chance's covariance is widened
+  by that count (`cov.repeat`). Features kept at the prior have none.
+- **One row's doubt** is the spread of its log-odds, `sd = sqrt(xᵀΣx)`: small for a row like many it has seen, larger
+  for an unusual one (one you never visited, a shape or a mix of signals it has rarely seen).
+- **The sample.** Each chance's log-odds moves by `sd × z`, with `z` a standard normal draw clipped to ±2, one per
+  chance per conversation, seeded by the conversation and the epoch. The epoch changes every 30 minutes and at every
+  refit, so between them a row's draw holds and live updates move it only as its features change; the client's
+  snapshot rules ([When the list moves](#when-the-list-moves)) still decide when the order on screen changes. A row
+  the model is sure of barely moves, so a reply you owe someone close stays where it was; one it knows little about
+  sometimes rises into view.
+- **Why.** A row the sample lifted by 10 points or more says so, first: "Shown higher to learn: not much history with
+  this one yet", in its tooltip and menu, and on How it sorts' *Why* for that conversation.
+- **Still learning without bias.** The visit log keeps the position the row had on screen when you opened it, which
+  with exploring is where the sample put it, and that is the position the examination weighting and the curve's fit
+  use ([Seeing a row](#seeing-a-row)). Rows not opened are placed by the formula's list, as before.
+
+`GET /api/attention/:id`'s `learned` has the mean (`points`) and the sample the inbox sorts by (`sampled`);
+`GET /api/attention/model` has `explore`: on or off, whether the model has a covariance yet (a fresh hub, on the
+prior, does not explore), the epoch and the clip.
+
+**What it costs.** In the replay (`--explore`: the learned order sorted by 20 seeds' samples against its mean; 7 days,
+the last 3 held out): MRR 0.436 against 0.447 on the held-out days (−0.011, 95% interval −0.020 to 0.003; across seeds
+0.418 to 0.453), and −0.016 (−0.030 to −0.006) over every day after the first. Where the model had little to go on,
+on the first days, it explores more and costs more: −0.025 (−0.042 to −0.002). A row lifted 10 points or more came
+into the first ten at 7% of held-out opens and 26% over every day after the first. The median row's spread was
+0.20 in log-odds, the largest 1.25. The rule was to keep the cost under about 0.02; it is.
+
+**What it buys cannot be measured here.** The replay can only score orders against what you opened from the orders
+you were shown; what exploring is for, opens of conversations the mean order would have kept out of view, and the
+better model they make, only shows in the activity log once it has run. Rerun the replay after a few weeks: a
+learned order that keeps pulling further ahead of the formula is the sign. `DITHER_INBOX_EXPLORE=0` turns it off.
 
 **Why it is the default.** In the replay below, refitted each day on the days before as the hub does, it beat the
 formula's one list on the held-out days. MRR went 0.366 → 0.526; the paired difference was +0.160, with a 95%
@@ -487,7 +531,7 @@ left out; a person's page counts as the best of their DMs. The earlier days are 
 are held out (two until 2026-11-10). It writes counts and rates only.
 
 ```
-bun scripts/inbox-replay.ts --live .data/hub.sqlite --out <scratch dir> [--holdout 3] [--grid] [--model-grid] [--calibrate]
+bun scripts/inbox-replay.ts --live .data/hub.sqlite --out <scratch dir> [--holdout 3] [--grid] [--model-grid] [--calibrate] [--curve] [--triage] [--explore]
 ```
 
 `--model-grid` replays the learned order with other settings, each against the shipped one on the same opens: the

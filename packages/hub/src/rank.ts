@@ -115,6 +115,17 @@ export interface RankModel {
   /** The examination curve fitted with it, one value per EXAM_AT bucket, and from how many inbox opens; absent: the guess. */
   curve?: number[] | null;
   curveFrom?: number;
+  /** How sure the fit is of each chance's weights (Laplace, `posteriorSteps`), for exploring; absent: not worked out. */
+  cov?: Covariance | null;
+}
+
+/** A covariance of the weights over the features the fit moves (not those kept at the prior). */
+export interface Covariance {
+  features: Feature[];
+  open: number[][];
+  send: number[][];
+  /** How many moments an open was a row of, on average: the open chance's covariance is that much wider. */
+  repeat?: number;
 }
 
 /**
@@ -148,15 +159,31 @@ export interface Prediction {
   points: number;
 }
 
-export function predict(m: RankModel, f: Features): Prediction {
-  const open = sigmoid(dot(m.open, f));
-  const send = sigmoid(dot(m.send, f));
+/**
+ * The chances and the value. With `z` (drawZ) and a model that knows its uncertainty, a Thompson sample: each logit
+ * moved by `scale` × its spread × its draw.
+ */
+export function predict(m: RankModel, f: Features, z?: { open: number; send: number } | null, scale = EXPLORE_SCALE): Prediction {
+  let lo = dot(m.open, f);
+  let ls = dot(m.send, f);
+  if (z && m.cov) {
+    lo += scale * spread(m.cov.features, m.cov.open, f) * z.open;
+    ls += scale * spread(m.cov.features, m.cov.send, f) * z.send;
+  }
+  const open = sigmoid(lo);
+  const send = sigmoid(ls);
   const value = open * (1 + SEND_VALUE * send);
-  // The value as the open chance the prior would need to give it, with the prior's send chance; then the formula's
-  // points that give that chance. Under the prior that is the formula's score itself.
+  return { open, send, value, points: pointsOf(value) };
+}
+
+/**
+ * A value as the formula's points: the open chance the prior would need to give it, with the prior's send chance,
+ * then the formula's points that give that chance. Under the prior that is the formula's score itself.
+ */
+export function pointsOf(value: number): number {
   const as = Math.min(1 - 1e-9, value / (1 + SEND_VALUE * sigmoid(PRIOR.send.bias!)));
   const points = (10 * (logit(as) - PRIOR.open.bias!)) / PRIOR.open.formula!;
-  return { open, send, value, points: Math.round(Math.max(-100, Math.min(200, points)) * 10) / 10 };
+  return Math.round(Math.max(-100, Math.min(200, points)) * 10) / 10;
 }
 
 /**
@@ -273,6 +300,8 @@ export interface FitOptions {
    */
   curve?: 'ipw' | 'em';
   rounds?: number;
+  /** False: skip working out how sure it is (the replay's grid, which never explores). */
+  cov?: boolean;
 }
 
 /** Fit both chances from the moments, starting from the prior. `eta` is the position correction (`examination`). */
@@ -301,26 +330,142 @@ export function* fitRankSteps(moments: readonly Moment[], at: number, o: FitOpti
       rows.push({ x: r.x, w: r.weight, opened: r.open && (r.open.after ?? 0) <= horizon ? r.open : null, pos: r.pos ?? null });
       if (r.chosen && r.sent !== undefined) send.push({ x: r.x, y: r.sent ? 1 : 0, w: 1 });
     }
-  const fit = (labelled: RankRow[]) => fitSteps(labelled, PRIOR.open, o.lambda);
   // The guess first: an inbox open counts 1/examination times.
-  let open = yield* fit(rows.map((r) => ({ x: r.x, y: r.opened ? 1 : 0, w: r.w * openWeight(r.opened, o.eta, o.cap) })));
+  let labelled = rows.map((r) => ({ x: r.x, y: r.opened ? 1 : 0, w: r.w * openWeight(r.opened, o.eta, o.cap) }));
+  let open = yield* fitSteps(labelled, PRIOR.open, o.lambda);
   let curve: number[] | null = null;
   let curveFrom = 0;
   if (o.curve && rows.length) {
     for (let i = 0; i < (o.rounds ?? 2); i++) {
       ({ curve, from: curveFrom } = curveFit(rows, open));
       yield;
-      open = yield* fit(o.curve === 'ipw' ? rows.map((r) => ({ x: r.x, y: r.opened ? 1 : 0, w: r.w * openWeight(r.opened, o.eta, o.cap, curve) })) : emRows(rows, open, curve));
+      labelled = o.curve === 'ipw' ? rows.map((r) => ({ x: r.x, y: r.opened ? 1 : 0, w: r.w * openWeight(r.opened, o.eta, o.cap, curve) })) : emRows(rows, open, curve);
+      open = yield* fitSteps(labelled, PRIOR.open, o.lambda);
     }
   }
+  const sendW = send.length ? yield* fitSteps(send, PRIOR.send, o.lambda) : { ...PRIOR.send };
+  const lambda = o.lambda ?? LAMBDA;
+  // An open is a row of every moment in the horizon before it, so the rows say it several times over: the open
+  // chance is as sure as that many fewer rows make it (the send chance has one row per open).
+  const repeat = Math.max(1, rows.filter((r) => r.opened).length / Math.max(1, moments.length));
+  const cov =
+    o.cov === false
+      ? null
+      : {
+          features: FEATURES.filter((f) => lambda[f] !== Infinity),
+          open: (yield* posteriorSteps(labelled, open, lambda)).map((row) => row.map((v) => Number((v * repeat).toPrecision(5)))),
+          send: yield* posteriorSteps(send, sendW, lambda),
+          repeat: Math.round(repeat * 100) / 100,
+        };
   return {
     open,
-    send: send.length ? yield* fitSteps(send, PRIOR.send, o.lambda) : { ...PRIOR.send },
+    send: sendW,
     fitAt: at,
     moments: moments.length,
     rows: rows.length,
     ...(curve ? { curve, curveFrom } : {}),
+    ...(cov ? { cov } : {}),
   };
+}
+
+// ------------------------------------------------------------------ exploring (Thompson sampling)
+
+/**
+ * How sure the fit is of its weights: near the fit they are about Gaussian (Laplace), the L2 pull being a Gaussian
+ * prior, with covariance the inverse of the Hessian there, Σᵢ wᵢ pᵢ(1 − pᵢ) xᵢxᵢᵀ + diag(λ). Over the features the fit
+ * moves. In steps: the hub pauses between them.
+ */
+export function* posteriorSteps(rows: readonly RankRow[], w: Weights, lambda: Record<Feature, number> = LAMBDA): Generator<undefined, number[][]> {
+  const free = FEATURES.filter((f) => lambda[f] !== Infinity);
+  const k = free.length;
+  const H = free.map((f, i) => free.map((_, j) => (i === j ? lambda[f] : 0)));
+  const x = new Array<number>(k);
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const p = sigmoid(dot(w, r.x));
+    const c = r.w * p * (1 - p);
+    for (let a = 0; a < k; a++) x[a] = r.x[free[a]];
+    for (let a = 0; a < k; a++) {
+      if (!x[a]) continue;
+      const ca = c * x[a];
+      for (let b = a; b < k; b++) H[a][b] += ca * x[b];
+    }
+    if (i % 2000 === 1999) yield;
+  }
+  for (let a = 0; a < k; a++) for (let b = 0; b < a; b++) H[a][b] = H[b][a];
+  return invertSPD(H).map((row) => row.map((v) => Number(v.toPrecision(5))));
+}
+
+/** The inverse of a symmetric positive-definite matrix, by Cholesky. */
+export function invertSPD(A: readonly number[][]): number[][] {
+  const n = A.length;
+  const L = A.map(() => new Array<number>(n).fill(0));
+  for (let i = 0; i < n; i++)
+    for (let j = 0; j <= i; j++) {
+      let s = A[i][j];
+      for (let k = 0; k < j; k++) s -= L[i][k] * L[j][k];
+      L[i][j] = i === j ? Math.sqrt(Math.max(s, 1e-12)) : s / L[j][j];
+    }
+  // Solve L Lᵀ X = I a column at a time.
+  const inv = A.map(() => new Array<number>(n).fill(0));
+  for (let c = 0; c < n; c++) {
+    const y = new Array<number>(n).fill(0);
+    for (let i = 0; i < n; i++) {
+      let s = i === c ? 1 : 0;
+      for (let k = 0; k < i; k++) s -= L[i][k] * y[k];
+      y[i] = s / L[i][i];
+    }
+    for (let i = n - 1; i >= 0; i--) {
+      let s = y[i];
+      for (let k = i + 1; k < n; k++) s -= L[k][i] * inv[k][c];
+      inv[i][c] = s / L[i][i];
+    }
+  }
+  return inv;
+}
+
+/** How uncertain one row's logit is: sqrt(xᵀΣx). */
+export function spread(features: readonly Feature[], cov: readonly number[][], f: Features): number {
+  let s = 0;
+  for (let a = 0; a < features.length; a++) {
+    const xa = f[features[a]];
+    if (!xa) continue;
+    for (let b = 0; b < features.length; b++) s += xa * cov[a][b] * f[features[b]];
+  }
+  return Math.sqrt(Math.max(0, s));
+}
+
+/** A draw is never more than this many standard deviations from the fit: exploring lifts a row, it never flings it. */
+export const Z_CLIP = 2;
+/** A new draw for every conversation this often, and at every refit. */
+export const EXPLORE_EPOCH = 30 * 60_000;
+/** How far the sample may stray, as a share of the uncertainty: the replay's cost rule sets it (docs/inbox.md). */
+export const EXPLORE_SCALE = 1;
+
+/** Which draw holds now: changes at a refit and every EXPLORE_EPOCH. */
+export const epochOf = (m: Pick<RankModel, 'fitAt'>, now: number) => `${m.fitAt ?? 0}:${Math.floor(now / EXPLORE_EPOCH)}`;
+
+/**
+ * Two standard normal draws for one key (the conversation and the epoch), clipped to ±Z_CLIP: the same key gives the
+ * same draws, so a row keeps its place between live updates and moves only when the epoch does.
+ */
+export function drawZ(key: string): { open: number; send: number } {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619);
+  // mulberry32
+  let a = h >>> 0;
+  const rand = () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const u1 = Math.max(rand(), 1e-12);
+  const u2 = rand();
+  const r = Math.sqrt(-2 * Math.log(u1));
+  const clip = (z: number) => Math.max(-Z_CLIP, Math.min(Z_CLIP, z));
+  return { open: clip(r * Math.cos(2 * Math.PI * u2)), send: clip(r * Math.sin(2 * Math.PI * u2)) };
 }
 
 /**

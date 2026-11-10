@@ -11,7 +11,7 @@
  * Nothing here reads what was said. "Asks a question" comes from triage's stored decision, never from the text.
  */
 import type * as P from '@dither-chat/protocol';
-import { decayed, USAGE_HALF_LIFE } from '@dither-chat/protocol';
+import { decayed, EXPLORE_REASON, USAGE_HALF_LIFE } from '@dither-chat/protocol';
 import type { Store } from './store.ts';
 import type { Triage } from './triage.ts';
 import type { ActivityStore } from './activity.ts';
@@ -920,7 +920,8 @@ export class Attention {
     if (!x) return null;
     const s = scoreConversation(x);
     const r = this.judge?.rank?.(cid, x, s) ?? null;
-    const reasons = r?.reason ? [...s.reasons.slice(0, 3), r.reason] : s.reasons;
+    // Lifted to learn about it: that comes first, since it is why the row is where it is.
+    const reasons = !r?.reason ? s.reasons : r.reason === EXPLORE_REASON ? [r.reason, ...s.reasons.slice(0, 3)] : [...s.reasons.slice(0, 3), r.reason];
     return { id: cid, score: r ? r.score : s.score, needs: s.needs, reasons, owedSince: s.owedSince, at: now };
   }
 

@@ -941,6 +941,9 @@ export interface Bootstrap {
  * conversation the inbox lists: direct, group, notes to self, rooms outside a space, and anything else while it
  * has an unread mention or pinged you.
  */
+/** The reason a row the learned order's exploring lifted gives (docs/inbox.md, "Exploring"). */
+export const EXPLORE_REASON = 'Shown higher to learn: not much history with this one yet';
+
 export interface AttentionView {
   /** A conversation's id, or a mail thread's (`mth_`) when `kind` is 'mail'. */
   id: string;

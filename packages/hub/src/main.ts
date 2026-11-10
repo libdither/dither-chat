@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 import { Categorizer, JevProvider, KeywordProvider, OllamaProvider, type CategoryProvider } from './categorize.ts';
 import { ActivityStore } from './activity.ts';
 import { Attention } from './attention.ts';
-import { InboxRanker, rankMode } from './ranker.ts';
+import { exploreOn, InboxRanker, rankMode } from './ranker.ts';
 import { applyDemoOverlay, createDemoAccounts, DEMO_MAIL_ACCOUNT, demoFactory, seedDemoMail } from './demo.ts';
 import { demoMailImages } from './mail/demo-html.ts';
 import { FakeMailBackend, MailHub, ManagerMailBackend } from './mail/index.ts';
@@ -71,7 +71,8 @@ const triage = new Triage(store, model, activity);
 const votes = new TriageVotes(store, triage);
 const attention = new Attention(store, triage);
 // The inbox's learned order (ranker.ts, docs/inbox.md). DITHER_INBOX_RANK=shadow works it out without sorting by it; off.
-const ranker = new InboxRanker(store, triage, rankMode(process.env.DITHER_INBOX_RANK), join(dataDir, 'hub.sqlite'));
+// DITHER_INBOX_EXPLORE=0 sorts by its mean instead of a Thompson sample.
+const ranker = new InboxRanker(store, triage, rankMode(process.env.DITHER_INBOX_RANK), join(dataDir, 'hub.sqlite'), Date.now, exploreOn(process.env.DITHER_INBOX_EXPLORE));
 attention.judge = ranker;
 // Per-device notification rules (docs/devices.md).
 const devices = new Devices(store, triage);
