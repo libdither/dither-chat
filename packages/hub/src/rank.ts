@@ -206,21 +206,39 @@ export function* fitSteps(rows: readonly RankRow[], prior: Weights, lambda: Reco
  */
 export interface Moment {
   at: number;
-  rows: { x: Features; weight: number; open: { source: string; rank: number | null } | null; chosen: boolean; sent?: boolean }[];
+  rows: { x: Features; weight: number; open: Opened | null; chosen: boolean; sent?: boolean }[];
+}
+
+/** How you first got to a conversation after a moment: the source, its inbox row then, and how long after (ms). */
+export interface Opened {
+  source: string;
+  rank: number | null;
+  after?: number;
+}
+
+/** What a fit can be told: the pull to the prior, the position correction and its cap, and the horizon. */
+export interface FitOptions {
+  lambda?: Record<Feature, number>;
+  eta?: number;
+  cap?: number;
+  /** Only opens this soon count (the moments must have been built with at least this horizon). */
+  horizon?: number;
 }
 
 /** Fit both chances from the moments, starting from the prior. `eta` is the position correction (`examination`). */
-export function fitRank(moments: readonly Moment[], at: number, o: { lambda?: Record<Feature, number>; eta?: number } = {}): RankModel {
+export function fitRank(moments: readonly Moment[], at: number, o: FitOptions = {}): RankModel {
   return drain(fitRankSteps(moments, at, o));
 }
 
 /** `fitRank` in steps. */
-export function* fitRankSteps(moments: readonly Moment[], at: number, o: { lambda?: Record<Feature, number>; eta?: number } = {}): Generator<undefined, RankModel> {
+export function* fitRankSteps(moments: readonly Moment[], at: number, o: FitOptions = {}): Generator<undefined, RankModel> {
   const open: RankRow[] = [];
   const send: RankRow[] = [];
+  const horizon = o.horizon ?? HORIZON;
   for (const m of moments)
     for (const r of m.rows) {
-      open.push({ x: r.x, y: r.open ? 1 : 0, w: r.weight * (r.open ? openWeight(r.open, o.eta) : 1) });
+      const opened = r.open && (r.open.after ?? 0) <= horizon ? r.open : null;
+      open.push({ x: r.x, y: opened ? 1 : 0, w: r.weight * (opened ? openWeight(opened, o.eta, o.cap) : 1) });
       if (r.chosen && r.sent !== undefined) send.push({ x: r.x, y: r.sent ? 1 : 0, w: 1 });
     }
   return {
@@ -236,9 +254,9 @@ export function* fitRankSteps(moments: readonly Moment[], at: number, o: { lambd
  * How much a row that was opened counts: an open from an inbox row far down says more than one from the top,
  * since you were less likely to see it there (inverse propensity, capped).
  */
-export function openWeight(open: { source: string; rank: number | null } | null, eta = EXAMINATION_ETA): number {
+export function openWeight(open: Opened | null, eta = EXAMINATION_ETA, cap = MAX_IPW): number {
   if (!open || open.source !== 'inbox' || open.rank == null) return 1;
-  return Math.min(MAX_IPW, 1 / examination(open.rank, eta));
+  return Math.min(cap, 1 / examination(open.rank, eta));
 }
 
 export { logit, sigmoid };

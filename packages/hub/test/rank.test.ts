@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { ActivityStore } from '../src/activity.ts';
 import { Attention, freshState, scoreConversation, type ScoreInput } from '../src/attention.ts';
-import { examination, FEATURES, fitLogistic, MAX_IPW, openWeight, predict, PRIOR, rankFeatures, type RankRow } from '../src/rank.ts';
+import { examination, FEATURES, fitLogistic, fitRank, MAX_IPW, openWeight, predict, PRIOR, rankFeatures, type Moment, type RankRow } from '../src/rank.ts';
 import { InboxRanker } from '../src/ranker.ts';
 import { KEEP_RECENT, KEEP_SAMPLE, sample, type Seen } from '../src/rankhistory.ts';
 import { Store, type AccountRow } from '../src/store.ts';
@@ -90,6 +90,30 @@ describe('seeing a row because it is listed', () => {
     // Not from the inbox's list: where it was there does not matter.
     expect(openWeight({ source: 'notification', rank: null })).toBe(1);
     expect(openWeight(null)).toBe(1);
+    // The replay tries other caps.
+    expect(openWeight({ source: 'inbox', rank: 10_000 }, 0.5, 3)).toBe(3);
+  });
+});
+
+describe('the horizon', () => {
+  test('an open later than the horizon counts as not opened, so moments built wide can try shorter ones', () => {
+    const fresh = feats({ lastMessageAt: T0 - 5 * MIN });
+    const quiet = feats({ lastMessageAt: T0 - 3 * DAY });
+    // Fresh ones are opened at once; quiet ones too, but only five hours later.
+    const moments: Moment[] = Array.from({ length: 40 }, (_, i) => ({
+      at: T0 + i * HOUR,
+      rows: [
+        { x: fresh, weight: 1, open: { source: 'notification', rank: null, after: 10 * MIN }, chosen: true, sent: false },
+        { x: quiet, weight: 1, open: i % 2 ? { source: 'notification', rank: null, after: 5 * HOUR } : null, chosen: false },
+      ],
+    }));
+    const gap = (h: number) => {
+      const m = fitRank(moments, T0, { horizon: h });
+      return predict(m, fresh).open - predict(m, quiet).open;
+    };
+    expect(gap(HOUR)).toBeGreaterThan(gap(6 * HOUR));
+    // Within six hours both kinds were opened; within one, only the fresh ones.
+    expect(fitRank(moments, T0, { horizon: 6 * HOUR }).rows).toBe(80);
   });
 });
 
