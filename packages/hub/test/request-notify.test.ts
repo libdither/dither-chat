@@ -33,13 +33,16 @@ beforeAll(() => {
   store = new Store(join(dir, 'hub.sqlite'), mediaSigner('s'));
   // Before the adapters: it hears what they send after connecting.
   notifier = new RequestNotifier(store, () => clock);
-  for (const acc of createDemoAccounts(store)) {
-    const adir = join(dir, acc.id);
-    mkdirSync(adir, { recursive: true });
-    const a = demoFactory(acc, adir)! as unknown as { stop(): void; start(e: (ev: P.AdapterEvent) => void): void };
-    adapters.push(a);
-    a.start((ev) => ev.t !== 'reply' && store.ingest(store.account(acc.id)!, ev));
-  }
+  // The world's first events in one transaction: one write to disk, not one per event (seconds on a busy disk).
+  store.db.transaction(() => {
+    for (const acc of createDemoAccounts(store)) {
+      const adir = join(dir, acc.id);
+      mkdirSync(adir, { recursive: true });
+      const a = demoFactory(acc, adir)! as unknown as { stop(): void; start(e: (ev: P.AdapterEvent) => void): void };
+      adapters.push(a);
+      a.start((ev) => ev.t !== 'reply' && store.ingest(store.account(acc.id)!, ev));
+    }
+  })();
   store.flush();
 });
 
