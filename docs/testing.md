@@ -8,22 +8,31 @@
 |---|---|---|
 | `changes` | decides what the pull request needs (scripts/ci-changes.ts) | `git diff --name-only origin/main... \| bun scripts/ci-changes.ts` |
 | `typecheck` | tsc on every project at once (scripts/typecheck.ts) | `bun run typecheck` |
-| `test-hub` | the hub's tests, its files on 4 workers (`bun test --parallel=4`) | `bun scripts/test-all.ts hub` |
+| `test-hub` | the hub's tests but mail-load's, its files on 4 workers (`bun test --parallel=4`) | `bun scripts/test-all.ts hub -- --path-ignore-patterns=test/mail-load.test.ts` |
+| `test-hub-mail` | the hub's mail-load tests (60k messages; 20 to 30 s, as long as the rest of the hub's) | `bun scripts/test-all.ts hub -- test/mail-load.test.ts` |
 | `test-packages` | every other package's tests, all at once | `bun scripts/test-all.ts --except hub` |
 | `web` | the web app's vite build | `bun run web:build` |
-| `boot` | the built web app in Chrome against a demo hub (scripts/check-boot.ts), then load and chat switching on a tenth-size world, its counts against a baseline (docs/perf.md) | `bun run check:boot`, `bun scripts/verify-perf.ts --ci` |
+| `boot` | the built web app in Chrome against a demo hub (scripts/check-boot.ts) | `bun run check:boot` |
+| `perf` | load and chat switching on a tenth-size world, a warm-up and one run, its counts against a baseline (docs/perf.md) | `bun scripts/verify-perf.ts --ci` |
 | `check` | passes only when each job above passed, or was skipped because `changes` said so | |
 
 - `check` is the one check branch protection requires, and what auto-merge waits on. A new job goes into its `needs`.
 - A pull request that only changes docs (any `*.md`, anything under `docs/`) or the Android app (`apps/android/`)
   skips everything but `changes` and `check`. Anything else, or a diff that can't be read, runs everything. A push to
   main and a manual run (Actions > CI > Run workflow) always run everything.
+- `perf`, the longest job, does not wait for `changes`: it starts at once, runs the same script itself, and skips its
+  steps when `changes` would skip it, so on such a pull request it passes rather than reads as skipped.
 - A new push to a pull request cancels its older run. Runs on main never cancel each other.
 - The Android app has its own workflow (android.yml), which runs only when apps/android changes.
+- The run takes as long as its slowest job, and every job sets up in a few seconds, so a long step gets a job of its
+  own rather than waiting behind another: `perf` (about 50 s of browser runs), `test-hub-mail` (one file of 20 to
+  30 s) and `test-hub` (the other 69 files) run side by side. A code pull request's run took about 70 s on 2026-11-10,
+  against 140 s with verify-perf inside `boot`.
 
 `bun run test` runs every package at once, the hub on 4 workers, and prints each package's output whole when it
 finishes. Flags after `--` go to each package's `bun test`, e.g. `bun scripts/test-all.ts hub -- -t "gap fill"` or
-`-- --parallel=8`. The hub in one process, as before: `cd packages/hub && bun test`.
+`-- --parallel=8`, and so do files: `-- test/mail-load.test.ts` runs that one, `-- --path-ignore-patterns=<glob>` all
+but those, as CI splits the hub. The hub in one process, as before: `cd packages/hub && bun test`.
 
 ## Startup
 
@@ -32,9 +41,9 @@ finishes. Flags after `--` go to each package's `bun test`, e.g. `bun scripts/te
   request (unless `EXPECTED` in the script lists it with its reason) or a service worker that does not register fails
   it. The browser is the first of `chromium`, `chromium-browser`, `google-chrome`, `google-chrome-stable` on PATH, or
   `$DITHER_CHROMIUM` (scripts/browser.ts).
-- Then `verify-perf --ci`: a warm-up and three runs on a tenth-size world, judging renders, layouts, DOM nodes and
-  bytes against `scripts/perf-baseline-ci.json` and printing the times without judging them (docs/perf.md, "In CI").
-  A change that moves a count on purpose updates that baseline with `--ci --update --runs 5` and says why.
+- `perf`, beside it: `verify-perf --ci`, a warm-up and one run on a tenth-size world, judging renders, layouts, DOM
+  nodes and bytes against `scripts/perf-baseline-ci.json` and printing the times without judging them (docs/perf.md,
+  "In CI"). A change that moves a count on purpose updates that baseline with `--ci --update --runs 5` and says why.
 - The hub's tests start the hub on databases older hubs left (`packages/hub/test/old-database.test.ts`): it must copy
   the database aside, migrate, log `startup: ready` and read back what the old hub stored. `bun scripts/old-db-fixture.ts
   <commit> <name>` adds a fixture from another commit's demo hub (demo data only; it checks), for a migration that

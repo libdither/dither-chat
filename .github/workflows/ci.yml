@@ -57,7 +57,8 @@ jobs:
       # No .only, retries or bare skips, and no new real-time waits in tests (scripts/check-tests.ts, docs/testing.md).
       - run: bun run check:tests
 
-  # The hub's suite is the longest; its files run on --parallel workers (scripts/test-all.ts).
+  # The hub's suite is the longest; its files run on --parallel workers (scripts/test-all.ts). All but mail-load's,
+  # which runs beside it in test-hub-mail.
   test-hub:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -69,7 +70,22 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
-      - run: bun scripts/test-all.ts hub
+      - run: bun scripts/test-all.ts hub -- --path-ignore-patterns=test/mail-load.test.ts
+
+  # The hub's mail-load tests on a runner of their own: 60k messages into SQLite take 20 to 30 s, as long as the rest of
+  # the hub's suite on four workers.
+  test-hub-mail:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun scripts/test-all.ts hub -- test/mail-load.test.ts
 
   test-packages:
     needs: changes
@@ -98,9 +114,7 @@ jobs:
       - run: bun run web:build
 
   # The built web app in the runner's Google Chrome against a demo hub, at a desktop's and a phone's size: fails on a
-  # page error, a console.error, a failed request or no service worker (scripts/check-boot.ts). Then load and chat
-  # switching on a tenth-size world: renders, DOM nodes and bytes against scripts/perf-baseline-ci.json; its times go
-  # in the job's summary and are never judged (docs/perf.md, "In CI").
+  # page error, a console.error, a failed request or no service worker (scripts/check-boot.ts).
   boot:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -116,13 +130,36 @@ jobs:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       - run: bun run check:boot
-      - run: bun scripts/verify-perf.ts --ci
+
+  # Load and chat switching on a tenth-size world in the runner's browser, a warm-up and then one run: renders, DOM
+  # nodes and bytes against scripts/perf-baseline-ci.json; its times go in the job's summary and are never judged
+  # (docs/perf.md, "In CI").
+  # The longest job, so it does not wait the 10 s or so for `changes`: it starts at once, asks the same script, and
+  # skips its steps when `changes` would skip it (then it passes, where the others read as skipped).
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # The browser's files from a cold disk in the background, as in boot.
+      - run: b=$(command -v chromium || command -v google-chrome) && (find -L "$(dirname "$(readlink -f "$b")")" -type f -print0 | xargs -0 cat > /dev/null 2>&1 &) || true
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - id: changes
+        run: bun scripts/ci-changes.ts --github
+      - if: steps.changes.outputs.code == 'true'
+        run: bun install --frozen-lockfile
+      - if: steps.changes.outputs.code == 'true'
+        run: bun scripts/verify-perf.ts --ci
 
   # Branch protection requires this job by name. It passes only when every job passed, or was skipped because
   # `changes` said the pull request does not need it. It runs on failure and cancellation too, so it never reads as
   # skipped (which GitHub would count as passed).
   check:
-    needs: [changes, typecheck, test-hub, test-packages, web, boot]
+    needs: [changes, typecheck, test-hub, test-hub-mail, test-packages, web, boot, perf]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
