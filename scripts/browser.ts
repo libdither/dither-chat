@@ -1,7 +1,7 @@
 /**
  * A private headless Chromium driven over the DevTools protocol, for verifying the PWA and taking
  * screenshots. It has its own throwaway profile and HOME; pass caCert to trust the hub's private CA.
- * Uses no dependency beyond chromium itself (and nix for certutil).
+ * Uses no dependency beyond chromium itself (and nix for certutil). Which browser: findBrowser().
  */
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,6 +28,20 @@ const readFileOr = (path: string) => {
   }
 };
 
+/**
+ * The browser to run: $DITHER_CHROMIUM if set, else the first of chromium, chromium-browser, google-chrome and
+ * google-chrome-stable on PATH (CI's runners have Google Chrome, not chromium).
+ */
+export function findBrowser(): string {
+  const set = process.env.DITHER_CHROMIUM;
+  if (set) return set;
+  for (const name of ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable']) {
+    const path = Bun.which(name);
+    if (path) return path;
+  }
+  throw new Error('no browser found: install chromium or Google Chrome, or set DITHER_CHROMIUM to one');
+}
+
 /** args: extra Chromium flags, e.g. a fake microphone for call tests. */
 export async function launch(opts: { caCert?: string; host?: string; args?: string[] } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'dither-browser-'));
@@ -42,7 +56,7 @@ export async function launch(opts: { caCert?: string; host?: string; args?: stri
   // Port 0: Chromium takes a free port itself and writes it to DevToolsActivePort in its own profile, so this never
   // attaches to another browser that happens to hold a port it guessed (other agents run headless Chromium too).
   const profile = join(home, 'profile');
-  const proc = Bun.spawn(['chromium', '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-sandbox', '--disable-gpu', ...(opts.args ?? []), 'about:blank'], {
+  const proc = Bun.spawn([findBrowser(), '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-sandbox', '--disable-gpu', ...(opts.args ?? []), 'about:blank'], {
     env: { ...process.env, HOME: home },
     stdout: 'ignore',
     stderr: 'ignore',

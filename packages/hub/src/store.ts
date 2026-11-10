@@ -10,6 +10,7 @@ import { binsFor, estimateMessages, snowflakeTime, type ChannelInput } from './m
 import { Journal } from './journal.ts';
 import { infoFor } from './mediainfo.ts';
 import { TypingRelay, typingTtl } from './typing.ts';
+import { stepTimer } from './startup.ts';
 import { addTables, ingestRelationships, ingestRequests, pendingLinks } from './add.ts';
 
 type Row = Record<string, any>;
@@ -158,17 +159,25 @@ export class Store {
   readonly typers = new TypingRelay();
   /** People a merge, a split or a new person changed: mail/people.ts sends their mail threads again. */
   personsChanged: ((personIds: string[]) => void) | null = null;
+  /** How long each step of opening the database took (startup.ts). */
+  readonly opening: [string, number][];
 
   constructor(path: string, readonly media: MediaSigner) {
+    const timer = stepTimer();
+    this.opening = timer.out;
     this.db = new Database(path, { create: true, strict: true });
     // Outside any transaction: inside one, SQLite ignores foreign_keys.
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
+    timer.step('db open');
     const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
     // A schema (or migration code) this database has not met yet: copy it first (backups/pre-migrate-*), then take
     // every step in one transaction, so a crash part way leaves the database as it was, not half moved.
     const sig = createHash('sha256').update(`${MIGRATIONS}\n${schema}`).digest('hex').slice(0, 16);
     const known = this.schemaSig();
-    if (known !== null && known !== sig) this.snapshotBeforeMigrating(path);
+    if (known !== null && known !== sig) {
+      this.snapshotBeforeMigrating(path);
+      timer.step('pre-migrate copy');
+    }
     this.db.transaction(() => {
       const reactionsBefore = this.oldReactions();
       const broadcastsUnknown = this.addMentionsAll();
@@ -186,10 +195,13 @@ export class Store {
       this.adoptOldReactions(reactionsBefore);
       this.db.query(`INSERT INTO meta (key, value) VALUES ('schema_sig', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(sig);
     })();
+    timer.step('migrations');
     this.journal = new Journal(this.db);
+    timer.step('journal');
     // Messages from before full-text search existed.
     if (!this.db.query(`SELECT 1 FROM meta WHERE key = 'fts_backfilled'`).get()) {
       this.db.exec(`INSERT INTO message_fts (message_fts) VALUES ('rebuild'); INSERT INTO meta (key, value) VALUES ('fts_backfilled', '1');`);
+      timer.step('search backfill');
     }
     for (const r of this.db.query('SELECT self_identity FROM account WHERE self_identity IS NOT NULL').all() as Row[]) {
       this.selfIdentities.add(r.self_identity);

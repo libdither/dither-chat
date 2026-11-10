@@ -1,9 +1,11 @@
 # Typecheck, tests and the web build on each push and pull request, as parallel jobs behind the one required check,
 # `check`. Everything runs against fakes (a fake signal-cli, a fake WhatsApp bridge, a replica of Discord's client,
 # in-memory hubs), so no network binaries are needed. The remote-account tests (hub test/remote.test.ts) need a
-# dither-accounts checkout beside this one and skip here.
+# dither-accounts checkout beside this one and skip here. The hub's tests also start it on databases older hubs left
+# (test/old-database.test.ts).
 # A pull request that only changes docs (*.md, docs/) or the Android app skips the work (scripts/ci-changes.ts); a push
-# to main and a manual run always run everything. The same locally: bun run typecheck, bun run test, bun run web:build.
+# to main and a manual run always run everything. The same locally: bun run typecheck, bun run test, bun run web:build,
+# bun run check:boot.
 name: CI
 
 on:
@@ -93,11 +95,26 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run web:build
 
+  # The built web app in the runner's Google Chrome against a demo hub, at a desktop's and a phone's size: fails on a
+  # page error, a console.error, a failed request or no service worker (scripts/check-boot.ts).
+  boot:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun run check:boot
+
   # Branch protection requires this job by name. It passes only when every job passed, or was skipped because
   # `changes` said the pull request does not need it. It runs on failure and cancellation too, so it never reads as
   # skipped (which GitHub would count as passed).
   check:
-    needs: [changes, typecheck, test-hub, test-packages, web]
+    needs: [changes, typecheck, test-hub, test-packages, web, boot]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -19,7 +19,7 @@
 import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { launch, type Page } from './browser.ts';
+import { findBrowser, launch, type Page } from './browser.ts';
 import { seedWorld, type World, type WorldConv } from './perf-world.ts';
 
 const args = process.argv.slice(2);
@@ -136,7 +136,7 @@ async function main() {
   }
   if (UPDATE && failed) console.log(`\n${failed} over their ceilings: the baseline is not written`);
   else if (UPDATE) {
-    const chromium = Bun.spawnSync(['chromium', '--version']).stdout.toString().trim();
+    const chromium = Bun.spawnSync([findBrowser(), '--version']).stdout.toString().trim();
     writeFileSync(BASELINE, JSON.stringify({ note: 'bun scripts/verify-perf.ts --update (docs/perf.md). Times are of the machine it ran on.', at: new Date().toISOString().slice(0, 10), runs: RUNS, pages: PAGES, chromium, world: world.counts, metrics }, null, 1) + '\n');
     console.log(`\nwrote ${BASELINE}`);
   } else if (!old) console.log('\nno baseline yet: run with --update');

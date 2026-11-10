@@ -24,6 +24,11 @@ import { Triage } from './triage.ts';
 import { TriageVotes } from './votes.ts';
 import { loadVapidKeys } from './webpush.ts';
 import { NightlyBackup, pruneMediaCache, rotateAdapterLogs, tightenPermissions } from './housekeeping.ts';
+import { StartupTrace } from './startup.ts';
+
+// Each part of the start, logged in one line once requests are answered (startup.ts).
+const startup = new StartupTrace();
+startup.mark('code');
 
 // Everything the hub writes is its user's alone: the database holds every message.
 process.umask(0o077);
@@ -57,8 +62,10 @@ const secretPath = join(dataDir, 'hub-secret');
 if (!existsSync(secretPath)) writeFileSync(secretPath, Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url'), { mode: 0o600 });
 chmodSync(secretPath, 0o600);
 const secret = readFileSync(secretPath, 'utf8').trim();
+startup.mark('data dir');
 
 const store = new Store(join(dataDir, 'hub.sqlite'), mediaSigner(secret));
+startup.add(store.opening);
 // What the last run left undecided, before this run's adapters add their own (decided once the server is up).
 const leftover = store.takePendingTriage(Date.now() - 30 * 60_000);
 const model = process.env.DITHER_TRIAGE_MODEL
@@ -67,6 +74,7 @@ const model = process.env.DITHER_TRIAGE_MODEL
 // The activity log (docs/activity.md). DITHER_ACTIVITY_FEATURES=1 lets triage see what it says, as reasons only.
 const activity = new ActivityStore(store, { featuresInTriage: args.includes('--activity-features') || process.env.DITHER_ACTIVITY_FEATURES === '1' });
 activity.prune(Date.now(), true);
+startup.mark('activity log');
 const triage = new Triage(store, model, activity);
 const votes = new TriageVotes(store, triage);
 const attention = new Attention(store, triage);
@@ -87,6 +95,7 @@ const embeddings = flag('embeddings') ? new Embeddings(store.db, join(dataDir, '
 embeddings?.start();
 // The shadow model weighs them (votes.ts); the live decision does not.
 if (embeddings) triage.content = (id) => embeddings.features(id, 'ping');
+startup.mark('models');
 
 // Triage runs serially so notifications keep message order. Each message waits in triage_pending until it is decided,
 // so one a crash or restart caught in the queue is decided at the next start (below, after the server starts).
@@ -241,6 +250,7 @@ function categoryProvider(): CategoryProvider {
 }
 const categorizer = new Categorizer(store, categoryProvider());
 store.categoryProvider = categorizer.provider.id;
+startup.mark('categories');
 
 const supOpts = {
   hubAdapterUrl: `ws://127.0.0.1:${tls ? plainPort : port}/adapter`,
@@ -279,6 +289,7 @@ if (mailTriaged) {
 
 const readQueue = new ReadQueue(store, sup);
 readQueue.start();
+startup.mark('mail');
 
 const server = new HubServer(store, sup, triage, {
   port,
@@ -333,17 +344,25 @@ if (demo && flag('adversarial') && !store.retention().adversarial) store.setRete
 if (demo && !store.accounts().some((a) => a.demo)) createDemoAccounts(store);
 if (demoMail && !mail.store.account(DEMO_MAIL_ACCOUNT)) seedDemoMail(demoMail);
 else if (demoMail) seedDemoMail(demoMail, mail.store.account(DEMO_MAIL_ACCOUNT)!.created_at);
+startup.mark('server');
 // Before the manager's first account list, so mail hears it.
 mail.start();
-if (sup instanceof RoutedSupervisor) await sup.connectOrRetry();
+startup.mark('mail start');
+if (sup instanceof RoutedSupervisor) {
+  await sup.connectOrRetry();
+  startup.mark('accounts manager');
+}
 sup.startAll();
 if (store.accounts().some((a) => a.demo)) applyDemoOverlay(store);
+startup.mark('adapters');
 server.start();
+startup.mark('http listen');
 attention.start((events) => server.broadcast(events));
 ranker.onFit = () => server.broadcast(attention.rescoreAll());
 ranker.start();
 // Scores live in memory and were worked out afresh: a client resuming from before this start takes the whole list.
 server.broadcast([{ t: 'attention', items: attention.list(), removed: [], replace: true }]);
+startup.mark('attention');
 if (store.journal.started === 'unclean') console.log('sync: the hub did not stop cleanly last time; clients start over with a full bootstrap');
 // Messages a crash or restart left undecided (taken before any adapter started): those from the last half hour still
 // get their notification.
@@ -355,6 +374,12 @@ if (leftover.length) {
 void categorizer.refresh();
 setInterval(() => void categorizer.refresh(), 5 * 60_000);
 console.log(`dither-chat hub on ${tls ? 'https' : 'http'}://${hostname}:${port}${tls ? ` (plain http on ${plainPort}: adapters, CA download)` : ''}  data=${dataDir}`);
+startup.mark('the rest');
+// Ready once the event loop is free to answer: what the start queued (adapters starting, the first refresh) runs first.
+setTimeout(() => {
+  startup.mark('queued work');
+  console.log(startup.line());
+});
 
 const shutdown = async () => {
   // What is being triaged finishes first (a few seconds at most); the rest waits in triage_pending for the next start.

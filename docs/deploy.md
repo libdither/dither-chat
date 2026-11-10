@@ -110,6 +110,25 @@ is in sight keeps its build and shows the bar too: a tab out of sight lets the n
 of the app is in sight (`sw.js`), and a tab updated by another one reloads only when it is out of sight and idle.
 `bun scripts/verify-update.ts <demo hub> --dist <its --web dir>` checks all of this in a browser.
 
+### How long a start takes
+
+Once it answers requests, the hub logs one line with how long each part of its start took
+(`packages/hub/src/startup.ts`), from the process starting:
+
+```
+startup: ready in 1.1 s (code 81 ms, data dir 1 ms, db open 6 ms, pre-migrate copy 16 ms, migrations 13 ms, journal 1 ms, activity log 1 ms, models 14 ms, categories 3 ms, mail 14 ms, server 30 ms, mail start 9 ms, adapters 813 ms, http listen 3 ms, attention 17 ms, the rest 1 ms, queued work 30 ms)
+```
+
+`pre-migrate copy` and `search backfill` show only when they ran, `accounts manager` only with dither-accounts.
+`queued work` is what the start left for the event loop before it could answer. Restarts have taken 86–332 s to come
+back; `journalctl --user -u dither-chat | grep 'startup: ready'` shows where a start's time went. The old process's
+stop is not in it. Nothing waits on it or fails on it.
+
+CI starts the hub on databases older hubs left (`packages/hub/test/old-database.test.ts`, fixtures in
+`packages/hub/test/fixtures/old-db/`): it must copy the database aside, migrate, log that line and read back what the old
+hub stored. `bun scripts/old-db-fixture.ts <commit> <name>` makes another fixture from an older commit's demo hub
+(demo data only; it checks), when a migration should be tried from a new era.
+
 Check a deployment with a private browser that trusts nothing extra:
 
 ```sh
@@ -192,3 +211,10 @@ devices.
 
 Screenshots, `scripts/verify-*.ts` and the call lab (`scripts/call-lab.ts`, see docs/calls.md) each run their
 own hub on another port with its own data dir.
+
+`bun run check:boot` (`scripts/check-boot.ts`, run by CI) builds the web app, starts a demo hub on a fresh data dir
+and a free port (`--port` to choose one), and loads it in headless Chromium at a desktop's size and then a phone's:
+the inbox list, a conversation, Settings. It fails on an uncaught error on the page, a `console.error`, a request
+that fails (unless `EXPECTED` in the script lists it with its reason) or a service worker that does not register. It
+takes about 10 s. The scripts look for `chromium`, `chromium-browser`, `google-chrome` and `google-chrome-stable` on
+PATH in that order (`findBrowser` in `scripts/browser.ts`); `DITHER_CHROMIUM` names another.
