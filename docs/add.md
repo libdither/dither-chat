@@ -353,9 +353,21 @@ How each of your accounts stands with someone, and ending it (2026-11-09). An in
   refuses when the network says otherwise now ("That changed; look again"). Only on a click on the hub's own page,
   paced on its own at 20 a day per account. Every button asks first, naming the account.
 - **Where.** A profile's **How you stand** card lists each account's entry with its button. People has chips for
-  Friends, Contacts and Following, each shown where an account here keeps that kind of list (Discord friends;
-  Telegram, Signal, WhatsApp and Google Messages contacts; X and Instagram follows): one row per person, the accounts
-  that have them, and since when; by account when several have any; a row's × removes it there, after asking.
+  Friends, Contacts and Following beside Chats, each shown where an account here keeps that kind of list (Discord
+  friends; Telegram, Signal, WhatsApp and Google Messages contacts; X and Instagram follows). In each list:
+  - **One row per person** (`linkRows`: by person, else by identity). An identity is one per network and native id,
+    so a friend of two Discord accounts is one identity with two links, and one row. With several accounts on the
+    list, the row has a dot in each account's colour, named in the dots' tooltip.
+  - **The second line** says when you last talked: the latest message in your DMs with them, on any network
+    ("talked 3 days ago"), else nothing. Presence never reaches the page unless the adversarial presence log is on,
+    so the list does not say who is online. "Friends since" is in the row's tooltip (and on the profile).
+  - **An account menu** under "People" when the list has people on several accounts, like Mail's: All accounts, or
+    one, each with its colour, and a line saying what the dots are.
+  - **The order**: last talked first (people you never talked with after, by name), or A to Z, from the order
+    button in the header; kept per device. A **filter box** narrows the list by name, on the page (Chats has it too).
+  - **Removing** is in the row's menu (right-click, or a long press on a phone): Remove friend, Cancel request,
+    Unblock, Remove contact or Unfollow, one item per account when they are on several. It asks first, as on the
+    profile. Until 2026-11-09 each row had a × for it, one slip away on a phone.
 
 | Network | List | Remove |
 |---|---|---|
@@ -363,7 +375,8 @@ How each of your accounts stands with someone, and ending it (2026-11-09). An in
 | Telegram | contact, blocked | delete the contact, unblock |
 | X, Instagram | following, later | unfollow |
 
-Code: packages/hub/src/add.ts (person_link, the routes), packages/web/src/requests.ts (pure: the lines, the rows),
-ui/Requests.tsx (`Answers`, `LinkBanner`, `ProfileLinks`, `PeopleLinks`, `RemoveDialog`), ConfirmFirst in
+Code: packages/hub/src/add.ts (person_link, the routes), packages/web/src/requests.ts (pure: the lines, the rows,
+`sortLinkRows`, `nameMatches`, `talkedLine`), ui/Requests.tsx (`Answers`, `LinkBanner`, `ProfileLinks`, `PeopleLinks`,
+`PeopleAccountPicker`, `RemoveDialog`), `PeopleSidebar` in ui/Sidebar.tsx, ConfirmFirst in
 ui/NewMessage.tsx. Tested by packages/hub/test/links.test.ts and scripts/verify-people-links.ts, which drives every
 screen at a desktop and a phone width on a demo hub.

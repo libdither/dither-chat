@@ -11,12 +11,14 @@ import { useEffect, useState } from 'preact/hooks';
 import { ACTION_LABEL } from '../add.ts';
 import { identityPeer } from '../direct.ts';
 import { ago } from '../format.ts';
-import { identityName, netName } from '../model.ts';
-import { accountLine, ANSWER_LABEL, canRemove, groupRequests, linkRows, messageRequestNote, profileLinks, relation, removeNote, removeQuestion, requestLine, requestsRow, sentence, targetMembers } from '../requests.ts';
+import { directsOf, identityName, netName } from '../model.ts';
+import { accountLine, ANSWER_LABEL, canRemove, groupRequests, linkRows, linkSinceLine, messageRequestNote, nameMatches, profileLinks, relation, removeNote, removeQuestion, requestLine, requestsRow, sentence, sortLinkRows, talkedLine, targetMembers, type LinkSort } from '../requests.ts';
 import { api, applyEvents, db, go, openDirect, openProfile, rev, toast } from '../state.ts';
 import { LiveView } from './Accounts.tsx';
-import { Avatar, Empty, Menu, Modal, NetGlyph } from './bits.tsx';
+import { Avatar, Empty, Modal } from './bits.tsx';
 import { Icon } from './icons.tsx';
+import { contextMenu, groups, openMenu, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
+import { identityMenu, personMenu } from './menus.tsx';
 import { CheckFirst, ConfirmFirst } from './NewMessage.tsx';
 import { Action } from './ProfileShell.tsx';
 import { homeRoute } from './Sidebar.tsx';
@@ -595,121 +597,198 @@ export function ProfileLinks({ identities, links, abouts, onEnded }: { identitie
   );
 }
 
-/**
- * The People list filtered to one kind of list across your accounts (GET /api/people): friends, contacts or follows,
- * by account when you have several. A row opens their profile; its button ends it.
- */
-export function PeopleLinks({ relationship, active }: { relationship: P.LinkRelationship; active?: string }) {
-  rev.value;
-  const [view, setView] = useState<P.PeopleLinksView | null>(null);
+/** GET /api/people for one kind of list; `reload` asks again (after a removal). Null while it is asked, or for none. */
+export function usePeopleLinks(relationship: P.LinkRelationship | null) {
+  const [got, setGot] = useState<{ relationship: P.LinkRelationship; view: P.PeopleLinksView } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [accountId, setAccountId] = useState<string | null>(null);
-  const [ending, setEnding] = useState<{ identityId: string; accountId: string } | null>(null);
   const [n, setN] = useState(0);
   useEffect(() => {
+    if (!relationship) return;
     let live = true;
     setError(null);
     api<P.PeopleLinksView>(`/api/people?relationship=${relationship}`)
       .then((v) => {
         if (!live) return;
         v.identities.forEach((i) => db.identities.set(i.id, i));
-        setView(v);
+        setGot({ relationship, view: v });
       })
       .catch((e) => live && setError(String(e?.message ?? e)));
     return () => void (live = false);
   }, [relationship, n]);
-  const listing = [...db.accounts.values()].filter((a) => a.capabilities.includes('relationships'));
-  if (error) return <p class="inbox-empty">{error}</p>;
-  if (!view) return <p class="inbox-empty">Asking the hub…</p>;
+  // Another list's answer while this one is asked: not shown.
+  return { view: got && got.relationship === relationship ? got.view : null, error, reload: () => setN((x) => x + 1) };
+}
+
+/** The accounts with anyone on this list, in the order the page lists accounts. */
+export function linkAccounts(view: P.PeopleLinksView): P.AccountView[] {
   const mine = new Set(view.links.map((l) => l.accountId));
-  const accounts = listing.filter((a) => mine.has(a.id));
-  const shown = accountId && mine.has(accountId) ? view.links.filter((l) => l.accountId === accountId) : view.links;
-  const rows = linkRows(shown);
+  return [...db.accounts.values()].filter((a) => mine.has(a.id));
+}
+
+const accountName = (a: P.AccountView) => `${netName(a.network)} ${a.label}`;
+/** Every account's colour in one dot: all of them. */
+const allDot = (accounts: P.AccountView[]) => `conic-gradient(${accounts.map((a, i) => `${a.color} ${(i * 360) / accounts.length}deg ${((i + 1) * 360) / accounts.length}deg`).join(', ')})`;
+const PICKER = 'People accounts';
+
+/**
+ * Under "People" when a list has people on several accounts: whose list to show, as Mail's account picker. A menu of
+ * All accounts and each account with its colour, and a line saying what the dots on the rows are.
+ */
+export function PeopleAccountPicker({ accounts, current, pick }: { accounts: P.AccountView[]; current: string | null; pick: (id: string | null) => void }) {
+  const on = accounts.find((a) => a.id === current) ?? null;
+  const open = (e: MouseEvent) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    openMenu(
+      { x: r.left, y: r.bottom + 4 },
+      {
+        label: PICKER,
+        track: 'people',
+        head: <div class="cm-sheet-title">Show people on</div>,
+        items: [
+          { label: 'All accounts', dot: allDot(accounts), checked: !on, radio: true, track: 'account (all)', run: () => pick(null) },
+          ...accounts.map((a): MenuEntry => ({ label: accountName(a), dot: a.color, checked: on?.id === a.id, radio: true, track: 'account (one)', run: () => pick(a.id) })),
+          { kind: 'sep' },
+          { kind: 'row', render: () => <p class="mail-acc-note">With all accounts showing, each person has a dot in the colour of each account they are on.</p> },
+        ],
+      },
+    );
+  };
+  return (
+    <button class="mail-acc-btn people-acc-btn" aria-haspopup="menu" aria-expanded={contextMenu.value?.label === PICKER} title="Whose list to show" data-track="accounts" onClick={open}>
+      <span class="mail-acc-dot" style={{ background: on ? on.color : allDot(accounts) }} aria-hidden="true" />
+      <span class="mail-acc-name">{on ? accountName(on) : 'All accounts'}</span>
+      <Icon name="chevronDown" size={12} />
+    </button>
+  );
+}
+
+type LinkRow = ReturnType<typeof linkRows>[number];
+const rowPerson = (row: LinkRow) => (row.personId ? db.persons.get(row.personId) : undefined);
+const rowName = (row: LinkRow) => rowPerson(row)?.name ?? identityName(row.identityId);
+/** When you last talked: the latest message in your DMs with them, on any network. */
+const lastTalked = (row: LinkRow) => (row.personId ? directsOf(row.personId).reduce<number | null>((a, c) => (c.lastMessageAt && c.lastMessageAt > (a ?? 0) ? c.lastMessageAt : a), null) : null);
+
+/** A row's menu: what a person's menu has, and ending it on each account that can. */
+function linkMenu(row: LinkRow, relationship: P.LinkRelationship, onEnd: (l: P.PersonLinkView) => void): MenuSpec {
+  const person = rowPerson(row);
+  const name = rowName(row);
+  const base = person ? personMenu(person) : identityMenu(row.identityId);
+  // In the order the page lists accounts.
+  const order = [...db.accounts.keys()];
+  const ends = row.links.filter((l) => canRemove(db.accounts.get(l.accountId))).sort((a, b) => order.indexOf(a.accountId) - order.indexOf(b.accountId));
+  const label = REMOVE_LABEL[relationship];
+  const removes = ends.map((l): MenuEntry => {
+    const a = db.accounts.get(l.accountId);
+    return { label: row.links.length > 1 ? `${label} on ${a ? accountName(a) : 'that account'}` : label, icon: 'x', danger: true, track: `remove (${relationship})`, run: () => onEnd(l) };
+  });
+  return { label: base?.label ?? `${name} actions`, head: base?.head ?? <div class="cm-sheet-title">{name}</div>, track: 'people', items: groups(base?.items ?? [], removes) };
+}
+
+/**
+ * One person on a list: their name, a dot for each account they are on (with several), and when you last talked. Its
+ * menu (right-click, long press) ends it, per account; the tooltip says since when.
+ */
+function LinkRowView({ row, relationship, active, dots, onEnd }: { row: LinkRow; relationship: P.LinkRelationship; active: boolean; dots: boolean; onEnd: (l: P.PersonLinkView) => void }) {
+  const person = rowPerson(row);
+  const i = db.identities.get(row.identityId);
+  const name = rowName(row);
+  // In the order the page lists accounts, as the account menu does.
+  const on = new Set(row.links.map((l) => l.accountId));
+  const accounts = [...db.accounts.values()].filter((a) => on.has(a.id));
+  const since = Math.min(...row.links.map((l) => l.since ?? Infinity));
+  const ctx = useMenu(() => linkMenu(row, relationship, onEnd));
+  return (
+    <button
+      class={`row conv-row plink-row ${active ? 'active' : ''}`}
+      data-plink={row.identityId}
+      data-track={`row (${relationship})`}
+      title={linkSinceLine(relationship, Number.isFinite(since) ? since : null, accounts.map(accountName))}
+      onClick={() => openProfile(row.identityId)}
+      {...ctx}
+    >
+      <span class="row-avatar">
+        <Avatar id={row.personId ?? row.identityId} name={name} url={person?.avatar ?? i?.avatar} size={36} network={i?.network} />
+      </span>
+      <span class="row-main">
+        <span class="row-top">
+          <span class="row-title">
+            {name}
+            {person?.starred && <Icon name="star" size={11} class="row-star" />}
+          </span>
+          {dots && (
+            <span class="plink-dots" title={accounts.map(accountName).join(', ')} data-accounts={accounts.map((a) => a.id).join(' ')}>
+              {accounts.map((a) => (
+                <span class="acc-dot" style={{ background: a.color }} />
+              ))}
+            </span>
+          )}
+        </span>
+        <span class="row-bottom">
+          <span class="row-preview plink-talked">{talkedLine(lastTalked(row))}</span>
+        </span>
+      </span>
+    </button>
+  );
+}
+
+/**
+ * People filtered to one kind of list across your accounts (GET /api/people, through usePeopleLinks): friends,
+ * contacts or follows, one row per person, `accountId`'s only when given. Sorted by when you last talked or by name,
+ * and narrowed by the filter box (`q`). A row opens their profile; its menu ends it.
+ */
+export function PeopleLinks({
+  relationship,
+  links,
+  accountId,
+  dots,
+  q,
+  sort,
+  active,
+}: {
+  relationship: P.LinkRelationship;
+  links: ReturnType<typeof usePeopleLinks>;
+  accountId: string | null;
+  dots: boolean;
+  q: string;
+  sort: LinkSort;
+  active?: string;
+}) {
+  rev.value;
+  const [ending, setEnding] = useState<{ identityId: string; accountId: string } | null>(null);
+  const listing = [...db.accounts.values()].filter((a) => a.capabilities.includes('relationships'));
+  if (links.error) return <p class="inbox-empty">{links.error}</p>;
+  const view = links.view;
+  if (!view) return <p class="inbox-empty">Asking the hub…</p>;
+  const shown = accountId ? view.links.filter((l) => l.accountId === accountId) : view.links;
+  const all = linkRows(shown);
+  const rows = sortLinkRows(
+    all.filter((r) => !q.trim() || nameMatches(rowName(r), q)),
+    sort,
+    lastTalked,
+    rowName,
+  );
   const what = RELATIONSHIP_LABEL[relationship].toLowerCase();
   return (
     <div class="people-links" data-relationship={relationship}>
-      {accounts.length > 1 && (
-        <div class="inbox-chips people-accounts" role="radiogroup" aria-label="Which account">
-          <button class={`chip-btn ${!accountId ? 'on' : ''}`} role="radio" aria-checked={!accountId} data-track="account chip (all)" onClick={() => setAccountId(null)}>
-            All
-          </button>
-          {accounts.map((a) => (
-            <button class={`chip-btn ${accountId === a.id ? 'on' : ''}`} role="radio" aria-checked={accountId === a.id} data-account={a.id} data-track="account chip" title={`${netName(a.network)} ${a.label}`} onClick={() => setAccountId(a.id)}>
-              <NetGlyph network={a.network} size={11} /> <span class="acc-dot" style={{ background: a.color }} /> {a.label}
-            </button>
-          ))}
-        </div>
-      )}
-      {!rows.length && (
+      {!all.length && (
         <p class="inbox-empty">
           {listing.length
             ? `Nobody here: none of your accounts lists anyone as ${relationship === 'following' ? 'followed' : what}.`
             : 'None of your accounts keeps a list the hub can read yet.'}
         </p>
       )}
-      {rows.map((row) => {
-        const person = row.personId ? db.persons.get(row.personId) : undefined;
-        const i = db.identities.get(row.identityId);
-        const name = person?.name ?? identityName(row.identityId);
-        const ends = row.links.filter((l) => canRemove(db.accounts.get(l.accountId)));
-        const since = Math.min(...row.links.map((l) => l.since ?? Infinity));
-        return (
-          <div class={`row conv-row plink-row ${active && (active === row.personId || active === row.identityId) ? 'active' : ''}`} data-plink={row.identityId}>
-            <button class="plink-main" data-track={`row (${relationship})`} onClick={() => openProfile(row.identityId)} title={`${name}'s profile`}>
-              <span class="row-avatar">
-                <Avatar id={row.personId ?? row.identityId} name={name} url={person?.avatar ?? i?.avatar} size={36} network={i?.network} />
-              </span>
-              <span class="row-main">
-                <span class="row-top">
-                  <span class="row-title">{name}</span>
-                </span>
-                <span class="row-bottom">
-                  <span class="row-preview">
-                    {row.links.map((l) => db.accounts.get(l.accountId)).filter((a): a is P.AccountView => !!a).map((a) => (
-                      <span class="plink-acc" title={`${netName(a.network)} ${a.label}`}>
-                        <NetGlyph network={a.network} size={10} />
-                        <span class="acc-dot" style={{ background: a.color }} />
-                        {a.label}
-                      </span>
-                    ))}
-                    {Number.isFinite(since) && <span class="plink-since">since {new Date(since).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}</span>}
-                  </span>
-                </span>
-              </span>
-            </button>
-            {ends.length > 0 && (
-              <LinkEnd links={ends} label={REMOVE_LABEL[relationship]} name={name} onPick={(l) => setEnding({ identityId: l.identityId, accountId: l.accountId })} />
-            )}
-          </div>
-        );
-      })}
-      {ending && <RemoveDialog {...ending} relationship={relationship} onClose={() => setEnding(null)} onDone={() => setN((x) => x + 1)} />}
+      {all.length > 0 && !rows.length && <p class="inbox-empty">Nobody on this list matches “{q.trim()}”.</p>}
+      {rows.map((row) => (
+        <LinkRowView
+          key={row.key}
+          row={row}
+          relationship={relationship}
+          active={!!active && (active === row.personId || active === row.identityId)}
+          dots={dots}
+          onEnd={(l) => setEnding({ identityId: l.identityId, accountId: l.accountId })}
+        />
+      ))}
+      {ending && <RemoveDialog {...ending} relationship={relationship} onClose={() => setEnding(null)} onDone={() => links.reload()} />}
     </div>
-  );
-}
-
-/** A row's button that ends it: straight to the question for one account, a choice of account for several. */
-function LinkEnd({ links, label, name, onPick }: { links: P.PersonLinkView[]; label: string; name: string; onPick: (l: P.PersonLinkView) => void }) {
-  const button = (onClick: () => void) => (
-    <button class="icon-btn small plink-end" data-remove={links[0].relationship} data-track={`remove (${links[0].relationship})`} title={`${label}: ${name}`} aria-label={`${label}: ${name}`} onClick={onClick}>
-      <Icon name="x" size={14} />
-    </button>
-  );
-  if (links.length === 1) return button(() => onPick(links[0]));
-  return (
-    <Menu align="right" trigger={(toggle) => button(toggle)}>
-      {(close) => (
-        <div class="level-menu plink-menu">
-          {links.map((l) => {
-            const a = db.accounts.get(l.accountId);
-            return (
-              <button class="menu-item" data-track={`remove (${l.relationship}, one account)`} onClick={() => (close(), onPick(l))}>
-                {label} on {a ? `${netName(a.network)} ${a.label}` : 'that account'}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </Menu>
   );
 }
