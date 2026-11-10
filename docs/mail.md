@@ -7,12 +7,19 @@ Email beside your chats, through dither-accounts' `mail` interface. The design, 
 
 - **Mail in the rail**, after People, once the hub can read mail. A dot while Inbox has unread threads. On a phone it
   sits in Home with the rest; Ctrl+K finds Mail, its views and each mailbox.
-- **The list**: Inbox, Unread, Starred and Sent across every account (or one account, with the picker when there are
-  several), and any mailbox from the folder button. Threads newest first, bold while unread, with who wrote ("Alex, Jo,
-  me"), how many messages, the subject, a star and a paper clip.
-- **The reader**: a thread's messages oldest first. Unread messages and the latest are open, the rest fold to a line.
-  Each shows its sender with the address, To and Cc, and ▾ for the rest of the headers. The body is the message's
-  text, with links, never Markdown; quoted text folds behind ···. An HTML-only message shows the text its HTML makes.
+- **The list**: Inbox, Unread, Starred and Sent across every account, and any mailbox from the folder button. The views
+  are one row of chips that scrolls sideways, without a scrollbar: its edge fades while more chips lie past it, and the
+  chosen one is scrolled into view. With several accounts, the line under "Mail" ("All accounts", or the account) is
+  the picker: a menu of All accounts and each account, each with its colour's dot, the dot rows show before the
+  sender's name when every account shows (the menu says so). Threads newest first, bold while unread, with who wrote
+  ("Alex, Jo, me"), how many messages, the subject, a star and a paper clip; each line ends in an ellipsis.
+- **The reader**: a thread's messages oldest first. Unread messages and the latest are open, the rest fold to a line:
+  who and the start of the text. Bodies ahead skip what you sent (and older mail), so when a thread opens the reader
+  asks for the bodies of its folded messages that have no preview yet (the newest 20, after the open ones), which the
+  hub fetches at once, as any body a page waits for. Each open message shows its sender with the address, To and Cc,
+  and ▾ for the rest of the headers. The body is the message's text, with links, never Markdown; quoted text folds
+  behind ···. An HTML-only message shows the text its HTML makes. On a phone the subject takes up to two lines, then an
+  ellipsis.
 - **Read here**: a thread that has been on screen for a second counts as read on the hub. Slice 4 (below) tells the
   server too, unless Settings says "only when I mark it".
 - **Accounts → Mail** and **Settings → Mail** list the mail accounts: online or not, what is wrong ("Sign in to Proton
@@ -128,7 +135,12 @@ files made without the hub surviving a reload of the page (its draft does).
 ## HTML, images and files (slice 3)
 
 - **The HTML** shows in a frame on a white sheet, in every theme, scaled down to the width when the mail is wider than
-  the screen. The hub sanitises it first (`hub/src/mail/sanitize.ts`, an allowlist on Bun's HTMLRewriter): no script,
+  the screen. Plain HTML is the exception: when the sanitiser finds only text, paragraphs, line breaks, links, lists,
+  quotes, bold and italic (no images, tables, headings, colours, backgrounds, fonts, alignment or style sheets; margins
+  and a quote's bar are fine) and the mail has a text part of its own, the body view says `html.plain` and the reader
+  shows the text part, with its quote fold, in the app's theme (a reply sent from here, say). The frame, its sandbox,
+  the CSP and the allowlist are unchanged; this only picks the part. `sanitize.ts` `plain`, `parts.ts` `hasTextPart`,
+  tested in `mail-sanitize.test.ts` and `mail-parts.test.ts`. The hub sanitises it first (`hub/src/mail/sanitize.ts`, an allowlist on Bun's HTMLRewriter): no script,
   frame, object, form, svg, math, meta or base survives; no `on…` attribute; links are http(s), mailto or a place in
   the mail; style keeps its looks but loses `url()`, `@import`, `expression()` and `behavior`. Every kept attribute is
   written again from its decoded value, so `jav&#x61;script:` is read as the browser would read it, and a tag left
@@ -172,7 +184,8 @@ As built, where it differs from §7: "Always from" is its own table, `mail_sende
   apps agree (§14 Q3). Settings → Mail → "Mark read on the server" offers "only when I mark it": then it is read here
   only until you choose Mark read. The setting is the hub's, so every device follows it.
 - **In the reader**: Archive (Move to Inbox when it is not in Inbox), Move to the trash, Star, and ⋯ for Mark unread,
-  Move to…, Mark as junk (Not junk in Junk). Each open message has its own Star. Filing it away goes back to the list.
+  Move to…, Mark as junk (Not junk in Junk). On a phone only Archive and ⋯ sit beside the subject; Star and Move to the
+  trash are in ⋯. Each open message has its own Star. Filing it away goes back to the list.
 - **In a list**: on a phone, swipe a row right to archive it and left to mark it read or unread. A long press picks
   a thread; then taps pick more, and a bar over the header archives, marks, stars, trashes or moves them all. On a
   desktop the avatar or Ctrl/Shift-click picks, and right-click opens the same menu. "Archived · Undo" shows for a
@@ -526,7 +539,9 @@ others were asked, because an IMAP move is a removal there and an addition elsew
 
   verify-mail drives it in headless Chromium on a phone (390 px, touch) and a desktop, in the dark and light themes:
   no page errors, nothing off the side of the screen, list → thread → back on a phone, the quote fold, read here, and
-  the HTML-only message. Use a fresh data dir each run: reading marks threads read. With `--html` it also checks the
+  the HTML-only message; the views in one row of chips, every folded message with a snippet (yours too), the phone
+  reader's subject whole or on two lines beside Archive and ⋯, and the reply it sends shown as text. Its `--proton` run
+  (two accounts) also checks the account picker under "Mail". Use a fresh data dir each run: reading marks threads read. With `--html` it also checks the
   frame (slice 3): no script runs in it, not even one put there by hand; no request leaves for anywhere but the hub;
   link clicks go through the opener, and a misleading one asks first; the image banner and the proxy; quotes, `cid:`
   pictures, files in the viewers; swiping back over a body. The demo's remote images are drawn by the hub itself

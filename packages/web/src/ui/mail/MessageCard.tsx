@@ -3,7 +3,7 @@
  * from the first renderer in slots.tsx that takes it (TextBody until slice 3); the actions from MESSAGE_ACTIONS.
  */
 import type * as P from '@dither-chat/protocol';
-import { mailAddressText } from '@dither-chat/protocol';
+import { mailAddressText, mailPreview } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { clock, dayLabel, fullTime, sameDay } from '../../format.ts';
 import { bodies, bodyState, loadBody, retryBody } from '../../mail/api.ts';
@@ -40,10 +40,10 @@ export function MessageCard({ message: m, thread, account, open, onToggle }: { m
   const name = fromMe ? 'me' : who(m.from);
   if (!open)
     return (
-      <button class="mail-msg folded" onClick={onToggle} aria-expanded="false">
+      <button class="mail-msg folded" data-message={m.id} onClick={onToggle} aria-expanded="false">
         <Avatar id={m.from.email || m.id} name={who(m.from)} size={28} />
         <span class="mail-msg-who">{name}</span>
-        <span class="mail-msg-line">{m.preview ?? ''}</span>
+        <span class="mail-msg-line">{m.preview ?? mailPreview(bodies.get(m.id)?.text) ?? ''}</span>
         <span class="mail-msg-time">{mailTime(m.receivedAt)}</span>
       </button>
     );

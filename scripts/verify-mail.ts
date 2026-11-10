@@ -4,9 +4,11 @@
  * phone (390x844, touch) and a desktop, in the dark and the light theme:
  *
  *   - no errors on the page, and nothing runs sideways off the screen;
- *   - the rail's Mail entry, the list, the views;
+ *   - the rail's Mail entry, the list, the views in one row of chips (on a phone too);
  *   - on a phone: the list, a thread over it, and back (the button and the browser's back);
- *   - the reader: the latest and unread messages open, the quote folded behind ···, read here after a second;
+ *   - the reader: the latest and unread messages open, the quote folded behind ···, read here after a second; each
+ *     folded message (yours too) with the start of its text; on a phone the subject whole, or on two lines with an
+ *     ellipsis, beside Archive and ⋯ (Trash and Star are in ⋯);
  *   - an HTML-only message shows (its HTML in the frame, or its text part), and none of its script;
  *   - the Accounts screen's Mail group;
  *   - from a person (slice 8): Inbox folds newsletters and notifications into one Updates row that opens Updates;
@@ -18,8 +20,9 @@
  *     results and back to them, the filter chips; the search page's Mail group and its way into Mail.
  *   - writing (slice 5), last, since it sends: on a phone, Reply from the reader's bar fills in To, the subject and the
  *     quote; a Cc typed in, a file attached; Send, "Sending… Undo", Undo brings the draft back, Send again, and the
- *     reply joins the thread with its file; on a desktop, ✎ docks a new message whose To completes from your mail, and
- *     closing it keeps a draft that opens again from the Drafts line.
+ *     reply joins the thread with its file and reads as text in the app's theme (its plain HTML part is not put on a
+ *     white sheet); on a desktop, ✎ docks a new message whose To completes from your mail, and closing it keeps a
+ *     draft that opens again from the Drafts line.
  *
  * With --html (slice 3, htmlChecks below), the HTML frame in Chromium: no script runs in it, even put there by hand;
  * no request leaves for anywhere but the hub; a link click goes through the app's opener and never moves the frame,
@@ -34,7 +37,8 @@
  * With --proton (a hub started with DITHER_DEMO_MAIL_PROTON=1: a second account whose summaries carry no headers, as
  * Proton's), only that account's run: its newsletter, which says it is one only in its body, reaches Updates once
  * its body was fetched ahead and is never in Inbox; the receipt Proton sorted into Transactions is in Updates; the
- * stranger's note stays in Inbox; on a phone and a desktop, both themes, nothing off the side.
+ * stranger's note stays in Inbox; on a phone and a desktop, both themes, nothing off the side. With two accounts, the
+ * line under "Mail" picks the account: its menu has each with the colour of its rows' dot, and says what the dot is.
  *
  *   bun scripts/verify-mail.ts http://127.0.0.1:8700 [screenshot dir] [--html] [--big] [--proton]
  * The hub must be a fresh demo hub (--demo) with its own data dir: reading marks threads read.
@@ -69,7 +73,8 @@ const byTitle = (s: string) => threads.find((t) => t.subject.includes(s))!;
 const dinner = byTitle('Dinner on Friday');
 const shipped = byTitle('Your order has shipped');
 const lease = byTitle('Lease renewal');
-if (!dinner || !shipped || !lease) throw new Error('the demo mail is not as seeded');
+const github = byTitle('libdither/dither-chat');
+if (!dinner || !shipped || !lease || !github) throw new Error('the demo mail is not as seeded');
 
 const { page, close } = await launch();
 let failed = 0;
@@ -114,7 +119,7 @@ const inView = (sel: string) =>
 
 // ------------------------------------------------------------------ layout (as verify-phone.ts)
 
-const SIDEWAYS = '.level-picker, .ident-chips, .composer-files, .sheet-quick, pre, code, .log-view, .detail-dump, .lv-screen';
+const SIDEWAYS = '.level-picker, .ident-chips, .composer-files, .sheet-quick, pre, code, .log-view, .detail-dump, .lv-screen, .mail-chips';
 async function overflow(): Promise<string[]> {
   return page.eval(`(() => {
     const W = innerWidth, out = [], sideways = ${JSON.stringify(SIDEWAYS)};
@@ -164,6 +169,23 @@ async function theme(name: string, hash: string) {
   check(`${name} is on`, light === name.includes('light'));
 }
 
+/** Mail's view chips: how many rows they take, and where the first thread starts (CSS px from the top). */
+const chipRows = () =>
+  page.eval<{ rows: number; chips: number; firstRow: number }>(`(() => {
+    const tops = new Set([...document.querySelectorAll('.sidebar .mail-chips .chip-btn')].map((c) => Math.round(c.getBoundingClientRect().top)));
+    const row = document.querySelector('.sidebar .mail-row');
+    return { rows: tops.size, chips: document.querySelectorAll('.sidebar .mail-chips .chip-btn').length, firstRow: row ? Math.round(row.getBoundingClientRect().top) : -1 };
+  })()`);
+/** The reader's subject: its lines, and whether all of it shows. */
+const subjectBox = () =>
+  page.eval<{ text: string; lines: number; whole: boolean }>(`(() => {
+    const el = document.querySelector('.mail-reader .mail-subject');
+    const lh = parseFloat(getComputedStyle(el).lineHeight);
+    return { text: el.textContent, lines: Math.round(el.clientHeight / lh), whole: el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1 };
+  })()`);
+/** The folded messages: who and the line beside them. */
+const foldedLines = () => page.eval<{ who: string; line: string }[]>(`[...document.querySelectorAll('.mail-reader .mail-msg.folded')].map((m) => ({ who: m.querySelector('.mail-msg-who').textContent, line: m.querySelector('.mail-msg-line').textContent }))`);
+
 // ------------------------------------------------------------------ the runs
 
 async function phone(themeName: string, first: boolean) {
@@ -178,6 +200,8 @@ async function phone(themeName: string, first: boolean) {
   check(`${tag}: the Mail list shows`, (await hash()).startsWith('#/mail'), await hash());
   check(`${tag}: rows are in the hub's order`, (await page.eval<string[]>(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].map((r) => r.dataset.thread)`)).slice(0, 5).join() === inboxThreads.slice(0, 5).map((t) => t.id).join());
   check(`${tag}: no sideways overflow: list`, !(await overflow()).length, await overflow());
+  const bar = await chipRows();
+  check(`${tag}: the views are one row of chips`, bar.rows === 1 && bar.chips >= 5, bar);
   await shot(`mail-${tag.replace(' ', '-')}-list`);
 
   // List, then the thread over it, then back.
@@ -187,7 +211,21 @@ async function phone(themeName: string, first: boolean) {
   const msgs = await page.eval<{ open: number; folded: number }>(`({ open: document.querySelectorAll('.mail-reader .mail-msg.open').length, folded: document.querySelectorAll('.mail-reader .mail-msg.folded').length })`);
   check(`${tag}: the latest and unread messages open, the read ones folded`, msgs.open === 1 && msgs.folded === 2, msgs);
   check(`${tag}: the quote is folded behind ···`, (await has('.mail-reader .mail-quote-toggle')) && !(await has('.mail-reader .mail-quote')));
+  // Yours folds with the start of its text too (its body is asked for when the thread opens).
+  await page.until(`[...document.querySelectorAll('.mail-reader .mail-msg.folded .mail-msg-line')].every((l) => l.textContent.trim())`, 10000).catch(() => {});
+  const lines = await foldedLines();
+  check(`${tag}: every folded message has a snippet, yours too`, lines.length === 2 && lines.every((l) => l.line.trim()) && lines.some((l) => l.who === 'me' && l.line.startsWith('Yes, 7:30 works')), lines);
+  const subject = await subjectBox();
+  check(`${tag}: the subject shows whole, not cut to a few letters`, subject.whole && subject.text === dinner.subject, subject);
+  const head = await page.eval<string[]>(`[...document.querySelectorAll('.mail-reader-head .hdr-btn')].map((b) => b.getAttribute('aria-label'))`);
+  check(`${tag}: beside it only Archive and ⋯`, head.join() === 'Archive,More', head);
   if (first) {
+    await tap(await at('.mail-reader-head .hdr-btn[aria-label="More"]'));
+    await page.until(`!!document.querySelector('.cm-sheet')`, 5000);
+    const items = await page.eval<string>(`document.querySelector('.cm-sheet').textContent`);
+    check(`${tag}: ⋯ has Star and Move to the trash`, items.includes('Star') && items.includes('Move to the trash'), items);
+    await page.eval(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+    await page.until(`!document.querySelector('.cm-sheet')`, 5000).catch(() => {});
     await tap(await at('.mail-reader .mail-quote-toggle'));
     check(`${tag}: ··· shows the quote`, await page.eval(`(document.querySelector('.mail-reader .mail-quote')?.textContent ?? '').includes('Should I book a table')`));
     // Read here after a second in view.
@@ -211,6 +249,18 @@ async function phone(themeName: string, first: boolean) {
   await page.eval('history.back()');
   await Bun.sleep(500);
   check(`${tag}: the browser's back goes to the list too`, !(await hash()).includes('/t/'), await hash());
+  if (first) {
+    // A long subject: two lines, then an ellipsis.
+    await page.eval(`location.hash = '#/mail/t/${github.id}'`);
+    await page.until(`document.querySelector('.mail-reader .mail-subject')?.textContent === ${JSON.stringify(github.subject)}`, 10000);
+    await Bun.sleep(400);
+    const long = await subjectBox();
+    check(`${tag}: a long subject takes two lines, then an ellipsis`, long.lines === 2 && !long.whole, long);
+    await shot(`mail-${tag.replace(' ', '-')}-reader-long-subject`);
+    await page.eval(`location.hash = '#/mail'`);
+    await page.until(`!location.hash.includes('/t/')`, 5000);
+    await Bun.sleep(500);
+  }
 
   // A view chip, then the Accounts screen's Mail group.
   await tap(await at('.sidebar .mail-chips .chip-btn', `el => el.textContent === 'Sent'`));
@@ -228,6 +278,8 @@ async function desktop(themeName: string) {
   await theme(themeName, '#/mail');
   await page.until(`document.querySelectorAll('.sidebar .mail-row').length >= 5`, 15000);
   check(`${tag}: no thread open yet: the welcome pane`, await has('.center .welcome'));
+  const bar = await chipRows();
+  check(`${tag}: the views are one row of chips`, bar.rows === 1 && bar.chips >= 5, bar);
   await click(await at(`.sidebar .mail-row[data-thread="${lease.id}"]`));
   await page.until(`!!document.querySelector('.mail-reader .mail-msg.open .mail-text')`, 15000);
   check(`${tag}: the list and the reader side by side`, (await inView('.sidebar .mail-list')) && (await inView('.center .mail-reader')));
@@ -318,8 +370,27 @@ async function composer(themeName: string, full: boolean) {
   }
   const mine = after.messages[after.messages.length - 1];
   check(`${tag}: the reply joins the thread, with its Cc and its file`, after.messages.length === before + 1 && mine.addressed === 'self' && mine.cc.some((a: any) => a.email === 'jo@park.example') && mine.hasAttachments, { n: after.messages.length, cc: mine?.cc, files: mine?.hasAttachments });
-  await page.until(`document.querySelectorAll('.mail-reader .mail-msg').length === ${before + 1}`, 10000).catch(() => {});
-  check(`${tag}: the reader shows it`, (await page.eval<number>(`document.querySelectorAll('.mail-reader .mail-msg').length`)) === before + 1);
+  await page.until(`document.querySelectorAll('.mail-reader .mail-msg').length >= ${before + 1}`, 10000).catch(() => {});
+  check(`${tag}: the reader shows it`, (await page.eval<number>(`document.querySelectorAll('.mail-reader .mail-msg').length`)) >= before + 1);
+  // Its HTML part is plain (text, a quote, a link): it reads as text in the app's theme, not on a white sheet.
+  const body = (await fetch(`${base}/api/mail/messages/${mine.id}/body`).then((r) => r.json())) as any;
+  check(`${tag}: the hub calls its HTML plain`, !!body.html && body.html.plain === true, body.html);
+  for (const t of [themeName, themeName === 'dither-dark' ? 'dither-light' : 'dither-dark']) {
+    await theme(t, `#/mail/t/${dinner.id}`);
+    const card = `.mail-reader .mail-msg[data-message="${mine.id}"]`;
+    await page.until(`!!document.querySelector(${JSON.stringify(card)})`, 10000);
+    if (await has(`${card}.folded`)) {
+      check(`composer phone ${t}: folded, your reply has its snippet`, (await page.eval<string>(`document.querySelector('${card} .mail-msg-line').textContent`)).startsWith('See you at 7:30!'));
+      await tap(await at(card));
+    }
+    await page.until(`!!document.querySelector('${card}.open .mail-text')`, 10000).catch(() => {});
+    const shown = await page.eval<{ text: string; sheet: boolean; color: string }>(
+      `(() => { const c = document.querySelector('${card}.open'); return { text: c?.querySelector('.mail-text')?.textContent ?? '', sheet: !!c?.querySelector('.mail-html, .mail-sheet'), color: c ? getComputedStyle(c.querySelector('.mail-msg-body')).backgroundColor : '' }; })()`,
+    );
+    check(`composer phone ${t}: a plain reply shows as text, with its quote folded, no white sheet`, shown.text.startsWith('See you at 7:30!') && !shown.sheet && (await has(`${card} .mail-quote-toggle`)), shown);
+    await page.eval(`document.querySelector('${card}').scrollIntoView({ block: 'center' })`);
+    await shot(`mail-composer-phone-${t}-plain-reply`);
+  }
 }
 
 async function composerDesktop(themeName: string, full: boolean) {
@@ -396,6 +467,37 @@ async function headerless(themeName: string, onPhone: boolean, first: boolean) {
   await page.until(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].some((r) => r.textContent.includes('Found your scarf'))`, 15000);
   check(`${tag}: Inbox shows the stranger's note, not the newsletter`, !(await rows()).some((r) => r.includes('Garden Club Weekly')));
   check(`${tag}: no sideways overflow: Inbox`, !(await overflow()).length, await overflow());
+
+  // Two accounts: the line under "Mail" picks whose mail the views show, and its menu says what the rows' dots are.
+  const press = onPhone ? tap : click;
+  const bar = await chipRows();
+  check(`${tag}: the views are one row of chips`, bar.rows === 1, bar);
+  check(`${tag}: the line under "Mail" says All accounts`, (await page.eval<string>(`document.querySelector('.sidebar .side-head .mail-acc-btn')?.textContent ?? ''`)) === 'All accounts');
+  await press(await at('.sidebar .mail-acc-btn'));
+  await page.until(`!!document.querySelector('.cm, .cm-sheet')`, 5000);
+  const menu = await page.eval<{ text: string; dots: string[] }>(
+    `(() => { const m = document.querySelector('.cm-sheet') ?? document.querySelector('.cm'); return { text: m.textContent, dots: [...m.querySelectorAll('.cm-dot')].map((d) => getComputedStyle(d).backgroundColor) }; })()`,
+  );
+  const rowDot = await page.eval<string>(`(() => { const d = [...document.querySelectorAll('.sidebar .mail-row .mail-acc-dot')].find((x) => x.title === 'zyan@proton.example'); return d ? getComputedStyle(d).backgroundColor : 'none'; })()`);
+  check(
+    `${tag}: its menu: All accounts, each account with its rows' dot, and what the dot is`,
+    ['All accounts', 'zyan@dither.example', 'zyan@proton.example', 'a dot in the account'].every((x) => menu.text.includes(x)) && menu.dots.length === 3 && menu.dots.includes(rowDot),
+    { ...menu, rowDot },
+  );
+  check(`${tag}: no sideways overflow: the account menu`, !(await overflow()).length, await overflow());
+  await shot(`mail-${onPhone ? 'phone' : 'desktop'}-${themeName}-account-menu`);
+  await press(await menuItem('zyan@proton.example'));
+  await page.until(`location.hash.includes(${JSON.stringify(encodeURIComponent(`v:inbox:${PROTON}`))})`, 5000);
+  await page.until(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].some((r) => r.textContent.includes('Found your scarf'))`, 10000);
+  check(
+    `${tag}: picking an account shows its mail only, and the line says which`,
+    (await page.eval<string>(`document.querySelector('.sidebar .mail-acc-btn').textContent`)) === 'zyan@proton.example' && !(await rows()).some((r) => r.includes('Dinner')),
+  );
+  await shot(`mail-${onPhone ? 'phone' : 'desktop'}-${themeName}-one-account`);
+  await press(await at('.sidebar .mail-acc-btn'));
+  await press(await menuItem('All accounts'));
+  await page.until(`document.querySelector('.sidebar .mail-acc-btn')?.textContent === 'All accounts'`, 5000).catch(() => {});
+  check(`${tag}: and All accounts again`, (await page.eval<string>(`document.querySelector('.sidebar .mail-acc-btn')?.textContent ?? ''`)) === 'All accounts');
 }
 
 // ------------------------------------------------------------------ from a person (slice 8)

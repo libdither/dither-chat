@@ -50,7 +50,9 @@ export interface ThreadAction {
 export type RowWrapper = ComponentType<{ thread: P.MailThreadView; children: ComponentChildren }>;
 export type ListBar = ComponentType<{ list: string }>;
 
-export const BODY_RENDERERS: BodyRenderer[] = [(p) => (p.body.html ? <HtmlBody {...p} /> : null), (p) => <TextBody {...p} />];
+// A plain HTML part (only text, links, lists, quotes, bold, italic) with a text part beside it reads as the text does,
+// in the app's theme; anything styled keeps its white sheet.
+export const BODY_RENDERERS: BodyRenderer[] = [(p) => (p.body.html && !p.body.html.plain ? <HtmlBody {...p} /> : null), (p) => <TextBody {...p} />];
 /** On a phone the latest message is answered from the bar below, so its own buttons would be the same twice. */
 const underMessage = (m: P.MailMessageView, a: P.MailAccountView | undefined) => canAnswer(a) && !(phone.value && latestOf(m.threadId)?.id === m.id);
 const onTheBar = (t: P.MailThreadView, a: P.MailAccountView | undefined) => phone.value && canAnswer(a) && !!latestOf(t.id);

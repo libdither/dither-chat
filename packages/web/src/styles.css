@@ -10130,19 +10130,84 @@ button.msg-edited.link:hover {
   color: var(--warn);
   flex: none;
 }
+/* Mail's views: one row that scrolls sideways, with no scrollbar, rather than wrapping onto a second. */
 .mail-chips {
+  flex-wrap: nowrap;
   align-items: center;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
 }
-.mail-acc-pick {
+.mail-chips::-webkit-scrollbar {
+  display: none;
+}
+.mail-chips.fade-r {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+.mail-chips.fade-l {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 28px);
+  mask-image: linear-gradient(to right, transparent, #000 28px);
+}
+.mail-chips.fade-l.fade-r {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+}
+/* Under "Mail": whose mail the views show (MailSidebar AccountPicker), with the dot its threads carry. */
+.mail-acc-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   max-width: 100%;
-  min-width: 0;
-  background: var(--bg-input);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 3px 8px;
+  margin-top: 2px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-faint);
   font: inherit;
   font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.mail-acc-btn:hover,
+.mail-acc-btn[aria-expanded='true'] {
+  color: var(--text);
+}
+.mail-acc-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (pointer: coarse) {
+  /* A finger-sized target on a small line. */
+  .mail-acc-btn::after {
+    content: '';
+    position: absolute;
+    inset: -10px -8px;
+  }
+}
+.cm-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.mail-acc-note {
+  max-width: 260px;
+  margin: 2px 8px 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-faint);
+  white-space: normal;
+}
+.cm-sheet .mail-acc-note {
+  max-width: none;
+  margin: 10px 20px 4px;
+  font-size: 13px;
 }
 .mail-list {
   display: flex;
@@ -10150,6 +10215,18 @@ button.msg-edited.link:hover {
 }
 .mail-row .row-main {
   gap: 1px;
+}
+/* Single-line row text ends in an ellipsis: as a block, not a flex box, whose bare text is cut mid-letter. */
+.mail-row .row-preview,
+.inbox-mail-row .row-preview,
+.inbox-mail-row .row-title {
+  display: block;
+}
+.mail-row-who {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .mail-row-subject {
   flex: 1;
@@ -10168,6 +10245,7 @@ button.msg-edited.link:hover {
   font-weight: 500;
 }
 .mail-count {
+  flex: none;
   font-size: 11px;
   font-weight: 500;
   color: var(--text-faint);
@@ -10427,7 +10505,9 @@ button.msg-edited.link:hover {
 .mail-reader {
   min-width: 0;
 }
-.mail-subject {
+/* A block, so a long subject ends in an ellipsis (the header's h2 is a flex box, which would cut it mid-letter). */
+.mail-reader-head .mail-subject {
+  display: block;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -10436,6 +10516,19 @@ button.msg-edited.link:hover {
 .mail-reader-head .conv-head-text {
   min-width: 0;
   flex: 1;
+}
+/* On a phone the subject may take two lines, then ends in an ellipsis; Trash and Star wait in ⋯ (Filing.tsx). */
+@media (max-width: 820px) {
+  .mail-reader-head .mail-subject {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    font-size: 16px;
+    line-height: 1.25;
+  }
 }
 .mail-reader-scroll {
   flex: 1;

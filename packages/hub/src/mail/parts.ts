@@ -26,6 +26,7 @@ import { ImageProxy, imageToken, imageType, readImageToken } from './images.ts';
 import { P0 } from './queue.ts';
 import type { MailRouter } from './routes.ts';
 import { contentId, mailDocument, SANITIZE_VERSION, sanitizeMail, type Sanitized } from './sanitize.ts';
+import { htmlText } from './store.ts';
 
 type Row = Record<string, any>;
 
@@ -134,7 +135,13 @@ class Parts {
       // The counts are those of the blocked pass: what the banner offers to load.
       const held = this.sanitized(messageId, b.html, false);
       cids = new Set(held.cids);
-      out.html = { url: `/api/mail/messages/${messageId}/html?images=${shown ? 1 : 0}&v=${SANITIZE_VERSION}`, remoteImages: held.remoteImages, trackers: held.trackers, imagesShown: shown };
+      out.html = {
+        url: `/api/mail/messages/${messageId}/html?images=${shown ? 1 : 0}&v=${SANITIZE_VERSION}`,
+        remoteImages: held.remoteImages,
+        trackers: held.trackers,
+        imagesShown: shown,
+        plain: held.plain && hasTextPart(b),
+      };
       for (const x of dedupe(held.mismatched).slice(0, 3)) warnings.push(`A link that shows ${x.shown} goes to ${x.goes}.`);
     }
     out.attachments = parts
@@ -210,6 +217,18 @@ class Parts {
       .run(file.slice(this.media.dir.length + 1), JSON.stringify(info), SNIFF_VERSION, Date.now());
     return info;
   }
+}
+
+/**
+ * The body has a text part of its own that says what its HTML says: not the text putBody made from the HTML when the
+ * mail had none (store.ts htmlText, so the same text again), and not a stub ("view this mail in a browser") much
+ * shorter than the HTML's own text.
+ */
+export function hasTextPart(b: { text?: string | null; html?: string | null }): boolean {
+  const text = b.text ?? '';
+  if (!text.trim() || !b.html) return false;
+  const made = htmlText(b.html).replace(/\r\n?/g, '\n');
+  return text !== made && text.length * 2 >= made.length;
 }
 
 const dedupe = (xs: { shown: string; goes: string }[]) => [...new Map(xs.map((x) => [`${x.shown} ${x.goes}`, x])).values()];

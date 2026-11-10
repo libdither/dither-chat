@@ -7,7 +7,9 @@
 import { describe, expect, test } from 'bun:test';
 import { hostsDiffer, shownHost } from '@dither-chat/protocol';
 import { messageHtml, quotedHtml } from '../src/mail/compose.ts';
-import { decodeEntities, isTracker, mailDocument, quoteFragment, safeHref, sanitizeCss, sanitizeMail, type SanitizeOpts } from '../src/mail/sanitize.ts';
+import { hasTextPart } from '../src/mail/parts.ts';
+import { decodeEntities, isTracker, mailDocument, plainStyle, quoteFragment, safeHref, sanitizeCss, sanitizeMail, type SanitizeOpts } from '../src/mail/sanitize.ts';
+import { htmlText } from '../src/mail/store.ts';
 
 const PROXY = (u: string) => `/api/mail/img/T.${Buffer.from(u).toString('base64url')}.SIG`;
 const CID = (c: string) => `/api/mail/messages/mml_X/cid/${encodeURIComponent(c)}`;
@@ -259,6 +261,78 @@ describe('quotes', () => {
     expect(quotedHtml(null)).toBeNull();
     // Nothing left of it: the text is quoted instead.
     expect(quotedHtml('<script>x</script>')).toBeNull();
+  });
+});
+
+describe('plain or styled (which part the reader shows)', () => {
+  const sam = { from: { name: 'Sam Rivera', email: 'sam@rivera.example' }, to: [], cc: [], replyTo: [], subject: 'Dinner on Friday?', date: Date.UTC(2026, 10, 3, 10), text: 'Are you free after 7?\n> on Friday\nhttps://ramen.example/menu' };
+  test('plain: a reply sent from here, with its quote and a link', () => {
+    const html = messageHtml('reply', 'See you at 7:30!\nhttps://ramen.example/menu', sam, true, 'UTC');
+    expect(clean(html).plain).toBe(true);
+    // A forward too, and the same with no quote.
+    expect(clean(messageHtml('forward', 'For you', sam, true, 'UTC')).plain).toBe(true);
+    expect(clean(messageHtml('reply', 'Yes', sam, false, 'UTC')).plain).toBe(true);
+  });
+
+  test('plain: what mail apps send for a few lines of text', () => {
+    for (const html of [
+      // Gmail, with its quote and signature
+      '<div dir="ltr">See you at 7:30!<div><br></div><div>Zyan</div></div><br><div class="gmail_quote"><div dir="ltr" class="gmail_attr">On Tue, Sam wrote:<br></div><blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">Are you free?</blockquote></div><div dir="ltr" class="gmail_signature" data-smartmail="gmail_signature">Zyan</div>',
+      // Apple Mail
+      '<html><head><meta http-equiv="content-type" content="text/html; charset=utf-8"></head><body style="overflow-wrap: break-word; -webkit-nbsp-mode: space; line-break: after-white-space;"><div dir="auto">Yes <b>7:30</b>, <i>see you</i>.</div><blockquote type="cite"><div>Are you free?</div></blockquote></body></html>',
+      // Thunderbird, with a list and a link
+      '<p>Two things:</p><ul><li>the <a href="https://ramen.example/">menu</a></li><li>the time</li></ul><ol start="3"><li>three</li></ol><div class="moz-cite-prefix">On 11/3/26, Sam wrote:<br></div><blockquote type="cite" cite="mid:x@y">old</blockquote>',
+      '<p><strong>Bold</strong> and <em>italic</em>, a line<br>break and <span>a span</span>.</p>',
+      'Just text, no markup at all.',
+    ])
+      expect(clean(html).plain, html.slice(0, 60)).toBe(true);
+  });
+
+  test('styled: images, tables, colours, backgrounds, fonts, headings, alignment, style sheets', () => {
+    for (const html of [
+      '<p>Hi</p><img src="https://e.example/banner.png" width="600" height="200">',
+      '<p>Hi</p><img src="cid:logo@x">',
+      '<p>Hi</p><img src="https://t.example/o.gif" width="1" height="1">',
+      '<table width="600"><tr><td>Hi</td></tr></table>',
+      '<p style="color:#333">Hi</p>',
+      '<div style="background:#f6f8fa">Hi</div>',
+      '<div style="background-image:url(https://e.example/bg.png)">Hi</div>',
+      '<div style="font-family:Arial, sans-serif; font-size:14px">Hi</div>',
+      '<span style="font-weight:bold">Hi</span>',
+      '<font face="Arial" color="red">Hi</font>',
+      '<h1>Hi</h1>',
+      '<p align="center">Hi</p>',
+      '<center>Hi</center>',
+      '<hr><p>Hi</p>',
+      '<pre>Hi</pre>',
+      '<u>Hi</u>',
+      '<style>p{color:red}</style><p>Hi</p>',
+      '<html><head><link rel="stylesheet" href="https://e.example/s.css"></head><body><p>Hi</p></body></html>',
+      '<body bgcolor="#eeeeee"><p>Hi</p></body>',
+      '<p>Hi<script>alert(1)</script></p>',
+      '<p>Hi</p><custom-box>x</custom-box>',
+      '<div style="border-left:3px solid red">not a quote</div>',
+    ])
+      expect(clean(html).plain, html.slice(0, 60)).toBe(false);
+  });
+
+  test('plainStyle: spacing and wrapping, and a quote’s bar only on a blockquote', () => {
+    expect(plainStyle('div', 'margin:0 0 0 .8ex; padding-left:1ex')).toBe(true);
+    expect(plainStyle('blockquote', 'margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex')).toBe(true);
+    expect(plainStyle('div', 'border-left:1px solid #ccc')).toBe(false);
+    expect(plainStyle('p', 'margin:0; color: red')).toBe(false);
+    expect(plainStyle('p', 'x-blocked: none')).toBe(false);
+  });
+
+  test('a text part: its own, not the text made from the HTML, and not a stub', () => {
+    const html = '<div dir="ltr">See you at 7:30!</div><blockquote type="cite">Are you free after 7 on Friday?</blockquote>';
+    expect(hasTextPart({ text: 'See you at 7:30!\n\n> Are you free after 7 on Friday?', html })).toBe(true);
+    // An HTML-only mail: the hub kept htmlText of it as its text (store.ts putBody).
+    expect(hasTextPart({ text: htmlText(html), html })).toBe(false);
+    expect(hasTextPart({ text: null, html })).toBe(false);
+    expect(hasTextPart({ text: '  \n', html })).toBe(false);
+    expect(hasTextPart({ text: 'Open it in a browser.', html: `<p>${'A long letter. '.repeat(20)}</p>` })).toBe(false);
+    expect(hasTextPart({ text: 'Hi', html: null })).toBe(false);
   });
 });
 

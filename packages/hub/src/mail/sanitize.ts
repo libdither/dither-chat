@@ -11,6 +11,8 @@
  * background are rewritten (a proxy token or a placeholder; cid: to the message's own part; data: for plain images);
  * srcset goes; style loses url(), @import, expression and behavior (sanitizeCss). Links open in a new context
  * (the page catches the click anyway). Quotes get the `dc-quote` class. A tracker (1–2 px, or hidden) always goes.
+ * The pass also says whether the mail is plain (`plain`), which only chooses what the reader shows: the text part in
+ * the app's theme, or this HTML on its white sheet.
  *
  * This is the first of three walls. The page loads the result in a frame sandboxed without scripts, and the hub
  * serves it with a CSP that also forbids script and loads nothing but its own images (routes in parts.ts).
@@ -50,6 +52,12 @@ export interface Sanitized {
   mismatched: { shown: string; goes: string }[];
   /** A quote was marked. */
   quotes: number;
+  /**
+   * Plain: only text, paragraphs, line breaks, links, lists, quotes, bold and italic. No images, tables, headings,
+   * colours, backgrounds, fonts, alignment or style sheets (margins and a quote's bar are fine). The reader shows such
+   * a mail's text part in the app's theme instead of the white sheet (parts.ts).
+   */
+  plain: boolean;
 }
 
 // ------------------------------------------------------------------ the lists
@@ -108,6 +116,23 @@ const ATTRS: Record<string, string[]> = {
   style: ['media'],
   body: ['bgcolor', 'background', 'text', 'link', 'vlink', 'alink'],
 };
+
+/** What a plain mail (Sanitized.plain) is made of. `meta` and `title` show nothing, so they do not count. */
+const PLAIN_TAGS = new Set('html head body meta title p div span br wbr a b strong i em ul ol li blockquote'.split(' '));
+/** The attributes a plain mail's elements may keep; `style` only as plainStyle allows. */
+const PLAIN_ATTRS = new Set(['href', 'class', 'id', 'dir', 'lang', 'title', 'role', 'type', 'start', 'value', 'reversed']);
+/** Style that changes no looks: spacing, how lines wrap, the direction. */
+const PLAIN_CSS = /^(margin|padding)(-(top|right|bottom|left|block|inline)(-(start|end))?)?$|^(overflow-wrap|word-wrap|word-break|line-break|-webkit-nbsp-mode|direction|unicode-bidi)$/;
+
+/** A kept style attribute that leaves a mail plain: PLAIN_CSS only, and a quote's bar on a blockquote. */
+export function plainStyle(tag: string, style: string): boolean {
+  for (const decl of style.split(';')) {
+    if (!decl.trim()) continue;
+    const prop = decl.split(':')[0].trim().toLowerCase();
+    if (!PLAIN_CSS.test(prop) && !(tag === 'blockquote' && /^border-left(-(width|style|color))?$/.test(prop))) return false;
+  }
+  return true;
+}
 
 /** Classes and ids mail clients put on the quoted part. `rest`: it and everything after it in its parent. */
 const QUOTE_CLASSES = ['gmail_quote', 'protonmail_quote', 'yahoo_quoted', 'moz-cite-prefix', 'gmail_extra'];
@@ -266,7 +291,7 @@ export function isTracker(width: string | null, height: string | null, style: st
 // ------------------------------------------------------------------ the pass
 
 export function sanitizeMail(input: string, o: SanitizeOpts): Sanitized {
-  const out: Sanitized = { html: '', body: {}, remoteImages: 0, trackers: 0, cids: [], mismatched: [], quotes: 0 };
+  const out: Sanitized = { html: '', body: {}, remoteImages: 0, trackers: 0, cids: [], mismatched: [], quotes: 0, plain: true };
   const cids = new Set<string>();
   const keepStyles = o.styles !== false;
   const cssUrl = (raw: string): string | null => {
@@ -311,6 +336,7 @@ export function sanitizeMail(input: string, o: SanitizeOpts): Sanitized {
     .on('*', {
       element(el) {
         const tag = el.tagName.toLowerCase();
+        if (!PLAIN_TAGS.has(tag)) out.plain = false;
         if (DROP.has(tag) || (tag === 'style' && !keepStyles)) return void el.remove();
         const isDoc = DOCUMENT.has(tag);
         if (!ALLOW.has(tag) && !isDoc) return void el.removeAndKeepContent();
@@ -361,6 +387,7 @@ export function sanitizeMail(input: string, o: SanitizeOpts): Sanitized {
           style = css(style).trim();
           if (style) keep.push(['style', style]);
         }
+        if (out.plain && keep.some(([n, v]) => (n === 'style' ? !plainStyle(tag, v) : !PLAIN_ATTRS.has(n)))) out.plain = false;
 
         // Quotes.
         const classes = (get('class') ?? '').toLowerCase().split(/\s+/);

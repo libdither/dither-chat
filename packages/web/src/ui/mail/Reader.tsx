@@ -1,11 +1,11 @@
 /**
  * A thread, read (docs/mail.md): the subject, then its messages oldest first. Unread messages and the latest are open;
- * the rest fold to one line each. After a second in view it counts as read here (slice 4 also tells the server).
- * Header and bottom-bar actions come from slots.tsx THREAD_ACTIONS.
+ * the rest fold to one line each, with the start of their text. After a second in view it counts as read here (slice
+ * 4 also tells the server). Header and bottom-bar actions come from slots.tsx THREAD_ACTIONS.
  */
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
-import { details, loadThread, markThreadRead } from '../../mail/api.ts';
+import { bodies, details, loadBody, loadThread, markThreadRead } from '../../mail/api.ts';
 import { db, mailRev } from '../../state.ts';
 import { Empty, Skeleton } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
@@ -15,6 +15,8 @@ import { THREAD_ACTIONS } from './slots.tsx';
 
 /** How long a thread is on screen before it counts as read (§14 Q3). */
 export const READ_AFTER_MS = 1000;
+/** Folded messages whose bodies a thread asks for when it opens, newest first. */
+export const FOLDED_BODIES = 20;
 
 export function Reader({ threadId, onBack }: { threadId: string; onBack: () => void }) {
   mailRev.value;
@@ -42,6 +44,15 @@ export function Reader({ threadId, onBack }: { threadId: string; onBack: () => v
       document.removeEventListener('visibilitychange', arm);
     };
   }, [threadId, loaded]);
+
+  // A folded line shows the start of the text, which comes with the body: bodies ahead (hub bodies.ts) skip mail you
+  // sent and older mail, so those are asked for now, after the open ones (asked for first, by their cards). The hub
+  // fetches them as it does any body a page waits for.
+  useEffect(() => {
+    if (!loaded) return;
+    const want = (d?.messages ?? []).filter((m) => !m.preview && !bodies.has(m.id));
+    for (const m of want.reverse().slice(0, FOLDED_BODIES)) void loadBody(m.id);
+  }, [threadId, loaded, d?.messages.length]);
 
   const head = THREAD_ACTIONS.filter((a) => a.place === 'head' && thread && (a.show?.(thread, account) ?? true));
   const bar = THREAD_ACTIONS.filter((a) => a.place === 'bar' && thread && (a.show?.(thread, account) ?? true));

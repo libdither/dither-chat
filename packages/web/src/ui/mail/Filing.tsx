@@ -11,7 +11,7 @@ import type * as P from '@dither-chat/protocol';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { lockAxis, rubber } from '../../gesture.ts';
 import { canWrite, clearSelected, destination, lastMove, markRead, move, moveTargets, selected, star, starMessage, toggleSelected, waiting } from '../../mail/ops.ts';
-import { haptic, reducedMotion } from '../../phone.ts';
+import { haptic, phone, reducedMotion } from '../../phone.ts';
 import { connected, db, go, mailRev, route } from '../../state.ts';
 import { groups, onMenu, openMenu, type MenuEntry, type MenuSpec } from '../ContextMenu.tsx';
 import { Icon } from '../icons.tsx';
@@ -76,13 +76,15 @@ export function threadMenu(ts: P.MailThreadView[], from: 'row' | 'reader' | 'sel
 // ------------------------------------------------------------------ the reader
 
 const leaveAfter = (t: P.MailThreadView, to: P.MailMoveTarget) => file([t], to);
+/** On a phone the subject gets the room: Archive stays a button, Trash and Star are in ⋯ (threadMenu has both). */
+const roomy = () => !phone.value;
 
 export const FILING_THREAD_ACTIONS: ThreadAction[] = [
   { id: 'archive', label: 'Archive', icon: 'archive', place: 'head', show: (t) => inInbox(t) && canMove(t, 'archive'), run: (t) => leaveAfter(t, 'archive') },
   { id: 'unarchive', label: 'Move to Inbox', icon: 'inbox', place: 'head', show: (t) => !inInbox(t) && t.roles.some((r) => r === 'archive' || r === 'junk' || r === 'trash') && canMove(t, 'inbox'), run: (t) => leaveAfter(t, 'inbox') },
-  { id: 'trash', label: 'Move to the trash', icon: 'trash', place: 'head', show: (t) => !only(t, 'trash') && canMove(t, 'trash'), run: (t) => leaveAfter(t, 'trash') },
-  { id: 'star', label: 'Star', icon: 'star', place: 'head', show: (t, a) => !t.flagged && canWrite(a, 'flag.flagged'), run: (t) => star([t.id], true) },
-  { id: 'unstar', label: 'Unstar', icon: 'star', place: 'head', show: (t, a) => t.flagged && canWrite(a, 'flag.flagged'), run: (t) => star([t.id], false) },
+  { id: 'trash', label: 'Move to the trash', icon: 'trash', place: 'head', show: (t) => roomy() && !only(t, 'trash') && canMove(t, 'trash'), run: (t) => leaveAfter(t, 'trash') },
+  { id: 'star', label: 'Star', icon: 'star', place: 'head', show: (t, a) => roomy() && !t.flagged && canWrite(a, 'flag.flagged'), run: (t) => star([t.id], true) },
+  { id: 'unstar', label: 'Unstar', icon: 'star', place: 'head', show: (t, a) => roomy() && t.flagged && canWrite(a, 'flag.flagged'), run: (t) => star([t.id], false) },
   {
     id: 'more',
     label: 'More',
