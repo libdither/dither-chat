@@ -40,7 +40,14 @@
  * stranger's note stays in Inbox; on a phone and a desktop, both themes, nothing off the side. With two accounts, the
  * line under "Mail" picks the account: its menu has each with the colour of its rows' dot, and says what the dot is.
  *
- *   bun scripts/verify-mail.ts http://127.0.0.1:8700 [screenshot dir] [--html] [--big] [--proton]
+ * With --gmail (a hub started with DITHER_DEMO_MAIL_GMAIL=1: a Gmail account as dither-accounts' imap extractor gives
+ * one), only that account's run, on a phone and a desktop in both themes: it is in the account menu; its labels are in
+ * the mailboxes menu and `[Gmail]`, which only holds mailboxes, is not; a label lists its threads; the reader shows
+ * the thread's own labels and none of Gmail's (`\Inbox`, `\Important`); one row a thread in Inbox, All Mail and a
+ * label; Archive, then Undo before it reaches Gmail, then Archive for good (out of Inbox, still in All Mail and its
+ * label); Move to the trash (out of every mailbox but Trash); nothing off the side.
+ *
+ *   bun scripts/verify-mail.ts http://127.0.0.1:8700 [screenshot dir] [--html] [--big] [--proton] [--gmail]
  * The hub must be a fresh demo hub (--demo) with its own data dir: reading marks threads read.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -52,8 +59,9 @@ const args = process.argv.slice(2);
 const withHtml = args.includes('--html');
 const bigRun = args.includes('--big');
 const protonRun = args.includes('--proton');
+const gmailRun = args.includes('--gmail');
 const [base, shots] = args.filter((a) => !a.startsWith('--'));
-if (!base) throw new Error('usage: bun scripts/verify-mail.ts <hub url> [screenshot dir] [--html] [--big] [--proton]');
+if (!base) throw new Error('usage: bun scripts/verify-mail.ts <hub url> [screenshot dir] [--html] [--big] [--proton] [--gmail]');
 if (shots) mkdirSync(shots, { recursive: true });
 
 const boot = (await fetch(`${base}/api/bootstrap`).then((r) => r.json())) as any;
@@ -498,6 +506,120 @@ async function headerless(themeName: string, onPhone: boolean, first: boolean) {
   await press(await menuItem('All accounts'));
   await page.until(`document.querySelector('.sidebar .mail-acc-btn')?.textContent === 'All accounts'`, 5000).catch(() => {});
   check(`${tag}: and All accounts again`, (await page.eval<string>(`document.querySelector('.sidebar .mail-acc-btn')?.textContent ?? ''`)) === 'All accounts');
+}
+
+// ------------------------------------------------------------------ a Gmail account (--gmail)
+
+const GMAIL_ACC = 'acc_demo-gmail';
+const GMAIL_ME = 'zyan@gmail.example';
+
+/** The Gmail account: in the account menu, its labels as mailboxes, its threads once each, archive and trash. */
+async function gmail(themeName: string, onPhone: boolean, step: 'archive' | 'trash' | null) {
+  const tag = `${onPhone ? 'phone' : 'desktop'} ${themeName}: Gmail`;
+  const sz = onPhone ? 'phone' : 'desktop';
+  const press = onPhone ? tap : click;
+  const now = await mailNow();
+  if (!now.accounts?.some((a: any) => a.id === GMAIL_ACC)) throw new Error('no Gmail account: start the hub with DITHER_DEMO_MAIL_GMAIL=1 for --gmail');
+  const boxes = now.mailboxes.filter((b: any) => b.accountId === GMAIL_ACC);
+  const boxOf = (path: string) => boxes.find((b: any) => b.path === path)!;
+  const all = boxOf('[Gmail]/All Mail');
+  const travel = boxOf('Travel');
+  const family = boxOf('Family');
+  const hubThread = async (id: string) => ((await fetch(`${base}/api/mail/threads/${id}`).then((r) => r.json())) as { thread: any }).thread;
+  const settled = async (id: string, f: (t: any) => boolean, ms = 15_000) => {
+    const end = Date.now() + ms;
+    for (;;) {
+      const t = await hubThread(id);
+      if (!t.pending && f(t)) return true;
+      if (Date.now() > end) return false;
+      await Bun.sleep(150);
+    }
+  };
+  const once = (ts: any[]) => new Set(ts.map((t) => t.id)).size === ts.length;
+  const lists = { inbox: await page1(`v:inbox:${GMAIL_ACC}`), all: await page1(`mb:${all.id}`), travel: await page1(`mb:${travel.id}`), family: await page1(`mb:${family.id}`) };
+  const find = (s: string) => [...lists.inbox, ...lists.all].find((t) => t.subject.includes(s));
+  const coast = find('Trip to the coast');
+  check(`${tag}: one row a thread in Inbox, All Mail and each label`, Object.values(lists).every(once) && lists.all.filter((t) => t.id === coast?.id).length === 1, Object.fromEntries(Object.entries(lists).map(([k, v]) => [k, v.map((t) => t.subject)])));
+  check(`${tag}: a thread's labels are its own, none of Gmail's`, coast?.labels.join() === 'Travel' && lists.all.every((t) => t.labels.every((l: string) => !l.startsWith('\\'))), coast?.labels);
+  check(`${tag}: All Mail is the archive (no Archive mailbox), [Gmail] has no counts`, all.role === 'all' && !boxes.some((b: any) => b.role === 'archive') && boxOf('[Gmail]').total === null);
+
+  if (onPhone) await page.size(390, 844, true);
+  else await page.size(1400, 900);
+  await theme(themeName, '#/mail');
+  await page.until(`document.querySelectorAll('.sidebar .mail-row[data-thread]').length >= 3`, 15000);
+  const rows = () => page.eval<string[]>(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].map((r) => r.dataset.thread)`);
+
+  // The account menu under "Mail".
+  await press(await at('.sidebar .mail-acc-btn'));
+  await page.until(`!!document.querySelector('.cm, .cm-sheet')`, 5000);
+  const accMenu = await page.eval<string>(`(document.querySelector('.cm-sheet') ?? document.querySelector('.cm')).textContent`);
+  check(`${tag}: the account menu has the Gmail account`, accMenu.includes(GMAIL_ME) && accMenu.includes('All accounts'), accMenu);
+  await press(await menuItem(GMAIL_ME));
+  await page.until(`location.hash.includes(${JSON.stringify(encodeURIComponent(`v:inbox:${GMAIL_ACC}`))})`, 5000);
+  await page.until(`document.querySelectorAll('.sidebar .mail-row[data-thread]').length >= 2`, 10000);
+  const inboxRows = await rows();
+  check(`${tag}: its Inbox, each thread once`, inboxRows.includes(coast.id) && new Set(inboxRows).size === inboxRows.length, inboxRows.length);
+  check(`${tag}: no sideways overflow: its Inbox`, !(await overflow()).length, await overflow());
+  await shot(`mail-${sz}-${themeName}-gmail-inbox`);
+
+  // The mailboxes menu: Inbox, the labels, Gmail's own; not `[Gmail]`, which only holds them.
+  await press(await at('.sidebar .mail-boxes-btn'));
+  await page.until(`!!document.querySelector('.cm, .cm-sheet')`, 5000);
+  const items = await page.eval<string[]>(`[...(document.querySelector('.cm-sheet') ?? document.querySelector('.cm')).querySelectorAll('.cm-item, button')].map((b) => b.textContent.trim()).filter(Boolean)`);
+  check(`${tag}: the mailboxes menu has its labels and Gmail's mailboxes`, ['Travel', 'Family', '[Gmail] / All Mail', '[Gmail] / Spam', '[Gmail] / Trash'].every((x) => items.includes(x)), items);
+  check(`${tag}: and not [Gmail], which only holds mailboxes`, !items.includes('[Gmail]'), items);
+  check(`${tag}: no sideways overflow: the mailboxes menu`, !(await overflow()).length, await overflow());
+  await shot(`mail-${sz}-${themeName}-gmail-mailboxes`);
+  await press(await menuItem('Travel'));
+  await page.until(`location.hash.includes(${JSON.stringify(encodeURIComponent(`mb:${travel.id}`))})`, 5000);
+  await page.until(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].some((r) => r.dataset.thread === ${JSON.stringify(coast.id)})`, 10000);
+  const travelRows = await rows();
+  check(`${tag}: a label lists its threads, each once`, travelRows.includes(coast.id) && new Set(travelRows).size === travelRows.length, travelRows.length);
+  check(`${tag}: no sideways overflow: a label`, !(await overflow()).length, await overflow());
+  await shot(`mail-${sz}-${themeName}-gmail-label`);
+
+  // The reader: the thread's own label, none of Gmail's.
+  await press(await at(`.sidebar .mail-row[data-thread="${coast.id}"]`));
+  await page.until(`!!document.querySelector('.mail-reader .mail-msg.open .mail-text')`, 15000);
+  const readerText = await page.eval<string>(`document.querySelector('.mail-reader').textContent`);
+  check(`${tag}: the reader shows Travel and no \\Inbox or \\Important`, readerText.includes('Travel') && !/\\(Inbox|Important|Sent|Starred)/.test(readerText));
+  check(`${tag}: no sideways overflow: reader`, !(await overflowThrough('.mail-reader-scroll')).length, await overflowThrough('.mail-reader-scroll'));
+  await shot(`mail-${sz}-${themeName}-gmail-reader`);
+
+  if (step === 'archive') {
+    // Garden photos, from Family: Archive, Undo before it reaches Gmail, then Archive for good.
+    const photos = find('Garden photos');
+    await page.eval(`location.hash = '#/mail/t/${photos.id}'`);
+    await page.until(`!!document.querySelector('.mail-reader .mail-msg.open .mail-text')`, 15000);
+    await press(await at('.mail-reader-head .hdr-btn[aria-label="Archive"]'));
+    await page.until(`!!document.querySelector('.mail-undo .link-btn')`, 5000);
+    check(`${tag}: Archive shows "Archived · Undo"`, (await page.eval<string>(`document.querySelector('.mail-undo')?.textContent ?? ''`)).includes('Archived'));
+    await press(await at('.mail-undo .link-btn'));
+    check(`${tag}: Undo brings it back before Gmail heard of it`, await settled(photos.id, (t) => t.roles.includes('inbox')));
+    await page.eval(`location.hash = '#/mail/t/${photos.id}'`);
+    await page.until(`!!document.querySelector('.mail-reader-head .hdr-btn[aria-label="Archive"]')`, 15000);
+    await press(await at('.mail-reader-head .hdr-btn[aria-label="Archive"]'));
+    check(`${tag}: Archive for good: out of Inbox, in All Mail`, await settled(photos.id, (t) => !t.roles.includes('inbox') && t.roles.includes('all')));
+    const [inAll, inFamily, inbox] = [await page1(`mb:${all.id}`), await page1(`mb:${family.id}`), await page1(`v:inbox:${GMAIL_ACC}`)];
+    check(`${tag}: once in All Mail, still in Family, not in Inbox`, inAll.filter((t) => t.id === photos.id).length === 1 && inFamily.some((t) => t.id === photos.id) && !inbox.some((t) => t.id === photos.id));
+    await shot(`mail-${sz}-${themeName}-gmail-archived`);
+  }
+  if (step === 'trash') {
+    // The booking, archived under Travel: to the trash, out of All Mail and Travel.
+    const hotel = find('Your booking is confirmed');
+    await page.eval(`location.hash = '#/mail/t/${hotel.id}'`);
+    await page.until(`!!document.querySelector('.mail-reader .mail-msg.open .mail-text')`, 15000);
+    if (onPhone) {
+      await press(await at('.mail-reader-head .hdr-btn[aria-label="More"]'));
+      await page.until(`!!document.querySelector('.cm-sheet')`, 5000);
+      await press(await menuItem('Move to the trash'));
+    } else await press(await at('.mail-reader-head .hdr-btn[aria-label="Move to the trash"]'));
+    check(`${tag}: Move to the trash: in Trash alone`, await settled(hotel.id, (t) => t.roles.join() === 'trash'));
+    const [inAll, inTravel] = [await page1(`mb:${all.id}`), await page1(`mb:${travel.id}`)];
+    check(`${tag}: out of All Mail and Travel`, !inAll.some((t) => t.id === hotel.id) && !inTravel.some((t) => t.id === hotel.id));
+    check(`${tag}: no sideways overflow: after the trash`, !(await overflow()).length, await overflow());
+    await shot(`mail-${sz}-${themeName}-gmail-trashed`);
+  }
 }
 
 // ------------------------------------------------------------------ from a person (slice 8)
@@ -989,6 +1111,11 @@ try {
   if (protonRun) {
     await headerless('dither-dark', false, true);
     await headerless('dither-light', true, false);
+  } else if (gmailRun) {
+    await gmail('dither-dark', false, 'archive');
+    await gmail('dither-light', true, 'trash');
+    await gmail('dither-light', false, null);
+    await gmail('dither-dark', true, null);
   } else {
     if (bigRun) {
       const box = (await mailNow()).mailboxes.find((b) => b.role === 'archive');

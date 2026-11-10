@@ -286,6 +286,12 @@ export const MAIL_VIEWS: { view: P.MailView; label: string }[] = [
 
 export const DEFAULT_LIST = viewList('inbox');
 
+/**
+ * A mailbox that only holds others (IMAP \Noselect, Gmail's `[Gmail]`): it has no counts and has mailboxes in it. The
+ * server cannot list it, so menus leave it out; the paths of those in it still say where they are.
+ */
+export const holdsOnlyMailboxes = (b: P.MailboxView, all: Iterable<P.MailboxView>) => b.total === null && b.unread === null && [...all].some((c) => c.parentId === b.id);
+
 /** "3 Mar", or "3 Mar 2025" before this year. */
 function day(t: number, now: number): string {
   const d = new Date(t);

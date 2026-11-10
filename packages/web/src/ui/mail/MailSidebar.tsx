@@ -6,7 +6,7 @@
 import type * as P from '@dither-chat/protocol';
 import { mailboxList, searchList, searchOfList, viewList } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
-import { DEFAULT_LIST, listTitle, MAIL_VIEWS } from '../../mail/model.ts';
+import { DEFAULT_LIST, holdsOnlyMailboxes, listTitle, MAIL_VIEWS } from '../../mail/model.ts';
 import { db, go, mailRev } from '../../state.ts';
 import { contextMenu, openMenu, type MenuEntry } from '../ContextMenu.tsx';
 import { Icon } from '../icons.tsx';
@@ -44,7 +44,7 @@ function ProblemStrips() {
 function mailboxMenu(s: typeof db.mail, at: { x: number; y: number }) {
   const items: MenuEntry[] = [];
   for (const a of s.accounts.values()) {
-    const boxes = [...s.mailboxes.values()].filter((b) => b.accountId === a.id).sort((x, y) => (x.role === 'inbox' ? -1 : y.role === 'inbox' ? 1 : x.path.localeCompare(y.path)));
+    const boxes = [...s.mailboxes.values()].filter((b) => b.accountId === a.id && !holdsOnlyMailboxes(b, s.mailboxes.values())).sort((x, y) => (x.role === 'inbox' ? -1 : y.role === 'inbox' ? 1 : x.path.localeCompare(y.path)));
     if (!boxes.length) continue;
     items.push({ kind: 'label', label: a.address ?? a.label });
     for (const b of boxes) items.push({ label: b.path.replace(/\//g, ' / '), icon: b.role === 'inbox' ? 'inbox' : b.role === 'sent' ? 'send' : b.role === 'trash' ? 'trash' : b.role === 'archive' || b.role === 'all' ? 'archive' : 'folder', run: () => go({ view: 'mail', list: mailboxList(b.id) }) });

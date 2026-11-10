@@ -168,8 +168,14 @@ export class Backfill {
         const b = this.store.mailbox(mailboxId);
         if (!b) return [];
         if (!b.follow) this.store.db.query(`UPDATE mailbox SET follow = 'open' WHERE id = ? AND follow IS NULL`).run(mailboxId);
-        if (!b.state) await this.s.takeState(b);
-        return this.page(mailboxId, null);
+        try {
+          if (!b.state) await this.s.takeState(b);
+          return await this.page(mailboxId, null);
+        } catch (e) {
+          // One that only holds others (IMAP \Noselect, Gmail's `[Gmail]`) cannot be listed: it is not followed after all.
+          if (!b.follow && asMailError(e).status === 404) this.store.db.query(`UPDATE mailbox SET follow = NULL WHERE id = ? AND follow = 'open'`).run(mailboxId);
+          throw e;
+        }
       })
       .finally(() => this.asked.delete(mailboxId));
     this.asked.set(mailboxId, run);

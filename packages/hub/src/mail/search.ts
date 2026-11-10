@@ -203,6 +203,15 @@ export class MailSearch {
     for (const a of q.account) within('s.account_id IN (SELECT value FROM json_each(?))', this.accountsNamed(a));
     for (const v of q.in) {
       if (['anywhere', 'any', '*'].includes(v.toLowerCase())) continue;
+      if (ROLE_NAMES[v.toLowerCase()] === 'archive') {
+        // Archived: in Archive, or where an account has none (Gmail), in All mail and not in Inbox, Sent or Drafts.
+        where.push(
+          `EXISTS (SELECT 1 FROM mail_location l JOIN mailbox b ON b.id = l.mailbox_id WHERE l.message_id = s.message_id AND (b.role = 'archive' OR (b.role = 'all'
+             AND NOT EXISTS (SELECT 1 FROM mailbox x WHERE x.account_id = b.account_id AND x.role = 'archive')
+             AND NOT EXISTS (SELECT 1 FROM mail_location i JOIN mailbox ib ON ib.id = i.mailbox_id WHERE i.message_id = s.message_id AND ib.role IN ('inbox', 'sent', 'drafts')))))`,
+        );
+        continue;
+      }
       within('EXISTS (SELECT 1 FROM mail_location l WHERE l.message_id = s.message_id AND l.mailbox_id IN (SELECT value FROM json_each(?)))', this.mailboxesNamed(v));
     }
     // Junk and Trash only when asked for, as mail apps do.
@@ -391,8 +400,7 @@ export class MailSearch {
   /** How this account's server takes a query. */
   serverForm(a: Row): ServerForm {
     if (a.kind === 'proton') return 'proton';
-    if (/@(gmail|googlemail)\.com$/i.test(a.address ?? '') || this.store.mailboxes(a.id).some((b) => /^\[(gmail|google mail)\]/i.test(b.path))) return 'gmail';
-    return 'imap';
+    return this.store.gmail(a.id) ? 'gmail' : 'imap';
   }
 
   private async askServer(a: Row, q: P.SearchQuery): Promise<ServerAnswer> {
@@ -465,6 +473,7 @@ export function serverQuery(q: P.SearchQuery, form: ServerForm): string {
     for (const v of q.in) {
       const role = ROLE_NAMES[v.toLowerCase()];
       if (['anywhere', 'any', '*'].includes(v.toLowerCase())) out.push('in:anywhere');
+      else if (role === 'archive') out.push('-in:inbox -in:sent -in:drafts');
       else if (role === 'junk') out.push('in:spam');
       else if (role && role !== 'all' && role !== 'archive') out.push(`in:${role}`);
       else if (!role) out.push(`label:${gmailValue(v)}`);

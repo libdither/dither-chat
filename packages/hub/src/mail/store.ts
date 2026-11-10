@@ -42,6 +42,12 @@ export function followedRoles(mailboxes: { role: string | null }[]): Set<string>
   return roles;
 }
 
+/**
+ * Labels for the views: Gmail's own (`\Inbox`, `\Important`, `\Starred`, `\Sent`) say where a message is, its importance
+ * and its star, which the views show otherwise. Those a person gave stay.
+ */
+export const shownLabels = (labels: string[]) => labels.filter((l) => !l.startsWith('\\'));
+
 /** Text from HTML when a message has no text part (the extractors make it themselves; this is for when one did not). */
 export function htmlText(html: string): string {
   let s = html
@@ -309,6 +315,28 @@ export class MailStore {
     this.dirty.mailboxes.add(id);
   }
 
+  /**
+   * A Gmail account (docs/mail.md "Gmail"): its address is Gmail's, or its mailboxes sit under `[Gmail]` (`[Google Mail]`
+   * in some countries; a Workspace address says nothing). On Gmail a label is a mailbox, so one message is in several
+   * at once, and a move takes a label off and puts one on.
+   */
+  gmail(accountId: string): boolean {
+    if (/@(gmail|googlemail)\.com$/i.test(this.account(accountId)?.address ?? '')) return true;
+    return !!this.one(`SELECT 1 FROM mailbox WHERE account_id = ? AND (path LIKE '[Gmail]%' OR path LIKE '[Google Mail]%')`, accountId);
+  }
+
+  /**
+   * Gmail leaves the label of the mailbox a message was listed from out of its labels (X-GM-LABELS): listed from Work
+   * it has no `Work`, from Inbox no `\Inbox`. That label, to put back, so a message's labels are the same whichever
+   * mailbox listed it last. All Mail, Trash, Spam and the other mailboxes under `[Gmail]` have none.
+   */
+  private ownLabel(accountId: string, b: Row): string | null {
+    if (!this.gmail(accountId)) return null;
+    const byRole: Record<string, string> = { inbox: '\\Inbox', sent: '\\Sent', drafts: '\\Draft', flagged: '\\Starred', important: '\\Important' };
+    if (b.role) return byRole[b.role] ?? null;
+    return /^\[(gmail|google mail)\]/i.test(b.path) ? null : b.path;
+  }
+
   markSynced(id: string) {
     this.run('UPDATE mail_account SET synced_at = ? WHERE id = ?', this.now(), id);
     this.dirty.accounts.add(id);
@@ -420,6 +448,8 @@ export class MailStore {
   ingest(accountId: string, mailbox: Row, list: M.MailSummary[], gen?: number): Ingested {
     const out: Ingested = { added: [], threads: new Set(), orphans: [] };
     if (!list.length) return out;
+    const own = this.ownLabel(accountId, mailbox);
+    if (own) list = list.map((s) => (s.labels && !s.labels.includes(own) ? { ...s, labels: [...s.labels, own].sort() } : s));
     const self = this.selfAddresses(accountId);
     this.db.transaction(() => {
       if (list.some((s) => s.bulk || s.inReplyTo || s.references?.length)) this.run('UPDATE mail_account SET headers_seen = 1 WHERE id = ? AND headers_seen IS NULL', accountId);
@@ -583,11 +613,13 @@ export class MailStore {
   /** mail.changes' `changed`: flags and labels, by the extractor's ids in this mailbox. Returns the threads touched. */
   changeFlags(mailboxId: string, changed: M.MailChanges['changed']): Set<string> {
     const touched = new Set<string>();
+    const b = this.mailbox(mailboxId);
+    const own = b ? this.ownLabel(b.account_id, b) : null;
     this.db.transaction(() => {
       for (const c of changed) {
         const m = this.one('SELECT m.id, m.thread_id, m.pending, m.seen FROM mail_location l JOIN mail_message m ON m.id = l.message_id WHERE l.mailbox_id = ? AND l.native_id = ?', mailboxId, c.id);
         if (!m) continue;
-        this.applyFlags(m, c.flags, c.labels);
+        this.applyFlags(m, c.flags, own && c.labels && !c.labels.includes(own) ? [...c.labels, own].sort() : c.labels);
         touched.add(m.thread_id);
       }
       for (const t of touched) this.recompute(t);
@@ -848,7 +880,7 @@ export class MailStore {
       preview: r.preview ?? null,
       mailboxIds: json(r.mailboxes, []),
       roles: json(r.roles, []),
-      labels: json(r.labels, []),
+      labels: shownLabels(json(r.labels, [])),
       class: r.class ?? null,
       unknown: false,
       personIds: [...new Set([...who.values()].map((w) => w.personId).filter((x): x is string => !!x))],
@@ -889,7 +921,7 @@ export class MailStore {
         flags: { seen: !!m.seen, flagged: !!m.flagged, answered: !!m.answered, draft: !!m.draft },
         seenHere: !!m.seen_local,
         pending: !!m.pending,
-        labels: json(m.labels, []),
+        labels: shownLabels(json(m.labels, [])),
         mailboxIds: json(m.boxes, []),
         hasAttachments: !!m.has_attachments,
         preview: m.preview ?? null,

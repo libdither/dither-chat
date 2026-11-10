@@ -61,6 +61,8 @@ const MAX_ATTEMPTS = 10;
 /** Roles a message is not filed under: what you sent and drafts stay, and All mail and the flag views are not folders. */
 const NOT_FOLDER = new Set(['sent', 'drafts', 'all', 'flagged', 'important']);
 const STAYS = new Set(['sent', 'drafts']);
+/** Why Gmail mail only in All Mail does not go back to Inbox from here (409). */
+export const GMAIL_NO_INBOX = 'It is only in All Mail on Gmail, and moving it out of there would delete it; dither-accounts cannot put it back in Inbox yet, so do that in Gmail.';
 const ROLE_NAMES: Record<string, string> = { archive: 'Archive', inbox: 'Inbox', trash: 'Trash', junk: 'Junk' };
 
 const json = <T>(s: string | null | undefined, d: T): T => {
@@ -79,6 +81,12 @@ export const mailOps = (hub: MailHub): MailOps => instances.get(hub)!;
 export class MailOps {
   /** How long a change waits for others to join its call. */
   coalesceMs = 250;
+  /**
+   * How long a Gmail archive waits before it goes: the 7 s the page offers Undo for (web mail/ops.ts), and a little.
+   * Gmail's archived mail is in All Mail alone, which nothing here moves out of (Gmail takes that as a delete), so an
+   * archive is undone only before it leaves the hub.
+   */
+  gmailArchiveHoldMs = 7_500;
   /** While changes wait for the manager or an account, how often to look again. */
   pollMs = 2000;
   private timer: Timer | null = null;
@@ -212,7 +220,10 @@ export class MailOps {
       const acc = this.checkAccount(accountId, 'write', 'move');
       const dest = this.destination(acc, req.to);
       const action: MailAction = req.to in ROLE_NAMES ? (req.to as MailAction) : 'move';
-      plans.push({ accountId, dest, action, ms: [...[...g.threads.values()].flat(), ...g.messages] });
+      const ms = [...[...g.threads.values()].flat(), ...g.messages];
+      // Gmail mail only in All Mail cannot go back to Inbox from here: say so rather than doing nothing.
+      if (action === 'inbox' && this.hub.store.gmail(accountId) && ms.every((m) => this.stuck(m, dest))) throw new MailCallError(GMAIL_NO_INBOX, 409);
+      plans.push({ accountId, dest, action, ms });
     }
     let threads = 0;
     let messages = 0;
@@ -300,10 +311,13 @@ export class MailOps {
    * already (then a move waiting for it is called off). Archive leaves Inbox; the others leave every folder, and what
    * you sent stays.
    */
-  private leaves(m: Row, dest: Row, action: MailAction, kind: string): string[] {
+  private leaves(m: Row, dest: Row, action: MailAction, kind: string, gmail: boolean): string[] {
     const locs = this.locations(m.id);
     if (!locs.length || locs.every((l) => STAYS.has(l.role ?? ''))) return [];
     if (action === 'archive') return locs.filter((l) => l.role === 'inbox').map((l) => l.mailbox_id);
+    // On Gmail, what you sent is in Sent and All Mail at once, and moving either copy to the trash takes it out of
+    // Sent too: it stays where it is.
+    if (gmail && (action === 'trash' || action === 'junk') && locs.some((l) => STAYS.has(l.role ?? ''))) return [];
     if (action === 'trash' || action === 'junk') return locs.filter((l) => !STAYS.has(l.role ?? '') && l.mailbox_id !== dest.id).map((l) => l.mailbox_id);
     // Into Inbox or a folder: out of the folders it is in, unless it is there already.
     if (locs.some((l) => l.mailbox_id === dest.id)) return [];
@@ -312,6 +326,13 @@ export class MailOps {
     // Only in All mail: Proton's ids are the message, so it moves from there; an IMAP server's All mail is never
     // emptied from here (Gmail would take that as a delete).
     return kind === 'proton' ? locs.filter((l) => l.role === 'all').map((l) => l.mailbox_id) : [];
+  }
+
+  /** Not in `dest`, no move of ours on its way, and nowhere a move could take it from (Gmail: only in All Mail). */
+  private stuck(m: Row, dest: Row): boolean {
+    if (json<Pending>(m.pending, {}).move) return false;
+    if (this.locations(m.id).some((l) => l.mailbox_id === dest.id)) return false;
+    return !this.leaves(m, dest, 'inbox', this.hub.store.account(m.account_id)?.kind ?? 'imap', true).length;
   }
 
   // ---------------------------------------------------------- inside: applying
@@ -364,13 +385,14 @@ export class MailOps {
 
   private applyMove(accountId: string, ms: Row[], dest: Row, action: MailAction): { threads: number; messages: number } {
     const acc = this.hub.store.account(accountId)!;
+    const gmail = this.hub.store.gmail(accountId);
     const touched = new Set<string>();
     let queued = 0;
     this.db.transaction(() => {
       const todo: { m: Row; hide: string[] }[] = [];
       for (const m of ms) {
         const p = json<Pending>(m.pending, {});
-        const hide = this.leaves(m, dest, action, acc.kind);
+        const hide = this.leaves(m, dest, action, acc.kind, gmail);
         if (hide.length) todo.push({ m, hide });
         else if (p.move) {
           // Already where it should be on the server: the move waiting for it is called off.
@@ -379,7 +401,8 @@ export class MailOps {
           touched.add(m.thread_id);
         }
       }
-      const ops = this.enqueue(accountId, 'move', { to: dest.id }, todo.map((x) => x.m.id));
+      const hold = gmail && action === 'archive' ? Math.max(this.coalesceMs, this.gmailArchiveHoldMs) : this.coalesceMs;
+      const ops = this.enqueue(accountId, 'move', { to: dest.id }, todo.map((x) => x.m.id), hold);
       for (const { m, hide } of todo) {
         const p = json<Pending>(m.pending, {});
         p.move = { to: dest.id, hide, op: ops.get(m.id)! };
@@ -407,7 +430,7 @@ export class MailOps {
    * Into mail_op: each message joins a call not sent yet for the same account, op and value, while it has room for
    * 1000; the rest start new ones. Returns each message's op.
    */
-  private enqueue(accountId: string, op: 'flag' | 'move', args: Record<string, unknown>, mids: string[]): Map<string, string> {
+  private enqueue(accountId: string, op: 'flag' | 'move', args: Record<string, unknown>, mids: string[], holdMs = this.coalesceMs): Map<string, string> {
     const out = new Map<string, string>();
     if (!mids.length) return out;
     const key = JSON.stringify(args);
@@ -423,7 +446,7 @@ export class MailOps {
       let r = open.find((x) => x.ids.length < MAX_IDS);
       if (!r) {
         r = { id: `mop_${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`, ids: [], dirty: true };
-        this.run('INSERT INTO mail_op (id, account_id, op, args, message_ids, next_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', r.id, accountId, op, key, '[]', now + this.coalesceMs, now);
+        this.run('INSERT INTO mail_op (id, account_id, op, args, message_ids, next_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', r.id, accountId, op, key, '[]', now + holdMs, now);
         open.push(r);
       }
       r.ids.push(id);
@@ -553,6 +576,8 @@ export class MailOps {
     const moved: string[] = [];
     let lost = false;
     const newIds = (res as { ids?: (string | null)[] } | null)?.ids;
+    // Gmail shows a message in Trash or Spam there alone: All Mail and its labels lost it with this move.
+    const alone = !!dest && (dest.role === 'trash' || dest.role === 'junk') && this.hub.store.gmail(op.account_id);
     this.db.transaction(() => {
       items.forEach((it, i) => {
         const m = this.one('SELECT thread_id, pending FROM mail_message WHERE id = ?', it.mid);
@@ -572,6 +597,7 @@ export class MailOps {
               it.mid,
               dest!.relist_gen ?? 0,
             );
+            if (alone) this.run('DELETE FROM mail_location WHERE message_id = ? AND mailbox_id != ?', it.mid, dest!.id);
           } else lost = true;
           moved.push(it.mid);
         }

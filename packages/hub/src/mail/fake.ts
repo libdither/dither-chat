@@ -2,7 +2,8 @@
  * An in-memory mail server behind the MailBackend interface (docs/mail-design.md §12.2): the hub's mail tests run on
  * it, and a demo world (--demo) seeds one account with it. It behaves like either extractor, as asked:
  *
- *   ids        'imap': a message gets a new id when it moves (a new UID); 'proton': ids survive moves
+ *   ids        'imap': a message gets a new id when it moves (a new UID); 'proton': ids survive moves; 'gmail': one
+ *              message sits in several mailboxes at once (Inbox, All Mail, a label), with an id in each ("Gmail" below)
  *   threadIds  the server's thread on summaries (Gmail, Proton), or none (plain IMAP)
  *   refs       In-Reply-To, References and bulk headers on summaries (dither-accounts' §13 fields), or only from
  *              mail.get (Proton); the status's `details.summaryHeaders` says which, as the extractors' do
@@ -23,6 +24,25 @@
  * on a read grant, `{ dryRun: true }` and no change on a dry run (as the manager answers), mail.changed for every
  * mailbox they touched (an extractor reports this app's own changes), Proton's 501 for `answered`, and a move answering
  * the new ids (or nulls, as an IMAP server without UIDPLUS may).
+ *
+ * Gmail (`ids: 'gmail'`) is what dither-accounts' imap extractor sends for an account with the `gmail` preset
+ * (extractors/imap/src/{imap,ids,config,smtp}.ts there). Gmail's labels are IMAP mailboxes, so one message is a copy in
+ * each mailbox its labels put it in, each with its own `<mailbox>.<UIDVALIDITY>.<UID>` id (ids.ts), its flags shared
+ * (they are the message's). Mailboxes are GMAIL_MAILBOXES, ids the base64url of their paths (ids.ts mailboxId), roles
+ * from SPECIAL-USE as imapflow 2.11 reads them (imap.ts roleOf): All Mail is 'all' and there is no Archive; Spam is
+ * 'junk'; Starred is 'flagged'; Important comes with no role (imapflow's list has no \Important); the `[Gmail]` parent
+ * is \Noselect (no counts, and listing it is 404). A summary's `labels` are imap.ts labelsOf: Gmail's X-GM-LABELS as
+ * they come (`\Inbox`, `\Important`, `\Starred`, `\Sent`, user labels by path), where Gmail never names \Trash, \Spam
+ * or All Mail, and leaves out the label of the mailbox the message was listed from (Mozilla bug 798648, and Limilabs'
+ * "GmailLabels does not contain draft label"). `threadId` is X-GM-THRID: a reply joins the thread its references name.
+ * Gmail has no category labels over IMAP (Promotions and the rest are not exposed), so none come. Keeping up is
+ * CONDSTORE (imap.ts changes, mode 'c'): a flag or label change shows as `changed` in every mailbox holding the
+ * message. A move is Gmail's: the destination's label added, the source's removed, so moving out of Inbox into All
+ * Mail is archiving and answers the All Mail id it already had; into Trash or Spam it leaves every other mailbox; out
+ * of All Mail Gmail takes as a delete (into the Trash). Starred is the \Flagged flag. Search is X-GM-RAW in All Mail
+ * (imap.ts search), as much of Gmail's syntax as the hub sends. Sending leaves the copy in Sent to Gmail (config.ts
+ * preset sentCopy 'server'): it shows in Sent Mail and All Mail with the original's thread, and `sentId` is it (smtp.ts
+ * finds it by Message-ID).
  */
 import { readFileSync } from 'node:fs';
 import type * as P from '@dither-chat/protocol';
@@ -31,7 +51,8 @@ import { MailCallError, type MailBackend, type MailBackendAccount, type MailBack
 import { htmlText } from './store.ts';
 
 export interface FakeOpts {
-  ids?: 'imap' | 'proton';
+  /** 'gmail' brings Gmail's mailboxes, its threads and its search with it (the header above). */
+  ids?: 'imap' | 'proton' | 'gmail';
   threadIds?: boolean;
   refs?: boolean;
   state?: 'mailbox' | 'account';
@@ -62,6 +83,8 @@ export interface FakeMessage extends Omit<M.MailMessage, 'mailboxId' | 'id'> {
   mailboxId: string;
   /** Attachments' bytes by attachment id, for mail.attachment (slice 3); one not here gets bytes made up to its size. */
   files?: Record<string, Uint8Array | string>;
+  /** Gmail: the message this is a copy of (its X-GM-MSGID); its copies in other mailboxes share it. */
+  gm?: string;
 }
 
 /** A message the fake sent (slice 5): what it was given, and its files' bytes. */
@@ -72,7 +95,10 @@ export interface FakeSent {
   messageId: string;
 }
 
-/** What a test or seed gives: anything left out gets a plain default. */
+/**
+ * What a test or seed gives: anything left out gets a plain default. On Gmail, `labels` are Gmail's: user labels by
+ * path (a mailbox is made for one it has not got) and system ones such as `\Important`; `mailboxId` adds its own.
+ */
 export type FakeInput = Partial<Omit<FakeMessage, 'flags'>> & { flags?: Partial<M.MailFlags> };
 
 interface Account {
@@ -90,6 +116,56 @@ interface Account {
   status: Record<string, unknown>;
   /** Each mailbox's messages, newest first, until something changes (a big mailbox lists fast). */
   sorted: Map<string, FakeMessage[]>;
+  /** Gmail: each message's labels (X-GM-MSGID → Gmail's labels, `\Inbox` and the like with their backslash). */
+  gm: Map<string, Set<string>>;
+  /** Mailboxes that only hold others (IMAP \Noselect: Gmail's `[Gmail]`). */
+  noselect: Set<string>;
+}
+
+/** A mailbox id as dither-accounts' imap extractor makes it (extractors/imap/src/ids.ts): base64url of its path. */
+export const gmailBoxId = (path: string) => Buffer.from(path, 'utf8').toString('base64url');
+
+/** A Gmail mailbox as the extractor lists it: its name is the last part of the path, its parent the path before. */
+export function gmailBox(path: string, role: M.MailboxRole | null = null): M.Mailbox {
+  const cut = path.lastIndexOf('/');
+  return { id: gmailBoxId(path), name: path.slice(cut + 1), path, parentId: cut > 0 ? gmailBoxId(path.slice(0, cut)) : null, role, unread: null, total: null };
+}
+
+/** Gmail's mailboxes, by what they are. */
+export const GMAIL = {
+  inbox: gmailBoxId('INBOX'),
+  /** `[Gmail]`: \Noselect, the parent of the rest. */
+  parent: gmailBoxId('[Gmail]'),
+  all: gmailBoxId('[Gmail]/All Mail'),
+  drafts: gmailBoxId('[Gmail]/Drafts'),
+  important: gmailBoxId('[Gmail]/Important'),
+  sent: gmailBoxId('[Gmail]/Sent Mail'),
+  spam: gmailBoxId('[Gmail]/Spam'),
+  starred: gmailBoxId('[Gmail]/Starred'),
+  trash: gmailBoxId('[Gmail]/Trash'),
+};
+
+/** What mail.mailboxes answers for a Gmail account with no labels of its own (imapflow's LIST, imap.ts mailboxes). */
+export const GMAIL_MAILBOXES: M.Mailbox[] = [
+  { ...gmailBox('INBOX', 'inbox'), name: 'INBOX' },
+  gmailBox('[Gmail]'),
+  gmailBox('[Gmail]/All Mail', 'all'),
+  gmailBox('[Gmail]/Drafts', 'drafts'),
+  // Gmail lists it \Important, but imapflow 2.11's special-use list has no \Important: it comes with no role.
+  gmailBox('[Gmail]/Important'),
+  gmailBox('[Gmail]/Sent Mail', 'sent'),
+  gmailBox('[Gmail]/Spam', 'junk'),
+  gmailBox('[Gmail]/Starred', 'flagged'),
+  gmailBox('[Gmail]/Trash', 'trash'),
+];
+
+/** Gmail's label for the messages in a mailbox, as X-GM-LABELS names it; null for All Mail and `[Gmail]`. */
+function gmailLabelOf(b: M.Mailbox | undefined): string | null {
+  if (!b) return null;
+  const byRole: Partial<Record<M.MailboxRole, string>> = { inbox: '\\Inbox', sent: '\\Sent', drafts: '\\Draft', junk: '\\Spam', trash: '\\Trash', flagged: '\\Starred', important: '\\Important' };
+  if (b.role) return byRole[b.role] ?? null;
+  if (b.id === GMAIL.important) return '\\Important';
+  return b.path.startsWith('[Gmail]') ? null : b.path;
 }
 
 const DEFAULT_MAILBOXES: M.Mailbox[] = [
@@ -171,9 +247,11 @@ export class FakeMailBackend implements MailBackend {
   // ---------------------------------------------------------- the server's side, for tests and the demo
 
   addAccount(id: string, o: { kind?: string; label?: string; email: string; name?: string; addresses?: M.MailAccountAddress[]; level?: 'read' | 'write'; dryRun?: boolean; mailboxes?: M.Mailbox[]; opts?: FakeOpts; online?: boolean }) {
+    const ids = o.opts?.ids ?? this.defaults.ids;
+    const gmail = ids === 'gmail';
     const opts: Required<FakeOpts> = {
       ids: 'imap',
-      threadIds: false,
+      threadIds: gmail,
       refs: true,
       state: 'mailbox',
       events: 'inbox',
@@ -182,7 +260,7 @@ export class FakeMailBackend implements MailBackend {
       latencyMs: 0,
       changesPage: 200,
       moveIds: 'new',
-      search: (o.opts?.ids ?? this.defaults.ids) === 'proton' ? 'proton' : 'imap',
+      search: ids === 'proton' ? 'proton' : gmail ? 'gmail' : 'imap',
       answer: 0,
       summaryHeaders: o.opts?.refs ?? this.defaults.refs ?? true,
       ...this.defaults,
@@ -193,7 +271,7 @@ export class FakeMailBackend implements MailBackend {
       view: { id, kind: o.kind ?? (opts.ids === 'proton' ? 'proton' : 'imap'), label: o.label ?? o.email, level: o.level ?? 'write', dryRun: !!o.dryRun, online },
       opts,
       self: { email: o.email, ...(o.name ? { displayName: o.name } : {}), ...(o.addresses ? { addresses: o.addresses } : {}) },
-      mailboxes: (o.mailboxes ?? DEFAULT_MAILBOXES).map((b) => ({ ...b })),
+      mailboxes: (o.mailboxes ?? (gmail ? GMAIL_MAILBOXES : DEFAULT_MAILBOXES)).map((b) => ({ ...b })),
       messages: new Map(),
       log: [],
       seq: 1,
@@ -201,6 +279,8 @@ export class FakeMailBackend implements MailBackend {
       nextUid: 1,
       status: {},
       sorted: new Map(),
+      gm: new Map(),
+      noselect: new Set(gmail ? [GMAIL.parent] : []),
     };
     a.status = this.statusOf(a, online);
     this.accs.set(id, a);
@@ -271,9 +351,10 @@ export class FakeMailBackend implements MailBackend {
     this.failures.set(op, list);
   }
 
-  /** Put a message on the server without telling anyone (a seed: listed by the first sync). */
+  /** Put a message on the server without telling anyone (a seed: listed by the first sync). On Gmail: its copy there. */
   put(account: string, input: FakeInput): FakeMessage {
     const a = this.accs.get(account)!;
+    if (a.opts.ids === 'gmail') return this.gmPut(a, input);
     const m = this.make(a, input);
     a.messages.set(m.id, m);
     this.journal(a, m.mailboxId, 'added', m.id);
@@ -293,6 +374,11 @@ export class FakeMailBackend implements MailBackend {
   /** Another client moved it: under IMAP it gets a new id there. Returns the new id. */
   move(account: string, id: string, to: string): string {
     const a = this.accs.get(account)!;
+    if (a.opts.ids === 'gmail') {
+      const r = this.gmMove(a, id, to);
+      this.changedEvents(a, [...r.touched]);
+      return r.id!;
+    }
     const m = a.messages.get(id)!;
     const from = m.mailboxId;
     a.messages.delete(id);
@@ -306,6 +392,7 @@ export class FakeMailBackend implements MailBackend {
 
   setFlags(account: string, id: string, flags: Partial<M.MailFlags>) {
     const a = this.accs.get(account)!;
+    if (a.opts.ids === 'gmail') return this.changedEvents(a, [...this.gmFlags(a, a.messages.get(id)!.gm!, flags)]);
     const m = a.messages.get(id)!;
     m.flags = { ...m.flags, ...flags };
     this.journal(a, m.mailboxId, 'changed', id);
@@ -317,6 +404,17 @@ export class FakeMailBackend implements MailBackend {
     const a = this.accs.get(account)!;
     const m = a.messages.get(id);
     if (!m) return;
+    if (m.gm) {
+      // Gmail: the message goes, and with it every copy.
+      const boxes: string[] = [];
+      for (const c of this.gmCopies(a, m.gm)) {
+        a.messages.delete(c.id);
+        this.journal(a, c.mailboxId, 'removed', c.id);
+        boxes.push(c.mailboxId);
+      }
+      a.gm.delete(m.gm);
+      return this.changedEvents(a, boxes);
+    }
     a.messages.delete(id);
     // Proton says so in every mailbox's changes, whether it was there or not.
     if (a.opts.state === 'account') for (const b of a.mailboxes) this.journal(a, b.id, 'removed', id);
@@ -332,7 +430,7 @@ export class FakeMailBackend implements MailBackend {
     if (key !== mailbox) a.epochs.set(mailbox, (a.epochs.get(mailbox) ?? 0) + 1);
     a.sorted.clear();
     // Proton's refresh keeps its ids; an IMAP server's new UIDVALIDITY gives each message a new one.
-    for (const m of a.opts.ids === 'imap' ? [...a.messages.values()] : []) {
+    for (const m of a.opts.ids !== 'proton' ? [...a.messages.values()] : []) {
       if (m.mailboxId !== mailbox) continue;
       a.messages.delete(m.id);
       const fresh = { ...m, id: this.uid(a, mailbox) };
@@ -343,6 +441,22 @@ export class FakeMailBackend implements MailBackend {
 
   messages(account: string, mailbox?: string): FakeMessage[] {
     return [...this.accs.get(account)!.messages.values()].filter((m) => !mailbox || m.mailboxId === mailbox);
+  }
+
+  /**
+   * Gmail: another client (Gmail on the web, the phone app) adds or takes off labels, `\Inbox` among them: taking it
+   * off archives. Its copies come and go with them.
+   */
+  label(account: string, id: string, change: { add?: string[]; remove?: string[] }) {
+    const a = this.accs.get(account)!;
+    const gm = a.messages.get(id)!.gm!;
+    this.changedEvents(a, [...this.gmRelabel(a, gm, change.add ?? [], change.remove ?? [])]);
+  }
+
+  /** Gmail: a message's labels as Gmail keeps them (not as a summary from one mailbox shows them). */
+  labelsOnServer(account: string, id: string): string[] {
+    const a = this.accs.get(account)!;
+    return [...(a.gm.get(a.messages.get(id)?.gm ?? '') ?? [])].sort();
   }
 
   // ---------------------------------------------------------- inside
@@ -360,13 +474,16 @@ export class FakeMailBackend implements MailBackend {
 
   private statusOf(a: Account, online: boolean): Record<string, unknown> {
     const sendOk = a.opts.send === 'ok';
+    // The imap extractor's details (main.ts sendStatus) for its gmail preset.
+    const gmail = a.opts.ids === 'gmail' ? { provider: 'Gmail', capabilities: 'IDLE MOVE UIDPLUS CONDSTORE SPECIAL-USE X-GM-EXT-1', 'sent copy': 'the server keeps it' } : {};
     return {
       t: 'status',
       status: online ? 'online' : 'offline',
       attention: null,
       self: a.self,
       details: {
-        sync: a.opts.state === 'account' ? 'events' : 'QRESYNC',
+        ...gmail,
+        sync: a.opts.ids === 'gmail' ? 'CONDSTORE (UID list kept)' : a.opts.state === 'account' ? 'events' : 'QRESYNC',
         canSend: sendOk,
         sendNote: sendOk ? null : 'Sending is not supported here (the extractor answered 501).',
         ...(a.opts.summaryHeaders === null ? {} : { summaryHeaders: a.opts.summaryHeaders }),
@@ -393,7 +510,7 @@ export class FakeMailBackend implements MailBackend {
 
   private uid(a: Account, mailbox: string): string {
     // IMAP's shape: <mailbox>.<UIDVALIDITY>.<UID>
-    return a.opts.ids === 'imap' ? `${mailbox}.${100 + (a.epochs.get(mailbox) ?? 0)}.${a.nextUid++}` : `p${a.nextUid++}`;
+    return a.opts.ids !== 'proton' ? `${mailbox}.${100 + (a.epochs.get(mailbox) ?? 0)}.${a.nextUid++}` : `p${a.nextUid++}`;
   }
 
   private make(a: Account, i: FakeInput): FakeMessage {
@@ -459,7 +576,7 @@ export class FakeMailBackend implements MailBackend {
       date: m.date,
       receivedAt: m.receivedAt,
       flags: { ...m.flags },
-      labels: [...m.labels],
+      labels: this.labelsOf(a, m),
       size: m.size,
       // Neither extractor gives one: the hub makes previews from bodies.
       preview: null,
@@ -473,18 +590,167 @@ export class FakeMailBackend implements MailBackend {
     return s;
   }
 
+  /**
+   * A summary's labels. Gmail's are the extractor's labelsOf (imap.ts): X-GM-LABELS as Gmail gives them, which never
+   * names \Trash, \Spam or All Mail, names \Starred for a flagged message, and leaves out the label of the mailbox the
+   * message was listed from.
+   */
+  private labelsOf(a: Account, m: FakeMessage): string[] {
+    if (!m.gm) return [...m.labels];
+    const own = gmailLabelOf(a.mailboxes.find((b) => b.id === m.mailboxId));
+    const out = new Set([...(a.gm.get(m.gm) ?? [])].filter((l) => l !== '\\Trash' && l !== '\\Spam'));
+    if (m.flags.flagged) out.add('\\Starred');
+    if (own) out.delete(own);
+    return [...out].sort();
+  }
+
+  // ---------------------------------------------------------- Gmail: one message, a copy in each of its mailboxes
+
+  /** X-GM-MSGID and X-GM-THRID: Gmail's are 64-bit numbers, written in decimal. */
+  private gmNext = 1n;
+  private gmId = () => String(1_790_000_000_000_000_000n + this.gmNext++);
+
+  private gmCopies(a: Account, gm: string): FakeMessage[] {
+    return [...a.messages.values()].filter((m) => m.gm === gm);
+  }
+
+  /** A new message with Gmail's labels: its copies made, the one in the mailbox asked for returned. */
+  private gmPut(a: Account, input: FakeInput): FakeMessage {
+    const box = input.mailboxId ?? GMAIL.inbox;
+    const base = this.make(a, { ...input, mailboxId: box, id: '' });
+    const gm = this.gmId();
+    // Gmail's thread: the one a message it refers to is in, else a new one.
+    const refs = new Set([base.inReplyTo, ...base.references].filter(Boolean));
+    base.threadId = input.threadId ?? [...a.messages.values()].find((m) => m.messageId && refs.has(m.messageId))?.threadId ?? this.gmId();
+    base.labels = [];
+    base.gm = gm;
+    const labels = new Set(input.labels ?? []);
+    const own = gmailLabelOf(a.mailboxes.find((b) => b.id === box));
+    if (own === '\\Starred') base.flags.flagged = true;
+    else if (own) labels.add(own);
+    // A label is a mailbox on Gmail's IMAP: one the account has not got yet is made with it.
+    for (const l of labels) if (!l.startsWith('\\') && !a.mailboxes.some((b) => b.path === l)) a.mailboxes.push(gmailBox(l));
+    a.gm.set(gm, labels);
+    this.gmPlace(a, gm, base);
+    const copies = this.gmCopies(a, gm);
+    return copies.find((c) => c.mailboxId === box) ?? copies[0];
+  }
+
+  /**
+   * Its copies made to match its labels: in Trash or Spam it is there alone; otherwise in All Mail, each label's
+   * mailbox, and Starred while flagged. Returns the mailboxes that gained or lost a copy.
+   */
+  private gmPlace(a: Account, gm: string, base?: FakeMessage): Set<string> {
+    const labels = a.gm.get(gm)!;
+    const copies = this.gmCopies(a, gm);
+    const proto = base ?? copies[0];
+    const boxOf = (l: string) => a.mailboxes.find((b) => gmailLabelOf(b) === l)?.id;
+    const want = new Set<string>();
+    if (labels.has('\\Trash')) want.add(GMAIL.trash);
+    else if (labels.has('\\Spam')) want.add(GMAIL.spam);
+    else {
+      want.add(GMAIL.all);
+      for (const l of labels) {
+        const b = boxOf(l);
+        if (b) want.add(b);
+      }
+      if (proto.flags.flagged) want.add(GMAIL.starred);
+    }
+    const touched = new Set<string>();
+    for (const c of copies) {
+      if (want.has(c.mailboxId)) continue;
+      a.messages.delete(c.id);
+      this.journal(a, c.mailboxId, 'removed', c.id);
+      touched.add(c.mailboxId);
+    }
+    for (const b of want) {
+      if (copies.some((c) => c.mailboxId === b)) continue;
+      const c: FakeMessage = { ...proto, flags: { ...proto.flags }, id: this.uid(a, b), mailboxId: b, gm };
+      a.messages.set(c.id, c);
+      this.journal(a, b, 'added', c.id);
+      touched.add(b);
+    }
+    return touched;
+  }
+
+  /** Flags on every copy (they are the message's); Starred follows \Flagged. Returns the mailboxes it changed in. */
+  private gmFlags(a: Account, gm: string, set: Partial<M.MailFlags>): Set<string> {
+    const touched = new Set<string>();
+    for (const c of this.gmCopies(a, gm)) {
+      c.flags = { ...c.flags, ...set };
+      this.journal(a, c.mailboxId, 'changed', c.id);
+      touched.add(c.mailboxId);
+    }
+    for (const b of this.gmPlace(a, gm)) touched.add(b);
+    return touched;
+  }
+
+  /** Labels added and taken off; every copy that stays sees it (its modseq moved), copies come and go. */
+  private gmRelabel(a: Account, gm: string, add: string[], remove: string[]): Set<string> {
+    const labels = a.gm.get(gm)!;
+    for (const l of remove) labels.delete(l);
+    for (const l of add) labels.add(l);
+    for (const l of add) if (!l.startsWith('\\') && !a.mailboxes.some((b) => b.path === l)) a.mailboxes.push(gmailBox(l));
+    const before = this.gmCopies(a, gm);
+    const touched = this.gmPlace(a, gm);
+    for (const c of before) {
+      if (!a.messages.has(c.id)) continue;
+      this.journal(a, c.mailboxId, 'changed', c.id);
+      touched.add(c.mailboxId);
+    }
+    return touched;
+  }
+
+  /**
+   * Gmail's MOVE: the destination's label on, the source's off. Into All Mail adds nothing (archiving); into Trash or
+   * Spam it shows only there; into Starred stars it, out of it unstars it; out of All Mail Gmail takes as a delete,
+   * into the Trash. Returns its id in the destination (the one it had there, if it was there already).
+   */
+  private gmMove(a: Account, id: string, to: string): { id: string | null; touched: Set<string> } {
+    const m = a.messages.get(id);
+    if (!m) return { id: null, touched: new Set() };
+    if (m.mailboxId === to) return { id, touched: new Set() };
+    const gm = m.gm!;
+    const box = (x: string) => a.mailboxes.find((b) => b.id === x);
+    const into = gmailLabelOf(box(to));
+    const source = box(m.mailboxId);
+    const from = gmailLabelOf(source);
+    const add: string[] = [];
+    const remove: string[] = [];
+    const touched = new Set<string>();
+    if (into === '\\Starred') for (const b of this.gmFlags(a, gm, { flagged: true })) touched.add(b);
+    else if (into) add.push(into);
+    if (into === '\\Trash') remove.push('\\Spam');
+    if (into === '\\Spam') remove.push('\\Trash');
+    if (source?.role === 'all') add.push('\\Trash');
+    else if (from === '\\Starred') for (const b of this.gmFlags(a, gm, { flagged: false })) touched.add(b);
+    else if (from) remove.push(from);
+    for (const b of this.gmRelabel(a, gm, add, remove)) touched.add(b);
+    return { id: this.gmCopies(a, gm).find((c) => c.mailboxId === to)?.id ?? null, touched };
+  }
+
+  /** mail.changed for this app's own change: the mailboxes the extractor names, and Inbox when IDLE saw it change. */
+  private gmEvents(a: Account, own: string[], touched: Set<string>) {
+    const evs: MailBackendEvent[] = [];
+    for (const b of new Set([...own, ...[...touched].filter((b) => this.watched(a, b))])) evs.push({ t: 'mail.changed', mailboxId: b, state: this.stateOf(a, b) });
+    this.emit(a.view.id, evs);
+  }
+
   private answer(a: Account, op: string, input: Record<string, any>): unknown {
     switch (op) {
       case 'mail.mailboxes':
         return {
           mailboxes: a.mailboxes.map((b) => {
+            // A \Noselect mailbox has no STATUS: imap.ts gives it no counts.
+            if (a.noselect.has(b.id)) return { ...b, total: null, unread: null };
             const ms = this.sortedOf(a, b.id);
             return { ...b, total: ms.length, unread: ms.filter((m) => !m.flags.seen).length };
           }),
         };
       case 'mail.list': {
         const box = String(input.mailboxId);
-        if (!a.mailboxes.some((b) => b.id === box)) throw new MailCallError(`no mailbox ${box}`, 404);
+        // The extractor's SELECT of a \Noselect mailbox fails as NONEXISTENT: 404 (imap.ts callError).
+        if (!a.mailboxes.some((b) => b.id === box) || a.noselect.has(box)) throw new MailCallError(`no such mailbox ${box}`, 404);
         const all = this.sortedOf(a, box);
         const from = input.before ? Number(String(input.before).split(':')[0]) : 0;
         const limit = Math.max(1, Math.min(Number(input.limit) || 50, 500));
@@ -495,8 +761,8 @@ export class FakeMailBackend implements MailBackend {
         // As the extractors read it: `id`, or `message` when the manager put its own call id in `id`.
         const m = a.messages.get(String(input.id)) ?? a.messages.get(String(input.message));
         if (!m) throw new MailCallError('no such message', 404);
-        const { mailboxId, id, files: _files, ...rest } = m;
-        return { ...this.summary(a, m), ...rest, mailboxId, id, preview: null, text: m.text ?? (m.html ? htmlText(m.html) : null) } satisfies M.MailMessage;
+        const { mailboxId, id, files: _files, gm: _gm, ...rest } = m;
+        return { ...this.summary(a, m), ...rest, labels: this.labelsOf(a, m), mailboxId, id, preview: null, text: m.text ?? (m.html ? htmlText(m.html) : null) } satisfies M.MailMessage;
       }
       case 'mail.changes':
         return this.changes(a, String(input.mailboxId), input.state as string | undefined, Number(input.limit) || a.opts.changesPage);
@@ -618,6 +884,20 @@ export class FakeMailBackend implements MailBackend {
     if (a.opts.ids === 'proton' && input.answered !== undefined) throw new MailCallError('Proton marks a message answered itself when you reply to it; mail.flag cannot set or clear that', 501);
     const set: Partial<M.MailFlags> = {};
     for (const k of ['seen', 'flagged', 'answered'] as const) if (typeof input[k] === 'boolean') set[k] = input[k];
+    if (a.opts.ids === 'gmail') {
+      // Flags are the message's: every copy changes, and Starred gains or loses one. The extractor says mail.changed
+      // for the mailbox of each id it stored to (imap.ts flag), and IDLE for Inbox when it changed there.
+      const own: string[] = [];
+      const touched = new Set<string>();
+      for (const id of ids) {
+        const m = a.messages.get(id);
+        if (!m) continue;
+        own.push(m.mailboxId);
+        for (const b of this.gmFlags(a, m.gm!, set)) touched.add(b);
+      }
+      this.gmEvents(a, own, touched);
+      return {};
+    }
     const touched: string[] = [];
     let missing = 0;
     for (const id of ids) {
@@ -637,7 +917,22 @@ export class FakeMailBackend implements MailBackend {
   }
 
   private moveTo(a: Account, ids: string[], to: string): { ids: (string | null)[] } {
-    if (!a.mailboxes.some((b) => b.id === to)) throw new MailCallError(`no mailbox ${to}`, 404);
+    if (!a.mailboxes.some((b) => b.id === to) || a.noselect.has(to)) throw new MailCallError(`no mailbox ${to}`, 404);
+    if (a.opts.ids === 'gmail') {
+      // The extractor says mail.changed for the source and the destination (imap.ts move), IDLE for Inbox.
+      const own = [to];
+      const touched = new Set<string>();
+      const out = ids.map((id) => {
+        const m = a.messages.get(id);
+        if (!m) return null;
+        own.push(m.mailboxId);
+        const r = this.gmMove(a, id, to);
+        for (const b of r.touched) touched.add(b);
+        return a.opts.moveIds === 'null' ? null : r.id;
+      });
+      this.gmEvents(a, own, touched);
+      return { ids: out };
+    }
     const touched: string[] = [to];
     const out = ids.map((id) => {
       const m = a.messages.get(id);
@@ -656,21 +951,29 @@ export class FakeMailBackend implements MailBackend {
   }
 
   private search(a: Account, query: string, mailbox: string | undefined, limit: number): M.MailSummary[] {
-    // Gmail's operators are its own business: here only its plain words count.
-    const words = query.split(/\s+/).filter((w) => w && (a.opts.search !== 'gmail' || !/^-|:|^\{/.test(w))).map((w) => w.replace(/"/g, '').toLowerCase());
-    if (!words.length) throw new MailCallError('search for what?', 400);
-    const skip = new Set(a.mailboxes.filter((b) => b.role === 'junk' || b.role === 'trash').map((b) => b.id));
+    if (!query.trim()) throw new MailCallError('search for what?', 400);
+    if (mailbox && a.noselect.has(mailbox)) throw new MailCallError(`no such mailbox ${mailbox}`, 404);
     const people = (m: FakeMessage) => [...m.from, ...m.to, ...m.cc].map((x) => `${x.name ?? ''} ${x.email}`).join(' ');
     const text = (m: FakeMessage) => (a.opts.search === 'proton' ? `${m.subject} ${people(m)}` : `${m.subject} ${people(m)} ${m.text ?? (m.html ? htmlText(m.html) : '')}`).toLowerCase();
+    let match: (m: FakeMessage) => boolean;
+    if (a.opts.search === 'gmail') match = gmailQuery(query, (m) => ({ text: text(m), labels: [...(m.gm ? (a.gm.get(m.gm) ?? []) : m.labels)] }));
+    else {
+      const words = query.split(/\s+/).filter(Boolean).map((w) => w.replace(/"/g, '').toLowerCase());
+      match = (m) => words.every((w) => text(m).includes(w));
+    }
+    // Without a mailbox: All Mail where there is one (Gmail), else every mailbox but Trash and Junk (imap.ts search).
+    const all = a.mailboxes.find((b) => b.role === 'all')?.id;
+    const skip = new Set(a.mailboxes.filter((b) => b.role === 'junk' || b.role === 'trash').map((b) => b.id));
+    const within = (m: FakeMessage) => (mailbox ? m.mailboxId === mailbox : all && a.opts.ids === 'gmail' ? m.mailboxId === all : !skip.has(m.mailboxId));
     return [...a.messages.values()]
-      .filter((m) => (mailbox ? m.mailboxId === mailbox : !skip.has(m.mailboxId)) && words.every((w) => text(m).includes(w)))
+      .filter((m) => within(m) && match(m))
       .sort((x, y) => y.receivedAt - x.receivedAt)
       .slice(0, Math.max(1, Math.min(limit, 200)))
       .map((m) => this.summary(a, m));
   }
 
   private changes(a: Account, box: string, state: string | undefined, limit: number): M.MailChanges {
-    if (!a.mailboxes.some((b) => b.id === box)) throw new MailCallError(`no mailbox ${box}`, 404);
+    if (!a.mailboxes.some((b) => b.id === box) || a.noselect.has(box)) throw new MailCallError(`no such mailbox ${box}`, 404);
     const key = a.opts.state === 'account' ? '*' : box;
     const epoch = a.epochs.get(key) ?? 0;
     if (!state) return { state: this.stateOf(a, box), added: [], changed: [], removed: [], more: false };
@@ -697,11 +1000,78 @@ export class FakeMailBackend implements MailBackend {
     return {
       state: `${epoch}.${upTo}`,
       added: [...added].filter(here).map((id) => this.summary(a, a.messages.get(id)!)),
-      changed: [...changed].filter(here).map((id) => ({ id, flags: { ...a.messages.get(id)!.flags }, labels: [...a.messages.get(id)!.labels] })),
+      changed: [...changed].filter(here).map((id) => ({ id, flags: { ...a.messages.get(id)!.flags }, labels: this.labelsOf(a, a.messages.get(id)!) })),
       removed: [...removed],
       more,
     };
   }
+}
+
+/**
+ * Gmail's search (X-GM-RAW), as much of it as the hub sends (search.ts serverQuery): words and "phrases" anywhere in
+ * the sender, recipients, subject or text, `-` before one, `{a b}` for any of them, and from:, to:, cc:, subject:,
+ * label:, in:, is:, has:attachment, after: and before: (YYYY/MM/DD). category: matches nothing: the fake has no
+ * Gmail categories. Other operators are left to Gmail, so they match everything here.
+ */
+export function gmailQuery(query: string, extra: (m: FakeMessage) => { text: string; labels: string[] }): (m: FakeMessage) => boolean {
+  const tokens = query.match(/-?\{[^}]*\}|-?[\w.-]+:"[^"]*"|-?"[^"]*"|\S+/g) ?? [];
+  const norm = (s: string) => s.toLowerCase().replace(/[\s/]+/g, '-');
+  const day = (v: string) => {
+    const [y, mo, d] = v.split('/').map(Number);
+    return new Date(y, (mo || 1) - 1, d || 1).getTime();
+  };
+  const term = (t: string): ((m: FakeMessage) => boolean) => {
+    if (t.startsWith('-')) {
+      const inner = term(t.slice(1));
+      return (m) => !inner(m);
+    }
+    if (t.startsWith('{')) {
+      const any = (t.slice(1, -1).match(/[\w.-]+:"[^"]*"|"[^"]*"|\S+/g) ?? []).map(term);
+      return (m) => any.some((f) => f(m));
+    }
+    const op = t.match(/^([a-z]+):(.*)$/i);
+    const raw = (op ? op[2] : t).replace(/^"|"$/g, '');
+    const v = raw.toLowerCase();
+    const who = (l: M.MailAddress[]) => l.some((x) => `${x.name ?? ''} ${x.email}`.toLowerCase().includes(v));
+    const has = (m: FakeMessage, l: string) => extra(m).labels.some((x) => norm(x) === norm(l));
+    if (!op) return (m) => extra(m).text.includes(v);
+    switch (op[1].toLowerCase()) {
+      case 'from':
+        return (m) => who(m.from);
+      case 'to':
+        return (m) => who(m.to);
+      case 'cc':
+        return (m) => who(m.cc);
+      case 'subject':
+        return (m) => m.subject.toLowerCase().includes(v);
+      case 'label':
+        return (m) => has(m, raw);
+      case 'in': {
+        const sys: Record<string, string> = { inbox: '\\Inbox', sent: '\\Sent', spam: '\\Spam', trash: '\\Trash', drafts: '\\Draft', important: '\\Important' };
+        if (v === 'anywhere') return () => true;
+        if (v === 'starred') return (m) => m.flags.flagged;
+        return (m) => has(m, sys[v] ?? raw);
+      }
+      case 'is':
+        if (v === 'unread') return (m) => !m.flags.seen;
+        if (v === 'read') return (m) => m.flags.seen;
+        if (v === 'starred') return (m) => m.flags.flagged;
+        if (v === 'important') return (m) => has(m, '\\Important');
+        return () => true;
+      case 'has':
+        return v === 'attachment' ? (m) => m.hasAttachments : () => true;
+      case 'after':
+        return (m) => m.receivedAt >= day(v);
+      case 'before':
+        return (m) => m.receivedAt < day(v);
+      case 'category':
+        return () => false;
+      default:
+        return () => true;
+    }
+  };
+  const all = tokens.map(term);
+  return (m) => all.every((f) => f(m));
 }
 
 /** An attachment's bytes on the fake server: its id over and over, as long as it says it is. */
