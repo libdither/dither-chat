@@ -138,7 +138,7 @@ at = (await center(`.msg:not(.system) .msg-author`))!;
 await rightClick(at.x, at.y);
 const personItems = await labels();
 console.log('     person menu:', personItems.join(' | '));
-check(personItems[0] === 'Profile' && personItems.some((l) => l.startsWith('Copy User ID') || l.startsWith('Copy from')), 'the person menu');
+check(personItems[0] === 'Profile' && personItems.includes('Copy') && !personItems.some((l) => /^(Star|Unstar|Copy from)/.test(l)), 'the person menu: one Copy entry, no star');
 await key('Escape');
 
 // ------------------------------------------------------------------ forwarding

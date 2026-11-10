@@ -20,9 +20,10 @@ command (`packages/protocol/src/about.ts` `PersonAbout`).
   for a place End-to-end encrypted, Age-restricted, Only admins send, your role there, Muted. A person's status line
   last.
 - **Actions.** One row. A person: Message (one network: straight there; several: a menu of each network, the merged
-  thread, and starting a chat where there is none), Star, All chats, More. A place: Open, Their profile (a DM), Mark
+  thread, and starting a chat where there is none), All chats, More. A place: Open, Their profile (a DM), Mark
   read, Mute, Search, Copy link, More. **More** is the same menu the person or place has everywhere else, minus what
-  the row already has, plus Open on <network>, Merge Another Identity In and Ask the Networks Again for a person.
+  the row already has, plus Merge Another Identity In and Ask the Networks Again for a person. It has no Open on
+  <network>: the browser is rarely signed in to the network's site, so Copy holds the profile link instead.
 - **Two columns**, one on a phone (under 900 px). Left: what it is and what you share. Right: how you stand with it.
 
 ## A person
@@ -56,7 +57,8 @@ Right:
 - **Accounts**: each identity, with Open on the network and Unmerge; a hint when someone elsewhere has the same name,
   saying where ("Alice Chen on Signal", "Alice Chen <alice@…>"), and the merge search, which finds people by any name
   or handle (an email address too) and email addresses no person holds yet (`GET /api/persons/candidates`).
-- **Notifications**: Star, and Always notify without starring.
+- **Notifications**: Always notify. A star set before stars left the app (2026-11-10) shows here as on, and turning
+  it off clears the star too; the hub still stores `starred` and treats it like Always notify.
 - **Note**: yours only, kept on the hub.
 
 ### Your own bio

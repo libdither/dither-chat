@@ -5,7 +5,7 @@
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, showsInline } from '@dither-chat/protocol';
 import { fullTime } from '../format.ts';
-import { LEVEL_LABEL, authorName, convTitle, deepLink, directsOf, effectiveLevel, netName, plainBody, sumUnread, unreadOf } from '../model.ts';
+import { LEVEL_LABEL, authorName, convTitle, deepLink, directsOf, effectiveLevel, externalProfile, netName, plainBody, sumUnread, unreadOf } from '../model.ts';
 import { deviceRule, myDevice, setDeviceRule } from '../devices.ts';
 import { android } from '../android.ts';
 import { desk, openLink } from '../desk.ts';
@@ -403,7 +403,6 @@ export function personMenu(p: P.PersonView, placeKey?: string): MenuSpec {
         { label: 'Profile', icon: 'user', run: () => go({ view: 'profile', person: p.id }) },
         !p.isSelf && directs.length > 0 && { label: 'Message', icon: 'groups', run: () => go({ view: 'people', person: p.id }) },
         !p.isSelf && !directs.length && idents[0] && canStartDirect() && { label: 'Message', icon: 'groups', run: () => (newMessage.value = { identityId: idents[0].id }) },
-        !p.isSelf && { label: p.starred ? 'Unstar' : 'Star', icon: 'star', run: () => api(`/api/persons/${p.id}`, { method: 'PATCH', body: { starred: !p.starred } }).catch((e) => toast({ kind: 'error', title: 'Could not save that', body: e.message })) },
       ],
       [directs.length > 0 && { label: 'Mark As Read', icon: 'check', disabled: !sumUnread(directs).unread, run: () => markAllRead(directs, p.name) }],
       placeKey ? arrangeEntries(placeKey) : [],
@@ -412,14 +411,22 @@ export function personMenu(p: P.PersonView, placeKey?: string): MenuSpec {
   };
 }
 
-/** Copy a handle or an id, per network when someone is on several. */
+/** One Copy entry: a handle, an id or a profile link, under each network when someone is on several. */
 function identityCopies(idents: P.IdentityView[]): MenuEntry[] {
-  const one = (i: P.IdentityView, suffix = ''): MenuEntry[] => [
-    i.handle ? { label: `Copy Username${suffix}`, icon: 'at', run: () => copy(i.handle!, 'Username copied') } : null,
-    { label: `Copy User ID${suffix}`, icon: 'idBadge', run: () => copy(i.nativeId, 'ID copied') },
-  ].filter(Boolean) as MenuEntry[];
-  if (idents.length === 1) return one(idents[0]);
-  return idents.map((i): MenuEntry => ({ label: `Copy from ${netName(i.network)}`, icon: 'copy', sub: one(i) }));
+  const one = (i: P.IdentityView): MenuEntry[] => {
+    const link = externalProfile(i);
+    return [
+      i.handle ? { label: 'Copy Username', icon: 'at', run: () => copy(i.handle!, 'Username copied') } : null,
+      { label: 'Copy User ID', icon: 'idBadge', run: () => copy(i.nativeId, 'ID copied') },
+      link ? { label: 'Copy Profile Link', icon: 'link', run: () => copy(link, 'Link copied') } : null,
+    ].filter(Boolean) as MenuEntry[];
+  };
+  if (!idents.length) return [];
+  // Two identities on one network are told apart by their handle.
+  const twice = (i: P.IdentityView) => idents.filter((x) => x.network === i.network).length > 1;
+  const name = (i: P.IdentityView) => (twice(i) ? `${netName(i.network)} · ${i.handle ?? i.displayName ?? i.nativeId}` : netName(i.network));
+  const sub = idents.length === 1 ? one(idents[0]) : idents.map((i): MenuEntry => ({ label: name(i), icon: 'copy', sub: one(i) }));
+  return [{ label: 'Copy', icon: 'copy', sub }];
 }
 
 /** An author, an avatar or a mention: the person behind it if the hub merged one, else just this identity. */

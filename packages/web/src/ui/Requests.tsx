@@ -713,7 +713,6 @@ function LinkRowView({ row, relationship, active, dots, onEnd }: { row: LinkRow;
         <span class="row-top">
           <span class="row-title">
             {name}
-            {person?.starred && <Icon name="star" size={11} class="row-star" />}
           </span>
           {dots && (
             <span class="plink-dots" title={accounts.map(accountName).join(', ')} data-accounts={accounts.map((a) => a.id).join(' ')}>

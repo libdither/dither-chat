@@ -22,6 +22,14 @@ function memo<T>(key: string, fn: () => T): T {
 }
 
 export const netName = (n: P.Network) => NETWORK_META[n].name;
+
+/** Someone's page on their network's own site, where it has one: for copying, since the browser is rarely signed in there. */
+export function externalProfile(i: P.IdentityView): string | null {
+  if (i.network === 'discord') return /^\d+$/.test(i.nativeId) ? `https://discord.com/users/${i.nativeId}` : null;
+  if (i.network === 'matrix') return `https://matrix.to/#/${encodeURIComponent(i.nativeId)}`;
+  if (i.network === 'whatsapp') return /^\+\d{6,}$/.test(i.handle ?? '') ? `https://wa.me/${i.handle!.slice(1)}` : null;
+  return null;
+}
 export const netColor = (n: P.Network) => NETWORK_META[n].color;
 
 // ------------------------------------------------------------------ visibility
@@ -551,7 +559,7 @@ export function people(): { person: P.PersonView; directs: P.ConversationView[];
         return { person, directs, last: Math.max(0, ...directs.map((d) => d.lastMessageAt ?? 0)) };
       })
       .filter((x) => x.directs.length)
-      .sort((a, b) => Number(b.person.starred) - Number(a.person.starred) || b.last - a.last),
+      .sort((a, b) => b.last - a.last),
   );
 }
 

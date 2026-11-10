@@ -159,8 +159,7 @@ function QuietHoursSettings() {
       <label class="toggle-row">
         <input type="checkbox" checked={q.allowStarred} onChange={(e) => save({ allowStarred: (e.target as HTMLInputElement).checked })} />
         <span>
-          <b>Starred people still get through</b>
-          <small>Also anyone set to always notify.</small>
+          <b>People set to always notify still get through</b>
         </span>
       </label>
       <p class="set-help">In {q.timezone}. A day counts from when the hours start, so a Friday night runs into Saturday morning.</p>

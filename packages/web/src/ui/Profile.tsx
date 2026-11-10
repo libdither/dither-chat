@@ -12,7 +12,7 @@ import { openers } from '../direct.ts';
 import { composeTo } from '../mail/people.ts';
 import { senderLine } from '../mail/model.ts';
 import { countText, countTitle } from '../msgcount.ts';
-import { communitiesOf, convLabel, convTitle, directsOf, identityName, kindLabel, netName, plainBody, rootCommunity } from '../model.ts';
+import { communitiesOf, convLabel, convTitle, directsOf, externalProfile, identityName, kindLabel, netName, plainBody, rootCommunity } from '../model.ts';
 import { profileLinks } from '../requests.ts';
 import { api, db, go, isSelfIdentity, newMessage, openMessage, openProfile, rev, setRule, toast } from '../state.ts';
 import { Avatar, Empty, NetBadge, NetGlyph, Skeleton } from './bits.tsx';
@@ -38,13 +38,6 @@ const WHAT_NETWORKS_SHARE: Record<P.Network, string> = {
   x: 'Name, handle, bio and picture, as their X profile shows them.',
   email: 'An address, and the name their mail is sent under. Mail has no profiles.',
 };
-
-function externalProfile(i: P.IdentityView): string | null {
-  if (i.network === 'discord') return /^\d+$/.test(i.nativeId) ? `https://discord.com/users/${i.nativeId}` : null;
-  if (i.network === 'matrix') return `https://matrix.to/#/${encodeURIComponent(i.nativeId)}`;
-  if (i.network === 'whatsapp') return /^\+\d{6,}$/.test(i.handle ?? '') ? `https://wa.me/${i.handle!.slice(1)}` : null;
-  return null;
-}
 
 /** What a network says when someone wrote nothing. */
 const STOCK_BIO = /^(available|busy|at work|hey there! i am using whatsapp\.?|urgent calls only)$/i;
@@ -418,12 +411,9 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   };
   const moreMenu = (): MenuSpec | null => {
     const base = person ? personMenu(person) : identityMenu(first?.id);
-    const extra: MenuEntry[] = groups(
-      ids.map((i) => externalProfile(i) && ({ label: `Open on ${netName(i.network)}`, icon: 'external', run: () => window.open(externalProfile(i)!, '_blank', 'noreferrer') })),
-      [!isSelf && { label: 'Merge Another Identity In', icon: 'merge', run: () => setMerging(true) }, { label: 'Ask the Networks Again', icon: 'refresh', run: refresh }],
-    );
+    const extra: MenuEntry[] = groups([!isSelf && { label: 'Merge Another Identity In', icon: 'merge', run: () => setMerging(true) }, { label: 'Ask the Networks Again', icon: 'refresh', run: refresh }]);
     // What the page already shows as a button is not repeated.
-    const shown = new Set(['Profile', 'Message', 'Star', 'Unstar']);
+    const shown = new Set(['Profile', 'Message']);
     const items = (base?.items ?? [])
       .filter((e) => !('label' in e && shown.has(e.label as string)))
       .filter((e, i, xs) => e.kind !== 'sep' || (i > 0 && i < xs.length - 1 && xs[i - 1].kind !== 'sep'));
@@ -443,10 +433,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       banner={banner}
       accent={accent}
       title={
-        <h1>
-          {name}
-          {person?.starred && <Icon name="star" size={17} class="row-star" />}
-        </h1>
+        <h1>{name}</h1>
       }
       sub={
         <span class="pf-handles">
@@ -486,7 +473,6 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         <>
           {!isSelf && messageOptions > 0 && (messageOptions === 1 ? <Action primary icon="send" label="Message" onClick={message} /> : <Action primary icon="send" label="Message" menu={messageMenu} />)}
           {!isSelf && <ConnectActions identities={ids} abouts={abouts} onChanged={learn} />}
-          {!isSelf && <Action icon="star" label={person?.starred ? 'Starred' : 'Star'} on={person?.starred} title={person?.starred ? 'Starred: their messages always notify. Click to unstar' : 'Star: always notify for them, everywhere'} onClick={() => patch({ starred: !person?.starred })} />}
           {directs.length > 1 && person && <Action icon="merge" label="All chats" onClick={() => go({ view: 'people', person: person.id })} />}
           <Action icon="more" label="More" menu={moreMenu} />
         </>
@@ -752,24 +738,19 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       {!isSelf && (
         <Card title="Notifications" icon="bell">
           <label class="toggle-row">
-            <input type="checkbox" checked={!!person?.starred} onChange={(e) => patch({ starred: (e.target as HTMLInputElement).checked })} />
-            <span>
-              <b>Star</b>
-              <small>Always notify for them, on every network, even in busy groups.</small>
-            </span>
-          </label>
-          <label class="toggle-row">
             <input
               type="checkbox"
-              checked={rule?.level === 'all'}
+              checked={rule?.level === 'all' || !!person?.starred}
               onChange={async (e) => {
                 const on = (e.target as HTMLInputElement).checked;
                 setRule('person', await ensure(), on ? 'all' : null);
+                // A star set before stars left the app means the same to the hub, so turning this off clears it too.
+                if (!on && person?.starred) patch({ starred: false });
               }}
             />
             <span>
-              <b>Always notify, without starring</b>
-              <small>The same, for someone you would rather not list as starred. A place set to Off still stays silent.</small>
+              <b>Always notify</b>
+              <small>For their messages on every network, even in busy groups. A place set to Off still stays silent.</small>
             </span>
           </label>
         </Card>
