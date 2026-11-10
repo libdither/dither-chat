@@ -1,8 +1,8 @@
 /**
- * Catch up's queue (docs/inbox.md#catch-up): the inbox rows that need you, owed replies first and then the rest with
- * something unread, each part in the inbox's own order. It is taken when the pane opens and kept steady while you
- * work through it: Done takes a card out, Later moves it to the end, and what newly needs you joins the end. Nothing
- * moves by itself. Pure: ui/CatchUp.tsx keeps one queue for the session.
+ * Catch up's queue (docs/inbox.md#catch-up): the inbox rows that need you, with a reply you owe or something unread,
+ * in the inbox's own order (the learned one: a reply you owe does not jump ahead). It is taken when the pane opens and
+ * kept steady while you work through it: Done takes a card out, Later moves it to the end, and what newly needs you
+ * joins the end. Nothing moves by itself. Pure: ui/CatchUp.tsx keeps one queue for the session.
  */
 
 /** What the queue needs to know of an inbox row. */
@@ -30,10 +30,9 @@ export type DoneMarks = ReadonlyMap<string, number>;
 
 const none: DoneMarks = new Map();
 
-/** The rows that belong in the queue, in order: owed replies first, then the other unread rows that need you. */
+/** The rows that belong in the queue, in the order given: those that need you, with a reply you owe or something unread. */
 export function wanted<R extends QueueRow>(rows: R[], done: DoneMarks = none): R[] {
-  const ok = (r: R) => r.needs && !(done.has(r.key) && r.last <= done.get(r.key)!);
-  return [...rows.filter((r) => ok(r) && r.owedSince !== null), ...rows.filter((r) => ok(r) && r.owedSince === null && r.unread)];
+  return rows.filter((r) => r.needs && (r.owedSince !== null || r.unread) && !(done.has(r.key) && r.last <= done.get(r.key)!));
 }
 
 /** A queue taken afresh. */

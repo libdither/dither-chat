@@ -33,7 +33,7 @@ import {
   type RailEntry,
 } from '../model.ts';
 import { db, go, mailRev, metaRev, newMessage, prefs, rev, route, setPrefs, type InboxFilter, type Route } from '../state.ts';
-import { INBOX_FILTERS, INBOX_SECTIONS } from '../ordering.ts';
+import { INBOX_FILTERS } from '../ordering.ts';
 import { senderLine } from '../mail/model.ts';
 import { personItems } from './mail/Classify.tsx';
 import { RowTyping } from './Typing.tsx';
@@ -145,7 +145,7 @@ function opener(key: string, open: () => void): () => void {
 
 /**
  * `why` is the inbox's reasons, shown on hover and at the top of the row's menu; `owedSince` marks a message you
- * have not answered, for a row that needs you without anything unread.
+ * have not answered, for a row that needs you: ↩ and how long, beside the unread count if there is one.
  */
 export const ConvRow = memo(function ConvRow({ c, active, onClick, showPlace = true, why, owedSince }: { c: P.ConversationView; active: boolean; onClick: () => void; showPlace?: boolean; why?: string[]; owedSince?: number | null }) {
   metaRev.value;
@@ -197,7 +197,7 @@ export const ConvRow = memo(function ConvRow({ c, active, onClick, showPlace = t
         {place && <span class="row-place">{place}</span>}
         <span class="row-bottom">
           <span class="row-preview">{preview(c)}</span>
-          {owedSince && !u.unread ? <Owed at={owedSince} /> : null}
+          {owedSince ? <Owed at={owedSince} /> : null}
           {u.muted && <Icon name={levelIcon(lvl.level)} size={12} class="row-muted" />}
           {u.badge ? <Count n={u.badge} /> : u.unread && !u.muted ? <span class="unread-dot" /> : null}
         </span>
@@ -254,7 +254,7 @@ export const MailRow = memo(function MailRow({ id, active, why, owedSince }: { i
             <span class="row-subject">{t.subject || '(no subject)'}</span>
             {t.preview ? ` — ${t.preview}` : ''}
           </span>
-          {owedSince && !t.unread ? <Owed at={owedSince} /> : null}
+          {owedSince ? <Owed at={owedSince} /> : null}
           <Count n={t.unread} />
         </span>
       </span>
@@ -322,8 +322,8 @@ const EMPTY: Record<InboxFilter, string> = { all: 'No conversations yet.', direc
 
 /**
  * One list: DMs, group chats, rooms outside a space and notes to self, plus anything else while it has something
- * for you, and mail from people (docs/mail.md), in three sections: what waits on a reply from you, what is new, and
- * the rest. Each goes by how likely you are to want it now (docs/inbox.md).
+ * for you, and mail from people (docs/mail.md), ranked by how likely you are to want each now (docs/inbox.md). No
+ * sections: a reply you owe shows on its row (↩ and how long), and unread rows are bold with their count.
  */
 export function InboxSidebar({ activeConv }: { activeConv?: string }) {
   if (counting) rendered('InboxSidebar');
@@ -334,7 +334,7 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
   const accounts = accountsNeedingYou();
   let filter = prefs.value.inboxFilter;
   if (filter === 'mail' && !db.mail.accounts.size) filter = 'all';
-  const parts = shownInbox(filter);
+  const rows = shownInbox(filter);
   const [q, setQ] = useState('');
   const scroll = useRef<HTMLDivElement>(null);
   useFlip(scroll, snap.v, '[data-row]');
@@ -389,17 +389,8 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
           </>
         )}
         <RequestsRow />
-        {INBOX_SECTIONS.map(({ id, label }) => {
-          const rows = parts[id];
-          if (!rows.length) return null;
-          return (
-            <>
-              <SectionHead id={`inbox-${id}`} label={label} count={rows.length} />
-              {!isCollapsed(`inbox-${id}`) && rows.map(row)}
-            </>
-          );
-        })}
-        {!parts.waiting.length && !parts.new.length && !parts.earlier.length && <p class="inbox-empty">{EMPTY[filter]}</p>}
+        {rows.map(row)}
+        {!rows.length && <p class="inbox-empty">{EMPTY[filter]}</p>}
       </div>
     </div>
   );

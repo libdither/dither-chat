@@ -85,14 +85,12 @@ try {
   await click('#set-usage input[type=checkbox]');
   check(await p.eval(`JSON.parse(localStorage.getItem('dither-chat:prefs')).countClicks === true`), 'switched on for this device');
 
-  // The inbox: the filter, a section, a row, search; Ctrl+K.
+  // The inbox: the filter, a row, search; Ctrl+K.
   await click('.rail [data-track="inbox"]');
   await p.until(`document.querySelectorAll('.sidebar [data-row]').length > 3`, 5000);
   await pickFilter('Groups');
   await pickFilter('Groups');
   await pickFilter('All');
-  await click('.sidebar [data-section="inbox-earlier"] .section-toggle');
-  await click('.sidebar [data-section="inbox-earlier"] .section-toggle');
   const dmRow = await p.eval<string>(`document.querySelector('.sidebar [data-track^="row (DM"]')?.dataset.track ?? ''`);
   check(!!dmRow, 'an inbox row says its kind and state', dmRow);
   // On the row's text, not the button itself: still the row.
@@ -120,9 +118,11 @@ try {
   }
   check(card, 'Catch up has cards to press');
 
-  // People: a chip if there are any, a row.
+  // People: a section folded and opened again, a row.
   await click('.rail [data-track="people"]');
   await p.until(`!!document.querySelector('.sidebar [data-track^="row (person"]')`, 5000);
+  await click('.sidebar [data-section="people-all"] .section-toggle');
+  await click('.sidebar [data-section="people-all"] .section-toggle');
   await click('.sidebar [data-track^="row (person"]');
   await Bun.sleep(300);
 
@@ -141,7 +141,7 @@ try {
     ['inbox: filter', 3],
     ['inbox: filter (Groups)', 2],
     ['inbox: filter (All)', 1],
-    ['inbox: section toggle (Earlier)', 2],
+    ['people: section toggle (Direct messages)', 2],
     [`inbox: ${dmRow}`, 1],
     ['chat header: details', 2],
     ['composer: text box', 1],

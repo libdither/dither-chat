@@ -15,12 +15,14 @@ const rows = [
   row('cnv_f'),
 ];
 
-test('owed replies first, then the other unread rows that need you, each in the inbox order', () => {
-  expect(take(rows).keys).toEqual(['cnv_a', 'mth_c', 'cnv_b', 'cnv_f']);
+test('the rows that need you, owed or unread, in the inbox order: a reply you owe does not jump ahead', () => {
+  expect(take(rows).keys).toEqual(['cnv_a', 'cnv_b', 'mth_c', 'cnv_f']);
+  // Owed below unread in the inbox stays below it here.
+  expect(take([row('cnv_x'), row('cnv_y', { owedSince: 5, unread: false })]).keys).toEqual(['cnv_x', 'cnv_y']);
 });
 
 test('mail threads are in it like any row', () => {
-  expect(take([row('mth_x'), row('cnv_y', { owedSince: 5 })]).keys).toEqual(['cnv_y', 'mth_x']);
+  expect(take([row('mth_x'), row('cnv_y', { owedSince: 5 })]).keys).toEqual(['mth_x', 'cnv_y']);
 });
 
 test('a row that needs you with nothing unread and nothing owed is not in it, nor one that does not need you', () => {
@@ -33,7 +35,7 @@ test('a row that needs you with nothing unread and nothing owed is not in it, no
 
 test('Later moves a card to the end of the queue; nothing else moves', () => {
   const q = later(take(rows), 'cnv_a');
-  expect(q.keys).toEqual(['mth_c', 'cnv_b', 'cnv_f', 'cnv_a']);
+  expect(q.keys).toEqual(['cnv_b', 'mth_c', 'cnv_f', 'cnv_a']);
   expect(later(q, 'nope')).toBe(q);
 });
 
@@ -47,7 +49,7 @@ test('while open, a new arrival joins the end and is counted as new; the order d
   // The inbox now ranks a new DM first, and moves cnv_f above cnv_b: the queue keeps its order.
   const now = [row('cnv_new'), rows[0], rows[2], rows[5], rows[1], rows[3], rows[4]];
   const next = arrive(q, now);
-  expect(next.keys).toEqual(['cnv_a', 'mth_c', 'cnv_b', 'cnv_f', 'cnv_new']);
+  expect(next.keys).toEqual(['cnv_a', 'cnv_b', 'mth_c', 'cnv_f', 'cnv_new']);
   expect(next.fresh).toEqual(['cnv_new']);
   expect(seen(next, 'cnv_new').fresh).toEqual([]);
   // Nothing new: the same queue.
@@ -63,10 +65,10 @@ test('while open, a card that stops needing you stays where it is', () => {
 test('a card marked Done comes back only after a newer message, even while you still owe it a reply', () => {
   const q = remove(take(rows), 'cnv_a');
   const done = new Map([['cnv_a', 1000]]);
-  expect(arrive(q, rows, done).keys).toEqual(['mth_c', 'cnv_b', 'cnv_f']);
+  expect(arrive(q, rows, done).keys).toEqual(['cnv_b', 'mth_c', 'cnv_f']);
   const newer = rows.map((r) => (r.key === 'cnv_a' ? { ...r, last: 2000 } : r));
   const back = arrive(q, newer, done);
-  expect(back.keys).toEqual(['mth_c', 'cnv_b', 'cnv_f', 'cnv_a']);
+  expect(back.keys).toEqual(['cnv_b', 'mth_c', 'cnv_f', 'cnv_a']);
   expect(back.fresh).toEqual(['cnv_a']);
 });
 

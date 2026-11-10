@@ -1,8 +1,8 @@
 /**
  * Catch up (packages/web/src/ui/CatchUp.tsx, docs/inbox.md#catch-up) in a real browser against a fresh demo hub:
  *
- *   - the queue is the conversations that need you, owed replies first and then the unread ones, in the inbox's
- *     order, mail included; opening it marks nothing read;
+ *   - the queue is the conversations that need you, owed or unread, in the inbox's order (a reply you owe does not
+ *     jump ahead), mail included; opening it marks nothing read;
  *   - j and k move between cards, l puts one Later (to the end), e is Done (off the queue, and read on the hub);
  *   - no key does anything while you type in a reply box, and Esc leaves the box;
  *   - a reply from a card goes out once: one message in the conversation and in the card, no double echo; the card
@@ -103,9 +103,7 @@ try {
   check('a long queue is drawn ten cards at a time', q0.keys.length <= 10 || drawnFirst === 10, { first: drawnFirst, all: q0.keys.length });
   console.log(`      the queue: ${q0.keys.length} cards, ${q0.owed.filter(Boolean).length} owed, ${q0.mail.filter(Boolean).length} mail`);
   check('it shows cards', q0.keys.length >= 6, q0.keys.length);
-  const lastOwed = q0.owed.lastIndexOf(true);
-  const firstNot = q0.owed.indexOf(false);
-  check('owed replies come first', lastOwed >= 0 && (firstNot < 0 || lastOwed < firstNot), q0.owed.map(Number).join(''));
+  check('replies you owe and unread rows are both in it', q0.owed.some(Boolean) && q0.owed.some((x) => !x), q0.owed.map(Number).join(''));
   check('mail threads from people are in it', q0.mail.some(Boolean));
   check('"N waiting" counts the cards', q0.waiting === q0.keys.length, [q0.waiting, q0.keys.length]);
 
@@ -117,13 +115,12 @@ try {
   const extra = q0.keys.filter((k) => !want.has(k));
   check('the cards are the rows that need you, owed or unread', !missing.length && !extra.length, { missing, extra });
 
-  // In the inbox's own order: the list's rows, owed first.
+  // In the inbox's own order, one order: an owed reply sits where the list has it, not first.
   const list = await page.eval<string[]>(`[...document.querySelectorAll('.sidebar [data-row]')].map((r) => r.dataset.row)`);
   if (list.length) {
-    const inList = list.filter((k) => got.has(k));
-    const owed = new Set(q0.keys.filter((_, i) => q0.owed[i]));
-    const expected = [...inList.filter((k) => owed.has(k)), ...inList.filter((k) => !owed.has(k))];
-    check("each part in the inbox's own order", expected.join() === q0.keys.filter((k) => list.includes(k)).join(), { expected: expected.slice(0, 8), got: q0.keys.slice(0, 8) });
+    const expected = list.filter((k) => got.has(k));
+    check("in the inbox's own order", expected.join() === q0.keys.filter((k) => list.includes(k)).join(), { expected: expected.slice(0, 8), got: q0.keys.slice(0, 8) });
+    console.log(`      the queue by kind (o owed, u unread): ${q0.owed.map((x) => (x ? 'o' : 'u')).join('')}`);
   } else console.log('      the inbox list has no [data-row]: its order is not compared');
 
   const after = await unreadNow();

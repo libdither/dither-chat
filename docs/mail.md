@@ -237,9 +237,9 @@ follows mailboxes you open), so what happens to it there later reaches the hub o
   minutes; unanswered for 2 hours" reads the same in both. An answer sent from here pays what you owe at once,
   before Sent's copy comes. Until the learned order learns mail (slice 10), a mail row keeps its formula points.
 - **A mail row** has the person's picture with the envelope where a chat's network goes, the subject before the start
-  of the last message, the same ↩ and reasons on hover, and a menu (why, Open in Mail, Not a person). All and Unread
-  include mail; People includes threads between you and one other, Groups the rest. Tapping it opens the reader
-  beside the inbox (`#/inbox/c/<thread>`).
+  of the last message, the same ↩ and reasons on hover, and a menu (why, Open in Mail, Not a person). The inbox's
+  filter shows mail under All and Mail; Direct messages and Groups are chats only (inbox.md). Tapping it opens the
+  reader beside the inbox (`#/inbox/c/<thread>`).
 
 How: `mail_message.class`/`class_why` and `mail_thread.class` are written by `MailStore.recomputed`'s hook in the
 ingest's transaction; a sender who becomes known (you wrote to them, a merge) has their other threads classified again

@@ -6,8 +6,8 @@
  */
 import { effect, signal } from '@preact/signals';
 import { isInteracting } from './arrange.ts';
-import { inboxRows, mailRowsWaiting, rowDirect, rowLast, rowMuted, rowUnread, rowWaiting, type InboxRow } from './model.ts';
-import { filterKeeps, inboxChanged, inboxSections, inboxSnapshot, inboxView, sameInbox, shouldResort, type Hold, type InboxSection, type InboxSnapshot, type Ranked, type ResortReason } from './ordering.ts';
+import { inboxRows, mailRowsWaiting, rowDirect, rowLast, rowMuted, type InboxRow } from './model.ts';
+import { filterKeeps, inboxChanged, inboxSnapshot, inboxView, sameInbox, shouldResort, type Hold, type InboxSnapshot, type Ranked, type ResortReason } from './ordering.ts';
 import { loaded, mailRev, rev, route, type InboxFilter } from './state.ts';
 import { onForeground } from './usage.ts';
 
@@ -33,8 +33,6 @@ const hold = (): Hold | undefined => {
 
 /** Chats and mail from people rank as one (docs/mail.md); notes to self rank like any other row. */
 const ranked = (rows: InboxRow[]): Ranked[] => rows.map((r) => ({ key: r.key, score: r.score, last: rowLast(r), muted: rowMuted(r) }));
-/** The same, with what decides each row's section. */
-const sectioned = (rows: InboxRow[]) => rows.map((r) => ({ key: r.key, score: r.score, last: rowLast(r), muted: rowMuted(r), unread: rowUnread(r), waiting: rowWaiting(r) }));
 
 let waiting: ReturnType<typeof setTimeout> | undefined;
 /** Take a new snapshot if now is a good moment; otherwise as soon as it is. */
@@ -45,7 +43,7 @@ export function resortInbox(reason: ResortReason) {
     if (reason !== 'timer') waiting = setTimeout(() => resortInbox(reason), 1500);
     return;
   }
-  const snap = inboxSnapshot(sectioned(inboxRows()), hold());
+  const snap = inboxSnapshot(ranked(inboxRows()), hold());
   const prev = inboxSnap.value;
   const same = sameInbox(prev.snap, snap);
   inboxSnap.value = { v: same ? prev.v : prev.v + 1, at: now, snap };
@@ -54,11 +52,8 @@ export function resortInbox(reason: ResortReason) {
   } catch {}
 }
 
-/**
- * The rows the filter shows, in order, by section. A row stays in the section it was in when the order was taken
- * until the next one (ordering.ts inboxSections), so reading it does not pull it out from under you.
- */
-export function shownInbox(filter: InboxFilter): Record<InboxSection, InboxRow[]> {
+/** The rows the filter shows, in order: one list, in the snapshot's order (docs/inbox.md). */
+export function shownInbox(filter: InboxFilter): InboxRow[] {
   const rows = inboxRows();
   const byId = new Map(rows.map((r) => [r.key, r]));
   const snap = inboxSnap.value.snap;
@@ -66,10 +61,7 @@ export function shownInbox(filter: InboxFilter): Record<InboxSection, InboxRow[]
     const r = byId.get(id)!;
     return filterKeeps(filter, { mail: r.kind === 'mail', direct: rowDirect(r) });
   };
-  const keys = inboxView(snap, ranked(rows), keep);
-  const parts = inboxSections(keys, snap, (k) => ({ unread: rowUnread(byId.get(k)!), waiting: rowWaiting(byId.get(k)!) }));
-  const of = (ks: string[]) => ks.map((k) => byId.get(k)!);
-  return { waiting: of(parts.waiting), new: of(parts.new), earlier: of(parts.earlier) };
+  return inboxView(snap, ranked(rows), keep).map((k) => byId.get(k)!);
 }
 
 let started = false;
@@ -87,7 +79,7 @@ export function startInbox() {
     if (mailRowsWaiting()) mailRev.value;
     if (!loaded.value) return;
     clearTimeout(soon);
-    soon = setTimeout(() => inboxChanged(inboxSnap.value.snap, sectioned(inboxRows()), hold()) && resortInbox('activity'), 600);
+    soon = setTimeout(() => inboxChanged(inboxSnap.value.snap, ranked(inboxRows()), hold()) && resortInbox('activity'), 600);
   });
   // Leaving a conversation lets it settle where it now belongs, once nothing is in use.
   let open = openHere();
