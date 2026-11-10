@@ -182,7 +182,8 @@ the digest); Active is not worth a ping but worth a notification; Digest only in
   from that message's facts (the place, the person, the network, what it said), so it reads "messages like this one
   belong a level up". The voted message moves to the other level's line at once, and the next newest takes the line's
   arrows. *Why* shows the line's reasons, each once with how many of its messages gave it, and every message with its
-  own arrows. The counts at the top say what they count ("26 messages buzzed you (3 unread), 30 came as silent
+  own arrows. When the inbox's learned order has lifted the conversation to learn about it, *Why* says so first ("In
+  the inbox: Shown higher to learn…", [inbox.md](inbox.md#exploring)). The counts at the top say what they count ("26 messages buzzed you (3 unread), 30 came as silent
   notifications, and 50 waited for the digest"); the badge on the inbox button and the phone's Catch up tab is the
   Important list's unread messages plus accounts that need you (`packages/web/src/board.ts`), so a vote changes them
   together. Accounts that need you are a line on Catch up ([inbox.md](inbox.md#catch-up)), not a count here. What it

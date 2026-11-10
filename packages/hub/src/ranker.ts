@@ -10,10 +10,14 @@
  *
  * DITHER_INBOX_RANK: `model` (the default) sorts by it; `shadow` works it out and shows it in
  * `GET /api/attention/:id` without sorting by it; `off` does neither.
+ *
+ * DITHER_INBOX_EXPLORE: `1` (the default) sorts by a Thompson sample of the model instead of its mean, so a row it
+ * knows little about sometimes rises into view (rank.ts `drawZ`); `0` sorts by the mean.
  */
 import { Database } from 'bun:sqlite';
 import type { AttentionJudge, ScoreInput, Scored } from './attention.ts';
-import { EXAM_AT, FEATURES, FIT, fitRankSteps, GUESSED_CURVE, HORIZON, predict, PRIOR, rankFeatures, type Moment, type Prediction, type RankModel } from './rank.ts';
+import { EXPLORE_REASON } from '@dither-chat/protocol';
+import { drawZ, epochOf, EXAM_AT, EXPLORE_EPOCH, EXPLORE_SCALE, FEATURES, FIT, fitRankSteps, GUESSED_CURVE, HORIZON, predict, PRIOR, rankFeatures, Z_CLIP, type Moment, type Prediction, type RankModel } from './rank.ts';
 import { flagged, isChoice, loadWorld, momentOf, mutedBy, Rebuild } from './rankhistory.ts';
 import type { Store } from './store.ts';
 import type { Triage } from './triage.ts';
@@ -25,6 +29,7 @@ const DAY = 24 * HOUR;
 
 export type RankMode = 'model' | 'shadow' | 'off';
 export const rankMode = (v: string | undefined): RankMode => (v === 'shadow' || v === 'off' ? v : 'model');
+export const exploreOn = (v: string | undefined): boolean => v !== '0';
 
 /** It learns from the opens of the last two months, at most this many of the latest. */
 export const TRAIN_WINDOW = 60 * DAY;
@@ -39,8 +44,8 @@ const KEY = 'inbox_rank';
 
 export class InboxRanker implements AttentionJudge {
   model: RankModel;
-  /** The latest prediction per conversation, for `explain`. */
-  private last = new Map<string, Prediction & { formula: number }>();
+  /** The latest prediction per conversation, for `explain`: the mean, and the sample the inbox sorts by. */
+  private last = new Map<string, Prediction & { formula: number; sampled: number }>();
   private busy: Promise<RankModel> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   /** After a refit: score everything again (main.ts broadcasts it). */
@@ -53,6 +58,8 @@ export class InboxRanker implements AttentionJudge {
     /** The database file, for a read-only connection of its own while it rebuilds; without it, the store's own. */
     private file?: string,
     private now: () => number = Date.now,
+    /** Sort by a Thompson sample instead of the mean (DITHER_INBOX_EXPLORE). */
+    readonly explore = true,
   ) {
     const r = store.db.query(`SELECT value FROM meta WHERE key = ?`).get(KEY) as Row | null;
     let saved: RankModel | null = null;
@@ -67,22 +74,30 @@ export class InboxRanker implements AttentionJudge {
   rank(conversationId: string, x: ScoreInput, formula: Scored): { score: number; reason?: string } | null {
     // Muted places keep their place at the bottom, by the formula.
     if (this.mode === 'off' || x.muted) return null;
-    const p = predict(this.model, rankFeatures(x, formula));
-    this.last.set(conversationId, { ...p, formula: formula.score });
+    const f = rankFeatures(x, formula);
+    const p = predict(this.model, f);
+    // The same draw for the conversation until the epoch turns: live updates move it only as its features do.
+    const z = this.explore && this.model.cov ? drawZ(`${conversationId}|${epochOf(this.model, x.now)}`) : null;
+    const sampled = z ? predict(this.model, f, z).points : p.points;
+    this.last.set(conversationId, { ...p, formula: formula.score, sampled });
     if (this.mode === 'shadow') return null;
     const moved = p.points - formula.score;
     const reason =
-      this.model.moments === 0 || Math.abs(moved) < SAY_AFTER
-        ? undefined
-        : moved > 0
-          ? 'Higher: you often open chats like this at times like this'
-          : 'Lower: you seldom open chats like this at times like this';
-    return { score: p.points, reason };
+      sampled - p.points >= SAY_AFTER
+        ? EXPLORE_REASON
+        : this.model.moments === 0 || Math.abs(moved) < SAY_AFTER
+          ? undefined
+          : moved > 0
+            ? 'Higher: you often open chats like this at times like this'
+            : 'Lower: you seldom open chats like this at times like this';
+    return { score: sampled, reason };
   }
 
   explain(conversationId: string) {
     const p = this.last.get(conversationId);
-    return p ? { mode: this.mode, open: round(p.open), send: round(p.send), points: p.points, formula: p.formula, fitAt: this.model.fitAt } : null;
+    return p
+      ? { mode: this.mode, open: round(p.open), send: round(p.send), points: p.points, sampled: p.sampled, explore: this.explore && !!this.model.cov, formula: p.formula, fitAt: this.model.fitAt }
+      : null;
   }
 
   forget(conversationId: string) {
@@ -102,6 +117,7 @@ export class InboxRanker implements AttentionJudge {
       prior: { open: PRIOR.open, send: PRIOR.send },
       learned: { open: diff('open'), send: diff('send') },
       examination: this.examinationView(),
+      explore: { on: this.explore, sampling: this.explore && !!m.cov, epochMinutes: EXPLORE_EPOCH / MIN, zClip: Z_CLIP, scale: EXPLORE_SCALE },
     };
   }
 
@@ -133,6 +149,8 @@ export class InboxRanker implements AttentionJudge {
   due(now = this.now()): boolean {
     const fitAt = this.model.fitAt;
     if (this.model.moments > 0 && !(this.store.db.query('SELECT 1 FROM visit LIMIT 1').get() as Row | null)) return true;
+    // Saved before the hub fitted its examination curve and how sure it is: fit again at start.
+    if (this.model.moments > 0 && (!this.model.cov || (FIT.curve && !this.model.curve))) return true;
     if (fitAt === null) return this.maturedSince(-Infinity, now) > 0;
     return now - fitAt >= DAY || this.maturedSince(fitAt, now) >= REFIT_AFTER;
   }

@@ -8,6 +8,7 @@
  *   bun scripts/inbox-replay.ts ... --model-grid   (also: the learned order's regularisation, position correction and its cap, horizon and window)
  *   bun scripts/inbox-replay.ts ... --curve        (also: the examination curve fitted to your opens; --model-grid has it too)
  *   bun scripts/inbox-replay.ts ... --triage       (also: the learned order with triage's level and your votes as features)
+ *   bun scripts/inbox-replay.ts ... --explore [--explore-scale 1]   (also: what exploring costs, over 20 seeds)
  *   bun scripts/inbox-replay.ts ... --calibrate    (the learned order's prior: open chance against the formula alone)
  *
  * It never opens the live database for writing: it copies it with VACUUM INTO (read-only) and works on the copy. It
@@ -27,7 +28,7 @@ import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { scoreConversation, WEIGHTS } from '../packages/hub/src/attention.ts';
-import { EXAM_AT, EXAMINATION_ETA, FEATURES, FIT, fitRank, GUESSED_CURVE, TRIAGE_FEATURES, HORIZON, LAMBDA, MAX_IPW, predict, PRIOR, rankFeatures, type Feature, type Features, type FitOptions, type Moment, type RankModel } from '../packages/hub/src/rank.ts';
+import { drawZ, epochOf, EXAM_AT, EXAMINATION_ETA, EXPLORE_SCALE, FEATURES, FIT, fitRank, GUESSED_CURVE, logit, pointsOf, SEND_VALUE, sigmoid, spread, TRIAGE_FEATURES, HORIZON, LAMBDA, MAX_IPW, predict, PRIOR, rankFeatures, type Feature, type Features, type FitOptions, type Moment, type RankModel } from '../packages/hub/src/rank.ts';
 import { isChoice, loadWorld, momentOf, mutedBy, Rebuild, seenAt, type Seen, type World } from '../packages/hub/src/rankhistory.ts';
 import { Store } from '../packages/hub/src/store.ts';
 import { Triage } from '../packages/hub/src/triage.ts';
@@ -254,6 +255,68 @@ function learned(ms: Moment[], opens: Open[], snaps: Snap[], id: string, o: Sett
   return models;
 }
 
+// ------------------------------------------------------------------ exploring
+
+/**
+ * What exploring costs (rank.ts drawZ): the learned order sorted by a Thompson sample, over `seeds` draws, against
+ * its mean. Per open, the reciprocal rank averaged over the seeds minus the mean order's, with a 95% interval from
+ * resampling the opens; and how often a row the sample lifted 10 points or more came into the first ten.
+ */
+function explore(models: Record<number, RankModel>, opens: Open[], snaps: Snap[], scale: number, val: Open[], hold: Open[], later: Open[], seeds = 20): string[] {
+  const rr = new Map<Open, { mean: number; seeds: number[]; lifted: number[] }>();
+  const spreads: number[] = [];
+  opens.forEach((o, i) => {
+    const m = models[o.day];
+    const s = snaps[i];
+    if (!m.cov) return;
+    const parts = s.cands.map((c) => {
+      const p = predict(m, c.x);
+      return { id: c.id, muted: c.muted, lo: logit(p.open), ls: logit(p.send), so: spread(m.cov!.features, m.cov!.open, c.x), ss: spread(m.cov!.features, m.cov!.send, c.x), value: p.value };
+    });
+    for (const c of parts) spreads.push(c.so);
+    const rankOf = (v: (c: (typeof parts)[number]) => number) => {
+      const order = parts.map((c) => ({ c, v: v(c) })).sort((a, b) => Number(a.c.muted) - Number(b.c.muted) || b.v - a.v || (a.c.id < b.c.id ? -1 : 1));
+      return { order, rank: Math.min(...s.targets.map((x) => order.findIndex((e) => e.c.id === x)).filter((r) => r >= 0)) };
+    };
+    const mean = rankOf((c) => c.value);
+    const top10 = new Set(mean.order.slice(0, 10).map((e) => e.c.id));
+    const out = { mean: 1 / (mean.rank + 1), seeds: [] as number[], lifted: [] as number[] };
+    for (let k = 1; k <= seeds; k++) {
+      const z = new Map(parts.map((c) => [c.id, drawZ(`${c.id}|${epochOf(m, o.t)}|${k}`)]));
+      const sampled = (c: (typeof parts)[number]) => {
+        const zz = z.get(c.id)!;
+        return sigmoid(c.lo + scale * c.so * zz.open) * (1 + SEND_VALUE * sigmoid(c.ls + scale * c.ss * zz.send));
+      };
+      const r = rankOf(sampled);
+      out.seeds.push(1 / (r.rank + 1));
+      out.lifted.push(r.order.slice(0, 10).filter((e) => !top10.has(e.c.id) && pointsOf(e.v) - pointsOf(e.c.value) >= 10).length);
+    }
+    rr.set(o, out);
+  });
+  const line = (what: string, os: Open[]) => {
+    const xs = os.filter((o) => rr.has(o)).map((o) => rr.get(o)!);
+    if (!xs.length) return `- ${what}: no opens with a fitted model`;
+    const mean = (a: number[]) => a.reduce((s, x) => s + x, 0) / (a.length || 1);
+    const d = xs.map((x) => mean(x.seeds) - x.mean);
+    const perSeed = Array.from({ length: seeds }, (_, k) => mean(xs.map((x) => x.seeds[k])));
+    let seed = 11;
+    const rand = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+    const draws = Array.from({ length: 4000 }, () => mean(d.map(() => d[Math.floor(rand() * d.length)]))).sort((a, b) => a - b);
+    const lifted = xs.flatMap((x) => x.lifted);
+    return `- ${what} (n=${xs.length}): the mean order ${fmt(mean(xs.map((x) => x.mean)))}, sampled ${fmt(mean(perSeed))} over ${seeds} seeds (${fmt(Math.min(...perSeed))} to ${fmt(Math.max(...perSeed))}); difference ${fmt(mean(d))}, 95% interval ${fmt(draws[100])} to ${fmt(draws[3900])}; a row lifted 10 points or more came into the first ten at ${fmt(lifted.filter((n) => n > 0).length / lifted.length)} of opens (${fmt(mean(lifted))} rows on average)`;
+  };
+  const q = (p: number) => [...spreads].sort((a, b) => a - b)[Math.floor(p * (spreads.length - 1))] ?? 0;
+  return [
+    `Exploring: the learned order sorted by a Thompson sample (scale ${scale}, draws clipped to ±2), MRR against its mean:`,
+    '',
+    line('choosing days', val),
+    line('held-out days', hold),
+    line('every day after the first', later),
+    `- the open chance's spread in log-odds over every candidate: median ${fmt(q(0.5))}, 90th percentile ${fmt(q(0.9))}, 99th ${fmt(q(0.99))}, largest ${fmt(q(1))}`,
+    '',
+  ];
+}
+
 // ------------------------------------------------------------------ the report
 
 /** How far down the inbox's list was on screen in the stays that say (`visit.depth`, recorded since 2026-11-10). */
@@ -318,7 +381,7 @@ if (import.meta.main) {
   const gridIds: string[] = [];
   const fitted: Record<string, Record<number, RankModel>> = { learned: models };
   const tryIt = (id: string, what: string, o: Setting, ms = moments) => {
-    fitted[id] = learned(ms, opens, snaps, id, { ...shipped, ...o });
+    fitted[id] = learned(ms, opens, snaps, id, { ...shipped, cov: false, ...o });
     policies.push({ id, what, order: () => [] });
     gridIds.push(id);
   };
@@ -348,6 +411,7 @@ if (import.meta.main) {
   const hold = opens.filter((o) => holdout.has(o.day));
   const fromInbox = (o: Open) => o.source === 'inbox';
   const later = opens.filter((o) => o.day > days[0]);
+  const exploring = flag('explore') ? explore(models, opens, snaps, Number(opt('explore-scale', String(EXPLORE_SCALE))), val, hold, later) : [];
   const gridGaps = gridIds.length
     ? [
         'Each setting minus the learned order as shipped, MRR on the same opens (choosing days; held-out days; every day after the first; held out, opened from elsewhere):',
@@ -388,6 +452,7 @@ if (import.meta.main) {
     gapLine('wrote', later.filter((o) => o.sent)),
     '',
     ...gridGaps,
+    ...exploring,
     'Sectioned minus the learned order (what hard sections cost), MRR on the same opens:',
     '',
     gapLine('choosing days', val, 'sectioned', 'learned'),

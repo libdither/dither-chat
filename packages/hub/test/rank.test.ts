@@ -9,8 +9,40 @@ import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { ActivityStore } from '../src/activity.ts';
 import { Attention, freshState, scoreConversation, VOTE_HALF_LIFE, voteDirection, votesAt, type ScoreInput } from '../src/attention.ts';
-import { bucketOf, curveFit, decreasing, EXAM_AT, EXAM_FLOOR, examination, FEATURES, fitLogistic, fitRank, GUESSED_CURVE, LAMBDA, logit, MAX_IPW, openWeight, predict, PRIOR, rankFeatures, TRIAGE_FEATURES, type FitRow, type Moment, type RankRow } from '../src/rank.ts';
-import { InboxRanker } from '../src/ranker.ts';
+import { EXPLORE_REASON } from '@dither-chat/protocol';
+import {
+  bucketOf,
+  curveFit,
+  decreasing,
+  drain,
+  drawZ,
+  epochOf,
+  EXAM_AT,
+  EXAM_FLOOR,
+  examination,
+  EXPLORE_EPOCH,
+  FEATURES,
+  fitLogistic,
+  fitRank,
+  GUESSED_CURVE,
+  invertSPD,
+  LAMBDA,
+  logit,
+  MAX_IPW,
+  openWeight,
+  posteriorSteps,
+  predict,
+  PRIOR,
+  rankFeatures,
+  spread,
+  TRIAGE_FEATURES,
+  Z_CLIP,
+  type FitRow,
+  type Moment,
+  type RankModel,
+  type RankRow,
+} from '../src/rank.ts';
+import { exploreOn, InboxRanker } from '../src/ranker.ts';
 import { KEEP_RECENT, KEEP_SAMPLE, positions, sample, seenAt, type Conv, type Seen, type World } from '../src/rankhistory.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
@@ -224,6 +256,76 @@ describe('what triage knows, as features', () => {
   });
 });
 
+describe('exploring: a Thompson sample of the model', () => {
+  test('the inverse of a symmetric positive-definite matrix', () => {
+    const A = [
+      [4, 1, 0.5],
+      [1, 3, 0.2],
+      [0.5, 0.2, 2],
+    ];
+    const inv = invertSPD(A);
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) expect(A[i].reduce((s, a, k) => s + a * inv[k][j], 0)).toBeCloseTo(i === j ? 1 : 0, 9);
+  });
+
+  test('more rows, less doubt; a pinned feature has none', () => {
+    const rows = (n: number): RankRow[] => Array.from({ length: n }, (_, i) => ({ x: feats({ shape: i % 2 ? 'direct' : 'group' }), y: i % 3 ? 0 : 1, w: 1 }));
+    const few = drain(posteriorSteps(rows(20), PRIOR.open));
+    const many = drain(posteriorSteps(rows(2000), PRIOR.open));
+    const free = FEATURES.filter((f) => LAMBDA[f] !== Infinity);
+    expect(free.some((f) => (TRIAGE_FEATURES as readonly string[]).includes(f))).toBe(false);
+    const x = feats({ shape: 'direct' });
+    expect(spread(free, many, x)).toBeLessThan(spread(free, few, x) / 2);
+    // With nothing to go on, only the pull to the prior: sd 1/sqrt(λ) on a lone feature.
+    const none = drain(posteriorSteps([], PRIOR.open));
+    expect(Math.sqrt(none[free.indexOf('direct')][free.indexOf('direct')])).toBeCloseTo(1 / Math.sqrt(30), 4);
+  });
+
+  test('a fit knows how sure it is, widened by how often each open was counted', () => {
+    const x = feats();
+    // One open, a row of each of three moments.
+    const moments: Moment[] = [0, 1, 2].map((i) => ({ at: T0 + i * MIN, rows: [{ x, weight: 1, open: { source: 'notification', rank: null, after: MIN }, chosen: i === 2, sent: false }, { x, weight: 1, open: null, chosen: false }] }));
+    const m = fitRank(moments, T0);
+    expect(m.cov!.features).toEqual(FEATURES.filter((f) => LAMBDA[f] !== Infinity));
+    expect(m.cov!.repeat).toBe(1);
+    expect(fitRank(moments, T0, { cov: false }).cov).toBeUndefined();
+  });
+
+  test('the same draw for a conversation until the epoch turns; standard normal, clipped', () => {
+    expect(drawZ('c1|e1')).toEqual(drawZ('c1|e1'));
+    expect(drawZ('c1|e1')).not.toEqual(drawZ('c1|e2'));
+    const zs = Array.from({ length: 4000 }, (_, i) => drawZ(`c${i}|e`).open);
+    const mean = zs.reduce((a, z) => a + z, 0) / zs.length;
+    const sd = Math.sqrt(zs.reduce((a, z) => a + (z - mean) ** 2, 0) / zs.length);
+    expect(Math.abs(mean)).toBeLessThan(0.06);
+    expect(sd).toBeGreaterThan(0.9);
+    expect(sd).toBeLessThan(1.02);
+    expect(Math.max(...zs.map(Math.abs))).toBeLessThanOrEqual(Z_CLIP);
+    const m = { fitAt: T0 };
+    expect(epochOf(m, T0 + MIN)).toBe(epochOf(m, T0 + 2 * MIN));
+    expect(epochOf(m, T0)).not.toBe(epochOf(m, T0 + EXPLORE_EPOCH));
+    expect(epochOf(m, T0)).not.toBe(epochOf({ fitAt: T0 + 1 }, T0));
+  });
+
+  test('a sample moves each logit by its spread times its draw; without doubt, the mean', () => {
+    const x = feats({ unread: 2 });
+    const free = FEATURES.filter((f) => LAMBDA[f] !== Infinity);
+    const cov = { features: free, open: free.map((_, i) => free.map((_, j) => (i === j ? 0.04 : 0))), send: free.map((_, i) => free.map((_, j) => (i === j ? 0.04 : 0))) };
+    const m: RankModel = { ...PRIOR, cov };
+    const mean = predict(m, x);
+    expect(predict(m, x, { open: 0, send: 0 })).toEqual(mean);
+    expect(predict(PRIOR, x, { open: 2, send: 2 })).toEqual(predict(PRIOR, x));
+    const up = predict(m, x, { open: 1, send: 0 });
+    expect(logit(up.open) - logit(mean.open)).toBeCloseTo(spread(free, cov.open, x), 6);
+    expect(predict(m, x, { open: 1, send: 0 }, 0)).toEqual(mean);
+  });
+
+  test('DITHER_INBOX_EXPLORE: on unless 0', () => {
+    expect(exploreOn(undefined)).toBe(true);
+    expect(exploreOn('1')).toBe(true);
+    expect(exploreOn('0')).toBe(false);
+  });
+});
+
 describe('the horizon', () => {
   test('an open later than the horizon counts as not opened, so moments built wide can try shorter ones', () => {
     const fresh = feats({ lastMessageAt: T0 - 5 * MIN });
@@ -311,7 +413,7 @@ describe('the hub learns from your opens', () => {
   test('it refits from the log, a little at a time, and the place you keep opening moves up', async () => {
     let now = NOW;
     const triage = new Triage(store);
-    const r = new InboxRanker(store, triage, 'model', join(dir, 'hub.sqlite'), () => now);
+    const r = new InboxRanker(store, triage, 'model', join(dir, 'hub.sqlite'), () => now, false);
     const att = new Attention(store, triage, () => now);
     att.judge = r;
     // The next day, an hour after "climb" spoke, as on every other day.
@@ -335,6 +437,52 @@ describe('the hub learns from your opens', () => {
     expect((att.explain(cid('climb'))!.learned as any).open).toBeGreaterThan((before.learned as any).open);
     // Saved: a new ranker starts from what was learned.
     expect(new InboxRanker(store, triage, 'model', undefined, () => now).model).toEqual(m);
+  });
+
+  test('exploring sorts by a sample that holds still within an epoch; off, by the mean; a big lift says why', () => {
+    const triage = new Triage(store);
+    const saved = new InboxRanker(store, triage, 'model', undefined, () => NOW).model;
+    expect(saved.cov).toBeTruthy();
+    const att = new Attention(store, triage, () => NOW);
+    const r = new InboxRanker(store, triage, 'model', undefined, () => NOW);
+    att.judge = r;
+    att.rescoreAll(NOW);
+    const ids = ['climb', 'work', 'news', 'band', 'film'].map(cid);
+    const once = ids.map((id) => att.view(id)!.score);
+    att.rescoreAll(NOW + MIN);
+    // A minute later, the same draws: only what the features did moves a row.
+    ids.forEach((id, i) => expect(Math.abs(att.view(id)!.score - once[i])).toBeLessThan(2));
+    for (const id of ids) {
+      const e = att.explain(id)!.learned as any;
+      expect(e.explore).toBe(true);
+      expect(att.view(id)!.score).toBe(e.sampled);
+    }
+    // Off: exactly the mean.
+    const off = new Attention(store, triage, () => NOW);
+    off.judge = new InboxRanker(store, triage, 'model', undefined, () => NOW, false);
+    off.rescoreAll(NOW);
+    for (const id of ids) expect(off.view(id)!.score).toBe((off.explain(id)!.learned as any).points);
+    expect(r.view().explore).toMatchObject({ on: true, sampling: true, epochMinutes: 30, zClip: Z_CLIP });
+    // A model saved before the curve and the covariance: due at once, so the first check after start fits them.
+    const soon = new InboxRanker(store, triage, 'model', undefined, () => saved.fitAt! + MIN);
+    expect(soon.due()).toBe(false);
+    soon.model = { ...saved, cov: undefined };
+    expect(soon.due()).toBe(true);
+    soon.model = { ...saved, curve: undefined };
+    expect(soon.due()).toBe(true);
+    // Much doubt about a row: a draw lifts it, and its why says so, first.
+    const doubt = new InboxRanker(store, triage, 'model', undefined, () => NOW);
+    const free = saved.cov!.features;
+    doubt.model = { ...saved, cov: { ...saved.cov!, open: free.map((_, i) => free.map((_, j) => (i === j ? 4 : 0))) } };
+    const lifted = new Attention(store, triage, () => NOW);
+    lifted.judge = doubt;
+    lifted.rescoreAll(NOW);
+    const views = ids.map((id) => lifted.view(id)!).filter((v) => v.reasons[0] === EXPLORE_REASON);
+    for (let k = 0; !views.length && k < 48; k++) {
+      lifted.rescoreAll(NOW + k * EXPLORE_EPOCH);
+      views.push(...ids.map((id) => lifted.view(id)!).filter((v) => v.reasons[0] === EXPLORE_REASON));
+    }
+    expect(views.length).toBeGreaterThan(0);
   });
 
   test('shadow works it out and shows it, but the inbox keeps the formula; off does neither', () => {
