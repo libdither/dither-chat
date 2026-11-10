@@ -3,7 +3,7 @@
  *
  * The test drives it over a Unix socket ($FAKE_WA_SOCK): every command the adapter sends is copied
  * there as {cmd}, and the test can send {emit: event}, {result: {op, value}} (the answer to an op),
- * {error: {op, message}} or {exit: code}.
+ * {error: {op, message}} or {exit: code}. A message with an ack number is answered {ack} once it has taken effect.
  *
  * Built-in behaviour: prints ready; `connect` prints connected when $FAKE_WA_LOGGED_IN=1, else a QR
  * code; `send` answers with a fresh id; `download` writes a file.
@@ -43,6 +43,7 @@ await Bun.connect({
         if (msg.result) results[msg.result.op] = msg.result.value;
         if (msg.error) errors[msg.error.op] = msg.error.message;
         if (msg.exit !== undefined) process.exit(msg.exit);
+        if (msg.ack) toCtl({ ack: msg.ack });
       }
     },
   },

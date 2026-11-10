@@ -10,7 +10,7 @@
     "hub": "bun packages/hub/src/main.ts",
     "web:dev": "cd packages/web && bunx --bun vite",
     "web:build": "cd packages/web && bunx --bun vite build",
-    "typecheck": "bunx tsc -p packages/hub --noEmit && bunx tsc -p packages/web --noEmit && bunx tsc -p packages/adapter-discord --noEmit && bunx tsc -p packages/adapter-matrix --noEmit && bunx tsc -p packages/adapter-signal --noEmit && bunx tsc -p packages/adapter-whatsapp --noEmit && bunx tsc -p packages/desk --noEmit && bunx tsc -p scripts --noEmit",
+    "typecheck": "bun scripts/typecheck.ts",
     "test": "bun scripts/test-all.ts",
     "accounts:check": "bun scripts/accounts-sync.ts --check"
   },

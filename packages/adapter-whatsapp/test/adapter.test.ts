@@ -43,6 +43,8 @@ async function harness(o: { loggedIn?: boolean; opts?: Partial<AdapterOptions> }
   const dir = mkdtempSync(join(tmpdir(), 'wa-adapter-'));
   const sock = join(dir, 'ctl.sock');
   const cmds: any[] = [];
+  const acks = new Set<number>();
+  let sent = 0;
   let conns: any[] = [];
   const server = Bun.listen({
     unix: sock,
@@ -58,6 +60,7 @@ async function harness(o: { loggedIn?: boolean; opts?: Partial<AdapterOptions> }
           const msg = JSON.parse((s as any).buf.slice(0, nl));
           (s as any).buf = (s as any).buf.slice(nl + 1);
           if (msg.cmd) cmds.push(msg.cmd);
+          if (msg.ack) acks.add(msg.ack);
         }
       },
       close(s) {
@@ -81,9 +84,14 @@ async function harness(o: { loggedIn?: boolean; opts?: Partial<AdapterOptions> }
       await Bun.sleep(10);
     }
   };
-  const ctl = async (msg: unknown) => {
+  // Waits until the bridge has taken the message (or is gone: an event can make the adapter stop it): it reads the
+  // socket and the adapter's calls apart, so an answer set here could otherwise come after the call it was meant for.
+  const ctl = async (msg: Record<string, unknown>) => {
     await waitFor(() => conns.length > 0);
-    conns[conns.length - 1].write(JSON.stringify(msg) + '\n');
+    const conn = conns[conns.length - 1];
+    const ack = msg.exit === undefined ? ++sent : 0;
+    conn.write(JSON.stringify(ack ? { ...msg, ack } : msg) + '\n');
+    if (ack) await waitFor(() => acks.has(ack) || !conns.includes(conn));
   };
   const h = {
     adapter,
