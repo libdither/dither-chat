@@ -47,6 +47,7 @@ Why not something else:
 | `RTCRtpScriptTransform` | No in WebView 124 (it reached Chromium later). `voice/discord.ts` already falls back to the encoded-streams path |
 | Module worker from a `data:` URL, with top-level await | Yes |
 | `AudioContext` | Yes, starts `running` (`mediaPlaybackRequiresUserGesture` is off) |
+| Camera: `getUserMedia` video, `torch`, `facingMode` per camera, `MediaRecorder` | Yes on the Android 15 emulator's WebView (2026-11-10). `MediaRecorder` records WebM there, not MP4 |
 
 ### Calls with the screen off
 
