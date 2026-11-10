@@ -107,18 +107,19 @@ the rest, as at full size (474 against 354 message renders at 1×, not at 4×, w
 message renders for the six first opens, 13 against 9 inbox list renders, 36 against 19 layouts, and the reopens
 too. It is not that the hub's first answers are slow. A warm-up that hurried (100 ms without a render before each
 step, not 500) drew 308 itself on a fresh hub, and left the excess to the run after it: 436 message renders and 13
-inbox list renders. A conversation open for less than 300 ms is never marked read, and the first run at the real pace
-marks the six read: marking them read through the API after the hurried warm-up took away the first opens' excess,
-though not the reopens' (368 against 308). So the warm-up has to be a whole run at the real pace: it leaves the hub
+inbox list renders. The timeline marks a conversation read once it has drawn nothing for 300 ms, so one left sooner
+stays unread, and the first run at the real pace is the one that marks the six read: marking them read through the
+API after the hurried warm-up took away the first opens' excess, though not the reopens' (368 against 308). So the warm-up has to be a whole run at the real pace: it leaves the hub
 as the runs after it find it.
 
-Why one run after it is enough (2026-11-10, RUNS_N runs of `--ci` on GitHub's runners): every gated number stayed within
-its baseline in every run, and RUNS_SAME of the 30 came out the same as the baseline every time. The seven that moved
-moved as much when CI took three runs and their median: App renders on a cold load 2 or 3; layouts on a cold load 8 or
-9, on the six first opens 15 to 18 and on the six after a relaunch 17 or 18, all within the two a tally may go over;
-`long.reopen.nodes` 8214 (the first run's, above); and the bootstrap's bytes, by an arriving message or so
-(`hub.bootstrap.bytes`, taken after the warm-up now, 539,634 against 539,665; `cold.bootstrapBytes` 539,733 against
-539,932).
+Why one run after it is enough (2026-11-10, 12 runs of `--ci` on GitHub's runners): every gated number stayed within
+its baseline in every run, and 23 of the 30 came out the same as the baseline every time. The seven that moved moved
+about as much when CI took three runs and their median (five runs of main, in brackets): App renders on a cold load 2
+or 3 (2 or 3); layouts on a cold load 8 or 9 (9 or 10), on the six first opens 15 to 19 (15 to 18) and on the six
+after a relaunch 16 to 18 (17 or 18), all within the two a tally may go over, the first opens' the closest, 19 against
+the 21 that fails; `long.reopen.nodes` 8214, the first run's (above); and the bootstrap's bytes, by an arriving message
+or so (`hub.bootstrap.bytes`, taken after the warm-up now, 539,634 against 539,665; `cold.bootstrapBytes` 539,733
+against 539,932).
 
 ## Baselines and when to update them
 

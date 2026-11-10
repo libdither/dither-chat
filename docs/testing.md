@@ -20,10 +20,12 @@
 - A pull request that only changes docs (any `*.md`, anything under `docs/`) or the Android app (`apps/android/`)
   skips everything but `changes` and `check`. Anything else, or a diff that can't be read, runs everything. A push to
   main and a manual run (Actions > CI > Run workflow) always run everything.
+- `perf`, the longest job, does not wait for `changes`: it starts at once, runs the same script itself, and skips its
+  steps when `changes` would skip it, so on such a pull request it passes rather than reads as skipped.
 - A new push to a pull request cancels its older run. Runs on main never cancel each other.
 - The Android app has its own workflow (android.yml), which runs only when apps/android changes.
 - The run takes as long as its slowest job, and every job sets up in a few seconds, so a long step gets a job of its
-  own rather than waiting behind another: `perf` (about 45 s of browser runs), `test-hub-mail` (one file of 20 to
+  own rather than waiting behind another: `perf` (about 50 s of browser runs), `test-hub-mail` (one file of 20 to
   30 s) and `test-hub` (the other 69 files) run side by side. A code pull request's run took about 70 s on 2026-11-10,
   against 140 s with verify-perf inside `boot`.
 
