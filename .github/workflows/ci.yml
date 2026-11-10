@@ -1,6 +1,9 @@
-# Typecheck and tests for every package on each push and pull request. Everything runs against fakes (a fake
-# signal-cli, a fake WhatsApp bridge, a replica of Discord's client, in-memory hubs), so no network binaries are needed.
-# The remote-account tests (hub test/remote.test.ts) need a dither-accounts checkout beside this one and skip here.
+# Typecheck, tests and the web build on each push and pull request, as parallel jobs behind the one required check,
+# `check`. Everything runs against fakes (a fake signal-cli, a fake WhatsApp bridge, a replica of Discord's client,
+# in-memory hubs), so no network binaries are needed. The remote-account tests (hub test/remote.test.ts) need a
+# dither-accounts checkout beside this one and skip here.
+# A pull request that only changes docs (*.md, docs/) or the Android app skips the work (scripts/ci-changes.ts); a push
+# to main and a manual run always run everything. The same locally: bun run typecheck, bun run test, bun run web:build.
 name: CI
 
 on:
@@ -12,10 +15,33 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels its older run; runs on main never cancel each other.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  check:
+  changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.changes.outputs.code }}
+    steps:
+      # A pull request checks out its merge commit; the parent is enough to see what it changes.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - id: changes
+        run: bun scripts/ci-changes.ts --github
+
+  typecheck:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,4 +52,61 @@ jobs:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
-      - run: bun run test
+
+  # The hub's suite is the longest; its files run on --parallel workers (scripts/test-all.ts).
+  test-hub:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun scripts/test-all.ts hub
+
+  test-packages:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun scripts/test-all.ts --except hub
+
+  web:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun run web:build
+
+  # Branch protection requires this job by name. It passes only when every job passed, or was skipped because
+  # `changes` said the pull request does not need it. It runs on failure and cancellation too, so it never reads as
+  # skipped (which GitHub would count as passed).
+  check:
+    needs: [changes, typecheck, test-hub, test-packages, web]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS"
+          code=$(jq -r '.changes.outputs.code // ""' <<<"$NEEDS")
+          bad=$(jq -r --arg code "$code" 'to_entries[] | select(.value.result != "success" and (.key == "changes" or .value.result != "skipped" or $code != "false")) | .key' <<<"$NEEDS")
+          if [ -n "$bad" ]; then echo "not passed: $(echo $bad)"; exit 1; fi
+          echo "code=$code: all passed"
