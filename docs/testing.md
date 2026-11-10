@@ -11,6 +11,7 @@
 | `test-hub` | the hub's tests, its files on 4 workers (`bun test --parallel=4`) | `bun scripts/test-all.ts hub` |
 | `test-packages` | every other package's tests, all at once | `bun scripts/test-all.ts --except hub` |
 | `web` | the web app's vite build | `bun run web:build` |
+| `boot` | the built web app in Chrome against a demo hub (scripts/check-boot.ts) | `bun run check:boot` |
 | `check` | passes only when each job above passed, or was skipped because `changes` said so | |
 
 - `check` is the one check branch protection requires, and what auto-merge waits on. A new job goes into its `needs`.
@@ -23,3 +24,15 @@
 `bun run test` runs every package at once, the hub on 4 workers, and prints each package's output whole when it
 finishes. Flags after `--` go to each package's `bun test`, e.g. `bun scripts/test-all.ts hub -- -t "gap fill"` or
 `-- --parallel=8`. The hub in one process, as before: `cd packages/hub && bun test`.
+
+## Startup
+
+- `boot` builds the web app, starts a demo hub on a fresh data dir, and loads it in headless Chrome at a desktop's and
+  then a phone's size: the inbox list, a conversation, Settings. Any uncaught page error, `console.error`, failed
+  request (unless `EXPECTED` in the script lists it with its reason) or a service worker that does not register fails
+  it. The browser is the first of `chromium`, `chromium-browser`, `google-chrome`, `google-chrome-stable` on PATH, or
+  `$DITHER_CHROMIUM` (scripts/browser.ts).
+- The hub's tests start the hub on databases older hubs left (`packages/hub/test/old-database.test.ts`): it must copy
+  the database aside, migrate, log `startup: ready` and read back what the old hub stored. `bun scripts/old-db-fixture.ts
+  <commit> <name>` adds a fixture from another commit's demo hub (demo data only; it checks), for a migration that
+  should be tried from a new schema era. docs/deploy.md has the startup line.
