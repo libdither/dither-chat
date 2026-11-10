@@ -23,3 +23,5 @@
 `bun run test` runs every package at once, the hub on 4 workers, and prints each package's output whole when it
 finishes. Flags after `--` go to each package's `bun test`, e.g. `bun scripts/test-all.ts hub -- -t "gap fill"` or
 `-- --parallel=8`. The hub in one process, as before: `cd packages/hub && bun test`.
+
+(probe: a docs-only change, to see CI skip the work; this pull request is closed unmerged)
