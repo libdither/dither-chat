@@ -143,7 +143,7 @@ describe('the table', () => {
 
 describe('the API', () => {
   const dir = mkdtempSync(join(tmpdir(), 'dither-usage-api-'));
-  const port = 19460 + Math.floor(Math.random() * 500);
+  let port = 0;
   let server: HubServer;
   let store: Store;
   const url = (p: string) => `http://127.0.0.1:${port}${p}`;
@@ -152,8 +152,8 @@ describe('the API', () => {
   beforeAll(() => {
     store = new Store(join(dir, 'hub.sqlite'), mediaSigner('s'));
     const sup = { authorize: () => null, online: () => false } as any;
-    server = new HubServer(store, sup, new Triage(store), { port, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
-    server.start();
+    server = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    port = server.start().port!;
   });
   afterAll(() => {
     server.stop();

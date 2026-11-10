@@ -23,7 +23,10 @@ const T0 = Date.UTC(2026, 4, 1);
 
 function world(name: string) {
   const store = new Store(join(dir, `${name}.sqlite`), mediaSigner('s'));
-  let acc = store.createAccount({ id: 'acc_dc', network: 'discord', label: 'main', color: '#000', adapter: 'discord' });
+  // No fsync per write: each test here makes a few hundred, which took over 5 s on a busy CI runner's disk, and
+  // nothing here has to outlive the process.
+  store.db.exec('PRAGMA synchronous = OFF');
+  let acc =store.createAccount({ id: 'acc_dc', network: 'discord', label: 'main', color: '#000', adapter: 'discord' });
   store.ingest(acc, { t: 'status', status: 'online', self: { nativeId: ME, isSelf: true } });
   acc = store.account('acc_dc')!;
   return { store, acc };

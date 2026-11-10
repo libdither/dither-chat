@@ -98,8 +98,8 @@ describe('zip reader', () => {
 });
 
 describe('import sources over HTTP', () => {
-  const port = 19460 + Math.floor(Math.random() * 1000);
-  const base = `http://127.0.0.1:${port}`;
+  let port = 0;
+  let base = '';
   let server: HubServer;
   let store: Store;
   const hubDir = join(dir, 'hub');
@@ -109,8 +109,9 @@ describe('import sources over HTTP', () => {
     store = new Store(join(hubDir, 'hub.sqlite'), mediaSigner('s'));
     store.createAccount({ id: 'acc_sig', network: 'signal', label: 'test', color: '#000', adapter: 'signal', token: 't' } as any);
     const sup = { authorize: () => null, online: () => false } as any;
-    server = new HubServer(store, sup, new Triage(store), { port, hostname: '127.0.0.1', dataDir: hubDir, webDist: hubDir, secret: 's' });
-    server.start();
+    server = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: hubDir, webDist: hubDir, secret: 's' });
+    port = server.start().port!;
+    base = `http://127.0.0.1:${port}`;
   });
   afterAll(() => {
     server.stop();

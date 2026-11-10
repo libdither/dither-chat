@@ -64,6 +64,22 @@ again too. So:
 - **A skip says why.** `test.skip` or `describe.skip` needs `// quarantine: <reason or issue>` on its line or the line
   above. A test that needs something a machine may not have uses `skipIf(!have)`.
 
+### Ports
+
+CI runs the hub's test files four at a time, and the stress run 15 times over. A port picked at random from a range
+two files share (`19460 + random * 500`) is sooner or later picked by both ("Is port 19602 in use?"). So a server a
+test starts listens on port 0 and the test reads the port it got:
+
+```ts
+hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+port = hub.start().port!;
+```
+
+The same for `Bun.serve`, `Bun.listen` and a dither-accounts manager (`createManager({ port: 0 })`), and for the hub's
+plain listener beside TLS (`plainPort: 0`, then `hub.plain.port`). Something told its port before it listens (a hub
+run from main.ts, Dovecot) gets one the OS picked: `freePorts(n)` in packages/hub/test/fixtures/port.ts. A port
+nothing listens on, for a test of what happens then, is port 1.
+
 ### Code that works in slices
 
 Some hub code works for a few milliseconds at a time and leaves the rest for the next call: the inbox's `sync` and
@@ -92,7 +108,10 @@ kill %1 %2 %3 %4                                                       # or let 
   what an earlier run left there. The demo world kept the groups that about.test.ts renamed until a new world began
   resetting them.
 - A `beforeAll` that times out under load is often many small writes, each its own transaction and its own fsync.
-  On a busy disk one fsync can take tens of milliseconds; one transaction around the setup makes it one.
+  On a busy disk one fsync can take tens of milliseconds; one transaction around the setup makes it one. When the
+  writes are the code under test, one at a time (the media archiver's, in gapfill.test.ts), `PRAGMA synchronous = OFF`
+  on the test's database drops their fsyncs: nothing in a test has to outlive the process. `strace -f -c -e
+  trace=fsync bun test <file>` counts them.
 
 ### The hygiene check
 
@@ -102,6 +121,9 @@ package's tests (`*.test.ts`, `*.test.tsx` and everything under a `test/` direct
 - a `.only`, under any name test, it or describe is imported as;
 - a retry: `retry:` in a test, `retry` in a bunfig.toml, `--retry` in a package.json, a workflow or a script;
 - a `.skip` without its `// quarantine:` note;
+- a port picked with `Math.random()`, or written as a number of 1024 and up: a port-named key or variable set to one
+  (`port: 18460`, `const IMAP_PORT = 18580`), `.listen(8080)`, `'--port', '8494'` ("Ports" above). One that has to
+  be fixed says why with `// fixed-port: <reason>` on its line or the line above;
 - more real-time waits or clock reads in a file than scripts/test-waits.json allows.
 
 The ratchet counts four things per file: `Bun.sleep(…)` (not `Bun.sleep(0)`, which only yields), `setTimeout` used

@@ -12,7 +12,9 @@ import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'dither-srv-'));
-const port = 18460 + Math.floor(Math.random() * 1000);
+let port = 0;
+/** The plain HTTP side listener beside TLS. */
+let plain = 0;
 let server: HubServer;
 let store: Store;
 
@@ -21,15 +23,16 @@ beforeAll(() => {
   store = new Store(join(dir, 'hub.sqlite'), mediaSigner('s'));
   const sup = { authorize: () => null, online: () => false } as any;
   server = new HubServer(store, sup, new Triage(store), {
-    port,
-    plainPort: port + 1,
+    port: 0,
+    plainPort: 0,
     hostname: '127.0.0.1',
     dataDir: dir,
     webDist: dir,
     secret: 's',
     tls: { cert: join(dir, 'tls/server.crt'), key: join(dir, 'tls/server.key'), ca: join(dir, 'tls/ca.crt') },
   });
-  server.start();
+  port = server.start().port!;
+  plain = server.plain!.port!;
 });
 
 afterAll(() => {
@@ -59,17 +62,17 @@ test('key files are private', async () => {
 });
 
 test('the plain listener serves the CA and sends everything else to HTTPS', async () => {
-  const crt = await fetch(`http://127.0.0.1:${port + 1}/ca.crt`);
+  const crt = await fetch(`http://127.0.0.1:${plain}/ca.crt`);
   expect(await crt.text()).toBe(await ca());
-  const page = await fetch(`http://127.0.0.1:${port + 1}/trust`);
+  const page = await fetch(`http://127.0.0.1:${plain}/trust`);
   expect(await page.text()).toContain('fingerprint');
-  const res = await fetch(`http://127.0.0.1:${port + 1}/api/bootstrap?x=1`, { redirect: 'manual' });
+  const res = await fetch(`http://127.0.0.1:${plain}/api/bootstrap?x=1`, { redirect: 'manual' });
   expect(res.status).toBe(307);
   expect(res.headers.get('location')).toBe(`https://127.0.0.1:${port}/api/bootstrap?x=1`);
 });
 
 test('the adapter socket still works in plaintext from this machine', async () => {
-  const res = await fetch(`http://127.0.0.1:${port + 1}/adapter?account=a&token=t`);
+  const res = await fetch(`http://127.0.0.1:${plain}/adapter?account=a&token=t`);
   expect(res.status).toBe(401); // reached the token check
 });
 
@@ -120,15 +123,15 @@ describe('starting a direct conversation', () => {
   const sent: any[] = [];
   let answer: (c: any) => unknown = () => ({});
   let online = true;
-  const p3 = port + 5;
+  let p3 = 0;
   let hub: HubServer;
   let acc: AccountRow;
   let bare: AccountRow;
   const open = (body: unknown, headers: Record<string, string> = {}) => fetch(`http://127.0.0.1:${p3}/api/directs`, { method: 'POST', body: JSON.stringify(body), headers });
   beforeAll(() => {
     const sup = { authorize: () => null, online: () => online, command: async (id: string, c: any) => (sent.push([id, c]), answer(c)) } as any;
-    hub = new HubServer(store, sup, new Triage(store), { port: p3, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
-    hub.start();
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    p3 = hub.start().port!;
     acc = store.createAccount({ network: 'matrix', label: 'mx', color: '#000', adapter: 'matrix' });
     bare = store.createAccount({ network: 'matrix', label: 'old', color: '#111', adapter: 'matrix' });
     store.ingest(acc, { t: 'hello', network: 'matrix', version: '1', capabilities: ['send', 'openDirect'] });
@@ -174,14 +177,14 @@ describe('starting a direct conversation', () => {
 
 describe('what a reply from outside the composer may do', () => {
   const sent: any[] = [];
-  const p4 = port + 4;
+  let p4 = 0;
   let hub: HubServer;
   let mx: AccountRow;
   const send = (cnv: string, body: unknown, headers: Record<string, string> = {}) => fetch(`http://127.0.0.1:${p4}/api/conversations/${hubId('cnv', 'matrix', cnv)}/send`, { method: 'POST', body: JSON.stringify(body), headers });
   beforeAll(() => {
     const sup = { authorize: () => null, online: () => true, command: async (_: string, c: any) => (sent.push(c), { nativeId: 'x' }) } as any;
-    hub = new HubServer(store, sup, new Triage(store), { port: p4, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
-    hub.start();
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    p4 = hub.start().port!;
     mx = store.createAccount({ network: 'matrix', label: 'mxr', color: '#000', adapter: 'matrix' });
     store.ingest(mx, { t: 'hello', network: 'matrix', version: '1', capabilities: ['send'] });
     store.ingest(mx, { t: 'status', status: 'online', self: { nativeId: '@r:x.org', isSelf: true } });
@@ -231,9 +234,8 @@ describe('what a reply from outside the composer may do', () => {
 test('edit and delete go through the account that wrote it, where the network allows', async () => {
   const sent: any[] = [];
   const sup = { authorize: () => null, online: () => true, command: async (id: string, c: any) => (sent.push([id, c]), undefined) } as any;
-  const p2 = port + 2;
-  const hub = new HubServer(store, sup, new Triage(store), { port: p2, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
-  hub.start();
+  const hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+  const p2 = hub.start().port;
   const a = store.createAccount({ network: 'discord', label: 'mine', color: '#000', adapter: 'discord' });
   const n = store.createAccount({ network: 'signal', label: 'noedit', color: '#111', adapter: 'signal' });
   store.ingest(a, { t: 'status', status: 'online', self: { nativeId: 'me', isSelf: true } });
@@ -270,9 +272,8 @@ test('your own bio: only yours, only where the adapter can, within the network l
       return { bio: c.change.bio, pronouns: 'they/them' };
     },
   } as any;
-  const p6 = port + 6;
-  const hub = new HubServer(store, sup, new Triage(store), { port: p6, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
-  hub.start();
+  const hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+  const p6 = hub.start().port;
   const d = store.createAccount({ network: 'discord', label: 'bio', color: '#000', adapter: 'discord' });
   const w = store.createAccount({ network: 'whatsapp', label: 'wa', color: '#000', adapter: 'whatsapp' });
   const m = store.createAccount({ network: 'matrix', label: 'mx', color: '#000', adapter: 'matrix' });
@@ -317,8 +318,7 @@ test('your own bio: only yours, only where the adapter can, within the network l
 });
 
 describe('sending files', () => {
-  const p3 = port + 3;
-  const url = `http://127.0.0.1:${p3}`;
+  let url = '';
   const sent: any[] = [];
   let hub: HubServer;
   let d: AccountRow;
@@ -337,8 +337,8 @@ describe('sending files', () => {
         return { nativeId: 'x' };
       },
     };
-    hub = new HubServer(store, sup, new Triage(store), { port: p3, hostname: '127.0.0.1', dataDir: join(dir, 'files'), webDist: dir, secret: 's' });
-    hub.start();
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: join(dir, 'files'), webDist: dir, secret: 's' });
+    url = `http://127.0.0.1:${hub.start().port}`;
     d = store.createAccount({ network: 'discord', label: 'files', color: '#000', adapter: 'discord' });
     store.ingest(d, { t: 'hello', network: 'discord', version: '1', capabilities: ['send', 'sendMedia'] });
     store.ingest(d, { t: 'status', status: 'online' });
@@ -445,8 +445,8 @@ describe('sending files', () => {
   test('a restart keeps what was uploaded: the send still goes', async () => {
     const u = await (await up('survives')).json();
     hub.stop();
-    hub = new HubServer(store, sup, new Triage(store), { port: p3, hostname: '127.0.0.1', dataDir: join(dir, 'files'), webDist: dir, secret: 's' });
-    hub.start();
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: join(dir, 'files'), webDist: dir, secret: 's' });
+    url = `http://127.0.0.1:${hub.start().port}`;
     expect((await send(cid('ff'), { body: 'after', attachments: [u.id] })).status).toBe(200);
     expect(sent.at(-1).seen).toEqual(['survives']);
   });

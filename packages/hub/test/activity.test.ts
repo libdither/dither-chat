@@ -334,7 +334,7 @@ describe('the API', () => {
   let store: Store;
   let server: HubServer;
   let a: ActivityStore;
-  const port = 20460 + Math.floor(Math.random() * 500);
+  let port = 0;
   const url = (p: string) => `http://127.0.0.1:${port}${p}`;
   const post = (p: string, body: unknown, method = 'POST') => fetch(url(p), { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
 
@@ -343,8 +343,8 @@ describe('the API', () => {
     store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
     a = new ActivityStore(store);
     const sup = { authorize: () => null, online: () => false } as any;
-    server = new HubServer(store, sup, new Triage(store), { port, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', activity: a });
-    server.start();
+    server = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', activity: a });
+    port = server.start().port!;
   });
   afterAll(() => {
     server.stop();

@@ -6,9 +6,10 @@
  * move made by another mail client, and a relist after a UIDVALIDITY change. Sending (slice 5): a reply through the
  * SMTP sink, threaded, and a message to yourself that comes back through IDLE.
  *
- * Ports 18580-18589 (dither-accounts' own tests use 18550-18569). Needs a dither-accounts checkout beside this repo
- * (or DITHER_ACCOUNTS_REPO) and Dovecot (DOVECOT_BIN, or the store path dither-accounts' tests remember); skipped
- * without them, so a plain `bun test` stays fast. Nothing in the checkout is written.
+ * Dovecot and the SMTP sink are told ports the OS picked (fixtures/port.ts); the manager listens on port 0. Needs a
+ * dither-accounts checkout beside this repo (or DITHER_ACCOUNTS_REPO) and Dovecot (DOVECOT_BIN, or the store path
+ * dither-accounts' tests remember); skipped without them, so a plain `bun test` stays fast. Nothing in the checkout is
+ * written.
  */
 import { afterAll, beforeAll, describe as describeAll, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -20,6 +21,7 @@ import { MailHub } from '../src/mail/index.ts';
 import { mailOps } from '../src/mail/ops.ts';
 import { RoutedSupervisor } from '../src/remote.ts';
 import { Store } from '../src/store.ts';
+import { freePorts } from './fixtures/port.ts';
 
 const ACCOUNTS = process.env.DITHER_ACCOUNTS_REPO ?? resolve(import.meta.dir, '../../../../dither-accounts');
 const IMAP_KIT = join(ACCOUNTS, 'extractors/imap/test/servers.ts');
@@ -39,9 +41,8 @@ const have = existsSync(join(ACCOUNTS, 'packages/manager/src/index.ts')) && exis
 const describe = describeAll.skipIf(!have);
 const REPO = resolve(import.meta.dir, '../../..');
 
-const IMAP_PORT = 18580;
-const SMTP_PORT = 18582;
-const MANAGER_PORT = 18583;
+let IMAP_PORT = 0;
+let SMTP_PORT = 0;
 
 const alice = { email: 'alice@example.test', password: 'alice-mail-pw' };
 
@@ -85,6 +86,7 @@ beforeAll(async () => {
   process.env.DOVECOT_BIN = DOVECOT!;
   process.env.DITHER_ACCOUNTS_CLIENT ??= join(ACCOUNTS, 'packages/client/src/index.ts');
   dir = mkdtempSync(join(tmpdir(), 'dither-mail-remote-'));
+  [IMAP_PORT, SMTP_PORT] = freePorts(2);
   kit = await import(IMAP_KIT);
   dv = new kit.Dovecot({ imapPort: IMAP_PORT, users: [alice] }, join(dir, 'dovecot'));
   await dv.start();
@@ -99,7 +101,7 @@ beforeAll(async () => {
 
   const { createManager } = await import(join(ACCOUNTS, 'packages/manager/src/index.ts'));
   mkdirSync(join(dir, 'manager'), { recursive: true });
-  m = await createManager({ dataDir: join(dir, 'manager'), port: MANAGER_PORT });
+  m = await createManager({ dataDir: join(dir, 'manager'), port: 0 });
 
   store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
   sup = new RoutedSupervisor(store, { hubAdapterUrl: 'ws://127.0.0.1:1/adapter', dataDir: dir, repoRoot: REPO, onFresh: () => {} } as any, { url: m.url, dataDir: dir, repoRoot: REPO, firstListMs: 2000 });
