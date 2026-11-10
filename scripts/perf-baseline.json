@@ -1,8 +1,9 @@
 {
  "note": "bun scripts/verify-perf.ts --update (docs/perf.md). Times are of the machine it ran on.",
- "at": "2026-11-07",
+ "at": "2026-11-10",
  "runs": 3,
  "pages": 15,
+ "scale": 1,
  "chromium": "Chromium 155.0.8059.39",
  "world": {
   "conversations": 5632,
@@ -15,59 +16,59 @@
  },
  "metrics": {
   "hub.bootstrap.bytes": {
-   "v": 4437940,
+   "v": 4460862,
    "kind": "bytes"
   },
   "hub.bootstrap.ms": {
-   "v": 79,
+   "v": 219,
    "kind": "ms"
   },
   "hub.inbox.ms": {
-   "v": 52,
+   "v": 342,
    "kind": "ms"
   },
   "1x.cold.list": {
-   "v": 704,
+   "v": 2725,
    "kind": "ms"
   },
   "1x.cold.fresh": {
-   "v": 266,
+   "v": 1183,
    "kind": "ms"
   },
   "1x.cold.longest": {
-   "v": 267,
+   "v": 639,
    "kind": "ms"
   },
   "1x.cold.longTasks": {
-   "v": 567,
+   "v": 1378,
    "kind": "ms"
   },
   "1x.cold.renders": {
-   "v": 3,
+   "v": 2,
    "kind": "tally"
   },
   "1x.cold.layouts": {
-   "v": 8,
+   "v": 13,
    "kind": "tally"
   },
   "1x.cold.nodes": {
-   "v": 13977,
+   "v": 11219,
    "kind": "count"
   },
   "1x.cold.bootstrapBytes": {
-   "v": 4437661,
+   "v": 4460580,
    "kind": "bytes"
   },
   "1x.open.first": {
-   "v": 150,
+   "v": 309,
    "kind": "ms"
   },
   "1x.open.first.max": {
-   "v": 206,
+   "v": 3550,
    "kind": "ms"
   },
   "1x.open.first.longest": {
-   "v": 75,
+   "v": 404,
    "kind": "ms"
   },
   "1x.open.first.renders": {
@@ -75,7 +76,7 @@
    "kind": "tally"
   },
   "1x.open.first.sidebarRenders": {
-   "v": 14,
+   "v": 10,
    "kind": "tally"
   },
   "1x.open.first.messageRenders": {
@@ -83,19 +84,19 @@
    "kind": "tally"
   },
   "1x.open.first.layouts": {
-   "v": 20,
+   "v": 17,
    "kind": "tally"
   },
   "1x.open.again": {
-   "v": 50,
+   "v": 97,
    "kind": "ms"
   },
   "1x.open.again.max": {
-   "v": 62,
+   "v": 129,
    "kind": "ms"
   },
   "1x.open.again.longest": {
-   "v": 0,
+   "v": 74,
    "kind": "ms"
   },
   "1x.open.again.renders": {
@@ -115,11 +116,11 @@
    "kind": "tally"
   },
   "1x.older.page": {
-   "v": 101,
+   "v": 153,
    "kind": "ms"
   },
   "1x.older.last": {
-   "v": 127,
+   "v": 253,
    "kind": "ms"
   },
   "1x.older.msgs": {
@@ -131,11 +132,11 @@
    "kind": "count"
   },
   "1x.long.reopen": {
-   "v": 98,
+   "v": 128,
    "kind": "ms"
   },
   "1x.long.reopen.longest": {
-   "v": 59,
+   "v": 79,
    "kind": "ms"
   },
   "1x.long.reopen.renders": {
@@ -151,7 +152,7 @@
    "kind": "tally"
   },
   "1x.long.reopen.nodes": {
-   "v": 16395,
+   "v": 17148,
    "kind": "count"
   },
   "1x.long.reopen.msgs": {
@@ -163,11 +164,11 @@
    "kind": "count"
   },
   "1x.arrival.shown": {
-   "v": 61,
+   "v": 137,
    "kind": "ms"
   },
   "1x.arrival.busy": {
-   "v": 33,
+   "v": 122,
    "kind": "ms"
   },
   "1x.arrival.longest": {
@@ -191,15 +192,15 @@
    "kind": "tally"
   },
   "1x.relaunch.list": {
-   "v": 383,
+   "v": 600,
    "kind": "ms"
   },
   "1x.relaunch.fresh": {
-   "v": 398,
+   "v": 606,
    "kind": "ms"
   },
   "1x.relaunch.longest": {
-   "v": 171,
+   "v": 283,
    "kind": "ms"
   },
   "1x.relaunch.renders": {
@@ -207,15 +208,15 @@
    "kind": "tally"
   },
   "1x.relaunch.open": {
-   "v": 76,
+   "v": 178,
    "kind": "ms"
   },
   "1x.relaunch.open.max": {
-   "v": 98,
+   "v": 228,
    "kind": "ms"
   },
   "1x.relaunch.open.longest": {
-   "v": 0,
+   "v": 139,
    "kind": "ms"
   },
   "1x.relaunch.open.renders": {
@@ -223,31 +224,31 @@
    "kind": "tally"
   },
   "1x.relaunch.open.sidebarRenders": {
-   "v": 13,
+   "v": 7,
    "kind": "tally"
   },
   "1x.relaunch.open.messageRenders": {
-   "v": 480,
+   "v": 240,
    "kind": "tally"
   },
   "1x.relaunch.open.layouts": {
-   "v": 27,
+   "v": 17,
    "kind": "tally"
   },
   "4x.cold.list": {
-   "v": 2138,
+   "v": 4433,
    "kind": "ms"
   },
   "4x.cold.fresh": {
-   "v": 641,
+   "v": 940,
    "kind": "ms"
   },
   "4x.cold.longest": {
-   "v": 804,
+   "v": 1792,
    "kind": "ms"
   },
   "4x.cold.longTasks": {
-   "v": 1711,
+   "v": 2311,
    "kind": "ms"
   },
   "4x.cold.renders": {
@@ -255,27 +256,27 @@
    "kind": "tally"
   },
   "4x.cold.layouts": {
-   "v": 9,
+   "v": 11,
    "kind": "tally"
   },
   "4x.cold.nodes": {
-   "v": 13977,
+   "v": 11219,
    "kind": "count"
   },
   "4x.cold.bootstrapBytes": {
-   "v": 4437859,
+   "v": 4460778,
    "kind": "bytes"
   },
   "4x.open.first": {
-   "v": 581,
+   "v": 714,
    "kind": "ms"
   },
   "4x.open.first.max": {
-   "v": 809,
+   "v": 2136,
    "kind": "ms"
   },
   "4x.open.first.longest": {
-   "v": 331,
+   "v": 667,
    "kind": "ms"
   },
   "4x.open.first.renders": {
@@ -283,7 +284,7 @@
    "kind": "tally"
   },
   "4x.open.first.sidebarRenders": {
-   "v": 13,
+   "v": 10,
    "kind": "tally"
   },
   "4x.open.first.messageRenders": {
@@ -291,19 +292,19 @@
    "kind": "tally"
   },
   "4x.open.first.layouts": {
-   "v": 20,
+   "v": 18,
    "kind": "tally"
   },
   "4x.open.again": {
-   "v": 215,
+   "v": 377,
    "kind": "ms"
   },
   "4x.open.again.max": {
-   "v": 242,
+   "v": 539,
    "kind": "ms"
   },
   "4x.open.again.longest": {
-   "v": 147,
+   "v": 342,
    "kind": "ms"
   },
   "4x.open.again.renders": {
@@ -323,11 +324,11 @@
    "kind": "tally"
   },
   "4x.older.page": {
-   "v": 444,
+   "v": 681,
    "kind": "ms"
   },
   "4x.older.last": {
-   "v": 577,
+   "v": 818,
    "kind": "ms"
   },
   "4x.older.msgs": {
@@ -339,11 +340,11 @@
    "kind": "count"
   },
   "4x.long.reopen": {
-   "v": 413,
+   "v": 668,
    "kind": "ms"
   },
   "4x.long.reopen.longest": {
-   "v": 246,
+   "v": 409,
    "kind": "ms"
   },
   "4x.long.reopen.renders": {
@@ -359,7 +360,7 @@
    "kind": "tally"
   },
   "4x.long.reopen.nodes": {
-   "v": 16374,
+   "v": 17127,
    "kind": "count"
   },
   "4x.long.reopen.msgs": {
@@ -371,15 +372,15 @@
    "kind": "count"
   },
   "4x.arrival.shown": {
-   "v": 104,
+   "v": 173,
    "kind": "ms"
   },
   "4x.arrival.busy": {
-   "v": 142,
+   "v": 224,
    "kind": "ms"
   },
   "4x.arrival.longest": {
-   "v": 65,
+   "v": 96,
    "kind": "ms"
   },
   "4x.arrival.renders": {
@@ -399,15 +400,15 @@
    "kind": "tally"
   },
   "4x.relaunch.list": {
-   "v": 1499,
+   "v": 1661,
    "kind": "ms"
   },
   "4x.relaunch.fresh": {
-   "v": 1663,
+   "v": 1747,
    "kind": "ms"
   },
   "4x.relaunch.longest": {
-   "v": 707,
+   "v": 681,
    "kind": "ms"
   },
   "4x.relaunch.renders": {
@@ -415,15 +416,15 @@
    "kind": "tally"
   },
   "4x.relaunch.open": {
-   "v": 302,
+   "v": 497,
    "kind": "ms"
   },
   "4x.relaunch.open.max": {
-   "v": 416,
+   "v": 554,
    "kind": "ms"
   },
   "4x.relaunch.open.longest": {
-   "v": 176,
+   "v": 191,
    "kind": "ms"
   },
   "4x.relaunch.open.renders": {
@@ -431,15 +432,15 @@
    "kind": "tally"
   },
   "4x.relaunch.open.sidebarRenders": {
-   "v": 13,
+   "v": 7,
    "kind": "tally"
   },
   "4x.relaunch.open.messageRenders": {
-   "v": 480,
+   "v": 240,
    "kind": "tally"
   },
   "4x.relaunch.open.layouts": {
-   "v": 21,
+   "v": 18,
    "kind": "tally"
   }
  }

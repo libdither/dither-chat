@@ -11,7 +11,7 @@
 | `test-hub` | the hub's tests, its files on 4 workers (`bun test --parallel=4`) | `bun scripts/test-all.ts hub` |
 | `test-packages` | every other package's tests, all at once | `bun scripts/test-all.ts --except hub` |
 | `web` | the web app's vite build | `bun run web:build` |
-| `boot` | the built web app in Chrome against a demo hub (scripts/check-boot.ts) | `bun run check:boot` |
+| `boot` | the built web app in Chrome against a demo hub (scripts/check-boot.ts), then load and chat switching on a tenth-size world, its counts against a baseline (docs/perf.md) | `bun run check:boot`, `bun scripts/verify-perf.ts --ci` |
 | `check` | passes only when each job above passed, or was skipped because `changes` said so | |
 
 - `check` is the one check branch protection requires, and what auto-merge waits on. A new job goes into its `needs`.
@@ -32,6 +32,9 @@ finishes. Flags after `--` go to each package's `bun test`, e.g. `bun scripts/te
   request (unless `EXPECTED` in the script lists it with its reason) or a service worker that does not register fails
   it. The browser is the first of `chromium`, `chromium-browser`, `google-chrome`, `google-chrome-stable` on PATH, or
   `$DITHER_CHROMIUM` (scripts/browser.ts).
+- Then `verify-perf --ci`: a warm-up and three runs on a tenth-size world, judging renders, layouts, DOM nodes and
+  bytes against `scripts/perf-baseline-ci.json` and printing the times without judging them (docs/perf.md, "In CI").
+  A change that moves a count on purpose updates that baseline with `--ci --update --runs 5` and says why.
 - The hub's tests start the hub on databases older hubs left (`packages/hub/test/old-database.test.ts`): it must copy
   the database aside, migrate, log `startup: ready` and read back what the old hub stored. `bun scripts/old-db-fixture.ts
   <commit> <name>` adds a fixture from another commit's demo hub (demo data only; it checks), for a migration that

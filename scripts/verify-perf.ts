@@ -3,7 +3,7 @@
  *
  *   bun scripts/verify-perf.ts [--port 8620] [--runs 3] [--cpu 1,4] [--pages 15] [--web <built dist>]
  *                              [--update] [--out results.json] [--baseline scripts/perf-baseline.json] [--css <css>]
- *                              [--work <empty dir>] [--keep] [--size 390x844]
+ *                              [--work <empty dir>] [--keep] [--size 390x844] [--scale 1] [--ci]
  *
  * Builds the web app (unless --web names a build), seeds a fresh world (scripts/perf-world.ts) in a temp dir, starts
  * a hub on it, and measures in headless Chromium at each CPU throttle, `runs` times each:
@@ -14,7 +14,13 @@
  *   DOM nodes, .msg elements.
  *
  * Medians go against the baseline: a count over its baseline fails (bytes get 1%), a time over baseline × 1.25 +
- * 50 ms fails. --update writes the medians as the new baseline. It runs locally: CI has no browser.
+ * 50 ms fails. --update writes the medians as the new baseline.
+ *
+ * --ci: what CI runs. A world a tenth the size, a warm-up run and then three at 1×, five older pages, against
+ * scripts/perf-baseline-ci.json. Only counts, renders, layouts and bytes are judged (a count may go 1% over: each run's
+ * arriving message moves the long timeline's window by one), and of those only the ones the baseline marks as steady
+ * (`gate`, from the spread of `--ci --update --runs 5`). Times are printed, never judged; with GITHUB_STEP_SUMMARY set
+ * they all go in the job's summary too. No run is tried again.
  */
 import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -24,10 +30,18 @@ import { seedWorld, type World, type WorldConv } from './perf-world.ts';
 
 const args = process.argv.slice(2);
 const opt = (k: string, d: string) => (args.includes(`--${k}`) ? args[args.indexOf(`--${k}`) + 1] : d);
+const CI = args.includes('--ci');
 const PORT = Number(opt('port', '8620'));
 const RUNS = Number(opt('runs', '3'));
-const CPUS = opt('cpu', '1,4').split(',').map(Number);
-const PAGES = Number(opt('pages', '15'));
+/**
+ * Runs first that are not counted. The first run on a fresh hub draws more than the rest (its first answers are
+ * slower, so pages come in two renders, not one): 1.4 times the message renders, twice the layouts.
+ */
+const WARMUP = Number(opt('warmup', CI ? '1' : '0'));
+const CPUS = opt('cpu', CI ? '1' : '1,4').split(',').map(Number);
+const PAGES = Number(opt('pages', CI ? '5' : '15'));
+/** The world's size against the live hub's (perf-world.ts). */
+const SCALE = Number(opt('scale', CI ? '0.1' : '1'));
 const UPDATE = args.includes('--update');
 const OUT = opt('out', '');
 /** Extra CSS for every page, to try a style change without a build (e.g. content-visibility on desktop). */
@@ -35,12 +49,13 @@ const CSS = opt('css', '');
 /** The window, 1280x800 (a desktop); 390x844 measures a phone's layout. */
 const [WIDTH, HEIGHT] = opt('size', '1280x800').split('x').map(Number);
 const root = resolve(import.meta.dir, '..');
-const BASELINE = resolve(opt('baseline', join(root, 'scripts/perf-baseline.json')));
+const BASELINE = resolve(opt('baseline', join(root, CI ? 'scripts/perf-baseline-ci.json' : 'scripts/perf-baseline.json')));
 const base = `http://127.0.0.1:${PORT}`;
 
 /** count: the page's structure (nodes, messages), exact. tally: renders and layouts, which a frame boundary can move by one or two. */
 type Kind = 'ms' | 'count' | 'tally' | 'bytes';
-type Metrics = Record<string, { v: number; kind: Kind }>;
+/** gate (CI's baseline only): whether CI judges it; false for one that moved between runs of the same code. */
+type Metrics = Record<string, { v: number; kind: Kind; gate?: boolean }>;
 /**
  * Render counts no baseline may go over, at any throttle: what scoped renders bought (docs/perf.md). An --update
  * fails on them too, so a regression cannot become the new baseline.
@@ -70,7 +85,7 @@ async function main() {
     if (b.exitCode !== 0) throw new Error('web build failed:\n' + b.stderr.toString());
   }
   const data = join(work, 'data');
-  const world = seedWorld(data);
+  const world = seedWorld(data, { scale: SCALE });
   console.log(`seeded in ${(world.ms / 1000).toFixed(1)} s:`, JSON.stringify(world.counts));
   if ((await fetch(`${base}/api/health`).catch(() => null))?.ok) throw new Error(`something is already listening on ${PORT}`);
   const log = openSync(join(work, 'hub.log'), 'a');
@@ -104,10 +119,15 @@ async function main() {
   const runs: Record<number, Metrics[]> = {};
   for (const cpu of CPUS) {
     runs[cpu] = [];
+    for (let i = 0; i < WARMUP; i++) {
+      const m = await run(cpu, world);
+      console.log(`${cpu}× warm-up run, not counted: cold ${m['cold.list'].v} ms, first open ${m['open.first'].v} ms, message renders ${m['open.first.messageRenders'].v}`);
+    }
     for (let i = 0; i < RUNS; i++) {
-      // A run that fails (a timeout on a busy machine) is tried once more; its error and the hub's log are shown.
+      // A run that fails (a timeout on a busy machine) is tried once more, but not in CI; its error and the hub's log are shown.
       const m = await run(cpu, world).catch((e) => {
-        console.warn(`${cpu}× run ${i + 1} failed, trying again: ${e.message}\n${readFileSync(join(work, 'hub.log'), 'utf8').split('\n').slice(-15).join('\n')}`);
+        console.warn(`${cpu}× run ${i + 1} failed${CI ? '' : ', trying again'}: ${e.message}\n${readFileSync(join(work, 'hub.log'), 'utf8').split('\n').slice(-15).join('\n')}`);
+        if (CI) throw e;
         return run(cpu, world);
       });
       runs[cpu].push(m);
@@ -121,26 +141,41 @@ async function main() {
 
   // ------------------------------------------------------------------ against the baseline
   if (OUT) writeFileSync(OUT, JSON.stringify({ world, metrics, runs }, null, 1));
+  if (CI && UPDATE) {
+    if (RUNS < 5) throw new Error('--ci --update wants --runs 5 or more, to tell the steady counts from the rest');
+    for (const [k, m] of Object.entries(metrics)) if (m.kind !== 'ms') m.gate = steady(m.kind, spread(k, runs) ?? [m.v]);
+  }
   const old = existsSync(BASELINE) ? (JSON.parse(readFileSync(BASELINE, 'utf8')) as { metrics: Metrics }) : null;
   let failed = 0;
+  const rows: { k: string; b?: number; v: number; kind: Kind; change: string; verdict: string; runs: number[] }[] = [];
   console.log(`\n${'metric'.padEnd(34)} ${'baseline'.padStart(10)} ${'now'.padStart(10)}  change`);
   for (const [k, m] of Object.entries(metrics)) {
     const b = old?.metrics[k];
     const ceiling = CEILINGS[k.replace(/^\d+x\./, '')];
     const capped = ceiling !== undefined && m.v > ceiling;
     if (capped) failed++;
-    const over = b && (m.kind === 'ms' ? m.v > b.v * 1.25 + 50 : m.kind === 'bytes' ? m.v > b.v * 1.01 : m.kind === 'tally' ? m.v > b.v + Math.max(2, b.v * 0.1) : m.v > b.v);
+    // In CI: times never, and of the rest only what the baseline found steady.
+    const judged = !CI || (m.kind !== 'ms' && (UPDATE ? m.gate : b?.gate) !== false);
+    const over = judged && b && m.v > b.v + allowed(m.kind, b.v);
     if (over && !UPDATE) failed++;
     const change = b ? `${m.v >= b.v ? '+' : ''}${b.v ? Math.round(((m.v - b.v) / b.v) * 100) : 0}%` : 'new';
-    console.log(`${(over || capped ? 'FAIL ' : '     ') + k.padEnd(29)} ${String(b?.v ?? '').padStart(10)} ${String(m.v).padStart(10)}  ${change}${m.kind === 'ms' ? '' : ` (${m.kind})`}${capped ? ` over its ceiling of ${ceiling}` : ''}`);
+    const verdict = over || capped ? 'FAIL' : judged ? '' : m.kind === 'ms' ? 'not judged' : 'not steady';
+    const xs = spread(k, runs) ?? [m.v];
+    rows.push({ k, b: b?.v, v: m.v, kind: m.kind, change, verdict, runs: xs });
+    const note = [m.kind === 'ms' ? '' : `(${m.kind})`, capped ? `over its ceiling of ${ceiling}` : '', CI && !judged ? `${verdict}: ${xs.join(' ')}` : ''].filter(Boolean).join(' ');
+    console.log(`${(over || capped ? 'FAIL ' : '     ') + k.padEnd(29)} ${String(b?.v ?? '').padStart(10)} ${String(m.v).padStart(10)}  ${change}${note ? ' ' + note : ''}`);
   }
   if (UPDATE && failed) console.log(`\n${failed} over their ceilings: the baseline is not written`);
   else if (UPDATE) {
     const chromium = Bun.spawnSync([findBrowser(), '--version']).stdout.toString().trim();
-    writeFileSync(BASELINE, JSON.stringify({ note: 'bun scripts/verify-perf.ts --update (docs/perf.md). Times are of the machine it ran on.', at: new Date().toISOString().slice(0, 10), runs: RUNS, pages: PAGES, chromium, world: world.counts, metrics }, null, 1) + '\n');
+    const note = CI
+      ? 'bun scripts/verify-perf.ts --ci --update --runs 5 (docs/perf.md). CI judges the counts marked gate, never the times.'
+      : 'bun scripts/verify-perf.ts --update (docs/perf.md). Times are of the machine it ran on.';
+    writeFileSync(BASELINE, JSON.stringify({ note, at: new Date().toISOString().slice(0, 10), runs: RUNS, pages: PAGES, scale: SCALE, chromium, world: world.counts, metrics }, null, 1) + '\n');
     console.log(`\nwrote ${BASELINE}`);
   } else if (!old) console.log('\nno baseline yet: run with --update');
   else console.log(failed ? `\n${failed} over the baseline` : '\nall within the baseline');
+  if (process.env.GITHUB_STEP_SUMMARY) summary(rows, world, failed);
   return failed;
 }
 
@@ -377,6 +412,48 @@ const SNAPSHOT_TIMELINES = `new Promise((res) => {
 })`;
 
 // ------------------------------------------------------------------ helpers
+
+/** Every run's value of a per-throttle metric ("1x.cold.nodes"), or null for the hub's own. */
+function spread(k: string, runs: Record<number, Metrics[]>): number[] | null {
+  const m = k.match(/^(\d+)x\.(.+)$/);
+  return m ? runs[Number(m[1])].map((r) => r[m[2]]?.v).filter((x) => x !== undefined) : null;
+}
+/**
+ * How far over its baseline a value may go. A time: a quarter and 50 ms. Renders and layouts: two or 10% (a frame
+ * boundary moves them). Bytes: 1%. A count of the page's structure: nothing locally; in CI 1% or two, since each run's
+ * arriving message moves the long timeline's window by one message and the runs it is the median of are always the same.
+ */
+function allowed(kind: Kind, b: number): number {
+  return kind === 'ms' ? b * 0.25 + 50 : kind === 'tally' ? Math.max(2, b * 0.1) : kind === 'bytes' ? b * 0.01 : CI ? Math.max(2, b * 0.01) : 0;
+}
+/** Steady enough to judge: its runs spread over at most half what it may go over by (a tally: one), so noise cannot fail it. */
+function steady(kind: Kind, xs: number[]): boolean {
+  const d = Math.max(...xs) - Math.min(...xs);
+  return kind === 'ms' ? false : kind === 'tally' ? d <= 1 : d <= allowed(kind, Math.min(...xs)) / 2;
+}
+
+/** The job's summary (GitHub Actions): what was judged and how it went, then the times, for reading only. */
+function summary(rows: { k: string; b?: number; v: number; kind: Kind; change: string; verdict: string; runs: number[] }[], world: World, failed: number) {
+  const line = (r: (typeof rows)[number]) => `| ${r.verdict === 'FAIL' ? '**FAIL**' : r.verdict || 'ok'} | \`${r.k}\` | ${r.b ?? ''} | ${r.v} | ${r.change} | ${r.runs.join(' ')} |`;
+  const head = '| | metric | baseline | now | change | runs |\n|---|---|---|---|---|---|';
+  const out = [
+    `### verify-perf${CI ? ' --ci' : ''}: ${failed ? `${failed} over the baseline` : 'all within the baseline'}`,
+    '',
+    `World: ${Object.entries(world.counts).map(([k, v]) => `${v} ${k}`).join(', ')}. ${RUNS} runs at ${CPUS.map((c) => `${c}×`).join(', ')}, ${PAGES} older pages; medians.`,
+    '',
+    '#### Counts, renders, layouts and bytes',
+    '',
+    head,
+    ...rows.filter((r) => r.kind !== 'ms').map(line),
+    '',
+    `#### Times (ms${CI ? ', not judged: a shared runner' : ''})`,
+    '',
+    head,
+    ...rows.filter((r) => r.kind === 'ms').map(line),
+    '',
+  ];
+  writeFileSync(process.env.GITHUB_STEP_SUMMARY!, out.join('\n') + '\n', { flag: 'a' });
+}
 
 async function getJson(path: string) {
   const r = await fetch(base + path);
