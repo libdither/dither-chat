@@ -5,7 +5,7 @@
 # (test/old-database.test.ts).
 # A pull request that only changes docs (*.md, docs/) or the Android app skips the work (scripts/ci-changes.ts); a push
 # to main and a manual run always run everything. The same locally: bun run typecheck, bun run test, bun run web:build,
-# bun run check:boot.
+# bun run check:boot, bun scripts/verify-perf.ts --ci.
 name: CI
 
 on:
@@ -98,19 +98,25 @@ jobs:
       - run: bun run web:build
 
   # The built web app in the runner's Google Chrome against a demo hub, at a desktop's and a phone's size: fails on a
-  # page error, a console.error, a failed request or no service worker (scripts/check-boot.ts).
+  # page error, a console.error, a failed request or no service worker (scripts/check-boot.ts). Then load and chat
+  # switching on a tenth-size world: renders, DOM nodes and bytes against scripts/perf-baseline-ci.json; its times go
+  # in the job's summary and are never judged (docs/perf.md, "In CI").
   boot:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # A fresh runner's first browser start reads its 670 MB from a cold disk (11 to 35 s, then half a second): read
+      # them in the background while the rest installs. scripts/browser.ts waits up to 90 s for it either way.
+      - run: b=$(command -v chromium || command -v google-chrome) && (find -L "$(dirname "$(readlink -f "$b")")" -type f -print0 | xargs -0 cat > /dev/null 2>&1 &) || true
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       - run: bun run check:boot
+      - run: bun scripts/verify-perf.ts --ci
 
   # Branch protection requires this job by name. It passes only when every job passed, or was skipped because
   # `changes` said the pull request does not need it. It runs on failure and cancellation too, so it never reads as

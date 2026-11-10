@@ -19,6 +19,7 @@ import { MAIL_LIMITS } from '../src/mail/limits.ts';
 import { mailPeople } from '../src/mail/people.ts';
 import { mailSearchOf, PROTON_NOTE, serverQuery, type MailSearch } from '../src/mail/search.ts';
 import { Store } from '../src/store.ts';
+import { FakeClock } from './fixtures/clock.ts';
 
 const ACC = 'acc_searchTest1';
 const ME = 'me@example.com';
@@ -300,18 +301,18 @@ describe('the hub’s own search', () => {
   });
 
   test('a body slice 2 fetches ahead is searchable without anything asking for it', async () => {
-    Object.assign(MAIL_LIMITS, { backgroundPerSec: 1000, userPauseMs: 0 });
+    const clock = new FakeClock();
     const fake = new FakeMailBackend();
+    fake.clock = clock;
     fake.addAccount(ACC, { email: ME, mailboxes: BOXES });
-    fake.put(ACC, { messageId: '<ahead@x>', from: [{ name: 'Sam Lee', email: 'sam@lee.example' }], subject: 'Plans', text: 'Bring the rambutan on Friday.', receivedAt: Date.now() - H });
+    fake.put(ACC, { messageId: '<ahead@x>', from: [{ name: 'Sam Lee', email: 'sam@lee.example' }], subject: 'Plans', text: 'Bring the rambutan on Friday.', receivedAt: clock.now() - H });
     const db = new Database(':memory:', { strict: true });
     db.exec('PRAGMA foreign_keys = ON');
-    hub = new MailHub({ db, backend: fake, log: () => {} });
+    hub = new MailHub({ db, backend: fake, log: () => {}, clock });
     hub.start();
-    await hub.sync(ACC)!.whenSynced();
+    await clock.wait(hub.sync(ACC)!.whenSynced());
     const s = mailSearchOf(hub)!;
-    const end = Date.now() + 8000;
-    while (!s.local('rambutan').hits.length && Date.now() < end) await Bun.sleep(20);
+    await clock.until(() => s.local('rambutan').hits.length, 8000, 'the body fetched ahead');
     expect(fake.calls.some((c) => c.op === 'mail.get')).toBe(true);
     expect(subjects(s.local('rambutan'))).toEqual(['Plans']);
     expect(s.local('rambutan').hits[0].snippet).toContain('\u0001rambutan\u0002');
@@ -449,7 +450,7 @@ describe('the servers’ search', () => {
   });
 
   test('a server that fails or is offline: the hub’s hits still come, with why', async () => {
-    const { fake, s } = await served({}, (f) => {
+    const { fake, s, st } = await served({}, (f) => {
       f.put(ACC, { subject: 'Invoice March', receivedAt: T0 });
     });
     fake.fail('mail.search', new MailCallError('the server is busy', 503));
@@ -457,7 +458,7 @@ describe('the servers’ search', () => {
     expect(subjects(p)).toEqual(['Invoice March']);
     expect(p.server!.accounts[0]).toMatchObject({ state: 'failed', error: 'the server is busy' });
     fake.setOnline(ACC, false);
-    await Bun.sleep(5);
+    expect(st.account(ACC)!.online).toBe(0);
     p = await s.search('invoice', { server: true });
     expect(p.server!.accounts[0]).toMatchObject({ state: 'offline' });
     expect(subjects(p)).toEqual(['Invoice March']);

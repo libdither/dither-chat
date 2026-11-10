@@ -25,6 +25,7 @@ import { mailOps } from '../src/mail/ops.ts';
 import { mailPeople } from '../src/mail/people.ts';
 import { mailSearchOf } from '../src/mail/search.ts';
 import { Store } from '../src/store.ts';
+import { FakeClock } from './fixtures/clock.ts';
 
 const ACC = 'acc_gmailTest01';
 // A Workspace address: the hub knows the account is Gmail by its `[Gmail]` mailboxes.
@@ -37,14 +38,9 @@ const H = 3_600_000;
 const D = 24 * H;
 const WORK = gmailBoxId('Work');
 
-const until = async (f: () => unknown, ms = 4000, what = 'condition') => {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    if (await f()) return;
-    await Bun.sleep(5);
-  }
-  throw new Error(`timed out waiting for ${what}`);
-};
+/** Each test's clock (world() makes one): the writer's pacing, the budget and the fake server's answers run on it. */
+let clock = new FakeClock();
+const until = (f: () => unknown, ms = 4000, what = 'condition') => clock.until(f, ms, what);
 
 const cleanup: (() => void)[] = [];
 afterEach(() => {
@@ -81,11 +77,13 @@ interface World {
 
 async function world(o: { classify?: boolean } = {}): Promise<World> {
   const dir = mkdtempSync(join(tmpdir(), 'dither-mail-gmail-'));
+  clock = new FakeClock();
   const fake = new FakeMailBackend();
+  fake.clock = clock;
   fake.addAccount(ACC, { email: ME.email, name: ME.name, opts: { ids: 'gmail' } });
-  seed(fake);
+  seed(fake, clock.now());
   const chat = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
-  const hub = new MailHub({ db: o.classify ? chat.db : new Database(':memory:', { strict: true }), backend: fake, log: () => {}, dataDir: dir, holdMs: 20 });
+  const hub = new MailHub({ db: o.classify ? chat.db : new Database(':memory:', { strict: true }), backend: fake, log: () => {}, dataDir: dir, holdMs: 20, clock });
   if (o.classify) {
     mailPeople(hub)!.connect(chat);
     mailClassifier(hub)!.connect(chat);
@@ -101,7 +99,7 @@ async function world(o: { classify?: boolean } = {}): Promise<World> {
     chat.db.close();
     rmSync(dir, { recursive: true, force: true });
   });
-  await hub.sync(ACC)!.whenSynced();
+  await clock.wait(hub.sync(ACC)!.whenSynced());
   return { fake, hub, chat };
 }
 
@@ -128,7 +126,7 @@ const rows = (w: World) => w.hub.store.one<{ n: number }>('SELECT COUNT(*) AS n 
 const subjects = (w: World, key: string) => w.hub.store.listThreads(key, null, 100)!.threads.map((t) => t.subject);
 const route = (w: World, method: string, path: string) => {
   const url = new URL(`http://hub${path}`);
-  return w.hub.route(new Request(url, { method }), url);
+  return clock.wait(w.hub.route(new Request(url, { method }), url));
 };
 
 describe('the first sync and the backfill', () => {
@@ -146,12 +144,12 @@ describe('the first sync and the backfill', () => {
     expect(where(w, '<r1@x>')).toEqual([]);
     expect(rows(w)).toBe(6);
     // A label opened in the page: listed, one more place for the same message.
-    await w.hub.sync(ACC)!.backfill.more(box(w, WORK).id);
+    await clock.wait(w.hub.sync(ACC)!.backfill.more(box(w, WORK).id));
     expect(where(w, '<s1@x>')).toEqual([GMAIL.inbox, GMAIL.all, WORK].sort());
     expect(where(w, '<j1@x>')).toEqual([GMAIL.all, WORK].sort());
     expect(rows(w)).toBe(6);
     // A changes pass on every mailbox the hub follows adds nothing.
-    await w.hub.sync(ACC)!.catchUp();
+    await clock.wait(w.hub.sync(ACC)!.catchUp());
     expect(rows(w)).toBe(6);
     expect(w.hub.store.one<{ n: number }>('SELECT COUNT(*) AS n FROM mail_location WHERE message_id = ?', mid('<s1@x>'))!.n).toBe(3);
   });
@@ -175,10 +173,10 @@ describe('labels', () => {
     const w = await world();
     // As the extractor gives them: from Inbox, Gmail leaves \Inbox out; from Work, Work.
     expect(copy(w, '<s1@x>', GMAIL.inbox).labels).toEqual([]);
-    expect((await w.fake.call<{ messages: { labels: string[] }[] }>(ACC, 'mail.list', { mailboxId: WORK })).messages.map((m) => m.labels)).toEqual([['\\Important', '\\Inbox'], []]);
+    expect((await clock.wait(w.fake.call<{ messages: { labels: string[] }[] }>(ACC, 'mail.list', { mailboxId: WORK }))).messages.map((m) => m.labels)).toEqual([['\\Important', '\\Inbox'], []]);
     expect(view(w, '<s1@x>').labels).toEqual(['Work']);
     await backfilled(w);
-    await w.hub.sync(ACC)!.backfill.more(box(w, WORK).id);
+    await clock.wait(w.hub.sync(ACC)!.backfill.more(box(w, WORK).id));
     // Listed from Work last: still Work.
     expect(view(w, '<s1@x>').labels).toEqual(['Work']);
     expect(view(w, '<j1@x>').labels).toEqual(['Work']);
@@ -201,7 +199,7 @@ describe('labels', () => {
     expect((await list(GMAIL.parent)).threads).toEqual([]);
     expect(box(w, GMAIL.parent).follow).toBeNull();
     const before = w.fake.calls.filter((c) => c.input.mailboxId === GMAIL.parent).length;
-    await w.hub.sync(ACC)!.catchUp();
+    await clock.wait(w.hub.sync(ACC)!.catchUp());
     expect(w.fake.calls.filter((c) => c.input.mailboxId === GMAIL.parent).length).toBe(before);
   });
 });
@@ -214,14 +212,14 @@ describe('filing', () => {
     const ops = mailOps(w.hub);
     expect(ops.move({ threadIds: [threadOf(w, '<s1@x>')], to: 'archive' })).toEqual({ ok: true, threads: 1, messages: 2 });
     expect(subjects(w, 'v:inbox:*')).not.toContain('Dinner on Friday?');
-    await ops.idle();
+    await clock.wait(ops.idle());
     // On Gmail: MOVE from Inbox to All Mail takes \Inbox off; the label stays.
     expect(w.fake.calls.find((c) => c.op === 'mail.move')!.input.mailboxId).toBe(GMAIL.all);
     expect(onServer(w, '<s1@x>')).toEqual([GMAIL.all, GMAIL.important, WORK].sort());
     expect(onServer(w, '<s3@x>')).toEqual([GMAIL.all]);
     // The move answered the All Mail ids the hub had already: the same places, not new ones.
     for (const [h, id] of allIds) expect(copy(w, h, GMAIL.all).id).toBe(id);
-    await w.hub.sync(ACC)!.catchUp();
+    await clock.wait(w.hub.sync(ACC)!.catchUp());
     expect(where(w, '<s1@x>')).toEqual([GMAIL.all]);
     expect(where(w, '<s3@x>')).toEqual([GMAIL.all]);
     expect(w.hub.store.one<{ n: number }>('SELECT COUNT(*) AS n FROM mail_location WHERE mailbox_id = ?', box(w, GMAIL.all).id)!.n).toBe(6);
@@ -240,37 +238,37 @@ describe('filing', () => {
     const t = threadOf(w, '<a1@x>');
     ops.move({ threadIds: [t], to: 'archive' });
     expect(view(w, '<a1@x>').roles).not.toContain('inbox');
-    await Bun.sleep(100);
+    await clock.advance(100);
     expect(w.fake.calls.some((c) => c.op === 'mail.move')).toBe(false);
     // The page's Undo: back to Inbox, before it went.
     ops.move({ threadIds: [t], to: 'inbox' });
-    await Bun.sleep(500);
-    await ops.idle();
+    await clock.advance(500);
+    await clock.wait(ops.idle());
     expect(w.fake.calls.some((c) => c.op === 'mail.move')).toBe(false);
     expect(onServer(w, '<a1@x>')).toEqual([GMAIL.inbox, GMAIL.all, GMAIL.starred].sort());
     expect(view(w, '<a1@x>')).toMatchObject({ pending: false, roles: expect.arrayContaining(['inbox']) });
     // Past the hold it goes.
     ops.move({ threadIds: [t], to: 'archive' });
     await until(() => w.fake.calls.some((c) => c.op === 'mail.move'), 3000, 'the archive');
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(onServer(w, '<a1@x>')).toEqual([GMAIL.all, GMAIL.starred].sort());
   });
 
   test('Undo after the archive went: a copy from All Mail puts it back in Inbox, its labels on, no new row', async () => {
     const w = await world();
     await backfilled(w);
-    await w.hub.sync(ACC)!.backfill.more(box(w, WORK).id);
+    await clock.wait(w.hub.sync(ACC)!.backfill.more(box(w, WORK).id));
     const ops = mailOps(w.hub);
     const t = threadOf(w, '<s1@x>');
     const allIds = ['<s1@x>', '<s3@x>'].map((h) => copy(w, h, GMAIL.all).id);
     ops.move({ threadIds: [t], to: 'archive' });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(onServer(w, '<s1@x>')).toEqual([GMAIL.all, GMAIL.important, WORK].sort());
     expect(where(w, '<s1@x>')).toEqual([GMAIL.all, WORK].sort());
     // The page's Undo, after the hold: back to Inbox. It shows there at once, and in All Mail still.
     expect(ops.move({ threadIds: [t], to: 'inbox' })).toEqual({ ok: true, threads: 1, messages: 2 });
     expect(view(w, '<s1@x>').roles).toEqual(expect.arrayContaining(['inbox', 'all']));
-    await ops.idle();
+    await clock.wait(ops.idle());
     // From All Mail, so the extractor copies (a MOVE out of All Mail would delete it on Gmail): \Inbox on, Work and
     // Important stay; your reply in Sent is not touched.
     const call = w.fake.calls.filter((c) => c.op === 'mail.move').pop()!;
@@ -283,7 +281,7 @@ describe('filing', () => {
     // The hub has it where Gmail has it at once: Inbox by the copy's own id, All Mail and Work as they were.
     expect(where(w, '<s1@x>')).toEqual([GMAIL.inbox, GMAIL.all, WORK].sort());
     expect(w.hub.store.one('SELECT native_id FROM mail_location WHERE message_id = ? AND mailbox_id = ?', mid('<s1@x>'), box(w, GMAIL.inbox).id)).toEqual({ native_id: copy(w, '<s1@x>', GMAIL.inbox).id });
-    await w.hub.sync(ACC)!.catchUp();
+    await clock.wait(w.hub.sync(ACC)!.catchUp());
     expect(where(w, '<s1@x>')).toEqual([GMAIL.inbox, GMAIL.all, WORK].sort());
     expect(where(w, '<s3@x>')).toEqual([GMAIL.inbox, GMAIL.all].sort());
     expect(rows(w)).toBe(6);
@@ -302,12 +300,12 @@ describe('filing', () => {
     expect(ops.move({ threadIds: [threadOf(w, '<j1@x>')], to: 'inbox' })).toEqual({ ok: true, threads: 1, messages: 1 });
     expect(subjects(w, 'v:inbox:*')).toContain('Old photos');
     expect(subjects(w, mailboxList(box(w, GMAIL.all).id))).toContain('Old photos');
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(w.fake.calls.find((c) => c.op === 'mail.move')!.input).toMatchObject({ ids: [allId], mailboxId: GMAIL.inbox });
     expect(onServer(w, '<j1@x>')).toEqual([GMAIL.inbox, GMAIL.all, WORK].sort());
     expect(copy(w, '<j1@x>', GMAIL.all).id).toBe(allId);
     expect(where(w, '<j1@x>')).toEqual([GMAIL.inbox, GMAIL.all].sort());
-    await w.hub.sync(ACC)!.catchUp();
+    await clock.wait(w.hub.sync(ACC)!.catchUp());
     expect(where(w, '<j1@x>')).toEqual([GMAIL.inbox, GMAIL.all].sort());
     expect(rows(w)).toBe(6);
     expect(view(w, '<j1@x>')).toMatchObject({ pending: false, labels: ['Work'], roles: expect.arrayContaining(['inbox', 'all']) });
@@ -321,15 +319,15 @@ describe('filing', () => {
     // Alex's starred note, archived: in All Mail (and Starred, which the hub has not listed).
     const t = threadOf(w, '<a1@x>');
     ops.move({ threadIds: [t], to: 'archive' });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(where(w, '<a1@x>')).toEqual([GMAIL.all]);
     expect(ops.move({ threadIds: [t], to: box(w, WORK).id })).toEqual({ ok: true, threads: 1, messages: 1 });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(w.fake.calls.filter((c) => c.op === 'mail.move').pop()!.input).toMatchObject({ ids: [copy(w, '<a1@x>', GMAIL.all).id], mailboxId: WORK });
     expect(onServer(w, '<a1@x>')).toEqual([GMAIL.all, GMAIL.starred, WORK].sort());
     expect(where(w, '<a1@x>')).toEqual([GMAIL.all, WORK].sort());
-    await w.hub.sync(ACC)!.catchUp();
-    await w.hub.sync(ACC)!.backfill.more(box(w, WORK).id);
+    await clock.wait(w.hub.sync(ACC)!.catchUp());
+    await clock.wait(w.hub.sync(ACC)!.backfill.more(box(w, WORK).id));
     expect(where(w, '<a1@x>')).toEqual([GMAIL.all, WORK].sort());
     expect(view(w, '<a1@x>')).toMatchObject({ pending: false, flagged: true, labels: ['Work'] });
     expect(rows(w)).toBe(6);
@@ -341,11 +339,11 @@ describe('filing', () => {
     const ops = mailOps(w.hub);
     const allId = copy(w, '<j1@x>', GMAIL.all).id;
     ops.move({ threadIds: [threadOf(w, '<j1@x>')], to: 'trash' });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(w.fake.calls.find((c) => c.op === 'mail.move')!.input).toMatchObject({ ids: [allId], mailboxId: GMAIL.trash });
     expect(onServer(w, '<j1@x>')).toEqual([GMAIL.trash]);
     expect(where(w, '<j1@x>')).toEqual([GMAIL.trash]);
-    await w.hub.sync(ACC)!.catchUp();
+    await clock.wait(w.hub.sync(ACC)!.catchUp());
     expect(where(w, '<j1@x>')).toEqual([GMAIL.trash]);
     expect(rows(w)).toBe(6);
   });
@@ -353,10 +351,10 @@ describe('filing', () => {
   test('trash takes it out of every mailbox but Trash, and leaves what you sent in Sent', async () => {
     const w = await world();
     await backfilled(w);
-    await w.hub.sync(ACC)!.backfill.more(box(w, WORK).id);
+    await clock.wait(w.hub.sync(ACC)!.backfill.more(box(w, WORK).id));
     const ops = mailOps(w.hub);
     ops.move({ threadIds: [threadOf(w, '<s1@x>')], to: 'trash' });
-    await ops.idle();
+    await clock.wait(ops.idle());
     // Gmail: into Trash is out of Inbox, All Mail, Work and Important at once.
     expect(onServer(w, '<s1@x>')).toEqual([GMAIL.trash]);
     expect(onServer(w, '<s3@x>')).toEqual([GMAIL.trash]);
@@ -367,7 +365,7 @@ describe('filing', () => {
     expect(where(w, '<s3@x>')).toEqual([GMAIL.trash]);
     expect(subjects(w, mailboxList(box(w, WORK).id))).toEqual(['Old photos']);
     expect(w.hub.store.one<{ shut: number }>('SELECT shut FROM mail_search WHERE message_id = ?', mid('<s1@x>'))!.shut).toBe(1);
-    await w.hub.sync(ACC)!.catchUp();
+    await clock.wait(w.hub.sync(ACC)!.catchUp());
     expect(where(w, '<s1@x>')).toEqual([GMAIL.trash]);
     expect(where(w, '<s2@x>')).toEqual([GMAIL.sent, GMAIL.all].sort());
     expect(rows(w)).toBe(6);
@@ -378,14 +376,14 @@ describe('filing', () => {
     await backfilled(w);
     const ops = mailOps(w.hub);
     ops.move({ threadIds: [threadOf(w, '<n1@x>')], to: 'junk' });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(onServer(w, '<n1@x>')).toEqual([GMAIL.spam]);
     expect(where(w, '<n1@x>')).toEqual([GMAIL.spam]);
     expect(view(w, '<n1@x>').roles).toEqual(['junk']);
     ops.move({ threadIds: [threadOf(w, '<n1@x>')], to: 'inbox' });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(onServer(w, '<n1@x>')).toEqual([GMAIL.inbox, GMAIL.all].sort());
-    await w.hub.sync(ACC)!.catchUp();
+    await clock.wait(w.hub.sync(ACC)!.catchUp());
     expect(where(w, '<n1@x>')).toEqual([GMAIL.inbox, GMAIL.all].sort());
     expect(rows(w)).toBe(6);
   });
@@ -396,23 +394,23 @@ describe('filing', () => {
     const ops = mailOps(w.hub);
     const t = threadOf(w, '<s1@x>');
     ops.flag({ threadIds: [t], flagged: true });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(copy(w, '<s3@x>', GMAIL.all).flags.flagged).toBe(true);
     expect(onServer(w, '<s3@x>')).toContain(GMAIL.starred);
-    await w.hub.sync(ACC)!.catchUp();
+    await clock.wait(w.hub.sync(ACC)!.catchUp());
     expect(view(w, '<s1@x>')).toMatchObject({ flagged: true, labels: ['Work'] });
     ops.flag({ threadIds: [t], flagged: false });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(onServer(w, '<s3@x>')).not.toContain(GMAIL.starred);
     ops.flag({ threadIds: [t], seen: true });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(copy(w, '<s3@x>', GMAIL.all).flags.seen).toBe(true);
-    await w.hub.sync(ACC)!.catchUp();
+    await clock.wait(w.hub.sync(ACC)!.catchUp());
     expect(view(w, '<s1@x>')).toMatchObject({ flagged: false, unread: 0 });
     ops.flag({ threadIds: [t], seen: false });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(copy(w, '<s3@x>', GMAIL.inbox).flags.seen).toBe(false);
-    await w.hub.sync(ACC)!.catchUp();
+    await clock.wait(w.hub.sync(ACC)!.catchUp());
     expect(view(w, '<s1@x>').unread).toBe(1);
     expect(rows(w)).toBe(6);
   });
@@ -429,11 +427,11 @@ describe('filing', () => {
     await until(() => view(w, '<s1@x>').flagged, 4000, 'starred');
     // A label added on the web: All Mail's next pass sees it (CONDSTORE: a changed message in every mailbox).
     w.fake.label(ACC, copy(w, '<n1@x>', GMAIL.inbox).id, { add: ['Reading'] });
-    await w.hub.sync(ACC)!.catchUp();
+    await clock.wait(w.hub.sync(ACC)!.catchUp());
     expect(view(w, '<n1@x>').labels).toEqual(['Reading']);
     // Deleted for good (emptied from the trash): gone here once the mailboxes it was in say so.
     w.fake.remove(ACC, copy(w, '<j1@x>', GMAIL.all).id);
-    await w.hub.sync(ACC)!.catchUp();
+    await clock.wait(w.hub.sync(ACC)!.catchUp());
     expect(w.hub.store.one('SELECT 1 FROM mail_message WHERE id = ?', mid('<j1@x>'))).toBeNull();
     expect(rows(w)).toBe(5);
   });
@@ -441,7 +439,7 @@ describe('filing', () => {
 
 describe('emailId', () => {
   /** A summary of the message the fake made, as `mailbox` lists it. */
-  const listed = async (w: World, mailbox: string, id: string) => (await w.fake.call<{ messages: M.MailSummary[] }>(ACC, 'mail.list', { mailboxId: mailbox, limit: 500 })).messages.find((s) => s.emailId === id)!;
+  const listed = async (w: World, mailbox: string, id: string) => (await clock.wait(w.fake.call<{ messages: M.MailSummary[] }>(ACC, 'mail.list', { mailboxId: mailbox, limit: 500 }))).messages.find((s) => s.emailId === id)!;
   /** The hub's places for one message. */
   const placesOf = (w: World, messageId: string) =>
     w.hub.store.all<{ native_id: string }>('SELECT b.native_id FROM mail_location l JOIN mailbox b ON b.id = l.mailbox_id WHERE l.message_id = ? ORDER BY b.native_id', messageId).map((r) => r.native_id);
@@ -457,8 +455,8 @@ describe('emailId', () => {
     expect(copies.map((s) => [s.messageId, s.emailId])).toEqual([[null, gm], [null, gm], [null, gm]]);
     await until(() => w.hub.store.one('SELECT 1 FROM mail_message WHERE email_id = ?', gm), 4000, 'the new message');
     await backfilled(w);
-    await w.hub.sync(ACC)!.backfill.more(box(w, WORK).id);
-    await w.hub.sync(ACC)!.catchUp();
+    await clock.wait(w.hub.sync(ACC)!.backfill.more(box(w, WORK).id));
+    await clock.wait(w.hub.sync(ACC)!.catchUp());
     const ms = w.hub.store.all<{ id: string; email_id: string }>(`SELECT id, email_id FROM mail_message WHERE account_id = ? AND subject = 'No header'`, ACC);
     expect(ms).toEqual([{ id: mailId('mml', ACC, `e:${gm}`), email_id: gm }]);
     expect(placesOf(w, ms[0].id)).toEqual([GMAIL.inbox, GMAIL.all, WORK].sort());
@@ -507,7 +505,7 @@ describe('Important', () => {
     expect(boxes.find((b) => b.path === '[Gmail]/Important')).toMatchObject({ role: 'important', followed: false });
     expect(boxes.find((b) => b.path === '[Gmail]/Starred')).toMatchObject({ role: 'flagged', followed: false });
     // Opened: Sam's first message is there too; still one message, its labels its own (Gmail's \Important not shown).
-    await w.hub.sync(ACC)!.backfill.more(box(w, GMAIL.important).id);
+    await clock.wait(w.hub.sync(ACC)!.backfill.more(box(w, GMAIL.important).id));
     expect(where(w, '<s1@x>')).toEqual([GMAIL.inbox, GMAIL.all, GMAIL.important].sort());
     expect(view(w, '<s1@x>')).toMatchObject({ labels: ['Work'], roles: expect.arrayContaining(['inbox', 'all', 'important']) });
     expect(w.hub.store.one<{ labels: string }>('SELECT labels FROM mail_message WHERE id = ?', mid('<s1@x>'))!.labels).toContain('\\\\Important');
@@ -515,9 +513,9 @@ describe('Important', () => {
     const ops = mailOps(w.hub);
     const t = threadOf(w, '<s1@x>');
     ops.move({ threadIds: [t], to: 'archive' });
-    await ops.idle();
+    await clock.wait(ops.idle());
     ops.move({ threadIds: [t], to: 'inbox' });
-    await ops.idle();
+    await clock.wait(ops.idle());
     expect(onServer(w, '<s1@x>')).toEqual([GMAIL.inbox, GMAIL.all, GMAIL.important, WORK].sort());
     expect(w.fake.calls.filter((c) => c.op === 'mail.move').flatMap((c) => c.input.ids as string[]).some((id) => id.startsWith(`${GMAIL.important}.`))).toBe(false);
     expect(where(w, '<s1@x>')).toEqual([GMAIL.inbox, GMAIL.all, GMAIL.important].sort());
@@ -531,7 +529,7 @@ describe('search', () => {
     await backfilled(w);
     const s = mailSearchOf(w.hub)!;
     expect(s.serverForm(w.hub.store.account(ACC)!)).toBe('gmail');
-    const page = await s.search('warranty from:maple', { server: true });
+    const page = await clock.wait(s.search('warranty from:maple', { server: true }));
     const call = w.fake.calls.filter((c) => c.op === 'mail.search').pop()!;
     expect(call.input).toMatchObject({ query: 'warranty from:maple' });
     expect(call.input.mailboxId).toBeUndefined();
@@ -539,14 +537,14 @@ describe('search', () => {
     expect(page.server!.hits.map((h) => h.thread.subject)).toEqual(['Your receipt']);
     expect(where(w, '<r1@x>')).toEqual([GMAIL.all]);
     // Gmail's operators: a label, in:, is:.
-    await s.search('label:work is:unread', { server: true });
+    await clock.wait(s.search('label:work is:unread', { server: true }));
     expect(w.fake.calls.filter((c) => c.op === 'mail.search').pop()!.input.query).toBe('label:work is:unread');
-    const hits = (await w.fake.call<{ messages: { messageId: string }[] }>(ACC, 'mail.search', { query: 'label:work -in:inbox' })).messages.map((m) => m.messageId);
+    const hits = (await clock.wait(w.fake.call<{ messages: { messageId: string }[] }>(ACC, 'mail.search', { query: 'label:work -in:inbox' }))).messages.map((m) => m.messageId);
     expect(hits).toEqual(['<j1@x>']);
     // Archived, in the hub's own words and on the server: on Gmail `in:archive` is All Mail but not Inbox or Sent.
-    expect((await s.search('in:archive photos')).hits.map((h) => h.thread.subject)).toEqual(['Old photos']);
-    expect((await s.search('in:archive dinner')).hits).toEqual([]);
-    await s.search('in:archive photos', { server: true });
+    expect((await clock.wait(s.search('in:archive photos'))).hits.map((h) => h.thread.subject)).toEqual(['Old photos']);
+    expect((await clock.wait(s.search('in:archive dinner'))).hits).toEqual([]);
+    await clock.wait(s.search('in:archive photos', { server: true }));
     expect(w.fake.calls.filter((c) => c.op === 'mail.search').pop()!.input.query).toBe('photos -in:inbox -in:sent -in:drafts');
     expect(rows(w)).toBe(7);
   });
@@ -574,7 +572,7 @@ describe('sending', () => {
       forwardParts: [],
       tz: 'UTC',
     };
-    const { outboxId } = await w.hub.outbox.accept(draft);
+    const { outboxId } = await clock.wait(w.hub.outbox.accept(draft));
     await until(() => w.hub.outbox.item(outboxId)?.state === 'sent', 4000, 'sent');
     const sent = w.fake.sent[0];
     // Answered from Inbox's copy; nothing appended: Gmail keeps the copy, in Sent Mail and All Mail.
@@ -582,7 +580,7 @@ describe('sending', () => {
     expect(onServer(w, sent.messageId)).toEqual([GMAIL.sent, GMAIL.all].sort());
     expect(copy(w, sent.messageId, GMAIL.sent).threadId).toBe(copy(w, '<s1@x>', GMAIL.inbox).threadId);
     await until(() => where(w, sent.messageId).length === 2, 4000, 'the copy in Sent and All Mail');
-    await w.hub.sync(ACC)!.catchUp();
+    await clock.wait(w.hub.sync(ACC)!.catchUp());
     expect(threadOf(w, sent.messageId)).toBe(t);
     expect(view(w, '<s1@x>').count).toBe(4);
     expect(w.hub.store.all('SELECT id FROM mail_message WHERE thread_id = ? AND addressed = ?', t, 'self')).toHaveLength(2);

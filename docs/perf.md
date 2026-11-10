@@ -1,9 +1,9 @@
 # Performance: measuring load and chat switching
 
 `scripts/verify-perf.ts` times what the app feels like on a hub the size of the real one, and fails when a change
-makes it slower. It runs on a machine with Chromium; CI has none, so run it before and after a change that touches
-rendering, the sync model or the hub's hot queries. What CI does check on every push is sizes and counts: see
-[Budgets](#budgets-sizes-and-counts-in-every-test-run).
+makes it slower. Run it before and after a change that touches rendering, the sync model or the hub's hot queries. CI
+runs a small version on every push that judges its counts, never its times ([In CI](#in-ci---ci)), and ordinary tests
+hold sizes and counts of what the hub sends and the web build weighs ([Budgets](#budgets-sizes-and-counts-in-every-test-run)).
 
 ```sh
 bun scripts/verify-perf.ts                 # 3 runs each at 1× and 4× CPU, compared with scripts/perf-baseline.json
@@ -15,7 +15,8 @@ Options: `--port` (8620; the hub it starts listens there), `--runs`, `--cpu 1,4`
 biggest conversation, 15), `--web <dist>` (a build to use instead of building one), `--out <file.json>` (every run's
 numbers), `--baseline <file>`, `--keep` (leave the temp dir with the world, the build and the hub's log), `--css <css>`
 (added to every page, to try a style change without a build), `--work <dir>` (an empty dir to work in instead of a
-temp dir, kept afterwards), `--size <w>x<h>` (1280x800; below 700 wide it emulates a phone, as `--size 390x844`).
+temp dir, kept afterwards), `--size <w>x<h>` (1280x800; below 700 wide it emulates a phone, as `--size 390x844`),
+`--scale` (the world's size against the live hub's, 1), `--ci` (below).
 
 It takes about five minutes. It builds the web app, seeds a world in a temp dir, starts its own demo hub on it
 (`--demo`, with the demo's random chatter off, `DITHER_DEMO_CHATTER=0`), and drives a fresh headless Chromium per
@@ -71,6 +72,59 @@ branch against it.
 Some render counts also have ceilings of their own (`CEILINGS` in the script), whatever the baseline says: at most
 two App renders and three of the inbox list per switch, none of App and at most five messages for an arriving message,
 and at most 250 messages drawn on a reopen. An `--update` over one of them fails and writes nothing.
+
+## In CI (`--ci`)
+
+CI's `boot` job runs a small version on every push and pull request that changes code (docs/testing.md), in the
+runner's browser, after the boot check:
+
+```sh
+bun scripts/verify-perf.ts --ci                          # what CI runs: compared with scripts/perf-baseline-ci.json
+bun scripts/verify-perf.ts --ci --update --runs 5        # a new CI baseline, and which of its numbers are steady
+```
+
+It seeds the same world at a tenth of the size (`--scale 0.1`: 574 conversations, 150 with messages, 22k messages,
+the biggest 8,000), then does a warm-up run that is not counted and three runs at 1×, with five older pages. Only
+counts, renders, layouts and bytes are judged, by the rules above, with one difference: a count of the page's
+structure may go 1% (at least two) over its baseline, not none. Each run's arriving message moves the long timeline's
+window of 150 by one message, so `long.reopen.nodes` comes down by about five a run (8214, 8209, 8205, 8199, 8194); the
+median is the same every time, but a change that only moves which message falls out of the window should not fail.
+A new part on every message (about 750 nodes on that timeline) or a list row (rows are in `cold.nodes`) still does.
+
+Of those, only the ones the CI baseline marks `"gate": true` are judged. `--ci --update` sets that from the spread of
+its runs (it wants five): steady when the runs spread over at most half what the number may go over by (a tally,
+within one), so that noise alone cannot fail it. Every time, and anything not steady, is printed with its runs and goes
+in the job's summary (`GITHUB_STEP_SUMMARY`), never compared: a shared runner's times say little, and a time gate would
+fail at random. No run is tried again in CI. It takes about two minutes.
+
+What made the warm-up necessary (2026-11-10, five runs on this world): the first run on a fresh hub drew more than
+the rest, as at full size (474 against 354 message renders at 1×, not at 4×, which runs after): 428 against 308
+message renders for the six first opens, 13 against 9 inbox list renders, 36 against 19 layouts, and the reopens
+too. Its first answers are slower, so pages come in two renders rather than one. After a warm-up every tally in the
+CI world is steady: renders the same in every run but a cold load's and a relaunch's App renders (2 or 3), layouts
+within one.
+
+## Baselines and when to update them
+
+- **`scripts/perf-baseline-ci.json`** (CI). Update it in the same pull request as a change that moves a count on
+  purpose (more DOM nodes for a new part of each message, a render saved), with `--ci --update --runs 5`, and say in
+  the pull request which count moved and why. A count that went up by accident is the thing CI is there to catch:
+  fix it rather than update the baseline. The ceilings (`CEILINGS`) still hold: an update over one fails and writes
+  nothing.
+- **`scripts/perf-baseline.json`** (local, full size, 1× and 4×). Its counts follow the same rule. Its times are of
+  the machine that wrote them: update them only on a quiet machine, and compare a branch against a baseline written
+  from `main` on the same machine, as above.
+
+The local baseline of 2026-11-07 failed three of its counts on main by 2026-11-10, none of them a slowdown, and was
+written again:
+
+- `1x.long.reopen.nodes` and `4x.long.reopen.nodes`, 16,395 to 17,148 (+753). +630 came with e4a80e64 (#59, the inbox
+  as one list again), where a row you owe a reply on shows its ↩ and age beside its unread count too, not only when
+  nothing is unread; the cold load's nodes moved by the same 649. About +100 came on 11-08 with the mail and Add
+  slices (+88 from 20562ee to dc9371e, +15 more by 950a49e; not narrowed further), the same in the cold load's nodes, so
+  in the inbox list or the rail, not the messages. Both are what those changes are for.
+- `4x.cold.layouts`, 9 to 12 (13, 12 and 8 in three runs; 10–11 at 1×). Layouts on a cold load moved from 8–9 to
+  10–12 over 11-09's inbox changes, in single runs on a loaded machine; nothing in the times follows it.
 
 ## What the page tells it
 

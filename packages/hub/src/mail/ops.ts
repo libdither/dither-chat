@@ -24,6 +24,7 @@
  */
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
+import { sleep, unref } from '../clock.ts';
 import { asMailError, MailCallError } from './backend.ts';
 import type { MailHub } from './index.ts';
 import { P0 } from './queue.ts';
@@ -90,7 +91,7 @@ export class MailOps {
   gmailArchiveHoldMs = 7_500;
   /** While changes wait for the manager or an account, how often to look again. */
   pollMs = 2000;
-  private timer: Timer | null = null;
+  private timer: unknown = null;
   private timerAt = Infinity;
   private busy = new Set<string>();
   private lastCall = new Map<string, number>();
@@ -121,6 +122,9 @@ export class MailOps {
     if (waiting.length) this.kick(0);
   }
 
+  private now() {
+    return this.hub.clock.now();
+  }
   private get db(): Database {
     return this.hub.store.db;
   }
@@ -447,7 +451,7 @@ export class MailOps {
     }));
     for (const r of open) for (const id of r.ids) out.set(id, r.id);
     const rest = mids.filter((id) => !out.has(id));
-    const now = Date.now();
+    const now = this.now();
     for (const id of rest) {
       let r = open.find((x) => x.ids.length < MAX_IDS);
       if (!r) {
@@ -467,7 +471,7 @@ export class MailOps {
 
   /** Sends what is due, on accounts that can take it; looks again later for the rest. */
   async pump(): Promise<void> {
-    const now = Date.now();
+    const now = this.now();
     const rows = this.all<{ account_id: string; next: number }>('SELECT account_id, MIN(next_at) AS next FROM mail_op WHERE sent_at IS NULL GROUP BY account_id');
     let later = Infinity;
     const runs: Promise<void>[] = [];
@@ -483,22 +487,22 @@ export class MailOps {
 
   /** Resolves once nothing is out and nothing waiting could go within a second (tests and scripts). */
   async idle(ms = 5000): Promise<void> {
-    const end = Date.now() + ms;
-    while (Date.now() < end) {
+    const end = this.now() + ms;
+    while (this.now() < end) {
       await this.pump();
-      const soon = Date.now() + 1000;
+      const soon = this.now() + 1000;
       const left = this.all<{ account_id: string; next_at: number }>('SELECT account_id, next_at FROM mail_op');
       if (!this.busy.size && left.every((r) => r.next_at > soon || !this.workable(r.account_id))) return;
-      await Bun.sleep(10);
+      await sleep(this.hub.clock, 10);
     }
   }
 
   private kick(ms: number) {
-    const at = Date.now() + ms;
+    const at = this.now() + ms;
     if (this.timer && this.timerAt <= at) return;
-    if (this.timer) clearTimeout(this.timer);
+    if (this.timer) this.hub.clock.clearTimeout(this.timer);
     this.timerAt = at;
-    this.timer = setTimeout(() => {
+    this.timer = this.hub.clock.setTimeout(() => {
       this.timer = null;
       this.timerAt = Infinity;
       this.pump().catch((e) => {
@@ -506,7 +510,7 @@ export class MailOps {
         if (!/closed database/.test(String((e as Error)?.message))) console.warn(`mail: ops: ${(e as Error)?.message ?? e}`);
       });
     }, Math.max(0, ms));
-    (this.timer as { unref?: () => void }).unref?.();
+    unref(this.timer);
   }
 
   private workable(accountId: string): boolean {
@@ -521,10 +525,10 @@ export class MailOps {
       if (this.catchUpFirst.delete(accountId)) await sync.catchUp().catch(() => {});
       for (;;) {
         if (!this.workable(accountId)) break;
-        const op = this.one('SELECT * FROM mail_op WHERE account_id = ? AND sent_at IS NULL AND next_at <= ? ORDER BY created_at, rowid LIMIT 1', accountId, Date.now());
+        const op = this.one('SELECT * FROM mail_op WHERE account_id = ? AND sent_at IS NULL AND next_at <= ? ORDER BY created_at, rowid LIMIT 1', accountId, this.now());
         if (!op) break;
-        const wait = (this.lastCall.get(accountId) ?? 0) + GAP_MS - Date.now();
-        if (wait > 0) await Bun.sleep(wait);
+        const wait = (this.lastCall.get(accountId) ?? 0) + GAP_MS - this.now();
+        if (wait > 0) await sleep(this.hub.clock, wait);
         await this.send(op, sync);
       }
     } finally {
@@ -568,8 +572,8 @@ export class MailOps {
       this.run('DELETE FROM mail_op WHERE id = ?', op.id);
       return;
     }
-    this.run('UPDATE mail_op SET sent_at = ? WHERE id = ?', Date.now(), op.id);
-    this.lastCall.set(op.account_id, Date.now());
+    this.run('UPDATE mail_op SET sent_at = ? WHERE id = ?', this.now(), op.id);
+    this.lastCall.set(op.account_id, this.now());
     const input = op.op === 'flag' ? { ids: items.map((i) => i.native), [k]: !!args[k] } : { ids: items.map((i) => i.native), mailboxId: dest!.native_id };
     let res: unknown;
     try {
@@ -635,7 +639,7 @@ export class MailOps {
       this.dropAccount(op.account_id, e.message);
       if (this.run(`UPDATE mail_account SET level = 'read' WHERE id = ? AND level = 'write'`, op.account_id).changes) this.hub.store.dirty.accounts.add(op.account_id);
     } else if (s === 501) {
-      this.run('INSERT OR REPLACE INTO mail_unsupported (account_id, op, why, at) VALUES (?, ?, ?, ?)', op.account_id, this.kindOf(op), e.message, Date.now());
+      this.run('INSERT OR REPLACE INTO mail_unsupported (account_id, op, why, at) VALUES (?, ?, ?, ?)', op.account_id, this.kindOf(op), e.message, this.now());
       this.undo(op, e.message);
     } else if (s === 400 || s === 422) {
       this.undo(op, e.message);
@@ -645,7 +649,7 @@ export class MailOps {
       // 410: the mailbox was rebuilt; the catch-up lists it again and the ids are looked up anew.
       if (s === 410) void sync.catchUp();
       const backoff = Math.min(300_000, 2_000 * 2 ** (attempts - 1));
-      this.run('UPDATE mail_op SET sent_at = NULL, attempts = ?, error = ?, next_at = ? WHERE id = ?', attempts, e.message, Date.now() + backoff, op.id);
+      this.run('UPDATE mail_op SET sent_at = NULL, attempts = ?, error = ?, next_at = ? WHERE id = ?', attempts, e.message, this.now() + backoff, op.id);
       this.hub.store.dirty.accounts.add(op.account_id);
     }
   }
@@ -671,7 +675,7 @@ export class MailOps {
 
   /** The server refused it: the messages show what the server has again. */
   private undo(op: Row, why: string | null) {
-    if (why) this.errors.set(op.account_id, { message: `${this.describe(op)}: ${why}`, at: Date.now() });
+    if (why) this.errors.set(op.account_id, { message: `${this.describe(op)}: ${why}`, at: this.now() });
     const ids = json<string[]>(op.message_ids, []);
     this.revert(op.account_id, ids, op.id, this.actionOf(op));
     this.run('DELETE FROM mail_op WHERE id = ?', op.id);
@@ -683,7 +687,7 @@ export class MailOps {
     const ops = this.all('SELECT * FROM mail_op WHERE account_id = ?', accountId);
     if (!ops.length) return;
     for (const op of ops) this.undo(op, null);
-    this.errors.set(accountId, { message: `${ops.length === 1 ? 'A change' : `${ops.length} changes`} could not be made: ${why}`, at: Date.now() });
+    this.errors.set(accountId, { message: `${ops.length === 1 ? 'A change' : `${ops.length} changes`} could not be made: ${why}`, at: this.now() });
   }
 
   private actionOf(op: Row): MailAction {
