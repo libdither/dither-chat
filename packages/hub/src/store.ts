@@ -176,6 +176,7 @@ export class Store {
       this.addColumns('identity', { status: 'TEXT' });
       this.addColumns('category', { threshold: 'REAL' });
       this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL' });
+      this.addColumns('visit', { depth: 'INTEGER' });
       const oldTriage = this.setAsideTriage();
       const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
       this.db.exec(schema);

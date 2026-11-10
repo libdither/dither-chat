@@ -13,7 +13,7 @@
  */
 import { Database } from 'bun:sqlite';
 import type { AttentionJudge, ScoreInput, Scored } from './attention.ts';
-import { EXAMINATION_ETA, FEATURES, fitRankSteps, HORIZON, predict, PRIOR, rankFeatures, type Moment, type Prediction, type RankModel } from './rank.ts';
+import { EXAM_AT, FEATURES, FIT, fitRankSteps, GUESSED_CURVE, HORIZON, predict, PRIOR, rankFeatures, type Moment, type Prediction, type RankModel } from './rank.ts';
 import { flagged, isChoice, loadWorld, momentOf, mutedBy, Rebuild } from './rankhistory.ts';
 import type { Store } from './store.ts';
 import type { Triage } from './triage.ts';
@@ -93,7 +93,33 @@ export class InboxRanker implements AttentionJudge {
   view() {
     const m = this.model;
     const diff = (k: 'open' | 'send') => Object.fromEntries(FEATURES.map((f) => [f, round((m[k][f] ?? 0) - (PRIOR[k][f] ?? 0))]).filter(([, v]) => v !== 0));
-    return { mode: this.mode, fitAt: m.fitAt, moments: m.moments, rows: m.rows, horizon: HORIZON, prior: { open: PRIOR.open, send: PRIOR.send }, learned: { open: diff('open'), send: diff('send') } };
+    return {
+      mode: this.mode,
+      fitAt: m.fitAt,
+      moments: m.moments,
+      rows: m.rows,
+      horizon: HORIZON,
+      prior: { open: PRIOR.open, send: PRIOR.send },
+      learned: { open: diff('open'), send: diff('send') },
+      examination: this.examinationView(),
+    };
+  }
+
+  /**
+   * "Seeing a row because it is listed", per stretch of rows (1-based): the curve fitted with the model (or null),
+   * the guess it started from, and how often the list was on screen down to there in a stay (`visit.depth`).
+   */
+  private examinationView() {
+    const m = this.model;
+    const since = this.now() - TRAIN_WINDOW;
+    const depths = this.store.db.query(`SELECT depth, COUNT(*) AS n FROM visit WHERE depth IS NOT NULL AND start_at >= ? GROUP BY depth`).all(since) as Row[];
+    const stays = depths.reduce((a, r) => a + r.n, 0);
+    const shown = (p: number) => (stays ? round(depths.reduce((a, r) => a + (r.depth >= p ? r.n : 0), 0) / stays) : null);
+    return {
+      fittedFrom: m.curve ? (m.curveFrom ?? 0) : 0,
+      staysWithDepth: stays,
+      rows: EXAM_AT.map((p, b) => ({ from: p + 1, to: b + 1 < EXAM_AT.length ? EXAM_AT[b + 1] : null, fitted: m.curve?.[b] ?? null, guess: round(GUESSED_CURVE[b]), onScreen: shown(p) })),
+    };
   }
 
   // ---------------------------------------------------------------- learning
@@ -146,7 +172,7 @@ export class InboxRanker implements AttentionJudge {
         if (m) moments.push(m);
       });
       while (!rebuild.step(stepMs)) await pause();
-      this.model = moments.length ? await run(fitRankSteps(moments, now, { eta: EXAMINATION_ETA })) : { ...PRIOR, fitAt: now };
+      this.model = moments.length ? await run(fitRankSteps(moments, now, FIT)) : { ...PRIOR, fitAt: now };
       this.store.db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)`).run(KEY, JSON.stringify(this.model));
       this.onFit?.();
       return this.model;

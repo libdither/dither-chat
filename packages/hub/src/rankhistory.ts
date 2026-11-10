@@ -9,7 +9,7 @@
  */
 import type { Database } from 'bun:sqlite';
 import { decayed } from '@dither-chat/protocol';
-import { emptyTally, foldMessage, freshState, scoreConversation, sumTallies, type ConvState, type ScoreInput, type Tally } from './attention.ts';
+import { emptyTally, foldMessage, freshState, scoreConversation, sumTallies, type ConvState, type ScoreInput, type Scored, type Tally } from './attention.ts';
 import { HORIZON, rankFeatures, type Moment, type Opened } from './rank.ts';
 import type { Triage } from './triage.ts';
 
@@ -331,13 +331,27 @@ export function sample(seen: Seen[], opened: Map<string, unknown>, t: number): {
 export function momentOf(w: World, stay: Stay, t: number, seen = seenAt(w, t), horizon = HORIZON): Moment | null {
   if (!stay.targets.some((id) => seen.some((s) => s.conv.id === id))) return null;
   const opened = openedAfter(w.stays, t, horizon);
+  const scored = new Map(seen.map((s) => [s.conv.id, scoreConversation(s.input)]));
+  const pos = positions(seen, scored);
   return {
     at: t,
     rows: sample(seen, opened, t).map(({ seen: s, weight }) => {
       const chosen = stay.targets.includes(s.conv.id);
-      return { x: rankFeatures(s.input, scoreConversation(s.input)), weight, open: opened.get(s.conv.id) ?? null, chosen, sent: chosen ? stay.sent > 0 : undefined };
+      return { x: rankFeatures(s.input, scored.get(s.conv.id)!), weight, open: opened.get(s.conv.id) ?? null, chosen, sent: chosen ? stay.sent > 0 : undefined, pos: pos.get(s.conv.id) };
     }),
   };
+}
+
+/**
+ * Where each candidate stood in the formula's one list (muted last, then by score, then the latest message): what
+ * the inbox showed, near enough. The visit log keeps the position of what you opened only.
+ */
+export function positions(seen: Seen[], scored: Map<string, Scored>): Map<string, number> {
+  const muted = (s: Seen) => Number(!!s.input.muted && s.conv.shape !== 'self');
+  const order = [...seen].sort(
+    (a, b) => muted(a) - muted(b) || scored.get(b.conv.id)!.score - scored.get(a.conv.id)!.score || (b.input.lastMessageAt ?? 0) - (a.input.lastMessageAt ?? 0) || (a.conv.id < b.conv.id ? -1 : 1),
+  );
+  return new Map(order.map((s, i) => [s.conv.id, i]));
 }
 
 /** Where a conversation's mute comes from now, by triage's effective level; notes to self are quiet, not muted. */

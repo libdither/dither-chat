@@ -75,6 +75,7 @@ export function cleanVisit(v: Partial<P.VisitRecord>, now: number): P.VisitRecor
     rank: v.rank == null ? null : int(v.rank, 0, 100_000),
     score: num(v.score),
     needs: typeof v.needs === 'boolean' ? v.needs : null,
+    depth: v.depth == null ? null : int(v.depth, 0, 100_000),
     readToId: str(v.readToId, 200),
     readToTs: num(v.readToTs),
     sent: int(v.sent, 0, 10_000),
@@ -317,11 +318,12 @@ export class ActivityStore {
         this.db
           .query(
             `INSERT INTO visit (id, device, device_label, view, conversation_id, space_id, person_id, start_at, end_at, active, source, push_id, rank, score, needs,
-               read_to_id, read_to_ts, sent, reactions, history, threads, attachments, next_view, closed, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               depth, read_to_id, read_to_ts, sent, reactions, history, threads, attachments, next_view, closed, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT (id) DO UPDATE SET
                device_label = COALESCE(excluded.device_label, device_label),
                start_at = MIN(start_at, excluded.start_at), end_at = MAX(end_at, excluded.end_at), active = MAX(active, excluded.active),
+               depth = CASE WHEN excluded.depth IS NULL THEN depth ELSE MAX(COALESCE(depth, 0), excluded.depth) END,
                read_to_id = CASE WHEN COALESCE(excluded.read_to_ts, 0) > COALESCE(read_to_ts, 0) THEN excluded.read_to_id ELSE read_to_id END,
                read_to_ts = MAX(COALESCE(read_to_ts, 0), COALESCE(excluded.read_to_ts, 0)),
                sent = MAX(sent, excluded.sent), reactions = MAX(reactions, excluded.reactions), history = MAX(history, excluded.history),
@@ -330,7 +332,7 @@ export class ActivityStore {
           )
           .run(
             v.id, v.device, v.deviceLabel ?? null, v.view, v.conversationId ?? null, v.spaceId ?? null, v.personId ?? null, v.start, v.end, v.active, v.source,
-            v.pushId ?? null, v.rank ?? null, v.score ?? null, v.needs == null ? null : +v.needs, v.readToId ?? null, v.readToTs || null,
+            v.pushId ?? null, v.rank ?? null, v.score ?? null, v.needs == null ? null : +v.needs, v.depth ?? null, v.readToId ?? null, v.readToTs || null,
             v.sent, v.reactions, v.history, v.threads, v.attachments, v.next ?? null, +v.closed, now,
           );
         // read_to_ts of 0 means none: MAX above turns a missing one into 0.
@@ -617,6 +619,7 @@ function visitOut(r: Row) {
     rank: r.rank,
     score: r.score,
     needs: r.needs == null ? null : !!r.needs,
+    depth: r.depth,
     readToId: r.read_to_id,
     readToTs: r.read_to_ts,
     sent: r.sent,

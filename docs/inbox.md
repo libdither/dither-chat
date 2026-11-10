@@ -320,7 +320,7 @@ in the order on screen, a DM as its person, then the rest by the latest message.
 | event `{ t: 'attention', items, removed }` | changed scores, and conversations no longer listed |
 | `GET /api/attention` | `{ now, items }` |
 | `GET /api/attention/:conversationId` | everything about one score: the formula's parts, noise, relationship, reply rate, usual reply time; `learned`: the model's open and send chances and points |
-| `GET /api/attention/model` | the learned order: its mode, when it last learned and from how many opens, its prior, and what it learned as changes to weights on named features |
+| `GET /api/attention/model` | the learned order: its mode, when it last learned and from how many opens, its prior, what it learned as changes to weights on named features, and the examination curve (fitted, the guess, and how often the list was on screen down to each row) |
 | `POST /api/attention/rebuild` | `{ conversations?: string[] }`: fold these, or all, again from the start |
 
 The bootstrap's and the events' `score` is the learned order's when it is on (the default), the formula's otherwise.
@@ -345,11 +345,51 @@ formula's. When the learned score is 10 points or more away from the formula's, 
 often open chats like this at times like this", or "Lower: …".
 
 **"See a chat if it is listed"** is the third chance. It depends on where the row is, not on the chat: you look at
-the rows near the top more, so they get opened more whatever they are. That is the examination chance,
-`(1 + position)^−0.5` (`examination`). It does not reorder anything by itself, since putting the likeliest rows
-where you look most is already what sorting by value does. What it changes is the learning: an open from an inbox row
-counts `1 / examination(position)` times, with the position the visit log kept (at most 10 times). An open from a
+the rows near the top more, so they get opened more whatever they are. That is the examination chance
+(`examination`). It does not reorder anything by itself, since putting the likeliest rows where you look most is
+already what sorting by value does. What it changes is the learning: an open from an inbox row counts
+`1 / examination(position)` times, with the position the visit log kept (at most 10 times). An open from a
 notification, Ctrl+K or search counts once.
+
+### Seeing a row
+
+Until 2026-11-10 the examination chance was a guess, `(1 + position)^−0.5`: half at the 4th row, a third at the 9th.
+Now each refit also fits it to your own opens, as a position-based click model: an open from the inbox at position
+k happens with chance examination(k) × the open chance, and the two are fitted in turn (`curveFit`, `FIT` in
+`rank.ts`):
+
+1. the open chance, with the guess;
+2. the curve that makes your inbox opens likeliest given that open chance: per stretch of rows (1, 2, 3, 4–5, 6–8,
+   9–12, 13–20, 21–35, 36–60, 61–100, 101 and on), the value where the opens there match what the rows not opened
+   there say, relative to the top row;
+3. the open chance again with that curve; then 2 and 3 once more.
+
+Rows opened from elsewhere say nothing about the inbox and are left out of step 2. Where a row stood is the
+visit log's position for what you opened, and the formula's one list at that moment for the rest (the log keeps
+only the first; the formula is what the inbox showed, near enough). Each stretch is pulled toward the guess by 3
+opens' worth, so a few far-down opens cannot move it much; it never rises further down (pooled where it would), and
+it stays between 0.1 and 1, so an open still counts at most 10 times.
+
+On the real hub (2026-11-10, 346 opens) it is flat over the first screenful and then falls: 1 for rows 1 to 8, 0.69
+for 9 to 12, 0.41 for 13 to 100, and 0.1 from 101. The guess said 0.33 by the 9th row, so it counted opens from rows 2
+to 12 up to three times too much and opens from far down too little. `GET /api/attention/model` shows it beside the
+guess (`examination.rows`), and `fittedFrom`, how many rows opened from the inbox it was fitted from.
+
+In the replay (7 days, 359 opens, the last 3 held out with 180), the fitted curve against the guess: +0.017 (95%
+interval 0.001 to 0.030) on the choosing days, +0.014 (−0.006 to 0.034) on the held-out days, +0.018 (0.003 to 0.033)
+over every day after the first (305 opens), and +0.053 (0.020 to 0.087) on held-out opens from elsewhere, which the
+order on screen cannot have favoured. Going back to a chat you were just in no longer loses: against the formula it
+went from −0.035 to +0.008 (−0.039 to 0.044), and the learned order against the formula from +0.014 to +0.028
+(−0.003 to 0.064) held out, +0.029 (0.001 to 0.052) over every day after the first. Regression-EM (Wang et al.
+2018), which instead counts a row not opened as possibly wanted but unseen, found the same shape a little lower
+(0.55 at rows 9 to 12, about 0.22 from 13 to 60) and did no better than the guess held out (−0.001), so the weights stay inverse
+propensities (`--curve` in the replay compares the three).
+
+**How far down you looked.** Since 2026-11-10 each stay in the activity log also keeps `depth`: the deepest inbox row
+that was on screen during it, when the list was on screen (on a desktop, beside the conversation; on a phone, the
+inbox screen). Only the number, never which rows ([activity.md](activity.md)). `GET /api/attention/model` shows, per
+stretch of rows, the share of those stays that showed it (`onScreen`). It is what the fitted curve can be checked
+against, and a ceiling a later fit can use: a row that was never on screen cannot have been seen.
 
 **Features**, all metadata: the formula's score, how long since you were there (an hour and a day half-life, and
 never), since the latest message (the same two), since you wrote, unread messages and mentions, the owed and
@@ -367,12 +407,14 @@ prior's two weights, 30 for the rest), so a few days of opens move the order a l
   the replay's code (`rankhistory.ts`).
 - It keeps every conversation you opened within the next 3 hours, the 40 with the latest message or stay, and
   40 drawn from the rest, each counting for as many as it stands for. Then it fits both chances again from the
-  prior and saves the result in `meta`.
+  prior, with the examination curve ([Seeing a row](#seeing-a-row)), and saves the result in `meta`.
 - It refits at start if it has never learned, a day after the last refit, and after 10 more opens have had their
   3 hours.
 - The work runs on a read-only connection of its own, at most about 25 ms at a time. Measured on a copy of the
   real hub (184 opens, 675K messages): the longest the hub was held was 86 ms, and the whole refit took about 10 s
-  in the background. Scoring all 484 listed conversations took 185 ms with the model, the same as without.
+  in the background. Scoring all 484 listed conversations took 185 ms with the model, the same as without. On a
+  later copy (2026-11-10, 346 opens, 30,172 rows) the refit took 17.3 s with the fitted curve and 16.7 s with the
+  guess; the longest hold was about 125 ms either way.
 - Clearing the activity log puts it back to the prior at the next check (every 30 minutes).
 
 `DITHER_INBOX_RANK`: `model` (the default) sorts by it; `shadow` works it out and shows it in
@@ -403,7 +445,7 @@ It learned "you were here" as worth less than `visited`'s 30 points (an hour's h
 −0.7). Part of that is the guessed position correction: it counts an open from far down up to 10 times, and opens
 from far down are seldom going back, so they outweigh the returns from the top. With no correction (η 0) going
 back held up on the held-out days (MRR 0.631 against 0.591 with 0.5), but over all opens neither was clearly
-better. A curve fitted to your own opens should replace the guess. Inbox clicks also favour the order that was on
+better. A curve fitted to your own opens replaced the guess ([Seeing a row](#seeing-a-row)). Inbox clicks also favour the order that was on
 screen then, the learned order since 2026-11-07, so its +0.037 on clicks from the inbox (−0.001 to 0.069) overstates
 it; on opens from elsewhere it was −0.029 (−0.065 to 0.015).
 

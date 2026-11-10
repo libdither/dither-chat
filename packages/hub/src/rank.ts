@@ -99,6 +99,9 @@ export interface RankModel {
   fitAt: number | null;
   moments: number;
   rows: number;
+  /** The examination curve fitted with it, one value per EXAM_AT bucket, and from how many inbox opens; absent: the guess. */
+  curve?: number[] | null;
+  curveFrom?: number;
 }
 
 /**
@@ -137,19 +140,35 @@ export function predict(m: RankModel, f: Features): Prediction {
 
 /**
  * How likely you are to look at the row at `position` (0 = top), relative to the top: "seeing a chat because it
- * is listed". A power law, as for search results; `eta` 0 says position does not matter.
+ * is listed". With a fitted `curve` (fitRank's `curve`), its value for the position's bucket; else the guess, a
+ * power law as for search results (`eta` 0 says position does not matter).
  */
-export function examination(position: number, eta = EXAMINATION_ETA): number {
+export function examination(position: number, eta = EXAMINATION_ETA, curve?: readonly number[] | null): number {
+  if (curve?.length) return curve[Math.min(bucketOf(position), curve.length - 1)];
   return (1 + Math.max(0, position)) ** -eta;
 }
 export const EXAMINATION_ETA = 0.5;
 /** An open from far down counts at most this many times: one click must not outweigh the rest. */
 export const MAX_IPW = 10;
+/** Where a fitted curve steps: bucket i holds the positions from EXAM_AT[i] up to the next. */
+export const EXAM_AT = [0, 1, 2, 3, 5, 8, 12, 20, 35, 60, 100] as const;
+/** A fitted curve never goes below this, so an open from far down counts at most MAX_IPW times. */
+export const EXAM_FLOOR = 1 / MAX_IPW;
+/** The guess per bucket, at each bucket's first position: where a fit starts, and what few opens are pulled back to. */
+export const GUESSED_CURVE: readonly number[] = EXAM_AT.map((p) => (1 + p) ** -EXAMINATION_ETA);
+/** Pseudo-opens of the guess in each bucket: a bucket with a handful of opens stays near it. */
+const CURVE_PRIOR = 3;
 
-/** One training row: the features, what happened, and how much it counts. */
+export function bucketOf(position: number): number {
+  let i = 0;
+  while (i + 1 < EXAM_AT.length && position >= EXAM_AT[i + 1]) i++;
+  return i;
+}
+
+/** One training row: the features, what happened (a chance, for a soft label), and how much it counts. */
 export interface RankRow {
   x: Features;
-  y: 0 | 1;
+  y: number;
   w: number;
 }
 
@@ -206,7 +225,8 @@ export function* fitSteps(rows: readonly RankRow[], prior: Weights, lambda: Reco
  */
 export interface Moment {
   at: number;
-  rows: { x: Features; weight: number; open: Opened | null; chosen: boolean; sent?: boolean }[];
+  /** `pos`: where the row stood in the formula's one list then (0 = top), as the inbox had it, near enough. */
+  rows: { x: Features; weight: number; open: Opened | null; chosen: boolean; sent?: boolean; pos?: number }[];
 }
 
 /** How you first got to a conversation after a moment: the source, its inbox row then, and how long after (ms). */
@@ -223,6 +243,14 @@ export interface FitOptions {
   cap?: number;
   /** Only opens this soon count (the moments must have been built with at least this horizon). */
   horizon?: number;
+  /**
+   * Fit the examination curve too: a position-based click model (P(open from the inbox) = examination(position) ×
+   * the open chance), fitted by alternating the two, `rounds` times (curveFit). 'ipw' weights an inbox open by
+   * 1/examination, as the guess does; 'em' instead takes a row not opened as a chance that it was wanted but not
+   * seen (regression-EM, Wang et al. 2018).
+   */
+  curve?: 'ipw' | 'em';
+  rounds?: number;
 }
 
 /** Fit both chances from the moments, starting from the prior. `eta` is the position correction (`examination`). */
@@ -230,33 +258,124 @@ export function fitRank(moments: readonly Moment[], at: number, o: FitOptions = 
   return drain(fitRankSteps(moments, at, o));
 }
 
+/** How the hub fits: the examination curve fitted to your opens, each inbox open weighted by 1/examination. */
+export const FIT: FitOptions = { eta: EXAMINATION_ETA, curve: 'ipw' };
+
+/** One row as the fit sees it: opened within the horizon or not, and where it stood. */
+export interface FitRow {
+  x: Features;
+  w: number;
+  opened: Opened | null;
+  pos: number | null;
+}
+
 /** `fitRank` in steps. */
 export function* fitRankSteps(moments: readonly Moment[], at: number, o: FitOptions = {}): Generator<undefined, RankModel> {
-  const open: RankRow[] = [];
+  const rows: FitRow[] = [];
   const send: RankRow[] = [];
   const horizon = o.horizon ?? HORIZON;
   for (const m of moments)
     for (const r of m.rows) {
-      const opened = r.open && (r.open.after ?? 0) <= horizon ? r.open : null;
-      open.push({ x: r.x, y: opened ? 1 : 0, w: r.weight * (opened ? openWeight(opened, o.eta, o.cap) : 1) });
+      rows.push({ x: r.x, w: r.weight, opened: r.open && (r.open.after ?? 0) <= horizon ? r.open : null, pos: r.pos ?? null });
       if (r.chosen && r.sent !== undefined) send.push({ x: r.x, y: r.sent ? 1 : 0, w: 1 });
     }
+  const fit = (labelled: RankRow[]) => fitSteps(labelled, PRIOR.open, o.lambda);
+  // The guess first: an inbox open counts 1/examination times.
+  let open = yield* fit(rows.map((r) => ({ x: r.x, y: r.opened ? 1 : 0, w: r.w * openWeight(r.opened, o.eta, o.cap) })));
+  let curve: number[] | null = null;
+  let curveFrom = 0;
+  if (o.curve && rows.length) {
+    for (let i = 0; i < (o.rounds ?? 2); i++) {
+      ({ curve, from: curveFrom } = curveFit(rows, open));
+      yield;
+      open = yield* fit(o.curve === 'ipw' ? rows.map((r) => ({ x: r.x, y: r.opened ? 1 : 0, w: r.w * openWeight(r.opened, o.eta, o.cap, curve) })) : emRows(rows, open, curve));
+    }
+  }
   return {
-    open: open.length ? yield* fitSteps(open, PRIOR.open, o.lambda) : { ...PRIOR.open },
+    open,
     send: send.length ? yield* fitSteps(send, PRIOR.send, o.lambda) : { ...PRIOR.send },
     fitAt: at,
     moments: moments.length,
-    rows: open.length,
+    rows: rows.length,
+    ...(curve ? { curve, curveFrom } : {}),
   };
 }
 
 /**
- * How much a row that was opened counts: an open from an inbox row far down says more than one from the top,
- * since you were less likely to see it there (inverse propensity, capped).
+ * The E-step of regression-EM: a row opened is wanted; a row not opened was either not wanted or wanted and not
+ * seen, so it counts as wanted with the chance (1 − e)·p / (1 − e·p), e its examination, p the open chance now.
  */
-export function openWeight(open: Opened | null, eta = EXAMINATION_ETA, cap = MAX_IPW): number {
+function emRows(rows: readonly FitRow[], w: Weights, curve: readonly number[]): RankRow[] {
+  return rows.map((r) => {
+    if (r.opened) return { x: r.x, y: 1, w: r.w };
+    const e = r.pos == null ? 1 : examination(r.pos, 0, curve);
+    const p = sigmoid(dot(w, r.x));
+    return { x: r.x, y: ((1 - e) * p) / (1 - e * p), w: r.w };
+  });
+}
+
+/**
+ * The examination curve that best explains where your inbox opens came from, given the open chance `w`: per bucket,
+ * the e that makes the opens there as likely as possible when each row is opened with e × p (rows opened from
+ * elsewhere say nothing about the inbox and are left out). Then relative to the top row, pulled toward the guess
+ * by CURVE_PRIOR opens per bucket, never rising further down, and between EXAM_FLOOR and 1.
+ */
+export function curveFit(rows: readonly FitRow[], w: Weights): { curve: number[]; from: number } {
+  const n = EXAM_AT.length;
+  const opens = new Array<number>(n).fill(0);
+  const ps: { p: number; w: number }[][] = Array.from({ length: n }, () => []);
+  let from = 0;
+  for (const r of rows) {
+    if (r.opened?.source === 'inbox' && r.opened.rank != null) {
+      opens[bucketOf(r.opened.rank)] += r.w;
+      from++;
+    } else if (!r.opened && r.pos != null) ps[bucketOf(r.pos)].push({ p: sigmoid(dot(w, r.x)), w: r.w });
+  }
+  // Per bucket, the e where opens/e = Σ p/(1 − e·p) over the rows not opened (decreasing in e: bisect).
+  const raw = opens.map((c, b) => {
+    if (!c || !ps[b].length) return null;
+    const maxP = Math.max(...ps[b].map((x) => x.p));
+    let lo = 1e-6;
+    let hi = Math.min(50, 0.999 / maxP);
+    for (let k = 0; k < 50; k++) {
+      const e = (lo + hi) / 2;
+      const g = c / e - ps[b].reduce((a, x) => a + (x.w * x.p) / (1 - e * x.p), 0);
+      if (g > 0) lo = e;
+      else hi = e;
+    }
+    return (lo + hi) / 2;
+  });
+  const top = raw[0];
+  const est = raw.map((e, b) => (e == null || !top ? GUESSED_CURVE[b] : e / top));
+  const weight = opens.map((c) => c + CURVE_PRIOR);
+  const pulled = est.map((e, b) => (opens[b] * e + CURVE_PRIOR * GUESSED_CURVE[b]) / weight[b]);
+  const curve = decreasing(pulled, weight).map((e, b) => (b === 0 ? 1 : Math.round(Math.max(EXAM_FLOOR, Math.min(1, e)) * 1000) / 1000));
+  return { curve, from };
+}
+
+/** The closest sequence that never rises (pool adjacent violators), each value counting `w` times. */
+export function decreasing(v: readonly number[], w: readonly number[]): number[] {
+  const blocks: { v: number; w: number; n: number }[] = [];
+  v.forEach((x, i) => {
+    blocks.push({ v: x, w: w[i], n: 1 });
+    while (blocks.length > 1 && blocks[blocks.length - 2].v < blocks[blocks.length - 1].v) {
+      const b = blocks.pop()!;
+      const a = blocks[blocks.length - 1];
+      a.v = (a.v * a.w + b.v * b.w) / (a.w + b.w || 1);
+      a.w += b.w;
+      a.n += b.n;
+    }
+  });
+  return blocks.flatMap((b) => new Array<number>(b.n).fill(b.v));
+}
+
+/**
+ * How much a row that was opened counts: an open from an inbox row far down says more than one from the top,
+ * since you were less likely to see it there (inverse propensity, capped). `curve`: a fitted one, else the guess.
+ */
+export function openWeight(open: Opened | null, eta = EXAMINATION_ETA, cap = MAX_IPW, curve?: readonly number[] | null): number {
   if (!open || open.source !== 'inbox' || open.rank == null) return 1;
-  return Math.min(cap, 1 / examination(open.rank, eta));
+  return Math.min(cap, 1 / examination(open.rank, eta, curve));
 }
 
 export { logit, sigmoid };

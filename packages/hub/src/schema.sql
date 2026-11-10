@@ -473,6 +473,7 @@ CREATE TABLE IF NOT EXISTS visit (
   rank            INTEGER,                   -- inbox row position, attention score and "needs you", when from the inbox
   score           REAL,
   needs           INTEGER,
+  depth           INTEGER,                   -- the deepest inbox row on screen during the stay, when the list was
   read_to_id      TEXT,
   read_to_ts      INTEGER,
   sent            INTEGER NOT NULL DEFAULT 0,

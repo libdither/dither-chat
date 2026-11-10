@@ -9,9 +9,9 @@ import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { ActivityStore } from '../src/activity.ts';
 import { Attention, freshState, scoreConversation, type ScoreInput } from '../src/attention.ts';
-import { examination, FEATURES, fitLogistic, fitRank, MAX_IPW, openWeight, predict, PRIOR, rankFeatures, type Moment, type RankRow } from '../src/rank.ts';
+import { bucketOf, curveFit, decreasing, EXAM_AT, EXAM_FLOOR, examination, FEATURES, fitLogistic, fitRank, GUESSED_CURVE, logit, MAX_IPW, openWeight, predict, PRIOR, rankFeatures, type FitRow, type Moment, type RankRow } from '../src/rank.ts';
 import { InboxRanker } from '../src/ranker.ts';
-import { KEEP_RECENT, KEEP_SAMPLE, sample, type Seen } from '../src/rankhistory.ts';
+import { KEEP_RECENT, KEEP_SAMPLE, positions, sample, type Seen } from '../src/rankhistory.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
 
@@ -92,6 +92,75 @@ describe('seeing a row because it is listed', () => {
     expect(openWeight(null)).toBe(1);
     // The replay tries other caps.
     expect(openWeight({ source: 'inbox', rank: 10_000 }, 0.5, 3)).toBe(3);
+  });
+});
+
+describe('the examination curve, fitted', () => {
+  test('a curve steps by bucket; without one, the guess', () => {
+    expect(EXAM_AT.map(bucketOf)).toEqual(EXAM_AT.map((_, i) => i));
+    expect(bucketOf(4)).toBe(3);
+    expect(bucketOf(10_000)).toBe(EXAM_AT.length - 1);
+    const curve = EXAM_AT.map((_, i) => 1 - i * 0.05);
+    expect(examination(9, 0.5, curve)).toBe(curve[bucketOf(9)]);
+    expect(examination(3, 0.5, null)).toBeCloseTo(0.5);
+    expect(openWeight({ source: 'inbox', rank: 9 }, 0.5, MAX_IPW, curve)).toBeCloseTo(1 / curve[bucketOf(9)]);
+  });
+
+  test('never rising further down: adjacent violators pooled by their weight', () => {
+    const near = (a: number[], b: number[]) => a.forEach((x, i) => expect(x).toBeCloseTo(b[i], 9));
+    near(decreasing([1, 0.5, 0.7, 0.2], [1, 1, 1, 1]), [1, 0.6, 0.6, 0.2]);
+    near(decreasing([1, 0.2, 0.8], [1, 3, 1]), [1, 0.35, 0.35]);
+  });
+
+  // Every row has a one-in-five chance of being wanted; the first 8 rows are always seen, the next 27 a third of the
+  // time, and the rest a tenth: opens from the inbox at each position are what that gives.
+  const truth = (pos: number) => (pos < 8 ? 1 : pos < 35 ? 0.3 : 0.1);
+  const p = 0.2;
+  const x = feats();
+  const rowsAt = (pos: number, n = 400): FitRow[] => {
+    const opened = Math.round(n * truth(pos) * p);
+    return Array.from({ length: n }, (_, i) => ({ x, w: 1, pos, opened: i < opened ? { source: 'inbox', rank: pos } : null }));
+  };
+  const rows = Array.from({ length: 120 }, (_, pos) => rowsAt(pos)).flat();
+  const w = { bias: logit(p) };
+
+  test('it finds where you look from where your inbox opens came from', () => {
+    const { curve, from } = curveFit(rows, w);
+    expect(from).toBeGreaterThan(1000);
+    expect(curve[0]).toBe(1);
+    for (const b of [1, 2, 3, 4]) expect(curve[b]).toBeCloseTo(1, 1);
+    for (const b of [5, 6, 7]) expect(curve[b]).toBeCloseTo(0.3, 1);
+    for (const b of [8, 9, 10]) expect(curve[b]).toBeCloseTo(0.1, 1);
+  });
+
+  test('with a handful of opens it stays near the guess; never below the floor or above 1', () => {
+    const few = [...rowsAt(0, 50), ...rowsAt(30, 50).map((r) => ({ ...r, opened: null })), ...rowsAt(30, 1)];
+    const { curve } = curveFit(few, w);
+    expect(curve[bucketOf(30)]).toBeLessThan(GUESSED_CURVE[bucketOf(30)] + 0.05);
+    expect(Math.min(...curve)).toBeGreaterThanOrEqual(EXAM_FLOOR);
+    expect(Math.max(...curve)).toBeLessThanOrEqual(1);
+    for (let i = 1; i < curve.length; i++) expect(curve[i]).toBeLessThanOrEqual(curve[i - 1]);
+  });
+
+  test('a fit with the curve keeps it, and opens from where you seldom look count more than the guess says', () => {
+    const moments: Moment[] = [];
+    for (let pos = 0; pos < 120; pos++) moments.push({ at: T0 + pos, rows: rowsAt(pos, 40).map((r) => ({ x: r.x, weight: 1, open: r.opened, chosen: false, pos })) });
+    const m = fitRank(moments, T0, { curve: 'ipw' });
+    expect(m.curve).toHaveLength(EXAM_AT.length);
+    expect(m.curve![0]).toBe(1);
+    expect(m.curveFrom).toBeGreaterThan(0);
+    // The guess, as before: no curve kept.
+    expect(fitRank(moments, T0).curve).toBeUndefined();
+    expect(fitRank(moments, T0, { curve: 'em' }).curve).toHaveLength(EXAM_AT.length);
+  });
+});
+
+describe('where each row stood', () => {
+  test('the formula’s one list: muted last, then by score, then the latest message', () => {
+    const s = (id: string, o: Partial<ScoreInput>) => ({ conv: { id, shape: 'group' }, input: input(o), lastThere: null }) as unknown as Seen;
+    const seen = [s('quiet', { lastMessageAt: T0 - 5 * DAY }), s('muted', { unread: 5, muted: 'you' }), s('busy', { unread: 3 }), s('fresh', { lastMessageAt: T0 - MIN })];
+    const pos = positions(seen, new Map(seen.map((x) => [x.conv.id, scoreConversation(x.input)])));
+    expect([...pos.entries()].sort((a, b) => a[1] - b[1]).map(([id]) => id)).toEqual(['busy', 'fresh', 'quiet', 'muted']);
   });
 });
 
@@ -225,6 +294,17 @@ describe('the hub learns from your opens', () => {
     const r = new InboxRanker(store, triage, 'model', undefined, () => NOW);
     const v = r.view();
     expect(Object.keys(v.learned.open).every((k) => (FEATURES as readonly string[]).includes(k))).toBe(true);
+    // The examination curve it fitted, beside the guess, per stretch of rows.
+    expect(v.examination.rows).toHaveLength(EXAM_AT.length);
+    expect(v.examination.rows[0]).toMatchObject({ from: 1, to: 1, fitted: 1, guess: 1 });
+    expect(v.examination.fittedFrom).toBeGreaterThan(0);
+    // How far down the list was on screen, from the stays that say.
+    expect(v.examination.staysWithDepth).toBe(0);
+    open('work', T0 + 9 * DAY, { depth: 3 });
+    open('work', T0 + 9 * DAY + HOUR, { depth: 20 });
+    const seen = r.view().examination;
+    expect(seen.staysWithDepth).toBe(2);
+    expect(seen.rows.map((x) => x.onScreen)).toEqual(EXAM_AT.map((p) => (p <= 3 ? 1 : p <= 20 ? 0.5 : 0)));
     activity.clear();
     expect(r.due()).toBe(true);
     expect((await r.refit({ stepMs: 5, pauseMs: 0 })).moments).toBe(0);
