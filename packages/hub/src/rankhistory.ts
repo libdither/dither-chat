@@ -10,7 +10,7 @@
 import type { Database } from 'bun:sqlite';
 import { decayed } from '@dither-chat/protocol';
 import { emptyTally, foldMessage, freshState, scoreConversation, sumTallies, type ConvState, type ScoreInput, type Tally } from './attention.ts';
-import { HORIZON, rankFeatures, type Moment } from './rank.ts';
+import { HORIZON, rankFeatures, type Moment, type Opened } from './rank.ts';
 import type { Triage } from './triage.ts';
 
 type Row = Record<string, any>;
@@ -286,14 +286,14 @@ export class Rebuild {
 
 // ------------------------------------------------------------------ moments to learn from
 
-/** What you opened within the horizon after `t`, each with how you first got there. */
-export function openedAfter(stays: Stay[], t: number): Map<string, { source: string; rank: number | null }> {
-  const out = new Map<string, { source: string; rank: number | null }>();
+/** What you opened within the horizon after `t`, each with how you first got there and how soon. */
+export function openedAfter(stays: Stay[], t: number, horizon = HORIZON): Map<string, Opened> {
+  const out = new Map<string, Opened>();
   for (const s of stays) {
     if (s.start < t) continue;
-    if (s.start > t + HORIZON) break;
+    if (s.start > t + horizon) break;
     if (!isChoice(s)) continue;
-    for (const id of s.targets) if (!out.has(id)) out.set(id, { source: s.source, rank: s.rank });
+    for (const id of s.targets) if (!out.has(id)) out.set(id, { source: s.source, rank: s.rank, after: s.start - t });
   }
   return out;
 }
@@ -324,10 +324,13 @@ export function sample(seen: Seen[], opened: Map<string, unknown>, t: number): {
   return [...pos.map((s) => ({ seen: s, weight: 1 })), ...top.map((s) => ({ seen: s, weight: 1 })), ...kept.map((s) => ({ seen: s, weight: w }))];
 }
 
-/** One open as a training moment: the sampled candidates' features, opened within the horizon or not. Null if the inbox did not list it. */
-export function momentOf(w: World, stay: Stay, t: number, seen = seenAt(w, t)): Moment | null {
+/**
+ * One open as a training moment: the sampled candidates' features, opened within the horizon or not. Null if the
+ * inbox did not list it. The replay builds them with a longer `horizon` to try shorter ones (fitRank's `horizon`).
+ */
+export function momentOf(w: World, stay: Stay, t: number, seen = seenAt(w, t), horizon = HORIZON): Moment | null {
   if (!stay.targets.some((id) => seen.some((s) => s.conv.id === id))) return null;
-  const opened = openedAfter(w.stays, t);
+  const opened = openedAfter(w.stays, t, horizon);
   return {
     at: t,
     rows: sample(seen, opened, t).map(({ seen: s, weight }) => {

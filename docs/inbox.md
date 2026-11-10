@@ -390,6 +390,33 @@ learning, and the replay can be run again as the log grows. Run again on 2026-11
 out), the two were even on the held-out days: −0.011 (−0.057 to 0.028), higher for 48 opens and lower
 for 33; on opens from elsewhere the formula did better, −0.063 (−0.140 to −0.002).
 
+**Why it is only even (2026-11-10).** The same 7 days (359 opens), now with the last 3 held out (180 opens): the
+formula 0.419, the learned order 0.433, a paired +0.014 (−0.023 to 0.057). Every day after the first is out of
+sample for the learned order (each day's model learned only from the days before), and over those 305 opens it is
++0.011 (−0.023 to 0.048), the sum of two parts that cancel:
+
+- on opens of a conversation you had not been in for 2 hours it is better, +0.043 (0.010 to 0.080, 179 opens);
+- on going back to one you were in within 2 hours it is worse, −0.035 (−0.088 to 0.008, 126 opens), and on opens
+  where you wrote, −0.066 (−0.131 to 0.003, 78 opens).
+
+It learned "you were here" as worth less than `visited`'s 30 points (an hour's half-life −1.2 in log-odds, a day's
+−0.7). Part of that is the guessed position correction: it counts an open from far down up to 10 times, and opens
+from far down are seldom going back, so they outweigh the returns from the top. With no correction (η 0) going
+back held up on the held-out days (MRR 0.631 against 0.591 with 0.5), but over all opens neither was clearly
+better. A curve fitted to your own opens should replace the guess. Inbox clicks also favour the order that was on
+screen then, the learned order since 2026-11-07, so its +0.037 on clicks from the inbox (−0.001 to 0.069) overstates
+it; on opens from elsewhere it was −0.029 (−0.065 to 0.015).
+
+Nothing in `--model-grid` was clearly better than what ships, so nothing changed. Against the shipped settings
+(choosing days; held out):
+
+| setting | tried | best, choosing days | best, held out | note |
+|---|---|---|---|---|
+| pull to the prior λ × position correction η | 3 to 300 × 0, 0.5, 1 | λ 100, η 0: +0.017 (−0.004 to 0.031) | the same: +0.015 (−0.018 to 0.043) | stronger pulls a little better; no interval above 0 on both |
+| horizon | 30 min, 1 h, 3 h, 6 h | 30 min: +0.001 | 30 min and 1 h: +0.005 | 6 h worse on both: −0.025 (−0.045 to −0.006), −0.017 (−0.029 to −0.002) |
+| cap on an open's weight | 2, 3, 10, 30 | 2: +0.009 (−0.006 to 0.022) | 3: −0.000 | every open from the inbox was in its first 100 rows, where η 0.5 stays under 10, so 10 and 30 are the same |
+| learn from the last | 2, 3, 5 days, all | 2 days: +0.008 (0.001 to 0.017) | 3 days: +0.007 (−0.021 to 0.032) | the 60-day and 1,500-open windows do not bind yet: 7 days, about 360 opens |
+
 What it learned on the real hub, in short: the time since the latest message counts much more than the formula's
 `recency` gives it, mentions and relationship a little more, and "you were here" a little less than `visited`'s
 30 points.
@@ -401,12 +428,17 @@ asks, at every moment you opened a conversation, at which position each ordering
 the world at that moment: every candidate's features folded up to then (the same fold as the hub), what was unread
 (messages from others since you last wrote or stayed there; before the log starts, everything counts as read),
 where you had been (the log's stays) and the mutes as they are now. App starts and resuming are not choices and are
-left out; a person's page counts as the best of their DMs. The earlier days are for choosing weights, the last two
-are held out. It writes counts and rates only.
+left out; a person's page counts as the best of their DMs. The earlier days are for choosing weights, the last three
+are held out (two until 2026-11-10). It writes counts and rates only.
 
 ```
-bun scripts/inbox-replay.ts --live .data/hub.sqlite --out <scratch dir> [--holdout 2] [--grid] [--model-grid] [--calibrate]
+bun scripts/inbox-replay.ts --live .data/hub.sqlite --out <scratch dir> [--holdout 3] [--grid] [--model-grid] [--calibrate]
 ```
+
+`--model-grid` replays the learned order with other settings, each against the shipped one on the same opens: the
+pull to the prior and the position correction, the horizon (from moments built with 6 hours, so a shorter one is
+exact), the cap on an open's weight, and how many days back it learns from. The report also splits every day after
+the first by how you got there, going back or not, and writing.
 
 The learned order is replayed as the hub runs it: refitted at the start of each day on the opens before it whose
 3 hours had passed, from the same rebuilt moments and the same sampling, and asked at every open of the day.
