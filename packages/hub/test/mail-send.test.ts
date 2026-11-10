@@ -322,6 +322,11 @@ describe('when it does not go', () => {
     expect(recipientsRefused('Proton has no key it trusts for recipient 2 or recipient 3, so send this one from Proton', out)).toBe(`Proton has no key it trusts for ${jo.email} or ${kim.email}, so send this one from Proton.`);
     expect(recipientsRefused('Recipient 4 has a pinned key in your Proton contacts, so send this one from Proton..', out)).toBe('Recipient 4 has a pinned key in your Proton contacts, so send this one from Proton.');
     expect(recipientsRefused('recipient 0 and recipient 12 are not on it', out)).toBe('Recipient 0 and recipient 12 are not on it.');
+    // Several sharing one reason, as dither-accounts' Proton extractor words them.
+    expect(recipientsRefused('Recipients 2 and 3 publish an encryption key, so Proton would encrypt to it; send this one from Proton.', out)).toBe(`${jo.email} and ${kim.email} publish an encryption key, so Proton would encrypt to it; send this one from Proton.`);
+    expect(recipientsRefused('Proton gave no key it can encrypt to for recipients 1, 2 and 3, so send this one from Proton.', out)).toBe(`Proton gave no key it can encrypt to for ${sam.email}, ${jo.email} and ${kim.email}, so send this one from Proton.`);
+    expect(recipientsRefused('Recipients 1, 2, and 3 have encryption settings', out)).toBe(`${sam.email}, ${jo.email} and ${kim.email} have encryption settings.`);
+    expect(recipientsRefused('Recipients 2 and 9 publish an encryption key', out)).toBe('Recipients 2 and 9 publish an encryption key.');
   });
 
   test('422 by its code: no code and from are the From; failed, settings and others are the extractor’s words, recipients named', async () => {

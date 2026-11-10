@@ -86,8 +86,9 @@ const sentence = (msg: string) => {
 };
 
 /**
- * An extractor's refusal (422) as one sentence, each "recipient N" in it replaced by that address: N counts To, then
- * Cc, then Bcc, an address once whatever its case, from 1. A number past the last stays as it was.
+ * An extractor's refusal (422) as one sentence, each "recipient N" or "recipients N and M" (or "N, M and K") in it
+ * replaced by those addresses: N counts To, then Cc, then Bcc, an address once whatever its case, from 1. When a
+ * number is past the last, that phrase stays as it was.
  */
 export function recipientsRefused(msg: string, out: Partial<Pick<M.OutgoingMail, 'to' | 'cc' | 'bcc'>>): string {
   const seen = new Set<string>();
@@ -99,7 +100,11 @@ export function recipientsRefused(msg: string, out: Partial<Pick<M.OutgoingMail,
     list.push(a.email.trim());
   }
   // A sentence first, so an address that now starts it keeps its case.
-  return sentence(msg).replace(/\b[Rr]ecipient (\d+)\b/g, (all, n: string) => list[Number(n) - 1] ?? all);
+  return sentence(msg).replace(/\b[Rr]ecipients? (\d+(?:(?:, and |, | and )\d+)*)\b/g, (all, ns: string) => {
+    const named = ns.split(/\D+/).map((n) => list[Number(n) - 1]);
+    if (named.some((e) => !e)) return all;
+    return named.length > 1 ? `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}` : named[0]!;
+  });
 }
 /** A type the extractors take (`type/subtype`), else the generic one. */
 const cleanMime = (m: unknown) => (typeof m === 'string' && /^[\w.+-]+\/[\w.+-]+$/.test(m) ? m : 'application/octet-stream');
