@@ -14,7 +14,7 @@ slides in over them. A tab bar along the bottom shows whenever the lists do:
 | Tab | What it is |
 |---|---|
 | Home | The rail and the list you were last on |
-| Triage | The board: what pinged you and why, the digest, accounts that need you, Mark all read |
+| Catch up | The conversations that need you, a card each to answer, mark Done or put Later; accounts that need you; Mark all read; How it sorts |
 | Search | Search with every filter; a search for a name also lists matching people, communities and channels |
 | You | Settings, with your accounts first and Add account |
 
@@ -36,7 +36,7 @@ the desktop is unchanged apart from the fixes listed below.
 | Long-press | A reaction | Who reacted |
 | Long-press, or hold and drag | A rail entry, a row, a card in All communities | The arrange sheet; or drag to reorder and make folders |
 | Drag down | A sheet's grabber or header; anywhere in it once scrolled to its top | Dismisses it. A short drag springs back |
-| Pull down | The top of a list or the Triage board | Reloads everything from the hub, or reconnects |
+| Pull down | The top of a list or Catch up | Reloads everything from the hub, or reconnects |
 | Pinch, double-tap, drag | An image | Zoom and pan, up to 5x |
 | Swipe sideways, swipe down | An image | Next or previous image of the message; close |
 | Flick sideways or up | A toast | Dismisses it |
@@ -79,8 +79,9 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Desktop capability | How on a desktop | Before, on a phone | Now, on a phone |
 |---|---|---|---|
 | Inbox: one ranked list of DMs, groups, rooms outside a space and notes ([inbox.md](inbox.md)) | Sidebar | Inbox tab | Home, Inbox in the rail |
-| Triage board: Important, Active, Digest and Not interesting, each with ▲/▼ votes, and the counts | Center pane with nothing open | **Unreachable**: the inbox tab showed the list | Triage tab |
-| Mark all read, everywhere | Board button | **Unreachable** | Triage tab; per place in its arrange sheet |
+| Catch up: the conversations that need you, to answer, Done or Later | Center pane with nothing open | **Unreachable**: the inbox tab showed the list | Catch up tab |
+| How it sorts: Important, Active, Digest and Not interesting, each with ▲/▼ votes, and the counts | Catch up's header, the inbox button's menu, Settings | **Unreachable** | Catch up's header, Settings |
+| Mark all read, everywhere | Catch up's header | **Unreachable** | Catch up tab; per place in its arrange sheet |
 | People, merged DM timeline, one network's chat | Rail, sidebar, header chips | People tab; chips wrapped | Rail; the chips scroll sideways, and the details panel lists each chat |
 | Group chats (now in the inbox), spaces with channel trees and threads, folders | Rail and sidebar | Groups and Spaces tabs, no rail | The inbox, and the rail and its list, as in Discord |
 | Open a folder in the rail; open it as a list | Click; arrange menu | Spaces tab | Tap in the rail; arrange sheet |
@@ -119,7 +120,7 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Any one Settings section (Message history, Adversarial features) without scrolling past the rest | Section list beside Settings | More tab, scrolled | Sections in Settings' header: a sheet of the sections, two taps |
 | Adversarial features' warning and its Yes | Dialog | Not there yet | Bottom sheet whose words scroll, Yes pinned at its bottom |
 | Toasts, open the conversation from one | Bottom right | Covered the composer | At the top; tap to open, flick to dismiss |
-| Unread and mention badges | Rail | None on the tabs | Rail, and the Home and Triage tabs; You has a dot when an account needs you |
+| Unread and mention badges | Rail | None on the tabs | Rail, and the Home and Catch up tabs; You has a dot when an account needs you |
 | Collapse sections and categories | Click | Tap, under 44px | Tap, 40-44px |
 | Escape closes things | Keyboard | Nothing | Back button, swipes, tap outside |
 
@@ -178,7 +179,7 @@ From the demo hub, at 390x844:
 [swipe to reply](screenshots/41-phone-swipe-reply.png),
 [message sheet](screenshots/42-phone-message-sheet.png),
 [image viewer](screenshots/43-phone-image-viewer.png),
-[Triage tab](screenshots/44-phone-triage.png),
+[Catch up tab](screenshots/44-phone-catchup.png),
 [You tab](screenshots/45-phone-you.png),
 [account](screenshots/46-phone-account.png),
 [a menu as a sheet](screenshots/47-phone-menu-sheet.png),

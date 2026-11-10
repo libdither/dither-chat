@@ -26,10 +26,10 @@ export const triagePolicy = signal<P.TriagePolicyView | null>(null);
 export const DEFAULT_THRESHOLDS: P.TriageProbs = { ping: 0.8, active: 0.5, interesting: 0.5 };
 /** The hub's thresholds for the three chances. */
 export const thresholds = (): P.TriageProbs => triagePolicy.value?.thresholds ?? DEFAULT_THRESHOLDS;
-/** The level each chance stands for, in the board's words. */
+/** The level each chance stands for, in How it sorts' words. */
 export const HEAD_LABEL: Record<P.TriageHead, string> = { ping: 'Important', active: 'Active', interesting: 'Digest' };
 
-/** What can be voted on: a chat message, or a mail message (its id `mml_`, the board's mail rows, the reader's). */
+/** What can be voted on: a chat message, or a mail message (its id `mml_`, How it sorts' mail lines, the reader's). */
 export interface Votable {
   id: string;
   triage?: P.TriageView | null;

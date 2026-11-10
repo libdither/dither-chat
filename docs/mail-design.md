@@ -727,7 +727,7 @@ Groups the rest. Tapping a row opens the reader.
 `everyone` (Cc or a list), `reply` (to you), `question`/`urgent` from subject and text, `link`, `long`, `media`. Its
 `base` is `push` for a known sender with you in To, `quiet` for one in Cc, `digest` for an unknown sender. It runs
 `predict` with the live model on words from the subject and the first 2 KB of text, and stores the result in
-`mail_triage`. **Bulk is never triaged**: `drop`, with no notification and no digest. Votes (notification, Triage board,
+`mail_triage`. **Bulk is never triaged**: `drop`, with no notification and no digest. Votes (notification, How it sorts (once the Triage board),
 the reader's ⋯) join `votes.ts`'s examples; the author feature is the person, so voting Sam's mail up raises Sam on
 Signal too, and the reverse. Quiet hours hold mail as they hold chat.
 
@@ -735,7 +735,7 @@ Signal too, and the reverse. Quiet hours hold mail as they hold chat.
 `conversationId = <thread>`. The title is the sender, the body is subject — preview, the picture is the person's avatar
 with the email mark. `devices.ts` gets a mail chain (`network:email`, `account:<mail account>`), so "Email off on the
 phone" works. `delivery.ts` groups a thread's lines as a chat's. `public/sw.js` and Android open `#/mail/t/<thread>` when
-`mailThreadId` is set, and reading the thread calls `push.clear`. The Triage board lists mail with an ✉ mark.
+`mailThreadId` is set, and reading the thread calls `push.clear`. How it sorts (once the Triage board) lists mail with an ✉ mark.
 
 ## 11. Search
 

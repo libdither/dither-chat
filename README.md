@@ -5,7 +5,7 @@ ontology — people, groups and communities — and serves every device as a PWA
 over Tailscale. No bridge, no hosted middleman: the clients run on your own
 machine and relay normalized facts to a local hub.
 
-![Inbox triage board](docs/screenshots/01-inbox-triage.png)
+![Catch up: the conversations that need you](docs/screenshots/01-inbox-catchup.png)
 
 ## Why
 
@@ -25,7 +25,7 @@ adapter (1 per account) ──native-id facts over WS──▶ hub ──▶ PWA
 - **`packages/hub`** — Bun + SQLite. Idempotent ingest, cross-account dedup,
   person-merge, notification triage, media proxy, live WebSocket, HTTP API,
   adapter supervisor. Entry: `packages/hub/src/main.ts`.
-- **`packages/web`** — Preact PWA. One ranked inbox, triage board, per-person merged DM
+- **`packages/web`** — Preact PWA. One ranked inbox, Catch up, per-person merged DM
   timelines, Discord/Matrix space trees with threads, folders, notification
   rules, sandbox live-view (noVNC), and a phone layout with Discord's panels and gestures.
 - **`packages/adapter-{discord,signal,matrix,whatsapp}`** — one adapter per network.

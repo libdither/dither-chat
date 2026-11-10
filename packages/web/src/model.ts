@@ -678,7 +678,7 @@ export function messageUnread(m: P.MessageView): boolean {
   return !!c && c.vantages.some((v) => (v.lastReadTs ?? 0) < m.ts) && unreadOf(c).unread > 0;
 }
 
-/** A mail message on the board you have not read: as its thread says, if held, else as the hub said. */
+/** A mail message on How it sorts you have not read: as its thread says, if held, else as the hub said. */
 function mailUnread(m: P.MailTriageItem): boolean {
   const t = db.mail.threads.get(m.threadId);
   return t ? t.unread > 0 && m.unread : m.unread;
@@ -687,7 +687,7 @@ function mailUnread(m: P.MailTriageItem): boolean {
 /** A board card you have not read, chat or mail. */
 export const boardUnread = (m: BoardItem) => (isMailItem(m) ? mailUnread(m) : messageUnread(m));
 
-/** The Triage board's lists and counts (board.ts), for what is shown here: chat's messages and mail's. */
+/** How it sorts' lists and counts (board.ts), for what is shown here: chat's messages and mail's. */
 export function board(): Board {
   return memo('board', () =>
     triageBoard<BoardItem>([...inbox.value, ...mailTriage.value], {
@@ -702,7 +702,7 @@ export function board(): Board {
   );
 }
 
-/** Important messages on the Triage board you have not read yet, by where they are now (your vote counts): the inbox button's count. */
+/** Important messages of the last week you have not read yet, by where they are now (your vote counts): the inbox button's count. */
 export function pingedCount(): number {
   return board().importantUnread;
 }

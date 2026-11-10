@@ -194,7 +194,14 @@ function RailEntryView({ entry: e, route: r }: { entry: RailEntry; route: Route 
 /** Discord's home button has no menu; this inbox spans every account, so reading all of it is worth one. */
 function inboxMenu(): MenuSpec {
   const all = [...db.conversations.values()].filter(visibleConv);
-  return { label: 'Inbox', items: groups([{ label: 'Mark Everything As Read', icon: 'check', disabled: !sumUnread(all).unread, run: () => markAllRead(all, 'all your accounts') }]) };
+  return {
+    label: 'Inbox',
+    track: 'inbox menu',
+    items: groups([
+      { label: 'Mark Everything As Read', icon: 'check', track: 'mark everything read', disabled: !sumUnread(all).unread, run: () => markAllRead(all, 'all your accounts') },
+      { label: 'How It Sorts', icon: 'sparkles', track: 'how it sorts', run: () => go({ view: 'model' }) },
+    ]),
+  };
 }
 
 /** Mail, once the hub can read it (docs/mail.md): a dot while Inbox has unread threads. Reads only mail's signal. */
@@ -230,7 +237,7 @@ export function Rail() {
 
   return (
     <nav class="rail" aria-label="Places" data-track-area="rail">
-      <RailItem active={is((r) => r.view === 'inbox' || r.view === 'triage')} title="Inbox" track="inbox" badge={priorityCount} onClick={() => go({ view: 'inbox' })} menu={inboxMenu}>
+      <RailItem active={is((r) => r.view === 'inbox' || r.view === 'triage' || r.view === 'model')} title="Inbox" track="inbox" badge={priorityCount} onClick={() => go({ view: 'inbox' })} menu={inboxMenu}>
         <span class="rail-logo">
           <DitherMark size={26} />
         </span>

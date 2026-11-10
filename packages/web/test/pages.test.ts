@@ -22,6 +22,7 @@ const ROUTES: [hash: string, kind: 'list' | 'tab' | 'page' | 'over', own: string
   ['#/inbox/c/chan', 'page', '#/inbox'],
   ['#/inbox/c/mth_1', 'page', '#/inbox'],
   ['#/triage', 'tab', '#/triage'],
+  ['#/model', 'over', '#/triage'],
   ['#/people', 'list', '#/people'],
   ['#/people/pal', 'page', '#/people'],
   ['#/people/graph', 'page', '#/people'],
@@ -55,7 +56,7 @@ const ROUTES: [hash: string, kind: 'list' | 'tab' | 'page' | 'over', own: string
 
 test('the table covers every kind of route', () => {
   const views = new Set(ROUTES.map(([h]) => R(h).view));
-  expect([...views].sort()).toEqual(['accounts', 'directory', 'folder', 'inbox', 'mail', 'people', 'profile', 'requests', 'search', 'settings', 'space', 'spaces', 'triage']);
+  expect([...views].sort()).toEqual(['accounts', 'directory', 'folder', 'inbox', 'mail', 'model', 'people', 'profile', 'requests', 'search', 'settings', 'space', 'spaces', 'triage']);
 });
 
 test('pages, tabs and lists are told apart', () => {
@@ -138,6 +139,10 @@ test('back from a page opened over another closes it onto that page, or goes to 
     return [href(w.to), w.how];
   };
   expect(way('#/p/pal', '#/s/srv/c/chan')).toEqual(['#/s/srv/c/chan', 'back']);
+  // How it sorts, from Catch up or Settings; opened directly, back goes to Catch up.
+  expect(way('#/model', '#/triage')).toEqual(['#/triage', 'back']);
+  expect(way('#/model', '#/settings')).toEqual(['#/settings', 'back']);
+  expect(way('#/model', null)).toEqual(['#/triage', 'replace']);
   expect(way('#/p/pal', null)).toEqual(['#/people', 'replace']);
   expect(way('#/about/c/chan', null)).toEqual(['#/s/srv', 'replace']);
   expect(way('#/accounts/acc', '#/settings')).toEqual(['#/settings', 'back']);

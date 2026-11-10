@@ -360,7 +360,7 @@ Tests: `hub/test/mail-classify.test.ts`, `mail-attention.test.ts`, `web/test/inb
 - **Device rules** (`devices.ts`): a mail thread's chain is the thread, its mail account, then Email. Settings →
   Notifications → Each device lists Email (and each mail account when there are several), so "Email off on the
   phone" works. "Mentions only" keeps mail with you in To or answering you.
-- **Votes**: on the Triage board, where mail is listed beside chat with an envelope and "by email"; from the
+- **Votes**: on How it sorts, where a mail thread is a line beside chat's with an envelope and "by email"; from the
   notification (Important: ▼ Active, ✓ Right; Active: ▲ Important, ▼ Digest); and in the reader, where a triaged
   message has a Notification button with why, the three chances and the four levels. They go to
   `POST /api/messages/:id/feedback` like chat's (or `POST /api/mail/triage/:id/vote`). "Not a person" is a vote
@@ -374,19 +374,20 @@ Tests: `hub/test/mail-classify.test.ts`, `mail-attention.test.ts`, `web/test/inb
   here (asked for, waited for at most a minute), 30 an account a pass, after a sync brings mail and every 5
   minutes. Such a decision has `quiet = 1` and says "Rated after a sync found it: no notification": it never
   notifies, is never held by quiet hours, is never a line of a later notification, and never counts as a
-  notification you let stand; it only decides the listing, and shows on the board and in the reader so you can vote
+  notification you let stand; it only decides the listing, and shows on How it sorts and in the reader so you can vote
   on it. On an account whose summaries carry no headers it waits until the steps below are done.
 
 How: `mail_triage` (`schema-triage.sql`) keeps each decision with its facts, words, chances, whether it notified and
 your vote; a message the server no longer has keeps its row only if you voted on it, and an account's mail going
-(§14 Q6) takes its rows, voted ones keeping their facts but not their words. `GET /api/mail/triage?since=` is the
-board's mail (`MailTriageItem`); each thread's view carries its newest decision (`MailThreadView.triage`) and each
-message's its own (`MailMessageView.triage`), so the board follows new mail and reads live. The daily digest
+(§14 Q6) takes its rows, voted ones keeping their facts but not their words. `GET /api/mail/triage?since=` is How it
+sorts' mail (`MailTriageItem`), and Catch up's level for a mail card; each thread's view carries its newest decision
+(`MailThreadView.triage`) and each message's its own (`MailMessageView.triage`), so both follow new mail and reads live.
+Mail threads from people are cards in Catch up too ([inbox.md](inbox.md#catch-up)), with Open and Done. The daily digest
 notification still counts chat only.
 Tests: `hub/test/mail-triage.test.ts` (bulk, a known sender in To, quiet hours, "Email off", a vote on Sam's mail
 and Sam on Signal, the inbox for strangers, what a sync found rated quietly, spoofing, late and read mail, lines and
 reads, the routes);
-`verify-notifications.ts`'s mail run (a demo person answers what you send; the toast, the board, a vote, the reader,
+`verify-notifications.ts`'s mail run (a demo person answers what you send; the toast, How it sorts, a vote, the reader,
 Email off, a phone and the light theme).
 
 ## Summaries without headers (Proton)

@@ -298,6 +298,14 @@ export function SettingsPane() {
 
         <section class="set-block" id="set-triage">
           <h3>Smart triage</h3>
+          <button class="link-row set-sorts" data-track="how it sorts" onClick={() => go({ view: 'model' })}>
+            <Icon name="sparkles" size={15} />
+            <span>
+              <b>How it sorts</b>
+              <small>Where each conversation's messages landed this week and why, your votes, and what the model learned from them</small>
+            </span>
+            <Icon name="chevronRight" size={15} />
+          </button>
           <label class="toggle-row">
             <input type="checkbox" checked disabled />
             <span>
@@ -326,7 +334,7 @@ export function SettingsPane() {
               <small>
                 With <code>DITHER_EMBEDDINGS=1</code> the hub asks <b>jev</b>, the local yes/no text model on the home machine, about messages where you take part (does it ask something
                 of you, is it time-sensitive, does it include you in plans) and gives the model learning in the background those answers next to your votes. You vote with the arrows
-                beside a message's level, on the Triage board or in its notification menu. No message ever leaves the hub's machine.
+                beside a message's level, on How it sorts or in its notification menu. No message ever leaves the hub's machine.
               </small>
             </div>
           </div>

@@ -69,6 +69,9 @@ export function placeOf(r: Route): Place {
       return r.person ? { view: 'person', personId: r.person } : { view: 'people' };
     case 'profile':
       return r.conv ? convPlace(r.conv) : r.space ? { view: 'space', spaceId: rootCommunity(r.space)?.id ?? r.space } : { view: 'profile', personId: r.person ?? null };
+    // How it sorts is triage's own page.
+    case 'model':
+      return { view: 'triage' };
     default:
       return { view: r.view };
   }
@@ -80,7 +83,7 @@ export function arrivalOf(el: Element | null): Arrival {
   if (el.closest('.toast')) return { source: 'toast' };
   if (el.closest('.rail, .tabbar')) return { source: 'rail' };
   if (el.closest('.switcher, .search-pane, .search-place')) return { source: 'search' };
-  if (el.closest('.board')) return { source: 'triage' };
+  if (el.closest('.board, .catchup')) return { source: 'triage' };
   const row = el.closest('[data-row]');
   const list = row?.closest('.sidebar-inner');
   // The inbox's list: its rank counts across the sections, top to bottom.

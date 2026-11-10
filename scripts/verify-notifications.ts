@@ -1,12 +1,12 @@
 /**
- * Notification levels and votes (docs/notifications.md), end to end against a demo hub in headless Chromium: the
- * Triage board's Important, Active and Digest lists, the digest by how much each matters, and what fell below it; a
+ * Notification levels and votes (docs/notifications.md), end to end against a demo hub in headless Chromium: How it
+ * sorts' Important, Active and Digest lists, the digest by how much each matters, and what fell below it; a
  * vote moving a message between them at once; what the model learned from it, with its backtest; the next message in
  * that place landing where the vote said; the level picker and the model's chances in a message's menu; forgetting
  * what it learned; and your message's read ticks after its text.
  *
  * Mail (slice 9, docs/mail.md), when the demo hub has its mail account: an answer from someone you write to arrives
- * as an Important notification with the email mark; the board lists it with the envelope and a vote moves it at once;
+ * as an Important notification with the email mark; How it sorts lists it with the envelope and a vote moves it at once;
  * what was learned names Sam; the reader's Notification button offers the four levels; Email off for this device
  * keeps the next one off it; and chat's policy is the same before any mail vote.
  *
@@ -34,15 +34,22 @@ const check = (ok: unknown, what: string, detail: unknown = '') => {
 };
 
 const { page: p, close } = await launch();
-const lists = () =>
-  p.eval<Record<string, string[]>>(`(() => {
+/** Each level's messages on How it sorts, every line's Why opened so its messages are on the page. */
+const lists = async () => {
+  for (let i = 0; i < 5; i++) {
+    const n = await p.eval<number>(`(() => { const bs = [...document.querySelectorAll('.model-line .model-why-btn:not(.on)')]; bs.forEach((b) => b.click()); return bs.length; })()`);
+    if (!n) break;
+    await Bun.sleep(150);
+  }
+  return p.eval<Record<string, string[]>>(`(() => {
     const out = {};
     for (const b of document.querySelectorAll('.board-block')) {
       const h = b.querySelector('h3')?.textContent.trim() ?? '';
-      out[h] = [...b.querySelectorAll('[data-mid]')].map((x) => x.dataset.mid);
+      out[h] = [...b.querySelectorAll('.model-msg[data-mid]')].map((x) => x.dataset.mid);
     }
     return out;
   })()`);
+};
 
 try {
   await p.size(1280, 900);
@@ -52,13 +59,14 @@ try {
   const pushed = inbox.items.map((i: any) => i.message).filter((m: any) => m.triage?.decision === 'push' && shape.get(m.conversationId) === 'direct');
   check(pushed.length > 0, 'the demo world has Important DM messages', pushed.length);
 
-  await p.goto(`${hub}/#/triage`);
-  await p.until(`!!document.querySelector('.board-block .ping')`, 15000);
+  await p.goto(`${hub}/#/model`);
+  await p.until(`!!document.querySelector('.board-block .model-line')`, 15000);
   await Bun.sleep(600);
   let l = await lists();
   const heads = Object.keys(l);
-  check(['Important', 'Active', 'Digest'].every((h) => heads.includes(h)), 'the board lists Important, Active and Digest', heads);
-  const scores = await p.eval<number[]>(`(() => { const b = [...document.querySelectorAll('.board-block')].find((x) => x.querySelector('h3')?.textContent.trim() === 'Digest'); return [...b.querySelectorAll('[data-mid]')].map((x) => x.dataset.mid); })()`).then(
+  check(['Important', 'Active', 'Digest'].every((h) => heads.includes(h)), 'How it sorts lists Important, Active and Digest', heads);
+  // Lines in the digest go by their first message, what matters most first; within a line, the same.
+  const scores = await p.eval<number[]>(`(() => { const b = [...document.querySelectorAll('.board-block')].find((x) => x.querySelector('h3')?.textContent.trim() === 'Digest'); return [...b.querySelectorAll('.model-line')].map((x) => x.querySelector('.model-msg[data-mid]')?.dataset.mid); })()`).then(
     async (ids) => ids.map((id) => inbox.items.find((i: any) => i.message.id === id)?.message.triage.score ?? -1),
   );
   check(scores.length > 1 && scores.every((x, i) => i === 0 || x <= scores[i - 1] || x === -1), 'the digest, what matters most first', scores.slice(0, 8));
@@ -67,7 +75,7 @@ try {
 
   // Vote an Important DM message down: it moves to Active at once.
   const first = l['Important'].find((id) => pushed.some((m: any) => m.id === id));
-  check(!!first, 'an Important message on the board', first);
+  check(!!first, 'an Important message on How it sorts', first);
   await p.eval(`document.querySelector('[data-mid="${first}"] .tier-vote button:last-child').click()`);
   await Bun.sleep(150);
   l = await lists();
@@ -78,7 +86,7 @@ try {
   check(policy.votes === 1 && top?.head === 'ping' && top.weight < 0 && top.text.startsWith('In your DM with'), 'learned from the vote: less likely to ping in that DM', policy.factors.slice(0, 3).map((f: any) => `${f.head} ${f.weight} ${f.text}`));
   check(policy.errors === 0 && policy.baseline === 1, 'its backtest: right where the networks alone were wrong', { errors: policy.errors, baseline: policy.baseline });
   const learned = await p.eval<string>(`document.querySelector('.learned')?.innerText ?? ''`);
-  check(learned.includes(top.text) && /1 vote/.test(learned), 'the board shows what it learned and the vote count', learned.split('\n').slice(0, 6));
+  check(learned.includes(top.text) && /1 vote/.test(learned), 'How it sorts shows what it learned and the vote count', learned.split('\n').slice(0, 6));
   if (shots) await p.shot(`${shots}/notif-02-voted.png`);
 
   // The next message there lands where the vote said: answer them, and the demo answers back.
@@ -156,7 +164,7 @@ async function mail() {
     return null;
   };
 
-  await p.goto(`${hub}/#/triage`);
+  await p.goto(`${hub}/#/model`);
   await p.until(`!!document.querySelector('.board-block')`, 15000);
   await p.eval(`document.querySelectorAll('.toast.notify .toast-x').forEach((x) => x.click())`);
   const seen1 = await answer('See you there!');
@@ -165,17 +173,17 @@ async function mail() {
   await p.until(`[...document.querySelectorAll('.toast.notify')].some((t) => t.textContent.includes('Sam Rivera'))`, 8000).catch(() => {});
   const t1 = (await toasts()).filter((t) => t.body.includes('Sam Rivera'));
   check(t1.length === 1 && /Dinner on Friday\? — /.test(t1[0].body) && t1[0].badge === 'Email', 'it shows here: the sender, “subject — text”, the email mark', t1);
-  await p.until(`!!document.querySelector('[data-mid="${got?.id}"]')`, 8000).catch(() => {});
+  await p.until(`!!document.querySelector('.model-line[data-line="${dinner.id}"]')`, 8000).catch(() => {});
   let l = await lists();
-  check(!!got && l['Important']?.includes(got.id), 'the board lists it under Important', l['Important']?.slice(0, 5));
-  const card = await p.eval<string>(`document.querySelector('[data-mid="${got?.id}"]')?.innerText ?? ''`);
-  check(card.includes('by email') && card.includes('Dinner on Friday'), 'its card says by email, with the subject', card.split('\n').slice(0, 4));
+  check(!!got && l['Important']?.includes(got.id), 'How it sorts lists it under Important', l['Important']?.slice(0, 5));
+  const card = await p.eval<string>(`document.querySelector('.model-line[data-line="${dinner.id}"]')?.innerText ?? ''`);
+  check(card.includes('by email') && card.includes('Dinner on Friday'), 'its line says by email, with the subject', card.split('\n').slice(0, 4));
   if (shots) await p.shot(`${shots}/notif-05-mail-board.png`);
 
   // Chat's policy is as it was: nothing about mail yet.
   check(JSON.stringify(policyBefore.factors) === JSON.stringify((await get('/api/triage/policy')).factors), 'chat’s policy is unchanged by mail that came without a vote');
 
-  // A vote down from the board: Active at once, and learned, about Sam.
+  // A vote down from How it sorts: Active at once, and learned, about Sam.
   await p.eval(`document.querySelector('[data-mid="${got?.id}"] .tier-vote button:last-child').click()`);
   await Bun.sleep(200);
   l = await lists();
@@ -205,7 +213,7 @@ async function mail() {
   check(await p.eval<boolean>(`!!document.querySelector('[data-device-net="email"]')`), 'Settings lists Email for each device');
   if (shots) await p.shot(`${shots}/notif-07-device-email.png`);
   check((await put('/api/devices/rules', { device, scope: 'network', target: 'email', level: 'none' })).ok, 'Email off on this device');
-  await p.goto(`${hub}/#/triage`);
+  await p.goto(`${hub}/#/model`);
   await p.until(`!!document.querySelector('.board-block')`, 15000);
   await p.eval(`document.querySelectorAll('.toast.notify .toast-x').forEach((x) => x.click())`);
   const seen2 = await answer('Booked a table too, just in case.');
@@ -215,17 +223,17 @@ async function mail() {
   check(!(await toasts()).some((t) => t.body.includes('Sam Rivera')), 'but not on this device');
   check((await put('/api/devices/rules', { device, scope: 'network', target: 'email', level: null })).ok, 'Email back on');
 
-  // On a phone and in the light theme: the mail card and Email's device row fit.
+  // On a phone and in the light theme: the mail line and Email's device row fit.
   for (const [w, h, mobile, name] of [[390, 844, true, 'dither-light'], [390, 844, true, 'dither-dark'], [1280, 900, false, 'dither-light']] as const) {
     await p.size(w, h, mobile);
     await p.eval(`localStorage.setItem('dither-chat:prefs', JSON.stringify({ ...JSON.parse(localStorage.getItem('dither-chat:prefs') || '{}'), theme: ${JSON.stringify(name)} }))`);
-    await p.goto(`${hub}/#/triage`);
+    await p.goto(`${hub}/#/model`);
     await p.eval(`location.reload()`).catch(() => {});
     await Bun.sleep(800);
-    await p.until(`!!document.querySelector('[data-mail]')`, 15000).catch(() => {});
+    await p.until(`!!document.querySelector('.model-line[data-mail]')`, 15000).catch(() => {});
     const tag = `${w}px ${name}`;
-    const fit = await p.eval<{ card: boolean; subject: string }>(`(() => { const el = document.querySelector('[data-mail]'); if (!el) return { card: false, subject: '' }; el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return { card: r.width > 0 && r.left >= -1 && r.right <= innerWidth + 1, subject: getComputedStyle(el.querySelector('.ping-subject')).color }; })()`);
-    check(fit.card, `${tag}: the board’s mail card fits`, fit);
+    const fit = await p.eval<{ card: boolean; subject: string }>(`(() => { const el = document.querySelector('.model-line[data-mail]'); if (!el) return { card: false, subject: '' }; el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return { card: r.width > 0 && r.left >= -1 && r.right <= innerWidth + 1, subject: getComputedStyle(el.querySelector('.model-where')).color }; })()`);
+    check(fit.card, `${tag}: How it sorts' mail line fits`, fit);
     if (shots) await p.shot(`${shots}/notif-08-mail-${w}-${name}.png`);
     await p.goto(`${hub}/#/settings`);
     await p.until(`!!document.querySelector('[data-device-net="email"]')`, 15000).catch(() => {});

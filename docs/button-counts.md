@@ -1,6 +1,6 @@
 # Button counts
 
-Which of the app's buttons you actually press, counted per day, so a redesign of the Inbox, the Triage board and
+Which of the app's buttons you actually press, counted per day, so a redesign of the Inbox, Catch up and
 the People list can follow real use. Off unless you switch it on, on each device. Everything stays on your hub:
 no analytics service, nothing sent anywhere else.
 
@@ -18,9 +18,9 @@ device that has it on. **Forget…** deletes every count on the hub.
 One number per day, key, page and kind of device:
 
 - **day**: the device's own date (YYYY-MM-DD). Nothing finer.
-- **key**: a string written in the app's code, such as `inbox: row (DM, unread)`, `triage: vote up` or
+- **key**: a string written in the app's code, such as `inbox: row (DM, unread)`, `catch up: done` or
   `keys: Ctrl+K (switcher)`. Never a name, a message, an id or an address.
-- **page**: the kind of screen it was pressed on (`inbox`, `conversation`, `triage`, `people`, `settings`, …), from
+- **page**: the kind of screen it was pressed on (`inbox`, `conversation`, `triage`, `model`, `people`, `settings`, …), from
   the route: never which conversation or person.
 - **device**: `phone` or `desktop`, from the layout in use (the phone layout is the one below 820 px).
 
@@ -29,7 +29,7 @@ One number per day, key, page and kind of device:
 `packages/web/src/clicks.ts`, from one capture listener on the document (`clicklog.ts`):
 
 - A control says what it is with `data-track="vote up"`. A key without `: ` takes the name of the nearest
-  `data-track-area` around it (`<section class="pane board" data-track-area="triage">` makes it `triage: vote up`),
+  `data-track-area` around it (`<section class="pane catchup" data-track-area="catch up">` makes it `catch up: done`),
   else the page's. A key with `: ` is complete.
 - The nearest control to the click decides: a `button`, link, form field, `summary` or an element with a button-like
   role. If it has no key, the click counts as `<page>: other`, so what is not tagged yet still shows, and an untagged
@@ -38,7 +38,7 @@ One number per day, key, page and kind of device:
   control that the browser sends next.
 - Shortcuts and gestures that are not clicks are counted where they are handled, with `countKey`: Ctrl+K, Ctrl+F,
   Enter and Esc in the composer, a context menu's letter keys, mail's keys, Enter in a search box, and on a phone
-  the swipes (back, to and from the details, forward, to reply) and pull to refresh.
+  the swipes (back, to and from the details, forward, to reply) and pull to refresh, and Catch up's keys.
 
 Context menu items carry their key in the menu's spec (`track` on an item, the area as `track` on the spec), never
 their label, which can hold a name ("Message Ann").
@@ -48,15 +48,17 @@ their label, which can hold a name ("Message Ann").
 | Area | Keys |
 |---|---|
 | `inbox` | `row (DM\|group\|notes\|channel\|thread\|mail[, unread\|, owes a reply])`, `filter` (the button), `filter (All\|Direct messages\|Groups\|Mail)` (its menu; until 2026-11-09 chips `filter (All\|People\|Groups\|Unread)`), `search`, `search (Enter)`, `search (suggestion)`, `requests row`, `new message`, `row (account needs you)`, `section toggle (Needs you\|Waiting on you\|New\|Earlier)` (until 2026-11-09 `section toggle`, in every list) |
-| `triage` | `card`, `card (unread)`, `card (mail[, unread])`, `vote up`, `vote down`, `mark all read`, `show all`, `account needs you`, `not interesting (open)`, the learned rules' buttons |
+| `catch up` | `done`, `done (mail)`, `later`, `open`, `open (mail)`, `reply box`, `reply sent`, `reply sent (Enter)`, `earlier`, `picture`, `new note`, `mark all read`, `how it sorts`, `how it sorts (all caught up)`, `account needs you`, `reply: try again`, `reply: discard`, `leave the box (Esc)`, `key j`, `key k`, `key Enter`, `key e`, `key l`, `key r` |
+| `how it sorts` | `open`, `open (mail)`, `why`, `why (close)`, `vote up`, `vote down`, `show all`, `not interesting (open)`, the learned rules' buttons; inside Why (`how it sorts (why)`): `message`, `message (mail)`, `vote up`, `vote down`, `show all` |
 | `people` | `chip (chats\|friend\|contact\|following)`, `accounts` (the account menu) and its `account (all\|one)` (until 2026-11-09 chips `account chip`, `account chip (all)`), `order` and its `order (Last talked\|A to Z)` on a list, `filter box`, `row (person[, unread])`, `row (friend\|contact\|following)`, `remove (…)` (from a row's menu), `people graph`, `new message`, `section toggle (Starred\|Direct messages)` |
 | `chat header` | `picture`, `name`, `crumb (community\|parent)`, `profile`, `all chats`, `join call`, `about`, `search here`, `notification level` and its choices, `details`, `network chip` |
 | `message` | the hover actions: `edit`, `delete`, `reply`, `forward`, `more`, `triage note` |
 | `message menu` (and `attachment menu`, `link menu`) | `reply`, `edit`, `forward`, `copy text`, `copy link`, `add reaction`, `quick reaction`, `view reactions`, `open thread`, `go to replied`, `go to original`, `profile`, `history`, `delete`, `copy message id`, `copy dither-chat id`; `… (key R)` when picked by its letter |
 | `composer` | `text box`, `send`, `send (Enter)`, `attach`, `send as`, `cancel reply`, `cancel edit`, `cancel … (Esc)` |
 | `rail` | `inbox`, `people`, `mail`, `community`, `chat`, `folder (open\|close)`, `all communities`, `order`, `accounts`, `settings` |
-| `tabs` (phone) | `Home`, `Triage`, `Search`, `You` |
-| `settings` | `section <name>` for each section, from the side list or the phone's Sections sheet |
+| `inbox menu` (the inbox button's) | `mark everything read`, `how it sorts` |
+| `tabs` (phone) | `Home`, `Catch up`, `Search`, `You` |
+| `settings` | `section <name>` for each section, from the side list or the phone's Sections sheet; `how it sorts` |
 | `pager` | `back button`, `swipe back`, `swipe to details`, `swipe from details`, `swipe forward`, `swipe to reply`, `pull to refresh`, `back to the page`, `close details` |
 | `keys` | `Ctrl+K (switcher)`, `Ctrl+F (search)`, `mail e\|#\|!\|s\|u` |
 

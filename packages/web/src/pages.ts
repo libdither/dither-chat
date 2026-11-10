@@ -38,6 +38,7 @@ export function isPage(r: Route): boolean {
     case 'profile':
     case 'directory':
     case 'requests':
+    case 'model':
       return true;
     default:
       return false;
@@ -52,6 +53,7 @@ export function opensOver(r: Route): boolean {
   switch (r.view) {
     case 'profile':
     case 'directory':
+    case 'model':
       return true;
     case 'accounts':
       return !!r.account;
@@ -81,6 +83,9 @@ export function ownList(r: Route, places: Places): Route {
       return r.list ? { view: 'mail', list: r.list } : { view: 'mail' };
     case 'directory':
       return { view: 'spaces' };
+    // How it sorts is reached from Catch up, Settings or the inbox's menu; opened directly, back goes to Catch up.
+    case 'model':
+      return { view: 'triage' };
     case 'profile':
       return places.placeHome(r) ?? { view: 'people' };
     case 'search': {
