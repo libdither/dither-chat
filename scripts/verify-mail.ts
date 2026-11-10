@@ -45,7 +45,8 @@
  * the mailboxes menu and `[Gmail]`, which only holds mailboxes, is not; a label lists its threads; the reader shows
  * the thread's own labels and none of Gmail's (`\Inbox`, `\Important`); one row a thread in Inbox, All Mail and a
  * label; Archive, then Undo before it reaches Gmail, then Archive for good (out of Inbox, still in All Mail and its
- * label); Move to the trash (out of every mailbox but Trash); nothing off the side.
+ * label), then the reader's Move to Inbox (a copy from All Mail: back in Inbox once, still in All Mail and its label,
+ * one message); Move to the trash (out of every mailbox but Trash); nothing off the side.
  *
  *   bun scripts/verify-mail.ts http://127.0.0.1:8700 [screenshot dir] [--html] [--big] [--proton] [--gmail]
  * The hub must be a fresh demo hub (--demo) with its own data dir: reading marks threads read.
@@ -603,6 +604,28 @@ async function gmail(themeName: string, onPhone: boolean, step: 'archive' | 'tra
     const [inAll, inFamily, inbox] = [await page1(`mb:${all.id}`), await page1(`mb:${family.id}`), await page1(`v:inbox:${GMAIL_ACC}`)];
     check(`${tag}: once in All Mail, still in Family, not in Inbox`, inAll.filter((t) => t.id === photos.id).length === 1 && inFamily.some((t) => t.id === photos.id) && !inbox.some((t) => t.id === photos.id));
     await shot(`mail-${sz}-${themeName}-gmail-archived`);
+
+    // Move to Inbox from All Mail: the extractor copies it there (a move out of All Mail would delete it on Gmail).
+    const before = await hubThread(photos.id);
+    await page.eval(`location.hash = '#/mail/t/${photos.id}'`);
+    await page.until(`!!document.querySelector('.mail-reader-head .hdr-btn[aria-label="Move to Inbox"]')`, 15000);
+    await press(await at('.mail-reader-head .hdr-btn[aria-label="Move to Inbox"]'));
+    await page.until(`!!document.querySelector('.mail-undo')`, 5000).catch(() => {});
+    check(`${tag}: Move to Inbox shows "Moved to Inbox · Undo"`, (await page.eval<string>(`document.querySelector('.mail-undo')?.textContent ?? ''`)).includes('Moved to Inbox'));
+    check(`${tag}: Move to Inbox from All Mail: in Inbox and All Mail`, await settled(photos.id, (t) => t.roles.includes('inbox') && t.roles.includes('all')));
+    const back = await hubThread(photos.id);
+    const [inAll2, inFamily2, inbox2] = [await page1(`mb:${all.id}`), await page1(`mb:${family.id}`), await page1(`v:inbox:${GMAIL_ACC}`)];
+    const named = (ts: any[]) => ts.filter((t) => t.subject === photos.subject).length;
+    check(
+      `${tag}: back in Inbox once, still once in All Mail and in Family, one message`,
+      named(inbox2) === 1 && inbox2.some((t) => t.id === photos.id) && named(inAll2) === 1 && inFamily2.some((t) => t.id === photos.id) && back.count === before.count && back.labels.join() === 'Family',
+      { inbox: named(inbox2), all: named(inAll2), count: [before.count, back.count], labels: back.labels },
+    );
+    await page.eval(`location.hash = '#/mail/l/${encodeURIComponent(`v:inbox:${GMAIL_ACC}`)}'`);
+    await page.until(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].some((r) => r.dataset.thread === ${JSON.stringify(photos.id)})`, 10000).catch(() => {});
+    const inboxRows2 = await rows();
+    check(`${tag}: its row is in the Inbox list once`, inboxRows2.filter((id) => id === photos.id).length === 1, inboxRows2.length);
+    await shot(`mail-${sz}-${themeName}-gmail-back-in-inbox`);
   }
   if (step === 'trash') {
     // The booking, archived under Travel: to the trash, out of All Mail and Travel.

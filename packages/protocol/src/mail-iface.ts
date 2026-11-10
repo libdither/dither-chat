@@ -39,6 +39,12 @@ export interface MailSummary {
   messageId: string | null;
   /** The server's thread, when it has threads (Gmail, JMAP); otherwise null. */
   threadId: string | null;
+  /**
+   * The server's own id for this message, the same in every mailbox it is in: Gmail's X-GM-MSGID, or RFC 8474's
+   * EMAILID (OBJECTID servers such as Dovecot). Absent when the server has none. A message with no Message-ID header is
+   * one message across mailboxes by this.
+   */
+  emailId?: string;
   from: MailAddress[];
   to: MailAddress[];
   cc: MailAddress[];

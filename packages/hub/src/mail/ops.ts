@@ -51,8 +51,11 @@ type FlagKey = 'seen' | 'flagged';
 export interface Pending {
   seen?: { v: Bit; was: Bit; op: string };
   flagged?: { v: Bit; was: Bit; op: string };
-  /** Where it goes, and the mailboxes it leaves. */
-  move?: { to: string; hide: string[]; op: string };
+  /**
+   * Where it goes, and the mailboxes it leaves. `copy`: Gmail's All Mail, which it is copied from and stays in
+   * (copyFrom); `hide` is empty then.
+   */
+  move?: { to: string; hide: string[]; op: string; copy?: string };
 }
 
 const MAX_IDS = 1000;
@@ -61,8 +64,6 @@ const MAX_ATTEMPTS = 10;
 /** Roles a message is not filed under: what you sent and drafts stay, and All mail and the flag views are not folders. */
 const NOT_FOLDER = new Set(['sent', 'drafts', 'all', 'flagged', 'important']);
 const STAYS = new Set(['sent', 'drafts']);
-/** Why Gmail mail only in All Mail does not go back to Inbox from here (409). */
-export const GMAIL_NO_INBOX = 'It is only in All Mail on Gmail, and moving it out of there would delete it; dither-accounts cannot put it back in Inbox yet, so do that in Gmail.';
 const ROLE_NAMES: Record<string, string> = { archive: 'Archive', inbox: 'Inbox', trash: 'Trash', junk: 'Junk' };
 
 const json = <T>(s: string | null | undefined, d: T): T => {
@@ -82,9 +83,9 @@ export class MailOps {
   /** How long a change waits for others to join its call. */
   coalesceMs = 250;
   /**
-   * How long a Gmail archive waits before it goes: the 7 s the page offers Undo for (web mail/ops.ts), and a little.
-   * Gmail's archived mail is in All Mail alone, which nothing here moves out of (Gmail takes that as a delete), so an
-   * archive is undone only before it leaves the hub.
+   * How long a Gmail archive waits before it goes: the 7 s the page offers Undo for (web mail/ops.ts), and a little,
+   * so an Undo calls it off and Gmail never hears of either. An archive that went is undone by a copy from All Mail
+   * back into Inbox (copyFrom).
    */
   gmailArchiveHoldMs = 7_500;
   /** While changes wait for the manager or an account, how often to look again. */
@@ -220,10 +221,7 @@ export class MailOps {
       const acc = this.checkAccount(accountId, 'write', 'move');
       const dest = this.destination(acc, req.to);
       const action: MailAction = req.to in ROLE_NAMES ? (req.to as MailAction) : 'move';
-      const ms = [...[...g.threads.values()].flat(), ...g.messages];
-      // Gmail mail only in All Mail cannot go back to Inbox from here: say so rather than doing nothing.
-      if (action === 'inbox' && this.hub.store.gmail(accountId) && ms.every((m) => this.stuck(m, dest))) throw new MailCallError(GMAIL_NO_INBOX, 409);
-      plans.push({ accountId, dest, action, ms });
+      plans.push({ accountId, dest, action, ms: [...[...g.threads.values()].flat(), ...g.messages] });
     }
     let threads = 0;
     let messages = 0;
@@ -324,15 +322,21 @@ export class MailOps {
     const folders = locs.filter((l) => l.mailbox_id !== dest.id && !NOT_FOLDER.has(l.role ?? '')).map((l) => l.mailbox_id);
     if (folders.length) return folders;
     // Only in All mail: Proton's ids are the message, so it moves from there; an IMAP server's All mail is never
-    // emptied from here (Gmail would take that as a delete).
+    // emptied from here (Gmail would take that as a delete: it is copied from there instead, copyFrom).
     return kind === 'proton' ? locs.filter((l) => l.role === 'all').map((l) => l.mailbox_id) : [];
   }
 
-  /** Not in `dest`, no move of ours on its way, and nowhere a move could take it from (Gmail: only in All Mail). */
-  private stuck(m: Row, dest: Row): boolean {
-    if (json<Pending>(m.pending, {}).move) return false;
-    if (this.locations(m.id).some((l) => l.mailbox_id === dest.id)) return false;
-    return !this.leaves(m, dest, 'inbox', this.hub.store.account(m.account_id)?.kind ?? 'imap', true).length;
+  /**
+   * Gmail: the All Mail a move copies it from, or null. dither-accounts COPYs out of All Mail into anything but Trash or
+   * Spam (a MOVE out of it would delete it on Gmail): the destination's label goes on and the rest stay. Into Inbox it
+   * is always the copy, so its labels stay (and an archive that went is undone as it was); into a label, when it is in
+   * no folder to move it from (only in All Mail). What you sent stays where it is.
+   */
+  private copyFrom(m: Row, dest: Row, action: MailAction): string | null {
+    if ((action !== 'inbox' && action !== 'move') || NOT_FOLDER.has(dest.role ?? '')) return null;
+    const locs = this.locations(m.id);
+    if (locs.some((l) => l.mailbox_id === dest.id || STAYS.has(l.role ?? ''))) return null;
+    return locs.find((l) => l.role === 'all')?.mailbox_id ?? null;
   }
 
   // ---------------------------------------------------------- inside: applying
@@ -389,11 +393,13 @@ export class MailOps {
     const touched = new Set<string>();
     let queued = 0;
     this.db.transaction(() => {
-      const todo: { m: Row; hide: string[] }[] = [];
+      const todo: { m: Row; hide: string[]; copy: string | null }[] = [];
       for (const m of ms) {
         const p = json<Pending>(m.pending, {});
-        const hide = this.leaves(m, dest, action, acc.kind, gmail);
-        if (hide.length) todo.push({ m, hide });
+        const left = this.leaves(m, dest, action, acc.kind, gmail);
+        const copy = gmail && (action === 'inbox' || !left.length) ? this.copyFrom(m, dest, action) : null;
+        const hide = copy ? [] : left;
+        if (hide.length || copy) todo.push({ m, hide, copy });
         else if (p.move) {
           // Already where it should be on the server: the move waiting for it is called off.
           delete p.move;
@@ -403,9 +409,9 @@ export class MailOps {
       }
       const hold = gmail && action === 'archive' ? Math.max(this.coalesceMs, this.gmailArchiveHoldMs) : this.coalesceMs;
       const ops = this.enqueue(accountId, 'move', { to: dest.id }, todo.map((x) => x.m.id), hold);
-      for (const { m, hide } of todo) {
+      for (const { m, hide, copy } of todo) {
         const p = json<Pending>(m.pending, {});
-        p.move = { to: dest.id, hide, op: ops.get(m.id)! };
+        p.move = { to: dest.id, hide, op: ops.get(m.id)!, ...(copy ? { copy } : {}) };
         this.run('UPDATE mail_message SET pending = ? WHERE id = ?', JSON.stringify(p), m.id);
         touched.add(m.thread_id);
       }
@@ -532,8 +538,10 @@ export class MailOps {
     const k: FlagKey = 'seen' in args ? 'seen' : 'flagged';
     const dest = op.op === 'move' ? this.hub.store.mailbox(args.to) : null;
     if (op.op === 'move' && !dest) return this.undo(op, 'that mailbox is gone');
-    const items: { mid: string; native: string; from: string }[] = [];
+    const items: { mid: string; native: string; from: string; copy?: boolean }[] = [];
     const nothing: string[] = [];
+    // dither-accounts copies out of Gmail's All Mail into anything but Trash or Spam (imap.ts copiesInstead).
+    const copies = op.op === 'move' && dest!.role !== 'trash' && dest!.role !== 'junk' && this.hub.store.gmail(op.account_id);
     for (const mid of json<string[]>(op.message_ids, [])) {
       const m = this.one<{ pending: string | null }>('SELECT pending FROM mail_message WHERE id = ?', mid);
       const p = json<Pending>(m?.pending, {});
@@ -543,11 +551,14 @@ export class MailOps {
         if (at) items.push({ mid, native: at.id, from: '' });
         else nothing.push(mid);
       } else {
-        if (p.move?.op !== op.id) continue;
-        const from = this.locations(mid)
-          .filter((l) => l.mailbox_id !== dest!.id && p.move!.hide.includes(l.mailbox_id))
-          .sort((a, b) => Number(NOT_FOLDER.has(a.role ?? '')) - Number(NOT_FOLDER.has(b.role ?? '')))[0];
-        if (from) items.push({ mid, native: from.native_id, from: from.mailbox_id });
+        const mv = p.move;
+        if (!mv || mv.op !== op.id) continue;
+        const locs = this.locations(mid);
+        // A copy: from All Mail, unless it is in the destination already (then there is nothing left to do).
+        const from = mv.copy
+          ? locs.find((l) => l.mailbox_id === mv.copy && !locs.some((x) => x.mailbox_id === dest!.id))
+          : locs.filter((l) => l.mailbox_id !== dest!.id && mv.hide.includes(l.mailbox_id)).sort((a, b) => Number(NOT_FOLDER.has(a.role ?? '')) - Number(NOT_FOLDER.has(b.role ?? '')))[0];
+        if (from) items.push({ mid, native: from.native_id, from: from.mailbox_id, copy: copies && from.role === 'all' });
         else nothing.push(mid);
       }
     }
@@ -571,7 +582,7 @@ export class MailOps {
     this.acked(op, items, dest, res, sync);
   }
 
-  private acked(op: Row, items: { mid: string; native: string; from: string }[], dest: Row | null, res: unknown, sync: AccountSync) {
+  private acked(op: Row, items: { mid: string; native: string; from: string; copy?: boolean }[], dest: Row | null, res: unknown, sync: AccountSync) {
     const touched = new Set<string>();
     const moved: string[] = [];
     let lost = false;
@@ -589,7 +600,8 @@ export class MailOps {
           if (p.move?.op === op.id) delete p.move;
           const nid = Array.isArray(newIds) ? newIds[i] : null;
           if (nid) {
-            this.run('DELETE FROM mail_location WHERE mailbox_id = ? AND native_id = ?', it.from, it.native);
+            // A copy (Gmail, out of All Mail) leaves it where it was.
+            if (!it.copy) this.run('DELETE FROM mail_location WHERE mailbox_id = ? AND native_id = ?', it.from, it.native);
             this.run(
               'INSERT INTO mail_location (mailbox_id, native_id, message_id, seen_gen) VALUES (?, ?, ?, ?) ON CONFLICT (mailbox_id, native_id) DO UPDATE SET message_id = excluded.message_id',
               dest!.id,

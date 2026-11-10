@@ -192,9 +192,10 @@ As built, where it differs from §7: "Always from" is its own table, `mail_sende
   few seconds after a move. Keys: `e` archive, `#` trash, `s` star, `u` unread, `!` junk, Escape lets the selection go.
 - **What moves.** Archive takes the thread's messages out of Inbox (into Archive, or All mail on Gmail). Trash, junk
   and a folder take the whole thread except what you sent, which stays in Sent. Back to Inbox takes them out of the
-  folder they are in; an IMAP server's All mail is never emptied from here (Gmail would take that as a delete), so a
-  Gmail thread that is only in All mail cannot go back to Inbox from here yet: the hub says so (409) rather than doing
-  nothing, and holds a Gmail archive back until its Undo is over ("Gmail" below). Nothing is ever deleted outright.
+  folder they are in; an IMAP server's All mail is never emptied from here (Gmail would take that as a delete). On
+  Gmail, Inbox, and a label for a thread only in All Mail, are a copy from All Mail instead, so the thread stays there
+  and keeps its labels; a Gmail archive is held back until its Undo is over ("Gmail" below). Nothing is ever deleted
+  outright.
 - **At once, then for real.** A change shows at once and the hub keeps it as pending (the row's time is greyed) until
   the server answers. It goes in batches of up to 1000 messages per account, op and value, at most one write call per
   220 ms. A message's latest change is the one sent: undone before it left, it never leaves. If the manager or the
@@ -428,11 +429,15 @@ by `fake.ts`'s `ids: 'gmail'`):
 
 - **Mailboxes**: INBOX; `[Gmail]`, which only holds the others (IMAP \Noselect: no counts, and listing it is 404);
   `[Gmail]/All Mail` with the role `all` (there is no Archive); Drafts, Sent Mail, Spam (`junk`), Starred (`flagged`),
-  Trash; `[Gmail]/Important` with no role (the extractor's imapflow does not read Gmail's \Important); and each label as
-  a mailbox named by its path (`Travel`, `Work/Clients`).
+  Trash; `[Gmail]/Important` with the role `important` (from its \Important flag, RFC 8457); and each label as a
+  mailbox named by its path (`Travel`, `Work/Clients`). Starred and Important are views, as All Mail is: Move to… does
+  not offer them, and filing never moves a message out of them.
 - **One message, several places.** A message is a copy in Inbox, All Mail, each of its labels, Starred and Important at
-  once, with an id in each (`<mailbox>.<UIDVALIDITY>.<UID>`). The hub keys a message by its Message-ID, so it stays one
-  message with several locations, whichever mailboxes list it and in whatever order.
+  once, with an id in each (`<mailbox>.<UIDVALIDITY>.<UID>`), and the same `emailId` (X-GM-MSGID) in all of them. The
+  hub keys a message by its Message-ID, or without one by that `emailId`, so it stays one message with several
+  locations, whichever mailboxes list it and in whatever order. A row stored before summaries had `emailId` (one per
+  place) takes it the next time its place is listed and stays the message; Proton's summaries have none, and its rows
+  are as they were.
 - **Labels** are Gmail's (X-GM-LABELS: `\Inbox`, `\Important`, `\Starred`, `\Sent`, and yours by path). Gmail never names
   \Trash, \Spam or All Mail there, and leaves out the label of the mailbox the message was listed from. The hub puts that
   one back as it stores a summary, so a message's labels read the same whichever mailbox listed it last, and the views
@@ -448,29 +453,37 @@ by `fake.ts`'s `ids: 'gmail'`):
 - **Sending**: Gmail keeps the copy in Sent itself (the preset's Copy to Sent is `server`), and the extractor finds it by
   its Message-ID. It shows once, in its thread, with places in Sent Mail and All Mail.
 
-**Filing on Gmail.** Gmail's MOVE takes the source mailbox's label off and puts the destination's on.
+**Filing on Gmail.** Gmail's MOVE takes the source mailbox's label off and puts the destination's on. Out of All Mail
+the extractor COPYs instead, into anything but Trash or Spam (a MOVE out of All Mail is a delete on Gmail): the
+destination's label goes on, the message stays in All Mail, and the answer is the copy's id (ops.ts `copyFrom`).
 
 - **Archive** is Inbox → All Mail: \Inbox comes off, the labels stay, and the answer is the All Mail id the hub already
   had, so no new row. It waits 7.5 s before it goes (`MailOps.gmailArchiveHoldMs`), so the page's Undo (7 s) calls it
-  off before Gmail hears of it: once it has gone, the message is in All Mail only, which nothing here moves out of.
+  off before Gmail hears of it. An Undo after it went (or a slow page) is Move to Inbox, a copy from All Mail.
 - **Trash and junk**: Gmail then shows the message in Trash or Spam alone, so the hub drops its other places as soon as
   the move is answered (it is out of All Mail and its labels at once, not after the next changes pass). What you sent is
   not moved: its copy in All Mail is the same message as Sent's, and moving it would take it out of Sent.
-- **Back to Inbox** works from Spam, Trash or a label (the label comes off, as Gmail's own "Move to Inbox" from a label
-  does). A thread only in All Mail answers 409 with why: dither-accounts has no way yet to put \Inbox back on.
+- **Back to Inbox** from All Mail is a copy: \Inbox goes back on and its labels stay, from wherever the thread was
+  listed, so an archive undone after it went is as it was. The reader offers it (Move to Inbox) for a thread in All
+  Mail and not Inbox, and its Undo archives again. From Spam or Trash, where Gmail has it alone, it is a move.
+- **Move to a label** from Inbox or another label is a move (that label comes off); from All Mail alone it is a copy.
 - **Star, read, unread** are the message's flags: a call on its Inbox copy changes them everywhere; Starred gains or
   loses it.
 - `in:archive` (search) is Archive where an account has one, else All Mail without Inbox, Sent or Drafts; Gmail's server
   gets `-in:inbox -in:sent -in:drafts`.
 
 **Checked**: `hub/test/mail-gmail.test.ts` (one message in Inbox, All Mail and a label through the first sync, the
-backfill and an opened label; Gmail's thread; labels from any mailbox; a label as a mailbox and `[Gmail]` never
-followed; archive, Undo before it goes, trash, junk and Not junk, star, read and unread; changes made in Gmail itself;
+backfill and an opened label, and by `emailId` without a Message-ID, an older row keeping its id; Gmail's thread;
+labels from any mailbox; a label as a mailbox and `[Gmail]` never followed; Important's role; archive, Undo before it
+goes and after it went, Move to Inbox and to a label from All Mail alone (copies), trash out of All Mail, junk and Not
+junk, star, read and unread; changes made in Gmail itself;
 search in Gmail's syntax with what only the server has; a reply shown once when Gmail's Sent copy comes; list mail
 classified by its headers) and `verify-mail.ts --gmail` (above). **Not checked** against a real Gmail account: a few
 of Gmail's ways come from reports, not from seeing them: that X-GM-LABELS leaves out the listing mailbox's label (the
 hub copes either way), that MOVE from Inbox to All Mail answers the All Mail id the message had (a new one would only
-replace it), and that a move out of All Mail deletes (the hub never makes one).
+replace it), that a MOVE out of All Mail deletes (the extractor copies instead), and that a COPY into a mailbox the
+message is in already answers the id it has there (a new one would be found by the next changes pass, as the same
+message).
 
 **Adding one** (on the owner's side; nothing is added from here):
 
@@ -583,7 +596,8 @@ hub holds, at 390 px and on a desktop in both themes, before its usual checks.
 
 Mail lives in its own tables in the hub's database (`hub/src/mail/schema.sql`). A message is keyed by its account and
 Message-ID, so a move on the server keeps the hub's message, its thread and its body; the extractor's ids are only
-where it is. Threads come from the server's thread ids (Gmail, Proton), else from In-Reply-To and References (on
+where it is. Without a Message-ID it is the server's `emailId` (Gmail's X-GM-MSGID, the same in every mailbox) that
+makes it one message; with neither, each place is a message of its own (store.ts `identify`). Threads come from the server's thread ids (Gmail, Proton), else from In-Reply-To and References (on
 summaries since dither-accounts 515f26d, and from bodies), else, provisionally, from the subject and the people on it.
 
 On the first sync the hub takes a `mail.changes` state for Inbox, Sent and All (or Archive) before listing, so nothing

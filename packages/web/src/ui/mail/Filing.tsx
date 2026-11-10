@@ -10,6 +10,7 @@
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { lockAxis, rubber } from '../../gesture.ts';
+import { archivedInAll } from '../../mail/filing.ts';
 import { canWrite, clearSelected, destination, lastMove, markRead, move, moveTargets, selected, star, starMessage, toggleSelected, waiting } from '../../mail/ops.ts';
 import { haptic, phone, reducedMotion } from '../../phone.ts';
 import { connected, db, go, mailRev, route } from '../../state.ts';
@@ -81,7 +82,14 @@ const roomy = () => !phone.value;
 
 export const FILING_THREAD_ACTIONS: ThreadAction[] = [
   { id: 'archive', label: 'Archive', icon: 'archive', place: 'head', show: (t) => inInbox(t) && canMove(t, 'archive'), run: (t) => leaveAfter(t, 'archive') },
-  { id: 'unarchive', label: 'Move to Inbox', icon: 'inbox', place: 'head', show: (t) => !inInbox(t) && t.roles.some((r) => r === 'archive' || r === 'junk' || r === 'trash') && canMove(t, 'inbox'), run: (t) => leaveAfter(t, 'inbox') },
+  {
+    id: 'unarchive',
+    label: 'Move to Inbox',
+    icon: 'inbox',
+    place: 'head',
+    show: (t) => !inInbox(t) && (t.roles.some((r) => r === 'archive' || r === 'junk' || r === 'trash') || archivedInAll(db.mail.mailboxes, t)) && canMove(t, 'inbox'),
+    run: (t) => leaveAfter(t, 'inbox'),
+  },
   { id: 'trash', label: 'Move to the trash', icon: 'trash', place: 'head', show: (t) => roomy() && !only(t, 'trash') && canMove(t, 'trash'), run: (t) => leaveAfter(t, 'trash') },
   { id: 'star', label: 'Star', icon: 'star', place: 'head', show: (t, a) => roomy() && !t.flagged && canWrite(a, 'flag.flagged'), run: (t) => star([t.id], true) },
   { id: 'unstar', label: 'Unstar', icon: 'star', place: 'head', show: (t, a) => roomy() && t.flagged && canWrite(a, 'flag.flagged'), run: (t) => star([t.id], false) },
