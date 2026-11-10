@@ -29,6 +29,22 @@ they start with `dither-accounts/`.
   Nothing is deleted from here. Back to Inbox never moves out of an IMAP server's All mail (Gmail).
 - MailHub gains the `filed` event; `MailThreadView.pending` and `MailAccountView.ops` are new.
 
+**As built for Gmail** (docs/mail.md "Gmail", `hub/test/mail-gmail.test.ts`, fake.ts `ids: 'gmail'`):
+
+- An account is Gmail by its address or its `[Gmail]`/`[Google Mail]` mailboxes (`MailStore.gmail`); its kind stays
+  `imap`. One message is in several mailboxes with an id in each; the (account, Message-ID) key keeps it one message.
+- §2.4: labels are stored as the summary gives them with the listing mailbox's own label put back (Gmail leaves it
+  out), and views leave out those starting with `\` (`shownLabels`). Rule 8's `CATEGORY_*` never comes from the imap
+  extractor: Gmail's IMAP has no categories (only a Gmail API extractor could give them).
+- §3.7: into Trash or Junk, the move's answer drops the message's other locations (Gmail shows it there alone), and a
+  message in Sent or Drafts is not moved there (its All Mail copy is the same message). An archive waits
+  `gmailArchiveHoldMs` (7.5 s), so the page's Undo calls it off before it goes. Back to Inbox of mail only in All Mail
+  answers 409 (`GMAIL_NO_INBOX`).
+- A mailbox the server cannot list (IMAP \Noselect: Gmail's `[Gmail]`, 404) stops being followed when a page opens it;
+  the page's mailbox menu and Ctrl+K leave out mailboxes with no counts that hold others (web `holdsOnlyMailboxes`).
+- §11: `in:archive` is Archive, else All mail without Inbox, Sent or Drafts; Gmail's server query says
+  `-in:inbox -in:sent -in:drafts`.
+
 **As built in slice 8** (`hub/src/mail/classify.ts`, `attention.ts`, `schema-inbox.sql`):
 
 - Overrides are `mail_override (scope 'sender'|'thread', key, class)`, not `mail_sender.override`: slices built side
@@ -750,7 +766,8 @@ part of the inbox.
 
 - **`FakeMailBackend`** (`hub/src/mail/fake.ts`, slice 1) implements `MailBackend`, not the wire, so hub tests are fast
   and `--demo` can seed a mail account (a few people, a newsletter, an HTML message with a tracker and a hostile script,
-  an attachment). Options: ids that change on a move (imap) or not (proton), `threadIds` on or off, an account-wide
+  an attachment). Options: ids that change on a move (imap), not (proton), or one per mailbox a Gmail message is in
+  (gmail: its labels, CONDSTORE, MOVE and search as Gmail has them), `threadIds` on or off, an account-wide
   state, `send: 'ok' | 501`, `refuseRecipient` (422 `recipients`), status layers, and failures per op (410, 503, 404,
   `limited`, latency). It emits
   `mail.arrived`/`mail.changed` IDLE-like (inbox only) or event-loop-like (every mailbox).

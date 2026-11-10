@@ -15,7 +15,7 @@ import { ABOUT_LABEL as P_ABOUT_LABEL, BIO_LIMIT as P_BIO_LIMIT, NETWORK_META } 
 import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
 import type { InprocAdapter } from './supervisor.ts';
-import { fillMailbox, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
+import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
 
 type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa' | 'tg';
@@ -2338,6 +2338,8 @@ export function applyDemoOverlay(store: Store) {
 export const DEMO_MAIL_ACCOUNT = 'acc_demo-mail';
 /** A second mail account like Proton's (DITHER_DEMO_MAIL_PROTON=1, scripts/verify-mail.ts --proton). */
 export const DEMO_PROTON_ACCOUNT = 'acc_demo-proton';
+/** A Gmail account as dither-accounts' imap extractor gives one (DITHER_DEMO_MAIL_GMAIL=1, scripts/verify-mail.ts --gmail). */
+export const DEMO_GMAIL_ACCOUNT = 'acc_demo-gmail';
 const ME = { name: 'Zyan', email: 'zyan@dither.example' };
 
 /**
@@ -2444,6 +2446,57 @@ export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
     fake.setOpts(DEMO_MAIL_ACCOUNT, { latencyMs: 250 });
   }
   if (process.env.DITHER_DEMO_MAIL_PROTON) seedDemoProton(fake, now);
+  if (process.env.DITHER_DEMO_MAIL_GMAIL) seedDemoGmail(fake, now);
+}
+
+/**
+ * A Gmail account (fake.ts `ids: 'gmail'`): a trip planned with Priya, in Inbox, labelled Travel and marked Important,
+ * that you answered; Mom's photos, labelled Family; Ben's recipe, starred; a booking you archived under Travel; and
+ * list mail, which Gmail's IMAP gives with its list headers but none of Gmail's categories.
+ */
+function seedDemoGmail(fake: FakeMailBackend, now: number) {
+  const H = 3_600_000;
+  const D = 24 * H;
+  const me = { name: ME.name, email: 'zyan@gmail.example' };
+  const priya = { name: 'Priya Nair', email: 'priya@nair.example' };
+  const mom = { name: 'Mom', email: 'mom@family.example' };
+  const ben = { name: 'Ben Okafor', email: 'ben@okafor.example' };
+  fake.addAccount(DEMO_GMAIL_ACCOUNT, { kind: 'imap', label: 'Gmail', email: me.email, name: me.name, opts: { ids: 'gmail', answer: 3_000 } });
+  const id = (k: string) => `<demo-gmail-${k}@dither.example>`;
+  const put = (i: FakeInput) => fake.put(DEMO_GMAIL_ACCOUNT, { to: [me], flags: { seen: true }, ...i });
+  put({ messageId: id('coast-1'), from: [priya], subject: 'Trip to the coast', receivedAt: now - 30 * H, labels: ['Travel', '\\Important'], text: 'Shall we take the early train on Saturday? The tide is low around noon, good for the rock pools.\n\nPriya' });
+  put({ mailboxId: GMAIL.sent, messageId: id('coast-2'), inReplyTo: id('coast-1'), references: [id('coast-1')], from: [me], to: [priya], subject: 'Re: Trip to the coast', receivedAt: now - 28 * H, text: 'Yes! I will bring the thermos. 8:10 from the central station?\n\nOn Fri, Priya Nair <priya@nair.example> wrote:\n> Shall we take the early train on Saturday?' });
+  put({
+    messageId: id('coast-3'),
+    inReplyTo: id('coast-2'),
+    references: [id('coast-1'), id('coast-2')],
+    from: [priya],
+    subject: 'Re: Trip to the coast',
+    receivedAt: now - 2 * H,
+    flags: { seen: false },
+    labels: ['Travel'],
+    text: '8:10 it is. I booked two seats in the quiet carriage.\n\nOn Fri, Zyan <zyan@gmail.example> wrote:\n> Yes! I will bring the thermos.',
+  });
+  put({ messageId: id('photos'), from: [mom], subject: 'Garden photos', receivedAt: now - 3 * D, labels: ['Family'], text: 'The roses came out at last. More photos when your uncle sends his.\n\nLove, Mom' });
+  put({ messageId: id('bread'), from: [ben], subject: 'Recipe for the bread', receivedAt: now - 5 * D, flags: { seen: true, flagged: true }, text: '500 g flour, 350 g water, 10 g salt, a spoon of starter. Fold it four times, then a night in the fridge.\n\nBen' });
+  put({ mailboxId: GMAIL.all, messageId: id('hotel'), from: [{ name: 'Harbour Hotel', email: 'noreply@harbour-hotel.example' }], subject: 'Your booking is confirmed', receivedAt: now - 9 * D, labels: ['Travel'], text: 'One double room, Saturday to Sunday. Check-in from 3 pm.' });
+  put({
+    messageId: id('rail'),
+    from: [{ name: 'Coastal Rail', email: 'news@coastal-rail.example' }],
+    subject: 'Timetable changes from December',
+    receivedAt: now - 6 * H,
+    flags: { seen: false },
+    bulk: { listId: '<timetable.coastal-rail.example>', unsubscribe: '<https://coastal-rail.example/leave>', precedence: 'bulk', autoSubmitted: null },
+    text: 'From 14 December the 8:10 leaves at 8:12. Weekend trains add a stop at Seal Point.',
+  });
+  put({
+    messageId: id('drive'),
+    from: [{ name: 'Cloud Drive', email: 'drive-shares-noreply@cloud.example' }],
+    subject: 'Mom shared an album with you',
+    receivedAt: now - 3 * D - H,
+    bulk: { listId: null, unsubscribe: null, precedence: null, autoSubmitted: 'auto-generated' },
+    text: 'Mom shared "Garden 2026" with you.',
+  });
 }
 
 /**

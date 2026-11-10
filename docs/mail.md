@@ -193,7 +193,8 @@ As built, where it differs from §7: "Always from" is its own table, `mail_sende
 - **What moves.** Archive takes the thread's messages out of Inbox (into Archive, or All mail on Gmail). Trash, junk
   and a folder take the whole thread except what you sent, which stays in Sent. Back to Inbox takes them out of the
   folder they are in; an IMAP server's All mail is never emptied from here (Gmail would take that as a delete), so a
-  Gmail thread that is only in All mail cannot go back to Inbox from here yet. Nothing is ever deleted outright.
+  Gmail thread that is only in All mail cannot go back to Inbox from here yet: the hub says so (409) rather than doing
+  nothing, and holds a Gmail archive back until its Undo is over ("Gmail" below). Nothing is ever deleted outright.
 - **At once, then for real.** A change shows at once and the hub keeps it as pending (the row's time is greyed) until
   the server answers. It goes in batches of up to 1000 messages per account, op and value, at most one write call per
   220 ms. A message's latest change is the one sent: undone before it left, it never leaves. If the manager or the
@@ -416,6 +417,73 @@ looks like a stranger's mail. What the hub does about it (`hub/src/mail/headerle
 Tests: `hub/test/mail-headerless.test.ts` (a newsletter leaving the inbox once its body comes, which accounts, the
 one-time steps on a restart and not on the next, an account added later, an account with headers).
 
+## Gmail
+
+A Gmail account reaches the hub as dither-accounts' **Email (IMAP)** account with the provider `gmail` (its
+`extractors/imap`, with an app password), so its kind is `imap`. The hub knows it is Gmail by its address or by its
+`[Gmail]` (or `[Google Mail]`) mailboxes (`MailStore.gmail`), so a Workspace address works too.
+
+**What comes in** (read from the extractor's code, `extractors/imap/src/{imap,ids,config,smtp}.ts` there, and modelled
+by `fake.ts`'s `ids: 'gmail'`):
+
+- **Mailboxes**: INBOX; `[Gmail]`, which only holds the others (IMAP \Noselect: no counts, and listing it is 404);
+  `[Gmail]/All Mail` with the role `all` (there is no Archive); Drafts, Sent Mail, Spam (`junk`), Starred (`flagged`),
+  Trash; `[Gmail]/Important` with no role (the extractor's imapflow does not read Gmail's \Important); and each label as
+  a mailbox named by its path (`Travel`, `Work/Clients`).
+- **One message, several places.** A message is a copy in Inbox, All Mail, each of its labels, Starred and Important at
+  once, with an id in each (`<mailbox>.<UIDVALIDITY>.<UID>`). The hub keys a message by its Message-ID, so it stays one
+  message with several locations, whichever mailboxes list it and in whatever order.
+- **Labels** are Gmail's (X-GM-LABELS: `\Inbox`, `\Important`, `\Starred`, `\Sent`, and yours by path). Gmail never names
+  \Trash, \Spam or All Mail there, and leaves out the label of the mailbox the message was listed from. The hub puts that
+  one back as it stores a summary, so a message's labels read the same whichever mailbox listed it last, and the views
+  show only the labels a person gave (`shownLabels`: none starting with `\`).
+- **Threads** are Gmail's (X-GM-THRID), your replies included.
+- **No categories.** Gmail's Promotions, Social, Updates and Forums are not exposed over IMAP, so §4's rule 8 never
+  fires for this account. List mail is known by its headers (List-Id, List-Unsubscribe, Precedence, Auto-Submitted),
+  which the extractor puts on every summary.
+- **Keeping up** is CONDSTORE (the account's "sync" detail says `CONDSTORE (UID list kept)`): a flag or label changed
+  anywhere shows as changed in every mailbox the message is in. IDLE watches Inbox; All Mail and Sent are asked every 15
+  minutes, and when the hub's own change touched them.
+- **Search** goes to All Mail in Gmail's own syntax (X-GM-RAW, search.ts `serverQuery`).
+- **Sending**: Gmail keeps the copy in Sent itself (the preset's Copy to Sent is `server`), and the extractor finds it by
+  its Message-ID. It shows once, in its thread, with places in Sent Mail and All Mail.
+
+**Filing on Gmail.** Gmail's MOVE takes the source mailbox's label off and puts the destination's on.
+
+- **Archive** is Inbox → All Mail: \Inbox comes off, the labels stay, and the answer is the All Mail id the hub already
+  had, so no new row. It waits 7.5 s before it goes (`MailOps.gmailArchiveHoldMs`), so the page's Undo (7 s) calls it
+  off before Gmail hears of it: once it has gone, the message is in All Mail only, which nothing here moves out of.
+- **Trash and junk**: Gmail then shows the message in Trash or Spam alone, so the hub drops its other places as soon as
+  the move is answered (it is out of All Mail and its labels at once, not after the next changes pass). What you sent is
+  not moved: its copy in All Mail is the same message as Sent's, and moving it would take it out of Sent.
+- **Back to Inbox** works from Spam, Trash or a label (the label comes off, as Gmail's own "Move to Inbox" from a label
+  does). A thread only in All Mail answers 409 with why: dither-accounts has no way yet to put \Inbox back on.
+- **Star, read, unread** are the message's flags: a call on its Inbox copy changes them everywhere; Starred gains or
+  loses it.
+- `in:archive` (search) is Archive where an account has one, else All Mail without Inbox, Sent or Drafts; Gmail's server
+  gets `-in:inbox -in:sent -in:drafts`.
+
+**Checked**: `hub/test/mail-gmail.test.ts` (one message in Inbox, All Mail and a label through the first sync, the
+backfill and an opened label; Gmail's thread; labels from any mailbox; a label as a mailbox and `[Gmail]` never
+followed; archive, Undo before it goes, trash, junk and Not junk, star, read and unread; changes made in Gmail itself;
+search in Gmail's syntax with what only the server has; a reply shown once when Gmail's Sent copy comes; list mail
+classified by its headers) and `verify-mail.ts --gmail` (above). **Not checked** against a real Gmail account: a few
+of Gmail's ways come from reports, not from seeing them: that X-GM-LABELS leaves out the listing mailbox's label (the
+hub copes either way), that MOVE from Inbox to All Mail answers the All Mail id the message had (a new one would only
+replace it), and that a move out of All Mail deletes (the hub never makes one).
+
+**Adding one** (on the owner's side; nothing is added from here):
+
+1. In your Google Account turn on 2-Step Verification (myaccount.google.com → Security), then make an app password
+   (Security → App passwords, named "dither-accounts", say). Google shows its 16 letters once. A Workspace account whose
+   admin turned off app passwords or IMAP cannot be added this way.
+2. On dither-accounts' page: Accounts → add → **Email (IMAP)**: your Gmail address, Provider `gmail`, the app password,
+   and your name. Leave the server fields empty (the preset fills imap.gmail.com:993 and smtp.gmail.com:465) and Copy to
+   Sent at `auto` (Gmail keeps its own).
+3. The hub sees it within seconds under its existing `mail` grant and syncs it: Accounts → Mail shows it online; Mail's
+   account menu has it, and the mailboxes menu its labels. Its "sync" detail should say CONDSTORE; dither-accounts'
+   docs/mail.md has a checklist for what only a real mailbox shows.
+
 ## Setting it up
 
 1. The hub runs with `DITHER_ACCOUNTS_URL` (docs/accounts.md). Set `DITHER_ACCOUNTS_PUBLIC_URL` too, for the links to
@@ -541,7 +609,9 @@ others were asked, because an IMAP move is a removal there and an addition elsew
   no page errors, nothing off the side of the screen, list → thread → back on a phone, the quote fold, read here, and
   the HTML-only message; the views in one row of chips, every folded message with a snippet (yours too), the phone
   reader's subject whole or on two lines beside Archive and ⋯, and the reply it sends shown as text. Its `--proton` run
-  (two accounts) also checks the account picker under "Mail". Use a fresh data dir each run: reading marks threads read. With `--html` it also checks the
+  (two accounts) also checks the account picker under "Mail". `DITHER_DEMO_MAIL_GMAIL=1` adds a Gmail account (a trip
+  labelled Travel and marked Important, that you answered; Mom's photos under Family; a starred recipe; a booking
+  archived under Travel; list mail), and `--gmail` checks it ("Gmail" above). Use a fresh data dir each run: reading marks threads read. With `--html` it also checks the
   frame (slice 3): no script runs in it, not even one put there by hand; no request leaves for anywhere but the hub;
   link clicks go through the opener, and a misleading one asks first; the image banner and the proxy; quotes, `cid:`
   pictures, files in the viewers; swiping back over a body. The demo's remote images are drawn by the hub itself
@@ -549,8 +619,8 @@ others were asked, because an IMAP move is a removal there and an addition elsew
 - Tests: `hub/test/mail-thread.test.ts` (threading, as a table), `mail-store.test.ts`, `mail-sync.test.ts` (the fake:
   first-sync order, `more`, 410, moves, Proton-like state, arrivals, gaps, the manager away, access ending, the delta
   sync), `mail-ops.test.ts` (writes on the fake: pending, batches of 1000, 404/403/501/410, a restart with changes
-  waiting, the manager away, read in view and its setting, a read grant) and `web/test/mail-model.test.ts`,
-  `mail-text.test.ts`, `mail-ops.test.ts`.
+  waiting, the manager away, read in view and its setting, a read grant), `mail-gmail.test.ts` (a Gmail account:
+  "Gmail" above) and `web/test/mail-model.test.ts`, `mail-text.test.ts`, `mail-ops.test.ts`.
 - Slice 3: `mail-sanitize.test.ts` (a hostile corpus, each output parsed again against the allowlist),
   `mail-images.test.ts` (the token, private addresses in every spelling, DNS rebinding, redirects, not-an-image, size,
   headers) and `mail-parts.test.ts` (the routes on the fake).

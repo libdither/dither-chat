@@ -7,7 +7,7 @@ import { shownInbox } from '../inbox.ts';
 import { switcherOrder } from '../ordering.ts';
 import { db, go, newMessage, type Route } from '../state.ts';
 import { describeAddRef, joinsSomething, mailboxList, parseAdd, viewList } from '@dither-chat/protocol';
-import { MAIL_VIEWS } from '../mail/model.ts';
+import { holdsOnlyMailboxes, MAIL_VIEWS } from '../mail/model.ts';
 import { useLayer } from '../phone.ts';
 import { Avatar, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -64,6 +64,7 @@ function items(): Item[] {
     out.push({ key: 'v:mail', label: 'Mail', sub: 'View', icon: <Icon name="mail" size={18} />, to: { view: 'mail' }, last: 0 });
     for (const v of MAIL_VIEWS.slice(1)) out.push({ key: `v:mail:${v.view}`, label: `Mail: ${v.label}`, sub: 'View', icon: <Icon name="mail" size={18} />, to: { view: 'mail', list: viewList(v.view) }, last: 0 });
     for (const b of db.mail.mailboxes.values()) {
+      if (holdsOnlyMailboxes(b, db.mail.mailboxes.values())) continue;
       const acc = db.mail.accounts.get(b.accountId);
       out.push({ key: b.id, label: b.path.replace(/\//g, ' / '), sub: `Mailbox${acc ? ` · ${acc.address ?? acc.label}` : ''}`, icon: <Icon name="folder" size={18} />, to: { view: 'mail', list: mailboxList(b.id) }, last: 0 });
     }
