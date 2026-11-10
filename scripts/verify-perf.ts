@@ -16,11 +16,12 @@
  * Medians go against the baseline: a count over its baseline fails (bytes get 1%), a time over baseline × 1.25 +
  * 50 ms fails. --update writes the medians as the new baseline.
  *
- * --ci: what CI runs. A world a tenth the size, a warm-up run and then three at 1×, five older pages, against
+ * --ci: what CI runs. A world a tenth the size, a warm-up run and then one at 1×, five older pages, against
  * scripts/perf-baseline-ci.json. Only counts, renders, layouts and bytes are judged (a count may go 1% over: each run's
  * arriving message moves the long timeline's window by one), and of those only the ones the baseline marks as steady
- * (`gate`, from the spread of `--ci --update --runs 5`). Times are printed, never judged; with GITHUB_STEP_SUMMARY set
- * they all go in the job's summary too. No run is tried again.
+ * (`gate`, from the spread of `--ci --update --runs 5`): after the warm-up they come out the same in every run, so one
+ * is enough. Times are printed, never judged; with GITHUB_STEP_SUMMARY set they all go in the job's summary too. No
+ * run is tried again.
  */
 import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -32,7 +33,8 @@ const args = process.argv.slice(2);
 const opt = (k: string, d: string) => (args.includes(`--${k}`) ? args[args.indexOf(`--${k}`) + 1] : d);
 const CI = args.includes('--ci');
 const PORT = Number(opt('port', '8620'));
-const RUNS = Number(opt('runs', '3'));
+/** Measured runs at each throttle; their medians are what counts. CI's are steady after the warm-up, so it takes one. */
+const RUNS = Number(opt('runs', CI ? '1' : '3'));
 /**
  * Runs first that are not counted. The first run on a fresh hub draws more than the rest (its first answers are
  * slower, so pages come in two renders, not one): 1.4 times the message renders, twice the layouts.
@@ -97,23 +99,29 @@ async function main() {
   await until(async () => (await fetch(`${base}/api/health`).catch(() => null))?.ok ?? false, 30_000, 'the hub did not start');
   // The demo accounts bring their own world in once they are up.
   await until(async () => (await getJson('/api/bootstrap')).accounts.every((a: any) => a.status === 'online'), 30_000, 'demo accounts not online');
-  // Then until its journal stands still: a first run that meets the demo world still settling counts its renders.
-  let seq = -1;
-  let still = Date.now();
-  while (Date.now() - still < 5000) {
-    await Bun.sleep(1000);
-    const now = (await getJson('/api/bootstrap')).sync?.seq ?? 0;
-    if (now !== seq) (seq = now), (still = Date.now());
-  }
   const boot = await getJson('/api/bootstrap');
   if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
+  // Then until its journal stands still (it moves for about five seconds): a first run that meets the demo world still
+  // settling counts its renders. A warm-up run stands in for the wait: the world settles while it runs, uncounted.
+  if (!WARMUP) {
+    let seq = -1;
+    let still = Date.now();
+    while (Date.now() - still < 5000) {
+      await Bun.sleep(1000);
+      const now = (await getJson('/api/bootstrap')).sync?.seq ?? 0;
+      if (now !== seq) (seq = now), (still = Date.now());
+    }
+  }
 
   const metrics: Metrics = {};
   const put = (k: string, v: number, kind: Kind) => (metrics[k] = { v: Math.round(v), kind });
-  // ------------------------------------------------------------------ the hub's side
-  put('hub.bootstrap.bytes', (await (await fetch(`${base}/api/bootstrap`)).arrayBuffer()).byteLength, 'bytes');
-  put('hub.bootstrap.ms', await timed('/api/bootstrap'), 'ms');
-  put('hub.inbox.ms', await timed('/api/inbox'), 'ms');
+  // ------------------------------------------------------------------ the hub's side, once the world has settled
+  const hubSide = async () => {
+    put('hub.bootstrap.bytes', (await (await fetch(`${base}/api/bootstrap`)).arrayBuffer()).byteLength, 'bytes');
+    put('hub.bootstrap.ms', await timed('/api/bootstrap'), 'ms');
+    put('hub.inbox.ms', await timed('/api/inbox'), 'ms');
+  };
+  if (!WARMUP) await hubSide();
 
   // ------------------------------------------------------------------ the browser's
   const runs: Record<number, Metrics[]> = {};
@@ -123,6 +131,7 @@ async function main() {
       const m = await run(cpu, world);
       console.log(`${cpu}× warm-up run, not counted: cold ${m['cold.list'].v} ms, first open ${m['open.first'].v} ms, message renders ${m['open.first.messageRenders'].v}`);
     }
+    if (!metrics['hub.bootstrap.bytes']) await hubSide();
     for (let i = 0; i < RUNS; i++) {
       // A run that fails (a timeout on a busy machine) is tried once more, but not in CI; its error and the hub's log are shown.
       const m = await run(cpu, world).catch((e) => {
@@ -439,7 +448,7 @@ function summary(rows: { k: string; b?: number; v: number; kind: Kind; change: s
   const out = [
     `### verify-perf${CI ? ' --ci' : ''}: ${failed ? `${failed} over the baseline` : 'all within the baseline'}`,
     '',
-    `World: ${Object.entries(world.counts).map(([k, v]) => `${v} ${k}`).join(', ')}. ${RUNS} runs at ${CPUS.map((c) => `${c}×`).join(', ')}, ${PAGES} older pages; medians.`,
+    `World: ${Object.entries(world.counts).map(([k, v]) => `${v} ${k}`).join(', ')}. ${WARMUP ? `${WARMUP} warm-up and ` : ''}${RUNS} ${RUNS === 1 ? 'run' : 'runs'} at ${CPUS.map((c) => `${c}×`).join(', ')}, ${PAGES} older pages${RUNS > 1 ? '; medians' : ''}.`,
     '',
     '#### Counts, renders, layouts and bytes',
     '',
