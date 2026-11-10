@@ -1,5 +1,6 @@
 {
   "name": "@dither-chat/adapter-matrix",
+  "license": "AGPL-3.0-or-later",
   "private": true,
   "type": "module",
   "dependencies": {
