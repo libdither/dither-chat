@@ -8,8 +8,9 @@
  * log's stays) and the mutes as they are now. Metadata only: never what was said.
  */
 import type { Database } from 'bun:sqlite';
+import type * as P from '@dither-chat/protocol';
 import { decayed } from '@dither-chat/protocol';
-import { emptyTally, foldMessage, freshState, scoreConversation, sumTallies, type ConvState, type ScoreInput, type Scored, type Tally } from './attention.ts';
+import { emptyTally, foldMessage, freshState, scoreConversation, sumTallies, voteDirection, votesAt, type ConvState, type ScoreInput, type Scored, type Tally } from './attention.ts';
 import { HORIZON, rankFeatures, type Moment, type Opened } from './rank.ts';
 import type { Triage } from './triage.ts';
 
@@ -33,8 +34,11 @@ export interface Conv {
   muted: string | null;
   state: ConvState;
   lastMessageAt: number | null;
-  /** Messages from others since the log began, in order: when, a mention of you, pushed. Older ones count as read. */
-  incoming: { ts: number; mention: boolean; pushed: boolean }[];
+  /**
+   * Messages from others since the log began, in order: when, a mention of you, pushed, and where triage put it
+   * (null: not decided, or silent) with your vote and when. Older ones count as read.
+   */
+  incoming: { ts: number; mention: boolean; pushed: boolean; level: P.TriageDecision | null; vote: P.TriageDecision | null; votedAt: number | null }[];
   /** When you last wrote. */
   lastOwn: number | null;
 }
@@ -66,6 +70,8 @@ export interface World {
   tallies: Map<string, Map<string, Tally>>;
   self: Set<string>;
   selfPerson: string | null;
+  /** Your votes on each conversation's messages: when, and up (1), down (−1) or right (0). */
+  votes: Map<string, { at: number; dir: number }[]>;
 }
 
 /** Where you had been by `t`: per usage key, decayed seconds and visits and when you were last there. */
@@ -108,10 +114,14 @@ export function seenAt(w: World, t: number, usage = usageAt(w.stays, t)): Seen[]
     let unread = 0;
     let mentions = 0;
     let pushedUnread = false;
+    let level: P.TriageDecision | null = null;
     for (let i = c.incoming.length - 1; i >= 0 && c.incoming[i].ts > read; i--) {
+      const m = c.incoming[i];
       unread++;
-      if (c.incoming[i].mention) mentions++;
-      if (c.incoming[i].pushed) pushedUnread = true;
+      if (m.mention) mentions++;
+      if (m.pushed) pushedUnread = true;
+      // The newest one triage decided on, with your vote only once you had cast it.
+      if (!level && m.level) level = m.vote && m.votedAt != null && m.votedAt <= t ? m.vote : m.level;
     }
     if (!c.listed && ((!mentions && !pushedUnread) || c.muted)) continue;
     const turn = c.state.turn?.addressed != null ? c.state.turn : null;
@@ -119,7 +129,22 @@ export function seenAt(w: World, t: number, usage = usageAt(w.stays, t)): Seen[]
     out.push({
       conv: c,
       lastThere: there,
-      input: { now: t, shape: c.shape, members: c.members, lastMessageAt: c.lastMessageAt, state: c.state, author, authorName: null, unread, mentions, pinged: pushedUnread ? 'a push' : null, muted: c.muted, usage: u },
+      input: {
+        now: t,
+        shape: c.shape,
+        members: c.members,
+        lastMessageAt: c.lastMessageAt,
+        state: c.state,
+        author,
+        authorName: null,
+        unread,
+        mentions,
+        pinged: pushedUnread ? 'a push' : null,
+        muted: c.muted,
+        usage: u,
+        level,
+        votes: votesAt(w.votes.get(c.id), t),
+      },
     });
   }
   return out;
@@ -191,14 +216,22 @@ export function loadWorld(db: Database, mutedOf: (id: string, shape: string) => 
     const targets = v.view === 'person' ? (dmsOf.get(v.person_id) ?? []) : v.conversation_id ? [v.conversation_id] : [];
     stays.push({ id: v.id, start: v.start_at, end: v.end_at, active: v.active, source: v.source, rank: v.rank, sent: v.sent, key, targets });
   }
-  return { convs, stays, logStart: stays[0]?.start ?? Infinity, tallies: new Map(), self, selfPerson };
+  const votes = new Map<string, { at: number; dir: number }[]>();
+  for (const r of db
+    .query(`SELECT m.conversation_id AS cid, t.decision, t.feedback, t.feedback_at AS at FROM triage t JOIN message m ON m.id = t.message_id WHERE t.feedback IS NOT NULL AND t.feedback_at IS NOT NULL`)
+    .all() as Row[]) {
+    if (!convs.has(r.cid)) continue;
+    votes.set(r.cid, [...(votes.get(r.cid) ?? []), { at: r.at, dir: voteDirection(r.decision, r.feedback) }]);
+  }
+  return { convs, stays, logStart: stays[0]?.start ?? Infinity, tallies: new Map(), self, selfPerson, votes };
 }
 
 const FOLD = `
   SELECT m.id, m.ts, m.conversation_id AS cid, m.author_id, m.mentions_self, m.mentions_all, m.kind, m.deleted, i.is_bot, i.person_id,
          r.author_id AS reply_author,
          EXISTS (SELECT 1 FROM reaction x WHERE x.message_id = m.id AND x.identity_id IN ${SELF_SQL}) AS reacted,
-         t.decision IN ('push', 'quiet') AS pushed, t.reasons LIKE '%asks a question%' AS question
+         t.decision IN ('push', 'quiet') AS pushed, t.reasons LIKE '%asks a question%' AS question,
+         t.decision, t.feedback, t.feedback_at
   FROM message m INDEXED BY message_ts LEFT JOIN identity i ON i.id = m.author_id LEFT JOIN message r ON r.id = m.reply_to_id LEFT JOIN triage t ON t.message_id = m.id
   WHERE m.conversation_id IN (SELECT value FROM json_each(?)) ORDER BY m.ts, m.rowid`;
 
@@ -268,7 +301,15 @@ export class Rebuild {
       if (ignore) continue;
       c.lastMessageAt = Math.max(c.lastMessageAt ?? 0, r.ts);
       if (me) c.lastOwn = Math.max(c.lastOwn ?? 0, r.ts);
-      else if (r.ts >= w.logStart) c.incoming.push({ ts: r.ts, mention: !!r.mentions_self, pushed: !!r.pushed });
+      else if (r.ts >= w.logStart)
+        c.incoming.push({
+          ts: r.ts,
+          mention: !!r.mentions_self,
+          pushed: !!r.pushed,
+          level: r.decision && r.decision !== 'silent' ? r.decision : null,
+          vote: r.feedback ?? null,
+          votedAt: r.feedback_at ?? null,
+        });
     }
     return this.done;
   }

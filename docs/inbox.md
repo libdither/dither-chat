@@ -396,6 +396,19 @@ never), since the latest message (the same two), since you wrote, unread message
 conversation-going-on parts, a push still unread, relationship strength, noise, decayed visits and minutes, and
 the shape (DM, group, notes). Never what was said.
 
+**What triage knows, tried as features (2026-11-10).** Where triage put the newest unread message it decided on
+(Important, Active, Digest, Not interesting, or none: your vote if you had cast one by then, else its decision), and
+your votes on the conversation's messages lately, up and down (decayed, half-life two weeks), as features of both
+chances (`TRIAGE_FEATURES` in `rank.ts`). No hand-set weight for importance: if opens and replies follow it, the
+features would carry it. In the replay they did not help: with them the learned order was −0.003 (−0.008 to 0.001)
+on the choosing days, −0.007 (−0.019 to 0.003) held out (180 opens) and −0.016 (−0.042 to 0.004) on held-out opens
+from elsewhere; the level of the newest message read or not did no better (−0.002). What the level says is mostly
+there already: a push still unread is `pinged`, and unread and mentions count the rest. And there were 28 votes in
+all, none of them up, so the vote features had almost nothing to learn from. So the hub keeps them at the prior's 0
+(an infinite pull in `LAMBDA`) and does not work them out; `inbox-replay.ts --triage` learns them again, as the votes
+grow. To turn them on: a finite pull for them in `LAMBDA`, and `level` and `votes` in `Attention.input` (as
+`seenAt` in `rankhistory.ts` has them).
+
 **Prior.** The open chance starts as a function of the formula's score alone, `logit = −5.1 + 0.66 × score/10`:
 1 in 160 at 0 points, 1 in 7 at 50, even odds at 77. That was fitted to the opens of the choosing days below
 (`--calibrate`). So a fresh hub, or one with no activity log, orders exactly as the formula does. The send chance

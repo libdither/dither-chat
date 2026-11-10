@@ -7,6 +7,7 @@
  *   bun scripts/inbox-replay.ts ... --grid      (also: the "you were here" weight and half-life)
  *   bun scripts/inbox-replay.ts ... --model-grid   (also: the learned order's regularisation, position correction and its cap, horizon and window)
  *   bun scripts/inbox-replay.ts ... --curve        (also: the examination curve fitted to your opens; --model-grid has it too)
+ *   bun scripts/inbox-replay.ts ... --triage       (also: the learned order with triage's level and your votes as features)
  *   bun scripts/inbox-replay.ts ... --calibrate    (the learned order's prior: open chance against the formula alone)
  *
  * It never opens the live database for writing: it copies it with VACUUM INTO (read-only) and works on the copy. It
@@ -26,7 +27,7 @@ import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { scoreConversation, WEIGHTS } from '../packages/hub/src/attention.ts';
-import { EXAM_AT, EXAMINATION_ETA, FEATURES, FIT, fitRank, GUESSED_CURVE, HORIZON, LAMBDA, MAX_IPW, predict, PRIOR, rankFeatures, type Feature, type Features, type FitOptions, type Moment, type RankModel } from '../packages/hub/src/rank.ts';
+import { EXAM_AT, EXAMINATION_ETA, FEATURES, FIT, fitRank, GUESSED_CURVE, TRIAGE_FEATURES, HORIZON, LAMBDA, MAX_IPW, predict, PRIOR, rankFeatures, type Feature, type Features, type FitOptions, type Moment, type RankModel } from '../packages/hub/src/rank.ts';
 import { isChoice, loadWorld, momentOf, mutedBy, Rebuild, seenAt, type Seen, type World } from '../packages/hub/src/rankhistory.ts';
 import { Store } from '../packages/hub/src/store.ts';
 import { Triage } from '../packages/hub/src/triage.ts';
@@ -313,7 +314,7 @@ if (import.meta.main) {
   const models = learned(moments, opens, snaps, 'learned', shipped, 'sectioned');
   policies.push({ id: 'learned', what: 'the learned order (rank.ts) as shipped, refitted daily on the days before', order: () => [] });
   policies.push({ id: 'sectioned', what: 'the learned order in the sections of 2026-11-09: a reply you owe that needs you, then unread, then the rest', order: () => [] });
-  const at = (lam: number): Record<Feature, number> => Object.fromEntries(FEATURES.map((f) => [f, f === 'bias' || f === 'formula' ? LAMBDA.formula : lam])) as Record<Feature, number>;
+  const at = (lam: number): Record<Feature, number> => Object.fromEntries(FEATURES.map((f) => [f, f === 'bias' || f === 'formula' || LAMBDA[f] === Infinity ? LAMBDA[f] : lam])) as Record<Feature, number>;
   const gridIds: string[] = [];
   const fitted: Record<string, Record<number, RankModel>> = { learned: models };
   const tryIt = (id: string, what: string, o: Setting, ms = moments) => {
@@ -329,13 +330,18 @@ if (import.meta.main) {
     for (const cap of [2, 3, 10, 30]) tryIt(`cap-${cap}`, `learned, an open from far down counts at most ${cap} times`, { cap });
     for (const d of [2, 3, 5]) tryIt(`window-${d}d`, `learned from the last ${d} days only`, { window: d * DAY });
   }
+  if (grid || flag('triage')) {
+    // Learned like the rest, where the hub keeps them at 0.
+    const withTriage = { ...LAMBDA, ...Object.fromEntries(TRIAGE_FEATURES.map((f) => [f, 30])) } as Record<Feature, number>;
+    tryIt('with-triage', 'learned with where triage put the newest unread message and your votes as features', { lambda: withTriage });
+  }
   if (grid || flag('curve')) {
     tryIt('guess', 'learned with the guessed examination curve, (1 + position)^-0.5, as until 2026-11-10', { curve: undefined });
     tryIt('curve-em', 'learned with the curve fitted by regression-EM: a row not opened may be one you did not see', { curve: 'em' });
   }
   if (flag('calibrate')) {
     const ms = moments.filter((m) => !holdout.has(dayOf(m.at)));
-    const only = Object.fromEntries(FEATURES.map((f) => [f, f === 'bias' || f === 'formula' ? 0 : 1e9])) as Record<Feature, number>;
+    const only = Object.fromEntries(FEATURES.map((f) => [f, f === 'bias' || f === 'formula' ? 0 : Infinity])) as Record<Feature, number>;
     console.log('prior, fitted on the choosing days:', JSON.stringify(fitRank(ms, Date.now(), { lambda: only, eta: 0 }).open), 'shipped:', JSON.stringify(PRIOR.open));
   }
   const val = opens.filter((o) => !holdout.has(o.day));

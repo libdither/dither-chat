@@ -350,6 +350,33 @@ export interface ScoreInput {
   usage: { score: number; visitScore: number; at: number; lastVisit: number | null } | null;
   /** Follow-up seam: a local model's answer for this conversation (AttentionJudge). */
   judged?: Judged | null;
+  /**
+   * Where triage put the newest unread message it decided on (your vote, else its decision), and your votes on this
+   * conversation's messages lately, up a level and down (decayed, VOTE_HALF_LIFE). The replay fills them in to try
+   * them as features of the learned order (rank.ts TRIAGE_FEATURES); the hub does not yet.
+   */
+  level?: P.TriageDecision | null;
+  votes?: { up: number; down: number } | null;
+}
+
+/** A vote on a message counts half after two weeks, as far as the learned order goes. */
+export const VOTE_HALF_LIFE = 14 * DAY;
+const LEVEL_ORDER: Record<P.TriageDecision, number> = { silent: -1, drop: 0, digest: 1, quiet: 2, push: 3 };
+/** A vote's direction: 1 up a level or more, −1 down, 0 "it was right". */
+export const voteDirection = (decision: P.TriageDecision, feedback: P.TriageDecision): number => Math.sign(LEVEL_ORDER[feedback] - LEVEL_ORDER[decision]);
+
+/** Votes as of `now`: up and down, each decayed by VOTE_HALF_LIFE; votes after `now` do not count yet. */
+export function votesAt(votes: readonly { at: number; dir: number }[] | undefined, now: number): { up: number; down: number } | null {
+  if (!votes?.length) return null;
+  let up = 0;
+  let down = 0;
+  for (const v of votes) {
+    if (v.at > now) continue;
+    const w = 2 ** (-(now - v.at) / VOTE_HALF_LIFE);
+    if (v.dir > 0) up += w;
+    else if (v.dir < 0) down += w;
+  }
+  return up || down ? { up, down } : null;
 }
 
 export interface Judged {

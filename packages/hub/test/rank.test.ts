@@ -8,10 +8,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { ActivityStore } from '../src/activity.ts';
-import { Attention, freshState, scoreConversation, type ScoreInput } from '../src/attention.ts';
-import { bucketOf, curveFit, decreasing, EXAM_AT, EXAM_FLOOR, examination, FEATURES, fitLogistic, fitRank, GUESSED_CURVE, logit, MAX_IPW, openWeight, predict, PRIOR, rankFeatures, type FitRow, type Moment, type RankRow } from '../src/rank.ts';
+import { Attention, freshState, scoreConversation, VOTE_HALF_LIFE, voteDirection, votesAt, type ScoreInput } from '../src/attention.ts';
+import { bucketOf, curveFit, decreasing, EXAM_AT, EXAM_FLOOR, examination, FEATURES, fitLogistic, fitRank, GUESSED_CURVE, LAMBDA, logit, MAX_IPW, openWeight, predict, PRIOR, rankFeatures, TRIAGE_FEATURES, type FitRow, type Moment, type RankRow } from '../src/rank.ts';
 import { InboxRanker } from '../src/ranker.ts';
-import { KEEP_RECENT, KEEP_SAMPLE, positions, sample, type Seen } from '../src/rankhistory.ts';
+import { KEEP_RECENT, KEEP_SAMPLE, positions, sample, seenAt, type Conv, type Seen, type World } from '../src/rankhistory.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
 
@@ -161,6 +161,66 @@ describe('where each row stood', () => {
     const seen = [s('quiet', { lastMessageAt: T0 - 5 * DAY }), s('muted', { unread: 5, muted: 'you' }), s('busy', { unread: 3 }), s('fresh', { lastMessageAt: T0 - MIN })];
     const pos = positions(seen, new Map(seen.map((x) => [x.conv.id, scoreConversation(x.input)])));
     expect([...pos.entries()].sort((a, b) => a[1] - b[1]).map(([id]) => id)).toEqual(['busy', 'fresh', 'quiet', 'muted']);
+  });
+});
+
+describe('what triage knows, as features', () => {
+  test('a vote up, down or right; decayed, and not before it was cast', () => {
+    expect(voteDirection('quiet', 'push')).toBe(1);
+    expect(voteDirection('push', 'digest')).toBe(-1);
+    expect(voteDirection('digest', 'digest')).toBe(0);
+    const votes = [
+      { at: T0 - VOTE_HALF_LIFE, dir: -1 },
+      { at: T0 - HOUR, dir: 1 },
+      { at: T0 + HOUR, dir: 1 },
+      { at: T0 - DAY, dir: 0 },
+    ];
+    expect(votesAt(votes, T0)!.down).toBeCloseTo(0.5);
+    expect(votesAt(votes, T0)!.up).toBeCloseTo(1, 2);
+    expect(votesAt(votes.slice(3), T0)).toBeNull();
+    expect(votesAt(undefined, T0)).toBeNull();
+  });
+
+  test('the newest unread message triage decided on, with your vote once you cast it', () => {
+    const conv: Conv = {
+      id: 'c1',
+      shape: 'group',
+      members: 5,
+      listed: true,
+      usageKey: 'conversation:c1',
+      muted: null,
+      state: freshState(),
+      lastMessageAt: T0 - 10 * MIN,
+      lastOwn: T0 - 2 * HOUR,
+      incoming: [
+        { ts: T0 - 30 * MIN, mention: false, pushed: true, level: 'push', vote: null, votedAt: null },
+        { ts: T0 - 20 * MIN, mention: false, pushed: true, level: 'quiet', vote: 'digest', votedAt: T0 + HOUR },
+        { ts: T0 - 10 * MIN, mention: false, pushed: false, level: null, vote: null, votedAt: null },
+      ],
+    };
+    const world: World = { convs: new Map([['c1', conv]]), stays: [], logStart: 0, tallies: new Map(), self: new Set(), selfPerson: null, votes: new Map([['c1', [{ at: T0 + HOUR, dir: -1 }]]]) };
+    const now = seenAt(world, T0)[0].input;
+    // Not decided (the newest) is passed over; the vote comes an hour later, so it is still Active and no vote yet.
+    expect(now.level).toBe('quiet');
+    expect(now.votes).toBeNull();
+    const later = seenAt(world, T0 + 2 * HOUR)[0].input;
+    expect(later.level).toBe('digest');
+    expect(later.votes!.down).toBeCloseTo(1, 2);
+    const f = rankFeatures(later, scoreConversation(later));
+    expect([f.important, f.active, f.digest, f.notInteresting, f.votedUp]).toEqual([0, 0, 1, 0, 0]);
+    expect(f.votedDown).toBeCloseTo(Math.log(2), 2);
+  });
+
+  test('the hub keeps them at the prior until they help; the replay can learn them', () => {
+    // Important always opened, the rest never: only an unpinned fit learns it.
+    const rows: RankRow[] = Array.from({ length: 200 }, (_, i) => {
+      const x = input({ level: i % 2 ? 'push' : 'digest' });
+      return { x: rankFeatures(x, scoreConversation(x)), y: i % 2, w: 1 };
+    });
+    expect(TRIAGE_FEATURES.every((f) => LAMBDA[f] === Infinity)).toBe(true);
+    expect(fitLogistic(rows, PRIOR.open).important).toBeUndefined();
+    const free = { ...LAMBDA, ...Object.fromEntries(TRIAGE_FEATURES.map((f) => [f, 30])) };
+    expect(fitLogistic(rows, PRIOR.open, free).important).toBeGreaterThan(0.5);
   });
 });
 
