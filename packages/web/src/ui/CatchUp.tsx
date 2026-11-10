@@ -19,6 +19,7 @@ import { phone } from '../phone.ts';
 import { db, discardSend, go, inbox, isSelfIdentity, loadMailTriage, loadTimeline, mailRev, mailTriage, markAllRead, markRead, pending, prefs, retrySend, rev, route, send, timelineKey, timelineRev, timelines } from '../state.ts';
 import { composerDone, composerTyped } from '../typing.ts';
 import { Avatar } from './bits.tsx';
+import { useGrow } from './grow.ts';
 import { Icon } from './icons.tsx';
 import { composerBlocker } from './Timeline.tsx';
 import { TIER_ICON } from './TierVote.tsx';
@@ -595,14 +596,8 @@ function ReplyBox({ c }: { c: P.ConversationView }) {
   const [text, setText] = useState(() => localStorage.getItem(draftKey) ?? '');
   const ta = useRef<HTMLTextAreaElement>(null);
   const blocked = composerBlocker(c, sendAs(c));
-  // Measured only with something in it: an empty box is one line, and measuring each card's would lay out the page once a card.
-  useLayoutEffect(() => {
-    const el = ta.current;
-    if (!el) return;
-    if (!text) return void (el.style.height = '');
-    el.style.height = 'auto';
-    el.style.height = Math.min(160, el.scrollHeight) + 'px';
-  }, [text]);
+  // Never measured while empty: measuring each card's box would lay out the page once a card.
+  useGrow(ta, text);
   const type = (v: string) => {
     setText(v);
     if (v) localStorage.setItem(draftKey, v);
