@@ -7,7 +7,7 @@
 
 CREATE TABLE IF NOT EXISTS mail_account (
   id           TEXT PRIMARY KEY,                -- the manager's account id
-  kind         TEXT NOT NULL,                   -- imap, proton
+  kind         TEXT NOT NULL,                   -- imap, proton, google
   label        TEXT NOT NULL,
   address      TEXT,                            -- status.self.email
   display_name TEXT,
@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS mail_account (
   synced_at    INTEGER,                         -- the first sync finished
   summary_headers INTEGER,                      -- status.details.summaryHeaders: 1 its summaries carry threading and bulk headers, 0 not (Proton); NULL: not said
   headers_seen INTEGER,                         -- 1 once a summary of it carried In-Reply-To, References or bulk headers
+  id_per_message INTEGER,                       -- status.details.idPerMessage: 1 a message has one id in every mailbox (Proton, Gmail on the web); NULL: not said
+  send_cap     INTEGER,                         -- status.details.sendCap: the most bytes of files one message may carry; NULL: not said
+  max_recipients INTEGER,                       -- status.details.maxRecipients: the most addresses in To, Cc and Bcc together; NULL: not said
+  provider     TEXT,                            -- status.details.provider: 'Gmail' and the like; NULL: not said
   hidden       INTEGER NOT NULL DEFAULT 0,
   gone_at      INTEGER,                         -- access ended: everything of it goes 24 h later
   created_at   INTEGER NOT NULL

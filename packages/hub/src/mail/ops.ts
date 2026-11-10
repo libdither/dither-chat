@@ -53,8 +53,9 @@ export interface Pending {
   seen?: { v: Bit; was: Bit; op: string };
   flagged?: { v: Bit; was: Bit; op: string };
   /**
-   * Where it goes, and the mailboxes it leaves. `copy`: Gmail's All Mail, which it is copied from and stays in
-   * (copyFrom); `hide` is empty then.
+   * Where it goes, and the mailboxes it leaves. `copy`: Gmail's All Mail, which it stays in while the destination's
+   * label goes on (copyFrom: over IMAP the extractor copies it from there, on the web it only adds the label); `hide`
+   * is empty then.
    */
   move?: { to: string; hide: string[]; op: string; copy?: string };
 }
@@ -84,9 +85,10 @@ export class MailOps {
   /** How long a change waits for others to join its call. */
   coalesceMs = 250;
   /**
-   * How long a Gmail archive waits before it goes: the 7 s the page offers Undo for (web mail/ops.ts), and a little,
-   * so an Undo calls it off and Gmail never hears of either. An archive that went is undone by a copy from All Mail
-   * back into Inbox (copyFrom).
+   * How long an archive on Gmail over IMAP waits before it goes: the 7 s the page offers Undo for (web mail/ops.ts),
+   * and a little, so an Undo calls it off and Gmail never hears of either. An archive that went is undone by a copy
+   * from All Mail back into Inbox (copyFrom), a new id there. Gmail on the web (one id for the message) takes Inbox's
+   * label off and puts it back on, and is not held.
    */
   gmailArchiveHoldMs = 7_500;
   /** While changes wait for the manager or an account, how often to look again. */
@@ -311,30 +313,34 @@ export class MailOps {
   /**
    * The mailboxes a move takes the message out of, from where the server has it: empty when it is where it should be
    * already (then a move waiting for it is called off). Archive leaves Inbox; the others leave every folder, and what
-   * you sent stays.
+   * you sent stays. `byId`: the account's ids are the message's (store.ts idPerMessage).
    */
-  private leaves(m: Row, dest: Row, action: MailAction, kind: string, gmail: boolean): string[] {
+  private leaves(m: Row, dest: Row, action: MailAction, gmail: boolean, byId: boolean): string[] {
     const locs = this.locations(m.id);
     if (!locs.length || locs.every((l) => STAYS.has(l.role ?? ''))) return [];
     if (action === 'archive') return locs.filter((l) => l.role === 'inbox').map((l) => l.mailbox_id);
-    // On Gmail, what you sent is in Sent and All Mail at once, and moving either copy to the trash takes it out of
-    // Sent too: it stays where it is.
+    // On Gmail, what you sent is one message in Sent and All Mail at once, and moving it to the trash takes it out of
+    // Sent too (over IMAP by either copy, on the web by its one id): it stays where it is.
     if (gmail && (action === 'trash' || action === 'junk') && locs.some((l) => STAYS.has(l.role ?? ''))) return [];
     if (action === 'trash' || action === 'junk') return locs.filter((l) => !STAYS.has(l.role ?? '') && l.mailbox_id !== dest.id).map((l) => l.mailbox_id);
-    // Into Inbox or a folder: out of the folders it is in, unless it is there already.
+    // Into Inbox or a folder: out of the folders it is in, unless it is there already. Gmail on the web's mail.move
+    // names no mailbox it comes from, so it takes off Inbox (and Trash and Spam) and leaves the labels it has: they
+    // are not folders it leaves here either.
     if (locs.some((l) => l.mailbox_id === dest.id)) return [];
-    const folders = locs.filter((l) => l.mailbox_id !== dest.id && !NOT_FOLDER.has(l.role ?? '')).map((l) => l.mailbox_id);
+    const folders = locs.filter((l) => l.mailbox_id !== dest.id && !NOT_FOLDER.has(l.role ?? '') && !(gmail && byId && !l.role)).map((l) => l.mailbox_id);
     if (folders.length) return folders;
-    // Only in All mail: Proton's ids are the message, so it moves from there; an IMAP server's All mail is never
-    // emptied from here (Gmail would take that as a delete: it is copied from there instead, copyFrom).
-    return kind === 'proton' ? locs.filter((l) => l.role === 'all').map((l) => l.mailbox_id) : [];
+    // Only in All mail: where ids are the message's (Proton), it moves from there by its id. Gmail keeps it in All Mail
+    // and only puts the label on (copyFrom; over IMAP a MOVE out of All Mail would delete it, so the extractor copies),
+    // and another IMAP server's All mail is never emptied from here.
+    return byId && !gmail ? locs.filter((l) => l.role === 'all').map((l) => l.mailbox_id) : [];
   }
 
   /**
-   * Gmail: the All Mail a move copies it from, or null. dither-accounts COPYs out of All Mail into anything but Trash or
-   * Spam (a MOVE out of it would delete it on Gmail): the destination's label goes on and the rest stay. Into Inbox it
-   * is always the copy, so its labels stay (and an archive that went is undone as it was); into a label, when it is in
-   * no folder to move it from (only in All Mail). What you sent stays where it is.
+   * Gmail: the All Mail a move leaves it in while the destination's label goes on, or null. Over IMAP dither-accounts
+   * COPYs out of All Mail into anything but Trash or Spam (a MOVE out of it would delete it on Gmail); on the web its
+   * one id gets the label. Either way the rest of its labels stay. Into Inbox it is always this, so its labels stay
+   * (and an archive that went is undone as it was); into a label, when it is in no folder to move it from (only in All
+   * Mail). What you sent stays where it is.
    */
   private copyFrom(m: Row, dest: Row, action: MailAction): string | null {
     if ((action !== 'inbox' && action !== 'move') || NOT_FOLDER.has(dest.role ?? '')) return null;
@@ -392,15 +398,15 @@ export class MailOps {
   }
 
   private applyMove(accountId: string, ms: Row[], dest: Row, action: MailAction): { threads: number; messages: number } {
-    const acc = this.hub.store.account(accountId)!;
     const gmail = this.hub.store.gmail(accountId);
+    const byId = this.hub.store.idPerMessage(accountId);
     const touched = new Set<string>();
     let queued = 0;
     this.db.transaction(() => {
       const todo: { m: Row; hide: string[]; copy: string | null }[] = [];
       for (const m of ms) {
         const p = json<Pending>(m.pending, {});
-        const left = this.leaves(m, dest, action, acc.kind, gmail);
+        const left = this.leaves(m, dest, action, gmail, byId);
         const copy = gmail && (action === 'inbox' || !left.length) ? this.copyFrom(m, dest, action) : null;
         const hide = copy ? [] : left;
         if (hide.length || copy) todo.push({ m, hide, copy });
@@ -411,7 +417,8 @@ export class MailOps {
           touched.add(m.thread_id);
         }
       }
-      const hold = gmail && action === 'archive' ? Math.max(this.coalesceMs, this.gmailArchiveHoldMs) : this.coalesceMs;
+      // Gmail over IMAP: held for the page's Undo (gmailArchiveHoldMs).
+      const hold = gmail && !byId && action === 'archive' ? Math.max(this.coalesceMs, this.gmailArchiveHoldMs) : this.coalesceMs;
       const ops = this.enqueue(accountId, 'move', { to: dest.id }, todo.map((x) => x.m.id), hold);
       for (const { m, hide, copy } of todo) {
         const p = json<Pending>(m.pending, {});
@@ -544,7 +551,8 @@ export class MailOps {
     if (op.op === 'move' && !dest) return this.undo(op, 'that mailbox is gone');
     const items: { mid: string; native: string; from: string; copy?: boolean }[] = [];
     const nothing: string[] = [];
-    // dither-accounts copies out of Gmail's All Mail into anything but Trash or Spam (imap.ts copiesInstead).
+    // Out of Gmail's All Mail into anything but Trash or Spam it stays there: dither-accounts' imap extractor copies
+    // (imap.ts copiesInstead), Gmail on the web only adds the label. Either way its place in All Mail is kept.
     const copies = op.op === 'move' && dest!.role !== 'trash' && dest!.role !== 'junk' && this.hub.store.gmail(op.account_id);
     for (const mid of json<string[]>(op.message_ids, [])) {
       const m = this.one<{ pending: string | null }>('SELECT pending FROM mail_message WHERE id = ?', mid);
@@ -591,7 +599,8 @@ export class MailOps {
     const moved: string[] = [];
     let lost = false;
     const newIds = (res as { ids?: (string | null)[] } | null)?.ids;
-    // Gmail shows a message in Trash or Spam there alone: All Mail and its labels lost it with this move.
+    // Gmail shows a message in Trash or Spam there alone, over IMAP and on the web: All Mail and its labels lost it with
+    // this move.
     const alone = !!dest && (dest.role === 'trash' || dest.role === 'junk') && this.hub.store.gmail(op.account_id);
     this.db.transaction(() => {
       items.forEach((it, i) => {

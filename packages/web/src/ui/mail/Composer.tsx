@@ -41,7 +41,9 @@ import { mailCompose, openCompose, type ComposeOpen } from './lazy.tsx';
 
 const MB = 1024 * 1024;
 const FILE_CAP = 25 * MB;
-const totalCap = (a: P.MailAccountView | undefined) => (a?.kind === 'proton' ? 25 * MB : 35 * MB);
+/** The most bytes of files one message from the account may carry, as the hub says (its extractor's), else as before it did. */
+const totalCap = (a: P.MailAccountView | undefined) => a?.sendCap ?? (a?.kind === 'proton' ? 25 * MB : 35 * MB);
+const mbText = (n: number) => `${Number.isInteger(n / MB) ? n / MB : (n / MB).toFixed(1)} MB`;
 const TITLES: Record<P.MailComposeKind, string> = { new: 'New message', reply: 'Reply', replyAll: 'Reply all', forward: 'Forward' };
 const same = (a: { email: string }, b: { email: string }) => a.email.trim().toLowerCase() === b.email.trim().toLowerCase();
 
@@ -553,7 +555,7 @@ function Composer({ open }: { open: ComposeOpen }) {
             <span class="hdr-btn-label">Attach</span>
           </button>
           <span class={`mc-limit ${over ? 'over' : ''}`}>
-            {total ? `${bytes(total)} of ${totalCap(account) / MB} MB` : `Up to 25 MB a file, ${totalCap(account) / MB} MB in all`}
+            {total ? `${bytes(total)} of ${mbText(totalCap(account))}` : `Up to 25 MB a file, ${mbText(totalCap(account))} in all`}
           </span>
           <button class="icon-btn mc-discard" onClick={discard} aria-label="Discard the draft" title="Discard the draft">
             <Icon name="trash" size={16} />

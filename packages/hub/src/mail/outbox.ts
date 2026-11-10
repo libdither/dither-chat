@@ -31,6 +31,7 @@ import type { MailHub } from './index.ts';
 import { MAIL_LIMITS } from './limits.ts';
 import { P0 } from './queue.ts';
 import type { MailRouter } from './routes.ts';
+import { maxRecipientsOf, sendCapOf } from './store.ts';
 
 type Row = Record<string, any>;
 
@@ -50,10 +51,12 @@ export interface OutboxOpts {
 }
 
 const MB = 1024 * 1024;
-/** dither-accounts' limits: 25 MB a file; 35 MB together (imap), 25 MB (proton). */
+/**
+ * dither-accounts' limits: 25 MB a file; the files together and the recipients as the account's extractor says
+ * (store.ts sendCapOf, maxRecipientsOf: 35 MB and 500 on IMAP, 25 MB and 100 on Proton until it says).
+ */
 export const FILE_CAP = 25 * MB;
-const totalCap = (kind: string) => (kind === 'proton' ? 25 * MB : 35 * MB);
-const maxRecipients = (kind: string) => (kind === 'proton' ? 100 : 500);
+const mbText = (n: number) => `${Number.isInteger(n / MB) ? n / MB : (n / MB).toFixed(1)} MB`;
 /** A sent item stays in the list this long. */
 export const SHOW_SENT_MS = 10 * 60_000;
 /** Waiting for the account is given up after this long. */
@@ -304,7 +307,7 @@ export class MailOutbox {
     const bcc = cleanList(req.bcc, 'Bcc');
     const n = to.length + cc.length + bcc.length;
     if (!n) throw bad('Who is it to? Add a recipient.');
-    if (n > maxRecipients(acc!.kind)) throw bad(`At most ${maxRecipients(acc!.kind)} recipients on one message from this account.`);
+    if (n > maxRecipientsOf(acc)) throw bad(`At most ${maxRecipientsOf(acc)} recipients on one message from this account.`);
     if (typeof req.subject !== 'string' || req.subject.length > 2000) throw bad('the subject is text');
     if (typeof req.text !== 'string' || req.text.length > 2 * MB) throw bad('the text is text, up to 2 MB');
     let from: string | null = null;
@@ -347,7 +350,7 @@ export class MailOutbox {
       total += p.size;
       forwardParts.push({ messageId: replyTo!, attachmentId: p.id, name: p.filename, mime: cleanMime(p.mime), size: p.size });
     }
-    if (total > totalCap(acc!.kind)) throw bad(`The files are ${(total / MB).toFixed(1)} MB together; this account takes ${totalCap(acc!.kind) / MB} MB on one message.`, 413);
+    if (total > sendCapOf(acc)) throw bad(`The files are ${(total / MB).toFixed(1)} MB together; this account takes ${mbText(sendCapOf(acc))} of files on one message.`, 413);
     draft.forwardParts = forwardParts;
     draft.to = to;
     draft.cc = cc;

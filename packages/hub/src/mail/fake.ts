@@ -3,7 +3,9 @@
  * it, and a demo world (--demo) seeds one account with it. It behaves like either extractor, as asked:
  *
  *   ids        'imap': a message gets a new id when it moves (a new UID); 'proton': ids survive moves; 'gmail': one
- *              message sits in several mailboxes at once (Inbox, All Mail, a label), with an id in each ("Gmail" below)
+ *              message sits in several mailboxes at once (Inbox, All Mail, a label), with an id in each ("Gmail" below);
+ *              'gmail-web': Gmail through the signed-in browser, one id for the message in every mailbox ("Gmail on
+ *              the web" below)
  *   threadIds  the server's thread on summaries (Gmail, Proton), or none (plain IMAP)
  *   refs       In-Reply-To, References and bulk headers on summaries (dither-accounts' §13 fields), or only from
  *              mail.get (Proton); the status's `details.summaryHeaders` says which, as the extractors' do
@@ -11,6 +13,9 @@
  *   events     mail.changed for the inbox only (IMAP IDLE), or for every mailbox (Proton's event loop)
  *   search     mail.search: each word in the sender, recipients, subject or text (IMAP; Gmail takes its own syntax,
  *              and here only its plain words count), or in the subject and addresses only (Proton)
+ *   details    what the status's `details` say of the server (idPerMessage, sendCap, maxRecipients, provider), as
+ *              dither-accounts' extractors say them: Proton's and Gmail on the web's; the imap extractor says none of
+ *              these but `provider` (its gmail preset)
  *
  * Changes made "on the server" (deliver, move, setFlags, remove, rebuild) are what another mail client would do; they
  * reach the hub as events and through mail.changes. Calls can be made to fail (410, 503, 404, limited) or slow.
@@ -46,6 +51,20 @@
  * (imap.ts search), as much of Gmail's syntax as the hub sends. Sending leaves the copy in Sent to Gmail (config.ts
  * preset sentCopy 'server'): it shows in Sent Mail and All Mail with the original's thread, and `sentId` is it (smtp.ts
  * finds it by Message-ID).
+ *
+ * Gmail on the web (`ids: 'gmail-web'`) is dither-accounts' google kind: Gmail read through the signed-in browser,
+ * where a label is a mailbox and a message has one id in all of them, as on Proton. Its status says `provider` 'Gmail'
+ * and `idPerMessage`, and its address need not be Gmail's (a Workspace domain). Mailboxes are GMAIL_WEB_MAILBOXES, each
+ * a label with a fixed id (Gmail's own: INBOX, SENT, DRAFT, TRASH, SPAM, IMPORTANT), All Mail made up from them (every
+ * message not in Trash or Spam, role 'all'), and a user label each (`Label_<n>`, role null). One FakeMessage is the
+ * message, its `gm` its own id, its labels in the account's `gm` (Gmail's system ones as the imap extractor names them,
+ * `\Inbox` and the like, user labels by path); which mailboxes list it follows from them: in Trash or Spam it is there alone. A
+ * summary's labels are all of them, from whichever mailbox; its `emailId` is its id. A move is a label change by its
+ * destination, since mail.move names no mailbox it comes from: the destination's label on, Inbox's off (as Gmail's
+ * Move to does from the inbox, and archiving into All Mail), unless it goes to Inbox; Trash's and Spam's off, unless it
+ * goes there; into Spam Inbox's off too. So out of All Mail a move only adds a label, and nothing is copied. A trashed
+ * message keeps its labels for when it comes back. Flags are the message's; starring is \Flagged, no mailbox. State is
+ * the account's, and every mailbox's changes are told (events 'all').
  */
 import { readFileSync } from 'node:fs';
 import type * as P from '@dither-chat/protocol';
@@ -55,8 +74,8 @@ import { MailCallError, type MailBackend, type MailBackendAccount, type MailBack
 import { htmlText } from './store.ts';
 
 export interface FakeOpts {
-  /** 'gmail' brings Gmail's mailboxes, its threads and its search with it (the header above). */
-  ids?: 'imap' | 'proton' | 'gmail';
+  /** 'gmail' and 'gmail-web' bring Gmail's mailboxes, its threads and its search with them (the header above). */
+  ids?: 'imap' | 'proton' | 'gmail' | 'gmail-web';
   threadIds?: boolean;
   refs?: boolean;
   state?: 'mailbox' | 'account';
@@ -79,7 +98,18 @@ export interface FakeOpts {
   answer?: number;
   /** The status's `details.summaryHeaders`: as `refs` unless set; null leaves it out (an extractor from before it). */
   summaryHeaders?: boolean | null;
+  /**
+   * More of the status's `details`: by default PROTON_DETAILS on Proton, GMAIL_WEB_DETAILS on Gmail on the web, none
+   * elsewhere; null says none of them (an extractor from before them).
+   */
+  details?: Record<string, unknown> | null;
 }
+
+const MB = 1024 * 1024;
+/** What dither-accounts' Proton extractor says of its server: one id a message, 25 MB of files, 100 recipients. */
+export const PROTON_DETAILS = { idPerMessage: true, sendCap: 25 * MB, maxRecipients: 100 };
+/** And its google kind's: Gmail, one id a message, Gmail's 25 MB of files and 500 recipients. */
+export const GMAIL_WEB_DETAILS = { provider: 'Gmail', idPerMessage: true, sendCap: 25 * MB, maxRecipients: 500 };
 
 /** A message as the fake server keeps it. */
 export interface FakeMessage extends Omit<M.MailMessage, 'mailboxId' | 'id'> {
@@ -87,7 +117,7 @@ export interface FakeMessage extends Omit<M.MailMessage, 'mailboxId' | 'id'> {
   mailboxId: string;
   /** Attachments' bytes by attachment id, for mail.attachment (slice 3); one not here gets bytes made up to its size. */
   files?: Record<string, Uint8Array | string>;
-  /** Gmail: the message this is a copy of (its X-GM-MSGID); its copies in other mailboxes share it. */
+  /** Gmail: the message this is a copy of (its X-GM-MSGID); its copies in other mailboxes share it. On the web: its id. */
   gm?: string;
 }
 
@@ -120,7 +150,7 @@ interface Account {
   status: Record<string, unknown>;
   /** Each mailbox's messages, newest first, until something changes (a big mailbox lists fast). */
   sorted: Map<string, FakeMessage[]>;
-  /** Gmail: each message's labels (X-GM-MSGID → Gmail's labels, `\Inbox` and the like with their backslash). */
+  /** Gmail: each message's labels (X-GM-MSGID, or its id on the web → Gmail's labels, `\Inbox` and the like with their backslash). */
   gm: Map<string, Set<string>>;
   /** Mailboxes that only hold others (IMAP \Noselect: Gmail's `[Gmail]`). */
   noselect: Set<string>;
@@ -169,6 +199,30 @@ function gmailLabelOf(b: M.Mailbox | undefined): string | null {
   const byRole: Partial<Record<M.MailboxRole, string>> = { inbox: '\\Inbox', sent: '\\Sent', drafts: '\\Draft', junk: '\\Spam', trash: '\\Trash', flagged: '\\Starred', important: '\\Important' };
   if (b.role) return byRole[b.role] ?? null;
   return b.path.startsWith('[Gmail]') ? null : b.path;
+}
+
+/** Gmail on the web's mailboxes, by what they are: its system labels' ids, and All Mail made up from them. */
+export const GMAIL_WEB = { inbox: 'INBOX', all: 'ALL_MAIL', sent: 'SENT', drafts: 'DRAFT', important: 'IMPORTANT', spam: 'SPAM', trash: 'TRASH' };
+
+const webBox = (id: string, name: string, role: M.MailboxRole | null): M.Mailbox => ({ id, name, path: name, parentId: null, role, unread: null, total: null });
+
+/** What mail.mailboxes answers for Gmail on the web with no labels of its own. */
+export const GMAIL_WEB_MAILBOXES: M.Mailbox[] = [
+  webBox(GMAIL_WEB.inbox, 'Inbox', 'inbox'),
+  webBox(GMAIL_WEB.all, 'All Mail', 'all'),
+  webBox(GMAIL_WEB.sent, 'Sent', 'sent'),
+  webBox(GMAIL_WEB.drafts, 'Drafts', 'drafts'),
+  webBox(GMAIL_WEB.important, 'Important', 'important'),
+  webBox(GMAIL_WEB.spam, 'Spam', 'junk'),
+  webBox(GMAIL_WEB.trash, 'Trash', 'trash'),
+];
+
+/** Gmail on the web: the label a mailbox lists, as the message's labels name it; null for All Mail. */
+function webLabelOf(b: M.Mailbox | undefined): string | null {
+  if (!b) return null;
+  const byRole: Partial<Record<M.MailboxRole, string>> = { inbox: '\\Inbox', sent: '\\Sent', drafts: '\\Draft', junk: '\\Spam', trash: '\\Trash', important: '\\Important' };
+  if (b.role) return byRole[b.role] ?? null;
+  return b.path;
 }
 
 const DEFAULT_MAILBOXES: M.Mailbox[] = [
@@ -254,29 +308,31 @@ export class FakeMailBackend implements MailBackend {
   addAccount(id: string, o: { kind?: string; label?: string; email: string; name?: string; addresses?: M.MailAccountAddress[]; level?: 'read' | 'write'; dryRun?: boolean; mailboxes?: M.Mailbox[]; opts?: FakeOpts; online?: boolean }) {
     const ids = o.opts?.ids ?? this.defaults.ids;
     const gmail = ids === 'gmail';
+    const web = ids === 'gmail-web';
     const opts: Required<FakeOpts> = {
       ids: 'imap',
-      threadIds: gmail,
+      threadIds: gmail || web,
       refs: true,
-      state: 'mailbox',
-      events: 'inbox',
+      state: web ? 'account' : 'mailbox',
+      events: web ? 'all' : 'inbox',
       send: 'ok',
       refuseRecipient: 0,
       latencyMs: 0,
       changesPage: 200,
       moveIds: 'new',
-      search: ids === 'proton' ? 'proton' : gmail ? 'gmail' : 'imap',
+      search: ids === 'proton' ? 'proton' : gmail || web ? 'gmail' : 'imap',
       answer: 0,
       summaryHeaders: o.opts?.refs ?? this.defaults.refs ?? true,
+      details: ids === 'proton' ? PROTON_DETAILS : web ? GMAIL_WEB_DETAILS : {},
       ...this.defaults,
       ...o.opts,
     };
     const online = o.online ?? true;
     const a: Account = {
-      view: { id, kind: o.kind ?? (opts.ids === 'proton' ? 'proton' : 'imap'), label: o.label ?? o.email, level: o.level ?? 'write', dryRun: !!o.dryRun, online },
+      view: { id, kind: o.kind ?? (opts.ids === 'proton' ? 'proton' : opts.ids === 'gmail-web' ? 'google' : 'imap'), label: o.label ?? o.email, level: o.level ?? 'write', dryRun: !!o.dryRun, online },
       opts,
       self: { email: o.email, ...(o.name ? { displayName: o.name } : {}), ...(o.addresses ? { addresses: o.addresses } : {}) },
-      mailboxes: (o.mailboxes ?? (gmail ? GMAIL_MAILBOXES : DEFAULT_MAILBOXES)).map((b) => ({ ...b })),
+      mailboxes: (o.mailboxes ?? (gmail ? GMAIL_MAILBOXES : web ? GMAIL_WEB_MAILBOXES : DEFAULT_MAILBOXES)).map((b) => ({ ...b })),
       messages: new Map(),
       log: [],
       seq: 1,
@@ -360,6 +416,7 @@ export class FakeMailBackend implements MailBackend {
   put(account: string, input: FakeInput): FakeMessage {
     const a = this.accs.get(account)!;
     if (a.opts.ids === 'gmail') return this.gmPut(a, input);
+    if (a.opts.ids === 'gmail-web') return this.webPut(a, input);
     const m = this.make(a, input);
     a.messages.set(m.id, m);
     this.journal(a, m.mailboxId, 'added', m.id);
@@ -371,7 +428,9 @@ export class FakeMailBackend implements MailBackend {
     const a = this.accs.get(account)!;
     const m = this.put(account, input);
     const evs: MailBackendEvent[] = [];
-    if (this.watched(a, m.mailboxId)) evs.push({ t: 'mail.arrived', message: this.summary(a, m) }, { t: 'mail.changed', mailboxId: m.mailboxId, state: this.stateOf(a, m.mailboxId) });
+    // On the web it arrives in every mailbox its labels put it in at once.
+    const seen = (a.opts.ids === 'gmail-web' ? [...this.webBoxes(a, m)] : [m.mailboxId]).filter((b) => this.watched(a, b));
+    if (seen.length) evs.push({ t: 'mail.arrived', message: this.summary(a, m, seen[0]) }, ...seen.map((b): MailBackendEvent => ({ t: 'mail.changed', mailboxId: b, state: this.stateOf(a, b) })));
     this.emit(account, evs);
     return m;
   }
@@ -383,6 +442,10 @@ export class FakeMailBackend implements MailBackend {
       const r = this.gmMove(a, id, to);
       this.changedEvents(a, [...r.touched]);
       return r.id!;
+    }
+    if (a.opts.ids === 'gmail-web') {
+      this.changedEvents(a, [...this.webMove(a, id, to)]);
+      return id;
     }
     const m = a.messages.get(id)!;
     const from = m.mailboxId;
@@ -398,6 +461,7 @@ export class FakeMailBackend implements MailBackend {
   setFlags(account: string, id: string, flags: Partial<M.MailFlags>) {
     const a = this.accs.get(account)!;
     if (a.opts.ids === 'gmail') return this.changedEvents(a, [...this.gmFlags(a, a.messages.get(id)!.gm!, flags)]);
+    if (a.opts.ids === 'gmail-web') return this.changedEvents(a, [...this.webFlags(a, a.messages.get(id)!, flags)]);
     const m = a.messages.get(id)!;
     m.flags = { ...m.flags, ...flags };
     this.journal(a, m.mailboxId, 'changed', id);
@@ -409,6 +473,14 @@ export class FakeMailBackend implements MailBackend {
     const a = this.accs.get(account)!;
     const m = a.messages.get(id);
     if (!m) return;
+    if (a.opts.ids === 'gmail-web') {
+      // Gone from every mailbox it was in.
+      const boxes = [...this.webBoxes(a, m)];
+      a.messages.delete(id);
+      for (const b of boxes) this.journal(a, b, 'removed', id);
+      a.gm.delete(id);
+      return this.changedEvents(a, boxes);
+    }
     if (m.gm) {
       // Gmail: the message goes, and with it every copy.
       const boxes: string[] = [];
@@ -434,8 +506,8 @@ export class FakeMailBackend implements MailBackend {
     a.epochs.set(key, (a.epochs.get(key) ?? 0) + 1);
     if (key !== mailbox) a.epochs.set(mailbox, (a.epochs.get(mailbox) ?? 0) + 1);
     a.sorted.clear();
-    // Proton's refresh keeps its ids; an IMAP server's new UIDVALIDITY gives each message a new one.
-    for (const m of a.opts.ids !== 'proton' ? [...a.messages.values()] : []) {
+    // Proton's refresh keeps its ids, as Gmail on the web's; an IMAP server's new UIDVALIDITY gives each message a new one.
+    for (const m of a.opts.ids !== 'proton' && a.opts.ids !== 'gmail-web' ? [...a.messages.values()] : []) {
       if (m.mailboxId !== mailbox) continue;
       a.messages.delete(m.id);
       const fresh = { ...m, id: this.uid(a, mailbox) };
@@ -444,8 +516,17 @@ export class FakeMailBackend implements MailBackend {
     this.changedEvents(a, [mailbox]);
   }
 
+  /** The messages on the server, or those a mailbox lists (on the web, a message is listed by every mailbox it is in). */
   messages(account: string, mailbox?: string): FakeMessage[] {
-    return [...this.accs.get(account)!.messages.values()].filter((m) => !mailbox || m.mailboxId === mailbox);
+    const a = this.accs.get(account)!;
+    return [...a.messages.values()].filter((m) => !mailbox || this.isIn(a, m, mailbox));
+  }
+
+  /** Gmail on the web: the mailboxes that list a message, as the server has them. */
+  mailboxesOf(account: string, id: string): string[] {
+    const a = this.accs.get(account)!;
+    const m = a.messages.get(id);
+    return m ? [...this.webBoxes(a, m)] : [];
   }
 
   /**
@@ -454,6 +535,7 @@ export class FakeMailBackend implements MailBackend {
    */
   label(account: string, id: string, change: { add?: string[]; remove?: string[] }) {
     const a = this.accs.get(account)!;
+    if (a.opts.ids === 'gmail-web') return this.changedEvents(a, [...this.webRelabel(a, a.messages.get(id)!, change.add ?? [], change.remove ?? [])]);
     const gm = a.messages.get(id)!.gm!;
     this.changedEvents(a, [...this.gmRelabel(a, gm, change.add ?? [], change.remove ?? [])]);
   }
@@ -492,6 +574,7 @@ export class FakeMailBackend implements MailBackend {
         canSend: sendOk,
         sendNote: sendOk ? null : 'Sending is not supported here (the extractor answered 501).',
         ...(a.opts.summaryHeaders === null ? {} : { summaryHeaders: a.opts.summaryHeaders }),
+        ...(a.opts.details ?? {}),
       },
       layers: [
         { name: 'server', state: online ? 'ok' : 'failed', ...(online ? {} : { note: 'not reachable' }) },
@@ -514,8 +597,16 @@ export class FakeMailBackend implements MailBackend {
   }
 
   private uid(a: Account, mailbox: string): string {
+    // Gmail on the web's: 16 hex digits, the message's in every mailbox.
+    if (a.opts.ids === 'gmail-web') return (0x19a0_0000_0000_0000n + BigInt(a.nextUid++)).toString(16);
     // IMAP's shape: <mailbox>.<UIDVALIDITY>.<UID>
     return a.opts.ids !== 'proton' ? `${mailbox}.${100 + (a.epochs.get(mailbox) ?? 0)}.${a.nextUid++}` : `p${a.nextUid++}`;
+  }
+
+  /** Is it listed by this mailbox: where it is, or on the web, where its labels put it. */
+  private isIn(a: Account, m: FakeMessage | undefined, box: string): boolean {
+    if (!m) return false;
+    return a.opts.ids === 'gmail-web' ? this.webBoxes(a, m).has(box) : m.mailboxId === box;
   }
 
   private make(a: Account, i: FakeInput): FakeMessage {
@@ -557,7 +648,7 @@ export class FakeMailBackend implements MailBackend {
   private sortedOf(a: Account, box: string): FakeMessage[] {
     let list = a.sorted.get(box);
     if (!list) {
-      list = [...a.messages.values()].filter((m) => m.mailboxId === box).sort((x, y) => y.receivedAt - x.receivedAt || (x.id < y.id ? 1 : -1));
+      list = [...a.messages.values()].filter((m) => this.isIn(a, m, box)).sort((x, y) => y.receivedAt - x.receivedAt || (x.id < y.id ? 1 : -1));
       a.sorted.set(box, list);
     }
     return list;
@@ -568,10 +659,11 @@ export class FakeMailBackend implements MailBackend {
     return `${a.epochs.get(key) ?? 0}.${a.seq}`;
   }
 
-  summary(a: Account, m: FakeMessage): M.MailSummary {
+  /** A summary of it, as `box` lists it (one message is listed by several on the web). */
+  summary(a: Account, m: FakeMessage, box = m.mailboxId): M.MailSummary {
     const s: M.MailSummary = {
       id: m.id,
-      mailboxId: m.mailboxId,
+      mailboxId: box,
       messageId: m.messageId,
       threadId: a.opts.threadIds ? m.threadId ?? m.messageId : null,
       // Gmail's X-GM-MSGID: the same in every mailbox the message is in.
@@ -604,6 +696,8 @@ export class FakeMailBackend implements MailBackend {
    */
   private labelsOf(a: Account, m: FakeMessage): string[] {
     if (!m.gm) return [...m.labels];
+    // On the web: all of them, the same from every mailbox.
+    if (a.opts.ids === 'gmail-web') return [...(a.gm.get(m.gm) ?? [])].sort();
     const own = gmailLabelOf(a.mailboxes.find((b) => b.id === m.mailboxId));
     const out = new Set([...(a.gm.get(m.gm) ?? [])].filter((l) => l !== '\\Trash' && l !== '\\Spam'));
     if (m.flags.flagged) out.add('\\Starred');
@@ -751,6 +845,94 @@ export class FakeMailBackend implements MailBackend {
     return { id: this.gmCopies(a, gm).find((c) => c.mailboxId === to)?.id ?? null, touched };
   }
 
+  // ---------------------------------------------------------- Gmail on the web: one message, one id, its labels its mailboxes
+
+  /** A new message: its labels are those asked for and the mailbox's it was put in. */
+  private webPut(a: Account, input: FakeInput): FakeMessage {
+    const box = input.mailboxId ?? GMAIL_WEB.inbox;
+    const m = this.make(a, { ...input, mailboxId: box, id: input.id ?? this.uid(a, box) });
+    const refs = new Set([m.inReplyTo, ...m.references].filter(Boolean));
+    m.threadId = input.threadId ?? [...a.messages.values()].find((x) => x.messageId && refs.has(x.messageId))?.threadId ?? this.gmId();
+    m.labels = [];
+    m.gm = m.id;
+    const labels = new Set(input.labels ?? []);
+    const own = webLabelOf(a.mailboxes.find((b) => b.id === box));
+    if (own) labels.add(own);
+    this.webLabelBoxes(a, labels);
+    a.gm.set(m.id, labels);
+    a.messages.set(m.id, m);
+    for (const b of this.webBoxes(a, m)) this.journal(a, b, 'added', m.id);
+    return m;
+  }
+
+  /** A mailbox for each user label it has not got yet (Gmail's ids for them: `Label_<n>`). */
+  private webLabelBoxes(a: Account, labels: Iterable<string>) {
+    for (const l of labels) {
+      if (l.startsWith('\\') || a.mailboxes.some((b) => b.path === l)) continue;
+      const n = a.mailboxes.filter((b) => b.id.startsWith('Label_')).length + 1;
+      a.mailboxes.push({ ...webBox(`Label_${n}`, l.slice(l.lastIndexOf('/') + 1), null), path: l });
+    }
+  }
+
+  /** The mailboxes that list it: Trash or Spam alone, else All Mail and each of its labels'. */
+  private webBoxes(a: Account, m: FakeMessage): Set<string> {
+    const labels = a.gm.get(m.id) ?? new Set<string>();
+    const only = labels.has('\\Trash') ? 'trash' : labels.has('\\Spam') ? 'junk' : null;
+    const out = new Set<string>();
+    for (const b of a.mailboxes) {
+      if (only ? b.role === only : b.role === 'all' || (webLabelOf(b) !== null && labels.has(webLabelOf(b)!))) out.add(b.id);
+    }
+    return out;
+  }
+
+  /**
+   * A change to it (`fn`): mailboxes it left and came to say so, those it stays in say it changed (its modseq moved).
+   * Returns them all.
+   */
+  private webChange(a: Account, m: FakeMessage, fn: () => void): Set<string> {
+    const before = this.webBoxes(a, m);
+    fn();
+    const after = this.webBoxes(a, m);
+    for (const b of before) this.journal(a, b, after.has(b) ? 'changed' : 'removed', m.id);
+    for (const b of after) if (!before.has(b)) this.journal(a, b, 'added', m.id);
+    return new Set([...before, ...after]);
+  }
+
+  /** mail.move on the web: a label change by the destination alone (the header above). */
+  private webMove(a: Account, id: string, to: string): Set<string> {
+    const m = a.messages.get(id);
+    if (!m) return new Set();
+    const dest = a.mailboxes.find((b) => b.id === to);
+    const labels = a.gm.get(id)!;
+    return this.webChange(a, m, () => {
+      if (dest?.role === 'trash') {
+        labels.delete('\\Spam');
+        labels.add('\\Trash');
+        return;
+      }
+      labels.delete('\\Trash');
+      labels.delete('\\Spam');
+      if (dest?.role !== 'inbox') labels.delete('\\Inbox');
+      const into = webLabelOf(dest);
+      if (into) labels.add(into);
+    });
+  }
+
+  private webFlags(a: Account, m: FakeMessage, set: Partial<M.MailFlags>): Set<string> {
+    return this.webChange(a, m, () => {
+      m.flags = { ...m.flags, ...set };
+    });
+  }
+
+  private webRelabel(a: Account, m: FakeMessage, add: string[], remove: string[]): Set<string> {
+    const labels = a.gm.get(m.id)!;
+    this.webLabelBoxes(a, add);
+    return this.webChange(a, m, () => {
+      for (const l of remove) labels.delete(l);
+      for (const l of add) labels.add(l);
+    });
+  }
+
   /** mail.changed for this app's own change: the mailboxes the extractor names, and Inbox when IDLE saw it change. */
   private gmEvents(a: Account, own: string[], touched: Set<string>) {
     const evs: MailBackendEvent[] = [];
@@ -777,7 +959,7 @@ export class FakeMailBackend implements MailBackend {
         const from = input.before ? Number(String(input.before).split(':')[0]) : 0;
         const limit = Math.max(1, Math.min(Number(input.limit) || 50, 500));
         const page = all.slice(from, from + limit);
-        return { messages: page.map((m) => this.summary(a, m)), next: from + limit < all.length ? `${from + limit}:${page[page.length - 1]?.id}` : null };
+        return { messages: page.map((m) => this.summary(a, m, box)), next: from + limit < all.length ? `${from + limit}:${page[page.length - 1]?.id}` : null };
       }
       case 'mail.get': {
         // As the extractors read it: `id`, or `message` when the manager put its own call id in `id`.
@@ -802,7 +984,7 @@ export class FakeMailBackend implements MailBackend {
         for (const id of ids) {
           const m = a.messages.get(id);
           if (!m) continue;
-          if (!trash || m.mailboxId === trash) this.remove(a.view.id, id);
+          if (!trash || this.isIn(a, m, trash)) this.remove(a.view.id, id);
           else this.moveTo(a, [id], trash);
         }
         return {};
@@ -920,6 +1102,16 @@ export class FakeMailBackend implements MailBackend {
       this.gmEvents(a, own, touched);
       return {};
     }
+    if (a.opts.ids === 'gmail-web') {
+      // The message's flags: every mailbox listing it says it changed.
+      const touched = new Set<string>();
+      for (const id of ids) {
+        const m = a.messages.get(id);
+        if (m) for (const b of this.webFlags(a, m, set)) touched.add(b);
+      }
+      this.changedEvents(a, [...touched], true);
+      return {};
+    }
     const touched: string[] = [];
     let missing = 0;
     for (const id of ids) {
@@ -958,6 +1150,17 @@ export class FakeMailBackend implements MailBackend {
       this.gmEvents(a, own, touched);
       return { ids: out };
     }
+    if (a.opts.ids === 'gmail-web') {
+      // A label change; the id stays the message's.
+      const touched = new Set<string>([to]);
+      const out = ids.map((id) => {
+        if (!a.messages.has(id)) return null;
+        for (const b of this.webMove(a, id, to)) touched.add(b);
+        return a.opts.moveIds === 'null' ? null : id;
+      });
+      this.changedEvents(a, [...touched], true);
+      return { ids: out };
+    }
     const touched: string[] = [to];
     const out = ids.map((id) => {
       const m = a.messages.get(id);
@@ -988,13 +1191,14 @@ export class FakeMailBackend implements MailBackend {
     }
     // Without a mailbox: All Mail where there is one (Gmail), else every mailbox but Trash and Junk (imap.ts search).
     const all = a.mailboxes.find((b) => b.role === 'all')?.id;
+    const inAll = !!all && (a.opts.ids === 'gmail' || a.opts.ids === 'gmail-web');
     const skip = new Set(a.mailboxes.filter((b) => b.role === 'junk' || b.role === 'trash').map((b) => b.id));
-    const within = (m: FakeMessage) => (mailbox ? m.mailboxId === mailbox : all && a.opts.ids === 'gmail' ? m.mailboxId === all : !skip.has(m.mailboxId));
+    const within = (m: FakeMessage) => (mailbox ? this.isIn(a, m, mailbox) : inAll ? this.isIn(a, m, all!) : !skip.has(m.mailboxId));
     return [...a.messages.values()]
       .filter((m) => within(m) && match(m))
       .sort((x, y) => y.receivedAt - x.receivedAt)
       .slice(0, Math.max(1, Math.min(limit, 200)))
-      .map((m) => this.summary(a, m));
+      .map((m) => this.summary(a, m, mailbox ?? (inAll ? all : m.mailboxId)));
   }
 
   private changes(a: Account, box: string, state: string | undefined, limit: number): M.MailChanges {
@@ -1021,10 +1225,10 @@ export class FakeMailBackend implements MailBackend {
         removed.delete(x.id);
       } else if (!added.has(x.id)) changed.add(x.id);
     }
-    const here = (id: string) => a.messages.get(id)?.mailboxId === box;
+    const here = (id: string) => this.isIn(a, a.messages.get(id), box);
     return {
       state: `${epoch}.${upTo}`,
-      added: [...added].filter(here).map((id) => this.summary(a, a.messages.get(id)!)),
+      added: [...added].filter(here).map((id) => this.summary(a, a.messages.get(id)!, box)),
       changed: [...changed].filter(here).map((id) => ({ id, flags: { ...a.messages.get(id)!.flags }, labels: this.labelsOf(a, a.messages.get(id)!) })),
       removed: [...removed],
       more,

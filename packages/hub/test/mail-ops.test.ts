@@ -1,14 +1,15 @@
 /**
  * Writes (mail/ops.ts, docs/mail-design.md §2.4, §3.7) against FakeMailBackend: shown at once and pending until the
  * server answers, batches of 1000, 404, 403 and 501, a restart with changes waiting, the manager away, read in view
- * and the "only when I mark it" setting, a read grant, moves with and without new ids, and the routes.
+ * and the "only when I mark it" setting, a read grant, moves with and without new ids, a move out of All mail where
+ * ids are the message's (Proton, whether its status says so or not) and where they are not, and the routes.
  */
 import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
 import { mailId } from '@dither-chat/protocol/ids';
 import { MailCallError } from '../src/mail/backend.ts';
-import { FakeMailBackend, type FakeOpts } from '../src/mail/fake.ts';
+import { FakeMailBackend, type FakeOpts, PROTON_DETAILS } from '../src/mail/fake.ts';
 import { MailHub } from '../src/mail/index.ts';
 import { mailOps } from '../src/mail/ops.ts';
 import { FakeClock } from './fixtures/clock.ts';
@@ -504,5 +505,47 @@ describe('routes', () => {
     const { hub, ops, st } = start(db, fake);
     await clock.wait(hub.sync(ACC)!.whenSynced());
     expect(() => ops.move({ threadIds: [thread(st, '<n1@x>').id], to: 'junk' })).toThrow(expect.objectContaining({ status: 409, message: `${ME} has no Junk mailbox` }));
+  });
+});
+
+describe('ids per message (store.ts idPerMessage)', () => {
+  /** An All mail, and an old message there alone. */
+  const allMail = (f: FakeMailBackend) => {
+    seed(f);
+    f.addMailbox(ACC, { id: 'All', name: 'All mail', path: 'All', parentId: null, role: 'all', unread: null, total: null });
+    f.put(ACC, { mailboxId: 'All', messageId: '<o1@x>', from: [sam], subject: 'Old one', receivedAt: T0 - 24 * H, flags: { seen: true } });
+  };
+  const listAll = (hub: MailHub, st: MailHub['store']) => clock.wait(hub.sync(ACC)!.backfill.more(boxOf(st, 'all')));
+
+  for (const [what, details] of [
+    ['saying nothing of it (an extractor from before it)', null],
+    ['saying so', PROTON_DETAILS],
+  ] as const) {
+    test(`Proton ${what}: one id a message, so Move to Inbox from All mail goes by it; Proton's caps`, async () => {
+      const { fake, st, ops, hub } = await world({ seed: allMail, opts: { ids: 'proton', state: 'account', events: 'all', details } });
+      expect(st.account(ACC)!.id_per_message).toBe(details ? 1 : null);
+      expect(st.idPerMessage(ACC)).toBe(true);
+      expect(st.gmail(ACC)).toBe(false);
+      expect(st.accountView(st.account(ACC)!)).toMatchObject({ sendCap: 25 * 1024 * 1024, maxRecipients: 100 });
+      await listAll(hub, st);
+      const id = onServer(fake, '<o1@x>').id;
+      expect(ops.move({ threadIds: [thread(st, '<o1@x>').id], to: 'inbox' })).toEqual({ ok: true, threads: 1, messages: 1 });
+      expect(thread(st, '<o1@x>').roles).toEqual(['inbox']);
+      await clock.wait(ops.idle());
+      expect(writes(fake).map((c) => c.input)).toEqual([{ ids: [id], mailboxId: 'INBOX' }]);
+      expect(onServer(fake, '<o1@x>')).toMatchObject({ id, mailboxId: 'INBOX' });
+      expect(st.all('SELECT native_id FROM mail_location WHERE message_id = ?', mid('<o1@x>'))).toEqual([{ native_id: id }]);
+    });
+  }
+
+  test('an IMAP server: an id per mailbox, so All mail is never emptied from here; IMAP\'s caps', async () => {
+    const { fake, st, ops, hub } = await world({ seed: allMail });
+    expect(st.idPerMessage(ACC)).toBe(false);
+    expect(st.accountView(st.account(ACC)!)).toMatchObject({ sendCap: 35 * 1024 * 1024, maxRecipients: 500 });
+    await listAll(hub, st);
+    expect(ops.move({ threadIds: [thread(st, '<o1@x>').id], to: 'inbox' })).toEqual({ ok: true, threads: 0, messages: 0 });
+    await clock.wait(ops.idle());
+    expect(writes(fake)).toEqual([]);
+    expect(onServer(fake, '<o1@x>').mailboxId).toBe('All');
   });
 });

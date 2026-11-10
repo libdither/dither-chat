@@ -523,6 +523,24 @@ describe('Important', () => {
   });
 });
 
+describe('ids per mailbox', () => {
+  test('Gmail over IMAP says nothing of its ids: per mailbox, so a move to Inbox from All Mail is a copy with an id of its own', async () => {
+    const w = await world();
+    const st = w.hub.store;
+    expect([st.gmail(ACC), st.idPerMessage(ACC), st.gmailPerMailbox(ACC)]).toEqual([true, false, true]);
+    expect(st.accountView(st.account(ACC)!)).toMatchObject({ kind: 'imap', sendCap: 35 * 1024 * 1024, maxRecipients: 500 });
+    await backfilled(w);
+    const ops = mailOps(w.hub);
+    const allId = copy(w, '<j1@x>', GMAIL.all).id;
+    ops.move({ threadIds: [threadOf(w, '<j1@x>')], to: 'inbox' });
+    await clock.wait(ops.idle());
+    const inboxId = copy(w, '<j1@x>', GMAIL.inbox).id;
+    expect(inboxId).not.toBe(allId);
+    expect(w.fake.messages(ACC).filter((m) => m.messageId === '<j1@x>')).toHaveLength(3);
+    expect(st.all<{ native_id: string }>('SELECT native_id FROM mail_location WHERE message_id = ? ORDER BY native_id', mid('<j1@x>')).map((r) => r.native_id)).toEqual([allId, inboxId].sort());
+  });
+});
+
 describe('search', () => {
   test('the server gets the query in Gmail\'s own syntax, in All Mail, and what only it has shows once', async () => {
     const w = await world();

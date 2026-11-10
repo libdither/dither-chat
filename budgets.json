@@ -3,7 +3,7 @@
   "hub": {
     "bootstrap.bytes": { "measured": 429110, "budget": 437693 },
     "bootstrap.zstd": { "measured": 43903, "budget": 44782 },
-    "bootstrap.fields": { "measured": 19139, "budget": 19139 },
+    "bootstrap.fields": { "measured": 19141, "budget": 19141, "reason": "A mail account's view carries sendCap and maxRecipients, its extractor's caps for the composer" },
     "bootstrap.conversations": { "measured": 574, "budget": 574 },
     "bootstrap.identities": { "measured": 146, "budget": 146 },
     "bootstrap.persons": { "measured": 51, "budget": 51 },
