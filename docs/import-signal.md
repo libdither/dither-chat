@@ -114,7 +114,7 @@ No native library: the derivations are ported and checked against libsignal-clie
   ACI, and updates the hub has no line for (profile changes, safety numbers, pins, …).
 - The newest snapshot is read; older ones in the same folder are ignored.
 
-### Reading a .backup (built: `packages/hub/src/imports/signal-legacy.ts`, reader `signal-legacy@1`)
+### Reading a .backup (built: `packages/hub/src/imports/signal-legacy.ts`, reader `signal-legacy@2`)
 
 1. **Unpack.** Every frame is decrypted and its MAC checked. Only the tables an import reads are replayed into a
    private SQLite file: message, recipient, thread, attachment, reaction, mention, groups, group_membership and the
@@ -126,8 +126,14 @@ No native library: the derivations are ported and checked against libsignal-clie
 2. **Map.** SQL rows become the same facts as the table above. Old edit revisions (`latest_revision_id` set) are left
    out. The latest revision gives the words and the original's `date_sent` names the message. Reactions on either are
    kept. Quote thumbnails (`attachment.quote = 1`) go into `extra.quote`, and long text (`text/x-signal-plain`)
-   becomes the body. Left out and counted: SMS (no secure/push bit), SMS-only chats and MMS groups ("chat not kept"),
-   stories, safety-number and session lines, and updates the hub has no line for.
+   becomes the body. Left out and counted: stories, safety-number and session lines, MMS never downloaded
+   (`m_type` 130), and updates the hub has no line for.
+3. **SMS and MMS** (no secure/push bit, base type 20–28) come in with `extra.sms` = `'sms'` or `'mms'` (`m_type` 128
+   sent, 132 received). With someone who has an ACI they go into that person's Signal chat, as the phone showed them.
+   Someone without one is `tel:<number as stored>` (short codes have no `+`) or `mailto:<email>`, in a chat
+   `sms:<self ACI>:<that id>`. An MMS group (`recipient.type` 1, `__signal_mms_group__!<hex>`) is a group chat
+   `mms:<hex>`, its members from `group_membership`. The Signal adapter sends only to `dm:` and `group:`, so these
+   chats are history: a reply there fails with "not a Signal conversation of this account".
 
 On a real backup (72k rows, 6.9 GB), the unpack and the mapping together take about 20 s. Attachments the new-format
 import had already stored hash to the same files.
@@ -175,7 +181,8 @@ produced.
 
 Message types: incoming and outgoing are bits in `message.type` (`MessageTypes.BASE_*`). Outgoing messages have
 `from_recipient_id` = self, so their author is the self ACI, as in signal-cli's sent transcripts. Skip stories
-(`story_type != 0`), group-story replies, and SMS/MMS (`MessageTypes.isSms…`, rows without an ACI author).
+(`story_type != 0`) and group-story replies. SMS/MMS (`MessageTypes.isSms…`) are read since signal-legacy@2,
+see "Reading a .backup".
 
 ### Dedupe and merge with live data
 
@@ -250,7 +257,7 @@ hub, in a worker:
   2. passphrase / recovery key → census                                 done; a wrong secret is forgotten
      (.backup: counts, date range, keepmsg rows; snapshots: chats, items, months)
   3. read → facts                                                       snapshots: done (signal-v2@1);
-                                                                         .backup: done (signal-legacy@1)
+                                                                         .backup: done (signal-legacy@2)
   4. plan: new / same / fill / conflict / skip, per conversation         dry run, shown in the History section
   5. apply, fill-only, inside the hub                                    conflicts wait for review (docs/import.md)
 ```
@@ -273,7 +280,7 @@ from live sync.
    temp dir. Test against a backup made by Molly's unit-test exporter (`app/src/test/.../backup`), not a real
    one.
 3. `map-legacy.ts`: scratch DB → facts, as pure functions with fixture tests like `mapping.test.ts`. Covers the
-   edit chain, quote → replyTo, group id hex → base64, keepmsg policy, and skipping stories/SMS/view-once.
+   edit chain, quote → replyTo, group id hex → base64, keepmsg policy, SMS/MMS chats, and skipping stories/view-once.
 4. Hub: `Store.importMessage()` (fill-only) and `/api/import/signal`, with a test that a live-deleted message
    stays deleted after an import that contains its content.
 5. v2: decrypt `main` with libsignal (or a small HKDF + AES-CBC port, cross-checked against libsignal's test

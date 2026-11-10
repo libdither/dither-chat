@@ -1,6 +1,6 @@
 /**
  * Reading a legacy Signal `.backup` (made up, written with Molly's framing): the unpack into a private database and the
- * media store, the mapping to the live adapter's facts (edits, quotes, reactions, styles, timers, SMS left out), and
+ * media store, the mapping to the live adapter's facts (edits, quotes, reactions, styles, timers, SMS and MMS in), and
  * Molly keepmsg's kept messages: disappeared and deleted ones come in kept as gone, a message you deleted yourself
  * does not, and a message the hub has as deleted and emptied gets its words back, still deleted. Then the whole run
  * through the hub.
@@ -24,6 +24,7 @@ const SELF = '11111111-1111-4111-8111-111111111111';
 const PEER = '22222222-2222-4222-8222-222222222222';
 const GROUP_ID = Buffer.alloc(32, 0xab);
 const T = Date.UTC(2024, 2, 1);
+const MMS_GROUP = 'c0ffee';
 const PHOTO = Buffer.from('synthetic photo bytes');
 const SECURE_IN = 0xa00014; // BASE_INBOX | SECURE | PUSH
 const SECURE_OUT = 0xa00017; // BASE_SENT | SECURE | PUSH
@@ -33,12 +34,12 @@ const BOLD5 = Buffer.from([0x0a, 0x06, 0x08, 0x00, 0x10, 0x05, 0x20, 0x00]);
 
 function backup(): Buffer {
   const w = legacyWriter();
-  w.sql('CREATE TABLE recipient (_id INTEGER PRIMARY KEY, type INTEGER, e164 TEXT, aci TEXT, username TEXT, group_id TEXT, profile_given_name TEXT, profile_family_name TEXT, nickname_given_name TEXT, nickname_family_name TEXT, system_nickname TEXT, system_given_name TEXT, system_family_name TEXT, system_joined_name TEXT)');
+  w.sql('CREATE TABLE recipient (_id INTEGER PRIMARY KEY, type INTEGER, e164 TEXT, aci TEXT, username TEXT, email TEXT, group_id TEXT, profile_given_name TEXT, profile_family_name TEXT, nickname_given_name TEXT, nickname_family_name TEXT, system_nickname TEXT, system_given_name TEXT, system_family_name TEXT, system_joined_name TEXT)');
   w.sql('CREATE TABLE thread (_id INTEGER PRIMARY KEY, recipient_id INTEGER, archived INTEGER)');
-  w.sql('CREATE TABLE groups (_id INTEGER PRIMARY KEY, group_id TEXT, recipient_id INTEGER, title TEXT, master_key BLOB)');
+  w.sql('CREATE TABLE groups (_id INTEGER PRIMARY KEY, group_id TEXT, recipient_id INTEGER, title TEXT, master_key BLOB, mms INTEGER)');
   w.sql('CREATE TABLE group_membership (_id INTEGER PRIMARY KEY, group_id TEXT, recipient_id INTEGER)');
   w.sql(
-    'CREATE TABLE message (_id INTEGER PRIMARY KEY, date_sent INTEGER, thread_id INTEGER, from_recipient_id INTEGER, type INTEGER, body TEXT, expires_in INTEGER, expire_started INTEGER, quote_id INTEGER, quote_author INTEGER, quote_body TEXT, shared_contacts TEXT, view_once INTEGER, remote_deleted INTEGER, mentions_self INTEGER, message_ranges BLOB, story_type INTEGER, parent_story_id INTEGER, latest_revision_id INTEGER, original_message_id INTEGER, deleted_by INTEGER, keepmsg_expired INTEGER, keepmsg_deleted_at INTEGER)',
+    'CREATE TABLE message (_id INTEGER PRIMARY KEY, date_sent INTEGER, thread_id INTEGER, from_recipient_id INTEGER, type INTEGER, body TEXT, expires_in INTEGER, expire_started INTEGER, quote_id INTEGER, quote_author INTEGER, quote_body TEXT, shared_contacts TEXT, view_once INTEGER, remote_deleted INTEGER, mentions_self INTEGER, message_ranges BLOB, story_type INTEGER, parent_story_id INTEGER, latest_revision_id INTEGER, original_message_id INTEGER, deleted_by INTEGER, keepmsg_expired INTEGER, keepmsg_deleted_at INTEGER, m_type INTEGER)',
   );
   w.sql('CREATE TABLE attachment (_id INTEGER PRIMARY KEY, message_id INTEGER, content_type TEXT, file_name TEXT, data_size INTEGER, width INTEGER, height INTEGER, quote INTEGER, sticker_pack_id TEXT, sticker_id INTEGER, sticker_emoji TEXT, display_order INTEGER)');
   w.sql('CREATE TABLE reaction (_id INTEGER PRIMARY KEY, message_id INTEGER, author_id INTEGER, emoji TEXT, date_sent INTEGER, date_received INTEGER)');
@@ -46,17 +47,23 @@ function backup(): Buffer {
   w.sql('CREATE TABLE sessions (_id INTEGER PRIMARY KEY, secret TEXT)');
   w.insert('sessions', [1, 'never written down']);
 
-  const r = (id: number, type: number, aci: string | null, groupId: string | null, given: string | null) => w.insert('recipient', [id, type, null, aci, null, groupId, given, null, null, null, null, null, null, null]);
-  r(1, 0, SELF, null, 'Me');
-  r(2, 0, PEER, null, 'Pat');
+  const r = (id: number, type: number, aci: string | null, groupId: string | null, given: string | null, phone: string | null = null) =>
+    w.insert('recipient', [id, type, phone, aci, null, null, groupId, given, null, null, null, null, null, null, null]);
+  r(1, 0, SELF, null, 'Me', '+15550100');
+  r(2, 0, PEER, null, 'Pat', '+15550101');
   r(3, 3, null, `__signal_group__v2__!${GROUP_ID.toString('hex')}`, null);
-  r(4, 0, null, null, 'SMS only');
-  w.insert('groups', [1, `__signal_group__v2__!${GROUP_ID.toString('hex')}`, 3, 'Synthetic group', null]);
+  r(4, 0, null, null, 'SMS only', '+15550102');
+  r(5, 1, null, `__signal_mms_group__!${MMS_GROUP}`, null);
+  r(6, 0, null, null, null, '+15550103');
+  w.insert('groups', [1, `__signal_group__v2__!${GROUP_ID.toString('hex')}`, 3, 'Synthetic group', null, 0]);
+  w.insert('groups', [2, `__signal_mms_group__!${MMS_GROUP}`, 5, null, null, 1]);
+  for (const [i, who] of [1, 2, 6].entries()) w.insert('group_membership', [10 + i, `__signal_mms_group__!${MMS_GROUP}`, who]);
   w.insert('group_membership', [1, `__signal_group__v2__!${GROUP_ID.toString('hex')}`, 1]);
   w.insert('group_membership', [2, `__signal_group__v2__!${GROUP_ID.toString('hex')}`, 2]);
   w.insert('thread', [1, 2, 0]);
   w.insert('thread', [2, 3, 1]);
   w.insert('thread', [3, 4, 0]);
+  w.insert('thread', [4, 5, 0]);
 
   // _id, date_sent, thread, from, type, body, expires_in, expire_started, quote_id, quote_author, quote_body, shared_contacts,
   // view_once, remote_deleted, mentions_self, message_ranges, story_type, parent_story_id, latest_revision_id,
@@ -64,7 +71,7 @@ function backup(): Buffer {
   const m = (id: number, at: number, thread: number, from: number, type: number, body: string | null, more: Partial<Record<string, number | string | Uint8Array | null>> = {}) =>
     w.insert('message', [
       id, T + at, thread, from, type, body, more.expires_in ?? 0, more.expire_started ?? 0, more.quote_id ?? 0, more.quote_author ?? 0, more.quote_body ?? null, null,
-      0, 0, 0, more.message_ranges ?? null, more.story_type ?? 0, 0, more.latest_revision_id ?? null, more.original_message_id ?? null, more.deleted_by ?? null, more.keepmsg_expired ?? 0, more.keepmsg_deleted_at ?? null,
+      0, 0, 0, more.message_ranges ?? null, more.story_type ?? 0, 0, more.latest_revision_id ?? null, more.original_message_id ?? null, more.deleted_by ?? null, more.keepmsg_expired ?? 0, more.keepmsg_deleted_at ?? null, more.m_type ?? null,
     ]);
   m(1, 1000, 1, 2, SECURE_IN, 'hello there', { message_ranges: BOLD5 });
   m(2, 2000, 1, 1, SECURE_OUT, 'a photo back', { quote_id: T + 1000, quote_author: 2, quote_body: 'hello there' });
@@ -82,6 +89,10 @@ function backup(): Buffer {
   m(13, 12_000, 1, 2, SECURE_IN, 'the hub saw this before it disappeared', { expires_in: 60_000, expire_started: T + 12_500, keepmsg_expired: 1 });
   m(14, 13_000, 3, 4, 20, 'sms thread');
   m(15, 14_000, 1, 2, SECURE_IN, 'story', { story_type: 1 });
+  // An MMS group: one received, one sent, and one never downloaded.
+  m(16, 15_000, 4, 6, 20, 'to all of us', { m_type: 132 });
+  m(17, 16_000, 4, 1, 23, 'and back', { m_type: 128 });
+  m(18, 17_000, 4, 6, 20, null, { m_type: 130 });
   w.insert('attachment', [1, 2, 'image/png', 'photo.png', PHOTO.length, 4, 3, 0, null, null, null, 0]);
   w.attachment(1, PHOTO);
   w.insert('attachment', [2, 2, 'image/jpeg', null, 99, 0, 0, 1, null, null, null, 0]); // the quote's thumbnail
@@ -112,7 +123,7 @@ describe('legacy .backup reader', () => {
 
   test('unpacks the tables an import reads, and files by their hash', () => {
     const s = unpackLegacy(file, SYNTHETIC_PASSPHRASE, dbPath, media);
-    expect(s.rows.message).toBe(15);
+    expect(s.rows.message).toBe(18);
     expect(s.rows.sessions).toBeUndefined();
     expect(s.attachments).toEqual({ count: 1, bytes: PHOTO.length, stored: 1 });
     expect((statSync(dbPath).mode & 0o777).toString(8)).toBe('600');
@@ -150,11 +161,23 @@ describe('legacy .backup reader', () => {
     expect(by.has(6500) || by.has(7000)).toBe(false);
     expect(by.get(10_000)).toMatchObject({ kind: 'system', body: 'Pat set disappearing messages to 1 day.' });
     expect(group.messages).toMatchObject([{ body: 'in the group', reactions: [{ key: '👍', authors: [SELF] }] }]);
+    // SMS with someone on Signal shows in their chat, as on the phone; with someone not on Signal, in a chat of its own.
+    expect(by.get(8000)).toMatchObject({ nativeId: `${PEER}:${T + 8000}`, author: PEER, body: 'an sms', extra: { sms: 'sms' } });
+    const sms = facts.find((f) => f.conversation.nativeId.startsWith('sms:'))!;
+    expect(sms.conversation).toEqual({ nativeId: `sms:${SELF}:tel:+15550102`, shape: 'direct', participants: [SELF, 'tel:+15550102'], encrypted: false });
+    expect(sms.identities.find((i) => i.nativeId === 'tel:+15550102')).toEqual({ nativeId: 'tel:+15550102', displayName: 'SMS only', handle: '+15550102' });
+    expect(sms.messages).toMatchObject([{ nativeId: `tel:+15550102:${T + 13_000}`, author: 'tel:+15550102', body: 'sms thread', extra: { sms: 'sms' } }]);
+    const mms = facts.find((f) => f.conversation.nativeId.startsWith('mms:'))!;
+    expect(mms.conversation).toEqual({ nativeId: `mms:${MMS_GROUP}`, shape: 'group', participants: [SELF, PEER, 'tel:+15550103'], encrypted: false });
+    expect(mms.messages).toMatchObject([
+      { author: 'tel:+15550103', body: 'to all of us', extra: { sms: 'mms' } },
+      { author: SELF, body: 'and back', extra: { sms: 'mms' } },
+    ]);
 
     expect(mapped.gone).toEqual({ deleted: 1, disappeared: 2 });
-    expect(mapped.skipped).toMatchObject({ sms: 1, 'deleted by you': 1, 'deleted, nothing kept': 1, story: 1, 'chat not kept': 1 });
+    expect(mapped.skipped).toEqual({ 'deleted by you': 1, 'deleted, nothing kept': 1, story: 1, 'mms never downloaded': 1 });
     expect(mapped.files).toEqual({ linked: 1, missing: 0 });
-    expect(mapped.selfMessages).toBe(1);
+    expect(mapped.selfMessages).toBe(2);
   });
 });
 
@@ -215,13 +238,13 @@ describe('a .backup through the hub', () => {
   test('a dry run counts the kept messages and writes nothing', async () => {
     const r = await run(true);
     expect(r.stage).toBe('done');
-    expect(r.counts).toMatchObject({ messages: 8, new: 5, filled: 3, kept: 3, conflicts: 0 });
+    expect(r.counts).toMatchObject({ messages: 12, new: 9, filled: 3, kept: 3, conflicts: 0, conversationsNew: 3 });
     expect(row(3000)).toBeNull();
   });
 
   test('kept messages come in as gone, and the hub’s emptied copy gets its words back', async () => {
     const r = await run(false);
-    expect(r.counts).toMatchObject({ new: 5, filled: 3, kept: 3, conflicts: 0 });
+    expect(r.counts).toMatchObject({ new: 9, filled: 3, kept: 3, conflicts: 0 });
     expect(row(1000)).toMatchObject({ body: '**hello** there', deleted: 0, imported: 1 });
     expect(row(3000)).toMatchObject({ body: 'this one disappeared', deleted: 1, gone_how: 'disappeared', gone_at: T + 63_500, imported: 1 });
     expect(row(4000)).toMatchObject({ body: 'they deleted this', deleted: 1, gone_how: 'deleted', imported: 0 });

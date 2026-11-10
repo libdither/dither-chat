@@ -97,7 +97,7 @@ message fact it decides one outcome:
 | `upgrade` | the row came only from imports, all ranked below this source | replace it, with origin |
 | `fill` | the row exists and the fact only adds something: a reply target, more reactors, an attachment size | fill the empty fields; reactions add only |
 | `conflict` | the row exists and the fact contradicts it | nothing, until decided; a conflict row records both sides |
-| `skip` | policy: a story, an SMS, view-once media, a keepmsg row not opted in, an unknown conversation | nothing; counted by reason |
+| `skip` | policy: a story, view-once media, a keepmsg row not opted in, an unknown conversation | nothing; counted by reason |
 
 Rank, highest first: **live** > `dce-json` > `signal-backup` / `signal-backup-v2` > `discord-package` > `dce-html`.
 Ties go to the newer source (`addedAt`), then the lower sha256, so the order is always defined.
