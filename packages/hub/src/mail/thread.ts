@@ -36,7 +36,7 @@ export function genericSubject(key: string): boolean {
 
 export interface ThreadInput {
   accountId: string;
-  /** The message's own key (`m:<Message-ID>` or `x:…`), for a new thread's id. */
+  /** The message's own key (`m:<Message-ID>`, `e:<emailId>` or `x:…`), for a new thread's id. */
   key: string;
   messageId: string | null;
   /** The server's thread. */

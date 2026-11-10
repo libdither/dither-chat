@@ -3,7 +3,8 @@
  * page's mailboxes (web/test/mail-ops.test.ts).
  *
  * Archive takes a thread out of Inbox (into Archive, or All mail where there is none); trash and junk take it out of
- * everything but Sent and Drafts; Inbox or a folder takes it out of the folders it is in.
+ * everything but Sent and Drafts; Inbox or a folder takes it out of the folders it is in, except that on Gmail Inbox is
+ * a copy from All Mail and its labels stay (hub ops.ts copyFrom).
  */
 import type * as P from '@dither-chat/protocol';
 
@@ -29,13 +30,21 @@ export function moveTargetsIn(boxes: Boxes, t: P.MailThreadView): P.MailboxView[
     .sort((a, b) => (a.role === 'inbox' ? -1 : b.role === 'inbox' ? 1 : a.path.localeCompare(b.path)));
 }
 
+/** Archived where the account has no Archive (Gmail): in All mail, not in Inbox. */
+export function archivedInAll(boxes: Boxes, t: P.MailThreadView): boolean {
+  if (t.roles.includes('inbox') || !t.roles.includes('all')) return false;
+  return ![...boxes.values()].some((b) => b.accountId === t.accountId && b.role === 'archive');
+}
+
 /** The thread after a move, or null when the account has no such mailbox. */
 export function movedView(boxes: Boxes, t: P.MailThreadView, to: P.MailMoveTarget): P.MailThreadView | null {
   const dest = destinationIn(boxes, t, to);
   if (!dest) return null;
   const role = (id: string) => boxes.get(id)?.role ?? null;
+  const copied = to === 'inbox' && archivedInAll(boxes, t);
   const keep = (id: string) => {
     const r = role(id);
+    if (copied) return true;
     if (to === 'archive') return r !== 'inbox';
     if (to === 'trash' || to === 'junk') return r === 'sent' || r === 'drafts';
     return NOT_FOLDER.has(r ?? '');
@@ -44,9 +53,13 @@ export function movedView(boxes: Boxes, t: P.MailThreadView, to: P.MailMoveTarge
   return { ...t, mailboxIds: ids, roles: [...new Set(ids.map(role).filter((r): r is P.MailboxRole => !!r))] };
 }
 
-/** Where Undo takes a moved thread back to: Inbox if it was there, else the folder it was in; null when nowhere. */
+/**
+ * Where Undo takes a moved thread back to: Inbox if it was there, Archive after Move to Inbox from Gmail's All Mail
+ * (its labels stayed), else the folder it was in; null when nowhere.
+ */
 export function undoTarget(boxes: Boxes, before: P.MailThreadView, to: P.MailMoveTarget): P.MailMoveTarget | null {
   if (before.roles.includes('inbox')) return 'inbox';
+  if (to === 'inbox' && archivedInAll(boxes, before)) return 'archive';
   const dest = destinationIn(boxes, before, to)?.id;
   return before.mailboxIds.find((id) => id !== dest && !NOT_FOLDER.has(boxes.get(id)?.role ?? '')) ?? null;
 }

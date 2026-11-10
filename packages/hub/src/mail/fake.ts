@@ -29,17 +29,20 @@
  * (extractors/imap/src/{imap,ids,config,smtp}.ts there). Gmail's labels are IMAP mailboxes, so one message is a copy in
  * each mailbox its labels put it in, each with its own `<mailbox>.<UIDVALIDITY>.<UID>` id (ids.ts), its flags shared
  * (they are the message's). Mailboxes are GMAIL_MAILBOXES, ids the base64url of their paths (ids.ts mailboxId), roles
- * from SPECIAL-USE as imapflow 2.11 reads them (imap.ts roleOf): All Mail is 'all' and there is no Archive; Spam is
- * 'junk'; Starred is 'flagged'; Important comes with no role (imapflow's list has no \Important); the `[Gmail]` parent
- * is \Noselect (no counts, and listing it is 404). A summary's `labels` are imap.ts labelsOf: Gmail's X-GM-LABELS as
- * they come (`\Inbox`, `\Important`, `\Starred`, `\Sent`, user labels by path), where Gmail never names \Trash, \Spam
- * or All Mail, and leaves out the label of the mailbox the message was listed from (Mozilla bug 798648, and Limilabs'
- * "GmailLabels does not contain draft label"). `threadId` is X-GM-THRID: a reply joins the thread its references name.
+ * from SPECIAL-USE as imapflow 2.11 reads them, and \Important (imap.ts roleOf): All Mail is 'all' and there is no
+ * Archive; Spam is 'junk'; Starred is 'flagged'; Important is 'important'; the `[Gmail]` parent is \Noselect (no
+ * counts, and listing it is 404). A summary's `emailId` is X-GM-MSGID, the same in every mailbox; its `labels` are
+ * imap.ts labelsOf: Gmail's X-GM-LABELS as they come (`\Inbox`, `\Important`, `\Starred`, `\Sent`, user labels by
+ * path), where Gmail never names \Trash, \Spam or All Mail, and leaves out the label of the mailbox the message was
+ * listed from (Mozilla bug 798648, and Limilabs' "GmailLabels does not contain draft label"). `threadId` is
+ * X-GM-THRID: a reply joins the thread its references name.
  * Gmail has no category labels over IMAP (Promotions and the rest are not exposed), so none come. Keeping up is
  * CONDSTORE (imap.ts changes, mode 'c'): a flag or label change shows as `changed` in every mailbox holding the
  * message. A move is Gmail's: the destination's label added, the source's removed, so moving out of Inbox into All
- * Mail is archiving and answers the All Mail id it already had; into Trash or Spam it leaves every other mailbox; out
- * of All Mail Gmail takes as a delete (into the Trash). Starred is the \Flagged flag. Search is X-GM-RAW in All Mail
+ * Mail is archiving and answers the All Mail id it already had; into Trash or Spam it leaves every other mailbox. Out
+ * of All Mail the extractor COPYs instead (imap.ts copiesInstead: a MOVE out of All Mail Gmail takes as a delete, which
+ * another client's `move` here still does): into Inbox or a label it puts that label on and stays in All Mail, and
+ * answers the copy's id; into Trash or Spam it still moves. Starred is the \Flagged flag. Search is X-GM-RAW in All Mail
  * (imap.ts search), as much of Gmail's syntax as the hub sends. Sending leaves the copy in Sent to Gmail (config.ts
  * preset sentCopy 'server'): it shows in Sent Mail and All Mail with the original's thread, and `sentId` is it (smtp.ts
  * finds it by Message-ID).
@@ -151,8 +154,8 @@ export const GMAIL_MAILBOXES: M.Mailbox[] = [
   gmailBox('[Gmail]'),
   gmailBox('[Gmail]/All Mail', 'all'),
   gmailBox('[Gmail]/Drafts', 'drafts'),
-  // Gmail lists it \Important, but imapflow 2.11's special-use list has no \Important: it comes with no role.
-  gmailBox('[Gmail]/Important'),
+  // Gmail lists it \Important (RFC 8457), which the extractor's roleOf reads from its flags.
+  gmailBox('[Gmail]/Important', 'important'),
   gmailBox('[Gmail]/Sent Mail', 'sent'),
   gmailBox('[Gmail]/Spam', 'junk'),
   gmailBox('[Gmail]/Starred', 'flagged'),
@@ -164,7 +167,6 @@ function gmailLabelOf(b: M.Mailbox | undefined): string | null {
   if (!b) return null;
   const byRole: Partial<Record<M.MailboxRole, string>> = { inbox: '\\Inbox', sent: '\\Sent', drafts: '\\Draft', junk: '\\Spam', trash: '\\Trash', flagged: '\\Starred', important: '\\Important' };
   if (b.role) return byRole[b.role] ?? null;
-  if (b.id === GMAIL.important) return '\\Important';
   return b.path.startsWith('[Gmail]') ? null : b.path;
 }
 
@@ -569,6 +571,8 @@ export class FakeMailBackend implements MailBackend {
       mailboxId: m.mailboxId,
       messageId: m.messageId,
       threadId: a.opts.threadIds ? m.threadId ?? m.messageId : null,
+      // Gmail's X-GM-MSGID: the same in every mailbox the message is in.
+      ...(m.gm ? { emailId: m.gm } : {}),
       from: m.from,
       to: m.to,
       cc: m.cc,
@@ -704,7 +708,8 @@ export class FakeMailBackend implements MailBackend {
   /**
    * Gmail's MOVE: the destination's label on, the source's off. Into All Mail adds nothing (archiving); into Trash or
    * Spam it shows only there; into Starred stars it, out of it unstars it; out of All Mail Gmail takes as a delete,
-   * into the Trash. Returns its id in the destination (the one it had there, if it was there already).
+   * into the Trash (another client's MOVE: the extractor copies instead, gmCopy). Returns its id in the destination
+   * (the one it had there, if it was there already).
    */
   private gmMove(a: Account, id: string, to: string): { id: string | null; touched: Set<string> } {
     const m = a.messages.get(id);
@@ -726,6 +731,20 @@ export class FakeMailBackend implements MailBackend {
     else if (from === '\\Starred') for (const b of this.gmFlags(a, gm, { flagged: false })) touched.add(b);
     else if (from) remove.push(from);
     for (const b of this.gmRelabel(a, gm, add, remove)) touched.add(b);
+    return { id: this.gmCopies(a, gm).find((c) => c.mailboxId === to)?.id ?? null, touched };
+  }
+
+  /**
+   * Gmail's COPY: the destination's label on, nothing taken off (into Starred stars it). Returns its id in the
+   * destination: a new copy's, or the one it had there already.
+   */
+  private gmCopy(a: Account, id: string, to: string): { id: string | null; touched: Set<string> } {
+    const m = a.messages.get(id);
+    if (!m) return { id: null, touched: new Set() };
+    if (m.mailboxId === to) return { id, touched: new Set() };
+    const gm = m.gm!;
+    const into = gmailLabelOf(a.mailboxes.find((b) => b.id === to));
+    const touched = into === '\\Starred' ? this.gmFlags(a, gm, { flagged: true }) : into ? this.gmRelabel(a, gm, [into], []) : new Set<string>();
     return { id: this.gmCopies(a, gm).find((c) => c.mailboxId === to)?.id ?? null, touched };
   }
 
@@ -919,14 +938,17 @@ export class FakeMailBackend implements MailBackend {
   private moveTo(a: Account, ids: string[], to: string): { ids: (string | null)[] } {
     if (!a.mailboxes.some((b) => b.id === to) || a.noselect.has(to)) throw new MailCallError(`no mailbox ${to}`, 404);
     if (a.opts.ids === 'gmail') {
-      // The extractor says mail.changed for the source and the destination (imap.ts move), IDLE for Inbox.
+      // The extractor says mail.changed for the source and the destination (imap.ts move), IDLE for Inbox. Out of All
+      // Mail into anything but Trash or Spam it COPYs (imap.ts copiesInstead): a MOVE there would delete it.
       const own = [to];
       const touched = new Set<string>();
+      const dest = a.mailboxes.find((b) => b.id === to)!;
       const out = ids.map((id) => {
         const m = a.messages.get(id);
         if (!m) return null;
         own.push(m.mailboxId);
-        const r = this.gmMove(a, id, to);
+        const fromAll = a.mailboxes.find((b) => b.id === m.mailboxId)?.role === 'all';
+        const r = fromAll && dest.role !== 'trash' && dest.role !== 'junk' ? this.gmCopy(a, id, to) : this.gmMove(a, id, to);
         for (const b of r.touched) touched.add(b);
         return a.opts.moveIds === 'null' ? null : r.id;
       });

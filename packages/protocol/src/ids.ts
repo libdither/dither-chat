@@ -16,7 +16,8 @@ export function hubId(prefix: IdPrefix, network: Network, nativeId: string): str
 
 /**
  * Mail ids are per account (the manager's account id): sha256(accountId NUL key), as hubId. A message's key is
- * `m:<Message-ID>` (so a move keeps it), else `x:<mailbox native id>/<native id>`.
+ * `m:<Message-ID>` (so a move keeps it), else `e:<emailId>` (the server's id in every mailbox), else
+ * `x:<mailbox native id>/<native id>` (hub mail/store.ts identify).
  */
 export function mailId(prefix: MailIdPrefix, accountId: string, key: string): string {
   return `${prefix}_${digest(`${accountId}\0${key}`)}`;

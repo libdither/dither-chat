@@ -1,7 +1,7 @@
 /** Where filing puts a thread on the page before the hub answers (mail/filing.ts), and where Undo takes it back. */
 import { expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
-import { destinationIn, movedView, moveTargetsIn, undoTarget } from '../src/mail/filing.ts';
+import { archivedInAll, destinationIn, movedView, moveTargetsIn, undoTarget } from '../src/mail/filing.ts';
 
 const box = (id: string, role: P.MailboxRole | null, accountId = 'acc_a', path = id): P.MailboxView => ({ id, accountId, name: path, path, parentId: null, role, unread: null, total: null, followed: false });
 const imap = new Map(
@@ -61,4 +61,18 @@ test('Undo: back to Inbox, else to the folder it was in', () => {
   expect(undoTarget(imap, t(['work']), 'trash')).toBe('work');
   expect(undoTarget(imap, t(['arch']), 'inbox')).toBe('arch');
   expect(undoTarget(gmail, t(['g-all'], gmail, 'acc_g'), 'trash')).toBeNull();
+});
+
+test('Gmail: Move to Inbox from All Mail is a copy there, so its labels stay; its Undo archives; Important is no folder', () => {
+  const g = new Map([...gmail, ...[box('g-work', null, 'acc_g', 'Work'), box('g-imp', 'important', 'acc_g', '[Gmail]/Important')].map((b) => [b.id, b] as const)]);
+  const archived = t(['g-all', 'g-work', 'g-imp'], g, 'acc_g');
+  expect(archivedInAll(g, archived)).toBe(true);
+  expect(archivedInAll(g, t(['g-in', 'g-all'], g, 'acc_g'))).toBe(false);
+  expect(archivedInAll(g, t(['g-trash'], g, 'acc_g'))).toBe(false);
+  // An account with an Archive (Proton's All mail too): archived means in Archive.
+  const withAll = new Map([...imap, ['all', box('all', 'all')] as const]);
+  expect(archivedInAll(withAll, t(['all', 'work'], withAll))).toBe(false);
+  expect(movedView(g, archived, 'inbox')).toMatchObject({ mailboxIds: ['g-all', 'g-work', 'g-imp', 'g-in'], roles: ['all', 'important', 'inbox'] });
+  expect(undoTarget(g, archived, 'inbox')).toBe('archive');
+  expect(moveTargetsIn(g, archived).map((b) => b.id)).toEqual(['g-in', 'g-trash', 'g-work']);
 });

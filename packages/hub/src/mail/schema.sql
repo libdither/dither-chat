@@ -79,7 +79,7 @@ CREATE INDEX IF NOT EXISTS mail_thread_subject ON mail_thread(account_id, subjec
 CREATE INDEX IF NOT EXISTS mail_thread_native ON mail_thread(account_id, native_thread);
 
 CREATE TABLE IF NOT EXISTS mail_message (
-  id              TEXT PRIMARY KEY,             -- mml_: key 'm:'+Message-ID, else 'x:'+mailbox native id+'/'+native id
+  id              TEXT PRIMARY KEY,             -- mml_: key 'm:'+Message-ID, else 'e:'+emailId, else 'x:'+mailbox native id+'/'+native id (store.ts identify)
   account_id      TEXT NOT NULL REFERENCES mail_account(id) ON DELETE CASCADE,
   thread_id       TEXT NOT NULL REFERENCES mail_thread(id),
   thread_by       TEXT NOT NULL,                -- how it was threaded: native, ref, subject (provisional) or new
@@ -108,7 +108,8 @@ CREATE TABLE IF NOT EXISTS mail_message (
   addressed       TEXT NOT NULL DEFAULT 'hidden', -- to | cc | hidden | self
   class           TEXT,                         -- slice 8
   class_why       TEXT,
-  images_allowed  INTEGER NOT NULL DEFAULT 0    -- slice 3
+  images_allowed  INTEGER NOT NULL DEFAULT 0,   -- slice 3
+  email_id        TEXT                          -- the server's id for it in every mailbox (Gmail's X-GM-MSGID), when it has one
 );
 CREATE INDEX IF NOT EXISTS mail_message_thread ON mail_message(thread_id, received_at);
 

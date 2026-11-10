@@ -2,9 +2,10 @@
  * Mail's tables (schema.sql) in the hub's database: accounts, mailboxes, messages and where they are, threads, bodies.
  * Ingest, the views the page gets, and dirty sets the server flushes with the chat store's (server.ts flush).
  *
- * A message is keyed by (account, Message-ID), so the extractor's ids, which change when IMAP moves a message, are
- * only its locations: a move keeps the hub message, its thread and its cached body. A message with no location left
- * is deleted by whoever removed the last one (sync.ts, once a move had its chance to show up elsewhere).
+ * A message is keyed by (account, Message-ID), or without one by the server's emailId (`identify`), so the extractor's
+ * ids, which change when IMAP moves a message, are only its locations: a move keeps the hub message, its thread and its
+ * cached body, and Gmail's copies in Inbox, All Mail and a label are one message. A message with no location left is
+ * deleted by whoever removed the last one (sync.ts, once a move had its chance to show up elsewhere).
  */
 import type { Database } from 'bun:sqlite';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -143,6 +144,9 @@ export class MailStore {
       if (this.addColumns('mail_account', { summary_headers: 'INTEGER', headers_seen: 'INTEGER' }).includes('headers_seen')) {
         this.run('UPDATE mail_account SET headers_seen = 1 WHERE id IN (SELECT DISTINCT account_id FROM mail_message WHERE bulk IS NOT NULL)');
       }
+      // The server's emailId (Gmail's X-GM-MSGID): empty on rows from before it, and on Proton's, which have none.
+      this.addColumns('mail_message', { email_id: 'TEXT' });
+      this.db.exec('CREATE INDEX IF NOT EXISTS mail_message_email ON mail_message(account_id, email_id) WHERE email_id IS NOT NULL');
     })();
   }
 
@@ -454,12 +458,12 @@ export class MailStore {
     this.db.transaction(() => {
       if (list.some((s) => s.bulk || s.inReplyTo || s.references?.length)) this.run('UPDATE mail_account SET headers_seen = 1 WHERE id = ? AND headers_seen IS NULL', accountId);
       for (const s of list) {
-        const key = s.messageId ? `m:${s.messageId}` : `x:${mailbox.native_id}/${s.id}`;
-        const id = mailId('mml', accountId, key);
+        const { id, key } = this.identify(accountId, mailbox, s);
         const at = this.one<{ message_id: string }>('SELECT message_id FROM mail_location WHERE mailbox_id = ? AND native_id = ?', mailbox.id, s.id);
         if (at && at.message_id !== id) out.orphans.push(at.message_id);
-        const known = this.one('SELECT id, thread_id, thread_by, in_reply_to, refs, pending, seen FROM mail_message WHERE id = ?', id);
+        const known = this.one('SELECT id, thread_id, thread_by, in_reply_to, refs, pending, seen, email_id FROM mail_message WHERE id = ?', id);
         if (known) {
+          if (s.emailId && !known.email_id) this.run('UPDATE mail_message SET email_id = ? WHERE id = ?', s.emailId, id);
           this.applyFlags(known, s.flags, s.labels);
           // The extractor gives threading headers on summaries now (§13): a provisional thread may be wrong.
           if ((s.inReplyTo || s.references?.length) && !known.in_reply_to && !json<string[]>(known.refs, []).length) {
@@ -483,6 +487,31 @@ export class MailStore {
     return out;
   }
 
+  /**
+   * Which message a summary is. With a Message-ID header: `m:<Message-ID>`, as always. Without one, the server's emailId
+   * (Gmail's X-GM-MSGID, the same in every mailbox): the message that has it already; else the one at this very place
+   * from before emailIds came (it takes the emailId and keeps its id, body and state); else a new one, `e:<emailId>`.
+   * With neither: `x:<mailbox>/<id>`, the place itself, so each mailbox's copy is a message of its own.
+   */
+  private identify(accountId: string, mailbox: Row, s: M.MailSummary): { id: string; key: string } {
+    const keyed = (key: string) => ({ id: mailId('mml', accountId, key), key });
+    if (s.messageId) return keyed(`m:${s.messageId}`);
+    if (!s.emailId) return keyed(`x:${mailbox.native_id}/${s.id}`);
+    const key = `e:${s.emailId}`;
+    const had = this.one<{ id: string }>('SELECT id FROM mail_message WHERE account_id = ? AND email_id = ?', accountId, s.emailId);
+    if (had) return { id: had.id, key };
+    const here = this.one<{ id: string }>(
+      'SELECT m.id FROM mail_location l JOIN mail_message m ON m.id = l.message_id WHERE l.mailbox_id = ? AND l.native_id = ? AND m.message_id_hdr IS NULL AND m.email_id IS NULL',
+      mailbox.id,
+      s.id,
+    );
+    if (here) {
+      this.run('UPDATE mail_message SET email_id = ? WHERE id = ?', s.emailId, here.id);
+      return { id: here.id, key };
+    }
+    return keyed(key);
+  }
+
   private insertMessage(accountId: string, id: string, key: string, s: M.MailSummary, self: Set<string>, out: Ingested) {
     const from = s.from[0] ?? null;
     const others = [...new Set([...s.from, ...s.to, ...s.cc].map((a) => lc(a.email)).filter((e) => e && !self.has(e)))];
@@ -494,8 +523,8 @@ export class MailStore {
     for (const t of place.merge) this.mergeThread(t, place.threadId, out.threads);
     this.run(
       `INSERT INTO mail_message (id, account_id, thread_id, thread_by, message_id_hdr, native_thread, in_reply_to, refs, from_addr, from_name, to_json, cc_json, subject,
-         date, received_at, size, has_attachments, preview, seen, flagged, answered, draft, labels, bulk, addressed)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         date, received_at, size, has_attachments, preview, seen, flagged, answered, draft, labels, bulk, addressed, email_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       accountId,
       place.threadId,
@@ -521,6 +550,7 @@ export class MailStore {
       JSON.stringify(s.labels ?? []),
       s.bulk ? JSON.stringify(s.bulk) : null,
       addressedOf(self, from?.email ?? null, s.to, s.cc),
+      s.emailId ?? null,
     );
     this.putRefs(accountId, place.threadId, [s.messageId, s.inReplyTo ?? null, ...(s.references ?? [])]);
     out.added.push(id);

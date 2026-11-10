@@ -26,20 +26,34 @@ they start with `dither-accounts/`.
   lists show the message moved. The answer's ids replace the location it left; with a null id the next changes pass
   finds it. A message whose move is on its way is not deleted as an orphan meanwhile.
 - Trash is a move into the Trash mailbox, never `mail.trash` (which deletes outright what is in the trash already).
-  Nothing is deleted from here. Back to Inbox never moves out of an IMAP server's All mail (Gmail).
+  Nothing is deleted from here. Back to Inbox never moves out of an IMAP server's All mail; on Gmail it copies from
+  there (as built for Gmail, below).
 - MailHub gains the `filed` event; `MailThreadView.pending` and `MailAccountView.ops` are new.
 
 **As built for Gmail** (docs/mail.md "Gmail", `hub/test/mail-gmail.test.ts`, fake.ts `ids: 'gmail'`):
 
 - An account is Gmail by its address or its `[Gmail]`/`[Google Mail]` mailboxes (`MailStore.gmail`); its kind stays
-  `imap`. One message is in several mailboxes with an id in each; the (account, Message-ID) key keeps it one message.
+  `imap`. One message is in several mailboxes with an id in each; the (account, Message-ID) key keeps it one message,
+  and without a Message-ID the summary's `emailId` (X-GM-MSGID) does (store.ts `identify`, below).
 - §2.4: labels are stored as the summary gives them with the listing mailbox's own label put back (Gmail leaves it
   out), and views leave out those starting with `\` (`shownLabels`). Rule 8's `CATEGORY_*` never comes from the imap
   extractor: Gmail's IMAP has no categories (only a Gmail API extractor could give them).
 - §3.7: into Trash or Junk, the move's answer drops the message's other locations (Gmail shows it there alone), and a
   message in Sent or Drafts is not moved there (its All Mail copy is the same message). An archive waits
-  `gmailArchiveHoldMs` (7.5 s), so the page's Undo calls it off before it goes. Back to Inbox of mail only in All Mail
-  answers 409 (`GMAIL_NO_INBOX`).
+  `gmailArchiveHoldMs` (7.5 s), so the page's Undo calls it off before it goes.
+- §3.7, copies: dither-accounts (5e8079a) makes `mail.move` out of Gmail's All Mail into anything but Trash or Spam a
+  COPY, answering the copy's id. `copyFrom` plans one: into Inbox whenever the message is in All Mail (so its labels
+  stay, and an archive that went is undone as it was), into a label when it is in no folder; never for what you sent.
+  `pending.move` gets `copy` (All Mail's id) and an empty `hide`, so the lists show it in both; the answer adds the
+  destination's location and leaves All Mail's. The web's `archivedInAll` offers the reader's Move to Inbox for such a
+  thread, `movedView` keeps its labels, and `undoTarget` archives it again.
+- `[Gmail]/Important` has the role `important` (the extractor's roleOf reads \Important, RFC 8457): a view, as Starred
+  is (`NOT_FOLDER` in ops.ts and web filing.ts), and the label the store puts back when it lists a message
+  (`ownLabel`).
+- Identity (store.ts `identify`): a Message-ID gives `m:<Message-ID>`, as before. Without one, `emailId` finds the
+  message that has it (`mail_message.email_id`, a nullable column added in place, indexed where set); else the row at
+  that very place from before emailIds came, which takes it and keeps its id; else a new `e:<emailId>`. With neither,
+  `x:<mailbox>/<id>` as before. No existing row is rewritten: Proton's summaries carry no `emailId`.
 - A mailbox the server cannot list (IMAP \Noselect: Gmail's `[Gmail]`, 404) stops being followed when a page opens it;
   the page's mailbox menu and Ctrl+K leave out mailboxes with no counts that hold others (web `holdsOnlyMailboxes`).
 - §11: `in:archive` is Archive, else All mail without Inbox, Sent or Drafts; Gmail's server query says
@@ -142,7 +156,7 @@ mailbox (id PK, account_id FK, native_id, name, path, parent_id, role, unread, t
   , horizon          -- oldest receivedAt synced without gaps from the top
   , complete, relist_gen, opened_at, UNIQUE(account_id, native_id))
 
-mail_message (id PK  -- mml_: key 'm:'+Message-ID, else 'x:'+mailbox native id+'/'+native id
+mail_message (id PK  -- mml_: key 'm:'+Message-ID, else 'e:'+emailId, else 'x:'+mailbox native id+'/'+native id
   , account_id, thread_id, message_id_hdr, native_thread, in_reply_to, refs JSON
   , from_addr, from_name, to_json, cc_json, subject, date, received_at, size, has_attachments
   , preview          -- made here from the body: 200 chars, quotes and signature cut
