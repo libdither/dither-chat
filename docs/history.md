@@ -57,6 +57,11 @@ settings yet can no longer put the defaults back. On 2026-11-10 that, or an acci
 day and the hub emptied the messages deleted meanwhile. Every change is logged with the device's user agent
 (`GET /api/retention/log`, the newest 200, and the hub's log).
 
+Devices keep their own copy of each chat and ask the hub only for what changed since (docs/sync.md). What the hub
+changes behind the journal's back would never reach them, so these make every device reload its chats (a `resync`,
+which starts a new journal epoch): showing or hiding adversarial features (kept messages are then served with or
+without their words), an import that added or filled messages, undoing an import, and Forget.
+
 `ui/Adversarial.tsx`, `keeping.ts` (what is kept now, for Message history's note and Forget); `ADVERSARIAL_KEEPS` and
 `KEPT_KINDS` in packages/protocol. A demo hub started with `--adversarial` shows them
 from the start (scripts/verify-history.ts); scripts/verify-adversarial.ts checks the gate.

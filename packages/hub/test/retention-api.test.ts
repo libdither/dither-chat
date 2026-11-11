@@ -47,12 +47,19 @@ describe('PUT /api/retention', () => {
     expect(hidden.status).toBe(200);
     // Hiding keeps the switches: nothing stops being kept.
     expect(hidden.json).toMatchObject({ adversarial: false, deleted: true, disappearing: true });
+    // Kept messages are served with their words again: devices' kept copies are void (a new journal epoch).
+    const epoch = store.journal.position().epoch;
     expect((await put({ adversarial: true })).status).toBe(200);
+    expect(store.journal.position().epoch).not.toBe(epoch);
+    const same = store.journal.position().epoch;
+    expect((await put({ show: 'hidden' })).status).toBe(200);
+    expect(store.journal.position().epoch).toBe(same);
+    await put({ show: 'shown' });
   });
 
   test('each change is logged with the device that made it', async () => {
     const log = store.retentionLog();
-    expect(log.at(-1)).toMatchObject({ by: 'test phone', changed: { adversarial: [false, true] } });
+    expect(log.findLast((c) => 'adversarial' in c.changed)).toMatchObject({ by: 'test phone', changed: { adversarial: [false, true] } });
     const r = await fetch(`http://127.0.0.1:${port}/api/retention/log`);
     expect(((await r.json()) as { changes: P.RetentionChange[] }).changes.length).toBe(log.length);
   });

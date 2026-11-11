@@ -93,6 +93,8 @@ function backup(): Buffer {
   m(16, 15_000, 4, 6, 20, 'to all of us', { m_type: 132 });
   m(17, 16_000, 4, 1, 23, 'and back', { m_type: 128 });
   m(18, 17_000, 4, 6, 20, null, { m_type: 130 });
+  // Your own message whose timer ran out: a timer took it, not you, so what Molly kept comes back.
+  m(19, 18_000, 1, 1, SECURE_OUT, 'my words that disappeared', { expires_in: 60_000, expire_started: T + 18_500, keepmsg_expired: 1 });
   w.insert('attachment', [1, 2, 'image/png', 'photo.png', PHOTO.length, 4, 3, 0, null, null, null, 0]);
   w.attachment(1, PHOTO);
   w.insert('attachment', [2, 2, 'image/jpeg', null, 99, 0, 0, 1, null, null, null, 0]); // the quote's thumbnail
@@ -123,7 +125,7 @@ describe('legacy .backup reader', () => {
 
   test('unpacks the tables an import reads, and files by their hash', () => {
     const s = unpackLegacy(file, SYNTHETIC_PASSPHRASE, dbPath, media);
-    expect(s.rows.message).toBe(18);
+    expect(s.rows.message).toBe(19);
     expect(s.rows.sessions).toBeUndefined();
     expect(s.attachments).toEqual({ count: 1, bytes: PHOTO.length, stored: 1 });
     expect((statSync(dbPath).mode & 0o777).toString(8)).toBe('600');
@@ -174,10 +176,10 @@ describe('legacy .backup reader', () => {
       { author: SELF, body: 'and back', extra: { sms: 'mms' } },
     ]);
 
-    expect(mapped.gone).toEqual({ deleted: 1, disappeared: 2 });
+    expect(mapped.gone).toEqual({ deleted: 1, disappeared: 3 });
     expect(mapped.skipped).toEqual({ 'deleted by you': 1, 'deleted, nothing kept': 1, story: 1, 'mms never downloaded': 1 });
     expect(mapped.files).toEqual({ linked: 1, missing: 0 });
-    expect(mapped.selfMessages).toBe(2);
+    expect(mapped.selfMessages).toBe(3);
   });
 });
 
@@ -188,6 +190,7 @@ describe('a .backup through the hub', () => {
   let acc: any;
   let sources: ImportSources;
   let runner: ImportRunner;
+  let resyncs = 0;
   const mid = (at: number, who = PEER) => hubId('msg', 'signal', `${who}:${T + at}`);
   const row = (at: number) => store.db.query('SELECT body, deleted, gone_how, gone_at, imported FROM message WHERE id = ?').get(mid(at)) as any;
 
@@ -221,12 +224,15 @@ describe('a .backup through the hub', () => {
     store.ingest(acc, { t: 'message', live: true, message: { nativeId: `${PEER}:${T + 12_000}`, conversation: dm, author: PEER, ts: T + 12_000, body: 'the hub saw this before it disappeared' } });
     // And the edited message before its edits.
     store.ingest(acc, { t: 'message', live: true, message: { nativeId: `${PEER}:${T + 6000}`, conversation: dm, author: PEER, ts: T + 6000, body: 'first words' } });
+    // Your own disappearing message, emptied when its timer ran out (the hub kept nothing then).
+    store.ingest(acc, { t: 'message', live: true, message: { nativeId: `${SELF}:${T + 18_000}`, conversation: dm, author: SELF, ts: T + 18_000, body: 'my words that disappeared' } });
+    store.ingest(acc, { t: 'delete', conversation: dm, nativeId: `${SELF}:${T + 18_000}`, reason: 'expired' });
     store.flush();
     expect(row(4000)).toMatchObject({ body: '', deleted: 1, gone_how: 'deleted' });
     sources = new ImportSources(data);
     await sources.check(id);
     sources.patch(id, { accountId: 'acc_sig' });
-    runner = new ImportRunner(store, sources, data);
+    runner = new ImportRunner(store, sources, data, () => {}, () => resyncs++);
   });
   afterAll(() => store.db.close());
 
@@ -238,19 +244,22 @@ describe('a .backup through the hub', () => {
   test('a dry run counts the kept messages and writes nothing', async () => {
     const r = await run(true);
     expect(r.stage).toBe('done');
-    expect(r.counts).toMatchObject({ messages: 12, new: 9, filled: 3, kept: 3, conflicts: 0, conversationsNew: 3 });
+    expect(r.counts).toMatchObject({ messages: 13, new: 9, filled: 4, kept: 4, conflicts: 0, conversationsNew: 3 });
     expect(row(3000)).toBeNull();
   });
 
   test('kept messages come in as gone, and the hub’s emptied copy gets its words back', async () => {
     const r = await run(false);
-    expect(r.counts).toMatchObject({ new: 9, filled: 3, kept: 3, conflicts: 0 });
+    expect(r.counts).toMatchObject({ new: 9, filled: 4, kept: 4, conflicts: 0 });
     expect(row(1000)).toMatchObject({ body: '**hello** there', deleted: 0, imported: 1 });
     expect(row(3000)).toMatchObject({ body: 'this one disappeared', deleted: 1, gone_how: 'disappeared', gone_at: T + 63_500, imported: 1 });
     expect(row(4000)).toMatchObject({ body: 'they deleted this', deleted: 1, gone_how: 'deleted', imported: 0 });
     expect(row(12_000)).toMatchObject({ body: 'the hub saw this before it disappeared', deleted: 1, gone_how: 'disappeared', gone_at: T + 72_500 });
         expect(store.db.query('SELECT 1 FROM message WHERE id = ?').get(mid(5000, SELF))).toBeNull();
     // A later edit than the hub has is taken, the hub's words kept as the earlier version.
+    expect(store.db.query('SELECT body, gone_how FROM message WHERE id = ?').get(mid(18_000, SELF))).toEqual({ body: 'my words that disappeared', gone_how: 'disappeared' });
+    // Devices reload their chats: what was filled in never went through the journal.
+    expect(resyncs).toBe(1);
     expect(store.db.query('SELECT body, edited_ts FROM message WHERE id = ?').get(mid(6000))).toEqual({ body: 'final words', edited_ts: T + 7000 });
     expect(store.db.query(`SELECT data FROM message_event WHERE message_id = ? AND kind = 'edit'`).all(mid(6000))).toEqual([{ data: JSON.stringify({ body: 'first words' }) }]);
     // Out of sight while adversarial features are hidden.
