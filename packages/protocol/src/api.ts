@@ -72,6 +72,47 @@ export interface PersonView {
   starred: boolean;
   isSelf: boolean;
   identityIds: string[];
+  /** Where `name` came from (NameSource). */
+  nameSource: NameSource;
+}
+
+/**
+ * Where a person's name came from: `network`, their one account's own name, kept up to date; `merge`, the name a merge
+ * of their accounts kept; `user`, a nickname you gave them, which shows in place of the names their accounts go by.
+ */
+export type NameSource = 'network' | 'merge' | 'user';
+
+/**
+ * One way to reach a chat (docs/chats.md): a conversation and one of your accounts in it. A person reached from two of
+ * your accounts in one conversation has two routes there.
+ */
+export interface ChatRoute {
+  conversationId: string;
+  accountId: string;
+  network: Network;
+  /** Their identity in the conversation (a direct one), null in a group. */
+  theirIdentityId: string | null;
+  /** Your identity on that account. */
+  myIdentityId: string | null;
+  lastTs: number | null;
+  unread: number;
+  mentions: number;
+}
+
+/**
+ * A chat as one thing (docs/chats.md): `person:<id>`, every direct conversation with someone, or a conversation id on
+ * its own. `route` is where a message goes when the sender does not say: the route you last chose, while it still
+ * exists, else the one of the latest message.
+ */
+export interface ChatView {
+  id: string;
+  kind: 'person' | 'conversation';
+  personId: string | null;
+  conversationId: string | null;
+  name: string;
+  nameSource: NameSource | null;
+  routes: ChatRoute[];
+  route: { conversationId: string; accountId: string; why: 'chosen' | 'latest' } | null;
 }
 
 /** One of your accounts observing a space or conversation, with its read state. */

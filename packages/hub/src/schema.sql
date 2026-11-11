@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS person (
   starred    INTEGER NOT NULL DEFAULT 0,      -- VIP: always notify
   is_self    INTEGER NOT NULL DEFAULT 0,
   manual     INTEGER NOT NULL DEFAULT 0,      -- the user merged or renamed it; ingest won't touch the name
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  name_source TEXT NOT NULL DEFAULT 'network' -- network | merge | user (a nickname you gave): P.NameSource
 );
 
 CREATE TABLE IF NOT EXISTS identity (
@@ -272,6 +273,16 @@ CREATE TABLE IF NOT EXISTS place_pref (
   open      INTEGER NOT NULL DEFAULT 0,
   railed    INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (kind, id)
+);
+
+-- Which route a chat sends through when you do not say (docs/chats.md): the one you last chose. A chat is
+-- 'person:<id>' or a conversation id; a route is a conversation and one of your accounts in it. Read against the
+-- routes the chat has now, so one that went away (a split, an account removed) is passed over, not followed.
+CREATE TABLE IF NOT EXISTS chat_route (
+  chat_id         TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  account_id      TEXT NOT NULL,
+  set_at          INTEGER NOT NULL
 );
 
 -- Categories are questions; scores are a provider's answers; overrides are yours and always win.

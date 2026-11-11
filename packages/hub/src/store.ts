@@ -139,7 +139,7 @@ const PRESENCE_STATES = new Set<string>(['online', 'idle', 'dnd', 'offline']);
 const PRESENCE_DEVICES = new Set<string>(['desktop', 'mobile', 'web']);
 
 /** Bump when a migration step changes without schema.sql changing, so the database is copied before it runs. */
-const MIGRATIONS = 2;
+const MIGRATIONS = 3;
 
 export class Store {
   readonly db: Database;
@@ -186,6 +186,7 @@ export class Store {
       this.addColumns('category', { threshold: 'REAL' });
       this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL' });
       this.addColumns('visit', { depth: 'INTEGER' });
+      this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'" });
       const oldTriage = this.setAsideTriage();
       const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
       this.db.exec(schema);
@@ -194,6 +195,7 @@ export class Store {
       if (broadcastsUnknown) this.markBroadcasts();
       this.adoptOldReactions(reactionsBefore);
       this.clearStars();
+      this.sourceNames();
       this.db.query(`INSERT INTO meta (key, value) VALUES ('schema_sig', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(sig);
     })();
     timer.step('migrations');
@@ -228,6 +230,26 @@ export class Store {
     const n = this.db.query('UPDATE person SET starred = 0 WHERE starred != 0').run().changes;
     if (n) console.log(`stars left the app: cleared ${n} star${n === 1 ? '' : 's'}`);
     this.db.query(`INSERT INTO meta (key, value) VALUES ('stars_cleared', ?)`).run(String(Date.now()));
+  }
+
+  /**
+   * Where each name came from, once, for people from before it was kept (2026-11-10): `manual` said only "merged or
+   * renamed by you". A merged or renamed person whose name one of their accounts goes by (display name or handle) is
+   * taken as `merge`, any other as a nickname of yours (`user`); everyone else keeps `network`.
+   */
+  private sourceNames() {
+    if (this.db.query(`SELECT 1 FROM meta WHERE key = 'name_source_set'`).get()) return;
+    const r = this.db
+      .query(
+        `UPDATE person SET name_source = CASE WHEN EXISTS (
+           SELECT 1 FROM identity i WHERE i.person_id = person.id
+             AND (lower(trim(person.name)) = lower(trim(i.display_name)) OR ltrim(lower(trim(person.name)), '@') = ltrim(lower(trim(i.handle)), '@'))
+         ) THEN 'merge' ELSE 'user' END
+         WHERE manual = 1 AND is_self = 0 AND name_source = 'network'`,
+      )
+      .run();
+    if (r.changes) console.log(`names: where ${r.changes} merged or renamed ${r.changes === 1 ? 'name' : 'names'} came from`);
+    this.db.query(`INSERT INTO meta (key, value) VALUES ('name_source_set', ?)`).run(String(Date.now()));
   }
 
   /** backups/pre-migrate-<time>.sqlite next to the database, the newest five kept. Not for an in-memory database. */
@@ -1271,7 +1293,13 @@ export class Store {
     if (intoId === fromId) return;
     const tx = this.db.transaction(() => {
       this.db.query('UPDATE identity SET person_id = ? WHERE person_id = ?').run(intoId, fromId);
-      this.db.query('UPDATE person SET manual = 1 WHERE id = ?').run(intoId);
+      // A nickname on either side stays a nickname: the one kept, else the other's, which then names them both.
+      const nick = this.db.query(`SELECT id, name FROM person WHERE id IN (?, ?) AND name_source = 'user' ORDER BY id = ? DESC LIMIT 1`).get(intoId, fromId, intoId) as Row | null;
+      if (nick) this.db.query(`UPDATE person SET manual = 1, name = ?, name_source = 'user' WHERE id = ?`).run(nick.name, intoId);
+      else this.db.query(`UPDATE person SET manual = 1, name_source = 'merge' WHERE id = ?`).run(intoId);
+      // The route chosen for them goes along, unless the one kept had its own.
+      this.db.query(`UPDATE OR IGNORE chat_route SET chat_id = ? WHERE chat_id = ?`).run(`person:${intoId}`, `person:${fromId}`);
+      this.db.query(`DELETE FROM chat_route WHERE chat_id = ?`).run(`person:${fromId}`);
       this.db.query(`UPDATE OR IGNORE folder_item SET item_id = ? WHERE item_kind = 'person' AND item_id = ?`).run(intoId, fromId);
       this.db.query(`DELETE FROM folder_item WHERE item_kind = 'person' AND item_id = ?`).run(fromId);
       this.db.query(`UPDATE OR IGNORE notify_rule SET target = ? WHERE scope = 'person' AND target = ?`).run(intoId, fromId);
@@ -1316,9 +1344,12 @@ export class Store {
     return pid;
   }
 
-  /** `starred`, which clients from before stars left the app may still send, is ignored: Always notify is a person rule. */
-  updatePerson(id: string, patch: { name?: string; note?: string }) {
-    if (patch.name !== undefined) this.db.query('UPDATE person SET name = ?, manual = 1 WHERE id = ?').run(patch.name, id);
+  /**
+   * `starred`, which clients from before stars left the app may still send, is ignored: Always notify is a person rule.
+   * A name given here is a nickname (`user`) unless `source` says otherwise (the demo names the people it merges).
+   */
+  updatePerson(id: string, patch: { name?: string; note?: string }, source: P.NameSource = 'user') {
+    if (patch.name !== undefined) this.db.query(`UPDATE person SET name = ?, manual = 1, name_source = ? WHERE id = ?`).run(patch.name, source, id);
     if (patch.note !== undefined) this.db.query('UPDATE person SET note = ? WHERE id = ?').run(patch.note, id);
     this.dirty.persons.add(id);
   }
@@ -2003,7 +2034,7 @@ export class Store {
 
   personView(r: Row, identityIds?: string[]): P.PersonView {
     const ids = identityIds ?? (this.db.query('SELECT id FROM identity WHERE person_id = ?').all(r.id) as Row[]).map((x) => x.id);
-    return { id: r.id, name: r.name, avatar: r.avatar_url ? this.media(r.avatar_url, null) : null, starred: false, isSelf: !!r.is_self, identityIds: ids };
+    return { id: r.id, name: r.name, avatar: r.avatar_url ? this.media(r.avatar_url, null) : null, starred: false, isSelf: !!r.is_self, identityIds: ids, nameSource: (r.name_source ?? 'network') as P.NameSource };
   }
 
   spaceView(r: Row, accountIds?: string[], mute?: string | null): P.SpaceView {
@@ -2495,7 +2526,7 @@ export class Store {
   }
 
   /** Every direct conversation with a person, merged into one timeline. */
-  personTimeline(personId: string, beforeTs: number | null, limit: number): P.MessagePage & { conversationIds: string[] } {
+  personTimeline(personId: string, before: number | { ts: number; id: string | null } | null, limit: number): P.MessagePage & { conversationIds: string[] } {
     const convs = (
       this.db
         .query(
@@ -2504,14 +2535,44 @@ export class Store {
         )
         .all(personId) as Row[]
     ).map((r) => r.id);
+    return this.mergedTimeline(convs, typeof before === 'number' ? { ts: before, id: null } : before, limit);
+  }
+
+  /**
+   * Several conversations as one timeline, newest first in pages. `before` is the oldest message held: its time, and
+   * its id when known, so a message sharing that time in another conversation is not skipped (chats.ts parseCursor).
+   */
+  mergedTimeline(convs: string[], before: { ts: number; id: string | null } | null, limit: number): P.MessagePage & { conversationIds: string[] } {
     if (!convs.length) return { messages: [], identities: [], hasMore: false, conversationIds: [] };
     const ph = convs.map(() => '?').join(',');
-    const rows = this.db
-      .query(`SELECT * FROM message WHERE conversation_id IN (${ph}) AND ts < ? ORDER BY ts DESC LIMIT ?`)
-      .all(...convs, beforeTs ?? Number.MAX_SAFE_INTEGER, limit + 1) as Row[];
+    const ts = before?.ts ?? Number.MAX_SAFE_INTEGER;
+    const rows = (
+      before?.id
+        ? this.db.query(`SELECT * FROM message WHERE conversation_id IN (${ph}) AND (ts < ? OR (ts = ? AND id < ?)) ORDER BY ts DESC, id DESC LIMIT ?`).all(...convs, ts, ts, before.id, limit + 1)
+        : this.db.query(`SELECT * FROM message WHERE conversation_id IN (${ph}) AND ts < ? ORDER BY ts DESC, id DESC LIMIT ?`).all(...convs, ts, limit + 1)
+    ) as Row[];
     const hasMore = rows.length > limit;
-    const msgs = this.messageViews(rows.slice(0, limit).reverse());
-    return { messages: msgs, identities: this.identitiesOf(msgs), hasMore, conversationIds: convs };
+    const page = rows.slice(0, limit).reverse();
+    const msgs = this.messageViews(page);
+    // The messages replies point at, so quotes render.
+    const replyIds = [...new Set(msgs.map((m) => m.replyToId).filter((x): x is string => !!x && !page.some((p) => p.id === x)))];
+    const quoted = replyIds.length ? this.messageViews(this.db.query(`SELECT * FROM message WHERE id IN (${replyIds.map(() => '?').join(',')})`).all(...replyIds) as Row[]) : [];
+    return { messages: msgs, identities: this.identitiesOf([...msgs, ...quoted]), hasMore, conversationIds: convs, ...(quoted.length ? { quoted } : {}) } as P.MessagePage & { conversationIds: string[] };
+  }
+
+  /**
+   * Your nickname for someone, or none (null): their name goes back to what their accounts say, the one they wrote in
+   * most recently, and a person of one account follows that account's name again.
+   */
+  setNickname(id: string, name: string | null) {
+    if (name !== null) return this.updatePerson(id, { name });
+    const ids = this.db.query('SELECT display_name, handle, native_id, avatar_url FROM identity WHERE person_id = ? ORDER BY updated_at DESC').all(id) as Row[];
+    if (!ids.length) return;
+    const i = ids[0];
+    const name0 = i.display_name ?? i.handle ?? i.native_id;
+    if (ids.length === 1) this.db.query(`UPDATE person SET name = ?, manual = 0, name_source = 'network' WHERE id = ?`).run(name0, id);
+    else this.db.query(`UPDATE person SET name = ?, name_source = 'merge' WHERE id = ?`).run(name0, id);
+    this.dirty.persons.add(id);
   }
 
   /** By person, or by identity for someone who is only a name in a channel so far. */

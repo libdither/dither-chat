@@ -2475,7 +2475,8 @@ export function applyDemoOverlay(store: Store) {
   const merge = (name: string, ...ids: [P.Network, P.IdentityFact][]) => {
     const [first, ...rest] = ids.map(([n, i]) => personOf(n, i));
     for (const r of rest) store.mergePersons(first, r);
-    store.updatePerson(first, { name });
+    // The name a merge settled on, not a nickname: theirs show beside it only where you gave one.
+    store.updatePerson(first, { name }, 'merge');
     return first;
   };
   const alice = merge('Alice Chen', ['signal', S.alice], ['discord', D.alice], ['matrix', M.alice], ['whatsapp', W.alice], ['telegram', TG.alice]);

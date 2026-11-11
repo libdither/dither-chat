@@ -3,6 +3,7 @@ import { createHmac } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
+import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, parseCursor } from './chats.ts';
 import { ATTACHMENT_LIMITS, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, RETENTION_GUARDED, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { ACCOUNT_COLORS, type Store } from './store.ts';
@@ -42,6 +43,8 @@ import { Adding, linksOf, requestHeld, requestViews } from './add.ts';
 
 
 type ClientData = { kind: 'client' };
+/** What a send carries (POST /api/conversations/:id/send, and a chat's /messages). */
+type SendBody = { body?: string; accountId?: string; replyTo?: string; attachments?: string[]; clientId?: string };
 /** A browser's live view, carried to the account's VNC socket here, or (remote accounts) to dither-accounts' socket for it. */
 type LiveViewData = { kind: 'liveview'; accountId: string; socket?: string; url?: string; vnc?: Socket<unknown>; up?: WebSocket; queue: Uint8Array[]; closed?: boolean };
 
@@ -689,7 +692,56 @@ export class HubServer {
       this.flush();
       return ok({ personId });
     }
-    if ((m = path.match(/^\/api\/persons\/([\w-]+)\/timeline$/))) return ok(s.personTimeline(m[1], num('before'), Math.min(num('limit') ?? 60, 200)));
+    // Chats (chats.ts, docs/chats.md): a person or a conversation as one thing, whichever routes carry it.
+    if ((m = path.match(/^\/api\/chats\/([\w:%-]+)(\/messages|\/read)?$/))) {
+      const ref = chatRef(s, decodeURIComponent(m[1]));
+      if (!ref) return bad('no such chat', 404);
+      const id = chatIdOf(ref);
+      const convs = () => [...new Set(chatRoutes(s, ref).map((r) => r.conversationId))];
+      if (!m[2] && method === 'GET') return ok(chatView(s, ref));
+      if (!m[2] && method === 'PATCH') {
+        const b = await body<{ route?: { conversationId?: unknown; accountId?: unknown } | null; name?: unknown }>();
+        if (b.route !== undefined) {
+          const r = b.route === null ? null : { conversationId: String(b.route.conversationId ?? ''), accountId: String(b.route.accountId ?? '') };
+          if (!chooseRoute(s, ref, r)) return bad('that is not a route of this chat', 409);
+        }
+        if (b.name !== undefined) {
+          if (ref.kind !== 'person') return bad('a conversation is named on its network');
+          const name = typeof b.name === 'string' ? b.name.trim().slice(0, 200) : null;
+          if (b.name !== null && !name) return bad('which name?');
+          s.setNickname(ref.personId, name);
+          this.flush();
+        }
+        return ok(chatView(s, ref));
+      }
+      if (m[2] === '/messages' && method === 'GET') {
+        // A person's chat is their person timeline, so live events and sync (journal.ts) know it by the same key.
+        const before = parseCursor(url.searchParams.get('before'));
+        const limit = Math.min(num('limit') ?? 60, 200);
+        return ok(ref.kind === 'person' ? s.personTimeline(ref.personId, before, limit) : s.mergedTimeline([ref.conversationId], before, limit));
+      }
+      if (m[2] === '/messages' && method === 'POST') {
+        const b = await body<SendBody & { route?: { conversationId?: string; accountId?: string } }>();
+        const routes = chatRoutes(s, ref);
+        // Said by the sender; else a reply goes where the message it answers is; else the chat's route.
+        const asked = b.route ? routes.find((r) => r.conversationId === b.route!.conversationId && (!b.route!.accountId || r.accountId === b.route!.accountId)) : undefined;
+        if (b.route && !asked) return bad('that is not a route of this chat', 409);
+        const replied = !asked && b.replyTo ? s.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', b.replyTo) : null;
+        const replyRoute = replied ? routes.find((r) => r.conversationId === replied.conversation_id) : undefined;
+        const r = asked ?? replyRoute ?? defaultRoute(s, id, routes);
+        if (!r) return bad('nowhere to send this', 409);
+        const { route: _, ...rest } = b;
+        return this.sendOnce(r.conversationId, { ...rest, accountId: r.accountId });
+      }
+      if (m[2] === '/read' && method === 'POST') {
+        const b = await body<{ upToTs?: number }>();
+        for (const c of convs()) this.readConversation(c, b.upToTs ?? Date.now());
+        this.flush();
+        return ok();
+      }
+      return bad('not found', 404);
+    }
+    if ((m = path.match(/^\/api\/persons\/([\w-]+)\/timeline$/))) return ok(s.personTimeline(m[1], parseCursor(url.searchParams.get('before')), Math.min(num('limit') ?? 60, 200)));
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/notify$/))) return ok(this.triage.effectiveLevel(m[1]));
     // About and settings (about.ts, docs/group-settings.md). GET reads, POST changes one thing.
     if ((m = path.match(/^\/api\/(conversations|spaces)\/([\w-]+)\/about$/))) {
@@ -826,32 +878,7 @@ export class HubServer {
         return fail(e);
       }
     }
-    if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/send$/)) && method === 'POST') {
-      const b = await body<{ body?: string; accountId?: string; replyTo?: string; attachments?: string[]; clientId?: string }>();
-      // A send retried after its answer was lost goes out once: the retry gets the first one's answer.
-      const key = typeof b.clientId === 'string' && b.clientId ? `${m[1]}|${b.clientId.slice(0, 64)}` : null;
-      const now = Date.now();
-      for (const [k, v] of this.sends) if (now - v.at > 15 * 60_000) this.sends.delete(k);
-      const earlier = key ? this.sends.get(key) : undefined;
-      if (earlier) return (await earlier.done).clone();
-      const done = this.sendNow(m[1], b);
-      if (key) this.sends.set(key, { at: now, done });
-      try {
-        const res = await done;
-        if (key && !res.ok) this.sends.delete(key);
-        return res.clone();
-      } catch (e) {
-        // The adapter took it and then went quiet: it may well have gone out. A retry with the same id gets this
-        // answer rather than a second copy; a new send (a new id) is the person's call.
-        if (key && unknownOutcome(e)) {
-          const answer = Response.json({ error: 'The network did not answer in time. It may have been sent: look before sending it again.', unknown: true }, { status: 504 });
-          this.sends.set(key, { at: now, done: Promise.resolve(answer) });
-          return answer.clone();
-        }
-        if (key) this.sends.delete(key);
-        throw e;
-      }
-    }
+    if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/send$/)) && method === 'POST') return this.sendOnce(m[1], await body<SendBody>());
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/forward$/)) && method === 'POST') {
       const b = await body<P.ForwardRequest>();
       const r = await forwardMessage(
@@ -889,13 +916,7 @@ export class HubServer {
     }
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/read$/)) && method === 'POST') {
       const b = await body<{ upToTs?: number }>();
-      const targets = s.markRead(m[1], b.upToTs ?? Date.now());
-      const conv = s.nativeOf('conversation', m[1]);
-      // An open message request: reading it here tells the sender nothing until it is accepted (add.ts).
-      for (const t of requestHeld(s.db, m[1]) ? [] : targets) {
-        if (conv && t.upTo && this.sup.online(t.accountId))
-          this.sup.command(t.accountId, { t: 'markRead', conversation: conv.nativeId, upTo: t.upTo }).catch(() => {});
-      }
+      this.readConversation(m[1], b.upToTs ?? Date.now());
       this.flush();
       return ok();
     }
@@ -1329,7 +1350,45 @@ export class HubServer {
     return bad('not found', 404);
   }
 
-  private async sendNow(conversationId: string, b: { body?: string; accountId?: string; replyTo?: string; attachments?: string[]; clientId?: string }): Promise<Response> {
+  /** Read up to a time, here and on the network through each account in it. */
+  private readConversation(conversationId: string, upToTs: number) {
+    const s = this.store;
+    const targets = s.markRead(conversationId, upToTs);
+    const conv = s.nativeOf('conversation', conversationId);
+    // An open message request: reading it here tells the sender nothing until it is accepted (add.ts).
+    for (const t of requestHeld(s.db, conversationId) ? [] : targets) {
+      if (conv && t.upTo && this.sup.online(t.accountId))
+        this.sup.command(t.accountId, { t: 'markRead', conversation: conv.nativeId, upTo: t.upTo }).catch(() => {});
+    }
+  }
+
+  /** A send retried after its answer was lost goes out once: the retry gets the first one's answer. */
+  private async sendOnce(conversationId: string, b: SendBody): Promise<Response> {
+    const key = typeof b.clientId === 'string' && b.clientId ? `${conversationId}|${b.clientId.slice(0, 64)}` : null;
+    const now = Date.now();
+    for (const [k, v] of this.sends) if (now - v.at > 15 * 60_000) this.sends.delete(k);
+    const earlier = key ? this.sends.get(key) : undefined;
+    if (earlier) return (await earlier.done).clone();
+    const done = this.sendNow(conversationId, b);
+    if (key) this.sends.set(key, { at: now, done });
+    try {
+      const res = await done;
+      if (key && !res.ok) this.sends.delete(key);
+      return res.clone();
+    } catch (e) {
+      // The adapter took it and then went quiet: it may well have gone out. A retry with the same id gets this
+      // answer rather than a second copy; a new send (a new id) is the person's call.
+      if (key && unknownOutcome(e)) {
+        const answer = Response.json({ error: 'The network did not answer in time. It may have been sent: look before sending it again.', unknown: true }, { status: 504 });
+        this.sends.set(key, { at: now, done: Promise.resolve(answer) });
+        return answer.clone();
+      }
+      if (key) this.sends.delete(key);
+      throw e;
+    }
+  }
+
+  private async sendNow(conversationId: string, b: SendBody): Promise<Response> {
     const s = this.store;
     const ok = (x: unknown) => Response.json(x);
     const bad = (msg: string, status = 400) => Response.json({ error: msg }, { status });
