@@ -2584,15 +2584,19 @@ export class Store {
 
   /** Every direct conversation with a person, merged into one timeline. */
   personTimeline(personId: string, before: number | { ts: number; id: string | null } | null, limit: number): P.MessagePage & { conversationIds: string[] } {
-    const convs = (
+    return this.mergedTimeline(this.personDirects(personId), typeof before === 'number' ? { ts: before, id: null } : before, limit);
+  }
+
+  /** Every direct conversation with a person: their chat (chats.ts). */
+  personDirects(personId: string): string[] {
+    return (
       this.db
         .query(
           `SELECT DISTINCT c.id FROM conversation c JOIN participant p ON p.conversation_id = c.id JOIN identity i ON i.id = p.identity_id
            WHERE c.shape = 'direct' AND i.person_id = ?`,
         )
         .all(personId) as Row[]
-    ).map((r) => r.id);
-    return this.mergedTimeline(convs, typeof before === 'number' ? { ts: before, id: null } : before, limit);
+    ).map((r) => r.id as string);
   }
 
   /**
@@ -2718,6 +2722,11 @@ export class Store {
   /** Conversations in, or under, places whose name matches: channels, rooms, groups, whole communities. */
   conversationsNamed(name: string): string[] {
     if (/^cnv_/.test(name)) return [name];
+    // A person's id: every chat with them (the header's search on their page, all chats together).
+    if (/^per_/.test(name)) {
+      const directs = this.personDirects(name);
+      if (directs.length) return directs;
+    }
     const like = `%${likeEscape(name)}%`;
     const out = new Set((this.db.query(`SELECT id FROM conversation WHERE name LIKE ? ESCAPE '\\' OR id = ?`).all(like, name) as Row[]).map((r) => r.id as string));
     const spaces = (this.db.query(`SELECT id FROM space WHERE name LIKE ? ESCAPE '\\' OR id = ?`).all(like, name) as Row[]).map((r) => r.id as string);

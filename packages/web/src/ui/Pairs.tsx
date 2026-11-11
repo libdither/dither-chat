@@ -1,10 +1,12 @@
 /**
  * A person you reach through several of your accounts (docs/chats.md): every pair of your account and theirs is a
- * route, and the person page shows them as one chat.
+ * route, and their chat is one page over them all. It is the page any conversation has (Timeline.tsx's PersonChat),
+ * and these are the parts it adds.
  *
- * All chats together by default: each run of one pair is a chunk, with a label at its top (the network's icon, their
- * name there, yours) and a bar down its side. The dropdown on the name's line (press and drag to a pair, or click)
- * shows one pair's history alone. The message box's line says where a message goes, and on a computer switches it.
+ * All chats together by default: messages look as they do anywhere, with the network on each picture, and a small
+ * label where the pair changes (the network's icon, their name there, yours). The dropdown under the name (press and
+ * drag to a pair, or click) shows one pair's history alone. The message box's line says where a message goes, and on a
+ * computer switches it.
  *
  * Where a message goes, first to last: the pair you picked on this page; where you came from (from a Discord group on
  * one of your accounts, the DM through that account); the route you chose last time (the hub keeps it, chats.ts);
@@ -153,7 +155,7 @@ function Token({ label, options, onPick, picture }: { label: string; options: { 
     );
   if (options.length === 2)
     return (
-      <button class="pair-token" title={`Switch to ${options[(cur + 1) % 2].label}`} onClick={() => onPick(options[(cur + 1) % 2].id)}>
+      <button class="pair-token" data-track="send through" title={`Switch to ${options[(cur + 1) % 2].label}`} onClick={() => onPick(options[(cur + 1) % 2].id)}>
         {picture}
         {label}
       </button>
@@ -162,7 +164,7 @@ function Token({ label, options, onPick, picture }: { label: string; options: { 
     <Menu
       up
       trigger={(toggle) => (
-        <button class="pair-token" title="Choose" onClick={toggle} aria-haspopup="menu">
+        <button class="pair-token" data-track="send through" title="Choose" onClick={toggle} aria-haspopup="menu">
           {picture}
           {label}
         </button>
@@ -173,6 +175,7 @@ function Token({ label, options, onPick, picture }: { label: string; options: { 
           {options.map((o) => (
             <button
               class={`menu-item ${o.label === label ? 'on' : ''}`}
+              data-track="send through (choice)"
               onClick={() => {
                 onPick(o.id);
                 close();
@@ -189,7 +192,7 @@ function Token({ label, options, onPick, picture }: { label: string; options: { 
 }
 
 /** "Message Kit (kit.exe) from zyansheep": both names switch. In the box while it is empty, on its edge once typed in. */
-export function PairLead({ person, personId, directs, focus }: { person: P.PersonView; personId: string; directs: P.ConversationView[]; focus: P.ConversationView }) {
+export function PairLead({ person, directs, focus, onFocus }: { person: P.PersonView; directs: P.ConversationView[]; focus: P.ConversationView; onFocus: (convId: string) => void }) {
   const pairs = directs.map(pairOf);
   const cur = pairOf(focus);
   // Theirs you can reach, each once; picking one keeps your account when it talks with them too.
@@ -198,7 +201,7 @@ export function PairLead({ person, personId, directs, focus }: { person: P.Perso
   const pickTheirs = (identityId: string) => {
     const withThem = pairs.filter((p) => p.theirs?.id === identityId);
     const next = withThem.find((p) => p.acc?.id === cur.acc?.id) ?? withThem.sort((a, b) => (b.conv.lastMessageAt ?? 0) - (a.conv.lastMessageAt ?? 0))[0];
-    if (next) focusPair(personId, focus.id, next.conv.id);
+    if (next) onFocus(next.conv.id);
   };
   const mine = pairs.filter((p) => p.theirs?.id === cur.theirs?.id);
   const theirLabel = (p: Pair) => `${netName(p.conv.network)} ${theirName(p)}`;
@@ -219,7 +222,7 @@ export function PairLead({ person, personId, directs, focus }: { person: P.Perso
         label={myName(cur)}
         picture={<MyPicture p={cur} size={16} />}
         options={mine.map((p) => ({ id: p.conv.id, label: myName(p), picture: <MyPicture p={p} size={16} /> }))}
-        onPick={(id) => focusPair(personId, focus.id, id)}
+        onPick={onFocus}
       />
     </span>
   );
@@ -258,10 +261,10 @@ export function Nickname({ person, onOpen }: { person: P.PersonView; onOpen: () 
     );
   return (
     <>
-      <button class="conv-head-name" title={`${person.name}'s profile`} onClick={onOpen}>
+      <button class="conv-head-name" data-track="name" title={`${person.name}'s profile`} onClick={onOpen}>
         {person.name}
       </button>
-      <button class="pair-nick-edit" title={person.nameSource === 'user' ? 'Change or remove the nickname (only you see it)' : 'Give them a nickname (only you see it)'} aria-label="Nickname" onClick={() => setEditing(true)}>
+      <button class="pair-nick-edit" data-track="nickname" title={person.nameSource === 'user' ? 'Change or remove the nickname (only you see it)' : 'Give them a nickname (only you see it)'} aria-label="Nickname" onClick={() => setEditing(true)}>
         ✎
       </button>
     </>
@@ -276,6 +279,7 @@ export const viewOf = (personId: string, directs: P.ConversationView[]) => {
   const v = viewing.value[personId];
   return v && directs.some((d) => d.id === v) ? v : 'all';
 };
+export const setView = (personId: string, v: string) => void (viewing.value = { ...viewing.value, [personId]: v });
 
 /** A pair as a line: the network's icon, their name there, ⇄, yours. */
 function PairLine({ p, size = 16 }: { p: Pair; size?: number }) {
@@ -290,10 +294,10 @@ function PairLine({ p, size = 16 }: { p: Pair; size?: number }) {
 }
 
 /**
- * On the name's line: all chats, or one pair's. Press and drag down to a row and let go to pick it, or click to open
- * and click a row.
+ * Under the name, where any conversation says its network and your account: all chats, or one pair's. Press and drag
+ * down to a row and let go to pick it, or click to open and click a row. `view`: 'all' or the pair's conversation.
  */
-export function PairDropdown({ personId, directs, focus }: { personId: string; directs: P.ConversationView[]; focus: P.ConversationView }) {
+export function PairDropdown({ directs, view: v, onPick }: { directs: P.ConversationView[]; view: string; onPick: (view: string) => void }) {
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
   // The header clips what overflows it, so the list is placed on the page, under the button.
@@ -307,13 +311,12 @@ export function PairDropdown({ personId, directs, focus }: { personId: string; d
   };
   const press = useRef<{ x: number; y: number; moved: boolean } | null>(null);
   const pairs = directs.map(pairOf).sort((a, b) => a.conv.network.localeCompare(b.conv.network) || theirName(a).localeCompare(theirName(b)) || myName(a).localeCompare(myName(b)));
-  const v = viewOf(personId, directs) === 'all' ? 'all' : focus.id;
-  const cur = v === 'all' ? null : pairOf(directs.find((d) => d.id === v)!);
+  const shown = directs.find((d) => d.id === v);
+  const cur = shown ? pairOf(shown) : null;
   const pick = (id: string) => {
     setOpen(false);
     setHover(null);
-    viewing.value = { ...viewing.value, [personId]: id };
-    if (id !== 'all') focusPair(personId, focus.id, id);
+    onPick(id);
   };
   useEffect(() => {
     if (!open) return;
@@ -332,6 +335,7 @@ export function PairDropdown({ personId, directs, focus }: { personId: string; d
       <button
         ref={btn}
         class={`pair-dd-btn ${open ? 'open' : ''}`}
+        data-track="chats list"
         aria-haspopup="listbox"
         aria-expanded={open}
         title="Which chats to show. Press and drag to pick, or click"
@@ -373,7 +377,7 @@ export function PairDropdown({ personId, directs, focus }: { personId: string; d
         }}
       >
         {cur ? (
-          <PairLine p={cur} size={16} />
+          <PairLine p={cur} size={14} />
         ) : (
           <span class="pair-dd-all">
             All chats <span class="pair-dd-count">{directs.length}</span>
@@ -385,14 +389,14 @@ export function PairDropdown({ personId, directs, focus }: { personId: string; d
       </button>
       {open && (
         <div class="pair-dd-menu" role="listbox" aria-label="Show" style={at ? { left: `${at.left}px`, top: `${at.top}px` } : undefined}>
-          <button role="option" aria-selected={v === 'all'} data-pair-row="all" class={`pair-dd-row ${v === 'all' ? 'on' : ''} ${hover === 'all' ? 'hover' : ''}`} onClick={() => pick('all')}>
+          <button role="option" aria-selected={v === 'all'} data-pair-row="all" data-track="chats list (all)" class={`pair-dd-row ${v === 'all' ? 'on' : ''} ${hover === 'all' ? 'hover' : ''}`} onClick={() => pick('all')}>
             <span class="pair-dd-all">All chats together</span>
             <span class="pair-dd-count">{directs.length}</span>
           </button>
           {pairs.map((p) => {
             const unread = p.conv.vantages.reduce((n, x) => n + x.unread, 0);
             return (
-              <button role="option" aria-selected={v === p.conv.id} data-pair-row={p.conv.id} class={`pair-dd-row ${v === p.conv.id ? 'on' : ''} ${hover === p.conv.id ? 'hover' : ''}`} onClick={() => pick(p.conv.id)}>
+              <button role="option" aria-selected={v === p.conv.id} data-pair-row={p.conv.id} data-track="chats list (pair)" class={`pair-dd-row ${v === p.conv.id ? 'on' : ''} ${hover === p.conv.id ? 'hover' : ''}`} onClick={() => pick(p.conv.id)}>
                 <PairLine p={p} size={18} />
                 <span class="pair-dd-net">{netName(p.conv.network)}</span>
                 {unread > 0 && <span class="pair-dd-unread">{unread}</span>}
@@ -405,12 +409,12 @@ export function PairDropdown({ personId, directs, focus }: { personId: string; d
   );
 }
 
-/** The top of a chunk: whose accounts these messages went between. Click to send there. */
+/** Where the pair changes in all chats together: whose accounts the messages below went between. Click to send there. */
 export function ChunkHead({ p, focused, onPick }: { p: Pair; focused: boolean; onPick: () => void }) {
   return (
-    <div class={`pair-chunk-head ${focused ? 'on' : 'off'}`}>
-      <button title={focused ? `Sending as ${myName(p)} to ${theirName(p)}` : `Send as ${myName(p)} to ${theirName(p)}`} onClick={onPick}>
-        <PairLine p={p} size={16} />
+    <div class={`pair-chunk-head ${focused ? 'on' : 'off'}`} data-track-area="message">
+      <button data-track="pair label" title={focused ? `Sending as ${myName(p)} to ${theirName(p)}` : `Send as ${myName(p)} to ${theirName(p)}`} onClick={onPick}>
+        <PairLine p={p} size={14} />
         {focused && <span class="pair-chunk-sending">sending here</span>}
       </button>
     </div>

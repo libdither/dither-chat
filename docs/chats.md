@@ -4,8 +4,8 @@ Someone you talk with on several networks, or through several of your own accoun
 them is a **route**: a conversation, plus one of your accounts in it. Kit with seven accounts, who talks with four of
 yours, comes to eight routes, and the person page shows them as one history.
 
-Code: `packages/hub/src/chats.ts` (the hub), `packages/web/src/ui/Pairs.tsx` (the person page), and the person page's
-parts of `ui/Timeline.tsx` (`PairsPersonPane`, the chunk labels in `Timeline`).
+Code: `packages/hub/src/chats.ts` (the hub), `packages/web/src/ui/Pairs.tsx` (the parts the page adds), and
+`PersonChat` in `ui/Timeline.tsx` (the page).
 
 ## The model, and why it is small
 
@@ -42,7 +42,9 @@ The person page adds two guesses in front of that, because it knows things the h
 3. the route you chose (from the hub);
 4. the pair of the latest message.
 
-Choosing a pair (the dropdown, a chunk's label, the message box's line, a reply) stores it as the chat's route with
+Opened as one of their DMs, the page sends through that DM, whatever was chosen.
+
+Choosing a pair (the list under the name, a label in the timeline, the message box's line, a reply) stores it as the chat's route with
 `PATCH /api/chats/person:<id>`, so the next visit and your other devices start there. A route that no longer exists
 (after a split, or with an account removed) is passed over, not followed.
 
@@ -89,23 +91,35 @@ A person's timeline spans conversations, so two messages can share a millisecond
 skipped the other one. `before` is now `<ts>:<message id>`, the oldest message held. Messages are ordered by
 `(ts, id)`, and a page holds what comes before that pair. A cursor with only a time still works the old way.
 
-## The person page
+## The page
 
-With more than one route, the person page (`PairsPersonPane`) shows:
+A chat over several routes is the page any conversation has (`PersonChat` uses the same header, timeline and message
+box as `ConversationPane`). It is reached two ways, and both are the one page:
 
-- **All chats together** by default. Each run of one pair is a chunk, with a small label at its top (the network's
-  icon, their name there ⇄ yours) and a bar down its side. The bar is coloured for the pair you are sending through,
-  with "sending here" on its label. A chunk also starts on a new day. Clicking a label sends through that pair.
-- **Pictures** in the timeline are the network's icon rather than a profile picture. **Names** are the accounts' own
-  names (yours too: `zyn.alt`, `@zyansheep`), unless you gave them a nickname (see [Names](#names)).
-- **The dropdown** beside the name: "All chats 8", or the pair shown alone. Press and drag down to a row and let go, or
-  click and click again. Picking a pair shows its history alone and sends through it.
+- the person, from People: **all chats together**, or one pair picked from the list;
+- one of their DMs, from the inbox or anywhere else: that pair alone. Picking another pair from the list opens that
+  DM, and "All chats together" opens the person.
+
+What it adds to a conversation's page:
+
+- **The list under the name**, where a conversation says its network and your account: "All chats 8", or the pair
+  shown (`kit.exe ⇄ zyansheep`). Press and drag down to a row and let go, or click and click again. Picking a pair
+  shows its history alone and sends through it. It takes the place of the header's old All chats button.
 - **The name** has a pencil, shown on hover, for the nickname.
+- **Messages** look as they do anywhere: the person's picture, the usual grouping. **Names** are the accounts' own
+  (yours too: `zyn.alt`, `@zyansheep`), unless you gave them a nickname (see [Names](#names)). Only the pair's two
+  accounts are renamed, so a bot in a DM keeps its name.
+- **All chats together** puts the network's badge on each picture, as rows in the lists have, and a small label where
+  the pair changes (the network's icon, their name there ⇄ yours, and "sending here" on the pair in use). Clicking a
+  label sends through that pair. A long run of one pair looks like that conversation's own page.
 - **The message box's line**, "Message Kit (kit.exe) from zyn.alt", takes the placeholder's place. Each name switches:
   two options toggle, more open a menu. On a phone the line only says where the message goes ("To kit.exe from zyn.alt")
-  and can't be tapped. Tapping the box is for typing, so the pair is switched from the dropdown.
+  and can't be tapped. Tapping the box is for typing, so the pair is switched from the list.
+- **The header's buttons** are a conversation's: profile, call, search, notifications, details. With all chats
+  together they act on every chat: search is `in:<person id>` (the hub reads a person's id as every direct
+  conversation with them), and a notification rule is set on each. A call goes through the pair in use.
 
-With one route, the person page is a plain conversation, as before.
+With one route, a person's page is that conversation's page.
 
 ## Not yet
 
