@@ -159,7 +159,9 @@ Conversations section.
 - **At most 20 rows.** A 21st takes the place of the row that comes last; if it would be last itself it is not shown
   (and reports no `shown`).
 - **A chat shows once.** An alert or a Conversation cancels the chat's list row, and a list row cancels the chat's
-  conversation notification. A clear cancels whichever is there.
+  conversation notification. A clear cancels whichever is there. The hub sends a push at the highest tier among the
+  unread lines it carries, so a list message arriving in a chat whose alert or Conversation is still unread comes as
+  that tier and only adds a line to the row that is there.
 - **The summary's upkeep.** It is posted with the first row and re-posted on every change, from the rows the system
   says are showing. The system adds and removes them asynchronously, so for five seconds the app goes by its own note
   of what it just posted or cancelled. Cancelling a summary cancels its children, so it goes only once no row is
