@@ -51,11 +51,11 @@ test('two of their accounts on one network: their account’s name, and no netwo
   expect(badgeDiffers(mo)).toBe(false);
 });
 
-test('two of your accounts with one of theirs: yours, as "as …"', () => {
+test('two of your accounts with one of theirs: yours, as "via …"', () => {
   const ravi = [r('a', 'discord', 'ravi_p', 'zyansheep'), r('b', 'discord', 'ravi_p', 'zyn.alt')];
   const t = tells(ravi[1], ravi);
   expect(t).toEqual({ network: false, theirs: false, mine: true });
-  expect(labelText(t, names('ravi_p', 'zyn.alt'))).toBe('as zyn.alt');
+  expect(labelText(t, names('ravi_p', 'zyn.alt'))).toBe('via zyn.alt');
   // The box says "from zyn.alt": their account is reached from two of yours.
   expect(leadTells(ravi[1], ravi)).toEqual({ network: false, theirs: false, mine: true });
   // Two of your accounts on a network: the badge's dots tell them apart.

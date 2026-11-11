@@ -56,12 +56,12 @@ export interface RouteNames {
 }
 
 /**
- * A route's label as text: `Signal`, `kit.work`, `as zyn.alt` or `kit.work ⇄ zyn.alt`, after the network's name when
+ * A route's label as text: `Signal`, `kit.work`, `via zyn.alt` or `kit.work ⇄ zyn.alt`, after the network's name when
  * networks mix (the page draws the network's icon there instead, so `withNetwork` is false for it). Empty for a chat of
  * one route.
  */
 export function labelText(t: Tells, n: RouteNames, withNetwork = true): string {
-  const who = t.theirs && t.mine ? `${n.theirs} ⇄ ${n.mine}` : t.theirs ? n.theirs : t.mine ? `as ${n.mine}` : '';
+  const who = t.theirs && t.mine ? `${n.theirs} ⇄ ${n.mine}` : t.theirs ? n.theirs : t.mine ? `via ${n.mine}` : '';
   if (!who) return t.network ? n.network : '';
   return t.network && withNetwork ? `${n.network} ${who}` : who;
 }

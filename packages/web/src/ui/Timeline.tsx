@@ -1399,7 +1399,7 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
         onReply={setReply}
         firstUnreadTs={unreadAt}
         focus={msg}
-        chat={{ selfName: self?.name, badge: badgeShows(directs), onFocus, onMissing }}
+        chat={{ selfName: self?.name, badge: view === 'all' && badgeShows(directs), onFocus, onMissing }}
       />
       <TypingBar convIds={shown.map((d) => d.id)} />
       {held ? (

@@ -117,12 +117,12 @@ route among the chat's routes, what tells it apart. Of the routes on the same ne
 
 - it is the only one: the **network** alone (`Signal`);
 - they differ in their account: **their account's name** there (`kit.work`);
-- they differ in yours: **your account's name** (`as zyn.alt`);
+- they differ in yours: **your account's name** (`via zyn.alt`);
 - both differ: both (`kit.work ⇄ zyn.alt`).
 
 The network's icon goes in front only when the chat spans more than one network. So Sam, on Signal and Matrix, has
 routes called Signal and Matrix; Mo, with two Discord accounts talking with one of yours, has `mo.codes` and
-`mo.draws`; Ravi, one Discord account talking with two of yours, has `as zyansheep` and `as zyn.alt`; Kit has all of
+`mo.draws`; Ravi, one Discord account talking with two of yours, has `via zyansheep` and `via zyn.alt`; Kit has all of
 these at once.
 
 What it adds to a conversation's page:
@@ -134,7 +134,7 @@ What it adds to a conversation's page:
   their name, yours, and "sending here") stood above each run.
 - **The picture's badge**, the same badge an inbox row has (the network, and dots for your account), only when it
   would differ between the chat's routes: more than one network, or more than one of your accounts on a network
-  (`badgeDiffers`). Mo's page has none.
+  (`badgeDiffers`). Mo's page has none, and neither has a page showing one route picked from the list.
 - **Under the name**, where a conversation says its network and your account: the networks' icons and "N chats", the
   button of the list. Press and drag down to a row and let go, or click and click again. The list keeps every route
   in full (their name ⇄ yours, the network, unread), the one place that does. Picking a route shows its history alone

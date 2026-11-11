@@ -65,7 +65,7 @@ export function routeTitle(c: P.ConversationView): string {
   return `Send as ${myName(p)} to ${theirName(p)} on ${netName(c.network)}`;
 }
 
-/** A route's label by the rule: `Signal`, `kit.work`, `as zyn.alt` or `kit.work ⇄ zyn.alt`, the network's icon first where networks mix. */
+/** A route's label by the rule: `Signal`, `kit.work`, `via zyn.alt` or `kit.work ⇄ zyn.alt`, the network's icon first where networks mix. */
 export function RouteLabel({ c, directs, size = 12 }: { c: P.ConversationView; directs: P.ConversationView[]; size?: number }) {
   const t = routeTells(c, directs);
   const p = pairOf(c);
@@ -439,9 +439,11 @@ export function PairDropdown({ directs, view: v, onPick }: { directs: P.Conversa
           <RouteLabel c={shown} directs={directs} size={12} />
         ) : (
           <span class="pair-dd-all">
-            {nets.map((n) => (
-              <NetGlyph network={n} size={12} />
-            ))}
+            <span class="pair-dd-nets">
+              {nets.map((n) => (
+                <NetBadge network={n} size={14} />
+              ))}
+            </span>
             <span>{directs.length} chats</span>
           </span>
         )}

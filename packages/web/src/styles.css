@@ -13261,7 +13261,13 @@ html.kb-open .ss-foot {
 .pair-dd-all {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+}
+/* The networks' badges, as a person's row in People has them. */
+.pair-dd-nets {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 .pair-dd-btn .route-label {
   overflow: hidden;
