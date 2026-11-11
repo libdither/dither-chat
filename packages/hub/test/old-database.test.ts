@@ -50,12 +50,14 @@ for (const name of readdirSync(fixtures).filter((f) => f.endsWith('.json')).map(
       writeFileSync(join(data, 'hub.sqlite'), Bun.gunzipSync(readFileSync(join(fixtures, `${name}.sqlite.gz`))), { mode: 0o600 });
       // What the old hub decided and what rules it held, read before this hub touches them.
       const old = new Database(join(data, 'hub.sqlite'), { readonly: true });
-      const decided = old.query('SELECT message_id AS id, decision, created_at FROM triage').all() as { id: string; decision: string; created_at: number }[];
+      // A hub from after the three tiers (#93) left decisions that are tiers already: they stay as they are.
+      const beforeTiers = !old.query(`SELECT 1 FROM meta WHERE key = 'tiers_at'`).get();
+      const decided = old.query(`SELECT message_id AS id, decision, ${beforeTiers ? 'NULL' : 'was'} AS was, created_at FROM triage`).all() as { id: string; decision: string; was: string | null; created_at: number }[];
       const ruled = (old.query('SELECT scope, target, level FROM notify_rule').all() as { scope: string; target: string | null; level: string }[]).map((r) => `${r.scope} ${r.target} ${r.level}`);
       const hadPolicy = !!old.query(`SELECT 1 FROM meta WHERE key = 'triage_policy'`).get();
       old.close();
       expect(decided.length).toBeGreaterThan(0);
-      expect(ruled.some((r) => r.endsWith(' smart'))).toBe(true);
+      if (beforeTiers) expect(ruled.some((r) => r.endsWith(' smart'))).toBe(true);
       const [port] = freePorts();
       const base = `http://127.0.0.1:${port}`;
       // None of the caller's hub settings (a manager's address, a model): a demo hub on the fixture alone.
@@ -118,6 +120,11 @@ for (const name of readdirSync(fixtures).filter((f) => f.endsWith('.json')).map(
             expect(r).toMatchObject({ decision: 'silent', was: null });
             continue;
           }
+          if (!beforeTiers) {
+            if (r.created_at === o.created_at) expect({ id: o.id, decision: r.decision, was: r.was }).toEqual({ id: o.id, decision: o.decision, was: o.was });
+            moved++;
+            continue;
+          }
           expect(r.was).toBe(o.decision);
           // Unless this hub decided on it again since (a message its queue still held).
           if (r.created_at !== o.created_at) continue;
@@ -128,8 +135,9 @@ for (const name of readdirSync(fixtures).filter((f) => f.endsWith('.json')).map(
         expect(moved).toBeGreaterThan(decided.length / 2);
         // Smart rules are gone; every other rule is as it was.
         const rules = (db.query('SELECT scope, target, level FROM notify_rule').all() as { scope: string; target: string | null; level: string }[]).map((r) => `${r.scope} ${r.target} ${r.level}`);
-        expect(rules.some((r) => r.endsWith(' smart'))).toBe(false);
-        for (const r of ruled.filter((x) => !x.endsWith(' smart'))) expect(rules).toContain(r);
+        // (The tiers' migration takes them out once; a hub from after it kept what it had.)
+        if (beforeTiers) expect(rules.some((r) => r.endsWith(' smart'))).toBe(false);
+        for (const r of ruled.filter((x) => !beforeTiers || !x.endsWith(' smart'))) expect(rules).toContain(r);
         // What the old model learned was three other chances: the hub started over with the two.
         if (hadPolicy) {
           const policy = JSON.parse((db.query(`SELECT value FROM meta WHERE key = 'triage_policy'`).get() as { value: string }).value);

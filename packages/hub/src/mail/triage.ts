@@ -158,7 +158,7 @@ export class MailTriage {
   quietWaitMs = MAIL_TRIAGE.quietWaitMs;
 
   constructor(private hub: MailHub) {
-    hub.store.addColumns('mail_triage', { quiet: 'INTEGER NOT NULL DEFAULT 0', was: 'TEXT' });
+    // Its columns from after mail_triage was first made come with MailStore's (store.ts MAIL_COLUMNS).
     hub.on('ingested', (e) => {
       if (e.live) this.arrived(e.messageIds);
       else this.sweepSoon();

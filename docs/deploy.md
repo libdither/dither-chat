@@ -88,7 +88,7 @@ at start). It copies the database every night at 04:00 (`DITHER_BACKUP_HOUR`) to
 `VACUUM INTO` from a separate process, and keeps the newest seven (`DITHER_BACKUP_KEEP`). After downtime it copies at
 the first chance. Copies you made yourself are never removed. Before opening a database with a schema it has not
 seen, the hub also copies it to `backups/pre-migrate-<time>.sqlite` (newest five kept), and every migration runs in
-one transaction.
+one transaction. Mail's schema files (`packages/hub/src/mail/schema*.sql`) count as the schema too.
 
 Every six hours it clears partial downloads from `media-cache/`. The cache itself is kept indefinitely: the media
 archive (`packages/hub/src/mediaarchive.ts`) fills it with every remote attachment soon after it arrives, because Discord's links
@@ -127,7 +127,12 @@ stop is not in it. Nothing waits on it or fails on it.
 CI starts the hub on databases older hubs left (`packages/hub/test/old-database.test.ts`, fixtures in
 `packages/hub/test/fixtures/old-db/`): it must copy the database aside, migrate, log that line and read back what the old
 hub stored. `bun scripts/old-db-fixture.ts <commit> <name>` makes another fixture from an older commit's demo hub
-(demo data only; it checks), when a migration should be tried from a new era.
+(demo data only; it checks), when a migration should be tried from a new era. `hub-2026-11-11` is the first with mail
+tables (main before #95): `packages/hub/test/mail-migrate.test.ts` opens each such fixture with MailStore and checks it
+ends up with a new database's columns, indexes and triggers, rows kept. A column added to a mail table after the table
+was first made goes in its CREATE TABLE and in `MAIL_COLUMNS` (`mail/store.ts`), which MailStore adds to an older
+table before the schema files run, since their indexes and triggers may name it (#95's index on `mail_text.cut` did,
+and the live hub could not start).
 
 Check a deployment with a private browser that trusts nothing extra:
 

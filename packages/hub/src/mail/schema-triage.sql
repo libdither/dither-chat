@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS mail_triage (
   quiet       INTEGER NOT NULL DEFAULT 0,       -- rated after a sync found it, not as it arrived: never notifies, never a line
   feedback    TEXT,                             -- 'drop': less like this; before the tiers, the level you voted it to
   feedback_at INTEGER,
-  created_at  INTEGER NOT NULL
+  created_at  INTEGER NOT NULL,
+  was         TEXT                              -- before the tiers: what it was rated (triage.ts toTiers); NULL after
 );
 CREATE INDEX IF NOT EXISTS mail_triage_thread ON mail_triage(thread_id);
 CREATE INDEX IF NOT EXISTS mail_triage_created ON mail_triage(created_at);
