@@ -12,6 +12,7 @@ import { Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
 import { openConv } from './Sidebar.tsx';
+import { Loading } from './Loader.tsx';
 
 const isSheet = () => matchMedia('(max-width: 820px), (pointer: coarse)').matches;
 
@@ -496,8 +497,8 @@ function Picker({ m, anchor, onClose }: { m: P.MessageView; anchor: DOMRect | nu
             </button>
           )}
           {grid}
-          {!!query && !hits.length && !rules.freeText && <div class="ep-none">{catalog ? 'Nothing matches that.' : 'Loading…'}</div>}
-          {!query && !catalog && !existingOnly && <div class="ep-none">Loading…</div>}
+          {!!query && !hits.length && !rules.freeText && (catalog ? <div class="ep-none">Nothing matches that.</div> : <Loading label="Loading…" />)}
+          {!query && !catalog && !existingOnly && <Loading label="Loading…" />}
         </div>
       </div>
 
@@ -612,7 +613,7 @@ function Reactors({ m, reactionKey, style, anchor, onClose }: { m: P.MessageView
             </div>
           );
         })}
-        {loading && <div class="reactor-more">Asking the network…</div>}
+        {loading && <Loading inline label="Asking the network…" />}
         {!loading && unknown > 0 && <div class="reactor-more">and {unknown} more</div>}
       </div>
     </>

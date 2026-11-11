@@ -6,6 +6,7 @@ import { db, go, markAllRead, patchPlaces, route, saveFolders } from '../state.t
 import { openMenu, type MenuEntry } from './ContextMenu.tsx';
 import { placeMenu } from './menus.tsx';
 import { arrangedRail, freezeOrder, organizing, sortOf } from '../arrange.ts';
+import { canIndex, startIndexing } from './Indexing.tsx';
 
 const randomId = () => 'fld_' + Math.random().toString(36).slice(2, 12);
 const splitKey = (key: string) => {
@@ -112,6 +113,7 @@ export function folderEntries(id: string): MenuEntry[][] {
     [
       { label: open ? 'Close in Sidebar' : 'Open in Sidebar', icon: 'folder', run: () => patchPlaces([{ kind: 'folder', id, open: !open }]) },
       { label: 'Open as List', icon: 'groups', run: () => go({ view: 'folder', folder: id }) },
+      ...(canIndex('folder', id) ? [{ label: 'Index Servers in This Folder…', icon: 'archive', run: () => startIndexing('folder', id) }] : []),
       {
         label: 'Rename Folder…',
         icon: 'pencil',

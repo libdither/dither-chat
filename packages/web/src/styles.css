@@ -105,22 +105,6 @@ code {
 .app.with-details {
   grid-template-columns: var(--rail-w) var(--sidebar-w) 1fr var(--details-w);
 }
-.loading-screen {
-  height: 100%;
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 16px;
-  color: var(--text-dim);
-}
-.spinner {
-  width: 30px;
-  height: 30px;
-  border: 3px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -1142,8 +1126,7 @@ code {
   padding: 16px 0 10px;
   min-height: min-content;
 }
-.timeline-start,
-.timeline-loading {
+.timeline-start {
   text-align: center;
   color: var(--text-faint);
   font-size: 12px;
@@ -4263,6 +4246,150 @@ code {
   margin: 8px 0 0;
   line-height: 1.5;
 }
+/* Settings → Indexing (Indexing.tsx): each index job, its progress and its controls. */
+.jobs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.job {
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+}
+.job-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.job-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.job-kind {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.job-pill {
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.job-pill.running {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+.job-pill.done {
+  background: color-mix(in srgb, var(--good) 16%, transparent);
+  color: var(--good);
+}
+.job-pill.failed {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+.job-pill.paused {
+  color: var(--warn);
+}
+.job-bar {
+  height: 6px;
+  margin: 9px 0 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--bg-raised);
+}
+.job-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.4s;
+}
+.job.done .job-bar span {
+  background: var(--good);
+}
+.job-line {
+  margin: 2px 0 0;
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+.job-now .loading.inline {
+  justify-content: flex-start;
+  padding: 2px 0;
+}
+.job-now .loading-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.job-skipped,
+.job-when {
+  color: var(--text-faint);
+}
+.job-error {
+  color: var(--danger);
+}
+.job-controls {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 10px;
+}
+.job-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 120px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+.job-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+.job-buttons .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.index-why {
+  margin: 0 0 6px;
+}
+.index-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 8px 0 4px;
+}
+.index-fields .job-field {
+  width: 150px;
+}
+.index-actions {
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+@media (max-width: 640px) {
+  .job-buttons {
+    margin-left: 0;
+  }
+  .job-field,
+  .index-fields .job-field {
+    flex: 1;
+    min-width: 120px;
+  }
+}
 .set-model {
   display: flex;
   gap: 10px;
@@ -5906,108 +6033,31 @@ pre.fv-md-html {
   display: block;
 }
 
-/* ---- skeletons ---- */
-.skeleton {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 14px 16px;
-  /* A quick load shows nothing: the shapes come in only after a moment. */
-  animation: fade-in 0.3s 0.18s both;
-}
-.skeleton.msg {
-  gap: 22px;
-  padding: 16px 16px 20px;
-}
-.sk-item {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
-.skeleton.msg .sk-item {
-  align-items: flex-start;
-  gap: 16px;
-}
-.sk-avatar {
-  flex: none;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-}
-.skeleton.msg .sk-avatar {
-  width: 40px;
-  height: 40px;
-}
-.sk-lines {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-}
-.sk-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 2px;
-}
-.sk-line {
-  height: 10px;
-  border-radius: 5px;
-  max-width: 100%;
-}
-.sk-name {
-  height: 12px;
-  opacity: 1;
-}
-.sk-time {
-  width: 46px;
-  height: 8px;
-  opacity: 0.6;
-}
-.sk-media {
-  width: min(260px, 70%);
-  aspect-ratio: 16 / 10;
-  border-radius: 8px;
-  margin-top: 2px;
-}
-/* One wave for all of them: the gradient is fixed to the viewport, so it sweeps across every shape at once. */
-.sk-avatar,
-.sk-line,
-.sk-media {
-  background: linear-gradient(100deg, var(--bg-raised) 40%, color-mix(in srgb, var(--bg-hover) 70%, var(--text) 5%) 50%, var(--bg-raised) 60%) fixed 0 0 / 250vw 100%;
-  animation: shimmer 1.6s linear infinite;
-}
-@keyframes shimmer {
-  from {
-    background-position: 125vw 0;
-  }
-  to {
-    background-position: -125vw 0;
-  }
-}
-.spinner.small {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border-width: 2px;
-  vertical-align: -2px;
-  margin-right: 6px;
-}
-.loading-screen {
-  position: relative;
-}
-.loading-skeleton {
-  position: absolute;
-  inset: 0;
-  opacity: 0.5;
-  max-width: 420px;
-  pointer-events: none;
-}
-.loading-note {
+/* ---- loading (Loader.tsx Loading): the dithered orb, small, where content is about to land ---- */
+.loading {
   display: grid;
   justify-items: center;
-  gap: 16px;
+  align-content: center;
+  gap: 10px;
+  padding: 28px 16px;
+  color: var(--accent);
+  /* A quick load shows nothing: the orb comes in only after a moment. */
+  animation: fade-in 0.3s 0.18s both;
+}
+.loading-label {
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+.loading.inline {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+}
+.loading.fill {
+  flex: 1;
+  min-height: 100%;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -6020,10 +6070,7 @@ pre.fv-md-html {
   .menu {
     animation: none;
   }
-  .sk-avatar,
-  .sk-line,
-  .sk-media,
-  .skeleton {
+  .loading {
     animation: none;
   }
 }
@@ -6505,6 +6552,98 @@ body.dragging * {
 .search-more {
   margin: 12px auto 24px;
   display: block;
+}
+/* On the networks (Search.tsx NetworkSearch): the networks' own search, below the hub's own hits. */
+.net-search {
+  margin: 18px 0 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+}
+.net-search-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.net-search-head small {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-weight: 400;
+}
+.net-search-why,
+.net-search-note {
+  margin: 4px 0 8px;
+}
+.net-search-error {
+  color: var(--danger);
+}
+.net-search-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+.ns-places {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+}
+.ns-place {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 3px 10px 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12.5px;
+}
+.ns-place-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ns-fit,
+.ns-state {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+.ns-fit {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--bg-raised);
+}
+.ns-place.done .ns-state {
+  color: var(--text-dim);
+}
+.ns-place.failed {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+.ns-failed {
+  display: inline-block;
+  max-width: 22ch;
+  overflow: hidden;
+  color: var(--danger);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+.ns-place .loading.inline {
+  padding: 0;
+  gap: 5px;
+}
+.ns-place .loading-label {
+  font-size: 11.5px;
 }
 .search-att {
   display: inline-flex;
@@ -10495,12 +10634,6 @@ button.msg-edited.link:hover {
 .pg-text {
   pointer-events: none;
 }
-.pg-loading {
-  flex: 1;
-  display: grid;
-  place-content: center;
-  color: var(--text-faint);
-}
 .pg-empty {
   flex: 1;
   display: grid;
@@ -11272,8 +11405,7 @@ button.msg-edited.link:hover {
 .mail-text a {
   color: var(--link);
 }
-.mail-text-empty,
-.mail-body-loading {
+.mail-text-empty {
   color: var(--text-faint);
   font-size: 13px;
 }
@@ -11559,12 +11691,6 @@ button.msg-edited.link:hover {
   padding: 2px 14px 12px;
   overflow-x: hidden;
   overflow-y: auto;
-}
-.mc-loading {
-  justify-content: center;
-  align-items: center;
-  color: var(--text-faint);
-  font-size: 13px;
 }
 .mc-field {
   position: relative;

@@ -105,6 +105,8 @@ export interface Toast {
   /** A notification's sender picture (a hub media path) and network. */
   icon?: string;
   network?: P.Network;
+  /** Where a tap goes, for a toast that is not about a conversation. */
+  action?: () => void;
 }
 export const toasts = signal<Toast[]>([]);
 let toastSeq = 0;

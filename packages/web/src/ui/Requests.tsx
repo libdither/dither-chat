@@ -22,6 +22,7 @@ import { identityMenu, personMenu } from './menus.tsx';
 import { CheckFirst, ConfirmFirst } from './NewMessage.tsx';
 import { Action } from './ProfileShell.tsx';
 import { homeRoute } from './Sidebar.tsx';
+import { Loading } from './Loader.tsx';
 
 /**
  * Answer one: the hub asks the network. Answered, it is gone here at once; the hub's requests event says the same.
@@ -757,7 +758,7 @@ export function PeopleLinks({
   const listing = [...db.accounts.values()].filter((a) => a.capabilities.includes('relationships'));
   if (links.error) return <p class="inbox-empty">{links.error}</p>;
   const view = links.view;
-  if (!view) return <p class="inbox-empty">Asking the hub…</p>;
+  if (!view) return <Loading label="Asking the hub…" />;
   const shown = accountId ? view.links.filter((l) => l.accountId === accountId) : view.links;
   const all = linkRows(shown);
   const rows = sortLinkRows(

@@ -106,7 +106,7 @@ export function normalizeForCompare(s: string): string {
     .toLowerCase();
 }
 
-function markSnippet(body: string, terms: string[]): string {
+export function markSnippet(body: string, terms: string[]): string {
   const lower = body.toLowerCase();
   const first = Math.min(...terms.map((t) => lower.indexOf(t.toLowerCase())).filter((i) => i >= 0));
   const start = Math.max(0, (Number.isFinite(first) ? first : 0) - 60);
@@ -1650,7 +1650,8 @@ export class Store {
    * a member is updated: last seen moves on, and what the network no longer says (a nick) stays as it was.
    */
   private members(acc: AccountRow, ev: Extract<P.AdapterEvent, { t: 'members' }>) {
-    if (!this.recordsMembers()) return;
+    // A walk is an index job you asked for (jobs.ts): kept whatever the setting for what clients merely saw.
+    if (!this.recordsMembers() && ev.source !== 'walk') return;
     const sid = hubId('spc', acc.network, ev.space);
     if (!this.db.query('SELECT 1 FROM space WHERE id = ?').get(sid)) return;
     const at = ev.ts ?? Date.now();
@@ -2661,7 +2662,7 @@ export class Store {
   }
 
   /** Conversations in, or under, places whose name matches: channels, rooms, groups, whole communities. */
-  private conversationsNamed(name: string): string[] {
+  conversationsNamed(name: string): string[] {
     if (/^cnv_/.test(name)) return [name];
     const like = `%${likeEscape(name)}%`;
     const out = new Set((this.db.query(`SELECT id FROM conversation WHERE name LIKE ? ESCAPE '\\' OR id = ?`).all(like, name) as Row[]).map((r) => r.id as string));
@@ -2690,7 +2691,7 @@ export class Store {
     return [...out];
   }
 
-  private identitiesNamed(name: string): string[] {
+  identitiesNamed(name: string): string[] {
     if (/^idn_/.test(name)) return [name];
     const like = `%${likeEscape(name)}%`;
     return (
@@ -2725,7 +2726,7 @@ export class Store {
     return { persons: views, identities: [...this.identitiesByIds(views.flatMap((p) => p.identityIds)), ...loose.map((r) => this.identityView(r))] };
   }
 
-  private accountsNamed(name: string): string[] {
+  accountsNamed(name: string): string[] {
     return (this.db.query(`SELECT id FROM account WHERE id = ?1 OR label = ?1 COLLATE NOCASE`).all(name) as Row[]).map((r) => r.id);
   }
 

@@ -11,6 +11,7 @@ import { api, db, isSelfIdentity, rev } from '../state.ts';
 import { Avatar, Modal } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { Glyph } from './Reactions.tsx';
+import { Loading } from './Loader.tsx';
 
 export const historyOf = signal<P.MessageView | null>(null);
 
@@ -40,7 +41,7 @@ export function MessageHistory({ m }: { m: P.MessageView }) {
       () => setH({ versions: [], events: [], receipts: [], identities: [] }),
     );
   }, [m.id, m.body, m.events, m.receipts?.read, m.receipts?.delivered]);
-  if (!h) return <p class="edit-loading">Loading…</p>;
+  if (!h) return <Loading label="Loading…" />;
   const name = (id?: string) => (!id ? 'Someone' : isSelfIdentity(id) ? 'You' : (db.persons.get(db.identities.get(id)?.personId ?? '')?.name ?? identityName(id)));
   // Each person once per state, the first time.
   const by = new Map<P.ReceiptState, { identityId: string; at: number }[]>();

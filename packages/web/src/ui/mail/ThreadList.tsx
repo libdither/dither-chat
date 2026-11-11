@@ -10,10 +10,11 @@ import { loadList } from '../../mail/api.ts';
 import { hasMore, listThreads, listTitle, syncLine, updatesFold, type UpdatesFold } from '../../mail/model.ts';
 import { db, go, mailRev } from '../../state.ts';
 import { mailChanged } from '../../versions.ts';
-import { Empty, Skeleton } from '../bits.tsx';
+import { Empty } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
 import { listTime } from './MessageCard.tsx';
 import { ThreadRow } from './ThreadRow.tsx';
+import { DitherOrb, Loading } from '../Loader.tsx';
 
 /** Inbox's mail not from a person, as one row where its newest sorts (slice 8): opening it is the Updates view. */
 function UpdatesRow({ fold }: { fold: UpdatesFold }) {
@@ -88,7 +89,7 @@ export function ThreadList({ list, active }: { list: string; active?: string }) 
   return (
     <div class="mail-list" aria-label={listTitle(s, list)}>
       {rows}
-      {!threads.length && !fold && (l?.loading || l?.pending || (!l?.loaded && syncing) ? <Skeleton rows={6} /> : l?.loaded && <Empty icon="mail" title={list === 'v:inbox:*' ? 'Inbox is empty.' : `Nothing in ${listTitle(s, list)}.`} />)}
+      {!threads.length && !fold && (l?.loading || l?.pending || (!l?.loaded && syncing) ? <Loading label="Loading mail…" /> : l?.loaded && <Empty icon="mail" title={list === 'v:inbox:*' ? 'Inbox is empty.' : `Nothing in ${listTitle(s, list)}.`} />)}
       {l?.error && (
         <div class="mail-list-note" role="alert">
           Could not load this list: {l.error}{' '}
@@ -99,10 +100,16 @@ export function ThreadList({ list, active }: { list: string; active?: string }) 
       )}
       {more && (
         <button ref={end} class="mail-more" disabled={l?.loading} onClick={() => void loadList(list, true)}>
-          {l?.loading ? 'Loading…' : 'Older threads'}
+          {l?.loading ? (
+            <>
+              <DitherOrb size={14} /> Loading…
+            </>
+          ) : (
+            'Older threads'
+          )}
         </button>
       )}
-      {l?.pending && threads.length > 0 && <div class="mail-list-note">Fetching older mail from the server…</div>}
+      {l?.pending && threads.length > 0 && <Loading inline label="Fetching older mail from the server…" />}
       {l?.loaded && !more && !l.complete && !l.pending && !l.error && threads.length > 0 && (
         <div class="mail-list-note">
           {line ? 'More comes as older mail syncs.' : 'Older mail is on the server.'}{' '}

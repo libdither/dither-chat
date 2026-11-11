@@ -1684,6 +1684,55 @@ class DemoAdd {
   }
 }
 
+/**
+ * What the networks hold that the demo never sent: older messages before each conversation's first, for history pages,
+ * index jobs and network search (jobs.ts, netsearch.ts), and a big server's member list to walk. The same every time.
+ */
+const ARCHIVE_SIZE = 240;
+const ARCHIVE_LINES = [
+  'has anyone tried the new release notes yet',
+  'the borrow checker is complaining about a lifetime again',
+  'deploying the staging build tonight, shout if something breaks',
+  'climbing at the gym on thursday, who is in',
+  'I pushed a fix for the dither pattern on dark backgrounds',
+  'is the meeting still on for friday',
+  'reminder: the conference talk proposals close next week',
+  'the speedrun route skips the second boss now',
+  'async traits finally landed, time to delete the workarounds',
+  'can someone review my pull request when they get a chance',
+  'the matrix bridge dropped messages overnight',
+  'new benchmark numbers: twice as fast on the large inputs',
+  'who wants to pair on the parser rewrite',
+  'lunch at the ramen place again?',
+  'the cache invalidation bug is back',
+  'posting the meeting notes in a minute',
+];
+const ARCHIVE_GAP_MIN = 3 * 60;
+const MEMBER_FIRST = ['ada', 'alex', 'bea', 'cam', 'dani', 'eli', 'fern', 'gus', 'hana', 'ivo', 'juno', 'kai', 'lena', 'milo', 'nia', 'oren', 'pia', 'quin', 'rosa', 'sol', 'tess', 'umi', 'vik', 'wren', 'xan', 'yuki', 'zed'];
+const MEMBER_LAST = ['', '_dev', '42', 'x', '.art', 'bot', '_rs', '99', 'kun', 'z'];
+
+/** A conversation as its network has it: the archive, then what the demo sends, oldest first. */
+function networkMessages(c: DemoConv, network: P.Network, ago: (min: number) => number, self: P.IdentityFact): P.MessageFact[] {
+  const pool = Object.values(POOLS[network] ?? D).filter((i) => i !== self);
+  const first = c.msgs.length ? Math.max(...c.msgs.map((m) => m[0])) : 60 * 24;
+  const seeded = c.msgs.map(([min, author, body], i) => ({ nativeId: `${c.fact.nativeId}~${i}`, conversation: c.fact.nativeId, author: author.nativeId, ts: ago(min), body }));
+  const k = parseInt(h('a' + c.fact.nativeId).toString('hex').slice(0, 6), 16);
+  const archive = Array.from({ length: ARCHIVE_SIZE }, (_, i) => {
+    const back = ARCHIVE_SIZE - i;
+    return {
+      nativeId: `${c.fact.nativeId}~a${pos(i)}`,
+      conversation: c.fact.nativeId,
+      author: pool[(k + i * 7) % pool.length].nativeId,
+      ts: ago(first + back * ARCHIVE_GAP_MIN),
+      body: `${ARCHIVE_LINES[(k + i * 5) % ARCHIVE_LINES.length]} (${c.fact.name ?? 'here'} #${i + 1})`,
+    };
+  });
+  return [...archive, ...seeded].sort((a, b) => a.ts - b.ts);
+}
+
+/** A big server's members beyond the few the client saw: 270 made-up people. */
+const WALKABLE: P.IdentityFact[] = MEMBER_FIRST.flatMap((f, i) => MEMBER_LAST.map((l, j) => ({ nativeId: snow(`member-${i}-${j}`), displayName: `${f}${l}`, handle: `${f}${l}` })));
+
 class DemoAdapter implements InprocAdapter {
   private emit!: (ev: P.AdapterEvent) => void;
   private timers = new Set<Timer>();
@@ -1695,6 +1744,7 @@ class DemoAdapter implements InprocAdapter {
   /** Capabilities a verify script took away (action 'capabilities'), to see the page without them. */
   private without = new Set<P.Capability>();
   private network: P.Network;
+  private ago: (min: number) => number = (min) => Date.now() - min * 60_000;
 
   constructor(
     private key: AccKey,
@@ -2043,7 +2093,13 @@ class DemoAdapter implements InprocAdapter {
     const caps: P.Capability[] = ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect', 'typing', 'about', 'configure', 'profile', ...(this.network === 'matrix' ? [] : (['editProfile'] as const)), 'resolve', 'join', 'connect', 'requests', ...(LISTED.has(this.network) ? (['relationships', 'disconnect'] as const) : [])];
     // Adding people to groups on Discord, Signal and Matrix; WhatsApp's adapter leaves it out on purpose
     // (docs/group-settings.md), and the demo Telegram has no group About of its own.
-    const all: P.Capability[] = [...caps, ...(this.network === 'discord' ? (['forward', 'members'] as const) : []), ...(ADDS_MEMBERS.has(this.network) ? (['addMembers'] as const) : [])];
+    const all: P.Capability[] = [
+      ...caps,
+      ...(this.network === 'discord' ? (['forward', 'members', 'walkMembers', 'listThreads'] as const) : []),
+      ...(ADDS_MEMBERS.has(this.network) ? (['addMembers'] as const) : []),
+      // The networks whose servers search (netsearch.ts).
+      ...(this.network === 'discord' || this.network === 'matrix' ? (['search'] as const) : []),
+    ];
     this.emit({ t: 'hello', network: this.network, version: 'demo', capabilities: all.filter((c) => !this.without.has(c)) });
   }
 
@@ -2054,6 +2110,7 @@ class DemoAdapter implements InprocAdapter {
     const marker = join(this.dir, 'seeded');
     const firstRun = !existsSync(marker);
     const ago = (min: number) => epoch - min * 60_000;
+    this.ago = ago;
 
     this.hello();
     emit({ t: 'status', status: 'online', self: { ...this.self, isSelf: true } });
@@ -2120,6 +2177,64 @@ class DemoAdapter implements InprocAdapter {
   }
 
   /** Things that changed and things taken back, once, so history has something to show (docs/history.md). */
+  /** A page back from the network's list, as Discord's `before`. */
+  private history(cmd: Extract<P.AdapterCommand, { t: 'history' }>): P.HistoryResult {
+    const c = this.findConv(cmd.conversation);
+    if (!c || (this.network !== 'discord' && this.network !== 'matrix')) return { count: 0, done: true };
+    const all = networkMessages(c, this.network, this.ago, this.self);
+    const below = all.filter((m) => cmd.beforeTs === undefined || m.ts < cmd.beforeTs);
+    const page = below.slice(-cmd.limit);
+    for (const m of page) this.emit({ t: 'message', live: false, message: m });
+    return { count: page.length, done: page.length === below.length, ...(page.length ? { oldest: page[0].ts } : {}) };
+  }
+
+  /** The network's search over what it holds, every word in the body, newest first, 25 at a time. */
+  private search(cmd: Extract<P.AdapterCommand, { t: 'search' }>): P.NetworkSearchResult {
+    const convs = CONVS.filter((c) => c.acc.includes(this.key) && c.fact.shape !== 'self').filter((c) => {
+      if (cmd.scope.kind === 'all') return true;
+      if (cmd.scope.kind === 'conversation') return c.fact.nativeId === cmd.scope.id;
+      return this.guildOf(c) === cmd.scope.id;
+    });
+    const q = cmd.query;
+    const words = q.text.toLowerCase().replace(/"/g, ' ').split(/\s+/).filter(Boolean);
+    const hits = convs
+      .filter((c) => !q.in?.length || q.in.includes(c.fact.nativeId))
+      .flatMap((c) => networkMessages(c, this.network, this.ago, this.self))
+      .filter((m) => words.every((w) => m.body.toLowerCase().includes(w)))
+      .filter((m) => !q.authors?.length || q.authors.includes(m.author))
+      .filter((m) => (q.after === undefined || m.ts >= q.after) && (q.before === undefined || m.ts < q.before))
+      .sort((a, b) => (q.sort === 'oldest' ? a.ts - b.ts : b.ts - a.ts));
+    const offset = cmd.offset ?? 0;
+    const page = hits.slice(offset, offset + (cmd.limit ?? 25));
+    for (const m of page) this.emit({ t: 'message', live: false, message: m });
+    return { hits: page.map((m) => m.nativeId), total: hits.length, next: offset + page.length < hits.length ? offset + page.length : null };
+  }
+
+  /** A channel's threads, as Discord's thread search lists them: the demo's are all active, none archived. */
+  private threads(cmd: Extract<P.AdapterCommand, { t: 'threads' }>): P.ThreadsResult {
+    const found = cmd.archived ? [] : CONVS.filter((c) => c.acc.includes(this.key) && c.fact.shape === 'thread' && c.fact.parentConversation === cmd.conversation);
+    const page = found.slice(cmd.offset, cmd.offset + 25);
+    for (const c of page) this.emit({ t: 'conversation', conversation: c.fact });
+    return { count: page.length, more: cmd.offset + page.length < found.length };
+  }
+
+  /** Members by name prefix, as Discord's member search answers it, or (`recent`) a page of the newest, as its op 35 does. */
+  private walkMembers(cmd: Extract<P.AdapterCommand, { t: 'walkMembers' }>): P.WalkResult {
+    const space = this.findSpace(cmd.space);
+    if (!space) throw new Error('this demo account is not in that server');
+    const everyone = [...WALKABLE, ...Object.values(D)];
+    const q = cmd.query.toLowerCase();
+    // The demo's newest page holds everyone, so a recent walk is one page.
+    const found = cmd.recent
+      ? cmd.after
+        ? []
+        : everyone.slice(0, cmd.limit)
+      : everyone.filter((i) => !q || (i.displayName ?? '').toLowerCase().startsWith(q) || (i.handle ?? '').toLowerCase().startsWith(q)).slice(0, cmd.limit);
+    for (const i of found) if (WALKABLE.includes(i)) this.emit({ t: 'identity', identity: i });
+    this.emit({ t: 'members', space: cmd.space, source: 'walk', total: everyone.length, members: found.map((i) => ({ who: i.nativeId })) });
+    return { count: found.length, total: everyone.length, ...(cmd.recent ? { next: found.length >= cmd.limit ? found[found.length - 1].nativeId : null } : {}) };
+  }
+
   private seedHistory(ago: (min: number) => number) {
     if (this.key !== 'sig') return;
     const climb = CONVS.find((c) => c.fact.nativeId === sgroup('climb', '', []).nativeId)!.fact;
@@ -2388,7 +2503,16 @@ class DemoAdapter implements InprocAdapter {
         reply({ authors: Object.values(D).filter((i) => i !== D.zyan && i !== D.zyn).slice(0, 5).map((i) => i.nativeId) });
         break;
       case 'history':
-        reply({ count: 0, done: true });
+        reply(this.history(cmd));
+        break;
+      case 'search':
+        reply(this.search(cmd));
+        break;
+      case 'walkMembers':
+        reply(this.walkMembers(cmd));
+        break;
+      case 'threads':
+        reply(this.threads(cmd));
         break;
       case 'markRead':
         this.readLog.push({ conversation: cmd.conversation, upTo: cmd.upTo, at: Date.now() });

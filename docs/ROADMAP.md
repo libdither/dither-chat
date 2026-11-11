@@ -8,7 +8,7 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 1. **Matrix E2EE on a real account.** Built: reads and writes encrypted rooms, opt-in per account. It has only run against a local homeserver with test clients, never against Element or matrix.org.
 2. **Try it on a real phone.** Install, Web Push, notification clicks and replying from one have only run in desktop Chromium. The phone layout and its gestures have run with touch input in a headless phone emulation ([phone.md](phone.md)), never in iOS Safari or on a real keyboard. No code until something breaks, and everything about notifications depends on it.
 3. **Login beyond tailnet membership.** Anyone on the tailnet can read everything, which matters as soon as another person or a shared device joins it.
-4. **Search reach.** Attachment filenames and embed text, then an explicit "Search Discord".
+4. **Search reach.** Attachment filenames and embed text. Network search and index jobs are built ([indexing.md](indexing.md)) and need a live Discord test.
 5. **Calls without media.** Call events on every network, a ringing notification and a link to the network's own app.
 
 ## Organising and finding
@@ -27,8 +27,8 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Discord-style search: suggestions as you type, recent searches, grouped results with context, sort, more operators | H | M | done | docs/search.md. Also typo correction and arrow keys through results |
 | Search Japanese and other unspaced text | H | L | done | Scans inside words, so unspaced text is found. Slower than the index on a large database; a trigram index would fix that |
 | Index attachment filenames and embed text | M | L | next | Only message bodies are searched today |
-| Search Discord itself, on an explicit click | M | M | next | The guild search route is documented and the hook's client REST can call it. One request per click, never as you type. Needs a live test |
-| Matrix server-side `/search` | M | L | later | Unencrypted rooms only; encrypted ones are indexed here once decrypted |
+| Search Discord and Matrix themselves, on an explicit click | M | M | done | [indexing.md](indexing.md): places in jev's order, six at a time, paced per account, hits kept. Run against the demo and the extractors' fakes, not a live account |
+| Index jobs: a server, a folder of servers or a channel fetched whole, members walked, repeating | H | M | done | [indexing.md](indexing.md). Repeats fetch only what is new (history spans). Archived threads the hub never saw are not found yet. Not run on a live account |
 | Signal history beyond what the hub received | L | H | blocked | A linked device gets no history |
 | Reorder channels inside a server | L | M | later | The network's order is usually what people want |
 
@@ -46,7 +46,7 @@ Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
 | Change your own bio from your profile | M | L | done | Discord, Signal and WhatsApp (`setProfile`, adapters in dither-accounts); Matrix has no bio. The hub and page are tested against the demo adapter; Signal's adapter only against a fake signal-cli and WhatsApp's against a fake bridge |
 | Matrix and Signal extended profiles | L | L | blocked | The protocols hold little more than name and avatar |
 | Presence (online, idle) | M | M | next | An adversarial feature (docs/history.md): the hub logs the `presence` event and shows it in a profile's Activity section (a list, and a band on its chart); the Discord and Matrix adapters that emit it are in dither-accounts. Signal does not report it |
-| Server members seen (passive, adversarial) | L | M | done | Who your accounts' clients loaded anyway, and "seen N of M listed" on a server's About. Hub side done; Discord's emitter lives in dither-accounts. Walking the member list is held |
+| Server members seen (passive, adversarial) | L | M | done | Who your accounts' clients loaded anyway, and "seen N of M listed" on a server's About. Hub side done; Discord's emitter lives in dither-accounts. Walking the member list is an index job's (indexing.md) |
 | Message counts per server, estimated | M | S | done | From stored messages only (docs/profile.md): seen, share with a Wilson interval, and on Discord a total from each channel's age and rate, with a range; none where the data cannot support one |
 | People graph: who shares which servers and groups | M | M | done | From the People header (docs/people-graph.md). Links from group participants, profiles' mutual servers, and members seen when recorded; WebGL with a worker layout, capped at 6,000 nodes by default. Not checked against the live hub's data in a browser |
 | Block, ignore | M | M | later | Differs per network |
