@@ -126,6 +126,7 @@ export interface Prefs {
   details: boolean;
   collapsed: Record<string, boolean>;
   sendAs: Record<string, string>;
+  /** Person -> conversation: the route this browser kept before the hub kept routes (chats.ts); moved there once, then gone. */
   via: Record<string, string>;
   notifications: boolean;
   /** Index into the emoji catalog's skins; 0 is the default yellow. */
@@ -481,8 +482,10 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
   t.loading = true;
   timelineChanged(key);
   const [kind, id] = key.split(':') as ['c' | 'p', string];
-  const before = older && t.messages.length ? t.messages[0].ts : undefined;
-  const url = kind === 'c' ? `/api/conversations/${id}/messages` : `/api/persons/${id}/timeline`;
+  // A person's timeline spans conversations, where two messages can share a time: its cursor names the message too.
+  const oldest = older ? t.messages[0] : undefined;
+  const before = oldest ? (kind === 'p' ? `${oldest.ts}:${encodeURIComponent(oldest.id)}` : oldest.ts) : undefined;
+  const url = kind === 'c' ? `/api/conversations/${id}/messages` : `/api/chats/person:${id}/messages`;
   try {
     // After the socket, so nothing can fall between this page and the live events.
     if (!older) {

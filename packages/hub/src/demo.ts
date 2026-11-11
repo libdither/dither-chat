@@ -20,13 +20,21 @@ import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
 
 type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa' | 'tg';
 
+/**
+ * DITHER_DEMO_SCENARIO=multiaccount adds Kit, one person on seven accounts across five networks, talking with several
+ * of yours (eight pairs), and names your demo accounts by their usernames. Off by default: the default world's counts
+ * are what the tests and perf baselines expect.
+ */
+export const MULTI_ACCOUNT = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('multiaccount');
+const named = (plain: string, username: string) => (MULTI_ACCOUNT ? username : plain);
+
 export const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label: string; color: string }[] = [
-  { key: 'dmain', id: 'acc_demo-discord-main', network: 'discord', label: 'main', color: '#F2A541' },
-  { key: 'dalt', id: 'acc_demo-discord-alt', network: 'discord', label: 'alt', color: '#E86A92' },
-  { key: 'sig', id: 'acc_demo-signal', network: 'signal', label: 'personal', color: '#B794F6' },
-  { key: 'mx', id: 'acc_demo-matrix', network: 'matrix', label: 'matrix.org', color: '#FF8C61' },
-  { key: 'wa', id: 'acc_demo-whatsapp', network: 'whatsapp', label: 'personal', color: '#7FD1AE' },
-  { key: 'tg', id: 'acc_demo-telegram', network: 'telegram', label: 'personal', color: '#5CC8FF' },
+  { key: 'dmain', id: 'acc_demo-discord-main', network: 'discord', label: named('main', 'zyansheep'), color: '#F2A541' },
+  { key: 'dalt', id: 'acc_demo-discord-alt', network: 'discord', label: named('alt', 'zyn.alt'), color: '#E86A92' },
+  { key: 'sig', id: 'acc_demo-signal', network: 'signal', label: named('personal', 'zyan.01'), color: '#B794F6' },
+  { key: 'mx', id: 'acc_demo-matrix', network: 'matrix', label: named('matrix.org', '@zyansheep'), color: '#FF8C61' },
+  { key: 'wa', id: 'acc_demo-whatsapp', network: 'whatsapp', label: named('personal', 'zyan'), color: '#7FD1AE' },
+  { key: 'tg', id: 'acc_demo-telegram', network: 'telegram', label: named('personal', '@zyansheep'), color: '#5CC8FF' },
 ];
 
 // ------------------------------------------------------------------ id shapes
@@ -119,6 +127,50 @@ const TG = {
   // Blocked (docs/add.md "Relationships").
   spam: tid('spam', 'crypto_signals_vip', 'Crypto Signals VIP', false),
 };
+/**
+ * Profile pictures for the multi-account scenario, each a different shape as well as colour, so pictures greyed out
+ * for an account not in focus can still be told apart.
+ */
+const pfp = (bg: string, body: string) =>
+  `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="${bg}"/>${body}</svg>`)}`;
+const PFP = {
+  // Yours.
+  sheep: pfp('#F7D154', `<g fill="#fff"><circle cx="22" cy="34" r="11"/><circle cx="32" cy="27" r="12"/><circle cx="42" cy="34" r="11"/><circle cx="32" cy="40" r="12"/></g><ellipse cx="32" cy="36" rx="8" ry="10" fill="#2b2b33"/><circle cx="29" cy="34" r="1.8" fill="#fff"/><circle cx="35" cy="34" r="1.8" fill="#fff"/><rect x="26" y="49" width="4" height="9" fill="#2b2b33"/><rect x="34" y="49" width="4" height="9" fill="#2b2b33"/>`),
+  invader: pfp('#FF6B6B', `<g fill="#3a1420">${[[20, 16], [40, 16], [24, 20], [36, 20], [20, 24], [24, 24], [28, 24], [32, 24], [36, 24], [40, 24], [16, 28], [20, 28], [28, 28], [32, 28], [40, 28], [44, 28], [12, 32], [16, 32], [20, 32], [24, 32], [28, 32], [32, 32], [36, 32], [40, 32], [44, 32], [48, 32], [12, 36], [20, 36], [24, 36], [28, 36], [32, 36], [36, 36], [40, 36], [48, 36], [12, 40], [20, 40], [40, 40], [48, 40], [24, 44], [28, 44], [32, 44], [36, 44]].map(([x, y]) => `<rect x="${x}" y="${y}" width="4" height="4"/>`).join('')}</g>`),
+  peak: pfp('#9ec5e8', `<circle cx="46" cy="18" r="8" fill="#fff4c2"/><path d="M0 52 L20 26 L30 38 L42 22 L64 50 L64 64 L0 64Z" fill="#3d4f6b"/><path d="M20 26 L25 32 L17 32Z M42 22 L48 30 L37 29Z" fill="#fff"/>`),
+  rings: pfp('#FF8C61', `<g fill="none" stroke="#4a1f0e" stroke-width="4"><circle cx="32" cy="32" r="22"/><circle cx="32" cy="32" r="13"/></g><circle cx="32" cy="32" r="5" fill="#4a1f0e"/>`),
+  moon: pfp('#1f2a4a', `<circle cx="34" cy="30" r="16" fill="#f3e9c6"/><circle cx="41" cy="25" r="14" fill="#1f2a4a"/><g fill="#f3e9c6"><circle cx="14" cy="14" r="1.5"/><circle cx="50" cy="48" r="1.5"/><circle cx="20" cy="50" r="1"/></g>`),
+  leaf: pfp('#5CC8FF', `<path d="M14 50 C 14 22, 34 12, 52 12 C 52 32, 42 52, 14 50Z" fill="#1d5c3a"/><path d="M14 50 L44 20" stroke="#a7e3b8" stroke-width="2.5"/>`),
+  // Kit's.
+  cat: pfp('#7c5cff', `<path d="M16 22 L22 8 L30 20 L34 20 L42 8 L48 22 C 52 30, 50 48, 32 50 C 14 48, 12 30, 16 22Z" fill="#f2a541"/><circle cx="25" cy="32" r="3" fill="#2b2b33"/><circle cx="39" cy="32" r="3" fill="#2b2b33"/><path d="M29 39 L35 39 L32 42Z" fill="#e86a92"/>`),
+  sword: pfp('#5a1b24', `<path d="M44 10 L54 10 L54 20 L28 46 L18 36Z" fill="#cfd6e0"/><path d="M14 34 L30 50 L26 54 L10 38Z" fill="#c8a24a"/><rect x="6" y="48" width="12" height="7" transform="rotate(-45 12 51)" fill="#7a4b2a"/>`),
+  suit: pfp('#8a94a6', `<circle cx="32" cy="24" r="11" fill="#e8c9a8"/><path d="M8 64 C 10 44, 22 38, 32 38 C 42 38, 54 44, 56 64Z" fill="#273042"/><path d="M28 38 L32 50 L36 38Z" fill="#fff"/><path d="M31 41 L33 41 L34 50 L32 53 L30 50Z" fill="#c0392b"/><path d="M21 22 C 21 12, 43 12, 43 22 C 40 16, 26 16, 21 22Z" fill="#3b2a20"/>`),
+  lake: pfp('#f2a07b', `<circle cx="32" cy="34" r="12" fill="#ffd36e"/><rect y="34" width="64" height="30" fill="#2f5d7c"/><g stroke="#ffd36e" stroke-width="2"><line x1="22" y1="40" x2="42" y2="40"/><line x1="26" y1="45" x2="38" y2="45"/><line x1="29" y1="50" x2="35" y2="50"/></g><path d="M0 34 L10 22 L16 30 L22 24 L28 34Z" fill="#26313f"/>`),
+  catline: pfp('#0dbd8b', `<path d="M16 24 L20 10 L28 20 L36 20 L44 10 L48 24 C 50 36, 44 48, 32 48 C 20 48, 14 36, 16 24Z" fill="none" stroke="#06382a" stroke-width="4" stroke-linejoin="round"/><path d="M24 32 L28 32 M36 32 L40 32" stroke="#06382a" stroke-width="3" stroke-linecap="round"/>`),
+  flake: pfp('#5277c3', `<g stroke="#e6eefc" stroke-width="5" stroke-linecap="round">${[0, 60, 120].map((r) => `<line x1="32" y1="12" x2="32" y2="52" transform="rotate(${r} 32 32)"/>`).join('')}</g><circle cx="32" cy="32" r="6" fill="#5277c3" stroke="#e6eefc" stroke-width="3"/>`),
+  heart: pfp('#ffb3c7', `<path d="M32 52 C 10 38, 8 22, 20 16 C 26 13, 31 17, 32 21 C 33 17, 38 13, 44 16 C 56 22, 54 38, 32 52Z" fill="#b3123f"/><path d="M18 22 C 20 19, 23 18, 25 19" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/>`),
+};
+/** Kit (MULTI_ACCOUNT): three Discord accounts, Signal, two Matrix accounts on different servers, Telegram. */
+const KIT = {
+  exe: did('kit', 'kit.exe', 'kit', { contact: true }),
+  alt: did('kit-alt', 'kit_alt', 'kit (raid)', { contact: true }),
+  work: did('kit-work', 'kit.work', 'Kit Okafor', { contact: true }),
+  sig: sid('kit', '+1 555 0144', 'Kit'),
+  mx: mid('@kit:matrix.org', 'kit', { contact: true }),
+  nix: mid('@kit:nixos.dev', 'kit (nixos)', { contact: true }),
+  tg: tid('kit', 'kitkat', 'Kit', true),
+};
+if (MULTI_ACCOUNT) {
+  const pics: [P.IdentityFact, string][] = [
+    [D.zyan, PFP.sheep], [D.zyn, PFP.invader], [S.self, PFP.peak], [M.self, PFP.rings], [W.self, PFP.moon], [TG.self, PFP.leaf],
+    [KIT.exe, PFP.cat], [KIT.alt, PFP.sword], [KIT.work, PFP.suit], [KIT.sig, PFP.lake], [KIT.mx, PFP.catline], [KIT.nix, PFP.flake], [KIT.tg, PFP.heart],
+  ];
+  for (const [who, url] of pics) who.avatarUrl = url;
+  Object.assign(D, { kit: KIT.exe, kitAlt: KIT.alt, kitWork: KIT.work });
+  Object.assign(S, { kit: KIT.sig });
+  Object.assign(M, { kit: KIT.mx, kitNix: KIT.nix });
+  Object.assign(TG, { kit: KIT.tg });
+}
 const POOLS: Partial<Record<P.Network, Record<string, P.IdentityFact>>> = { discord: D, signal: S, whatsapp: W, matrix: M, telegram: TG };
 const at = (i: P.IdentityFact) => `<@${i.nativeId}>`;
 
@@ -981,6 +1033,93 @@ const CONVS: DemoConv[] = [
   },
 ];
 
+/**
+ * Kit's eight pairs over three days: a cabin trip that starts on Discord, moves to Signal, a work PR on the work
+ * account and Matrix, a message to the wrong one of your Discord accounts, a map sent on Matrix and asked about on
+ * Discord. Minutes ago, newest last.
+ */
+const KIT_CONVS: DemoConv[] = [
+  {
+    acc: ['dmain'],
+    fact: { nativeId: snow('dm-kit-main'), shape: 'direct', participants: [D.zyan.nativeId, KIT.exe.nativeId] },
+    msgs: [
+      [3 * DAY + 300, KIT.exe, 'you around the weekend after next? thinking cabin trip'],
+      [3 * DAY + 290, D.zyan, 'maybe! who is going'],
+      [3 * DAY + 288, KIT.exe, 'me, ravi, maybe theo. the one by the lake with the bad wifi'],
+      [DAY + 100, KIT.exe, 'did you get my signal msg?'],
+      [DAY + 95, D.zyan, 'yes, friday 4pm works'],
+    ],
+  },
+  {
+    acc: ['dmain'],
+    fact: { nativeId: snow('dm-kitwork-main'), shape: 'direct', participants: [D.zyan.nativeId, KIT.work.nativeId] },
+    msgs: [
+      [3 * DAY + 200, KIT.work, 'unrelated, but can you review my sync PR when you get a sec'],
+      [3 * DAY + 150, D.zyan, 'yep, tomorrow morning'],
+      [120, KIT.work, 'PR is green now, merge whenever'],
+    ],
+    unread: 1,
+  },
+  {
+    acc: ['dalt'],
+    fact: { nativeId: snow('dm-kit-alt'), shape: 'direct', participants: [D.zyn.nativeId, KIT.exe.nativeId] },
+    msgs: [
+      [2 * DAY + 400, KIT.exe, 'cabin: fri to sun, $60 each. you in?'],
+      [2 * DAY + 390, D.zyn, 'this is my alt 😅 but yes, count me in'],
+      [2 * DAY + 385, KIT.exe, 'lol both your accounts are called zyan something, how am I supposed to know'],
+      [20, KIT.exe, 'sent the map on matrix, did it arrive?'],
+    ],
+    unread: 1,
+  },
+  {
+    acc: ['dalt'],
+    fact: { nativeId: snow('dm-kitalt-alt'), shape: 'direct', participants: [D.zyn.nativeId, KIT.alt.nativeId] },
+    msgs: [
+      [2 * DAY + 380, KIT.alt, 'raid alt checking in: are you healing saturday?'],
+      [2 * DAY + 370, D.zyn, 'yes, 8pm'],
+    ],
+  },
+  {
+    acc: ['sig'],
+    fact: sdm(KIT.sig),
+    msgs: [
+      [2 * DAY + 100, KIT.sig, 'moving cabin stuff to signal, discord keeps eating my messages'],
+      [2 * DAY + 95, S.self, '👍'],
+      [2 * DAY + 90, KIT.sig, 'carpool from mine at 4pm friday?'],
+      [300, KIT.sig, 'bring the speaker'],
+      [250, KIT.sig, 'and snacks, ravi is bringing nothing as usual'],
+    ],
+    unread: 2,
+  },
+  {
+    acc: ['mx'],
+    fact: { nativeId: room('dm-kit', 'matrix.org'), shape: 'direct', participants: [M.self.nativeId, KIT.mx.nativeId], encrypted: true },
+    msgs: [
+      [3 * DAY + 120, KIT.mx, 'the PR, for when you look: https://github.com/libdither/dither-chat/pull/418'],
+      [3 * DAY + 60, M.self, 'left two comments'],
+      [60, KIT.mx, 'cabin map, the parking is the bit circled in red: https://maps.example.org/cabin-lake'],
+    ],
+    unread: 1,
+  },
+  {
+    acc: ['mx'],
+    fact: { nativeId: room('dm-kit-nix', 'nixos.dev'), shape: 'direct', participants: [M.self.nativeId, KIT.nix.nativeId], encrypted: true },
+    msgs: [
+      [DAY + 500, KIT.nix, 'btw the flake for the cabin wifi thing: https://github.com/kit/cabin-router'],
+      [DAY + 480, M.self, 'of course you put nixos on the cabin router'],
+    ],
+  },
+  {
+    acc: ['tg'],
+    fact: { nativeId: `user:${KIT.tg.nativeId}`, shape: 'direct', participants: [TG.self.nativeId, KIT.tg.nativeId] },
+    msgs: [
+      [DAY + 300, KIT.tg, 'made a telegram for the film photo group, adding you'],
+      [DAY + 290, TG.self, 'app number five'],
+    ],
+  },
+];
+if (MULTI_ACCOUNT) CONVS.push(...KIT_CONVS);
+
 // ------------------------------------------------------------------ live behaviour
 
 /** Background chatter so the review instance stays alive. One line every ~1.5-3 minutes. */
@@ -1003,6 +1142,9 @@ const CHATTER: [AccKey, string, P.IdentityFact, string][] = [
 const REPLIES: Record<string, string[]> = {
   [S.alice.nativeId]: ['haha ok', 'sounds good!', 'omw', '👍', 'you are the best'],
   [D.alice.nativeId]: ['lol', 'ok ok', 'sending it on signal'],
+  [KIT.exe.nativeId]: ['wait which account is this', 'ok cool', 'lol'],
+  [KIT.sig.nativeId]: ['perfect', 'see you friday', '🚗'],
+  [KIT.work.nativeId]: ['thanks!', 'merging'],
   [M.alice.nativeId]: ['let me know what you think of section 3'],
   [S.mom.nativeId]: ['Ok sweetie', 'Love you! See you Sunday', '❤️'],
   [W.nana.nativeId]: ['❤️', 'Good. Eat vegetables too'],
@@ -2333,13 +2475,15 @@ export function applyDemoOverlay(store: Store) {
   const merge = (name: string, ...ids: [P.Network, P.IdentityFact][]) => {
     const [first, ...rest] = ids.map(([n, i]) => personOf(n, i));
     for (const r of rest) store.mergePersons(first, r);
-    store.updatePerson(first, { name });
+    // The name a merge settled on, not a nickname: theirs show beside it only where you gave one.
+    store.updatePerson(first, { name }, 'merge');
     return first;
   };
   const alice = merge('Alice Chen', ['signal', S.alice], ['discord', D.alice], ['matrix', M.alice], ['whatsapp', W.alice], ['telegram', TG.alice]);
   const sam = merge('Sam Rivera', ['signal', S.sam], ['matrix', M.sam]);
   merge('Theo', ['signal', S.theo], ['discord', D.theo]);
   merge('Quinn', ['discord', D.quinn], ['signal', S.quinn]);
+  if (MULTI_ACCOUNT) merge('Kit', ['discord', KIT.exe], ['discord', KIT.alt], ['discord', KIT.work], ['signal', KIT.sig], ['matrix', KIT.mx], ['matrix', KIT.nix], ['telegram', KIT.tg]);
 
   const cnv = (net: P.Network, nativeId: string) => hubId('cnv', net, nativeId);
   const spc = (net: P.Network, nativeId: string) => hubId('spc', net, nativeId);
