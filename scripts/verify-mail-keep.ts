@@ -4,7 +4,7 @@
  * how far its walk has come; Gmail's month audits; Pause and Resume; turning keeping off and on; on a desktop in the
  * dark theme and a phone in the light one, with nothing off the side of the screen and no page errors.
  *
- *   DITHER_DEMO_MAIL_GMAIL=1 bun packages/hub/src/main.ts --demo --data <fresh dir> --port 8798 --web <built web>
+ *   DITHER_DEMO_MAIL_KEEP=1 DITHER_DEMO_MAIL_GMAIL=1 bun packages/hub/src/main.ts --demo --data <fresh dir> --port 8798 --web <built web>
  *   bun scripts/verify-mail-keep.ts http://127.0.0.1:8798 [screenshot dir]
  *
  * Changes keeping on the demo hub's accounts; use a fresh data dir.
@@ -35,6 +35,7 @@ for (let i = 0; i < 120; i++) {
 }
 const first = await keep();
 check(first.accounts.length >= 1, 'GET /api/mail/keep lists the mail accounts', first.accounts.length);
+if (!first.accounts.some((a) => a.keep)) throw new Error('nothing kept: start the demo hub with DITHER_DEMO_MAIL_KEEP=1');
 check(
   first.accounts.every((a) => a.keep && a.walk.complete && a.bodies === a.messages.held),
   'each kept, walked to the end, every body here',

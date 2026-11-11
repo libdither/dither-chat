@@ -491,10 +491,13 @@ export class Keeper {
 
   // ---------------------------------------------------------- coverage
 
-  /** server=auto may leave this account's server out (search.ts): its mail is all here. */
+  /** server=auto may leave this account's server out (search.ts): its mail is all here. The cheap answers first. */
   searchedLocally(accountId: string): boolean {
     const a = this.store.account(accountId);
-    return !!a && this.view(a).local.on;
+    if (!a || !this.store.kept(accountId)) return false;
+    const last = this.store.all<{ found: number; held: number }>('SELECT found, held FROM mail_search_measure WHERE account_id = ? ORDER BY n DESC LIMIT ?', accountId, LOCAL_SEARCHES);
+    if (last.length < LOCAL_SEARCHES || last.some((r) => r.held < r.found)) return false;
+    return this.view(a).local.on;
   }
 
   /** One account measured against its server. */

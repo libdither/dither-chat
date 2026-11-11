@@ -3,7 +3,7 @@
  * accounts, its history back to the start, its member list, or both. Started from a server's About page, a folder's
  * menu or a conversation's; followed and changed in Settings → Indexing. The hub does the work and keeps the
  * progress, so this only asks it and draws what it says. Mail has a part of its own there (mail/MailKeep.tsx: keeping
- * all mail, per account).
+ * all mail, per account), in Mail's chunk.
  */
 import type * as P from '@dither-chat/protocol';
 import { JOB_PRIORITIES, JOB_REPEATS, NETWORK_META } from '@dither-chat/protocol';
@@ -15,7 +15,7 @@ import { api, db, go, rev, toast } from '../state.ts';
 import { Modal, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { Loading } from './Loader.tsx';
-import { MailKeepSection } from './mail/MailKeep.tsx';
+import { MailKeepLazy } from './mail/lazy.tsx';
 
 /** What the index dialog is open for. */
 export const indexing = signal<{ kind: P.JobTargetKind; id: string } | null>(null);
@@ -337,7 +337,7 @@ export function IndexingSettings() {
           ))}
         </ul>
       )}
-      <MailKeepSection />
+      <MailKeepLazy />
     </section>
   );
 }
