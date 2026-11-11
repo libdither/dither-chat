@@ -61,7 +61,10 @@
  * message not in Trash or Spam, role 'all'), and a user label each (`Label_<n>`, role null). One FakeMessage is the
  * message, its `gm` its own id, its labels in the account's `gm` (Gmail's system ones as the imap extractor names them,
  * `\Inbox` and the like, user labels by path); which mailboxes list it follows from them: in Trash or Spam it is there alone. A
- * summary's labels are all of them, from whichever mailbox; its `emailId` is its id. A move is a label change by its
+ * summary's labels are all of them, from whichever mailbox, Gmail's categories among them (`Category/Promotions`,
+ * `Category/Social`, `Category/Updates`, `Category/Forums`: labels, not mailboxes); its `emailId` is its id. As
+ * dither-accounts reads Gmail's web protocol, its summaries carry no headers: no Message-ID, In-Reply-To, References or
+ * list headers (summaryHeaders false), which mail.get has, as on Proton. A move is a label change by its
  * destination, since mail.move names no mailbox it comes from: the destination's label on, Inbox's off (as Gmail's
  * Move to does from the inbox, and archiving into All Mail), unless it goes to Inbox; Trash's and Spam's off, unless it
  * goes there; into Spam Inbox's off too. So out of All Mail a move only adds a label, and nothing is copied. A trashed
@@ -311,10 +314,12 @@ export class FakeMailBackend implements MailBackend {
     const ids = o.opts?.ids ?? this.defaults.ids;
     const gmail = ids === 'gmail';
     const web = ids === 'gmail-web';
+    // Gmail on the web: no headers on summaries.
+    const refs = o.opts?.refs ?? this.defaults.refs ?? !web;
     const opts: Required<FakeOpts> = {
       ids: 'imap',
       threadIds: gmail || web,
-      refs: true,
+      refs,
       state: web ? 'account' : 'mailbox',
       events: web ? 'all' : 'inbox',
       send: 'ok',
@@ -324,7 +329,7 @@ export class FakeMailBackend implements MailBackend {
       moveIds: 'new',
       search: ids === 'proton' ? 'proton' : gmail || web ? 'gmail' : 'imap',
       answer: 0,
-      summaryHeaders: o.opts?.refs ?? this.defaults.refs ?? true,
+      summaryHeaders: refs,
       details: ids === 'proton' ? PROTON_DETAILS : web ? GMAIL_WEB_DETAILS : {},
       ...this.defaults,
       ...o.opts,
@@ -666,7 +671,8 @@ export class FakeMailBackend implements MailBackend {
     const s: M.MailSummary = {
       id: m.id,
       mailboxId: box,
-      messageId: m.messageId,
+      // Gmail on the web: its Message-ID comes with mail.get alone.
+      messageId: a.opts.ids === 'gmail-web' && !a.opts.refs ? null : m.messageId,
       threadId: a.opts.threadIds ? m.threadId ?? m.messageId : null,
       // Gmail's X-GM-MSGID: the same in every mailbox the message is in.
       ...(m.gm ? { emailId: m.gm } : {}),
@@ -867,10 +873,10 @@ export class FakeMailBackend implements MailBackend {
     return m;
   }
 
-  /** A mailbox for each user label it has not got yet (Gmail's ids for them: `Label_<n>`). */
+  /** A mailbox for each user label it has not got yet (Gmail's ids for them: `Label_<n>`); categories are labels only. */
   private webLabelBoxes(a: Account, labels: Iterable<string>) {
     for (const l of labels) {
-      if (l.startsWith('\\') || a.mailboxes.some((b) => b.path === l)) continue;
+      if (l.startsWith('\\') || /^Category\//.test(l) || a.mailboxes.some((b) => b.path === l)) continue;
       const n = a.mailboxes.filter((b) => b.id.startsWith('Label_')).length + 1;
       a.mailboxes.push({ ...webBox(`Label_${n}`, l.slice(l.lastIndexOf('/') + 1), null), path: l });
     }

@@ -2,10 +2,13 @@
  * Gmail on the web (docs/mail.md "Gmail"): dither-accounts' google kind, on FakeMailBackend's 'gmail-web' mode. A label
  * is a mailbox and a message has one id in all of them, as on Proton; the status says `provider` 'Gmail',
  * `idPerMessage`, `sendCap` and `maxRecipients`, and the address is a Workspace one, so the hub knows it is Gmail only
- * by what the extractor says. Checked: what the hub reads of the status, one message (and one id) in every mailbox
- * that lists it, Move to Inbox from All Mail and into a label as label changes (nothing copied), archive and Undo with
- * no hold, trash and Undo, star and read, changes made in Gmail itself, search in Gmail's syntax, and the caps a send
- * is checked against.
+ * by what the extractor says. As dither-accounts reads Gmail's web protocol, its summaries carry no headers (no
+ * Message-ID, In-Reply-To, References or list headers: mail.get has them) and its `emailId` is its id; Gmail's
+ * categories come as `Category/…` labels. Checked: what the hub reads of the status, one message (and one id) in every
+ * mailbox that lists it with no Message-ID on its summaries, the Message-ID from its body, a Promotions message as bulk
+ * by its category, Move to Inbox from All Mail and into a label as label changes (nothing copied), archive and Undo
+ * with no hold, trash and Undo, star and read, changes made in Gmail itself, search in Gmail's syntax, and the caps a
+ * send is checked against.
  */
 import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
@@ -77,6 +80,9 @@ function seed(f: FakeMailBackend, now: number) {
   f.put(ACC, { mailboxId: ALL, messageId: '<r1@x>', from: [{ name: 'Maple Hardware', email: 'orders@maple.example' }], to: [ME], subject: 'Your receipt', receivedAt: now - 730 * D, flags: { seen: true }, text: 'Keep this as your warranty.' });
 }
 
+/** The world a test made last: `mid` finds its messages by the server's id (summaries carry no Message-ID here). */
+let current: World;
+
 interface World {
   fake: FakeMailBackend;
   hub: MailHub;
@@ -100,12 +106,14 @@ async function world(o: { opts?: FakeOpts } = {}): Promise<World> {
     rmSync(dir, { recursive: true, force: true });
   });
   await clock.wait(hub.sync(ACC)!.whenSynced());
-  return { fake, hub };
+  current = { fake, hub };
+  return current;
 }
 
 /** The backfill has listed what it lists (All Mail back a year, here). */
 const backfilled = (w: World) => until(() => w.hub.sync(ACC)!.backfill.legs().length === 0 && !w.hub.sync(ACC)!.backfill.running, 15_000, 'the backfill');
-const mid = (hdr: string) => mailId('mml', ACC, `m:${hdr}`);
+/** The hub's message for a seeded one: keyed by its emailId, the server's id, since its summaries have no Message-ID. */
+const mid = (hdr: string) => mailId('mml', ACC, `e:${onServer(current, hdr).id}`);
 const box = (w: World, native: string) => w.hub.store.mailboxByNative(ACC, native)!;
 /** The message on the server: there is one, whichever mailboxes list it. */
 const onServer = (w: World, hdr: string) => {
@@ -185,6 +193,39 @@ describe('one message', () => {
     const ms = w.hub.store.all<{ id: string }>(`SELECT id FROM mail_message WHERE account_id = ? AND subject = 'No header'`, ACC);
     expect(ms).toEqual([{ id: mailId('mml', ACC, `e:${m.id}`) }]);
     expect(w.hub.store.all<{ native_id: string }>('SELECT native_id FROM mail_location WHERE message_id = ?', ms[0].id).map((r) => r.native_id)).toEqual([m.id, m.id, m.id]);
+  });
+});
+
+describe('summaries without headers', () => {
+  test('no Message-ID on summaries: one message by its id; the body brings its Message-ID and threading headers', async () => {
+    const w = await world();
+    await backfilled(w);
+    // The status says so, and the hub reads it.
+    expect(w.hub.store.headerless(ACC)).toBe(true);
+    expect(w.hub.store.one('SELECT summary_headers FROM mail_account WHERE id = ?', ACC)).toEqual({ summary_headers: 0 });
+    const s3 = mid('<s3@x>');
+    expect(w.hub.store.one('SELECT message_id_hdr, in_reply_to, email_id FROM mail_message WHERE id = ?', s3)).toEqual({ message_id_hdr: null, in_reply_to: null, email_id: onServer(w, '<s3@x>').id });
+    // Fetched: its Message-ID and In-Reply-To from mail.get, the thread as Gmail has it.
+    await clock.wait(w.hub.body(s3));
+    expect(w.hub.store.one('SELECT message_id_hdr, in_reply_to FROM mail_message WHERE id = ?', s3)).toEqual({ message_id_hdr: '<s3@x>', in_reply_to: '<s2@x>' });
+    expect(threadOf(w, '<s3@x>')).toBe(threadOf(w, '<s1@x>'));
+    expect(rows(w)).toBe(6);
+  });
+
+  test("Gmail's categories come as labels: a Promotions message is bulk by rule 8, with no list headers to go by", async () => {
+    const w = await world();
+    const { mailClassifier } = await import('../src/mail/classify.ts');
+    const { Store } = await import('../src/store.ts');
+    const dir = mkdtempSync(join(tmpdir(), 'dither-mail-gmail-web-classify-'));
+    const chat = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
+    cleanup.push(() => (chat.db.close(), rmSync(dir, { recursive: true, force: true })));
+    mailClassifier(w.hub)!.connect(chat);
+    const m = w.fake.deliver(ACC, { messageId: '<sale@x>', from: [{ name: 'Shop', email: 'hello@shop.example' }], to: [ME], subject: '20% off', labels: ['Category/Promotions'], text: 'This week only.' });
+    const id = mailId('mml', ACC, `e:${m.id}`);
+    await until(() => w.hub.store.one('SELECT class FROM mail_message WHERE id = ?', id)?.class, 4000, 'classified');
+    expect(w.hub.store.one('SELECT class, class_why, labels FROM mail_message WHERE id = ?', id)).toEqual({ class: 'bulk', class_why: 'category', labels: JSON.stringify(['Category/Promotions', '\\Inbox']) });
+    // A category is a label, not a mailbox.
+    expect(w.hub.store.mailboxes(ACC).some((b) => /Promotions/.test(b.path))).toBe(false);
   });
 });
 
@@ -345,10 +386,11 @@ describe('filing', () => {
     await clock.wait(w.hub.sync(ACC)!.catchUp());
     expect(view(w, '<n1@x>').labels).toEqual(['Reading']);
     // Deleted for good: gone here once the other mailboxes the hub keeps up with were asked whether it moved.
+    const j1 = mid('<j1@x>');
     w.fake.remove(ACC, onServer(w, '<j1@x>').id);
     await clock.wait(w.hub.sync(ACC)!.catchUp());
-    expect(where(w, '<j1@x>')).toEqual([]);
-    await until(() => !w.hub.store.one('SELECT 1 FROM mail_message WHERE id = ?', mid('<j1@x>')), 4000, 'deleted');
+    expect(w.hub.store.all('SELECT 1 FROM mail_location WHERE message_id = ?', j1)).toEqual([]);
+    await until(() => !w.hub.store.one('SELECT 1 FROM mail_message WHERE id = ?', j1), 4000, 'deleted');
     expect(rows(w)).toBe(5);
   });
 });

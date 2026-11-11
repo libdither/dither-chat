@@ -85,6 +85,22 @@ describe('ingest', () => {
     expect(t.roles.sort()).toEqual(['archive', 'inbox']);
   });
 
+  test('with neither a Message-ID nor an emailId: one message by its id where ids are the message\'s, a message per place elsewhere', () => {
+    const bare = (mailboxId: string) => sum({ id: 'g42', mailboxId, messageId: null });
+    // Here ids are per mailbox (IMAP): each place is a message of its own.
+    st.ingest(ACC, box('INBOX'), [bare('INBOX')]);
+    st.ingest(ACC, box('Work'), [bare('Work')]);
+    expect(st.all('SELECT id FROM mail_message')).toHaveLength(2);
+    // Where the status says one id a message (Gmail on the web, Proton): that id is its emailId, so it is one message.
+    st.setStatus(ACC, { status: 'online', self: { email: ME }, details: { idPerMessage: true } });
+    st.db.query('DELETE FROM mail_message').run();
+    st.ingest(ACC, box('INBOX'), [bare('INBOX')]);
+    st.ingest(ACC, box('Work'), [bare('Work')]);
+    st.ingest(ACC, box('Archive'), [bare('Archive')]);
+    expect(st.all('SELECT id, email_id FROM mail_message')).toEqual([{ id: mailId('mml', ACC, 'e:g42'), email_id: 'g42' }]);
+    expect(st.all<{ n: number }>('SELECT COUNT(*) AS n FROM mail_location')[0].n).toBe(3);
+  });
+
   test('summaries with In-Reply-To and References thread as they come', () => {
     st.ingest(ACC, box('INBOX'), [sum({ id: 'INBOX.1.1', messageId: '<a@x>', subject: 'Plans' })]);
     st.ingest(ACC, box('Sent'), [sum({ id: 'Sent.1.1', mailboxId: 'Sent', messageId: '<b@x>', subject: 'Re: Plans', from: [{ name: null, email: ME }], to: [{ name: 'Alice', email: 'alice@example.org' }], inReplyTo: '<a@x>', references: ['<a@x>'], receivedAt: T0 + H })]);

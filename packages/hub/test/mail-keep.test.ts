@@ -410,12 +410,22 @@ describe("Gmail's audits", () => {
     expect(n).toBeGreaterThan(500);
     expect(busy).toMatchObject({ server: n, estimate: n, searches: 2 });
     expect(view(w).audit!.estimate).toBe(680);
-    // One lost here is fetched by its id (with its body) when its window is searched again.
-    const lost = mid('<busy3@big.example>');
-    w.hub.store.db.query('DELETE FROM mail_message WHERE id = ?').run(lost);
+    // One lost here is fetched by its id (with its body) when its window is searched again. Its summaries carry no
+    // Message-ID: the hub knows it by the server's id.
+    const native = w.fake.messages(ACC, GMAIL_WEB.all).find((m) => m.messageId === '<busy3@big.example>')!.id;
+    const hubId = () => w.hub.store.one<{ message_id: string }>('SELECT message_id FROM mail_location WHERE native_id = ? LIMIT 1', native)?.message_id;
+    w.hub.store.db.query('DELETE FROM mail_message WHERE id = ?').run(hubId()!);
+    expect(hubId()).toBeUndefined();
     w.hub.store.db.query('UPDATE mail_audit SET checked_at = 0 WHERE account_id = ? AND start = ?').run(ACC, busy.start);
-    await clock.until(() => w.hub.store.one('SELECT 1 FROM mail_body WHERE message_id = ?', lost), 3_600_000, 'the lost message caught');
+    await clock.until(() => hubId() && w.hub.store.one('SELECT 1 FROM mail_body WHERE message_id = ?', hubId()), 3_600_000, 'the lost message caught');
     expect(view(w).audit!.caught).toBe(1);
+    // Stored from mail.get (with its Message-ID), it is still the one message its id-only summaries name.
+    const fm = w.fake.messages(ACC, GMAIL_WEB.all).find((m) => m.id === native)!;
+    const all = w.hub.store.mailboxByNative(ACC, GMAIL_WEB.all)!;
+    const was = hubId();
+    w.hub.store.ingest(ACC, all, [{ id: native, mailboxId: GMAIL_WEB.all, messageId: null, threadId: fm.threadId, emailId: native, from: fm.from, to: fm.to, cc: fm.cc, subject: fm.subject, date: fm.date, receivedAt: fm.receivedAt, flags: fm.flags, labels: [], size: fm.size, preview: null, hasAttachments: false }]);
+    expect(w.hub.store.all('SELECT id FROM mail_message WHERE email_id = ?', native)).toEqual([{ id: was }]);
+    expect(hubId()).toBe(was);
   });
 
   test('re-checks: the current month daily, older ones less and less often', async () => {

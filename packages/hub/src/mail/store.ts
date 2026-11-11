@@ -552,6 +552,10 @@ export class MailStore {
   ingest(accountId: string, mailbox: Row, list: M.MailSummary[], gen?: number): Ingested {
     const out: Ingested = { added: [], threads: new Set(), orphans: [] };
     if (!list.length) return out;
+    // One id a message in every mailbox (Proton, Gmail on the web): that id is its emailId when it comes without one, so
+    // its copies in each mailbox are one message, and a summary without a Message-ID finds the row mail.get's answer
+    // (with one) made, and the other way round (identify).
+    if (this.idPerMessage(accountId)) list = list.map((s) => (s.emailId ? s : { ...s, emailId: s.id }));
     const own = this.ownLabel(accountId, mailbox);
     if (own) list = list.map((s) => (s.labels && !s.labels.includes(own) ? { ...s, labels: [...s.labels, own].sort() } : s));
     const self = this.selfAddresses(accountId);
@@ -591,10 +595,16 @@ export class MailStore {
    * Which message a summary is. With a Message-ID header: `m:<Message-ID>`, as always. Without one, the server's emailId
    * (Gmail's X-GM-MSGID, the same in every mailbox): the message that has it already; else the one at this very place
    * from before emailIds came (it takes the emailId and keeps its id, body and state); else a new one, `e:<emailId>`.
-   * With neither: `x:<mailbox>/<id>`, the place itself, so each mailbox's copy is a message of its own.
+   * With neither: `x:<mailbox>/<id>`, the place itself, so each mailbox's copy is a message of its own; on an account
+   * with one id a message (idPerMessage) ingest has made that id its emailId first. A message that has this emailId
+   * already is the one, Message-ID or not: Gmail on the web's summaries carry none, its mail.get answers do.
    */
   private identify(accountId: string, mailbox: Row, s: M.MailSummary): { id: string; key: string } {
     const keyed = (key: string) => ({ id: mailId('mml', accountId, key), key });
+    if (s.messageId && s.emailId) {
+      const had = this.one<{ id: string }>('SELECT id FROM mail_message WHERE account_id = ? AND email_id = ?', accountId, s.emailId);
+      if (had) return { id: had.id, key: `m:${s.messageId}` };
+    }
     if (s.messageId) return keyed(`m:${s.messageId}`);
     if (!s.emailId) return keyed(`x:${mailbox.native_id}/${s.id}`);
     const key = `e:${s.emailId}`;
@@ -917,7 +927,8 @@ export class MailStore {
 
   /**
    * mail.get's answer: the body kept, the preview made, threading and bulk headers filled in (the thread fixed, and
-   * classified again: Proton's summaries have neither, so a newsletter is known as one only from its body).
+   * classified again: Proton's summaries have neither, so a newsletter is known as one only from its body), and the
+   * Message-ID when the summaries had none (Gmail on the web).
    */
   putBody(messageId: string, msg: M.MailMessage) {
     const m = this.one('SELECT * FROM mail_message WHERE id = ?', messageId);
@@ -946,6 +957,11 @@ export class MailStore {
       this.run('UPDATE mail_message SET preview = ?, has_attachments = ? WHERE id = ?', mailPreview(text) ?? m.preview, hasFiles, messageId);
       const bulk = msg.bulk ? JSON.stringify(msg.bulk) : null;
       if (bulk && bulk !== m.bulk) this.run('UPDATE mail_message SET bulk = ? WHERE id = ?', bulk, messageId);
+      // Summaries without a Message-ID (Gmail on the web): the body's, for "a reply to yours" and threading by reference.
+      if (msg.messageId && !m.message_id_hdr) {
+        this.run('UPDATE mail_message SET message_id_hdr = ? WHERE id = ?', msg.messageId, messageId);
+        this.putRefs(m.account_id, m.thread_id, [msg.messageId]);
+      }
       const refs = msg.references ?? [];
       if ((msg.inReplyTo && msg.inReplyTo !== m.in_reply_to) || refs.length > json<string[]>(m.refs, []).length) {
         this.run('UPDATE mail_message SET in_reply_to = ?, refs = ? WHERE id = ?', msg.inReplyTo ?? m.in_reply_to, JSON.stringify(refs.length ? refs : json(m.refs, [])), messageId);
