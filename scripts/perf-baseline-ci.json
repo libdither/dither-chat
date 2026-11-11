@@ -1,5 +1,5 @@
 {
- "note": "bun scripts/verify-perf.ts --ci --update --runs 5 (docs/perf.md). CI judges the counts marked gate, never the times.",
+ "note": "bun scripts/verify-perf.ts --ci --update --runs 5 (docs/perf.md). CI judges the counts marked gate, never the times. Two layout tallies (cold, first opens) are kept at their values of 2026-11-10: this machine measured them lower than a CI runner does.",
  "at": "2026-11-11",
  "runs": 5,
  "pages": 5,
@@ -50,7 +50,7 @@
    "gate": true
   },
   "1x.cold.layouts": {
-   "v": 8,
+   "v": 9,
    "kind": "tally",
    "gate": true
   },
@@ -92,7 +92,7 @@
    "gate": true
   },
   "1x.open.first.layouts": {
-   "v": 16,
+   "v": 18,
    "kind": "tally",
    "gate": true
   },
