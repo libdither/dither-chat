@@ -314,7 +314,8 @@ const mailBackend = demoMail ?? (sup instanceof RoutedSupervisor ? new ManagerMa
 if (sup instanceof RoutedSupervisor && mailBackend instanceof ManagerMailBackend) sup.mail = mailBackend;
 // A manager on this machine reads attachments from the outbox's folder; one elsewhere gets their bytes.
 if (mailBackend instanceof ManagerMailBackend) mailBackend.localFiles = /^(?:https?|wss?):\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/i.test(accountsUrl ?? '');
-const mail = new MailHub({ db: store.db, backend: mailBackend, managerUrl: accountsPage, dataDir, media: { dir: join(dataDir, 'media-cache'), key: secret, ...(demoMail ? demoMailImages : {}) } });
+// Every mail account keeps all of its mail unless it is turned off for it (mail/keep.ts, docs/mail.md "Keeping all mail").
+const mail = new MailHub({ db: store.db, backend: mailBackend, managerUrl: accountsPage, dataDir, keepAll: true, media: { dir: join(dataDir, 'media-cache'), key: secret, ...(demoMail ? demoMailImages : {}) } });
 // Correspondents become identities and persons (mail/people.ts).
 mailPeople(mail)?.connect(store);
 // Mail from people in the one-list inbox, scored with the chats (mail/attention.ts).

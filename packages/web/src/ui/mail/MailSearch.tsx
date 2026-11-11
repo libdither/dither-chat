@@ -47,8 +47,9 @@ const update = (q: string, patch: Partial<Found>) => {
   if (f) keep({ ...f, ...patch });
 };
 
-const ask = (q: string, o: { cursor?: string | null; limit?: number; server?: boolean } = {}) =>
-  api<P.MailSearchPage>(`/api/mail/search?q=${encodeURIComponent(q)}&limit=${o.limit ?? 50}${o.cursor ? `&cursor=${encodeURIComponent(o.cursor)}` : ''}${o.server ? '&server=1' : ''}`);
+/** `server`: true asks every account's server; 'auto' leaves out those searched locally (the hub holds all their mail). */
+const ask = (q: string, o: { cursor?: string | null; limit?: number; server?: boolean | 'auto' } = {}) =>
+  api<P.MailSearchPage>(`/api/mail/search?q=${encodeURIComponent(q)}&limit=${o.limit ?? 50}${o.cursor ? `&cursor=${encodeURIComponent(o.cursor)}` : ''}${o.server ? `&server=${o.server === 'auto' ? 'auto' : '1'}` : ''}`);
 
 /** Threads from a page go where the reader and the lists find them. */
 const absorb = (hits: P.MailSearchHit[]) => hits.forEach((h) => db.mail.threads.set(h.thread.id, h.thread));
@@ -59,7 +60,7 @@ async function run(q: string) {
     const p = await ask(q);
     absorb(p.hits);
     update(q, { hits: p.hits, next: p.next, mode: p.mode, corrected: p.corrected ?? null, loading: false });
-    if (p.hits.length < ASK_SERVER_UNDER && !p.next) void askServers(q);
+    if (p.hits.length < ASK_SERVER_UNDER && !p.next) void askServers(q, false);
   } catch (e) {
     update(q, { loading: false, error: (e as Error).message });
   }
@@ -80,12 +81,13 @@ async function more(q: string) {
   }
 }
 
-async function askServers(q: string) {
+/** The servers asked: when you ask, every one; on its own (few hits here), not those searched locally. */
+async function askServers(q: string, asked = true) {
   const f = held.get(q);
   if (!f || f.serverLoading) return;
   update(q, { serverLoading: true });
   try {
-    const p = await ask(q, { limit: 1, server: true });
+    const p = await ask(q, { limit: 1, server: asked ? true : 'auto' });
     absorb(p.server?.hits ?? []);
     update(q, { server: p.server ?? { hits: [], accounts: [] }, serverLoading: false });
   } catch (e) {
@@ -146,6 +148,9 @@ const CHIPS: [string, string, string][] = [
   ['has', 'attachment', 'Attachment'],
 ];
 
+/** Some account's server was left out because the hub holds all of its mail (server=auto). */
+const skipped = (server: NonNullable<P.MailSearchPage['server']>) => server.accounts.some((a) => a.state === 'local');
+
 /** What the servers said: who could not be asked, and what they cannot search. */
 function ServerNotes({ server }: { server: NonNullable<P.MailSearchPage['server']> }) {
   const label = (id: string) => {
@@ -154,7 +159,8 @@ function ServerNotes({ server }: { server: NonNullable<P.MailSearchPage['server'
   };
   const lines = server.accounts.flatMap((a) => [
     ...(a.state === 'failed' || a.state === 'offline' ? [`${label(a.accountId)}: ${a.state === 'offline' ? 'not searched' : 'the search failed'}${a.error ? ` (${a.error})` : ''}.`] : []),
-    ...(a.note ? [`${label(a.accountId)}: ${a.note}`] : []),
+    // Searched locally: the hub holds all of it, so its server was not asked.
+    ...(a.state === 'local' ? [`${label(a.accountId)}: searched here, since this hub holds all of its mail. Search the servers too to ask it all the same.`] : a.note ? [`${label(a.accountId)}: ${a.note}`] : []),
   ]);
   if (!lines.length) return null;
   return (
@@ -238,7 +244,7 @@ export function MailSearch({ q, active }: { q: string; active?: string }) {
             More results
           </button>
         )}
-        {f && !f.loading && !f.next && !f.server && !f.serverLoading && f.hits.length > 0 && (
+        {f && !f.loading && !f.next && (!f.server || skipped(f.server)) && !f.serverLoading && (f.hits.length > 0 || !!f.server) && (
           <button class="mail-more" onClick={() => void askServers(q)}>
             Search the servers too
           </button>
@@ -254,7 +260,7 @@ export function MailSearch({ q, active }: { q: string; active?: string }) {
         )}
         {f && !f.loading && !f.serverLoading && !f.hits.length && !serverHits.length && !f.error && (
           <Empty icon="search" title="No mail matches">
-            {f.server ? 'Not here, and not on the servers either.' : 'Only mail this hub holds is searched here.'}
+            {f.server && !skipped(f.server) ? 'Not here, and not on the servers either.' : 'Only mail this hub holds is searched here.'}
           </Empty>
         )}
         {f?.server && <ServerNotes server={f.server} />}
