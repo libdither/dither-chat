@@ -5579,6 +5579,7 @@ code {
 .att-file[data-kind='archive'] {
   cursor: zoom-in;
 }
+/* On a phone the box fills the screen; wider, it sits over the app (below its title bar) with the app dimmed around it. */
 .fviewer {
   position: fixed;
   inset: 0;
@@ -5589,6 +5590,40 @@ code {
   color: var(--text);
   animation: fade-in 0.15s ease-out;
 }
+.fviewer-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-center, var(--bg-raised));
+}
+@media (min-width: 821px) {
+  .fviewer {
+    align-items: center;
+    justify-content: center;
+    padding: calc(var(--titlebar-h) + 24px) 32px 32px;
+    background: var(--overlay);
+    backdrop-filter: blur(3px);
+  }
+  .fviewer-card {
+    flex: none;
+    width: min(960px, 100%);
+    max-height: 100%;
+    min-height: min(240px, 100%);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    animation: pop 0.15s;
+  }
+  /* Documents take the height they may have from the start, so the box does not grow as pages and lines arrive. */
+  .fviewer:is([data-kind='text'], [data-kind='markdown'], [data-kind='json'], [data-kind='csv'], [data-kind='pdf']) .fviewer-card {
+    height: 100%;
+  }
+  .fviewer:is([data-kind='archive'], [data-kind='binary'], [data-kind='audio']) .fviewer-card {
+    width: min(640px, 100%);
+  }
+}
 .fviewer-bar {
   display: flex;
   align-items: center;
@@ -5597,6 +5632,23 @@ code {
   padding: calc(6px + env(safe-area-inset-top)) 8px 6px 14px;
   border-bottom: 1px solid var(--border-soft);
   background: var(--bg-raised);
+}
+@media (min-width: 821px) {
+  .fviewer-bar {
+    padding-top: 6px;
+  }
+}
+/* An installed app with the window controls overlay: the window's own buttons are drawn over the top of the page, so
+   the viewers' bars start below them (wider than a phone, the file box already does). */
+@media (display-mode: window-controls-overlay) {
+  .viewer-bar {
+    padding-top: calc(6px + env(titlebar-area-height, 0px));
+  }
+}
+@media (max-width: 820px) and (display-mode: window-controls-overlay) {
+  .fviewer {
+    padding-top: env(titlebar-area-height, 0px);
+  }
 }
 .fviewer-bar > .icon {
   flex: none;

@@ -57,6 +57,11 @@ which is still a download under the sandbox.
 
 ## The viewers
 
+On a phone a viewer fills the screen. Wider than a phone it is a box over the app, below the title bar, with the app
+dimmed around it: as wide as a page for text, code and PDFs (and as tall as the window allows, so it does not grow as
+lines and pages arrive), narrower for an archive's list, and a click beside it closes it. In an installed app with the
+window controls overlay, the viewers' bars start below the window's own buttons.
+
 The header always has the name, what the card says, and Download. With the desktop helper paired and "open files in my
 apps" on, or in the Android app, it has Open File too (the desktop's or the phone's app for the type), and with the
 helper paired, Open With…, which lists the desktop's apps for the type the bytes say (and text editors for a kind of
