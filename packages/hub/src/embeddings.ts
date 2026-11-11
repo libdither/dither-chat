@@ -10,7 +10,7 @@
  *   emb        a cross-fitted linear probe's logit: "reads like messages you answer"
  *   knn        how close it is to your labelled positives minus your negatives, nearest first in the same author's,
  *              then the conversation's, then all examples
- *   jev:<q>    jev's yes/no answer to a fixed question, as a logit; asked only when triage is unsure
+ *   jev:<q>    jev's yes/no answer to a fixed question, as a logit (`QUESTIONS`: none are asked now)
  * A missing feature is absent from the map and so contributes nothing: jev down, nothing to embed, too few labels.
  *
  * Off unless DITHER_EMBEDDINGS=1. The embedder never blocks triage: it follows new messages in the background, in
@@ -33,12 +33,12 @@ const MIN = 60_000;
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
 
-/** jev's questions. Fixed strings, so its cache works and the features mean the same thing over time. */
-export const QUESTIONS: Record<string, string> = {
-  ask: 'Does this message ask the reader to reply, decide or do something?',
-  soon: "Is this message time-sensitive, needing the reader's attention today?",
-  plans: 'Is this message about plans that include the reader?',
-};
+/**
+ * jev's questions for content features: none now. The three there were (does it ask something, is it time-sensitive,
+ * is it about plans with you) fed only the shadow model and answered about 1% on real messages. The one question
+ * that decides anything, whether a message cannot wait, is triage's own (triage.ts `STOP_QUESTION`).
+ */
+export const QUESTIONS: Record<string, string> = {};
 export const JEV_INSTRUCT = 'Given a chat message someone received, judge whether it meets the description';
 
 // ------------------------------------------------------------------ what is embedded
@@ -179,16 +179,16 @@ export function outcomes(turns: readonly Turn[]): Map<string, Outcome> {
   return out;
 }
 
-/** The labels an outcome gives each head, as far as the reply rule goes. Engaged messages say nothing. */
+/** What an outcome says of importance, as far as the reply rule goes: you answered within three hours. Engaged messages say nothing. */
 export function outcomeLabels(o: Outcome): Partial<Record<Head, 0 | 1>> {
   if (o.engaged) return {};
   const d = o.delay;
-  return { ping: d !== null && d <= PING_MS ? 1 : 0, active: d !== null && d <= ACTIVE_MS ? 1 : 0 };
+  return { important: d !== null && d <= ACTIVE_MS ? 1 : 0 };
 }
 
-/** A vote, for each head (learn.ts `labels`). */
-export function voteLabels(level: P.NotifyTier): Record<Head, 0 | 1> {
-  return { ping: level === 'push' ? 1 : 0, active: level === 'push' || level === 'quiet' ? 1 : 0, interesting: level === 'drop' ? 0 : 1 };
+/** A vote from before the tiers (learn.ts `labels`). */
+export function voteLabels(level: P.NotifyTier): Partial<Record<Head, 0 | 1>> {
+  return { important: level === 'push' || level === 'quiet' ? 1 : 0 };
 }
 
 /** A Beta-smoothed answer rate as a logit, pulled toward `prior` by `m` pseudo-examples. */
@@ -396,9 +396,9 @@ export class KnnIndex {
 
 // ------------------------------------------------------------------ jev's answers
 
-/** Ask jev only when triage is unsure (§5): ping between 0.3 and 0.95, or Active at 0.2 or more. */
-export function needsJev(p: P.TriageProbs | null | undefined): boolean {
-  return !!p && ((p.ping >= 0.3 && p.ping <= 0.95) || p.active >= 0.2);
+/** Would jev's content questions be asked of a message with these chances? Only where its importance is in doubt. */
+export function needsJev(p: Partial<P.TriageProbs> | null | undefined): boolean {
+  return !!p && typeof p.important === 'number' && p.important >= 0.2 && p.important <= 0.95;
 }
 
 /** jev's P(yes) per question as `jev:<q>` logits. P(yes) is uncalibrated; the learning model calibrates it. */
@@ -859,7 +859,7 @@ export class Embeddings {
       const text = inputFor(this.hub, row, self);
       if (text) pick.push({ id, ts: row.ts, text });
     }
-    if (!pick.length) return;
+    if (!pick.length || !Object.keys(QUESTIONS).length) return;
     const answers = pick.map(() => ({}) as Record<string, number>);
     for (const [k, question] of Object.entries(QUESTIONS)) {
       const ps = await this.jev.judge(question, pick.map((p) => p.text));
@@ -921,8 +921,8 @@ export class Embeddings {
   }
 
   /**
-   * Relearn from the labels: replies and reactions (§3) for ping and Active, votes for every head. For each head with
-   * at least ten positives and ten negatives: a probe on top of the conversation's answer rate, cross-fitted logits
+   * Relearn from the labels: replies and reactions, votes from before the tiers, and "less like this". For importance,
+   * given at least ten positives and ten negatives: a probe on top of the conversation's answer rate, cross-fitted logits
    * for the examples themselves, and the kNN examples. Labelled messages are kept past the retention window.
    */
   async refit(yieldNow: () => Promise<unknown> = async () => {}) {
@@ -932,14 +932,15 @@ export class Embeddings {
     const labels = new Map<string, { y: Partial<Record<Head, 0 | 1>>; weight: number }>();
     const ripe = this.now() - ACTIVE_MS;
     for (const [id, o] of outcomes(turns)) if (rows.get(id)!.ts < ripe) labels.set(id, { y: outcomeLabels(o), weight: 0.5 });
-    const votes = this.hub.query('SELECT t.message_id AS id, t.feedback FROM triage t WHERE t.feedback IS NOT NULL').all() as { id: string; feedback: P.NotifyTier }[];
-    for (const v of votes) labels.set(v.id, { y: voteLabels(v.feedback), weight: 1 });
+    const votes = this.hub.query('SELECT t.message_id AS id, t.feedback, t.less_mark FROM triage t WHERE t.feedback IS NOT NULL OR t.less_mark = 1').all() as { id: string; feedback: P.NotifyTier | null; less_mark: number | null }[];
+    for (const v of votes) labels.set(v.id, { y: v.less_mark ? { important: 0 } : voteLabels(v.feedback!), weight: 1 });
     const vectors = this.store.many([...labels.keys()]);
     const notified = this.hub.query('SELECT DISTINCT message_id AS id FROM notification WHERE message_id IS NOT NULL').all() as { id: string }[];
     this.store.keep([...labels.keys(), ...notified.map((n) => n.id)]);
 
     const heads: Partial<Record<Head, HeadModel>> = {};
-    for (const h of ['ping', 'active', 'interesting'] as Head[]) {
+    // Importance only: nothing you did says a message could not wait.
+    for (const h of ['important'] as Head[]) {
       const ex = [...labels].flatMap(([id, l]) => (l.y[h] !== undefined && vectors.has(id) ? [{ id, s: vectors.get(id)!, y: l.y[h]!, weight: l.weight }] : []));
       ex.sort((a, b) => a.s.ts - b.s.ts);
       const pos = ex.filter((e) => e.y).length;
@@ -978,7 +979,7 @@ export class Embeddings {
    * The content features of a message for one head: `{ emb, knn, jev:<q> }`, each present only when known. A
    * labelled example gets its cross-fitted logit and leaves itself out of kNN, so training never sees its own label.
    */
-  features(id: string, head: Head = 'ping'): Record<string, number> {
+  features(id: string, head: Head = 'important'): Record<string, number> {
     const out: Record<string, number> = {};
     const s = this.store.vector(id);
     const m = this.heads[head];
@@ -988,7 +989,8 @@ export class Embeddings {
       const knn = m.knn?.score(s.v, { author: s.author, conversation: s.conversation }, new Set([id]));
       if (knn !== null && knn !== undefined) out.knn = Math.round(knn * 1000) / 1000;
     }
-    for (const [k, v] of Object.entries(jevFeatures(this.store.answers(id)))) out[k] = Math.round(v * 1000) / 1000;
+    // Answers to questions no longer asked are not features.
+    for (const [k, v] of Object.entries(jevFeatures(this.store.answers(id)))) if (k.slice(4) in QUESTIONS) out[k] = Math.round(v * 1000) / 1000;
     return out;
   }
 

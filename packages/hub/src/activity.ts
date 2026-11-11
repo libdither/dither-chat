@@ -421,7 +421,7 @@ export class ActivityStore {
       this.db
         .query(`SELECT m.ts, t.decision FROM message m JOIN triage t ON t.message_id = m.id WHERE m.conversation_id IN (${ph}) AND m.ts >= ? AND (m.author_id IS NULL OR m.author_id NOT IN ${SELF})`)
         .all(...convs, since) as Row[]
-    ).map((r) => ({ ts: r.ts, pushed: r.decision === 'push' || r.decision === 'quiet' }));
+    ).map((r) => ({ ts: r.ts, pushed: r.decision === 'push' || r.decision === 'quiet' || r.decision === 'digest' }));
     const visits = (
       this.db
         .query(`SELECT id, start_at, end_at, active FROM visit WHERE (conversation_id IN (${ph}) OR (? IS NOT NULL AND person_id = ?)) AND view IN ('conversation', 'person') AND start_at >= ? ORDER BY start_at`)

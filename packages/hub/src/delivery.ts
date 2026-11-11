@@ -3,10 +3,14 @@ import { previewText } from './store.ts';
 import type { Triage } from './triage.ts';
 
 type Row = Record<string, any>;
-type Level = 'push' | 'quiet';
+/** The tiers that reach a device: an alert, a Conversation, the list. */
+type Level = 'push' | 'quiet' | 'digest';
+const ORDER: Record<Level, number> = { digest: 0, quiet: 1, push: 2 };
 
 /** A burst: messages less than this apart make one notification that buzzes once. */
 export const BURST_MS = 5 * 60_000;
+/** A chat's row in the phone's list is brought up to date at most this often: a busy channel is one row, not a stream of pushes. */
+export const LIST_EVERY = 10 * 60_000;
 /** Someone using a page on a computer this recently: a phone buzz adds nothing. */
 export const ACTIVE_MS = 2 * 60_000;
 const LINES = 6;
@@ -38,15 +42,15 @@ interface Showing {
   /** When the last push about it went out, and the newest message it showed. */
   at: number;
   ts: number;
-  /** The highest level in this burst: a rise to Important buzzes again. */
+  /** The highest tier in this burst: a rise to an alert sounds again. */
   top: Level;
 }
 
 /**
  * Delivery is per conversation, while triage stays per message: each conversation has one notification on a device,
- * updated as messages come. It buzzes on the first message after a quiet spell, when the level rises from Active to
- * Important, or for a message to you; every other update changes it silently. Reading the conversation anywhere
- * takes it off the phones.
+ * updated as messages come. Only an alert sounds: on the first one after a quiet spell, when the tier rises to an
+ * alert, or for one to you; every other update changes the row silently. Reading the conversation anywhere takes it
+ * off the phones.
  */
 /** Threads that are not chat conversations (mail/triage.ts): their lines, and when they were read. */
 export interface OtherThreads {
@@ -67,12 +71,18 @@ export class Delivery {
 
   /** The rule alone, for one message in one conversation. */
   static alert(prev: Showing | undefined, level: Level, addressed: boolean, now: number): boolean {
-    if (level === 'quiet') return false;
+    if (level !== 'push') return false;
     if (!prev || now - prev.at >= BURST_MS) return true;
     return prev.top !== 'push' || addressed;
   }
 
-  /** Decide whether this push buzzes, note it as showing, and gather what the devices draw. */
+  /** May a list row for this conversation go out now? Not when one went out in the last `LIST_EVERY`. */
+  listDue(conversationId: string, now = Date.now()): boolean {
+    const prev = this.showing.get(conversationId);
+    return !prev || now - prev.at >= LIST_EVERY;
+  }
+
+  /** Decide whether this push sounds, note it as showing, and gather what the devices draw. */
   plan(conversationId: string, messageId: string, level: Level, addressed: boolean, now = Date.now()): Grouped | null {
     const prev = this.showing.get(conversationId);
     const fresh = prev && now - prev.at < BURST_MS ? prev : undefined;
@@ -80,7 +90,7 @@ export class Delivery {
     const g = this.gather(conversationId, messageId);
     if (!g) return null;
     const ts = g.lines.at(-1)?.ts ?? now;
-    this.showing.set(conversationId, { at: now, ts: Math.max(ts, prev?.ts ?? 0), top: fresh?.top === 'push' || level === 'push' ? 'push' : 'quiet' });
+    this.showing.set(conversationId, { at: now, ts: Math.max(ts, prev?.ts ?? 0), top: fresh && ORDER[fresh.top] > ORDER[level] ? fresh.top : level });
     return { ...g, alert };
   }
 

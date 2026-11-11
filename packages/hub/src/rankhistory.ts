@@ -155,7 +155,7 @@ export function* flagged(db: Database, slice = 10_000): Generator<undefined, Set
   const out = new Set<string>();
   const max = ((db.query('SELECT MAX(rowid) AS n FROM message').get() as Row).n as number | null) ?? 0;
   const q = db.query(
-    `SELECT DISTINCT m.conversation_id AS id FROM message m LEFT JOIN triage t ON t.message_id = m.id WHERE m.rowid > ? AND m.rowid <= ? AND (m.mentions_self = 1 OR t.decision IN ('push', 'quiet'))`,
+    `SELECT DISTINCT m.conversation_id AS id FROM message m LEFT JOIN triage t ON t.message_id = m.id WHERE m.rowid > ? AND m.rowid <= ? AND (m.mentions_self = 1 OR t.decision IN ('push', 'quiet', 'digest'))`,
   );
   for (let a = 0; a < max; a += slice) {
     for (const r of q.all(a, a + slice) as Row[]) out.add(r.id);
@@ -188,7 +188,7 @@ export function loadWorld(db: Database, mutedOf: (id: string, shape: string) => 
   const extra = flaggedIds
     ? `c.id IN (SELECT value FROM json_each(?))`
     : `c.id IN (SELECT conversation_id FROM message WHERE mentions_self = 1)
-          OR c.id IN (SELECT m.conversation_id FROM triage t JOIN message m ON m.id = t.message_id WHERE t.decision IN ('push', 'quiet'))`;
+          OR c.id IN (SELECT m.conversation_id FROM triage t JOIN message m ON m.id = t.message_id WHERE t.decision IN ('push', 'quiet', 'digest'))`;
   for (const r of db
     .query(`SELECT c.id, c.shape, ${LISTED} AS listed, (SELECT COUNT(*) FROM participant WHERE conversation_id = c.id) AS members FROM conversation c WHERE ${LISTED} OR ${extra}`)
     .all(...(flaggedIds ? [JSON.stringify([...flaggedIds])] : [])) as Row[]) {
@@ -230,7 +230,7 @@ const FOLD = `
   SELECT m.id, m.ts, m.conversation_id AS cid, m.author_id, m.mentions_self, m.mentions_all, m.kind, m.deleted, i.is_bot, i.person_id,
          r.author_id AS reply_author,
          EXISTS (SELECT 1 FROM reaction x WHERE x.message_id = m.id AND x.identity_id IN ${SELF_SQL}) AS reacted,
-         t.decision IN ('push', 'quiet') AS pushed, t.reasons LIKE '%asks a question%' AS question,
+         t.decision IN ('push', 'quiet', 'digest') AS pushed, t.reasons LIKE '%asks a question%' AS question,
          t.decision, t.feedback, t.feedback_at
   FROM message m INDEXED BY message_ts LEFT JOIN identity i ON i.id = m.author_id LEFT JOIN message r ON r.id = m.reply_to_id LEFT JOIN triage t ON t.message_id = m.id
   WHERE m.conversation_id IN (SELECT value FROM json_each(?)) ORDER BY m.ts, m.rowid`;

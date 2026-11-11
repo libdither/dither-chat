@@ -39,10 +39,10 @@
 import type * as P from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { fit, type Grouped, type Line } from '../delivery.ts';
-import { describeWeight, importance, isTier, levelFrom, predict, prior, STOOD, STOOD_PER_PLACE, TIER_NAME, tierDown, tierUp, voteWeight, words as wordsOf, type Example, type Facts, type Level } from '../learn.ts';
+import { describeWeight, importance, isTier, OLD_VOTE, predict, prior, STOOD, STOOD_PER_PLACE, TIER_NAME, voteWeight, words as wordsOf, type Example, type Facts, type Level } from '../learn.ts';
 import type { Store } from '../store.ts';
 import { inQuietHours, URGENT, type Triage } from '../triage.ts';
-import type { OtherVotes, TriageVotes, Vote } from '../votes.ts';
+import type { OtherVotes, TriageVotes } from '../votes.ts';
 import { mailAttention, type MailTriageFacts } from './attention.ts';
 import { bigOf } from './backfill.ts';
 import { settled } from './headerless.ts';
@@ -90,7 +90,10 @@ export interface MailNotice {
   /** Subject — preview. */
   body: string;
   reasons: string[];
-  level: 'push' | 'quiet';
+  /** An alert (mail from someone set to always alert), else a row on the list. */
+  level: 'push' | 'digest';
+  /** Its importance, 0 to 1: where its row sorts on the list. */
+  importance: number | null;
   /** You in To, or a reply to you: what a device set to "Mentions only" still shows. */
   addressed: boolean;
   look: { network: 'email'; icon?: string };
@@ -133,7 +136,7 @@ const json = <T>(s: string | null | undefined, fallback: T): T => {
 };
 const lc = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
 const round = (x: number) => Math.round(x * 1000) / 1000;
-const rounded = (p: P.TriageProbs): P.TriageProbs => ({ ping: round(p.ping), active: round(p.active), interesting: round(p.interesting) });
+const rounded = (p: P.TriageProbs): P.TriageProbs => ({ alert: round(p.alert), important: round(p.important) });
 /** The subject without Re:, Fwd: and the like, for showing. */
 export const bareSubject = (s: string | null | undefined) => (s ?? '').replace(/^(?:\s*(?:re|fwd?|aw|wg|sv|tr)\s*(?:\[\d+\])?\s*:\s*)+/i, '').trim() || '(no subject)';
 /** An inline picture goes only when small (delivery.ts). */
@@ -154,7 +157,7 @@ export class MailTriage {
   quietWaitMs = MAIL_TRIAGE.quietWaitMs;
 
   constructor(private hub: MailHub) {
-    hub.store.addColumns('mail_triage', { quiet: 'INTEGER NOT NULL DEFAULT 0' });
+    hub.store.addColumns('mail_triage', { quiet: 'INTEGER NOT NULL DEFAULT 0', was: 'TEXT' });
     hub.on('ingested', (e) => {
       if (e.live) this.arrived(e.messageIds);
       else this.sweepSoon();
@@ -164,14 +167,14 @@ export class MailTriage {
     hub.on('account', (e) => {
       if (e.state === 'deleted') this.forgetAccount(e.accountId);
     });
-    // "Not a person" is a vote down, on the newest decision in that thread.
+    // "Not a person" is "less like this", on the newest decision in that thread.
     hub.on('override', (e) => {
       if (e.class !== 'bulk' || !e.threadId || !this.deps?.votes) return;
       const r = hub.store.one<{ id: string }>(
         `SELECT t.message_id AS id FROM mail_triage t JOIN mail_message m ON m.id = t.message_id WHERE m.thread_id = ? AND t.decision != 'silent' ORDER BY m.received_at DESC LIMIT 1`,
         e.threadId,
       );
-      if (r) this.deps.votes.vote(r.id, 'down');
+      if (r) this.deps.votes.mark(r.id, { less: true });
     });
     this.seams();
     // The thread's newest decision goes with its view (the board's mail rows), and each message's with its own.
@@ -197,10 +200,11 @@ export class MailTriage {
   connect(deps: MailTriageDeps, now: () => number = Date.now) {
     this.deps = deps;
     this.now = now;
+    this.toTiers(deps.store.tiersAt());
     this.seams();
     const v: OtherVotes = {
       examples: (at) => this.examples(at),
-      vote: (id, x, at) => this.vote(id, x, at),
+      mark: (id, x, at) => this.mark(id, x, at),
       names: { conversation: (id) => this.threadName(id), space: (id) => this.accountName(id) },
     };
     deps.votes?.others.push(v);
@@ -209,6 +213,22 @@ export class MailTriage {
       this.sweepEvery = setInterval(() => this.sweepSoon(0), MAIL_TRIAGE.quietEveryMs);
       this.sweepEvery.unref?.();
     }
+  }
+
+  /**
+   * Decisions from before the tiers (store.ts `toTiers`), once: Important and Active mail becomes a row on the list,
+   * Digest and below go below it, each keeping what it was. Mail has no Conversation tier.
+   */
+  private toTiers(tiersAt: number) {
+    if (!tiersAt) return;
+    this.hub.store.db
+      .query(
+        `UPDATE mail_triage SET was = COALESCE(level, decision),
+           decision = CASE WHEN decision IN ('push', 'quiet') THEN 'digest' WHEN decision = 'digest' THEN 'drop' ELSE decision END,
+           level = CASE WHEN level IN ('push', 'quiet') THEN 'digest' WHEN level = 'digest' THEN 'drop' ELSE level END
+         WHERE was IS NULL AND created_at < ? AND decision != 'silent'`,
+      )
+      .run(tiersAt);
   }
 
   /** The chat votes it learns with, once connected. */
@@ -357,7 +377,7 @@ export class MailTriage {
     if (!t) return null;
     const quiet = !!o.quiet;
     const x = this.judge(m, t, now, quiet);
-    const ok = !quiet && x.hold === null && (x.decision === 'push' || x.decision === 'quiet');
+    const ok = !quiet && x.hold === null && (x.decision === 'push' || x.decision === 'digest');
     st.db
       .query(
         `INSERT INTO mail_triage (message_id, thread_id, account_id, address, decision, level, score, reasons, decided_by, facts, words, probs, delivered, quiet, created_at)
@@ -380,7 +400,7 @@ export class MailTriage {
         quiet ? 1 : 0,
         now,
       );
-    // The rating moves the listing (a sender nobody knows, at Active) and the fold (what was pushed).
+    // The rating moves the listing (a sender nobody knows, on the list) and the fold (what was notified).
     st.recompute(m.thread_id);
     if (ok && d.deliver) d.deliver(this.notice(m, x));
     return { ...x, delivered: ok };
@@ -443,51 +463,56 @@ export class MailTriage {
 
     const personRule = person ? d.store.rules().find((r) => r.scope === 'person' && r.target === person.id) : null;
     const starred = !!person?.starred || personRule?.level === 'all';
+    // Where the sender and the address lines put it, which is what a mail client would have notified you about.
     let base: Level;
-    if (starred) (base = 'push'), reasons.push(`From ${name}, who is starred`);
-    else if (known && f.mention) (base = 'push'), reasons.push(`${name} wrote to you`);
+    if (starred) (base = 'push'), reasons.push(`From ${name}, who is set to always alert`);
+    else if (known && f.mention) (base = 'quiet'), reasons.push(`${name} wrote to you`);
     else if (known && m.addressed === 'cc') (base = 'quiet'), reasons.push(`${name} copied you in`);
     else {
-      // A list (or Bcc) from someone you know, or anything from someone nobody knows: the digest, if it says enough.
+      // A list (or Bcc) from someone you know, or anything from someone nobody knows: the list, if it says enough.
       base = 'digest';
       reasons.push(known ? `${name} wrote to a list you are on` : 'From someone you have not written to');
-      if (why.length) reasons.push(`Interesting: ${why.join(', ')}`);
+      if (why.length) reasons.push(`About you: ${why.join(', ')}`);
     }
-    if (body.spoof && base === 'push') {
-      base = 'quiet';
-      reasons.push(`No buzz: ${body.spoof}`);
-    }
-    const facts: Facts = { ...f, base, score };
+    const facts: Facts = { ...f, base, score, notify: base !== 'digest' };
     const ws = wordsOf(all);
     const p = predict(d.triage.learned, facts, ws);
-    let level = p.level;
+    const th = d.triage.thresholds();
+    // Mail has no Conversation tier, and nothing reads it for urgency: someone set to always alert is an alert (never
+    // when the sender looks spoofed), the rest is on the list or below it by its importance.
+    const alert = starred && !body.spoof;
+    const tierOf = (important: number): Level => (alert ? 'push' : important >= th.important ? 'digest' : 'drop');
+    const level = tierOf(p.probs.important);
     let decidedBy: Decided['decidedBy'] = 'rules';
-    const before = levelFrom(prior(facts));
+    const before = tierOf(prior(facts).important);
     if (level !== before) {
       const n = d.triage.namer;
-      const words = n ? p.why.slice(0, 2).map((w) => describeWeight(w.feature, w.head, w.by, n)) : [];
-      reasons.unshift(`${TIER_NAME[level]}, learned from your votes (was ${TIER_NAME[before]})`, ...words);
+      const words = n
+        ? p.why
+            .filter((w) => w.head === 'important')
+            .slice(0, 2)
+            .map((w) => describeWeight(w.feature, w.head, w.by, n))
+        : [];
+      reasons.unshift(`${TIER_NAME[level]}, learned from your marks (was ${TIER_NAME[before]})`, ...words);
       decidedBy = 'learned';
-    } else if (level === 'drop') reasons.unshift(`Not interesting enough for the digest (${Math.round(p.probs.interesting * 100)}%)`);
-    // A spoofed-looking sender never buzzes, whatever was learned.
-    if (body.spoof && level === 'push') {
-      level = 'quiet';
-      if (!reasons.some((r) => r.startsWith('No buzz:'))) reasons.unshift(`No buzz: ${body.spoof}`);
-    }
+    } else if (level === 'drop') reasons.unshift(`Below the list: importance ${Math.round(p.probs.important * 100)}%`);
+    if (starred && body.spoof) reasons.unshift(`No alert: ${body.spoof}`);
     let decision: P.TriageDecision = level;
     let hold: string | null = null;
     if (quiet) {
       // Found by a sync: it decides the listing only, so quiet hours have nothing to hold.
       hold = QUIET_REASON;
       reasons.push(hold);
-    } else if (level === 'push' || level === 'quiet') {
+    } else if (level === 'push' || level === 'digest') {
       const q = d.store.quietHours();
-      if (inQuietHours(q, now) && !(q!.allowStarred && starred)) {
+      if (level === 'push' && inQuietHours(q, now) && !(q!.allowStarred && starred)) {
+        // Held: a silent row on the list, counted for the summary when quiet hours end.
         decision = 'digest';
         reasons.unshift(`Held by quiet hours until ${q!.end}`);
         const held = d.store.quietHeld();
         d.store.setQuietHeld({ count: (held?.count ?? 0) + 1, conversationId: m.thread_id, messageId: m.id });
-      } else if (m.seen || m.seen_local) hold = 'Already read: no notification';
+      }
+      if (m.seen || m.seen_local) hold = 'Already read: no notification';
       else if (now - m.received_at > MAIL_TRIAGE.freshMs) hold = 'Came in late: no notification';
       else if (!st.one(`SELECT 1 FROM mail_location l JOIN mailbox b ON b.id = l.mailbox_id WHERE l.message_id = ? AND b.role = 'inbox'`, m.id)) hold = 'Not in Inbox: no notification';
       if (hold) reasons.push(hold);
@@ -520,7 +545,8 @@ export class MailTriage {
       title: w.name ?? m.from_name ?? from ?? 'Someone',
       body: preview ? `${subject} — ${preview}` : subject,
       reasons: x.reasons,
-      level: x.decision as 'push' | 'quiet',
+      level: x.decision as 'push' | 'digest',
+      importance: x.score,
       addressed: !!x.facts?.mention || !!x.facts?.reply,
       look: { network: 'email', ...(w.icon ? { icon: w.icon } : {}) },
     };
@@ -544,14 +570,17 @@ export class MailTriage {
 
   // ---------------------------------------------------------- what the rest of mail asks
 
-  /** §14 Q4: the thread's newest decision (from someone else) is Active or above, by your vote or the model's rating. */
+  /** §14 Q4: the thread's newest decision (from someone else) is on the list or above, and not marked "less like this". */
   rated(threadId: string): boolean {
     const r = this.hub.store.one<Row>(
       `SELECT t.feedback, t.level, t.decision FROM mail_triage t JOIN mail_message m ON m.id = t.message_id WHERE m.thread_id = ? ORDER BY m.received_at DESC, m.id DESC LIMIT 1`,
       threadId,
     );
-    const at = r ? (r.feedback ?? r.level ?? r.decision) : null;
-    return at === 'push' || at === 'quiet';
+    if (!r) return false;
+    // A mark, or a vote from before the tiers: up to Important or Active lets it in, down keeps it out.
+    if (r.feedback) return r.feedback === 'push' || r.feedback === 'quiet';
+    const at = r.level ?? r.decision;
+    return at === 'push' || at === 'quiet' || at === 'digest';
   }
 
   /** For the fold (mail/attention.ts): pushed means a notification went out. */
@@ -642,26 +671,31 @@ export class MailTriage {
 
   // ---------------------------------------------------------- votes
 
-  /** Up or down a level from where it is now, or to one; null takes it back. Undefined: not a mail message. */
-  vote(id: string, v: Vote, now = this.now()): Level | null | undefined {
+  /**
+   * A mark on a mail message: only "less like this" means anything here (kept as the feedback 'drop'; false or null
+   * takes it back). Undefined: not a mail message.
+   */
+  mark(id: string, marks: P.TriageMarks, now = this.now()): P.TriageMarks | undefined {
     if (!id.startsWith('mml_')) return undefined;
     const st = this.hub.store;
     const t = st.one<Row>('SELECT t.decision, t.feedback, m.thread_id FROM mail_triage t LEFT JOIN mail_message m ON m.id = t.message_id WHERE t.message_id = ?', id);
     if (!t) throw new Error('Triage never decided on this message');
     if (!isTier(t.decision)) throw new Error('This thread is muted: unmute it instead');
-    const cur = (t.feedback ?? t.decision) as Level;
-    const target = v === null ? null : v === 'up' ? tierUp(cur) : v === 'down' ? tierDown(cur) : v;
-    if (target !== null && !isTier(target)) throw new Error('Unknown level');
-    st.db.query('UPDATE mail_triage SET feedback = ?, feedback_at = ? WHERE message_id = ?').run(target, target === null ? null : now, id);
-    if (t.thread_id) st.recompute(t.thread_id);
-    return target;
+    if (marks.less !== undefined) {
+      const less = !!marks.less;
+      st.db.query('UPDATE mail_triage SET feedback = ?, feedback_at = ? WHERE message_id = ?').run(less ? 'drop' : null, less ? now : null, id);
+      if (t.thread_id) st.recompute(t.thread_id);
+      return less ? { less: true } : {};
+    }
+    return t.feedback === 'drop' ? { less: true } : {};
   }
 
-  /** Every vote on mail, and the newest notifications you let stand in each thread (votes.ts examples). */
+  /** Every mark and older vote on mail, and the newest notifications you let stand in each thread (votes.ts examples). */
   examples(now = this.now()): Example[] {
     const st = this.hub.store;
     const out: Example[] = [];
     const authors = new Map<string, string | null>();
+    const tiersAt = this.deps?.store.tiersAt() ?? 0;
     // The author as they are now: a merge since the vote counts (Sam's mail and Sam's chats are one person).
     const author = (address: string | null, f: Facts): Facts => {
       if (!address) return f;
@@ -670,30 +704,33 @@ export class MailTriage {
       return a && a !== f.author ? { ...f, author: a } : f;
     };
     for (const r of st.all<Row>(`SELECT address, facts, words, feedback, feedback_at FROM mail_triage WHERE feedback IS NOT NULL AND facts IS NOT NULL ORDER BY feedback_at DESC LIMIT 5000`)) {
-      out.push({ facts: author(r.address, JSON.parse(r.facts)), words: json<string[]>(r.words, []), label: r.feedback, weight: voteWeight(r.feedback_at ?? now, now), vote: true, at: r.feedback_at ?? 0 });
+      // A vote from before the tiers answered another question: half a mark.
+      const old = (r.feedback_at ?? 0) < tiersAt ? OLD_VOTE : 1;
+      out.push({ facts: author(r.address, JSON.parse(r.facts)), words: json<string[]>(r.words, []), label: r.feedback, weight: old * voteWeight(r.feedback_at ?? now, now), vote: true, at: r.feedback_at ?? 0 });
     }
+    // A notification about mail that you left alone says it was worth seeing.
     const stood = st.all<Row>(
-      `SELECT address, decision, facts, created_at FROM (
-         SELECT address, decision, facts, created_at, ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY created_at DESC) AS n
-         FROM mail_triage WHERE feedback IS NULL AND facts IS NOT NULL AND delivered = 1 AND decision IN ('push', 'quiet') AND created_at > ? AND created_at < ?)
+      `SELECT address, facts, created_at FROM (
+         SELECT address, facts, created_at, ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY created_at DESC) AS n
+         FROM mail_triage WHERE feedback IS NULL AND facts IS NOT NULL AND delivered = 1 AND decision IN ('push', 'digest') AND created_at > ? AND created_at < ?)
        WHERE n <= ?`,
       now - 30 * DAY,
       now - DAY / 2,
       STOOD_PER_PLACE,
     );
-    for (const r of stood) out.push({ facts: author(r.address, JSON.parse(r.facts)), words: [], label: r.decision, weight: STOOD, vote: false, at: r.created_at });
+    for (const r of stood) out.push({ facts: author(r.address, JSON.parse(r.facts)), words: [], y: { important: 1 }, weight: STOOD, vote: false, at: r.created_at });
     return out;
   }
 
   // ---------------------------------------------------------- the board
 
-  /** The board's mail: what was decided in the last week (what fell below the digest, two days), newest first. */
+  /** The board's mail: what was decided in the last week (what fell below the list, two days), newest first. */
   items(since: number, now = this.now()): P.MailTriageItem[] {
     const below = Math.max(since, now - MAIL_TRIAGE.belowDays * DAY);
     const rows = this.hub.store.all<Row>(
       `SELECT t.*, m.thread_id AS tid, m.from_addr, m.from_name, m.subject, m.preview, m.received_at, m.seen, m.seen_local
        FROM mail_triage t JOIN mail_message m ON m.id = t.message_id
-       WHERE t.decision != 'silent' AND t.created_at >= ? AND (COALESCE(t.feedback, t.decision) != 'drop' OR t.created_at >= ?)
+       WHERE t.decision != 'silent' AND t.created_at >= ? AND (t.decision != 'drop' OR t.created_at >= ?)
        ORDER BY t.created_at DESC LIMIT 500`,
       since,
       below,
@@ -752,7 +789,17 @@ function authorOf(s: Pick<MailSender, 'personId' | 'identityId'> | null, address
 }
 
 function view(t: Row): P.TriageView {
-  return { decision: t.decision, score: t.score ?? null, reasons: json<string[]>(t.reasons, []), decidedBy: t.decided_by, feedback: t.feedback ?? null, probs: json<P.TriageProbs | null>(t.probs, null) };
+  const probs = json<Partial<P.TriageProbs> | null>(t.probs, null);
+  return {
+    decision: t.decision,
+    score: t.score ?? null,
+    reasons: json<string[]>(t.reasons, []),
+    decidedBy: t.decided_by,
+    feedback: t.feedback ?? null,
+    // Chances from before the tiers were three others.
+    probs: probs && typeof probs.important === 'number' && typeof probs.alert === 'number' ? { alert: probs.alert, important: probs.important } : null,
+    ...(t.feedback === 'drop' ? { marks: { less: true } } : {}),
+  };
 }
 
 function itemOf(r: Row, who: { identityId: string; personId: string | null } | undefined): P.MailTriageItem {
@@ -796,18 +843,17 @@ export const triageRoutes: MailRouter = (hub) => {
       },
     },
     {
-      // { vote: up | down } or { level: push | quiet | digest | drop | null }, as /api/messages/:id/feedback takes.
+      // { less: true | false }, as /api/messages/:id/feedback takes; { vote: 'down' } from an app before the tiers.
       method: 'POST',
       path: /^\/api\/mail\/triage\/([\w-]+)\/vote$/,
       handle: async ({ params, body }) => {
-        const b = await body<{ vote?: unknown; level?: unknown; feedback?: unknown }>();
-        const lv = b.level !== undefined ? b.level : b.feedback;
-        const v: Vote | undefined = b.vote === 'up' || b.vote === 'down' ? b.vote : lv === null || isTier(lv) ? (lv as Vote) : undefined;
-        if (v === undefined) return bad('Say vote: up or down, or level: a level or null');
+        const b = await body<{ less?: unknown; vote?: unknown }>();
+        const less = typeof b.less === 'boolean' ? b.less : b.less === null ? false : b.vote === 'down' ? true : undefined;
+        if (less === undefined) return bad('Say less: true or false');
         const votes = t.votes;
         try {
-          if (votes) return ok(votes.vote(params[0], v));
-          return ok({ feedback: t.vote(params[0], v) ?? null });
+          if (votes) return ok(votes.mark(params[0], { less }));
+          return ok({ marks: t.mark(params[0], { less }) ?? {} });
         } catch (e) {
           return bad((e as Error).message, 409);
         }

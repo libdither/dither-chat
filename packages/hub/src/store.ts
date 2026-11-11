@@ -75,6 +75,24 @@ const json = <T>(s: string | null | undefined, fallback: T): T => {
 
 const PREVIEW_LEN = 140;
 
+/** A stored decision as the app sees it. Chances from before the tiers (three of them) are not the two it reads. */
+export function triageView(t: Row): P.TriageView {
+  const probs = json<Partial<P.TriageProbs> | null>(t.probs, null);
+  const marks: P.TriageMarks = { ...(t.alert_mark != null ? { alert: !!t.alert_mark } : {}), ...(t.less_mark ? { less: true } : {}) };
+  // The local model's answer is kept with the facts.
+  const judge = typeof t.facts === 'string' && t.facts.includes('"judge"') ? json<{ judge?: number }>(t.facts, {}).judge : undefined;
+  return {
+    decision: t.decision,
+    score: t.score,
+    reasons: json(t.reasons, []),
+    decidedBy: t.decided_by,
+    feedback: t.feedback,
+    probs: probs && typeof probs.important === 'number' && typeof probs.alert === 'number' ? { alert: probs.alert, important: probs.important } : null,
+    ...(Object.keys(marks).length ? { marks } : {}),
+    ...(judge !== undefined ? { judge } : {}),
+  };
+}
+
 export function previewText(body: string, kind: string): string {
   if (kind === 'encrypted') return 'Encrypted message';
   // Keep <@id> / <#id> tokens intact: the client resolves them to names.
@@ -139,7 +157,7 @@ const PRESENCE_STATES = new Set<string>(['online', 'idle', 'dnd', 'offline']);
 const PRESENCE_DEVICES = new Set<string>(['desktop', 'mobile', 'web']);
 
 /** Bump when a migration step changes without schema.sql changing, so the database is copied before it runs. */
-const MIGRATIONS = 2;
+const MIGRATIONS = 3;
 
 export class Store {
   readonly db: Database;
@@ -184,7 +202,7 @@ export class Store {
       this.addColumns('message', { gone_how: 'TEXT', gone_at: 'INTEGER', imported: 'INTEGER NOT NULL DEFAULT 0' });
       this.addColumns('identity', { status: 'TEXT' });
       this.addColumns('category', { threshold: 'REAL' });
-      this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL' });
+      this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL', was: 'TEXT', alert_mark: 'INTEGER', less_mark: 'INTEGER', marked_at: 'INTEGER' });
       this.addColumns('visit', { depth: 'INTEGER' });
       const oldTriage = this.setAsideTriage();
       const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
@@ -194,6 +212,7 @@ export class Store {
       if (broadcastsUnknown) this.markBroadcasts();
       this.adoptOldReactions(reactionsBefore);
       this.clearStars();
+      this.toTiers();
       this.db.query(`INSERT INTO meta (key, value) VALUES ('schema_sig', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(sig);
     })();
     timer.step('migrations');
@@ -217,6 +236,35 @@ export class Store {
     } catch {
       return '';
     }
+  }
+
+  /**
+   * The four levels became three tiers (docs/notifications.md), once. The codes stay, so nothing is rebuilt: what was
+   * Important or Active becomes a Conversation in a DM or a group chat and a list row elsewhere (no old message turns
+   * into an alert), Digest and below go below the list, each row keeping what it was (`was`) and taking the old Active
+   * chance as its importance. Rules set to Smart become Automatic (no rule); the daily digest's settings go.
+   */
+  private toTiers() {
+    if (this.db.query(`SELECT 1 FROM meta WHERE key = 'tiers_at'`).get()) return;
+    const n = this.db
+      .query(
+        `UPDATE triage SET was = decision, score = COALESCE(json_extract(probs, '$.active'), score), decision = CASE
+           WHEN decision IN ('push', 'quiet') THEN CASE
+             WHEN (SELECT c.shape FROM message m JOIN conversation c ON c.id = m.conversation_id WHERE m.id = triage.message_id) IN ('direct', 'group') THEN 'quiet'
+             ELSE 'digest' END
+           ELSE 'drop' END
+         WHERE was IS NULL AND decision != 'silent'`,
+      )
+      .run().changes;
+    const rules = this.db.query(`DELETE FROM notify_rule WHERE level = 'smart'`).run().changes;
+    this.db.exec(`DELETE FROM meta WHERE key IN ('daily_digest', 'daily_digest_state'); DROP INDEX IF EXISTS triage_level_score;`);
+    if (n || rules) console.log(`three tiers: ${n} decision${n === 1 ? '' : 's'} moved from the four levels, ${rules} Smart rule${rules === 1 ? '' : 's'} now Automatic`);
+    this.db.query(`INSERT INTO meta (key, value) VALUES ('tiers_at', ?)`).run(String(Date.now()));
+  }
+
+  /** When this database took up the tiers: what stood before it says nothing about alerts. */
+  tiersAt(): number {
+    return Number((this.db.query(`SELECT value FROM meta WHERE key = 'tiers_at'`).get() as Row | null)?.value ?? 0);
   }
 
   /**
@@ -268,8 +316,8 @@ export class Store {
   }
 
   /**
-   * Triage rows nobody will learn from: older than `keepDays`, in conversations you have never written in, never voted
-   * on, never notified and never explored. Learning reads two weeks (votes.ts) and the replay a few (docs/
+   * Triage rows nobody will learn from: older than `keepDays`, in conversations you have never written in, never
+   * marked, and below the list. Learning reads two weeks (votes.ts) and the replay a few (docs/
    * triage-replay.md), so the default 90 days keeps every label. At most `limit` rows a call. Returns how many went.
    */
   pruneTriage(now = Date.now(), keepDays = Number(process.env.DITHER_TRIAGE_KEEP_DAYS) || 90, limit = 5000): number {
@@ -280,7 +328,7 @@ export class Store {
       .query(
         `DELETE FROM triage WHERE rowid IN (
            SELECT t.rowid FROM triage t JOIN message m ON m.id = t.message_id
-           WHERE t.created_at < ? AND t.feedback IS NULL AND t.explore IS NULL AND t.decision IN ('digest', 'drop', 'silent')
+           WHERE t.created_at < ? AND t.feedback IS NULL AND t.marked_at IS NULL AND t.explore IS NULL AND t.decision IN ('drop', 'silent')
              AND m.conversation_id NOT IN (${yours})
            LIMIT ?)`,
       )
@@ -1928,23 +1976,27 @@ export class Store {
   }
 
 
-  /** A decision, and what it was made from; with the shadow model's chances and what exploration did, if anything. A vote already given stays. */
-  setTriage(messageId: string, t: Omit<P.TriageView, 'feedback'> & { shadow?: P.TriageProbs; explore?: 'up' | 'down' | null; propensity?: number | null }, facts?: unknown) {
+  /** A decision, and what it was made from; with the shadow model's chances. Marks already given stay. */
+  setTriage(messageId: string, t: Pick<P.TriageView, 'decision' | 'score' | 'reasons' | 'decidedBy' | 'probs'> & { shadow?: P.TriageProbs }, facts?: unknown) {
     this.db
       .query(
-        `INSERT INTO triage (message_id, decision, score, reasons, decided_by, facts, probs, shadow, explore, propensity, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO triage (message_id, decision, score, reasons, decided_by, facts, probs, shadow, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (message_id) DO UPDATE SET decision = excluded.decision, score = excluded.score, reasons = excluded.reasons,
            decided_by = excluded.decided_by, facts = COALESCE(excluded.facts, facts), probs = excluded.probs, shadow = excluded.shadow,
-           explore = excluded.explore, propensity = excluded.propensity, created_at = excluded.created_at`,
+           created_at = excluded.created_at`,
       )
-      .run(
-        messageId, t.decision, t.score, JSON.stringify(t.reasons), t.decidedBy, facts ? JSON.stringify(facts) : null, t.probs ? JSON.stringify(t.probs) : null,
-        t.shadow ? JSON.stringify(t.shadow) : null, t.explore ?? null, t.propensity ?? null, Date.now(),
-      );
+      .run(messageId, t.decision, t.score, JSON.stringify(t.reasons), t.decidedBy, facts ? JSON.stringify(facts) : null, t.probs ? JSON.stringify(t.probs) : null, t.shadow ? JSON.stringify(t.shadow) : null, Date.now());
   }
 
-  triageFeedback(messageId: string, feedback: P.TriageView['feedback'], now = Date.now()) {
-    this.db.query('UPDATE triage SET feedback = ?, feedback_at = ? WHERE message_id = ?').run(feedback, feedback ? now : null, messageId);
+  /** Your marks on a decision: each given key is set (null takes that mark back); the others stay. */
+  triageMark(messageId: string, marks: P.TriageMarks, now = Date.now()) {
+    const t = this.db.query('SELECT alert_mark, less_mark FROM triage WHERE message_id = ?').get(messageId) as Row | null;
+    if (!t) return;
+    const flag = (v: boolean | null | undefined, was: number | null) => (v === undefined ? was : v === null ? null : v ? 1 : 0);
+    const alert = flag(marks.alert, t.alert_mark);
+    // Only "less" is a mark: false takes it back.
+    const less = marks.less === undefined ? t.less_mark : marks.less ? 1 : null;
+    this.db.query('UPDATE triage SET alert_mark = ?, less_mark = ?, marked_at = ? WHERE message_id = ?').run(alert, less, alert === null && less === null ? null : now, messageId);
     this.dirty.messages.set(messageId, true);
   }
 
@@ -2379,7 +2431,7 @@ export class Store {
           })
           .filter((x) => x.count > 0),
         seenVia,
-        triage: t ? { decision: t.decision, score: t.score, reasons: json(t.reasons, []), decidedBy: t.decided_by, feedback: t.feedback, probs: json(t.probs, null) } : null,
+        triage: t ? triageView(t) : null,
       };
     });
   }
@@ -2565,15 +2617,15 @@ export class Store {
   }
 
   /**
-   * The inbox's picks. What notified (or you voted up) has its own share, so a busy digest cannot push it out of the
-   * list; the digest is what matters most, not what came last; and the most interesting of what fell below it, to
-   * vote up. A week of triage is hundreds of thousands of rows, so each walks an index and stops at its limit
-   * (test/inbox-plan.test.ts): the few that notified from triage_level_score; the digest and below by score, best
-   * first, then (with what is left of the limit) the many without a score, newest first along message_ts.
-   * That is ORDER BY score DESC, ts DESC with no score last, as one query had it, without sorting the week.
+   * The inbox's picks. Alerts and Conversations have their own share, so a busy list cannot push them out; the list
+   * is what matters most, not what came last; and the most important of what fell below it, to mark. A week of
+   * triage is hundreds of thousands of rows, so each walks an index and stops at its limit
+   * (test/inbox-plan.test.ts): the few alerts and conversations from triage_tier_score; the list and below by
+   * importance, best first, then (with what is left of the limit) the many without a score, newest first along
+   * message_ts. That is ORDER BY score DESC, ts DESC with no score last, as one query had it, without sorting the week.
    */
   static inboxQueries(sinceTs: number, now = Date.now()) {
-    const at = `COALESCE(t.feedback, t.decision)`;
+    const at = `t.decision`;
     const ok = `m.ts >= ? AND m.deleted = 0 AND t.decision != 'silent'`;
     const byLevel = (level: string, scored: boolean) =>
       scored
@@ -2860,27 +2912,12 @@ export class Store {
   setQuietHours = (q: P.QuietHours) => this.setMetaJson('quiet_hours', q);
   quietHeld = () => this.metaJson<{ count: number; conversationId: string; messageId: string }>('quiet_held');
   setQuietHeld = (held: { count: number; conversationId: string; messageId: string } | null) => this.setMetaJson('quiet_held', held);
-  dailyDigest = () => this.metaJson<P.DailyDigest>('daily_digest');
-  /** What triage learned from your votes (learn.ts). */
+  /** What triage learned from your marks (learn.ts). */
   triagePolicy = <T>() => this.metaJson<T>('triage_policy');
   setTriagePolicy = (p: unknown) => this.setMetaJson('triage_policy', p);
-  setDailyDigest = (d: P.DailyDigest) => this.setMetaJson('daily_digest', d);
-  /** The last daily slot dealt with, and when the digest last started gathering. Kept here so restarts neither repeat nor lose it. */
-  digestState = () => this.metaJson<{ slot: string; since: number }>('daily_digest_state');
-  setDigestState = (st: { slot: string; since: number }) => this.setMetaJson('daily_digest_state', st);
-
-  /** What the inbox's digest section gathered in this window, busiest conversation first. */
-  digestSummary(since: number, until: number): { id: string; count: number }[] {
-    return (
-      this.db
-        .query(
-          `SELECT m.conversation_id AS id, COUNT(*) AS count FROM triage t JOIN message m ON m.id = t.message_id
-           WHERE t.decision = 'digest' AND t.created_at > ? AND t.created_at <= ? AND m.deleted = 0
-           GROUP BY m.conversation_id ORDER BY count DESC, MAX(m.ts) DESC`,
-        )
-        .all(since, until) as { id: string; count: number }[]
-    );
-  }
+  /** The importance at which a message reaches the phone's list; null until you set it (learn.ts THRESHOLDS). */
+  listLevel = (): number | null => this.metaJson<number>('list_level');
+  setListLevel = (level: number) => this.setMetaJson('list_level', level);
 
   rules(): P.RuleView[] {
     return (this.db.query('SELECT * FROM notify_rule ORDER BY created_at').all() as Row[]).map((r) => ({

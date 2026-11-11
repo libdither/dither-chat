@@ -3,14 +3,14 @@ import { createHmac } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, RETENTION_GUARDED, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, RETENTION_GUARDED, RULE_LEVELS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { ACCOUNT_COLORS, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
 import type { PushService } from './push.ts';
 import type { ReadQueue } from './readqueue.ts';
-import { validDailyDigest, validQuietHours, type Triage } from './triage.ts';
-import type { TriageVotes, Vote } from './votes.ts';
+import { validQuietHours, type Triage } from './triage.ts';
+import type { TriageVotes } from './votes.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
 import { ImportRunner } from './imports/engine.ts';
 import { GapFill } from './imports/gapfill.ts';
@@ -970,17 +970,27 @@ export class HubServer {
       this.flush();
       return ok();
     }
-    // A vote: { vote: 'up' | 'down' } from where it is now, or { feedback: level | null } straight to a level.
+    // Your marks on a decision (P.TriageMarks): { alert: true } it should have alerted, { alert: false } the alert was
+    // wrong, { less: true } less like this; null (or less: false) takes one back. An app from before the tiers still
+    // sends { vote: 'up' | 'down' }: up says it should have alerted; down says the alert was wrong, or less like this.
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/feedback$/)) && method === 'POST') {
-      const b = await body<{ vote?: 'up' | 'down'; feedback?: P.NotifyTier | null }>();
-      const v: Vote | undefined = b.vote === 'up' || b.vote === 'down' ? b.vote : b.feedback === null || ['push', 'quiet', 'digest', 'drop'].includes(b.feedback as string) ? (b.feedback as Vote) : undefined;
-      if (v === undefined) return bad('Say vote: up or down, or feedback: a level or null');
+      const b = await body<{ alert?: unknown; less?: unknown; vote?: unknown }>();
+      const marks: P.TriageMarks = {};
+      if (typeof b.alert === 'boolean' || b.alert === null) marks.alert = b.alert;
+      if (typeof b.less === 'boolean' || b.less === null) marks.less = b.less;
+      if (b.alert === undefined && b.less === undefined && (b.vote === 'up' || b.vote === 'down')) {
+        const was = s.one<{ decision: string }>('SELECT decision FROM triage WHERE message_id = ?', m[1])?.decision;
+        if (b.vote === 'up') marks.alert = true;
+        else if (was === 'push') marks.alert = false;
+        else marks.less = true;
+      }
+      if (marks.alert === undefined && marks.less === undefined) return bad('Say alert: true, false or null, or less: true or false');
       if (!this.opts.votes) {
-        s.triageFeedback(m[1], v === 'up' || v === 'down' ? null : v);
+        s.triageMark(m[1], marks);
         return ok();
       }
       try {
-        const r = this.opts.votes.vote(m[1], v);
+        const r = this.opts.votes.mark(m[1], marks);
         this.flush();
         return ok(r);
       } catch (e: any) {
@@ -990,6 +1000,13 @@ export class HubServer {
     if (path === '/api/triage/policy' && method === 'GET') return this.opts.votes ? ok(this.opts.votes.view()) : bad('No triage here', 404);
     // What the shadow model would have done lately (shadow.ts): counts only.
     if (path === '/api/triage/shadow' && method === 'GET') return this.opts.votes ? ok(this.opts.votes.shadow()) : bad('No triage here', 404);
+    // The importance at which a message reaches the phone's list: { level: 0.01 to 0.99 }.
+    if (path === '/api/triage/level' && method === 'PUT' && this.opts.votes) {
+      const b = await body<{ level?: unknown }>();
+      if (typeof b.level !== 'number' || !(b.level > 0 && b.level < 1)) return bad('Say level: a number between 0 and 1');
+      this.opts.votes.setLevel(b.level);
+      return ok(this.opts.votes.view());
+    }
     if (path === '/api/triage/policy/relearn' && method === 'POST' && this.opts.votes) {
       this.opts.votes.learn('you asked');
       return ok(this.opts.votes.view());
@@ -1223,14 +1240,6 @@ export class HubServer {
       }
       return ok({ quietHours: s.quietHours() });
     }
-    if (path === '/api/daily-digest') {
-      if (method === 'PUT') {
-        const b = await body<Partial<P.DailyDigest>>();
-        if (!validDailyDigest(b)) return bad('the digest needs a time and a time zone');
-        this.triage.setDailyDigest({ enabled: !!b.enabled, time: b.time, timezone: b.timezone });
-      }
-      return ok({ dailyDigest: s.dailyDigest() });
-    }
     // Per-device notification rules (docs/devices.md).
     if (path.startsWith('/api/devices')) {
       const d = this.opts.devices;
@@ -1257,6 +1266,8 @@ export class HubServer {
     }
     if (path === '/api/rules' && method === 'PUT') {
       const b = await body<{ scope: P.NotifyScope; target: string | null; level: P.NotifyLevel | null }>();
+      // Always alert, List only or Mute; null is Automatic (no rule).
+      if (b.level != null && !(RULE_LEVELS as readonly string[]).includes(b.level)) return bad('A rule is all (always alert), digest (list only) or none (mute); null for automatic');
       s.setRule(b.scope, b.target ?? null, b.level ?? null);
       // Conversations under this rule now explain themselves differently.
       for (const c of s.raw<{ id: string }>('SELECT id FROM conversation')) s.dirty.conversations.add(c.id);

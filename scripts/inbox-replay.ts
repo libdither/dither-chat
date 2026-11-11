@@ -398,6 +398,8 @@ if (import.meta.main) {
     const withTriage = { ...LAMBDA, ...Object.fromEntries(TRIAGE_FEATURES.map((f) => [f, 30])) } as Record<Feature, number>;
     tryIt('with-triage', 'learned with where triage put the newest unread message and your votes as features', { lambda: withTriage });
   }
+  // The floor (rank.ts FLOORED): unread, mentions, owed replies, a live conversation, an alert waiting and DMs never count against a row.
+  if (grid || flag('floor')) tryIt('no-floor', 'learned without the floor: any weight may fall below the prior', { floor: [] });
   if (grid || flag('curve')) {
     tryIt('guess', 'learned with the guessed examination curve, (1 + position)^-0.5, as until 2026-11-10', { curve: undefined });
     tryIt('curve-em', 'learned with the curve fitted by regression-EM: a row not opened may be one you did not see', { curve: 'em' });
