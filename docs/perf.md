@@ -354,6 +354,23 @@ of it, everything only it imports included:
 Those twelve together are about 280 KB (93 KB gzip), more than a third of the startup JS. The emoji data (429 KB, 82 KB
 gzip) is not in the set: Reactions.tsx loads it four seconds after a conversation opens.
 
+## The hub's own stalls (2026-11-11)
+
+The hub answers everything on one thread, so a slow query holds up every device's requests behind it, the page of
+messages a phone is waiting for included. A CPU profile of a demo hub while a browser opened the six (`bun --cpu-prof`)
+found two:
+
+- **Which account sends** (`pickAccount` in server.ts), asked when a conversation opens (its history from the
+  network), for every push (whether to offer Reply) and before a send. It looked for the last message you wrote
+  there, newest first, which reads every message of a conversation you never wrote in, or wrote in long ago. On a copy
+  of the live hub's database that took 0.2 to 3.4 s for 9 of its 12 biggest channels (on a busy machine), and each of those
+  has one account, so there was nothing to choose. Now it reads messages only when two or more connected accounts can
+  act there (11 of 6,388 conversations on the live hub). The perf world's biggest channel: `POST /history` 1.9–2.8 s
+  before, 1 ms after; while it ran, the timeline's own page, a script file and everything else waited.
+- **The triage prune** (`pruneTriage`, every six hours) walked every row below the list by tier to find the old
+  ones: 0.9 s on the live copy with none old enough. It walks by age now (`triage_created`): 0 ms.
+  `test/pick-account.test.ts` and the prune's plan test in `test/hardening.test.ts` keep them so.
+
 ## Next
 
 What these numbers point at, not done yet:
