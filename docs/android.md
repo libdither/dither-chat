@@ -282,7 +282,9 @@ These live in the web app, so the PWA gets them too.
    once. It also keeps its place in the hub's change journal, so the app then asks only for what changed since
    ([sync.md](sync.md)); a full bootstrap replaces it only when the hub cannot say. A kept conversation catches up
    the same way when opened. It is saved when the bootstrap arrives (the hub's own text, without
-   serializing it again) and again whenever the app goes out of sight. Caps: 12 MB of bootstrap (above that it is
+   serializing it again) and again whenever the app goes out of sight. While the app stays open, the save after
+   a conversation opens writes only the rest (a record of its own) and keeps the stored bootstrap, unless that is
+   over ten minutes old: writing the bootstrap again cost a phone a few hundred milliseconds each time. Caps: 12 MB of bootstrap (above that it is
    not kept, because reading it back would cost about what the network does) and 1.5 MB for the rest. Only a build
    with the same `packages/protocol` reads it back (the vite config hashes the protocol into
    `__SNAPSHOT_SCHEMA__`), and one that fails to render is dropped and the page reloads from the hub. Nothing in it

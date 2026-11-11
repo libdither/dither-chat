@@ -168,6 +168,13 @@ export function currentBootstrap(): P.Bootstrap {
 const DB_NAME = 'dither-chat';
 const STORE = 'snapshot';
 const KEY = 'last';
+/** The rest alone, written while the app stays open; newer than KEY's rest when its savedAt is. */
+const REST_KEY = 'rest';
+interface RestRecord {
+  schema: string;
+  savedAt: number;
+  rest: string;
+}
 
 function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -197,11 +204,28 @@ function tx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T
 
 export async function readSnapshot(): Promise<Snapshot | null> {
   if (typeof indexedDB === 'undefined') return null;
-  const s = await tx<Snapshot | undefined>('readonly', (st) => st.get(KEY)).catch(() => undefined);
-  return s && s.schema === SCHEMA ? s : null;
+  const [s, r] = await idb()
+    .then(
+      (d) =>
+        new Promise<[Snapshot | undefined, RestRecord | undefined]>((resolve, reject) => {
+          const t = d.transaction(STORE, 'readonly');
+          const a = t.objectStore(STORE).get(KEY);
+          const b = t.objectStore(STORE).get(REST_KEY);
+          t.oncomplete = () => resolve([a.result, b.result]);
+          t.onerror = t.onabort = () => reject(t.error);
+        }),
+    )
+    .catch(() => [undefined, undefined] as const);
+  if (!s || s.schema !== SCHEMA) return null;
+  // savedAt stays the bootstrap's.
+  return r && r.schema === SCHEMA && r.savedAt > s.savedAt ? { ...s, rest: r.rest } : s;
 }
 
-export const dropSnapshot = () => tx('readwrite', (st) => st.delete(KEY)).catch(() => {});
+export const dropSnapshot = () =>
+  tx('readwrite', (st) => {
+    st.delete(REST_KEY);
+    return st.delete(KEY);
+  }).catch(() => {});
 
 // ------------------------------------------------------------------ restoring
 
@@ -237,6 +261,7 @@ export function restore(s: Snapshot, apply: (b: P.Bootstrap) => void, putIdentit
     recent.push(t.key);
   }
   if (loaded.value) return false;
+  bootstrapAt = s.savedAt;
   apply(JSON.parse(s.bootstrap) as P.Bootstrap);
   putIdentities(rest.identities);
   rest.quoted.forEach((m) => quoted.set(m.id, m));
@@ -258,8 +283,11 @@ export function freshFromHub() {
 
 // ------------------------------------------------------------------ saving
 
-/** The data version (versions.ts) the stored bootstrap reflects. */
+/** The data version (versions.ts) the stored bootstrap reflects, and when it was written. */
 let savedRev = -1;
+let bootstrapAt = 0;
+/** How old the stored bootstrap gets while the app stays in sight before a quiet moment writes it again. */
+const BOOTSTRAP_EVERY_MS = 10 * 60_000;
 let pending: { text: string; rev: number } | null = null;
 let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -272,12 +300,19 @@ export function persistSoon(bootstrapText?: string, ms = 1500) {
   clearTimeout(timer);
   timer = setTimeout(() => {
     const idle = (globalThis as any).requestIdleCallback as ((cb: () => void, o?: { timeout: number }) => void) | undefined;
-    if (idle) idle(() => void persistNow(), { timeout: 3000 });
-    else void persistNow();
+    if (idle) idle(() => void persistNow(false), { timeout: 3000 });
+    else void persistNow(false);
   }, ms);
 }
 
-export async function persistNow() {
+/**
+ * `full`: the bootstrap is written again from `db` if anything changed since it was stored, as when the app goes out of
+ * sight. Otherwise (the save after a conversation opens) the stored one stays unless it is old, and only the rest is
+ * written: serializing and storing a 4–5 MB bootstrap after every open took a few hundred milliseconds of a phone's
+ * main thread (docs/perf.md). The stored bootstrap carries its own sync position, so an older one is caught up as
+ * any snapshot is.
+ */
+export async function persistNow(full = true) {
   clearTimeout(timer);
   if (!loaded.value || fromSnapshot) return;
   let text: string | null = null;
@@ -285,7 +320,7 @@ export async function persistNow() {
     // What the hub sent, as it sent it. Anything since is caught by the save when the app goes out of sight.
     ({ text, rev: savedRev } = pending);
     pending = null;
-  } else if (savedRev !== dataVersion()) {
+  } else if (savedRev !== dataVersion() && (full || Date.now() - bootstrapAt > BOOTSTRAP_EVERY_MS)) {
     savedRev = dataVersion();
     text = JSON.stringify(currentBootstrap());
   }
@@ -303,16 +338,22 @@ export async function persistNow() {
   if (text === null) return void (await patchRest(rest));
   if (text.length > MAX_BOOTSTRAP_CHARS) {
     console.warn(`snapshot: the bootstrap is ${text.length} characters, over ${MAX_BOOTSTRAP_CHARS}; not kept`);
+    bootstrapAt = 0;
     return void (await dropSnapshot());
   }
   const s: Snapshot = { schema: SCHEMA, savedAt: Date.now(), bootstrap: text, rest };
-  await tx('readwrite', (st) => st.put(s, KEY)).catch((e) => console.warn('snapshot not saved', e));
+  bootstrapAt = s.savedAt;
+  await tx('readwrite', (st) => {
+    st.delete(REST_KEY);
+    return st.put(s, KEY);
+  }).catch((e) => console.warn('snapshot not saved', e));
 }
 
-/** Only the timelines and inbox changed: keep the stored bootstrap. */
+/** Only the timelines and inbox changed: the stored bootstrap stays, unread and unwritten. */
 async function patchRest(rest: string) {
-  const s = await readSnapshot();
-  if (s) await tx('readwrite', (st) => st.put({ ...s, savedAt: Date.now(), rest }, KEY)).catch(() => {});
+  if (!bootstrapAt) return;
+  const r: RestRecord = { schema: SCHEMA, savedAt: Date.now(), rest };
+  await tx('readwrite', (st) => st.put(r, REST_KEY)).catch(() => {});
 }
 
 if (typeof document !== 'undefined') {
