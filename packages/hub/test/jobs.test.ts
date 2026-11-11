@@ -107,6 +107,16 @@ describe('index jobs', () => {
     expect(none).toMatchObject({ tasks: 0, skipped: 2 });
     j2.tick();
     expect(j2.get(none.id)).toMatchObject({ state: 'failed', error: 'None of your accounts can fetch this.' });
+
+    // A voice channel's chat is paged but has no threads to list; a forum's posts are threads, with no history of its own.
+    const { store: s3, acc: a3 } = world('plan-variants', ['history', 'listThreads']);
+    guild(s3, a3, 'g1', 'One', ['text'], 0);
+    for (const [c, variant] of [['voice', 'voice'], ['forum', 'forum']] as const)
+      s3.ingest(a3, { t: 'conversation', conversation: { nativeId: c, shape: 'channel', variant, name: c, spaces: [{ nativeId: 'g1-cat' }] } });
+    const j3 = new Jobs(s3, { online: () => false, command: async () => null });
+    const v3 = j3.create({ target: { kind: 'space', id: hub(s3, 'discord', 'space', 'g1') }, history: true, members: false });
+    const planned = s3.raw<{ kind: string; native_id: string }>('SELECT t.kind, c.native_id FROM job_task t JOIN conversation c ON c.id = t.target_id WHERE t.job_id = ? ORDER BY c.native_id, t.kind', v3.id);
+    expect(planned.map((t) => `${t.kind} ${t.native_id}`)).toEqual(['threads forum', 'history text', 'threads text', 'history voice']);
   });
 
   test('threads under a channel are listed, archived ones too, and each found gets its history paged', async () => {
@@ -117,6 +127,7 @@ describe('index jobs', () => {
     net.t9 = [0, 1, 2].map((i) => ({ nativeId: `t9-${i}`, conversation: 't9', author: PEER, ts: T0 + i, body: `t ${i}` }));
     const clock = new FakeClock(T0 + 1000 * minute);
     const asked: string[] = [];
+    let indexed = false;
     const jobs = new Jobs(store, {
       online: () => true,
       clock,
@@ -124,6 +135,11 @@ describe('index jobs', () => {
         if (cmd.t === 'threads') {
           asked.push(`threads ${cmd.archived ? 'archived' : 'active'} ${cmd.offset}`);
           if (!cmd.archived) return { count: 0, more: false };
+          // Discord's thread list is its search index: 202 the first time, so the same page is asked again.
+          if (!indexed) {
+            indexed = true;
+            return { count: 0, more: false, retryAfterMs: 5000 };
+          }
           store.ingest(acc, { t: 'conversation', conversation: thread });
           return { count: 1, more: false };
         }
@@ -137,8 +153,8 @@ describe('index jobs', () => {
     await clock.until(() => jobs.get(v.id)!.state === 'done', 600_000, 'the job');
     jobs.stop();
     // Threads first, so the thread's history is planned in this run.
-    expect(asked.slice(0, 2)).toEqual(['threads active 0', 'threads archived 0']);
-    expect(asked.slice(2).sort()).toEqual(['history c1', 'history t9']);
+    expect(asked.slice(0, 3)).toEqual(['threads active 0', 'threads archived 0', 'threads archived 0']);
+    expect(asked.slice(3).sort()).toEqual(['history c1', 'history t9']);
     expect(jobs.get(v.id)).toMatchObject({ tasks: 3, done: 3, fetched: 8 });
   });
 
@@ -155,6 +171,8 @@ describe('index jobs', () => {
       clock,
       command: async (_a, cmd) => {
         expect(cmd.t).toBe('walkMembers');
+        // No list of recent members here: answered without `next`, so the walk goes by name.
+        if (cmd.recent) return { count: 0 };
         queries.push(cmd.query);
         const found = people.filter((p) => p.startsWith(cmd.query)).slice(0, cmd.limit);
         store.ingest(acc, { t: 'members', space: 'g1', source: 'walk', members: found.map((p) => ({ who: `u-${p}` })), total: people.length });
@@ -174,6 +192,47 @@ describe('index jobs', () => {
     // Kept though the passive members setting is off: you asked for this walk.
     expect(store.recordsMembers()).toBe(false);
     expect(n(store, `SELECT COUNT(*) AS n FROM membership WHERE source = 'walk'`)).toBe(180);
+  });
+
+  test('a member walk pages the recent members to the end, and walks a server too big for them by name', async () => {
+    const { store, acc } = world('recent');
+    guild(store, acc, 'g1', 'Mid', [], 0);
+    guild(store, acc, 'g2', 'Huge', [], 0);
+    // g1: 2,390 members in pages of 1,000, newest first, each page's `next` its oldest member.
+    const mid = Array.from({ length: 2390 }, (_, i) => `m${i}`);
+    const asked: string[] = [];
+    const clock = new FakeClock(T0);
+    const jobs = new Jobs(store, {
+      online: () => true,
+      clock,
+      command: async (_a, cmd) => {
+        expect(cmd.t).toBe('walkMembers');
+        if (cmd.space === 'g2') {
+          asked.push(`g2 ${cmd.recent ? `recent ${cmd.after ?? ''}` : cmd.query}`);
+          if (cmd.recent) return { count: 1000, total: 50_000, next: 'x999' };
+          return { count: 3, total: 50_000 };
+        }
+        expect(cmd.recent).toBe(true);
+        asked.push(`g1 recent ${cmd.after ?? ''}`);
+        const from = cmd.after ? mid.indexOf(cmd.after) + 1 : 0;
+        const page = mid.slice(from, from + cmd.limit);
+        store.ingest(acc, { t: 'members', space: 'g1', source: 'walk', members: page.slice(0, 500).map((p) => ({ who: `u-${p}` })), total: mid.length });
+        store.ingest(acc, { t: 'members', space: 'g1', source: 'walk', members: page.slice(500).map((p) => ({ who: `u-${p}` })) });
+        return { count: page.length, total: mid.length, next: page.length >= cmd.limit ? page[page.length - 1] : null };
+      },
+    });
+    const a = jobs.create({ target: { kind: 'space', id: hub(store, 'discord', 'space', 'g1') }, history: false, members: true });
+    await clock.until(() => jobs.get(a.id)!.state === 'done', 3_600_000, 'the recent walk');
+    expect(asked).toEqual(['g1 recent ', 'g1 recent m999', 'g1 recent m1999']);
+    expect(jobs.get(a.id)).toMatchObject({ membersListed: 2390 });
+    expect(n(store, `SELECT COUNT(*) AS n FROM membership WHERE source = 'walk'`)).toBe(2390);
+    // Over 10,000: one recent page shows the size, then by name from a to 9, never an empty query.
+    asked.length = 0;
+    const b = jobs.create({ target: { kind: 'space', id: hub(store, 'discord', 'space', 'g2') }, history: false, members: true });
+    await clock.until(() => jobs.get(b.id)!.state === 'done', 3_600_000, 'the name walk');
+    jobs.stop();
+    expect(asked[0]).toBe('g2 recent ');
+    expect(asked.slice(1)).toEqual([...'abcdefghijklmnopqrstuvwxyz0123456789'].map((c) => `g2 ${c}`));
   });
 
   test('pausing holds a job; a restart carries on from the cursor', async () => {
@@ -251,6 +310,31 @@ describe('network search', () => {
     await clock.until(() => !ns.view(v.id)!.running, 120_000, 'the rest');
     expect(asked.length).toBe(names.length);
     expect(ns.view(v.id)!.left).toBe(0);
+  });
+
+  test('a place Discord is still indexing is asked again after its wait, and if it still is, says so', async () => {
+    const { store, acc } = world('search-indexing');
+    guild(store, acc, 'g1', 'New', ['a'], 0);
+    guild(store, acc, 'g2', 'Slow', ['b'], 0);
+    const clock = new FakeClock(T0);
+    const asked: string[] = [];
+    const ns = new NetSearch(store, {
+      online: () => true,
+      clock,
+      command: async (_a, cmd) => {
+        asked.push(cmd.scope.id);
+        // g1 is indexed by the second ask; g2 never in time (Discord said 1 s each time).
+        if (cmd.scope.id === 'g2' || asked.filter((x) => x === 'g1').length === 1) return { hits: [], total: null, next: null, retryAfterMs: 1000 };
+        return { hits: [], total: 0, next: null };
+      },
+    });
+    const v = ns.start('hello');
+    await clock.until(() => ns.view(v.id)!.places.length === 2 && !ns.view(v.id)!.running, 120_000, 'both places');
+    const places = Object.fromEntries(ns.view(v.id)!.places.map((p) => [p.name, p]));
+    expect(places.New).toMatchObject({ state: 'done', total: 0 });
+    expect(places.Slow).toMatchObject({ state: 'failed', error: expect.stringContaining('still indexing') });
+    expect(asked.filter((x) => x === 'g1')).toHaveLength(2);
+    expect(asked.filter((x) => x === 'g2')).toHaveLength(3);
   });
 
   test('filters narrow the places; no capable account, deleted messages and an hourly cap say why', async () => {

@@ -13,9 +13,11 @@
  * Threads: Discord's channel lists only the threads someone opened lately, so each channel's are listed first, active
  * then archived (DiscordChatExporter's route for user accounts), and every thread found gets a history task of its own.
  *
- * Members: a walk asks for names by prefix (a to z, 0 to 9: a user account may not send an empty query, as
- * discord.py-self's query_members insists), and a prefix that came back full is asked again one character longer, so
- * a big server is listed without one request asking for everyone.
+ * Members: a walk first asks for the most recently joined members a page at a time (Discord's op 35 lists the 10,000
+ * newest, 1,000 a page, to an ordinary member too), which is the whole of a server up to that size. A bigger server,
+ * or an adapter without that list, is walked by name prefix (a to z, 0 to 9: a user account may not send an empty
+ * query, as discord.py-self's query_members insists), and a prefix that came back full is asked again one character
+ * longer, so a big server is listed without one request asking for everyone.
  */
 import type * as P from '@dither-chat/protocol';
 import { randomId } from '@dither-chat/protocol/ids';
@@ -31,13 +33,27 @@ export const PAUSE_MS = 1500;
 const TICK_MS = 5000;
 const WALK_LIMIT = 100;
 const WALK_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
-/** How a walk starts: every one-character prefix. */
-export const WALK_START = [...WALK_ALPHABET];
+/** A name walk: every one-character prefix. */
+export const WALK_PREFIXES = [...WALK_ALPHABET];
+/** A walk's queue item for a page of recent members, then the page's start ('' for the first). Never a prefix: no '@' in WALK_ALPHABET. */
+const RECENT = '@recent:';
+/** How a walk starts: the recent members' first page. */
+export const WALK_START = [RECENT];
+/** The most recent members a network lists (Discord's op 35): a server bigger than this is walked by name. */
+export const RECENT_MAX = 10_000;
+/** Members a recent page holds at most. */
+const RECENT_PAGE = 1000;
 /** A prefix longer than this is not widened again: what is left is people with the same long name start. */
 const WALK_DEPTH = 4;
+/** How many times a channel's thread list waits for Discord to index it before going on without. */
+const THREADS_WAITS = 10;
 /** A page's messages may land just after its answer (remote accounts): looked for this often, this many times. */
 const LAND_MS = 500;
 const LAND_TRIES = 6;
+/** Channels whose own history holds nothing: their posts are threads. */
+const NO_MESSAGES = new Set(['forum', 'media']);
+/** Channels that cannot have threads. */
+const NO_THREADS = new Set(['voice', 'stage']);
 const PRIORITY: Record<P.JobPriority, number> = { low: 0, normal: 1, high: 2 };
 
 type Command = (accountId: string, cmd: any, timeoutMs?: number) => Promise<any>;
@@ -209,9 +225,11 @@ export class Jobs {
             skipped++;
             continue;
           }
-          put.run(jobId, 'history', cid, acc, null, now);
+          // A forum's or media channel's messages are its posts, which are threads: nothing of its own to page.
+          if (!NO_MESSAGES.has(c.variant)) put.run(jobId, 'history', cid, acc, null, now);
           // A channel (not a thread, not a DM) may hold threads the hub never saw: listed first, where the account can.
-          if (c.shape === 'channel') {
+          // Voice and stage channels have none (Discord refuses to list them: "Cannot execute action on this channel type").
+          if (c.shape === 'channel' && !NO_THREADS.has(c.variant)) {
             const lister = this.accountFor('conversation', cid, 'listThreads');
             if (lister) put.run(jobId, 'threads', cid, lister, JSON.stringify({ archived: false, offset: 0 }), now);
           }
@@ -384,10 +402,19 @@ export class Jobs {
     if (prefix === undefined) return save({ done: true });
     // A walk saved before walks stopped asking with an empty query.
     if (prefix === '') {
-      queue.unshift(...WALK_START.filter((c) => !queue.includes(c)));
+      queue.unshift(...WALK_PREFIXES.filter((c) => !queue.includes(c)));
       return save({});
     }
-    const r = (await this.o.command(t.account_id, { t: 'walkMembers', space: native, query: prefix, limit: WALK_LIMIT }, 60_000)) as { count?: number; total?: number } | null;
+    if (prefix.startsWith(RECENT)) {
+      const after = prefix.slice(RECENT.length) || undefined;
+      const r = (await this.o.command(t.account_id, { t: 'walkMembers', space: native, query: '', limit: RECENT_PAGE, recent: true, ...(after ? { after } : {}) }, 60_000)) as P.WalkResult | null;
+      const count = r?.count ?? 0;
+      // No such list here (the answer has no `next`), or more members than it reaches: by name instead.
+      if (r?.next === undefined || (typeof r.total === 'number' && r.total > RECENT_MAX)) queue.unshift(...WALK_PREFIXES);
+      else if (typeof r.next === 'string' && r.next && count > 0) queue.unshift(RECENT + r.next);
+      return save({ listed: count });
+    }
+    const r = (await this.o.command(t.account_id, { t: 'walkMembers', space: native, query: prefix, limit: WALK_LIMIT }, 60_000)) as P.WalkResult | null;
     const count = r?.count ?? 0;
     if (count >= WALK_LIMIT && prefix.length < WALK_DEPTH) queue.unshift(...[...WALK_ALPHABET, ' ', '_', '.'].map((c) => prefix + c));
     save({ listed: count });
@@ -400,13 +427,21 @@ export class Jobs {
     const cid = t.target_id as string;
     const native = this.store.nativeOf('conversation', cid)?.nativeId;
     if (!native) throw new Error('the conversation is gone');
-    let at = { archived: false, offset: 0 };
+    let at: { archived: boolean; offset: number; waits?: number } = { archived: false, offset: 0 };
     try {
       at = { ...at, ...JSON.parse(t.walk || '{}') };
     } catch {
       /* from the start */
     }
     const r = (await this.o.command(t.account_id, { t: 'threads', conversation: native, archived: at.archived, offset: at.offset }, 60_000)) as P.ThreadsResult | null;
+    // Discord lists threads from its search index (202 while it builds it): the same page again after its wait, a few
+    // times, then on as if there were none (the threads the hub knows still get their history tasks).
+    if (r?.retryAfterMs && (at.waits ?? 0) < THREADS_WAITS) {
+      at.waits = (at.waits ?? 0) + 1;
+      this.store.db.query('UPDATE job_task SET walk = ?, updated_at = ? WHERE job_id = ? AND kind = ? AND target_id = ?').run(JSON.stringify(at), this.clock.now(), t.job_id, 'threads', cid);
+      await sleep(this.clock, Math.min(r.retryAfterMs, 30_000));
+      return;
+    }
     const count = r?.count ?? 0;
     let done = false;
     if (count && r?.more) at.offset += count;

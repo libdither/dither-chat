@@ -24,7 +24,11 @@ now or delete it.
 channels added since the last run.
 
 - A **history** task is one conversation: every channel under the server, found through `space_edge` and its
-  categories, plus the threads the hub knows under each channel.
+  categories, plus the threads under each channel.
+- A **threads** task per channel lists its threads first, active then archived, so threads nobody opened are found
+  too. On Discord this is the thread browser's list (`/channels/{id}/threads/search`, DiscordChatExporter's route for a
+  user account). It comes from Discord's search index: a new thread shows there a minute or two later, and a 202
+  ("still indexing") is waited out up to ten times. Threads the hub already knows get their history tasks either way.
 - A **members** task is one community space.
 - Each task goes to an account that sees the place and has the capability (`history` or `walkMembers`). An online
   account is preferred.
@@ -52,20 +56,21 @@ channels added since the last run.
 
 **Members.**
 
-- A walk asks for names by prefix: `''` first. If that brings everyone (the count is under the limit and reaches the
-  total), the walk is over. Otherwise it goes through a–z and 0–9.
-- A prefix that came back full (100) is asked again one character longer, up to four characters. A big server is
-  listed in a few hundred small requests rather than one request for everyone.
-- On Discord the request is the client's own member search (gateway op 8), the same one the @mention picker makes.
+- A walk first lists the most recently joined members, 1,000 a page, each page starting after the one before
+  (Discord's op 35, the list behind a server's Members page). Discord lists the 10,000 newest this way, to an
+  ordinary member too, so a server up to that size is listed whole in a few requests: one of 2,390 took three.
+- A bigger server, or an adapter without that list, is walked by name prefix: a to z, 0 to 9, never `''` (a user
+  account may not ask for everyone). A prefix that came back full (100) is asked again one character longer (and with
+  a space, `_` or `.`), up to four characters. Names starting with anything else (accents, other scripts, emoji) are
+  not reached this way.
+- On Discord a prefix is the client's own member search (gateway op 8), the same one the @mention picker makes. It
+  matches the start of the username, the display name or the server nick.
 - What a walk lists is stored with `source = 'walk'`, even when the passive "members seen" setting is off: you asked
-  for it by starting the job.
-- A server Discord will list only partly (only its online members, past a size) stays partial. The About's "seen N of
-  M" shows how far it got.
+  for it by starting the job. The job counts them as it goes. The About's "seen N of M" shows them only while that
+  setting is on, as it does any member list.
 
 **Left out.**
 
-- Archived threads the hub has never seen are not found yet. Discord lists them per channel, which needs another
-  adapter command.
 - Media is kept by the media archive (`mediaarchive.ts`) as it is for any message, not by the job itself.
 - No export file is written. The hub's database and media cache are the archive, and the nightly backup copies them.
 
@@ -102,8 +107,9 @@ accounts can search. It never runs as you type. When the hub found little, the b
 - The first six places are asked. **Search N more places** asks the next six.
 - Each account searches one place at a time, whatever query asked: 3 s apart on Discord, 1 s apart elsewhere.
 - There is a cap of 120 searches per account per hour. A place past the cap shows "Held back" instead of being asked.
-- When Discord is still indexing a place, it answers 202. The hub asks once more after the wait Discord gave, at most
-  15 s.
+- When Discord is still indexing a place (a server or DM nobody searched before), it answers 202. The hub asks again
+  after the wait Discord gave (2 to 15 s), three times in all. After that the place shows "Discord is still indexing
+  this place. Try again in a minute." rather than looking searched with nothing found.
 - Hits arrive as ordinary message facts, so they are stored and the hub's own search finds them from then on. Each
   place shows how many it found and how many were new to the hub. The page leaves out hits the local results already
   show.
@@ -112,11 +118,24 @@ accounts can search. It never runs as you type. When the hub found little, the b
 **Routes.** `POST /api/search/network {q}` returns a `NetSearchView`. Follow it with `GET /api/search/network/:id`
 every second while `running`. `POST /api/search/network/:id/more` asks the next few places.
 
-## Not tried on a live account
+## Checked on a live account
 
-Everything here has run against the demo hub and the extractors' fakes. Nothing has run against a real Discord or
-Matrix account. The two things most likely to need adjusting on the live client are listed in dither-accounts'
-`docs/chat.md`:
+On 2026-11-10 the Discord side ran on a live client with a throwaway account, through an isolated test hub's own API
+(`POST /api/jobs`, `POST /api/search/network`). It used the account's own test server, seeded with 300 messages in a
+channel, threads (one archived) and a forum post, and a public server of 2,390 members the account was already in.
+The client's side of each request is in dither-accounts' `docs/chat.md`.
 
-- the shape of the Discord client's member requester module, and the gateway request it falls back to;
-- whether the client's REST module resolves or rejects a 202 from search. Both are handled.
+- **History.** A 300-message channel paged to its start in four requests (100, 100, 100, then none), and every
+  conversation got a span reaching the start. Run again, the job cost one history page per conversation, plus two
+  thread-list requests per channel and one member page.
+- **Threads.** The thread browser's list works for a user account on a text channel (active and archived) and on a
+  forum. It lists a new thread a minute or two after it is made. Voice and stage channels refuse it, so they get no
+  threads task. A forum's own history holds nothing, so it gets none either.
+- **Members.** The recent-members list answered an ordinary member and listed the 2,390 whole in three requests. A
+  prefix query is a valid op 8. Its answer comes back in one batch, without chunk numbers, and the client keeps a
+  nonce off query requests.
+- **Search.** The client's REST module sends arrays as repeated keys and resolves a 202 rather than rejecting it. A
+  server or DM nobody searched before answers 202 for a little while. The hub asks up to three times, then says the
+  place is still being indexed instead of showing it as searched. Hits in threads come with their threads.
+- **Not seen live.** A 202 from the thread list, and the prefix walk of a server over 10,000 beyond a few queries.
+  Matrix's search has run only against the testbed.

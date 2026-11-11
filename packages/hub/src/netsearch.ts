@@ -23,6 +23,9 @@ export const BATCH = 6;
 /** Between two searches by one account. Discord's search bucket is narrow; others take more. */
 export const GAP_MS: Partial<Record<P.Network, number>> = { discord: 3000 };
 const GAP_DEFAULT = 1000;
+/** A place Discord is still indexing is asked this many times in all, at least this far apart. */
+const INDEXING_TRIES = 3;
+const INDEXING_MIN_WAIT_MS = 2000;
 /** Searches per account per hour, all queries together. */
 export const HOURLY_CAP = 120;
 /** How long jev may take to put places in order before the hub orders them without it. */
@@ -372,9 +375,15 @@ export class NetSearch {
         this.nextAt.set(p.accountId, at + (GAP_MS[p.network] ?? GAP_DEFAULT));
         const before = (this.store.one<Row>('SELECT MAX(rowid) AS r FROM message')?.r as number | null) ?? 0;
         const r = (await this.o.command(p.accountId, { t: 'search', scope: p.scope, query: p.query, limit: 25 }, 60_000)) as P.NetworkSearchResult | null;
-        if (r?.retryAfterMs && attempt === 0) {
-          // Discord is still indexing the place: once more, after it said to.
-          await sleep(this.clock, Math.min(r.retryAfterMs, 15_000));
+        if (r?.retryAfterMs) {
+          // Discord is still indexing the place (a DM nobody searched before, a new server): again after it said to,
+          // a couple of times, and then say so rather than show it as searched with nothing found.
+          if (attempt + 1 >= INDEXING_TRIES) {
+            p.state = 'failed';
+            p.error = 'Discord is still indexing this place. Try again in a minute.';
+            return;
+          }
+          await sleep(this.clock, Math.min(Math.max(r.retryAfterMs, INDEXING_MIN_WAIT_MS), 15_000));
           continue;
         }
         await this.take(s, p, r, before);

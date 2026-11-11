@@ -398,11 +398,22 @@ export interface HistoryResult {
   oldest?: number;
 }
 
+/** The `walkMembers` command's reply. */
+export interface WalkResult {
+  count: number;
+  /** The network's member count, when known. */
+  total?: number;
+  /** A `recent` page only: where the next page starts, or null at the end. Absent: no such list here. */
+  next?: string | null;
+}
+
 /** The `threads` command's reply. */
 export interface ThreadsResult {
   count: number;
   /** More after these: ask again with offset + count. */
   more: boolean;
+  /** The network is still indexing this channel's threads (Discord's 202): ask the same again after this long. */
+  retryAfterMs?: number;
 }
 
 /** What a network search asks for, from the hub's query language (search.ts) in the network's terms. */
@@ -462,11 +473,15 @@ export type AdapterCommand =
    */
   | { t: 'search'; id: string; scope: { kind: 'space' | 'conversation'; id: string } | { kind: 'all' }; query: NetworkQuery; offset?: number; limit?: number }
   /**
-   * Members of a space whose name starts with `query` ('' for whatever the network lists first), at most `limit`
-   * (capability 'walkMembers'). A members event with source 'walk' first, then reply.result: { count, total? }.
-   * The hub widens a prefix that came back full (jobs.ts), so the adapter asks once and does not walk on its own.
+   * Members of a space, one request (capability 'walkMembers'). A members event with source 'walk' first, then
+   * reply.result: WalkResult.
+   * - By name: those whose name starts with `query`, at most `limit`. Never '': a Discord user account may not ask for
+   *   everyone. The hub widens a prefix that came back full (jobs.ts), so the adapter asks once and does not walk.
+   * - `recent`: a page of the most recently joined members instead (Discord's op 35, its 10,000 newest; `query` is
+   *   ignored), from `after`, the page before's `next`. An adapter without such a list answers without `next`, and
+   *   the hub walks by name.
    */
-  | { t: 'walkMembers'; id: string; space: string; query: string; limit: number }
+  | { t: 'walkMembers'; id: string; space: string; query: string; limit: number; recent?: boolean; after?: string }
   /**
    * A page of a channel's threads, newest activity first (capability 'listThreads'): the active ones, or with `archived`
    * the archived ones. Discord's user route is DiscordChatExporter's: /channels/{id}/threads/search. Conversation

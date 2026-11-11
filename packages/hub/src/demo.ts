@@ -2218,16 +2218,21 @@ class DemoAdapter implements InprocAdapter {
     return { count: page.length, more: cmd.offset + page.length < found.length };
   }
 
-  /** Members by name prefix, as Discord's member search answers it. */
-  private walkMembers(cmd: Extract<P.AdapterCommand, { t: 'walkMembers' }>): { count: number; total: number } {
+  /** Members by name prefix, as Discord's member search answers it, or (`recent`) a page of the newest, as its op 35 does. */
+  private walkMembers(cmd: Extract<P.AdapterCommand, { t: 'walkMembers' }>): P.WalkResult {
     const space = this.findSpace(cmd.space);
     if (!space) throw new Error('this demo account is not in that server');
     const everyone = [...WALKABLE, ...Object.values(D)];
     const q = cmd.query.toLowerCase();
-    const found = everyone.filter((i) => !q || (i.displayName ?? '').toLowerCase().startsWith(q) || (i.handle ?? '').toLowerCase().startsWith(q)).slice(0, cmd.limit);
+    // The demo's newest page holds everyone, so a recent walk is one page.
+    const found = cmd.recent
+      ? cmd.after
+        ? []
+        : everyone.slice(0, cmd.limit)
+      : everyone.filter((i) => !q || (i.displayName ?? '').toLowerCase().startsWith(q) || (i.handle ?? '').toLowerCase().startsWith(q)).slice(0, cmd.limit);
     for (const i of found) if (WALKABLE.includes(i)) this.emit({ t: 'identity', identity: i });
     this.emit({ t: 'members', space: cmd.space, source: 'walk', total: everyone.length, members: found.map((i) => ({ who: i.nativeId })) });
-    return { count: found.length, total: everyone.length };
+    return { count: found.length, total: everyone.length, ...(cmd.recent ? { next: found.length >= cmd.limit ? found[found.length - 1].nativeId : null } : {}) };
   }
 
   private seedHistory(ago: (min: number) => number) {
