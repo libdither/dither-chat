@@ -65,6 +65,7 @@ else.
   | joining and asking to join | 10 a day | 5 a day |
   | friend, follow, contact | 20 a day | 20 a day |
   | removing: unfriend, cancel a request, unblock, remove a contact, unfollow | 20 a day | 20 a day |
+  | making a group (`groups`), plus one `members` slot per person in it | 5 a day, 3 on Telegram | left out |
 
   Past it the hub answers 429 with a sentence that says when the next frees up. A network's own flood wait comes back
   as its error sentence, saying when, and is shown as it is.

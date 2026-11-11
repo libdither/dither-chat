@@ -3,7 +3,7 @@
  * Every id here is a hub id; native ids are included for display and deep links only.
  */
 
-import type { About, AboutFields, AddWho, PersonAbout, PersonRelationship } from './about.ts';
+import type { About, AboutFields, AddWho, GroupRule, PersonAbout, PersonRelationship } from './about.ts';
 import type { AddAction, AddCheck, AddPreview, AddRef, LinkRelationship, RequestAnswer, RequestFact } from './add.ts';
 import type { Capability, NativeMute, ReceiptState } from './adapter.ts';
 import type {
@@ -414,6 +414,30 @@ export interface AddMembersView {
   failed: { identityId: string; reason: string }[];
   /** The About as it now stands, when the network said. */
   about: AboutView | null;
+}
+
+/** GET /api/groups/candidates (`?account=` for one): each connected account that can make a group, and whom it could put in one. */
+export interface GroupCandidatesView {
+  accounts: {
+    accountId: string;
+    network: Network;
+    rule: GroupRule;
+    /** People it talked with lately first, as for adding people. */
+    candidates: { identityId: string; relationship?: PersonRelationship; lastTalked?: number }[];
+  }[];
+  /** Your other connected chat accounts, and why each cannot (WhatsApp's line, not built yet). Offline accounts are left out. */
+  unable: { accountId: string; network: Network; reason: string }[];
+  identities: IdentityView[];
+}
+
+/** POST /api/groups { accountId, name?, identities }: the group as made, who is in, who was invited, who was refused and why. */
+export interface CreateGroupView {
+  accountId: string;
+  conversation: ConversationView;
+  added: string[];
+  invited: string[];
+  failed: { identityId: string; reason: string }[];
+  notes: string[];
 }
 
 /**
