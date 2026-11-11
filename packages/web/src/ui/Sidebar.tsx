@@ -57,6 +57,7 @@ import { rememberSearch, SearchBox } from './SearchBox.tsx';
 import { counting, rendered } from '../perf.ts';
 import { memo } from './memo.ts';
 import { convKind, rowTrack } from '../clicks.ts';
+import { useShown } from './more.tsx';
 
 // ------------------------------------------------------------------ navigation helpers
 
@@ -337,6 +338,7 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
   let filter = prefs.value.inboxFilter;
   if (filter === 'mail' && !db.mail.accounts.size) filter = 'all';
   const rows = shownInbox(filter);
+  const [drawn, more] = useShown(rows.length);
   const [q, setQ] = useState('');
   const scroll = useRef<HTMLDivElement>(null);
   useFlip(scroll, snap.v, '[data-row]');
@@ -391,7 +393,8 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
           </>
         )}
         <RequestsRow />
-        {rows.map(row)}
+        {rows.slice(0, drawn).map(row)}
+        {more}
         {!rows.length && <p class="inbox-empty">{EMPTY[filter]}</p>}
       </div>
     </div>
@@ -513,6 +516,7 @@ export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
   const accounts = relationship && links.view ? linkAccounts(links.view) : [];
   const scoped = accountId && accounts.some((a) => a.id === accountId) ? accountId : null;
   const list = filter === 'chats' ? arrangedPeople(people()).filter((x) => !q.trim() || nameMatches(x.person.name, q)) : [];
+  const [drawn, more] = useShown(list.length);
   return (
     <div class="sidebar-inner" data-track-area="people">
       <header class="side-head">
@@ -532,7 +536,8 @@ export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
       <div class="side-scroll">
         {relationship && <PeopleLinks relationship={relationship} links={links} accountId={scoped} dots={accounts.length > 1 && !scoped} q={q} sort={prefs.value.peopleLinkSort ?? 'recent'} active={activePerson} />}
         {filter === 'chats' && <SectionHead id="people-all" label="Direct messages" count={list.length} />}
-        {!isCollapsed('people-all') && list.map(({ person, directs }) => <PersonRow key={person.id} person={person} directs={directs} active={person.id === activePerson} onClick={opener(`people:${person.id}`, () => go({ view: 'people', person: person.id }))} />)}
+        {!isCollapsed('people-all') && list.slice(0, drawn).map(({ person, directs }) => <PersonRow key={person.id} person={person} directs={directs} active={person.id === activePerson} onClick={opener(`people:${person.id}`, () => go({ view: 'people', person: person.id }))} />)}
+        {!isCollapsed('people-all') && more}
         {filter === 'chats' && q.trim() && !list.length && <p class="inbox-empty">Nobody here matches “{q.trim()}”.</p>}
       </div>
     </div>

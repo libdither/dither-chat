@@ -399,6 +399,30 @@ frames side by side in a strip (an SVG `<symbol>` for the whole page) and slides
 back for three seconds at phone size and 4×, 2 layouts and 297–373 ms of main thread, against 42 layouts and 751 ms.
 It looks the same: the same 36 frames, 85 ms apart, and the 600 ms dither-in, as a strip of its 16 steps.
 
+## Long lists draw a window (2026-11-11)
+
+The inbox list drew every row it had: 495 on the perf world, 8,756 DOM nodes of the page's 11,018 at phone size,
+where a phone shows 11 rows. All of them were built on a cold load, and again each time the list came back (the Home
+tab, back from a page or Mail), since a phone's page replaces the list. The people list and the rail did the same.
+Each now draws its first 60 rows (`ui/more.tsx`, `FIRST_ROWS`) and 100 more whenever the view comes within 1,200 px of
+the last one drawn, so scrolling reaches every row (checked to the end: 495 inbox rows, 174 rail entries, All
+communities last).
+
+Phone size (390 × 844), 4× CPU, one run each, the branch first (load 15, then 11 and 33 for main):
+
+| | main | windowed |
+|---|---|---|
+| cold load: list painted | 5,206 ms | 1,564 ms |
+| its main-thread time, longest task | 7,056 ms, 2,567 ms | 1,866 ms, 442 ms |
+| its DOM nodes | 11,018 | 2,124 |
+| back to the list with the Home tab: longest task | 1,632 ms | 277 ms |
+| back to the inbox from Mail: longest task | 1,062 ms | 73 ms |
+| flicking the inbox list: frames over 33 ms, the longest | 4, 167 ms | 0, 17 ms |
+| flicking the people list: frames over 33 ms, the longest | 8, 300 ms | 1, 67 ms |
+
+The baselines' DOM node counts moved by hand: `cold.nodes` 11,402 to 2,562 and `long.reopen.nodes` 16,984 to 8,133
+(desktop, full size), and in CI's 2,353 to 2,111 and 7,875 to 7,634.
+
 ## Next
 
 What these numbers point at, not done yet:
