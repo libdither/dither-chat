@@ -32,9 +32,9 @@ export function forgetSearches() {
 
 /** A query as people read it: a chat named rather than its id. */
 export function readableSearch(q: string): string {
-  return q.replace(/(^|\s)in:(cnv_\S+)/g, (all, sp, id) => {
-    const c = db.conversations.get(id);
-    return c ? `${sp}in:${searchValue(convTitle(c))}` : all;
+  return q.replace(/(^|\s)in:((?:cnv|per)_\S+)/g, (all, sp, id) => {
+    const name = db.conversations.has(id) ? convTitle(db.conversations.get(id)!) : db.persons.get(id)?.name;
+    return name ? `${sp}in:${searchValue(name)}` : all;
   });
 }
 

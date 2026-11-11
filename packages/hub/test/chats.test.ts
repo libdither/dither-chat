@@ -1,7 +1,8 @@
 /**
  * Chats (chats.ts, docs/chats.md) through the hub with a stand-in supervisor: a person's routes, the route a message
  * goes through when nobody says, the one you chose and what a merge or a split does to it, paging across
- * conversations that share a time, reading every route, and nicknames, including where old names came from.
+ * conversations that share a time, searching and reading every route, and nicknames, including where old names came
+ * from.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -132,6 +133,11 @@ describe('messages', () => {
   test('a time alone still works, as before', async () => {
     const page = (await call<P.MessagePage>('GET', `/api/chats/person:${kit}/messages?before=3000`)).json;
     expect(page.messages.map((m) => m.body)).toEqual(['a1', 'b1']);
+  });
+
+  test('a search in the person is a search in every chat with them', () => {
+    expect(store.search(`in:${kit}`, 50).hits.map((h) => h.message.nativeId).sort()).toEqual(['a1', 'a2', 'b1', 'c1', 'd1']);
+    expect(store.search(`in:${cnv('signal', 'dm-kit')}`, 50).hits.map((h) => h.message.nativeId)).toEqual(['d1']);
   });
 
   test('a send without a route goes through the chat’s; with one, through that; a reply, where it was said', async () => {

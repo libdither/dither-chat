@@ -1090,25 +1090,10 @@ code {
   opacity: 0.6;
 }
 
-.ident-chips,
 .member-nets {
   display: flex;
   gap: 5px;
   flex-wrap: wrap;
-}
-.ident-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: color-mix(in oklab, var(--net) 12%, transparent);
-  color: color-mix(in oklab, var(--net) var(--net-ink, 100%), var(--text));
-  border-radius: 20px;
-  padding: 2px 9px;
-  font-size: 11.5px;
-  font-weight: 600;
-}
-.ident-chip:hover {
-  background: color-mix(in oklab, var(--net) 22%, transparent);
 }
 
 /* ---------------------------------------------------------------- timeline */
@@ -1133,8 +1118,7 @@ code {
   padding: 16px;
 }
 .day-sep,
-.new-sep,
-.net-switch {
+.new-sep {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1160,25 +1144,9 @@ code {
   height: 1px;
   background: color-mix(in oklab, var(--danger) 50%, transparent);
 }
-.new-sep span,
-.net-switch span {
+.new-sep span {
   text-transform: uppercase;
   letter-spacing: 0.05em;
-}
-.net-switch {
-  color: color-mix(in oklab, var(--net) var(--net-ink, 100%), var(--text));
-  justify-content: center;
-}
-.net-switch span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: color-mix(in oklab, var(--net) 12%, transparent);
-  padding: 3px 12px;
-  border-radius: 20px;
-  text-transform: none;
-  letter-spacing: 0;
-  font-weight: 600;
 }
 
 .msg {
@@ -1439,6 +1407,9 @@ code {
 }
 
 .reply-quote {
+  grid-column: 2;
+  justify-self: start;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1447,15 +1418,16 @@ code {
   margin-bottom: 2px;
   max-width: 100%;
 }
+/* Its line: from the middle of the quote's text, round the corner, down to just above the picture's middle. */
 .reply-quote::before {
   content: '';
   width: 26px;
-  height: 10px;
+  height: 11px;
   border-top: 2px solid var(--border);
   border-left: 2px solid var(--border);
   border-top-left-radius: 7px;
   margin-left: -30px;
-  margin-bottom: -4px;
+  margin-bottom: -11px;
   flex: none;
 }
 .reply-quote b {
@@ -4797,20 +4769,15 @@ code {
     -webkit-mask-image: linear-gradient(to right, #000 85%, transparent);
     mask-image: linear-gradient(to right, #000 85%, transparent);
   }
-  .conv-head .crumbs,
-  .conv-head .ident-chips {
+  .conv-head .crumbs {
     flex-wrap: nowrap;
   }
   /* A phone's header fades out at its edge instead. */
   .conv-head .crumb {
     flex-shrink: 0;
   }
-  /* A person's networks scroll sideways: each opens that one chat. */
-  .conv-head .ident-chips {
-    min-width: 0;
-    overflow-x: auto;
-  }
-  .conv-head-sub:has(.ident-chips) {
+  /* The list of a person's chats opens out of this line, so nothing may mask it. */
+  .conv-head-sub:has(.pair-dd) {
     -webkit-mask-image: none;
     mask-image: none;
   }
@@ -4889,6 +4856,13 @@ code {
   .msg {
     grid-template-columns: 52px 1fr;
     padding-right: 12px;
+  }
+  .reply-quote::before {
+    width: 24px;
+    margin-left: -28px;
+  }
+  .pair-chunk-head {
+    margin-left: 47px;
   }
   .msg-body {
     font-size: 15.5px;
@@ -5048,12 +5022,10 @@ code {
     min-height: 44px;
   }
   /* Rows of chips scroll sideways under a finger; a scrollbar there is only clutter. */
-  .level-picker,
-  .ident-chips {
+  .level-picker {
     scrollbar-width: none;
   }
-  .level-picker::-webkit-scrollbar,
-  .ident-chips::-webkit-scrollbar {
+  .level-picker::-webkit-scrollbar {
     display: none;
   }
   /* iOS zooms into a field whose text is smaller than this. */
@@ -5080,7 +5052,6 @@ code {
   .icon-btn.small::after,
   .reaction::after,
   .triage-pill::after,
-  .ident-chip::after,
   .crumb.link::after {
     content: '';
     position: absolute;
@@ -5088,7 +5059,6 @@ code {
   }
   .reaction,
   .triage-pill,
-  .ident-chip,
   .crumb.link {
     position: relative;
   }
@@ -12825,11 +12795,6 @@ html.kb-open .ss-foot {
 
 /* ---------------------------------------------------------------- a person on several accounts (ui/Pairs.tsx) */
 
-.pairs-pane,
-.pairs-pane .conv-head,
-.pairs-pane .conv-head-text {
-  min-width: 0;
-}
 .pair-dd-unread {
   font-size: 10.5px;
   font-weight: 700;
@@ -12940,25 +12905,21 @@ html.kb-open .ss-foot {
 .msg-via-their:not(.on) {
   color: var(--text-faint);
 }
-/* A dropdown on the name's line; each run of one pair a chunk with a label and a side bar. */
-.pairs-pane .conv-head h2 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
+/* The list under the name, where any conversation says its network and your account: all chats, or one pair's. */
 .pair-dd {
   position: relative;
+  display: flex;
   min-width: 0;
-  font-size: 12.5px;
-  font-weight: 400;
+  margin-left: -6px;
 }
+/* As tall as the line any conversation has there, so the header does not move between them. */
 .pair-dd-btn {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   max-width: 100%;
-  padding: 2px 6px 2px 8px;
+  height: 18px;
+  padding: 0 6px;
   border-radius: 7px;
   color: var(--text-dim);
   touch-action: none;
@@ -12984,6 +12945,7 @@ html.kb-open .ss-foot {
 .pair-dd-menu {
   position: fixed;
   z-index: 400;
+  font-size: 12.5px;
   min-width: 300px;
   padding: 4px;
   border-radius: 10px;
@@ -13029,15 +12991,15 @@ html.kb-open .ss-foot {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* All chats together: a label where the pair changes, in line with the text. */
 .pair-chunk-head {
-  margin: 10px 0 0 56px;
-  padding-left: 8px;
+  margin: 8px 0 0 51px;
 }
 .pair-chunk-head button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 2px 8px 2px 4px;
+  padding: 2px 8px 2px 5px;
   border-radius: 7px;
   font-size: 11.5px;
   color: var(--text-faint);
@@ -13045,36 +13007,16 @@ html.kb-open .ss-foot {
 .pair-chunk-head.on button {
   color: var(--text-dim);
 }
-.pair-chunk-head.off .avatar {
-  filter: grayscale(1);
-  opacity: 0.6;
-}
 .pair-chunk-head button:hover {
   background: var(--bg-raised);
   color: var(--text);
-}
-.pair-chunk-head button:hover .avatar {
-  filter: none;
-  opacity: 1;
 }
 .pair-chunk-sending {
   margin-left: 4px;
   color: var(--accent);
   font-size: 10.5px;
 }
-/* The bar down a chunk's side, in the gap between the pictures and the text (narrower on a phone). */
-.msg.pair-chunk .msg-main {
-  position: relative;
-}
-.msg.pair-chunk .msg-main::before {
-  content: '';
-  position: absolute;
-  left: -6px;
-  top: -2px;
-  bottom: -2px;
-  width: 2px;
-  background: var(--border);
-}
-.msg.pair-chunk.on .msg-main::before {
-  background: var(--accent);
+/* The network on each picture there, ringed in the timeline's colour. */
+.msg .avatar-net {
+  box-shadow: 0 0 0 2px var(--bg-center);
 }

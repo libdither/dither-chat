@@ -42,10 +42,16 @@ const SORTS: [string | null, string][] = [
   ['relevance', 'Best match'],
 ];
 
-/** A conversation has no unique name (and a DM has none at all), so the header's button scopes by id. */
-function scopeOf(q: string): P.ConversationView | null {
+/**
+ * A conversation has no unique name (and a DM has none at all), so the header's button scopes by id: a conversation's,
+ * or a person's for every chat with them.
+ */
+function scopeOf(q: string): { id: string; label: string; network?: P.Network } | null {
   const id = searchOp(q, 'in');
-  return (id && db.conversations.get(id)) || null;
+  const c = id ? db.conversations.get(id) : null;
+  if (c) return { id: c.id, label: c.shape === 'direct' ? convTitle(c) : convLabel(c), network: c.network };
+  const p = id ? db.persons.get(id) : null;
+  return p ? { id: p.id, label: `every chat with ${p.name}` } : null;
 }
 
 const IS: [string, string][] = [
@@ -450,7 +456,7 @@ export function SearchPane({ q, onBack }: { q: string; onBack?: () => void }) {
           value={draft}
           setValue={setDraft}
           onDown={first}
-          placeholder={scope ? `Search in ${convTitle(scope)}` : 'Search messages, people and places'}
+          placeholder={scope ? `Search in ${scope.label}` : 'Search messages, people and places'}
           submit={(t) => {
             const next = scope ? setSearchOp(t, 'in', scope.id) : t;
             rememberSearch(next);
@@ -461,7 +467,7 @@ export function SearchPane({ q, onBack }: { q: string; onBack?: () => void }) {
       {scope && (
         <div class="search-scope">
           <button class="chip-btn on" title="Search everywhere instead" onClick={() => set(setSearchOp(q, 'in', null))}>
-            <NetGlyph network={scope.network} size={11} /> In {scope.shape === 'direct' ? convTitle(scope) : convLabel(scope)} <Icon name="x" size={12} />
+            {scope.network ? <NetGlyph network={scope.network} size={11} /> : <Icon name="user" size={12} />} In {scope.label} <Icon name="x" size={12} />
           </button>
         </div>
       )}

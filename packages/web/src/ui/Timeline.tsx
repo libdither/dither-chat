@@ -22,7 +22,6 @@ import {
   effectiveLevel,
   heldHere,
   identityName,
-  kindLabel,
   netName,
   personOf,
   ruleIcon,
@@ -68,7 +67,7 @@ import {
 } from '../state.ts';
 import { reactionContext } from '../reactions.ts';
 import { openAbout } from './About.tsx';
-import { AccountChip, AccountDots, Avatar, Empty, Menu, NetBadge, NetGlyph, variantIcon } from './bits.tsx';
+import { AccountChip, Avatar, Empty, Menu, NetGlyph, variantIcon } from './bits.tsx';
 import { HoverReactions, ReactionBar, useLongPress } from './Reactions.tsx';
 import { Icon } from './icons.tsx';
 import { TriageWhy, tierIcon, tierName } from './Marks.tsx';
@@ -97,7 +96,7 @@ import { memo } from './memo.ts';
 import { heldRequest } from '../requests.ts';
 import { LinkBanner, RequestBar } from './Requests.tsx';
 import { countKey } from '../clicklog.ts';
-import { ChunkHead, focusedPair, focusPair, hasNickname, loadChat, myName, Nickname, pairOf, PairDropdown, PairLead, theirName, viewOf } from './Pairs.tsx';
+import { ChunkHead, focusedPair, focusPair, hasNickname, loadChat, myName, Nickname, pairOf, PairDropdown, PairLead, setView, theirName, viewOf } from './Pairs.tsx';
 import { Loading } from './Loader.tsx';
 
 
@@ -137,7 +136,7 @@ function Crumbs({ c }: { c: P.ConversationView }) {
  * A conversation's notification rule, from its header: Automatic (no rule), Always alert, List only or Mute. With no
  * rule of its own, the line under Automatic says what holds: a rule above it, or what the network does here.
  */
-export function LevelMenu({ c }: { c: P.ConversationView }) {
+export function LevelMenu({ c, also }: { c: P.ConversationView; /** A person's other chats, which take the same rule (all chats together). */ also?: P.ConversationView[] }) {
   const eff = effectiveLevel(c);
   const own = ruleOn('conversation', c.id);
   const com = c.spaceIds[0] ?? (c.parentId ? db.conversations.get(c.parentId)?.spaceIds[0] : undefined);
@@ -145,7 +144,7 @@ export function LevelMenu({ c }: { c: P.ConversationView }) {
   const held = eff.rule === 'mentions' ? 'Mentions only' : ruleName(eff.rule);
   const look = eff.rule ?? (eff.level === 'digest' ? 'digest' : 'auto');
   const pick = (l: P.RuleLevel | null, close: () => void) => () => {
-    setRule('conversation', c.id, l);
+    for (const x of [c, ...(also ?? [])]) setRule('conversation', x.id, l);
     close();
   };
   return (
@@ -214,14 +213,20 @@ export function LevelMenu({ c }: { c: P.ConversationView }) {
   );
 }
 
-function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void }) {
+/**
+ * `chat`: someone you reach through several pairs of accounts (PersonChat). The line under the name is then the list
+ * to choose the pair from, in place of the network and your account, and `c` is the pair messages go through.
+ */
+function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () => void; chat?: { person: P.PersonView; directs: P.ConversationView[]; all: boolean; onView: (view: string) => void } }) {
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && visibleAccount(a.id));
   const isDirect = c.shape === 'direct';
-  const person = c.peerPersonId ? db.persons.get(c.peerPersonId) : null;
+  const person = chat?.person ?? (c.peerPersonId ? db.persons.get(c.peerPersonId) : null);
+  // All chats together: the header is the person's, not one conversation's.
+  const all = !!chat?.all;
   const whoTitle = person && isDirect ? `${person.name}'s profile` : `About ${convTitle(c)}`;
   const openWho = () => go(person && isDirect ? { view: 'profile', person: person.id } : { view: 'profile', conv: c.id });
   return (
-    <header class="conv-head" data-track-area="chat header" onContextMenu={onMenu(() => conversationMenu(c))}>
+    <header class="conv-head" data-track-area="chat header" onContextMenu={onMenu(() => (all ? personMenu(chat!.person) : conversationMenu(c)))}>
       {onBack && (
         <button class="icon-btn back" data-track="pager: back button" onClick={onBack} aria-label="Back">
           <Icon name="back" />
@@ -230,7 +235,7 @@ function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void 
       {/* The picture and the name open its profile page: theirs for a DM, the place's otherwise. */}
       <button class="conv-head-icon conv-head-who" tabIndex={-1} data-track="picture" title={whoTitle} onClick={openWho}>
         {isDirect || c.shape === 'group' || c.shape === 'self' ? (
-          <Avatar id={person?.id ?? c.id} name={convTitle(c)} url={person?.avatar ?? c.avatar} size={34} square={!isDirect} network={c.network} />
+          <Avatar id={person?.id ?? c.id} name={convTitle(c)} url={person?.avatar ?? c.avatar} size={34} square={!isDirect} network={all ? undefined : c.network} />
         ) : (
           <span class="conv-head-variant">
             <Icon name={variantIcon(c.variant, c.shape)} size={20} />
@@ -239,38 +244,42 @@ function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void 
       </button>
       <div class="conv-head-text">
         <h2>
-          <button class="conv-head-name" data-track="name" title={whoTitle} onClick={openWho}>
-            {convTitle(c)}
-          </button>
-          {c.encrypted && (
+          {chat ? (
+            <Nickname person={chat.person} onOpen={openWho} />
+          ) : (
+            <button class="conv-head-name" data-track="name" title={whoTitle} onClick={openWho}>
+              {convTitle(c)}
+            </button>
+          )}
+          {c.encrypted && !all && (
             <span class="e2ee" title="End-to-end encrypted on the network">
               <Icon name="lock" size={12} />
             </span>
           )}
         </h2>
         <div class="conv-head-sub">
-          <Crumbs c={c} />
-          {accounts.length > 0 && (accounts.length > 1 || db.accounts.size > 1) && (
-            <span class="via">
-              via
-              {accounts.map((a) => (
-                <AccountChip account={a} small />
-              ))}
-            </span>
+          {chat ? (
+            <PairDropdown directs={chat.directs} view={all ? 'all' : c.id} onPick={chat.onView} />
+          ) : (
+            <>
+              <Crumbs c={c} />
+              {accounts.length > 0 && (accounts.length > 1 || db.accounts.size > 1) && (
+                <span class="via">
+                  via
+                  {accounts.map((a) => (
+                    <AccountChip account={a} small />
+                  ))}
+                </span>
+              )}
+            </>
           )}
         </div>
       </div>
       <div class="conv-head-actions">
         {person && isDirect && (
-          <>
-            <button class="hdr-btn phone-hide" data-track="profile" title="Profile" aria-label="Profile" onClick={() => go({ view: 'profile', person: person.id })}>
-              <Icon name="info" size={16} />
-            </button>
-            <button class="hdr-btn phone-hide" data-track="all chats" title="Open the merged thread with this person" aria-label="All chats with this person" onClick={() => go({ view: 'people', person: person.id })}>
-              <Icon name="user" size={16} />
-              <span class="hdr-btn-label">All chats</span>
-            </button>
-          </>
+          <button class="hdr-btn phone-hide" data-track="profile" title="Profile" aria-label="Profile" onClick={() => go({ view: 'profile', person: person.id })}>
+            <Icon name="info" size={16} />
+          </button>
         )}
         <JoinCallButton c={c} />
         {!isDirect && (
@@ -278,53 +287,10 @@ function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void 
             <Icon name="info" size={16} />
           </button>
         )}
-        <button class="hdr-btn" data-track="search here" title="Search in this conversation" aria-label="Search in this conversation" onClick={() => go({ view: 'search', q: `in:${c.id}` })}>
+        <button class="hdr-btn" data-track="search here" title={all ? 'Search in every chat with them' : 'Search in this conversation'} aria-label={all ? 'Search in every chat with them' : 'Search in this conversation'} onClick={() => go({ view: 'search', q: `in:${all ? chat!.person.id : c.id}` })}>
           <Icon name="search" size={16} />
         </button>
-        <LevelMenu c={c} />
-        <button class={`hdr-btn ${detailsShown() ? 'on' : ''}`} data-track="details" onClick={() => showDetails(!detailsShown())} title="Details" aria-label="Details">
-          <Icon name="panel" size={16} />
-        </button>
-      </div>
-    </header>
-  );
-}
-
-function PersonHeader({ person, onBack }: { person: P.PersonView; onBack?: () => void }) {
-  const directs = directsOf(person.id);
-  return (
-    <header class="conv-head" data-track-area="chat header" onContextMenu={onMenu(() => personMenu(person))}>
-      {onBack && (
-        <button class="icon-btn back" data-track="pager: back button" onClick={onBack} aria-label="Back">
-          <Icon name="back" />
-        </button>
-      )}
-      <button class="conv-head-icon conv-head-who" tabIndex={-1} data-track="picture" title={`${person.name}'s profile`} onClick={() => go({ view: 'profile', person: person.id })}>
-        <Avatar id={person.id} name={person.name} url={person.avatar} size={34} />
-      </button>
-      <div class="conv-head-text">
-        <h2>
-          <button class="conv-head-name" data-track="name" title={`${person.name}'s profile`} onClick={() => go({ view: 'profile', person: person.id })}>
-            {person.name}
-          </button>
-        </h2>
-        <div class="conv-head-sub">
-          <span class="ident-chips">
-            {directs.map((d) => {
-              const peer = d.participantIds.find((p) => !isSelfIdentity(p));
-              const ident = peer ? db.identities.get(peer) : null;
-              return (
-                <button class="ident-chip" data-track="network chip" style={{ '--net': NETWORK_META[d.network].color } as any} title={`Open only the ${netName(d.network)} chat`} onClick={() => go({ view: 'inbox', conv: d.id })}>
-                  <NetGlyph network={d.network} size={11} />
-                  {ident?.handle ?? ident?.displayName ?? netName(d.network)}
-                  <AccountDots network={d.network} accountIds={d.vantages.map((v) => v.accountId)} size={6} />
-                </button>
-              );
-            })}
-          </span>
-        </div>
-      </div>
-      <div class="conv-head-actions">
+        <LevelMenu c={c} also={all ? chat!.directs.filter((d) => d.id !== c.id) : undefined} />
         <button class={`hdr-btn ${detailsShown() ? 'on' : ''}`} data-track="details" onClick={() => showDetails(!detailsShown())} title="Details" aria-label="Details">
           <Icon name="panel" size={16} />
         </button>
@@ -532,21 +498,15 @@ function TriageNote({ m }: { m: P.MessageView }) {
   );
 }
 
-/** Where a message in a merged timeline came from, for the title of its network mark. */
-function sourceTitle(m: P.MessageView): string | undefined {
-  const conv = db.conversations.get(m.conversationId);
-  if (!conv) return undefined;
-  const seenVia = m.seenVia.map((id) => db.accounts.get(id)).filter((a): a is P.AccountView => !!a);
-  return `${kindLabel(conv)}${seenVia.length ? ' · via ' + seenVia.map((a) => a.label).join(', ') : ''}`;
-}
-
 /**
  * Drawn again only when its props change (memo.ts) or a name or setting does (`metaRev`): a message arriving draws
  * itself and the one before it, not the whole timeline. The timeline looks up what it would read that changes with
  * each message: `target`, the message it replies to (a map per render, not a search per message); `thread`, its
- * thread's conversation; `src`, where it came from in a merged timeline. `onQuote` shows the quoted message.
+ * thread's conversation. `onQuote` shows the quoted message. In a person's chat over several pairs of accounts
+ * (ui/Pairs.tsx): `alias`, the name the account that wrote it goes by; `via`, that name beside a nickname; `net`, the
+ * network on the picture, where networks mix.
  */
-const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuote, highlight, target, thread, via, viaOn, chunk, alias, netPic }: { m: P.MessageView; grouped: boolean; src?: string; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; via?: string; viaOn?: boolean; chunk?: 'on' | 'off'; alias?: string; netPic?: boolean }) {
+const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, highlight, target, thread, via, viaOn, alias, net }: { m: P.MessageView; grouped: boolean; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; via?: string; viaOn?: boolean; alias?: string; net?: boolean }) {
   if (counting) rendered('MessageItem');
   metaRev.value;
   const author = m.authorId ? db.identities.get(m.authorId) : null;
@@ -589,11 +549,19 @@ const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuot
   const ticks = m.receipts && isSelfIdentity(m.authorId) ? <Ticks m={m} /> : null;
   return (
     <div
-      class={`msg ${grouped ? 'grouped' : ''} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''} ${chunk ? `pair-chunk ${chunk}` : ''}`}
+      class={`msg ${grouped ? 'grouped' : ''} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''}`}
       id={`m-${m.id}`}
       ref={(el) => void (el && swipeReply.set(el, () => onReply(m)))}
       {...menuProps}
     >
+      {/* What it replies to, on a line of its own above the picture and the name: its line bends up from the picture. */}
+      {target && (
+        <button class="reply-quote" onClick={() => onQuote(target.id)}>
+          <Icon name="reply" size={12} />
+          <b>{isSelfIdentity(target.authorId) ? 'You' : authorName(target.authorId)}</b>
+          <span>{target.deleted ? 'Message deleted' : plainBody(target.body, target.network).slice(0, 120) || 'Attachment'}</span>
+        </button>
+      )}
       <div class="msg-gutter">
         {grouped ? (
           <span class="msg-time-hover" title={fullTime(m.ts)}>
@@ -601,18 +569,11 @@ const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuot
           </span>
         ) : (
           <button class="avatar-btn" data-identity={m.authorId ?? undefined} onClick={() => openProfile(m.authorId)} aria-label={`Profile of ${name}`}>
-            {netPic ? <NetBadge network={m.network} size={36} /> : <Avatar id={person?.id ?? m.authorId ?? m.id} name={name} url={person?.avatar ?? author?.avatar} size={36} />}
+            <Avatar id={person?.id ?? m.authorId ?? m.id} name={name} url={person?.avatar ?? author?.avatar} size={36} network={net ? m.network : undefined} />
           </button>
         )}
       </div>
       <div class="msg-main">
-        {target && (
-          <button class="reply-quote" onClick={() => onQuote(target.id)}>
-            <Icon name="reply" size={12} />
-            <b>{isSelfIdentity(target.authorId) ? 'You' : authorName(target.authorId)}</b>
-            <span>{target.deleted ? 'Message deleted' : plainBody(target.body, target.network).slice(0, 120) || 'Attachment'}</span>
-          </button>
-        )}
         {!grouped && (
           <div class="msg-head">
             <span class={`msg-author ${self ? 'self' : ''}`} data-identity={m.authorId ?? undefined} role="link" tabindex={0} onClick={() => openProfile(m.authorId)} onKeyDown={(e) => e.key === 'Enter' && openProfile(m.authorId)} title={author ? `${author.displayName ?? ''} ${author.handle ? '· ' + author.handle : ''} on ${netName(author.network)}` : ''}>
@@ -624,12 +585,6 @@ const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuot
               <span class={`msg-src msg-via-their ${viaOn ? 'on' : ''}`} title={`${via} on ${netName(m.network)}`}>
                 <NetGlyph network={m.network} size={11} />
                 {via}
-              </span>
-            )}
-            {src !== undefined && (
-              <span class="msg-src" title={src}>
-                <NetGlyph network={m.network} size={11} />
-                {netName(m.network)}
               </span>
             )}
             <span class="msg-time" title={fullTime(m.ts)}>
@@ -729,7 +684,7 @@ interface Drawn {
   to: string | null;
 }
 
-function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus, pairs }: { tkey: string; convIds: string[]; merged: boolean; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; pairs?: { focus: string; onFocus: (convId: string) => void } }) {
+function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, pairs }: { tkey: string; convIds: string[]; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; pairs?: { focus: string; onFocus: (convId: string) => void } }) {
   if (counting) rendered('Timeline');
   timelineRev(tkey).value;
   const scroller = useRef<HTMLDivElement>(null);
@@ -881,40 +836,26 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus, pairs 
   for (let i = start; i < end; i++) {
     const m = all[i];
     if (!prev || !sameDay(prev.ts, m.ts)) items.push(<div class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
-    // A person page (ui/Pairs.tsx): a chunk starts where the pair changes, and on a new day, in place of the divider.
-    const runStart = !!pairs && (!prev || prev.conversationId !== m.conversationId || !sameDay(prev.ts, m.ts));
-    if (merged && !pairs && prev && prev.conversationId !== m.conversationId) {
-      const c = db.conversations.get(m.conversationId);
-      items.push(
-        <div class="net-switch" style={{ '--net': NETWORK_META[m.network].color } as any}>
-          <span>
-            <NetGlyph network={m.network} size={11} /> continued on {netName(m.network)}
-            {c && c.vantages.length > 0 && db.accounts.get(c.vantages[0].accountId) && ` · ${db.accounts.get(c.vantages[0].accountId)!.label}`}
-          </span>
-        </div>,
-      );
-    }
     if (i === unreadFrom) items.push(<div class="new-sep"><span>New</span></div>);
     const grouped = !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId;
     const target = m.replyToId ? (byId.get(m.replyToId) ?? quoted.get(m.replyToId) ?? null) : null;
     const thread = m.threadId ? (db.conversations.get(m.threadId) ?? null) : null;
     let via: string | undefined;
-    let chunk: 'on' | 'off' | undefined;
     let alias: string | undefined;
     const c = pairs ? db.conversations.get(m.conversationId) : undefined;
     if (pairs && c) {
       const pr = pairOf(c);
-      const focused = m.conversationId === pairs.focus;
-      // Names as the network has them (your account's, their username), unless you gave them a nickname.
-      if (isSelfIdentity(m.authorId)) alias = myName(pr);
-      else if (hasNickname(personOf(m.authorId))) via = theirName(pr);
-      else alias = theirName(pr);
-      if (convIds.length > 1) {
-        chunk = focused ? 'on' : 'off';
-        if (runStart) items.push(<ChunkHead key={`ch-${m.id}`} p={pr} focused={focused} onPick={() => pairs.onFocus(c.id)} />);
+      // The pair's two accounts go by the names the network has (your account's, their username), unless you gave
+      // them a nickname. Anyone else who wrote there (a bot, the network itself) keeps their own name.
+      if (m.authorId && m.authorId === pr.mine?.id) alias = myName(pr);
+      else if (m.authorId && m.authorId === pr.theirs?.id) {
+        if (hasNickname(personOf(m.authorId))) via = theirName(pr);
+        else alias = theirName(pr);
       }
+      // All chats together: a label where the pair changes, to say which and to send through it.
+      if (convIds.length > 1 && (!prev || prev.conversationId !== m.conversationId)) items.push(<ChunkHead key={`ch-${m.id}`} p={pr} focused={m.conversationId === pairs.focus} onPick={() => pairs.onFocus(c.id)} />);
     }
-    items.push(<MessageItem key={m.id} m={m} grouped={pairs ? grouped && !runStart : grouped} src={merged && !pairs ? sourceTitle(m) : undefined} onReply={onReply} onQuote={onQuote} highlight={m.id === flash} target={target} thread={thread} via={via} viaOn={!!pairs && m.conversationId === pairs.focus} chunk={chunk} alias={alias} netPic={!!pairs} />);
+    items.push(<MessageItem key={m.id} m={m} grouped={grouped} onReply={onReply} onQuote={onQuote} highlight={m.id === flash} target={target} thread={thread} via={via} viaOn={!!pairs && m.conversationId === pairs.focus} alias={alias} net={!!pairs && convIds.length > 1} />);
     prev = m;
   }
 
@@ -1348,6 +1289,16 @@ function NotStartedNote({ c }: { c: P.ConversationView }) {
 export function ConversationPane({ convId, onBack, focus }: { convId: string; onBack?: () => void; focus?: string }) {
   rev.value;
   const c = db.conversations.get(convId);
+  // A DM with someone you reach through several pairs of accounts is their chat, showing this pair.
+  const person = c?.shape === 'direct' && c.peerPersonId ? db.persons.get(c.peerPersonId) : null;
+  const directs = person && !person.isSelf ? directsOf(person.id) : [];
+  if (c && person && directs.length > 1 && directs.some((d) => d.id === c.id)) return <PersonChat person={person} directs={directs} only={c} onBack={onBack} msg={focus} />;
+  return <PlainPane convId={convId} onBack={onBack} focus={focus} />;
+}
+
+function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => void; focus?: string }) {
+  rev.value;
+  const c = db.conversations.get(convId);
   const [reply, setReply] = useState<P.MessageView | null>(null);
   const unreadAt = useMemo(() => (c ? firstUnread([c]) : null), [convId]);
   useEffect(() => setReply(null), [convId]);
@@ -1367,7 +1318,7 @@ export function ConversationPane({ convId, onBack, focus }: { convId: string; on
         <>
           {voice && <div class="voice-note"><Icon name="voice" size={14} /> Voice isn't relayed. This shows the channel's text chat.</div>}
           <NotStartedNote c={c} />
-          <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} merged={false} onReply={setReply} firstUnreadTs={unreadAt} focus={focus} />
+          <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} onReply={setReply} firstUnreadTs={unreadAt} focus={focus} />
         </>
       )}
       <TypingBar convIds={[c.id]} />
@@ -1396,91 +1347,66 @@ export function ConversationPane({ convId, onBack, focus }: { convId: string; on
   );
 }
 
+/** A person's page: the chat with them. One conversation is that conversation's page; several are one chat over them. */
 export function PersonPane({ personId, onBack }: { personId: string; onBack?: () => void }) {
   rev.value;
   const person = db.persons.get(personId);
-  const [reply, setReply] = useState<P.MessageView | null>(null);
   const directs = directsOf(personId);
-  const unreadAt = useMemo(() => firstUnread(directs), [personId]);
   if (!person) return <Empty icon="user" title="Person not found" />;
   if (!directs.length) return <Empty icon="user" title={`No chats with ${person.name}`} />;
-  // Reached through more than one pair of accounts: one chat over them all (ui/Pairs.tsx, docs/chats.md).
-  if (directs.length > 1) return <PairsPersonPane person={person} directs={directs} onBack={onBack} reply={reply} setReply={setReply} unreadAt={unreadAt} />;
-  const via = directs[0];
-  return (
-    <section class="pane">
-      <PersonHeader person={person} onBack={onBack} />
-      {directs.filter((d) => d.pending).map((d) => (
-        <LinkBanner key={d.id} c={d} />
-      ))}
-      <NotStartedNote c={via} />
-      <Timeline tkey={timelineKey('p', personId)} convIds={[via.id]} merged={false} onReply={setReply} firstUnreadTs={unreadAt} />
-      <TypingBar convIds={[via.id]} />
-      <Composer
-        targets={{ convId: via.id }}
-        placeholder={`Message ${person.name} on ${netName(via.network)}`}
-        reply={reply}
-        clearReply={() => setReply(null)}
-        disabledReason={composerBlocker(via)}
-      />
-    </section>
-  );
+  if (directs.length === 1) return <PlainPane convId={directs[0].id} onBack={onBack} />;
+  return <PersonChat person={person} directs={directs} onBack={onBack} />;
 }
 
 /**
- * Someone you reach through several pairs of your account and theirs (ui/Pairs.tsx, docs/chats.md): all chats together
- * by default, in chunks by pair; the dropdown beside the name shows one pair's alone.
+ * Someone you reach through several pairs of your account and theirs (ui/Pairs.tsx, docs/chats.md), as one chat: the
+ * page any conversation has, with the pair to choose under the name and in the message box. `only`: opened as one of
+ * their DMs, which shows that pair alone. Otherwise all chats together, or the pair picked from the list.
  */
-function PairsPersonPane({ person, directs, onBack, reply, setReply, unreadAt }: { person: P.PersonView; directs: P.ConversationView[]; onBack?: () => void; reply: P.MessageView | null; setReply: (m: P.MessageView | null) => void; unreadAt: number | null }) {
+function PersonChat({ person, directs, only, onBack, msg }: { person: P.PersonView; directs: P.ConversationView[]; only?: P.ConversationView; onBack?: () => void; msg?: string }) {
+  const [reply, setReply] = useState<P.MessageView | null>(null);
+  const unreadAt = useMemo(() => firstUnread(only ? [only] : directs), [person.id, only?.id]);
+  useEffect(() => setReply(null), [person.id, only?.id]);
   useEffect(() => void loadChat(person.id), [person.id]);
-  const picked = focusedPair(person.id, directs);
-  // Replying to a message sends through the pair it came from.
-  const focus = (reply && directs.find((d) => d.id === reply.conversationId)) || picked;
+  // Where a message goes: the DM that is open, else the pair of the message you are replying to, else the pair in use.
+  const focus = only ?? (reply && directs.find((d) => d.id === reply.conversationId)) ?? focusedPair(person.id, directs);
+  useEffect(() => void reactionContext(focus.id), [focus.id]);
   // Showing one pair's history follows the pair you send through, so switching it in the message box switches both.
-  const view = viewOf(person.id, directs) !== 'all' ? focus.id : 'all';
-  const shown = view === 'all' ? directs : directs.filter((d) => d.id === view);
+  const view = only || viewOf(person.id, directs) !== 'all' ? focus.id : 'all';
+  const shown = view === 'all' ? directs : [focus];
   const onFocus = (id: string) => {
     if (reply && reply.conversationId !== id) setReply(null);
     focusPair(person.id, focus.id, id);
+    // Opened as one DM: another pair is another DM's page.
+    const other = only && id !== only.id ? db.conversations.get(id) : null;
+    if (other) openConv(other);
+  };
+  const onView = (v: string) => {
+    if (!only || v === 'all') setView(person.id, v);
+    if (v !== 'all') onFocus(v);
+    else if (only) go({ view: 'people', person: person.id });
   };
   const cur = pairOf(focus);
+  const held = heldRequest(db.requests, focus.id);
   return (
-    <section class="pane pairs-pane">
-      <header class="conv-head" data-track-area="chat header" onContextMenu={onMenu(() => personMenu(person))}>
-        {onBack && (
-          <button class="icon-btn back" data-track="pager: back button" onClick={onBack} aria-label="Back">
-            <Icon name="back" />
-          </button>
-        )}
-        <button class="conv-head-icon conv-head-who" tabIndex={-1} title={`${person.name}'s profile`} onClick={() => go({ view: 'profile', person: person.id })}>
-          <Avatar id={person.id} name={person.name} url={person.avatar} size={34} />
-        </button>
-        <div class="conv-head-text">
-          <h2>
-            <Nickname person={person} onOpen={() => go({ view: 'profile', person: person.id })} />
-            <PairDropdown personId={person.id} directs={directs} focus={focus} />
-          </h2>
-        </div>
-        <div class="conv-head-actions">
-          <button class={`hdr-btn ${detailsShown() ? 'on' : ''}`} data-track="details" onClick={() => showDetails(!detailsShown())} title="Details" aria-label="Details">
-            <Icon name="panel" size={16} />
-          </button>
-        </div>
-      </header>
-      {directs.filter((d) => d.pending).map((d) => (
-        <LinkBanner key={d.id} c={d} />
-      ))}
+    <section class="pane">
+      <ConvHeader c={focus} onBack={onBack} chat={{ person, directs, all: view === 'all', onView }} />
+      {!held && shown.filter((d) => d.pending).map((d) => <LinkBanner key={d.id} c={d} />)}
       <NotStartedNote c={focus} />
-      <Timeline key={view} tkey={view === 'all' ? timelineKey('p', person.id) : timelineKey('c', view)} convIds={shown.map((d) => d.id)} merged={shown.length > 1} onReply={setReply} firstUnreadTs={unreadAt} pairs={{ focus: focus.id, onFocus }} />
-      <TypingBar convIds={directs.map((d) => d.id)} />
-      <Composer
-        targets={{ convId: focus.id }}
-        placeholder={`Message ${theirName(cur)} from ${myName(cur)} on ${netName(cur.conv.network)}`}
-        reply={reply}
-        clearReply={() => setReply(null)}
-        disabledReason={composerBlocker(focus)}
-        lead={<PairLead person={person} personId={person.id} directs={directs} focus={focus} />}
-      />
+      <Timeline key={view} tkey={view === 'all' ? timelineKey('p', person.id) : timelineKey('c', view)} convIds={shown.map((d) => d.id)} onReply={setReply} firstUnreadTs={unreadAt} focus={msg} pairs={{ focus: focus.id, onFocus }} />
+      <TypingBar convIds={shown.map((d) => d.id)} />
+      {held ? (
+        <RequestBar r={held} />
+      ) : (
+        <Composer
+          targets={{ convId: focus.id }}
+          placeholder={`Message ${theirName(cur)} from ${myName(cur)} on ${netName(cur.conv.network)}`}
+          reply={reply}
+          clearReply={() => setReply(null)}
+          disabledReason={composerBlocker(focus)}
+          lead={<PairLead person={person} directs={directs} focus={focus} onFocus={onFocus} />}
+        />
+      )}
     </section>
   );
 }

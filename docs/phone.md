@@ -103,7 +103,7 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Categories: edit the questions, per-place yes/no/auto | Dialogs | Centered dialogs | Bottom sheets |
 | Per-place notification rule, whole server | Header menu | Small dropdown | Bottom sheet |
 | Per-place overrides list, clear one | Settings | More tab | You tab |
-| Conversation header: where it is, via which account, search in it, profile, all chats, details | Header | Wrapped to four lines | One line that fades; "via" is in the details panel; Profile and All chats in the details panel |
+| Conversation header: where it is, via which account, search in it, profile, details; for someone reached through several pairs of accounts, the list of their chats in place of where it is (docs/chats.md) | Header | Wrapped to four lines | One line that fades; "via" is in the details panel; Profile and All chats in the details panel; the list of chats stays, unfaded |
 | Details panel: source, accounts, native id, open in the network's app, notification rule, members, threads | Toggle in the header | Full-screen overlay | Swipe left, or the header button; a panel with the page peeking |
 | Person details: identities, split, merge, always alert, chats | Details panel | Full-screen overlay | Panel |
 | Profile and the merge flow | Avatar, member or mention | Reachable | Reachable; swipe back |
