@@ -12,6 +12,7 @@ import { phone } from '../phone.ts';
 import { api, db, toast } from '../state.ts';
 import { Avatar, Modal } from './bits.tsx';
 import { Icon } from './icons.tsx';
+import { Loading } from './Loader.tsx';
 
 const REL: Partial<Record<P.PersonRelationship, string>> = { friend: 'Friend', contact: 'Contact' };
 
@@ -134,7 +135,7 @@ export function AddMembersDialog({
             <Icon name="alert" size={13} /> {error}
           </p>
         )}
-        {!view && !error && <p class="det-note">Loading…</p>}
+        {!view && !error && <Loading inline label="Loading…" />}
         {view && (
           <>
             <label class="search fwd-search">

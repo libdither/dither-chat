@@ -65,7 +65,8 @@ function ToastItem({ t }: { t: Toast }) {
       class={`toast ${t.kind ?? 'info'}`}
       {...flick}
       onClick={() => {
-        if (t.conversationId) go({ view: 'inbox', conv: t.conversationId });
+        if (t.action) t.action();
+        else if (t.conversationId) go({ view: 'inbox', conv: t.conversationId });
         else if (t.kind === 'notify') go({ view: 'inbox' });
         dismiss(t.id);
       }}

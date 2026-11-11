@@ -7,6 +7,7 @@ import { clickTotals, countingClicks, forgetClicks, loadClickTotals, setCounting
 import { phone } from '../phone.ts';
 import { toast } from '../state.ts';
 import { Icon } from './icons.tsx';
+import { Loading } from './Loader.tsx';
 
 /** Rows shown until asked for all. */
 const SHOWN = 25;
@@ -50,7 +51,7 @@ export function UsageSettings() {
             </div>
           </div>
           {!v ? (
-            <p class="set-help">Loading…</p>
+            <Loading inline label="Loading…" />
           ) : !keys.length ? (
             <p class="set-help">Nothing counted in the last {days} days yet.</p>
           ) : (

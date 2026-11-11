@@ -10,8 +10,9 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import { activitySummary, barHours, dayDate, dayTicks, duration, group, heatLevel, hourLabel, RANGES, shareLevel, spanLabel, sumHours } from '../activitychart.ts';
 import { netName } from '../model.ts';
 import { api } from '../state.ts';
-import { openAdversarial, Skeleton } from './bits.tsx';
+import { openAdversarial } from './bits.tsx';
 import { Icon } from './icons.tsx';
+import { Loading } from './Loader.tsx';
 
 const DAYS_KEY = 'dither.activityDays';
 const STATES: P.PresenceState[] = ['online', 'idle', 'dnd', 'offline'];
@@ -117,7 +118,7 @@ export function ActivityChart({ path, self, statusesKept, presenceKept }: { path
         </div>
       </div>
       {!v ? (
-        failed ? <p class="pf-empty">Could not load their activity.</p> : <Skeleton rows={3} />
+        failed ? <p class="pf-empty">Could not load their activity.</p> : <Loading />
       ) : (
         <>
           <p class="act-summary">{activitySummary(v, self)}</p>

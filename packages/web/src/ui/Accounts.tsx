@@ -12,6 +12,7 @@ import { Icon } from './icons.tsx';
 import { ImportsSection } from './Imports.tsx';
 import { TelegramSignIns } from './TelegramSignIns.tsx';
 import { MailAccessNote, MailAccountRows } from './mail/MailAccounts.tsx';
+import { Loading } from './Loader.tsx';
 
 /** The add-account dialog, opened from the accounts list or from settings. */
 export const addingAccount = signal(false);
@@ -695,13 +696,14 @@ function EncryptionSection({ a }: { a: P.AccountView }) {
 }
 
 function LogView({ accountId }: { accountId: string }) {
-  const [text, setText] = useState('Loading…');
+  const [text, setText] = useState<string | null>(null);
   const load = () => api<string>(`/api/accounts/${accountId}/log`).then(setText, (e) => setText(String(e.message)));
   useEffect(() => {
     load();
     const t = setInterval(load, 4000);
     return () => clearInterval(t);
   }, [accountId]);
+  if (text === null) return <Loading inline label="Loading…" />;
   return <pre class="log-view">{text || '(empty)'}</pre>;
 }
 

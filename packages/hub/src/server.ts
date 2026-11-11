@@ -15,6 +15,8 @@ import type { TriageVotes, Vote } from './votes.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
 import { ImportRunner } from './imports/engine.ts';
 import { GapFill } from './imports/gapfill.ts';
+import { Jobs } from './jobs.ts';
+import { NetSearch } from './netsearch.ts';
 import { linkPath, MediaArchiver } from './mediaarchive.ts';
 import { infoFor, MediaInfo } from './mediainfo.ts';
 import { genericType } from './fileinfo.ts';
@@ -161,6 +163,10 @@ export class HubServer {
   readonly imports: ImportSources;
   readonly importer: ImportRunner;
   readonly gapfill: GapFill;
+  /** Index jobs: servers, folders and conversations fetched whole (jobs.ts, docs/indexing.md). */
+  readonly jobs: Jobs;
+  /** The networks' own search (netsearch.ts). */
+  readonly netsearch: NetSearch;
   private archiver?: MediaArchiver;
   /** What each kept file is (mediainfo.ts, docs/files.md). */
   readonly mediaInfo: MediaInfo;
@@ -191,6 +197,13 @@ export class HubServer {
     // An import fills and adds messages behind the journal's back: every device reloads its chats (a resync).
     this.importer = new ImportRunner(store, this.imports, opts.dataDir, (msg) => console.warn(msg), () => this.resync());
     this.gapfill = new GapFill(store, (acc, cmd) => this.sup.command(acc, cmd, 180_000), (msg) => console.warn(msg));
+    this.jobs = new Jobs(store, { command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 180_000), online: (a) => sup.online(a), log: (msg) => console.warn(msg) });
+    this.netsearch = new NetSearch(store, {
+      command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 60_000),
+      online: (a) => sup.online(a),
+      probe: opts.probeCategory ? (q) => opts.probeCategory!(q) : undefined,
+      log: (msg) => console.warn(msg),
+    });
     // A demo hub keeps nothing ahead of time: its own files (local) are fetched to be looked at.
     this.mediaInfo = new MediaInfo(store, opts.dataDir, {
       behindArchive: !!opts.archiveMedia,
@@ -298,6 +311,7 @@ export class HubServer {
     this.flushTimer = setInterval(() => this.flush(), 80);
     this.imports.resume();
     this.gapfill.resume();
+    this.jobs.start();
     this.archiver?.start();
     this.mediaInfo.start();
     this.store.journal.prune();
@@ -310,6 +324,7 @@ export class HubServer {
     clearInterval(this.pruneTimer);
     this.importer.stop();
     this.gapfill.stopAll();
+    this.jobs.stop();
     this.archiver?.stop();
     this.mediaInfo.stop();
     this.imports.stop();
@@ -556,6 +571,12 @@ export class HubServer {
     if (path === '/api/inbox') return ok(s.inbox(num('since') ?? Date.now() - 7 * 86_400_000));
     // People and the places they share (graph.ts, docs/people-graph.md).
     if (path === '/api/graph' && method === 'GET') return ok(peopleGraph(s));
+    // The networks' own search, a few places at a time in jev's order (netsearch.ts).
+    if (path === '/api/search/network' && method === 'POST') return ok(this.netsearch.start((await body<{ q?: string }>()).q ?? ''));
+    if ((m = path.match(/^\/api\/search\/network\/([\w-]+)(\/more)?$/))) {
+      const v = m[2] && method === 'POST' ? await this.netsearch.more(m[1]) : this.netsearch.view(m[1]);
+      return v ? ok(v) : bad('that search is over; search again', 404);
+    }
     if (path === '/api/search') return ok(s.search(url.searchParams.get('q') ?? '', Math.min(num('limit') ?? 40, 100), url.searchParams.get('cursor'), num('context') ?? 0));
 
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/context$/))) {
@@ -819,6 +840,26 @@ export class HubServer {
       } catch (e) {
         return fail(e);
       }
+    }
+    // Index jobs (jobs.ts, docs/indexing.md).
+    if (path === '/api/jobs' && method === 'GET') return ok({ jobs: this.jobs.list() });
+    if (path === '/api/jobs' && method === 'POST') {
+      try {
+        return ok(this.jobs.create(await body<P.JobSpec>()));
+      } catch (e: any) {
+        return bad(String(e?.message ?? e));
+      }
+    }
+    if ((m = path.match(/^\/api\/jobs\/([\w-]+)(?:\/(pause|resume|run))?$/))) {
+      const id = m[1];
+      if (method === 'DELETE') return this.jobs.remove(id) ? ok({ ok: true }) : bad('no such job', 404);
+      let v: P.JobView | null = null;
+      if (method === 'GET') v = this.jobs.get(id);
+      else if (method === 'POST' && m[2] === 'pause') v = this.jobs.pause(id);
+      else if (method === 'POST' && m[2] === 'resume') v = this.jobs.resume(id);
+      else if (method === 'POST' && m[2] === 'run') v = this.jobs.runNow(id);
+      else if (method === 'PATCH') v = this.jobs.update(id, await body<{ priority?: P.JobPriority; repeatHours?: number | null }>());
+      return v ? ok(v) : bad('no such job', 404);
     }
     // History sources (docs/import.md): uploaded in pieces at their offset, so a dropped connection resumes.
     if ((m = path.match(/^\/api\/history-gaps\/([\w-]+)(\/stop)?$/))) {

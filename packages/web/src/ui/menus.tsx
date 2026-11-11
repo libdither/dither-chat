@@ -20,6 +20,7 @@ import { forwarding } from './Forward.tsx';
 import { addLook } from './Reactions.tsx';
 import { Icon } from './icons.tsx';
 import { openAbout } from './About.tsx';
+import { canIndex, startIndexing } from './Indexing.tsx';
 import { arrangeEntries, folderEntries, placeConvs } from './Organize.tsx';
 import { openConv } from './Sidebar.tsx';
 import { viewer, type ViewerImage } from './Viewer.tsx';
@@ -313,6 +314,7 @@ export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpe
         person && directsOf(person.id).length > 1 && { label: 'All Chats with Them', icon: 'users', run: () => go({ view: 'people', person: person.id }) },
         { label: `About This ${c.shape === 'direct' ? 'Chat' : noun}`, icon: 'info', run: () => openAbout('conversation', c.id) },
         { label: `Search in ${noun}`, icon: 'search', run: () => go({ view: 'search', q: `in:${c.id}` }) },
+        c.shape !== 'self' && canIndex('conversation', c.id) && { label: `Index This ${channel ? 'Channel' : 'Chat'}…`, icon: 'archive', run: () => startIndexing('conversation', c.id) },
         { label: 'Copy Link', icon: 'link', run: () => copy(link ?? appLink({ view: 'inbox', conv: c.id }), 'Link copied') },
       ],
       [
@@ -343,7 +345,10 @@ export function spaceMenu(s: P.SpaceView): MenuSpec {
     head: <div class="cm-sheet-title">{s.name}</div>,
     items: groups(
       [{ label: 'Mark As Read', icon: 'check', disabled: !sumUnread(convs).unread, run: () => markAllRead(convs, s.name) }],
-      [{ label: `About This ${noun}`, icon: 'info', run: () => openAbout('space', s.id) }],
+      [
+        { label: `About This ${noun}`, icon: 'info', run: () => openAbout('space', s.id) },
+        !section && canIndex('space', s.id) && { label: `Index This ${noun}…`, icon: 'archive', run: () => startIndexing('space', s.id) },
+      ],
       [
         { label: muted ? `Unmute ${noun}` : `Mute ${noun}`, icon: muted ? 'bell' : 'bellOff', run: () => setRule('space', s.id, muted ? null : 'none') },
         { label: 'Notification Settings', icon: 'bell', sub: notifyEntries('space', s.id, own, own ? 'from above' : 'your default') },

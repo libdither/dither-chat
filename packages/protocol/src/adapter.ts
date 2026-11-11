@@ -78,7 +78,13 @@ export type Capability =
   /** Ends one of those: unfriend, cancel a request you sent, unblock, remove a contact, unfollow (the `remove` command). */
   | 'disconnect'
   /** Adds people to a group the account is in (the `addMembers` command), where its About's `adding` says it may. */
-  | 'addMembers';
+  | 'addMembers'
+  /** Searches messages on the network's own servers, one place at a time (the `search` command, jobs.ts NetworkQuery). */
+  | 'search'
+  /** Lists a space's members on request, by name prefix (the `walkMembers` command): an active walk, not only what was seen. */
+  | 'walkMembers'
+  /** Lists a channel's threads, archived ones too (the `threads` command), so an index job finds threads nobody opened. */
+  | 'listThreads';
 
 // ---------------------------------------------------------------- facts
 
@@ -343,7 +349,7 @@ export type AdapterEvent =
    * People seen as members of a space (a Discord guild's native id).
    * - source 'seen' (passive): members the network's client loaded anyway (the member list in view, message
    *   authors' member objects, chunks it asked for itself). It makes no request of its own.
-   * - source 'walk' (active): members from a walk of the member list. The hub has no such walk yet.
+   * - source 'walk' (active): members from a walk of the member list: an index job's `walkMembers` (hub jobs.ts).
    * `total`: the network's member count, and `online` its online count, when known. `complete`: this walk reached
    * the end of what the network will list. For a big Discord guild that may be only the online members, so complete
    * means "all the network shows", not "everyone".
@@ -383,6 +389,50 @@ export type AdapterEvent =
 
 // ---------------------------------------------------------------- hub -> adapter
 
+/** The `history` command's reply. */
+export interface HistoryResult {
+  count: number;
+  /** The start of the conversation was reached. */
+  done: boolean;
+  /** The ts of the page's oldest message, when there was one. */
+  oldest?: number;
+}
+
+/** The `threads` command's reply. */
+export interface ThreadsResult {
+  count: number;
+  /** More after these: ask again with offset + count. */
+  more: boolean;
+}
+
+/** What a network search asks for, from the hub's query language (search.ts) in the network's terms. */
+export interface NetworkQuery {
+  /** Words and phrases as typed ("quoted" kept), without operators. */
+  text: string;
+  /** Native identity ids. */
+  authors?: string[];
+  mentions?: string[];
+  /** Native conversation ids, inside a space scope. */
+  in?: string[];
+  has?: string[];
+  /** ms, inclusive and exclusive as search.ts. */
+  after?: number;
+  before?: number;
+  sort?: 'newest' | 'oldest' | 'relevance';
+}
+
+/** The `search` command's reply. */
+export interface NetworkSearchResult {
+  /** Native message ids of the hits, in the network's order. Their message facts came before this reply. */
+  hits: string[];
+  /** How many the network says match in all, when it says. */
+  total: number | null;
+  /** Pass as `offset` for the next page; null at the end. */
+  next: number | null;
+  /** The network is still indexing this place (Discord answers 202): ask again after this long. */
+  retryAfterMs?: number;
+}
+
 export type AdapterCommand =
   /** Call lab only (scripts/call-lab.ts, DITHER_LAB=1): a command for the lab probe in the sandbox. */
   | { t: 'lab'; id: string; lab: { op: string; [k: string]: unknown }; timeout?: number }
@@ -399,8 +449,30 @@ export type AdapterCommand =
    * peer: Discord user id | Matrix @user:server | Signal ACI or +phone. reply.result: OpenDirectResult
    */
   | { t: 'openDirect'; id: string; peer: string }
-  /** Backfill older messages as message facts with live=false; reply.result: { count, done } */
+  /**
+   * Backfill older messages as message facts with live=false; reply.result: HistoryResult. `oldest`, the ts of the
+   * page's oldest message, lets the hub's index jobs (jobs.ts) know exactly what a page covered.
+   */
   | { t: 'history'; id: string; conversation: string; beforeTs?: number; limit: number }
+  /**
+   * Search the network's own servers, one request (capability 'search'): Discord's guild or channel search,
+   * Matrix's /search. `scope` is a space (a guild) or a conversation, native ids, or everything the account sees
+   * where the network searches that in one request (Matrix). The hits come first as message facts (live=false), with
+   * the conversations, threads and authors they need, then reply.result: NetworkSearchResult.
+   */
+  | { t: 'search'; id: string; scope: { kind: 'space' | 'conversation'; id: string } | { kind: 'all' }; query: NetworkQuery; offset?: number; limit?: number }
+  /**
+   * Members of a space whose name starts with `query` ('' for whatever the network lists first), at most `limit`
+   * (capability 'walkMembers'). A members event with source 'walk' first, then reply.result: { count, total? }.
+   * The hub widens a prefix that came back full (jobs.ts), so the adapter asks once and does not walk on its own.
+   */
+  | { t: 'walkMembers'; id: string; space: string; query: string; limit: number }
+  /**
+   * A page of a channel's threads, newest activity first (capability 'listThreads'): the active ones, or with `archived`
+   * the archived ones. Discord's user route is DiscordChatExporter's: /channels/{id}/threads/search. Conversation
+   * facts for the threads first (each with parentConversation), then reply.result: ThreadsResult.
+   */
+  | { t: 'threads'; id: string; conversation: string; archived: boolean; offset: number }
   | { t: 'markRead'; id: string; conversation: string; upTo: string }
   /** You are typing here, or (`stop`) no longer: say so on the network, the way its own client would. Best effort. */
   | { t: 'typing'; id: string; conversation: string; stop?: boolean }

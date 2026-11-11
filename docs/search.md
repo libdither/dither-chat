@@ -77,4 +77,5 @@ before and after each hit in its conversation; the web asks for one.
 - `has:poll`: no adapter stores polls yet.
 - Earlier versions of edited messages are not searched, only what a message says now.
 - Typo correction does not fix the first letter, phrases, or words in scripts without spaces.
-- No search on the networks themselves: only what the hub has fetched is found.
+- The networks' own search is a separate step you start, under the results: docs/indexing.md, "Network search".
+  To have a whole server searchable here, index it (same doc).

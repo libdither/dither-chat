@@ -60,7 +60,7 @@ import {
 } from '../state.ts';
 import { reactionContext } from '../reactions.ts';
 import { openAbout } from './About.tsx';
-import { AccountChip, AccountDots, Avatar, Empty, Menu, NetBadge, NetGlyph, Skeleton, levelIcon, variantIcon } from './bits.tsx';
+import { AccountChip, AccountDots, Avatar, Empty, Menu, NetBadge, NetGlyph, levelIcon, variantIcon } from './bits.tsx';
 import { HoverReactions, ReactionBar, useLongPress } from './Reactions.tsx';
 import { Icon } from './icons.tsx';
 import { TIER_ICON, TierPicker, TriageChances, triageHeading } from './TierVote.tsx';
@@ -90,6 +90,7 @@ import { heldRequest } from '../requests.ts';
 import { LinkBanner, RequestBar } from './Requests.tsx';
 import { countKey } from '../clicklog.ts';
 import { ChunkHead, focusedPair, focusPair, hasNickname, loadChat, myName, Nickname, pairOf, PairDropdown, PairLead, theirName, viewOf } from './Pairs.tsx';
+import { Loading } from './Loader.tsx';
 
 
 // ------------------------------------------------------------------ header
@@ -945,8 +946,8 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus, pairs 
             <Icon name="chevronDown" size={14} /> Older messages. Jump to the latest
           </button>
         )}
-        {t?.loading && (msgs.length ? <div class="timeline-loading" role="status"><span class="spinner small" /> Loading older messages</div> : <Skeleton rows={7} kind="msg" />)}
-        {!t && <Skeleton rows={7} kind="msg" />}
+        {t?.loading && (msgs.length ? <Loading inline label="Loading older messages" /> : <Loading label="Loading messages…" />)}
+        {!t && <Loading label="Loading messages…" />}
         {t && !t.loading && msgs.length === 0 && <Empty icon="groups" title="No messages yet" />}
         {items}
         {/* Not yet sent: after the newest, so only while the newest is drawn. */}

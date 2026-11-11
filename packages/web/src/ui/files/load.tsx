@@ -4,6 +4,7 @@
  * put them into the page as text, never as markup.
  */
 import { useEffect, useState } from 'preact/hooks';
+import { Loading } from '../Loader.tsx';
 
 export const TEXT_CAP = 2 * 1024 * 1024;
 
@@ -108,5 +109,5 @@ export function Failed({ error }: { error: string }) {
 }
 
 export function Waiting() {
-  return <div class="fv-wait">Loading…</div>;
+  return <Loading fill label="Loading…" />;
 }

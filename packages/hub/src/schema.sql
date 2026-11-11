@@ -636,6 +636,51 @@ CREATE TABLE IF NOT EXISTS gap_fill (
   PRIMARY KEY (account_id, conversation_id)
 ) WITHOUT ROWID;
 
+-- Index jobs (jobs.ts, docs/indexing.md): fetch a server, a folder of servers or a conversation whole, through your
+-- accounts, paced per account, carried on after a restart, and run again if they repeat.
+CREATE TABLE IF NOT EXISTS job (
+  id            TEXT PRIMARY KEY,
+  target_kind   TEXT NOT NULL CHECK (target_kind IN ('space', 'folder', 'conversation')),
+  target_id     TEXT NOT NULL,
+  history       INTEGER NOT NULL,
+  members       INTEGER NOT NULL,
+  priority      INTEGER NOT NULL DEFAULT 1, -- 0 low, 1 normal, 2 high
+  repeat_hours  REAL,                     -- NULL: once
+  state         TEXT NOT NULL,            -- queued, running, paused, done, failed
+  created_at    INTEGER NOT NULL,
+  started_at    INTEGER,
+  finished_at   INTEGER,
+  next_run_at   INTEGER,                  -- a repeating job's next run
+  skipped       INTEGER NOT NULL DEFAULT 0,
+  error         TEXT
+);
+
+-- One conversation to page back to its start, or one space whose members to walk, in a job's current run.
+CREATE TABLE IF NOT EXISTS job_task (
+  job_id      TEXT NOT NULL REFERENCES job(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL CHECK (kind IN ('threads', 'history', 'members')),
+  target_id   TEXT NOT NULL,              -- cnv_ for threads and history, spc_ for members
+  account_id  TEXT NOT NULL,
+  cursor      INTEGER,                    -- history: the next page ends before this ts; NULL: from now
+  walk        TEXT,                       -- members: JSON name prefixes still to ask; threads: JSON {archived, offset}
+  pages       INTEGER NOT NULL DEFAULT 0,
+  fetched     INTEGER NOT NULL DEFAULT 0, -- messages new to the hub, or members listed
+  done        INTEGER NOT NULL DEFAULT 0,
+  error       TEXT,
+  updated_at  INTEGER NOT NULL,
+  PRIMARY KEY (job_id, kind, target_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS job_task_account ON job_task(account_id, done);
+
+-- Stretches of a conversation known to be whole: fetched page after page with nothing between. A later run skips
+-- them, so a repeating job fetches only what is new. from_ts 0: back to the conversation's start.
+CREATE TABLE IF NOT EXISTS history_span (
+  conversation_id TEXT NOT NULL,
+  from_ts         INTEGER NOT NULL,
+  to_ts           INTEGER NOT NULL,
+  PRIMARY KEY (conversation_id, from_ts)
+) WITHOUT ROWID;
+
 -- Remote media (an attachment's URL) the archiver could not keep, so it stops asking (mediaarchive.ts).
 CREATE TABLE IF NOT EXISTS media_archive_fail (
   key     TEXT PRIMARY KEY,               -- sha256 of the URL, as the media cache names it

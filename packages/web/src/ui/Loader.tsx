@@ -73,6 +73,19 @@ export function DitherOrb({ size = 88, class: cls, appear = true }: { size?: num
   );
 }
 
+/**
+ * Something about to land: the orb, small, with what it is waiting for. Inline sits in a row or a line of text;
+ * fill takes the height of its pane, to centre the orb in it.
+ */
+export function Loading({ label, size, inline, fill }: { label?: string; size?: number; inline?: boolean; fill?: boolean }) {
+  return (
+    <div class={`loading${inline ? ' inline' : ''}${fill ? ' fill' : ''}`} role="status" aria-live="polite" aria-label={label ?? 'Loading'}>
+      <DitherOrb size={inline ? 16 : size ?? 32} />
+      {label && <span class="loading-label">{label}</span>}
+    </div>
+  );
+}
+
 /** The whole-screen start: the orb, what it is waiting for, and after a while what to try. */
 export function BootScreen({ status, slow }: { status: string; slow?: string | null }) {
   return (

@@ -38,6 +38,7 @@ import { readable, refusalOf, type UploadJob } from '../../upload.ts';
 import { openMenu } from '../ContextMenu.tsx';
 import { Icon } from '../icons.tsx';
 import { mailCompose, openCompose, type ComposeOpen } from './lazy.tsx';
+import { Loading } from '../Loader.tsx';
 
 const MB = 1024 * 1024;
 const FILE_CAP = 25 * MB;
@@ -429,8 +430,8 @@ function Composer({ open }: { open: ComposeOpen }) {
           </div>
         )}
         {load.loading ? (
-          <div class="mc-scroll mc-loading" role="status">
-            Loading…
+          <div class="mc-scroll">
+            <Loading fill label="Loading…" />
           </div>
         ) : load.error || !d ? (
           <div class="mc-scroll">

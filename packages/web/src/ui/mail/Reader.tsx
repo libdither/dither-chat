@@ -7,11 +7,12 @@ import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { bodies, details, loadBody, loadThread, markThreadRead } from '../../mail/api.ts';
 import { db, mailRev } from '../../state.ts';
-import { Empty, Skeleton } from '../bits.tsx';
+import { Empty } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
 import { SendNote } from './Composer.tsx';
 import { MessageCard } from './MessageCard.tsx';
 import { THREAD_ACTIONS } from './slots.tsx';
+import { Loading } from '../Loader.tsx';
 
 /** How long a thread is on screen before it counts as read (§14 Q3). */
 export const READ_AFTER_MS = 1000;
@@ -88,13 +89,13 @@ export function Reader({ threadId, onBack }: { threadId: string; onBack: () => v
       </header>
       <div class="mail-reader-scroll">
         {!thread && !d ? (
-          <Skeleton rows={3} kind="msg" />
+          <Loading label="Loading messages…" />
         ) : d?.error && !messages.length ? (
           <Empty icon="alert" title="Could not open this thread">
             {d.error}
           </Empty>
         ) : !messages.length ? (
-          <Skeleton rows={3} kind="msg" />
+          <Loading label="Loading messages…" />
         ) : (
           messages.map((m) => <MessageCard key={m.id} message={m} thread={thread!} account={account} open={isOpen(m)} onToggle={() => setOpened({ ...opened, [m.id]: !isOpen(m) })} />)
         )}

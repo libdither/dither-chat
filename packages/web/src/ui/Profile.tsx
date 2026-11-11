@@ -15,7 +15,7 @@ import { countText, countTitle } from '../msgcount.ts';
 import { communitiesOf, convLabel, convTitle, directsOf, externalProfile, identityName, kindLabel, netName, plainBody, rootCommunity } from '../model.ts';
 import { profileLinks } from '../requests.ts';
 import { api, db, go, isSelfIdentity, newMessage, openMessage, openProfile, rev, setRule, toast } from '../state.ts';
-import { Avatar, Empty, NetBadge, NetGlyph, Skeleton } from './bits.tsx';
+import { Avatar, Empty, NetBadge, NetGlyph } from './bits.tsx';
 import { copy, groups, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import { ActivityCard } from './ActivityCard.tsx';
@@ -24,6 +24,7 @@ import { identityMenu, personMenu } from './menus.tsx';
 import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, Tag } from './ProfileShell.tsx';
 import { ConnectActions, ProfileLinks } from './Requests.tsx';
 import { openConv } from './Sidebar.tsx';
+import { Loading } from './Loader.tsx';
 
 /** What a network's profile holds at most, for when it says little. */
 const WHAT_NETWORKS_SHARE: Record<P.Network, string> = {
@@ -263,7 +264,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   if (!profile)
     return (
       <ProfilePage title="Profile" label="Profile" onBack={onBack}>
-        <Skeleton rows={4} />
+        <Loading label="Loading profile…" />
       </ProfilePage>
     );
 
@@ -497,9 +498,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
               <p>{plainBody(a.bio!, a.network)}</p>
             </div>
           ))
+        ) : asking ? (
+          <Loading inline label="Asking the networks…" />
         ) : (
           <p class="pf-empty" title={nets.map((n) => `${netName(n)}: ${WHAT_NETWORKS_SHARE[n]}`).join('\n')}>
-            {asking ? 'Asking the networks…' : `No bio on ${nets.length > 1 ? 'any of their networks' : netName(nets[0])}.`}
+            No bio on {nets.length > 1 ? 'any of their networks' : netName(nets[0])}.
           </p>
         )}
         {links.length > 0 && (
