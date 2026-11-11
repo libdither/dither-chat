@@ -1152,12 +1152,15 @@ export interface RetentionSettings extends KeepSettings {
   /** Who is in which server, from what the network's client loads anyway (passive). Adversarial. */
   members: boolean;
   /**
-   * Adversarial features shown, after the warning (docs/history.md): keeping what others deleted or set to disappear,
-   * logging statuses and presence, and recording server members. Until then the hub does none of them, whatever their switches say.
+   * Adversarial features shown, after the warning (docs/history.md): their switches, and what they kept, in sight.
+   * Statuses, presence and members are logged only while shown. Deleted and disappearing messages are kept as their
+   * switches say whether shown or not: hiding never loses a message, it only keeps what was kept out of sight.
    */
   adversarial: boolean;
-  /** Kept deleted and disappeared messages: a collapsed row in the timeline, or not shown at all. */
-  show: 'collapsed' | 'hidden';
+  /** Kept deleted and disappeared messages in chats: shown in full, marked, or not shown at all. */
+  show: 'shown' | 'hidden';
+  /** The same for one chat (conversation id), over `show`. */
+  showIn: Record<string, 'shown' | 'hidden'>;
   /** Overrides by network ("signal") or account id, the account's first. */
   sources: Record<string, Partial<KeepSettings>>;
 }
@@ -1173,9 +1176,24 @@ export const DEFAULT_RETENTION: RetentionSettings = {
   presence: false,
   members: false,
   adversarial: false,
-  show: 'collapsed',
+  show: 'shown',
+  showIn: {},
   sources: {},
 };
+
+/** One change to the retention settings: each field's [before, after], and the device that made it. */
+export interface RetentionChange {
+  at: number;
+  by: string | null;
+  changed: Record<string, [unknown, unknown]>;
+}
+
+/** Switches whose turning off is confirmed (PUT /api/retention takes `confirm: true` for it). */
+export const RETENTION_GUARDED = ['deleted', 'disappearing', 'statuses', 'presence', 'members', 'adversarial'] as const satisfies readonly (keyof RetentionSettings)[];
+
+/** Whether kept deleted and disappeared messages show in this chat. */
+export const showsGone = (r: RetentionSettings, conversationId: string | null | undefined): boolean =>
+  r.adversarial && ((conversationId ? r.showIn?.[conversationId] : undefined) ?? r.show) !== 'hidden';
 
 /** Someone's presence, as a presence change's `old` and `new` (ChangeView, field "presence"). */
 export interface PresenceView {
@@ -1184,7 +1202,7 @@ export interface PresenceView {
   devices?: ('desktop' | 'mobile' | 'web')[];
 }
 
-/** The kinds kept only with adversarial features shown. */
+/** The kinds that are adversarial: their switches show only with adversarial features shown. */
 export const ADVERSARIAL_KEEPS = ['deleted', 'disappearing'] as const satisfies readonly (keyof KeepSettings)[];
 
 /** What Forget erases, one kind at a time (POST /api/retention/erase); GET /api/retention/kept says which have anything kept. */

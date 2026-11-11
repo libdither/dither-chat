@@ -252,7 +252,7 @@ describe('more like Discord', () => {
     expect(find('is:deleted')).toContain('del1');
     store.setRetention({ ...store.retention(), show: 'hidden' });
     expect(find('platypus is:deleted')).toEqual([]);
-    store.setRetention({ ...store.retention(), show: 'collapsed', adversarial: false });
+    store.setRetention({ ...store.retention(), show: 'shown', adversarial: false });
     expect(find('platypus is:deleted')).toEqual([]);
     store.setRetention({ ...store.retention(), adversarial: true });
   });

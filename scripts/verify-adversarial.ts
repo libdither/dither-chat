@@ -78,7 +78,7 @@ try {
   await p.goto(`${hub}/#/c/${climb}`);
   await p.until(`document.querySelectorAll('.msg').length > 3`, 15000);
   await Bun.sleep(500);
-  check(!(await p.eval<number>(`document.querySelectorAll('.msg-gone-line').length`)), 'no kept deleted or disappeared messages in the chat');
+  check(!(await p.eval<number>(`document.querySelectorAll('.msg-gone').length`)), 'no kept deleted or disappeared messages in the chat');
   check(!(await p.eval<string>(`document.body.innerText`)).includes('wrong chat lol'), 'a deleted message’s words are gone');
 
   // Opening a chat from the sidebar: the cursor is in its box.
@@ -141,7 +141,7 @@ try {
   check(labels.join() === 'Keep deleted messages,Keep disappearing messages,Log statuses,Log presence (online/idle/offline),Record server members (passive)', 'its switches', labels);
   const where = await p.eval<string[]>(`[...document.querySelectorAll('#set-adversarial .toggle-row .adv-where')].map((s) => s.textContent.trim())`);
   check(
-    where.length === 5 && where.slice(0, 2).every((w) => w === 'Where it shows: a collapsed line in the chat') && where.slice(2, 4).every((w) => w === 'Where it shows: the Activity section of a profile') && /About/.test(where[4]),
+    where.length === 5 && where[0] === 'Where it shows: in full in the chat, marked Deleted' && where[1] === 'Where it shows: in full in the chat, marked Disappeared' && where.slice(2, 4).every((w) => w === 'Where it shows: the Activity section of a profile') && /About/.test(where[4]),
     'each switch says where it shows',
     where,
   );
@@ -166,14 +166,27 @@ try {
   await p.eval(`document.querySelector('#set-adversarial').scrollIntoView()`);
   if (shots) await p.shot(`${shots}/adversarial-open.png`);
 
-  // Hiding turns them off.
+  // Turning a switch off is asked first; cancelled, it stays on.
+  await p.eval(`window.confirm = () => false`);
+  await p.eval(`[...document.querySelectorAll('#set-adversarial .toggle-row')].find((l) => l.textContent.includes('Keep deleted')).querySelector('input').click()`);
+  await Bun.sleep(400);
+  check((await retention()).deleted, 'cancelling the question leaves keeping deleted messages on');
+  // A stale device sending the defaults back is refused.
+  const stale = await fetch(`${hub}/api/retention`, { method: 'PUT', headers: { 'content-type': 'application/json', origin: hub }, body: JSON.stringify({ adversarial: false, deleted: false }) });
+  check(stale.status === 409 && (await retention()).deleted, 'turning them off without confirming is refused by the hub', stale.status);
+
+  // Hiding keeps each switch: nothing stops being kept, it is only out of sight.
+  await p.eval(`window.confirm = () => true`);
   await p.eval(`[...document.querySelectorAll('#set-adversarial button')].find((b) => b.textContent.includes('Hide adversarial features')).click()`);
   await Bun.sleep(400);
   const r2 = await retention();
-  check(!r2.adversarial && !r2.deleted && !r2.disappearing && !r2.statuses && !r2.presence && !r2.members, 'hiding them turns them all off', r2);
+  check(!r2.adversarial && r2.deleted && r2.members, 'hiding them keeps their switches', r2);
   check((await coverage()) === undefined, 'and members coverage is out of sight');
   check(!(await p.eval<boolean>(`!!document.querySelector('#set-adversarial .adv-body')`)), 'and the section closes');
-  check(/not being kept/.test((await historyState()).note), 'and Message history says so again');
+  check(/Still keeping deleted messages, out of sight/.test(await p.eval<string>(`document.querySelector('#set-adversarial').innerText`)), 'and says deleted messages are still kept, out of sight');
+  await fetch(`${hub}/api/retention`, { method: 'PUT', headers: { 'content-type': 'application/json', origin: hub }, body: JSON.stringify({ deleted: false, members: false, confirm: true }) });
+  await Bun.sleep(400);
+  check(/not being kept/.test((await historyState()).note), 'with their switches off too, Message history says nothing is kept');
 
   // A profile's Activity section without them: the current status, no history, no presence band or status marks.
   await p.goto(`${hub}/#/p/${alice.id}`);
@@ -229,6 +242,7 @@ try {
   await tap('.set-sections .menu-item', `(b) => b.dataset.section === 'set-history'`);
   await Bun.sleep(1000);
   check((await inView('#set-history h3')) && !(await historyState()).note, 'Sections reaches Message history, which no longer says nothing is kept');
+  await p.eval(`window.confirm = () => true`);
   await p.eval(`[...document.querySelectorAll('#set-adversarial button')].find((b) => b.textContent.includes('Hide adversarial features')).click()`);
   await Bun.sleep(400);
   check(!(await retention()).adversarial, 'hidden again');

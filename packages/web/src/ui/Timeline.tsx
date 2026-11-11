@@ -1,5 +1,5 @@
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, NETWORK_META, sendBlocker, showsInline, TIER_LABEL } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, NETWORK_META, sendBlocker, showsGone, showsInline, TIER_LABEL } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import { ago, bytes, clock, dayLabel, fullTime, sameDay } from '../format.ts';
@@ -382,29 +382,22 @@ function openViewer(e: MouseEvent, images: ViewerImage[], index: number) {
 }
 
 /**
- * A deleted or disappeared message the hub kept (docs/history.md): one quiet line, opened on a click to show what it
- * said and when it went.
+ * A deleted or disappeared message the hub kept (docs/history.md): shown in full, as it was, with a quiet mark of
+ * how and when it went.
  */
 function Gone({ m }: { m: P.MessageView }) {
   // Its "5m ago" moves on with the list, as it did when every change drew every message.
   rev.value;
-  const [open, setOpen] = useState(false);
   const how = m.gone!.how === 'disappeared' ? 'Disappeared' : 'Deleted';
   const shown = { ...m, deleted: false };
   return (
-    <div class={`msg-gone ${open ? 'open' : ''}`}>
-      <button class="msg-gone-line" onClick={() => setOpen(!open)} aria-expanded={open} title={`${how} ${fullTime(m.gone!.at)}`}>
-        <Icon name={m.gone!.how === 'disappeared' ? 'clock' : 'trash'} size={12} />
-        {how} message
-        <span class="msg-gone-when">· {ago(m.gone!.at)}</span>
-        <span class="msg-gone-toggle">{open ? 'Hide' : 'Show'}</span>
-      </button>
-      {open && (
-        <div class="msg-gone-body">
-          <Body m={shown} />
-          <Attachments m={shown} />
-        </div>
-      )}
+    <div class="msg-gone open">
+      <Body m={shown} />
+      <Attachments m={shown} />
+      <span class="msg-gone-mark" title={`${how} ${fullTime(m.gone!.at)}`}>
+        <Icon name={m.gone!.how === 'disappeared' ? 'clock' : 'trash'} size={11} />
+        {how} <span class="msg-gone-when">· {ago(m.gone!.at)}</span>
+      </span>
     </div>
   );
 }
@@ -761,9 +754,9 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus }: { tk
   });
 
   const msgs = t?.messages ?? [];
-  // Settings → Adversarial features: deleted and disappeared messages not shown at all.
-  const hideGone = retention.value.show === 'hidden';
-  const all = hideGone ? msgs.filter((m) => !m.deleted) : msgs;
+  // Settings → Adversarial features, or the chat's own say: kept deleted and disappeared messages not shown at all.
+  const r = retention.value;
+  const all = r.adversarial ? msgs.filter((m) => !(m.deleted && m.gone?.kept) || showsGone(r, m.conversationId)) : msgs;
   const at = new Map<string, number>();
   all.forEach((m, i) => at.set(m.id, i));
 

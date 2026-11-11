@@ -5,8 +5,8 @@ first two, statuses, presence and server members, Adversarial features), everywh
 
 | | What is kept | Where it shows |
 |---|---|---|
-| **Deleted messages** (adversarial) | the words and files of a message someone deleted (not ones you delete yourself) | a collapsed line in the chat, "Deleted message · 3m · Show" |
-| **Disappearing messages** (adversarial) | a Signal or WhatsApp message whose timer ran out | the same, "Disappeared message" |
+| **Deleted messages** (adversarial) | the words and files of a message someone deleted (not ones you delete yourself) | in full in the chat, marked "Deleted · 3m" under it |
+| **Disappearing messages** (adversarial) | a Signal or WhatsApp message whose timer ran out | the same, marked "Disappeared" |
 | **Edits** | each earlier version of an edited message | click "(edited)" on it |
 | **Reactions taken back** | who took back which reaction; reactions a moderator cleared | Message History in the message's menu |
 | **Read receipts** | who got, read and played your messages, and when (Signal, WhatsApp, Matrix) | ticks beside your messages; click for who |
@@ -15,9 +15,10 @@ first two, statuses, presence and server members, Adversarial features), everywh
 | **Presence** (adversarial) | each time people you follow come online, go idle or do not disturb, or go offline, and on which devices; nothing at all while off | the Activity section of a profile: a list, and a band under its chart (docs/profile.md) |
 | **Server members** (adversarial, passive) | who your accounts' clients saw as a member of each server, with nick, roles and when they joined, and the server's member and online counts: only what the client loaded anyway (message authors, the member list in view), never a walk of the list | "Members seen: 5 of 1,287 listed" on a server's About; the server under In common on a profile; its links in the people graph (docs/people-graph.md) |
 
-Each adversarial switch says where what it keeps shows, in the words of the last column ("Where it shows: a collapsed
-line in the chat"). "Deleted and disappeared messages in chats" picks a collapsed line or nothing at all (they are
-still kept, and come back with the setting).
+Each adversarial switch says where what it keeps shows, in the words of the last column ("Where it shows: in full in
+the chat, marked Deleted"). "Deleted and disappeared messages in chats" is Shown or Hidden, and each chat can say
+otherwise on its page under Kept messages (`showIn`, by conversation id; `showsGone` in packages/protocol). Hidden only
+hides: they are still kept, and come back with the setting.
 
 Forget what was kept erases each kind for good. It offers a red button for each kind that is kept now, or has
 anything kept from before (`GET /api/retention/kept`, which looks for one row of each); the rest are listed as
@@ -43,9 +44,18 @@ really want to do this" stays greyed for 15 seconds. Its words scroll and the Ye
 sheet has it on screen from the start, with "This shows their switches. Each starts off." under it. Ticking it shows
 the switches, each still off: Settings scrolls to them and says "Next, turn on the ones you want. Each starts off."
 (also whenever they are first seen all off). Finishing the warning alone keeps nothing. "Hide adversarial features"
-turns them all off again. While hidden, what was kept stays in the database but out of sight:
-kept deleted messages are served empty, status and presence history are left out of the profile, server members and
-coverage are left out of About and profiles. Message history → Forget erases it.
+(asked first) only hides them: each switch stays as it is, and deleted and disappearing messages go on being kept as
+their switches say, so hiding never loses a message. Statuses, presence and members are logged only while shown.
+While hidden, what was kept stays in the database but out of sight: kept deleted messages are served empty, status
+and presence history are left out of the profile, server members and coverage are left out of About and profiles,
+and the section says "Still keeping deleted messages, out of sight". Message history → Forget erases it.
+
+Turning off a switch that keeps or shows kept things (deleted, disappearing, statuses, presence, members, the whole
+section, or a network's or account's deleted or disappearing) is asked first in the app, and the hub refuses it
+without `confirm: true` (409). `PUT /api/retention` changes only the fields sent: a device that has not loaded the
+settings yet can no longer put the defaults back. On 2026-11-10 that, or an accidental Hide, turned them all off for a
+day and the hub emptied the messages deleted meanwhile. Every change is logged with the device's user agent
+(`GET /api/retention/log`, the newest 200, and the hub's log).
 
 `ui/Adversarial.tsx`, `keeping.ts` (what is kept now, for Message history's note and Forget); `ADVERSARIAL_KEEPS` and
 `KEPT_KINDS` in packages/protocol. A demo hub started with `--adversarial` shows them

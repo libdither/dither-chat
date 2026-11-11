@@ -281,11 +281,11 @@ test('the first change log comes across: values as JSON, edits into message even
 });
 
 describe('adversarial features', () => {
-  test('off by default: deleted and disappeared messages are emptied, statuses not logged, whatever the switches say', () => {
-    store.setRetention({ ...DEFAULT_RETENTION, deleted: true, disappearing: true, statuses: true, sources: { signal: { deleted: true } } });
+  test('off by default: deleted and disappeared messages are emptied, statuses not logged', () => {
+    store.setRetention({ ...DEFAULT_RETENTION, statuses: true });
     const a = say(sig, 'g1', 'deleted, not kept');
     store.ingest(sig, { t: 'delete', conversation: 'g1', nativeId: `m${n}` });
-    expect(msg(a).body).toBe('');
+    expect(store.one<{ body: string }>('SELECT body FROM message WHERE id = ?', a)!.body).toBe('');
     const b = say(sig, 'g1', 'disappeared, not kept');
     store.ingest(sig, { t: 'delete', conversation: 'g1', nativeId: `m${n}`, reason: 'expired' });
     expect(msg(b).gone).toMatchObject({ how: 'disappeared', kept: false });
@@ -293,6 +293,25 @@ describe('adversarial features', () => {
     expect(changes('identity', dc, 'ann').filter((c) => c.field === 'status')).toEqual([]);
     // The current status is still known.
     expect(store.identitiesByIds([hubId('idn', 'discord', 'ann')])[0].status).toMatchObject({ text: 'unlogged' });
+    store.setRetention(ADV);
+  });
+
+  test('hidden with their switches on, deleted and disappeared messages go on being kept, out of sight', () => {
+    store.setRetention({ ...ADV, adversarial: false });
+    const a = say(sig, 'g1', 'kept while hidden');
+    store.ingest(sig, { t: 'delete', conversation: 'g1', nativeId: `m${n}`, reason: 'expired' });
+    expect(store.one<{ body: string }>('SELECT body FROM message WHERE id = ?', a)!.body).toBe('kept while hidden');
+    expect(msg(a)).toMatchObject({ body: '', gone: { how: 'disappeared', kept: false } });
+    store.setRetention(ADV);
+    expect(msg(a)).toMatchObject({ body: 'kept while hidden', gone: { how: 'disappeared', kept: true } });
+  });
+
+  test('settings from before: a collapsed line is shown now; every change is logged with who made it', () => {
+    store.setRetention({ ...ADV, show: 'collapsed' as any }, 'a phone');
+    expect(store.retention()).toMatchObject({ show: 'shown', showIn: {} });
+    store.setRetention({ ...ADV, show: 'hidden' }, 'a laptop');
+    const last = store.retentionLog().at(-1)!;
+    expect(last).toMatchObject({ by: 'a laptop', changed: { show: ['shown', 'hidden'] } });
     store.setRetention(ADV);
   });
 

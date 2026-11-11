@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } f
 import { dirname, join } from 'node:path';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
-import { ADVERSARIAL_KEEPS, canonicalReactionKey, DEFAULT_RETENTION, parseSearch, PROTOCOL_VERSION, REACTION_RULES } from '@dither-chat/protocol';
+import { canonicalReactionKey, DEFAULT_RETENTION, parseSearch, PROTOCOL_VERSION, REACTION_RULES } from '@dither-chat/protocol';
 import { activityChart, type Zone } from './activitychart.ts';
 import { binsFor, estimateMessages, snowflakeTime, type ChannelInput } from './msgcount.ts';
 import { Journal } from './journal.ts';
@@ -1463,20 +1463,38 @@ export class Store {
 
   private retentionCache: P.RetentionSettings | null = null;
   retention(): P.RetentionSettings {
-    return (this.retentionCache ??= { ...DEFAULT_RETENTION, ...(this.metaJson<Partial<P.RetentionSettings>>('retention') ?? {}) });
+    if (this.retentionCache) return this.retentionCache;
+    const r = { ...DEFAULT_RETENTION, ...(this.metaJson<Partial<P.RetentionSettings>>('retention') ?? {}) };
+    // Before 2026-11-11 kept messages showed as a collapsed line: shown now, in full.
+    if (r.show !== 'hidden') r.show = 'shown';
+    r.showIn ??= {};
+    return (this.retentionCache = r);
   }
-  setRetention(r: P.RetentionSettings) {
+  /** `by`: who changed it (a device's label), for the log of changes (retentionLog). */
+  setRetention(r: P.RetentionSettings, by?: string) {
+    const before = this.retention();
     this.setMetaJson('retention', r);
     this.retentionCache = null;
+    const after = this.retention();
+    const changed: Record<string, [unknown, unknown]> = {};
+    for (const k of new Set([...Object.keys(before), ...Object.keys(after)]) as Set<keyof P.RetentionSettings>)
+      if (JSON.stringify(before[k]) !== JSON.stringify(after[k])) changed[k] = [before[k], after[k]];
+    if (!Object.keys(changed).length) return;
+    const log = [...(this.metaJson<P.RetentionChange[]>('retention_log') ?? []), { at: Date.now(), by: by ?? null, changed }].slice(-200);
+    this.setMetaJson('retention_log', log);
+    if (by) console.log(`retention: ${by} changed ${Object.keys(changed).join(', ')}`);
   }
+
+  /** Every change to the retention settings, oldest first (the newest 200). */
+  retentionLog = (): P.RetentionChange[] => this.metaJson<P.RetentionChange[]>('retention_log') ?? [];
 
   /**
    * Whether this account's deleted, disappeared or edited messages are kept: the account's say, its network's, then the
-   * default. Deleted and disappeared only with adversarial features shown.
+   * default. Deleted and disappeared go on being kept while adversarial features are hidden (out of sight): hiding
+   * them never loses a message; only their switches, turned off on purpose, stop it.
    */
   keeps(what: keyof P.KeepSettings, acc: { id: string; network: string }): boolean {
     const r = this.retention();
-    if ((ADVERSARIAL_KEEPS as readonly string[]).includes(what) && !r.adversarial) return false;
     return r.sources[acc.id]?.[what] ?? r.sources[acc.network]?.[what] ?? r[what];
   }
 

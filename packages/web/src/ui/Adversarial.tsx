@@ -1,12 +1,12 @@
 /**
  * Settings → Adversarial features (docs/history.md): keeping what others deleted or set to disappear, logging
  * people's statuses and presence over time, and recording who is in which server. Off, and out of sight, until you have read why they are here behind a
- * warning: a popup whose "Yes, I really want to do this" stays greyed for 15 seconds. Each switch still starts off, and
- * the section says so. Hiding them again turns them all off.
+ * warning: a popup whose "Yes, I really want to do this" stays greyed for 15 seconds. Each switch starts off, and
+ * the section says so. Hiding them keeps their switches as they are: what they keep goes on being kept, out of sight,
+ * so nothing is lost by hiding. Turning a switch off is asked first, and never forgets what was kept.
  */
-import { ADVERSARIAL_KEEPS } from '@dither-chat/protocol';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { retention, saveRetention } from '../history.ts';
+import { confirmOff, retention, saveRetention } from '../history.ts';
 import { Modal, showSection } from './bits.tsx';
 import { type Kind, SourceTable } from './HistorySettings.tsx';
 import { Icon } from './icons.tsx';
@@ -25,13 +25,13 @@ const SWITCHES: { key: 'deleted' | 'disappearing' | 'statuses' | 'presence' | 'm
     key: 'deleted',
     label: 'Keep deleted messages',
     help: 'When someone deletes a message, keep what it said. Messages you delete yourself are never kept.',
-    where: 'a collapsed line in the chat',
+    where: 'in full in the chat, marked Deleted',
   },
   {
     key: 'disappearing',
     label: 'Keep disappearing messages',
     help: 'When a Signal or WhatsApp disappearing-message timer runs out, keep the message here instead of erasing it.',
-    where: 'a collapsed line in the chat',
+    where: 'in full in the chat, marked Disappeared',
   },
   {
     key: 'statuses',
@@ -72,19 +72,21 @@ export function AdversarialSettings() {
     }
   }, [r.adversarial]);
   const hide = () => {
-    const sources = Object.fromEntries(
-      Object.entries(r.sources)
-        .map(([k, v]) => [k, Object.fromEntries(Object.entries(v).filter(([f]) => !(ADVERSARIAL_KEEPS as readonly string[]).includes(f)))] as const)
-        .filter(([, v]) => Object.keys(v).length),
-    );
-    void saveRetention({ adversarial: false, deleted: false, disappearing: false, statuses: false, presence: false, members: false, sources });
+    if (confirmOff('adversarial')) void saveRetention({ adversarial: false }, { confirm: true });
   };
+  const set = (key: (typeof SWITCHES)[number]['key'], on: boolean) => {
+    if (on) void saveRetention({ [key]: true });
+    else if (confirmOff(key)) void saveRetention({ [key]: false }, { confirm: true });
+    else retention.value = { ...retention.value };
+  };
+  const stillKept = [r.deleted && 'deleted', r.disappearing && 'disappearing'].filter(Boolean) as string[];
   return (
     <section class={`set-block adversarial ${r.adversarial ? 'open' : ''}`} id="set-adversarial">
       <h3>Adversarial features</h3>
       {!r.adversarial ? (
         <>
           <p class="set-help">Features that keep what other people chose to take back, or watch them over time. Off unless you turn them on here.</p>
+          {stillKept.length > 0 && <p class="set-help">Still keeping {stillKept.join(' and ')} messages, out of sight. Show these features to see them or to stop it.</p>}
           <button class="btn ghost small" onClick={() => setWarning(true)}>
             <Icon name="eye" size={14} /> Show adversarial features
           </button>
@@ -96,10 +98,10 @@ export function AdversarialSettings() {
               <Icon name="info" size={15} /> Next, turn on the ones you want. Each starts off.
             </p>
           )}
-          <p class="set-help">These work against what other people expect of the networks. Hiding them turns them all off; what was kept stays out of sight until they are shown again, or is forgotten under Message history.</p>
+          <p class="set-help">These work against what other people expect of the networks. Hiding them keeps each switch as it is and what was kept out of sight; turning a switch off is asked first. Nothing kept is lost unless you forget it under Message history.</p>
           {SWITCHES.map((x) => (
             <label class="toggle-row">
-              <input type="checkbox" checked={r[x.key]} onChange={(e) => void saveRetention({ [x.key]: (e.target as HTMLInputElement).checked })} />
+              <input type="checkbox" checked={r[x.key]} onChange={(e) => set(x.key, (e.target as HTMLInputElement).checked)} />
               <span>
                 <b>{x.label}</b>
                 <small>{x.help}</small>
@@ -113,12 +115,13 @@ export function AdversarialSettings() {
           <div class="hist-show">
             <b>Deleted and disappeared messages in chats</b>
             <div class="seg" role="radiogroup">
-              {(['collapsed', 'hidden'] as const).map((v) => (
+              {(['shown', 'hidden'] as const).map((v) => (
                 <button role="radio" aria-checked={r.show === v} class={`chip-btn ${r.show === v ? 'on' : ''}`} onClick={() => void saveRetention({ show: v })}>
-                  {v === 'collapsed' ? 'Collapsed line' : 'Hidden completely'}
+                  {v === 'shown' ? 'Shown' : 'Hidden'}
                 </button>
               ))}
             </div>
+            <small class="set-help">Each chat can say otherwise, on its page under Kept messages.</small>
           </div>
 
           <h4 class="hist-sub">By network and account</h4>

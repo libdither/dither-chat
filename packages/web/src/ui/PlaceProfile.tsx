@@ -15,6 +15,7 @@ import { copy } from './ContextMenu.tsx';
 import { EditableText, InviteSection, MembersSection, PinnedSection, RulesList, SettingRow, settingKeys, useAbout, valueText, type AboutTarget } from './About.tsx';
 import { AddMembersDialog } from './AddMembers.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
+import { retention, setShowIn } from '../history.ts';
 import { Icon } from './icons.tsx';
 import { conversationMenu, spaceMenu } from './menus.tsx';
 import { placeConvs } from './Organize.tsx';
@@ -203,6 +204,8 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
         <p class="pf-hint">{ruleOf ? LEVEL_HINT[ruleOf] : eff ? `${LEVEL_LABEL[eff.level]}, from ${eff.source}. ${LEVEL_HINT[eff.level]}` : 'As your defaults say.'}</p>
       </Card>
 
+      {conv && retention.value.adversarial && <KeptHere conversationId={conv.id} />}
+
       {view?.invite && (
         <div class="pf-card pf-embed">
           <InviteSection inv={view.invite} busy={busy === 'invite'} onChange={(op) => change({ key: 'invite', op }, op === 'create' ? 'New invite link made' : 'Invite link turned off')} />
@@ -253,5 +256,24 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
       {hero}
       <Columns main={main} side={selfChat ? null : side} />
     </ProfilePage>
+  );
+}
+
+/** Kept deleted and disappeared messages in this chat: shown or hidden, or as Settings → Adversarial features says. */
+function KeptHere({ conversationId }: { conversationId: string }) {
+  const r = retention.value;
+  const own = r.showIn[conversationId] ?? null;
+  const label = (v: 'shown' | 'hidden') => (v === 'shown' ? 'Shown' : 'Hidden');
+  return (
+    <Card title="Kept messages" icon="clock">
+      <label class="pf-level">
+        <select class="select" value={own ?? ''} onChange={(e) => void setShowIn(conversationId, ((e.target as HTMLSelectElement).value || null) as 'shown' | 'hidden' | null)}>
+          <option value="">Default ({label(r.show)})</option>
+          <option value="shown">Shown</option>
+          <option value="hidden">Hidden</option>
+        </select>
+      </label>
+      <p class="pf-hint">Deleted and disappeared messages the hub kept in this chat. Hidden only hides them here; nothing is forgotten.</p>
+    </Card>
   );
 }
