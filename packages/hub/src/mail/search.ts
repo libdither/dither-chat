@@ -14,8 +14,13 @@
  *
  * from:, to: and with: know people (slice 6): a name finds the addresses of everyone it names, across networks.
  *
- * A body's text comes from slice 2's mail_text (cache.ts), which holds its first 16 KB, outlives the body cache and has
- * the one cap on search text; schema-search.sql's triggers follow it.
+ * A body's text comes from slice 2's mail_text (cache.ts), which holds its first 16 KB (all of it, up to 1 MB, on an
+ * account that keeps all its mail), outlives the body cache and has the one cap on search text; schema-search.sql's
+ * triggers follow it. Attachments' names are indexed too (`files`): filename: looks only there, plain words there as well.
+ *
+ * Keeping all mail (keep.ts): each server search is measured per account (mail_search_measure: its hits, how many the
+ * hub held before, how many with text here, how many its own search found). server=auto leaves out an account that is
+ * searched locally (state `local`); server=1 asks it all the same, and measures.
  */
 import type * as P from '@dither-chat/protocol';
 import { parseSearch } from '@dither-chat/protocol';
@@ -23,6 +28,7 @@ import type * as M from '@dither-chat/protocol/mail-iface';
 import { editDistance } from '../store.ts';
 import { asMailError, MailCallError } from './backend.ts';
 import type { MailHub } from './index.ts';
+import { keepOf, LOCAL_SEARCHES, MEASURE_DAYS } from './keep.ts';
 import { P0 } from './queue.ts';
 import type { MailRouter } from './routes.ts';
 
@@ -36,6 +42,7 @@ export const SERVER_LIMIT = 50;
 export const SERVER_WAIT_MS = 20_000;
 
 export const PROTON_NOTE = "Proton's server searches subjects and addresses only, not the text of messages. Text is searched here, in the mail this hub has fetched.";
+export const LOCAL_NOTE = 'Searched here: this hub holds all of its mail.';
 
 const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => '\\' + c);
@@ -123,9 +130,9 @@ export class MailSearch {
 
   // ---------------------------------------------------------- local
 
-  /** Quoted for FTS5, so what people type is never a syntax error; subject: as a column filter. Null: no words. */
+  /** Quoted for FTS5, so what people type is never a syntax error; subject: and filename: as column filters. Null: no words. */
   private ftsQuery(q: P.SearchQuery): string | null {
-    const parts = [...q.phrases.map(quote), ...q.terms.map((t, i) => quote(t) + (i === q.terms.length - 1 ? '*' : '')), ...q.subject.map((s) => `subject : ${quote(s)}*`)];
+    const parts = [...q.phrases.map(quote), ...q.terms.map((t, i) => quote(t) + (i === q.terms.length - 1 ? '*' : '')), ...q.subject.map((s) => `subject : ${quote(s)}*`), ...q.filename.map((f) => `files : ${quote(f)}*`)];
     if (!parts.length) return null;
     return parts.join(' ') + q.not.map((t) => ` NOT ${quote(t)}`).join('');
   }
@@ -234,14 +241,14 @@ export class MailSearch {
 
   /** Whether the query asks anything at all. */
   private asks(q: P.SearchQuery): boolean {
-    return !!(q.terms.length || q.phrases.length || q.subject.length || q.not.length || q.from.length || q.to.length || q.with.length || q.account.length || q.in.length || q.label.length || q.has.length || q.is.length || q.after !== null || q.before !== null);
+    return !!(q.terms.length || q.phrases.length || q.subject.length || q.filename.length || q.not.length || q.from.length || q.to.length || q.with.length || q.account.length || q.in.length || q.label.length || q.has.length || q.is.length || q.after !== null || q.before !== null);
   }
 
   /**
    * Threads matching, newest matching message first. `among`: only these threads (no paging). Substring mode matches
    * the words inside words, with LIKE.
    */
-  private find(q: P.SearchQuery, mode: Mode, o: { cursor?: string | null; limit?: number; among?: string[]; ids?: string[]; notIds?: string[] } = {}): Found[] {
+  private find(q: P.SearchQuery, mode: Mode, o: { cursor?: string | null; limit?: number; among?: string[]; ids?: string[]; notIds?: string[]; byMessage?: boolean } = {}): Found[] {
     const { where, args, needsM } = this.filters(q);
     const fts = mode === 'fulltext' ? this.ftsQuery(q) : null;
     const m = needsM ? ' CROSS JOIN mail_message m ON m.id = s.message_id' : '';
@@ -256,8 +263,9 @@ export class MailSearch {
     } else if (mode === 'substring' || q.not.length) {
       from = `mail_search s${m}`;
       if (mode === 'substring') {
-        for (const t of texts) (where.push(`(s.subject LIKE ? ESCAPE '\\' OR s.people LIKE ? ESCAPE '\\' OR s.body LIKE ? ESCAPE '\\')`), args.push(like(t), like(t), like(t)));
+        for (const t of texts) (where.push(`(s.subject LIKE ? ESCAPE '\\' OR s.people LIKE ? ESCAPE '\\' OR s.body LIKE ? ESCAPE '\\' OR s.files LIKE ? ESCAPE '\\')`), args.push(like(t), like(t), like(t), like(t)));
         for (const t of q.subject) (where.push(`s.subject LIKE ? ESCAPE '\\'`), args.push(like(t)));
+        for (const t of q.filename) (where.push(`s.files LIKE ? ESCAPE '\\'`), args.push(like(t)));
       }
       for (const t of q.not) (where.push(`NOT (s.subject LIKE ? ESCAPE '\\' OR s.people LIKE ? ESCAPE '\\' OR s.body LIKE ? ESCAPE '\\')`), args.push(like(t), like(t), like(t)));
     }
@@ -276,7 +284,7 @@ export class MailSearch {
     }
     const limit = o.limit ? 'LIMIT ?' : '';
     return this.store.all<Found>(
-      `SELECT s.thread_id AS tid, ${agg}(s.at) AS at, s.message_id AS mid, COUNT(*) AS n FROM ${from} WHERE ${where.join(' AND ')} GROUP BY +s.thread_id ${having} ORDER BY at ${dir}, tid ${dir} ${limit}`,
+      `SELECT s.thread_id AS tid, ${agg}(s.at) AS at, s.message_id AS mid, COUNT(*) AS n FROM ${from} WHERE ${where.join(' AND ')} GROUP BY ${o.byMessage ? '+s.message_id' : '+s.thread_id'} ${having} ORDER BY at ${dir}, tid ${dir} ${limit}`,
       ...pre,
       ...args,
       ...hargs,
@@ -359,19 +367,23 @@ export class MailSearch {
 
   // ---------------------------------------------------------- servers
 
-  /** The hub's hits, then (when asked, or `auto` and a first page under SERVER_UNDER) the servers'. */
+  /**
+   * The hub's hits, then (when asked, or `auto` and a first page under SERVER_UNDER) the servers'. `auto` leaves out
+   * the accounts searched locally (keep.ts).
+   */
   async search(input: string, o: { limit?: number; cursor?: string | null; server?: boolean | 'auto' } = {}): Promise<P.MailSearchPage> {
     const page = this.local(input, o.limit ?? 50, o.cursor ?? null);
     const ask = o.server === true || (o.server === 'auto' && !o.cursor && page.hits.length < SERVER_UNDER);
     if (!ask) return page;
-    return { ...page, server: await this.servers(input) };
+    return { ...page, server: await this.servers(input, { auto: o.server === 'auto' }) };
   }
 
   /**
    * Each account's server, at once. Their hits are stored, then kept when they pass the query's operators and their
-   * thread is not one the hub's own search found (with what it held before they came).
+   * thread is not one the hub's own search found (with what it held before they came). Each answer is measured
+   * (keep.ts). `auto`: an account searched locally is not asked.
    */
-  async servers(input: string): Promise<NonNullable<P.MailSearchPage['server']>> {
+  async servers(input: string, o: { auto?: boolean } = {}): Promise<NonNullable<P.MailSearchPage['server']>> {
     const q = parseSearch(input, new Date(), 'mail');
     if (!this.asks(q)) return { hits: [], accounts: [] };
     let accounts = this.store.accounts().filter((a) => !a.hidden);
@@ -379,15 +391,41 @@ export class MailSearch {
       const named = new Set(q.account.flatMap((a) => this.accountsNamed(a)));
       accounts = accounts.filter((a) => named.has(a.id));
     }
-    const answers = await Promise.all(accounts.map((a) => this.askServer(a, q)));
+    const keep = keepOf(this.hub);
+    const answers = await Promise.all(
+      accounts.map((a) =>
+        o.auto && keep?.searchedLocally(a.id) ? Promise.resolve<ServerAnswer>({ accountId: a.id, state: 'local', found: 0, error: null, note: LOCAL_NOTE, ids: [], added: [] }) : this.askServer(a, q),
+      ),
+    );
+    for (const a of answers) if (a.state === 'done') this.measure(a, q);
     const ids = [...new Set(answers.flatMap((a) => a.ids))];
     const added = answers.flatMap((a) => a.added);
     // The words matched on the server; the rest of the query is checked here.
-    const ops = { ...q, terms: [], phrases: [], subject: [], not: [] };
+    const ops = { ...q, terms: [], phrases: [], subject: [], filename: [], not: [] };
     const passed = ids.length ? this.find(ops, 'filters', { ids }) : [];
     const mine = new Set(passed.length ? this.findAll(q, passed.map((f) => f.tid), added) : []);
     const fresh = passed.filter((f) => !mine.has(f.tid)).map((f) => ({ ...f, n: 1 }));
     return { hits: this.hits(fresh, new Map(), true), accounts: answers.map(({ ids: _i, added: _a, ...a }) => a) };
+  }
+
+  /**
+   * One account's server answer measured (keep.ts, mail_search_measure): its hits, those the hub held before this
+   * search stored them, those of them with body text here, and those its own search for the query found. The query is
+   * not kept. Rows older than the measure's 30 days go, but never an account's last LOCAL_SEARCHES.
+   */
+  private measure(a: ServerAnswer, q: P.SearchQuery) {
+    const hits = [...new Set(a.ids)];
+    const added = new Set(a.added);
+    const held = hits.filter((id) => !added.has(id));
+    const json = JSON.stringify(held);
+    const bodies = held.length ? this.store.one<{ n: number }>('SELECT COUNT(*) AS n FROM mail_text WHERE message_id IN (SELECT value FROM json_each(?))', json)!.n : 0;
+    const local = new Set<string>();
+    if (held.length) for (const mode of this.ftsQuery(q) ? (['fulltext', 'substring'] as const) : (['filters'] as const)) for (const f of this.find(q, mode, { ids: held, byMessage: true })) local.add(f.mid);
+    const now = this.hub.clock.now();
+    this.db.query('INSERT INTO mail_search_measure (account_id, at, found, held, bodies, local, full) VALUES (?, ?, ?, ?, ?, ?, ?)').run(a.accountId, now, hits.length, held.length, bodies, local.size, a.found >= SERVER_LIMIT ? 1 : 0);
+    this.db
+      .query('DELETE FROM mail_search_measure WHERE account_id = ?1 AND at < ?2 AND n NOT IN (SELECT n FROM mail_search_measure WHERE account_id = ?1 ORDER BY n DESC LIMIT ?3)')
+      .run(a.accountId, now - MEASURE_DAYS * 86_400_000, LOCAL_SEARCHES);
   }
 
   /** Of these threads, those the hub's own search finds (whole words or inside them), leaving out `without`. */
@@ -472,6 +510,7 @@ export function serverQuery(q: P.SearchQuery, form: ServerForm): string {
     for (const v of q.to) out.push(`to:${gmailValue(v)}`);
     for (const v of q.with) out.push(`{from:${gmailValue(v)} to:${gmailValue(v)} cc:${gmailValue(v)}}`);
     for (const v of q.subject) out.push(`subject:${gmailValue(v)}`);
+    for (const v of q.filename) out.push(`filename:${gmailValue(v)}`);
     for (const v of q.label) out.push(`label:${gmailValue(v)}`);
     for (const v of q.in) {
       const role = ROLE_NAMES[v.toLowerCase()];
@@ -487,7 +526,7 @@ export function serverQuery(q: P.SearchQuery, form: ServerForm): string {
     if (q.before !== null) out.push(`before:${gmailDay(q.before)}`);
     return out.join(' ');
   }
-  const words = [...q.terms, ...q.phrases, ...q.from, ...q.to, ...q.with, ...q.subject].flatMap((v) => v.split(/\s+/)).filter(Boolean);
+  const words = [...q.terms, ...q.phrases, ...q.from, ...q.to, ...q.with, ...q.subject, ...q.filename].flatMap((v) => v.split(/\s+/)).filter(Boolean);
   return [...new Set(words)].slice(0, 10).join(' ');
 }
 

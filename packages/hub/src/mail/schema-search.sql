@@ -4,8 +4,10 @@
 --
 --   subject  the subject
 --   people   From, To and Cc, names and addresses
---   body     the body's search text once it is fetched (slice 2's mail_text: its first MAIL_LIMITS.textBytes), else
---            the preview
+--   body     the body's search text once it is fetched (slice 2's mail_text: its first MAIL_LIMITS.textBytes, all of
+--            it up to MAIL_LIMITS.keepTextBytes on an account that keeps all its mail), else the preview
+--   files    its attachments' file names, once its body was fetched (filename:, and plain words too); they stay when
+--            the body and its text go
 --
 -- mail_text (schema-big.sql, loaded before this file) outlives the body cache and has the one cap on search text
 -- (MAIL_LIMITS.indexMb, oldest first, cache.ts). Its rows set the body here, and one that goes puts the preview back.
@@ -15,7 +17,8 @@
 -- message's account, thread and time, and whether it is only in Junk or Trash (searched only when asked for).
 --
 -- mail_search has an INTEGER PRIMARY KEY, so the index's rowids survive a VACUUM. Triggers are created only when
--- missing: a change to one needs a DROP TRIGGER first.
+-- missing: a change to one needs a DROP TRIGGER first. A database from before `files` gets it in store.ts
+-- (searchFiles): the column, the index made again with it, and these triggers again.
 
 CREATE TABLE IF NOT EXISTS mail_search (
   n           INTEGER PRIMARY KEY,
@@ -27,23 +30,24 @@ CREATE TABLE IF NOT EXISTS mail_search (
   full        INTEGER NOT NULL DEFAULT 0,     -- body is mail_text's (else the preview)
   subject     TEXT NOT NULL DEFAULT '',
   people      TEXT NOT NULL DEFAULT '',
-  body        TEXT NOT NULL DEFAULT ''
+  body        TEXT NOT NULL DEFAULT '',
+  files       TEXT NOT NULL DEFAULT ''
 );
 
-CREATE VIRTUAL TABLE IF NOT EXISTS mail_fts USING fts5(subject, people, body, content = 'mail_search', content_rowid = 'n', tokenize = "unicode61 remove_diacritics 2");
+CREATE VIRTUAL TABLE IF NOT EXISTS mail_fts USING fts5(subject, people, body, files, content = 'mail_search', content_rowid = 'n', tokenize = "unicode61 remove_diacritics 2");
 -- The index's words, for correcting a misspelt one (as chat's message_fts_vocab).
 CREATE VIRTUAL TABLE IF NOT EXISTS mail_fts_vocab USING fts5vocab(mail_fts, row);
 
 CREATE TRIGGER IF NOT EXISTS mail_search_insert AFTER INSERT ON mail_search BEGIN
-  INSERT INTO mail_fts (rowid, subject, people, body) VALUES (new.n, new.subject, new.people, new.body);
+  INSERT INTO mail_fts (rowid, subject, people, body, files) VALUES (new.n, new.subject, new.people, new.body, new.files);
 END;
 CREATE TRIGGER IF NOT EXISTS mail_search_delete AFTER DELETE ON mail_search BEGIN
-  INSERT INTO mail_fts (mail_fts, rowid, subject, people, body) VALUES ('delete', old.n, old.subject, old.people, old.body);
+  INSERT INTO mail_fts (mail_fts, rowid, subject, people, body, files) VALUES ('delete', old.n, old.subject, old.people, old.body, old.files);
 END;
-CREATE TRIGGER IF NOT EXISTS mail_search_update AFTER UPDATE OF subject, people, body ON mail_search
-  WHEN old.subject IS NOT new.subject OR old.people IS NOT new.people OR old.body IS NOT new.body BEGIN
-  INSERT INTO mail_fts (mail_fts, rowid, subject, people, body) VALUES ('delete', old.n, old.subject, old.people, old.body);
-  INSERT INTO mail_fts (rowid, subject, people, body) VALUES (new.n, new.subject, new.people, new.body);
+CREATE TRIGGER IF NOT EXISTS mail_search_update AFTER UPDATE OF subject, people, body, files ON mail_search
+  WHEN old.subject IS NOT new.subject OR old.people IS NOT new.people OR old.body IS NOT new.body OR old.files IS NOT new.files BEGIN
+  INSERT INTO mail_fts (mail_fts, rowid, subject, people, body, files) VALUES ('delete', old.n, old.subject, old.people, old.body, old.files);
+  INSERT INTO mail_fts (rowid, subject, people, body, files) VALUES (new.n, new.subject, new.people, new.body, new.files);
 END;
 
 -- From the messages.

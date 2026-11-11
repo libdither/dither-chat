@@ -4,7 +4,7 @@
  * Anything that is not a known operator is text, so "from:" alone or "http://x" still search as typed.
  *
  * Mail (docs/mail.md) reads the same language with its own operators: parseSearch(input, now, 'mail').
- *   invoice from:sam to:jo with:alex subject:lease in:archive label:work has:attachment is:unread account:proton after:2026-01
+ *   invoice from:sam to:jo with:alex subject:lease in:archive label:work has:attachment filename:lease is:unread account:proton after:2026-01
  */
 export interface SearchQuery {
   terms: string[];
@@ -30,6 +30,8 @@ export interface SearchQuery {
   with: string[];
   subject: string[];
   label: string[];
+  /** Mail only: words in an attachment's file name (Gmail's `filename:`). */
+  filename: string[];
 }
 
 export const SEARCH_HAS = ['attachment', 'image', 'video', 'audio', 'file', 'link', 'embed', 'sticker', 'reaction'] as const;
@@ -65,6 +67,7 @@ export const MAIL_SEARCH_OPS: { op: string; hint: string }[] = [
   { op: 'in', hint: 'inbox, sent, archive, trash, a folder' },
   { op: 'label', hint: 'a label' },
   { op: 'has', hint: 'attachment' },
+  { op: 'filename', hint: "an attachment's name" },
   { op: 'is', hint: 'unread, read, starred' },
   { op: 'account', hint: 'one of your mail accounts' },
   { op: 'before', hint: 'a date' },
@@ -83,7 +86,7 @@ export function searchDay(s: string, end: boolean, now = new Date()): number | n
 }
 
 export function parseSearch(input: string, now = new Date(), kind: 'chat' | 'mail' = 'chat'): SearchQuery {
-  const q: SearchQuery = { terms: [], phrases: [], not: [], from: [], in: [], network: [], account: [], has: [], is: [], mentionsMe: false, mentions: [], after: null, before: null, relevance: false, oldest: false, to: [], with: [], subject: [], label: [] };
+  const q: SearchQuery = { terms: [], phrases: [], not: [], from: [], in: [], network: [], account: [], has: [], is: [], mentionsMe: false, mentions: [], after: null, before: null, relevance: false, oldest: false, to: [], with: [], subject: [], label: [], filename: [] };
   const day = (s: string, end: boolean) => searchDay(s, end, now);
   const mail = kind === 'mail';
   for (const m of input.matchAll(/(-?)(?:(\w+):)?(?:"([^"]*)"|(\S+))/g)) {
@@ -131,6 +134,7 @@ function mailOp(q: SearchQuery, key: string, val: string, low: string): boolean 
     case 'with':
     case 'subject':
     case 'label':
+    case 'filename':
       q[key].push(val);
       return true;
     case 'cc':

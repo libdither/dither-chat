@@ -72,6 +72,28 @@ export class AccountSync {
   call<T>(op: string, input: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {
     return this.ctx.backend.call<T>(this.accountId, op, input, timeoutMs);
   }
+  /**
+   * An archive read (keep.ts: the walk's pages, the kept bodies, the audits' searches): `background: true` when the
+   * account's status says it has a lane for them (details.backgroundLane), else the input as it is. A 503 `paused`
+   * stops background reads for the account until its status no longer says so.
+   */
+  async background<T>(op: string, input: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {
+    try {
+      return await this.call<T>(op, this.store.backgroundLane(this.accountId) ? { ...input, background: true } : input, timeoutMs);
+    } catch (e) {
+      const err = asMailError(e);
+      // The manager's 503 with the code 'paused' (the code alone, should a manager leave the status out).
+      if (err.code === 'paused' && (err.status === 503 || err.status === undefined)) {
+        this.store.stopBackground(this.accountId, 'paused');
+        this.log(`background reads stopped by the account: ${err.message}`);
+      }
+      throw e;
+    }
+  }
+  /** The archive's background work may go: the account has not stopped background reads (details.backgroundStopped). */
+  get archiveGoes(): boolean {
+    return this.workable && !this.store.backgroundStopped(this.accountId);
+  }
   /** Background work waits for the manager and for the account to be online. */
   get workable(): boolean {
     return !this.stopped && this.ctx.backend.connected && !!this.store.account(this.accountId)?.online;
@@ -344,12 +366,15 @@ export class AccountSync {
 
   // ---------------------------------------------------------- for the page
 
-  /** A message's body from the server: for a page ahead of background work (P0), or fetched ahead (P2, bodies.ts). */
-  fetchBody(messageId: string, p: Priority = P0): Promise<void> {
+  /**
+   * A message's body from the server: for a page ahead of background work (P0), fetched ahead (P2, bodies.ts), or for
+   * the archive (keep.ts, `background`: in the account's background lane when it has one).
+   */
+  fetchBody(messageId: string, p: Priority = P0, background = false): Promise<void> {
     return this.queue.run(p, `body:${messageId}`, async () => {
       const at = this.store.nativeOf(messageId);
       if (!at) throw asMailError(Object.assign(new Error('the server no longer has this message'), { status: 404 }));
-      const m = await this.call<M.MailMessage>('mail.get', { id: at.id }, 65_000);
+      const m = background ? await this.background<M.MailMessage>('mail.get', { id: at.id }, 65_000) : await this.call<M.MailMessage>('mail.get', { id: at.id }, 65_000);
       storeBody(this.store, messageId, m);
     });
   }

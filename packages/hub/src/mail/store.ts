@@ -149,6 +149,11 @@ export class MailStore {
       // The server's emailId (Gmail's X-GM-MSGID): empty on rows from before it, and on Proton's, which have none.
       this.addColumns('mail_message', { email_id: 'TEXT' });
       this.db.exec('CREATE INDEX IF NOT EXISTS mail_message_email ON mail_message(account_id, email_id) WHERE email_id IS NOT NULL');
+      // Keeping all mail (keep.ts): what the status says of background reads and of the account's storage.
+      this.addColumns('mail_account', { background_lane: 'INTEGER', search_ids: 'INTEGER', background_stopped: 'TEXT', storage: 'TEXT' });
+      // Search text from before `cut`: what was as long as the cap then was cut to it.
+      if (this.addColumns('mail_text', { cut: 'INTEGER NOT NULL DEFAULT 0' }).length) this.run('UPDATE mail_text SET cut = ?1 WHERE length(text) >= ?1', MAIL_LIMITS.textBytes);
+      searchFiles(this);
     })();
   }
 
@@ -275,11 +280,17 @@ export class MailStore {
     const sendCap = count(details.sendCap, was.send_cap);
     const maxRecipients = count(details.maxRecipients, was.max_recipients);
     const provider = typeof details.provider === 'string' && details.provider.trim() ? details.provider.trim() : (was.provider ?? null);
-    const next = [JSON.stringify(problem), JSON.stringify(send), address, name, addresses, online, syncMode, headers, perMessage, sendCap, maxRecipients, provider];
-    const prev = [was.problem, was.send, was.address, was.display_name, was.addresses, was.online, was.sync_mode, was.summary_headers ?? null, was.id_per_message ?? null, was.send_cap ?? null, was.max_recipients ?? null, was.provider ?? null];
+    // Keeping all mail (keep.ts): the lane for background reads and the ids-only search, kept as the others are;
+    // background reads stopped only while a status says so; the storage the account uses, when it says.
+    const lane = bit(details[DETAILS.backgroundLane], was.background_lane);
+    const searchIds = bit(details[DETAILS.searchIds], was.search_ids);
+    const stopped = typeof details[DETAILS.backgroundStopped] === 'string' && details[DETAILS.backgroundStopped] ? String(details[DETAILS.backgroundStopped]) : null;
+    const storage = storageOf(details) ?? was.storage ?? null;
+    const next = [JSON.stringify(problem), JSON.stringify(send), address, name, addresses, online, syncMode, headers, perMessage, sendCap, maxRecipients, provider, lane, searchIds, stopped, storage];
+    const prev = [was.problem, was.send, was.address, was.display_name, was.addresses, was.online, was.sync_mode, was.summary_headers ?? null, was.id_per_message ?? null, was.send_cap ?? null, was.max_recipients ?? null, was.provider ?? null, was.background_lane ?? null, was.search_ids ?? null, was.background_stopped ?? null, was.storage ?? null];
     if (next.every((v, i) => v === prev[i])) return false;
     this.run(
-      'UPDATE mail_account SET problem = ?, send = ?, address = ?, display_name = ?, addresses = ?, online = ?, sync_mode = ?, summary_headers = ?, id_per_message = ?, send_cap = ?, max_recipients = ?, provider = ? WHERE id = ?',
+      'UPDATE mail_account SET problem = ?, send = ?, address = ?, display_name = ?, addresses = ?, online = ?, sync_mode = ?, summary_headers = ?, id_per_message = ?, send_cap = ?, max_recipients = ?, provider = ?, background_lane = ?, search_ids = ?, background_stopped = ?, storage = ? WHERE id = ?',
       ...next,
       id,
     );
@@ -287,6 +298,54 @@ export class MailStore {
     const selfChanged = address !== was.address || addresses !== was.addresses;
     if (selfChanged) this.selfChanged(id);
     return selfChanged;
+  }
+
+  // ------------------------------------------------------------ keeping all mail (keep.ts)
+
+  /**
+   * Whether an account keeps all its mail unless set otherwise for it (mail_keep): MailHub's `keepAll`, on in the hub
+   * main.ts runs, off in a bare MailHub (the older tests' year of mail).
+   */
+  keepAll = false;
+
+  /** It keeps all of its mail (keep.ts): as set for it, else `keepAll`. */
+  kept(accountId: string): boolean {
+    return this.keepState(accountId).keep;
+  }
+
+  /** The accounts that keep all their mail, as SQL: `account_id IN (${store.keptSql})`. */
+  get keptSql(): string {
+    return this.keepAll ? `SELECT id FROM mail_account WHERE id NOT IN (SELECT account_id FROM mail_keep WHERE keep = 0)` : `SELECT account_id FROM mail_keep WHERE keep = 1`;
+  }
+
+  /** Keeping all mail for it, and whether that is paused here. */
+  keepState(accountId: string): { keep: boolean; paused: boolean } {
+    const r = this.one<{ keep: number; paused: number }>('SELECT keep, paused FROM mail_keep WHERE account_id = ?', accountId);
+    return { keep: r ? r.keep === 1 : this.keepAll, paused: !!r?.paused };
+  }
+
+  /** Keep all of it or not, pause or resume (PUT /api/mail/keep/:id). */
+  setKeep(accountId: string, change: { keep?: boolean; paused?: boolean }) {
+    const now = this.keepState(accountId);
+    const keep = change.keep ?? now.keep;
+    const paused = change.paused ?? now.paused;
+    this.run('INSERT INTO mail_keep (account_id, keep, paused) VALUES (?, ?, ?) ON CONFLICT (account_id) DO UPDATE SET keep = excluded.keep, paused = excluded.paused', accountId, keep ? 1 : 0, paused ? 1 : 0);
+  }
+
+  /** Its status says background reads have a lane of their own (`details.backgroundLane`): the archive's calls say `background: true`. */
+  backgroundLane(accountId: string): boolean {
+    return !!this.account(accountId)?.background_lane;
+  }
+
+  /** Background reads are stopped (`details.backgroundStopped`, or a background call's 503 `paused`): why, else null. */
+  backgroundStopped(accountId: string): string | null {
+    return this.account(accountId)?.background_stopped ?? null;
+  }
+
+  /** A background call answered 503 `paused`: stopped until a status no longer says so. */
+  stopBackground(accountId: string, why: string) {
+    const r = this.run('UPDATE mail_account SET background_stopped = ? WHERE id = ? AND background_stopped IS NOT ?', why, accountId, why);
+    if (r.changes) this.dirty.accounts.add(accountId);
   }
 
   /** The addresses an account sends as, lower-cased. */
@@ -322,6 +381,7 @@ export class MailStore {
       this.run('DELETE FROM mail_ref WHERE account_id = ?', id);
       this.run('DELETE FROM mail_thread WHERE account_id = ?', id);
       this.run('DELETE FROM mailbox WHERE account_id = ?', id);
+      for (const t of ['mail_keep', 'mail_search_measure', 'mail_audit']) this.run(`DELETE FROM ${t} WHERE account_id = ?`, id);
       this.run('DELETE FROM mail_account WHERE id = ?', id);
     })();
     this.selfCache.delete(id);
@@ -1177,6 +1237,45 @@ export function addressedOf(self: Set<string>, from: string | null, to: M.MailAd
   if (to.some((a) => self.has(lc(a.email)))) return 'to';
   if (cc.some((a) => self.has(lc(a.email)))) return 'cc';
   return 'hidden';
+}
+
+/**
+ * The names of the status's `details` that keeping all mail reads (dither-accounts, as agreed; keep.ts): a lane for
+ * background reads, an ids-only paged mail.search, why background reads stopped, and the account's storage.
+ */
+export const DETAILS = {
+  backgroundLane: 'backgroundLane',
+  searchIds: 'searchIds',
+  backgroundStopped: 'backgroundStopped',
+  storage: 'storage',
+  storageUsed: 'storageUsed',
+  storageTotal: 'storageTotal',
+} as const;
+
+/** The storage the status says the account uses, as JSON {text, used, total}; null when it says nothing of it. */
+function storageOf(details: Record<string, unknown>): string | null {
+  const text = typeof details[DETAILS.storage] === 'string' && (details[DETAILS.storage] as string).trim() ? (details[DETAILS.storage] as string).trim() : null;
+  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+  const used = n(details[DETAILS.storageUsed]);
+  const total = n(details[DETAILS.storageTotal]);
+  return text === null && used === null && total === null ? null : JSON.stringify({ text, used, total });
+}
+
+/**
+ * A database from before attachments' names were searchable: mail_search gets `files`, filled from the bodies held,
+ * and the full-text index is made again with it (its triggers too). Once; a few seconds on a big mailbox.
+ */
+function searchFiles(store: MailStore) {
+  const cols = store.all<{ name: string }>('PRAGMA table_info(mail_search)').map((c) => c.name);
+  if (!cols.length || cols.includes('files')) return;
+  const db = store.db;
+  db.exec(`ALTER TABLE mail_search ADD COLUMN files TEXT NOT NULL DEFAULT ''`);
+  for (const t of ['mail_search_insert', 'mail_search_delete', 'mail_search_update']) db.exec(`DROP TRIGGER IF EXISTS ${t}`);
+  db.exec('DROP TABLE IF EXISTS mail_fts_vocab');
+  db.exec('DROP TABLE IF EXISTS mail_fts');
+  db.exec(`UPDATE mail_search SET files = COALESCE((SELECT group_concat(json_extract(j.value, '$.filename'), ' ') FROM mail_body b, json_each(b.parts) j WHERE b.message_id = mail_search.message_id AND json_extract(j.value, '$.filename') IS NOT NULL), '')`);
+  db.exec(readFileSync(new URL('./schema-search.sql', import.meta.url), 'utf8'));
+  db.exec(`INSERT INTO mail_fts (mail_fts) VALUES ('rebuild')`);
 }
 
 /** schema.sql, then each slice's schema-*.sql in name order. */
