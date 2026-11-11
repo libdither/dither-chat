@@ -12,7 +12,9 @@
  *   state      one per mailbox (IMAP), or one for the whole account (Proton's event loop)
  *   events     mail.changed for the inbox only (IMAP IDLE), or for every mailbox (Proton's event loop)
  *   search     mail.search: each word in the sender, recipients, subject or text (IMAP; Gmail takes its own syntax,
- *              and here only its plain words count), or in the subject and addresses only (Proton)
+ *              and here only its plain words count), or in the subject and addresses only (Proton). With `idsOnly`
+ *              on an account whose details say `searchIds`, the ids only, paged by cursor (500 a page at most), with an
+ *              estimate: the paged search dither-accounts proposed for keeping all mail (keep.ts)
  *   details    what the status's `details` say of the server (idPerMessage, sendCap, maxRecipients, provider), as
  *              dither-accounts' extractors say them: Proton's and Gmail on the web's; the imap extractor says none of
  *              these but `provider` (its gmail preset)
@@ -59,7 +61,10 @@
  * message not in Trash or Spam, role 'all'), and a user label each (`Label_<n>`, role null). One FakeMessage is the
  * message, its `gm` its own id, its labels in the account's `gm` (Gmail's system ones as the imap extractor names them,
  * `\Inbox` and the like, user labels by path); which mailboxes list it follows from them: in Trash or Spam it is there alone. A
- * summary's labels are all of them, from whichever mailbox; its `emailId` is its id. A move is a label change by its
+ * summary's labels are all of them, from whichever mailbox, Gmail's categories among them (`Category/Promotions`,
+ * `Category/Social`, `Category/Updates`, `Category/Forums`: labels, not mailboxes); its `emailId` is its id. As
+ * dither-accounts reads Gmail's web protocol, its summaries carry no headers: no Message-ID, In-Reply-To, References or
+ * list headers (summaryHeaders false), which mail.get has, as on Proton. A move is a label change by its
  * destination, since mail.move names no mailbox it comes from: the destination's label on, Inbox's off (as Gmail's
  * Move to does from the inbox, and archiving into All Mail), unless it goes to Inbox; Trash's and Spam's off, unless it
  * goes there; into Spam Inbox's off too. So out of All Mail a move only adds a label, and nothing is copied. A trashed
@@ -309,10 +314,12 @@ export class FakeMailBackend implements MailBackend {
     const ids = o.opts?.ids ?? this.defaults.ids;
     const gmail = ids === 'gmail';
     const web = ids === 'gmail-web';
+    // Gmail on the web: no headers on summaries.
+    const refs = o.opts?.refs ?? this.defaults.refs ?? !web;
     const opts: Required<FakeOpts> = {
       ids: 'imap',
       threadIds: gmail || web,
-      refs: true,
+      refs,
       state: web ? 'account' : 'mailbox',
       events: web ? 'all' : 'inbox',
       send: 'ok',
@@ -322,7 +329,7 @@ export class FakeMailBackend implements MailBackend {
       moveIds: 'new',
       search: ids === 'proton' ? 'proton' : gmail || web ? 'gmail' : 'imap',
       answer: 0,
-      summaryHeaders: o.opts?.refs ?? this.defaults.refs ?? true,
+      summaryHeaders: refs,
       details: ids === 'proton' ? PROTON_DETAILS : web ? GMAIL_WEB_DETAILS : {},
       ...this.defaults,
       ...o.opts,
@@ -664,7 +671,8 @@ export class FakeMailBackend implements MailBackend {
     const s: M.MailSummary = {
       id: m.id,
       mailboxId: box,
-      messageId: m.messageId,
+      // Gmail on the web: its Message-ID comes with mail.get alone.
+      messageId: a.opts.ids === 'gmail-web' && !a.opts.refs ? null : m.messageId,
       threadId: a.opts.threadIds ? m.threadId ?? m.messageId : null,
       // Gmail's X-GM-MSGID: the same in every mailbox the message is in.
       ...(m.gm ? { emailId: m.gm } : {}),
@@ -865,10 +873,10 @@ export class FakeMailBackend implements MailBackend {
     return m;
   }
 
-  /** A mailbox for each user label it has not got yet (Gmail's ids for them: `Label_<n>`). */
+  /** A mailbox for each user label it has not got yet (Gmail's ids for them: `Label_<n>`); categories are labels only. */
   private webLabelBoxes(a: Account, labels: Iterable<string>) {
     for (const l of labels) {
-      if (l.startsWith('\\') || a.mailboxes.some((b) => b.path === l)) continue;
+      if (l.startsWith('\\') || /^Category\//.test(l) || a.mailboxes.some((b) => b.path === l)) continue;
       const n = a.mailboxes.filter((b) => b.id.startsWith('Label_')).length + 1;
       a.mailboxes.push({ ...webBox(`Label_${n}`, l.slice(l.lastIndexOf('/') + 1), null), path: l });
     }
@@ -990,6 +998,7 @@ export class FakeMailBackend implements MailBackend {
         return {};
       }
       case 'mail.search':
+        if (input.idsOnly && (a.status.details as Record<string, unknown> | undefined)?.searchIds) return this.searchIds(a, String(input.query ?? ''), input.mailboxId as string | undefined, Number(input.limit) || 500, input.cursor as string | undefined);
         return { messages: this.search(a, String(input.query ?? ''), input.mailboxId as string | undefined, Number(input.limit) || 50) };
       case 'mail.send':
         return this.send(a, input as M.OutgoingMail);
@@ -1178,6 +1187,14 @@ export class FakeMailBackend implements MailBackend {
     return { ids: out };
   }
 
+  /** The ids-only search: every match's id in the mailbox searched, newest first, a page at a time; Gmail's estimate is the count. */
+  private searchIds(a: Account, query: string, mailbox: string | undefined, limit: number, cursor: string | undefined): { ids: string[]; next: string | null; estimate: number | null } {
+    const all = this.search(a, query, mailbox, Infinity);
+    const from = Number(cursor ?? 0) || 0;
+    const page = all.slice(from, from + Math.max(1, Math.min(limit, 500)));
+    return { ids: page.map((m) => m.id), next: from + page.length < all.length ? String(from + page.length) : null, estimate: all.length };
+  }
+
   private search(a: Account, query: string, mailbox: string | undefined, limit: number): M.MailSummary[] {
     if (!query.trim()) throw new MailCallError('search for what?', 400);
     if (mailbox && a.noselect.has(mailbox)) throw new MailCallError(`no such mailbox ${mailbox}`, 404);
@@ -1197,7 +1214,7 @@ export class FakeMailBackend implements MailBackend {
     return [...a.messages.values()]
       .filter((m) => within(m) && match(m))
       .sort((x, y) => y.receivedAt - x.receivedAt)
-      .slice(0, Math.max(1, Math.min(limit, 200)))
+      .slice(0, limit === Infinity ? undefined : Math.max(1, Math.min(limit, 200)))
       .map((m) => this.summary(a, m, mailbox ?? (inAll ? all : m.mailboxId)));
   }
 
@@ -1239,13 +1256,15 @@ export class FakeMailBackend implements MailBackend {
 /**
  * Gmail's search (X-GM-RAW), as much of it as the hub sends (search.ts serverQuery): words and "phrases" anywhere in
  * the sender, recipients, subject or text, `-` before one, `{a b}` for any of them, and from:, to:, cc:, subject:,
- * label:, in:, is:, has:attachment, after: and before: (YYYY/MM/DD). category: matches nothing: the fake has no
- * Gmail categories. Other operators are left to Gmail, so they match everything here.
+ * label:, in:, is:, has:attachment, filename:, after: and before: (YYYY/MM/DD, or seconds since the epoch, as Gmail takes
+ * them too: after: from then on, before: up to it). category: matches nothing: the fake has no Gmail categories. Other
+ * operators are left to Gmail, so they match everything here.
  */
 export function gmailQuery(query: string, extra: (m: FakeMessage) => { text: string; labels: string[] }): (m: FakeMessage) => boolean {
   const tokens = query.match(/-?\{[^}]*\}|-?[\w.-]+:"[^"]*"|-?"[^"]*"|\S+/g) ?? [];
   const norm = (s: string) => s.toLowerCase().replace(/[\s/]+/g, '-');
   const day = (v: string) => {
+    if (/^\d{9,}$/.test(v)) return Number(v) * 1000;
     const [y, mo, d] = v.split('/').map(Number);
     return new Date(y, (mo || 1) - 1, d || 1).getTime();
   };
@@ -1289,6 +1308,8 @@ export function gmailQuery(query: string, extra: (m: FakeMessage) => { text: str
         return () => true;
       case 'has':
         return v === 'attachment' ? (m) => m.hasAttachments : () => true;
+      case 'filename':
+        return (m) => m.attachments.some((x) => (x.filename ?? '').toLowerCase().includes(v));
       case 'after':
         return (m) => m.receivedAt >= day(v);
       case 'before':

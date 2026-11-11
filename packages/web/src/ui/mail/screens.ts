@@ -3,3 +3,4 @@ export { MailSidebar } from './MailSidebar.tsx';
 export { MailSearchGroup } from './MailSearch.tsx';
 export { MailWelcome, Reader } from './Reader.tsx';
 export { ComposerLayer } from './Composer.tsx';
+export { MailKeepSection } from './MailKeep.tsx';

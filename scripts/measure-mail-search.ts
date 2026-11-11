@@ -3,7 +3,13 @@
  * threads, each with a fetched body (the worst case for the index), stored through MailStore as the sync stores them,
  * then the hub's own search (mail/search.ts) timed for each kind of query, median of several runs.
  *
- *   bun scripts/measure-mail-search.ts [--messages 50000] [--runs 7] [--db <file>]
+ *   bun scripts/measure-mail-search.ts [--messages 50000] [--runs 7] [--db <file>] [--kept]
+ *
+ * --long: one message in 25 is a long one (20 to 120 KB: long threads, pasted logs, newsletters), and one has a word
+ * of its own only past its first 16 KB; drawn apart from the rest, so the other messages are as without it. The
+ * search text keeps the first 16 KB of each, as for an account that does not keep all its mail.
+ * --kept: the same mail (it implies --long), for an account that keeps all of it (keep.ts): each body's whole text in
+ * the search text, which a search for that word must find.
  *
  * Everything is invented here; nothing reads a real database. Without --db the database is a temp file, removed after.
  */
@@ -14,6 +20,7 @@ import { join } from 'node:path';
 import { mailId } from '../packages/protocol/src/ids.ts';
 import type * as M from '../packages/protocol/src/mail-iface.ts';
 import { MailHub } from '../packages/hub/src/mail/index.ts';
+import { MAIL_LIMITS } from '../packages/hub/src/mail/limits.ts';
 import { mailSearchOf } from '../packages/hub/src/mail/search.ts';
 
 const args = process.argv.slice(2);
@@ -22,6 +29,8 @@ const opt = (n: string, d: string) => {
   return i >= 0 ? args[i + 1] : d;
 };
 const N = Number(opt('messages', '50000'));
+const KEPT = args.includes('--kept');
+const LONG = KEPT || args.includes('--long');
 const RUNS = Number(opt('runs', '7'));
 const dir = mkdtempSync(join(tmpdir(), 'mail-search-'));
 const file = opt('db', join(dir, 'hub.sqlite'));
@@ -35,6 +44,14 @@ const rnd = () => {
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
 const pick = <T>(xs: T[]) => xs[Math.floor(rnd() * xs.length)];
+// --long's draws, apart from the rest.
+let longSeed = 7;
+const longRnd = () => {
+  longSeed = (longSeed + 0x6d2b79f5) | 0;
+  let t = Math.imul(longSeed ^ (longSeed >>> 15), 1 | longSeed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
 // Words in a Zipf-like spread: a few common, many rare.
 const syll = ['ka', 'lo', 'mi', 're', 'su', 'ta', 'ne', 'vo', 'pi', 'da', 'ro', 'zu', 'el', 'an', 'is', 'or'];
 const vocab = Array.from({ length: 6000 }, (_, i) => syll[i % 16] + syll[Math.floor(i / 16) % 16] + (i >= 256 ? syll[Math.floor(i / 256) % 16] : '') + (i >= 4096 ? 'x' : ''));
@@ -42,10 +59,12 @@ const word = () => vocab[Math.floor(vocab.length * rnd() ** 3)];
 const words = (n: number) => Array.from({ length: n }, word).join(' ');
 const people = Array.from({ length: 800 }, (_, i) => ({ name: `${pick(['Sam', 'Alex', 'Jo', 'Pat', 'Kim', 'Lee', 'Max', 'Ana'])} ${vocab[i * 7]}`, email: `${vocab[i * 7]}${i}@${pick(['mail', 'work', 'lists', 'shop'])}.example` }));
 const ME = { name: 'Me', email: 'me@example.com' };
+/** Kept: a word only past the first 16 KB of one long message. */
+const DEEP = 'quillworthy';
 
 const db = new Database(file, { create: true, strict: true });
 db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
-const hub = new MailHub({ db, backend: null, log: () => {} });
+const hub = new MailHub({ db, backend: null, log: () => {}, keepAll: KEPT });
 const st = hub.store;
 const ACC = 'acc_measure';
 st.upsertAccount({ id: ACC, kind: 'imap', label: 'measure', level: 'write', dryRun: false, online: true });
@@ -72,12 +91,15 @@ const flush = () => {
   // The body and its search text, as slice 2's storeBody keeps them (schema-search.sql's triggers index mail_text),
   // without putBody's preview and threading work.
   const body = db.query('INSERT INTO mail_body (message_id, text, bytes, fetched_at, used_at) VALUES (?, ?, ?, ?, ?)');
-  const text = db.query('INSERT INTO mail_text (message_id, text, bytes, received_at) SELECT id, ?, ?, received_at FROM mail_message WHERE id = ?');
+  const text = db.query('INSERT INTO mail_text (message_id, text, bytes, received_at, cut) SELECT id, ?, ?, received_at, ? FROM mail_message WHERE id = ?');
+  // Kept: all of it (up to 1 MB); else its first 16 KB, as cache.ts putText keeps them.
+  const cap = KEPT ? MAIL_LIMITS.keepTextBytes : MAIL_LIMITS.textBytes;
   db.transaction(() => {
     for (const [hdr, t] of bodies) {
       const id = mailId('mml', ACC, `m:${hdr}`);
+      const kept = t.length > cap ? t.slice(0, cap) : t;
       body.run(id, t, t.length, Date.now(), Date.now());
-      text.run(t, t.length, id);
+      text.run(kept, Buffer.byteLength(kept), kept.length < t.length ? cap : 0, id);
     }
   })();
   bodies.length = 0;
@@ -111,7 +133,15 @@ for (let i = 0; i < N; i++) {
     references: reply ? [reply.root] : [],
   };
   batch.set(box, [...(batch.get(box) ?? []), s]);
-  bodies.push([hdr, Array.from({ length: 2 + Math.floor(rnd() * 8) }, () => words(8 + Math.floor(rnd() * 14)) + '.').join('\n')]);
+  let text = Array.from({ length: 2 + Math.floor(rnd() * 8) }, () => words(8 + Math.floor(rnd() * 14)) + '.').join('\n');
+  // --long: one in 25 long instead; the 1000th has a word of its own past its first 16 KB.
+  if (LONG && (longRnd() < 0.04 || i === 1000)) {
+    // About 25 characters a sentence: 20 to 120 KB, and the 1000th 25 KB.
+    const n = i === 1000 ? 1000 : 800 + Math.floor(longRnd() * 4000);
+    text = Array.from({ length: n }, () => vocab[Math.floor(vocab.length * longRnd() ** 3)] + ' ' + vocab[Math.floor(vocab.length * longRnd())] + ' and so on.').join('\n');
+    if (i === 1000) text += `\nthe word ${DEEP} is only here.`;
+  }
+  bodies.push([hdr, text]);
   if (!reply) threads.push({ subject, root: hdr, at });
   if (threads.length > 400) threads = threads.slice(-200);
   if (batch.size && [...batch.values()].reduce((n, l) => n + l.length, 0) >= 200) flush();
@@ -124,7 +154,9 @@ const nThreads = count('SELECT COUNT(*) AS n FROM mail_thread');
 const textMb = count('SELECT SUM(bytes) AS n FROM mail_text') / 1e6;
 const dbMb = statSync(file).size / 1e6;
 const idx = (db.query("SELECT SUM(pgsize) AS n FROM dbstat WHERE name LIKE 'mail_fts%' OR name LIKE 'mail_search%' OR name LIKE 'mail_text%'").get() as { n: number } | null)?.n;
-console.log(`${N.toLocaleString()} messages in ${nThreads.toLocaleString()} threads, stored in ${(storeMs / 1000).toFixed(1)} s; search text ${textMb.toFixed(1)} MB; database ${dbMb.toFixed(0)} MB${idx ? `, of which the search tables ${(idx / 1e6).toFixed(0)} MB` : ''}`);
+const bodyMb = count('SELECT SUM(bytes) AS n FROM mail_body') / 1e6;
+const long = count(`SELECT COUNT(*) AS n FROM mail_body WHERE length(text) > ${MAIL_LIMITS.textBytes}`);
+console.log(`${N.toLocaleString()} messages in ${nThreads.toLocaleString()} threads${KEPT ? ', kept (whole text)' : LONG ? ', long ones cut at 16 KB' : ''}, stored in ${(storeMs / 1000).toFixed(1)} s; bodies ${bodyMb.toFixed(1)} MB; search text ${textMb.toFixed(1)} MB${LONG ? ` (${long.toLocaleString()} past 16 KB)` : ''}; database ${dbMb.toFixed(0)} MB${idx ? `, of which the search tables ${(idx / 1e6).toFixed(0)} MB` : ''}`);
 
 const s = mailSearchOf(hub)!;
 // Words by how many messages have them: rare, a quarter, nearly all (like "the").
@@ -149,6 +181,7 @@ const queries: [string, string][] = [
   ['inside words (no whole word matches)', rare.slice(1)],
   ['misspelt (corrected)', rare.slice(0, 2) + 'q' + rare.slice(3)],
   ['nothing at all', 'zzqqxx'],
+  ...(LONG ? ([['a word only past the first 16 KB of one message', DEEP]] as [string, string][]) : []),
 ];
 const median = (xs: number[]) => xs.sort((a, b) => a - b)[Math.floor(xs.length / 2)];
 console.log(`\nmedian of ${RUNS} runs, first page of 50 threads:`);

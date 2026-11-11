@@ -57,6 +57,17 @@ export const MAIL_LIMITS = {
   windowMax: 300,
   /** How long a send waits for Undo before it goes (slice 5, §8). */
   holdMs: env('DITHER_MAIL_HOLD_MS', 10_000),
+  /**
+   * Keeping all mail (keep.ts, docs/mail.md "Keeping all mail"): a kept account's search text keeps this much of each
+   * body's text (not MAIL_LIMITS.textBytes), outside the index cap; body fetching stops while the disk holding the
+   * hub's data has less than `keepFreeGb` free.
+   */
+  keepTextBytes: 1024 * 1024,
+  keepFreeGb: env('DITHER_MAIL_KEEP_FREE_GB', 10),
+  /** A kept account's mailbox counts are asked again this often (they say how much the server holds). */
+  keepCountsMs: 30 * 60_000,
+  /** Gmail's month windows: at most this many searches an hour an account, at the lowest background priority. */
+  auditPerHour: 30,
 };
 
 /** The oldest receivedAt slice 2 backfills to, from now. */

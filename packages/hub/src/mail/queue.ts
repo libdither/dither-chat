@@ -1,12 +1,14 @@
 /**
- * One queue per mail account (docs/mail-design.md §3.5): four priorities, at most two pieces of work at once. A piece
+ * One queue per mail account (docs/mail-design.md §3.5): six priorities, at most two pieces of work at once. A piece
  * of work makes its own calls (a mail.changes pass with `more`, a relist, a body fetch); the queue decides when it
  * starts.
  *
  *   P0 user      what a page is waiting for: a body, a page of an open mailbox
  *   P1 keep-up   mail.changes, and the first sync
  *   P2 prefetch  bodies nobody asked for yet (slice 2)
- *   P3 backfill  older pages (slice 2)
+ *   P3 backfill  older pages (slice 2), and a kept account's walk (keep.ts)
+ *   P4 archive   a kept account's bodies and mailbox counts (keep.ts)
+ *   P5 audit     Gmail's month windows searched (keep.ts): the lowest
  *
  * The same `key` queued twice is one piece of work (two mail.changed for one mailbox make one changes pass). The
  * manager's `limited` answer puts the work back and holds the queue, from 2 s, doubling. Slice 2's budgets plug in as
@@ -15,8 +17,9 @@
 import { type Clock, realClock } from '../clock.ts';
 import { asMailError } from './backend.ts';
 
-export type Priority = 0 | 1 | 2 | 3;
-export const P0 = 0, P1 = 1, P2 = 2, P3 = 3;
+export type Priority = 0 | 1 | 2 | 3 | 4 | 5;
+export const P0 = 0, P1 = 1, P2 = 2, P3 = 3, P4 = 4, P5 = 5;
+const LOWEST = P5;
 
 interface Task {
   p: Priority;
@@ -28,14 +31,14 @@ interface Task {
 }
 
 export class MailQueue {
-  private waiting: Task[][] = [[], [], [], []];
+  private waiting: Task[][] = Array.from({ length: LOWEST + 1 }, () => []);
   private running = new Set<Task>();
   private holdUntil = 0;
   private backoff = 0;
   private timer: unknown = null;
   private stopped = false;
   /**
-   * How long work of this priority must wait before it may start (0: now). Slice 2 sets it for its budgets: P2 and P3
+   * How long work of this priority must wait before it may start (0: now). Slice 2 sets it for its budgets: P2 to P5
    * together at most 2 calls/s, and none for 10 s after a P0 call.
    */
   gate: (p: Priority, now: number) => number = () => 0;
@@ -101,7 +104,7 @@ export class MailQueue {
         break;
       }
       let next: Task | undefined;
-      for (let p = 0 as Priority; p <= 3; p = (p + 1) as Priority) {
+      for (let p = 0 as Priority; p <= LOWEST; p = (p + 1) as Priority) {
         if (!this.waiting[p].length) continue;
         const g = this.gate(p, now);
         if (g > 0) {

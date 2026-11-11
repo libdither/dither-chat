@@ -17,6 +17,7 @@
  * MAIL_LIMITS.goneMs (24 h), then goes; "Delete now" goes at once (§14 Q6).
  */
 import type { Database } from 'bun:sqlite';
+import { statfsSync } from 'node:fs';
 import type * as P from '@dither-chat/protocol';
 import type * as M from '@dither-chat/protocol/mail-iface';
 import { type Clock, realClock } from '../clock.ts';
@@ -55,6 +56,13 @@ export interface MailHubOpts {
   holdMs?: number;
   /** Files and images (slice 3, parts.ts): where they are kept, and the key image tokens are signed with. */
   media?: MailMediaOpts;
+  /**
+   * Keep all of every account's mail unless it is turned off for the account (keep.ts, docs/mail.md "Keeping all
+   * mail"): main.ts says yes. Without it an account keeps a year of mail and all of Inbox, as before.
+   */
+  keepAll?: boolean;
+  /** Bytes free on the disk holding the data dir, for keep.ts's disk guard (tests); default: the data dir's, else none. */
+  freeBytes?: () => number | null;
 }
 
 export interface MailMediaOpts {
@@ -86,12 +94,17 @@ export class MailHub {
   private now: () => number;
   /** What the slices pace their work and set their timers by. */
   readonly clock: Clock;
+  /** Bytes free on the disk holding the hub's data (keep.ts's disk guard); null: not known. */
+  readonly freeBytes: () => number | null;
 
   constructor(private opts: MailHubOpts) {
     this.clock = opts.clock ?? realClock;
     this.now = opts.now ?? (() => this.clock.now());
     this.log = opts.log ?? ((m) => console.warn(`mail: ${m}`));
     this.store = new MailStore(opts.db, this.now);
+    this.store.keepAll = !!opts.keepAll;
+    const dir = opts.dataDir;
+    this.freeBytes = opts.freeBytes ?? (dir ? () => freeOn(dir) : () => null);
     this.backend = opts.backend;
     const base = opts.managerUrl?.replace(/\/$/, '') ?? null;
     this.store.managedUrl = (id) => (base ? `${base}/#/accounts/${encodeURIComponent(id)}` : null);
@@ -321,6 +334,16 @@ export class MailHub {
         return Response.json({ error: err.message }, { status: err.status && err.status >= 400 && err.status < 600 ? err.status : 500 });
       }
     }
+    return null;
+  }
+}
+
+/** Bytes free to this process on the filesystem holding `dir`; null when it cannot be told. */
+function freeOn(dir: string): number | null {
+  try {
+    const s = statfsSync(dir);
+    return Number(s.bavail) * Number(s.bsize);
+  } catch {
     return null;
   }
 }

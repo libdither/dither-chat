@@ -396,8 +396,11 @@ export interface MailSearchHit {
 /** How one account's server search went. */
 export interface MailServerSearch {
   accountId: string;
-  /** `skipped`: nothing a server can search for (only filters), or the account cannot be asked now. */
-  state: 'done' | 'failed' | 'offline' | 'skipped';
+  /**
+   * `skipped`: nothing a server can search for (only filters), or the account cannot be asked now. `local`: not asked
+   * (server=auto), because the hub holds all of this account's mail and searched it here ("Keeping all mail").
+   */
+  state: 'done' | 'failed' | 'offline' | 'skipped' | 'local';
   /** Messages it answered with. */
   found: number;
   error: string | null;
@@ -415,6 +418,76 @@ export interface MailSearchPage {
   corrected?: string;
   /** Asked of the servers (server=1, or server=auto and a first page under 20 hits): threads the hub's own search did not find, newest first. */
   server?: { hits: MailSearchHit[]; accounts: MailServerSearch[] };
+}
+
+// ------------------------------------------------------------------ keeping all mail (docs/mail.md "Keeping all mail")
+
+/** Why an account's background reads stopped: what its status said (`details.backgroundStopped`), or a call's 503 `paused`. */
+export type MailKeepStop = 'challenge' | 'signedOut' | 'quota' | 'paused' | (string & {});
+
+/** One mailbox of a kept account: what its server counts in it, what the hub holds there, and whether it is listed to its end. */
+export interface MailKeepBox {
+  id: string;
+  name: string;
+  role: MailboxRole | null;
+  /** The server's count (mail.mailboxes), null when it gives none. */
+  total: number | null;
+  held: number;
+  complete: boolean;
+}
+
+/**
+ * GET /api/mail/keep: each mail account's copy here measured against its server. Settings → Indexing's Mail section.
+ * A kept account's walk lists every mailbox to its end, its bodies are all fetched and never evicted, and its search
+ * text is whole (up to 1 MB a message).
+ */
+export interface MailKeepView {
+  accountId: string;
+  /** Keep all of its mail (on unless turned off for the account). */
+  keep: boolean;
+  /** Paused here (Pause/Resume). */
+  paused: boolean;
+  /**
+   * `running`: walking or fetching bodies; `idle`: nothing left to do now; `paused`; `disk`: the disk guard stopped body
+   * fetching; `stopped`: the account stopped background reads (`stopped` says why); `offline`: the account or the
+   * manager cannot be reached; `off`: not kept.
+   */
+  state: 'running' | 'idle' | 'paused' | 'disk' | 'stopped' | 'offline' | 'off';
+  stopped: MailKeepStop | null;
+  /** The account's status says it has a background lane: the archive's reads go in it (`background: true`). */
+  backgroundLane: boolean;
+  /** Messages held here, and the server's count of them: All mail (else Archive) with Trash and Junk, else every mailbox. */
+  messages: { held: number; total: number | null };
+  /** Held messages whose body text is here (whole, for a kept account). */
+  bodies: number;
+  /** Bytes used here for this account: bodies and search text, as stored (an estimate: indexes come on top). */
+  bytes: { bodies: number; text: number };
+  /** The walk: complete once every mailbox it lists is; else how far back the mailbox it is on has come. */
+  walk: { complete: boolean; mailbox: string | null; back: number | null; done: number; mailboxes: number };
+  boxes: MailKeepBox[];
+  /**
+   * Gmail only (its search takes dates): month windows searched on the server and compared with what is held.
+   * `estimate`: the server's own count of the account's mail, when its ids-only search gives one.
+   */
+  audit: { windows: number; matched: number; missed: number; checked: number; caught: number; estimate: number | null } | null;
+  /** The last 30 days of server searches (GET /api/mail/search with the servers): their hits, held here before, with body text here, found by the hub's own search. */
+  measure: { searches: number; found: number; held: number; bodies: number; local: number };
+  /** Searched locally: server=auto asks this account's server no more. `missing`: what still stands in the way. */
+  local: { on: boolean; missing: string[] };
+  /** What the account's server says it uses (`details.storage`, `storageUsed`, `storageTotal`), when it says. */
+  storage: { text: string | null; used: number | null; total: number | null } | null;
+}
+
+export interface MailKeepPage {
+  accounts: MailKeepView[];
+  /** The disk guard: bytes free where the hub keeps its data, and the floor under which body fetching stops. */
+  disk: { free: number | null; floor: number };
+}
+
+/** PUT /api/mail/keep/:accountId: keep all of it or not, pause or resume. */
+export interface MailKeepChange {
+  keep?: boolean;
+  paused?: boolean;
 }
 
 /** A search as a list key, so Mail's route shows it in place of a list: `s:<query>`. */

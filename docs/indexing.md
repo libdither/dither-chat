@@ -8,6 +8,10 @@ Two ways to find what the hub has not stored. Each one fetches through your own 
 - **Network search** asks the networks' own search (Discord's, Matrix's) for one query. It asks a few places at a time,
   in the order jev ranks them, and keeps what it finds.
 
+Mail has its own: every message of each mail account and its whole text kept on the hub, measured against the server,
+with a row per account under Settings → Indexing → Mail. It runs on mail's own machinery, not as an index job:
+[mail.md "Keeping all mail"](mail.md#keeping-all-mail).
+
 Hub: `packages/hub/src/jobs.ts`, `packages/hub/src/netsearch.ts`. Types: `packages/protocol/src/jobs.ts`. Adapter
 commands: `history` (now with `oldest`), `search`, `walkMembers` (`packages/protocol/src/adapter.ts`). The adapters
 live in dither-accounts (`extractors/discord`, `extractors/matrix`). The web UI is `ui/Indexing.tsx` and the "On the

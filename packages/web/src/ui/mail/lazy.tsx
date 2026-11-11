@@ -57,6 +57,17 @@ export function MailCenterLazy({ thread, onBack }: { thread?: string; onBack: ()
   );
 }
 
+/** Settings → Indexing → Mail (MailKeep.tsx), in Mail's chunk: loaded there only when the hub has mail accounts. */
+export function MailKeepLazy() {
+  mailRev.value;
+  const want = db.mail.access.state === 'granted' && db.mail.accounts.size > 0;
+  const [m, setM] = useState(screens);
+  useEffect(() => {
+    if (want && !m) preloadMail().then(setM, () => {});
+  }, [want]);
+  return want && m ? <m.MailKeepSection /> : null;
+}
+
 // ------------------------------------------------------------------ the composer (slice 5)
 
 /** What the composer opens on: a reply, reply all or forward of a message, a new message, or a draft. */

@@ -279,6 +279,7 @@ Tests: `hub/test/mail-classify.test.ts`, `mail-attention.test.ts`, `web/test/inb
   | `in:archive`, `in:"Work/Clients"`, `in:anywhere` | a mailbox by role (inbox, sent, drafts, archive, spam or junk, trash), name or path. Junk and Trash are searched only when named, or with `in:anywhere` |
   | `label:work` | a Gmail or Proton label, or a folder of that name |
   | `has:attachment` | with a file |
+  | `filename:lease` | an attachment's name ("Keeping all mail": for every account, once its body was fetched) |
   | `is:unread`, `is:read`, `is:starred` (or `is:flagged`) | as the hub has it |
   | `account:proton`, `account:me@x.org` | one mail account, by label, address, kind or id |
   | `before:`, `after:`, `during:`, `sort:oldest` | as in chat search, on when the server got it |
@@ -288,14 +289,17 @@ Tests: `hub/test/mail-classify.test.ts`, `mail-attention.test.ts`, `web/test/inb
   beside what a search groups and filters by (account, thread, time, "only in Junk or Trash"), and `mail_fts` indexes
   it. Triggers on `mail_message`, `mail_text`, `mail_location` and `mailbox` keep both current, so anything that
   stores a message or a body is searchable without calling anything: the first sync, a server search, the reader, and
-  bodies fetched ahead alike. The body's search text is slice 2's `mail_text` (the first 16 KB, kept after the body
-  cache lets the body go, under the one cap `DITHER_MAIL_INDEX_MB`): a row stored sets it here, and a row the cap
+  bodies fetched ahead alike. The body's search text is slice 2's `mail_text` (the first 16 KB, or all of it up to 1 MB
+  on an account that keeps all its mail, kept after the body cache lets the body go, under the one cap
+  `DITHER_MAIL_INDEX_MB` that a kept account is outside of): a row stored sets it here, and a row the cap
   drops puts the preview back. Hits are threads, newest matching message first, with how many of their messages matched and the
   matched words marked; paged by cursor. As chat search does, nothing found as whole words searches inside words, and
   still nothing corrects misspelt words from `mail_fts_vocab`.
 - **The servers.** `GET /api/mail/search?q=&cursor=&limit=&server=0|1|auto`. The page shows the hub's own hits at once,
   then asks the servers (`server=1`) when those are under 20 threads, or when you ask ("Search the servers too");
-  `auto` is the same rule on the hub. Each account gets `mail.search` at P0, 50 at most, 20 s at most. Gmail gets the
+  `auto` is the same rule on the hub, and leaves out an account searched locally ("Keeping all mail"); the page's own
+  ask is `auto`, its "Search the servers too" is `1`. Each account gets `mail.search` at P0, 50 at most, 20 s at most,
+  and each answer is measured (`mail_search_measure`). Gmail gets the
   query in its own syntax (X-GM-RAW over IMAP; an account is Gmail as `MailStore.gmail` says, below); other IMAP servers
   and Proton get the words, with the values of `from:`, `to:`, `with:` and `subject:` as words. What they answer is
   stored as listed summaries (so it opens like any other, and `ingested` goes out), the query's other operators are
@@ -441,14 +445,20 @@ until one says, the hub goes by the account's kind as it did before they existed
 
 | detail | column | what it changes | until it is said |
 | --- | --- | --- | --- |
-| `idPerMessage: true` | `id_per_message` | a message has one id in every mailbox (Proton, Gmail on the web): a move keeps it, and a move out of All mail goes by it (`MailStore.idPerMessage`) | true on Proton, false elsewhere |
+| `idPerMessage: true` | `id_per_message` | a message has one id in every mailbox (Proton, Gmail on the web): a move keeps it, a move out of All mail goes by it (`MailStore.idPerMessage`), and a summary without an emailId takes its id as one | true on Proton, false elsewhere |
 | `sendCap` | `send_cap` | the most bytes of files one message may carry, checked before a send is held (413) and shown by the composer | 25 MB on Proton, 35 MB elsewhere |
 | `maxRecipients` | `max_recipients` | the most recipients, To, Cc and Bcc together | 100 on Proton, 500 elsewhere |
 | `provider: 'Gmail'` | `provider` | the account is Gmail (`MailStore.gmail`), whatever its address or mailboxes | its address or its `[Gmail]` mailboxes |
 | `summaryHeaders` | `summary_headers` | "Summaries without headers" above | a summary that carried them |
+| `backgroundLane: true` | `background_lane` | the archive's reads say `background: true` ("Keeping all mail") | never sent |
+| `searchIds: true` | `search_ids` | Gmail's audits page by ids instead of splitting windows ("Keeping all mail") | split |
+| `backgroundStopped` | `background_stopped` | the archive stops (`challenge`, `signedOut`, `quota`, or a call's 503 `paused`); cleared by a status without it | going |
+| `storage`, `storageUsed`, `storageTotal` | `storage` | shown on Settings → Indexing | not shown |
 
 The account view carries the caps as `sendCap` and `maxRecipients` (protocol `MailAccountView`); Proton says all three
-of the first now (`idPerMessage`, 25 MB, 100). Proton's search stays by its kind: that is how its server searches, not
+of the first now (`idPerMessage`, 25 MB, 100). `backgroundStopped` is the one a status clears by leaving it out: it is
+there for as long as background reads are stopped. `raw` (`'original' | 'rebuilt'`) is not read yet (next PR, "Keeping
+all mail"). Proton's search stays by its kind: that is how its server searches, not
 how its ids are.
 
 ## Gmail
@@ -535,6 +545,14 @@ dither-accounts' google kind reads Gmail through the signed-in browser. Its stat
   Mail made up from them (`all`: every message not in Trash or Spam) and each label of yours (`Label_<n>`, by path).
 - **One message, one id** in each mailbox that lists it. The hub keeps a location per mailbox all the same, each with
   that id; nothing is put back on its labels (they come whole, from every mailbox).
+- **Summaries without headers.** As dither-accounts reads Gmail's web protocol, a summary carries no Message-ID,
+  In-Reply-To, References or list headers (`summaryHeaders` false); `mail.get` has them, as on Proton ("Summaries
+  without headers"). Its `emailId` is its id, so the hub keys it `e:<id>` (store.ts `identify`); where a status says
+  `idPerMessage`, a summary with neither a Message-ID nor an emailId gets its id as its emailId, and a message that has
+  that emailId already is the one, so `mail.get`'s answer (with a Message-ID) finds the same row. The body fills in the
+  Message-ID (`putBody`), for "a reply to yours" and threading by reference; threads are Gmail's.
+- **Categories** come as labels: `Category/Promotions`, `Category/Social`, `Category/Updates`, `Category/Forums`, which
+  classify as bulk (§4 rule 8) with no list headers to go by. They are labels, not mailboxes.
 - **Filing** is a label change. `mail.move` names no mailbox it comes from, so it goes by the destination: its label on,
   Inbox's off unless it goes to Inbox (archive is into All Mail), Trash's and Spam's off unless it goes there. Into
   Inbox, and into a label from All Mail alone, it only adds the label: the hub keeps it where it was (ops.ts
@@ -579,10 +597,14 @@ Without `DITHER_ACCOUNTS_URL` there is no Mail entry; Settings → Mail says wha
 ### Numbers
 
 `hub/src/mail/limits.ts` (`MAIL_LIMITS`), overridden by `DITHER_MAIL_SYNC_DAYS` (365: how far back slice 2 backfills,
-plus all of Inbox), `DITHER_MAIL_MAX` (150,000 summaries an account), `DITHER_MAIL_CACHE_MB` (500 MB of bodies) and
-`DITHER_MAIL_INDEX_MB` (300 MB of search text).
+plus all of Inbox), `DITHER_MAIL_MAX` (150,000 summaries an account), `DITHER_MAIL_CACHE_MB` (500 MB of bodies),
+`DITHER_MAIL_INDEX_MB` (300 MB of search text) and `DITHER_MAIL_KEEP_FREE_GB` (10: the disk guard of "Keeping all
+mail"). The first two and the caps apply to an account that does not keep all its mail.
 
 ## Big mailboxes (slice 2)
+
+An account that keeps all its mail goes further than this: every mailbox to its end, every body, no caps ("Keeping all
+mail", below). What follows is any account's first year, and all of an account that does not.
 
 - **How far back.** After the first sync, each account goes on listing older mail in the background, 200 summaries a
   page: Inbox and Sent back a year (`DITHER_MAIL_SYNC_DAYS`), then All mail (else Archive) back a year, then the rest of
@@ -659,6 +681,170 @@ hub holds, at 390 px and on a desktop in both themes, before its usual checks.
 - Triage (9): a new personal message's body is fetched on arrival; its `body` event says when it is here.
 - Filing (4): `bigOf(hub)?.window.want(threadIds)` (`backfill.ts`) sends threads you acted on as they change.
 - Sending (5): `UPDATE mail_body SET keep = 1` keeps a body out of eviction.
+
+## Keeping all mail
+
+The aim, in the owner's words: keep scraping until all search can be done locally, found out by seeing how much of the
+server's search results the hub does not have, so that eventually all mail is stored in the same database. It is on
+for every mail account (`MailHub`'s `keepAll`, which main.ts sets), with a switch per account on Settings → Indexing.
+Gmail gets it when dither-accounts ships Gmail reads; Proton's accounts have it now. `hub/src/mail/keep.ts`,
+`schema-keep.sql`; tests in `hub/test/mail-keep.test.ts`.
+
+**For a kept account:**
+
+- **The walk** lists every mailbox to its end, after the year any account lists: All mail (else Archive), Inbox, Sent,
+  Trash, Junk, Drafts, then each label or folder by path (`backfill.ts` `walkBoxes`). Not Starred or Important: they
+  are views of All mail. Not a mailbox that only holds others (Gmail's `[Gmail]`). A mailbox the hub did not follow is
+  kept up from then on (`follow = 'open'`), its state taken first. `mailbox.complete` says a mailbox is listed to its
+  end. The cursor is kept as the server gave it, so the walk goes on from it after a restart (Gmail on the web's are
+  opaque and last days).
+- **No cap.** The 150,000 summaries and their hourly sweep do not apply (`bigSweep` leaves it out).
+- **Every body** is fetched with `mail.get`, newest first, at P4: below the bodies fetched ahead (P2) and the walk (P3),
+  in the same budget of two calls a second that waits 10 s after any call a page waited for. Two at a time are on
+  their way, one in the background slot and one waiting. A body already here whose text was cut at 16 KB (fetched
+  before the account was kept) is cut again from itself, with no call.
+- **Never evicted.** A rule per account, not a `keep` value on each body (`MailStore.keptSql`): a kept account's bodies
+  are left out of the 500 MB cache's eviction and of the bytes counted against it. Turning keeping off puts them back
+  under the cap as they are, with nothing to rewrite.
+- **Whole text.** The search text (`mail_text`) holds all of each body's text up to 1 MB
+  (`MAIL_LIMITS.keepTextBytes`), not its first 16 KB, outside the 300 MB index cap. `mail_text.cut` says where a text
+  was cut (0: whole). A message with no text at all gets an empty row, so it counts as done.
+- **Over 2 MB.** A kept account's body over 2 MB still goes 10 minutes after it was read, as for any account: its text
+  stays (up to 1 MB) and is searched, which is what the archive is for here; what the 2 MB is made of is mostly HTML
+  with pictures in it, and fetching it again when it is opened is one call. The original will come whole from
+  `mail.raw` (next PR), and keeping a second copy of it in `mail_body` now would only be thrown away then.
+- **The mailboxes' counts** (`mail.mailboxes`) are asked again every 30 minutes and once the walk is done: they say how
+  much the server holds.
+- **The disk guard**: no body is fetched while the disk holding the data dir has under 10 GB free
+  (`DITHER_MAIL_KEEP_FREE_GB`); the account's row says "Disk guard" and the section says how much is free.
+
+**Attachments' names** are searchable for every account, kept or not: `filename:forecast` looks only at them (Gmail's
+operator, which Gmail's server is asked with too), and plain words find them as well. They come with the body
+(`mail.get`'s parts) and stay when the body goes (`mail_search.files`, a fourth column of `mail_fts`; a database from
+before it gets the column and its index made again once, at start). Their bytes are not fetched: they come with
+`mail.raw` (next PR).
+
+**Deleted on the server is deleted here**, kept or not, as before. Whether a kept account should keep what was deleted
+on the server is an open question (below).
+
+**The background lane** (dither-accounts, as agreed). Archive reads (the walk's pages, these bodies, the audits'
+searches and gets) say `background: true` when the account's status says `details.backgroundLane: true`, and only
+then; a page's reads never do. When the status says `details.backgroundStopped` (`challenge`, `signedOut`, `quota`), or
+a background call answers 503 with the code `paused`, the walk, the bodies and the audits of that account stop at once
+and nothing is tried again until a status no longer says so; the row says "Stopped by the account" and why. What a page
+reads goes on as usual. `details.storage` ("4.2 GB of 15 GB" as Gmail shows it), `storageUsed` and `storageTotal`, when
+the status has them, show on the row beside what the hub holds.
+
+**Coverage** (`GET /api/mail/keep`, protocol `MailKeepPage`), per account:
+
+- **Totals**: each walked mailbox's server count against the hub's locations there, and whether it is listed to its
+  end; the account's total is All mail (else Archive) with Trash and Junk where there is one, else every mailbox walked.
+- **Bodies**: messages with their whole text against messages held; the room the account takes (bodies and search text
+  as stored; indexes come on top).
+- **The search measure**: each time a page asks a server's search (`GET /api/mail/search` with the servers), each
+  account's answer is a row of `mail_search_measure`: how many hits the server gave, how many of those the hub held
+  before the search stored them, how many of those had their text here, and how many the hub's own search for the same
+  query found. The query is not kept. The row shows the last 30 days ("Gmail's search found 412 in your last 30 days of
+  searches: 405 held here, 391 found here"). Rows older than 30 days go, but never an account's last 20.
+- **Audits, Gmail only** (its search takes dates; Gmail over IMAP and on the web, `MailStore.gmail`). Once the walk is
+  done, the hub searches Gmail month by month with operators only, never words: `after:<s> before:<s>` in seconds
+  since the epoch, which dither-accounts says both take, so a window is the same instant on both sides with no time
+  zone to agree on (the first window is everything before the oldest month held: `before:` alone). The ids it answers
+  are compared with what the hub holds, by native id, Message-ID or emailId as store.ts identifies messages; what the
+  hub lacked is stored then (`caught`), and the window is searched again until it matches. Today mail.search answers
+  at most 50, so a window that comes back full is split in halves until it is not, down to an hour (seconds allow
+  less than the day dates would; an hour still full is marked `full`, and checked again weekly). Where the status says
+  `details.searchIds: true`, a window is paged whole instead (`mail.search { query, limit: 500, idsOnly: true,
+  cursor }` → `{ ids, next, estimate }`), with Gmail's estimate on the row, and nothing is split; what it lacks is
+  fetched by id with `mail.get`. The pace: at most 30 searches an hour an account, at P5, the lowest priority, never
+  while a page waits. Matched windows are searched again: the current month daily, the last three weekly, the last year
+  monthly, older ones twice a year. Gmail's search leaves out Trash and Spam unless asked, so the audits do too.
+- **Searched locally**: the walk is done, every message held has its text, every audited window matches (Gmail) or every
+  mailbox holds at least what its server counts (other servers), and at least 20 server searches were measured and the
+  last 20 found nothing the hub did not hold. Then `server=auto` does not ask that account's server: its answer says
+  `local`, and the search page says "searched here, since this hub holds all of its mail" and still offers "Search the
+  servers too". `server=1` asks it all the same, and measures. It is worked out each time, so a condition lost (a
+  server search finding something new, a count growing past what is held) turns it off at once. The page's own ask,
+  when the hub found under 20, is now `server=auto`; the button is `server=1`.
+
+**Settings → Indexing → Mail** (`web/src/ui/mail/MailKeep.tsx`), under the index jobs, in their rows' looks: one row per
+mail account with the Keep all mail switch (turning it off asks first), "12,400 of 14,000 messages held · 12,100 with
+their text · 1.2 GB here", what the account says it uses, the walk ("Walking Archive: back to 3 Mar 2014 · 4 of 9
+mailboxes listed", or "Every mailbox listed to its end"), Gmail's audits ("312 of 340 months match Gmail"), the search
+measure, why searches still ask the server (or "Searched locally"), the state (Running, Up to date, Paused, Disk guard,
+Stopped, Offline, Not kept), and Pause or Resume. It asks the hub every 5 s while an account is running, else every 30 s.
+`PUT /api/mail/keep/:accountId { keep?, paused? }` changes it. `scripts/verify-mail-keep.ts` drives it on a demo hub, on
+a desktop in the dark theme and a phone in the light one. A demo hub keeps a year unless it is started with
+`DITHER_DEMO_MAIL_KEEP=1` (the other verify scripts count on its receipt being found only on the server).
+
+**Measured** (2026-11-11, on the shared 16-core machine while other agents ran, load 6 to 30, so the numbers are
+rough):
+
+| | |
+|---|---|
+| Walk and bodies at the budget | 2,050 messages over six years in four mailboxes: every mailbox listed and every body fetched in 1,033 s on the test clock, 2,060 background calls at 1.99 a second, never more than two in a second (`mail-load.test.ts`). 50,000 messages: about 7.0 hours (a body each and a list page each 200) |
+| Database, 50,000 kept | 685 MB, of which the search tables 435 MB, for 161 MB of text; the same mail cut at 16 KB: 429 MB and 178 MB, for 57 MB of text (and the same 161 MB of bodies, which the cache would evict). Storing took about 3 minutes either way |
+| Coverage of a 50,000-message account | about 90 ms (`GET /api/mail/keep`, and each `server=auto` search) once the indexes in schema-keep.sql carry `cut` and `bytes`; 850 to 2,000 ms without, as those columns sit after the text in their rows |
+
+Search on the same 50,000 messages (`bun scripts/measure-mail-search.ts --long`, then `--kept`: one message in 25 a long
+one of 20 to 120 KB, so 1,971 run past 16 KB; median of 7, the first page of 50 threads, ms):
+
+| Query | cut at 16 KB | kept whole |
+|---|---|---|
+| a word in a quarter of them; its second page | 30; 29 | 24; 24 |
+| a word in nearly all, like "the" | 127 | 82 |
+| two words; a word and `after:` | 25; 24 | 23; 23 |
+| `subject:` a word | 2.0 | 1.0 |
+| `from:` someone; a word and `from:` | 40; 48 | 26; 48 |
+| `is:unread`; `has:attachment in:archive` (filters only) | 80; 211 | 96; 69 |
+| a phrase found nowhere (then inside words) | 419 | 497 |
+| inside words; nothing matched at all | 439; 389 | 470; 439 |
+| a misspelt word, corrected | 394 | 382 |
+| a word only past the first 16 KB of one message | 339, not found | 0.2, found |
+
+The machine was busy enough that one query differs two to five times from one run to the next (in a third run, at load
+18 to 36, the "nearly all" word took 409 ms cut and 83 kept, `is:unread` 123 cut and 190 kept), so read the table for
+its sizes, not its last digit: whole text costs nothing on a word the index has, and what reads through the text itself (inside words, nothing
+found) costs what the text weighs.
+
+**Not done yet**:
+
+- Attachments' bytes, and originals: `mail.raw` (next PR).
+- The search text is held three times for a kept account: `mail_body.text`, `mail_text.text` and `mail_search.body`
+  (the index's content). The next PR makes `mail_body` a cache re-parsed from the original; an FTS5 table without its
+  own content copy would take another.
+- Gmail's Trash and Spam are walked and counted but not audited.
+- A safe background pace from the status is not read yet: the archive goes at the hub's two calls a second.
+- "Searched locally" needs 20 measured server searches first, so a new account asks its server until then.
+
+**Open questions**:
+
+- **Kept-deleted.** Mail deleted on the server is deleted here, as before. Should a kept account keep it, marked as
+  deleted on the server (as chat keeps deleted messages, docs/history.md)? It would change what "searched locally"
+  compares with, and what "deleted" means to you.
+- **Attachments.** Fetch every file of a kept account (much bigger than bodies), only some kinds or sizes, or only
+  with the originals?
+
+**The next PR, once dither-accounts answers.** dither-accounts has been asked for:
+
+- `mail.raw {message}`: the whole RFC 822 original, in the same answer shape as `mail.attachment`
+  (`{ filename: null, mime: 'message/rfc822', base64, size }`, `rebuilt: true` on Proton, where the extractor builds it
+  from what Proton gives); on Gmail this is Show original. The status says which (`details.raw: 'original' |
+  'rebuilt'`, absent when there is none); this PR does not read it;
+- an ids-only, paged `mail.search` with Gmail's estimate (`details.searchIds`, used here already);
+- a safe background pace in the status, and an error code for an account challenge (`details.backgroundStopped` and 503
+  `paused`, used here already);
+- the storage the account uses, in its status details (`details.storage`, `storageUsed`, `storageTotal`, shown here
+  already).
+
+That PR stores each kept message's original as a compressed `.eml` file beside the database (rows and search stay in
+hub.sqlite), and `mail_body` becomes a cache parsed again from the original instead of fetched again. On an account
+whose status says `raw`, the archive fetches `mail.raw` once a message and takes the body and its text from the parsed
+original: it does not call `mail.get` as well for the same message. On Gmail on the web the bodies then come from the
+original, one fetch a message. Attachments' bytes come from it too. `bun scripts/accounts-sync.ts` then copies the new
+interface types (the ids-only answer, `mail.raw`) into `protocol/src/mail-iface.ts`; until then the hub has its own
+type for the ids-only answer (keep.ts). Once every Gmail extractor pages by ids, the splitting fallback
+(`splitSearch`, `AUDIT_MIN_MS`) can go.
 
 ## How it keeps up
 
@@ -754,6 +940,10 @@ others were asked, because an IMAP move is a removal there and an addition elsew
   `triageFacts(messageIds)` gives the fold triage's pushes and questions, and `isListed`/`input`/`view` read a
   thread's listing and attention. A thread's class is `mail_thread.class` (`MailThreadView.class`, `unknown`), its
   owed time `MailThreadView.owedSince`, its inbox score `Attention.view(<thread id>)`.
+- **Keeping all mail**: `keepOf(hub)` (`hub/src/mail/keep.ts`) is the hub's `Keeper`: `view(account)` measures an
+  account against its server, `searchedLocally(id)` is what `server=auto` asks, `kick(id)` sets its work going.
+  `MailStore.kept(id)` and `keptSql` say which accounts keep all their mail; `AccountSync.background(op, input)` is an
+  archive read, `archiveGoes` whether one may go now.
 - **Search** (slice 7): whatever stores a message, or a body's text in `mail_text`, is indexed by schema-search.sql's
   triggers, with no call. `mailSearchOf(hub)` is the hub's `MailSearch`; `local(q)` is the hub's own search,
   `search(q, { server })` adds the servers'. `mail_search.shut` marks messages only in Junk or Trash.

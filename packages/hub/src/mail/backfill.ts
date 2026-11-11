@@ -10,6 +10,11 @@
  * mailbox behind the list, at user priority. A mailbox the hub does not follow is listed the first time it is opened,
  * and kept up from then on ('open').
  *
+ * An account that keeps all its mail (keep.ts, on by default) goes on after those: every mailbox to its end, All mail
+ * (else Archive), Inbox, Sent, Trash, Junk, Drafts, then each label or folder (`walkBoxes`), each kept up from then on
+ * ('open'). The cap does not apply to it. Its pages are archive reads (AccountSync.background). Paused here, only these
+ * extra legs wait; stopped by the account (details.backgroundStopped), the whole backfill does.
+ *
  * Budget: the queue's P2 (prefetch) and P3 (backfill) work, one call each, start at most
  * MAIL_LIMITS.backgroundPerSec a second, on at most MAIL_LIMITS.backgroundSlots of the queue's two slots, and not at
  * all for MAIL_LIMITS.userPauseMs after any P0 call. Keep-up (P1) and what a page waits for (P0) are not held back.
@@ -36,7 +41,7 @@ type Row = Record<string, any>;
 
 // ---------------------------------------------------------------- the budget
 
-/** P2 and P3 together: a few calls a second, one slot, a pause after a page waited on the server (§3.5). */
+/** P2 to P5 together (prefetch, backfill, a kept account's bodies and audits): a few calls a second, one slot, a pause after a page waited on the server (§3.5). */
 export class Budget {
   private starts: number[] = [];
   private lastUser = -Infinity;
@@ -67,6 +72,23 @@ export class Budget {
 }
 
 // ---------------------------------------------------------------- one account's backfill
+
+/**
+ * The mailboxes a kept account's walk lists to their end (keep.ts), in order: All mail (else Archive), Inbox, Sent,
+ * Trash, Junk, Drafts, then the rest by path. Not Starred or Important (views of All mail), nor one that only holds
+ * others (no counts, with mailboxes under it: Gmail's `[Gmail]`).
+ */
+export function walkBoxes(store: MailStore, accountId: string): Row[] {
+  const boxes = store.mailboxes(accountId);
+  const parents = new Set(boxes.map((b) => b.parent_id).filter(Boolean));
+  const walked = boxes.filter((b) => b.role !== 'flagged' && b.role !== 'important' && !(b.total === null && parents.has(b.id)));
+  const order = ['all', 'archive', 'inbox', 'sent', 'trash', 'junk', 'drafts'];
+  const rank = (b: Row) => {
+    const i = order.indexOf(b.role);
+    return i < 0 ? order.length : i;
+  };
+  return walked.sort((a, b) => rank(a) - rank(b) || String(a.path).localeCompare(String(b.path)));
+}
 
 interface Leg {
   mailboxId: string;
@@ -113,7 +135,7 @@ export class Backfill {
       });
   }
 
-  /** What is left to list, in order. */
+  /** What is left to list, in order: a year of the followed mailboxes and all of Inbox, then a kept account's walk. */
   legs(): Leg[] {
     const boxes = this.store.followed(this.s.accountId).filter((b) => b.follow === 'always');
     const of = (role: string) => boxes.find((b) => b.role === role);
@@ -122,7 +144,13 @@ export class Backfill {
     const all = of('all') ?? of('archive');
     const h = syncHorizon(this.s.now);
     const legs: (Leg | null)[] = [inbox ? { mailboxId: inbox.id, until: h } : null, sent ? { mailboxId: sent.id, until: h } : null, all ? { mailboxId: all.id, until: h } : null, inbox ? { mailboxId: inbox.id, until: null } : null];
+    const k = this.store.keepState(this.s.accountId);
+    if (k.keep && !k.paused) for (const b of this.walkBoxes()) if (b.id !== inbox?.id) legs.push({ mailboxId: b.id, until: null });
     return legs.filter((l): l is Leg => !!l && !this.done(l));
+  }
+
+  walkBoxes(): Row[] {
+    return walkBoxes(this.store, this.s.accountId);
   }
 
   private done(l: Leg): boolean {
@@ -138,12 +166,26 @@ export class Backfill {
 
   private async run() {
     for (;;) {
-      if (!this.s.workable) return;
+      if (!this.s.archiveGoes) return;
       const leg = this.legs()[0];
-      if (!leg || this.held() >= MAIL_LIMITS.maxPerAccount) return;
+      if (!leg || (!this.store.kept(this.s.accountId) && this.held() >= MAIL_LIMITS.maxPerAccount)) return;
       this.active = true;
       if (this.s.phase === 'idle' || this.s.phase === 'first') this.s.setPhase('backfill');
-      await this.s.queue.run(P3, `page:${leg.mailboxId}`, () => this.page(leg.mailboxId, leg.until));
+      const b = this.store.mailbox(leg.mailboxId);
+      if (!b) return;
+      try {
+        if (!b.follow) {
+          // A kept account's walk reaches a mailbox the hub does not follow: kept up from now on, its state taken
+          // first, in a turn of the budget of its own.
+          this.store.db.query(`UPDATE mailbox SET follow = 'open' WHERE id = ? AND follow IS NULL`).run(b.id);
+          if (!b.state) await this.s.queue.run(P3, `state:${b.id}`, () => this.s.takeState(b));
+        }
+        await this.s.queue.run(P3, `page:${leg.mailboxId}`, () => this.page(leg.mailboxId, leg.until, true));
+      } catch (e) {
+        // One that cannot be listed (404) is not walked: it counts as done.
+        if (b.follow || asMailError(e).status !== 404) throw e;
+        this.store.db.query(`UPDATE mailbox SET follow = NULL, complete = 1 WHERE id = ? AND follow = 'open'`).run(b.id);
+      }
       this.progress();
     }
   }
@@ -183,22 +225,27 @@ export class Backfill {
     return run;
   }
 
-  /** One page of a mailbox below where its listing got to. `until`: what is older is left for later. */
-  page(mailboxId: string, until: number | null): Promise<string[]> {
+  /**
+   * One page of a mailbox below where its listing got to. `until`: what is older is left for later. `background`: the
+   * backfill's, an archive read (AccountSync.background), not a page's.
+   */
+  page(mailboxId: string, until: number | null, background = false): Promise<string[]> {
     const prev = this.paging.get(mailboxId);
-    const run = (prev ? prev.catch(() => []) : Promise.resolve([])).then(() => this.listPage(mailboxId, until));
+    const run = (prev ? prev.catch(() => []) : Promise.resolve([])).then(() => this.listPage(mailboxId, until, background));
     this.paging.set(mailboxId, run);
     return run.finally(() => {
       if (this.paging.get(mailboxId) === run) this.paging.delete(mailboxId);
     });
   }
 
-  private async listPage(mailboxId: string, until: number | null): Promise<string[]> {
+  private async listPage(mailboxId: string, until: number | null, background: boolean): Promise<string[]> {
     const b = this.store.mailbox(mailboxId);
     if (!b || b.complete) return [];
     let r: { messages: M.MailSummary[]; next: string | null };
     try {
-      r = await this.s.call('mail.list', { mailboxId: b.native_id, limit: MAIL_LIMITS.backfillPage, ...(b.list_next ? { before: b.list_next } : {}) });
+      // The cursor as the server gave it (an opaque one, good for days, on Gmail on the web), kept across restarts.
+      const input = { mailboxId: b.native_id, limit: MAIL_LIMITS.backfillPage, ...(b.list_next ? { before: b.list_next } : {}) };
+      r = background ? await this.s.background('mail.list', input) : await this.s.call('mail.list', input);
     } catch (e) {
       // A rebuilt mailbox (IMAP: a new UIDVALIDITY) does not know the cursor: its changes pass relists it, and the
       // listing starts over from the top.
@@ -444,9 +491,10 @@ export const bigRoutes = (hub: MailHub): [] => {
   return [];
 };
 
-/** The hourly sweep: each account past its cap trimmed, then the body cache and the search text. */
+/** The hourly sweep: each account past its cap trimmed (not one that keeps all its mail), then the body cache and the search text. */
 export function bigSweep(hub: MailHub, cache = new BodyCache(hub.store)) {
   for (const a of hub.store.accounts()) {
+    if (hub.store.kept(a.id)) continue;
     const gone = trimToCap(hub.store, a.id);
     if (gone.length) hub.emit('deleted', { accountId: a.id, messageIds: gone });
   }

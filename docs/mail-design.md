@@ -118,6 +118,32 @@ notes above name a level, a vote or the digest, this holds instead:
 - `mail_triage` gains `was`, what a decision was before the one conversion: Important and Active mail became list
   rows, Digest went below the list. There is no daily digest any more.
 
+**As built: keeping all mail** (2026-11; docs/mail.md "Keeping all mail", `hub/src/mail/keep.ts`, `schema-keep.sql`).
+The owner asked for every message stored here, until searching the server finds nothing the hub cannot. Where it
+changes the text below:
+
+- §2.5 and §14 Q2: an account keeps all its mail unless it is turned off for it (`mail_keep`; `MailHub` `keepAll`, on in
+  main.ts). For such an account the walk lists every mailbox to its end (`walkBoxes`: not Starred or Important, which
+  are views of All mail), the 150k cap and its sweep do not apply, every body is fetched (P4, a new priority under the
+  backfill, in §3.5's budget) and never evicted (a rule per account, `MailStore.keptSql`, rather than a `keep` value on
+  each body, so turning it off needs no rewrite), and the search text holds up to 1 MB of each body outside the index
+  cap. A body over 2 MB still goes after it is read; its text stays. Deleted on the server is still deleted here.
+- §3.5: the queue has six priorities: P4 a kept account's bodies and counts, P5 Gmail's audits (the lowest).
+- §11: attachments' names are a fourth column of the index (`mail_search.files`, `filename:`), for every account.
+  Each server search is measured per account (`mail_search_measure`). `server=auto` leaves out an account that is
+  searched locally; `MailServerSearch.state` gains `local`.
+- Coverage is measured per account: mailbox counts against locations, bodies against messages, the search measure,
+  and on Gmail month windows searched with operators only (`after:`/`before:` in epoch seconds), split while a window
+  comes back full until dither-accounts' ids-only search (`details.searchIds`) pages them whole. The window is the seam:
+  `searchWindow` picks `idsSearch` or `splitSearch`, and the second can go.
+- dither-accounts' status details read for it: `backgroundLane` (archive reads say `background: true`, only then),
+  `backgroundStopped` (the archive stops until a status no longer says it; a background call's 503 `paused` does the
+  same), `searchIds`, `storage`/`storageUsed`/`storageTotal`. `raw` is for the next PR, which keeps originals as
+  compressed `.eml` files beside the database and makes `mail_body` a cache parsed from them.
+- §2.1/§2.3 identity: where ids are the message's (`idPerMessage`), a summary without an emailId takes its id as one,
+  and a message already holding a summary's emailId is the one even when the summary has a Message-ID: Gmail on the
+  web's summaries carry no headers, its `mail.get` answers do.
+
 ## 0. In one page
 
 | Decision | Where |

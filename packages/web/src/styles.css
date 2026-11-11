@@ -4283,6 +4283,23 @@ code {
   justify-content: flex-end;
   margin-top: 14px;
 }
+/* Settings → Indexing → Mail (mail/MailKeep.tsx): an account's copy here against its server, in the jobs' rows. */
+.keep-mail {
+  margin-top: 18px;
+}
+.keep-mail h4 {
+  margin: 0 0 4px;
+}
+.keep-mail .mail-acc-dot {
+  flex: none;
+}
+.keep-toggle {
+  margin: 0;
+  padding: 0;
+}
+.keep-local {
+  color: var(--good);
+}
 @media (max-width: 640px) {
   .job-buttons {
     margin-left: 0;

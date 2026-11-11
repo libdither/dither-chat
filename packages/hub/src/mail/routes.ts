@@ -24,6 +24,7 @@ import { classifyRoutes } from './classify.ts';
 import { attentionRoutes } from './attention.ts';
 import { searchRoutes } from './search.ts';
 import { triageRoutes } from './triage.ts';
+import { keepRoutes } from './keep.ts';
 
 export interface MailRequest {
   req: Request;
@@ -119,7 +120,7 @@ export const readRoutes: MailRouter = (hub) => [
 ];
 
 /** Every slice's router. Add yours here. */
-const ROUTERS: MailRouter[] = [readRoutes, peopleRoutes, sendRoutes, opsRoutes, partRoutes, bigRoutes, classifyRoutes, attentionRoutes, searchRoutes, triageRoutes];
+const ROUTERS: MailRouter[] = [readRoutes, peopleRoutes, sendRoutes, opsRoutes, partRoutes, bigRoutes, classifyRoutes, attentionRoutes, searchRoutes, triageRoutes, keepRoutes];
 
 export function mountRouters(hub: MailHub): MailRoute[] {
   return ROUTERS.flatMap((r) => r(hub));
