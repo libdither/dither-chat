@@ -7,6 +7,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
+import type * as P from '@dither-chat/protocol';
 import { readSecretFile, writeSecretFile } from '@dither-chat/protocol/secret-file';
 import { hostAllowed, hostNames } from '../src/hosts.ts';
 import { fetchPublicToFile } from '../src/fetchsafe.ts';
@@ -198,29 +199,68 @@ describe('the store', () => {
       expect(store.takePendingTriage(0)).toEqual([b]);
     });
 
-    test('only rows nobody learns from are let go: old, in a place you never wrote, not voted, notified or explored', () => {
+    test('only rows nobody learns from are let go: old, below the list or silent, in a place you never wrote, never marked', () => {
       const old = 1_000;
       const now = old + 100 * 86_400_000;
-      const t = (id: string, decision: string, extra: Record<string, unknown> = {}) =>
-        store.setTriage(id, { decision, score: 0.1, reasons: [], decidedBy: 'rules', ...extra } as any);
-      const ids = ['q1', 'q2', 'q3', 'q4', 'q5'].map((n, i) => msg('busy', n, 'someone', 2000 + i));
+      const t = (id: string, decision: P.TriageDecision) => store.setTriage(id, { decision, score: 0.1, reasons: [], decidedBy: 'rules' });
+      const ids = ['q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7', 'q8', 'q9'].map((n, i) => msg('busy', n, 'someone', 2000 + i));
+      const [below, silent, listed, conversation, alert, less, alerted, voted, explored] = ids;
       const mine = msg('mine', 'm1', 'someone', 3000);
       msg('mine', 'm2', 'me', 3001);
       const recent = msg('busy', 'r1', 'someone', 4000);
-      t(ids[0], 'drop');
-      t(ids[1], 'digest');
-      t(ids[2], 'push');
-      t(ids[3], 'drop', { explore: 'up' });
-      t(ids[4], 'drop');
-      store.triageFeedback(ids[4], 'push', old);
+      t(below, 'drop');
+      t(silent, 'silent');
+      // On the list or above: kept, what you did after it is learned from.
+      t(listed, 'digest');
+      t(conversation, 'quiet');
+      t(alert, 'push');
+      // Your marks, of either kind.
+      t(less, 'drop');
+      store.triageMark(less, { less: true }, old);
+      t(alerted, 'drop');
+      store.triageMark(alerted, { alert: true }, old);
+      // From before the tiers: a vote, and a row exploration changed.
+      t(voted, 'drop');
+      store.db.query(`UPDATE triage SET feedback = 'push', feedback_at = ? WHERE message_id = ?`).run(old, voted);
+      t(explored, 'drop');
+      store.db.query(`UPDATE triage SET explore = 'up' WHERE message_id = ?`).run(explored);
       t(mine, 'drop');
       t(recent, 'drop');
       store.db.query('UPDATE triage SET created_at = ? WHERE message_id != ?').run(old, recent);
       store.db.query('UPDATE triage SET created_at = ? WHERE message_id = ?').run(now - 86_400_000, recent);
       expect(store.pruneTriage(now, 90)).toBe(2);
       const left = new Set((store.db.query('SELECT message_id FROM triage').all() as { message_id: string }[]).map((r) => r.message_id));
-      expect(left.has(ids[0]) || left.has(ids[1])).toBe(false);
-      for (const id of [ids[2], ids[3], ids[4], mine, recent]) expect(left.has(id)).toBe(true);
+      expect(left.has(below) || left.has(silent)).toBe(false);
+      for (const id of [listed, conversation, alert, less, alerted, voted, explored, mine, recent]) expect(left.has(id)).toBe(true);
+      // A mark taken back leaves nothing to learn from: the row goes with the next pass.
+      store.triageMark(less, { less: false }, now);
+      expect(store.one<{ marked_at: number | null }>('SELECT marked_at FROM triage WHERE message_id = ?', less)!.marked_at).toBeNull();
+      expect(store.pruneTriage(now, 90)).toBe(1);
+      expect(store.one('SELECT 1 FROM triage WHERE message_id = ?', less)).toBeNull();
+    });
+
+    test('marks: each key given is set, null takes it back, the others stay', () => {
+      const id = msg('busy', 'k1', 'someone', 5000);
+      store.setTriage(id, { decision: 'quiet', score: 0.4, reasons: [], decidedBy: 'rules' });
+      const row = () => store.one<{ alert_mark: number | null; less_mark: number | null; marked_at: number | null }>('SELECT alert_mark, less_mark, marked_at FROM triage WHERE message_id = ?', id)!;
+      store.triageMark(id, { alert: true }, 10);
+      expect(row()).toEqual({ alert_mark: 1, less_mark: null, marked_at: 10 });
+      store.triageMark(id, { less: true }, 20);
+      expect(row()).toEqual({ alert_mark: 1, less_mark: 1, marked_at: 20 });
+      store.triageMark(id, { alert: false }, 30);
+      expect(row()).toEqual({ alert_mark: 0, less_mark: 1, marked_at: 30 });
+      // The app reads them with the decision.
+      expect(store.messageViews([store.one('SELECT * FROM message WHERE id = ?', id)!])[0].triage).toMatchObject({ decision: 'quiet', score: 0.4, marks: { alert: false, less: true } });
+      store.triageMark(id, { alert: null }, 40);
+      expect(row()).toEqual({ alert_mark: null, less_mark: 1, marked_at: 40 });
+      store.triageMark(id, { less: false }, 50);
+      expect(row()).toEqual({ alert_mark: null, less_mark: null, marked_at: null });
+      // A decision made again keeps the marks; a message triage never decided on has nothing to mark.
+      store.triageMark(id, { alert: true }, 60);
+      store.setTriage(id, { decision: 'push', score: 0.5, reasons: [], decidedBy: 'learned' });
+      expect(row()).toMatchObject({ alert_mark: 1, marked_at: 60 });
+      store.triageMark(msg('busy', 'k2', 'someone', 5001), { alert: true }, 70);
+      expect(store.one<{ n: number }>('SELECT COUNT(*) AS n FROM triage WHERE marked_at = 70')!.n).toBe(0);
     });
   });
 });

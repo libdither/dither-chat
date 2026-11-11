@@ -1,46 +1,61 @@
-/** src/board.ts: How it sorts' lists, its lines per conversation, and the badge counted from them. */
+/** src/board.ts: How it sorts' four sections, its lines per conversation, and the badge counted from them. */
 import { expect, test } from 'bun:test';
-import { BELOW_DAYS, BELOW_SHOWN, isMailItem, lineKey, linesOf, reasonsOf, topLevel, triageBoard, type BoardItem } from '../src/board.ts';
+import { BELOW_DAYS, BELOW_SHOWN, isMailItem, lineKey, linesOf, listPreview, reasonsOf, topImportance, topTier, triageBoard, type BoardItem } from '../src/board.ts';
 
 const DAY = 86_400_000;
 const now = 100 * DAY;
-const msg = (id: string, decision: string, x: { feedback?: string | null; ts?: number; score?: number; conv?: string; reasons?: string[] } = {}): any => ({
+const msg = (id: string, decision: string, x: { feedback?: string | null; marks?: { alert?: boolean; less?: boolean }; ts?: number; score?: number | null; conv?: string; reasons?: string[] } = {}): any => ({
   id,
   conversationId: x.conv ?? 'cnv_a',
   ts: x.ts ?? now - 1000,
-  triage: { decision, feedback: x.feedback ?? null, score: x.score ?? 0.5, reasons: x.reasons ?? [] },
+  triage: { decision, feedback: x.feedback ?? null, score: x.score === undefined ? 0.5 : x.score, reasons: x.reasons ?? [], ...(x.marks ? { marks: x.marks } : {}) },
 });
 const all = () => true;
 const ids = (ms: { id: string }[]) => ms.map((m) => m.id);
 
-test('each message is listed by where it is now: your vote, else the decision', () => {
-  const b = triageBoard([msg('a', 'push'), msg('b', 'push', { feedback: 'quiet' }), msg('c', 'digest', { feedback: 'push' }), msg('d', 'quiet', { feedback: 'drop' })], { now, shown: all, unread: all });
-  expect(ids(b.important).sort()).toEqual(['a', 'c']);
-  expect(ids(b.active)).toEqual(['b']);
+test('four sections, by the tier each message landed in: Alerts, Conversations, List, Below the list', () => {
+  const b = triageBoard([msg('a', 'push'), msg('b', 'quiet'), msg('c', 'digest'), msg('d', 'drop'), msg('e', 'silent')], { now, shown: all, unread: all });
+  expect(ids(b.alerts)).toEqual(['a']);
+  expect(ids(b.conversations)).toEqual(['b']);
+  expect(ids(b.list)).toEqual(['c']);
   expect(ids(b.below)).toEqual(['d']);
+  // A silenced place is in none of them.
+  expect([...b.alerts, ...b.conversations, ...b.list, ...b.below].some((m) => m.id === 'e')).toBe(false);
 });
 
-test('the badge is the Important list unread: a vote down takes one off, a vote up adds one, Active never counts', () => {
-  const unread = new Set(['a', 'b', 'c', 'e']);
-  const items = [msg('a', 'push'), msg('b', 'push'), msg('c', 'quiet'), msg('e', 'digest'), msg('f', 'push')];
-  const before = triageBoard(items, { now, shown: all, unread: (m) => unread.has(m.id) });
-  expect(before.importantUnread).toBe(2);
-  expect(before.important).toHaveLength(3);
-  // b voted down to Active, e up to Important.
-  items[1] = msg('b', 'push', { feedback: 'quiet' });
-  items[3] = msg('e', 'digest', { feedback: 'push' });
-  const after = triageBoard(items, { now, shown: all, unread: (m) => unread.has(m.id) });
-  expect(after.importantUnread).toBe(2);
-  expect(ids(after.important).sort()).toEqual(['a', 'e', 'f']);
-  expect(ids(after.active).sort()).toEqual(['b', 'c']);
-  // The count is of what the list shows.
-  expect(after.importantUnread).toBe(after.important.filter((m) => unread.has(m.id)).length);
+test('a mark, or a vote from before the tiers, does not move a message: it stays where it was decided', () => {
+  const b = triageBoard(
+    [msg('a', 'push', { marks: { alert: false } }), msg('b', 'quiet', { marks: { alert: true } }), msg('c', 'digest', { marks: { less: true } }), msg('d', 'digest', { feedback: 'push' }), msg('e', 'push', { feedback: 'drop' })],
+    { now, shown: all, unread: all },
+  );
+  expect(ids(b.alerts).sort()).toEqual(['a', 'e']);
+  expect(ids(b.conversations)).toEqual(['b']);
+  expect(ids(b.list).sort()).toEqual(['c', 'd']);
+  expect(ids(b.below)).toEqual([]);
 });
 
-test('a week for the lists, two days for Not interesting, places you hid left out', () => {
+test('the badge is the unread alerts and the unread Conversation messages; the list and below it never count', () => {
+  const unread = new Set(['a', 'b', 'c', 'e', 'g']);
+  const items = [msg('a', 'push'), msg('b', 'push'), msg('c', 'quiet'), msg('d', 'quiet'), msg('e', 'digest'), msg('f', 'push'), msg('g', 'drop')];
+  const b = triageBoard(items, { now, shown: all, unread: (m) => unread.has(m.id) });
+  expect(b.alertsUnread).toBe(2);
+  expect(b.conversationsUnread).toBe(1);
+  expect(b.alerts).toHaveLength(3);
+  expect(b.conversations).toHaveLength(2);
+  // Each count is of what its section shows.
+  expect(b.alertsUnread).toBe(b.alerts.filter((m) => unread.has(m.id)).length);
+  expect(b.conversationsUnread).toBe(b.conversations.filter((m) => unread.has(m.id)).length);
+  // Read, they leave the badge and stay in their sections.
+  const read = triageBoard(items, { now, shown: all, unread: () => false });
+  expect([read.alertsUnread, read.conversationsUnread]).toEqual([0, 0]);
+  expect(read.alerts).toHaveLength(3);
+});
+
+test('a week for the sections, two days for below the list, places you hid left out', () => {
   const b = triageBoard(
     [
       msg('old', 'push', { ts: now - 8 * DAY }),
+      msg('old-conv', 'quiet', { ts: now - 8 * DAY }),
       msg('week', 'digest', { ts: now - 6 * DAY }),
       msg('drop-old', 'drop', { ts: now - (BELOW_DAYS + 1) * DAY }),
       msg('drop-new', 'drop', { ts: now - DAY }),
@@ -49,27 +64,54 @@ test('a week for the lists, two days for Not interesting, places you hid left ou
     ],
     { now, shown: (m) => m.conversationId !== 'cnv_hidden', unread: all },
   );
-  expect(ids(b.important)).toEqual([]);
-  expect(ids(b.digest)).toEqual(['week']);
+  expect(ids(b.alerts)).toEqual([]);
+  expect(ids(b.conversations)).toEqual([]);
+  expect(ids(b.list)).toEqual(['week']);
   expect(ids(b.below)).toEqual(['drop-new']);
-  expect(b.importantUnread).toBe(0);
+  expect(b.alertsUnread).toBe(0);
+  expect(b.conversationsUnread).toBe(0);
 });
 
-test('orders: newest first for Important and Active, what matters most first for the digest and below', () => {
+test('orders: newest first for Alerts and Conversations, the most important first for the list and below it', () => {
   const b = triageBoard(
-    [msg('p1', 'push', { ts: now - 3000 }), msg('p2', 'push', { ts: now - 1000 }), msg('d1', 'digest', { score: 0.2 }), msg('d2', 'digest', { score: 0.9 })],
+    [
+      msg('p1', 'push', { ts: now - 3000 }),
+      msg('p2', 'push', { ts: now - 1000 }),
+      msg('q1', 'quiet', { ts: now - 4000, score: 0.9 }),
+      msg('q2', 'quiet', { ts: now - 2000, score: 0.1 }),
+      msg('d1', 'digest', { score: 0.2 }),
+      msg('d2', 'digest', { score: 0.9 }),
+      msg('d3', 'digest', { score: 0.9, ts: now - 500 }),
+      msg('d4', 'digest', { score: null }),
+    ],
     { now, shown: all, unread: all },
   );
-  expect(ids(b.important)).toEqual(['p2', 'p1']);
-  expect(ids(b.digest)).toEqual(['d2', 'd1']);
+  expect(ids(b.alerts)).toEqual(['p2', 'p1']);
+  expect(ids(b.conversations)).toEqual(['q2', 'q1']);
+  // The same importance: the newer first. None at all: last.
+  expect(ids(b.list)).toEqual(['d3', 'd2', 'd1', 'd4']);
   const many = Array.from({ length: BELOW_SHOWN + 5 }, (_, i) => msg(`x${i}`, 'drop', { score: i / 100 }));
   const below = triageBoard(many, { now, shown: all, unread: all }).below;
   expect(below).toHaveLength(BELOW_SHOWN);
   expect(below[0].id).toBe(`x${BELOW_SHOWN + 4}`);
+  expect(below.at(-1)!.id).toBe('x5');
 });
 
-test('mail sits beside chat by the same levels, its unread counting in the badge (slice 9)', () => {
-  const mail = (id: string, decision: string, x: { feedback?: string | null; ts?: number; unread?: boolean } = {}): any => ({
+test('two messages of one importance that came at once keep their order, whichever was handed over last', () => {
+  const a = msg('a', 'digest', { score: 0.8, conv: 'cnv_a' });
+  const b = msg('b', 'digest', { score: 0.8, conv: 'cnv_b' });
+  const p = msg('p', 'push');
+  const q = msg('q', 'push');
+  const o = { now, shown: all, unread: all };
+  // A mark sends the message again, after the others: its line must not jump.
+  expect(ids(triageBoard([a, b, p, q], o).list)).toEqual(['a', 'b']);
+  expect(ids(triageBoard([b, q, p, { ...a, triage: { ...a.triage, marks: { less: true } } }], o).list)).toEqual(['a', 'b']);
+  expect(ids(triageBoard([a, b, p, q], o).alerts)).toEqual(['p', 'q']);
+  expect(ids(triageBoard([q, p, b, a], o).alerts)).toEqual(['p', 'q']);
+});
+
+test('mail sits beside chat in the same sections, its unread counting in the badge (slice 9)', () => {
+  const mail = (id: string, decision: string, x: { marks?: { less?: boolean }; ts?: number; unread?: boolean } = {}): any => ({
     kind: 'mail',
     id,
     threadId: 'mth_a',
@@ -79,18 +121,19 @@ test('mail sits beside chat by the same levels, its unread counting in the badge
     preview: null,
     ts: x.ts ?? now - 500,
     unread: x.unread ?? true,
-    triage: { decision, feedback: x.feedback ?? null, score: 0.5, reasons: [], decidedBy: 'rules' },
+    triage: { decision, feedback: null, score: 0.5, reasons: [], decidedBy: 'rules', ...(x.marks ? { marks: x.marks } : {}) },
   });
-  const items: BoardItem[] = [msg('a', 'push'), mail('mml_1', 'push'), mail('mml_2', 'push', { feedback: 'quiet' }), mail('mml_3', 'digest', { unread: false })];
+  const items: BoardItem[] = [msg('a', 'push'), mail('mml_1', 'push'), mail('mml_2', 'digest', { marks: { less: true } }), mail('mml_3', 'digest', { unread: false }), mail('mml_4', 'drop')];
   const b = triageBoard(items, { now, shown: all, unread: (m) => (isMailItem(m) ? m.unread : true) });
-  expect(ids(b.important)).toEqual(['mml_1', 'a']);
-  expect(ids(b.active)).toEqual(['mml_2']);
-  expect(ids(b.digest)).toEqual(['mml_3']);
-  expect(b.importantUnread).toBe(2);
-  expect(b.important.filter(isMailItem).map((m) => m.threadId)).toEqual(['mth_a']);
+  expect(ids(b.alerts)).toEqual(['mml_1', 'a']);
+  expect(ids(b.conversations)).toEqual([]);
+  expect(ids(b.list).sort()).toEqual(['mml_2', 'mml_3']);
+  expect(ids(b.below)).toEqual(['mml_4']);
+  expect(b.alertsUnread).toBe(2);
+  expect(b.alerts.filter(isMailItem).map((m) => m.threadId)).toEqual(['mth_a']);
 });
 
-test('one line per conversation: where its first message in the list is, its vote on its newest', () => {
+test('one line per conversation: where its first message in the section is, its marks on its newest', () => {
   const b = triageBoard(
     [
       msg('g1', 'push', { conv: 'cnv_g', ts: now - 4000 }),
@@ -101,14 +144,14 @@ test('one line per conversation: where its first message in the list is, its vot
     ],
     { now, shown: all, unread: all },
   );
-  const lines = linesOf(b.important, lineKey);
+  const lines = linesOf(b.alerts, lineKey);
   expect(lines.map((l) => [l.key, ids(l.items), l.newest.id])).toEqual([
     ['cnv_g', ['g3', 'g2', 'g1'], 'g3'],
     ['cnv_d', ['d1'], 'd1'],
   ]);
-  // Its newest at Active is on a line of its own there.
-  expect(linesOf(b.active, lineKey).map((l) => [l.key, l.newest.id])).toEqual([['cnv_g', 'g4']]);
-  // By score in the digest: the newest is still the newest, wherever it sits in the line.
+  // Its newest in Conversations is on a line of its own there.
+  expect(linesOf(b.conversations, lineKey).map((l) => [l.key, l.newest.id])).toEqual([['cnv_g', 'g4']]);
+  // By importance on the list: the newest is still the newest, wherever it sits in the line.
   const d = linesOf([msg('a', 'digest', { ts: now - 10 }), msg('b', 'digest', { ts: now - 5 })], lineKey);
   expect(d[0].newest.id).toBe('b');
 });
@@ -127,9 +170,39 @@ test("a line's reasons are each said once, the commonest first", () => {
   ]);
 });
 
-test('the highest level among messages, by where each is now', () => {
-  expect(topLevel([msg('a', 'digest'), msg('b', 'quiet')])).toBe('quiet');
-  expect(topLevel([msg('a', 'push', { feedback: 'digest' }), msg('b', 'digest')])).toBe('digest');
-  expect(topLevel([msg('a', 'silent')])).toBe(null);
-  expect(topLevel([])).toBe(null);
+test("a line's importance is the highest among its messages; none when none has one", () => {
+  expect(topImportance([msg('a', 'digest', { score: 0.62 }), msg('b', 'digest', { score: 0.9 }), msg('c', 'digest', { score: null })])).toBe(0.9);
+  expect(topImportance([msg('a', 'digest', { score: 0 })])).toBe(0);
+  expect(topImportance([msg('a', 'push', { score: null })])).toBe(null);
+  expect(topImportance([])).toBe(null);
+});
+
+test('the highest tier among messages, by what was decided', () => {
+  expect(topTier([msg('a', 'digest'), msg('b', 'quiet')])).toBe('quiet');
+  expect(topTier([msg('a', 'drop'), msg('b', 'digest'), msg('c', 'push')])).toBe('push');
+  // An old vote and a mark leave the tier alone.
+  expect(topTier([msg('a', 'push', { feedback: 'digest', marks: { alert: false } }), msg('b', 'digest')])).toBe('push');
+  expect(topTier([msg('a', 'drop')])).toBe('drop');
+  expect(topTier([msg('a', 'silent')])).toBe(null);
+  expect(topTier([])).toBe(null);
+});
+
+test("the list's preview: chats a day at a level, from the hub's rows, said in words", () => {
+  const preview = [
+    { level: 0.1, perDay: 61.4 },
+    { level: 0.5, perDay: 2.9 },
+    { level: 0.6, perDay: 16.9 },
+    { level: 0.8, perDay: 1 },
+    { level: 0.9, perDay: 0 },
+  ];
+  expect(listPreview(preview, 0.6)).toBe('about 17 chats a day at this level (last week)');
+  expect(listPreview(preview, 0.1)).toBe('about 61 chats a day at this level (last week)');
+  // Under three a day the decimal stays; exactly one is one chat.
+  expect(listPreview(preview, 0.5)).toBe('about 2.9 chats a day at this level (last week)');
+  expect(listPreview(preview, 0.8)).toBe('about 1 chat a day at this level (last week)');
+  expect(listPreview(preview, 0.9)).toBe('about 0 chats a day at this level (last week)');
+  // A level between two tenths reads the nearest; one the hub has no row for says nothing.
+  expect(listPreview(preview, 0.62)).toBe('about 17 chats a day at this level (last week)');
+  expect(listPreview(preview, 0.3)).toBe(null);
+  expect(listPreview([], 0.6)).toBe(null);
 });

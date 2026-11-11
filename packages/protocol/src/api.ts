@@ -217,6 +217,8 @@ export interface TriageView {
   probs?: TriageProbs | null;
   /** The local model's answer to "does this need the reader within an hour or two?", 0 to 1, when it was asked. */
   judge?: number | null;
+  /** The bar that answer was held to: lower in DMs and messages about you (learn.ts `ALERT_BAR`). With `judge`. */
+  bar?: number;
 }
 
 /**
@@ -1020,7 +1022,7 @@ export type ClientEvent =
   | { t: 'conversation.removed'; id: string }
   | { t: 'message'; message: MessageView; identities: IdentityView[]; live: boolean }
   | { t: 'message.deleted'; id: string; conversationId: string }
-  /** No conversation: it is about the inbox as a whole (the daily digest). */
+  /** No conversation: it is about a request, or about what quiet hours held. */
   | { t: 'notify'; messageId?: string; conversationId?: string; title: string; body: string; reasons: string[]; /** Its tier; absent is an alert. */ level?: 'push' | 'quiet' | 'digest'; /** The notification's id in the activity log (docs/activity.md). */ nid?: string; /** Devices whose own rules keep this quiet (docs/devices.md). */ quiet?: string[]; /** The sender's (or the place's) picture, a hub media path. */ icon?: string; network?: Network; /** About a mail thread (slice 9): `conversationId` is the thread too. */ mailThreadId?: string; /** About a request waiting on you (docs/add.md): it opens under Requests. */ requestId?: string }
   /**
    * Someone started typing (it lasts `ttl` ms unless another start comes) or `stop`ped. Of the moment: not journaled,

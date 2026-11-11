@@ -1,11 +1,14 @@
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
-import { LEVEL_LABEL, netName } from '../model.ts';
+import { listPreview } from '../board.ts';
+import { liveRules, netName, ruleIcon, ruleName } from '../model.ts';
 import { api, db, go, mailRev, prefs, rev, setPrefs, setRule, toast } from '../state.ts';
+import { loadPolicy, setListLevel, triagePolicy } from '../triage.ts';
 import { STATUS, addingAccount } from './Accounts.tsx';
-import { AccountChip, NetBadge, NetGlyph, levelIcon, showSection } from './bits.tsx';
+import { AccountChip, NetBadge, showSection } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { DeviceRules } from './DeviceRules.tsx';
+import { percent } from './Marks.tsx';
 import { PushSettings } from './Push.tsx';
 import { PrivacySettings } from './Privacy.tsx';
 import { HistorySettings } from './HistorySettings.tsx';
@@ -20,16 +23,13 @@ import { Sheet } from './Sheet.tsx';
 import { chosenTheme, followsSystem, Swatch, ThemeList } from './Themes.tsx';
 import { themeById } from '../themes.ts';
 
-const LEVELS: P.NotifyLevel[] = ['all', 'smart', 'mentions', 'digest', 'none'];
-
 /** Settings' sections: listed beside them on a desktop, and in a sheet from their header on a phone. */
 export const SECTIONS: [title: string, icon: string, id: string][] = [
-  ['Default notifications', 'bell', 'set-defaults'],
-  ['Smart triage', 'sparkles', 'set-triage'],
+  ['Notifications', 'bell', 'set-notifications'],
   ['Push and quiet hours', 'bellOff', 'push'],
   ['Each device', 'phone', 'set-devices'],
   ['Keywords', 'at', 'set-keywords'],
-  ['Per-place overrides', 'layers', 'set-overrides'],
+  ['Your rules', 'layers', 'set-overrides'],
   ['Privacy', 'lock', 'set-privacy'],
   ['Message history', 'clock', 'set-history'],
   ['Adversarial features', 'eyeOff', 'set-adversarial'],
@@ -53,7 +53,7 @@ function SectionsButton() {
           <div class="sheet-menu set-sections">
             <div class="menu-title">Go to</div>
             {[['Accounts', 'power', 'set-accounts'] as const, ...SECTIONS]
-              // Per-place overrides are there only once there are some.
+              // Your rules are there only once there are some.
               .filter(([, , id]) => document.getElementById(id))
               .map(([t, i, id]) => (
                 <button
@@ -75,21 +75,43 @@ function SectionsButton() {
   );
 }
 
-function LevelPicker({ value, onChange }: { value: P.NotifyLevel; onChange: (l: P.NotifyLevel) => void }) {
+/** The steps the list's level can be set to: 0.1 to 0.9. */
+const LIST_STEPS = 9;
+
+/**
+ * The phone's list: the importance a message needs to reach it, in steps of ten percent, with how many chats a day
+ * the list would have held last week at the step under the thumb.
+ */
+function ListLevel() {
+  const p = triagePolicy.value;
+  const [at, setAt] = useState<number | null>(null);
+  useEffect(() => void loadPolicy(), []);
+  if (!p) return null;
+  const level = at ?? p.thresholds.important;
+  const step = Math.min(LIST_STEPS, Math.max(1, Math.round(level * 10)));
+  const value = (e: Event) => Number((e.target as HTMLInputElement).value) / 10;
+  const save = (v: number) =>
+    setListLevel(v)
+      .catch((e) => toast({ kind: 'error', title: 'Could not save the level', body: e.message }))
+      .finally(() => setAt(null));
   return (
-    <div class="level-picker">
-      {LEVELS.map((l) => (
-        <button class={`chip-btn ${value === l ? 'on' : ''}`} onClick={() => onChange(l)} title={LEVEL_LABEL[l]}>
-          <Icon name={levelIcon(l)} size={13} /> {LEVEL_LABEL[l]}
-        </button>
-      ))}
+    <div class="list-level" id="set-list">
+      <b>The phone's list</b>
+      <small>A message reaches the list when its importance is at or above this level. Lower it for a longer list.</small>
+      <div class="sensitivity">
+        <input type="range" min={1} max={LIST_STEPS} step={1} value={step} aria-label="The importance a message needs to reach the list" onInput={(e) => setAt(value(e))} onChange={(e) => save(value(e))} />
+        <span class="sensitivity-label" data-list-level>
+          {percent(level)}
+        </span>
+        <span data-list-preview>{listPreview(p.preview, step / 10)}</span>
+      </div>
     </div>
   );
 }
 
 function ruleLabel(r: P.RuleView): { icon: P.Network | null; text: string } {
   if (r.scope === 'network') return { icon: r.target as P.Network, text: `All of ${netName(r.target as P.Network)}` };
-  if (r.scope === 'global') return { icon: null, text: 'Everything (global default)' };
+  if (r.scope === 'global') return { icon: null, text: 'Everything' };
   if (r.scope === 'keyword') return { icon: null, text: `Keyword “${r.target}”` };
   if (r.scope === 'account') {
     const a = r.target ? db.accounts.get(r.target) : null;
@@ -135,8 +157,8 @@ function QuietHoursSettings() {
       <label class="toggle-row">
         <input type="checkbox" checked={q.enabled} onChange={(e) => save({ enabled: (e.target as HTMLInputElement).checked })} />
         <span>
-          <b>Hold pushes during these hours</b>
-          <small>Messages still land in the inbox, marked with why they were held. One notification when the hours end says how many are waiting.</small>
+          <b>Hold alerts during these hours</b>
+          <small>A held alert stays a silent conversation or list row, marked with why it was held. One notification when the hours end says how many were held.</small>
         </span>
       </label>
       <div class="quiet-times">
@@ -159,43 +181,10 @@ function QuietHoursSettings() {
       <label class="toggle-row">
         <input type="checkbox" checked={q.allowStarred} onChange={(e) => save({ allowStarred: (e.target as HTMLInputElement).checked })} />
         <span>
-          <b>People set to always notify still get through</b>
+          <b>People set to always alert still get through</b>
         </span>
       </label>
       <p class="set-help">In {q.timezone}. A day counts from when the hours start, so a Friday night runs into Saturday morning.</p>
-    </section>
-  );
-}
-
-function DailyDigestSettings() {
-  const [d, setD] = useState<P.DailyDigest | null>(null);
-  useEffect(() => {
-    api<{ dailyDigest: P.DailyDigest | null }>('/api/daily-digest').then((r) => setD(r.dailyDigest ?? { enabled: false, time: '18:00', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }));
-  }, []);
-  if (!d) return null;
-  const save = (patch: Partial<P.DailyDigest>) => {
-    // As with quiet hours: the time means what it means on the device that set it.
-    const next = { ...d, ...patch, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
-    setD(next);
-    api('/api/daily-digest', { method: 'PUT', body: next }).catch((e) => toast({ kind: 'error', title: 'Could not save the digest', body: e.message }));
-  };
-  return (
-    <section class="set-block" id="daily-digest">
-      <h3>Daily digest</h3>
-      <label class="toggle-row">
-        <input type="checkbox" checked={d.enabled} onChange={(e) => save({ enabled: (e.target as HTMLInputElement).checked })} />
-        <span>
-          <b>One notification a day about what the digest gathered</b>
-          <small>How many messages and the busiest places since the last one. It opens the inbox. A day with nothing to report sends nothing.</small>
-        </span>
-      </label>
-      <div class="quiet-times">
-        <label class="search-field">
-          <span>At</span>
-          <input class="input" type="time" value={d.time} onChange={(e) => save({ time: (e.target as HTMLInputElement).value })} />
-        </label>
-      </div>
-      <p class="set-help">In {d.timezone}. If quiet hours cover this time, it waits until they end and takes the place of their summary. If the hub was down, one digest catches up.</p>
     </section>
   );
 }
@@ -246,13 +235,10 @@ export function SettingsPane() {
   rev.value;
   const p = prefs.value;
   const [keyword, setKeyword] = useState('');
-  const rules = db.rules;
-  const defaults = ['global', 'network', 'account'];
-  const defaultRules = rules.filter((r) => defaults.includes(r.scope));
+  const rules = liveRules();
   const keywordRules = rules.filter((r) => r.scope === 'keyword');
-  const scoped = rules.filter((r) => !defaults.includes(r.scope) && r.scope !== 'keyword');
-  const level = (scope: P.NotifyScope, target: string | null) => rules.find((r) => r.scope === scope && (r.target ?? null) === target)?.level;
-  const networks = [...new Set([...db.accounts.values()].map((a) => a.network))];
+  // Every rule on a place or a person, and any wider one kept from before the tiers, so that it can be cleared.
+  const scoped = rules.filter((r) => r.scope !== 'keyword');
 
   return (
     <section class="pane settings">
@@ -268,50 +254,20 @@ export function SettingsPane() {
       <div class="settings-scroll">
         <AccountsBlock />
 
-        <section class="set-block" id="set-defaults">
-          <h3>Default notifications</h3>
-          <div class="set-rule">
-            <span class="set-rule-label">
-              <Icon name="grid" size={15} /> Everything, unless something more specific says otherwise
-            </span>
-            <LevelPicker value={level('global', null) ?? 'mentions'} onChange={(l) => setRule('global', null, l)} />
-          </div>
-          {networks.map((n) => (
-            <div class="set-rule">
-              <span class="set-rule-label">
-                <NetBadge network={n} size={18} /> All of {netName(n)}
-              </span>
-              <LevelPicker value={level('network', n) ?? ('inherit' as any)} onChange={(l) => setRule('network', n, l)} />
-              {level('network', n) && (
-                <button class="icon-btn small" title="Clear" onClick={() => setRule('network', n, null)}>
-                  <Icon name="x" size={13} />
-                </button>
-              )}
-            </div>
-          ))}
+        <section class="set-block" id="set-notifications">
+          <h3>Notifications</h3>
           <p class="set-help">
-            Built-in starting points: DMs push everything, groups use Smart, channels and threads push only mentions, notes to self stay silent. Change any of them above or on a
-            conversation.
+            Alerts sound; conversations are people talking with you, silent; the list is everything else that is important enough, silent, the most important first.
           </p>
-        </section>
-
-        <section class="set-block" id="set-triage">
-          <h3>Smart triage</h3>
+          <ListLevel />
           <button class="link-row set-sorts" data-track="how it sorts" onClick={() => go({ view: 'model' })}>
             <Icon name="sparkles" size={15} />
             <span>
               <b>How it sorts</b>
-              <small>Where each conversation's messages landed this week and why, your votes, and what the model learned from them</small>
+              <small>Where each conversation's messages landed this week and why, your marks, and what was learned from them</small>
             </span>
             <Icon name="chevronRight" size={15} />
           </button>
-          <label class="toggle-row">
-            <input type="checkbox" checked disabled />
-            <span>
-              <b>Rule-based scoring</b>
-              <small>Mentions, replies to you, questions aimed at you, urgency words, small groups and whether you're active all raise the score. Always on.</small>
-            </span>
-          </label>
           <label class="toggle-row">
             <input type="checkbox" checked={!!p.notifications} onChange={async (e) => {
               const on = (e.target as HTMLInputElement).checked;
@@ -323,17 +279,16 @@ export function SettingsPane() {
             }} />
             <span>
               <b>Notifications while the app is running</b>
-              <small>A system notification when something clears triage, delivered over the hub's own connection. It stops when the app is closed; for that, turn on push below.</small>
+              <small>A system notification for an alert, delivered over the hub's own connection. It stops when the app is closed; for that, turn on push below.</small>
             </span>
           </label>
           <div class="set-model">
             <Icon name="sparkles" size={15} />
             <div>
-              <b>Local model (optional)</b>
+              <b>Local model</b>
               <small>
-                With <code>DITHER_EMBEDDINGS=1</code> the hub asks <b>jev</b>, the local yes/no text model on the home machine, about messages where you take part (does it ask something
-                of you, is it time-sensitive, does it include you in plans) and gives the model learning in the background those answers next to your votes. You vote with the arrows
-                beside a message's level, on How it sorts or in its notification menu. No message ever leaves the hub's machine.
+                Alerts start from a model on the hub's machine. It reads a message in a conversation and answers one question: does this need you within the next hour or two? Your marks move it from there. Without
+                a model only your rules alert: people and places set to Always alert, and keywords. No message ever leaves the hub's machine.
               </small>
             </div>
           </div>
@@ -345,11 +300,9 @@ export function SettingsPane() {
 
         <QuietHoursSettings />
 
-        <DailyDigestSettings />
-
         <section class="set-block" id="set-keywords">
-          <h3>Keywords that are always Important</h3>
-          <p class="set-help">A message containing one of these is Important, buzzing your phone, wherever it lands (unless that place is set to Off).</p>
+          <h3>Keywords that always alert</h3>
+          <p class="set-help">A message with one of these words is an alert, wherever it lands (unless that place is muted).</p>
           <div class="keyword-list">
             {keywordRules.map((r) => (
               <span class="keyword-chip">
@@ -380,7 +333,7 @@ export function SettingsPane() {
 
         {scoped.length > 0 && (
           <section class="set-block" id="set-overrides">
-            <h3>Per-place overrides</h3>
+            <h3>Your rules</h3>
             {scoped.map((r) => {
               const l = ruleLabel(r);
               return (
@@ -389,7 +342,7 @@ export function SettingsPane() {
                     {l.icon ? <NetBadge network={l.icon} size={16} /> : <Icon name="at" size={15} />} {l.text}
                   </span>
                   <span class={`level-tag ${r.level}`}>
-                    <Icon name={levelIcon(r.level)} size={12} /> {LEVEL_LABEL[r.level]}
+                    <Icon name={ruleIcon(r.level)} size={12} /> {ruleName(r.level)}
                   </span>
                   <button class="icon-btn small" title="Clear" onClick={() => setRule(r.scope, r.target, null)}>
                     <Icon name="x" size={13} />

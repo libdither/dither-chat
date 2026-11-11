@@ -10,7 +10,7 @@
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
 import { decayed } from '@dither-chat/protocol';
-import { emptyTally, foldMessage, freshState, scoreConversation, sumTallies, voteDirection, votesAt, type ConvState, type ScoreInput, type Scored, type Tally } from './attention.ts';
+import { emptyTally, foldMessage, freshState, PIN_FOR, scoreConversation, sumTallies, voteDirection, votesAt, type ConvState, type ScoreInput, type Scored, type Tally } from './attention.ts';
 import { HORIZON, rankFeatures, type Moment, type Opened } from './rank.ts';
 import type { Triage } from './triage.ts';
 
@@ -35,10 +35,11 @@ export interface Conv {
   state: ConvState;
   lastMessageAt: number | null;
   /**
-   * Messages from others since the log began, in order: when, a mention of you, pushed, and where triage put it
-   * (null: not decided, or silent) with your vote and when. Older ones count as read.
+   * Messages from others since the log began, in order: when, a mention of you, whether triage put it in a tier
+   * (`pushed`), which (null: not decided, or silent) and its importance, with your vote and when. Older ones count as
+   * read.
    */
-  incoming: { ts: number; mention: boolean; pushed: boolean; level: P.TriageDecision | null; vote: P.TriageDecision | null; votedAt: number | null }[];
+  incoming: { ts: number; mention: boolean; pushed: boolean; level: P.TriageDecision | null; score: number | null; vote: P.TriageDecision | null; votedAt: number | null }[];
   /** When you last wrote. */
   lastOwn: number | null;
 }
@@ -115,11 +116,16 @@ export function seenAt(w: World, t: number, usage = usageAt(w.stays, t)): Seen[]
     let mentions = 0;
     let pushedUnread = false;
     let level: P.TriageDecision | null = null;
+    // The newest unread message triage put in a tier, as Attention.input reads it (`lastPush`).
+    let told: (typeof c.incoming)[number] | null = null;
     for (let i = c.incoming.length - 1; i >= 0 && c.incoming[i].ts > read; i--) {
       const m = c.incoming[i];
       unread++;
       if (m.mention) mentions++;
-      if (m.pushed) pushedUnread = true;
+      if (m.pushed) {
+        pushedUnread = true;
+        told ??= m;
+      }
       // The newest one triage decided on, with your vote only once you had cast it.
       if (!level && m.level) level = m.vote && m.votedAt != null && m.votedAt <= t ? m.vote : m.level;
     }
@@ -139,7 +145,11 @@ export function seenAt(w: World, t: number, usage = usageAt(w.stays, t)): Seen[]
         authorName: null,
         unread,
         mentions,
-        pinged: pushedUnread ? 'a push' : null,
+        // As the live inbox has it: an alert or a Conversation is pinged, an alert is pinned while fresh, and any tier
+        // brings its importance. (A swipe since is not replayed: the row then counts a little more than it did.)
+        pinged: told && (told.level === 'push' || told.level === 'quiet') ? 'a push' : null,
+        alerted: !!told && told.level === 'push' && t - told.ts <= PIN_FOR,
+        importance: told?.score ?? null,
         muted: c.muted,
         usage: u,
         level,
@@ -231,7 +241,7 @@ const FOLD = `
          r.author_id AS reply_author,
          EXISTS (SELECT 1 FROM reaction x WHERE x.message_id = m.id AND x.identity_id IN ${SELF_SQL}) AS reacted,
          t.decision IN ('push', 'quiet', 'digest') AS pushed, t.reasons LIKE '%asks a question%' AS question,
-         t.decision, t.feedback, t.feedback_at
+         t.decision, t.score, t.feedback, t.feedback_at
   FROM message m INDEXED BY message_ts LEFT JOIN identity i ON i.id = m.author_id LEFT JOIN message r ON r.id = m.reply_to_id LEFT JOIN triage t ON t.message_id = m.id
   WHERE m.conversation_id IN (SELECT value FROM json_each(?)) ORDER BY m.ts, m.rowid`;
 
@@ -307,6 +317,7 @@ export class Rebuild {
           mention: !!r.mentions_self,
           pushed: !!r.pushed,
           level: r.decision && r.decision !== 'silent' ? r.decision : null,
+          score: r.score ?? null,
           vote: r.feedback ?? null,
           votedAt: r.feedback_at ?? null,
         });

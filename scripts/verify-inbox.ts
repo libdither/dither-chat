@@ -12,6 +12,7 @@
  */
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { ALERT_PIN } from '../packages/hub/src/attention.ts';
 import { inboxLift } from '../packages/web/src/ordering.ts';
 import { launch } from './browser.ts';
 
@@ -190,10 +191,13 @@ try {
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
   await Bun.sleep(300);
 
-  // The chat you were just in: a quiet group far down the list. Open it, stay, leave: it moves up. (In the demo world
+  // The chat you were just in: a quiet chat far down the list, with nothing unread (reading something takes away what
+  // it counted for, which is about what having been there adds). Open it, stay, leave: it moves up. (In the demo world
   // most rows owe a reply, so it climbs a few places; on a real hub it is usually among the first rows.)
-  const low = [...s.keys].reverse().find((k) => !isMail(k) && shapeOf.get(k) === 'group' && (scores.get(k)?.score ?? 0) > -30 && !scores.get(k)?.reasons.some((r: string) => r.startsWith('You were here')));
-  check(low, 'a quiet group far down the list');
+  const low = [...s.keys]
+    .reverse()
+    .find((k) => !isMail(k) && ['group', 'direct'].includes(shapeOf.get(k) ?? '') && !scores.get(k)?.needs && (scores.get(k)?.score ?? 0) > -30 && !scores.get(k)?.reasons.some((r: string) => r.startsWith('You were here')));
+  check(low, 'a quiet chat far down the list');
   const lowFrom = s.keys.indexOf(low!);
   await click(...(await center(`[data-row="${low}"]`)));
   await away();
@@ -216,7 +220,8 @@ try {
 
   // Answering a group that needs you makes it a conversation going on, at its new score, but not while the pointer
   // is on the list. (A group: in a demo DM the other side answers back a few seconds later, which would open a new turn.)
-  const groupsNeeding = s.keys.filter((k) => !isMail(k) && shapeOf.get(k) === 'group' && scores.get(k)?.needs && k !== low);
+  // Not one an alert pins to the top: its message may be hours old, and answering that is not a conversation going on.
+  const groupsNeeding = s.keys.filter((k) => !isMail(k) && shapeOf.get(k) === 'group' && scores.get(k)?.needs && (scores.get(k)?.score ?? 0) < ALERT_PIN && k !== low);
   await mouse('mouseMoved', ...(await center('.sidebar .conv-row', `el => !${JSON.stringify(groupsNeeding)}.includes(el.dataset.row)`)));
   const before = await shown();
   // Some demo groups refuse a send (an encrypted room without encryption set up): the first that takes one.

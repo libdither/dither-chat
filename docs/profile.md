@@ -57,8 +57,9 @@ Right:
 - **Accounts**: each identity, with Open on the network and Unmerge; a hint when someone elsewhere has the same name,
   saying where ("Alice Chen on Signal", "Alice Chen <alice@…>"), and the merge search, which finds people by any name
   or handle (an email address too) and email addresses no person holds yet (`GET /api/persons/candidates`).
-- **Notifications**: Always notify, a person rule `all`. Stars left the app on 2026-11-10 and the hub cleared the old
-  ones once (`clearStars`, packages/hub/src/store.ts), so Always notify is the only way to have someone always push.
+- **Notifications**: Always alert, a person rule `all`: every message of theirs is an alert
+  ([notifications.md](notifications.md#rules)). Stars left the app on 2026-11-10 and the hub cleared the old ones
+  once (`clearStars`, packages/hub/src/store.ts), so Always alert is the only way to have someone always get through.
 - **Note**: yours only, kept on the hub.
 
 ### Your own bio
@@ -165,8 +166,9 @@ control or a lock and the reason), **Pinned** (hidden when there is nothing and 
 server (the most active twelve), **Members** by role.
 
 Right: **Seen as** (when several of your accounts are there: each may see and change different things),
-**Notifications** (the place's level, or Default with what it inherits and from where), **Invite link**, **Who can
-do what**, **Details** (your role, the account it is seen as, the native id to copy, when the network last said).
+**Notifications** (the place's rule: Automatic, Always alert, List only or Mute, and under Automatic what holds here
+and from where; [notifications.md](notifications.md#rules)), **Invite link**, **Who can do what**, **Details** (your
+role, the account it is seen as, the native id to copy, when the network last said).
 
 Everything that changes something goes through the same checks as before (docs/group-settings.md): the network's
 rules, then a fresh About through the account whose view it is.

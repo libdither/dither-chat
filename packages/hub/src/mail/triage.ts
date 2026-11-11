@@ -1,10 +1,11 @@
 /**
  * Triage of mail (docs/mail.md "Triage and notifications", docs/mail-design.md §10): each new message from a person
- * gets one of chat's four levels from chat's own decision model (learn.ts), and Important and Active ones notify
- * through the same push path, one notification per thread (delivery.ts).
+ * gets a tier from chat's own decision model (learn.ts), and what reaches a tier notifies through the same push path,
+ * one notification per thread (delivery.ts). Mail has two of chat's tiers: an alert, only from someone you set to
+ * always alert, and the list, by importance; there is no Conversation tier, and the local model does not read mail.
  *
  * **What is triaged**: mail that arrives live (`ingested` with `live`; never backfill or search hits), classed
- * personal (classify.ts), not yours and not a draft. Bulk is never triaged: no notification, no digest. Its body is
+ * personal (classify.ts), not yours and not a draft. Bulk is never triaged: no notification, no list. Its body is
  * waited for (it is fetched on arrival, bodies.ts) at most MAIL_TRIAGE.bodyWaitMs; then the model reads the subject
  * and the start of the text.
  *
@@ -17,29 +18,29 @@
  * carry no headers it waits for headerless.ts (`settled`), so a newsletter is not rated as a person.
  *
  * **The facts** are learn.ts's, from mail: network `email`, shape `mail`, the thread as the conversation, the mail
- * account as the space, the author (their person, else identity: the same feature chat uses, so a vote on Sam's mail
- * moves Sam on Signal too once you merged them), you in To as a mention, Cc or a list as `everyone`, a reply to one
- * of yours, a question or urgency in the subject or text, a link, an attachment, long. The prior: Important for
- * someone you correspond with who wrote to you (To), Active for one who Cc'd you, Digest for a sender nobody knows,
- * Important for a starred person. Fields with no meaning for mail (`native`, `notify`) are left out, so mail votes do
- * not move what chat learned about them.
+ * account as the space, the author (their person, else identity: the same feature chat uses, so "less like this" on
+ * Sam's mail moves Sam on Signal too once you merged them), you in To as a mention, Cc or a list as `everyone`, a
+ * reply to one of yours, a question or urgency in the subject or text, a link, an attachment, long. Importance
+ * starts where chat's does: as "the network would have notified you" (`notify`) for someone you correspond with who
+ * wrote to you or copied you in, and by how much it is about you for a list or a sender nobody knows.
  *
- * **Not a ping**: a message whose body warns of spoofing (a name that is another address, Reply-To elsewhere, a link
- * that says one site and goes to another: parts.ts) is held at Active at most. Late mail (a catch-up after the
- * manager was away), mail already read, mail not in Inbox and muted threads notify nobody; quiet hours hold Important
- * and Active as they hold chat.
+ * **Not an alert**: a message whose body warns of spoofing (a name that is another address, Reply-To elsewhere, a
+ * link that says one site and goes to another: parts.ts) never alerts, whoever it claims to be from. Late mail (a
+ * catch-up after the manager was away), mail already read, mail not in Inbox and muted threads notify nobody; quiet
+ * hours hold an alert as they hold chat's (it stays a silent row on the list).
  *
- * **Votes** (`POST /api/messages/:id/feedback` with a mail message id, or `POST /api/mail/triage/:id/vote`, from the
- * board, a notification or the reader) are kept here and join chat's in training (votes.ts `others`). "Not a person"
- * (classify.ts's `override` event) is a vote down.
+ * **Marks** (`POST /api/messages/:id/feedback` with a mail message id, or `POST /api/mail/triage/:id/vote`, from the
+ * board, a notification or the reader): "less like this" is the one mark mail has. It is kept here (as the feedback
+ * 'drop') and joins chat's in training (votes.ts `others`), with the votes from before the tiers. "Not a person"
+ * (classify.ts's `override` event) is "less like this".
  *
- * The rating lets a sender nobody knows into the one-list inbox at Active or above (§14 Q4, mail/attention.ts
- * `triage`), and tells the fold what was pushed (`triageFacts`).
+ * The rating lets a sender nobody knows into the one-list inbox when it is on the list or above (§14 Q4,
+ * mail/attention.ts `triage`), and tells the fold what was notified (`triageFacts`).
  */
 import type * as P from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { fit, type Grouped, type Line } from '../delivery.ts';
-import { describeWeight, importance, isTier, OLD_VOTE, predict, prior, STOOD, STOOD_PER_PLACE, TIER_NAME, voteWeight, words as wordsOf, type Example, type Facts, type Level } from '../learn.ts';
+import { describeWeight, importance, isTier, OLD_VOTE, predict, prior, TIER_NAME, voteWeight, words as wordsOf, type Example, type Facts, type Level } from '../learn.ts';
 import type { Store } from '../store.ts';
 import { inQuietHours, URGENT, type Triage } from '../triage.ts';
 import type { OtherVotes, TriageVotes } from '../votes.ts';
@@ -184,7 +185,7 @@ export class MailTriage {
     });
     hub.store.messageExtras.push((r, v) => {
       const t = hub.store.one<Row>('SELECT * FROM mail_triage WHERE message_id = ?', r.id);
-      if (t) v.triage = view(t);
+      if (t) v.triage = view(t, this.deps?.store.tiersAt() ?? 0);
     });
   }
 
@@ -216,15 +217,16 @@ export class MailTriage {
   }
 
   /**
-   * Decisions from before the tiers (store.ts `toTiers`), once: Important and Active mail becomes a row on the list,
-   * Digest and below go below it, each keeping what it was. Mail has no Conversation tier.
+   * Decisions from before the tiers (store.ts `toTiers`), once: mail rated Important or Active becomes a row on the
+   * list (also what quiet hours had held), Digest and below go below it, each keeping what it was. Mail has no
+   * Conversation tier.
    */
   private toTiers(tiersAt: number) {
     if (!tiersAt) return;
     this.hub.store.db
       .query(
         `UPDATE mail_triage SET was = COALESCE(level, decision),
-           decision = CASE WHEN decision IN ('push', 'quiet') THEN 'digest' WHEN decision = 'digest' THEN 'drop' ELSE decision END,
+           decision = CASE WHEN COALESCE(level, decision) IN ('push', 'quiet') THEN 'digest' ELSE 'drop' END,
            level = CASE WHEN level IN ('push', 'quiet') THEN 'digest' WHEN level = 'digest' THEN 'drop' ELSE level END
          WHERE was IS NULL AND created_at < ? AND decision != 'silent'`,
       )
@@ -462,7 +464,8 @@ export class MailTriage {
     score = Math.round(Math.max(0, Math.min(1, score)) * 100) / 100;
 
     const personRule = person ? d.store.rules().find((r) => r.scope === 'person' && r.target === person.id) : null;
-    const starred = !!person?.starred || personRule?.level === 'all';
+    // Always alert is a person rule; stars left the app (store.ts clearStars).
+    const starred = personRule?.level === 'all';
     // Where the sender and the address lines put it, which is what a mail client would have notified you about.
     let base: Level;
     if (starred) (base = 'push'), reasons.push(`From ${name}, who is set to always alert`);
@@ -587,8 +590,8 @@ export class MailTriage {
   factsOf(ids: string[]): Map<string, MailTriageFacts> {
     const out = new Map<string, MailTriageFacts>();
     if (!ids.length) return out;
-    for (const r of this.hub.store.all<Row>('SELECT message_id, delivered, facts, reasons FROM mail_triage WHERE message_id IN (SELECT value FROM json_each(?))', JSON.stringify(ids))) {
-      out.set(r.message_id, { pushed: !!r.delivered, question: !!json<Partial<Facts>>(r.facts, {}).question, reason: json<string[]>(r.reasons, [])[0] ?? null });
+    for (const r of this.hub.store.all<Row>('SELECT message_id, delivered, decision, score, facts, reasons FROM mail_triage WHERE message_id IN (SELECT value FROM json_each(?))', JSON.stringify(ids))) {
+      out.set(r.message_id, { pushed: !!r.delivered, alert: !!r.delivered && r.decision === 'push', importance: r.delivered ? (r.score ?? null) : null, question: !!json<Partial<Facts>>(r.facts, {}).question, reason: json<string[]>(r.reasons, [])[0] ?? null });
     }
     return out;
   }
@@ -690,7 +693,7 @@ export class MailTriage {
     return t.feedback === 'drop' ? { less: true } : {};
   }
 
-  /** Every mark and older vote on mail, and the newest notifications you let stand in each thread (votes.ts examples). */
+  /** Every mark and older vote on mail (votes.ts examples). A notification left alone says nothing: only what you did counts. */
   examples(now = this.now()): Example[] {
     const st = this.hub.store;
     const out: Example[] = [];
@@ -708,17 +711,6 @@ export class MailTriage {
       const old = (r.feedback_at ?? 0) < tiersAt ? OLD_VOTE : 1;
       out.push({ facts: author(r.address, JSON.parse(r.facts)), words: json<string[]>(r.words, []), label: r.feedback, weight: old * voteWeight(r.feedback_at ?? now, now), vote: true, at: r.feedback_at ?? 0 });
     }
-    // A notification about mail that you left alone says it was worth seeing.
-    const stood = st.all<Row>(
-      `SELECT address, facts, created_at FROM (
-         SELECT address, facts, created_at, ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY created_at DESC) AS n
-         FROM mail_triage WHERE feedback IS NULL AND facts IS NOT NULL AND delivered = 1 AND decision IN ('push', 'digest') AND created_at > ? AND created_at < ?)
-       WHERE n <= ?`,
-      now - 30 * DAY,
-      now - DAY / 2,
-      STOOD_PER_PLACE,
-    );
-    for (const r of stood) out.push({ facts: author(r.address, JSON.parse(r.facts)), words: [], y: { important: 1 }, weight: STOOD, vote: false, at: r.created_at });
     return out;
   }
 
@@ -736,7 +728,8 @@ export class MailTriage {
       below,
     );
     const who = this.hub.store.whoIs([...new Set(rows.map((r) => lc(r.from_addr)).filter(Boolean))]);
-    return rows.map((r) => itemOf(r, who.get(lc(r.from_addr))));
+    const tiersAt = this.deps?.store.tiersAt() ?? 0;
+    return rows.map((r) => itemOf(r, who.get(lc(r.from_addr)), tiersAt));
   }
 
   /** A thread's newest decision, for its view. */
@@ -747,7 +740,7 @@ export class MailTriage {
       threadId,
     );
     if (!r) return null;
-    return itemOf(r, this.hub.store.whoIs([lc(r.from_addr)]).get(lc(r.from_addr)));
+    return itemOf(r, this.hub.store.whoIs([lc(r.from_addr)]).get(lc(r.from_addr)), this.deps?.store.tiersAt() ?? 0);
   }
 
   // ---------------------------------------------------------- names, for what was learned in words (votes.ts namer)
@@ -788,21 +781,23 @@ function authorOf(s: Pick<MailSender, 'personId' | 'identityId'> | null, address
   return s?.personId ?? s?.identityId ?? (address ? hubId('idn', 'email', address) : null);
 }
 
-function view(t: Row): P.TriageView {
+/** A decision as the app sees it. A 'drop' given since the tiers is the mark "less like this"; an older feedback is a vote from before them. */
+function view(t: Row, tiersAt: number): P.TriageView {
   const probs = json<Partial<P.TriageProbs> | null>(t.probs, null);
+  const less = t.feedback === 'drop' && (t.feedback_at ?? 0) >= tiersAt;
   return {
     decision: t.decision,
     score: t.score ?? null,
     reasons: json<string[]>(t.reasons, []),
     decidedBy: t.decided_by,
-    feedback: t.feedback ?? null,
+    feedback: less ? null : (t.feedback ?? null),
     // Chances from before the tiers were three others.
     probs: probs && typeof probs.important === 'number' && typeof probs.alert === 'number' ? { alert: probs.alert, important: probs.important } : null,
-    ...(t.feedback === 'drop' ? { marks: { less: true } } : {}),
+    ...(less ? { marks: { less: true } } : {}),
   };
 }
 
-function itemOf(r: Row, who: { identityId: string; personId: string | null } | undefined): P.MailTriageItem {
+function itemOf(r: Row, who: { identityId: string; personId: string | null } | undefined, tiersAt: number): P.MailTriageItem {
   return {
     kind: 'mail',
     id: r.message_id,
@@ -813,7 +808,7 @@ function itemOf(r: Row, who: { identityId: string; personId: string | null } | u
     preview: r.preview ?? null,
     ts: r.received_at,
     unread: !r.seen && !r.seen_local,
-    triage: view(r),
+    triage: view(r, tiersAt),
   };
 }
 

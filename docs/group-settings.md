@@ -3,8 +3,8 @@
 One panel shows what a group, channel, server, room, space or community *is* and how it is set up: its name,
 description and picture, its members and their roles, who may change what, its invite link, disappearing
 messages, slow mode, the age flag, announcement-only, join approval and pinned messages. Every setting says
-whether **your account** may change it there, and why not when it may not. Notification levels are not here:
-they are the hub's own, set from the menus and the details panel (docs/devices.md, docs/inbox.md).
+whether **your account** may change it there, and why not when it may not. Notification rules are not here:
+they are the hub's own, set from the menus and the details panel (docs/notifications.md, docs/devices.md).
 
 The protocol is in `packages/protocol/src/about.ts`; the hub side in `packages/hub/src/about.ts`; the panel in
 `packages/web/src/ui/About.tsx`. The headless check is `scripts/verify-about.ts`.

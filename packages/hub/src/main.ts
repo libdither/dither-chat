@@ -180,6 +180,8 @@ function deliver(title: string, body: string, conversationId: string, messageId:
   const look = store.notifyLook(conversationId, kind === 'message' ? messageId : undefined);
   const vote = kind === 'message' ? { messageId, level, tier, ...(importance !== null ? { importance } : {}) } : {};
   const grouped = kind === 'message' ? delivery.plan(conversationId, messageId, tier, addressed) : null;
+  // The row keeps the highest tier of what it shows (delivery.ts `Grouped.tier`); only this message's own tier sounds.
+  if (grouped?.tier && kind === 'message') Object.assign(vote, { tier: grouped.tier, level: grouped.tier === 'push' ? 'push' : 'quiet' });
   server.notify({ t: 'notify', messageId, conversationId, title, body, reasons, ...look, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(tier !== 'push' ? { level: tier } : {}) });
   server
     .warm(pictures(look, grouped))

@@ -7,7 +7,7 @@
  * unread in its chat. The codes are those of the four levels the tiers replaced.
  *
  * For each message, in order:
- *   1. A place or person you muted, or a held message request: silent.
+ *   1. A place you muted, or a held message request: silent.
  *   2. A person or place you set to always alert, or one of your keywords: an alert.
  *   3. Its importance, a chance (learn.ts): it starts from the network's own setting for the place and moves with
  *      what you opened, swiped away and marked.
@@ -366,7 +366,7 @@ export class Triage {
     d.decision = tier;
     const pct = (x: number) => `${Math.round(x * 100)}%`;
     if (why) d.reasons.unshift(CONVERSING_REASON[why]);
-    if (tier === 'push') d.reasons.unshift(`Reads as urgent: the local model's answer is ${f.judge} against a bar of ${alertBar(f)}`);
+    if (tier === 'push') d.reasons.unshift((f.judge ?? 0) >= alertBar(f) ? `Reads as urgent: the local model's answer is ${f.judge} against a bar of ${alertBar(f)}` : `The local model's answer is ${f.judge}, under its bar of ${alertBar(f)}: your marks made it an alert`);
     else if (tier === 'digest') d.reasons.unshift(`On the list: importance ${pct(p.probs.important)}, at or over your level of ${pct(t.important)}`);
     else if (tier === 'drop') d.reasons.unshift(`Below the list: importance ${pct(p.probs.important)}, under your level of ${pct(t.important)}`);
     if (tier !== before) {

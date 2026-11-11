@@ -2,10 +2,13 @@
 
 The inbox used to be fixed sections (Needs you, Pinged you, Unread, Recent chats) with group chats in a separate
 Groups view. It is now one list: DMs, group chats, rooms outside a space and notes to self, plus any other
-channel or thread while it has an unread mention or pinged you. Accounts that need you (a QR to scan, a login)
-stay on top. The hub scores every conversation by how much it needs you and by where you were just now (the
-formula, below), then a model learned from what you open reorders it ([A learned order](#a-learned-order)); the
-list goes by that score, with muted places last. Unread rows keep their bold title and badge wherever they land.
+channel or thread while it holds an unread mention, or an unread message that triage made an alert, a Conversation
+or a row on the list ([notifications.md](notifications.md)), unless the place is muted. Accounts that need you (a QR
+to scan, a login) stay on top. The hub scores every conversation by how much it needs you and by where you were
+just now (the formula, below), then a model learned from what you open reorders it
+([A learned order](#a-learned-order)); the list goes by that score, with muted places last. A conversation with an
+alert you have not seen comes before everything else. Unread rows keep their bold title and badge wherever they
+land.
 
 What needs you shows on the row, not in a section. A reply you owe that the hub still counts (they wrote last, the
 row's `owedSince`, and it needs you, `needs`) has ↩ and how long it has waited, in the accent colour, beside the
@@ -41,8 +44,8 @@ Direct messages and Groups only chats. Tapping one opens the reader beside the i
 here changes.
 
 The score uses metadata only: who wrote, when, who replied to whom, mentions, the conversation's shape and member
-count, unread state, triage's decisions and time spent and where you were (`usage.ts`). It never reads message text. "Asks a question"
-comes from triage's stored decision, not from the text.
+count, unread state, triage's stored decisions (the tier and the importance) and time spent and where you were
+(`usage.ts`). It never reads message text. "Asks a question" comes from triage's stored decision, not from the text.
 
 Code: `packages/hub/src/attention.ts` (features and score), `rank.ts`, `rankhistory.ts` and `ranker.ts` (the
 learned order), `packages/web/src/inbox.ts` (the order on screen), `ordering.ts` (the snapshot rules, shared with
@@ -55,11 +58,13 @@ and the reasons. In points, roughly 0 to 100. A conversation **needs you** at 20
 lately moves a row, it does not make it need you.
 
 ```
-score = max(owed, unread + pinged, live) + relationship + noise + recency + visited   (muted: −50 + recency)
+score = max(owed, unread + pinged, live) + importance + relationship + noise + recency + visited
+                                                                       (muted: −50 + recency)
 
 owed         = 60 × p × curve(age)
 unread       = 8 + 12 × min(addressed, 3) + 3 × min(other, 3)         when anything is unread
-pinged       = 15                                                      triage pushed something still unread
+pinged       = 15, and 40 more for an alert                            an alert or Conversation message, unread, unseen
+importance   = 25 × triage's importance, 0..1                          of the newest message in a tier, unread, unseen
 live         = 30 × 2^(−since your last message / 30 min)              you and they wrote within an hour of each other
 relationship = 25 × strength                                           strength 0..1
 noise        = 20 × fit if fit < 0, else 8 × fit                       fit −1..1
@@ -68,10 +73,11 @@ visited      = 30 × 2^(−since you were last there / 2 h)                a pla
 ```
 
 Something to **answer** (owed), something to **read** (unread, pinged) and a **conversation going on** (live) are one
-need, not three, so the largest counts (`parts.overlap` takes off the rest). Reading clears what there was to read; only answering, or time, clears what
-you owe. So reading a message from someone you answer leaves the conversation where it was, and reading one you would
-not answer lets it go. Before, the two added up, and reading a fresh message took its points away while the owed part
-was still near zero: the conversation you were in sank below chats you had finished with.
+need, not three, so the largest counts (`parts.overlap` takes off the rest). Importance is added apart from them.
+Reading clears what there was to read; only answering, or time, clears what you owe. So reading a message from someone
+you answer leaves the conversation where it was, and reading one you would not answer lets it go. Before, the two
+added up, and reading a fresh message took its points away while the owed part was still near zero: the conversation
+you were in sank below chats you had finished with.
 
 ### Owed reply
 
@@ -106,11 +112,37 @@ While a turn is open, `age` is the time since its first addressed message, and
 So someone you answer 9 times in 10 is worth about 50 points as soon as they write, and needs you. Someone you answer
 1 time in 10 stays near 10 and does not.
 
-### Unread and pinged
+### Unread, alerts and importance
 
 DM messages and mentions count 12 each (up to 3). Other unread messages count 3 each (up to 3). Anything unread
 adds 8. An unread busy group you never take part in therefore does not need you, and a mention in it lifts
-it. Pinged adds 15 when triage pushed a message you have not read.
+it.
+
+Where triage put the conversation's newest unread message that it put in a tier at all (an alert, a Conversation or
+the list: [notifications.md](notifications.md)) counts too (`Attention.input`):
+
+- **A Conversation message** adds `pinged`, 15 points, and the row's reason is triage's first reason for it.
+- **An alert** adds those 15 and 40 more (`alerted`), and 1,000 on top of the whole score, the formula's or the
+  learned one (`ALERT_PIN`): a conversation with an alert you have not seen sorts before everything else, whatever
+  the order learned. Its reason starts "Alerted you:". The pin lasts a day at most (`PIN_FOR`): what could not wait
+  an hour is, a day later, an unread message like any other.
+- **Its importance**, 0 to 1, adds 25 times itself, whatever its tier. For a message on the list that is the row's
+  reason: "On your list: importance 72%".
+
+**Seen.** All three last until you read the conversation, or swipe its notification away on the phone: the app
+reports the swipe as `dismissed` ([activity.md](activity.md)), a dismissal at or after that message is read as
+seen, and the conversation is scored again at once (`POST /api/activity/notifications` in `server.ts`). It needs the
+activity log to be on. The conversation stays unread and no read receipt goes anywhere, but its place at the top, its boost and its
+importance stop counting until a newer message lands in a tier.
+
+**Server channels and threads** are not in the list by themselves. One is listed while it holds an unread mention,
+or an unread message on the list or above, and is not muted or set to List only; before the tiers it took a mention
+or a notification. Swiping its notification away leaves it listed, as an unread row with nothing more to say, until
+you read it.
+
+A mail thread has two of the three (`mail/attention.ts`): an alert about an unread message of it is `pinged` and
+pinned as a chat's is, with triage's first reason, and a notified message on the list adds its importance. Mail has
+no Conversation tier. A swipe is read as seen there too.
 
 ### A conversation going on
 
@@ -154,8 +186,8 @@ A weighted sum, 0..1:
 
 ### Noise
 
-Per place: messages from others per day, pushes per day, and your engagement (your messages plus visits) per
-day, all from decayed sums. Then
+Per place: messages from others per day, those of them triage put in a tier per day (`pushed`: alerts,
+Conversations and list rows), and your engagement (your messages plus visits) per day, all from decayed sums. Then
 
 ```
 fit = clamp(log2((1 + 4 × engaged) / (1 + received + pushed)) / 5, −1, 1)
@@ -167,7 +199,7 @@ use later (`Attention.placeNoise`); triage does not use them yet.
 
 ### Muted
 
-A conversation muted on the hub (Nothing, Digest only) or on its network sits at −50 plus its recency, below
+A conversation set to Mute or List only on the hub, or muted on its network, sits at −50 plus its recency, below
 everything else, and never needs you. Notes to self are silent by default because you do not notify yourself.
 That is not a mute, so they rank normally.
 
@@ -183,7 +215,9 @@ the row's tooltip and at the top of its right-click menu (a sheet on a phone):
 | owed, reply rate known (3+ turns) | You reply to Sam most of the time / about half the time / rarely; unanswered for 2 days |
 | owed, otherwise | Sam wrote to you / mentioned you / replied to you / asked the group something / answered you 3 hours ago; not answered yet |
 | unread | 2 unread messages · 1 unread mention, 4 more unread |
-| pinged | Pinged you: (triage's first reason) |
+| an alert you have not seen | Alerted you: (triage's first reason) |
+| an unread Conversation message | triage's first reason as it stands: A direct message · You wrote here in the last day |
+| importance, for a message on the list | On your list: importance 72% |
 | relationship ≥ 0.3, by its largest part | You talk with Sam often: about 12 messages a week · You spend time here: 2 hours lately · You wrote here 3 hours ago · You answer here 80% of the time · It goes both ways here |
 | noise | Busy (about 200 messages a day) and you rarely take part · Quiet, and you take part when it speaks |
 | muted | Muted: (where the mute comes from) |
@@ -196,8 +230,9 @@ has one (until 2026-11-10 only with nothing unread).
 ## Features, kept incrementally
 
 The hub keeps per conversation (`conv_feature`) a JSON state folded over its messages in `(ts, rowid)` order up
-to a cursor: decayed counts of messages from others, from you and pushed (half-life 30 days), totals, the last
-times, the open turn, the last push, and a tally of addressed and answered turns with a reply-latency histogram
+to a cursor: decayed counts of messages from others, from you and of those triage put in a tier (half-life 30
+days), totals, the last times, the open turn, the last message triage put in a tier (`lastPush`), and a tally of
+addressed and answered turns with a reply-latency histogram
 (buckets from 5 minutes to 3 days). Per conversation and author (a person, else an identity) there is the same
 tally (`conv_author_feature`), so a person's reply rate is a sum over a few rows.
 
@@ -211,7 +246,7 @@ tally (`conv_author_feature`), so a person's reply rate is a sum over a few rows
 - **In the background**: a pump folds whatever is behind its cursor, at most 5000 messages and about 30 ms per
   step, until nothing is. A new hub, or a `FEATURE_VERSION` bump, folds everything this way.
 - **Triage after the fold**: triage decides a moment after the message is stored. If the fold already passed
-  it, `Attention.triaged` adds the push or the question; a later full fold reads the stored decision instead.
+  it, `Attention.triaged` adds the tier or the question; a later full fold reads the stored decision instead.
 - **Time**: every 5 minutes all listed conversations are scored again, since an unanswered message ages and
   recency fades. A change in notification rules scores everything at once.
 
@@ -219,6 +254,8 @@ Measured on a copy of a real hub (93,439 messages, 5,234 conversations, 403 list
 1.9 s in 59 steps of at most 35 ms; scoring all 403 takes about 55 ms; the features take 384 KB. That is about
 20 µs a message, so a million imported messages fold in about 20 s of background steps. Since the fold also looks
 for your reactions (version 2), it is slower: 129,600 messages in 5.7 s on a later copy, about 44 µs a message.
+Version 3 counts list rows, with alerts and Conversations, as what triage put in a tier, so a hub's first start with
+the tiers folds everything again.
 
 Not followed: a message deleted or edited after it was folded (its mention or reply target) keeps counting
 until the conversation folds again. Merging two people leaves their old author rows under the old person until
@@ -226,14 +263,14 @@ then too. `POST /api/attention/rebuild` folds again.
 
 ## When the list moves
 
-The order is the hub's score, highest first, with muted places last; equal scores go by the latest message
-(`rank` in `ordering.ts`). The order on screen is a snapshot (`inbox.ts`), taken by the same rule as the sidebar's automatic orders
-(`shouldResort` in `ordering.ts`, [organize.md](organize.md#when-the-order-changes)): at start, when the app
-comes back to the front, every 5 minutes, and with one more reason for the inbox, **activity**: any change in
-the ranking (a new score, a new conversation, one gone). None of these happen while anything is in use: a
-pointer over a list, a touch on one in the last 4 seconds, an open menu, a drag, or keyboard focus in a list.
-They retry every 1.5 s until that ends. So the inbox is as current as a chat app's while you are not touching
-it, and never moves under your pointer or finger.
+The order is the hub's score, highest first, with muted places last; equal scores go by the latest message (`rank` in
+`ordering.ts`). An alert you have not seen is 1,000 points in that score, so it is first. The order on screen is a
+snapshot (`inbox.ts`), taken by the same rule as the sidebar's automatic orders (`shouldResort` in `ordering.ts`,
+[organize.md](organize.md#when-the-order-changes)): at start, when the app comes back to the front, every 5 minutes,
+and with one more reason for the inbox, **activity**: any change in the ranking (a new score, a new conversation, one
+gone). None of these happen while anything is in use: a pointer over a list, a touch on one in the last 4 seconds, an
+open menu, a drag, or keyboard focus in a list. They retry every 1.5 s until that ends. So the inbox is as current as
+a chat app's while you are not touching it, and never moves under your pointer or finger.
 
 The conversation you have open keeps its place across snapshots until you leave it (`inboxSnapshot`'s `hold`):
 reading or answering it changes its score, and it should not jump away while you are in it. Leaving it asks for a
@@ -243,10 +280,10 @@ Between snapshots rows keep their places. A new conversation goes at the end unt
 places when the order changes (`useFlip`). Before the hub has scored a conversation, or with
 a hub that predates scores, it ranks unread first, then by recency.
 
-The inbox button and the phone's Catch up tab count the Important messages of the last week that you have not read, by
-where each is now (one you voted down to Active no longer counts), plus accounts that need you: the same count as the
-push's. How it sorts' own "buzzed you (N unread)" is the same number, from the same lists (`packages/web/src/board.ts`).
-A turn you owe does not raise a badge you cannot clear by reading.
+The inbox button and the phone's Catch up tab count the alerts and the Conversation messages of the last week that
+you have not read, plus accounts that need you (`inboxBadge` in `packages/web/src/model.ts`). The list does not
+count. How it sorts shows the same two numbers beside its Alerts and Conversations, from the same lists
+(`packages/web/src/board.ts`). A turn you owe does not raise a badge you cannot clear by reading.
 
 ## Catch up
 
@@ -268,12 +305,12 @@ the device (`localStorage`, `dither-chat:catch-up-done`) with the conversation's
 you owe marks it read but leaves it owed, so it comes back only once a newer message arrives. Later keeps no state
 anywhere.
 
-**A card**, one per conversation: the picture with the network badge and account dots, the name (and community), "waiting
-3h" when you owe a reply, and the level its messages landed on since you last read it (Important, Active or Digest:
-the highest, by where each is now). Under it the messages since you last read it (or since the message you owe an answer,
-whichever came first), the last 5 with "and N earlier" to show the rest, pictures as thumbnails that open the viewer.
-Then a one-line reply box that grows, and Done, Later and Open. A mail card shows the subject and the newest snippet,
-with Open and Done, and no reply box.
+**A card**, one per conversation: the picture with the network badge and account dots, the name (and community),
+"waiting 3h" when you owe a reply, and the tier its messages landed in since you last read it (Alert, Conversation or
+List: the highest). Under it the messages since you last read it (or since the message you owe an answer, whichever
+came first), the last 5 with "and N earlier" to show the rest, pictures as thumbnails that open the viewer. Then a
+one-line reply box that grows, and Done, Later and Open. A mail card shows the subject and the newest snippet, with
+Open and Done, and no reply box.
 
 - **Done** marks it read (a mail thread too) and takes it off the queue.
 - **Later** moves it to the end of the queue.
@@ -297,7 +334,7 @@ or with a menu, sheet or dialog open.
 
 **The header**: "Catch up · N waiting" (cards not yet answered), Mark all read (with its confirm; for 10 seconds after
 it, the cards that no longer need you leave as the reads come in, and replies you owe stay), and How it sorts
-([notifications.md](notifications.md#voting)). Accounts that need you (a sign-in, a QR) are one line under it, each
+([notifications.md](notifications.md#marks)). Accounts that need you (a sign-in, a QR) are one line under it, each
 name a link to its page. With nothing waiting: "All caught up", when the last message came, and How it sorts.
 
 `scripts/verify-catchup.ts` drives it on a fresh demo hub: the queue and its order, j/k/e/l, a reply from a card
@@ -393,21 +430,25 @@ against, and a ceiling a later fit can use: a row that was never on screen canno
 
 **Features**, all metadata: the formula's score, how long since you were there (an hour and a day half-life, and
 never), since the latest message (the same two), since you wrote, unread messages and mentions, the owed and
-conversation-going-on parts, a push still unread, relationship strength, noise, decayed visits and minutes, and
-the shape (DM, group, notes). Never what was said.
+conversation-going-on parts, an alert or Conversation message still unread (`pinged`), relationship strength, noise,
+decayed visits and minutes, and the shape (DM, group, notes). Never what was said. Triage's importance reaches it
+only through the formula's score. The inbox as rebuilt for learning (`seenAt` in `rankhistory.ts`) reads alerts,
+Conversations and importance as the live score does; it does not replay a swipe, so a row swiped away counts a
+little more there than it did.
 
-**What triage knows, tried as features (2026-11-10).** Where triage put the newest unread message it decided on
-(Important, Active, Digest, Not interesting, or none: your vote if you had cast one by then, else its decision), and
-your votes on the conversation's messages lately, up and down (decayed, half-life two weeks), as features of both
-chances (`TRIAGE_FEATURES` in `rank.ts`). No hand-set weight for importance: if opens and replies follow it, the
-features would carry it. In the replay they did not help: with them the learned order was −0.003 (−0.008 to 0.001)
-on the choosing days, −0.007 (−0.019 to 0.003) held out (180 opens) and −0.016 (−0.042 to 0.004) on held-out opens
-from elsewhere; the level of the newest message read or not did no better (−0.002). What the level says is mostly
-there already: a push still unread is `pinged`, and unread and mentions count the rest. And there were 28 votes in
-all, none of them up, so the vote features had almost nothing to learn from. So the hub keeps them at the prior's 0
-(an infinite pull in `LAMBDA`) and does not work them out; `inbox-replay.ts --triage` learns them again, as the votes
-grow. To turn them on: a finite pull for them in `LAMBDA`, and `level` and `votes` in `Attention.input` (as
-`seenAt` in `rankhistory.ts` has them).
+**What triage knows, tried as features (2026-11-10, before the tiers).** Under the four levels the tiers replaced:
+where triage put the newest unread message it decided on (Important, Active, Digest, Not interesting, or none: your
+vote if you had cast one by then, else its decision), and your votes on the conversation's messages lately, up and
+down (decayed, half-life two weeks), as features of both chances (`TRIAGE_FEATURES` in `rank.ts`). No hand-set
+weight for importance: if opens and replies follow it, the features would carry it. In the replay they did not help:
+with them the learned order was −0.003 (−0.008 to 0.001) on the choosing days, −0.007 (−0.019 to 0.003) held out
+(180 opens) and −0.016 (−0.042 to 0.004) on held-out opens from elsewhere; the level of the newest message read or
+not did no better (−0.002). What the level said was mostly there already: a notification still unread was `pinged`,
+and unread and mentions count the rest. And there were 28 votes in all, none of them up, so the vote features had
+almost nothing to learn from. So the hub keeps them at the prior's 0 (an infinite pull in `LAMBDA`) and does not
+work them out; `inbox-replay.ts --triage` learns them again. They still read the stored codes and the votes from
+before the tiers; marks are not among them. Since the tiers, what triage knows is in the formula itself: `pinged`,
+the alert's place at the top and `importance` ([above](#unread-alerts-and-importance)).
 
 **Prior.** The open chance starts as a function of the formula's score alone, `logit = −5.1 + 0.66 × score/10`:
 1 in 160 at 0 points, 1 in 7 at 50, even odds at 77. That was fitted to the opens of the choosing days below
@@ -435,6 +476,28 @@ prior's two weights, 30 for the rest), so a few days of opens move the order a l
 `DITHER_INBOX_RANK`: `model` (the default) sorts by it; `shadow` works it out and shows it in
 `GET /api/attention/:id` without sorting by it; `off` does neither. `DITHER_INBOX_EXPLORE`: `1` (the default) sorts
 by a sample of it ([Exploring](#exploring)); `0` sorts by its mean, exactly as before exploring.
+
+### The floor
+
+Some things can only count for a row, never against it: something unread, a mention, a reply you owe, a
+conversation going on, an alert or a Conversation message waiting, a DM (`FLOORED` in `rank.ts`: `unread`,
+`mentions`, `owed`, `live`, `pinged`, `direct`). When the open chance is fitted, the weights of these may rise above
+the prior's and may not fall below it (`fitSteps`' `floor`, part of `FIT`). The prior gives each of them 0 on top of
+what the formula's score already carries, so the model can add to what the formula gives them and never take away.
+The send chance has no floor.
+
+**Why.** A week of opens once taught the model that unread DMs you owe a reply in are opened less. They were at the
+top of the list anyway, so every open of something else counted against them, and a fresh DM sank to row 14.
+
+**What it costs.** Next to nothing. In the replay of 2026-11-10 (8 days, 443 opens of a listed conversation, the
+last 3 days held out with 207; `--floor` adds `no-floor`, the same model fitted without it), the held-out MRR is
+0.400 with the floor and 0.400 without. Paired on the same opens, taking the floor away is worth −0.004 (95% interval
+−0.015 to 0.008) on the choosing days, −0.000 (−0.015 to 0.013) held out, and −0.003 (−0.012 to 0.009) over every day
+after the first (389 opens): each interval spans zero. Only on the 74 held-out opens from elsewhere is the model
+without the floor a little ahead, +0.014 (0.002 to 0.029). Flooring the formula's own weight as well (`floor-formula`
+in the replay) was tried and is worse, −0.013 (−0.025 to −0.002) over every day after the first, so the formula's
+weight stays free. In that run the learned order with the floor was ahead of the formula's one list by +0.051 (0.018
+to 0.077) held out, and by +0.042 (0.025 to 0.062) over every day after the first.
 
 ### Exploring
 
@@ -531,7 +594,7 @@ left out; a person's page counts as the best of their DMs. The earlier days are 
 are held out (two until 2026-11-10). It writes counts and rates only.
 
 ```
-bun scripts/inbox-replay.ts --live .data/hub.sqlite --out <scratch dir> [--holdout 3] [--grid] [--model-grid] [--calibrate] [--curve] [--triage] [--explore]
+bun scripts/inbox-replay.ts --live .data/hub.sqlite --out <scratch dir> [--holdout 3] [--grid] [--model-grid] [--calibrate] [--curve] [--triage] [--floor] [--explore]
 ```
 
 `--model-grid` replays the learned order with other settings, each against the shipped one on the same opens: the
@@ -589,12 +652,13 @@ afterwards. Import in transactions of a few thousand messages so the hub keeps a
 given a few candidate conversations (the top of the ranking with an open turn, say) and their latest message ids,
 it answers per conversation
 `{ needsReply: 0..1, importance: 0..1, reason }`. Answers go in `Attention.judged`, and `scoreConversation`
-already uses them: `p` becomes the mean of the reply rate and `needsReply`, `importance` adds up to 10 points,
-and the reason shows as "Model: …". Nothing implements it yet. It should follow triage.ts's `askModel`:
-Ollama at `DITHER_OLLAMA_URL`, a few recent messages as context, a short timeout, and your corrections as
-few-shot examples. Those would come from triage's votes (▲/▼ on a message's level) and, once added, a "doesn't need me" action on
-an inbox row. Run it off the ingest path, on a timer or after a sync, for a handful of conversations at a time.
-This is the only part that would read message text, and only in the local model.
+already uses them: `p` becomes the mean of the reply rate and `needsReply`, its `importance` adds up to 10 points
+(the `judged` part, apart from triage's importance above), and the reason shows as "Model: …". Nothing implements it
+yet. It should follow the way triage asks its one question about an alert (`triage.ts` `judge`, `main.ts`
+`alertJudge`): the machine's local model, a fixed question, a short timeout, and going on without an answer. Your
+corrections would come from triage's marks and, once added, a "doesn't need me" action on an inbox row. Run it off
+the ingest path, on a timer or after a sync, for a handful of conversations at a time. In the inbox this is the only
+part that would read message text, and only in the local model.
 
 What you actually did with notifications and chats, as labelled data for this model and for triage's, is in the
 activity log ([activity.md](activity.md)): open rate after a push, time to open, dwell, replies after opening, and

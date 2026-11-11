@@ -497,11 +497,11 @@ CREATE INDEX IF NOT EXISTS visit_conv ON visit(conversation_id, start_at) WHERE 
 CREATE INDEX IF NOT EXISTS visit_person ON visit(person_id, start_at) WHERE person_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS visit_push ON visit(push_id) WHERE push_id IS NOT NULL;
 
--- Every push and digest the hub sends, by the id the device sees (`nid` in the payload), and what came of it.
+-- Every push the hub sends, by the id the device sees (`nid` in the payload), and what came of it.
 -- The *_at columns are the first time any device said so; notification_event has each device's word.
 CREATE TABLE IF NOT EXISTS notification (
   id              TEXT PRIMARY KEY,
-  kind            TEXT NOT NULL,             -- message, held (quiet hours summary), digest, request (docs/add.md)
+  kind            TEXT NOT NULL,             -- message, held (quiet hours summary), request (docs/add.md); digest, before the tiers
   message_id      TEXT,
   conversation_id TEXT,
   sent_at         INTEGER NOT NULL,

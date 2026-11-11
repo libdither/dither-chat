@@ -9,8 +9,9 @@
  *  - you answer openings there at `ANSWER_RATE` or more (interact.ts `answerRate`: of the times someone started
  *    talking there while you were away, how often you wrote back within three hours, the last months counting most).
  *
- * On ten days of a real hub (2026-11) this is about 14 chats a day: 11 by the first three, 3 more by the rate. A
- * rate of 0.05 makes it 16, 0.02 makes it 19 with twice the silent updates.
+ * On ten days of a real hub (2026-11, docs/triage-replay.md) this is 17 or 18 chats a day, 20 at most, with about 60
+ * silent updates. A lower rate lets in more: counted another way on the same days, 0.05 added two chats a day to
+ * 0.1's, and 0.02 added five with nearly twice the updates.
  */
 import type { Facts } from './learn.ts';
 

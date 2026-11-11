@@ -219,7 +219,7 @@ describe('only mail from people', () => {
     });
     expect(w.mail().size).toBe(0);
     const theo = tid(w.hub, '<t1@x>');
-    // Slice 9's rating: Active or above lets it in.
+    // Slice 9's rating: on the list or above lets it in.
     mailAttention(w.hub)!.triage = (id) => id === theo;
     w.attention.rescoreAll();
     expect([...w.mail().keys()]).toEqual([theo]);

@@ -1,5 +1,5 @@
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, NETWORK_META, sendBlocker, showsGone, showsInline, TIER_LABEL } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, NETWORK_META, RULE_LABEL, RULE_LEVELS, sendBlocker, showsGone, showsInline } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import { ago, bytes, clock, dayLabel, fullTime, sameDay } from '../format.ts';
@@ -7,7 +7,11 @@ import { retention } from '../history.ts';
 import { isJumbo, renderMarkdown } from '../markdown.ts';
 import { inviteRef } from '../invites.ts';
 import {
-  LEVEL_LABEL,
+  AUTOMATIC,
+  AUTOMATIC_HELP,
+  OLDER_RULE,
+  OLDER_RULE_HELP,
+  RULE_HELP,
   authorName,
   plainBody,
   convByNative,
@@ -16,10 +20,14 @@ import {
   crumbs,
   directsOf,
   effectiveLevel,
+  heldHere,
   identityName,
   kindLabel,
   netName,
   personOf,
+  ruleIcon,
+  ruleName,
+  ruleOn,
   threadsOf,
   visibleAccount,
 } from '../model.ts';
@@ -60,10 +68,10 @@ import {
 } from '../state.ts';
 import { reactionContext } from '../reactions.ts';
 import { openAbout } from './About.tsx';
-import { AccountChip, AccountDots, Avatar, Empty, Menu, NetBadge, NetGlyph, Skeleton, levelIcon, variantIcon } from './bits.tsx';
+import { AccountChip, AccountDots, Avatar, Empty, Menu, NetBadge, NetGlyph, Skeleton, variantIcon } from './bits.tsx';
 import { HoverReactions, ReactionBar, useLongPress } from './Reactions.tsx';
 import { Icon } from './icons.tsx';
-import { TIER_ICON, TierPicker, TriageChances, triageHeading } from './TierVote.tsx';
+import { TriageWhy, tierIcon, tierName } from './Marks.tsx';
 import { MessageHistory, Ticks } from './MessageHistory.tsx';
 import { detailsShown, showDetails, swipeReply } from './Pager.ts';
 import { openConv } from './Sidebar.tsx';
@@ -123,58 +131,66 @@ function Crumbs({ c }: { c: P.ConversationView }) {
   );
 }
 
+/**
+ * A conversation's notification rule, from its header: Automatic (no rule), Always alert, List only or Mute. With no
+ * rule of its own, the line under Automatic says what holds: a rule above it, or what the network does here.
+ */
 export function LevelMenu({ c }: { c: P.ConversationView }) {
   const eff = effectiveLevel(c);
-  const levels: P.NotifyLevel[] = ['all', 'smart', 'mentions', 'digest', 'none'];
+  const own = ruleOn('conversation', c.id);
   const com = c.spaceIds[0] ?? (c.parentId ? db.conversations.get(c.parentId)?.spaceIds[0] : undefined);
+  // The button says the rule that holds; with none, Automatic. A place muted on its network looks kept to the list.
+  const held = eff.rule === 'mentions' ? 'Mentions only' : ruleName(eff.rule);
+  const look = eff.rule ?? (eff.level === 'digest' ? 'digest' : 'auto');
+  const pick = (l: P.RuleLevel | null, close: () => void) => () => {
+    setRule('conversation', c.id, l);
+    close();
+  };
   return (
     <Menu
       align="right"
       trigger={(toggle) => (
-        <button class={`hdr-btn level ${eff.level}`} data-track="notification level" onClick={toggle} title={`Notifications: ${LEVEL_LABEL[eff.level]} (${eff.source})`} aria-label={`Notifications: ${LEVEL_LABEL[eff.level]}`}>
-          <Icon name={levelIcon(eff.level)} size={16} />
-          <span class="hdr-btn-label">{LEVEL_LABEL[eff.level]}</span>
+        <button class={`hdr-btn level ${look}`} data-track="notification level" onClick={toggle} title={`Notifications: ${ruleName(eff.rule)} (${eff.source})`} aria-label={`Notifications: ${held}`}>
+          <Icon name={ruleIcon(eff.rule)} size={16} />
+          <span class="hdr-btn-label">{held}</span>
         </button>
       )}
     >
       {(close) => (
         <div class="level-menu">
           <div class="menu-title">Notify me about {convLabel(c)}</div>
-          {levels.map((l) => (
-            <button
-              data-track={`notification level (${l})`}
-              class={`menu-item ${eff.explicit && eff.scope === 'conversation' && eff.level === l ? 'on' : ''}`}
-              onClick={() => {
-                setRule('conversation', c.id, l);
-                close();
-              }}
-            >
-              <Icon name={levelIcon(l)} size={15} />
+          {own === 'mentions' && (
+            <div class="menu-item on" data-rule="mentions">
+              <Icon name={ruleIcon(own)} size={15} />
               <span>
-                <b>{LEVEL_LABEL[l]}</b>
-                <small>{LEVEL_HELP[l]}</small>
+                <b>{OLDER_RULE}</b>
+                <small>{OLDER_RULE_HELP}</small>
+              </span>
+            </div>
+          )}
+          <button data-track="notification level (automatic)" data-rule="" class={`menu-item ${own === null ? 'on' : ''}`} onClick={pick(null, close)}>
+            <Icon name={ruleIcon(null)} size={15} />
+            <span>
+              <b>{AUTOMATIC}</b>
+              <small>
+                {AUTOMATIC_HELP}
+                {own === null && `. Now: ${heldHere(eff)}`}
+              </small>
+            </span>
+          </button>
+          {RULE_LEVELS.map((l) => (
+            <button data-track={`notification level (${l})`} data-rule={l} class={`menu-item ${own === l ? 'on' : ''}`} onClick={pick(l, close)}>
+              <Icon name={ruleIcon(l)} size={15} />
+              <span>
+                <b>{RULE_LABEL[l]}</b>
+                <small>{RULE_HELP[l]}</small>
               </span>
             </button>
           ))}
-          <div class="menu-sep" />
-          <button
-            class="menu-item"
-            data-track="notification level (inherit)"
-            onClick={() => {
-              setRule('conversation', c.id, null);
-              close();
-            }}
-          >
-            <Icon name="refresh" size={15} />
-            <span>
-              <b>Inherit</b>
-              <small>Currently: {LEVEL_LABEL[eff.level]}, from {eff.source}</small>
-            </span>
-          </button>
           {com && (
             <div class="menu-foot">
               Whole {NETWORK_META[c.network].spaceNoun}:
-              {(['mentions', 'digest', 'none'] as const).map((l) => (
+              {(['digest', 'none'] as const).map((l) => (
                 <button
                   class="chip-btn"
                   data-track={`notification level (whole community, ${l})`}
@@ -185,7 +201,7 @@ export function LevelMenu({ c }: { c: P.ConversationView }) {
                     close();
                   }}
                 >
-                  {LEVEL_LABEL[l]}
+                  {RULE_LABEL[l]}
                 </button>
               ))}
             </div>
@@ -195,14 +211,6 @@ export function LevelMenu({ c }: { c: P.ConversationView }) {
     </Menu>
   );
 }
-
-const LEVEL_HELP: Record<P.NotifyLevel, string> = {
-  all: 'Every message is Important',
-  smart: 'Triage decides each one: Important, Active or Digest',
-  mentions: '@mentions and replies to you are Important; the rest goes to the digest',
-  digest: 'Nothing notifies; everything waits for the digest',
-  none: 'Silent; unread count only',
-};
 
 function ConvHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void }) {
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && visibleAccount(a.id));
@@ -495,47 +503,29 @@ function Embeds({ m }: { m: P.MessageView }) {
 }
 
 /**
- * Why this notified (or not), and the vote: a quiet button among the hover actions, opening as a floating menu so
- * nothing clips it.
+ * Which tier a message landed in and why, and your marks on it: a quiet button among the hover actions, opening as a
+ * floating menu so nothing clips it.
  */
 function TriageNote({ m }: { m: P.MessageView }) {
   const t = m.triage;
   if (!t) return null;
-  const now = t.feedback ?? t.decision;
-  const label = now === 'silent' ? 'Silent' : TIER_LABEL[now];
+  const label = tierName(t.decision);
   const spec = (): MenuSpec => ({
     label: 'Notification',
-    items: [
-      {
-        kind: 'row',
-        render: (close) => (
-          <div class="triage-pop">
-            <div class="menu-title">{triageHeading(t.decision)}</div>
-            <ul>
-              {t.reasons.map((r, i) => (
-                <li key={i}>{r}</li>
-              ))}
-            </ul>
-            {t.probs && <TriageChances p={t.probs} />}
-            {t.score !== null && <div class="triage-score">matters {Math.round(t.score * 100)}% · decided by {t.decidedBy === 'learned' ? 'your votes' : t.decidedBy}</div>}
-            <TierPicker m={m} onDone={close} />
-          </div>
-        ),
-      },
-    ],
+    items: [{ kind: 'row', render: (close) => <TriageWhy m={m} marks={!isSelfIdentity(m.authorId)} onDone={close} /> }],
   });
   return (
     <button
       class="icon-btn small"
       data-track="triage note"
-      title={`${label}: why, and vote it up or down a level`}
+      title={`${label}: why, and say if it was wrong`}
       aria-label={`Notification: ${label}`}
       onClick={(e) => {
         const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
         openMenu({ x: r.right - 340, y: r.bottom + 4 }, spec());
       }}
     >
-      <Icon name={now === 'silent' ? 'bellOff' : TIER_ICON[now]} size={14} />
+      <Icon name={tierIcon(t.decision)} size={14} />
     </button>
   );
 }
@@ -1408,5 +1398,3 @@ export function PersonPane({ personId, onBack }: { personId: string; onBack?: ()
     </section>
   );
 }
-
-export { LEVEL_HELP };

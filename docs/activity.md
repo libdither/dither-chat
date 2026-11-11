@@ -1,12 +1,14 @@
 # The activity log: what you open, how you got there, and what notifications led to
 
-Triage decides per message whether to push, digest or stay silent ([inbox.md](inbox.md), `triage.ts`). To learn
-whether those decisions were right, the hub needs labelled data: which notifications you opened, how fast, what
-you did then, and which chats you opened without being told to. Usage (`place_usage`, [organize.md](organize.md))
-only keeps decayed totals per place, so it cannot answer that. The activity log can. It is the training and
-evaluation data for the planned local decision model, and its derived features are already available to triage
-and the inbox's ranking behind a flag. The inbox's learned order learns from its visits: which conversations you
-opened, from which row, and whether you wrote ([inbox.md](inbox.md#a-learned-order)).
+Triage decides per message which tier it lands in: an alert, a Conversation, the list, below it, or silent
+([notifications.md](notifications.md), `triage.ts`). To learn whether those decisions were right, the hub needs
+labelled data: which notifications you opened, how fast, what you did then, and which chats you opened without being
+told to. Usage (`place_usage`, [organize.md](organize.md)) only keeps decayed totals per place, so it cannot answer
+that. The activity log can. Triage's importance learns from it: a notification you tapped, a chat you opened after a
+message and stayed in ([notifications.md](notifications.md#importance), `labels.ts`). The replays read it
+([triage-replay.md](triage-replay.md)), and its derived features are available to triage's candidate model and to
+the inbox's explanation of a score behind a flag. The inbox's learned order learns from its visits: which
+conversations you opened, from which row, and whether you wrote ([inbox.md](inbox.md#a-learned-order)).
 
 Everything stays on the hub. It is not in the sync journal and not sent to other clients ([sync.md](sync.md)).
 Devices only send to it.
@@ -45,15 +47,15 @@ after more than 30 minutes away (`NEW_VISIT_AFTER`, as for usage) starts a new s
 kept if it was in use for at least 3 s (`VISIT_AFTER`), or a notification led there, or something was done in it.
 Passing through on the way elsewhere is not kept.
 
-### `notification` and `notification_event`: every push and digest, and what came of it
+### `notification` and `notification_event`: every notification, and what came of it
 
-Each push and digest gets an id when it is sent (`activity.notification` in `main.ts`). It rides in the payload
-as `nid`, with `device`, the push registration it was sent to, and in the in-app `notify` event. A tap opens the
-app at a hash carrying it (`#/inbox/c/<conv>?n=<nid>`), so the page knows which visit it led to and the address
-bar drops it.
+Each notification gets an id when it is sent (`activity.notification` in `main.ts`): an alert, a Conversation's
+silent row, a row on the list, a request, the quiet-hours summary. It rides in the payload as `nid`, with `device`,
+the push registration it was sent to, and in the in-app `notify` event. A tap opens the app at a hash carrying it
+(`#/inbox/c/<conv>?n=<nid>`), so the page knows which visit it led to and the address bar drops it.
 
-`notification` keeps the kind (`message`, `held` for the quiet-hours summary, `digest`, `request` for a request
-waiting on you, docs/add.md), the message and
+`notification` keeps the kind (`message`, `held` for the quiet-hours summary, `request` for a request waiting on you,
+docs/add.md; rows of kind `digest` are from before the tiers, when a daily digest notification existed), the message and
 conversation, when it was sent, how many registrations it went to and how many push servers took it, the first
 time any device said each outcome, and the visit the tap led to. `notification_event` keeps each device's word,
 once per device and outcome.
@@ -71,12 +73,17 @@ once per device and outcome.
 Delivery is only confirmed where the device runs code for the push. A push server that took the push
 (`accepted`) does not mean it arrived: a phone that is off or a distributor that is not running drops it.
 
+A dismissal is also how the inbox knows you saw a notification without opening its conversation: the conversation
+stays unread, and its alert, its boost and its importance stop counting there
+([inbox.md](inbox.md#unread-alerts-and-importance)).
+
 ### `triage_input`: what triage knew when it decided
 
 With the flag on (below), the features triage saw are kept with its decision, so training uses what was known then,
 not outcomes that came later: `{ conversation, person, x }`, where `x` holds the interaction features as of the
 message (`interact.ts`: how often you answer here and after this author, engaged now, time since you last looked,
-another device in use, push open rate; docs/notifications.md "The shadow model").
+another device in use, push open rate; docs/notifications.md "The shadow model"). Only the candidate model, which
+decides nothing, weighs them.
 
 ## How outcomes link
 
@@ -89,11 +96,11 @@ another device in use, push open rate; docs/notifications.md "The shadow model")
 - **Dwell.** The active seconds of the visit the tap led to, else of the first visit after the push.
 - **Reply after open.** A message from you in that conversation within 10 minutes (`REPLY_AFTER`) of opening,
   from any device or network: the hub reads it from the messages, not from the visit.
-- **Opened without a push.** Messages from others that triage did not push are grouped into bursts (a gap of 30
-  minutes, `BURST_GAP`, or a push between them ends one). A burst was opened anyway if a visit began between its
-  first message and an hour after its last. Bursts you were already looking at, and opens that a push came before,
-  are left out. This is the missed-importance signal: places you keep opening unprompted are ones triage should
-  perhaps push.
+- **Opened without a push.** Messages from others that triage left below the list (no alert, no Conversation row,
+  no list row) are grouped into bursts (a gap of 30 minutes, `BURST_GAP`, or a message in a tier between them ends
+  one). A burst was opened anyway if a visit began between its first message and an hour after its last. Bursts you
+  were already looking at, and opens that a notification came before, are left out. This is the missed-importance
+  signal: places you keep opening unprompted are ones whose messages should perhaps be on the list.
 
 ## Derived features
 
@@ -123,25 +130,28 @@ Privacy → "What it has learned" shows them for the busiest places; `GET /api/a
 - **Attention**: `Attention.activity` is set, and `GET /api/attention/:id` (`explain`) includes the features. The
   score does not use them yet.
 
-### How the local model would use them
+### How a local model would use them
 
-The model that would replace triage's smart score (`askModel` in `triage.ts`, Ollama) and the `AttentionJudge`
-([inbox.md](inbox.md#a-local-model-for-needs-a-reply-from-me)) get, per candidate message:
+This section is a plan from before the tiers (2026-11), kept for the `AttentionJudge`
+([inbox.md](inbox.md#a-local-model-for-needs-a-reply-from-me)), which nothing implements yet. Triage itself took
+another road: its importance is a regression learned from these outcomes, and the one thing a local model is asked
+is whether a message cannot wait ([notifications.md](notifications.md)). A model asked about a conversation would
+get, per candidate message:
 
 1. **Features as context.** A line per place and person: "You open 80% of pushes from here, usually within 2
    minutes, and reply after half of them; you opened it unprompted 3 of 4 times it was not pushed." A low open
-   rate with a short dwell says the pushes from here are noise; a high unprompted rate says a digest-only place
-   matters more than its rules say.
-2. **Examples from your own history**, not only your thumbs up/down: the export below gives every triaged message
+   rate with a short dwell says the notifications from here are noise; a high unprompted rate says a place kept to
+   the list matters more than its rules say.
+2. **Examples from your own history**, not only your marks: the export below gives every triaged message
    with what you did. Pick a few nearest to the message at hand (same place, same person, same shape) with their
    outcome as the label.
 3. **Evaluation before trusting it.** Run the model over the exported examples (decisions made before the model
    existed) and compare with the labels: how many pushes it would have dropped that you opened within minutes, and
    how many unprompted opens it would have pushed. Only then let its answers change decisions, and keep the rules'
-   floor (people set to always notify, keywords, "Nothing").
+   floor (people set to Always alert, keywords, Mute).
 
-The simplest first use needs no model at all: a place with 20+ pushes and an open rate under 10% could be suggested
-for Digest, and one with a high unprompted rate for Smart or All, as suggestions in Settings, never silent changes.
+The simplest first use needs no model at all: a place with 20+ notifications and an open rate under 10% could be
+suggested for List only, as a suggestion in Settings, never a silent change.
 
 ## Exports
 
@@ -152,17 +162,21 @@ Both are JSON lines, downloadable from Settings → Privacy.
 - **`GET /api/activity/examples`**: one line per triaged message within retention, for training and evaluating the
   model. Its metadata (conversation, network, shape, variant, members, kind, mentions you, replies to you, in a
   thread, bot, starred (`authorStarred`: false for everyone since stars were cleared on 2026-11-10), author's
-  person), triage's decision, score, reasons (a model's reason is replaced by "Model", since it may paraphrase the
-  message), and your feedback; `inputs`, what triage knew from the log then (if
+  person), triage's decision (the tier's code), score (its importance), reasons (a model's reason is replaced by
+  "Model", since it may paraphrase the message), and `feedback`; `inputs`, what triage knew from the log then (if
   kept); and `outcome`: notified, delivered, shown, suppressed, in-app, tapped, time to tap, dismissed, replied from
   the notification, seen live, opened after, dwell, replied after, and how long it was observed (up to a day). Then a
   `label`:
-  - your feedback (`should_push` / `should_not_push`) when you gave it;
+  - a vote from before the tiers when there is one: `should_push` for Important or Active, `should_not_push` for
+    Digest or Not interesting;
   - else `should_push` if you opened it within 15 minutes and replied or stayed 20 s;
   - `should_not_push` if you tapped and left within 5 s, or nothing opened it within a day;
   - null otherwise, and when you were already looking (`seenLive`).
 
-  These weak labels are a starting point, and the raw outcome is there to choose other rules.
+  `feedback` and these weak labels are from before the tiers: `feedback` is the level a message was voted to then,
+  and the label answers the old question, whether a message was worth a notification. The marks made since ("should
+  have alerted", "alert was wrong", "less like this") are not in this export yet, and triage does not learn from
+  these labels: what it learns from what you did is in `labels.ts`. The raw outcome is there to choose other rules.
 
 ## Privacy and control
 
@@ -199,7 +213,8 @@ pure) and `activity.ts` (wiring), `ui/ActivityLog.tsx`, sw.js, and `Notification
 
 ## Not done yet
 
-- Decisions do not use the features; a model does not exist yet (above).
+- Live decisions do not use the derived features (`placeFeatures`): only the candidate model sees them, as `x`.
+  What importance learns from is the outcomes themselves.
 - The Android WebView does not handle `download` links, so the exports are for a browser.
 - A visit's `personId` for a DM is filled in from the device's data; on a cold start before the data is there it is
   missing, and the hub matches DMs by conversation instead.

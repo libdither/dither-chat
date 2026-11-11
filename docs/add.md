@@ -305,16 +305,18 @@ someone you know notifies once; and a profile has the buttons for how you stand 
   composer comes back; declined or blocked, the page goes back to Requests. The page marks it read on the hub as it
   does any conversation, and the hub keeps that from the network (`requestHeld`). The hub also refuses to send there
   ("Accept the message request first"), and the conversation stays out of People and of every unread total.
-- **Notifications.** A new request from someone you know notifies once, at the **Active** level: a silent notification
-  on phones, nothing on a computer (docs/notifications.md). Someone you know: they have a person here (for a message
-  request, one you named, set to always notify or merged: its own conversation made one), or they share a conversation
-  or group with the account it came to, are a member of a server it sees, or wrote in a channel it sees. Requests from
-  strangers, message requests among them, only count on the row. Each request is judged once (`add_request_seen`), 20
-  seconds after it arrives so the account's first sync has said who people are, and only when it is under two days old
-  (`REQUEST_NOTICE`, packages/hub/src/requestnotify.ts). Quiet hours hold it (people set to always notify through
-  where you let them), a person, account, network or everything set to Nothing or Digest only keeps it silent, and
-  device rules for its account or network keep it off that device. The notification opens the Requests view at its
-  card (sw.js, the Android app, an ntfy topic's click). Requests the hub held before this was built are not news.
+- **Notifications.** A new request from someone you know notifies once, as a **row on the phone's list**: silent,
+  sorted among the list's rows as something the network would have notified you about, and nothing on a computer
+  (docs/notifications.md "Requests"). Someone you know: they have a person here (for a message request, one you named,
+  set to Always alert or merged: its own conversation made one), or they share a conversation or group with the
+  account it came to, are a member of a server it sees, or wrote in a channel it sees. Requests from strangers,
+  message requests among them, only count on the row. Each request is judged once (`add_request_seen`), 20 seconds
+  after it arrives so the account's first sync has said who people are, and only when it is under two days old
+  (`REQUEST_NOTICE`, packages/hub/src/requestnotify.ts). Quiet hours do not hold it (they hold alerts, and this is silent); an account,
+  a network or everything set to Mute keeps it off the list too, and device rules for its account or network keep it
+  off that device. The notification opens the
+  Requests view at its card (sw.js, the Android app, an ntfy topic's click). Requests the hub held before this was
+  built are not news.
 - **Profile buttons.** From what each network says about how you stand with them (`relationship`): a stranger gets
   **Add friend** (Discord), **Follow** (X, Instagram) or **Add contact** (Telegram), through `POST /api/add` with a
   reading made from their identity, as the account that asked about them where it can; someone who asked you gets

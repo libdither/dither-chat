@@ -2,9 +2,10 @@
  * The triage replay (docs/triage-replay.md): replays the hub's history day by day through the three tiers and
  * reports what each way of learning would have done, with numbers only.
  *
- *   bun scripts/triage-replay.ts --live ~/path/.data/hub.sqlite --out <scratch dir> [--days 14] [--level 0.5]
+ *   bun scripts/triage-replay.ts --live ~/path/.data/hub.sqlite --out <scratch dir> [--days 14] [--level 0.6]
  *   bun scripts/triage-replay.ts --db <scratch dir>/hub-copy.sqlite --out <scratch dir>   (reuse a copy)
  *   bun scripts/triage-replay.ts ... --no-judge      (do not ask the local model: nothing alerts by chance)
+ *   bun scripts/triage-replay.ts ... --labels        (also: the labels from what you did that are off, tried again)
  *
  * It never opens the live database for writing: it copies it with VACUUM INTO (read-only) and works on the copy,
  * which the hub's own Store then opens, so a copy from before a schema change is migrated first: the replay is also
@@ -64,6 +65,8 @@ export interface ReplayExample {
   facts: Facts;
   /** Why it is a Conversation, or null. */
   why: Conversing;
+  /** A rule of yours makes it an alert whatever the model says (as the rules are now): a person or place set to always alert, a keyword. */
+  forced: boolean;
   words: string[];
   x: NumericFeatures;
   outcome: Outcome;
@@ -162,9 +165,17 @@ async function load(path: string) {
     .all(from) as Row[];
   console.error(`${rows.length} decisions from ${new Date(from).toISOString().slice(0, 10)} to ${new Date(end).toISOString().slice(0, 10)}; the copy opened (and migrated, if it needed it) in ${migrated} ms`);
 
-  // Facts: kept with the decision, else the rules' as of now. Whether a place is kept to the list is as of now.
+  // Facts: kept with the decision, else the rules' as of now. Whether a place is kept to the list, and what your
+  // rules make an alert, are as of now.
   const facts = new Map<string, Facts>();
   const capped = new Map<string, boolean>();
+  const always = new Map<string, boolean>();
+  const alwaysPeople = new Set(store.rules().filter((r) => r.scope === 'person' && r.level === 'all' && r.target).map((r) => r.target!));
+  const keywords = store
+    .rules()
+    .filter((r) => r.scope === 'keyword' && r.level === 'all' && r.target)
+    .map((r) => new RegExp(`\\b${r.target!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i'));
+  const forced = new Set<string>();
   let rebuilt = 0;
   for (const r of rows) {
     let f: Facts | null = r.facts ? JSON.parse(r.facts) : null;
@@ -173,7 +184,12 @@ async function load(path: string) {
       rebuilt++;
     }
     if (!f) continue;
-    if (!capped.has(r.conv)) capped.set(r.conv, triage.effectiveLevel(r.conv).level === 'digest');
+    if (!capped.has(r.conv)) {
+      const eff = triage.effectiveLevel(r.conv);
+      capped.set(r.conv, eff.level === 'digest');
+      always.set(r.conv, eff.level === 'all' && !eff.native);
+    }
+    if (always.get(r.conv) || (r.author && alwaysPeople.has(r.author)) || (keywords.length && keywords.some((k) => k.test((r.body ?? '').replace(/<[@#][^>]+>/g, ' '))))) forced.add(r.id);
     delete f.judge;
     f.cap = capped.get(r.conv) || undefined;
     facts.set(r.id, f);
@@ -231,6 +247,7 @@ async function load(path: string) {
       day: dayOf(r.ts),
       facts: f,
       why: whys.get(r.id) ?? null,
+      forced: forced.has(r.id),
       words: words(r.body ?? ''),
       x: {},
       outcome: o,
@@ -255,7 +272,7 @@ function decideDay(model: Model, day: readonly ReplayExample[], t: P.TriageProbs
   return day.map((e) => {
     const p = predict(model, e.facts, e.words, bars === ALERT_BAR ? undefined : startWith(e.facts, bars)).probs;
     const conv = !!e.facts.conv;
-    return { e, probs: p, tier: tierFrom(p, { conv, eligible: conv, judged: e.facts.judge !== undefined, listOnly: !!e.facts.cap }, t) };
+    return { e, probs: p, tier: e.forced ? 'push' : tierFrom(p, { conv, eligible: conv, judged: e.facts.judge !== undefined, listOnly: !!e.facts.cap }, t) };
   });
 }
 
@@ -298,7 +315,8 @@ function numbers(ds: readonly Decided[]): DayNumbers {
     }
     if (d.tier === 'push' && away(e.outcome)) {
       out.alerts++;
-      out.alertsBy[e.why ?? 'marked'] = (out.alertsBy[e.why ?? 'marked'] ?? 0) + 1;
+      const by = e.forced ? 'rule' : (e.why ?? 'marked');
+      out.alertsBy[by] = (out.alertsBy[by] ?? 0) + 1;
       if (e.ts - (lastSound.get(e.conv) ?? -Infinity) >= HOUR) {
         out.alertSounds++;
         lastSound.set(e.conv, e.ts);
@@ -450,7 +468,7 @@ async function main() {
       const ns = testDays.map((d) => numbers(decideDay(start, byDay.get(d)!, t, { direct, other })));
       const by: Record<string, number> = {};
       for (const n of ns) for (const [k, v] of Object.entries(n.alertsBy)) by[k] = (by[k] ?? 0) + v;
-      return { direct, other, soundsPerDay: r1(mean(ns.map((n) => n.alertSounds))), most: Math.max(0, ...ns.map((n) => n.alertSounds)), direct_or_about: (by.dm ?? 0) + (by.about ?? 0), taking_part: (by.wrote ?? 0) + (by.answers ?? 0) };
+      return { direct, other, soundsPerDay: r1(mean(ns.map((n) => n.alertSounds))), most: Math.max(0, ...ns.map((n) => n.alertSounds)), direct_or_about: (by.dm ?? 0) + (by.about ?? 0), taking_part: (by.wrote ?? 0) + (by.answers ?? 0), rule: by.rule ?? 0 };
     }),
   );
   // Why messages are Conversations, over the tested days.
@@ -472,11 +490,11 @@ function markdown(r: Record<string, any>): string {
   out.push(`${r.decisions} decisions over ${r.days.all} days, ${r.days.tested} of them tested (each policy learns from the days before). ${r.votes} votes from before the tiers. The local model read ${r.judged} Conversation messages. The visit log covers ${r.visitDays} days. List level ${r.level}; bars ${r.bars.direct} (DMs, about you) and ${r.bars.other} (elsewhere).`, '');
   out.push(`Before the tiers, on the same days: ${r.before.importantPerDay} Important messages a day, ${r.before.soundsPerDay} sounds a day (one an hour per conversation), ${r.before.notifiedChatsPerDay} chats a day with a notification.`, '');
   out.push('## The tiers, by policy', '');
-  out.push('| Policy | Alert sounds a day (most) | Alerts: DM or about you / taking part | Conversation chats a day (most) | Silent Conversation updates a day | List chats a day (most) | List pushes a day |');
+  out.push('| Policy | Alert sounds a day (most) | Alerts: DM or about you / taking part / by a rule of yours | Conversation chats a day (most) | Silent Conversation updates a day | List chats a day (most) | List pushes a day |');
   out.push('|---|---|---|---|---|---|---|');
   for (const [name, p] of Object.entries<any>(r.policies)) {
     const by = p.alertsBy;
-    out.push(`| ${name} | ${p.alertSoundsPerDay} (${p.alertSoundsMost}) | ${(by.dm ?? 0) + (by.about ?? 0)} / ${(by.wrote ?? 0) + (by.answers ?? 0)} | ${p.convChatsPerDay.median} (${p.convChatsPerDay.most}) | ${p.convUpdatesPerDay} | ${p.listChatsPerDay.median} (${p.listChatsPerDay.most}) | ${p.listPushesPerDay} |`);
+    out.push(`| ${name} | ${p.alertSoundsPerDay} (${p.alertSoundsMost}) | ${(by.dm ?? 0) + (by.about ?? 0)} / ${(by.wrote ?? 0) + (by.answers ?? 0)} / ${by.rule ?? 0} | ${p.convChatsPerDay.median} (${p.convChatsPerDay.most}) | ${p.convUpdatesPerDay} | ${p.listChatsPerDay.median} (${p.listChatsPerDay.most}) | ${p.listPushesPerDay} |`);
   }
   out.push('', '## The list against what you opened', '', 'A chat on a day, outside the Conversation tier. "Opened": you opened it within a day of one of its messages. "Unprompted": no notification had gone out for it.', '');
   out.push('| Policy | Opened chat-days on the list | Unprompted ones on the list | Listed chat-days you opened | AUC of importance | Held-out votes it agrees with |');
@@ -488,8 +506,8 @@ function markdown(r: Record<string, any>): string {
   out.push(`|---|${Object.keys(r.policies).map(() => '---').join('|')}|`);
   for (let i = 0; i < LIST_LEVELS.length; i++)
     out.push(`| ${LIST_LEVELS[i]} | ${Object.values<any>(r.policies).map((p) => `${p.levels[i].chatsPerDay} (${p.levels[i].openedOnList} of ${p.levels[i].opened})`).join(' | ')} |`);
-  out.push('', '## The alert bars, nothing learned', '', '| Bar: DMs and about you | Bar: elsewhere | Sounds a day (most) | Alerts in DMs or about you | Alerts where you take part |', '|---|---|---|---|---|');
-  for (const g of r.barGrid) out.push(`| ${g.direct} | ${g.other} | ${g.soundsPerDay} (${g.most}) | ${g.direct_or_about} | ${g.taking_part} |`);
+  out.push('', '## The alert bars, nothing learned', '', '| Bar: DMs and about you | Bar: elsewhere | Sounds a day (most) | Alerts in DMs or about you | Alerts where you take part | Alerts by a rule of yours |', '|---|---|---|---|---|---|');
+  for (const g of r.barGrid) out.push(`| ${g.direct} | ${g.other} | ${g.soundsPerDay} (${g.most}) | ${g.direct_or_about} | ${g.taking_part} | ${g.rule} |`);
   out.push('', '## Why messages are Conversations (a day)', '', Object.entries<number>(r.conversing).map(([k, v]) => `${k}: ${v}`).join(', '), '');
   out.push('## Policies', '');
   for (const [name, p] of Object.entries<any>(r.policies)) out.push(`- **${name}**: ${p.about}`);

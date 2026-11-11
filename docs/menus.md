@@ -27,7 +27,7 @@ One component draws them all (`packages/web/src/ui/ContextMenu.tsx`); what each 
   `Reactions.tsx`, the press that already opened the message sheet). Sidebar rows keep `dnd.tsx`'s rule: hold
   and lift without moving for the menu, hold and drag to move. A submenu replaces the sheet's list and adds a
   back row. The message sheet keeps what the old one had: the author and exact time at the top, six quick
-  reactions, and "why did this notify" at the bottom.
+  reactions, and at the bottom which tier the message landed in, why, and the two marks.
 
 ## Per surface
 
@@ -38,11 +38,19 @@ One component draws them all (`packages/web/src/ui/ContextMenu.tsx`); what each 
 | Reactions | quick-reaction row (your 4 most used here), Add Reaction › (6 + Other Reactions…), View Reactions › (who reacted, per emoji) |
 | Actions | Edit Message **E** (own, where the network allows), Reply **R**, Forward **F**, Open Thread, Copy Text **C**, Copy Message Link |
 | Going places | Go to Replied Message, Go to Original Message (forwards), Profile |
+| Marks | Should have alerted (on a message that alerted it reads Alert was wrong), Less like this |
 | Red | Delete Message **Del** (own, where the network allows) |
 | Developer | Copy Message ID (the network's), Copy dither-chat ID |
 
 Copy Message Link gives the network's own link where there is one (`discord.com/channels/…/…/…`,
 `matrix.to/#/room/event`) and this app's link otherwise (Signal has none).
+
+The two marks are what you tell triage about where it put the message
+([notifications.md](notifications.md#marks)). Each is a tick: picking a ticked one takes the mark back. They
+are there for a message from someone else that triage put in a tier, not for your own messages or a muted
+place's. A mark teaches the next decision and leaves this message where it is. On a phone they sit under the
+reasons at the bottom of the sheet, not among the items. They replaced the four levels a message could be
+voted to.
 
 Left out: **Pin** and **Mark Unread** (no adapter command, and read state cannot go backwards on the networks
 here), **Create Thread**, **Apps**, **Speak Message**, **Report**. The hover bar gains Forward and a More (…)
@@ -50,16 +58,20 @@ button that opens this menu.
 
 ### A conversation or channel (sidebar rows, the channel tree, the header)
 
-Mark As Read · Profile and All Chats with Them (DMs) · About This Channel (or Group, Chat: its settings, members
-and who may change what, [group-settings.md](group-settings.md)) · Search in Channel · Copy Link · Mute Channel and
-Notification Settings › (Use Default, All Messages, Smart, Only @mentions, Digest, Nothing: the hub's own levels)
-· Pin to Top, Add to Sidebar, Move Up/Down, Move to Folder › (with New Folder…), Take Out of folder, Hide ·
-Copy Channel ID, Copy dither-chat ID.
+Mark As Read · Profile and All Chats with Them (DMs) · About This Channel (or Group, Chat: its settings,
+members and who may change what, [group-settings.md](group-settings.md)) · Search in Channel · Copy Link ·
+Mute Channel and Notification Settings › (Automatic, Always alert, List only, Mute: the hub's own rules,
+[notifications.md](notifications.md#rules)) · Pin to Top, Add to Sidebar, Move Up/Down, Move to Folder › (with
+New Folder…), Take Out of folder, Hide · Copy Channel ID, Copy dither-chat ID.
+
+Under Automatic the submenu says what holds instead: a rule set above this place and where, else what the
+network does here. A rule of Mentions from before the tiers shows as "Mentions only (older setting)", ticked
+and not choosable, until one of the four replaces it.
 
 In the inbox the menu starts with **Why it's here**: the hub's reasons for the row's place, the same ones its
 tooltip shows ([inbox.md](inbox.md)). They are text, not items, so the arrow keys pass over them.
 
-Muting sets the level to Nothing; Discord's timed mutes have no counterpart in the hub's rules, so there is
+Muting sets the rule to Mute; Discord's timed mutes have no counterpart in the hub's rules, so there is
 no "for 1 hour" submenu.
 
 ### A server or space (rail, Spaces list, directory, the sidebar header, categories in the tree)
@@ -80,7 +92,7 @@ Folder** (red; what is in it stays).
 Profile · Message (their merged chat, or a new conversation where an account can start one) · Mark As Read ·
 Copy, a submenu: Copy Username, Copy User ID and Copy Profile Link (where the network has a profile page: Discord,
 Matrix, WhatsApp), or with several identities one submenu per network (with the handle when two share a network)
-holding those. No Star: stars left the app on 2026-11-10 and the hub cleared them (Always notify does their job). Left out:
+holding those. No Star: stars left the app on 2026-11-10 and the hub cleared them (Always alert does their job). Left out:
 Mention (the composer has no way in from outside it yet), Call, Add Note, Block.
 
 ### An account (the accounts button in the rail lists all of them; account chips; "Needs you" rows)

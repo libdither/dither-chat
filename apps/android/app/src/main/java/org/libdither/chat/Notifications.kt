@@ -27,6 +27,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.StyleSpan
@@ -34,36 +35,51 @@ import android.util.Base64
 import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
+import java.util.Locale
+import kotlin.math.roundToInt
 
 /**
  * Message notifications, from the hub's push payload (webpush.ts pushPayload), as the web app's sw.js shows them.
- * A message is a conversation notification (docs/android.md): one per conversation, its last few messages in
- * MessagingStyle, linked to a long-lived shortcut so Android draws the conversation's picture on the left with the
- * network's mark as its badge, all in one group with a summary.
+ * The push's tier says which kind it is (docs/android.md). An alert or a Conversation is a conversation notification:
+ * one per conversation, its last few messages in MessagingStyle, linked to a long-lived shortcut so Android draws the
+ * conversation's picture on the left with the network's mark as its badge, each a row of its own. A row of the ranked
+ * list is a plain notification, all of them in one bundle that Android orders by importance.
  */
 object Notifications {
+    /** Alerts: the only ones that sound. The ids are older than the tiers, so the sounds set on them stay. */
     const val MESSAGES = "messages"
-    /** Active (docs/notifications.md): in the shade and on the lock screen, without sound or vibration. */
+    /** Conversations: in the shade and on the lock screen, without sound or vibration. */
     const val QUIET = "messages-quiet"
+    /** The ranked list's rows: silent too, with a channel of their own so they can be turned off alone. */
+    const val LIST = "list"
     const val CALLS = "calls"
     const val UPLOADS = "uploads"
     const val REPLY = "reply"
     private const val ID = 1
-    /** Every conversation notification, under one summary. */
-    private const val GROUP = "dither-messages"
-    private const val SUMMARY = "dither-summary"
+    /** Every list row is in this group, under one summary whose tag this is too. */
+    private const val LIST_GROUP = "dither-list"
+    /** The list shows this many rows at most. */
+    private const val LIST_MAX = 20
     private const val DIGEST = "dither-digest"
-    /** A conversation notification's line in the summary, kept in its extras. */
+    /** A list row's line in the summary, kept in its extras. */
     private const val LINE = "org.libdither.chat.line"
+    /** How many rows the list's summary speaks of, kept in its extras. */
+    private const val COUNT = "org.libdither.chat.count"
+    /** How long this app's own note of what it posted or cancelled stands in for the system's list. */
+    private const val SETTLE_MS = 5_000L
+    /** A time in milliseconds is taken from this for the sort key, so that the newer comes first; fourteen digits. */
+    private const val MAX_TS = 99_999_999_999_999L
 
     private fun nm(c: Context) = c.getSystemService(NotificationManager::class.java)
 
     fun shortcutId(conv: String) = "conv:$conv"
 
     fun channels(c: Context) {
+        // A channel that is there already keeps the sound and importance its owner set: only its name follows.
         nm(c).createNotificationChannels(listOf(
-            NotificationChannel(MESSAGES, "Important messages", NotificationManager.IMPORTANCE_HIGH),
-            NotificationChannel(QUIET, "Active messages (silent)", NotificationManager.IMPORTANCE_LOW),
+            NotificationChannel(MESSAGES, "Alerts", NotificationManager.IMPORTANCE_HIGH),
+            NotificationChannel(QUIET, "Conversations (silent)", NotificationManager.IMPORTANCE_LOW),
+            NotificationChannel(LIST, "Ranked list (silent)", NotificationManager.IMPORTANCE_LOW),
             NotificationChannel(CALLS, "Ongoing call", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) },
             NotificationChannel(UPLOADS, "History uploads", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) },
         ))
@@ -85,27 +101,41 @@ object Notifications {
         // The page is on screen and raises its own toast from the live socket.
         if (!test && MainActivity.resumed != null) return outcome(c, nid, device, "suppressed")
         if (!nm(c).areNotificationsEnabled()) return outcome(c, nid, device, "blocked")
-        // A request waiting on you (docs/add.md): a notification of its own, opening it under Requests.
+        // A request waiting on you (docs/add.md): a row of its own, opening it under Requests.
         val request = d.optString("requestId").ifEmpty { null }
-        val tag = conv ?: request?.let { "request:$it" } ?: if (inbox) DIGEST else "dither"
+        val tier = tierOf(d)
         // The push's id rides in the hash, so the page can say which visit the tap led to (docs/activity.md).
         val n = if (nid != null) "?n=$nid" else ""
-        val hash = if (conv != null) "/inbox/c/$conv$n" else if (request != null) "/requests/$request$n" else if (inbox) "/inbox$n" else null
+        val hash = if (conv != null) "/inbox/c/$conv$n" else if (request != null) "/requests/$request$n" else if (inbox || tier == "digest") "/inbox$n" else null
         val title = d.optString("title", "dither-chat")
         val app = c.applicationContext
         val canReply = conv != null && d.optBoolean("canReply")
         val replyTo = if (canReply) d.optString("replyTo").ifEmpty { null } else null
+        val marks = marksOf(d, tier)
         // Pictures come from the hub: off the thread the push arrived on.
         Thread {
-            val vote = d.optString("messageId").ifEmpty { null }?.let { Vote(it, d.optString("level", "push")) }
-            if (conv != null) {
-                conversation(app, conv, d, hash, replyTo, canReply, nid, device, vote)
+            val shown = if (tier == "digest") {
+                listRow(app, conv ?: request?.let { "request:$it" } ?: "inbox", d, hash, nid, device, marks)
+            } else if (conv != null) {
+                conversation(app, conv, d, tier, hash, replyTo, canReply, nid, device, marks)
+                true
             } else {
+                val tag = request?.let { "request:$it" } ?: if (inbox) DIGEST else "dither"
                 val look = Looks.of(app, d.optString("network"), d.optString("icon").ifEmpty { null }, title)
-                post(app, tag, title, d.optString("body"), hash, null, false, nid = nid, device = device, look = look, vote = vote, group = if (inbox) DIGEST else null, level = d.optString("level").ifEmpty { null })
+                post(app, tag, title, d.optString("body"), hash, nid = nid, device = device, look = look, quiet = tier == "quiet")
+                true
             }
-            outcome(app, nid, device, "shown")
+            if (shown) outcome(app, nid, device, "shown")
         }.start()
+    }
+
+    /**
+     * The push's tier: "push" an alert, "quiet" a Conversation, "digest" a row of the ranked list. A hub from before
+     * the tiers sends only `level`, which knows the first two.
+     */
+    private fun tierOf(d: JSONObject): String = when (val tier = d.optString("tier")) {
+        "push", "quiet", "digest" -> tier
+        else -> if (d.optString("level") == "quiet") "quiet" else "push"
     }
 
     /**
@@ -119,77 +149,126 @@ object Notifications {
         Thread { runCatching { Hub.request(app, "POST", "/api/activity/notifications", JSONObject().put("events", org.json.JSONArray().put(e))) } }.start()
     }
 
-    /** The message a notification is about and its level, so it can be voted up or down from the shade. */
-    data class Vote(val messageId: String, val level: String)
+    /**
+     * What you can say of a message from its notification (docs/notifications.md): it should have alerted, its alert
+     * was wrong, or less like this. The last two take the row away.
+     */
+    enum class Mark(val id: String, val label: String, val closes: Boolean) {
+        ALERT("alert", "Should have alerted", false),
+        CALM("calm", "Not urgent", true),
+        LESS("less", "Less like this", true);
 
-    /** One message in a conversation notification, from the payload's `lines`. */
-    private class Line(val author: String, val key: String, val body: String, val ts: Long)
+        /** What the hub is told (POST /api/messages/:id/feedback; for mail, /api/mail/triage/:id/vote). */
+        fun body(): JSONObject = when (this) {
+            ALERT -> JSONObject().put("alert", true)
+            CALM -> JSONObject().put("alert", false)
+            LESS -> JSONObject().put("less", true)
+        }
+
+        companion object {
+            fun of(id: String?): Mark? = entries.firstOrNull { it.id == id }
+        }
+    }
+
+    /** The message a notification is about and the marks it offers. Mail's marks go to mail's own route. */
+    class Marks(val messageId: String, val mail: Boolean, val offered: List<Mark>)
 
     /**
-     * A conversation's notification: its last few messages, each with its author as a Person (name and plain round
-     * picture), linked to the conversation's shortcut. `alert` false updates it, or
-     * posts it, without sound, vibration or heads-up.
+     * The marks by tier: an alert can be called not urgent, a Conversation one that should have alerted, a list row
+     * either less like this or one that should have alerted. Mail has no alert marks, only "Less like this".
      */
-    private fun conversation(c: Context, conv: String, d: JSONObject, hash: String?, replyTo: String?, canReply: Boolean, nid: String?, device: String?, vote: Vote?) {
-        val title = d.optString("title", "dither-chat")
-        val cv = d.optJSONObject("conv")
+    private fun marksOf(d: JSONObject, tier: String): Marks? {
+        val id = d.optString("messageId").ifEmpty { return null }
+        val mail = d.optString("mailThreadId").isNotEmpty()
+        val offered = when {
+            mail -> listOf(Mark.LESS)
+            tier == "push" -> listOf(Mark.CALM)
+            tier == "quiet" -> listOf(Mark.ALERT)
+            else -> listOf(Mark.LESS, Mark.ALERT)
+        }
+        return Marks(id, mail, offered)
+    }
+
+    /** One message in a notification, from the payload's `lines`. */
+    private class Line(val author: String, val key: String, val body: String, val ts: Long)
+
+    /** What a push says of its chat: its name, whether it is a group, its unread lines and where its pictures are. */
+    private class Chat(private val d: JSONObject) {
+        private val title = d.optString("title", "dither-chat")
+        private val cv = d.optJSONObject("conv")
         val group = cv != null && cv.optString("shape", "direct") != "direct"
-        val convTitle = cv?.optString("title")?.ifEmpty { null } ?: title
-        val sender = d.optJSONObject("sender")
+        val name = cv?.optString("title")?.ifEmpty { null } ?: title
+        private val sender = d.optJSONObject("sender")
         val senderKey = sender?.optString("key")?.ifEmpty { null } ?: title
-        val icons = d.optJSONObject("icons")
-        val now = System.currentTimeMillis()
-        val lines = d.optJSONArray("lines")?.let { a ->
+        private val icons = d.optJSONObject("icons")
+        private val now = System.currentTimeMillis()
+        val lines: List<Line> = d.optJSONArray("lines")?.let { a ->
             (0 until a.length()).mapNotNull { a.optJSONObject(it) }.map { l ->
                 Line(l.optString("author", "?"), l.optString("key").ifEmpty { l.optString("author", "?") }, l.optString("body"), l.optLong("ts", now))
             }
         }?.takeIf { it.isNotEmpty() }
-            // An older hub sends one message as title and body.
+            // An older hub sends one message as title and body, and so does a request.
             ?: listOf(Line(sender?.optString("name")?.ifEmpty { null } ?: title, senderKey, d.optString("body"), now))
+        val last get() = lines.last()
 
-        val pictures = HashMap<String, Bitmap?>()
-        fun picture(src: String?): Bitmap? = src?.let { pictures.getOrPut(it) { runCatching { Looks.picture(c, it) }.getOrNull() } }
-        // All of them at once first: one at a time, a slow hub ran out the wait.
-        val wanted = buildList {
+        /** A line outside MessagingStyle: in a group it says who wrote it. */
+        fun text(l: Line) = if (group) "${l.author}: ${l.body}" else l.body
+
+        /** Every picture the push names. */
+        fun pictures(): List<String> = buildList {
             icons?.keys()?.forEach { k -> icons.optString(k).ifEmpty { null }?.let(::add) }
             sender?.optString("icon")?.ifEmpty { null }?.let(::add)
             cv?.optString("icon")?.ifEmpty { null }?.let(::add)
             d.optString("icon").ifEmpty { null }?.let(::add)
         }
-        pictures.putAll(Looks.pictures(c, wanted))
+
         fun iconOf(key: String): String? =
             icons?.optString(key)?.ifEmpty { null }
                 ?: (if (key == senderKey) sender?.optString("icon")?.ifEmpty { null } else null)
                 // An older hub's one picture is the sender's, else the conversation's.
                 ?: (if (sender == null && !group) d.optString("icon").ifEmpty { null } else null)
+
+        /** Where the chat's picture is: the group's or server's, or for a DM the person's. The first that loads is it. */
+        fun icon(): List<String> =
+            if (group) listOfNotNull(cv?.optString("icon")?.ifEmpty { null }) else listOfNotNull(iconOf(senderKey), iconOf(last.key))
+    }
+
+    /**
+     * A conversation's notification, for an alert or a Conversation: its last few messages, each with its author as a
+     * Person (name and plain round picture), linked to the conversation's shortcut. An alert is on the channel that
+     * sounds and a Conversation on the silent one, the same row either way. `alert` false updates it, or posts it,
+     * without sound, vibration or heads-up.
+     */
+    private fun conversation(c: Context, conv: String, d: JSONObject, tier: String, hash: String?, replyTo: String?, canReply: Boolean, nid: String?, device: String?, marks: Marks?) {
+        val chat = Chat(d)
+        val pictures = HashMap<String, Bitmap?>()
+        fun picture(src: String?): Bitmap? = src?.let { pictures.getOrPut(it) { runCatching { Looks.picture(c, it) }.getOrNull() } }
+        // All of them at once first: one at a time, a slow hub ran out the wait.
+        pictures.putAll(Looks.pictures(c, chat.pictures()))
         val people = LinkedHashMap<String, Person>()
         fun person(l: Line): Person = people.getOrPut(l.key) {
             Person.Builder().setName(l.author).setKey(l.key).apply {
-                picture(iconOf(l.key))?.let { setIcon(Icon.createWithBitmap(Looks.round(it))) }
+                picture(chat.iconOf(l.key))?.let { setIcon(Icon.createWithBitmap(Looks.round(it))) }
             }.build()
         }
         val me = Person.Builder().setName("You").setKey("self").build()
-        val style = Notification.MessagingStyle(me).setConversationTitle(if (group) convTitle else null).setGroupConversation(group)
-        for (l in lines) style.addMessage(Notification.MessagingStyle.Message(l.body, l.ts, person(l)))
+        val style = Notification.MessagingStyle(me).setConversationTitle(if (chat.group) chat.name else null).setGroupConversation(chat.group)
+        for (l in chat.lines) style.addMessage(Notification.MessagingStyle.Message(l.body, l.ts, person(l)))
 
-        // The conversation's picture: the group's or server's, or for a DM the person's.
-        val last = lines.last()
-        val pic = if (group) picture(cv?.optString("icon")?.ifEmpty { null }) else picture(iconOf(senderKey)) ?: picture(iconOf(last.key))
-        publish(c, conv, convTitle, Looks.adaptive(pic, convTitle), people.values.toList())
+        val last = chat.last
+        val pic = chat.icon().firstNotNullOfOrNull { picture(it) }
+        publish(c, conv, chat.name, Looks.adaptive(pic, chat.name), people.values.toList())
+        // A chat shows once: its row on the list goes.
+        unlist(c, conv)
 
-        val quiet = vote?.level == "quiet"
         val alert = d.optBoolean("alert", true)
         val (small, color) = Looks.badge(c, d.optString("network"))
-        val line = SpannableStringBuilder(convTitle).apply {
-            setSpan(StyleSpan(Typeface.BOLD), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            append("  ").append(if (group) "${last.author}: ${last.body}" else last.body)
-        }
         val sid = shortcutId(conv)
-        val b = Notification.Builder(c, if (quiet) QUIET else MESSAGES)
+        val b = Notification.Builder(c, if (tier == "quiet") QUIET else MESSAGES)
             .setSmallIcon(small)
             .setColor(color)
-            .setContentTitle(convTitle)
-            .setContentText(if (group) "${last.author}: ${last.body}" else last.body)
+            .setContentTitle(chat.name)
+            .setContentText(chat.text(last))
             .setStyle(style)
             .setShortcutId(sid)
             .setLocusId(LocusId(sid))
@@ -200,15 +279,14 @@ object Notifications {
             .setAutoCancel(true)
             // A burst updates the text without sounding again.
             .setOnlyAlertOnce(!alert)
-            .setGroup(GROUP)
-            .addExtras(Bundle().apply { putCharSequence(LINE, line) })
-        // Not even a new one may sound: a child that leaves alerting to its summary (whose behaviour is to leave it to
-        // the children) is muted. setSilent (Android 12+) does exactly this; this also works on 10 and 11.
+            // A group of its own, which never gets a summary: Android shows such a notification as a row by itself,
+            // and does not gather it into a bundle of its own making as it does those without any group.
+            .setGroup(sid)
+        // Not even a new one may sound: a notification in a group that leaves alerting to the group's summary is
+        // muted, and this group has none. setSilent (Android 12+) does exactly this; this also works on 10 and 11.
         if (!alert) b.setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY)
-        actions(c, b, conv, nid, device, vote, canReply, replyTo, dismissTag = conv)
-        val built = b.build()
-        nm(c).notify(conv, ID, built)
-        summary(c, conv, line, built.channelId)
+        actions(c, b, conv, nid, device, marks, canReply, replyTo, list = false)
+        nm(c).notify(conv, ID, b.build())
     }
 
     /**
@@ -234,47 +312,156 @@ object Notifications {
     }
 
     /**
-     * The group's summary: one line per conversation showing, posted once there are two. It never sounds; its
-     * children do. With one left the system shows that one alone, so the summary only goes with the last.
+     * A chat's row on the ranked list (a request's too): a plain notification, not a conversation's, so it stays out
+     * of Android's Conversations section, in one bundle with the other rows. Android orders the bundle by the sort
+     * key. False when the row is not shown, because the list is full of rows that come before it.
      */
-    private fun summary(c: Context, changed: String?, line: CharSequence?, channel: String? = null) {
-        val nm = nm(c)
-        class Row(val line: CharSequence, val time: Long, val channel: String)
-        val rows = HashMap<String, Row>()
-        // The system adds and removes notifications asynchronously, so what just changed is taken from the caller.
-        for (s in nm.activeNotifications) {
-            val n = s.notification
-            if (s.id != ID || n.group != GROUP || n.flags and Notification.FLAG_GROUP_SUMMARY != 0 || s.tag == changed) continue
-            rows[s.tag] = Row(n.extras.getCharSequence(LINE) ?: continue, n.`when`, n.channelId)
+    private fun listRow(c: Context, key: String, d: JSONObject, hash: String?, nid: String?, device: String?, marks: Marks?): Boolean {
+        val chat = Chat(d)
+        val tag = "list:$key"
+        val last = chat.last
+        val text = chat.text(last)
+        val pic = chat.icon().firstNotNullOfOrNull { runCatching { Looks.picture(c, it) }.getOrNull() }
+        val importance = d.optDouble("importance", 0.5).let { if (it.isNaN()) 0.5 else it }
+        val row = Row(
+            SpannableStringBuilder(chat.name).apply {
+                setSpan(StyleSpan(Typeface.BOLD), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                append("  ").append(text)
+            },
+            sortKey(importance, last.ts),
+        )
+        val (small, color) = Looks.badge(c, d.optString("network"))
+        val b = Notification.Builder(c, LIST)
+            .setSmallIcon(small)
+            .setColor(color)
+            .setContentTitle(chat.name)
+            .setContentText(text)
+            .setWhen(last.ts)
+            .setShowWhen(true)
+            .setContentIntent(open(c, hash, tag.hashCode()))
+            .setAutoCancel(true)
+            .setGroup(LIST_GROUP)
+            .setSortKey(row.sort)
+            .setOnlyAlertOnce(true)
+            .addExtras(Bundle().apply { putCharSequence(LINE, row.line) })
+        // Several messages are a line each; one is shown whole.
+        if (chat.lines.size > 1) b.setStyle(Notification.InboxStyle().also { s -> chat.lines.forEach { s.addLine(chat.text(it)) } })
+        else b.setStyle(Notification.BigTextStyle().bigText(text))
+        Looks.row(c, d.optString("network"), pic, chat.name)?.let { b.setLargeIcon(Icon.createWithBitmap(it)) }
+        actions(c, b, tag, nid, device, marks, false, null, list = true)
+        return synchronized(changes) {
+            val rows = listing(c).rows
+            rows[tag] = row
+            // The list is full: the rows that come last go, and a new one that would be last is not shown at all.
+            val over = rows.entries.sortedBy { it.value.sort }.drop(LIST_MAX).map { it.key }
+            for (t in over) {
+                rows.remove(t)
+                nm(c).cancel(t, ID)
+                note(t, null)
+            }
+            val shown = tag !in over
+            if (shown) {
+                // A chat shows once: its conversation notification goes.
+                nm(c).cancel(key, ID)
+                nm(c).notify(tag, ID, b.build())
+                note(tag, row)
+            }
+            summarize(c, rows)
+            shown
         }
-        if (changed != null && line != null) rows[changed] = Row(line, Long.MAX_VALUE, channel ?: MESSAGES)
-        if (rows.isEmpty()) return nm.cancel(SUMMARY, ID)
-        // Cancelling a summary cancels its children, so with one child left it stays, and the system hides it.
-        if (rows.size < 2) return
-        val sorted = rows.values.sortedByDescending { it.time }
+    }
+
+    /**
+     * Where a list row comes in its bundle, as text that sorts the way the rows should: the more important first
+     * and, between two as important, the newer first.
+     */
+    fun sortKey(importance: Double, ts: Long): String {
+        val rank = 1000 - (importance.coerceIn(0.0, 1.0) * 1000).roundToInt()
+        return String.format(Locale.US, "%04d-%014d", rank, (MAX_TS - ts).coerceIn(0, MAX_TS))
+    }
+
+    /** A list row as its summary needs it: its line and its place. */
+    private class Row(val line: CharSequence, val sort: String)
+
+    /** What this app last did to a list row and when: the row it posted, or null for one it cancelled. */
+    private class Change(val row: Row?, val at: Long)
+
+    /** The list as it shows: its rows by tag, and how many rows its summary speaks of (0 without one). */
+    private class Listing(val rows: HashMap<String, Row>, val count: Int)
+
+    /** This app's own latest changes to the list, by tag; the lock for everything that changes the list. */
+    private val changes = HashMap<String, Change>()
+
+    /** How many rows this app's last summary spoke of, and when it posted it. */
+    private var counted: Pair<Int, Long>? = null
+
+    private fun note(tag: String, row: Row?) {
+        changes[tag] = Change(row, SystemClock.elapsedRealtime())
+    }
+
+    /**
+     * The list now showing. The system adds and removes notifications asynchronously, so for a few seconds what this
+     * app itself posted or cancelled is taken from its own note of it, not from the system's list.
+     */
+    private fun listing(c: Context): Listing {
+        val rows = HashMap<String, Row>()
+        var count = 0
+        for (s in nm(c).activeNotifications) {
+            val n = s.notification
+            if (s.id != ID || n.group != LIST_GROUP) continue
+            if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) count = n.extras.getInt(COUNT)
+            else rows[s.tag ?: continue] = Row(n.extras.getCharSequence(LINE) ?: continue, n.sortKey ?: continue)
+        }
+        val now = SystemClock.elapsedRealtime()
+        changes.values.removeIf { now - it.at > SETTLE_MS }
+        for ((tag, change) in changes) if (change.row != null) rows[tag] = change.row else rows.remove(tag)
+        counted?.let { (rows, at) -> if (now - at <= SETTLE_MS) count = rows }
+        return Listing(rows, count)
+    }
+
+    /**
+     * The list's summary, which makes the rows one bundle: how many chats, and the first six in the bundle's order.
+     * It never sounds. Cancelling a summary cancels its children, so it goes only once no row is left; with one row
+     * the system shows that row alone.
+     */
+    private fun summarize(c: Context, rows: Map<String, Row>) {
+        counted = rows.size to SystemClock.elapsedRealtime()
+        if (rows.isEmpty()) return nm(c).cancel(LIST_GROUP, ID)
+        val sorted = rows.values.sortedBy { it.sort }
         val inbox = Notification.InboxStyle()
         sorted.take(6).forEach { inbox.addLine(it.line) }
         if (sorted.size > 6) inbox.setSummaryText("+${sorted.size - 6} more")
-        val b = Notification.Builder(c, if (sorted.any { it.channel == MESSAGES }) MESSAGES else QUIET)
+        val b = Notification.Builder(c, LIST)
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(c.getColor(R.color.accent))
-            .setContentTitle("${rows.size} conversations")
+            .setContentTitle(if (rows.size == 1) "1 chat" else "${rows.size} chats")
             .setContentText(sorted.first().line)
             .setStyle(inbox)
-            .setCategory(Notification.CATEGORY_MESSAGE)
-            .setContentIntent(open(c, "/inbox", SUMMARY.hashCode()))
+            .setContentIntent(open(c, "/inbox", LIST_GROUP.hashCode()))
             .setAutoCancel(true)
-            .setGroup(GROUP)
+            .setGroup(LIST_GROUP)
             .setGroupSummary(true)
             .setGroupAlertBehavior(Notification.GROUP_ALERT_CHILDREN)
             .setOnlyAlertOnce(true)
-        nm.notify(SUMMARY, ID, b.build())
+            .addExtras(Bundle().apply { putInt(COUNT, rows.size) })
+        nm(c).notify(LIST_GROUP, ID, b.build())
     }
 
-    /** A notification that is not a conversation's: the digest, a test, a reply that did not go. */
-    fun post(c: Context, tag: String, title: String, body: String, hash: String?, replyTo: String?, canReply: Boolean, sticky: Boolean = false, nid: String? = null, device: String? = null, look: Looks.Look? = null, vote: Vote? = null, group: String? = null, level: String? = null) {
-        // Active: the silent channel, with or without votes (a request's has none).
-        val quiet = (vote?.level ?: level) == "quiet"
+    /**
+     * A chat's row leaves the list: the chat was read, or it now has a conversation notification, and a chat never
+     * shows twice. The summary follows, also when the system closed the row itself (a tap does, without a word).
+     */
+    private fun unlist(c: Context, chat: String) = synchronized(changes) {
+        val tag = "list:$chat"
+        val list = listing(c)
+        val had = list.rows.remove(tag) != null
+        nm(c).cancel(tag, ID)
+        if (had) note(tag, null)
+        if (had || list.rows.size != list.count) summarize(c, list.rows)
+    }
+
+    /** A notification that is neither a conversation's nor a list row: a test, a reply that did not go. */
+    fun post(c: Context, tag: String, title: String, body: String, hash: String?, sticky: Boolean = false, nid: String? = null, device: String? = null, look: Looks.Look? = null, quiet: Boolean = false) {
         val b = Notification.Builder(c, if (quiet) QUIET else MESSAGES)
             .setSmallIcon(look?.small ?: R.drawable.ic_notification)
             .setColor(look?.color ?: c.getColor(R.color.accent))
@@ -285,38 +472,28 @@ object Notifications {
             .setContentIntent(open(c, hash, tag.hashCode()))
             .setAutoCancel(!sticky)
         look?.large?.let { b.setLargeIcon(Icon.createWithBitmap(it)) }
-        group?.let { b.setGroup(it) }
-        actions(c, b, tag, nid, device, vote, canReply, replyTo, dismissTag = null)
+        actions(c, b, tag, nid, device, null, false, null, list = false)
         nm(c).notify(tag, ID, b.build())
     }
 
-    /** The delete intent, the votes and Reply. */
-    private fun actions(c: Context, b: Notification.Builder, tag: String, nid: String?, device: String?, vote: Vote?, canReply: Boolean, replyTo: String?, dismissTag: String?) {
-        if (nid != null || dismissTag != null) {
-            val gone = Intent(c, DismissReceiver::class.java).putExtra("nid", nid).putExtra("device", device).putExtra("tag", dismissTag)
+    /** The delete intent, Reply and the marks. */
+    private fun actions(c: Context, b: Notification.Builder, tag: String, nid: String?, device: String?, marks: Marks?, canReply: Boolean, replyTo: String?, list: Boolean) {
+        // A swipe is reported, and a list row's also brings the summary up to date.
+        if (nid != null || list) {
+            val gone = Intent(c, DismissReceiver::class.java).putExtra("nid", nid).putExtra("device", device).putExtra("tag", if (list) tag else null)
             b.setDeleteIntent(PendingIntent.getBroadcast(c, tag.hashCode(), gone, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
         }
-        val quiet = vote?.level == "quiet"
-        // Up and down a level from the shade (docs/notifications.md). Active: up to Important or down to the digest,
-        // before Reply. Important: Reply, then down to Active, or up, which says it was right.
-        val votes = when (vote?.level) {
-            "quiet" -> listOf("up" to "▲ Important", "down" to "▼ Digest")
-            "push" -> listOf("down" to "▼ Active", "up" to "✓ Right")
-            else -> emptyList()
-        }
-        fun addVotes() = votes.forEachIndexed { i, (dir, label) ->
-            val intent = Intent(c, VoteReceiver::class.java).putExtra("message", vote!!.messageId).putExtra("vote", dir).putExtra("tag", tag)
-            val pi = PendingIntent.getBroadcast(c, tag.hashCode() * 31 + i + 1, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            b.addAction(Notification.Action.Builder(null, label, pi).build())
-        }
-        if (quiet) addVotes()
         if (canReply) {
             val intent = Intent(c, ReplyReceiver::class.java).putExtra("conversation", tag).putExtra("replyTo", replyTo).putExtra("nid", nid).putExtra("device", device)
             // Mutable: the system writes the typed text into it.
             val pi = PendingIntent.getBroadcast(c, tag.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
             b.addAction(Notification.Action.Builder(null, "Reply", pi).addRemoteInput(RemoteInput.Builder(REPLY).setLabel("Message").build()).build())
         }
-        if (!quiet) addVotes()
+        marks?.offered?.forEach { mark ->
+            val intent = Intent(c, VoteReceiver::class.java).putExtra("message", marks.messageId).putExtra("mark", mark.id).putExtra("mail", marks.mail).putExtra("tag", tag)
+            val pi = PendingIntent.getBroadcast(c, tag.hashCode() * 31 + mark.ordinal + 1, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            b.addAction(Notification.Action.Builder(null, mark.label, pi).build())
+        }
     }
 
     /**
@@ -329,31 +506,52 @@ object Notifications {
         val b = Notification.Builder.recoverBuilder(c, n)
         val style = b.style as? Notification.MessagingStyle ?: return clear(c, conv)
         style.addMessage(Notification.MessagingStyle.Message(text, System.currentTimeMillis(), null as Person?))
-        val title = style.conversationTitle ?: style.messages.lastOrNull { it.senderPerson != null }?.senderPerson?.name ?: ""
-        val line = SpannableStringBuilder(title).apply {
-            setSpan(StyleSpan(Typeface.BOLD), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            append("  You: ").append(text)
-        }
-        b.setOnlyAlertOnce(true).setWhen(System.currentTimeMillis()).addExtras(Bundle().apply { putCharSequence(LINE, line) })
+        b.setOnlyAlertOnce(true).setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY).setWhen(System.currentTimeMillis())
         nm(c).notify(conv, ID, b.build())
-        summary(c, conv, line, n.channelId)
     }
 
-    /** A notification closed by the app (read here or elsewhere, voted on), and the summary without it. */
-    fun clear(c: Context, tag: String) {
+    /**
+     * The hub took a mark that leaves its row there: the row stays as it was, quietly, without that button, which
+     * shows the mark went and keeps it from going twice.
+     */
+    fun marked(c: Context, tag: String, mark: Mark) {
+        val n = nm(c).activeNotifications.firstOrNull { it.tag == tag && it.id == ID }?.notification ?: return
+        val b = Notification.Builder.recoverBuilder(c, n)
+        b.setActions(*n.actions.orEmpty().filter { it.title?.toString() != mark.label }.toTypedArray())
+        b.setOnlyAlertOnce(true).setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY)
+        nm(c).notify(tag, ID, b.build())
+    }
+
+    /**
+     * A chat read here or elsewhere: its notification goes, whichever of the two it has, and the list's summary is
+     * brought up to date.
+     */
+    fun clear(c: Context, chat: String) {
+        nm(c).cancel(chat, ID)
+        unlist(c, chat)
+    }
+
+    /** One notification closed by its own button. */
+    fun cancel(c: Context, tag: String) {
         nm(c).cancel(tag, ID)
         dismissed(c, tag)
     }
 
-    /** A conversation notification is gone: the summary follows. */
-    fun dismissed(c: Context, tag: String) = summary(c, tag, null)
+    /** A notification is gone. When it was a list row, the summary follows. */
+    fun dismissed(c: Context, tag: String) {
+        if (!tag.startsWith("list:")) return
+        synchronized(changes) {
+            note(tag, null)
+            summarize(c, listing(c).rows)
+        }
+    }
 }
 
 /**
  * How a notification looks: the network's mark as the small icon (status bar and header, in the network's colour).
  * A conversation notification is drawn by the system from its shortcut's picture with that mark as a badge; the
- * others carry the sender's picture, round, with the network's badge in a corner, as the large icon. sw.js draws the
- * same for browsers. Without a picture, the title's first letter on a plain disc.
+ * others carry a picture (the sender's, or for a list row the chat's), round, with the network's badge in a corner,
+ * as the large icon. sw.js draws the same for browsers. Without a picture, the title's first letter on a plain disc.
  */
 object Looks {
     class Look(val small: Int, val color: Int, val large: Bitmap?)
@@ -370,9 +568,13 @@ object Looks {
     fun of(c: Context, network: String, icon: String?, title: String): Look? {
         val (glyph, color) = NETWORKS[network] ?: return null
         val pic = icon?.let { runCatching { picture(c, it) }.getOrNull() }
-        val large = runCatching { draw(c, pic, glyph, color, title) }.getOrNull()
+        val large = runCatching { draw(c, pic, glyph to color, title) }.getOrNull()
         return Look(glyph, color, large)
     }
+
+    /** A list row's large icon: the chat's picture with the network's badge, when the network has a mark. */
+    fun row(c: Context, network: String, pic: Bitmap?, title: String): Bitmap? =
+        runCatching { draw(c, pic, NETWORKS[network], title) }.getOrNull()
 
     /** The network's mark and colour, or the app's. */
     fun badge(c: Context, network: String): Pair<Int, Int> = NETWORKS[network] ?: (R.drawable.ic_notification to c.getColor(R.color.accent))
@@ -458,7 +660,7 @@ object Looks {
         g.drawText(letter, r, r - (p.descent() + p.ascent()) / 2, p)
     }
 
-    private fun draw(c: Context, pic: Bitmap?, glyph: Int, color: Int, title: String): Bitmap {
+    private fun draw(c: Context, pic: Bitmap?, mark: Pair<Int, Int>?, title: String): Bitmap {
         val out = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
         val g = Canvas(out)
         val r = SIZE / 2f
@@ -477,6 +679,7 @@ object Looks {
             letter(g, title, r, SIZE.toFloat())
         }
         // The badge: the network's colour behind its white mark, ringed so it stands off any picture.
+        val (glyph, color) = mark ?: return out
         val b = SIZE * 0.2f
         val x = SIZE - b
         p.color = Color.WHITE
@@ -515,7 +718,7 @@ class ReplyReceiver : BroadcastReceiver() {
                     Notifications.replied(c, conv, text)
                 } else {
                     val why = if (code == 0) "Could not reach the hub" else Hub.errorOf(res).ifEmpty { "The hub answered $code" }
-                    Notifications.post(c, conv, "Reply not sent", "$why. You wrote: $text".take(1000), "/inbox/c/$conv", null, false, sticky = true)
+                    Notifications.post(c, conv, "Reply not sent", "$why. You wrote: $text".take(1000), "/inbox/c/$conv", sticky = true)
                 }
             } finally {
                 done.finish()
@@ -532,16 +735,23 @@ class DismissReceiver : BroadcastReceiver() {
     }
 }
 
-/** A vote from the shade (docs/notifications.md): the hub moves the message a level and learns from it. */
+/**
+ * A mark from the shade (docs/notifications.md): the hub learns from it. "Not urgent" and "Less like this" take the
+ * row away at once; after "Should have alerted" the row stays, without that button once the hub has the mark. Mail
+ * keeps its marks itself, on its own route.
+ */
 class VoteReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, intent: Intent) {
         val message = intent.getStringExtra("message") ?: return
-        val vote = intent.getStringExtra("vote") ?: return
-        intent.getStringExtra("tag")?.let { Notifications.clear(c, it) }
+        val mark = Notifications.Mark.of(intent.getStringExtra("mark")) ?: return
+        val tag = intent.getStringExtra("tag")
+        if (mark.closes && tag != null) Notifications.cancel(c, tag)
+        val path = if (intent.getBooleanExtra("mail", false)) "/api/mail/triage/$message/vote" else "/api/messages/$message/feedback"
         val done = goAsync()
         Thread {
             try {
-                runCatching { Hub.request(c, "POST", "/api/messages/$message/feedback", JSONObject().put("vote", vote)) }
+                val code = runCatching { Hub.request(c, "POST", path, mark.body()).first }.getOrDefault(0)
+                if (code in 200..299 && !mark.closes && tag != null) Notifications.marked(c, tag, mark)
             } finally {
                 done.finish()
             }

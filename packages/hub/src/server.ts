@@ -1060,7 +1060,13 @@ export class HubServer {
       }
       if (path === '/api/activity/notifications' && method === 'POST') {
         const b = await body<{ events?: Partial<P.NotificationEvent>[] }>();
-        return ok({ applied: a.events(Array.isArray(b.events) ? b.events : []), enabled: a.enabled });
+        const events = Array.isArray(b.events) ? b.events : [];
+        const applied = a.events(events);
+        // Swiped away is seen (docs/inbox.md): its conversation is scored again now, so an alert's pin goes at once.
+        const swiped = applied ? a.conversationsOf(events.filter((e) => e?.event === 'dismissed').map((e) => e.id)) : [];
+        const scores = swiped.length ? (this.opts.attention?.sync(swiped) ?? []) : [];
+        if (scores.length) this.broadcast(scores);
+        return ok({ applied, enabled: a.enabled });
       }
       if (path === '/api/activity/features' && method === 'GET') {
         const cid = url.searchParams.get('conversation');
@@ -1268,6 +1274,8 @@ export class HubServer {
       const b = await body<{ scope: P.NotifyScope; target: string | null; level: P.NotifyLevel | null }>();
       // Always alert, List only or Mute; null is Automatic (no rule).
       if (b.level != null && !(RULE_LEVELS as readonly string[]).includes(b.level)) return bad('A rule is all (always alert), digest (list only) or none (mute); null for automatic');
+      // Triage reads a person or a keyword only as "always alert": there is nothing else to set on one.
+      if ((b.scope === 'person' || b.scope === 'keyword') && b.level != null && b.level !== 'all') return bad('A person or a keyword can only be set to always alert (all); null takes the rule away');
       s.setRule(b.scope, b.target ?? null, b.level ?? null);
       // Conversations under this rule now explain themselves differently.
       for (const c of s.raw<{ id: string }>('SELECT id FROM conversation')) s.dirty.conversations.add(c.id);

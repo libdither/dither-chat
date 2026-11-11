@@ -352,7 +352,7 @@ export interface ScoreInput {
   alerted?: boolean;
   /** The importance, 0 to 1, of the newest unread message triage put in a tier (triage's `score`), until you swipe it away. */
   importance?: number | null;
-  /** Where the mute comes from, when the level is Nothing or Digest. */
+  /** Where the mute comes from, when the place is muted or kept to the list. */
   muted: string | null;
   /** usage.ts: decayed seconds and visits (half-life a week) as of `at` (the last time you were there), and the last visit. */
   usage: { score: number; visitScore: number; at: number; lastVisit: number | null } | null;
@@ -369,6 +369,8 @@ export interface ScoreInput {
 
 /** Added to the score of a conversation with an alert you have not seen: above any score the formula or the model gives. */
 export const ALERT_PIN = 1000;
+/** An alert is pinned this long at most: what could not wait an hour is, a day later, an unread message like any other. */
+export const PIN_FOR = DAY;
 
 /** A vote on a message counts half after two weeks, as far as the learned order goes. */
 export const VOTE_HALF_LIFE = 14 * DAY;
@@ -595,7 +597,7 @@ export function scoreConversation(x: ScoreInput): Scored {
 /**
  * A model's say in the order (docs/inbox.md). Two ways in:
  *  - `judge`: a local model asked "does this need a reply from me?" and "how important is it?" for a few candidate
- *    conversations, the way triage.ts asks Ollama. Nothing implements it yet; `Attention.judged` is where answers
+ *    conversations. Nothing implements it yet; `Attention.judged` is where answers
  *    would go, and `scoreConversation` already uses them.
  *  - `rank`: a learned order (ranker.ts), asked as each conversation is scored, with the formula's answer. Its score
  *    is what the inbox sorts by; `needs` and the reasons stay the formula's. Null keeps the formula's score.
@@ -868,7 +870,7 @@ export class Attention {
     if (pushedUnread && !seen) {
       const t = db.query('SELECT decision, score, reasons FROM triage WHERE message_id = ?').get(state.lastPush!.id) as Row | null;
       importance = t?.score ?? null;
-      alerted = t?.decision === 'push';
+      alerted = t?.decision === 'push' && now - state.lastPush!.ts <= PIN_FOR;
       // The list's rows have their importance; an alert or a Conversation says why it is one.
       if (!t || t.decision === 'push' || t.decision === 'quiet') pinged = (t ? (JSON.parse(t.reasons) as string[])[0] : null) ?? 'a message you have not read';
     }

@@ -1,13 +1,16 @@
 /**
- * The inbox's attention score (attention.ts, docs/inbox.md): the formula's parts, and keeping features up to date
- * one message at a time, in batches, and after older messages turn up.
+ * The inbox's attention score (attention.ts, docs/inbox.md): the formula's parts, keeping features up to date one
+ * message at a time, in batches, and after older messages turn up, and what the tiers do to a row: an alert pins it,
+ * a Conversation lifts it, the list gives it its importance, until you have seen it.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
+import { ActivityStore } from '../src/activity.ts';
 import {
+  ALERT_PIN,
   Attention,
   emptyTally,
   foldMessage,
@@ -520,5 +523,219 @@ describe('incremental features in the hub', () => {
     clock += 10_000;
     while (att.pump() > 0);
     expect(state('dm').turn?.addressed).toBe(owed);
+  });
+});
+
+// ------------------------------------------------------------------ the tiers
+
+describe('the tiers in the formula', () => {
+  const now = T0 + 40 * DAY;
+  /** A group with two unread messages, neither to you. */
+  const base: ScoreInput = { now, shape: 'group', members: 12, lastMessageAt: now - HOUR, state: freshState(), author: null, authorName: null, unread: 2, mentions: 0, pinged: null, muted: null, usage: null };
+  const plain = scoreConversation(base);
+
+  test('an unread Conversation message lifts the row, and says why it is one', () => {
+    const s = scoreConversation({ ...base, pinged: 'You wrote here in the last day' });
+    expect(WEIGHTS.pinged).toBe(15);
+    expect(s.parts.pinged).toBe(WEIGHTS.pinged);
+    expect(s.score).toBeCloseTo(plain.score + WEIGHTS.pinged, 1);
+    expect(s.reasons).toContain('You wrote here in the last day');
+    expect(s.reasons.some((r) => r.startsWith('Alerted you'))).toBe(false);
+  });
+
+  test('an unread alert lifts it further, and says it alerted you; a long reason is cut', () => {
+    const why = "Reads as urgent: the local model's answer is 0.3 against a bar of 0.05";
+    expect(why.length).toBeLessThanOrEqual(70);
+    const s = scoreConversation({ ...base, pinged: why, alerted: true });
+    expect(WEIGHTS.alerted).toBe(40);
+    expect(s.parts.pinged).toBe(WEIGHTS.pinged + WEIGHTS.alerted);
+    expect(s.score).toBeCloseTo(plain.score + 55, 1);
+    expect(s.reasons[0]).toBe(`Alerted you: ${why}`);
+    expect(scoreConversation({ ...base, pinged: 'Matches keyword “deploy”', alerted: true }).reasons[0]).toBe('Alerted you: Matches keyword “deploy”');
+    // Over seventy characters it is cut.
+    const long = "Reads as urgent: the local model's answer is 0.125 against a bar of 0.05";
+    expect(long.length).toBeGreaterThan(70);
+    expect(scoreConversation({ ...base, pinged: long, alerted: true }).reasons[0]).toBe(`Alerted you: ${long.slice(0, 69)}…`);
+    // Alerted without anything unread to say why: nothing to lift.
+    expect(scoreConversation({ ...base, pinged: null, alerted: true }).parts.pinged).toBeUndefined();
+    expect(ALERT_PIN).toBe(1000);
+  });
+
+  test('importance counts by how much: a list row says so, an alert or a Conversation says its own reason', () => {
+    expect(WEIGHTS.importance).toBe(25);
+    const listed = scoreConversation({ ...base, importance: 0.8 });
+    expect(listed.parts.importance).toBe(20);
+    expect(listed.score).toBeCloseTo(plain.score + 20, 1);
+    expect(listed.reasons).toContain('On your list: importance 80%');
+    expect(scoreConversation({ ...base, importance: 0.2 }).parts.importance).toBe(5);
+    const conv = scoreConversation({ ...base, pinged: 'A direct message', importance: 0.8 });
+    expect(conv.parts).toMatchObject({ pinged: 15, importance: 20 });
+    expect(conv.reasons).toContain('A direct message');
+    expect(conv.reasons.some((r) => r.startsWith('On your list'))).toBe(false);
+    // None kept (decided by a rule alone), or none at all: no part.
+    expect(scoreConversation({ ...base, importance: null }).parts.importance).toBeUndefined();
+    expect(scoreConversation({ ...base, importance: 0 }).parts.importance).toBeUndefined();
+    expect(plain.parts.importance).toBeUndefined();
+  });
+
+  test('a muted place takes none of it', () => {
+    const s = scoreConversation({ ...base, muted: 'this conversation', pinged: 'About you', alerted: true, importance: 0.9 });
+    expect(s.parts.pinged).toBeUndefined();
+    expect(s.parts.importance).toBeUndefined();
+    expect(s.score).toBeLessThan(plain.score);
+  });
+});
+
+describe('the tiers in the inbox', () => {
+  let store: Store;
+  let att: Attention;
+  let activity: ActivityStore;
+  let acc: AccountRow;
+  let clock = T0;
+  let n = 0;
+  const cid = (native: string) => store.one<{ id: string }>('SELECT id FROM conversation WHERE native_id = ?', native)!.id;
+  const flush = () => {
+    const evs = store.flush();
+    att.sync(evs.flatMap((e) => (e.t === 'conversation' ? [e.conversation.id] : [])));
+    while (att.busy) att.sync([]);
+  };
+  /** A message from someone else an hour on, decided as triage would have, then folded and scored. Returns its id. */
+  const arrive = (conversation: string, author: string, d: { decision: P.TriageDecision; score: number | null; reasons: string[] }) => {
+    clock += HOUR;
+    const nativeId = `t${++n}`;
+    store.ingest(acc, { t: 'message', message: { nativeId, conversation, author, ts: clock, body: 'hello' }, live: true });
+    flush();
+    const id = store.one<{ id: string }>('SELECT id FROM message WHERE native_id = ?', nativeId)!.id;
+    const dec = { ...d, decidedBy: 'rules' as const };
+    store.setTriage(id, dec);
+    att.triaged(id, dec);
+    flush();
+    return id;
+  };
+  /** Its notification, swiped away on the phone a minute after it came. */
+  const swipe = (conversation: string, messageId: string, at = clock + MIN) => {
+    const nid = activity.notification({ kind: 'message', messageId, conversationId: cid(conversation) }, clock)!;
+    expect(activity.events([{ id: nid, device: 'phone', event: 'dismissed', at }], at)).toBe(1);
+    // The inbox scores everything again every few minutes (and at once when the chat changes).
+    att.rescoreAll(at);
+  };
+  /** The formula's answer for a chat, part by part (what the pin is added to). */
+  const explain = (conversation: string) => att.explain(cid(conversation), clock) as { score: number; parts: Record<string, number> };
+  const parts = (conversation: string) => explain(conversation).parts;
+  const unreadOf = (conversation: string) => store.one<{ unread: number }>('SELECT MAX(unread) AS unread FROM vantage WHERE target_id = ?', cid(conversation))!.unread;
+  const URGENT = "Reads as urgent: the local model's answer is 0.3 against a bar of 0.05";
+
+  beforeAll(() => {
+    store = new Store(':memory:', (raw) => raw ?? null);
+    acc = store.createAccount({ network: 'matrix', label: 'a', color: '#000', adapter: 'matrix' });
+    store.ingest(acc, { t: 'status', status: 'online', self: { nativeId: 'me', displayName: 'Me' } });
+    acc = store.account(acc.id)!;
+    for (const who of ['sam', 'kim', 'lee']) store.ingest(acc, { t: 'identity', identity: { nativeId: who, displayName: who[0].toUpperCase() + who.slice(1), contact: true } });
+    store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'dm', shape: 'direct', participants: ['me', 'sam'] } });
+    store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'trio', shape: 'group', name: 'Trio', participants: ['me', 'kim', 'lee'] } });
+    for (const c of ['chan', 'side', 'quiet']) store.ingest(acc, { t: 'conversation', conversation: { nativeId: c, shape: 'channel', name: c, spaces: [{ nativeId: 'srv' }] } });
+    activity = new ActivityStore(store);
+    activity.setSettings({ enabled: true, retentionDays: 365 });
+    att = new Attention(store, new Triage(store), () => clock);
+    att.rescoreAll(T0);
+    store.flush();
+  });
+  afterAll(() => store.db.close());
+
+  test('an unread alert pins its conversation above everything, with why', () => {
+    arrive('trio', 'kim', { decision: 'quiet', score: 0.8, reasons: ['You wrote here in the last day'] });
+    arrive('dm', 'sam', { decision: 'push', score: 0.8, reasons: [URGENT, 'A direct message'] });
+    const v = att.view(cid('dm'))!;
+    const x = explain('dm');
+    expect(x.parts).toMatchObject({ pinged: WEIGHTS.pinged + WEIGHTS.alerted, importance: 20 });
+    expect(v.score).toBeCloseTo(x.score + ALERT_PIN, 1);
+    expect(v.reasons[0]).toBe(`Alerted you: ${URGENT}`);
+    // Whatever else is in the inbox scores under the pin.
+    const others = att.list().filter((o) => o.id !== cid('dm'));
+    expect(others.length).toBeGreaterThan(0);
+    expect(Math.max(...others.map((o) => o.score))).toBeLessThan(ALERT_PIN);
+    expect(v.score).toBeGreaterThan(ALERT_PIN);
+  });
+
+  test('an unread Conversation message lifts its row, with its reason, and is not pinned', () => {
+    const v = att.view(cid('trio'))!;
+    expect(parts('trio')).toMatchObject({ pinged: WEIGHTS.pinged, importance: 20 });
+    expect(v.reasons).toContain('You wrote here in the last day');
+    expect(v.reasons.some((r) => r.startsWith('Alerted you'))).toBe(false);
+    expect(v.score).toBeLessThan(ALERT_PIN);
+  });
+
+  test('a list message gives its importance, and lists a server channel that is otherwise not listed', () => {
+    // Below the list: unread in its channel, and the channel is not in the inbox.
+    arrive('quiet', 'lee', { decision: 'drop', score: 0.2, reasons: ['Below the list: importance 20%, under your level of 60%'] });
+    expect(att.view(cid('quiet'))).toBeUndefined();
+    expect(unreadOf('quiet')).toBe(1);
+    // On the list: the channel is listed while that message is unread.
+    arrive('chan', 'lee', { decision: 'digest', score: 0.8, reasons: ['On the list: importance 80%, at or over your level of 60%'] });
+    const v = att.view(cid('chan'))!;
+    expect(v).toBeDefined();
+    expect(parts('chan').importance).toBe(20);
+    expect(parts('chan').pinged).toBeUndefined();
+    expect(v.reasons).toContain('On your list: importance 80%');
+    expect(v.score).toBeLessThan(ALERT_PIN);
+    // The more important, the higher: another channel at 30%.
+    arrive('side', 'lee', { decision: 'digest', score: 0.3, reasons: ['On the list: importance 30%, at or over your level of 20%'] });
+    expect(parts('side').importance).toBe(7.5);
+    expect(att.view(cid('side'))!.score).toBeLessThan(att.view(cid('chan'))!.score);
+    // Read, the channel leaves the inbox again.
+    store.markRead(cid('side'), clock);
+    flush();
+    expect(att.view(cid('side'))).toBeUndefined();
+  });
+
+  test('swiped away on the phone, it is seen: the pin, the lift and the importance go, and it stays unread', () => {
+    const alert = store.one<{ id: string }>(`SELECT t.message_id AS id FROM triage t JOIN message m ON m.id = t.message_id WHERE m.conversation_id = ? AND t.decision = 'push'`, cid('dm'))!.id;
+    const conv = store.one<{ id: string }>(`SELECT t.message_id AS id FROM triage t JOIN message m ON m.id = t.message_id WHERE m.conversation_id = ?`, cid('trio'))!.id;
+    const listed = store.one<{ id: string }>(`SELECT t.message_id AS id FROM triage t JOIN message m ON m.id = t.message_id WHERE m.conversation_id = ?`, cid('chan'))!.id;
+    const before = { dm: att.view(cid('dm'))!.score, trio: att.view(cid('trio'))!.score, chan: att.view(cid('chan'))!.score };
+    swipe('dm', alert);
+    swipe('trio', conv);
+    swipe('chan', listed);
+    for (const c of ['dm', 'trio', 'chan']) {
+      const p = parts(c);
+      expect(p.pinged).toBeUndefined();
+      expect(p.importance).toBeUndefined();
+      // Still unread: no read receipt went anywhere, and the row says so.
+      expect(unreadOf(c)).toBe(1);
+      expect(p.unread).toBeGreaterThan(0);
+      expect(att.view(cid(c))).toBeDefined();
+    }
+    expect(att.view(cid('dm'))!.score).toBeLessThan(ALERT_PIN);
+    expect(att.view(cid('dm'))!.reasons.some((r) => r.startsWith('Alerted you'))).toBe(false);
+    expect(att.view(cid('dm'))!.reasons).toContain('1 unread message');
+    expect(att.view(cid('trio'))!.score).toBeLessThan(before.trio - 20);
+    expect(att.view(cid('chan'))!.score).toBeLessThan(before.chan - 15);
+    expect(before.dm).toBeGreaterThan(ALERT_PIN);
+  });
+
+  test('until something new arrives: the next alert there pins it again, and an older swipe does not count for it', () => {
+    arrive('dm', 'sam', { decision: 'push', score: 0.9, reasons: ['Matches keyword “stove”'] });
+    const v = att.view(cid('dm'))!;
+    expect(v.score).toBeGreaterThan(ALERT_PIN);
+    expect(v.reasons).toContain('Alerted you: Matches keyword “stove”');
+    expect(parts('dm')).toMatchObject({ pinged: 55, importance: 22.5 });
+    // A Conversation message after a seen alert: the lift, without the pin.
+    arrive('trio', 'lee', { decision: 'quiet', score: 0.4, reasons: ['You usually answer here'] });
+    expect(parts('trio')).toMatchObject({ pinged: 15, importance: 10 });
+    expect(att.view(cid('trio'))!.score).toBeLessThan(ALERT_PIN);
+    // Reading it anywhere takes all of it away with the unread count.
+    store.markRead(cid('dm'), clock);
+    flush();
+    expect(att.view(cid('dm'))!.score).toBeLessThan(ALERT_PIN);
+    expect(parts('dm').pinged).toBeUndefined();
+    expect(parts('dm').unread).toBeUndefined();
+  });
+
+  test('a message below the list is nothing new for the row: what you swiped away stays seen until the next one in a tier', () => {
+    arrive('chan', 'kim', { decision: 'drop', score: 0.1, reasons: ['Below the list: importance 10%, under your level of 60%'] });
+    expect(unreadOf('chan')).toBe(2);
+    expect(parts('chan').importance).toBeUndefined();
+    arrive('chan', 'kim', { decision: 'digest', score: 0.7, reasons: ['On the list: importance 70%, at or over your level of 60%'] });
+    expect(parts('chan').importance).toBe(17.5);
   });
 });

@@ -29,8 +29,8 @@ describe('the inbox query', () => {
     let seed = 7;
     const rnd = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
     store.db.transaction(() => {
-      // Ten days of 80k messages. The last day was scored (the model), mostly dropped, too few digest to fill its
-      // share; before that, rules only (no score), mostly digest: the live hub's week as of 2026-11, compressed.
+      // Ten days of 80k messages. The last day was scored (the model), mostly below the list, too few on it to fill
+      // its share; before that, rules only (no score), mostly on the list: the live hub's week as of 2026-11, compressed.
       for (let i = 0; i < 80_000; i++) {
         const ts = now - Math.round((i / 80_000) * 10 * 86_400_000);
         const scored = ts > now - 86_400_000;
@@ -50,14 +50,15 @@ describe('the inbox query', () => {
     for (const q of Store.inboxQueries(since, now)) {
       const plan = (store.db.query('EXPLAIN QUERY PLAN ' + q.sql).all(q.since, q.limit) as { detail: string }[]).map((r) => r.detail);
       expect(plan.some((d) => /^SCAN (m|t)\b/.test(d))).toBe(false);
-      // Triage first by level and score, or messages first by time: never a sort of everything in the window.
-      expect(plan[0]).toMatch(q.sql.includes('FROM triage t') ? /USING INDEX triage_level_score/ : /USING INDEX message_ts/);
+      // Triage first by tier and importance, or messages first by time: never a sort of everything in the window.
+      expect(plan[0]).toMatch(q.sql.includes('FROM triage t') ? /USING INDEX triage_tier_score/ : /USING INDEX message_ts/);
       if (q.sql.includes('ORDER BY m.ts DESC') && q.sql.includes('FROM message m')) expect(plan.some((d) => d.includes('TEMP B-TREE'))).toBe(false);
     }
   });
 
-  test('the same answer as one query per pick, ordered by score then time', () => {
-    const at = `COALESCE(t.feedback, t.decision)`;
+  test('the same answer as one query per pick, ordered by importance then time', () => {
+    // The tier as decided: a vote from before the tiers no longer moves a row between the picks.
+    const at = `t.decision`;
     const pick = (where: string, limit: number, order: string, s = since) =>
       store.db.query(`SELECT m.id, m.ts FROM triage t JOIN message m ON m.id = t.message_id WHERE m.ts >= ? AND m.deleted = 0 AND t.decision != 'silent' AND ${where} ORDER BY ${order} LIMIT ${limit}`).all(s) as { id: string; ts: number }[];
     const ids = (rows: { id: string; ts: number }[]) => rows.map((r) => r.id).sort();
@@ -66,13 +67,18 @@ describe('the inbox query', () => {
     expect(got.length).toBe(490);
     expect(ids(got)).toEqual(ids(want));
     expect(got.every((x, i) => i === 0 || got[i - 1].ts >= x.ts)).toBe(true);
-    // Fewer scored than the digest's share: the rest are the newest without a score.
+    // Fewer scored than the list's share: the rest are the newest without a score.
     expect(pick(`${at} = 'digest' AND t.score IS NOT NULL`, 300, 'm.ts DESC').length).toBeLessThan(300);
+    // A row below the list from four days ago, voted up to Important before the tiers: still not picked.
+    const old = store.one<{ id: string }>(`SELECT m.id FROM triage t JOIN message m ON m.id = t.message_id WHERE t.decision = 'drop' AND m.ts < ? AND m.ts >= ? ORDER BY m.ts DESC LIMIT 1`, now - 4 * 86_400_000, since)!.id;
+    store.db.query(`UPDATE triage SET feedback = 'push', feedback_at = ? WHERE message_id = ?`).run(now, old);
+    expect(store.inbox(since, now).items.some((i) => i.message.id === old)).toBe(false);
+    store.db.query(`UPDATE triage SET feedback = NULL, feedback_at = NULL WHERE message_id = ?`).run(old);
   });
 
   test('only a few rows are ever sorted whole: the notified, never the week', () => {
     // Sorting the week took 1.5 s on the live hub. Counted, not timed: a pick whose plan sorts all it finds is the
-    // notified one (push and quiet), and what it finds is a small part of the window.
+    // notified one (alerts and Conversations), and what it finds is a small part of the window.
     const week = store.one<{ n: number }>('SELECT COUNT(*) AS n FROM message WHERE ts >= ?', since)!.n;
     let sorted = 0;
     for (const q of Store.inboxQueries(since, now)) {

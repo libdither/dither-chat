@@ -30,8 +30,8 @@ Email beside your chats, through dither-accounts' `mail` interface. The design, 
 - **Offline**: the page keeps the threads it was showing and the last threads and bodies it opened, so they show
   before the hub answers.
 
-Not yet: notifications (9). Big mailboxes (older mail, other folders, bodies ahead) and search have sections of
-their own below.
+Big mailboxes (older mail, other folders, bodies ahead), search and notifications (slice 9) have sections of their
+own below.
 
 ## People (slice 6)
 
@@ -233,7 +233,7 @@ follows mailboxes you open), so what happens to it there later reaches the hub o
 - **The one-list inbox** lists a thread from a person in Inbox, not muted, that is unread (last message within 30
   days), or owes a reply (to a message within 14 days), or had mail in the last week, or that you opened in the last
   two days (`MAIL_INBOX` in `hub/src/mail/attention.ts`). Archiving it takes it out, from here or another mail app.
-  Mail from a sender nobody knows stays in Mail until triage rates it Active or above (§14 Q4: slice 9).
+  Mail from a sender nobody knows stays in Mail until triage puts it on the list or above (§14 Q4: slice 9).
 - **Its order** is the chats' formula (`attention.ts`): you and one other is a DM, else a group of everyone on it; you
   in To is a mention, a reply to yours replies to you. How you answer someone counts all their mail threads and, once
   you merged them with a chat contact, their chats too, and the reverse: "You usually reply to Sam within 30
@@ -330,46 +330,56 @@ Tests: `hub/test/mail-classify.test.ts`, `mail-attention.test.ts`, `web/test/inb
 
 ## Triage and notifications (slice 9)
 
-- **New mail from a person is triaged** like a chat message (`hub/src/mail/triage.ts`): one of the four levels
-  (Important, Active, Digest, Not interesting), from chat's own decision model and chat's votes
-  ([notifications.md](notifications.md)). Mail that arrives (`ingested` with `live`) is triaged and may notify; what a
-  sync, a backfill or a search lists never notifies (but see "quietly" below). Bulk is never triaged: no
-  notification, no digest. Yours and drafts are not either.
-- **Where it starts.** Someone you correspond with (you wrote to them, they wrote in a thread of yours, or you merged
-  them with a chat contact) who wrote to you (To): Important. The same in Cc: Active. A list or Bcc from them, and
-  anything from a sender nobody knows: the digest, if it says enough ("to you", a question, a reply to you, urgency),
-  else below it. A starred person: Important. Your votes move it from there, as in chat.
+- **New mail from a person is triaged** with chat's own importance model and chat's marks
+  (`hub/src/mail/triage.ts`, [notifications.md](notifications.md)). Mail has two of chat's three tiers. It is a row
+  on the **List** when its importance is at or above your level, and **below the list** when it is not. It is an
+  **Alert** only when its sender is set to Always alert. There is no Conversation tier for mail, and no local model
+  reads it for urgency. Mail that arrives (`ingested` with `live`) is triaged and may notify; what a sync, a backfill
+  or a search lists never notifies (but see "quietly" below). Bulk is never triaged: no notification, no list. Yours
+  and drafts are not either.
+- **Where importance starts.** At 0.8 for someone you correspond with (you wrote to them, they wrote in a thread of
+  yours, or you merged them with a chat contact) who wrote to you or copied you in: what a mail client would have
+  notified you about. For a list or Bcc from them, and anything from a sender nobody knows, lower, by how much it is
+  about you (`0.05 + 0.75 ×` a score that starts at 0.15 and adds 0.2 for you in To, 0.2 for someone you know, 0.4
+  for a reply to you, 0.15 for a question, 0.15 for urgency, and takes off 0.3 when it looks spoofed; at most 0.6).
+  At the default level of 0.6, and before anything is learned, a stranger's mail is on the list only when it
+  answers something you wrote and is to you (or asks or presses besides). What you did and what you marked move it
+  from there, as in chat.
 - **The facts** are chat's, from mail: network `email`, shape `mail`, the thread as the conversation, the mail
   account as the space, the author as their person (else identity), you in To as a mention, Cc or a list as
   `everyone`, a reply to one of yours, a question or urgency in the subject or text, a link, an attachment, long
-  (over 1,500 characters above the quote). The model reads the subject and the first 2 KB of text above any quote.
-  `native` and `notify` are left out, so mail votes leave what chat learned about them alone.
-- **Shared with chat.** Votes on mail join chat's examples (`TriageVotes.others`), so one vote on Sam's mail moves
-  Sam's chances on Signal once the two are one person, and the reverse. The author is read as it is now, so a merge
-  after the vote counts. With no mail votes, chat's policy and decisions are what they were (checked on a demo hub
-  against origin/main: the same 54 decisions, the same policy before and after a chat vote).
-- **What keeps it quiet**: a body that warns of spoofing (a name that is another address, Reply-To elsewhere, a
-  link that says one site and goes to another) holds it at Active at most, whatever was learned. Quiet hours hold
-  Important and Active as chat's, into the same summary. Mail that reached the server over an hour before it came
-  here (a catch-up), mail already read, mail outside Inbox and muted threads (silent) are rated but notify nobody.
+  (over 1,500 characters above the quote), and `notify`: whether a mail client would have notified you (the first
+  case above). The model reads the subject and the first 2 KB of text above any quote. `native` is left out, so
+  mail leaves what chat learned about the networks' settings alone.
+- **Shared with chat.** Marks on mail join chat's examples (`TriageVotes.others`), so "Less like this" on Sam's
+  mail lowers Sam's importance on Signal once the two are one person, and the reverse. The author is read as it is
+  now, so a merge after the mark counts. A mail notification you left alone teaches nothing: as in chat, only what
+  you did counts.
+- **What keeps it quiet**: from a sender set to Always alert, a body that warns of spoofing (a name that is another
+  address, Reply-To elsewhere, a link that says one site and goes to another) is no alert ("No alert: …"), only a
+  row on the list or below it. Quiet hours hold an alert as a list row, into chat's summary. Mail that reached the
+  server over an hour before it came here (a catch-up), mail already read, mail outside Inbox and muted threads
+  (silent) are rated but notify nobody.
 - **The body first.** A new personal message's body is fetched on arrival (slice 2) and moved up to keep-up priority
   when it may notify; triage waits for it at most 5 s, then decides on what is there.
 - **One notification per thread** (`deliverMail` in `hub/src/main.ts`, `delivery.ts`): the sender as the title,
-  "subject — start of the text" as the body, the person's picture with the email mark, and the thread's unread
-  lines, the subject before the first. It buzzes once a burst, as chat's; reading the thread anywhere (here, in
-  another mail app, or answering) takes it off the phones. Its conversation is the thread, which opens the reader
-  beside the inbox (`#/inbox/c/<thread>`, as a mail row does) in the browser and in the Android app as they are; the
-  push and the live `notify` event also carry `mailThreadId`.
+  "subject — start of the text" as the body, the person's picture with the email mark, and the thread's unread lines,
+  the subject before the first. A list row is silent, goes only to phones, sorts by its importance, and is brought up
+  to date at most every ten minutes a thread; an alert sounds once a burst, as chat's. Reading the thread anywhere
+  (here, in another mail app, or answering) takes it off the phones. Its conversation is the thread, which opens the
+  reader beside the inbox (`#/inbox/c/<thread>`, as a mail row does) in the browser and in the Android app as they
+  are; the push and the live `notify` event also carry `mailThreadId`.
 - **Device rules** (`devices.ts`): a mail thread's chain is the thread, its mail account, then Email. Settings →
   Notifications → Each device lists Email (and each mail account when there are several), so "Email off on the
   phone" works. "Mentions only" keeps mail with you in To or answering you.
-- **Votes**: on How it sorts, where a mail thread is a line beside chat's with an envelope and "by email"; from the
-  notification (Important: ▼ Active, ✓ Right; Active: ▲ Important, ▼ Digest); and in the reader, where a triaged
-  message has a Notification button with why, the three chances and the four levels. They go to
-  `POST /api/messages/:id/feedback` like chat's (or `POST /api/mail/triage/:id/vote`). "Not a person" is a vote
-  down on the thread's newest decision.
-- **A sender nobody knows** reaches the one-list inbox only when triage rates the thread's newest message Active or
-  above, by the model or your vote (§14 Q4, `mailAttention(hub).triage`).
+- **One mark: "Less like this."** Mail has no alert marks. It is on How it sorts, where a mail thread is a line
+  beside chat's with an envelope and "by email"; on the notification; and in the reader, where a triaged message has
+  a Notification button with its tier, why, its importance and the mark. It goes to
+  `POST /api/mail/triage/:id/vote { less: true | false }` (or to `POST /api/messages/:id/feedback` with the mail
+  message's id, as chat's), and `false` takes it back. "Not a person" is "Less like this" on the thread's newest
+  decision.
+- **A sender nobody knows** reaches the one-list inbox only when the thread's newest message is on the list or
+  above and you have not marked it "Less like this" (§14 Q4, `mailAttention(hub).triage`).
 - **Quietly, what a sync found** (`MailTriage.sweep`). A stranger's thread that was already there when the account was
   added never arrived live, so it would never be rated and never listed. So the threads the one-list inbox could list
   (its window: unread within 30 days, mail in the last week, opened, owed; never a year of mail) from a sender
@@ -377,21 +387,22 @@ Tests: `hub/test/mail-classify.test.ts`, `mail-attention.test.ts`, `web/test/inb
   here (asked for, waited for at most a minute), 30 an account a pass, after a sync brings mail and every 5
   minutes. Such a decision has `quiet = 1` and says "Rated after a sync found it: no notification": it never
   notifies, is never held by quiet hours, is never a line of a later notification, and never counts as a
-  notification you let stand; it only decides the listing, and shows on How it sorts and in the reader so you can vote
-  on it. On an account whose summaries carry no headers it waits until the steps below are done.
+  notification you let stand; it only decides the listing, and shows on How it sorts and in the reader so you can mark
+  it. On an account whose summaries carry no headers it waits until the steps below are done.
 
 How: `mail_triage` (`schema-triage.sql`) keeps each decision with its facts, words, chances, whether it notified and
-your vote; a message the server no longer has keeps its row only if you voted on it, and an account's mail going
-(§14 Q6) takes its rows, voted ones keeping their facts but not their words. `GET /api/mail/triage?since=` is How it
-sorts' mail (`MailTriageItem`), and Catch up's level for a mail card; each thread's view carries its newest decision
-(`MailThreadView.triage`) and each message's its own (`MailMessageView.triage`), so both follow new mail and reads live.
-Mail threads from people are cards in Catch up too ([inbox.md](inbox.md#catch-up)), with Open and Done. The daily digest
-notification still counts chat only.
-Tests: `hub/test/mail-triage.test.ts` (bulk, a known sender in To, quiet hours, "Email off", a vote on Sam's mail
-and Sam on Signal, the inbox for strangers, what a sync found rated quietly, spoofing, late and read mail, lines and
-reads, the routes);
-`verify-notifications.ts`'s mail run (a demo person answers what you send; the toast, How it sorts, a vote, the reader,
-Email off, a phone and the light theme).
+your mark (`feedback`: `drop` for "Less like this", else a vote from before the tiers); a message the server no longer
+has keeps its row only if you marked it, and an account's mail going (§14 Q6) takes its rows, marked ones keeping
+their facts but not their words. `GET /api/mail/triage?since=` is How it sorts' mail (`MailTriageItem`: the last week,
+and the last two days of what fell below the list), and Catch up's tier for a mail card; each thread's view carries
+its newest decision (`MailThreadView.triage`) and each message's its own (`MailMessageView.triage`), so both follow
+new mail and reads live. Mail threads from people are cards in Catch up too ([inbox.md](inbox.md#catch-up)), with Open
+and Done.
+
+Decisions from before the tiers were converted once, as chat's ([notifications.md](notifications.md#the-migration)):
+Important and Active mail became rows on the list, Digest went below it, each keeping what it was (`was`), and the
+votes on them count half a mark.
+Tests: `hub/test/mail-triage.test.ts`; `verify-notifications.ts`'s mail run.
 
 ## Summaries without headers (Proton)
 
@@ -738,8 +749,8 @@ others were asked, because an IMAP move is a removal there and an addition elsew
   `Pager.ts` `forwardTouches(frame)` hands a same-origin frame's touches to the pager.
 - **Classification and the inbox** (slice 8): `mailClassifier(hub)` (`hub/src/mail/classify.ts`): `changed` (after
   a thread's class or `unknown` changed), `person()`/`setSender()`/`setThread()` for overrides, and the `override`
-  event ("Not a person" is a vote down). `mailAttention(hub)` (`hub/src/mail/attention.ts`): `triage(threadId)` is
-  where triage's rating lets a sender nobody knows into the inbox (Active or above; no until slice 9),
+  event ("Not a person" is "Less like this"). `mailAttention(hub)` (`hub/src/mail/attention.ts`): `triage(threadId)`
+  is where triage's rating lets a sender nobody knows into the inbox (on the list or above; no until slice 9),
   `triageFacts(messageIds)` gives the fold triage's pushes and questions, and `isListed`/`input`/`view` read a
   thread's listing and attention. A thread's class is `mail_thread.class` (`MailThreadView.class`, `unknown`), its
   owed time `MailThreadView.owedSince`, its inbox score `Attention.view(<thread id>)`.
@@ -748,7 +759,7 @@ others were asked, because an IMAP move is a removal there and an addition elsew
   `search(q, { server })` adds the servers'. `mail_search.shut` marks messages only in Junk or Trash.
 - **Triage** (slice 9): `mailTriage(hub)` (`hub/src/mail/triage.ts`): `rated(threadId)`, `factsOf(messageIds)`,
   `items(since)` (the board's), `chain(threadId)` for device rules, `gather`/`readTs` for delivery.ts. Each decision
-  is a `mail_triage` row; `delivered` says a notification went out, `feedback` is your vote. The activity log's
+  is a `mail_triage` row; `delivered` says a notification went out, `feedback` is your mark. The activity log's
   notification rows for mail carry the mail message and thread ids, which slice 10 can join to opens.
 - `protocol/src/mail-iface.ts` is a copy of dither-accounts' interface types; `bun scripts/accounts-sync.ts --check`
   says when it differs.

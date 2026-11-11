@@ -306,6 +306,25 @@ describe('the log on the hub', () => {
     expect(ex.get(ignored)).toMatchObject({ outcome: { notified: false, openedAfter: null }, label: 'should_not_push' });
   });
 
+  test('a message triage put in a tier was notified, an alert, a Conversation and a list row alike; one below the list was not', () => {
+    const make = (nativeId: string) => {
+      store.ingest(acc, { t: 'conversation', conversation: { nativeId, shape: 'group', name: nativeId, participants: ['me', 'ann'] } });
+      return store.one<{ id: string }>('SELECT id FROM conversation WHERE native_id = ?', nativeId)!.id;
+    };
+    // Three bursts hours apart, each in a tier: none of them came unnoticed.
+    const tiered = make('tiered');
+    message(tiered, 'ann', NOW - 3 * DAY, 'push');
+    message(tiered, 'ann', NOW - 3 * DAY + 3 * HOUR, 'quiet');
+    message(tiered, 'ann', NOW - 3 * DAY + 6 * HOUR, 'digest');
+    expect(a.features(tiered, NOW)!.conversation.unpushedBursts).toBe(0);
+    // The same three below the list or silenced: three bursts nobody was told about.
+    const below = make('below');
+    message(below, 'ann', NOW - 3 * DAY, 'drop');
+    message(below, 'ann', NOW - 3 * DAY + 3 * HOUR, 'drop');
+    message(below, 'ann', NOW - 3 * DAY + 6 * HOUR, 'silent');
+    expect(a.features(below, NOW)!.conversation.unpushedBursts).toBe(3);
+  });
+
   test('triage: behind the flag the log adds a reason and is kept with the decision; the decision stays', async () => {
     // A history: three pushes from the group, all opened within a few minutes.
     for (let i = 0; i < 3; i++) {
@@ -315,7 +334,7 @@ describe('the log on the hub', () => {
     }
     const id = message(group, 'ann', Date.now(), null);
     const off = await new Triage(store).decide(id);
-    const on = await new Triage(store, undefined, a).decide(id);
+    const on = await new Triage(store, a).decide(id);
     expect(on!.decision).toBe(off!.decision);
     expect(on!.reasons.slice(0, -1)).toEqual(off!.reasons);
     expect(on!.reasons.at(-1)).toBe('Activity: you opened 3 of 3 pushes, usually within 2 min; replied after 0% of them');
@@ -324,7 +343,7 @@ describe('the log on the hub', () => {
     expect(JSON.parse((store.db.query('SELECT features FROM triage_input WHERE message_id = ?').get(id) as any).features).conversation.pushes).toBe(3);
     // Without the flag, nothing.
     a.featuresInTriage = false;
-    expect((await new Triage(store, undefined, a).decide(id))!.features).toBeUndefined();
+    expect((await new Triage(store, a).decide(id))!.features).toBeUndefined();
     a.featuresInTriage = true;
   });
 });

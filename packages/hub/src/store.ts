@@ -12,6 +12,7 @@ import { infoFor } from './mediainfo.ts';
 import { TypingRelay, typingTtl } from './typing.ts';
 import { stepTimer } from './startup.ts';
 import { addTables, ingestRelationships, ingestRequests, pendingLinks } from './add.ts';
+import { alertBar, type Facts } from './learn.ts';
 
 type Row = Record<string, any>;
 
@@ -79,8 +80,9 @@ const PREVIEW_LEN = 140;
 export function triageView(t: Row): P.TriageView {
   const probs = json<Partial<P.TriageProbs> | null>(t.probs, null);
   const marks: P.TriageMarks = { ...(t.alert_mark != null ? { alert: !!t.alert_mark } : {}), ...(t.less_mark ? { less: true } : {}) };
-  // The local model's answer is kept with the facts.
-  const judge = typeof t.facts === 'string' && t.facts.includes('"judge"') ? json<{ judge?: number }>(t.facts, {}).judge : undefined;
+  // The local model's answer is kept with the facts, which also say which bar it was held to.
+  const facts = typeof t.facts === 'string' && t.facts.includes('"judge"') ? json<Partial<Facts>>(t.facts, {}) : null;
+  const judge = facts?.judge;
   return {
     decision: t.decision,
     score: t.score,
@@ -89,7 +91,7 @@ export function triageView(t: Row): P.TriageView {
     feedback: t.feedback,
     probs: probs && typeof probs.important === 'number' && typeof probs.alert === 'number' ? { alert: probs.alert, important: probs.important } : null,
     ...(Object.keys(marks).length ? { marks } : {}),
-    ...(judge !== undefined ? { judge } : {}),
+    ...(judge !== undefined ? { judge, bar: alertBar({ shape: facts!.shape ?? '', mention: !!facts!.mention, reply: !!facts!.reply }) } : {}),
   };
 }
 

@@ -197,19 +197,16 @@ async function dataUrl(canvas) {
 }
 
 /**
- * A vote from the notification (docs/notifications.md): Important down to Active, or up, which says it was right;
- * Active up to Important or down to the digest.
+ * A mark from the notification (docs/notifications.md), by its tier: an alert ('push') can be said to be not urgent,
+ * a Conversation ('quiet') that it should have alerted, a list row ('digest') that there should be less like it or
+ * that it should have alerted. Each action is what it tells the hub (POST /api/messages/:id/feedback).
  */
-const VOTES = {
-  push: [
-    { action: 'down', title: '▼ Active' },
-    { action: 'up', title: '✓ Right' },
-  ],
-  quiet: [
-    { action: 'up', title: '▲ Important' },
-    { action: 'down', title: '▼ Digest' },
-  ],
+const MARKS = {
+  wrong: { title: 'Not urgent', body: { alert: false } },
+  alert: { title: 'Should have alerted', body: { alert: true } },
+  less: { title: 'Less like this', body: { less: true } },
 };
+const TIER_MARKS = { push: ['wrong'], quiet: ['alert'], digest: ['less', 'alert'] };
 
 /** Title and body: a group's lines each say who wrote them, and the title counts them. */
 function grouped(d) {
@@ -226,17 +223,20 @@ function grouped(d) {
 /** Shows a notification from the hub's payload (webpush.ts pushPayload, or a page's notify event). Returns its tag. */
 async function show(d) {
   // A request waiting on you (docs/add.md) has one of its own, and opens under Requests.
-  const tag = d.conversationId ?? (d.requestId ? `request:${d.requestId}` : d.inbox ? 'dither-digest' : 'dither');
+  const tag = d.conversationId ?? (d.requestId ? `request:${d.requestId}` : d.inbox ? 'dither-inbox' : 'dither');
   const look = await looks(d);
-  // Active (docs/notifications.md): shown, but without sound or vibration.
-  const quiet = d.level === 'quiet';
+  // Its tier (docs/notifications.md): an alert, a Conversation or a list row. A hub from before the tiers says only
+  // `level`: 'quiet' for what is silent, else an alert.
+  const tier = d.tier ?? (d.level === 'quiet' ? 'quiet' : 'push');
   const reply = d.conversationId && d.canReply && CAN_REPLY ? [{ action: 'reply', type: 'text', title: 'Reply', placeholder: 'Message' }] : [];
-  const votes = d.messageId ? VOTES[d.level] ?? [] : [];
-  // The votes first: a browser that shows two actions shows them.
-  const actions = d.conversationId ? [...votes, ...reply, ...(votes.length ? [] : [{ action: 'open', title: 'Open' }])] : [];
-  // One notification per conversation (docs/notifications.md): its unread lines, and a sound only when the hub says
-  // so. An older hub sends neither, and every Important message sounds.
-  const alert = d.alert ?? !quiet;
+  // Mail takes only "Less like this" (docs/mail.md).
+  const marks = (d.messageId ? TIER_MARKS[tier] ?? [] : []).filter((a) => !d.mailThreadId || a === 'less').map((a) => ({ action: a, title: MARKS[a].title }));
+  // A browser shows two actions: Reply and the mark for an alert or a Conversation, both marks for a list row.
+  const actions = d.conversationId ? (tier === 'digest' ? [...marks, ...reply] : [...reply, ...marks, ...(marks.length ? [] : [{ action: 'open', title: 'Open' }])]) : [];
+  // One notification per conversation (docs/notifications.md): its unread lines. Only an alert may sound, and only
+  // when the hub says so; an older hub does not say, and every alert sounds. A Conversation and a list row are shown
+  // without sound or vibration.
+  const alert = tier === 'push' && (d.alert ?? true);
   const { title, body } = grouped(d);
   await self.registration.showNotification(title, {
     body,
@@ -318,9 +318,10 @@ self.addEventListener('notificationclick', (e) => {
     return;
   }
   const mid = e.notification.data?.messageId;
-  if ((e.action === 'up' || e.action === 'down') && mid) {
+  const mark = Object.hasOwn(MARKS, e.action) ? MARKS[e.action] : null;
+  if (mark && mid) {
     e.notification.close();
-    e.waitUntil(fetch(`/api/messages/${encodeURIComponent(mid)}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ vote: e.action }) }).catch(() => {}));
+    e.waitUntil(fetch(`/api/messages/${encodeURIComponent(mid)}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(mark.body) }).catch(() => {}));
     return;
   }
   e.notification.close();

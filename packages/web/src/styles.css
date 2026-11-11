@@ -2628,7 +2628,7 @@ code {
   border-color: var(--accent);
 }
 
-/* The notification menu is wider than other menus: four levels and three bars. */
+/* The notification menu is wider than other menus: its reasons, and the two marks side by side. */
 .cm:has(.triage-pop) {
   max-width: min(340px, calc(100vw - 16px));
 }
@@ -2650,6 +2650,7 @@ code {
 .triage-score {
   padding: 4px 8px;
   font-size: 11px;
+  line-height: 1.5;
   color: var(--text-faint);
 }
 .triage-fb {
@@ -3471,9 +3472,17 @@ code {
   color: var(--text);
   background: var(--bg-hover);
 }
-.model-vote .tier-vote {
-  flex-direction: row;
-  gap: 2px;
+.model-marks {
+  flex: none;
+}
+/* A line's or a message's importance, beside its marks. */
+.model-imp {
+  flex: none;
+  min-width: 30px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
 }
 .model-why {
   padding: 2px 12px 10px 50px;
@@ -3500,11 +3509,6 @@ code {
   align-items: center;
   gap: 6px;
   border-radius: 8px;
-}
-.model-msg .tier-vote {
-  flex-direction: row;
-  gap: 2px;
-  flex: none;
 }
 .model-msg-main {
   flex: 1;
@@ -3563,79 +3567,6 @@ code {
 .set-sorts small {
   color: var(--text-faint);
   font-size: 11.5px;
-}
-.digest-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 10px;
-}
-.digest-grid .digest {
-  text-align: left;
-  border: 1px solid var(--border-soft);
-  border-radius: 12px;
-  padding: 12px;
-  background: var(--bg-raised);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.digest-grid .digest:hover {
-  border-color: var(--border);
-  background: var(--bg-hover);
-}
-.digest-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 2px;
-}
-.digest-head b {
-  flex: 1;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.digest-places {
-  font-size: 11px;
-  color: var(--text-faint);
-}
-.digest-line {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-.digest-text {
-  flex: 1;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* In a digest card the votes stay out of the way until the card is hovered. */
-.digest-line .tier-vote {
-  opacity: 0;
-}
-.digest:hover .tier-vote,
-.digest:focus-within .tier-vote {
-  opacity: 1;
-}
-@media (hover: none) {
-  .digest-line .tier-vote {
-    opacity: 1;
-  }
-}
-.digest-line b {
-  color: var(--text-dim);
-  font-weight: 600;
-}
-.digest-why {
-  font-size: 10.5px;
-  color: var(--text-faint);
-  margin-top: 4px;
-  font-style: italic;
 }
 /* ---------------------------------------------------------------- accounts */
 
@@ -8340,19 +8271,23 @@ html[data-theme='light'] .acc-dot {
   flex-shrink: 0;
 }
 
-/* ------------------------------------------------------------------ notification levels (docs/notifications.md) */
+/* ------------------------------------------------------------------ notification tiers and marks (docs/notifications.md) */
 
-.tier-vote {
+/* The two marks on a decision (ui/Marks.tsx): chips with their words in a bell or a sheet, icons alone on a line. */
+.mark-toggles {
   display: inline-flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 1px;
+  gap: 6px;
+  flex: none;
 }
-.digest-line .tier-vote {
-  flex-direction: row;
+.mark-toggles.small {
+  flex-wrap: nowrap;
+  gap: 2px;
 }
-.tier-vote .icon-btn.small {
-  padding: 1px;
+.mark-toggles .icon-btn.on {
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 .tier-chip {
   display: inline-flex;
@@ -8376,26 +8311,46 @@ html[data-theme='light'] .acc-dot {
   color: var(--accent);
   background: var(--accent-soft);
 }
-.tier-chip.moved {
-  outline: 1px dashed currentColor;
-  outline-offset: 1px;
+.learned-group h4 {
+  margin: 10px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
 }
-.tier-picker {
+/* The phone's list in Settings: its level, and how many chats a day that was. */
+.list-level {
   display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0 10px;
+  font-size: 13px;
+}
+.list-level small {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.list-level .sensitivity {
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 6px 8px 4px;
-  border-top: 1px solid var(--border-soft);
+  font-size: 12px;
 }
-.tier-picker .chip-btn {
-  position: relative;
+.list-level input[type='range'] {
+  flex: 1 1 160px;
+  max-width: 280px;
 }
-.tier-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: currentColor;
-  opacity: 0.6;
+/* Touch: tall enough for a thumb. */
+@media (pointer: coarse) {
+  .list-level input[type='range'] {
+    height: 40px;
+  }
+}
+/* A line about the menu entry above it. */
+.cm-label.note {
+  padding: 0 8px 4px 14px;
+  max-width: 230px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: normal;
 }
 .learned .rule-row {
   display: flex;
@@ -8416,13 +8371,12 @@ html[data-theme='light'] .acc-dot {
   min-width: 0;
   color: var(--text);
 }
-.rule-votes {
+.rule-marks {
   font-size: 11px;
   color: var(--text-faint);
   white-space: nowrap;
 }
-.rule-dropped summary,
-.learned-prompt summary {
+.rule-dropped summary {
   cursor: pointer;
   font-size: 12px;
   color: var(--text-dim);
@@ -8434,18 +8388,6 @@ html[data-theme='light'] .acc-dot {
   align-items: flex-start;
   gap: 10px;
   margin-top: 8px;
-}
-.learned-prompt {
-  flex: 1 1 100%;
-}
-.learned-prompt pre {
-  white-space: pre-wrap;
-  font-size: 11.5px;
-  color: var(--text-dim);
-  background: var(--bg-raised);
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  padding: 10px 12px;
 }
 
 /* ---------------------------------------------------------------- about and settings (About.tsx) */
@@ -10141,7 +10083,7 @@ button.msg-edited.link:hover {
   font-weight: normal;
 }
 
-/* Triage: below the digest, the model's chances, what it learned */
+/* Triage: below the list, and what was learned */
 .tier-chip.drop {
   opacity: 0.7;
   background: transparent;
@@ -10158,55 +10100,10 @@ button.msg-edited.link:hover {
 .board-block.below > summary .muted {
   font-weight: normal;
 }
-.triage-chances {
-  display: grid;
-  gap: 4px;
-  padding: 4px 8px 8px;
-  font-size: 11px;
-}
-.triage-chance {
-  display: grid;
-  grid-template-columns: 60px 1fr 34px;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-faint);
-}
-.triage-chance b {
-  text-align: right;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.triage-chance.over b,
-.triage-chance.over span:first-child {
-  color: var(--text);
-}
-.triage-bar {
-  position: relative;
-  height: 5px;
-  border-radius: 3px;
-  background: var(--bg-hover);
-}
-.triage-bar span {
-  position: absolute;
-  inset: 0 auto 0 0;
-  border-radius: 3px;
-  background: color-mix(in oklab, var(--text-faint) 60%, transparent);
-}
-.triage-chance.over .triage-bar span {
-  background: var(--accent);
-}
-.triage-bar i {
-  position: absolute;
-  top: -2px;
-  bottom: -2px;
-  width: 1px;
-  background: var(--text-faint);
-}
 .factor-weight {
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
-  min-width: 64px;
 }
 .factor-weight.up {
   color: var(--accent);

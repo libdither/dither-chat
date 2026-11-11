@@ -93,7 +93,7 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 |---|---|---|---|
 | Inbox: one ranked list of DMs, groups, rooms outside a space and notes ([inbox.md](inbox.md)) | Sidebar | Inbox tab | Home, Inbox in the rail |
 | Catch up: the conversations that need you, to answer, Done or Later | Center pane with nothing open | **Unreachable**: the inbox tab showed the list | Catch up tab |
-| How it sorts: Important, Active, Digest and Not interesting, each with ▲/▼ votes, and the counts | Catch up's header, the inbox button's menu, Settings | **Unreachable** | Catch up's header, Settings |
+| How it sorts: Alerts, Conversations, List and Below the list, each line with its two marks, and the counts | Catch up's header, the inbox button's menu, Settings | **Unreachable** | Catch up's header, Settings |
 | Mark all read, everywhere | Catch up's header | **Unreachable** | Catch up tab; per place in its arrange sheet |
 | People, merged DM timeline, one network's chat | Rail, sidebar, header chips | People tab; chips wrapped | Rail; the chips scroll sideways, and the details panel lists each chat |
 | Group chats (now in the inbox), spaces with channel trees and threads, folders | Rail and sidebar | Groups and Spaces tabs, no rail | The inbox, and the rail and its list, as in Discord |
@@ -101,11 +101,11 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Arrange: drag to reorder, folders, pin, hide, move up/down, rename, delete folder, add a group to the sidebar | Drag; right-click menu | Hold and drag; popup menu sized for a mouse | Hold and drag; the menu is a bottom sheet |
 | All communities: seven orderings, network filter, hidden places, manual order by drag | Rail grid button | Spaces tab | Rail grid button; chip rows scroll sideways |
 | Categories: edit the questions, per-place yes/no/auto | Dialogs | Centered dialogs | Bottom sheets |
-| Per-place notification level, whole server | Header menu | Small dropdown | Bottom sheet |
+| Per-place notification rule, whole server | Header menu | Small dropdown | Bottom sheet |
 | Per-place overrides list, clear one | Settings | More tab | You tab |
 | Conversation header: where it is, via which account, search in it, profile, all chats, details | Header | Wrapped to four lines | One line that fades; "via" is in the details panel; Profile and All chats in the details panel |
-| Details panel: source, accounts, native id, open in the network's app, level, members, threads | Toggle in the header | Full-screen overlay | Swipe left, or the header button; a panel with the page peeking |
-| Person details: identities, split, merge, always notify, chats | Details panel | Full-screen overlay | Panel |
+| Details panel: source, accounts, native id, open in the network's app, notification rule, members, threads | Toggle in the header | Full-screen overlay | Swipe left, or the header button; a panel with the page peeking |
+| Person details: identities, split, merge, always alert, chats | Details panel | Full-screen overlay | Panel |
 | Profile and the merge flow | Avatar, member or mention | Reachable | Reachable; swipe back |
 | New message (start a DM), send-as account | Plus in the Inbox and People headers; dialog | Centered dialog | Plus in the headers; bottom sheet |
 | Quick switcher | Ctrl+K | **Keyboard only** | Search tab: searching a name lists people, communities and channels to jump to |
@@ -113,7 +113,7 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Hover bar on a message: three reactions, picker, edit, delete, reply | Hover | Long-press: reactions, reply, copy, edit, delete | Long-press: also the author's profile, the thread, the message it replies to |
 | Exact time of a grouped message | Hover | **Hidden** | Sheet header |
 | Which account a message came through, its encryption warning, the author's handle | Tooltips | **Hidden** | Sheet header; profile |
-| Why a message pinged or not, and feedback | Pill, visible on hover except for pings | **Invisible pill** for silent and digest | Sheet: reasons and both buttons |
+| Which tier a message landed in and why, and the two marks | The bell among its hover actions; its menu | **Invisible pill** for silent and digest | Sheet: the reasons and both marks |
 | Who reacted | Right-click a pill | Long-press | Long-press, as a sheet |
 | Reaction picker, skin tone, super reactions, search | Popover | Sheet without drag | Sheet that drags away |
 | Reply, edit, cancel either | Hover bar; Escape | Sheet; X | Swipe or sheet; X |
@@ -125,10 +125,10 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Account live view with paste, fit or actual size | Account page | Reachable only when it needed you | Reachable; back closes it |
 | Signal link code, full screen | Account page | As above | Reachable; back closes it |
 | Matrix encryption setup, recovery key, emoji verification | Account page | As above | Reachable. Not in the demo, so checked in the code only |
-| Default levels, per network, smart triage, notifications while open | Settings | More tab | You tab; the section list on a desktop now scrolls to each section |
+| The list's level, your rules, notifications while open | Settings | More tab | You tab; the section list on a desktop now scrolls to each section |
 | Web Push opt-in, devices | Settings | More tab | You tab |
-| Quiet hours, daily digest | Settings | More tab | You tab; time fields at 16px |
-| Keywords that are always Important | Settings | More tab | You tab |
+| Quiet hours | Settings | More tab | You tab; time fields at 16px |
+| Keywords that always alert | Settings | More tab | You tab |
 | Theme, demo accounts, reset demo | Settings | More tab | You tab |
 | Any one Settings section (Message history, Adversarial features) without scrolling past the rest | Section list beside Settings | More tab, scrolled | Sections in Settings' header: a sheet of the sections, two taps |
 | Adversarial features' warning and its Yes | Dialog | Not there yet | Bottom sheet whose words scroll, Yes pinned at its bottom |

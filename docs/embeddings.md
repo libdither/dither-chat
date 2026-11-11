@@ -1,9 +1,14 @@
 # Message embeddings as triage features
 
-Status: built, **off by default** (`DITHER_EMBEDDINGS=1` turns it on). Not yet wired into the decision: it produces
-a numeric feature map per message, and the learning model (`learn.ts`) is what would weigh it. The design and the
-reasons behind it are in [research/notification-design.md](research/notification-design.md) §5. This page covers
-what was built, how to evaluate it, and the evaluation's verdict.
+Status: built, **off by default** (`DITHER_EMBEDDINGS=1` turns it on). It decides nothing: it produces a numeric
+feature map per message, which only the candidate model weighs, in shadow
+([notifications.md](notifications.md#the-shadow-model)). The design and the reasons behind it are in
+[research/notification-design.md](research/notification-design.md) §5. This page covers what was built, how to
+evaluate it, and the evaluation's verdict.
+
+Since the three tiers (2026-11) the features are made for one chance, a message's importance, where there were
+three (ping, active, interesting), and jev is asked no questions for them. The evaluation and its results below are
+from before the tiers: they scored the old ping label, an answer within 15 minutes.
 
 ## What it does
 
@@ -23,41 +28,46 @@ what was built, how to evaluate it, and the evaluation's verdict.
   truncation), **centred** on a background mean, scaled to unit length, and stored as int8 with one scale (256 B a
   message). The mean comes from a random sample of 512 messages of the last 30 days. It is fixed once set, so stored
   vectors stay comparable. A different model, size or instruction empties the store and starts over. Retention: 30
-  days, plus every labelled example (voted, answered, or notified), which is kept indefinitely.
+  days, plus every labelled example (marked or voted, answered, or notified), which is kept indefinitely.
 - **The embedder** runs in the background and never blocks triage. New messages are picked up by rowid every few
   seconds in batches of 64. With nothing new, it backfills the last 30 days slowly: up to 256 rows a step, with a
   4-second pause between steps (on the live hub, about 140k messages and roughly 1.5 h of mostly idle GPU). If jev is
   down, a step fails, it waits 5 minutes and tries again, and meanwhile the features are missing (they count as
   zero). `prepare(ids, timeoutMs)` embeds a message at once, with a deadline, for a caller that wants the feature
   before deciding.
-- **jev's questions**, as gated features: `ask` (asks the reader to reply, decide or do something?), `soon`
-  (time-sensitive, needs attention today?) and `plans` (plans that include the reader?). They are asked about messages in
-  conversations you wrote or reacted in during the last 30 days, before triage decides (`prepare`), at most 2000 a
-  day; the backfill may use the first half of a day's budget. They are fixed strings, so
-  jev's cache works and the features keep their meaning.
+- **jev's questions**: none now (`QUESTIONS` is empty). Before the tiers there were three, `ask` (asks the reader to
+  reply, decide or do something?), `soon` (time-sensitive, needs attention today?) and `plans` (plans that include
+  the reader?), as features for the shadow model only; on real messages they answered yes about 1% of the time. The
+  one question that decides anything now, whether a message cannot wait, is triage's own (`triage.ts`
+  `STOP_QUESTION`, [notifications.md](notifications.md#alert)). The code that asks is still here for a question added
+  later: about messages in conversations you wrote or reacted in during the last 30 days, before triage decides
+  (`prepare`), at most 2000 a day, as fixed strings so jev's cache works and the features keep their meaning.
+  Answers kept from the three old questions are not features any more.
 
 ## The features
 
-`embeddings.features(messageId, head = 'ping')` → `{ emb?, knn?, 'jev:ask'?, 'jev:soon'?, 'jev:plans'? }`. A key is
-absent when it is unknown.
+`embeddings.features(messageId, head = 'important')` → `{ emb?, knn? }`, and a `jev:<q>` for each question in
+`QUESTIONS` (none now). A key is absent when it is unknown.
 
 | Feature | What it is |
 | --- | --- |
-| `emb` | A linear probe's logit: L2 logistic regression on the centred vector. It is trained per head on top of each example's conversation answer rate (an offset), so it learns only the within-conversation part. **Cross-fitted:** a labelled example gets the logit from a probe fitted on the other four time-blocks. Any other message is scored by the probe fitted on all of them. |
+| `emb` | A linear probe's logit: L2 logistic regression on the centred vector. It is trained on top of each example's conversation answer rate (an offset), so it learns only the within-conversation part. **Cross-fitted:** a labelled example gets the logit from a probe fitted on the other four time-blocks. Any other message is scored by the probe fitted on all of them. |
 | `knn` | The mean cosine to the 5 nearest labelled positives minus the same for negatives. It uses the narrowest scope (the same author, else the conversation, else everything) that has ≥10 examples of both kinds. An example leaves itself out. |
 | `jev:<q>` | `logit(P(yes))`, clipped at 0.001. P(yes) is uncalibrated, and the learning model's weight calibrates it. |
 
 Labels for the probe and kNN, refitted daily (`refit()`):
 
-- ping: answered (a reply, a reaction, or your next message there) within 15 minutes. active: within 3 hours. Both
-  apply only to messages from others in conversations where you wrote or reacted in the last 30 days, and leave out
-  messages you were already engaged with (you wrote there in the 15 minutes before). They count half.
-- votes, at full weight, for all three heads (as `learn.ts` reads them).
-- A head is fitted only with ≥10 positives and ≥10 negatives. Otherwise its `emb` and `knn` are missing.
+- important: answered (a reply, a reaction, or your next message there) within 3 hours; not important: not
+  answered by then. Only messages from others in conversations where you wrote or reacted in the last 30 days, and
+  not those you were already engaged with (you wrote there in the 15 minutes before). They count half.
+- "Less like this" as not important, and the votes from before the tiers (Important or Active as important, Digest
+  or Not interesting as not), at full weight.
+- It is fitted only with ≥10 positives and ≥10 negatives. Otherwise `emb` and `knn` are missing.
 
-Wiring it in (for whoever changes `learn.ts`/`triage.ts`): give `emb`, `knn` and `jev:*` their own small numeric
-weights per head with `lambda` ≈ 5. Read the map when deciding, and keep it with the decision in `triage_input`, so
-training sees what was known at the time.
+How it is wired in: the candidate model weighs `emb` and `knn` as numeric features of importance, each held by 5
+(`NUMERIC` in `learn.ts`; `triage.content` in `main.ts`). They are read when deciding, made just before if jev
+answers within 800 ms, and for training they are read afresh, so a labelled message's probe score never learned
+from its own label. The live decision does not use them.
 
 ## Evaluating it: `scripts/embed-eval.ts`
 
@@ -69,8 +79,8 @@ bun scripts/embed-eval.ts --db .data/hub.sqlite --scratch <scratch dir> [--days 
 2. Examples are the messages from others in conversations where you wrote or reacted in the window. Each is labelled
    by the §3 rule: answered within 15 minutes = 1, else 0. Messages you were engaged with are left out unless
    `--engaged` is given. Reactions carry no time on the networks, so a reaction counts as immediate.
-3. It embeds them and asks jev's three questions about all of them. Both are cached in
-   `<scratch>/eval-embeddings.sqlite`.
+3. It embeds them and asks jev every question in `QUESTIONS` about all of them: three when the results below were
+   made, none now, so a run today leaves the jev rows empty. Both are cached in `<scratch>/eval-embeddings.sqlite`.
 4. **Rolling time split:** for each day after a 2-day warm-up, everything (probe, kNN, centroids, the stacking
    weights) is fitted on examples whose label was known before that day began. Then that day is scored. The
    conversation answer rate is point-in-time, from labels known by each message's own time.
@@ -80,10 +90,11 @@ bun scripts/embed-eval.ts --db .data/hub.sqlite --scratch <scratch dir> [--days 
 
 It prints and writes (`<scratch>/embed-eval.json`) aggregate numbers only.
 
-## Results (2026-11-05)
+## Results (2026-11-05, before the tiers)
 
-These come from a `VACUUM INTO` copy of the live database, 30-day window, probe λ=10 unless stated. The data is
-small: the hub has held full traffic for about 6 days, and you wrote or reacted in about 50 conversations.
+These come from a `VACUUM INTO` copy of the live database, 30-day window, probe λ=10 unless stated. The label is the
+old ping label (answered within 15 minutes), and "the §5 gate" and "Active" below are the three chances of that time.
+The data is small: the hub has held full traffic for about 6 days, and you wrote or reacted in about 50 conversations.
 
 **Main run (engaged messages left out, as §3 defines the ping label):** 1483 examples, 138 answered within 15 min,
 48 conversations. Scored: 1408 (123 positive) over 18 rolling days. **7 conversations** have ≥5 positives, and chance
@@ -144,7 +155,9 @@ without engaged messages. Switch on if the within-conversation gain holds (the p
 conversations) and at-budget recall does not drop.
 
 Done (2026-11-05): `DITHER_EMBEDDINGS=1` is on, the shadow model weighs `emb`, `knn` and the jev answers
-(docs/notifications.md, "Content features"), and the two changes below are in.
+(docs/notifications.md, "The shadow model"), and the two changes below are in. Since the tiers the jev answers are
+gone again: the three questions fed only the shadow model and answered yes about 1% of the time, and the one
+question that decides anything is the alert's.
 
 1. **Change the jev gate** from "triage is unsure" to "a conversation you wrote or reacted in during the last 30
    days" (about 350 messages a day). Under the §5 gate the answers are useless here, and ungated they are among the

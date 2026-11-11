@@ -95,8 +95,8 @@ archive (`packages/hub/src/mediaarchive.ts`) fills it with every remote attachme
 expire. Each kept file is then looked at once for what it really is (`mediainfo.ts`, [files.md](files.md)), in the
 background, a few seconds of work every half minute. Setting `DITHER_MEDIA_CACHE_MB` caps the cache again, least
 recently shown first. Adapter logs rotate at 10 MB.
-Triage rows older than `DITHER_TRIAGE_KEEP_DAYS` (90) go when nothing can be learned from them: in conversations you
-never wrote in, never voted on, never notified and never explored.
+Triage rows older than `DITHER_TRIAGE_KEEP_DAYS` (90) go when nothing can be learned from them: below the list or
+silent, never marked (nor voted on before the tiers), in conversations you never wrote in.
 
 To restore, stop the hub, move `hub.sqlite`, `hub.sqlite-wal` and `hub.sqlite-shm` aside, copy a backup to
 `hub.sqlite`, and start it. Clients notice and download everything again.
@@ -189,6 +189,11 @@ On a demo hub (`--demo`), simulated messages are real pushes to any device that 
 
 Categories use keyword matching by default. Set `DITHER_CATEGORY_MODEL=<model>` for a local Ollama model, and `DITHER_OLLAMA_URL` if it is not on
 `127.0.0.1:11434`. The hub refuses to send to a public address unless `DITHER_CATEGORY_ALLOW_REMOTE=1`. It only ever sends names, topics and channel names.
+
+Alerts start from one question put to jev, the machine's local model service, about a message's text
+([notifications.md](notifications.md#alert)): `DITHER_JEV_URL` says where it is (`127.0.0.1:7862`), and the hub
+refuses an address that is not on this machine or a private network. `DITHER_ALERT_MODEL=off` asks nothing, so only
+your rules alert; `keyword` is the demo hub's stand-in. Without jev running the hub works the same way as with `off`.
 
 ## Moving the hub to another machine
 

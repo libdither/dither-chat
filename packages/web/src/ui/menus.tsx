@@ -3,18 +3,21 @@
  * the same action. The reasoning per surface is in docs/menus.md.
  */
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META, showsInline } from '@dither-chat/protocol';
+import { NETWORK_META, RULE_LABEL, RULE_LEVELS, showsInline } from '@dither-chat/protocol';
 import { fullTime } from '../format.ts';
-import { LEVEL_LABEL, authorName, convTitle, deepLink, directsOf, effectiveLevel, externalProfile, netName, plainBody, sumUnread, unreadOf } from '../model.ts';
+import { AUTOMATIC, OLDER_RULE, authorName, convTitle, deepLink, directsOf, effectiveLevel, externalProfile, heldHere, netName, plainBody, ruleOn, sumUnread, unreadOf, type Level } from '../model.ts';
 import { deviceRule, myDevice, setDeviceRule } from '../devices.ts';
 import { android } from '../android.ts';
+import { alertToggle, isTier, lessToggle } from '../marks.ts';
+import { phone } from '../phone.ts';
+import { mark } from '../triage.ts';
 import { desk, openLink } from '../desk.ts';
 import { pickerFor, quickReactions, reactionScope, reactorsFor, replacing, toggleReaction } from '../reactions.ts';
 import { api, canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, newMessage, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
 import { hasHistory, historyOf } from './MessageHistory.tsx';
-import { TierPicker, triageHeading } from './TierVote.tsx';
+import { MarkToggles, tierHeading, tierIcon } from './Marks.tsx';
 import { Avatar } from './bits.tsx';
-import { copy, groups, menuPoint, openMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
+import { closeMenu, copy, groups, menuPoint, openMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { DEVICE_LEVELS } from './DeviceRules.tsx';
 import { forwarding } from './Forward.tsx';
 import { addLook } from './Reactions.tsx';
@@ -102,27 +105,46 @@ function MessageHead({ m }: { m: P.MessageView }) {
   );
 }
 
-/** Why it notified, on the phone, where there is no pill to hover. */
+/** A message from someone else that triage put in a tier: it can be marked. */
+const markable = (m: P.MessageView) => !!m.triage && isTier(m.triage.decision) && !isSelfIdentity(m.authorId);
+
+/** Which tier it landed in and why, on the phone, where there is no bell to hover: the reasons, then the two marks. */
 function TriageFoot({ m }: { m: P.MessageView }) {
   const t = m.triage;
   if (!t) return null;
   return (
     <div class="sheet-triage">
       <h4>
-        <Icon name={t.decision === 'push' ? 'bell' : t.decision === 'quiet' ? 'bellOff' : t.decision === 'digest' ? 'layers' : 'bellOff'} size={14} />
-        {triageHeading(t.decision)}
+        <Icon name={tierIcon(t.decision)} size={14} />
+        {tierHeading(t.decision)}
       </h4>
       <ul>
         {t.reasons.map((r) => (
           <li>{r}</li>
         ))}
       </ul>
-      <TierPicker m={m} />
+      {markable(m) && (
+        <div class="triage-fb">
+          <MarkToggles m={m} onDone={closeMenu} />
+        </div>
+      )}
     </div>
   );
 }
 
-function messageEntries(m: P.MessageView, onReply?: () => void): MenuEntry[] {
+/** The two marks as ticked entries: "Should have alerted" (on an alert, "Alert was wrong") and "Less like this". */
+function markEntries(m: P.MessageView): MenuEntry[] {
+  if (!markable(m)) return [];
+  const alert = alertToggle(m.triage!);
+  const less = lessToggle(m.triage!);
+  return [
+    { label: alert.label, checked: alert.on, track: m.triage!.decision === 'push' ? 'mark alert wrong' : 'mark alert', run: () => void mark(m, { alert: alert.send }) },
+    { label: less.label, checked: less.on, track: 'mark less', run: () => void mark(m, { less: less.send }) },
+  ];
+}
+
+/** `marks` false leaves the two marks out: the phone's sheet has them under the reasons (`TriageFoot`). */
+function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): MenuEntry[] {
   const scope = reactionScope(m.conversationId);
   const self = isSelfIdentity(m.authorId);
   const thread = m.threadId ? db.conversations.get(m.threadId) : null;
@@ -164,6 +186,7 @@ function messageEntries(m: P.MessageView, onReply?: () => void): MenuEntry[] {
       m.authorId && { label: self ? 'Your Profile' : 'Profile', icon: 'user', track: 'profile', run: () => openProfile(m.authorId) },
       hasHistory(m) && { label: 'Message History', icon: 'clock', track: 'history', run: () => (historyOf.value = m) },
     ],
+    marks ? markEntries(m) : [],
     // Google Messages has no unsend: a delete only takes it off your phone.
     [canDelete(m) && { label: m.network === 'gmessages' ? 'Delete From Your Phone' : 'Delete Message', icon: 'trash', hint: 'Del', danger: true, track: 'delete', run: () => deleteMessage(m) }],
     [
@@ -174,7 +197,7 @@ function messageEntries(m: P.MessageView, onReply?: () => void): MenuEntry[] {
 }
 
 export function messageMenu(m: P.MessageView, onReply?: () => void): MenuSpec {
-  return { label: 'Message actions', track: 'message menu', items: messageEntries(m, onReply), head: <MessageHead m={m} />, foot: <TriageFoot m={m} /> };
+  return { label: 'Message actions', track: 'message menu', items: messageEntries(m, onReply, !phone.value), head: <MessageHead m={m} />, foot: <TriageFoot m={m} /> };
 }
 
 // ------------------------------------------------------------------ attachments and links
@@ -247,14 +270,18 @@ export function linkMenu(url: string, m: P.MessageView | null, onReply?: () => v
 
 // ------------------------------------------------------------------ notification settings
 
-const LEVELS: P.NotifyLevel[] = ['all', 'smart', 'mentions', 'digest', 'none'];
-const LEVEL_MENU: Record<P.NotifyLevel, string> = { all: 'All Messages', smart: 'Smart', mentions: 'Only @mentions', digest: 'Digest only', none: 'Nothing' };
-
-function notifyEntries(scope: 'conversation' | 'space', id: string, current: P.NotifyLevel | null, inherited: string): MenuEntry[] {
+/**
+ * A place's rule: Automatic (none), Always alert, List only or Mute. `held`: with no rule here, what holds instead (a
+ * rule above, or what the network does), said under Automatic. A rule from before the tiers shows as what is set,
+ * and any of the four replaces it.
+ */
+function notifyEntries(scope: 'conversation' | 'space', id: string, own: Level | null, held?: string): MenuEntry[] {
   return [
-    { label: `Use Default (${inherited})`, radio: true, checked: current === null, run: () => setRule(scope, id, null) },
+    ...(own === 'mentions' ? [{ label: OLDER_RULE, radio: true, checked: true, disabled: true } as MenuEntry] : []),
+    { label: AUTOMATIC, radio: true, checked: own === null, run: () => setRule(scope, id, null) },
+    ...(held && own === null ? [{ kind: 'label', label: held, note: true } as MenuEntry] : []),
     { kind: 'sep' },
-    ...LEVELS.map((l): MenuEntry => ({ label: LEVEL_MENU[l], radio: true, checked: current === l, run: () => setRule(scope, id, l) })),
+    ...RULE_LEVELS.map((l): MenuEntry => ({ label: RULE_LABEL[l], radio: true, checked: own === l, run: () => setRule(scope, id, l) })),
   ];
 }
 
@@ -275,8 +302,6 @@ function deviceEntries(scope: 'conversation' | 'space', id: string): MenuEntry |
   };
 }
 
-const ruleOf = (scope: P.NotifyScope, id: string) => db.rules.find((r) => r.scope === scope && r.target === id)?.level ?? null;
-
 // ------------------------------------------------------------------ conversations
 
 /** Why a conversation sits where it does in the inbox: not an action, so the keys pass over it. */
@@ -294,13 +319,12 @@ export function WhyHere({ reasons }: { reasons: string[] }) {
 /** `why`: the inbox's reasons for where this row sits (docs/inbox.md), shown first. */
 export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpec {
   const eff = effectiveLevel(c);
-  const own = ruleOf('conversation', c.id);
+  const own = ruleOn('conversation', c.id);
   const muted = own === 'none';
   const person = c.shape === 'direct' && c.peerPersonId ? db.persons.get(c.peerPersonId) : null;
   const link = deepLink(c);
   const channel = c.shape === 'channel' || c.shape === 'thread';
   const noun = channel ? 'Channel' : 'Conversation';
-  const inherited = own ? 'from above' : LEVEL_LABEL[eff.level];
   const placeKey = `conversation:${c.id}`;
   return {
     label: `${convTitle(c)} actions`,
@@ -317,7 +341,7 @@ export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpe
       ],
       [
         { label: muted ? `Unmute ${noun}` : `Mute ${noun}`, icon: muted ? 'bell' : 'bellOff', run: () => setRule('conversation', c.id, muted ? null : 'none') },
-        { label: 'Notification Settings', icon: 'bell', sub: notifyEntries('conversation', c.id, own, inherited) },
+        { label: 'Notification Settings', icon: 'bell', sub: notifyEntries('conversation', c.id, own, heldHere(eff)) },
         deviceEntries('conversation', c.id),
       ],
       c.shape !== 'thread' ? arrangeEntries(placeKey) : [],
@@ -332,7 +356,7 @@ export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpe
 // ------------------------------------------------------------------ spaces, folders, places
 
 export function spaceMenu(s: P.SpaceView): MenuSpec {
-  const own = ruleOf('space', s.id);
+  const own = ruleOn('space', s.id);
   const muted = own === 'none';
   const section = s.kind === 'section';
   const noun = section ? 'Category' : s.network === 'discord' ? 'Server' : NETWORK_META[s.network].spaceNoun.replace(/^./, (x) => x.toUpperCase());
@@ -346,7 +370,7 @@ export function spaceMenu(s: P.SpaceView): MenuSpec {
       [{ label: `About This ${noun}`, icon: 'info', run: () => openAbout('space', s.id) }],
       [
         { label: muted ? `Unmute ${noun}` : `Mute ${noun}`, icon: muted ? 'bell' : 'bellOff', run: () => setRule('space', s.id, muted ? null : 'none') },
-        { label: 'Notification Settings', icon: 'bell', sub: notifyEntries('space', s.id, own, own ? 'from above' : 'your default') },
+        { label: 'Notification Settings', icon: 'bell', sub: notifyEntries('space', s.id, own) },
         deviceEntries('space', s.id),
       ],
       section ? [] : arrangeEntries(`space:${s.id}`),

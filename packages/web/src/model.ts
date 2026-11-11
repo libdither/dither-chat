@@ -5,7 +5,7 @@
  * nothing: a component reads `rev` or `metaRev` itself.
  */
 import type * as P from '@dither-chat/protocol';
-import { categoryThreshold, NETWORK_META } from '@dither-chat/protocol';
+import { categoryThreshold, NETWORK_META, RULE_LABEL } from '@dither-chat/protocol';
 import { dataVersion, db, inbox, isSelfIdentity, mailTriage, prefs } from './state.ts';
 import { mailDataVersion } from './versions.ts';
 import { isMailItem, triageBoard, type Board, type BoardItem } from './board.ts';
@@ -367,14 +367,29 @@ export function categoriesOf(kind: 'space' | 'conversation', id: string, at?: Re
   return db.categories.filter((c) => mine.some((x) => x.categoryId === c.id && memberOf(x, at)));
 }
 
-// ------------------------------------------------------------------ notification level (mirrors hub triage.ts)
+// ------------------------------------------------------------------ notification rules (mirrors hub triage.ts)
 
 /** What the networks do where nothing is set: DMs and group chats notify on every message, channels on mentions. */
 const NATIVE_DEFAULT: Record<P.Shape, 'all' | 'mentions' | 'none'> = { direct: 'all', group: 'all', channel: 'mentions', thread: 'mentions', self: 'none' };
-const rank = (l: P.NotifyLevel) => ({ none: 0, digest: 1, mentions: 2, smart: 3, all: 4 })[l];
+/** A level that still means something: `smart` is from before the tiers and reads as no rule. */
+export type Level = Exclude<P.NotifyLevel, 'smart'>;
+const rank = (l: Level) => ({ none: 0, digest: 1, mentions: 2, all: 3 })[l];
+
+/** Your rules that still mean something. */
+export const liveRules = () => memo('liveRules', () => db.rules.filter((r): r is P.RuleView & { level: Level } => r.level !== 'smart'));
+const ruleMap = () => memo('rules', () => new Map(liveRules().map((r) => [`${r.scope}:${r.target ?? ''}`, r.level])));
+/** The rule set on this very place, person or keyword; null with none. */
+export const ruleOn = (scope: P.NotifyScope, target: string | null): Level | null => ruleMap().get(`${scope}:${target ?? ''}`) ?? null;
 
 export interface Effective {
-  level: P.NotifyLevel;
+  /**
+   * What holds here. With a rule, its level: `all` always alerts, `digest` keeps the place to the list, `none` mutes
+   * it. With none, what the network itself does: `digest` where it is muted there (kept to the list too).
+   */
+  level: Level;
+  /** The rule that holds, set here or above; null with none, where the tiers decide (Automatic). */
+  rule: Level | null;
+  /** Where the rule was set; with none, what the network does here, in words. */
   source: string;
   explicit: boolean;
   scope: P.NotifyScope | 'default' | 'native';
@@ -382,12 +397,13 @@ export interface Effective {
 
 export function effectiveLevel(c: P.ConversationView): Effective {
   return memo('lvl:' + c.id, () => {
-    const rules = memo('rules', () => new Map(db.rules.map((r) => [`${r.scope}:${r.target ?? ''}`, r.level])));
+    const rules = ruleMap();
     const hit = (scope: string, target: string | null) => rules.get(`${scope}:${target ?? ''}`);
-    let l: P.NotifyLevel | undefined;
-    if ((l = hit('conversation', c.id))) return { level: l, source: 'this conversation', explicit: true, scope: 'conversation' };
+    const set = (level: Level, source: string, explicit: boolean, scope: Effective['scope']): Effective => ({ level, rule: level, source, explicit, scope });
+    let l: Level | undefined;
+    if ((l = hit('conversation', c.id))) return set(l, 'this conversation', true, 'conversation');
     const parent = c.shape === 'thread' && c.parentId ? db.conversations.get(c.parentId) : undefined;
-    if (parent && (l = hit('conversation', parent.id))) return { level: l, source: convLabel(parent), explicit: true, scope: 'conversation' };
+    if (parent && (l = hit('conversation', parent.id))) return set(l, convLabel(parent), true, 'conversation');
     // Breadth-first over containing spaces.
     const seen = new Set<string>();
     let frontier = [...(parent ?? c).spaceIds];
@@ -397,7 +413,7 @@ export function effectiveLevel(c: P.ConversationView): Effective {
         if (seen.has(sid)) continue;
         seen.add(sid);
         const s = db.spaces.get(sid);
-        if (s && (l = hit('space', sid))) return { level: l, source: s.kind === 'section' ? s.name : `${s.name} (${NETWORK_META[s.network].spaceNoun})`, explicit: true, scope: 'space' };
+        if (s && (l = hit('space', sid))) return set(l, s.kind === 'section' ? s.name : `${s.name} (${NETWORK_META[s.network].spaceNoun})`, true, 'space');
         next.push(...(db.parents.get(sid) ?? []).map((e) => e.parentId));
       }
       frontier = next;
@@ -405,19 +421,22 @@ export function effectiveLevel(c: P.ConversationView): Effective {
     let base: Effective | null = null;
     for (const v of c.vantages) {
       if ((l = hit('account', v.accountId))) {
-        base = { level: l, source: `account ${db.accounts.get(v.accountId)?.label}`, explicit: false, scope: 'account' };
+        base = set(l, `account ${db.accounts.get(v.accountId)?.label}`, false, 'account');
         break;
       }
     }
-    if (!base && (l = hit('network', c.network))) base = { level: l, source: `all of ${netName(c.network)}`, explicit: false, scope: 'network' };
-    if (!base && (l = hit('global', null))) base = { level: l, source: 'global default', explicit: false, scope: 'global' };
-    // Nothing set: as the network has it (hub triage.ts nativeLevel), muted held for the digest.
+    if (!base && (l = hit('network', c.network))) base = set(l, `all of ${netName(c.network)}`, false, 'network');
+    if (!base && (l = hit('global', null))) base = set(l, 'everything', false, 'global');
+    // No rule: Automatic. What the network does here (hub triage.ts nativeLevel) is said beside it; muted there, the
+    // place is kept to the list.
     if (!base) {
       const n = nativeLevel(c, parent);
-      return { level: n === 'none' ? 'digest' : n, source: `as in ${netName(c.network)}`, explicit: false, scope: 'default' };
+      const net = netName(c.network);
+      const source = n === 'all' ? `${net} notifies every message here` : n === 'mentions' ? `${net} notifies only mentions here` : `Muted in ${net}: kept to the list`;
+      return { level: n === 'none' ? 'digest' : n, rule: null, source, explicit: false, scope: 'default' };
     }
     const mute = nativeMuteLevel(c, parent);
-    if (mute && rank(base.level) > rank(mute)) return { level: mute, source: `muted in ${netName(c.network)}`, explicit: false, scope: 'native' };
+    if (mute && rank(base.level) > rank(mute)) return set(mute, `muted in ${netName(c.network)}`, false, 'native');
     return base;
   });
 }
@@ -446,20 +465,43 @@ function nativeLevel(c: P.ConversationView, parent?: P.ConversationView): 'all' 
   return NATIVE_DEFAULT[c.shape];
 }
 
-function nativeMuteLevel(c: P.ConversationView, parent?: P.ConversationView): P.NotifyLevel | null {
+function nativeMuteLevel(c: P.ConversationView, parent?: P.ConversationView): Level | null {
   const now = Date.now();
   const mutes: (P.NativeMute | null)[] = [c.nativeMute, parent?.nativeMute ?? null, ...(parent ?? c).spaceIds.map((s) => db.spaces.get(s)?.nativeMute ?? null)];
-  let best: P.NotifyLevel | null = null;
+  let best: Level | null = null;
   for (const m of mutes) {
     if (!m) continue;
-    const lv: P.NotifyLevel | null = m.level === 'none' || (m.until && m.until > now) ? 'digest' : m.level === 'mentions' ? 'mentions' : null;
+    const lv: Level | null = m.level === 'none' || (m.until && m.until > now) ? 'digest' : m.level === 'mentions' ? 'mentions' : null;
     if (lv && (!best || rank(lv) < rank(best))) best = lv;
   }
   return best;
 }
 
-/** A place's notification setting. 'digest' is "Digest only": nothing there notifies; not to be confused with the Digest level of one message. */
-export const LEVEL_LABEL: Record<P.NotifyLevel, string> = { all: 'All messages', smart: 'Smart', mentions: 'Mentions', digest: 'Digest only', none: 'Off' };
+/** No rule on a place: the tiers decide. */
+export const AUTOMATIC = 'Automatic';
+export const AUTOMATIC_HELP = 'Conversations and alerts are worked out for you';
+/** What each rule you can set does. */
+export const RULE_HELP: Record<P.RuleLevel, string> = {
+  all: 'Every message here is an alert',
+  digest: 'Never a conversation row or an alert; it can still be on the list',
+  none: 'No notification and never on the list; the unread count only',
+};
+/** A rule kept from before the tiers: it can be replaced, not chosen. */
+export const OLDER_RULE = 'Mentions only (older setting)';
+export const OLDER_RULE_HELP = 'From before the tiers: only mentions and replies count as notified here. Any of the others replaces it';
+
+/** A rule's name; no rule (or one from before the tiers that means nothing now) is Automatic. */
+export const ruleName = (l: Level | null | undefined): string => (l === 'mentions' ? OLDER_RULE : ((l && RULE_LABEL[l as P.RuleLevel]) ?? AUTOMATIC));
+/** What a rule does, in a sentence without its full stop. */
+export const ruleHelp = (l: Level | null | undefined): string => (l === 'mentions' ? OLDER_RULE_HELP : ((l && RULE_HELP[l as P.RuleLevel]) ?? AUTOMATIC_HELP));
+/** An icon for a rule; the sparkles are Automatic. */
+export const ruleIcon = (l: Level | null | undefined): string => (l === 'all' ? 'bell' : l === 'mentions' ? 'at' : l === 'digest' ? 'list' : l === 'none' ? 'bellOff' : 'sparkles');
+
+/**
+ * What holds at a conversation with no rule of its own, for the line under Automatic: the rule above it and where
+ * that was set, else what the network does here.
+ */
+export const heldHere = (e: Effective): string => (e.rule === null ? e.source : `${ruleName(e.rule)}, from ${e.source}`);
 
 // ------------------------------------------------------------------ unread
 
@@ -468,6 +510,7 @@ export interface Unread {
   mentions: number;
   /** Shown as a red count: mentions, or any message in a DM/group you listen to. */
   badge: number;
+  /** Muted, or kept to the list (List only, or muted on its network): drawn dimmed. Only Mute takes mentions off the badge. */
   muted: boolean;
 }
 
@@ -705,9 +748,10 @@ export function board(): Board {
   );
 }
 
-/** Important messages of the last week you have not read yet, by where they are now (your vote counts): the inbox button's count. */
-export function pingedCount(): number {
-  return board().importantUnread;
+/** Alerts and Conversation messages of the last week you have not read yet: the inbox button's count. The list does not count. */
+export function inboxBadge(): number {
+  const b = board();
+  return b.alertsUnread + b.conversationsUnread;
 }
 
 export function deepLink(c: P.ConversationView): string | null {

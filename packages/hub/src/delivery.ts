@@ -31,6 +31,11 @@ export interface Line {
 /** What a push about a message carries besides its title and body (docs/notifications.md, "One per conversation"). */
 export interface Grouped {
   alert: boolean;
+  /**
+   * The highest tier among the lines it shows: the row's tier. A list message in a chat whose unread alert or
+   * Conversation message is still showing updates that row, it does not turn it into a list row.
+   */
+  tier?: Level;
   count: number;
   conv: { title: string; shape: 'direct' | 'group' | 'channel'; icon?: string };
   sender: { name: string; key: string; icon?: string };
@@ -136,6 +141,7 @@ export class Delivery {
     const icons: Record<string, string> = {};
     let sender: Grouped['sender'] | null = null;
     let others = 0;
+    let top: Level | null = null;
     for (const r of rows) {
       const own = r.id === messageId;
       // Lines start after your last read or your last word here, whichever is later.
@@ -143,6 +149,7 @@ export class Delivery {
       if (r.deleted) continue;
       others++;
       if (!own && !['push', 'quiet', 'digest'].includes(r.decision)) continue;
+      if (r.decision in ORDER && (!top || ORDER[r.decision as Level] > ORDER[top])) top = r.decision as Level;
       if (lines.length >= LINES && !own) continue;
       const key = r.person_id ?? r.author_id ?? 'someone';
       const author = r.person_name ?? r.display_name ?? r.handle ?? 'Someone';
@@ -162,6 +169,7 @@ export class Delivery {
       sender,
       lines,
       icons,
+      ...(top ? { tier: top } : {}),
     };
     return fit(g);
   }

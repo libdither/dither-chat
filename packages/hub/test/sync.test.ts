@@ -333,16 +333,20 @@ const steps: [string, () => void | Promise<unknown>][] = [
     const other = await call('POST', '/api/categories', { name: 'Work' });
     await call('DELETE', `/api/categories/${other.id}`);
   }],
-  ['triage: the inbox gains, a feedback, a silenced one', async () => {
+  ['triage: the inbox gains, marks given and one taken back, a silenced one', async () => {
     const pushed = say(d1, 'dm-ann', 'ann');
-    store.setTriage(msg(d1, pushed), { decision: 'push', score: 0.9, reasons: ['A direct message'], decidedBy: 'rules' });
+    store.setTriage(msg(d1, pushed), { decision: 'push', score: 0.9, reasons: ['A direct message'], decidedBy: 'rules', probs: { alert: 0.7, important: 0.9 } });
     store.dirty.messages.set(msg(d1, pushed), true);
-    const quiet = say(sig, 'family', 'bob');
-    store.setTriage(msg(sig, quiet), { decision: 'digest', score: 0.3, reasons: ['A group'], decidedBy: 'rules' });
-    store.dirty.messages.set(msg(sig, quiet), true);
+    const listed = say(sig, 'family', 'bob');
+    store.setTriage(msg(sig, listed), { decision: 'digest', score: 0.7, reasons: ['A group'], decidedBy: 'rules' });
+    store.dirty.messages.set(msg(sig, listed), true);
     await settle();
-    await call('POST', `/api/messages/${msg(d1, pushed)}/feedback`, { feedback: 'push' });
-    store.ingest(sig, { t: 'delete', conversation: 'family', nativeId: quiet });
+    // The alert was wrong, and less like it; then the second is taken back.
+    await call('POST', `/api/messages/${msg(d1, pushed)}/feedback`, { alert: false, less: true });
+    await settle();
+    await call('POST', `/api/messages/${msg(d1, pushed)}/feedback`, { less: false });
+    await call('POST', `/api/messages/${msg(sig, listed)}/feedback`, { alert: true });
+    store.ingest(sig, { t: 'delete', conversation: 'family', nativeId: listed });
   }],
   ['a thread off a channel, a conversation opened here', () => {
     store.ingest(d1, { t: 'conversation', conversation: { nativeId: 'thread-1', shape: 'thread', name: 'A thread', parentConversation: 'general', spaces: [{ nativeId: 'guild' }] } });

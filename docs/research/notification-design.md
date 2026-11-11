@@ -1,5 +1,21 @@
 # Notification triage, from first principles: a design report
 
+**Note, 2026-11-10.** This report is kept as it was written. It describes triage under four levels (Important,
+Active, Digest, Not interesting) and three chances (ping, active, interesting), which the three tiers of 2026-11
+replaced: Alert, Conversation and List, with one alert chance and one importance. What is built now is in
+[../notifications.md](../notifications.md), and how it was measured in [../triage-replay.md](../triage-replay.md).
+Which parts still hold, and which the tiers replaced:
+
+- **Replaced**: §2's three heads and its objective, recall of pings worth acting on within 15 minutes under an alert
+  budget (an alert is now "cannot wait an hour or two", started from one question to the local model, and there is
+  no budget); §3's label table and weights (only what you did counts, for importance, and two marks replaced the
+  votes); the exploration step of §4 and §6, which is gone; §5's jev questions as features; §6's replay metrics
+  (precision and recall of pings).
+- **Still what the hub does**: the hierarchical logistic model as the core (§1, §4), the interaction features, now
+  for the candidate model and, as the answer rate to openings, for the Conversation rule (§3), embeddings as features
+  in shadow (§5), the rolling replay on a copy of the database (§6), one notification per conversation that sounds
+  once a burst (§7), and the Android conversation notification (§8).
+
 Research notes, 2026-11-05. Nothing here is built yet. It covers what a good notification is for this hub, which
 labels and features to learn it from, whether message embeddings help, how to run experiments honestly, how to group
 several messages into one notification (Android and web push), and why the Android avatar sits on the wrong side.

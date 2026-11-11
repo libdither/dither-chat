@@ -23,6 +23,7 @@ import {
   plainBody,
   resolveTokens,
   rootCommunity,
+  ruleIcon,
   spaceChildren,
   spaceUnread,
   sumUnread,
@@ -37,7 +38,7 @@ import { INBOX_FILTERS } from '../ordering.ts';
 import { senderLine } from '../mail/model.ts';
 import { personItems } from './mail/Classify.tsx';
 import { RowTyping } from './Typing.tsx';
-import { AccountChip, AccountDots, Avatar, Count, NetBadge, NetGlyph, SourceChip, levelIcon, variantIcon } from './bits.tsx';
+import { AccountChip, AccountDots, Avatar, Count, NetBadge, NetGlyph, SourceChip, variantIcon } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
 import { phone } from '../phone.ts';
@@ -198,7 +199,7 @@ export const ConvRow = memo(function ConvRow({ c, active, onClick, showPlace = t
         <span class="row-bottom">
           <span class="row-preview">{preview(c)}</span>
           {owedSince ? <Owed at={owedSince} /> : null}
-          {u.muted && <Icon name={levelIcon(lvl.level)} size={12} class="row-muted" />}
+          {u.muted && <Icon name={ruleIcon(lvl.level)} size={12} class="row-muted" />}
           {u.badge ? <Count n={u.badge} /> : u.unread && !u.muted ? <span class="unread-dot" /> : null}
         </span>
       </span>
@@ -562,7 +563,7 @@ function ChannelRow({ c, active, depth, onOpen, alsoIn, dots = true }: { c: P.Co
             <Icon name="link" size={11} />
           </span>
         )}
-        {u.muted && <Icon name={levelIcon(lvl.level)} size={12} class="chan-muted" />}
+        {u.muted && <Icon name={ruleIcon(lvl.level)} size={12} class="chan-muted" />}
         {dots && <AccountDots network={c.network} accountIds={c.vantages.map((v) => v.accountId)} size={6} />}
         <Count n={u.badge} />
       </button>

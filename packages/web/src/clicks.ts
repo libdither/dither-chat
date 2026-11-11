@@ -2,8 +2,8 @@
  * Button counts (docs/button-counts.md), the part that needs no browser: which key a click counts as, which page
  * the app is on, and the tally waiting to go to the hub. clicklog.ts listens and sends.
  *
- * A control says what it is with `data-track="vote up"`. A key without ": " takes the name of the nearest
- * `data-track-area` around it ("triage: vote up"), else the page's; one with ": " is complete. A control without a
+ * A control says what it is with `data-track="mark less"`. A key without ": " takes the name of the nearest
+ * `data-track-area` around it ("how it sorts: mark less"), else the page's; one with ": " is complete. A control without a
  * key counts as "<page>: other", so what is not tagged yet still shows. Keys are written in code: never a name,
  * a message, an id or an address.
  */

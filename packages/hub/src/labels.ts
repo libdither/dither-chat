@@ -76,9 +76,9 @@ export interface Outcome {
 /**
  * Weights of each kind of label, against a mark's 1. Only what you did counts by default. The replay tried the two
  * "you did not" labels on ten days of a real hub (2026-11, docs/triage-replay.md) and both made the list worse:
- *  - with "nothing happened" as a no, the list held 42 of 54 chats you opened where it held 43 without learning, and
- *    at its strictest level 21 where what you did alone finds 30;
- *  - a swipe as a no: 24 at the strictest level against 30. A swipe says you read the row, not that it did not matter.
+ *  - with "nothing happened" as a no, the list at its strictest level (0.9) held 15 of the 54 chats you opened,
+ *    where what you did alone finds 30;
+ *  - a swipe as a no: 24 at that level against 30. A swipe says you read the row, not that it did not matter.
  * "Less like this" is the way to say no (votes.ts).
  */
 export interface LabelWeights {

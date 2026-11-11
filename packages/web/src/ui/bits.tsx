@@ -202,10 +202,6 @@ export function variantIcon(v: P.Variant, shape?: P.Shape): string {
   return { text: 'hash', announcement: 'announcement', forum: 'forum', voice: 'voice', stage: 'stage', media: 'media', rules: 'rules' }[v] ?? 'hash';
 }
 
-export function levelIcon(l: P.NotifyLevel): string {
-  return { all: 'bell', smart: 'sparkles', mentions: 'at', digest: 'layers', none: 'bellOff' }[l];
-}
-
 /**
  * Grey shapes where content is about to land, so the layout does not jump when it does. They wait a moment before
  * showing (CSS), so a load that is quick shows nothing at all, and one wave of light crosses all of them together.
