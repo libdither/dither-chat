@@ -3,6 +3,7 @@ import { createHmac } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
+import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, parseCursor } from './chats.ts';
 import { ATTACHMENT_LIMITS, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, RETENTION_GUARDED, RULE_LEVELS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { ACCOUNT_COLORS, type Store } from './store.ts';
@@ -14,6 +15,8 @@ import type { TriageVotes } from './votes.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
 import { ImportRunner } from './imports/engine.ts';
 import { GapFill } from './imports/gapfill.ts';
+import { Jobs } from './jobs.ts';
+import { NetSearch } from './netsearch.ts';
 import { linkPath, MediaArchiver } from './mediaarchive.ts';
 import { infoFor, MediaInfo } from './mediainfo.ts';
 import { genericType } from './fileinfo.ts';
@@ -42,6 +45,8 @@ import { Adding, linksOf, requestHeld, requestViews } from './add.ts';
 
 
 type ClientData = { kind: 'client' };
+/** What a send carries (POST /api/conversations/:id/send, and a chat's /messages). */
+type SendBody = { body?: string; accountId?: string; replyTo?: string; attachments?: string[]; clientId?: string };
 /** A browser's live view, carried to the account's VNC socket here, or (remote accounts) to dither-accounts' socket for it. */
 type LiveViewData = { kind: 'liveview'; accountId: string; socket?: string; url?: string; vnc?: Socket<unknown>; up?: WebSocket; queue: Uint8Array[]; closed?: boolean };
 
@@ -158,6 +163,10 @@ export class HubServer {
   readonly imports: ImportSources;
   readonly importer: ImportRunner;
   readonly gapfill: GapFill;
+  /** Index jobs: servers, folders and conversations fetched whole (jobs.ts, docs/indexing.md). */
+  readonly jobs: Jobs;
+  /** The networks' own search (netsearch.ts). */
+  readonly netsearch: NetSearch;
   private archiver?: MediaArchiver;
   /** What each kept file is (mediainfo.ts, docs/files.md). */
   readonly mediaInfo: MediaInfo;
@@ -185,8 +194,16 @@ export class HubServer {
     // Mail's outbox sends files uploaded the same way (mail/outbox.ts).
     if (opts.mail) opts.mail.outbox.files = this.uploads;
     this.imports = new ImportSources(opts.dataDir, (msg) => console.warn(msg));
-    this.importer = new ImportRunner(store, this.imports, opts.dataDir, (msg) => console.warn(msg));
+    // An import fills and adds messages behind the journal's back: every device reloads its chats (a resync).
+    this.importer = new ImportRunner(store, this.imports, opts.dataDir, (msg) => console.warn(msg), () => this.resync());
     this.gapfill = new GapFill(store, (acc, cmd) => this.sup.command(acc, cmd, 180_000), (msg) => console.warn(msg));
+    this.jobs = new Jobs(store, { command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 180_000), online: (a) => sup.online(a), log: (msg) => console.warn(msg) });
+    this.netsearch = new NetSearch(store, {
+      command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 60_000),
+      online: (a) => sup.online(a),
+      probe: opts.probeCategory ? (q) => opts.probeCategory!(q) : undefined,
+      log: (msg) => console.warn(msg),
+    });
     // A demo hub keeps nothing ahead of time: its own files (local) are fetched to be looked at.
     this.mediaInfo = new MediaInfo(store, opts.dataDir, {
       behindArchive: !!opts.archiveMedia,
@@ -294,6 +311,7 @@ export class HubServer {
     this.flushTimer = setInterval(() => this.flush(), 80);
     this.imports.resume();
     this.gapfill.resume();
+    this.jobs.start();
     this.archiver?.start();
     this.mediaInfo.start();
     this.store.journal.prune();
@@ -306,6 +324,7 @@ export class HubServer {
     clearInterval(this.pruneTimer);
     this.importer.stop();
     this.gapfill.stopAll();
+    this.jobs.stop();
     this.archiver?.stop();
     this.mediaInfo.stop();
     this.imports.stop();
@@ -331,6 +350,12 @@ export class HubServer {
       events.push(...(rules ? a.rescoreAll() : a.sync(changed, removed)));
     }
     this.broadcast(events);
+  }
+
+  /** Every device drops what it kept and loads again: for changes made behind the journal's back. */
+  resync() {
+    this.flush();
+    this.broadcast([{ t: 'resync' }]);
   }
 
   /** To every client, and into the journal: a frame that changed something ends with its position (docs/sync.md). */
@@ -546,6 +571,12 @@ export class HubServer {
     if (path === '/api/inbox') return ok(s.inbox(num('since') ?? Date.now() - 7 * 86_400_000));
     // People and the places they share (graph.ts, docs/people-graph.md).
     if (path === '/api/graph' && method === 'GET') return ok(peopleGraph(s));
+    // The networks' own search, a few places at a time in jev's order (netsearch.ts).
+    if (path === '/api/search/network' && method === 'POST') return ok(this.netsearch.start((await body<{ q?: string }>()).q ?? ''));
+    if ((m = path.match(/^\/api\/search\/network\/([\w-]+)(\/more)?$/))) {
+      const v = m[2] && method === 'POST' ? await this.netsearch.more(m[1]) : this.netsearch.view(m[1]);
+      return v ? ok(v) : bad('that search is over; search again', 404);
+    }
     if (path === '/api/search') return ok(s.search(url.searchParams.get('q') ?? '', Math.min(num('limit') ?? 40, 100), url.searchParams.get('cursor'), num('context') ?? 0));
 
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/context$/))) {
@@ -652,6 +683,8 @@ export class HubServer {
         const by = (typeof b.device === 'string' ? b.device : req.headers.get('user-agent') ?? 'unknown').slice(0, 160);
         s.setRetention(next, by);
         this.broadcast([{ t: 'retention', retention: s.retention() }]);
+        // Shown or hidden, kept messages are served with or without their words: devices' kept copies are stale.
+        if (cur.adversarial !== next.adversarial) this.resync();
       }
       return ok(s.retention());
     }
@@ -661,7 +694,7 @@ export class HubServer {
       const b = await body<{ what?: string }>();
       if (!(KEPT_KINDS as readonly string[]).includes(b.what as string)) return bad(`what: ${KEPT_KINDS.join(', ')}`);
       const n = s.eraseKept(b.what as P.KeptKind);
-      this.flush();
+      this.resync();
       return ok({ erased: n });
     }
     // What the network says about one identity (people.ts, docs/profile.md). ?fresh=1 asks even if a recent answer is kept.
@@ -689,7 +722,56 @@ export class HubServer {
       this.flush();
       return ok({ personId });
     }
-    if ((m = path.match(/^\/api\/persons\/([\w-]+)\/timeline$/))) return ok(s.personTimeline(m[1], num('before'), Math.min(num('limit') ?? 60, 200)));
+    // Chats (chats.ts, docs/chats.md): a person or a conversation as one thing, whichever routes carry it.
+    if ((m = path.match(/^\/api\/chats\/([\w:%-]+)(\/messages|\/read)?$/))) {
+      const ref = chatRef(s, decodeURIComponent(m[1]));
+      if (!ref) return bad('no such chat', 404);
+      const id = chatIdOf(ref);
+      const convs = () => [...new Set(chatRoutes(s, ref).map((r) => r.conversationId))];
+      if (!m[2] && method === 'GET') return ok(chatView(s, ref));
+      if (!m[2] && method === 'PATCH') {
+        const b = await body<{ route?: { conversationId?: unknown; accountId?: unknown } | null; name?: unknown }>();
+        if (b.route !== undefined) {
+          const r = b.route === null ? null : { conversationId: String(b.route.conversationId ?? ''), accountId: String(b.route.accountId ?? '') };
+          if (!chooseRoute(s, ref, r)) return bad('that is not a route of this chat', 409);
+        }
+        if (b.name !== undefined) {
+          if (ref.kind !== 'person') return bad('a conversation is named on its network');
+          const name = typeof b.name === 'string' ? b.name.trim().slice(0, 200) : null;
+          if (b.name !== null && !name) return bad('which name?');
+          s.setNickname(ref.personId, name);
+          this.flush();
+        }
+        return ok(chatView(s, ref));
+      }
+      if (m[2] === '/messages' && method === 'GET') {
+        // A person's chat is their person timeline, so live events and sync (journal.ts) know it by the same key.
+        const before = parseCursor(url.searchParams.get('before'));
+        const limit = Math.min(num('limit') ?? 60, 200);
+        return ok(ref.kind === 'person' ? s.personTimeline(ref.personId, before, limit) : s.mergedTimeline([ref.conversationId], before, limit));
+      }
+      if (m[2] === '/messages' && method === 'POST') {
+        const b = await body<SendBody & { route?: { conversationId?: string; accountId?: string } }>();
+        const routes = chatRoutes(s, ref);
+        // Said by the sender; else a reply goes where the message it answers is; else the chat's route.
+        const asked = b.route ? routes.find((r) => r.conversationId === b.route!.conversationId && (!b.route!.accountId || r.accountId === b.route!.accountId)) : undefined;
+        if (b.route && !asked) return bad('that is not a route of this chat', 409);
+        const replied = !asked && b.replyTo ? s.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', b.replyTo) : null;
+        const replyRoute = replied ? routes.find((r) => r.conversationId === replied.conversation_id) : undefined;
+        const r = asked ?? replyRoute ?? defaultRoute(s, id, routes);
+        if (!r) return bad('nowhere to send this', 409);
+        const { route: _, ...rest } = b;
+        return this.sendOnce(r.conversationId, { ...rest, accountId: r.accountId });
+      }
+      if (m[2] === '/read' && method === 'POST') {
+        const b = await body<{ upToTs?: number }>();
+        for (const c of convs()) this.readConversation(c, b.upToTs ?? Date.now());
+        this.flush();
+        return ok();
+      }
+      return bad('not found', 404);
+    }
+    if ((m = path.match(/^\/api\/persons\/([\w-]+)\/timeline$/))) return ok(s.personTimeline(m[1], parseCursor(url.searchParams.get('before')), Math.min(num('limit') ?? 60, 200)));
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/notify$/))) return ok(this.triage.effectiveLevel(m[1]));
     // About and settings (about.ts, docs/group-settings.md). GET reads, POST changes one thing.
     if ((m = path.match(/^\/api\/(conversations|spaces)\/([\w-]+)\/about$/))) {
@@ -759,6 +841,26 @@ export class HubServer {
         return fail(e);
       }
     }
+    // Index jobs (jobs.ts, docs/indexing.md).
+    if (path === '/api/jobs' && method === 'GET') return ok({ jobs: this.jobs.list() });
+    if (path === '/api/jobs' && method === 'POST') {
+      try {
+        return ok(this.jobs.create(await body<P.JobSpec>()));
+      } catch (e: any) {
+        return bad(String(e?.message ?? e));
+      }
+    }
+    if ((m = path.match(/^\/api\/jobs\/([\w-]+)(?:\/(pause|resume|run))?$/))) {
+      const id = m[1];
+      if (method === 'DELETE') return this.jobs.remove(id) ? ok({ ok: true }) : bad('no such job', 404);
+      let v: P.JobView | null = null;
+      if (method === 'GET') v = this.jobs.get(id);
+      else if (method === 'POST' && m[2] === 'pause') v = this.jobs.pause(id);
+      else if (method === 'POST' && m[2] === 'resume') v = this.jobs.resume(id);
+      else if (method === 'POST' && m[2] === 'run') v = this.jobs.runNow(id);
+      else if (method === 'PATCH') v = this.jobs.update(id, await body<{ priority?: P.JobPriority; repeatHours?: number | null }>());
+      return v ? ok(v) : bad('no such job', 404);
+    }
     // History sources (docs/import.md): uploaded in pieces at their offset, so a dropped connection resumes.
     if ((m = path.match(/^\/api\/history-gaps\/([\w-]+)(\/stop)?$/))) {
       if (!s.account(m[1])) return bad('no such account', 404);
@@ -803,7 +905,9 @@ export class HubServer {
           const v = this.imports.view(m[1]);
           if (!v?.sha256) return bad('no such source', 404);
           if (this.importer.busy) return bad('an import is running', 409);
-          return ok(s.undoImport(v.sha256));
+          const undone = s.undoImport(v.sha256);
+          this.resync();
+          return ok(undone);
         }
         if ((m = path.match(/^\/api\/imports\/([\w.-]+)\/check$/)) && method === 'POST') {
           void this.imports.check(m[1]);
@@ -826,32 +930,7 @@ export class HubServer {
         return fail(e);
       }
     }
-    if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/send$/)) && method === 'POST') {
-      const b = await body<{ body?: string; accountId?: string; replyTo?: string; attachments?: string[]; clientId?: string }>();
-      // A send retried after its answer was lost goes out once: the retry gets the first one's answer.
-      const key = typeof b.clientId === 'string' && b.clientId ? `${m[1]}|${b.clientId.slice(0, 64)}` : null;
-      const now = Date.now();
-      for (const [k, v] of this.sends) if (now - v.at > 15 * 60_000) this.sends.delete(k);
-      const earlier = key ? this.sends.get(key) : undefined;
-      if (earlier) return (await earlier.done).clone();
-      const done = this.sendNow(m[1], b);
-      if (key) this.sends.set(key, { at: now, done });
-      try {
-        const res = await done;
-        if (key && !res.ok) this.sends.delete(key);
-        return res.clone();
-      } catch (e) {
-        // The adapter took it and then went quiet: it may well have gone out. A retry with the same id gets this
-        // answer rather than a second copy; a new send (a new id) is the person's call.
-        if (key && unknownOutcome(e)) {
-          const answer = Response.json({ error: 'The network did not answer in time. It may have been sent: look before sending it again.', unknown: true }, { status: 504 });
-          this.sends.set(key, { at: now, done: Promise.resolve(answer) });
-          return answer.clone();
-        }
-        if (key) this.sends.delete(key);
-        throw e;
-      }
-    }
+    if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/send$/)) && method === 'POST') return this.sendOnce(m[1], await body<SendBody>());
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/forward$/)) && method === 'POST') {
       const b = await body<P.ForwardRequest>();
       const r = await forwardMessage(
@@ -889,13 +968,7 @@ export class HubServer {
     }
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/read$/)) && method === 'POST') {
       const b = await body<{ upToTs?: number }>();
-      const targets = s.markRead(m[1], b.upToTs ?? Date.now());
-      const conv = s.nativeOf('conversation', m[1]);
-      // An open message request: reading it here tells the sender nothing until it is accepted (add.ts).
-      for (const t of requestHeld(s.db, m[1]) ? [] : targets) {
-        if (conv && t.upTo && this.sup.online(t.accountId))
-          this.sup.command(t.accountId, { t: 'markRead', conversation: conv.nativeId, upTo: t.upTo }).catch(() => {});
-      }
+      this.readConversation(m[1], b.upToTs ?? Date.now());
       this.flush();
       return ok();
     }
@@ -1348,7 +1421,45 @@ export class HubServer {
     return bad('not found', 404);
   }
 
-  private async sendNow(conversationId: string, b: { body?: string; accountId?: string; replyTo?: string; attachments?: string[]; clientId?: string }): Promise<Response> {
+  /** Read up to a time, here and on the network through each account in it. */
+  private readConversation(conversationId: string, upToTs: number) {
+    const s = this.store;
+    const targets = s.markRead(conversationId, upToTs);
+    const conv = s.nativeOf('conversation', conversationId);
+    // An open message request: reading it here tells the sender nothing until it is accepted (add.ts).
+    for (const t of requestHeld(s.db, conversationId) ? [] : targets) {
+      if (conv && t.upTo && this.sup.online(t.accountId))
+        this.sup.command(t.accountId, { t: 'markRead', conversation: conv.nativeId, upTo: t.upTo }).catch(() => {});
+    }
+  }
+
+  /** A send retried after its answer was lost goes out once: the retry gets the first one's answer. */
+  private async sendOnce(conversationId: string, b: SendBody): Promise<Response> {
+    const key = typeof b.clientId === 'string' && b.clientId ? `${conversationId}|${b.clientId.slice(0, 64)}` : null;
+    const now = Date.now();
+    for (const [k, v] of this.sends) if (now - v.at > 15 * 60_000) this.sends.delete(k);
+    const earlier = key ? this.sends.get(key) : undefined;
+    if (earlier) return (await earlier.done).clone();
+    const done = this.sendNow(conversationId, b);
+    if (key) this.sends.set(key, { at: now, done });
+    try {
+      const res = await done;
+      if (key && !res.ok) this.sends.delete(key);
+      return res.clone();
+    } catch (e) {
+      // The adapter took it and then went quiet: it may well have gone out. A retry with the same id gets this
+      // answer rather than a second copy; a new send (a new id) is the person's call.
+      if (key && unknownOutcome(e)) {
+        const answer = Response.json({ error: 'The network did not answer in time. It may have been sent: look before sending it again.', unknown: true }, { status: 504 });
+        this.sends.set(key, { at: now, done: Promise.resolve(answer) });
+        return answer.clone();
+      }
+      if (key) this.sends.delete(key);
+      throw e;
+    }
+  }
+
+  private async sendNow(conversationId: string, b: SendBody): Promise<Response> {
     const s = this.store;
     const ok = (x: unknown) => Response.json(x);
     const bad = (msg: string, status = 400) => Response.json({ error: msg }, { status });

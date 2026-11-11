@@ -12,6 +12,7 @@ import { percent } from './Marks.tsx';
 import { PushSettings } from './Push.tsx';
 import { PrivacySettings } from './Privacy.tsx';
 import { HistorySettings } from './HistorySettings.tsx';
+import { IndexingSettings } from './Indexing.tsx';
 import { AdversarialSettings } from './Adversarial.tsx';
 import { UsageSettings } from './ButtonCounts.tsx';
 import { DeskSettings } from './DeskSettings.tsx';
@@ -32,6 +33,7 @@ export const SECTIONS: [title: string, icon: string, id: string][] = [
   ['Your rules', 'layers', 'set-overrides'],
   ['Privacy', 'lock', 'set-privacy'],
   ['Message history', 'clock', 'set-history'],
+  ['Indexing', 'archive', 'set-indexing'],
   ['Adversarial features', 'eyeOff', 'set-adversarial'],
   ['Usage', 'activity', 'set-usage'],
   ['Appearance', 'eye', 'set-appearance'],
@@ -355,6 +357,7 @@ export function SettingsPane() {
 
         <PrivacySettings />
         <HistorySettings />
+        <IndexingSettings />
         <AdversarialSettings />
         <UsageSettings />
 

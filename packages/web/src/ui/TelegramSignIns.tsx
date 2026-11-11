@@ -11,6 +11,7 @@ import { api } from '../state.ts';
 import { actionError, ARM_MS, type ApprovedSession, isOwnSession, roughlyIn, type SessionInfo, sessionApp, sessionPlace, step, type Step, undoBlockedUntil } from '../tglogin.ts';
 import { Modal } from './bits.tsx';
 import { Icon } from './icons.tsx';
+import { DitherOrb } from './Loader.tsx';
 
 const action = <T,>(a: P.AccountView, name: string, args?: Record<string, unknown>) =>
   api<{ result: T }>(`/api/accounts/${a.id}/action`, { body: { action: name, ...(args ? { args } : {}) } }).then((r) => r.result);
@@ -53,7 +54,15 @@ export function TelegramSignIns({ a }: { a: P.AccountView }) {
           <Icon name="qr" size={15} /> Approve a sign-in
         </button>
         <button class="btn ghost" disabled={!online || loading} onClick={load}>
-          <Icon name="refresh" size={14} /> {loading ? 'Loading…' : 'Refresh'}
+          {loading ? (
+            <>
+              <DitherOrb size={14} /> Loading…
+            </>
+          ) : (
+            <>
+              <Icon name="refresh" size={14} /> Refresh
+            </>
+          )}
         </button>
       </div>
       {!online && <p class="det-note tg-offline">The account has to be online for this.</p>}

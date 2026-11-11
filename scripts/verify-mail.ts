@@ -1082,7 +1082,7 @@ async function search() {
     };
     // A subject the hub has: its own hit; the server finds the same thread, so nothing shows twice.
     await type('lease');
-    await page.until(`!!document.querySelector('.mail-hit') && !document.querySelector('.mail-search .skeleton') && !/Searching the servers/.test(document.querySelector('.mail-search').textContent)`, 15000);
+    await page.until(`!!document.querySelector('.mail-hit') && !document.querySelector('.mail-search .loading') && !/Searching the servers/.test(document.querySelector('.mail-search').textContent)`, 15000);
     const leaseHits = await page.eval<string[]>(`[...document.querySelectorAll('.mail-search .mail-hit')].map((r) => r.dataset.thread)`);
     check(`${tag}: the hub's hit, and the server's same thread not again`, leaseHits.length === 1 && leaseHits[0] === lease.id && !(await has('.mail-search-head')), leaseHits);
     await tap(await at(`.mail-search .mail-hit[data-thread="${lease.id}"]`));

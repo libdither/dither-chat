@@ -12,6 +12,7 @@ import { Avatar } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
 import { MailFiles } from './MailFiles.tsx';
 import { BODY_RENDERERS, MESSAGE_ACTIONS } from './slots.tsx';
+import { Loading } from '../Loader.tsx';
 
 /** In the reader: "10:42" today, "Yesterday 18:02", a day and a time before. */
 export function mailTime(ts: number, now = Date.now()): string {
@@ -123,9 +124,7 @@ export function MessageCard({ message: m, thread, account, open, onToggle }: { m
             </button>
           </div>
         ) : (
-          <div class="mail-body-loading" role="status">
-            Loading…
-          </div>
+          <Loading inline label="Loading…" />
         )}
       </div>
       {body && <MailFiles body={body} />}

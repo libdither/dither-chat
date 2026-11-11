@@ -73,6 +73,29 @@ export function DitherOrb({ size = 88, class: cls, appear = true }: { size?: num
   );
 }
 
+/** How long a load goes before its orb starts: a quick one never draws a frame (styles.css fades it in from here). */
+export const LOADING_DELAY_MS = 180;
+
+/**
+ * Something about to land: the orb, small, with what it is waiting for. Inline sits in a row or a line of text;
+ * fill takes the height of its pane, to centre the orb in it. The orb redraws its path about 12 times a second, and
+ * each redraw is a layout, so it starts only once the load has taken a moment: before that the space is held, empty.
+ */
+export function Loading({ label, size, inline, fill }: { label?: string; size?: number; inline?: boolean; fill?: boolean }) {
+  const px = inline ? 16 : size ?? 32;
+  const [started, setStarted] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setStarted(true), LOADING_DELAY_MS);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <div class={`loading${inline ? ' inline' : ''}${fill ? ' fill' : ''}`} role="status" aria-live="polite" aria-label={label ?? 'Loading'}>
+      {started ? <DitherOrb size={px} /> : <span class="dither-orb" style={{ width: `${px}px`, height: `${px}px` }} />}
+      {label && <span class="loading-label">{label}</span>}
+    </div>
+  );
+}
+
 /** The whole-screen start: the orb, what it is waiting for, and after a while what to try. */
 export function BootScreen({ status, slow }: { status: string; slow?: string | null }) {
   return (

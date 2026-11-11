@@ -17,6 +17,7 @@ import { AccountChip, Avatar, NetBadge, useDialog } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { homeRoute } from './Sidebar.tsx';
 import { fuzzyScore } from './Switcher.tsx';
+import { Loading } from './Loader.tsx';
 
 interface Target {
   network: P.Network;
@@ -350,7 +351,7 @@ export function AddCard({ card, live, setLive, onAccount, onAct, onOpen, onBack,
           </div>
         </div>
       )}
-      {card.loading && <p class="set-help add-loading">Asking {netName(net)}…</p>}
+      {card.loading && <Loading inline label={`Asking ${netName(net)}…`} />}
       {card.error && (
         <>
           <p class="new-message-error add-error" role="alert">

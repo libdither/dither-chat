@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS person (
   starred    INTEGER NOT NULL DEFAULT 0,      -- VIP: always notify
   is_self    INTEGER NOT NULL DEFAULT 0,
   manual     INTEGER NOT NULL DEFAULT 0,      -- the user merged or renamed it; ingest won't touch the name
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  name_source TEXT NOT NULL DEFAULT 'network' -- network | merge | user (a nickname you gave): P.NameSource
 );
 
 CREATE TABLE IF NOT EXISTS identity (
@@ -272,6 +273,16 @@ CREATE TABLE IF NOT EXISTS place_pref (
   open      INTEGER NOT NULL DEFAULT 0,
   railed    INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (kind, id)
+);
+
+-- Which route a chat sends through when you do not say (docs/chats.md): the one you last chose. A chat is
+-- 'person:<id>' or a conversation id; a route is a conversation and one of your accounts in it. Read against the
+-- routes the chat has now, so one that went away (a split, an account removed) is passed over, not followed.
+CREATE TABLE IF NOT EXISTS chat_route (
+  chat_id         TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  account_id      TEXT NOT NULL,
+  set_at          INTEGER NOT NULL
 );
 
 -- Categories are questions; scores are a provider's answers; overrides are yours and always win.
@@ -630,6 +641,51 @@ CREATE TABLE IF NOT EXISTS gap_fill (
   error           TEXT,
   updated_at      INTEGER NOT NULL,
   PRIMARY KEY (account_id, conversation_id)
+) WITHOUT ROWID;
+
+-- Index jobs (jobs.ts, docs/indexing.md): fetch a server, a folder of servers or a conversation whole, through your
+-- accounts, paced per account, carried on after a restart, and run again if they repeat.
+CREATE TABLE IF NOT EXISTS job (
+  id            TEXT PRIMARY KEY,
+  target_kind   TEXT NOT NULL CHECK (target_kind IN ('space', 'folder', 'conversation')),
+  target_id     TEXT NOT NULL,
+  history       INTEGER NOT NULL,
+  members       INTEGER NOT NULL,
+  priority      INTEGER NOT NULL DEFAULT 1, -- 0 low, 1 normal, 2 high
+  repeat_hours  REAL,                     -- NULL: once
+  state         TEXT NOT NULL,            -- queued, running, paused, done, failed
+  created_at    INTEGER NOT NULL,
+  started_at    INTEGER,
+  finished_at   INTEGER,
+  next_run_at   INTEGER,                  -- a repeating job's next run
+  skipped       INTEGER NOT NULL DEFAULT 0,
+  error         TEXT
+);
+
+-- One conversation to page back to its start, or one space whose members to walk, in a job's current run.
+CREATE TABLE IF NOT EXISTS job_task (
+  job_id      TEXT NOT NULL REFERENCES job(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL CHECK (kind IN ('threads', 'history', 'members')),
+  target_id   TEXT NOT NULL,              -- cnv_ for threads and history, spc_ for members
+  account_id  TEXT NOT NULL,
+  cursor      INTEGER,                    -- history: the next page ends before this ts; NULL: from now
+  walk        TEXT,                       -- members: JSON name prefixes still to ask; threads: JSON {archived, offset}
+  pages       INTEGER NOT NULL DEFAULT 0,
+  fetched     INTEGER NOT NULL DEFAULT 0, -- messages new to the hub, or members listed
+  done        INTEGER NOT NULL DEFAULT 0,
+  error       TEXT,
+  updated_at  INTEGER NOT NULL,
+  PRIMARY KEY (job_id, kind, target_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS job_task_account ON job_task(account_id, done);
+
+-- Stretches of a conversation known to be whole: fetched page after page with nothing between. A later run skips
+-- them, so a repeating job fetches only what is new. from_ts 0: back to the conversation's start.
+CREATE TABLE IF NOT EXISTS history_span (
+  conversation_id TEXT NOT NULL,
+  from_ts         INTEGER NOT NULL,
+  to_ts           INTEGER NOT NULL,
+  PRIMARY KEY (conversation_id, from_ts)
 ) WITHOUT ROWID;
 
 -- Remote media (an attachment's URL) the archiver could not keep, so it stops asking (mediaarchive.ts).

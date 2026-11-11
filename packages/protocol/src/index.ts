@@ -11,5 +11,6 @@ export * from './activity.ts';
 export * from './about.ts';
 export * from './add.ts';
 export * from './imports.ts';
+export * from './jobs.ts';
 export * from './files.ts';
 export * from './mail.ts';

@@ -6,6 +6,7 @@ import { activityInfo, deleteActivity, fetchActivity, setActivitySettings } from
 import { convTitle } from '../model.ts';
 import { api, db, toast } from '../state.ts';
 import { Icon } from './icons.tsx';
+import { Loading } from './Loader.tsx';
 
 type Learned = P.PlaceActivity & { conversationId: string };
 
@@ -43,9 +44,13 @@ export function ActivityLogSettings() {
           ))}
         </div>
       </div>
-      <p class="set-help">
-        {!info ? 'Loading…' : `${info.visits} visit${info.visits === 1 ? '' : 's'} and ${info.notifications} notification${info.notifications === 1 ? '' : 's'} recorded${info.oldest ? ` since ${day(info.oldest)}` : ''}.`}
-      </p>
+      {!info ? (
+        <Loading inline label="Loading…" />
+      ) : (
+        <p class="set-help">
+          {`${info.visits} visit${info.visits === 1 ? '' : 's'} and ${info.notifications} notification${info.notifications === 1 ? '' : 's'} recorded${info.oldest ? ` since ${day(info.oldest)}` : ''}.`}
+        </p>
+      )}
       <div class="btn-row">
         <a class="btn ghost small" href="/api/activity/export" download>
           <Icon name="download" size={13} /> Export my activity log
@@ -71,7 +76,7 @@ export function ActivityLogSettings() {
       >
         <summary>What it has learned</summary>
         {learned === null ? (
-          <p class="set-help">Loading…</p>
+          <Loading inline label="Loading…" />
         ) : !learned.length ? (
           <p class="set-help">Nothing yet. It fills in as you get notifications and open chats.</p>
         ) : (

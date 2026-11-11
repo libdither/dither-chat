@@ -12,9 +12,10 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { senderLine } from '../../mail/model.ts';
 import { api, db, go, mailRev } from '../../state.ts';
 import { mailChanged } from '../../versions.ts';
-import { Avatar, Empty, Skeleton } from '../bits.tsx';
+import { Avatar, Empty } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
 import { listTime } from './MessageCard.tsx';
+import { Loading } from '../Loader.tsx';
 
 /** Under this many of the hub's own hits, the servers are asked without asking you. */
 const ASK_SERVER_UNDER = 20;
@@ -223,7 +224,7 @@ export function MailSearch({ q, active }: { q: string; active?: string }) {
         )}
         {f?.mode === 'substring' && f.hits.length > 0 && <p class="mail-list-note">These match inside words, not whole words.</p>}
         {f?.hits.map((h) => <HitRow key={h.thread.id} hit={h} list={list} active={h.thread.id === active} showAccount={showAccount} />)}
-        {f?.loading && <Skeleton rows={f.hits.length ? 2 : 6} />}
+        {f?.loading && <Loading label={f.hits.length ? undefined : 'Searching…'} inline={f.hits.length > 0} />}
         {f?.error && (
           <div class="mail-list-note" role="alert">
             Could not search: {f.error}{' '}
@@ -242,7 +243,7 @@ export function MailSearch({ q, active }: { q: string; active?: string }) {
             Search the servers too
           </button>
         )}
-        {f?.serverLoading && <p class="mail-list-note">Searching the servers…</p>}
+        {f?.serverLoading && <Loading inline label="Searching the servers…" />}
         {serverHits.length > 0 && (
           <>
             <h3 class="mail-search-head">On the server</h3>

@@ -6,7 +6,7 @@ import { clock, dayLabel } from '../format.ts';
 import { allCommunities, authorName, communitiesOf, convLabel, convTitle, netName, people, plainBody, plainMarkdown, resolveTokens, visibleConv } from '../model.ts';
 import { api, back, db, go, mailRev, openMessage, openProfile, rev, route } from '../state.ts';
 import { retention } from '../history.ts';
-import { Avatar, Empty, NetBadge, NetGlyph, Skeleton } from './bits.tsx';
+import { Avatar, Empty, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { homeRoute } from './Sidebar.tsx';
 import { Menuable } from './ContextMenu.tsx';
@@ -14,6 +14,7 @@ import { conversationMenu, identityMenu, messageMenu, personMenu, spaceMenu } fr
 import { readableSearch, recentSearches, rememberSearch, SearchBox } from './SearchBox.tsx';
 import { preloadMail } from './mail/lazy.tsx';
 import { countKey } from '../clicklog.ts';
+import { Loading } from './Loader.tsx';
 
 /** Split a snippet into text and matches. It is plain text, so it stays out of innerHTML. */
 function Snippet({ text, network }: { text: string; network: P.Network }) {
@@ -225,6 +226,150 @@ function MailGroup({ q }: { q: string }) {
   return on && Group ? <Group q={q} /> : null;
 }
 
+/** Under this many of the hub's own hits, the networks are offered first thing, not only at the end. */
+const OFFER_UNDER = 5;
+
+const RANKED: Record<P.NetSearchView['ranked'], string> = { jev: 'Ordered by jev', keyword: 'Ordered by keywords', local: 'Ordered by your own messages' };
+
+/** "Discord", "Discord and Matrix", "Discord, Matrix and Slack". */
+const andList = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}` : (xs[0] ?? ''));
+
+/** The networks some account of yours can search on its own servers. */
+export function searchableNetworks(): P.Network[] {
+  return [...new Set([...db.accounts.values()].filter((a) => a.status !== 'disabled' && a.capabilities.includes('search')).map((a) => a.network))];
+}
+
+/** One place being asked: what it is, how well jev thinks it fits, and how the asking went. */
+function NetPlace({ p, jev }: { p: P.NetSearchPlace; jev: boolean }) {
+  return (
+    <li class={`ns-place ${p.state}`}>
+      <NetGlyph network={p.network} size={12} />
+      <span class="ns-place-name">{p.name}</span>
+      {/* A keyword match's score is a count of words found, not a likelihood: only jev's is worth showing. */}
+      {jev && p.score !== null && (
+        <span class="ns-fit" title="How likely jev thinks it is that people there talk about this">
+          {Math.round(p.score * 100)}% fit
+        </span>
+      )}
+      <span class="ns-state">
+        {p.state === 'queued' && 'Waiting'}
+        {p.state === 'searching' && <Loading inline label="Searching" />}
+        {p.state === 'done' && `${p.found} found, ${p.fresh} new`}
+        {p.state === 'failed' && <span class="ns-failed" title={p.error ?? undefined}>Failed{p.error ? `: ${p.error}` : ''}</span>}
+      </span>
+    </li>
+  );
+}
+
+/**
+ * On the networks (docs/search.md): the networks' own search, for what the hub has not stored. Only ever on a click:
+ * Discord searches one server per request and rate-limits it, so the hub asks a few places at a time, best first,
+ * and this follows it each second while any is still being asked. What it finds is stored, so the hub's own search
+ * finds it from then on; here it shows below the hub's own hits, without those.
+ */
+function NetworkSearch({ q, local, few }: { q: string; local: P.SearchHit[]; few: boolean }) {
+  rev.value;
+  const nets = searchableNetworks();
+  const [view, setView] = useState<P.NetSearchView | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // The query each answer is for, so one that comes back after the query changed is dropped.
+  const current = useRef(q);
+  current.current = q;
+  const absorb = (v: P.NetSearchView) => v.identities.forEach((i) => db.identities.set(i.id, i));
+  useEffect(() => {
+    setView(null);
+    setError(null);
+    setBusy(false);
+  }, [q]);
+  // Follow it while any place is still being asked; a new query or leaving the page stops it.
+  useEffect(() => {
+    if (!view?.running) return;
+    let live = true;
+    const id = view.id;
+    const t = setInterval(() => {
+      api<P.NetSearchView>(`/api/search/network/${id}`).then(
+        (v) => {
+          if (!live || current.current !== q) return;
+          absorb(v);
+          setView(v);
+        },
+        (e) => {
+          if (!live) return;
+          setError(e.status === 404 ? 'That search is over. Search again.' : e.message);
+          setView((v) => v && { ...v, running: false });
+        },
+      );
+    }, 1000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [view?.id, view?.running, q]);
+  if (!nets.length || !q.trim()) return null;
+  const send = async (path: string, body: unknown) => {
+    setBusy(true);
+    setError(null);
+    const asked = q;
+    try {
+      const v = await api<P.NetSearchView>(path, { body });
+      if (current.current !== asked) return;
+      absorb(v);
+      setView(v);
+    } catch (e: any) {
+      if (current.current === asked) setError(e.status === 404 ? 'That search is over. Search again.' : e.message);
+    } finally {
+      if (current.current === asked) setBusy(false);
+    }
+  };
+  const start = () => send('/api/search/network', { q });
+  const more = () => view && send(`/api/search/network/${view.id}/more`, {});
+  const shownHere = new Set(local.map((h) => h.message.id));
+  const hits = (view?.hits ?? []).filter((h) => {
+    const c = db.conversations.get(h.message.conversationId);
+    return !shownHere.has(h.message.id) && c && visibleConv(c);
+  });
+  const names = andList(nets.map(netName));
+  const finished = view && !view.running && view.places.length > 0;
+  return (
+    <section class={`net-search ${few && !view ? 'offer' : ''}`} aria-label="On the networks">
+      <h3 class="net-search-head">
+        <Icon name="globe" size={14} /> On the networks
+        {view && view.places.length > 0 && <small>{RANKED[view.ranked]}</small>}
+      </h3>
+      {!view && (
+        <>
+          {few && <p class="set-help net-search-why">Only what your accounts have fetched is stored here. {names} can search their own servers for the rest.</p>}
+          <button class={`btn small ${few ? 'primary' : 'ghost'} net-search-go`} disabled={busy} onClick={() => void start()}>
+            <Icon name="search" size={13} /> Search {names} too
+          </button>
+        </>
+      )}
+      {((busy && !view) || (view?.running && !view.places.length)) && <Loading inline label="Choosing where to look…" />}
+      {view && view.places.length > 0 && (
+        <ul class="ns-places" aria-live="polite">
+          {view.places.map((p) => (
+            <NetPlace p={p} jev={view.ranked === 'jev'} />
+          ))}
+        </ul>
+      )}
+      {view?.note && <p class="set-help net-search-note">{view.note}</p>}
+      {error && (
+        <p class="set-help net-search-note net-search-error" role="alert">
+          {error}
+        </p>
+      )}
+      <Results hits={hits} />
+      {finished && !hits.length && <p class="set-help net-search-note">{view.hits.length ? 'Nothing new: what they found is already above.' : 'Nothing found there.'}</p>}
+      {view && view.left > 0 && view.places.length > 0 && (
+        <button class="btn ghost small search-more" disabled={busy} onClick={() => void more()}>
+          Search {view.left} more place{view.left === 1 ? '' : 's'}
+        </button>
+      )}
+    </section>
+  );
+}
+
 /** Up and Down walk the results; Up from the first goes back to the box. */
 function walk(e: KeyboardEvent, box: HTMLInputElement | null) {
   if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
@@ -347,7 +492,7 @@ export function SearchPane({ q, onBack }: { q: string; onBack?: () => void }) {
           </div>
         )}
         <MailGroup q={q} />
-        {loading && <Skeleton rows={4} />}
+        {loading && <Loading label="Searching…" />}
         {page && !loading && !visible.length && <Empty icon="search" title="No matching messages">Only what your accounts have fetched is stored here, so older messages may exist on the network.</Empty>}
         {page?.corrected && visible.length > 0 && (
           <p class="set-help search-note">
@@ -361,6 +506,7 @@ export function SearchPane({ q, onBack }: { q: string; onBack?: () => void }) {
             More results
           </button>
         )}
+        {page && !loading && <NetworkSearch q={q} local={hits} few={!page.next && visible.length < OFFER_UNDER} />}
       </div>
     </section>
   );

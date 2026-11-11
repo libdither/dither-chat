@@ -21,6 +21,8 @@ import { conversationMenu, spaceMenu } from './menus.tsx';
 import { placeConvs } from './Organize.tsx';
 import { Action, Card, Columns, Facts, Hero, ProfilePage, Tag } from './ProfileShell.tsx';
 import { openConv } from './Sidebar.tsx';
+import { Loading } from './Loader.tsx';
+import { canIndex, startIndexing } from './Indexing.tsx';
 
 /** "Seen 12 of 1,287 listed (1%) · 214 online": honest about how little that may be. */
 export function coverageText(c: P.MemberCoverageView): string {
@@ -58,6 +60,8 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
   const ruleOf = ruleOn(kind, id);
   const eff = conv ? effectiveLevel(conv) : null;
   const unread = conv ? unreadOf(conv).unread : 0;
+  // A section is a community's category: the community is what gets indexed.
+  const indexable = space?.kind !== 'section' && conv?.shape !== 'self' && canIndex(kind, id);
 
   const hero = (
     <Hero
@@ -93,6 +97,7 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
           <Action icon={ruleOf === 'none' ? 'bell' : 'bellOff'} label={ruleOf === 'none' ? 'Unmute' : 'Mute'} onClick={() => setRule(kind, id, ruleOf === 'none' ? null : 'none')} />
           {conv && <Action icon="search" label="Search" onClick={() => go({ view: 'search', q: `in:${conv.id}` })} />}
           {link && <Action icon="link" label="Copy link" onClick={() => copy(link, 'Link copied')} />}
+          {indexable && <Action icon="archive" label="Index…" kind="index" title={`Index this ${noun.toLowerCase()}: its whole history, and its members`} onClick={() => startIndexing(kind, id)} />}
           <Action icon="more" label="More" menu={() => (conv ? conversationMenu(conv) : spaceMenu(space!))} />
         </>
       }
@@ -108,7 +113,7 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
           <p class="pf-empty">{conv?.topic ?? space?.topic ?? `${netName(network)} keeps no description for this ${noun.toLowerCase()}.`}</p>
         )}
         {error && <p class="about-error">{error}</p>}
-        {!view && !error && <p class="pf-empty">Asking {netName(network)}…</p>}
+        {!view && !error && <Loading inline label={`Asking ${netName(network)}…`} />}
         {view?.stale && (
           <p class="pf-stale">
             <Icon name="alert" size={12} /> {view.stale}

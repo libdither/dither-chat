@@ -6,7 +6,8 @@ import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { db, mailRev } from '../../state.ts';
-import { Empty, Skeleton } from '../bits.tsx';
+import { Empty } from '../bits.tsx';
+import { Loading } from '../Loader.tsx';
 
 type Screens = typeof import('./screens.ts');
 let screens: Screens | null = null;
@@ -41,7 +42,7 @@ export function MailSidebarLazy(p: { list?: string; active?: string }) {
       <header class="side-head">
         <h1>Mail</h1>
       </header>
-      <Skeleton rows={6} />
+      <Loading />
     </div>
   );
 }
@@ -51,7 +52,7 @@ export function MailCenterLazy({ thread, onBack }: { thread?: string; onBack: ()
   if (m) return thread ? <m.Reader threadId={thread} onBack={onBack} /> : <m.MailWelcome />;
   return (
     <section class="pane welcome">
-      {failed ? <Empty icon="alert" title="Could not load Mail">Check the connection to the hub, then try again.</Empty> : <Skeleton rows={3} kind="msg" />}
+      {failed ? <Empty icon="alert" title="Could not load Mail">Check the connection to the hub, then try again.</Empty> : <Loading fill />}
     </section>
   );
 }

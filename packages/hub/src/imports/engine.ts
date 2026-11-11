@@ -35,6 +35,8 @@ export class ImportRunner {
     private sources: ImportSources,
     private dataDir: string,
     private log: (msg: string) => void = () => {},
+    /** After an import changed messages: devices' kept copies of chats are stale (filled bodies are not journaled). */
+    private onImported: () => void = () => {},
   ) {}
 
   get busy(): string | null {
@@ -83,8 +85,13 @@ export class ImportRunner {
       run.progress = 0;
       this.sources.setRun(sourceId, run);
       run.counts = await this.apply(facts.path, facts.stats, accountId, v.sha256!, run);
-      if (this.current?.stop) return finish({ stage: 'stopped' }, 'stopped');
+      const wrote = !run.dryRun && !!(run.counts && (run.counts.new || run.counts.filled));
+      if (this.current?.stop) {
+        if (wrote) this.onImported();
+        return finish({ stage: 'stopped' }, 'stopped');
+      }
       finish({ stage: 'done', progress: 1 }, 'done');
+      if (wrote) this.onImported();
     } catch (e: any) {
       this.log(`import ${sourceId}: ${e?.stack ?? e}`);
       finish({ stage: 'error', error: String(e?.message ?? e) }, 'error');

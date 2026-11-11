@@ -19,6 +19,7 @@ import { reducedMotion, useLayer } from '../phone.ts';
 import { api } from '../state.ts';
 import { openAttachment, openWith } from './fileopen.tsx';
 import { Icon } from './icons.tsx';
+import { Loading } from './Loader.tsx';
 
 export interface ViewerImage {
   url: string;
@@ -146,7 +147,7 @@ function FileBody(p: FileViewProps) {
     };
   }, [p.kind]);
   if (failed) return <div class="fv-wait">Could not load the viewer. Check the connection to the hub, then try again.</div>;
-  return View ? <View {...p} /> : <div class="fv-wait">Loading…</div>;
+  return View ? <View {...p} /> : <Loading fill label="Loading…" />;
 }
 
 /** A type with no viewer here. */

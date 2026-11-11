@@ -12,6 +12,7 @@ import { ago } from '../format.ts';
 import { netName } from '../model.ts';
 import { api, toast } from '../state.ts';
 import { Icon } from './icons.tsx';
+import { Loading } from './Loader.tsx';
 
 const HELP: Partial<Record<P.Network, { accept: string; what: string; folder?: string; zip?: string }>> = {
   signal: {
@@ -131,7 +132,7 @@ function Conflicts({ s, onChange }: { s: P.ImportSourceView; onChange: () => voi
   useEffect(() => void load(), [s.id]);
   const decide = (c: P.ImportConflictView, decision: 'take-source' | 'ignore' | null) =>
     api(`/api/imports/${s.id}/conflicts`, { body: { messageId: c.messageId, kind: c.kind, decision } }).then(load, (e) => toast({ kind: 'error', title: 'Could not do that', body: e.message })).then(onChange);
-  if (!data) return <p class="det-note">Loading…</p>;
+  if (!data) return <Loading inline label="Loading…" />;
   if (!data.items.length) return <p class="det-note">Nothing differs.</p>;
   return (
     <div class="import-conflicts">

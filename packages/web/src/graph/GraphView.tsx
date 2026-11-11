@@ -12,6 +12,7 @@ import { Empty, NetBadge, openAdversarial } from '../ui/bits.tsx';
 import { Icon } from '../ui/icons.tsx';
 import { Engine } from './engine.ts';
 import { DEFAULT_FILTERS, index, neighbours, sharesWith, visible, type Filters, type Index } from './model.ts';
+import { Loading } from '../ui/Loader.tsx';
 
 const KEY = 'dither-chat:graph';
 const CAPS = [2000, 6000, 20000];
@@ -70,7 +71,7 @@ export default function GraphView({ onBack }: { onBack: () => void }) {
           {error}
         </Empty>
       ) : !graph ? (
-        <div class="pg-loading">Loading…</div>
+        <Loading fill label="Loading…" />
       ) : !graph.links.length ? (
         <Sparse graph={graph} />
       ) : (
