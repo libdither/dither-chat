@@ -495,7 +495,7 @@ export const ruleName = (l: Level | null | undefined): string => (l === 'mention
 /** What a rule does, in a sentence without its full stop. */
 export const ruleHelp = (l: Level | null | undefined): string => (l === 'mentions' ? OLDER_RULE_HELP : ((l && RULE_HELP[l as P.RuleLevel]) ?? AUTOMATIC_HELP));
 /** An icon for a rule; the sparkles are Automatic. */
-export const ruleIcon = (l: Level | null | undefined): string => (l === 'all' ? 'bell' : l === 'mentions' ? 'at' : l === 'digest' ? 'list' : l === 'none' ? 'bellOff' : 'sparkles');
+export const ruleIcon = (l: Level | null | undefined): string => (l === 'all' ? 'bell' : l === 'mentions' ? 'at' : l === 'digest' ? 'layers' : l === 'none' ? 'bellOff' : 'sparkles');
 
 /**
  * What holds at a conversation with no rule of its own, for the line under Automatic: the rule above it and where

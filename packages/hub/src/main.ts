@@ -95,6 +95,8 @@ if (embeddings) triage.content = (id) => embeddings.features(id, 'important');
 // What reads a message that may alert (docs/notifications.md): jev, the machine's local model, unless
 // DITHER_ALERT_MODEL says otherwise: `keyword` (a demo hub's: urgent words) or `off` (only your rules alert).
 triage.judge = alertJudge();
+// Who wrote when, for the Conversation rule: folded now, not when the first message arrives.
+triage.warm();
 function alertJudge(): Judge | null {
   const name = process.env.DITHER_ALERT_MODEL ?? (demo ? 'keyword' : 'jev');
   if (name === 'off') return null;

@@ -142,6 +142,14 @@ export class Triage {
     return { alert: THRESHOLDS.alert, important: this.store.listLevel() ?? THRESHOLDS.important };
   }
 
+  /**
+   * Fold the last two months of who wrote when now (interact.ts), about a second on a busy hub, so the first message
+   * to decide on does not wait for it: main.ts calls this as the hub starts.
+   */
+  warm() {
+    this.interact();
+  }
+
   /** The fold of who wrote when (interact.ts), caught up to now. */
   private interact(): InteractionLog {
     this.interactions ??= new InteractionLog(this.store.db);

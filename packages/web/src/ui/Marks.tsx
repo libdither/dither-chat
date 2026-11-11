@@ -10,7 +10,8 @@ import { alertToggle, isMailId, isTier, lessToggle, oldVote } from '../marks.ts'
 import { mark, type Markable } from '../triage.ts';
 import { Icon } from './icons.tsx';
 
-export const TIER_ICON: Record<P.NotifyTier, string> = { push: 'bell', quiet: 'groups', digest: 'list', drop: 'eyeOff' };
+// Light ones: every message in a timeline carries its tier's icon among its hover actions, and most are below the list.
+export const TIER_ICON: Record<P.NotifyTier, string> = { push: 'bell', quiet: 'groups', digest: 'layers', drop: 'chevronDown' };
 export const tierIcon = (d: P.TriageDecision) => (d === 'silent' ? 'bellOff' : TIER_ICON[d]);
 export const tierName = (d: P.TriageDecision) => (d === 'silent' ? 'Silent' : TIER_LABEL[d]);
 

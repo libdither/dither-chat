@@ -1070,7 +1070,12 @@ export class HubServer {
         return bad(e.message, 409);
       }
     }
-    if (path === '/api/triage/policy' && method === 'GET') return this.opts.votes ? ok(this.opts.votes.view()) : bad('No triage here', 404);
+    if (path === '/api/triage/policy' && method === 'GET') {
+      if (!this.opts.votes) return bad('No triage here', 404);
+      // The list's preview is worked out in the background (votes.ts): the first answer waits for it.
+      await this.opts.votes.previewReady();
+      return ok(this.opts.votes.view());
+    }
     // What the shadow model would have done lately (shadow.ts): counts only.
     if (path === '/api/triage/shadow' && method === 'GET') return this.opts.votes ? ok(this.opts.votes.shadow()) : bad('No triage here', 404);
     // The importance at which a message reaches the phone's list: { level: 0.01 to 0.99 }.

@@ -348,6 +348,8 @@ decided from then on. `GET /api/triage/policy` gives `thresholds: { alert: 0.5, 
 `bars: { direct: 0.05, other: 0.2 }` and `preview`, so the setting can say what a level means before you choose it:
 for each of the levels 0.1 to 0.9, how many chats a day the list would have held over the last week. A chat counts
 once a day, when one of its messages outside the Conversation tier reached that importance (`votes.ts` `preview`).
+A week of decisions takes a second or more to read on a busy hub, so it is read in the background, six hours of them
+at a time, and stands for an hour (`refreshPreview`); only the first request for the policy after a start waits for it.
 
 In the replay, with what the model learns from the two weeks before: 0.6 was about 17 chats a day, 0.5 about 38,
 0.4 about 56, and 0.9 about 9.
@@ -519,7 +521,7 @@ The first start of a hub with the tiers converts what it has, once (`store.ts` `
 | rules of Every message, Digest only, Nothing | the same rows, now called Always alert, List only, Mute |
 | a rule of Mentions | kept as it is ([Rules](#rules)) |
 | the daily digest's setting and state | deleted |
-| the saved model | started over: it predicted other chances. It learns at once from the old votes and what you did |
+| the saved model | started over: it predicted other chances. It learns at once from the old votes, and from what you did at the first tick, within a minute |
 
 No old message becomes an alert, and nothing that stood before the migration counts as an alert you let stand.
 Mail's decisions convert the same way, without the Conversation tier: Important and Active mail becomes a list row,

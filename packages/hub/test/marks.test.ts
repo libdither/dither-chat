@@ -346,8 +346,11 @@ describe('what you did', () => {
 });
 
 describe('the list’s level and what the app is shown', () => {
-  test('the view: thresholds, the bars, the preview; nothing of the old prompt', () => {
+  test('the view: thresholds, the bars, the preview; nothing of the old prompt', async () => {
     const w = world();
+    // The preview is worked out in the background: until then the view has none.
+    expect(w.votes.view().preview).toEqual([]);
+    await w.votes.previewReady();
     const v = w.votes.view();
     expect(v).toMatchObject({ factors: [], rejected: [], votes: 0, errors: 0, baseline: 0, learnedAt: null, lastReason: null });
     expect(v.thresholds).toEqual({ alert: 0.5, important: 0.6 });
@@ -411,23 +414,25 @@ describe('the list’s level and what the app is shown', () => {
     await put('builds', 'digest', 0.9, day - 9 * DAY);
     const now = day + HOUR;
     w.votes.learn('test', now);
-    const rows = w.votes.preview(now);
+    const rows = await w.votes.refreshPreview(now);
+    // What was worked out stands for an hour, and a mark does not put it in doubt.
+    expect(w.votes.preview(now + HOUR / 2)).toEqual(rows);
     const at = (level: number) => rows.find((r) => r.level === level)!.perDay;
     // Three chat-days at 30% or under, one from 40% to 80%, none at 90%: over seven days, to a tenth.
     expect([0.1, 0.2, 0.3].map(at)).toEqual([0.4, 0.4, 0.4]);
     expect([0.4, 0.5, 0.6, 0.7, 0.8].map(at)).toEqual([0.1, 0.1, 0.1, 0.1, 0.1]);
     expect(at(0.9)).toBe(0);
     expect(w.votes.view(now).preview).toBe(rows);
-    // Worked out at most every ten minutes, and again after it learns.
+    // It stands for an hour, whatever is decided or learned meanwhile; then it is worked out again.
     await put('builds', 'digest', 0.95, day - 12 * HOUR);
-    expect(w.votes.preview(now + MIN)).toBe(rows);
-    expect(w.votes.preview(now + 11 * MIN).find((r) => r.level === 0.9)!.perDay).toBe(0.1);
-    await put('general', 'digest', 0.95, day - 12 * HOUR);
     w.votes.learn('test', now + 12 * MIN);
-    expect(w.votes.preview(now + 12 * MIN).find((r) => r.level === 0.9)!.perDay).toBe(0.3);
+    expect(w.votes.preview(now + 30 * MIN)).toBe(rows);
+    expect((await w.votes.refreshPreview(now + 61 * MIN)).find((r) => r.level === 0.9)!.perDay).toBe(0.1);
+    await put('general', 'digest', 0.95, day - 12 * HOUR);
+    expect((await w.votes.refreshPreview(now + 62 * MIN)).find((r) => r.level === 0.9)!.perDay).toBe(0.3);
+    expect(w.votes.view(now + 63 * MIN).preview.find((r) => r.level === 0.9)!.perDay).toBe(0.3);
     // Over a shorter span the same chats are more a day.
-    w.votes.learn('test', now + 13 * MIN);
-    expect(w.votes.preview(now + 13 * MIN, 2).find((r) => r.level === 0.9)!.perDay).toBe(1);
+    expect((await w.votes.refreshPreview(now + 63 * MIN, 2)).find((r) => r.level === 0.9)!.perDay).toBe(1);
   });
 
   test('forgetting what it learned about a conversation, for good; and letting it be learned again', async () => {
@@ -483,14 +488,15 @@ describe('a model saved before the tiers', () => {
       const votes = new TriageVotes(store, triage);
       expect(validModel(triage.learned)).toBe(true);
       expect(triage.learned.w).not.toHaveProperty('ping');
-      // Learned again at once, from the old vote: that channel matters less. What you had it forget stays forgotten.
+      // Learned again at once, from the old vote (what you did is read at the first tick, not while the hub starts):
+      // that channel matters less. What you had it forget stays forgotten.
       expect(triage.learned.w.important[`conv:${cid}`]).toBeLessThan(0);
       expect(triage.learned.w.important['w:paper']).toBeUndefined();
       expect(triage.learned.w.alert).toEqual({});
       const kept = store.triagePolicy<{ model: Model; candidate: Model; candidateFrom: unknown; rejected: string[]; lastReason: string; learnedAt: number }>()!;
       expect(kept.model).toEqual(triage.learned);
       expect(kept.lastReason).toBe('the tiers replaced the levels');
-      expect(kept.learnedAt).toBeGreaterThan(123);
+      expect(kept.learnedAt).toBeNull();
       expect(kept.rejected).toEqual(['w:paper']);
       // The old candidate goes the same way.
       expect(validModel(kept.candidate)).toBe(true);

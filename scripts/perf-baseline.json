@@ -1,6 +1,6 @@
 {
- "note": "bun scripts/verify-perf.ts --update (docs/perf.md). Times are of the machine it ran on. Times: the slower of two runs on 2026-11-10 (load 3-7 on a shared machine).",
- "at": "2026-11-10",
+ "note": "bun scripts/verify-perf.ts --update (docs/perf.md). Times are of the machine it ran on. Times: the slower of two runs on 2026-11-10 (load 3-7 on a shared machine). Counts, renders and layouts: two runs on 2026-11-11, once the perf world's decisions followed the three tiers (the higher of the two for renders and layouts).",
+ "at": "2026-11-11",
  "runs": 3,
  "pages": 15,
  "scale": 1,
@@ -16,7 +16,7 @@
  },
  "metrics": {
   "hub.bootstrap.bytes": {
-   "v": 4460784,
+   "v": 4474979,
    "kind": "bytes"
   },
   "hub.bootstrap.ms": {
@@ -44,7 +44,7 @@
    "kind": "ms"
   },
   "1x.cold.renders": {
-   "v": 3,
+   "v": 2,
    "kind": "tally"
   },
   "1x.cold.layouts": {
@@ -52,11 +52,11 @@
    "kind": "tally"
   },
   "1x.cold.nodes": {
-   "v": 11219,
+   "v": 11402,
    "kind": "count"
   },
   "1x.cold.bootstrapBytes": {
-   "v": 4460501,
+   "v": 4474718,
    "kind": "bytes"
   },
   "1x.open.first": {
@@ -152,7 +152,7 @@
    "kind": "tally"
   },
   "1x.long.reopen.nodes": {
-   "v": 17148,
+   "v": 16984,
    "kind": "count"
   },
   "1x.long.reopen.msgs": {
@@ -232,7 +232,7 @@
    "kind": "tally"
   },
   "1x.relaunch.open.layouts": {
-   "v": 25,
+   "v": 29,
    "kind": "tally"
   },
   "4x.cold.list": {
@@ -260,11 +260,11 @@
    "kind": "tally"
   },
   "4x.cold.nodes": {
-   "v": 11219,
+   "v": 11402,
    "kind": "count"
   },
   "4x.cold.bootstrapBytes": {
-   "v": 4460699,
+   "v": 4474916,
    "kind": "bytes"
   },
   "4x.open.first": {
@@ -292,7 +292,7 @@
    "kind": "tally"
   },
   "4x.open.first.layouts": {
-   "v": 17,
+   "v": 19,
    "kind": "tally"
   },
   "4x.open.again": {
@@ -360,7 +360,7 @@
    "kind": "tally"
   },
   "4x.long.reopen.nodes": {
-   "v": 17127,
+   "v": 16960,
    "kind": "count"
   },
   "4x.long.reopen.msgs": {
@@ -440,7 +440,7 @@
    "kind": "tally"
   },
   "4x.relaunch.open.layouts": {
-   "v": 17,
+   "v": 21,
    "kind": "tally"
   }
  }

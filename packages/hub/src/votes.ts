@@ -46,6 +46,8 @@ const IMPLICIT_TTL = DAY;
 export const IMPLICIT_PER_PLACE = 10;
 /** An alert left unmarked this long stood; so did a Conversation message that did not alert. */
 export const STOOD_AFTER = 12 * HOUR;
+/** How long a worked-out preview stands. */
+const PREVIEW_EVERY = HOUR;
 /** The levels the list can be set to, for the preview. */
 export const LIST_LEVELS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
 
@@ -84,8 +86,15 @@ export class TriageVotes {
       candidate: validModel(saved.candidate) ? saved.candidate : null,
       candidateFrom: validModel(saved.candidate) ? (saved.candidateFrom ?? null) : null,
     };
+    if (!ok && saved.model) {
+      // Start over at once from the marks and the old votes, which is quick. What you did is two weeks of messages
+      // to read, seconds on a busy hub: the first tick does that (`daily`, which finds nothing learned yet).
+      const ex = [...this.marked(Date.now()), ...this.stood(Date.now())];
+      const model = train(ex, new Set(this.state.rejected));
+      this.state = { ...this.state, model, candidate: model, candidateFrom: { votes: ex.filter((e) => e.vote).length, implicit: 0 }, lastReason: 'the tiers replaced the levels' };
+      this.store.setTriagePolicy(this.state);
+    }
     this.publish();
-    if (!ok && saved.model) this.learn('the tiers replaced the levels');
   }
 
   /** Everything the live model learns from: marks, old votes, what stood, and the newest of what you did in each place. */
@@ -107,11 +116,12 @@ export class TriageVotes {
   private marked(now: number): Example[] {
     const s = this.store;
     const out: Example[] = [];
-    for (const r of s.raw<Row>(
-      `SELECT t.message_id, t.decision, t.was, t.feedback, t.feedback_at, t.alert_mark, t.less_mark, t.marked_at, t.facts, m.body
-       FROM triage t LEFT JOIN message m ON m.id = t.message_id
-       WHERE t.feedback IS NOT NULL OR t.marked_at IS NOT NULL ORDER BY COALESCE(t.marked_at, t.feedback_at) DESC LIMIT 5000`,
-    )) {
+    // Each half walks its own index (triage_marked, triage_feedback): asked for together, every decision is read.
+    const cols = `t.message_id, t.decision, t.was, t.feedback, t.feedback_at, t.alert_mark, t.less_mark, t.marked_at, t.facts, m.body`;
+    const rows = new Map<string, Row>();
+    for (const r of s.raw<Row>(`SELECT ${cols} FROM triage t LEFT JOIN message m ON m.id = t.message_id WHERE t.marked_at IS NOT NULL ORDER BY t.marked_at DESC LIMIT 5000`)) rows.set(r.message_id, r);
+    for (const r of s.raw<Row>(`SELECT ${cols} FROM triage t LEFT JOIN message m ON m.id = t.message_id WHERE t.feedback IS NOT NULL ORDER BY t.feedback_at DESC LIMIT 5000`)) rows.set(r.message_id, r);
+    for (const r of rows.values()) {
       let facts = r.facts ? (JSON.parse(r.facts) as Facts) : null;
       const base = r.was ?? r.decision;
       if (!facts && isTier(base)) {
@@ -141,7 +151,7 @@ export class TriageVotes {
     const rows = this.store.raw<Row>(
       `SELECT decision, facts, created_at FROM (
          SELECT t.decision, t.facts, t.created_at, ROW_NUMBER() OVER (PARTITION BY m.conversation_id, t.decision ORDER BY t.created_at DESC) AS n
-         FROM triage t JOIN message m ON m.id = t.message_id
+         FROM triage t INDEXED BY triage_tier_score JOIN message m ON m.id = t.message_id
          WHERE t.marked_at IS NULL AND t.facts IS NOT NULL AND t.decision IN ('push', 'quiet') AND t.created_at > ? AND t.created_at < ?
            AND json_extract(t.facts, '$.judge') IS NOT NULL AND json_extract(t.facts, '$.base') != 'push')
        WHERE n <= ?`,
@@ -210,8 +220,7 @@ export class TriageVotes {
     ex ??= this.examples(now);
     const model = train(ex, new Set(this.state.rejected));
     this.state = { ...this.state, model, learnedAt: now, lastReason: reason };
-    this.learnCandidate(now);
-    this.previewCache = null;
+    this.learnCandidate(now, ex.filter((e) => e.vote));
     this.save();
   }
 
@@ -219,7 +228,7 @@ export class TriageVotes {
    * What the candidate learns from: the marks and old votes, and every outcome of the last two weeks (not only the
    * newest in each place), each with the interaction and content features kept when it was decided.
    */
-  candidateExamples(now = Date.now()): Example[] {
+  candidateExamples(now = Date.now(), marked: Example[] = this.marked(now)): Example[] {
     const s = this.store;
     const inputs = s.db.query('SELECT features FROM triage_input WHERE message_id = ?');
     // Content features are read now, not as kept: a labelled message's probe score is cross-fitted (embeddings.ts),
@@ -231,12 +240,12 @@ export class TriageVotes {
       const c = id && content ? content(id) : null;
       return c && Object.keys(c).length ? { ...kept, ...c } : kept;
     };
-    return [...this.marked(now), ...this.implicit(now)].map((e) => ({ ...e, x: xOf(e.id) }));
+    return [...marked, ...this.implicit(now)].map((e) => ({ ...e, x: xOf(e.id) }));
   }
 
-  private learnCandidate(now: number) {
+  private learnCandidate(now: number, marked?: Example[]) {
     try {
-      const cx = this.candidateExamples(now);
+      const cx = this.candidateExamples(now, marked);
       this.state.candidate = train(cx, new Set(this.state.rejected));
       this.state.candidateFrom = { votes: cx.filter((e) => e.vote).length, implicit: cx.filter((e) => !e.vote).length };
     } catch (e) {
@@ -254,17 +263,47 @@ export class TriageVotes {
 
   /**
    * Chats a day the list would have held over the last week at each level: a chat counts once a day, when a message
-   * outside the Conversation tier reached that importance. Worked out at most every ten minutes.
+   * outside the Conversation tier reached that importance. A week of decisions is a second or more to read on a busy
+   * hub, so it is read in the background, a few hours of them at a time (`refreshPreview`), at most once an hour:
+   * this answers with what was last worked out, and with nothing until the first time.
    */
-  preview(now = Date.now(), days = 7): P.TriagePolicyView['preview'] {
-    if (this.previewCache && now - this.previewCache.at < 10 * 60_000 && now >= this.previewCache.at) return this.previewCache.rows;
-    const best = this.store.raw<Row>(
-      `SELECT MAX(t.score) AS score FROM triage t JOIN message m ON m.id = t.message_id
-       WHERE t.created_at > ? AND t.decision IN ('digest', 'drop') AND t.score IS NOT NULL
-       GROUP BY m.conversation_id, CAST(t.created_at / ${DAY} AS INTEGER)`,
-      now - days * DAY,
+  preview(now = Date.now()): P.TriagePolicyView['preview'] {
+    if (!this.previewBusy && (!this.previewCache || now - this.previewCache.at >= PREVIEW_EVERY || now < this.previewCache.at)) {
+      this.previewBusy = this.refreshPreview(now)
+        // The hub stopping while it reads is not worth a line.
+        .catch((e) => /closed/i.test(String(e)) || console.error('triage: the list preview could not be worked out', e))
+        .finally(() => (this.previewBusy = null));
+    }
+    return this.previewCache?.rows ?? [];
+  }
+  private previewBusy: Promise<unknown> | null = null;
+
+  /** Resolves once there is a preview to show: at once when one was worked out before, else when the first is. */
+  async previewReady(now = Date.now()): Promise<void> {
+    if (this.previewCache) return;
+    this.preview(now);
+    await this.previewBusy;
+  }
+
+  /** Work the preview out now, `stepHours` of decisions at a time with room for everything else between. */
+  async refreshPreview(now = Date.now(), days = 7, stepHours = 6, pause: () => Promise<unknown> = () => new Promise((r) => setTimeout(r, 5))): Promise<P.TriagePolicyView['preview']> {
+    const q = this.store.db.query(
+      `SELECT m.conversation_id AS conv, CAST(t.created_at / ${DAY} AS INTEGER) AS day, MAX(t.score) AS score
+       FROM triage t INDEXED BY triage_created JOIN message m ON m.id = t.message_id
+       WHERE t.created_at > ? AND t.created_at <= ? AND t.decision IN ('digest', 'drop') AND t.score >= ?
+       GROUP BY m.conversation_id, day`,
     );
-    const rows = LIST_LEVELS.map((level) => ({ level, perDay: Math.round((best.filter((r) => r.score >= level).length / days) * 10) / 10 }));
+    const best = new Map<string, number>();
+    const step = stepHours * HOUR;
+    for (let from = now - days * DAY; from < now; from += step) {
+      for (const r of q.all(from, Math.min(now, from + step), LIST_LEVELS[0]) as Row[]) {
+        const k = `${r.conv}|${r.day}`;
+        if ((best.get(k) ?? 0) < r.score) best.set(k, r.score);
+      }
+      await pause();
+    }
+    const scores = [...best.values()];
+    const rows = LIST_LEVELS.map((level) => ({ level, perDay: Math.round((scores.filter((s) => s >= level).length / days) * 10) / 10 }));
     this.previewCache = { at: now, rows };
     return rows;
   }
