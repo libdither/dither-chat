@@ -1126,7 +1126,9 @@ export class Store {
             .run(mid, kind, o.sourceSha, o.runId, JSON.stringify(value), Date.now());
         };
         // Taken back, and the hub kept nothing of it (or never heard): what the source kept fills it in, kept as gone.
-        if ((row.deleted || g) && hasContent && !this.isSelf(row.author_id)) {
+        // Your own messages too when they disappeared (a timer, not you, took them); never what you deleted.
+        const ownDisappeared = this.isSelf(row.author_id) && g?.how === 'disappeared';
+        if ((row.deleted || g) && hasContent && (!this.isSelf(row.author_id) || ownDisappeared)) {
           const empty = !row.body && !row.atts;
           if (row.deleted && !empty) {
             counts.same++;
@@ -1135,7 +1137,7 @@ export class Store {
           counts.filled++;
           counts.kept!++;
           if (o.dryRun) continue;
-          const how = row.gone_how ?? g?.how ?? 'deleted';
+          const how = ownDisappeared ? 'disappeared' : (row.gone_how ?? g?.how ?? 'deleted');
           this.db.query('UPDATE message SET deleted = 1, gone_how = ?, gone_at = COALESCE(gone_at, ?) WHERE id = ?').run(how, g?.at ?? null, mid);
           if (!row.body && f.body) this.db.query('UPDATE message SET body = ? WHERE id = ?').run(f.body, mid);
           if (!row.atts && f.attachments?.length) this.insertAttachments(acc, mid, f.nativeId, f.attachments);

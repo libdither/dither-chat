@@ -188,7 +188,8 @@ export class HubServer {
     // Mail's outbox sends files uploaded the same way (mail/outbox.ts).
     if (opts.mail) opts.mail.outbox.files = this.uploads;
     this.imports = new ImportSources(opts.dataDir, (msg) => console.warn(msg));
-    this.importer = new ImportRunner(store, this.imports, opts.dataDir, (msg) => console.warn(msg));
+    // An import fills and adds messages behind the journal's back: every device reloads its chats (a resync).
+    this.importer = new ImportRunner(store, this.imports, opts.dataDir, (msg) => console.warn(msg), () => this.resync());
     this.gapfill = new GapFill(store, (acc, cmd) => this.sup.command(acc, cmd, 180_000), (msg) => console.warn(msg));
     // A demo hub keeps nothing ahead of time: its own files (local) are fetched to be looked at.
     this.mediaInfo = new MediaInfo(store, opts.dataDir, {
@@ -334,6 +335,12 @@ export class HubServer {
       events.push(...(rules ? a.rescoreAll() : a.sync(changed, removed)));
     }
     this.broadcast(events);
+  }
+
+  /** Every device drops what it kept and loads again: for changes made behind the journal's back. */
+  resync() {
+    this.flush();
+    this.broadcast([{ t: 'resync' }]);
   }
 
   /** To every client, and into the journal: a frame that changed something ends with its position (docs/sync.md). */
@@ -655,6 +662,8 @@ export class HubServer {
         const by = (typeof b.device === 'string' ? b.device : req.headers.get('user-agent') ?? 'unknown').slice(0, 160);
         s.setRetention(next, by);
         this.broadcast([{ t: 'retention', retention: s.retention() }]);
+        // Shown or hidden, kept messages are served with or without their words: devices' kept copies are stale.
+        if (cur.adversarial !== next.adversarial) this.resync();
       }
       return ok(s.retention());
     }
@@ -664,7 +673,7 @@ export class HubServer {
       const b = await body<{ what?: string }>();
       if (!(KEPT_KINDS as readonly string[]).includes(b.what as string)) return bad(`what: ${KEPT_KINDS.join(', ')}`);
       const n = s.eraseKept(b.what as P.KeptKind);
-      this.flush();
+      this.resync();
       return ok({ erased: n });
     }
     // What the network says about one identity (people.ts, docs/profile.md). ?fresh=1 asks even if a recent answer is kept.
@@ -855,7 +864,9 @@ export class HubServer {
           const v = this.imports.view(m[1]);
           if (!v?.sha256) return bad('no such source', 404);
           if (this.importer.busy) return bad('an import is running', 409);
-          return ok(s.undoImport(v.sha256));
+          const undone = s.undoImport(v.sha256);
+          this.resync();
+          return ok(undone);
         }
         if ((m = path.match(/^\/api\/imports\/([\w.-]+)\/check$/)) && method === 'POST') {
           void this.imports.check(m[1]);
