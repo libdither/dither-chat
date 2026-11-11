@@ -89,7 +89,7 @@ import { memo } from './memo.ts';
 import { heldRequest } from '../requests.ts';
 import { LinkBanner, RequestBar } from './Requests.tsx';
 import { countKey } from '../clicklog.ts';
-import { ChunkHead, design, focusedPair, focusPair, hasNickname, myName, Nickname, pairOf, PairDropdown, PairIcons, PairLead, PairMark, PairRail, PairSliders, theirName, viewOf } from './Pairs.tsx';
+import { ChunkHead, focusedPair, focusPair, hasNickname, loadChat, myName, Nickname, pairOf, PairDropdown, PairLead, theirName, viewOf } from './Pairs.tsx';
 
 
 // ------------------------------------------------------------------ header
@@ -555,7 +555,7 @@ function sourceTitle(m: P.MessageView): string | undefined {
  * each message: `target`, the message it replies to (a map per render, not a search per message); `thread`, its
  * thread's conversation; `src`, where it came from in a merged timeline. `onQuote` shows the quoted message.
  */
-const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuote, highlight, target, thread, mark, onPick, via, viaOn, chunk, alias, netPic }: { m: P.MessageView; grouped: boolean; src?: string; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; mark?: ComponentChildren; onPick?: () => void; via?: string; viaOn?: boolean; chunk?: 'on' | 'off'; alias?: string; netPic?: boolean }) {
+const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuote, highlight, target, thread, via, viaOn, chunk, alias, netPic }: { m: P.MessageView; grouped: boolean; src?: string; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; via?: string; viaOn?: boolean; chunk?: 'on' | 'off'; alias?: string; netPic?: boolean }) {
   if (counting) rendered('MessageItem');
   metaRev.value;
   const author = m.authorId ? db.identities.get(m.authorId) : null;
@@ -598,19 +598,10 @@ const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuot
   const ticks = m.receipts && isSelfIdentity(m.authorId) ? <Ticks m={m} /> : null;
   return (
     <div
-      class={`msg ${grouped ? 'grouped' : ''} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''} ${onPick ? 'pair-pick' : ''} ${chunk ? `pair-chunk ${chunk}` : ''}`}
+      class={`msg ${grouped ? 'grouped' : ''} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''} ${chunk ? `pair-chunk ${chunk}` : ''}`}
       id={`m-${m.id}`}
       ref={(el) => void (el && swipeReply.set(el, () => onReply(m)))}
       {...menuProps}
-      // Design study (ui/Pairs.tsx): a click on a message of another pair sends through that pair, unless it selects text or hits a control.
-      onClick={
-        onPick &&
-        ((e: MouseEvent) => {
-          if (getSelection()?.toString()) return;
-          if ((e.target as HTMLElement).closest('a, button, img, video, audio, input, textarea, [data-att], [role="link"]')) return;
-          onPick();
-        })
-      }
     >
       <div class="msg-gutter">
         {grouped ? (
@@ -624,7 +615,6 @@ const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuot
         )}
       </div>
       <div class="msg-main">
-        {mark}
         {target && (
           <button class="reply-quote" onClick={() => onQuote(target.id)}>
             <Icon name="reply" size={12} />
@@ -638,18 +628,13 @@ const MessageItem = memo(function MessageItem({ m, grouped, src, onReply, onQuot
               {name}
             </span>
             {author?.isBot && <span class="bot-tag">BOT</span>}
-            {/* Design study (ui/Pairs.tsx, sliders): which of their accounts, or which of yours it was sent from. */}
-            {via !== undefined &&
-              (self ? (
-                <span class={`msg-via-mine ${viaOn ? 'on' : ''}`}>
-                  sent from <NetGlyph network={m.network} size={11} /> {via}
-                </span>
-              ) : (
-                <span class={`msg-src msg-via-their ${viaOn ? 'on' : ''}`} title={`${via} on ${netName(m.network)}`}>
-                  <NetGlyph network={m.network} size={11} />
-                  {via}
-                </span>
-              ))}
+            {/* A person page (ui/Pairs.tsx), someone with a nickname: which of their accounts wrote it. */}
+            {via !== undefined && (
+              <span class={`msg-src msg-via-their ${viaOn ? 'on' : ''}`} title={`${via} on ${netName(m.network)}`}>
+                <NetGlyph network={m.network} size={11} />
+                {via}
+              </span>
+            )}
             {src !== undefined && (
               <span class="msg-src" title={src}>
                 <NetGlyph network={m.network} size={11} />
@@ -753,7 +738,7 @@ interface Drawn {
   to: string | null;
 }
 
-function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus, pairs }: { tkey: string; convIds: string[]; merged: boolean; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; pairs?: { focus: string; onFocus: (convId: string) => void; inline?: boolean; chunks?: boolean } }) {
+function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus, pairs }: { tkey: string; convIds: string[]; merged: boolean; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; pairs?: { focus: string; onFocus: (convId: string) => void } }) {
   if (counting) rendered('Timeline');
   timelineRev(tkey).value;
   const scroller = useRef<HTMLDivElement>(null);
@@ -905,8 +890,8 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus, pairs 
   for (let i = start; i < end; i++) {
     const m = all[i];
     if (!prev || !sameDay(prev.ts, m.ts)) items.push(<div class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
-    // Design study (ui/Pairs.tsx): where the pair changes, a picture at the right of the message instead of a divider.
-    const runStart = !!pairs && (!prev || prev.conversationId !== m.conversationId || (!!pairs.chunks && !sameDay(prev.ts, m.ts)));
+    // A person page (ui/Pairs.tsx): a chunk starts where the pair changes, and on a new day, in place of the divider.
+    const runStart = !!pairs && (!prev || prev.conversationId !== m.conversationId || !sameDay(prev.ts, m.ts));
     if (merged && !pairs && prev && prev.conversationId !== m.conversationId) {
       const c = db.conversations.get(m.conversationId);
       items.push(
@@ -922,33 +907,23 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus, pairs 
     const grouped = !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId;
     const target = m.replyToId ? (byId.get(m.replyToId) ?? quoted.get(m.replyToId) ?? null) : null;
     const thread = m.threadId ? (db.conversations.get(m.threadId) ?? null) : null;
-    let mark: ComponentChildren = undefined;
-    let onPick: (() => void) | undefined;
     let via: string | undefined;
     let chunk: 'on' | 'off' | undefined;
     let alias: string | undefined;
-    if (pairs?.chunks) {
-      const c = db.conversations.get(m.conversationId);
+    const c = pairs ? db.conversations.get(m.conversationId) : undefined;
+    if (pairs && c) {
+      const pr = pairOf(c);
       const focused = m.conversationId === pairs.focus;
       // Names as the network has them (your account's, their username), unless you gave them a nickname.
-      if (c) {
-        const pr = pairOf(c);
-        if (isSelfIdentity(m.authorId)) alias = myName(pr);
-        else if (hasNickname(personOf(m.authorId))) via = theirName(pr);
-        else alias = theirName(pr);
-      }
-      if (c && convIds.length > 1) {
+      if (isSelfIdentity(m.authorId)) alias = myName(pr);
+      else if (hasNickname(personOf(m.authorId))) via = theirName(pr);
+      else alias = theirName(pr);
+      if (convIds.length > 1) {
         chunk = focused ? 'on' : 'off';
-        if (runStart) items.push(<ChunkHead key={`ch-${m.id}`} p={pairOf(c)} focused={focused} onPick={() => pairs.onFocus(c.id)} />);
+        if (runStart) items.push(<ChunkHead key={`ch-${m.id}`} p={pr} focused={focused} onPick={() => pairs.onFocus(c.id)} />);
       }
-    } else if (pairs) {
-      const c = db.conversations.get(m.conversationId);
-      const focused = m.conversationId === pairs.focus;
-      if (c && !focused) onPick = () => pairs.onFocus(c.id);
-      if (c && pairs.inline) via = isSelfIdentity(m.authorId) ? myName(pairOf(c)) : theirName(pairOf(c));
-      else if (c && runStart) mark = <PairMark p={pairOf(c)} directs={convIds.map((id) => db.conversations.get(id)).filter((x): x is P.ConversationView => !!x)} focused={focused} onPick={() => pairs.onFocus(c.id)} />;
     }
-    items.push(<MessageItem key={m.id} m={m} grouped={pairs ? grouped && !runStart : grouped} src={merged && !pairs ? sourceTitle(m) : undefined} onReply={onReply} onQuote={onQuote} highlight={m.id === flash} target={target} thread={thread} mark={mark} onPick={onPick} via={via} viaOn={!!pairs && m.conversationId === pairs.focus} chunk={chunk} alias={alias} netPic={!!pairs?.chunks} />);
+    items.push(<MessageItem key={m.id} m={m} grouped={pairs ? grouped && !runStart : grouped} src={merged && !pairs ? sourceTitle(m) : undefined} onReply={onReply} onQuote={onQuote} highlight={m.id === flash} target={target} thread={thread} via={via} viaOn={!!pairs && m.conversationId === pairs.focus} chunk={chunk} alias={alias} netPic={!!pairs} />);
     prev = m;
   }
 
@@ -1011,7 +986,7 @@ function Timeline({ tkey, convIds, merged, onReply, firstUnreadTs, focus, pairs 
 function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, disabledReason, lead }: {
   targets: { convId: string; accountId?: string };
   placeholder: string;
-  /** Design study (ui/Pairs.tsx): a line in place of the placeholder that can be clicked; it moves to the box's edge once typed in. */
+  /** A person page (ui/Pairs.tsx): a line in place of the placeholder that can be clicked; it moves to the box's edge once typed in. */
   lead?: ComponentChildren;
   sendAs?: { options: { id: string; label: any }[]; value: string; onChange: (v: string) => void; label: string };
   onSendAs?: never;
@@ -1438,19 +1413,9 @@ export function PersonPane({ personId, onBack }: { personId: string; onBack?: ()
   const unreadAt = useMemo(() => firstUnread(directs), [personId]);
   if (!person) return <Empty icon="user" title="Person not found" />;
   if (!directs.length) return <Empty icon="user" title={`No chats with ${person.name}`} />;
-  if (design.value !== 'current' && directs.length > 1) return <PairsPersonPane person={person} directs={directs} onBack={onBack} reply={reply} setReply={setReply} unreadAt={unreadAt} />;
-  const viaId = (reply && directs.find((d) => d.id === reply.conversationId)?.id) || prefs.value.via[personId] || directs[0].id;
-  const via = directs.find((d) => d.id === viaId) ?? directs[0];
-  const label = (d: P.ConversationView) => {
-    const acc = d.vantages.map((v) => db.accounts.get(v.accountId)).filter(Boolean)[0];
-    return (
-      <span class="via-opt">
-        <NetBadge network={d.network} size={14} />
-        {netName(d.network)}
-        {acc && <AccountChip account={acc} small />}
-      </span>
-    );
-  };
+  // Reached through more than one pair of accounts: one chat over them all (ui/Pairs.tsx, docs/chats.md).
+  if (directs.length > 1) return <PairsPersonPane person={person} directs={directs} onBack={onBack} reply={reply} setReply={setReply} unreadAt={unreadAt} />;
+  const via = directs[0];
   return (
     <section class="pane">
       <PersonHeader person={person} onBack={onBack} />
@@ -1458,35 +1423,30 @@ export function PersonPane({ personId, onBack }: { personId: string; onBack?: ()
         <LinkBanner key={d.id} c={d} />
       ))}
       <NotStartedNote c={via} />
-      <Timeline tkey={timelineKey('p', personId)} convIds={directs.map((d) => d.id)} merged={directs.length > 1} onReply={setReply} firstUnreadTs={unreadAt} />
-      <TypingBar convIds={directs.map((d) => d.id)} />
+      <Timeline tkey={timelineKey('p', personId)} convIds={[via.id]} merged={false} onReply={setReply} firstUnreadTs={unreadAt} />
+      <TypingBar convIds={[via.id]} />
       <Composer
         targets={{ convId: via.id }}
         placeholder={`Message ${person.name} on ${netName(via.network)}`}
         reply={reply}
         clearReply={() => setReply(null)}
         disabledReason={composerBlocker(via)}
-        sendAs={{
-          label: `Send to ${person.name} through`,
-          value: via.id,
-          onChange: (v) => setPrefs({ via: { ...prefs.value.via, [personId]: v } }),
-          options: directs.map((d) => ({ id: d.id, label: label(d) })),
-        }}
       />
     </section>
   );
 }
 
-/** Design study (ui/Pairs.tsx): the person page as pairs of your account and theirs. */
+/**
+ * Someone you reach through several pairs of your account and theirs (ui/Pairs.tsx, docs/chats.md): all chats together
+ * by default, in chunks by pair; the dropdown beside the name shows one pair's alone.
+ */
 function PairsPersonPane({ person, directs, onBack, reply, setReply, unreadAt }: { person: P.PersonView; directs: P.ConversationView[]; onBack?: () => void; reply: P.MessageView | null; setReply: (m: P.MessageView | null) => void; unreadAt: number | null }) {
-  const rail = design.value === 'pairs-rail';
-  const sliders = design.value === 'sliders';
-  const chunks = design.value === 'chunks';
+  useEffect(() => void loadChat(person.id), [person.id]);
   const picked = focusedPair(person.id, directs);
   // Replying to a message sends through the pair it came from.
   const focus = (reply && directs.find((d) => d.id === reply.conversationId)) || picked;
   // Showing one pair's history follows the pair you send through, so switching it in the message box switches both.
-  const view = chunks && viewOf(person.id, directs) !== 'all' ? focus.id : 'all';
+  const view = viewOf(person.id, directs) !== 'all' ? focus.id : 'all';
   const shown = view === 'all' ? directs : directs.filter((d) => d.id === view);
   const onFocus = (id: string) => {
     if (reply && reply.conversationId !== id) setReply(null);
@@ -1494,7 +1454,7 @@ function PairsPersonPane({ person, directs, onBack, reply, setReply, unreadAt }:
   };
   const cur = pairOf(focus);
   return (
-    <section class={`pane pairs-pane ${rail ? 'pairs-pane-rail' : ''} ${sliders ? 'pairs-pane-sliders' : ''} ${chunks ? 'pairs-pane-chunks' : ''}`}>
+    <section class="pane pairs-pane">
       <header class="conv-head" data-track-area="chat header" onContextMenu={onMenu(() => personMenu(person))}>
         {onBack && (
           <button class="icon-btn back" data-track="pager: back button" onClick={onBack} aria-label="Back">
@@ -1506,21 +1466,9 @@ function PairsPersonPane({ person, directs, onBack, reply, setReply, unreadAt }:
         </button>
         <div class="conv-head-text">
           <h2>
-            {chunks ? (
-              <>
-                <Nickname person={person} onOpen={() => go({ view: 'profile', person: person.id })} />
-                <PairDropdown personId={person.id} directs={directs} focus={focus} />
-              </>
-            ) : sliders ? (
-              <Nickname person={person} onOpen={() => go({ view: 'profile', person: person.id })} />
-            ) : (
-              <button class="conv-head-name" title={`${person.name}'s profile`} onClick={() => go({ view: 'profile', person: person.id })}>
-                {person.name}
-              </button>
-            )}
-            {person.starred && !chunks && <Icon name="star" size={13} class="row-star" />}
+            <Nickname person={person} onOpen={() => go({ view: 'profile', person: person.id })} />
+            <PairDropdown personId={person.id} directs={directs} focus={focus} />
           </h2>
-          <div class="conv-head-sub">{chunks ? null : sliders ? <PairSliders personId={person.id} directs={directs} focus={focus} /> : rail ? <PairRail personId={person.id} directs={directs} focus={focus} /> : <PairIcons personId={person.id} directs={directs} focus={focus} />}</div>
         </div>
         <div class="conv-head-actions">
           <button class={`hdr-btn ${detailsShown() ? 'on' : ''}`} data-track="details" onClick={() => showDetails(!detailsShown())} title="Details" aria-label="Details">
@@ -1532,7 +1480,7 @@ function PairsPersonPane({ person, directs, onBack, reply, setReply, unreadAt }:
         <LinkBanner key={d.id} c={d} />
       ))}
       <NotStartedNote c={focus} />
-      <Timeline key={view} tkey={view === 'all' ? timelineKey('p', person.id) : timelineKey('c', view)} convIds={shown.map((d) => d.id)} merged={shown.length > 1} onReply={setReply} firstUnreadTs={unreadAt} pairs={{ focus: focus.id, onFocus, inline: sliders, chunks }} />
+      <Timeline key={view} tkey={view === 'all' ? timelineKey('p', person.id) : timelineKey('c', view)} convIds={shown.map((d) => d.id)} merged={shown.length > 1} onReply={setReply} firstUnreadTs={unreadAt} pairs={{ focus: focus.id, onFocus }} />
       <TypingBar convIds={directs.map((d) => d.id)} />
       <Composer
         targets={{ convId: focus.id }}
@@ -1540,7 +1488,7 @@ function PairsPersonPane({ person, directs, onBack, reply, setReply, unreadAt }:
         reply={reply}
         clearReply={() => setReply(null)}
         disabledReason={composerBlocker(focus)}
-        lead={rail || sliders ? undefined : <PairLead person={person} personId={person.id} directs={directs} focus={focus} />}
+        lead={<PairLead person={person} personId={person.id} directs={directs} focus={focus} />}
       />
     </section>
   );
