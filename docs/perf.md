@@ -371,6 +371,16 @@ found two:
   ones: 0.9 s on the live copy with none old enough. It walks by age now (`triage_created`): 0 ms.
   `test/pick-account.test.ts` and the prune's plan test in `test/hardening.test.ts` keep them so.
 
+## The snapshot after each open (2026-11-11)
+
+Opening a conversation saves the device's snapshot 1.5 s later, when the page is idle (snapshot.ts). Opening one marks
+it read, which changes `db`, so that save serialized the whole bootstrap again (4.5 MB on the perf world) and stored it
+with the rest. Now it writes only the rest, as a record of its own (`rest`, newer than the one beside the bootstrap
+when its `savedAt` is), and leaves the stored bootstrap, which carries its own sync position, to the save when the app
+goes out of sight, or to the next quiet save once it is ten minutes old. Counted in the page at phone size and 4× CPU
+over four opens: main wrote 4,544,244 to 4,655,541 characters per save, 134–156 ms in `JSON.stringify` and 116–154 ms
+in the store's `put`, all on the main thread; the branch writes 98,213 to 164,072 characters in 2–6 ms.
+
 ## Next
 
 What these numbers point at, not done yet:
