@@ -171,22 +171,21 @@ export class Backfill {
       if (!leg || (!this.store.kept(this.s.accountId) && this.held() >= MAIL_LIMITS.maxPerAccount)) return;
       this.active = true;
       if (this.s.phase === 'idle' || this.s.phase === 'first') this.s.setPhase('backfill');
-      await this.s.queue.run(P3, `page:${leg.mailboxId}`, async () => {
-        const b = this.store.mailbox(leg.mailboxId);
-        if (!b) return [];
-        if (b.follow) return this.page(leg.mailboxId, leg.until, true);
-        // A kept account's walk reaches a mailbox the hub does not follow: kept up from now on, its state taken first.
-        this.store.db.query(`UPDATE mailbox SET follow = 'open' WHERE id = ? AND follow IS NULL`).run(b.id);
-        try {
-          if (!b.state) await this.s.takeState(b);
-          return await this.page(leg.mailboxId, leg.until, true);
-        } catch (e) {
-          // One that cannot be listed (404) is not walked: it counts as done.
-          if (asMailError(e).status !== 404) throw e;
-          this.store.db.query(`UPDATE mailbox SET follow = NULL, complete = 1 WHERE id = ? AND follow = 'open'`).run(b.id);
-          return [];
+      const b = this.store.mailbox(leg.mailboxId);
+      if (!b) return;
+      try {
+        if (!b.follow) {
+          // A kept account's walk reaches a mailbox the hub does not follow: kept up from now on, its state taken
+          // first, in a turn of the budget of its own.
+          this.store.db.query(`UPDATE mailbox SET follow = 'open' WHERE id = ? AND follow IS NULL`).run(b.id);
+          if (!b.state) await this.s.queue.run(P3, `state:${b.id}`, () => this.s.takeState(b));
         }
-      });
+        await this.s.queue.run(P3, `page:${leg.mailboxId}`, () => this.page(leg.mailboxId, leg.until, true));
+      } catch (e) {
+        // One that cannot be listed (404) is not walked: it counts as done.
+        if (b.follow || asMailError(e).status !== 404) throw e;
+        this.store.db.query(`UPDATE mailbox SET follow = NULL, complete = 1 WHERE id = ? AND follow = 'open'`).run(b.id);
+      }
       this.progress();
     }
   }

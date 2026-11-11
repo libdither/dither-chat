@@ -372,6 +372,8 @@ export class AccountSync {
    */
   fetchBody(messageId: string, p: Priority = P0, background = false): Promise<void> {
     return this.queue.run(p, `body:${messageId}`, async () => {
+      // The archive's: a fetch ahead of it brought this body meanwhile (keep.ts cuts its text from it, with no call).
+      if (background && this.store.one('SELECT 1 FROM mail_body WHERE message_id = ?', messageId)) return;
       const at = this.store.nativeOf(messageId);
       if (!at) throw asMailError(Object.assign(new Error('the server no longer has this message'), { status: 404 }));
       const m = background ? await this.background<M.MailMessage>('mail.get', { id: at.id }, 65_000) : await this.call<M.MailMessage>('mail.get', { id: at.id }, 65_000);

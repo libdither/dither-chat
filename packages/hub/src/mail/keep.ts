@@ -283,7 +283,7 @@ export class Keeper {
       const c = f.cursor;
       const rows = this.store.all<{ id: string; received_at: number }>(
         `SELECT m.id, m.received_at FROM mail_message m WHERE m.account_id = ? ${c ? 'AND (m.received_at < ? OR (m.received_at = ? AND m.id < ?))' : ''}
-           AND NOT EXISTS (SELECT 1 FROM mail_text t WHERE t.message_id = m.id AND ${TEXT_KEPT})
+           AND NOT EXISTS (SELECT 1 FROM mail_text t INDEXED BY mail_text_kept WHERE t.message_id = m.id AND ${TEXT_KEPT})
          ORDER BY m.received_at DESC, m.id DESC LIMIT 20`,
         accountId,
         ...(c ? [c[0], c[0], c[1]] : []),
@@ -505,10 +505,15 @@ export class Keeper {
     const s = this.hub.sync(id);
     const gmail = st.gmail(id);
     const held = st.one<{ n: number }>('SELECT COUNT(*) AS n FROM mail_message WHERE account_id = ?', id)!.n;
-    const bodies = st.one<{ n: number }>(`SELECT COUNT(*) AS n FROM mail_text t JOIN mail_message m ON m.id = t.message_id WHERE m.account_id = ? ${k.keep ? `AND ${TEXT_KEPT}` : ''}`, id)!.n;
+    // Through the indexes that hold `cut` and `bytes` (schema-keep.sql): the rows would mean reading every text.
+    const t = st.one<{ n: number; kept: number | null; bytes: number | null }>(
+      `SELECT COUNT(*) AS n, SUM(${TEXT_KEPT}) AS kept, SUM(t.bytes) AS bytes FROM mail_message m CROSS JOIN mail_text t INDEXED BY mail_text_kept ON t.message_id = m.id WHERE m.account_id = ?`,
+      id,
+    )!;
+    const bodies = k.keep ? (t.kept ?? 0) : t.n;
     const bytes = {
-      bodies: st.one<{ n: number | null }>('SELECT SUM(b.bytes) AS n FROM mail_body b JOIN mail_message m ON m.id = b.message_id WHERE m.account_id = ?', id)!.n ?? 0,
-      text: st.one<{ n: number | null }>('SELECT SUM(t.bytes) AS n FROM mail_text t JOIN mail_message m ON m.id = t.message_id WHERE m.account_id = ?', id)!.n ?? 0,
+      bodies: st.one<{ n: number | null }>('SELECT SUM(b.bytes) AS n FROM mail_message m CROSS JOIN mail_body b INDEXED BY mail_body_bytes ON b.message_id = m.id WHERE m.account_id = ?', id)!.n ?? 0,
+      text: t.bytes ?? 0,
     };
     const heldIn = new Map(st.all<{ b: string; n: number }>('SELECT l.mailbox_id AS b, COUNT(*) AS n FROM mail_location l JOIN mailbox x ON x.id = l.mailbox_id WHERE x.account_id = ? GROUP BY l.mailbox_id', id).map((r) => [r.b, r.n]));
     const walked = walkBoxes(st, id);

@@ -39,3 +39,11 @@ CREATE TABLE IF NOT EXISTS mail_audit (
   checked_at  INTEGER,
   PRIMARY KEY (account_id, start)
 );
+
+-- What keeping all mail asks of every message (keep.ts: is its text here, whole; how many bytes it takes) answered from
+-- these alone: `cut` and `bytes` sit after the text in their rows, so reading them otherwise reads all of it. The body
+-- cache's own sums (cache.ts) use the second.
+CREATE INDEX IF NOT EXISTS mail_text_kept ON mail_text(message_id, cut, bytes);
+CREATE INDEX IF NOT EXISTS mail_body_bytes ON mail_body(message_id, bytes);
+-- An account's messages newest first, with their ids: the bodies' pass (keep.ts next) and the sums walk it alone.
+CREATE INDEX IF NOT EXISTS mail_message_keep ON mail_message(account_id, received_at, id);

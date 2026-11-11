@@ -18,6 +18,7 @@ import { BIG_BODY_MS, BodyCache, searchText } from '../src/mail/cache.ts';
 import { demoPng } from '../src/mail/demo-html.ts';
 import { FakeMailBackend, fillMailbox, type FakeOpts } from '../src/mail/fake.ts';
 import { MailHub } from '../src/mail/index.ts';
+import { keepOf } from '../src/mail/keep.ts';
 import { MAIL_LIMITS, syncHorizon } from '../src/mail/limits.ts';
 import { FakeClock } from './fixtures/clock.ts';
 
@@ -64,7 +65,7 @@ function seed(f: FakeMailBackend, s: Seed) {
   fillMailbox(f, ACC, 'Junk', s.junk ?? 0, at);
 }
 
-function world(s: Seed, o: { opts?: FakeOpts; file?: boolean; now?: () => number; clock?: FakeClock } = {}) {
+function world(s: Seed, o: { opts?: FakeOpts; file?: boolean; now?: () => number; clock?: FakeClock; keep?: boolean } = {}) {
   const fake = new FakeMailBackend();
   if (o.clock) fake.clock = o.clock;
   fake.addAccount(ACC, { email: ME, opts: { ids: 'imap', ...o.opts } });
@@ -79,7 +80,7 @@ function world(s: Seed, o: { opts?: FakeOpts; file?: boolean; now?: () => number
     db = new Database(':memory:', { strict: true });
     db.exec('PRAGMA foreign_keys = ON');
   }
-  hub = new MailHub({ db, backend: fake, log: () => {}, now: o.now, clock: o.clock });
+  hub = new MailHub({ db, backend: fake, log: () => {}, now: o.now, clock: o.clock, keepAll: o.keep });
   return { fake, hub, st: hub.store, db, start: () => (hub!.start(), hub!.sync(ACC)!) };
 }
 
@@ -245,6 +246,33 @@ describe('the budget', () => {
     expect(next).toBeDefined();
     expect(next!.at - call.at).toBeGreaterThanOrEqual(MAIL_LIMITS.userPauseMs);
   }, 15_000);
+});
+
+describe('keeping all mail at the budget', () => {
+  test('every mailbox walked and every body fetched at two calls a second, never more (prints the rate, and the time for 50,000)', async () => {
+    const clock = new FakeClock(NOW);
+    const { fake, start } = world({ inbox: 600, sent: 200, archive: 1_200, junk: 50, years: 6, text: (i) => `message ${i}: ${'a few words of text '.repeat(20)}` }, { clock, keep: true, opts: { latencyMs: 20 } });
+    const s = start();
+    await clock.wait(s.whenSynced());
+    const t0 = clock.now();
+    const from = fake.calls.length;
+    const k = keepOf(hub!)!;
+    const all = () => count(hub!, 'mail_message');
+    await clock.until(() => {
+      const v = k.view(hub!.store.account(ACC)!);
+      return v.walk.complete && v.bodies === all();
+    }, 6 * 3_600_000, 'everything kept');
+    const secs = (clock.now() - t0) / 1000;
+    const bg = fake.calls.slice(from).filter(background);
+    expect(all()).toBe(2_050);
+    expect(bg.filter((c) => c.op === 'mail.get').length).toBe(2_050);
+    for (const c of bg) expect(bg.filter((x) => x.at >= c.at && x.at < c.at + 1_000).length).toBeLessThanOrEqual(MAIL_LIMITS.backgroundPerSec);
+    const rate = bg.length / secs;
+    // 50,000 messages: a body each, and a list page each 200 of them.
+    const hours = (50_000 + 50_000 / MAIL_LIMITS.backfillPage) / rate / 3600;
+    console.log(`kept: ${all().toLocaleString()} messages, ${bg.length.toLocaleString()} background calls in ${Math.round(secs).toLocaleString()} s on the budget's clock: ${rate.toFixed(2)} a second; 50,000 messages would take about ${hours.toFixed(1)} h`);
+    expect(rate).toBeGreaterThan(1.8);
+  }, 120_000);
 });
 
 describe('pages on demand', () => {
