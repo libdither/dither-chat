@@ -239,6 +239,14 @@ describe('the store', () => {
       expect(store.one('SELECT 1 FROM triage WHERE message_id = ?', less)).toBeNull();
     });
 
+    test('the prune walks triage by age, not every row below the list', () => {
+      const q = store.db.prepare('EXPLAIN QUERY PLAN ' + Store.pruneTriageSql('SELECT NULL WHERE 0'));
+      const plan = (q.all(0, 5000) as { detail: string }[]).map((r) => r.detail);
+      q.finalize();
+      expect(plan.some((d) => /SEARCH t USING INDEX triage_created \(created_at<\?\)/.test(d))).toBe(true);
+      expect(plan.some((d) => d.includes('triage_tier_score'))).toBe(false);
+    });
+
     test('marks: each key given is set, null takes it back, the others stay', () => {
       const id = msg('busy', 'k1', 'someone', 5000);
       store.setTriage(id, { decision: 'quiet', score: 0.4, reasons: [], decidedBy: 'rules' });

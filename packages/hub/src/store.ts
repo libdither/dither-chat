@@ -362,16 +362,20 @@ export class Store {
     const self = [...this.selfIdentities];
     const marks = self.map(() => '?').join(',');
     const yours = self.length ? `SELECT DISTINCT conversation_id FROM message WHERE author_id IN (${marks})` : 'SELECT NULL WHERE 0';
-    const r = this.db
-      .query(
-        `DELETE FROM triage WHERE rowid IN (
-           SELECT t.rowid FROM triage t JOIN message m ON m.id = t.message_id
-           WHERE t.created_at < ? AND t.feedback IS NULL AND t.marked_at IS NULL AND t.explore IS NULL AND t.decision IN ('drop', 'silent')
-             AND m.conversation_id NOT IN (${yours})
-           LIMIT ?)`,
-      )
-      .run(now - keepDays * 86_400_000, ...self, limit);
+    const r = this.db.query(Store.pruneTriageSql(yours)).run(now - keepDays * 86_400_000, ...self, limit);
     return r.changes;
+  }
+
+  /**
+   * By age first (`triage_created`), not by tier: the tier index walked every row below the list to find the old
+   * ones, about a second on the live hub every six hours when none were old enough (`+t.decision` keeps it off it).
+   */
+  static pruneTriageSql(yours: string): string {
+    return `DELETE FROM triage WHERE rowid IN (
+           SELECT t.rowid FROM triage t JOIN message m ON m.id = t.message_id
+           WHERE t.created_at < ? AND t.feedback IS NULL AND t.marked_at IS NULL AND t.explore IS NULL AND +t.decision IN ('drop', 'silent')
+             AND m.conversation_id NOT IN (${yours})
+           LIMIT ?)`;
   }
 
   /**
