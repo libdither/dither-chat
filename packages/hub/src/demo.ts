@@ -22,7 +22,8 @@ type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa' | 'tg';
 
 /**
  * DITHER_DEMO_SCENARIO=multiaccount adds Kit, one person on seven accounts across five networks, talking with several
- * of yours (eight pairs), and names your demo accounts by their usernames. Off by default: the default world's counts
+ * of yours (eight pairs), and Mo, two Discord accounts of theirs talking with one of yours, and names your demo
+ * accounts by their usernames. Off by default: the default world's counts
  * are what the tests and perf baselines expect.
  */
 export const MULTI_ACCOUNT = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('multiaccount');
@@ -160,13 +161,18 @@ const KIT = {
   nix: mid('@kit:nixos.dev', 'kit (nixos)', { contact: true }),
   tg: tid('kit', 'kitkat', 'Kit', true),
 };
+/** Mo (MULTI_ACCOUNT): two Discord accounts of theirs, each in a DM with the same one of yours. */
+const MO = {
+  main: did('mo', 'mo.codes', 'Mo', { contact: true }),
+  art: did('mo-art', 'mo.draws', 'mo (art)', { contact: true }),
+};
 if (MULTI_ACCOUNT) {
   const pics: [P.IdentityFact, string][] = [
     [D.zyan, PFP.sheep], [D.zyn, PFP.invader], [S.self, PFP.peak], [M.self, PFP.rings], [W.self, PFP.moon], [TG.self, PFP.leaf],
     [KIT.exe, PFP.cat], [KIT.alt, PFP.sword], [KIT.work, PFP.suit], [KIT.sig, PFP.lake], [KIT.mx, PFP.catline], [KIT.nix, PFP.flake], [KIT.tg, PFP.heart],
   ];
   for (const [who, url] of pics) who.avatarUrl = url;
-  Object.assign(D, { kit: KIT.exe, kitAlt: KIT.alt, kitWork: KIT.work });
+  Object.assign(D, { kit: KIT.exe, kitAlt: KIT.alt, kitWork: KIT.work, mo: MO.main, moArt: MO.art });
   Object.assign(S, { kit: KIT.sig });
   Object.assign(M, { kit: KIT.mx, kitNix: KIT.nix });
   Object.assign(TG, { kit: KIT.tg });
@@ -1118,7 +1124,28 @@ const KIT_CONVS: DemoConv[] = [
     ],
   },
 ];
-if (MULTI_ACCOUNT) CONVS.push(...KIT_CONVS);
+/** Mo's two Discord accounts, both talking with your main one: a chat whose routes differ in their account alone. */
+const MO_CONVS: DemoConv[] = [
+  {
+    acc: ['dmain'],
+    fact: { nativeId: snow('dm-mo-main'), shape: 'direct', participants: [D.zyan.nativeId, MO.main.nativeId] },
+    msgs: [
+      [2 * DAY + 200, MO.main, 'can you look at the sprite sheet tonight?'],
+      [2 * DAY + 190, D.zyan, 'sure, send it over'],
+      [45, MO.main, 'sending it from my art account, it has the files'],
+    ],
+  },
+  {
+    acc: ['dmain'],
+    fact: { nativeId: snow('dm-moart-main'), shape: 'direct', participants: [D.zyan.nativeId, MO.art.nativeId] },
+    msgs: [
+      [40, MO.art, 'here, the walk cycle is frames 4 to 9'],
+      [38, MO.art, 'the run cycle still needs work'],
+    ],
+    unread: 2,
+  },
+];
+if (MULTI_ACCOUNT) CONVS.push(...KIT_CONVS, ...MO_CONVS);
 
 // ------------------------------------------------------------------ live behaviour
 
@@ -1145,6 +1172,8 @@ const REPLIES: Record<string, string[]> = {
   [KIT.exe.nativeId]: ['wait which account is this', 'ok cool', 'lol'],
   [KIT.sig.nativeId]: ['perfect', 'see you friday', '🚗'],
   [KIT.work.nativeId]: ['thanks!', 'merging'],
+  [MO.main.nativeId]: ['ok!', 'let me check'],
+  [MO.art.nativeId]: ['nice', 'I will fix the run cycle'],
   [M.alice.nativeId]: ['let me know what you think of section 3'],
   [S.mom.nativeId]: ['Ok sweetie', 'Love you! See you Sunday', '❤️'],
   [W.nana.nativeId]: ['❤️', 'Good. Eat vegetables too'],
@@ -2657,6 +2686,7 @@ export function applyDemoOverlay(store: Store) {
   const sam = merge('Sam Rivera', ['signal', S.sam], ['matrix', M.sam]);
   merge('Theo', ['signal', S.theo], ['discord', D.theo]);
   merge('Quinn', ['discord', D.quinn], ['signal', S.quinn]);
+  if (MULTI_ACCOUNT) merge('Mo', ['discord', MO.main], ['discord', MO.art]);
   if (MULTI_ACCOUNT) merge('Kit', ['discord', KIT.exe], ['discord', KIT.alt], ['discord', KIT.work], ['signal', KIT.sig], ['matrix', KIT.mx], ['matrix', KIT.nix], ['telegram', KIT.tg]);
 
   const cnv = (net: P.Network, nativeId: string) => hubId('cnv', net, nativeId);

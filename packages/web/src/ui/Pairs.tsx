@@ -1,26 +1,24 @@
 /**
- * A person you reach through several of your accounts (docs/chats.md): every pair of your account and theirs is a
- * route, and their chat is one page over them all. It is the page any conversation has (Timeline.tsx's PersonChat),
- * and these are the parts it adds.
+ * A person you reach through several routes (docs/chats.md): every pair of your account and theirs is a route, and
+ * their chat is one page over them all, interleaved. It is the page any conversation has (Timeline.tsx's PersonChat),
+ * and these are the parts it adds. Each adds only what the chat needs: chatroutes.ts says, for a route among the
+ * chat's, what tells it apart (the network, their account, yours), and every part here asks it.
  *
- * All chats together by default: messages look as they do anywhere, with the network on each picture, and a small
- * label where the pair changes (the network's icon, their name there, yours). The dropdown under the name (press and
- * drag to a pair, or click) shows one pair's history alone. The message box's line says where a message goes, and on a
- * computer switches it.
- *
- * Where a message goes, first to last: the pair you picked on this page; where you came from (from a Discord group on
- * one of your accounts, the DM through that account); the route you chose last time (the hub keeps it, chats.ts);
- * the pair of the latest message.
+ * Where a message goes, first to last: the route you picked on this page (a tag in the timeline, the message box's
+ * line, the list under the name); the DM the page was opened as; where you came from (from a Discord group on one of
+ * your accounts, the DM through that account); the route you chose last time (the hub keeps it, chats.ts); the route
+ * of the latest message.
  */
 import type * as P from '@dither-chat/protocol';
 import { effect, signal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { badgeDiffers, labelText, leadTells, tells, type RouteKey, type Tells } from '../chatroutes.ts';
 import { hueOf, initials } from '../format.ts';
 import { identityName, netName } from '../model.ts';
 import { phone } from '../phone.ts';
 import { api, db, isSelfIdentity, prefs, route, setPrefs, toast } from '../state.ts';
-import { Avatar, Menu, NetBadge } from './bits.tsx';
+import { Avatar, Menu, NetBadge, NetGlyph } from './bits.tsx';
 
 // ------------------------------------------------------------------ pairs
 
@@ -49,8 +47,59 @@ export const theirName = (p: Pair) => {
 };
 export const myName = (p: Pair) => p.acc?.label || identityName(p.mine?.id) || 'you';
 
-/** The pair picked on this page, per person, this session. */
-const picked = signal<Record<string, string>>({});
+/** A route as chatroutes.ts sees it. */
+export function routeKey(c: P.ConversationView): RouteKey {
+  const p = pairOf(c);
+  return { id: c.id, network: c.network, theirs: p.theirs?.id ?? null, mine: p.acc?.id ?? null };
+}
+
+/** What tells this route from the chat's others (chatroutes.ts). */
+const routeTells = (c: P.ConversationView, directs: P.ConversationView[]): Tells => tells(routeKey(c), directs.map(routeKey));
+
+/** Whether message pictures carry the network's badge in this chat: only when it would differ between its routes. */
+export const badgeShows = (directs: P.ConversationView[]) => badgeDiffers(directs.map(routeKey));
+
+/** A route said in full, for a title: "Send as zyn.alt to kit.work on Discord". */
+export function routeTitle(c: P.ConversationView): string {
+  const p = pairOf(c);
+  return `Send as ${myName(p)} to ${theirName(p)} on ${netName(c.network)}`;
+}
+
+/** A route's label by the rule: `Signal`, `kit.work`, `as zyn.alt` or `kit.work ⇄ zyn.alt`, the network's icon first where networks mix. */
+export function RouteLabel({ c, directs, size = 12 }: { c: P.ConversationView; directs: P.ConversationView[]; size?: number }) {
+  const t = routeTells(c, directs);
+  const p = pairOf(c);
+  return (
+    <>
+      {t.network && <NetGlyph network={c.network} size={size} />}
+      <span class="route-label">{labelText(t, { network: netName(c.network), theirs: theirName(p), mine: myName(p) }, false)}</span>
+    </>
+  );
+}
+
+/**
+ * Where the route changes in the timeline, after the time on the message's head line: the route's label, quietly. A
+ * click sends through it.
+ */
+export function RouteTag({ c, directs, onPick }: { c: P.ConversationView; directs: P.ConversationView[]; onPick: () => void }) {
+  return (
+    <button class="route-tag" data-track="route tag" title={routeTitle(c)} onClick={onPick}>
+      <RouteLabel c={c} directs={directs} size={10} />
+    </button>
+  );
+}
+
+/**
+ * The route picked on this page, per person, this session, and the address it was picked at: a pick holds while the
+ * page stays at that address, and the address wins once it changes (opening another of their DMs sends through it).
+ */
+const picked = signal<Record<string, { to: string; at: string }>>({});
+
+/** The route picked this session, if it is still one of theirs: where the inbox's row for them opens. */
+export function pickedRoute(personId: string, directs: P.ConversationView[]): string | null {
+  const p = picked.value[personId];
+  return p && directs.some((d) => d.id === p.to) ? p.to : null;
+}
 
 /** What the hub says of each person's chat (GET /api/chats/person:<id>): the route chosen last time, if any. */
 export const chats = signal<Record<string, P.ChatView>>({});
@@ -83,11 +132,13 @@ if (typeof window !== 'undefined')
     if (r.view !== 'people' && r.conv) cameFrom.value = r.conv;
   });
 
-/** Where a message to them goes now (the module's comment says in what order). */
-export function focusedPair(personId: string, directs: P.ConversationView[]): P.ConversationView {
-  const id = picked.value[personId];
-  const hit = id && directs.find((d) => d.id === id);
+/** Where a message to them goes now (the module's comment says in what order). `at`: the DM the page was opened as. */
+export function focusedPair(personId: string, directs: P.ConversationView[], at?: string): P.ConversationView {
+  const p = picked.value[personId];
+  const hit = p && p.at === (at ?? '') && directs.find((d) => d.id === p.to);
   if (hit) return hit;
+  const opened = at && directs.find((d) => d.id === at);
+  if (opened) return opened;
   const latest = (xs: P.ConversationView[]) => [...xs].sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))[0];
   const from = cameFrom.value ? db.conversations.get(cameFrom.value) : null;
   if (from) {
@@ -107,10 +158,11 @@ export function focusedPair(personId: string, directs: P.ConversationView[]): P.
 }
 
 /**
- * Send through a pair from now on: here at once, and the hub keeps it as the chat's route for next time. A draft typed
- * for the old pair moves along, so switching mid-sentence keeps the sentence.
+ * Send through a route from now on: here at once, and the hub keeps it as the chat's route for next time. A draft
+ * typed for the old route moves along, so switching mid-sentence keeps the sentence. `at`: the DM the page was
+ * opened as, if it was.
  */
-export function focusPair(personId: string, from: string | null, to: string) {
+export function focusPair(personId: string, from: string | null, to: string, at?: string) {
   if (from && from !== to) {
     try {
       const k = (id: string) => `dither-chat:draft:${id}`;
@@ -121,7 +173,7 @@ export function focusPair(personId: string, from: string | null, to: string) {
       }
     } catch {}
   }
-  picked.value = { ...picked.value, [personId]: to };
+  picked.value = { ...picked.value, [personId]: { to, at: at ?? '' } };
   const conv = db.conversations.get(to);
   const acc = conv && pairOf(conv).acc;
   const cur = chats.value[personId]?.route;
@@ -191,10 +243,16 @@ function Token({ label, options, onPick, picture }: { label: string; options: { 
   );
 }
 
-/** "Message Kit (kit.exe) from zyansheep": both names switch. In the box while it is empty, on its edge once typed in. */
+/**
+ * Where a message goes, by the same rule as the tags and no more: "Message Kit on Signal", "Message Kit on Discord
+ * (kit.work)", and "from zyn.alt" only when the account of theirs it goes to can be reached from several of yours
+ * (chatroutes.ts leadTells). The parts that can change switch. In the box while it is empty, on its edge once typed in.
+ */
 export function PairLead({ person, directs, focus, onFocus }: { person: P.PersonView; directs: P.ConversationView[]; focus: P.ConversationView; onFocus: (convId: string) => void }) {
+  const keys = directs.map(routeKey);
   const pairs = directs.map(pairOf);
   const cur = pairOf(focus);
+  const t = leadTells(routeKey(focus), keys);
   // Theirs you can reach, each once; picking one keeps your account when it talks with them too.
   const theirs: Pair[] = [];
   for (const p of pairs) if (!theirs.some((x) => x.theirs?.id === p.theirs?.id)) theirs.push(p);
@@ -203,27 +261,26 @@ export function PairLead({ person, directs, focus, onFocus }: { person: P.Person
     const next = withThem.find((p) => p.acc?.id === cur.acc?.id) ?? withThem.sort((a, b) => (b.conv.lastMessageAt ?? 0) - (a.conv.lastMessageAt ?? 0))[0];
     if (next) onFocus(next.conv.id);
   };
-  const mine = pairs.filter((p) => p.theirs?.id === cur.theirs?.id);
-  const theirLabel = (p: Pair) => `${netName(p.conv.network)} ${theirName(p)}`;
-  // A phone has room for the two names only.
-  const short = phone.value;
-  // Their name there in brackets, unless it is the name already shown.
-  const curLabel = short || theirName(cur) === person.name ? theirName(cur) : `${person.name} (${theirName(cur)})`;
+  const mine = pairs.filter((p) => p.theirs?.id === cur.theirs?.id && p.conv.network === focus.network);
+  const theirLabel = (p: Pair) => {
+    const lt = leadTells(routeKey(p.conv), keys);
+    return `${person.name}${lt.network ? ` on ${netName(p.conv.network)}` : ''}${lt.theirs ? ` (${theirName(p)})` : ''}`;
+  };
   return (
     <span class="pair-lead-line">
-      {short ? 'To' : 'Message'}{' '}
+      {phone.value ? 'To' : 'Message'}{' '}
       <Token
-        label={curLabel}
-        options={theirs.map((p) => ({ id: p.theirs?.id ?? p.conv.id, label: p.theirs?.id === cur.theirs?.id ? curLabel : theirLabel(p), picture: <Avatar id={p.theirs?.id ?? p.conv.id} name={theirName(p)} url={p.theirs?.avatar} size={16} network={p.conv.network} /> }))}
+        label={theirLabel(cur)}
+        options={theirs.map((p) => ({ id: p.theirs?.id ?? p.conv.id, label: theirLabel(p), picture: <Avatar id={p.theirs?.id ?? p.conv.id} name={theirName(p)} url={p.theirs?.avatar} size={16} network={p.conv.network} /> }))}
         onPick={pickTheirs}
-      />{' '}
-      from{' '}
-      <Token
-        label={myName(cur)}
-        picture={<MyPicture p={cur} size={16} />}
-        options={mine.map((p) => ({ id: p.conv.id, label: myName(p), picture: <MyPicture p={p} size={16} /> }))}
-        onPick={onFocus}
       />
+      {t.mine && (
+        <>
+          {' '}
+          from{' '}
+          <Token label={myName(cur)} picture={<MyPicture p={cur} size={16} />} options={mine.map((p) => ({ id: p.conv.id, label: myName(p), picture: <MyPicture p={p} size={16} /> }))} onPick={onFocus} />
+        </>
+      )}
     </span>
   );
 }
@@ -273,7 +330,7 @@ export function Nickname({ person, onOpen }: { person: P.PersonView; onOpen: () 
 
 // ------------------------------------------------------------------ the page's parts
 
-/** What the person page shows, per person this session: every chat (the default) or one pair's. */
+/** What the page shows, per person this session: every route (the default) or one route's, picked from the list. */
 const viewing = signal<Record<string, string>>({});
 export const viewOf = (personId: string, directs: P.ConversationView[]) => {
   const v = viewing.value[personId];
@@ -281,7 +338,7 @@ export const viewOf = (personId: string, directs: P.ConversationView[]) => {
 };
 export const setView = (personId: string, v: string) => void (viewing.value = { ...viewing.value, [personId]: v });
 
-/** A pair as a line: the network's icon, their name there, ⇄, yours. */
+/** A route in full, for the list: the network's icon, their name there, ⇄, yours. */
 function PairLine({ p, size = 16 }: { p: Pair; size?: number }) {
   return (
     <>
@@ -294,8 +351,10 @@ function PairLine({ p, size = 16 }: { p: Pair; size?: number }) {
 }
 
 /**
- * Under the name, where any conversation says its network and your account: all chats, or one pair's. Press and drag
- * down to a row and let go to pick it, or click to open and click a row. `view`: 'all' or the pair's conversation.
+ * Under the name, where any conversation says its network and your account: the networks' icons and "N chats", or
+ * the route picked, by its label. The list keeps every route in full, the one place that does. Press and drag down to
+ * a row and let go to pick it, or click to open and click a row. Picking filters the page; it never navigates.
+ * `view`: 'all' or the route's conversation.
  */
 export function PairDropdown({ directs, view: v, onPick }: { directs: P.ConversationView[]; view: string; onPick: (view: string) => void }) {
   const [open, setOpen] = useState(false);
@@ -311,8 +370,8 @@ export function PairDropdown({ directs, view: v, onPick }: { directs: P.Conversa
   };
   const press = useRef<{ x: number; y: number; moved: boolean } | null>(null);
   const pairs = directs.map(pairOf).sort((a, b) => a.conv.network.localeCompare(b.conv.network) || theirName(a).localeCompare(theirName(b)) || myName(a).localeCompare(myName(b)));
+  const nets = [...new Set(directs.map((d) => d.network))];
   const shown = directs.find((d) => d.id === v);
-  const cur = shown ? pairOf(shown) : null;
   const pick = (id: string) => {
     setOpen(false);
     setHover(null);
@@ -338,7 +397,7 @@ export function PairDropdown({ directs, view: v, onPick }: { directs: P.Conversa
         data-track="chats list"
         aria-haspopup="listbox"
         aria-expanded={open}
-        title="Which chats to show. Press and drag to pick, or click"
+        title={shown ? `Showing only this chat (${routeTitle(shown).replace(/^Send/, 'sending')}). Press and drag to pick, or click` : 'Which chats to show. Press and drag to pick, or click'}
         onPointerDown={(e) => {
           if (e.button !== 0) return;
           press.current = { x: e.clientX, y: e.clientY, moved: false };
@@ -376,11 +435,14 @@ export function PairDropdown({ directs, view: v, onPick }: { directs: P.Conversa
           }
         }}
       >
-        {cur ? (
-          <PairLine p={cur} size={14} />
+        {shown ? (
+          <RouteLabel c={shown} directs={directs} size={12} />
         ) : (
           <span class="pair-dd-all">
-            All chats <span class="pair-dd-count">{directs.length}</span>
+            {nets.map((n) => (
+              <NetGlyph network={n} size={12} />
+            ))}
+            <span>{directs.length} chats</span>
           </span>
         )}
         <span class="pair-dd-caret" aria-hidden="true">
@@ -407,21 +469,4 @@ export function PairDropdown({ directs, view: v, onPick }: { directs: P.Conversa
       )}
     </div>
   );
-}
-
-/** Where the pair changes in all chats together: whose accounts the messages below went between. Click to send there. */
-export function ChunkHead({ p, focused, onPick }: { p: Pair; focused: boolean; onPick: () => void }) {
-  return (
-    <div class={`pair-chunk-head ${focused ? 'on' : 'off'}`} data-track-area="message">
-      <button data-track="pair label" title={focused ? `Sending as ${myName(p)} to ${theirName(p)}` : `Send as ${myName(p)} to ${theirName(p)}`} onClick={onPick}>
-        <PairLine p={p} size={14} />
-        {focused && <span class="pair-chunk-sending">sending here</span>}
-      </button>
-    </div>
-  );
-}
-
-/** Whether you gave them a nickname: then it shows in place of the names their accounts go by, which move aside. */
-export function hasNickname(person: P.PersonView | null | undefined): boolean {
-  return !!person && !person.isSelf && person.nameSource === 'user';
 }

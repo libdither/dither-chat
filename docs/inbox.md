@@ -10,6 +10,17 @@ just now (the formula, below), then a model learned from what you open reorders 
 alert you have not seen comes before everything else. Unread rows keep their bold title and badge wherever they
 land.
 
+**One row per chat.** Someone you reach by several routes ([chats.md](chats.md): several networks, or several of
+their accounts or yours) is one row, not one per DM (`convRows` in `packages/web/src/model.ts`, the merge in
+`chatroutes.ts`). Its key is `person:<id>`, so ranking, the kept snapshot and the hold on the open row all see one
+thing. It scores the highest of its routes, needs you if any does, is owed since the earliest, sums their unread, and
+is muted only if every route is; its reasons are the top route's. It looks like any DM row: the person's picture with
+the badge of the route that has the latest message, that message as the preview, the summed count. A click opens the
+conversation of the latest message, so a reply goes where they last wrote, unless a route was picked on their page
+this session. It is active whichever of their DMs is open, and its menu acts on the whole chat: Mark As Read reads
+every route, Mute and the rule go on each, and search looks in every chat with them. Catch up makes it one card the
+same way, with every route's messages.
+
 What needs you shows on the row, not in a section. A reply you owe that the hub still counts (they wrote last, the
 row's `owedSince`, and it needs you, `needs`) has ↩ and how long it has waited, in the accent colour, beside the
 unread count when there is one. An unanswered message from long ago, or from someone you rarely answer, has faded
@@ -272,7 +283,8 @@ gone). None of these happen while anything is in use: a pointer over a list, a t
 open menu, a drag, or keyboard focus in a list. They retry every 1.5 s until that ends. So the inbox is as current as
 a chat app's while you are not touching it, and never moves under your pointer or finger.
 
-The conversation you have open keeps its place across snapshots until you leave it (`inboxSnapshot`'s `hold`):
+The conversation you have open keeps its place across snapshots until you leave it (`inboxSnapshot`'s `hold`; a
+person's chat by its one row, whichever of their DMs is open):
 reading or answering it changes its score, and it should not jump away while you are in it. Leaving it asks for a
 snapshot, so it settles where it now belongs once nothing is in use: with what `visited` adds, near the top.
 

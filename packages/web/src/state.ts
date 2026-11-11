@@ -1,10 +1,10 @@
-import { signal } from '@preact/signals';
+import { effect, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { SYNC_VERSION } from '@dither-chat/protocol';
 import { leaveLayerEntry, takeOverLayers } from './phone.ts';
 import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
 import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, emptyDb, identityVersion, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
-import { changed, mailChanged, timelineChanged } from './versions.ts';
+import { changed, mailChanged, timelineChanged, timelineRev } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
 import { ECHO_SKEW, mayBeOut, openOutbox, settled, type Echo, type OutboxEntry } from './outbox.ts';
 import { hubTransport, UploadJob } from './upload.ts';
@@ -574,6 +574,39 @@ export async function jumpTo(conversationId: string, messageId: string) {
   page.identities.forEach(putIdentity);
   timelines.set(key, { key, messages: page.messages, hasMore: page.hasMore, loading: false, detached: page.hasNewer });
   timelineChanged(key);
+}
+
+/** Pages a person's chat may go back to reach a message linked to (60 each), before its route alone shows it. */
+const CHAT_JUMP_PAGES = 10;
+
+/** Once a timeline is not loading. */
+function timelineIdle(key: string): Promise<void> {
+  return new Promise((done) => {
+    let stop: (() => void) | undefined;
+    stop = effect(() => {
+      timelineRev(key).value;
+      if (timelines.get(key)?.loading) return;
+      queueMicrotask(() => stop?.());
+      done();
+    });
+  });
+}
+
+/**
+ * Open a person's chat (`p:` timeline) at a message: page back through every route until it is held, so it shows
+ * interleaved like any other. The hub has no page around a message across conversations, so a message more than
+ * CHAT_JUMP_PAGES pages back is not reached: false, and the page shows its route alone (Timeline.tsx PersonChat).
+ */
+export async function jumpInChat(key: string, messageId: string): Promise<boolean> {
+  await loadTimeline(key);
+  await timelineIdle(key);
+  for (let i = 0; ; i++) {
+    const t = timelines.get(key);
+    if (t?.messages.some((m) => m.id === messageId)) return true;
+    if (!t?.hasMore || i >= CHAT_JUMP_PAGES) return false;
+    await loadTimeline(key, true);
+    await timelineIdle(key);
+  }
 }
 
 export async function loadNewer(key: string) {

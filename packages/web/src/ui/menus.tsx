@@ -277,13 +277,15 @@ export function linkMenu(url: string, m: P.MessageView | null, onReply?: () => v
  * rule above, or what the network does), said under Automatic. A rule from before the tiers shows as what is set,
  * and any of the four replaces it.
  */
-function notifyEntries(scope: 'conversation' | 'space', id: string, own: Level | null, held?: string): MenuEntry[] {
+function notifyEntries(scope: 'conversation' | 'space', id: string | string[], own: Level | null, held?: string): MenuEntry[] {
+  // A person's chat (chatMenu): the rule goes on every route.
+  const set = (l: P.RuleLevel | null) => () => void (Array.isArray(id) ? id : [id]).forEach((x) => setRule(scope, x, l));
   return [
     ...(own === 'mentions' ? [{ label: OLDER_RULE, radio: true, checked: true, disabled: true } as MenuEntry] : []),
-    { label: AUTOMATIC, radio: true, checked: own === null, run: () => setRule(scope, id, null) },
+    { label: AUTOMATIC, radio: true, checked: own === null, run: set(null) },
     ...(held && own === null ? [{ kind: 'label', label: held, note: true } as MenuEntry] : []),
     { kind: 'sep' },
-    ...RULE_LEVELS.map((l): MenuEntry => ({ label: RULE_LABEL[l], radio: true, checked: own === l, run: () => setRule(scope, id, l) })),
+    ...RULE_LEVELS.map((l): MenuEntry => ({ label: RULE_LABEL[l], radio: true, checked: own === l, run: set(l) })),
   ];
 }
 
@@ -336,7 +338,6 @@ export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpe
       [{ label: 'Mark As Read', icon: 'check', disabled: !unreadOf(c).unread, run: () => markRead(c.id) }],
       [
         person && { label: 'Profile', icon: 'user', run: () => go({ view: 'profile', person: person.id }) },
-        person && directsOf(person.id).length > 1 && { label: 'All Chats with Them', icon: 'users', run: () => go({ view: 'people', person: person.id }) },
         { label: `About This ${c.shape === 'direct' ? 'Chat' : noun}`, icon: 'info', run: () => openAbout('conversation', c.id) },
         { label: `Search in ${noun}`, icon: 'search', run: () => go({ view: 'search', q: `in:${c.id}` }) },
         c.shape !== 'self' && canIndex('conversation', c.id) && { label: `Index This ${channel ? 'Channel' : 'Chat'}…`, icon: 'archive', run: () => startIndexing('conversation', c.id) },
@@ -352,6 +353,36 @@ export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpe
         { label: `Copy ${channel ? 'Channel' : 'Chat'} ID`, icon: 'idBadge', run: () => copy(c.nativeId, 'ID copied') },
         { label: 'Copy dither-chat ID', icon: 'idBadge', run: () => copy(c.id, 'ID copied') },
       ],
+    ),
+  };
+}
+
+/**
+ * The inbox's row for a person reached by several routes (model.ts): its actions act on the whole chat. Mark As Read
+ * reads every route, Mute and the rule go on each, search looks in every chat with them.
+ */
+export function chatMenu(p: P.PersonView, routes: P.ConversationView[], why?: string[]): MenuSpec {
+  const rules = routes.map((c) => ruleOn('conversation', c.id));
+  // The rule they all have, if they agree; otherwise none is shown as set.
+  const own = rules.every((r) => r === rules[0]) ? rules[0] : null;
+  const muted = rules.every((r) => r === 'none');
+  const ids = routes.map((c) => c.id);
+  return {
+    label: `${p.name} actions`,
+    head: <div class="cm-sheet-title">{p.name}</div>,
+    items: groups(
+      why?.length ? [{ kind: 'row', render: () => <WhyHere reasons={why} /> }] : [],
+      [{ label: 'Mark As Read', icon: 'check', disabled: !routes.some((c) => unreadOf(c).unread), run: () => routes.forEach((c) => markRead(c.id)) }],
+      [
+        { label: 'Profile', icon: 'user', run: () => go({ view: 'profile', person: p.id }) },
+        { label: 'Search in Chat', icon: 'search', run: () => go({ view: 'search', q: `in:${p.id}` }) },
+        { label: 'Copy Link', icon: 'link', run: () => copy(appLink({ view: 'people', person: p.id }), 'Link copied') },
+      ],
+      [
+        { label: muted ? 'Unmute Chat' : 'Mute Chat', icon: muted ? 'bell' : 'bellOff', run: () => ids.forEach((id) => setRule('conversation', id, muted ? null : 'none')) },
+        { label: 'Notification Settings', icon: 'bell', sub: notifyEntries('conversation', ids, own) },
+      ],
+      identityCopies(p.identityIds.map((id) => db.identities.get(id)).filter((x): x is P.IdentityView => !!x)),
     ),
   };
 }

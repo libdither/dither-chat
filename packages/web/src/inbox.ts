@@ -6,7 +6,7 @@
  */
 import { effect, signal } from '@preact/signals';
 import { isInteracting } from './arrange.ts';
-import { inboxRows, mailRowsWaiting, rowDirect, rowLast, rowMuted, type InboxRow } from './model.ts';
+import { inboxKeyOf, inboxRows, mailRowsWaiting, rowDirect, rowLast, rowMuted, type InboxRow } from './model.ts';
 import { filterKeeps, inboxChanged, inboxSnapshot, inboxView, sameInbox, shouldResort, type Hold, type InboxSnapshot, type Ranked, type ResortReason } from './ordering.ts';
 import { loaded, mailRev, rev, route, type InboxFilter } from './state.ts';
 import { onForeground } from './usage.ts';
@@ -24,8 +24,11 @@ function stored(): InboxSnapshot | null {
 /** The order last taken; this device's last one until the first of this session. Bumping `v` animates the change. */
 export const inboxSnap = signal<{ v: number; at: number | null; snap: InboxSnapshot | null }>({ v: 0, at: null, snap: stored() });
 
-/** The conversation open in the inbox keeps its place while it is open. */
-const openHere = () => (route.value.view === 'inbox' ? route.value.conv : undefined);
+/** The row open in the inbox keeps its place while it is open: a person's chat by any of their DMs. */
+const openHere = () => {
+  const r = route.value;
+  return r.view === 'inbox' && r.conv ? inboxKeyOf(r.conv) : undefined;
+};
 const hold = (): Hold | undefined => {
   const key = openHere();
   return key ? { key, prev: inboxSnap.value.snap } : undefined;

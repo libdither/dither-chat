@@ -74,9 +74,6 @@ export function ConversationDetails({ convId }: { convId: string }) {
             <button class="btn ghost small" onClick={() => go({ view: 'profile', person: c.peerPersonId! })}>
               <Icon name="info" size={13} /> Profile
             </button>
-            <button class="btn ghost small" onClick={() => go({ view: 'people', person: c.peerPersonId! })}>
-              <Icon name="user" size={13} /> All chats with them
-            </button>
           </div>
         )}
         <Section title="Source">

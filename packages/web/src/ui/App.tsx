@@ -1,6 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
-import { accountsNeedingYou, inboxBadge, rootCommunity, totalUnread } from '../model.ts';
+import { accountsNeedingYou, chatPersonOf, inboxBadge, rootCommunity, totalUnread } from '../model.ts';
 import { adoptEntry, api, connected, db, go, loaded, pending, prefs, previousRoute, readProgress, refresh, rev, route, setListUnder, unreachable, type Route } from '../state.ts';
 import { isPage, isTabRoot, listKey, listToWrite, ownList, restAfter, wayBack, type Places } from '../pages.ts';
 import { dropLayer, phone, pushLayer } from '../phone.ts';
@@ -39,6 +39,12 @@ import { MailCenterLazy, MailComposerLazy, MailSidebarLazy } from './mail/lazy.t
 import { RequestsPane } from './Requests.tsx';
 import { countKey } from '../clicklog.ts';
 
+/** A conversation's details panel: the person's, for a DM of someone reached by several routes (their chat's page). */
+function convDetail(id: string): { kind: 'conv' | 'person'; id: string } {
+  const p = chatPersonOf(db.conversations.get(id));
+  return p ? { kind: 'person', id: p.id } : { kind: 'conv', id };
+}
+
 /** What the center pane shows, and whether a details pane is available. */
 function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'conv' | 'person'; id: string } } {
   switch (r.view) {
@@ -49,7 +55,7 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
     case 'inbox':
       // A mail thread from the inbox opens in the reader, beside the inbox (docs/mail.md).
       if (r.conv?.startsWith('mth_')) return { pane: <MailCenterLazy thread={r.conv} onBack={back} /> };
-      return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <CatchUp /> };
+      return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: convDetail(r.conv) } : { pane: <CatchUp /> };
     case 'people':
       if (r.graph) return { pane: <GraphPane onBack={back} /> };
       return r.person ? { pane: <PersonPane personId={r.person} onBack={back} />, detail: { kind: 'person', id: r.person } } : { pane: <WelcomePane view="people" /> };
@@ -57,10 +63,10 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       if (r.conv || r.space) return { pane: <PlaceProfile kind={r.conv ? 'conversation' : 'space'} id={(r.conv ?? r.space)!} onBack={back} /> };
       return { pane: <ProfilePane personId={r.person} identityId={r.identity} onBack={back} /> };
     case 'space':
-      return r.conv ? { pane: <ConversationPane convId={r.conv} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <WelcomePane view="space" id={r.space} /> };
+      return r.conv ? { pane: <ConversationPane convId={r.conv} onBack={back} />, detail: convDetail(r.conv) } : { pane: <WelcomePane view="space" id={r.space} /> };
     case 'folder':
       return r.conv
-        ? { pane: <ConversationPane convId={r.conv} onBack={back} />, detail: { kind: 'conv', id: r.conv } }
+        ? { pane: <ConversationPane convId={r.conv} onBack={back} />, detail: convDetail(r.conv) }
         : r.person
           ? { pane: <PersonPane personId={r.person} onBack={back} />, detail: { kind: 'person', id: r.person } }
           : { pane: <WelcomePane view="folder" id={r.folder} /> };
@@ -73,7 +79,7 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
     case 'directory':
       return { pane: <DirectoryPane onBack={back} /> };
     case 'search':
-      return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: { kind: 'conv', id: r.conv } } : { pane: <SearchPane q={r.q} onBack={isPage(r) ? back : undefined} /> };
+      return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: convDetail(r.conv) } : { pane: <SearchPane q={r.q} onBack={isPage(r) ? back : undefined} /> };
     case 'mail':
       return { pane: <MailCenterLazy thread={r.thread} onBack={back} /> };
     case 'requests':

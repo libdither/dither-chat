@@ -9,11 +9,11 @@ import { TIER_LABEL } from '@dither-chat/protocol';
 import { signal } from '@preact/signals';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { arrive, focusAfter, later, remove, reopen, seen, step, take, type Queue, type QueueRow } from '../catchup.ts';
-import { lineKey, topTier, type BoardItem } from '../board.ts';
+import { isMailItem, lineKey, topTier, type BoardItem } from '../board.ts';
 import { countKey } from '../clicklog.ts';
 import { ago, fullTime, since as sinceText } from '../format.ts';
 import { shownInbox } from '../inbox.ts';
-import { accountsNeedingYou, authorName, communitiesOf, convLabel, convTitle, mailRowsWaiting, plainBody, rowLast, rowUnread, visibleAccount, visibleConv, type InboxRow } from '../model.ts';
+import { accountsNeedingYou, authorName, communitiesOf, convLabel, convTitle, inboxKeyOf, mailRowsWaiting, plainBody, rowConvs, rowLast, rowUnread, visibleAccount, visibleConv, type ConvInboxRow, type InboxRow } from '../model.ts';
 import { senderLine } from '../mail/model.ts';
 import { phone } from '../phone.ts';
 import { db, discardSend, go, inbox, isSelfIdentity, loadMailTriage, loadTimeline, mailRev, mailTriage, markAllRead, markRead, pending, prefs, retrySend, rev, route, send, timelineKey, timelineRev, timelines } from '../state.ts';
@@ -96,11 +96,11 @@ const queueRows = (): Row[] =>
 /** Where a card's messages start: the earliest unread, or the message you owe an answer, whichever came first. */
 function sinceOf(r: InboxRow): number {
   if (r.kind === 'mail') return 0;
-  const c = r.conv;
-  const reads = c.vantages.filter((v) => v.unread > 0).map((v) => v.lastReadTs ?? 0);
+  // A person's chat: over every route.
+  const reads = rowConvs(r).flatMap((c) => c.vantages.filter((v) => v.unread > 0).map((v) => v.lastReadTs ?? 0));
   let s = reads.length ? Math.min(...reads) : Infinity;
   if (r.owedSince !== null) s = Math.min(s, r.owedSince - 1);
-  return s === Infinity ? (c.lastMessageAt ?? 1) - 1 : s;
+  return s === Infinity ? (r.conv.lastMessageAt ?? 1) - 1 : s;
 }
 
 function openSession(rows: Row[]) {
@@ -127,6 +127,8 @@ function done(key: string) {
   const r = rowOf(key);
   if (r) markDone(key, r.last);
   if (key.startsWith('mth_')) void import('../mail/api.ts').then((m) => m.markThreadRead(key));
+  // A person's chat reads every route.
+  else if (r?.row.kind === 'conv') rowConvs(r.row).forEach((c) => markRead(c.id));
   else markRead(key);
   update((s) => {
     const q = remove(s.q, key);
@@ -142,7 +144,8 @@ function putLater(key: string) {
 }
 
 function openCard(key: string) {
-  go({ view: 'inbox', conv: key });
+  const r = rowOf(key)?.row;
+  go({ view: 'inbox', conv: r?.kind === 'conv' ? r.conv.id : key });
 }
 
 function setFocus(key: string | null) {
@@ -156,14 +159,14 @@ function sendAs(c: P.ConversationView): string | undefined {
 }
 
 /** Through the conversation's own send path (state.ts `send`): the same outbox, clientId and echo matching. */
-function reply(c: P.ConversationView, body: string) {
+function reply(c: P.ConversationView, body: string, key: string) {
   void send(c.id, body, { accountId: sendAs(c) });
   composerDone();
   markRead(c.id);
   update((s) => {
-    const replied = new Map(s.replied).set(c.id, Date.now());
+    const replied = new Map(s.replied).set(key, Date.now());
     // Focus goes on to the next card; this one stays where it is, marked Replied.
-    const next = s.focus === c.id ? focusAfter(s.q.keys, s.q.keys.filter((k) => k !== c.id), c.id) : s.focus;
+    const next = s.focus === key ? focusAfter(s.q.keys, s.q.keys.filter((k) => k !== key), key) : s.focus;
     return { replied, focus: next, acted: true };
   });
 }
@@ -276,7 +279,8 @@ export function CatchUp() {
     const by = new Map<string, BoardItem[]>();
     if (!shown || !s) return by;
     for (const m of [...inbox.value, ...mailTriage.value]) {
-      const k = lineKey(m);
+      // A person's chat is one card over every route (model.ts).
+      const k = isMailItem(m) ? lineKey(m) : inboxKeyOf(m.conversationId);
       const l = by.get(k);
       if (l) l.push(m);
       else by.set(k, [m]);
@@ -367,7 +371,7 @@ export function CatchUp() {
             return <MailCard key={k} t={r.thread} tier={topTier(unread.length ? unread : items)} {...props} />;
           }
           const from = s.since.get(k) ?? sinceOf(r);
-          return <ChatCard key={k} c={r.conv} since={from} tier={topTier((decided.get(k) ?? []).filter((m) => m.ts > from))} replied={s.replied.has(k)} {...props} />;
+          return <ChatCard key={k} k={k} r={r} since={from} tier={topTier((decided.get(k) ?? []).filter((m) => m.ts > from))} replied={s.replied.has(k)} {...props} />;
         })}
         {keys.length > upTo && <More key={upTo} left={keys.length - upTo} onMore={() => setDrawn(upTo + DRAWN)} />}
       </div>
@@ -496,8 +500,14 @@ function CardMessage({ m, names }: { m: P.MessageView; names: boolean }) {
   );
 }
 
-function ChatCard({ c, since, replied, focused, ahead, owedSince, tier, onFocus }: CardProps & { c: P.ConversationView; since: number; replied: boolean }) {
-  const tkey = timelineKey('c', c.id);
+/**
+ * A conversation's card, or a person's chat of several routes as one (`r.chat`): then the messages are every
+ * route's, and a reply goes through the route of the latest message, where they last wrote.
+ */
+function ChatCard({ k, r, since, replied, focused, ahead, owedSince, tier, onFocus }: CardProps & { k: string; r: ConvInboxRow; since: number; replied: boolean }) {
+  const c = r.conv;
+  const ids = rowConvs(r).map((x) => x.id);
+  const tkey = r.chat ? timelineKey('p', r.chat.person.id) : timelineKey('c', c.id);
   timelineRev(tkey).value;
   const el = useRef<HTMLDivElement>(null);
   const near = useNear(el);
@@ -509,11 +519,11 @@ function ChatCard({ c, since, replied, focused, ahead, owedSince, tier, onFocus 
   const shown = all ? msgs : msgs.slice(-SHOWN);
   const earlier = msgs.length - shown.length;
   // Not yet sent: as the timeline shows them, and gone once their message is here (outbox.ts).
-  const mine = pending.value.filter((p) => p.conversationId === c.id && !p.echoed);
+  const mine = pending.value.filter((p) => ids.includes(p.conversationId) && !p.echoed);
   const com = c.shape === 'channel' || c.shape === 'thread' ? communitiesOf(c)[0] : undefined;
   const names = c.shape !== 'direct';
   return (
-    <div ref={el} class={`cu-card ${focused ? 'focused' : ''} ${replied ? 'replied' : ''}`} data-card={c.id} data-owed={owedSince !== null ? '1' : undefined} onClick={onFocus}>
+    <div ref={el} class={`cu-card ${focused ? 'focused' : ''} ${replied ? 'replied' : ''}`} data-card={k} data-owed={owedSince !== null ? '1' : undefined} onClick={onFocus}>
       <div class="cu-head">
         <ConvAvatar c={c} />
         <span class="cu-who">
@@ -575,15 +585,15 @@ function ChatCard({ c, since, replied, focused, ahead, owedSince, tier, onFocus 
         ))}
       </div>
       <div class="cu-foot">
-        <ReplyBox c={c} />
+        <ReplyBox c={c} k={k} />
         <span class="cu-actions">
-          <button class="btn ghost small" data-track="done" title="Mark it read, and take it off the queue (e)" onClick={(e) => (e.stopPropagation(), done(c.id))}>
+          <button class="btn ghost small" data-track="done" title="Mark it read, and take it off the queue (e)" onClick={(e) => (e.stopPropagation(), done(k))}>
             <Icon name="check" size={14} /> Done
           </button>
-          <button class="btn ghost small" data-track="later" title="To the end of the queue, for now (l)" onClick={(e) => (e.stopPropagation(), putLater(c.id))}>
+          <button class="btn ghost small" data-track="later" title="To the end of the queue, for now (l)" onClick={(e) => (e.stopPropagation(), putLater(k))}>
             <Icon name="clock" size={14} /> Later
           </button>
-          <button class="btn ghost small" data-track="open" title="Open the conversation (Enter)" onClick={(e) => (e.stopPropagation(), openCard(c.id))}>
+          <button class="btn ghost small" data-track="open" title="Open the conversation (Enter)" onClick={(e) => (e.stopPropagation(), openCard(k))}>
             Open <Icon name="chevronRight" size={14} />
           </button>
         </span>
@@ -593,7 +603,7 @@ function ChatCard({ c, since, replied, focused, ahead, owedSince, tier, onFocus 
 }
 
 /** One line that grows, sending through the conversation's own path. Its draft is the conversation's composer's. */
-function ReplyBox({ c }: { c: P.ConversationView }) {
+function ReplyBox({ c, k }: { c: P.ConversationView; k: string }) {
   const draftKey = `dither-chat:draft:${c.id}`;
   const [text, setText] = useState(() => localStorage.getItem(draftKey) ?? '');
   const ta = useRef<HTMLTextAreaElement>(null);
@@ -612,7 +622,7 @@ function ReplyBox({ c }: { c: P.ConversationView }) {
     if (enter) countKey('catch up: reply sent (Enter)');
     type('');
     ta.current?.blur();
-    reply(c, body);
+    reply(c, body, k);
   };
   // Where the composer cannot send, the card says why instead of offering a box.
   if (blocked)
@@ -636,7 +646,7 @@ function ReplyBox({ c }: { c: P.ConversationView }) {
           type(v);
           composerTyped({ conversationId: c.id, accountId: sendAs(c) }, v);
         }}
-        onFocus={() => setFocus(c.id)}
+        onFocus={() => setFocus(k)}
         onBlur={composerDone}
         onKeyDown={(e) => {
           // As in the composer: a phone keyboard has no Shift+Enter, so there Enter is a new line and the button sends.

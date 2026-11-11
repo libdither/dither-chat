@@ -12,6 +12,8 @@ import {
   directsOf,
   effectiveLevel,
   folderConvs,
+  heldByRequest,
+  inboxKeyOf,
   placePref,
   railEntries,
   accountsNeedingYou,
@@ -45,7 +47,9 @@ import { Icon } from './icons.tsx';
 import { phone } from '../phone.ts';
 import { dropPlace, openPlaceMenu, placeLabel } from './Organize.tsx';
 import { contextMenu, Menuable, onMenu, openMenu, useMenu, type MenuEntry } from './ContextMenu.tsx';
-import { accountMenu, conversationMenu, folderMenuSpec, personMenu, spaceMenu, WhyHere } from './menus.tsx';
+import { accountMenu, chatMenu, conversationMenu, folderMenuSpec, personMenu, spaceMenu, WhyHere } from './menus.tsx';
+import { pickedRoute } from './Pairs.tsx';
+import { chatKey } from '../chatroutes.ts';
 import { groups, type MenuSpec } from './ContextMenu.tsx';
 import { openAbout } from './About.tsx';
 import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapshot } from '../arrange.ts';
@@ -148,22 +152,24 @@ function opener(key: string, open: () => void): () => void {
 
 /**
  * `why` is the inbox's reasons, shown on hover and at the top of the row's menu; `owedSince` marks a message you
- * have not answered, for a row that needs you: ↩ and how long, beside the unread count if there is one.
+ * have not answered, for a row that needs you: ↩ and how long, beside the unread count if there is one. `chat`: the
+ * inbox's one row for a person reached by several routes (model.ts), drawn as a DM row of the route with the latest
+ * message (`c`), its unread summed over every route and its menu acting on them all.
  */
-export const ConvRow = memo(function ConvRow({ c, active, onClick, showPlace = true, why, owedSince }: { c: P.ConversationView; active: boolean; onClick: () => void; showPlace?: boolean; why?: string[]; owedSince?: number | null }) {
+export const ConvRow = memo(function ConvRow({ c, active, onClick, showPlace = true, why, owedSince, chat }: { c: P.ConversationView; active: boolean; onClick: () => void; showPlace?: boolean; why?: string[]; owedSince?: number | null; chat?: { person: P.PersonView; routes: P.ConversationView[] } }) {
   metaRev.value;
-  const u = unreadOf(c);
+  const u = chat ? chatUnread(chat.routes) : unreadOf(c);
   const lvl = effectiveLevel(c);
   const place = showPlace ? placeLine(c) : '';
   const isChannel = c.shape === 'channel' || c.shape === 'thread';
   const com = communitiesOf(c)[0];
-  const ctx = useMenu(() => conversationMenu(c, why));
+  const ctx = useMenu(() => (chat ? chatMenu(chat.person, chat.routes, why) : conversationMenu(c, why)));
   return (
     <button
       class={`row conv-row ${active ? 'active' : ''} ${u.unread ? 'unread' : ''} ${u.muted ? 'muted' : ''}`}
       onClick={onClick}
       title={why?.length ? why.join('\n') : undefined}
-      data-row={c.id}
+      data-row={chat ? chatKey(chat.person.id) : c.id}
       data-track={rowTrack(convKind(c.shape), !!u.unread, !!owedSince)}
       {...ctx}
     >
@@ -183,7 +189,7 @@ export const ConvRow = memo(function ConvRow({ c, active, onClick, showPlace = t
             accountIds={c.vantages.map((v) => v.accountId)}
             icon={c.shape === 'self' ? '✎' : undefined}
           />
-          {(c.shape === 'direct' || c.shape === 'group') && <RowTyping convIds={[c.id]} />}
+          {(c.shape === 'direct' || c.shape === 'group') && <RowTyping convIds={chat ? chat.routes.map((r) => r.id) : [c.id]} />}
         </span>
       )}
       <span class="row-main">
@@ -208,6 +214,22 @@ export const ConvRow = memo(function ConvRow({ c, active, onClick, showPlace = t
     </button>
   );
 });
+
+/** A chat's unread, as one row: summed over its routes, muted only if every route is. */
+function chatUnread(routes: P.ConversationView[]) {
+  const us = routes.map(unreadOf);
+  return { unread: us.reduce((n, u) => n + u.unread, 0), badge: us.reduce((n, u) => n + u.badge, 0), muted: us.every((u) => u.muted) };
+}
+
+/**
+ * Where a chat's row opens: the route picked on its page this session, else the conversation of the latest message,
+ * so a reply goes where they last wrote. Asked at the click, not when the row was drawn.
+ */
+function chatOpens(personId: string): string | undefined {
+  const directs = directsOf(personId);
+  const held = heldByRequest();
+  return pickedRoute(personId, directs) ?? (directs.find((d) => !held.has(d.id)) ?? directs[0])?.id;
+}
 
 /** A thread's menu in the inbox: why it is here, where it lives in Mail, and whether it is from a person. */
 function mailRowMenu(t: P.MailThreadView, why?: string[]): MenuSpec {
@@ -342,9 +364,13 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
   const [q, setQ] = useState('');
   const scroll = useRef<HTMLDivElement>(null);
   useFlip(scroll, snap.v, '[data-row]');
+  // A person's chat is one row, active whichever of their DMs is open.
+  const activeKey = activeConv ? inboxKeyOf(activeConv) : undefined;
   const row = (r: InboxRow) =>
     r.kind === 'mail' ? (
       <MailRow key={r.key} id={r.key} active={r.key === activeConv} why={r.reasons} owedSince={r.needs ? r.owedSince : null} />
+    ) : r.chat ? (
+      <ConvRow key={r.key} c={r.conv} chat={r.chat} active={r.key === activeKey} onClick={opener(`inbox:${r.key}`, () => go({ view: 'inbox', conv: chatOpens(r.chat!.person.id) ?? r.conv.id }))} why={r.reasons} owedSince={r.needs ? r.owedSince : null} />
     ) : (
       <ConvRow key={r.conv.id} c={r.conv} active={r.conv.id === activeConv} onClick={opener(`inbox:${r.conv.id}`, () => go({ view: 'inbox', conv: r.conv.id }))} why={r.reasons} owedSince={r.needs ? r.owedSince : null} />
     );
