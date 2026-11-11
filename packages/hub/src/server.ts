@@ -3,7 +3,7 @@ import { createHmac } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, RETENTION_GUARDED, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { ACCOUNT_COLORS, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
@@ -608,17 +608,28 @@ export class HubServer {
     }
     if (path === '/api/retention') {
       if (method === 'PUT') {
-        const b = await body<Partial<P.RetentionSettings>>();
+        // Only the fields sent change: a device that has not loaded the settings yet cannot put the defaults back.
+        const b = await body<Partial<P.RetentionSettings> & { confirm?: boolean; device?: string; showIn?: Record<string, 'shown' | 'hidden' | null> }>();
         const cur = s.retention();
         const bool = (v: unknown, d: boolean) => (typeof v === 'boolean' ? v : d);
-        const sources: P.RetentionSettings['sources'] = {};
-        for (const [k, v] of Object.entries(b.sources ?? cur.sources)) {
-          if (!/^[\w-]{1,64}$/.test(k) || !v || typeof v !== 'object') continue;
-          const o: Partial<P.KeepSettings> = {};
-          for (const f of ['deleted', 'disappearing', 'edits', 'reactions', 'receipts'] as const) if (typeof v[f] === 'boolean') o[f] = v[f];
-          if (Object.keys(o).length) sources[k] = o;
+        let sources = cur.sources;
+        if (b.sources && typeof b.sources === 'object') {
+          sources = {};
+          for (const [k, v] of Object.entries(b.sources)) {
+            if (!/^[\w-]{1,64}$/.test(k) || !v || typeof v !== 'object') continue;
+            const o: Partial<P.KeepSettings> = {};
+            for (const f of ['deleted', 'disappearing', 'edits', 'reactions', 'receipts'] as const) if (typeof v[f] === 'boolean') o[f] = v[f];
+            if (Object.keys(o).length) sources[k] = o;
+          }
         }
-        s.setRetention({
+        const showIn = { ...cur.showIn };
+        if (b.showIn && typeof b.showIn === 'object')
+          for (const [k, v] of Object.entries(b.showIn)) {
+            if (!/^[\w-]{1,64}$/.test(k)) continue;
+            if (v === 'shown' || v === 'hidden') showIn[k] = v;
+            else if (v === null) delete showIn[k];
+          }
+        const next: P.RetentionSettings = {
           deleted: bool(b.deleted, cur.deleted),
           disappearing: bool(b.disappearing, cur.disappearing),
           edits: bool(b.edits, cur.edits),
@@ -629,13 +640,22 @@ export class HubServer {
           presence: bool(b.presence, cur.presence),
           members: bool(b.members, cur.members),
           adversarial: bool(b.adversarial, cur.adversarial),
-          show: b.show === 'hidden' || b.show === 'collapsed' ? b.show : cur.show,
+          show: b.show === 'hidden' ? 'hidden' : b.show === 'shown' || (b.show as unknown) === 'collapsed' ? 'shown' : cur.show,
+          showIn,
           sources,
-        });
+        };
+        // Turning off what keeps or shows kept things is asked for on purpose, never by a stray save.
+        const off = RETENTION_GUARDED.filter((k) => cur[k] && !next[k]);
+        const offBySource = Object.entries(cur.sources).some(([k, v]) => (['deleted', 'disappearing'] as const).some((f) => v[f] === true && next.sources[k]?.[f] !== true));
+        if ((off.length || offBySource) && b.confirm !== true)
+          return Response.json({ error: `turning off ${off.length ? off.join(', ') : 'a source\'s keeping'} needs confirm: true`, confirm: off }, { status: 409 });
+        const by = (typeof b.device === 'string' ? b.device : req.headers.get('user-agent') ?? 'unknown').slice(0, 160);
+        s.setRetention(next, by);
         this.broadcast([{ t: 'retention', retention: s.retention() }]);
       }
       return ok(s.retention());
     }
+    if (path === '/api/retention/log') return ok({ changes: s.retentionLog() });
     if (path === '/api/retention/kept') return ok(s.keptKinds());
     if (path === '/api/retention/erase' && method === 'POST') {
       const b = await body<{ what?: string }>();

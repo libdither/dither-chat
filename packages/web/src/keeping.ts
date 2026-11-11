@@ -6,9 +6,9 @@ export function keeping(r: P.RetentionSettings, what: P.KeptKind): boolean {
   const some = (k: keyof P.KeepSettings) => r[k] || Object.values(r.sources).some((s) => s[k] === true);
   switch (what) {
     case 'deleted':
-      return r.adversarial && some('deleted');
+      return some('deleted'); // kept while hidden too, out of sight
     case 'disappeared':
-      return r.adversarial && some('disappearing');
+      return some('disappearing');
     case 'edits':
     case 'reactions':
     case 'receipts':

@@ -17,9 +17,10 @@ test('shown after the warning, each still off until its own switch', () => {
   expect(keeping({ ...ADV, members: true }, 'members')).toBe(true);
 });
 
-test('hidden, no switch or override keeps anything', () => {
-  const all = { ...DEFAULT_RETENTION, deleted: true, disappearing: true, statuses: true, presence: true, members: true, sources: { signal: { deleted: true } } };
-  expect(ADVERSARIAL_KINDS.filter((k) => keeping(all, k))).toEqual([]);
+test('hidden, deleted and disappearing messages go on being kept as their switches say; nothing is logged', () => {
+  const all = { ...DEFAULT_RETENTION, deleted: true, disappearing: true, statuses: true, presence: true, members: true };
+  expect(ADVERSARIAL_KINDS.filter((k) => keeping(all, k))).toEqual(['deleted', 'disappeared']);
+  expect(keeping({ ...DEFAULT_RETENTION, sources: { signal: { deleted: true } } }, 'deleted')).toBe(true);
 });
 
 test('one network keeping them counts; statuses and presence need changes kept too', () => {

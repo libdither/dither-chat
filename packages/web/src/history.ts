@@ -22,12 +22,18 @@ eventHooks.add((ev) => {
   if (ev.t === 'retention') retention.value = ev.retention;
 });
 
-/** Change some settings; shown at once, put back if the hub refuses. */
-export async function saveRetention(patch: Partial<P.RetentionSettings>) {
+/**
+ * Change some settings; shown at once, put back if the hub refuses. Only `patch` goes to the hub, so a device that
+ * has not loaded the settings yet never sends its defaults back. Turning off a switch that keeps or shows kept things
+ * takes `confirm` (the hub refuses it otherwise): ask first (confirmOff).
+ */
+export async function saveRetention(patch: Partial<P.RetentionSettings> | { showIn: Record<string, 'shown' | 'hidden' | null> }, o: { confirm?: boolean } = {}) {
+  await loadRetention();
   const before = retention.value;
-  retention.value = { ...before, ...patch };
+  const showIn = 'showIn' in patch && patch.showIn ? Object.fromEntries(Object.entries({ ...before.showIn, ...patch.showIn }).filter(([, v]) => v)) : before.showIn;
+  retention.value = { ...before, ...(patch as Partial<P.RetentionSettings>), showIn: showIn as P.RetentionSettings['showIn'] };
   try {
-    retention.value = await api<P.RetentionSettings>('/api/retention', { method: 'PUT', body: retention.value });
+    retention.value = await api<P.RetentionSettings>('/api/retention', { method: 'PUT', body: { ...patch, ...(o.confirm ? { confirm: true } : {}) } });
   } catch (e: any) {
     retention.value = before;
     toast({ kind: 'error', title: 'Could not save that', body: e.message });
@@ -49,7 +55,29 @@ export function setSource(key: string, what: keyof P.KeepSettings, on: boolean |
   if (on === null) delete sources[key][what];
   else sources[key][what] = on;
   if (!Object.keys(sources[key]).length) delete sources[key];
-  return saveRetention({ sources });
+  const was = retention.value.sources[key]?.[what];
+  if (was === true && on !== true && (what === 'deleted' || what === 'disappearing') && !confirmOff(what)) return Promise.resolve();
+  return saveRetention({ sources }, { confirm: true });
+}
+
+const STOPS: Partial<Record<keyof P.RetentionSettings, string>> = {
+  deleted: 'Stop keeping deleted messages? Messages deleted from now on are emptied, as the network asks.',
+  disappearing: 'Stop keeping disappearing messages? Messages whose timer runs out from now on are emptied.',
+  statuses: 'Stop logging statuses?',
+  presence: 'Stop logging presence?',
+  members: 'Stop recording server members?',
+  adversarial: 'Hide adversarial features? What their switches keep goes on being kept, out of sight. Turn a switch off to stop it.',
+};
+
+/** Asks before turning off a switch that keeps or shows kept things. What was kept stays either way. */
+export function confirmOff(what: keyof P.RetentionSettings): boolean {
+  const q = STOPS[what];
+  return !q || confirm(`${q}\n\nWhat was kept already stays, until you forget it under Message history.`);
+}
+
+/** One chat's say on showing kept deleted and disappeared messages; null goes back to the default. */
+export function setShowIn(conversationId: string, v: 'shown' | 'hidden' | null) {
+  return saveRetention({ showIn: { [conversationId]: v } });
 }
 
 export async function eraseKept(what: P.KeptKind) {

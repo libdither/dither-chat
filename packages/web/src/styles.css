@@ -9686,38 +9686,19 @@ a.pf-link:hover {
 /* ------------------------------------------------------------------ message history (docs/history.md) */
 
 .msg-gone {
-  margin-top: 2px;
+  margin-top: 0;
 }
-.msg-gone-line {
+/* A kept deleted or disappeared message: in full, with how and when it went in a quiet line under it. */
+.msg-gone-mark {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
+  gap: 4px;
+  margin-top: 2px;
+  font-size: 11px;
   color: var(--text-faint);
-  padding: 2px 8px;
-  border-radius: 7px;
-  border: 1px dashed var(--border);
-}
-.msg-gone-line:hover {
-  color: var(--text-dim);
-  background: var(--bg-hover);
 }
 .msg-gone-when {
   opacity: 0.8;
-}
-.msg-gone-toggle {
-  color: var(--link);
-  font-weight: 600;
-}
-.msg-gone-body {
-  margin-top: 4px;
-  padding: 4px 0 4px 10px;
-  border-left: 2px solid var(--border);
-  opacity: 0.75;
-}
-.msg-gone-body .msg-body {
-  text-decoration: line-through;
-  text-decoration-color: color-mix(in oklab, var(--text-faint) 60%, transparent);
 }
 button.msg-edited.link {
   font-size: 10px;

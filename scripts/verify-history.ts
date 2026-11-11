@@ -28,18 +28,15 @@ const check = (ok: unknown, what: string, detail: unknown = '') => {
 const put = (body: unknown) => fetch(`${hub}/api/retention`, { method: 'PUT', headers: { 'content-type': 'application/json', origin: hub }, body: JSON.stringify(body) }).then((r) => r.json()) as Promise<any>;
 
 const { page: p, close } = await launch();
-const lines = () => p.eval<string[]>(`[...document.querySelectorAll('.msg-gone-line')].map((b) => b.textContent.trim())`);
+const lines = () => p.eval<string[]>(`[...document.querySelectorAll('.msg-gone .msg-gone-mark')].map((b) => b.textContent.trim())`);
 try {
   await p.size(1280, 900);
   await p.goto(`${hub}/#/c/${climb}`);
   await p.until(`document.querySelectorAll('.msg').length > 3`, 15000);
   await Bun.sleep(500);
   const gone = await lines();
-  check(gone.some((l) => l.startsWith('Deleted message')) && gone.some((l) => l.startsWith('Disappeared message')), 'deleted and disappeared messages as collapsed lines', gone);
-  check(!(await p.eval<string>(`document.querySelector('.timeline')?.innerText ?? document.body.innerText`)).includes('wrong chat lol'), 'their words hidden until opened');
-  await p.eval(`[...document.querySelectorAll('.msg-gone-line')].find((b) => b.textContent.startsWith('Deleted')).click()`);
-  await Bun.sleep(200);
-  check((await p.eval<string>(`document.querySelector('.msg-gone.open')?.innerText ?? ''`)).includes('wrong chat lol, ignore this'), 'opening one shows what it said');
+  check(gone.some((l) => l.startsWith('Deleted')) && gone.some((l) => l.startsWith('Disappeared')), 'deleted and disappeared messages marked as such', gone);
+  check((await p.eval<string>(`[...document.querySelectorAll('.msg-gone')].map((g) => g.innerText).join('\\n')`)).includes('wrong chat lol, ignore this'), 'shown in full, what it said with it');
   if (shots) await p.shot(`${shots}/history-chat.png`);
 
   await p.eval(`document.querySelector('button.msg-edited.link').click()`);
@@ -107,10 +104,23 @@ try {
   await Bun.sleep(400);
   check((await lines()).length === 0 && !(await p.eval<boolean>(`[...document.querySelectorAll('.msg-body.deleted')].length > 0`)), 'and the chat no longer shows them');
 
-  // A network turned off, through the table's checkbox.
-  await put({ show: 'collapsed' });
+  // Shown everywhere but hidden in one chat, from the chat's page.
+  await put({ show: 'shown' });
+  await p.goto(`${hub}/#/about/c/${climb}`);
+  await p.until(`[...document.querySelectorAll('.pf-card')].some((c) => c.textContent.includes('Kept messages'))`, 10000);
+  await p.eval(`(() => { const s = [...document.querySelectorAll('.pf-card')].find((c) => c.textContent.includes('Kept messages')).querySelector('select'); s.value = 'hidden'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await Bun.sleep(400);
+  check(((await fetch(`${hub}/api/retention`).then((r) => r.json())) as any).showIn[climb] === 'hidden', 'the chat page hides them in this chat');
+  await p.goto(`${hub}/#/c/${climb}`);
+  await p.until(`document.querySelectorAll('.msg').length > 3`, 15000);
+  await Bun.sleep(400);
+  check((await lines()).length === 0, 'and the chat no longer shows them');
+  await put({ showIn: { [climb]: null } });
+
+  // A network turned off, through the table's checkbox (asked first).
   await p.goto(`${hub}/#/settings`);
   await p.until(`!!document.querySelector('#set-adversarial .hist-table')`, 10000);
+  await p.eval(`window.confirm = () => true`);
   await p.eval(`(() => { const row = [...document.querySelectorAll('#set-adversarial .hist-table tr.hist-net')].find((r) => r.textContent.includes('Signal')); row.querySelector('td input').click(); })()`);
   await Bun.sleep(400);
   const r = (await fetch(`${hub}/api/retention`).then((x) => x.json())) as any;
