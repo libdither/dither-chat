@@ -158,8 +158,21 @@ const SETTABLE = new Set(['topic', 'bio', 'status', 'pronouns']);
 const PRESENCE_STATES = new Set<string>(['online', 'idle', 'dnd', 'offline']);
 const PRESENCE_DEVICES = new Set<string>(['desktop', 'mobile', 'web']);
 
-/** Bump when a migration step changes without schema.sql changing, so the database is copied before it runs. */
+/**
+ * Bump when a migration step changes without schema.sql changing, so the database is copied before it runs. Mail's
+ * migration steps (mail/store.ts) count here too, when no mail schema file changes with them.
+ */
 const MIGRATIONS = 4;
+
+/** mail/schema*.sql as MailStore runs them (mail/store.ts mailSchemas), read here without importing mail's store. */
+function mailSchemaText(): string {
+  const dir = new URL('./mail/', import.meta.url);
+  return readdirSync(dir)
+    .filter((f) => /^schema(?:-[\w-]+)?\.sql$/.test(f))
+    .sort()
+    .map((f) => readFileSync(new URL(f, dir), 'utf8'))
+    .join('\n');
+}
 
 export class Store {
   readonly db: Database;
@@ -191,8 +204,9 @@ export class Store {
     timer.step('db open');
     const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
     // A schema (or migration code) this database has not met yet: copy it first (backups/pre-migrate-*), then take
-    // every step in one transaction, so a crash part way leaves the database as it was, not half moved.
-    const sig = createHash('sha256').update(`${MIGRATIONS}\n${schema}`).digest('hex').slice(0, 16);
+    // every step in one transaction, so a crash part way leaves the database as it was, not half moved. Mail's schema
+    // files count too: MailStore migrates its tables in the same database when MailHub starts, after this.
+    const sig = createHash('sha256').update(`${MIGRATIONS}\n${schema}\n${mailSchemaText()}`).digest('hex').slice(0, 16);
     const known = this.schemaSig();
     if (known !== null && known !== sig) {
       this.snapshotBeforeMigrating(path);

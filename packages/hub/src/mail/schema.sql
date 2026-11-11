@@ -26,7 +26,11 @@ CREATE TABLE IF NOT EXISTS mail_account (
   send_cap     INTEGER,                         -- status.details.sendCap: the most bytes of files one message may carry; NULL: not said
   max_recipients INTEGER,                       -- status.details.maxRecipients: the most addresses in To, Cc and Bcc together; NULL: not said
   provider     TEXT,                            -- status.details.provider: 'Gmail' and the like; NULL: not said
-  hidden       INTEGER NOT NULL DEFAULT 0,
+  background_lane INTEGER,                      -- status.details.backgroundLane: 1 it takes `background` on reads (keep.ts); NULL: not said
+  search_ids   INTEGER,                         -- status.details.searchIds: 1 its search pages ids only (keep.ts audits)
+  background_stopped TEXT,                      -- status.details.backgroundStopped: 'challenge' | 'signedOut' | 'quota'; NULL: reading
+  storage      TEXT,                            -- JSON {text, used, total}: what the status says of the account's storage
+  hidden      INTEGER NOT NULL DEFAULT 0,
   gone_at      INTEGER,                         -- access ended: everything of it goes 24 h later
   created_at   INTEGER NOT NULL
 );

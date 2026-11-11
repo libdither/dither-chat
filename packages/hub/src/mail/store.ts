@@ -139,27 +139,31 @@ export class MailStore {
     private now: () => number = Date.now,
   ) {
     this.db.transaction(() => {
+      // Columns added since a table was first made go onto a database from before them FIRST: the schema files' indexes
+      // and triggers may name them, and running those against the old table fails (#95's index on mail_text.cut
+      // stopped the live hub's start). A table not made yet gets them from its CREATE TABLE in the schema files.
+      // A new column goes here, in MAIL_COLUMNS, as well as in its CREATE TABLE (test/mail-migrate.test.ts checks both).
+      const added = new Set<string>();
+      for (const [table, cols] of Object.entries(MAIL_COLUMNS)) for (const c of this.addColumns(table, cols)) added.add(`${table}.${c}`);
       for (const sql of mailSchemas()) this.db.exec(sql);
       // Before summary_headers: bulk was only ever stored from summaries, so an account with some had headers there.
-      if (this.addColumns('mail_account', { summary_headers: 'INTEGER', headers_seen: 'INTEGER' }).includes('headers_seen')) {
+      if (added.has('mail_account.headers_seen')) {
         this.run('UPDATE mail_account SET headers_seen = 1 WHERE id IN (SELECT DISTINCT account_id FROM mail_message WHERE bulk IS NOT NULL)');
       }
-      // What the extractor's status says of the account (setStatus): empty until it says, and from one that never does.
-      this.addColumns('mail_account', { id_per_message: 'INTEGER', send_cap: 'INTEGER', max_recipients: 'INTEGER', provider: 'TEXT' });
-      // The server's emailId (Gmail's X-GM-MSGID): empty on rows from before it, and on Proton's, which have none.
-      this.addColumns('mail_message', { email_id: 'TEXT' });
       this.db.exec('CREATE INDEX IF NOT EXISTS mail_message_email ON mail_message(account_id, email_id) WHERE email_id IS NOT NULL');
-      // Keeping all mail (keep.ts): what the status says of background reads and of the account's storage.
-      this.addColumns('mail_account', { background_lane: 'INTEGER', search_ids: 'INTEGER', background_stopped: 'TEXT', storage: 'TEXT' });
       // Search text from before `cut`: what was as long as the cap then was cut to it.
-      if (this.addColumns('mail_text', { cut: 'INTEGER NOT NULL DEFAULT 0' }).length) this.run('UPDATE mail_text SET cut = ?1 WHERE length(text) >= ?1', MAIL_LIMITS.textBytes);
+      if (added.has('mail_text.cut')) this.run('UPDATE mail_text SET cut = ?1 WHERE length(text) >= ?1', MAIL_LIMITS.textBytes);
       searchFiles(this);
     })();
   }
 
-  /** Columns added since a table was first made (new databases have them from the schema). Returns those it added. */
+  /**
+   * Columns added since a table was first made (new databases have them from the schema). Returns those it added; none
+   * to a table that is not there yet (its CREATE TABLE will have them).
+   */
   addColumns(table: string, cols: Record<string, string>): string[] {
     const have = this.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name);
+    if (!have.length) return [];
     const added = Object.keys(cols).filter((c) => !have.includes(c));
     for (const c of added) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${c} ${cols[c]}`);
     return added;
@@ -1293,6 +1297,36 @@ function searchFiles(store: MailStore) {
   db.exec(readFileSync(new URL('./schema-search.sql', import.meta.url), 'utf8'));
   db.exec(`INSERT INTO mail_fts (mail_fts) VALUES ('rebuild')`);
 }
+
+/**
+ * Every column added to a mail table after the table was first made, by table: MailStore adds them to a database from
+ * before them, before the schema files run (their indexes and triggers may name them). Each is also in its table's
+ * CREATE TABLE, for a new database (test/mail-migrate.test.ts checks that the two agree). mail_search's `files` is not
+ * here: it rebuilds the full-text index (searchFiles).
+ */
+export const MAIL_COLUMNS: Record<string, Record<string, string>> = {
+  // summary_headers, headers_seen: what the status says of summaries' headers, and whether any summary had some.
+  // id_per_message … provider: what the extractor's status says of the account (setStatus).
+  // background_lane … storage: keeping all mail (keep.ts), what the status says of background reads and storage.
+  mail_account: {
+    summary_headers: 'INTEGER',
+    headers_seen: 'INTEGER',
+    id_per_message: 'INTEGER',
+    send_cap: 'INTEGER',
+    max_recipients: 'INTEGER',
+    provider: 'TEXT',
+    background_lane: 'INTEGER',
+    search_ids: 'INTEGER',
+    background_stopped: 'TEXT',
+    storage: 'TEXT',
+  },
+  // The server's emailId (Gmail's X-GM-MSGID): empty on rows from before it, and on Proton's, which have none.
+  mail_message: { email_id: 'TEXT' },
+  // Where a kept account's search text was cut (keep.ts); the store sets it on rows from before it.
+  mail_text: { cut: 'INTEGER NOT NULL DEFAULT 0' },
+  // Triage (triage.ts): rated after a sync found it, and what it was before a change.
+  mail_triage: { quiet: 'INTEGER NOT NULL DEFAULT 0', was: 'TEXT' },
+};
 
 /** schema.sql, then each slice's schema-*.sql in name order. */
 export function mailSchemas(): string[] {
