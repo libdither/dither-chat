@@ -188,9 +188,16 @@ export function seedWorld(dir: string, opts: { scale?: number; anchor?: number }
         if (rnd() < 0.03) att.run(hubId('att', acc.network, `${nativeId}#0`), id, IMG);
         if (rnd() < 0.045) tally.run(id, pick(['👍', '❤️', '😂', '🎉']), 1 + int(5));
         if (ts >= since) {
+          // As the tiers have it on a real hub (docs/notifications.md): a DM is a Conversation and now and then an
+          // alert; in a server nearly everything falls below the list, a few reach it, and one about you is a
+          // Conversation. Every decision has its importance. (The draws are the three the levels took, so the rest of
+          // the world is as it was.)
           const d = rnd();
-          const decision = d < 0.004 ? 'push' : d < 0.008 ? 'quiet' : d < 0.009 ? 'silent' : d < 0.33 ? 'drop' : 'digest';
-          tri.run(id, decision, rnd() < 0.012 ? Math.round(rnd() * 500) / 1000 : null, ts + 2_000);
+          const r = rnd();
+          if (r < 0.012) rnd();
+          const decision = !rooms.length ? (d < 0.01 ? 'push' : 'quiet') : d < 0.001 ? 'silent' : d < 0.002 ? 'push' : d < 0.012 ? 'quiet' : d < 0.04 ? 'digest' : 'drop';
+          const score = decision === 'silent' ? null : decision === 'drop' ? Math.round(r * 550) / 1000 : decision === 'digest' ? Math.round(600 + r * 390) / 1000 : 0.8;
+          tri.run(id, decision, score, ts + 2_000);
           triaged++;
         }
         ids.push(id);

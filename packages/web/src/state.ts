@@ -53,7 +53,7 @@ export async function loadMailTriage() {
   changed('list');
 }
 
-/** Thread views carry their newest decision: the week's mail decisions follow them (new mail, a read, a vote elsewhere). */
+/** Thread views carry their newest decision: the week's mail decisions follow them (new mail, a read, a mark elsewhere). */
 function mergeMailTriage(threads: P.MailThreadView[]) {
   const fresh = threads.map((t) => t.triage).filter((x): x is P.MailTriageItem => !!x);
   if (!fresh.length) return;
@@ -61,7 +61,7 @@ function mergeMailTriage(threads: P.MailThreadView[]) {
   let moved = false;
   for (const x of fresh) {
     const was = by.get(x.id);
-    if (was && was.unread === x.unread && was.triage.feedback === x.triage.feedback && was.triage.decision === x.triage.decision) continue;
+    if (was && was.unread === x.unread && !!was.triage.marks?.less === !!x.triage.marks?.less && was.triage.decision === x.triage.decision) continue;
     by.set(x.id, x);
     moved = true;
   }
@@ -346,7 +346,7 @@ export function applyEvents(events: P.ClientEvent[]) {
           quoted.set(m.id, m);
           timelineChanged();
         }
-        if (m.triage && m.triage.decision !== 'silent' && (m.triage.feedback ?? m.triage.decision) !== 'drop') mergeInbox([m]);
+        if (m.triage && m.triage.decision !== 'silent' && m.triage.decision !== 'drop') mergeInbox([m]);
         // Perhaps the message a pending copy became: matched below, once the frame is applied.
         if (pending.value.length && isSelfIdentity(m.authorId)) noteEcho(m);
         break;
@@ -410,9 +410,14 @@ export function quietHere(ev: { quiet?: string[] }): boolean {
   }
 }
 
+/**
+ * Only an alert shows on a page, as a toast or a system notification. A Conversation or a list row is a silent
+ * notification on a phone (the hub sends it there): here its message only moves the lists and the badges.
+ */
+export const showsHere = (ev: Extract<P.ClientEvent, { t: 'notify' }>) => (!ev.level || ev.level === 'push') && !quietHere(ev);
+
 function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
-  // Active is a silent notification on a phone (the hub sends it there): here it is only a row in the inbox.
-  if (quietHere(ev) || ev.level === 'quiet') return;
+  if (!showsHere(ev)) return;
   const r = route.value;
   const here = (!!ev.conversationId && 'conv' in r && r.conv === ev.conversationId) || (!!ev.mailThreadId && r.view === 'mail' && r.thread === ev.mailThreadId);
   const viewing = here && document.visibilityState === 'visible';
@@ -425,7 +430,7 @@ function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
     const show = (reg?: ServiceWorkerRegistration) => {
       // The worker draws the picture and the network's badge, as it does for a push (sw.js).
       if (reg?.active) return reg.active.postMessage({ t: 'notify', d: { title: ev.title, body: ev.body, conversationId: ev.conversationId, inbox: !ev.conversationId, icon: ev.icon, network: ev.network, nid: ev.nid, ...(conv ? { conv } : {}) } });
-      const opts = { body: ev.body, tag: ev.conversationId ?? 'dither-digest', icon: conv?.icon ?? ev.icon, data: { conversationId: ev.conversationId, inbox: !ev.conversationId } };
+      const opts = { body: ev.body, tag: ev.conversationId ?? 'dither-inbox', icon: conv?.icon ?? ev.icon, data: { conversationId: ev.conversationId, inbox: !ev.conversationId } };
       if (reg) reg.showNotification(ev.title, opts);
       else new Notification(ev.title, opts).onclick = () => go({ view: 'inbox', conv: ev.conversationId });
     };
@@ -675,7 +680,7 @@ export async function loadInbox() {
   const [page] = await Promise.all([api<P.InboxPage>('/api/inbox'), loadMailTriage()]);
   page.identities.forEach(putIdentity);
   inbox.value = page.items.map((i) => i.message);
-  // What pinged you is counted from the inbox, behind a memo keyed on the data version.
+  // The badge is counted from the inbox, behind a memo keyed on the data version.
   changed('list');
 }
 
@@ -965,7 +970,8 @@ export function markRead(conversationId: string) {
   );
 }
 
-export const setRule = (scope: P.NotifyScope, target: string | null, level: P.NotifyLevel | null) => api('/api/rules', { method: 'PUT', body: { scope, target, level } });
+/** A rule on a place, a person or a keyword: Always alert, List only or Mute; null takes it away (Automatic). */
+export const setRule = (scope: P.NotifyScope, target: string | null, level: P.RuleLevel | null) => api('/api/rules', { method: 'PUT', body: { scope, target, level } });
 /** Shown at once; the hub's event confirms it, and a failure resyncs. */
 export function saveFolders(folders: P.FolderView[]) {
   db.folders = folders;

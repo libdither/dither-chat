@@ -245,26 +245,40 @@ export interface SendResult {
 
 export interface TriageView {
   decision: TriageDecision;
-  /** How much it matters, 0 to 1: the mean of the three chances below. The digest is sorted by it. */
+  /** Its importance, 0 to 1 (the model's `important` chance): the phone's list and the inbox sort by it. */
   score: number | null;
   reasons: string[];
-  /** 'learned': what your votes taught moved it from where the network's own settings put it (docs/notifications.md). */
+  /** 'learned': what your marks taught moved it from where it started (docs/notifications.md). */
   decidedBy: 'rules' | 'model' | 'learned';
-  /** The level you voted it to, if you did. */
+  /** Your marks on it, if any. */
+  marks?: TriageMarks | null;
+  /** A vote from before the tiers (the level you voted it to), kept as an example of importance. */
   feedback: NotifyTier | null;
-  /** The model's three chances: worth a ping, worth a silent notification, worth the digest. */
+  /** The model's two chances. */
   probs?: TriageProbs | null;
+  /** The local model's answer to "does this need the reader within an hour or two?", 0 to 1, when it was asked. */
+  judge?: number | null;
+  /** The bar that answer was held to: lower in DMs and messages about you (learn.ts `ALERT_BAR`). With `judge`. */
+  bar?: number;
 }
 
-/** What the decision model predicts for a message (docs/notifications.md). */
+/**
+ * What you said of a decision (POST /api/messages/:id/feedback). `alert` true: it should have alerted; false: the
+ * alert was wrong. `less`: less like this (it was not important). Absent or null: no mark.
+ */
+export interface TriageMarks {
+  alert?: boolean | null;
+  less?: boolean | null;
+}
+
+/** What the decision model predicts for a message (docs/notifications.md): worth an alert, and its importance. */
 export interface TriageProbs {
-  ping: number;
-  active: number;
-  interesting: number;
+  alert: number;
+  important: number;
 }
 export type TriageHead = keyof TriageProbs;
 
-/** Something the model learned from your votes: a feature, in words, and how far it moves one of the three chances. */
+/** Something the model learned from your marks: a feature, in words, and how far it moves one of the chances. */
 export interface LearnedFactorView {
   /** The feature, stable: for forgetting it. */
   key: string;
@@ -272,27 +286,29 @@ export interface LearnedFactorView {
   head: TriageHead;
   /** In log-odds: +1 roughly doubles the odds again over. */
   weight: number;
-  /** Votes it was part of. */
+  /** Marks it was part of. */
   votes: number;
 }
 
-/** What triage has learned from your votes, and how well it fits them. */
+/** What triage has learned from your marks, and how well it fits them. */
 export interface TriagePolicyView {
   factors: LearnedFactorView[];
   /** Features you told it to forget: never learned again. */
   rejected: { key: string; text: string }[];
+  /** Marks (and votes from before the tiers) it learns from. */
   votes: number;
-  /** Votes the model gets wrong, and that the networks' own settings alone would. */
+  /** Marks the model gets wrong, and that its starting chances alone would. */
   errors: number;
   baseline: number;
-  /** A message pings at `ping` or more, is Active at `active`, goes in the digest at `interesting`. */
+  /** A message alerts at `alert` or more, and reaches the list at `important` or more (your level, PUT /api/triage/level). */
   thresholds: TriageProbs;
+  /** The local model's answer at which a message alerts before any mark: in DMs and messages about you, and elsewhere. */
+  bars: { direct: number; other: number };
+  /** Chats a day the list would have held over the last week, at each level you could set. */
+  preview: { level: number; perDay: number }[];
   learnedAt: number | null;
   /** Why it last learned. */
   lastReason: string | null;
-  /** The local model's prompt, written from what was learned; shown whether or not a model is set. */
-  prompt: string | null;
-  model: string | null;
 }
 
 /**
@@ -303,15 +319,12 @@ export interface TriageShadowView {
   days: number;
   /** The oldest decision with a shadow, or null with none yet. */
   since: number | null;
-  /** Decisions with a shadow. */
+  /** Decisions with a shadow, outside the Conversation tier. */
   decided: number;
-  /** Pings and silent notifications: as decided, and as the shadow would have. */
-  live: { ping: number; active: number };
-  shadow: { ping: number; active: number };
-  /** Messages you answered within 15 minutes that both pinged; that only the live model pinged (the shadow would have missed them); that only the shadow would have. */
-  answered: { both: number; missed: number; gained: number };
-  /** Decisions exploration changed (DITHER_TRIAGE_EXPLORE): tried as Active, or held from Important to Active. */
-  explored: { up: number; down: number };
+  /** Of those, at the list or above: as decided, as the shadow's importance would have, and by both. */
+  live: number;
+  shadow: number;
+  both: number;
 }
 
 /** A link preview or bot card attached to a message. */
@@ -936,13 +949,6 @@ export interface QuietHours {
   allowStarred: boolean;
 }
 
-/** One notification a day about what the inbox's digest gathered. The time is in `timezone`, the zone of the device that set it. */
-export interface DailyDigest {
-  enabled: boolean;
-  time: string; // "18:00"
-  timezone: string;
-}
-
 export interface RuleView {
   id: string;
   scope: NotifyScope;
@@ -1057,8 +1063,8 @@ export type ClientEvent =
   | { t: 'conversation.removed'; id: string }
   | { t: 'message'; message: MessageView; identities: IdentityView[]; live: boolean }
   | { t: 'message.deleted'; id: string; conversationId: string }
-  /** No conversation: it is about the inbox as a whole (the daily digest). */
-  | { t: 'notify'; messageId?: string; conversationId?: string; title: string; body: string; reasons: string[]; /** Important or Active; absent is Important. */ level?: 'push' | 'quiet'; /** The notification's id in the activity log (docs/activity.md). */ nid?: string; /** Devices whose own rules keep this quiet (docs/devices.md). */ quiet?: string[]; /** The sender's (or the place's) picture, a hub media path. */ icon?: string; network?: Network; /** About a mail thread (slice 9): `conversationId` is the thread too. */ mailThreadId?: string; /** About a request waiting on you (docs/add.md): it opens under Requests. */ requestId?: string }
+  /** No conversation: it is about a request, or about what quiet hours held. */
+  | { t: 'notify'; messageId?: string; conversationId?: string; title: string; body: string; reasons: string[]; /** Its tier; absent is an alert. */ level?: 'push' | 'quiet' | 'digest'; /** The notification's id in the activity log (docs/activity.md). */ nid?: string; /** Devices whose own rules keep this quiet (docs/devices.md). */ quiet?: string[]; /** The sender's (or the place's) picture, a hub media path. */ icon?: string; network?: Network; /** About a mail thread (slice 9): `conversationId` is the thread too. */ mailThreadId?: string; /** About a request waiting on you (docs/add.md): it opens under Requests. */ requestId?: string }
   /**
    * Someone started typing (it lasts `ttl` ms unless another start comes) or `stop`ped. Of the moment: not journaled,
    * and a client that reconnects simply does not see it. `name` only when the hub knows no name for the identity.

@@ -4,7 +4,7 @@ export type Route =
   | { view: 'inbox'; conv?: string; msg?: string }
   /** Catch up (docs/inbox.md#catch-up). On a desktop it is the inbox with nothing open; a phone gives it a tab of its own. */
   | { view: 'triage' }
-  /** How it sorts (docs/notifications.md#voting): where triage put each conversation's messages this week, and why. */
+  /** How it sorts (docs/notifications.md): which tier triage put each conversation's messages in this week, and why. */
   | { view: 'model' }
   /** graph: the people graph (graph/GraphView.tsx) in place of a thread. */
   | { view: 'people'; person?: string; graph?: boolean }

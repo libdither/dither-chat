@@ -1,6 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
-import { accountsNeedingYou, pingedCount, rootCommunity, totalUnread } from '../model.ts';
+import { accountsNeedingYou, inboxBadge, rootCommunity, totalUnread } from '../model.ts';
 import { adoptEntry, api, connected, db, go, loaded, pending, prefs, previousRoute, readProgress, refresh, rev, route, setListUnder, unreachable, type Route } from '../state.ts';
 import { isPage, isTabRoot, listKey, listToWrite, ownList, restAfter, wayBack, type Places } from '../pages.ts';
 import { dropLayer, phone, pushLayer } from '../phone.ts';
@@ -208,8 +208,8 @@ function TabBar({ r }: { r: Route }) {
   const attention = [...db.accounts.values()].some((a) => a.attention);
   const tabs: { id: Tab; label: string; icon: string; to: () => Route; badge?: number; dot?: boolean }[] = [
     { id: 'home', label: 'Home', icon: 'home', to: () => lastHome, badge: all },
-    // Its badge is what the push counts as Important and unread, and accounts that need you.
-    { id: 'triage', label: 'Catch up', icon: 'checks', to: () => ({ view: 'triage' }), badge: pingedCount() + accountsNeedingYou().length },
+    // Its badge is the unread alerts and Conversation messages, and accounts that need you.
+    { id: 'triage', label: 'Catch up', icon: 'checks', to: () => ({ view: 'triage' }), badge: inboxBadge() + accountsNeedingYou().length },
     { id: 'search', label: 'Search', icon: 'search', to: () => ({ view: 'search', q: '' }) },
     { id: 'you', label: 'You', icon: 'user', to: () => ({ view: 'settings' }), dot: attention },
   ];

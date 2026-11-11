@@ -34,7 +34,8 @@ export type MenuEntry =
       track?: string;
     }
   | { kind: 'sep' }
-  | { kind: 'label'; label: string }
+  /** A heading over the entries below it; `note`: a plain line about the entry above it instead. */
+  | { kind: 'label'; label: string; note?: boolean }
   /** Anything else in a row of its own, such as quick reactions. Not reachable by arrow keys. */
   | { kind: 'row'; render: (close: () => void, sheet: boolean) => ComponentChildren };
 
@@ -196,7 +197,7 @@ function Panel({ items, x, y, flipX, depth, onClose, onBack, autoFocus, track }:
       <div class={`cm ${depth ? 'cm-sub' : ''}`} ref={box} role="menu" tabIndex={-1} onKeyDown={key} style={{ visibility: 'hidden' }} onContextMenu={(e) => e.preventDefault()}>
         {items.map((e, i) => {
           if (e.kind === 'sep') return <div class="cm-sep" role="separator" />;
-          if (e.kind === 'label') return <div class="cm-label">{e.label}</div>;
+          if (e.kind === 'label') return <div class={`cm-label ${e.note ? 'note' : ''}`}>{e.label}</div>;
           if (e.kind === 'row') return <div class="cm-row">{e.render(onClose, false)}</div>;
           return (
             <button
@@ -293,7 +294,7 @@ function SheetMenu({ spec, onClose }: { spec: MenuSpec; onClose: () => void }) {
       <div class="sheet-actions" role="menu" data-track-area={spec.track}>
         {items.map((e) => {
           if (e.kind === 'sep') return <div class="cm-sep" role="separator" />;
-          if (e.kind === 'label') return <div class="cm-label">{e.label}</div>;
+          if (e.kind === 'label') return <div class={`cm-label ${e.note ? 'note' : ''}`}>{e.label}</div>;
           if (e.kind === 'row') return e.render(onClose, true);
           return (
             <button

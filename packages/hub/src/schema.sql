@@ -331,9 +331,10 @@ CREATE TABLE IF NOT EXISTS push_subscription (
   last_arrived_at INTEGER                    -- the device said a test push reached it
 );
 
--- Most specific scope wins: conversation > thread parent > section > community
--- > account > network > global. Person and keyword rules can only raise
--- urgency (push), never silence a conversation the user asked to hear.
+-- A rule of yours on a place or a person (docs/notifications.md): 'all' always alerts, 'digest' keeps a place to
+-- the list, 'none' mutes it; no rule is Automatic. Most specific scope wins: conversation > thread parent > section >
+-- community > account > network > global. 'mentions' and 'smart' are from before the tiers: 'mentions' still reads
+-- as "the network notifies only mentions here", 'smart' rows are deleted at the migration.
 CREATE TABLE IF NOT EXISTS notify_rule (
   id         TEXT PRIMARY KEY,
   scope      TEXT NOT NULL CHECK (scope IN ('global', 'network', 'account', 'space', 'conversation', 'person', 'keyword')),
@@ -344,27 +345,33 @@ CREATE TABLE IF NOT EXISTS notify_rule (
 );
 
 -- Every live message gets a decision and the reasons for it, so the UI can
--- answer "why did this ping me?" and learn from corrections.
--- 'push' is Important, 'quiet' Active, 'drop' below the digest (docs/notifications.md).
+-- answer "why did this alert me?" and learn from your marks.
+-- The tier, by the codes of the four levels it replaced: 'push' is Alert, 'quiet' Conversation, 'digest' List,
+-- 'drop' below the list (docs/notifications.md).
 CREATE TABLE IF NOT EXISTS triage (
   message_id  TEXT PRIMARY KEY REFERENCES message(id) ON DELETE CASCADE,
   decision    TEXT NOT NULL CHECK (decision IN ('push', 'quiet', 'digest', 'drop', 'silent')),
-  score       REAL,                          -- how much it matters, 0 to 1: the digest is sorted by it
+  score       REAL,                          -- its importance, 0 to 1: the list and the inbox sort by it
   reasons     TEXT NOT NULL,                 -- JSON string[]
   decided_by  TEXT NOT NULL,                 -- 'rules' | 'model' | 'learned'
-  feedback    TEXT CHECK (feedback IN ('push', 'quiet', 'digest', 'drop')),  -- the level you voted it to
+  feedback    TEXT CHECK (feedback IN ('push', 'quiet', 'digest', 'drop')),  -- a vote from before the tiers: the level you voted it to
   feedback_at INTEGER,
   facts       TEXT,                          -- JSON learn.ts Facts: what it was decided from, for training
-  probs       TEXT,                          -- JSON { ping, active, interesting }: the model's chances
-  shadow      TEXT,                          -- JSON { ping, active, interesting }: the candidate model's, which never decides
-  explore     TEXT,                          -- 'up' | 'down': exploration changed the decision (shadow.ts)
-  propensity  REAL,                          -- the chance of what was done, when exploration drew; NULL when it did not
-  created_at  INTEGER NOT NULL
+  probs       TEXT,                          -- JSON { alert, important }: the model's chances ({ ping, active, interesting } before the tiers)
+  shadow      TEXT,                          -- JSON, as probs: the candidate model's, which never decides
+  explore     TEXT,                          -- from before the tiers: 'up' | 'down', exploration changed the decision
+  propensity  REAL,                          -- from before the tiers: the chance of what exploration did
+  created_at  INTEGER NOT NULL,
+  was         TEXT,                          -- the level it was decided at before the tiers, when it was
+  alert_mark  INTEGER,                       -- your mark: 1 it should have alerted, 0 the alert was wrong
+  less_mark   INTEGER,                       -- your mark: 1 less like this
+  marked_at   INTEGER
 );
 CREATE INDEX IF NOT EXISTS triage_created ON triage(created_at);
--- The inbox's picks by level, best first (store.ts inboxQueries).
-CREATE INDEX IF NOT EXISTS triage_level_score ON triage(COALESCE(feedback, decision), score);
+-- The inbox's picks by tier, best first (store.ts inboxQueries).
+CREATE INDEX IF NOT EXISTS triage_tier_score ON triage(decision, score);
 CREATE INDEX IF NOT EXISTS triage_feedback ON triage(feedback_at) WHERE feedback IS NOT NULL;
+CREATE INDEX IF NOT EXISTS triage_marked ON triage(marked_at) WHERE marked_at IS NOT NULL;
 
 -- Live messages handed to triage and not yet decided (main.ts): a restart decides what a crash left in the queue.
 CREATE TABLE IF NOT EXISTS triage_pending (
@@ -501,11 +508,11 @@ CREATE INDEX IF NOT EXISTS visit_conv ON visit(conversation_id, start_at) WHERE 
 CREATE INDEX IF NOT EXISTS visit_person ON visit(person_id, start_at) WHERE person_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS visit_push ON visit(push_id) WHERE push_id IS NOT NULL;
 
--- Every push and digest the hub sends, by the id the device sees (`nid` in the payload), and what came of it.
+-- Every push the hub sends, by the id the device sees (`nid` in the payload), and what came of it.
 -- The *_at columns are the first time any device said so; notification_event has each device's word.
 CREATE TABLE IF NOT EXISTS notification (
   id              TEXT PRIMARY KEY,
-  kind            TEXT NOT NULL,             -- message, held (quiet hours summary), digest, request (docs/add.md)
+  kind            TEXT NOT NULL,             -- message, held (quiet hours summary), request (docs/add.md); digest, before the tiers
   message_id      TEXT,
   conversation_id TEXT,
   sent_at         INTEGER NOT NULL,

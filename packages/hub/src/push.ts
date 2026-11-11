@@ -332,7 +332,7 @@ export class PushService {
     await Promise.all(rows.map((r) => this.deliver(r, { clear: conversationId, device: r.id })));
   }
 
-  /** Registrations that are not phones (by the label the page gave): Active, a silent phone notification, skips them. */
+  /** Registrations that are not phones (by the label the page gave): only an alert reaches them. */
   desktops(): string[] {
     return (this.store.db.query('SELECT id, device, label FROM push_subscription').all() as Row[]).filter((r) => !PHONE.test(r.label ?? '')).map((r) => r.device || r.id);
   }

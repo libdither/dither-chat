@@ -34,7 +34,7 @@ export const SMALL_GROUP = 6;
 /** Reply latency histogram: bucket i counts replies within LATENCY_EDGES[i] and after the edge before it. */
 export const LATENCY_EDGES = [5 * MIN, 15 * MIN, 30 * MIN, HOUR, 2 * HOUR, 4 * HOUR, 8 * HOUR, 16 * HOUR, DAY, 2 * DAY, REPLY_WINDOW];
 /** Bumped when the fold changes meaning: every conversation folds again, in the background. */
-export const FEATURE_VERSION = 2;
+export const FEATURE_VERSION = 3;
 /** A conversation that got older messages folds again once none have arrived for this long. */
 const QUIET = 5_000;
 /** Scores move with time (an unanswered message ages, recency fades): all are recomputed this often. */
@@ -66,7 +66,7 @@ export interface Turn {
 export interface ConvState {
   /** The decayed sums below are as of this time. */
   at: number;
-  /** Messages from others, from you, and pushes triage sent: decayed. */
+  /** Messages from others, from you, and those triage put in a tier (an alert, a Conversation, the list): decayed. */
   received: number;
   sent: number;
   pushed: number;
@@ -78,7 +78,7 @@ export interface ConvState {
   /** The last message was yours. */
   lastWasMine: boolean;
   turn: Turn | null;
-  /** The latest message triage pushed. */
+  /** The latest message triage put in a tier. */
   lastPush: { ts: number; id: string } | null;
 }
 
@@ -304,8 +304,12 @@ export const WEIGHTS = {
   unreadCap: 3,
   /** Anything unread at all. */
   unreadAny: 8,
-  /** Triage pushed something you have not read. */
+  /** An alert or a Conversation message you have not read (or swiped away). */
   pinged: 15,
+  /** An alert you have not seen, on top: with `ALERT_PIN` it sorts before everything else. */
+  alerted: 40,
+  /** The importance, 0 to 1, of the newest unread message triage put in a tier, times this. */
+  importance: 25,
   /** A conversation going on now (you wrote, they wrote around then), halving each `liveHalfLife` after your last message. */
   live: 30,
   liveHalfLife: 30 * MIN,
@@ -342,9 +346,13 @@ export interface ScoreInput {
   authorName: string | null;
   unread: number;
   mentions: number;
-  /** The first reason of an unread message triage pushed. */
+  /** The first reason of an unread alert or Conversation message, until you swipe its notification away. */
   pinged: string | null;
-  /** Where the mute comes from, when the level is Nothing or Digest. */
+  /** That message is an alert. */
+  alerted?: boolean;
+  /** The importance, 0 to 1, of the newest unread message triage put in a tier (triage's `score`), until you swipe it away. */
+  importance?: number | null;
+  /** Where the mute comes from, when the place is muted or kept to the list. */
   muted: string | null;
   /** usage.ts: decayed seconds and visits (half-life a week) as of `at` (the last time you were there), and the last visit. */
   usage: { score: number; visitScore: number; at: number; lastVisit: number | null } | null;
@@ -358,6 +366,11 @@ export interface ScoreInput {
   level?: P.TriageDecision | null;
   votes?: { up: number; down: number } | null;
 }
+
+/** Added to the score of a conversation with an alert you have not seen: above any score the formula or the model gives. */
+export const ALERT_PIN = 1000;
+/** An alert is pinned this long at most: what could not wait an hour is, a day later, an unread message like any other. */
+export const PIN_FOR = DAY;
 
 /** A vote on a message counts half after two weeks, as far as the learned order goes. */
 export const VOTE_HALF_LIFE = 14 * DAY;
@@ -507,8 +520,13 @@ export function scoreConversation(x: ScoreInput): Scored {
     reasons.push({ w: parts.unread, text });
   }
   if (x.pinged) {
-    parts.pinged = W.pinged;
-    reasons.push({ w: parts.pinged, text: `Pinged you: ${x.pinged.length > 70 ? x.pinged.slice(0, 69) + '…' : x.pinged}` });
+    parts.pinged = W.pinged + (x.alerted ? W.alerted : 0);
+    const why = x.pinged.length > 70 ? x.pinged.slice(0, 69) + '…' : x.pinged;
+    reasons.push({ w: parts.pinged, text: x.alerted ? `Alerted you: ${why}` : why });
+  }
+  if (x.importance) {
+    parts.importance = W.importance * x.importance;
+    if (!x.pinged) reasons.push({ w: parts.importance, text: `On your list: importance ${Math.round(x.importance * 100)}%` });
   }
 
   // A conversation going on right now keeps its place above the line while the back-and-forth lasts, so the chat you
@@ -579,7 +597,7 @@ export function scoreConversation(x: ScoreInput): Scored {
 /**
  * A model's say in the order (docs/inbox.md). Two ways in:
  *  - `judge`: a local model asked "does this need a reply from me?" and "how important is it?" for a few candidate
- *    conversations, the way triage.ts asks Ollama. Nothing implements it yet; `Attention.judged` is where answers
+ *    conversations. Nothing implements it yet; `Attention.judged` is where answers
  *    would go, and `scoreConversation` already uses them.
  *  - `rank`: a learned order (ranker.ts), asked as each conversation is scored, with the formula's answer. Its score
  *    is what the inbox sorts by; `needs` and the reasons stay the formula's. Null keeps the formula's score.
@@ -612,7 +630,7 @@ const FOLD_SQL = `
   SELECT m.id, m.rowid AS rid, m.ts, m.author_id, m.mentions_self, m.mentions_all, m.kind, m.deleted, i.is_bot, i.person_id,
          r.author_id AS reply_author,
          EXISTS (SELECT 1 FROM reaction x JOIN identity xi ON xi.id = x.identity_id LEFT JOIN person xp ON xp.id = xi.person_id
-                 WHERE x.message_id = m.id AND (xp.is_self = 1 OR xi.id IN (SELECT self_identity FROM account))) AS reacted, t.decision IN ('push', 'quiet') AS pushed, t.reasons LIKE '%asks a question%' AS question
+                 WHERE x.message_id = m.id AND (xp.is_self = 1 OR xi.id IN (SELECT self_identity FROM account))) AS reacted, t.decision IN ('push', 'quiet', 'digest') AS pushed, t.reasons LIKE '%asks a question%' AS question
   FROM message m
   LEFT JOIN identity i ON i.id = m.author_id
   LEFT JOIN message r ON r.id = m.reply_to_id
@@ -816,7 +834,7 @@ export class Attention {
     if (!place) return;
     const s: ConvState = JSON.parse(row.state);
     const question = d.reasons.some((r) => r.includes('asks a question'));
-    if (lateTriage(s, place, { id: messageId, ts: m.ts, author: m.author_id, authorKey: m.person_id ?? m.author_id }, { pushed: d.decision === 'push' || d.decision === 'quiet', question })) {
+    if (lateTriage(s, place, { id: messageId, ts: m.ts, author: m.author_id, authorKey: m.person_id ?? m.author_id }, { pushed: d.decision === 'push' || d.decision === 'quiet' || d.decision === 'digest', question })) {
       db.query('UPDATE conv_feature SET state = ? WHERE conversation_id = ?').run(JSON.stringify(s), m.cid);
       this.pending.add(m.cid);
     }
@@ -845,9 +863,16 @@ export class Attention {
     const muted = quiet && !(c.shape === 'self' && !eff.explicit) ? eff.source : null;
     if (!listed && muted) return null;
     let pinged: string | null = null;
-    if (pushedUnread) {
-      const t = db.query('SELECT reasons FROM triage WHERE message_id = ?').get(state.lastPush!.id) as Row | null;
-      pinged = (t ? (JSON.parse(t.reasons) as string[])[0] : null) ?? 'a message you have not read';
+    let alerted = false;
+    let importance: number | null = null;
+    // Swiped away on the phone since: seen. It stays unread, and counts for nothing more here.
+    const seen = pushedUnread && ((db.query('SELECT MAX(dismissed_at) AS at FROM notification WHERE conversation_id = ?').get(cid) as Row | null)?.at ?? 0) >= state.lastPush!.ts;
+    if (pushedUnread && !seen) {
+      const t = db.query('SELECT decision, score, reasons FROM triage WHERE message_id = ?').get(state.lastPush!.id) as Row | null;
+      importance = t?.score ?? null;
+      alerted = t?.decision === 'push' && now - state.lastPush!.ts <= PIN_FOR;
+      // The list's rows have their importance; an alert or a Conversation says why it is one.
+      if (!t || t.decision === 'push' || t.decision === 'quiet') pinged = (t ? (JSON.parse(t.reasons) as string[])[0] : null) ?? 'a message you have not read';
     }
     const members = (db.query('SELECT COUNT(*) AS n FROM participant WHERE conversation_id = ?').get(cid) as Row).n;
     const nameOf = (identityId: string | null) =>
@@ -876,6 +901,8 @@ export class Attention {
       unread,
       mentions,
       pinged,
+      alerted,
+      importance,
       muted,
       usage: u ? { score: u.score, visitScore: u.visit_score, at: u.score_at, lastVisit: u.last_visit } : null,
       judged: this.judged.get(cid) ?? null,
@@ -929,7 +956,8 @@ export class Attention {
     const r = this.judge?.rank?.(cid, x, s) ?? null;
     // Lifted to learn about it: that comes first, since it is why the row is where it is.
     const reasons = !r?.reason ? s.reasons : r.reason === EXPLORE_REASON ? [r.reason, ...s.reasons.slice(0, 3)] : [...s.reasons.slice(0, 3), r.reason];
-    return { id: cid, score: r ? r.score : s.score, needs: s.needs, reasons, owedSince: s.owedSince, at: now };
+    // An alert you have not seen comes before everything, whatever the order learned.
+    return { id: cid, score: (r ? r.score : s.score) + (x.alerted ? ALERT_PIN : 0), needs: s.needs, reasons, owedSince: s.owedSince, at: now };
   }
 
   /** The view if it changed, 'removed' if the inbox no longer lists it, null if nothing changed. */
@@ -959,7 +987,7 @@ export class Attention {
     const ids = new Set<string>(this.views.keys());
     for (const r of db.query(`SELECT c.id FROM conversation c WHERE ${LISTED}`).all() as Row[]) ids.add(r.id);
     for (const r of db.query(`SELECT DISTINCT target_id AS id FROM vantage WHERE target_kind = 'conversation' AND mentions > 0`).all() as Row[]) ids.add(r.id);
-    for (const r of db.query(`SELECT DISTINCT m.conversation_id AS id FROM triage t JOIN message m ON m.id = t.message_id WHERE t.decision IN ('push', 'quiet') AND t.created_at > ?`).all(now - 14 * DAY) as Row[]) ids.add(r.id);
+    for (const r of db.query(`SELECT DISTINCT m.conversation_id AS id FROM triage t JOIN message m ON m.id = t.message_id WHERE t.decision IN ('push', 'quiet', 'digest') AND t.created_at > ?`).all(now - 14 * DAY) as Row[]) ids.add(r.id);
     const items: P.AttentionView[] = [];
     const removed: string[] = [];
     for (const id of ids) {

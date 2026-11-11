@@ -20,7 +20,7 @@ import { HubServer, mediaSigner } from './server.ts';
 import { Store } from './store.ts';
 import { RoutedSupervisor } from './remote.ts';
 import { Supervisor } from './supervisor.ts';
-import { Triage } from './triage.ts';
+import { STOP_QUESTION, Triage, URGENT, type Judge } from './triage.ts';
 import { TriageVotes } from './votes.ts';
 import { loadVapidKeys } from './webpush.ts';
 import { NightlyBackup, pruneMediaCache, rotateAdapterLogs, tightenPermissions } from './housekeeping.ts';
@@ -68,14 +68,11 @@ const store = new Store(join(dataDir, 'hub.sqlite'), mediaSigner(secret));
 startup.add(store.opening);
 // What the last run left undecided, before this run's adapters add their own (decided once the server is up).
 const leftover = store.takePendingTriage(Date.now() - 30 * 60_000);
-const model = process.env.DITHER_TRIAGE_MODEL
-  ? { url: process.env.DITHER_OLLAMA_URL ?? 'http://127.0.0.1:11434', name: process.env.DITHER_TRIAGE_MODEL }
-  : undefined;
 // The activity log (docs/activity.md). DITHER_ACTIVITY_FEATURES=1 lets triage see what it says, as reasons only.
 const activity = new ActivityStore(store, { featuresInTriage: args.includes('--activity-features') || process.env.DITHER_ACTIVITY_FEATURES === '1' });
 activity.prune(Date.now(), true);
 startup.mark('activity log');
-const triage = new Triage(store, model, activity);
+const triage = new Triage(store, activity);
 const votes = new TriageVotes(store, triage);
 const attention = new Attention(store, triage);
 // The inbox's learned order (ranker.ts, docs/inbox.md). DITHER_INBOX_RANK=shadow works it out without sorting by it; off.
@@ -94,7 +91,24 @@ attention.activity = activity;
 const embeddings = flag('embeddings') ? new Embeddings(store.db, join(dataDir, 'embeddings.sqlite'), { jev: new Jev(process.env.DITHER_JEV_URL ?? 'http://127.0.0.1:7862') }) : null;
 embeddings?.start();
 // The shadow model weighs them (votes.ts); the live decision does not.
-if (embeddings) triage.content = (id) => embeddings.features(id, 'ping');
+if (embeddings) triage.content = (id) => embeddings.features(id, 'important');
+// What reads a message that may alert (docs/notifications.md): jev, the machine's local model, unless
+// DITHER_ALERT_MODEL says otherwise: `keyword` (a demo hub's: urgent words) or `off` (only your rules alert).
+triage.judge = alertJudge();
+// Who wrote when, for the Conversation rule: folded now, not when the first message arrives.
+triage.warm();
+function alertJudge(): Judge | null {
+  const name = process.env.DITHER_ALERT_MODEL ?? (demo ? 'keyword' : 'jev');
+  if (name === 'off') return null;
+  if (name === 'keyword') return async (text) => (URGENT.test(text) ? 0.6 : 0.01);
+  try {
+    const jev = new Jev(process.env.DITHER_JEV_URL ?? 'http://127.0.0.1:7862', 10_000);
+    return async (text) => (await jev.judge(STOP_QUESTION, [text]))[0] ?? null;
+  } catch (e) {
+    console.error(`alerts: ${(e as Error).message}; only your rules alert`);
+    return null;
+  }
+}
 startup.mark('models');
 
 // Triage runs serially so notifications keep message order. Each message waits in triage_pending until it is decided,
@@ -119,7 +133,9 @@ async function triageNow(ids: string[]) {
       if (d.features) activity.keepInputs(id, d.features);
       store.dirty.messages.set(id, true);
       attention.triaged(id, d);
-      if (d.decision === 'push' || d.decision === 'quiet') deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', d.decision);
+      if (d.decision === 'push' || d.decision === 'quiet' || d.decision === 'digest') deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', d.decision, d.score);
+      // The local model was too slow: the message went out silent, and is read again once it has had time.
+      if (d.unjudged) setTimeout(() => void judgeLate(id), LATE_JUDGE_MS);
     } catch (e) {
       console.error('triage failed', id, e);
     } finally {
@@ -128,22 +144,47 @@ async function triageNow(ids: string[]) {
   }
 }
 
+/** How long after a decision the local model could not read in time it is asked again. */
+const LATE_JUDGE_MS = 20_000;
+/** A message the local model was too slow for, read again: if it is an alert after all, it goes out as one. */
+async function judgeLate(id: string) {
+  try {
+    const was = store.one<{ decision: string }>('SELECT decision FROM triage WHERE message_id = ?', id)?.decision;
+    const conversationId = store.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', id)?.conversation_id;
+    if (!conversationId || was === 'push' || was === 'silent') return;
+    const d = await triage.decide(id);
+    if (!d || d.unjudged || d.decision !== 'push') return;
+    store.setTriage(id, d, d.facts);
+    store.dirty.messages.set(id, true);
+    attention.triaged(id, d);
+    deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', 'push', d.score);
+  } catch (e) {
+    console.error('late alert check failed', id, e);
+  }
+}
+
 /** Each one gets an id the devices see (`nid`), so what they say happened to it lands in the activity log. */
 /**
- * Important ('push') goes everywhere; Active ('quiet') only to phones, silently, and to open pages as an entry in the
- * list rather than a notification (docs/notifications.md). A message's push carries its level and id, so the
- * notification can be voted up or down from where it shows.
+ * An alert ('push') goes everywhere and sounds. A Conversation ('quiet') and a list row ('digest') go only to phones,
+ * silently, and to open pages as an entry in the list rather than a notification (docs/notifications.md). A message's
+ * push carries its tier, its importance and its id, so the row can be sorted and marked from where it shows. `level`
+ * says the same to an app from before the tiers, which knows only 'push' and 'quiet'.
  */
-function deliver(title: string, body: string, conversationId: string, messageId: string, reasons: string[], pushExtra: Record<string, unknown> = {}, kind: 'message' | 'held' = 'held', level: 'push' | 'quiet' = 'push') {
+function deliver(title: string, body: string, conversationId: string, messageId: string, reasons: string[], pushExtra: Record<string, unknown> = {}, kind: 'message' | 'held' = 'held', tier: 'push' | 'quiet' | 'digest' = 'push', importance: number | null = null) {
+  // A chat's row in the list is brought up to date now and then, not with every message.
+  if (tier === 'digest' && !delivery.listDue(conversationId)) return;
   const nid = activity.notification({ kind, messageId, conversationId });
   // Devices whose own rules keep this off them: their push is not sent, and their open pages show no toast.
   const addressed = kind === 'message' && devices.addressed(messageId);
   const quiet = devices.quietOn(conversationId, addressed);
-  const skip = level === 'quiet' ? [...quiet, ...push.desktops()] : quiet;
+  const level = tier === 'push' ? 'push' : 'quiet';
+  const skip = tier === 'push' ? quiet : [...quiet, ...push.desktops()];
   const look = store.notifyLook(conversationId, kind === 'message' ? messageId : undefined);
-  const vote = kind === 'message' ? { messageId, level } : {};
-  const grouped = kind === 'message' ? delivery.plan(conversationId, messageId, level, addressed) : null;
-  server.notify({ t: 'notify', messageId, conversationId, title, body, reasons, ...look, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(level === 'quiet' ? { level } : {}) });
+  const vote = kind === 'message' ? { messageId, level, tier, ...(importance !== null ? { importance } : {}) } : {};
+  const grouped = kind === 'message' ? delivery.plan(conversationId, messageId, tier, addressed) : null;
+  // The row keeps the highest tier of what it shows (delivery.ts `Grouped.tier`); only this message's own tier sounds.
+  if (grouped?.tier && kind === 'message') Object.assign(vote, { tier: grouped.tier, level: grouped.tier === 'push' ? 'push' : 'quiet' });
+  server.notify({ t: 'notify', messageId, conversationId, title, body, reasons, ...look, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(tier !== 'push' ? { level: tier } : {}) });
   server
     .warm(pictures(look, grouped))
     .then(() => push.notify(title, body, conversationId, { ...pushExtra, ...look, ...vote, ...grouped, ...(nid ? { nid } : {}) }, skip, level))
@@ -157,45 +198,40 @@ function pictures(look: { icon?: string } | undefined, g: { conv?: { icon?: stri
 }
 
 /**
- * Mail's Important and Active (mail/triage.ts), as `deliver` sends chat's: one notification per thread (delivery.ts),
- * the devices whose rules keep Email or that account off left out (devices.ts), votes from the notification itself.
- * The push's conversation is the thread, which the app and the worker open beside the inbox.
+ * Mail's notifications (mail/triage.ts), as `deliver` sends chat's: an alert for mail from someone set to always
+ * alert, else a row on the list; one notification per thread (delivery.ts), the devices whose rules keep Email or that
+ * account off left out (devices.ts), marks from the notification itself. The push's conversation is the thread, which
+ * the app and the worker open beside the inbox.
  */
 function deliverMail(n: MailNotice) {
+  if (n.level === 'digest' && !delivery.listDue(n.threadId)) return;
   const nid = activity.notification({ kind: 'message', messageId: n.messageId, conversationId: n.threadId });
   const quiet = devices.quietOn(n.threadId, n.addressed);
-  const skip = n.level === 'quiet' ? [...quiet, ...push.desktops()] : quiet;
+  const level = n.level === 'push' ? 'push' : 'quiet';
+  const skip = n.level === 'push' ? quiet : [...quiet, ...push.desktops()];
   const grouped = delivery.plan(n.threadId, n.messageId, n.level, n.addressed);
   const mail = { mailThreadId: n.threadId };
-  server.notify({ t: 'notify', messageId: n.messageId, conversationId: n.threadId, title: n.title, body: n.body, reasons: n.reasons, ...n.look, ...mail, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(n.level === 'quiet' ? { level: n.level } : {}) });
+  server.notify({ t: 'notify', messageId: n.messageId, conversationId: n.threadId, title: n.title, body: n.body, reasons: n.reasons, ...n.look, ...mail, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(n.level !== 'push' ? { level: n.level } : {}) });
   server
     .warm(pictures(n.look, grouped))
-    .then(() => push.notify(n.title, n.body, n.threadId, { ...n.look, ...mail, messageId: n.messageId, level: n.level, ...grouped, ...(nid ? { nid } : {}) }, skip, n.level))
+    .then(() => push.notify(n.title, n.body, n.threadId, { ...n.look, ...mail, messageId: n.messageId, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) }, skip, level))
     .then((r) => nid && activity.sent(nid, r))
     .catch((e) => console.error('push failed', e));
 }
 
+/** A request's row on the list sorts as something the network would have notified you about. */
+const REQUEST_IMPORTANCE = 0.8;
 /**
- * A new request from someone you know (requestnotify.ts, docs/add.md): Active, so a silent notification on phones and
- * nothing on a computer, opening the request under Requests. Device rules for its account or network keep it off.
+ * A new request from someone you know (requestnotify.ts, docs/add.md): a silent row on the phone's list and nothing
+ * on a computer, opening the request under Requests. Device rules for its account or network keep it off.
  */
 function deliverRequest(n: RequestNotice) {
   const nid = activity.notification({ kind: 'request' });
   const quiet = devices.quietOn(n.requestId, false);
   const look = { network: n.network, ...(n.icon ? { icon: n.icon } : {}) };
-  server.notify({ t: 'notify', requestId: n.requestId, title: n.title, body: n.body, reasons: [n.reason], level: 'quiet', ...look, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}) });
+  server.notify({ t: 'notify', requestId: n.requestId, title: n.title, body: n.body, reasons: [n.reason], level: 'digest', ...look, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}) });
   push
-    .notify(n.title, n.body, undefined, { ...look, requestId: n.requestId, level: 'quiet', ...(nid ? { nid } : {}) }, [...quiet, ...push.desktops()], 'quiet')
-    .then((r) => nid && activity.sent(nid, r))
-    .catch((e) => console.error('push failed', e));
-}
-
-/** About the inbox, not a conversation: a click opens the inbox. */
-function deliverDigest(title: string, body: string) {
-  const nid = activity.notification({ kind: 'digest' });
-  server.notify({ t: 'notify', title, body, reasons: ['Your daily digest'], ...(nid ? { nid } : {}) });
-  push
-    .notify(title, body, undefined, nid ? { inbox: true, nid } : { inbox: true })
+    .notify(n.title, n.body, undefined, { ...look, requestId: n.requestId, level: 'quiet', tier: 'digest', importance: REQUEST_IMPORTANCE, ...(nid ? { nid } : {}) }, [...quiet, ...push.desktops()], 'quiet')
     .then((r) => nid && activity.sent(nid, r))
     .catch((e) => console.error('push failed', e));
 }
@@ -230,9 +266,6 @@ setTimeout(() => void upkeep(), 60_000);
 setInterval(() => void upkeep(), 6 * 3_600_000);
 
 setInterval(() => {
-  // First: when both are due, the digest counts what was held and clears it.
-  const digest = triage.takeDailyDigest();
-  if (digest) deliverDigest(digest.title, digest.body);
   votes.daily();
   const held = triage.takeHeldSummary();
   if (held) deliver(held.title, held.body, held.conversationId, held.messageId, ['Quiet hours ended']);

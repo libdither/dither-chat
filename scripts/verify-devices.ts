@@ -1,11 +1,12 @@
 /**
  * Per-device notification rules and the notification's look (docs/devices.md), end to end against a demo hub in
  * headless Chromium: the page says hello, Settings lists it, Off for a network on this device keeps that network's
- * notifications from its toasts while another network's still show, with the sender and network on them, and the
- * service worker draws the sender's picture with the network's badge.
+ * alerts from its toasts while another network's still show, with the sender and network on them, and the service
+ * worker draws the sender's picture with the network's badge. Only an alert shows on a page, so the two DMs it
+ * writes to are set to Always alert first.
  *
  *   bun scripts/verify-devices.ts http://127.0.0.1:8481 [/tmp/shots]
- * The hub must be a fresh demo hub (--demo) with its own data dir: this sends messages.
+ * The hub must be a fresh demo hub (--demo) with its own data dir: this sends messages and sets rules.
  */
 import { mkdirSync } from 'node:fs';
 import { launch } from './browser.ts';
@@ -21,6 +22,11 @@ const dm = (network: string) => boot.conversations.find((c: any) => c.shape === 
 const signalDm = dm('signal');
 const discordDm = dm('discord');
 if (!signalDm || !discordDm) throw new Error('the demo world has no Signal or Discord DM');
+// A DM's answer is a Conversation, which shows nothing on a page: every message in these two is an alert.
+for (const target of [signalDm, discordDm]) {
+  const r = await fetch(`${hub}/api/rules`, { method: 'PUT', headers: { 'content-type': 'application/json', origin }, body: JSON.stringify({ scope: 'conversation', target, level: 'all' }) });
+  if (!r.ok) throw new Error(`could not set a DM to always alert: ${r.status}`);
+}
 
 let failures = 0;
 const check = (ok: unknown, what: string, detail: unknown = '') => {
@@ -71,7 +77,7 @@ try {
   // Its answer still comes to the page as a notification, marked quiet for this device, and shows nothing.
   await p.until(`false`, 9000).catch(() => {});
   const quietOne = notifies.find((n) => n.conversationId === signalDm);
-  check(quietOne?.quiet?.includes(me), 'the hub marked the Signal answer quiet for this device', quietOne && { quiet: quietOne.quiet, network: quietOne.network });
+  check(quietOne?.quiet?.includes(me) && !quietOne.level, 'the hub sent the Signal answer as an alert, marked quiet for this device', quietOne && { quiet: quietOne.quiet, network: quietOne.network, level: quietOne.level });
   const afterSignal = await toasts();
   check(afterSignal.length === 0, 'a Signal answer shows no toast on this device', afterSignal);
   await send(discordDm);

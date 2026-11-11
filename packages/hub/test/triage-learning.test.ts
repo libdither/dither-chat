@@ -1,6 +1,7 @@
 /**
  * The learning side of triage (docs/notifications.md, docs/triage-replay.md): per-chance label masks and numeric
- * features in the model, labels from what you did, and interaction features as of a moment.
+ * features in the model, labels from what you did (they speak of importance only), and interaction features as of a
+ * moment.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -9,7 +10,7 @@ import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { describe as say, emptyModel, features, lambda, predict, train, type Example, type Facts } from '../src/learn.ts';
 import { ANSWER_WINDOW, Interactions, rateLogit, sinceScale } from '../src/interact.ts';
-import { gatherOutcomes, implicitLabel, LABEL_WEIGHTS, type Outcome } from '../src/labels.ts';
+import { gatherOutcomes, IGNORED_AFTER, implicitLabel, LABEL_WEIGHTS, LATE, OPEN_DWELL, type LabelWeights, type Outcome } from '../src/labels.ts';
 import { ActivityStore } from '../src/activity.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
@@ -34,7 +35,7 @@ const facts = (f: Partial<Facts> = {}): Facts => ({
   urgent: false,
   active: false,
   media: false,
-  base: 'push',
+  base: 'drop',
   native: 'all',
   notify: true,
   score: 0.15,
@@ -46,15 +47,19 @@ const facts = (f: Partial<Facts> = {}): Facts => ({
 
 describe('label masks and numeric features', () => {
   test('an example teaches only the chances it labels', () => {
-    const ex: Example[] = Array.from({ length: 5 }, () => ({ facts: facts(), words: [], y: { ping: 0 }, weight: 1, vote: false, at: T0 }));
+    const ex: Example[] = Array.from({ length: 5 }, () => ({ facts: facts(), words: [], y: { important: 0 }, weight: 1, vote: false, at: T0 }));
     const m = train(ex);
     const p = predict(m, facts()).probs;
-    expect(p.ping).toBeLessThan(0.5);
-    expect(m.w.active).toEqual({});
-    expect(m.w.interesting).toEqual({});
-    // A vote still labels all three, from its level.
+    expect(p.important).toBeLessThan(0.5);
+    expect(m.w.alert).toEqual({});
+    // What you did never says a message could not wait; a mark can.
+    const marked = train([{ facts: facts({ judge: 0.1 }), words: [], y: { alert: 1 }, weight: 1, vote: true, at: T0 }]);
+    expect(Object.keys(marked.w.alert).length).toBeGreaterThan(0);
+    expect(marked.w.important).toEqual({});
+    // A vote from before the tiers labels importance, from its level, and nothing else.
     const v = train([{ facts: facts(), words: [], label: 'digest', weight: 1, vote: true, at: T0 }]);
-    expect(Object.keys(v.w.active).length).toBeGreaterThan(0);
+    expect(Object.keys(v.w.important).length).toBeGreaterThan(0);
+    expect(v.w.alert).toEqual({});
   });
 
   test('numeric features: named apart, held by their own lambda, learned as one slope across places', () => {
@@ -67,16 +72,17 @@ describe('label masks and numeric features', () => {
     const ex: Example[] = [];
     for (let i = 0; i < 200; i++) {
       const answers = i % 2 === 0;
-      ex.push({ facts: facts({ conversation: `c${i}` }), words: [], y: { ping: answers ? 1 : 0 }, x: { 'rr:conv': answers ? 2 : -3 }, weight: 1, vote: false, at: T0 });
+      ex.push({ facts: facts({ conversation: `c${i}` }), words: [], y: { important: answers ? 1 : 0 }, x: { 'rr:conv': answers ? 2 : -3 }, weight: 1, vote: false, at: T0 });
     }
     const m = train(ex);
-    expect(m.w.ping['#rr:conv']).toBeGreaterThan(0.3);
-    const hi = predict(m, facts({ conversation: 'new' }), [], undefined, { 'rr:conv': 2 }).probs.ping;
-    const lo = predict(m, facts({ conversation: 'new' }), [], undefined, { 'rr:conv': -3 }).probs.ping;
+    expect(m.w.important['#rr:conv']).toBeGreaterThan(0.3);
+    expect(m.w.alert['#rr:conv']).toBeUndefined();
+    const hi = predict(m, facts({ conversation: 'new' }), [], undefined, { 'rr:conv': 2 }).probs.important;
+    const lo = predict(m, facts({ conversation: 'new' }), [], undefined, { 'rr:conv': -3 }).probs.important;
     expect(hi).toBeGreaterThan(0.8);
     expect(lo).toBeLessThan(0.5);
-    // Without x the model is as before.
-    expect(predict(emptyModel(), facts(), [], undefined, { 'rr:conv': 5 }).probs.ping).toBeCloseTo(0.9);
+    // Without what it learned the feature moves nothing: the start is the start.
+    expect(predict(emptyModel(), facts(), [], undefined, { 'rr:conv': 5 }).probs.important).toBeCloseTo(0.8);
   });
 });
 
@@ -91,7 +97,7 @@ const outcome = (o: Partial<Outcome> = {}): Outcome => ({
   nextOwn: null,
   answered: false,
   reacted: false,
-  decision: 'push',
+  decision: 'digest',
   notified: false,
   shown: false,
   suppressed: false,
@@ -109,38 +115,76 @@ const outcome = (o: Partial<Outcome> = {}): Outcome => ({
 });
 
 describe('labels from what you did', () => {
-  test('a quick answer when you were not there: worth a ping; while there, or later: worth seeing, ping unknown', () => {
-    expect(implicitLabel(outcome({ answered: true, nextOwn: 5 * MIN }))).toMatchObject({ y: { ping: 1, active: 1, interesting: 1 }, weight: LABEL_WEIGHTS.quickAnswer });
-    expect(implicitLabel(outcome({ answered: true, nextOwn: 5 * MIN, engaged: true }))!.y).toEqual({ active: 1, interesting: 1 });
-    expect(implicitLabel(outcome({ answered: true, nextOwn: HOUR }))).toMatchObject({ y: { active: 1, interesting: 1 }, weight: LABEL_WEIGHTS.lateAnswer });
-    expect(implicitLabel(outcome({ reacted: true }))!.y).toEqual({ active: 1, interesting: 1 });
-    // Your next message answers another one: this one says nothing by that.
+  /** With the two "you did not" labels on, as the replay tried them. */
+  const both: LabelWeights = { ...LABEL_WEIGHTS, dismissed: 0.3, nothing: 0.2 };
+
+  test('only what you did counts by default, and it says importance, never alert', () => {
+    expect(LABEL_WEIGHTS).toEqual({ answered: 0.5, opened: 0.5, dismissed: 0, nothing: 0 });
+    const said = [
+      outcome({ answered: true, nextOwn: 5 * MIN }),
+      outcome({ reacted: true }),
+      outcome({ notified: true, tapped: 2 * MIN, tapDwell: 40, opened: 2 * MIN }),
+      outcome({ opened: 20 * MIN, openDwell: 30 }),
+      outcome({ notified: true, dismissed: true }),
+      outcome({ burstFirst: true }),
+    ].map((o) => implicitLabel(o, both)!);
+    expect(said.map((l) => Object.keys(l.y))).toEqual(Array(6).fill(['important']));
+    expect(said.map((l) => l.y.important)).toEqual([1, 1, 1, 1, 0, 0]);
+  });
+
+  test('you answered it within three hours, or reacted to it: important, there already or not', () => {
+    expect(implicitLabel(outcome({ answered: true, nextOwn: 5 * MIN }))).toEqual({ y: { important: 1 }, weight: LABEL_WEIGHTS.answered, why: ['answered'], knownAt: T0 + 5 * MIN });
+    expect(implicitLabel(outcome({ answered: true, nextOwn: LATE }))!.y).toEqual({ important: 1 });
+    // While you were talking there, or watching it arrive: an answer is still an answer.
+    expect(implicitLabel(outcome({ answered: true, nextOwn: 5 * MIN, engaged: true }))!.y).toEqual({ important: 1 });
+    expect(implicitLabel(outcome({ answered: true, nextOwn: 5 * MIN, seenLive: true }))!.why).toEqual(['answered']);
+    // A reaction carries no time: it is known once an answer could have come.
+    expect(implicitLabel(outcome({ reacted: true }))).toEqual({ y: { important: 1 }, weight: LABEL_WEIGHTS.answered, why: ['reacted'], knownAt: T0 + LATE });
+    // Later than three hours is no answer to it; nor is your next message when it answers another one.
+    expect(implicitLabel(outcome({ answered: true, nextOwn: LATE + MIN }))).toBeNull();
     expect(implicitLabel(outcome({ answered: false, nextOwn: 5 * MIN }))).toBeNull();
+    // Turned off, it says nothing.
+    expect(implicitLabel(outcome({ answered: true, nextOwn: 5 * MIN }), { ...LABEL_WEIGHTS, answered: 0 })).toBeNull();
   });
 
-  test('taps, bounces, dismissals and pushes nobody opened', () => {
-    expect(implicitLabel(outcome({ notified: true, tapped: 2 * MIN, tapDwell: 40, opened: 2 * MIN }))!.y).toEqual({ ping: 1, active: 1, interesting: 1 });
-    expect(implicitLabel(outcome({ notified: true, tapped: 2 * MIN, tapDwell: 2, opened: 2 * MIN }))!.y).toEqual({ ping: 0 });
-    expect(implicitLabel(outcome({ notified: true, dismissed: true }))).toMatchObject({ y: { ping: 0 }, weight: LABEL_WEIGHTS.dismissed });
-    const ignored = implicitLabel(outcome({ notified: true, shown: true }))!;
-    expect(ignored).toMatchObject({ y: { ping: 0, active: 0 }, weight: LABEL_WEIGHTS.ignored });
-    expect(ignored.knownAt).toBe(T0 + DAY);
-    // Not yet a day: nothing to say about it being ignored.
-    expect(implicitLabel(outcome({ notified: true, shown: true, observed: HOUR }))).toBeNull();
-    // A page that was open kept it to itself: not ignored.
-    expect(implicitLabel(outcome({ notified: true, shown: true, suppressed: true }))).toBeNull();
+  test('you tapped its notification, or opened its chat within a day, and stayed: important', () => {
+    expect(implicitLabel(outcome({ notified: true, tapped: 2 * MIN, tapDwell: 40, opened: 2 * MIN }))).toEqual({ y: { important: 1 }, weight: LABEL_WEIGHTS.opened, why: ['tapped'], knownAt: T0 + 2 * MIN });
+    expect(implicitLabel(outcome({ opened: 20 * MIN, openDwell: OPEN_DWELL }))).toEqual({ y: { important: 1 }, weight: LABEL_WEIGHTS.opened, why: ['opened'], knownAt: T0 + 20 * MIN });
+    expect(implicitLabel(outcome({ opened: IGNORED_AFTER, openDwell: 60 }))!.why).toEqual(['opened']);
+    // How long you stayed is not always known: an open still counts.
+    expect(implicitLabel(outcome({ opened: 20 * MIN }))!.y).toEqual({ important: 1 });
+    // A bounce (in and out in under five seconds), and an open more than a day later, say nothing.
+    expect(implicitLabel(outcome({ notified: true, tapped: 2 * MIN, tapDwell: 2, opened: 2 * MIN, openDwell: 2 }))).toBeNull();
+    expect(implicitLabel(outcome({ opened: 20 * MIN, openDwell: OPEN_DWELL - 1 }))).toBeNull();
+    expect(implicitLabel(outcome({ opened: IGNORED_AFTER + MIN, openDwell: 60 }))).toBeNull();
+    // You were already there (talking, watching, or a page kept the notification to itself): nothing to learn.
+    for (const there of [{ engaged: true }, { seenLive: true }, { suppressed: true }]) expect(implicitLabel(outcome({ ...there, opened: MIN, openDwell: 60 }), both)).toBeNull();
+    expect(implicitLabel(outcome({ opened: 20 * MIN, openDwell: 30 }), { ...LABEL_WEIGHTS, opened: 0 })).toBeNull();
   });
 
-  test('opens: unprompted ones say Active; an open alone, only interesting', () => {
-    expect(implicitLabel(outcome({ unprompted: true, burstFirst: true, opened: 20 * MIN }))!.y).toEqual({ active: 1, interesting: 1 });
-    expect(implicitLabel(outcome({ opened: 20 * MIN }))).toMatchObject({ y: { interesting: 1 }, weight: LABEL_WEIGHTS.openOnly });
+  test('a swipe is no label by default; with a weight, only a list row swiped away and left for a day says "not this"', () => {
+    const swiped = outcome({ notified: true, shown: true, dismissed: true });
+    expect(implicitLabel(swiped)).toBeNull();
+    expect(implicitLabel(swiped, both)).toEqual({ y: { important: 0 }, weight: 0.3, why: ['dismissed'], knownAt: T0 + IGNORED_AFTER });
+    // A Conversation row or an alert swiped away says you saw it, not that it did not matter.
+    expect(implicitLabel(outcome({ ...swiped, decision: 'quiet' }), both)).toBeNull();
+    expect(implicitLabel(outcome({ ...swiped, decision: 'push' }), both)).toBeNull();
+    // Not yet a day: you may still open it. And if you did, that wins.
+    expect(implicitLabel(outcome({ ...swiped, observed: HOUR }), both)).toBeNull();
+    expect(implicitLabel(outcome({ ...swiped, opened: 2 * HOUR, openDwell: 20 }), both)!.y).toEqual({ important: 1 });
   });
 
-  test('nothing at all after the first of a burst: a weak no, unless it was about you', () => {
-    expect(implicitLabel(outcome({ burstFirst: true }))).toMatchObject({ y: { ping: 0, active: 0 }, weight: LABEL_WEIGHTS.nothing });
-    expect(implicitLabel(outcome({ burstFirst: true, addressed: true }))).toBeNull();
-    expect(implicitLabel(outcome({ burstFirst: false }))).toBeNull();
-    expect(implicitLabel(outcome({ burstFirst: true }), { ...LABEL_WEIGHTS, nothing: 0 })).toBeNull();
+  test('"nothing happened" is no label by default; with a weight, the first of a burst nobody touched is a weak no, unless it was about you', () => {
+    expect(implicitLabel(outcome({ burstFirst: true }))).toBeNull();
+    expect(implicitLabel(outcome({ burstFirst: true }), both)).toEqual({ y: { important: 0 }, weight: 0.2, why: ['nothing happened'], knownAt: T0 + IGNORED_AFTER });
+    expect(implicitLabel(outcome({ burstFirst: true, addressed: true }), both)).toBeNull();
+    expect(implicitLabel(outcome({ burstFirst: false }), both)).toBeNull();
+    expect(implicitLabel(outcome({ burstFirst: true, observed: HOUR }), both)).toBeNull();
+    // You wrote there later, or opened it after the day: something did happen.
+    expect(implicitLabel(outcome({ burstFirst: true, nextOwn: 5 * HOUR }), both)).toBeNull();
+    expect(implicitLabel(outcome({ burstFirst: true, opened: 2 * DAY }), both)).toBeNull();
+    // A swipe counts before it.
+    expect(implicitLabel(outcome({ burstFirst: true, dismissed: true }), both)!.why).toEqual(['dismissed']);
   });
 });
 
@@ -197,7 +241,7 @@ describe('through the hub', () => {
     const nativeId = `m${++n}`;
     store.ingest(acc, { t: 'message', message: { nativeId, conversation, author, ts, body: 'words here', ...x }, live: true });
     const id = store.one<{ id: string }>('SELECT id FROM message WHERE native_id = ?', nativeId)!.id;
-    if (decision && author !== 'me') store.setTriage(id, { decision, score: null, reasons: [], decidedBy: 'rules', probs: { ping: 0.9, active: 0.95, interesting: 0.99 } }, facts({ conversation: conv(conversation) }));
+    if (decision && author !== 'me') store.setTriage(id, { decision, score: 0.8, reasons: [], decidedBy: 'rules', probs: { alert: 0.02, important: 0.8 } }, facts({ conversation: conv(conversation) }));
     return id;
   };
 
@@ -212,7 +256,7 @@ describe('through the hub', () => {
     store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'g', shape: 'group', name: 'Club', participants: ['ann', 'bo', 'cy', 'me'] } });
     activity = new ActivityStore(store, { featuresInTriage: true });
     activity.setSettings({ enabled: true, retentionDays: 365 });
-    triage = new Triage(store, undefined, activity);
+    triage = new Triage(store, activity);
   });
   afterAll(() => {
     store.db.close();
@@ -238,9 +282,35 @@ describe('through the hub', () => {
     expect(o.get(b1)).toMatchObject({ answered: true, engaged: true });
     expect(o.get(b2)).toMatchObject({ answered: false, reacted: true });
     expect(o.get(c1)).toMatchObject({ notified: true, tapped: 2 * MIN, tapDwell: 60, opened: 2 * MIN });
-    expect(implicitLabel(o.get(a2)!)!.y).toEqual({ ping: 1, active: 1, interesting: 1 });
-    expect(implicitLabel(o.get(b1)!)!.y).toEqual({ active: 1, interesting: 1 });
-    expect(implicitLabel(o.get(c1)!)!.why).toContain('tapped');
+    // What each says: the one you answered, the one you answered while there, the one you reacted to, the one you tapped.
+    expect(implicitLabel(o.get(a2)!)).toMatchObject({ y: { important: 1 }, why: ['answered'], knownAt: T0 + 3 * MIN });
+    expect(implicitLabel(o.get(b1)!)).toMatchObject({ y: { important: 1 }, why: ['answered'] });
+    expect(implicitLabel(o.get(b2)!)).toMatchObject({ y: { important: 1 }, why: ['reacted'] });
+    expect(implicitLabel(o.get(c1)!)).toMatchObject({ y: { important: 1 }, why: ['tapped'], weight: LABEL_WEIGHTS.opened });
+    // The first of the burst, which your message did not answer: nothing, with or without the "you did not" labels.
+    expect(implicitLabel(o.get(a1)!)).toBeNull();
+    expect(implicitLabel(o.get(a1)!, { ...LABEL_WEIGHTS, nothing: 0.2 })).toBeNull();
+  });
+
+  test('outcomes: a list row swiped away and never opened, and a burst nobody touched', () => {
+    const base = T0 + 10 * DAY;
+    const swiped = post('g', 'bo', base, {}, 'digest');
+    const nid = activity.notification({ kind: 'message', messageId: swiped, conversationId: conv('g') }, base)!;
+    activity.events([{ id: nid, device: 'phone', event: 'dismissed', at: base + MIN }], base + MIN);
+    const quiet = post('g', 'cy', base + 2 * HOUR, {}, 'drop');
+    const o = gatherOutcomes(store.db, base - HOUR, base + DAY, { now: base + 3 * DAY });
+    expect(o.get(swiped)).toMatchObject({ decision: 'digest', notified: true, dismissed: true, opened: null, nextOwn: null, burstFirst: true });
+    expect(o.get(quiet)).toMatchObject({ decision: 'drop', notified: false, dismissed: false, burstFirst: true });
+    // Neither is a label as the hub learns; with their weights given, both are a no.
+    expect(implicitLabel(o.get(swiped)!)).toBeNull();
+    expect(implicitLabel(o.get(quiet)!)).toBeNull();
+    const w = { ...LABEL_WEIGHTS, dismissed: 0.3, nothing: 0.2 };
+    expect(implicitLabel(o.get(swiped)!, w)).toMatchObject({ y: { important: 0 }, why: ['dismissed'], weight: 0.3 });
+    expect(implicitLabel(o.get(quiet)!, w)).toMatchObject({ y: { important: 0 }, why: ['nothing happened'], weight: 0.2 });
+    // Before the day is over nothing is known of either.
+    const early = gatherOutcomes(store.db, base - HOUR, base + DAY, { now: base + 3 * HOUR });
+    expect(implicitLabel(early.get(swiped)!, w)).toBeNull();
+    expect(implicitLabel(early.get(quiet)!, w)).toBeNull();
   });
 
   test('the features triage keeps with a decision include the interaction features', async () => {
@@ -248,7 +318,9 @@ describe('through the hub', () => {
     const d = (await triage.decide(id, T0 + 2 * DAY))!;
     expect(d.features?.x).toMatchObject({ engaged: 0 });
     expect(Object.keys(d.features!.x!)).toEqual(expect.arrayContaining(['rr:conv', 'rr:author', 'alt', 'since:seen', 'device:active', 'open:rate']));
-    // The live decision does not use them.
-    expect(d.decision).toBe('push');
+    // The live decision does not use them: a DM nobody read for urgency is a Conversation.
+    expect(d.decision).toBe('quiet');
+    expect(d.facts).toMatchObject({ conv: true, shape: 'direct' });
+    expect(d.probs).toEqual({ alert: 0.02, important: 0.8 });
   });
 });

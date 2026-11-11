@@ -28,7 +28,7 @@ One number per day, key, page and kind of device:
 
 `packages/web/src/clicks.ts`, from one capture listener on the document (`clicklog.ts`):
 
-- A control says what it is with `data-track="vote up"`. A key without `: ` takes the name of the nearest
+- A control says what it is with `data-track="done"`. A key without `: ` takes the name of the nearest
   `data-track-area` around it (`<section class="pane catchup" data-track-area="catch up">` makes it `catch up: done`),
   else the page's. A key with `: ` is complete.
 - The nearest control to the click decides: a `button`, link, form field, `summary` or an element with a button-like
@@ -49,11 +49,12 @@ their label, which can hold a name ("Message Ann").
 |---|---|
 | `inbox` | `row (DM\|group\|notes\|channel\|thread\|mail[, unread\|, owes a reply])`, `filter` (the button), `filter (All\|Direct messages\|Groups\|Mail)` (its menu; until 2026-11-09 chips `filter (All\|People\|Groups\|Unread)`), `search`, `search (Enter)`, `search (suggestion)`, `requests row`, `new message`, `row (account needs you)`, `section toggle (Needs you)` (until 2026-11-09 `section toggle`, in every list; from 2026-11-09 to 11-10 also `Waiting on you\|New\|Earlier`) |
 | `catch up` | `done`, `done (mail)`, `later`, `open`, `open (mail)`, `reply box`, `reply sent`, `reply sent (Enter)`, `earlier`, `picture`, `new note`, `mark all read`, `how it sorts`, `how it sorts (all caught up)`, `account needs you`, `reply: try again`, `reply: discard`, `leave the box (Esc)`, `key j`, `key k`, `key Enter`, `key e`, `key l`, `key r` |
-| `how it sorts` | `open`, `open (mail)`, `why`, `why (close)`, `vote up`, `vote down`, `show all`, `not interesting (open)`, the learned rules' buttons; inside Why (`how it sorts (why)`): `message`, `message (mail)`, `vote up`, `vote down`, `show all` |
+| `how it sorts` | `open`, `open (mail)`, `why`, `why (close)`, `show all`, `below the list (open)`, the learned rules' buttons; inside Why (`how it sorts (why)`): `message`, `message (mail)`, `show all` (until the tiers of 2026-11 also `vote up`, `vote down` and `not interesting (open)`) |
+| `mark` (a message's two marks, wherever they are pressed: How it sorts, a message's bell, the phone's sheet, the mail reader) | `should have alerted`, `alert was wrong`, `less like this` |
 | `people` | `chip (chats\|friend\|contact\|following)`, `accounts` (the account menu) and its `account (all\|one)` (until 2026-11-09 chips `account chip`, `account chip (all)`), `order` and its `order (Last talked\|A to Z)` on a list, `filter box`, `row (person[, unread])`, `row (friend\|contact\|following)`, `remove (…)` (from a row's menu), `people graph`, `new message`, `section toggle (Direct messages)` (and `(Starred)` until 2026-11-10) |
 | `chat header` | `picture`, `name`, `crumb (community\|parent)`, `profile`, `all chats`, `join call`, `about`, `search here`, `notification level` and its choices, `details`, `network chip` |
 | `message` | the hover actions: `edit`, `delete`, `reply`, `forward`, `more`, `triage note` |
-| `message menu` (and `attachment menu`, `link menu`) | `reply`, `edit`, `forward`, `copy text`, `copy link`, `add reaction`, `quick reaction`, `view reactions`, `open thread`, `go to replied`, `go to original`, `profile`, `history`, `delete`, `copy message id`, `copy dither-chat id`; `… (key R)` when picked by its letter |
+| `message menu` (and `attachment menu`, `link menu`) | `reply`, `edit`, `forward`, `copy text`, `copy link`, `add reaction`, `quick reaction`, `view reactions`, `open thread`, `go to replied`, `go to original`, `profile`, `history`, `mark alert`, `mark less` (the two marks as menu items), `delete`, `copy message id`, `copy dither-chat id`; `… (key R)` when picked by its letter |
 | `composer` | `text box`, `send`, `send (Enter)`, `attach`, `send as`, `cancel reply`, `cancel edit`, `cancel … (Esc)`; on a phone `plus` and `camera` (from 2026-11-10) |
 | `attach` (the phone's + sheet) | `photos`, `file` |
 | `camera` | `shutter` (a tap or a hold), `flip`, `torch`, `photos` (the gallery beside the shutter), `close`, `system camera` (after a refusal) |

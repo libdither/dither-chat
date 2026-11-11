@@ -19,10 +19,12 @@ import {
   outcomeLabels,
   outcomes,
   probeLogit,
+  QUESTIONS,
   quantize,
   rocAuc,
   timeFolds,
   unit,
+  voteLabels,
   type JevClient,
   type Labelled,
   type Turn,
@@ -90,10 +92,19 @@ describe('labels', () => {
     expect(o.get('a')!.engaged).toBe(false);
     expect(outcomeLabels(o.get('b')!)).toEqual({});
   });
-  test('a reaction counts as at once; the heads have their own windows', () => {
-    const o = outcomes([t('a', 0, false, { reacted: true }), t('b', 100), t('me', 200, true)]);
-    expect(outcomeLabels(o.get('a')!)).toEqual({ ping: 1, active: 1 });
-    expect(outcomeLabels(o.get('b')!)).toEqual({ ping: 0, active: 1 });
+  test('a reaction counts as at once; an answer within three hours says it was important, a later one or none that it was not', () => {
+    const o = outcomes([t('a', 0, false, { reacted: true }), t('b', 100), t('me', 200, true), t('c', 300), t('me2', 500, true), t('d', 600)]);
+    expect(outcomeLabels(o.get('a')!)).toEqual({ important: 1 });
+    expect(outcomeLabels(o.get('b')!)).toEqual({ important: 1 });
+    expect(o.get('c')!.delay).toBe(200 * MIN);
+    expect(outcomeLabels(o.get('c')!)).toEqual({ important: 0 });
+    expect(outcomeLabels(o.get('d')!)).toEqual({ important: 0 });
+  });
+  test('a vote from before the tiers: Important or Active was worth seeing, Digest or below was not; nothing about alerts', () => {
+    expect(voteLabels('push')).toEqual({ important: 1 });
+    expect(voteLabels('quiet')).toEqual({ important: 1 });
+    expect(voteLabels('digest')).toEqual({ important: 0 });
+    expect(voteLabels('drop')).toEqual({ important: 0 });
   });
   test('conversations do not answer each other', () => {
     const o = outcomes([t('a', 0), { id: 'me', conversation: 'other', ts: MIN, mine: true }]);
@@ -157,12 +168,17 @@ describe('kNN', () => {
 });
 
 describe('jev answers', () => {
-  test('asked only when triage is unsure', () => {
-    expect(needsJev({ ping: 0.5, active: 0.6, interesting: 0.9 })).toBe(true);
-    expect(needsJev({ ping: 0.99, active: 0.1, interesting: 0.9 })).toBe(false);
-    expect(needsJev({ ping: 0.01, active: 0.03, interesting: 0.2 })).toBe(false);
-    expect(needsJev({ ping: 0.03, active: 0.2, interesting: 0.2 })).toBe(true);
+  test('wanted only where the importance is in doubt; no content question is asked now', () => {
+    expect(needsJev({ alert: 0.02, important: 0.6 })).toBe(true);
+    expect(needsJev({ alert: 0.02, important: 0.2 })).toBe(true);
+    expect(needsJev({ alert: 0.02, important: 0.95 })).toBe(true);
+    expect(needsJev({ alert: 0.9, important: 0.99 })).toBe(false);
+    expect(needsJev({ alert: 0.9, important: 0.19 })).toBe(false);
+    // The alert chance alone says nothing, and neither do the three chances from before the tiers.
+    expect(needsJev({ alert: 0.5 })).toBe(false);
+    expect(needsJev({ ping: 0.5, active: 0.6, interesting: 0.9 } as object)).toBe(false);
     expect(needsJev(null)).toBe(false);
+    expect(QUESTIONS).toEqual({});
   });
   test('as logits', () => {
     const f = jevFeatures({ ask: 0.5, soon: 0.9 });
@@ -304,7 +320,7 @@ describe('the embedder on a hub', () => {
     expect(emb.store.has(id('pic'))).toBe(true);
   });
 
-  test('new messages are followed; jev is asked only where you take part', async () => {
+  test('new messages are followed; jev is asked no content question, and old answers are not features', async () => {
     store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'news', shape: 'channel', name: 'news' } });
     store.ingest(acc, { t: 'message', message: { nativeId: 'n0', conversation: 'news', author: 'friend3', ts: now - 1500, body: 'lunch deals today' } });
     store.ingest(acc, { t: 'message', message: { nativeId: 'n1', conversation: 'grp', author: 'friend2', ts: now - 1000, body: 'lunch tomorrow?' } });
@@ -312,17 +328,23 @@ describe('the embedder on a hub', () => {
     const id = (n: string) => store.one<{ id: string }>('SELECT id FROM message WHERE native_id = ?', n)!.id;
     expect(await emb.tick()).toBe('new');
     expect(emb.store.has(id('n1'))).toBe(true);
-    // Asked before triage decides, in a group you write in; not in a channel you only read.
-    expect(emb.store.answers(id('n1')).ask).toBeCloseTo(0.8, 6);
-    expect(emb.store.answers(id('n2')).ask).toBeCloseTo(0.05, 6);
+    expect(emb.store.has(id('n2'))).toBe(true);
     expect(emb.store.has(id('n0'))).toBe(true);
-    expect(Object.keys(emb.store.answers(id('n0')))).toEqual([]);
-    expect(emb.features(id('n1'))['jev:ask']).toBeCloseTo(Math.log(4), 2);
+    // Embedded, and nothing else: in a group you write in or a channel you only read, jev judges nothing.
+    expect(jev.judged).toEqual([]);
+    for (const n of ['n0', 'n1', 'n2']) expect(emb.store.answers(id(n))).toEqual({});
+    await emb.askJev([id('n1')]);
+    expect(jev.judged).toEqual([]);
+    // An answer kept from when the three questions were asked is not a feature any more.
+    emb.store.setAnswers(id('n1'), now - 1000, { ask: 0.8 });
+    expect(emb.store.answers(id('n1'))).toEqual({ ask: 0.8 });
+    expect(Object.keys(emb.features(id('n1'))).filter((k) => k.startsWith('jev:'))).toEqual([]);
   });
 
   test('the probe and kNN learn which messages you answer', async () => {
     await emb.refit();
-    expect(emb.status().heads).toContain('ping');
+    // One head: importance. Nothing you did says a message could not wait.
+    expect(emb.status().heads).toEqual(['important']);
     const id = (n: string) => store.one<{ id: string }>('SELECT id FROM message WHERE native_id = ?', n)!.id;
     const plans = emb.features(id('n1'));
     const meme = emb.features(id('n2'));

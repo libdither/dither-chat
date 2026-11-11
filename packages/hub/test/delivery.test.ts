@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BURST_MS, Delivery } from '../src/delivery.ts';
+import { BURST_MS, Delivery, LIST_EVERY } from '../src/delivery.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
 
@@ -29,21 +29,30 @@ describe('one notification per conversation', () => {
     store.ingest(sg, { t: 'identity', identity: { nativeId: 'bo', displayName: 'Bo', contact: true } });
     store.ingest(sg, { t: 'conversation', conversation: { nativeId: 'dm', shape: 'direct', participants: ['ann'] } });
     store.ingest(sg, { t: 'conversation', conversation: { nativeId: 'fam', shape: 'group', name: 'Family', avatarUrl: 'fam.png', participants: ['ann', 'bo'] } });
+    for (const g of ['club', 'crew', 'band']) store.ingest(sg, { t: 'conversation', conversation: { nativeId: g, shape: 'group', name: g, participants: ['ann', 'bo'] } });
   });
   afterAll(() => {
     store.db.close();
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test('the rule: first of a burst, a rise to Important, or one to you', () => {
+  test('the rule: only an alert sounds, on the first of a burst, a rise to an alert, or one to you', () => {
     const t = 1_000_000;
     expect(Delivery.alert(undefined, 'push', false, t)).toBe(true);
-    expect(Delivery.alert(undefined, 'quiet', true, t)).toBe(false);
     const prev = { at: t, ts: t, top: 'push' as const };
     expect(Delivery.alert(prev, 'push', false, t + 60_000)).toBe(false);
     expect(Delivery.alert(prev, 'push', true, t + 60_000)).toBe(true);
     expect(Delivery.alert(prev, 'push', false, t + BURST_MS)).toBe(true);
+    // A rise: the burst was a Conversation or a list row so far, and now something cannot wait.
     expect(Delivery.alert({ ...prev, top: 'quiet' }, 'push', false, t + 60_000)).toBe(true);
+    expect(Delivery.alert({ ...prev, top: 'digest' }, 'push', false, t + 60_000)).toBe(true);
+    // A Conversation and a list row never sound: first of a burst or not, to you or not, whatever came before.
+    for (const tier of ['quiet', 'digest'] as const) {
+      expect(Delivery.alert(undefined, tier, true, t)).toBe(false);
+      expect(Delivery.alert(undefined, tier, false, t)).toBe(false);
+      expect(Delivery.alert(prev, tier, true, t + 60_000)).toBe(false);
+      expect(Delivery.alert({ ...prev, top: tier }, tier, true, t + BURST_MS)).toBe(false);
+    }
   });
 
   test('a burst buzzes once, and its lines are what you have not read, oldest first', () => {
@@ -70,6 +79,68 @@ describe('one notification per conversation', () => {
     store.markRead(conv('fam'), Date.now());
     expect(delivery.read()).toEqual([conv('fam')]);
     expect(delivery.read()).toEqual([]);
+  });
+
+  test('a burst keeps its highest tier: after an alert, a silent row in between does not make the next alert sound again', () => {
+    const d = new Delivery(store, new Triage(store));
+    const t = Date.now() + 60 * 60_000;
+    say('c1', 'club', 'ann', t, 'come now', 'push');
+    say('c2', 'club', 'bo', t + 60_000, 'on my way', 'quiet');
+    say('c3', 'club', 'ann', t + 120_000, 'hurry', 'push');
+    expect(d.plan(conv('club'), msg('c1'), 'push', false, t)!.alert).toBe(true);
+    const silent = d.plan(conv('club'), msg('c2'), 'quiet', false, t + 60_000)!;
+    expect(silent.alert).toBe(false);
+    // The row shows every tier's lines; the burst is still an alert's.
+    expect(silent.lines.map((l) => l.body)).toEqual(['come now', 'on my way']);
+    expect(d.plan(conv('club'), msg('c3'), 'push', false, t + 120_000)!.alert).toBe(false);
+    // To you by name, it sounds whatever came before.
+    expect(d.plan(conv('club'), msg('c3'), 'push', true, t + 130_000)!.alert).toBe(true);
+    // Five minutes after the last of it, a new burst: an alert sounds, a list row does not.
+    say('c4', 'club', 'bo', t + 130_000 + BURST_MS, 'where are you', 'push');
+    expect(d.plan(conv('club'), msg('c4'), 'push', false, t + 130_000 + BURST_MS)!.alert).toBe(true);
+  });
+
+  test('a burst that rises: list row, Conversation, then an alert, which sounds once', () => {
+    const d = new Delivery(store, new Triage(store));
+    const t = Date.now() + 2 * 60 * 60_000;
+    say('r1', 'crew', 'ann', t, 'photos from Sunday', 'digest');
+    say('r2', 'crew', 'bo', t + 30_000, 'nice ones', 'quiet');
+    say('r3', 'crew', 'ann', t + 60_000, 'the car is being towed', 'push');
+    say('r4', 'crew', 'ann', t + 90_000, 'come quick', 'push');
+    say('r5', 'crew', 'bo', t + 100_000, 'not worth a row', 'drop');
+    expect(d.plan(conv('crew'), msg('r1'), 'digest', false, t)!.alert).toBe(false);
+    expect(d.plan(conv('crew'), msg('r2'), 'quiet', false, t + 30_000)!.alert).toBe(false);
+    expect(d.plan(conv('crew'), msg('r3'), 'push', false, t + 60_000)!.alert).toBe(true);
+    const last = d.plan(conv('crew'), msg('r4'), 'push', false, t + 90_000)!;
+    expect(last.alert).toBe(false);
+    expect(last.lines.map((l) => l.body)).toEqual(['photos from Sunday', 'nice ones', 'the car is being towed', 'come quick']);
+    // What fell below the list is counted as unread and is no line of the row.
+    say('r6', 'crew', 'ann', t + 110_000, 'still there?', 'quiet');
+    const after = d.plan(conv('crew'), msg('r6'), 'quiet', false, t + 110_000)!;
+    expect(after.lines.map((l) => l.body)).not.toContain('not worth a row');
+    expect(after.count).toBe(6);
+  });
+
+  test('a list row for a chat goes out at most every ten minutes; another chat’s is its own', () => {
+    const d = new Delivery(store, new Triage(store));
+    const t = Date.now() + 3 * 60 * 60_000;
+    expect(LIST_EVERY).toBe(10 * 60_000);
+    expect(d.listDue(conv('band'), t)).toBe(true);
+    say('b1', 'band', 'ann', t, 'new song is up', 'digest');
+    expect(d.plan(conv('band'), msg('b1'), 'digest', false, t)).not.toBeNull();
+    // A second message a minute later: its row is not due. Nor at nine minutes; at ten it is.
+    expect(d.listDue(conv('band'), t + 60_000)).toBe(false);
+    expect(d.listDue(conv('band'), t + LIST_EVERY - 1)).toBe(false);
+    expect(d.listDue(conv('band'), t + LIST_EVERY)).toBe(true);
+    expect(d.listDue(conv('crew'), t + 60_000)).toBe(true);
+    // Whatever went out for the chat counts: a Conversation row or an alert a moment ago shows it already.
+    say('b2', 'band', 'bo', t + LIST_EVERY, 'listening now', 'quiet');
+    d.plan(conv('band'), msg('b2'), 'quiet', false, t + LIST_EVERY);
+    expect(d.listDue(conv('band'), t + LIST_EVERY + 60_000)).toBe(false);
+    // Read anywhere: the row is gone from the phones, and the next list message brings a new one at once.
+    store.markRead(conv('band'), t + LIST_EVERY + 1);
+    expect(d.read(t + LIST_EVERY + 2)).toEqual([conv('band')]);
+    expect(d.listDue(conv('band'), t + LIST_EVERY + 60_000)).toBe(true);
   });
 
   test('a computer in use: nothing buzzes', () => {

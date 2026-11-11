@@ -1,17 +1,17 @@
 /**
- * How it sorts (docs/notifications.md#voting): where triage put each conversation's messages this week, one line per
- * conversation under Important, Active, Digest and Not interesting, with why, and votes that teach the decision model.
- * Under them, what it learned. Reached from Catch up, the inbox's menu and Settings → Smart triage.
+ * How it sorts (docs/notifications.md): which tier triage put each conversation's messages in this week, one line per
+ * conversation under Alerts, Conversations, List and Below the list, with why, its importance, and the two marks that
+ * teach the models. Under them, what was learned. Reached from Catch up, the inbox's menu and Settings → Notifications.
  */
 import type * as P from '@dither-chat/protocol';
 import { EXPLORE_REASON } from '@dither-chat/protocol';
 import { ago, fullTime } from '../format.ts';
-import { BELOW_DAYS, isMailItem, lineKey, linesOf, reasonsOf, type BoardItem, type BoardLine } from '../board.ts';
+import { BELOW_DAYS, isMailItem, lineKey, linesOf, listPreview, reasonsOf, topImportance, type BoardItem, type BoardLine } from '../board.ts';
 import { authorName, board, boardUnread, communitiesOf, convLabel, convTitle, plainBody } from '../model.ts';
 import { useEffect, useState } from 'preact/hooks';
 import { db, go, loadMailTriage, rev } from '../state.ts';
-import { forgetFactor, HEAD_LABEL, loadPolicy, loadShadow, relearn, triagePolicy, triageShadow } from '../triage.ts';
-import { TierVote } from './TierVote.tsx';
+import { forgetFactor, loadPolicy, loadShadow, relearn, triagePolicy, triageShadow } from '../triage.ts';
+import { MarkToggles, percent, TIER_ICON } from './Marks.tsx';
 import { Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { useMenu } from './ContextMenu.tsx';
@@ -35,7 +35,17 @@ function lineFace(l: BoardLine): { id: string; name: string; url?: string | null
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-/** One conversation at one level: how many of its messages landed there, its vote, and why. */
+/** A message's importance, small, beside its marks. */
+function Importance({ score, title }: { score: number | null | undefined; title: string }) {
+  if (typeof score !== 'number') return null;
+  return (
+    <span class="model-imp" data-importance title={title}>
+      {percent(score)}
+    </span>
+  );
+}
+
+/** One conversation in one tier: how many of its messages landed there, its importance, its marks, and why. */
 function Line({ l, below }: { l: BoardLine; below: boolean }) {
   const [open, setOpen] = useState(false);
   const face = lineFace(l);
@@ -69,8 +79,9 @@ function Line({ l, below }: { l: BoardLine; below: boolean }) {
         <button class={`btn ghost small model-why-btn ${open ? 'on' : ''}`} aria-expanded={open} data-track={open ? 'why (close)' : 'why'} onClick={() => setOpen(!open)}>
           Why <Icon name={open ? 'chevronUp' : 'chevronDown'} size={13} />
         </button>
-        <span class="model-vote" title="Votes on its newest message here">
-          <TierVote m={l.newest} />
+        <Importance score={topImportance(l.items)} title="Importance: the highest among its messages here" />
+        <span class="model-marks" title="Marks on its newest message here">
+          <MarkToggles m={l.newest} small />
         </span>
       </div>
       {open && <Why l={l} />}
@@ -81,7 +92,7 @@ function Line({ l, below }: { l: BoardLine; below: boolean }) {
 /** A line's messages beyond this many wait for "Show all". */
 const WHY_SHOWN = 20;
 
-/** The reasons, each once, and the messages themselves, each with its own vote. */
+/** The reasons, each once, and the messages themselves, each with its own importance and marks. */
 function Why({ l }: { l: BoardLine }) {
   const [all, setAll] = useState(false);
   const reasons = reasonsOf(l.items);
@@ -128,7 +139,8 @@ function WhyMessage({ m }: { m: P.MessageView }) {
           {ago(m.ts)}
         </span>
       </button>
-      <TierVote m={m} />
+      <Importance score={m.triage?.score} title="Its importance" />
+      <MarkToggles m={m} small />
     </div>
   );
 }
@@ -146,7 +158,8 @@ function WhyMail({ m }: { m: P.MailTriageItem }) {
           {ago(m.ts)}
         </span>
       </button>
-      <TierVote m={m} />
+      <Importance score={m.triage.score} title="Its importance" />
+      <MarkToggles m={m} small />
     </div>
   );
 }
@@ -154,7 +167,7 @@ function WhyMail({ m }: { m: P.MailTriageItem }) {
 /** Long lists show this many lines, then a button for the rest. */
 const SHOWN = 40;
 
-/** A level's lines, the first SHOWN until asked for all. Keyed by conversation: a vote moves a message to another level's line. */
+/** A tier's lines, the first SHOWN until asked for all. */
 function Lines({ ms, below = false }: { ms: BoardItem[]; below?: boolean }) {
   const [all, setAll] = useState(false);
   const lines = linesOf(ms, lineKey);
@@ -175,9 +188,10 @@ function Lines({ ms, below = false }: { ms: BoardItem[]; below?: boolean }) {
 export function HowItSorts({ onBack }: { onBack?: () => void }) {
   rev.value;
   useEffect(() => void loadMailTriage(), []);
-  // The last week, by where each message is now: a vote moves it between the lists at once. The badge counts from the same.
-  const { important, active, digest, below, importantUnread } = board();
+  // The last week, by the tier each message landed in. The badge counts from the same.
+  const { alerts, conversations, list, below, alertsUnread, conversationsUnread } = board();
   const convs = (ms: BoardItem[]) => linesOf(ms, lineKey).length;
+  const unread = (n: number) => (n > 0 ? ` (${n} unread)` : '');
   return (
     <section class="pane board model-page" aria-label="How it sorts" data-track-area="how it sorts">
       <header class="conv-head">
@@ -198,57 +212,63 @@ export function HowItSorts({ onBack }: { onBack?: () => void }) {
       </header>
       <div class="board-scroll">
         <p class="model-intro">
-          Every message from every account goes through the same decision model. A conversation is listed under each level its messages landed at. The arrows on a line vote on its newest message there; open
-          Why for the reasons and every message, each with its own vote. The model learns from each vote.
+          Every message from every account lands in one of three tiers, or below them. A conversation is listed under each tier its messages landed in, with the importance of the most important one there. The two
+          buttons on a line mark its newest message there: the bell says it should have alerted (on an alert, that the alert was wrong), the arrow says less like this. Open Why for the reasons and every message,
+          each with its own marks. A mark teaches the next decision; it does not move the message.
         </p>
         <p class="model-stats">
           This week:{' '}
-          <span data-count="important">
-            <b>{important.length}</b> {important.length === 1 ? 'message' : 'messages'} buzzed you{importantUnread > 0 ? ` (${importantUnread} unread)` : ''}
+          <span data-count="alerts">
+            <b>{alerts.length}</b> {alerts.length === 1 ? 'alert' : 'alerts'}
+            {unread(alertsUnread)}
           </span>
           ,{' '}
-          <span data-count="active">
-            <b>{active.length}</b> came as silent notifications
+          <span data-count="conversations">
+            <b>{conversations.length}</b> {conversations.length === 1 ? 'message' : 'messages'} in conversations
+            {unread(conversationsUnread)}
           </span>
           , and{' '}
-          <span data-count="digest">
-            <b>{digest.length}</b> waited for the digest
+          <span data-count="list">
+            <b>{list.length}</b> on the list
           </span>
           .
         </p>
-        <div class="board-block">
+        <div class="board-block" data-tier="push">
           <h3>
-            <Icon name="bell" size={15} /> Important
+            <Icon name={TIER_ICON.push} size={15} /> Alerts
           </h3>
-          <p class="muted">Buzzed your phone and notified your desktop{important.length ? `: ${plural(important.length, 'message')} in ${plural(convs(important), 'conversation')}` : ''}. The unread ones are the count on Catch up.</p>
-          {important.length === 0 && <p class="muted">Nothing this week.</p>}
-          <Lines ms={important} />
+          <p class="muted">
+            Sounded on your phone and notified your desktop{alerts.length ? `: ${plural(alerts.length, 'message')} in ${plural(convs(alerts), 'conversation')}` : ''}. Urgent only. The unread ones count on Catch up,
+            with the unread in Conversations.
+          </p>
+          {alerts.length === 0 && <p class="muted">Nothing this week.</p>}
+          <Lines ms={alerts} />
         </div>
-        <div class="board-block">
+        <div class="board-block" data-tier="quiet">
           <h3>
-            <Icon name="bellOff" size={15} /> Active
+            <Icon name={TIER_ICON.quiet} size={15} /> Conversations
           </h3>
-          <p class="muted">A silent notification on your phone; nothing on the desktop.</p>
-          {active.length === 0 && <p class="muted">Nothing this week.</p>}
-          <Lines ms={active} />
+          <p class="muted">People talking with you: a DM, a message about you, or a chat you take part in. A silent row of its own on your phone; nothing on the desktop.</p>
+          {conversations.length === 0 && <p class="muted">Nothing this week.</p>}
+          <Lines ms={conversations} />
         </div>
-        <div class="board-block">
+        <div class="board-block" data-tier="digest">
           <h3>
-            <Icon name="layers" size={15} /> Digest
+            <Icon name={TIER_ICON.digest} size={15} /> List
           </h3>
-          <p class="muted">Held back instead of notifying, what matters most first. Read it when you feel like it, or vote one up or down.</p>
-          {digest.length === 0 && <p class="muted">Nothing this week.</p>}
-          <Lines ms={digest} />
+          <p class="muted">Everything else that is important enough: a silent row in your phone's list, the most important first.</p>
+          {list.length === 0 && <p class="muted">Nothing this week.</p>}
+          <Lines ms={list} />
         </div>
         {below.length > 0 && (
-          <details class="board-block below">
-            <summary data-track="not interesting (open)">
-              <Icon name="eyeOff" size={15} /> Not interesting{' '}
+          <details class="board-block below" data-tier="drop">
+            <summary data-track="below the list (open)">
+              <Icon name={TIER_ICON.drop} size={15} /> Below the list{' '}
               <span class="muted">
-                · the closest {below.length} from the last {BELOW_DAYS === 2 ? 'two days' : `${BELOW_DAYS} days`}
+                · the {below.length} most important from the last {BELOW_DAYS === 2 ? 'two days' : `${BELOW_DAYS} days`}
               </span>
             </summary>
-            <p class="muted">Not even the digest: these stay unread in their chats. Vote one up if it should have made the digest.</p>
+            <p class="muted">Not important enough for the list: these stay unread in their chats. If one belonged on it, lower the list's level in Settings.</p>
             <Lines ms={below} below />
           </details>
         )}
@@ -258,25 +278,28 @@ export function HowItSorts({ onBack }: { onBack?: () => void }) {
   );
 }
 
-
-/** What the candidate model, which learns from what you do and only watches, would have done this week. */
+/** What the candidate model, which learns from what you do and only watches, would have put on the list lately. */
 function ShadowLine() {
   const s = triageShadow.value;
   useEffect(() => void loadShadow(), []);
   if (!s || !s.decided) return null;
-  const fewer = s.live.ping - s.shadow.ping;
   const days = s.since ? Math.max(1, Math.min(s.days, Math.ceil((Date.now() - s.since) / 86_400_000))) : s.days;
-  const explored = s.explored.up + s.explored.down;
   return (
-    <p class="muted shadow-line" title="A second model learns from what you do after messages (answers, opens, taps) as well as your votes. It only watches: it decides nothing until it is switched on.">
-      Learning from what you do, in the background: over the last {plural(days, 'day')} it would have made{' '}
-      {fewer > 0 ? `${fewer} fewer` : fewer < 0 ? `${-fewer} more` : 'as many'} Important ({s.shadow.ping} instead of {s.live.ping}), missed {plural(s.answered.missed, 'message')} you answered within 15 minutes
-      {s.answered.gained ? `, and caught ${s.answered.gained} more` : ''}.{explored ? ` ${plural(explored, 'notification')} changed to learn from (silent only).` : ''}
+    <p class="muted shadow-line" title="A second model learns from what you do after messages (answers, opens, taps) as well as your marks. It only watches: it decides nothing until it is switched on.">
+      The candidate model would have put {plural(s.shadow, 'message')} on the list where {s.live} {s.live === 1 ? 'was' : 'were'} ({s.both} the same) over the last {plural(days, 'day')}.
     </p>
   );
 }
 
-/** What the decision model learned from your votes, how well it fits them, and the prompt written from it. */
+/** What was learned, in words, by what it moves: the chance of an alert up or down, the importance up or down. */
+const LEARNED: { head: P.TriageHead; up: boolean; title: string }[] = [
+  { head: 'alert', up: true, title: 'More likely to alert' },
+  { head: 'alert', up: false, title: 'Less likely to alert' },
+  { head: 'important', up: true, title: 'More important' },
+  { head: 'important', up: false, title: 'Less important' },
+];
+
+/** Where alerts start, the list's level, how well the models fit your marks, and what they learned from them. */
 function Learned() {
   const p = triagePolicy.value;
   const [busy, setBusy] = useState(false);
@@ -290,38 +313,51 @@ function Learned() {
       setBusy(false);
     }
   };
-  const t = p.thresholds;
+  const level = p.thresholds.important;
+  const preview = listPreview(p.preview, level);
   return (
     <div class="board-block learned">
       <h3>
-        <Icon name="sparkles" size={15} /> What it learned from your votes
+        <Icon name="sparkles" size={15} /> What it learned from your marks
       </h3>
-      <p class="muted">
-        For each message it predicts three chances: <b>Important</b>, worth buzzing you (at {Math.round(t.ping * 100)}% or more); else <b>Active</b>, worth a silent notification (at{' '}
-        {Math.round(t.active * 100)}%); else <b>Digest</b>, interesting enough for the digest (at {Math.round(t.interesting * 100)}%); below that, Not interesting. It starts from what Discord, Signal and the rest would notify you about; your votes move it from there, one chat at once, a person or a server
-        after a few, everything only after many.
+      <p class="muted" data-learned="bars">
+        Alerts start when the local model's answer reaches {p.bars.direct} in DMs and messages about you, {p.bars.other} in chats you take part in. Your marks move them from there: one chat at once, a person or a
+        server after a few, everything only after many.
       </p>
-      <p class="muted">
+      <p class="muted" data-learned="list">
+        The list holds what reaches an importance of {percent(level)}
+        {preview ? `: ${preview}` : ''}. Importance starts from what Discord, Signal and the rest would notify you about, and moves with what you open and what you mark. The level is yours to set in Settings.
+      </p>
+      <p class="muted" data-learned="marks">
         {p.votes === 0
-          ? 'No votes yet. Vote a notification up or down a level, here or from the notification itself, and what it learns shows up here.'
-          : `${p.votes} vote${p.votes === 1 ? '' : 's'}: it gets ${p.errors} wrong; the networks' own settings alone would get ${p.baseline} wrong.`}
+          ? 'No marks yet. Mark a message here, from its menu or from its notification, and what is learned shows up here.'
+          : `${plural(p.votes, 'mark')}; the model gets ${p.errors} of them wrong, ${p.baseline} without what it learned.`}
         {p.learnedAt ? ` Last learned ${ago(p.learnedAt)} (${p.lastReason}).` : ''}
       </p>
       <ShadowLine />
-      {p.factors.map((f) => (
-        <div key={f.key} class="rule-row">
-          <span class={`factor-weight ${f.weight > 0 ? 'up' : 'down'}`} title={`${f.weight > 0 ? '+' : ''}${f.weight.toFixed(2)} log-odds`}>
-            {f.weight > 0 ? '▲' : '▼'} {HEAD_LABEL[f.head]}
-          </span>
-          <span class="rule-text">{f.text}</span>
-          <span class="rule-votes" title="Votes it was part of">
-            {f.votes} vote{f.votes === 1 ? '' : 's'}
-          </span>
-          <button class="icon-btn small" disabled={busy} data-track="forget a learned rule" title="Forget this, and never learn it again" onClick={act(() => forgetFactor(f.key, true))}>
-            <Icon name="x" size={13} />
-          </button>
-        </div>
-      ))}
+      {LEARNED.map((g) => {
+        const fs = p.factors.filter((f) => f.head === g.head && f.weight > 0 === g.up);
+        if (!fs.length) return null;
+        return (
+          <div key={g.title} class="learned-group" data-head={g.head} data-dir={g.up ? 'up' : 'down'}>
+            <h4>{g.title}:</h4>
+            {fs.map((f) => (
+              <div key={f.key} class="rule-row">
+                <span class={`factor-weight ${g.up ? 'up' : 'down'}`} title={`${f.weight > 0 ? '+' : ''}${f.weight.toFixed(2)} log-odds`}>
+                  {g.up ? '▲' : '▼'}
+                </span>
+                <span class="rule-text">{f.text}</span>
+                <span class="rule-marks" title="Marks it was part of">
+                  {plural(f.votes, 'mark')}
+                </span>
+                <button class="icon-btn small" disabled={busy} data-track="forget a learned rule" title="Forget this, and never learn it again" onClick={act(() => forgetFactor(f.key, true))}>
+                  <Icon name="x" size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+        );
+      })}
       {p.rejected.length > 0 && (
         <details class="rule-dropped">
           <summary>{p.rejected.length} forgotten</summary>
@@ -339,13 +375,6 @@ function Learned() {
         <button class="btn ghost small" disabled={busy} data-track="learn again now" onClick={act(relearn)}>
           <Icon name="refresh" size={13} /> Learn again now
         </button>
-        {p.prompt && (
-          <details class="learned-prompt">
-            <summary>Decision prompt{p.model ? ` for ${p.model}` : ''}</summary>
-            {!p.model && <p class="muted">No local model is set (DITHER_TRIAGE_MODEL), so the model above decides on its own. With one, places set to Smart ask it with this, and its chances become the starting point.</p>}
-            <pre>{p.prompt}</pre>
-          </details>
-        )}
       </div>
     </div>
   );

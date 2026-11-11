@@ -9,7 +9,7 @@ import { TIER_LABEL } from '@dither-chat/protocol';
 import { signal } from '@preact/signals';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { arrive, focusAfter, later, remove, reopen, seen, step, take, type Queue, type QueueRow } from '../catchup.ts';
-import { lineKey, topLevel, type BoardItem } from '../board.ts';
+import { lineKey, topTier, type BoardItem } from '../board.ts';
 import { countKey } from '../clicklog.ts';
 import { ago, fullTime, since as sinceText } from '../format.ts';
 import { shownInbox } from '../inbox.ts';
@@ -22,7 +22,7 @@ import { Avatar } from './bits.tsx';
 import { useGrow } from './grow.ts';
 import { Icon } from './icons.tsx';
 import { composerBlocker } from './Timeline.tsx';
-import { TIER_ICON } from './TierVote.tsx';
+import { TIER_ICON } from './Marks.tsx';
 import { viewer, type ViewerImage } from './Viewer.tsx';
 
 // ------------------------------------------------------------------ the session's queue
@@ -271,7 +271,7 @@ export function CatchUp() {
   const focus = s?.focus ?? null;
   useLayoutEffect(() => void scrollToCard(focus), [focus]);
 
-  // Each card's level, from what triage decided on its messages since it joined. Not before there are cards.
+  // Each card's tier, from what triage decided on its messages since it joined. Not before there are cards.
   const decided = useMemo(() => {
     const by = new Map<string, BoardItem[]>();
     if (!shown || !s) return by;
@@ -364,10 +364,10 @@ export function CatchUp() {
           if (r.kind === 'mail') {
             const items = decided.get(k) ?? [];
             const unread = items.filter((m) => (m as P.MailTriageItem).unread);
-            return <MailCard key={k} t={r.thread} level={topLevel(unread.length ? unread : items)} {...props} />;
+            return <MailCard key={k} t={r.thread} tier={topTier(unread.length ? unread : items)} {...props} />;
           }
           const from = s.since.get(k) ?? sinceOf(r);
-          return <ChatCard key={k} c={r.conv} since={from} level={topLevel((decided.get(k) ?? []).filter((m) => m.ts > from))} replied={s.replied.has(k)} {...props} />;
+          return <ChatCard key={k} c={r.conv} since={from} tier={topTier((decided.get(k) ?? []).filter((m) => m.ts > from))} replied={s.replied.has(k)} {...props} />;
         })}
         {keys.length > upTo && <More key={upTo} left={keys.length - upTo} onMore={() => setDrawn(upTo + DRAWN)} />}
       </div>
@@ -404,7 +404,8 @@ interface CardProps {
   /** The focused card or one of the few after it: its messages load before it is scrolled to. */
   ahead: boolean;
   owedSince: number | null;
-  level: P.NotifyTier | null;
+  /** The highest tier among its messages since you last read it. */
+  tier: P.NotifyTier | null;
   onFocus: () => void;
 }
 
@@ -420,11 +421,12 @@ function useNear(el: { current: HTMLElement | null }): boolean {
   return near;
 }
 
-function LevelTag({ level }: { level: P.NotifyTier | null }) {
-  if (!level || level === 'drop') return null;
+/** A card's tier; what fell below the list has no tag. */
+function TierTag({ tier }: { tier: P.NotifyTier | null }) {
+  if (!tier || tier === 'drop') return null;
   return (
-    <span class={`tier-chip ${level}`} title="Where triage put its messages since you last read it">
-      <Icon name={TIER_ICON[level]} size={10} /> {TIER_LABEL[level]}
+    <span class={`tier-chip ${tier}`} title="The highest tier among its messages since you last read it">
+      <Icon name={TIER_ICON[tier]} size={10} /> {TIER_LABEL[tier]}
     </span>
   );
 }
@@ -494,7 +496,7 @@ function CardMessage({ m, names }: { m: P.MessageView; names: boolean }) {
   );
 }
 
-function ChatCard({ c, since, replied, focused, ahead, owedSince, level, onFocus }: CardProps & { c: P.ConversationView; since: number; replied: boolean }) {
+function ChatCard({ c, since, replied, focused, ahead, owedSince, tier, onFocus }: CardProps & { c: P.ConversationView; since: number; replied: boolean }) {
   const tkey = timelineKey('c', c.id);
   timelineRev(tkey).value;
   const el = useRef<HTMLDivElement>(null);
@@ -527,7 +529,7 @@ function ChatCard({ c, since, replied, focused, ahead, owedSince, level, onFocus
             ) : (
               <Waiting at={owedSince} />
             )}
-            <LevelTag level={level} />
+            <TierTag tier={tier} />
           </span>
         </span>
         <span class="cu-time" title={c.lastMessageAt ? fullTime(c.lastMessageAt) : undefined}>
@@ -656,7 +658,7 @@ function ReplyBox({ c }: { c: P.ConversationView }) {
   );
 }
 
-function MailCard({ t, focused, owedSince, level, onFocus }: CardProps & { t: P.MailThreadView }) {
+function MailCard({ t, focused, owedSince, tier, onFocus }: CardProps & { t: P.MailThreadView }) {
   const other = [...t.from].reverse().find((f) => !f.self) ?? t.from[t.from.length - 1];
   const person = other?.personId ? db.persons.get(other.personId) : undefined;
   const name = t.participants <= 2 ? (person?.name ?? other?.name ?? other?.email ?? '?') : senderLine(t);
@@ -673,7 +675,7 @@ function MailCard({ t, focused, owedSince, level, onFocus }: CardProps & { t: P.
           </span>
           <span class="cu-tags">
             <Waiting at={owedSince} />
-            <LevelTag level={level} />
+            <TierTag tier={tier} />
           </span>
         </span>
         <span class="cu-time" title={fullTime(t.lastAt)}>

@@ -1,9 +1,9 @@
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META } from '@dither-chat/protocol';
+import { NETWORK_META, RULE_LABEL, RULE_LEVELS } from '@dither-chat/protocol';
 import { useState } from 'preact/hooks';
-import { LEVEL_LABEL, communitiesOf, convLabel, convTitle, deepLink, directsOf, effectiveLevel, identityName, kindLabel, netName, placeConv, threadsOf } from '../model.ts';
+import { AUTOMATIC, AUTOMATIC_HELP, RULE_HELP, communitiesOf, convLabel, convTitle, deepLink, directsOf, effectiveLevel, identityName, kindLabel, netName, placeConv, ruleHelp, ruleIcon, ruleName, ruleOn, threadsOf } from '../model.ts';
 import { api, db, go, isSelfIdentity, openProfile, prefs, rev, setRule } from '../state.ts';
-import { AccountChip, Avatar, NetBadge, NetGlyph, levelIcon } from './bits.tsx';
+import { AccountChip, Avatar, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { showDetails } from './Pager.ts';
 import { openConv } from './Sidebar.tsx';
@@ -38,13 +38,14 @@ function Copyable({ text }: { text: string }) {
   );
 }
 
-const ORDER = ['this conversation', 'thread parent', 'section', 'server / space', 'account', 'network', 'global', 'default for its shape'];
+const ORDER = ['this conversation', 'thread parent', 'section', 'server / space', 'account'];
 
 export function ConversationDetails({ convId }: { convId: string }) {
   rev.value;
   const c = db.conversations.get(convId);
   if (!c) return null;
   const eff = effectiveLevel(c);
+  const own = ruleOn('conversation', c.id);
   const base = placeConv(c);
   const coms = communitiesOf(c);
   const link = deepLink(c);
@@ -138,33 +139,34 @@ export function ConversationDetails({ convId }: { convId: string }) {
         </Section>
 
         <Section title="Notifications">
-          <div class={`det-level ${eff.level}`}>
-            <Icon name={levelIcon(eff.level)} size={18} />
+          <div class={`det-level ${eff.rule ?? 'auto'}`}>
+            <Icon name={ruleIcon(eff.rule)} size={18} />
             <div>
-              <b>{LEVEL_LABEL[eff.level]}</b>
-              <small>{eff.explicit ? `Set on ${eff.source}` : `Inherited: ${eff.source}`}</small>
+              <b>{ruleName(eff.rule)}</b>
+              <small>{eff.rule === null ? `${AUTOMATIC_HELP}. ${eff.source}` : `${ruleHelp(eff.rule)}. ${eff.explicit ? 'Set on' : 'From'} ${eff.source}`}</small>
             </div>
           </div>
           <div class="level-row">
-            {(['all', 'smart', 'mentions', 'digest', 'none'] as const).map((l) => (
-              <button class={`chip-btn ${eff.level === l && eff.scope === 'conversation' ? 'on' : ''}`} onClick={() => setRule('conversation', c.id, l)} title={LEVEL_LABEL[l]}>
-                <Icon name={levelIcon(l)} size={13} /> {LEVEL_LABEL[l]}
+            <button class={`chip-btn ${own === null ? 'on' : ''}`} data-rule="" onClick={() => setRule('conversation', c.id, null)} title={AUTOMATIC_HELP}>
+              <Icon name={ruleIcon(null)} size={13} /> {AUTOMATIC}
+            </button>
+            {RULE_LEVELS.map((l) => (
+              <button class={`chip-btn ${own === l ? 'on' : ''}`} data-rule={l} onClick={() => setRule('conversation', c.id, l)} title={RULE_HELP[l]}>
+                <Icon name={ruleIcon(l)} size={13} /> {RULE_LABEL[l]}
               </button>
             ))}
-            {eff.scope === 'conversation' && (
-              <button class="chip-btn" onClick={() => setRule('conversation', c.id, null)}>
-                Inherit
-              </button>
-            )}
           </div>
           <details class="det-order">
-            <summary>How the level is chosen</summary>
+            <summary>How it is chosen</summary>
             <ol>
               {ORDER.map((o) => (
                 <li>{o}</li>
               ))}
             </ol>
-            <p>The most specific rule wins. A mute set in the native app caps inherited levels at Digest. People set to always notify, and keywords, can still push.</p>
+            <p>
+              The most specific rule wins. With none it is Automatic: a DM, a message about you or a chat you take part in is a conversation, what reads as urgent there is an alert, and the rest reaches the list when it
+              is important enough. A place muted on its network is kept to the list. People set to always alert, and keywords, still alert anywhere but in a muted place.
+            </p>
           </details>
         </Section>
 
@@ -283,8 +285,8 @@ export function PersonDetails({ personId }: { personId: string }) {
               onChange={(e) => setRule('person', p.id, (e.target as HTMLInputElement).checked ? 'all' : null)}
             />
             <span>
-              <b>Always notify</b>
-              <small>Push messages from {p.name}, on every network, even in busy groups.</small>
+              <b>Always alert</b>
+              <small>Every message from {p.name} is an alert, on every network, even in busy groups.</small>
             </span>
           </label>
         </Section>

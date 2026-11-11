@@ -66,28 +66,40 @@ export interface Attention {
   detail?: unknown;
 }
 
+/**
+ * A notification rule you set on a place or a person (docs/notifications.md). No rule is Automatic: the tiers decide.
+ * `all` always alerts, `digest` keeps a place to the list (never a conversation row or an alert), `none` mutes it.
+ * `mentions` is only what a network's own setting can say of a place ("it notifies mentions here"); `smart` and a
+ * rule of `mentions` are from before the tiers, and the hub neither stores nor reads them.
+ */
 export type NotifyLevel =
-  | 'all' //      push every message
-  | 'mentions' // push mentions and replies to you; the rest goes to the digest
-  | 'smart' //    push what the triage model scores as needing you; the rest goes to the digest
-  | 'digest' //   never push; collect into the digest
-  | 'none'; //    silent: no push, no digest, unread badge only
+  | 'all' //      Always alert
+  | 'mentions' // not a rule: a network's own setting, "notifies only mentions here"
+  | 'smart' //    gone: read as no rule
+  | 'digest' //   List only
+  | 'none'; //    Mute: no notification, no list, unread badge only
+
+/** The levels a rule can be set to, and what the app calls them. */
+export const RULE_LEVELS = ['all', 'digest', 'none'] as const;
+export type RuleLevel = (typeof RULE_LEVELS)[number];
+export const RULE_LABEL: Record<RuleLevel, string> = { all: 'Always alert', digest: 'List only', none: 'Mute' };
 
 export type NotifyScope = 'global' | 'network' | 'account' | 'space' | 'conversation' | 'person' | 'keyword';
 
 /**
- * Where a message lands (docs/notifications.md): 'push' is Important (the phone buzzes, the desktop shows a
- * notification), 'quiet' is Active (a silent notification on the phone, none on the desktop), 'digest' waits for the
- * digest, 'silent' is nowhere but the unread badge.
+ * The tier a message lands in (docs/notifications.md). The stored codes are those of the four levels the tiers
+ * replaced, so old rows and an app that was not updated read on:
+ *  - 'push'   Alert: the phone sounds, the desktop shows a notification. Urgent only.
+ *  - 'quiet'  Conversation: people talking with you. A silent row of its own on the phone, nothing on the desktop.
+ *  - 'digest' List: important enough for the phone's ranked list (importance at or above your level), silent.
+ *  - 'drop'   below the list: unread in its chat, nowhere else.
+ *  - 'silent' muted places, held requests: nowhere but the unread badge, and never marked.
  */
 export type TriageDecision = 'push' | 'quiet' | 'digest' | 'drop' | 'silent';
 
-/**
- * The levels you can vote a decision between: Important, Active, Digest, and below the digest ('drop': not
- * interesting enough for it; still unread in its chat).
- */
+/** The four tiers a decided message can be in. */
 export type NotifyTier = 'push' | 'quiet' | 'digest' | 'drop';
-export const TIER_LABEL: Record<NotifyTier, string> = { push: 'Important', quiet: 'Active', digest: 'Digest', drop: 'Not interesting' };
+export const TIER_LABEL: Record<NotifyTier, string> = { push: 'Alert', quiet: 'Conversation', digest: 'List', drop: 'Below the list' };
 
 export type MessageKind = 'text' | 'media' | 'system' | 'sticker' | 'call' | 'encrypted';
 

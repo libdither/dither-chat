@@ -98,6 +98,26 @@ and into a label it leaves Inbox only, as its `mail.move` names no source.
 - Votes share chat's route (`POST /api/messages/:id/feedback` takes a mail message id) besides
   `POST /api/mail/triage/:id/vote`; `TriageVotes.others` is where mail's examples join chat's.
 
+**As built with the three tiers** (2026-11; docs/notifications.md, docs/mail.md "Triage and notifications"). Chat's
+four levels (Important, Active, Digest, Not interesting) became three tiers, and wherever the text below or slice 9's
+notes above name a level, a vote or the digest, this holds instead:
+
+- Mail has two of the tiers. A personal message is a row on the **List** when its importance (chat's model, one
+  chance) is at or above your level, and **below the list** when it is not. It is an **Alert** only when its sender
+  is set to Always alert, and not when the body warns of spoofing. Mail has no Conversation tier, and the local model
+  that reads chat for urgency does not read mail. The stored codes are the old ones (`push`, `digest`, `drop`).
+- §10's `base` (`push` for a known sender in To, `quiet` in Cc, `digest` otherwise) now only says where importance
+  starts: 0.8 for the first two (a mail client would have notified you), lower for the rest by how much the message
+  is about you.
+- A list row is a silent notification on phones, sorted by importance, at most every ten minutes a thread; only an
+  alert sounds or reaches a computer. Quiet hours hold alerts only, as list rows.
+- One mark replaces the votes: **Less like this** (`POST /api/mail/triage/:id/vote { less: true | false }`, where §5
+  has `{ level }`). "Not a person" is that mark on the thread's newest decision. Votes cast before count half.
+- §4 and §14 Q4: a sender nobody knows reaches the one-list inbox when the thread's newest message is on the list or
+  above and not marked "Less like this" (where the text says "Active or above").
+- `mail_triage` gains `was`, what a decision was before the one conversion: Important and Active mail became list
+  rows, Digest went below the list. There is no daily digest any more.
+
 ## 0. In one page
 
 | Decision | Where |

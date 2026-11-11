@@ -190,12 +190,13 @@ What made the difference:
 - **Message bodies** rendered their Markdown again on every change anywhere; now only bodies with mentions or room
   links do, since only those read anything that can change.
 - **Room links** and **reply quotes** were linear searches (every conversation, every loaded message) per message.
-- **The unread total** (the app badge, the Home tab) worked out every conversation's notification level on every
+- **The unread total** (the app badge, the Home tab) worked out every conversation's notification rule on every
   render; it now skips the ones with nothing unread and is counted once per change.
 - **`useFlip`** measured every list row after every render, a forced layout of the whole sidebar; now only when the
   order changes.
-- **`/api/inbox`** sorted a week of triage (200k rows on the live hub) for each of its picks. An index on the level
-  and score (`triage_level_score`) lets each pick stop at its limit; `test/inbox-plan.test.ts` checks the plans.
+- **`/api/inbox`** sorted a week of triage (200k rows on the live hub) for each of its picks. An index on the tier
+  and score (`triage_tier_score`; `triage_level_score` before the tiers) lets each pick stop at its limit;
+  `test/inbox-plan.test.ts` checks the plans.
 
 ## Scoped renders and a window
 

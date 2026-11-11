@@ -358,6 +358,17 @@ export class ActivityStore {
     this.db.query('UPDATE notification SET tapped_at = MIN(COALESCE(tapped_at, ?), ?) WHERE id = ?').run(at, at, n.id);
   }
 
+  /** The conversations these notifications were about. */
+  conversationsOf(ids: (string | undefined)[]): string[] {
+    const out = new Set<string>();
+    const q = this.db.query('SELECT conversation_id FROM notification WHERE id = ?');
+    for (const id of ids.slice(0, 200)) {
+      const cid = typeof id === 'string' ? (q.get(id) as Row | null)?.conversation_id : null;
+      if (cid) out.add(cid);
+    }
+    return [...out];
+  }
+
   /** Features worked out before this change are stale. */
   private changed(cid: string | null | undefined) {
     if (cid) this.cache.delete(cid);
@@ -421,7 +432,7 @@ export class ActivityStore {
       this.db
         .query(`SELECT m.ts, t.decision FROM message m JOIN triage t ON t.message_id = m.id WHERE m.conversation_id IN (${ph}) AND m.ts >= ? AND (m.author_id IS NULL OR m.author_id NOT IN ${SELF})`)
         .all(...convs, since) as Row[]
-    ).map((r) => ({ ts: r.ts, pushed: r.decision === 'push' || r.decision === 'quiet' }));
+    ).map((r) => ({ ts: r.ts, pushed: r.decision === 'push' || r.decision === 'quiet' || r.decision === 'digest' }));
     const visits = (
       this.db
         .query(`SELECT id, start_at, end_at, active FROM visit WHERE (conversation_id IN (${ph}) OR (? IS NOT NULL AND person_id = ?)) AND view IN ('conversation', 'person') AND start_at >= ? ORDER BY start_at`)
@@ -505,7 +516,7 @@ export class ActivityStore {
     const peers = new Map<string, string | null>();
     const rows = db
       .query(
-        `SELECT t.message_id, t.decision, t.score, t.reasons, t.decided_by, t.feedback, t.created_at,
+        `SELECT t.message_id, t.decision, t.score, t.reasons, t.decided_by, t.feedback, t.alert_mark, t.less_mark, t.created_at,
                 m.conversation_id, m.ts, m.kind, m.mentions_self, m.reply_to_id, m.thread_id, m.deleted, m.network,
                 c.shape, c.variant, i.is_bot, i.person_id, p.starred,
                 r.author_id IN ${SELF} AS reply_to_self
@@ -569,6 +580,8 @@ export class ActivityStore {
           decidedBy: r.decided_by,
           // A model's reason may paraphrase the message: its words stay out.
           reasons: (JSON.parse(r.reasons) as string[]).map((s) => (s.startsWith('Model:') ? 'Model' : s)),
+          // Your marks (docs/notifications.md); `feedback` is a vote from before the tiers.
+          marks: { ...(r.alert_mark != null ? { alert: !!r.alert_mark } : {}), ...(r.less_mark ? { less: true } : {}) },
           feedback: r.feedback ?? null,
           at: r.created_at,
         },

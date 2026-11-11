@@ -42,7 +42,8 @@ journal, as after restoring an older database) or:
 - `events`: the live socket's own events for everything changed after `since`, read as it is now: `account`,
   `identity`, `person`, `space` (with its edges), `conversation`, the `*.removed` ones, `folders`, `placePrefs`,
   `categories`, `rules`, `attention`, `usage`, `arrange`. The client applies them exactly as it applies live frames.
-- `inbox`: triaged, not silent, last 7 days, changed since (at most 300, which is the inbox's own size).
+- `inbox`: triaged, on the list or above (not silent, not below the list), last 7 days, changed since (at most 300,
+  which is the inbox's own size).
 - `timelines`: for each one the client holds, the messages after its newest, and the ones it holds (between `oldest`
   and `newest`) that changed since its `seq`: edits, deletions, reactions, triage, forwards. When there are more than
   a page (60) of new ones, when the timeline's `seq` is older than the floor, or when a person timeline now spans

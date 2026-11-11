@@ -28,7 +28,7 @@ import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { scoreConversation, WEIGHTS } from '../packages/hub/src/attention.ts';
-import { drawZ, epochOf, EXAM_AT, EXAMINATION_ETA, EXPLORE_SCALE, FEATURES, FIT, fitRank, GUESSED_CURVE, logit, pointsOf, SEND_VALUE, sigmoid, spread, TRIAGE_FEATURES, HORIZON, LAMBDA, MAX_IPW, predict, PRIOR, rankFeatures, type Feature, type Features, type FitOptions, type Moment, type RankModel } from '../packages/hub/src/rank.ts';
+import { drawZ, epochOf, EXAM_AT, EXAMINATION_ETA, EXPLORE_SCALE, FEATURES, FIT, fitRank, FLOORED, GUESSED_CURVE, logit, pointsOf, SEND_VALUE, sigmoid, spread, TRIAGE_FEATURES, HORIZON, LAMBDA, MAX_IPW, predict, PRIOR, rankFeatures, type Feature, type Features, type FitOptions, type Moment, type RankModel } from '../packages/hub/src/rank.ts';
 import { isChoice, loadWorld, momentOf, mutedBy, Rebuild, seenAt, type Seen, type World } from '../packages/hub/src/rankhistory.ts';
 import { Store } from '../packages/hub/src/store.ts';
 import { Triage } from '../packages/hub/src/triage.ts';
@@ -397,6 +397,11 @@ if (import.meta.main) {
     // Learned like the rest, where the hub keeps them at 0.
     const withTriage = { ...LAMBDA, ...Object.fromEntries(TRIAGE_FEATURES.map((f) => [f, 30])) } as Record<Feature, number>;
     tryIt('with-triage', 'learned with where triage put the newest unread message and your votes as features', { lambda: withTriage });
+  }
+  // The floor (rank.ts FLOORED): unread, mentions, owed replies, a live conversation, an alert waiting and DMs never count against a row.
+  if (grid || flag('floor')) {
+    tryIt('no-floor', 'learned without the floor: any weight may fall below the prior', { floor: [] });
+    tryIt('floor-formula', "learned with the formula's own weight floored too", { floor: [...FLOORED, 'formula'] });
   }
   if (grid || flag('curve')) {
     tryIt('guess', 'learned with the guessed examination curve, (1 + position)^-0.5, as until 2026-11-10', { curve: undefined });

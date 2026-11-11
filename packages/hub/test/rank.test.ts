@@ -22,8 +22,11 @@ import {
   examination,
   EXPLORE_EPOCH,
   FEATURES,
+  FIT,
   fitLogistic,
   fitRank,
+  fitSteps,
+  FLOORED,
   GUESSED_CURVE,
   invertSPD,
   LAMBDA,
@@ -110,6 +113,87 @@ describe('fitting', () => {
     const one = (n: number) => fitLogistic(rows(n, (i) => (i % 2 ? [{ shape: 'direct' }, 1] : [{ shape: 'group' }, 0])), PRIOR.open).direct ?? 0;
     expect(one(4)).toBeGreaterThan(0);
     expect(one(4)).toBeLessThan(one(400) / 2);
+  });
+});
+
+describe('the floor: what can only count for a row', () => {
+  const rows = (n: number, f: (i: number) => [Partial<ScoreInput>, 0 | 1]): RankRow[] =>
+    Array.from({ length: n }, (_, i) => {
+      const [o, y] = f(i);
+      return { x: feats(o), y, w: 1 };
+    });
+  // A week as it once went: the rows with something unread were at the top anyway and you opened what was under them.
+  const unreadIgnored = rows(400, (i) => (i % 2 ? [{ unread: 6 }, 0] : [{ unread: 0 }, 1]));
+  const at = (w: ReturnType<typeof fitLogistic>, k: (typeof FEATURES)[number]) => w[k] ?? 0;
+
+  test('what is floored: unread, a mention, a reply owed, a conversation going on, an alert or a Conversation waiting, a DM', () => {
+    expect([...FLOORED].sort()).toEqual(['direct', 'live', 'mentions', 'owed', 'pinged', 'unread']);
+    for (const k of FLOORED) expect(FEATURES).toContain(k);
+    // The hub fits with it.
+    expect(FIT.floor).toBe(FLOORED);
+  });
+
+  test('without it the fit learns that unread rows are opened less; with it that weight never goes under the prior’s', () => {
+    const free = fitLogistic(unreadIgnored, PRIOR.open);
+    expect(at(free, 'unread')).toBeLessThan(-0.1);
+    const floored = fitLogistic(unreadIgnored, PRIOR.open, LAMBDA, 25, FLOORED);
+    expect(at(floored, 'unread')).toBe(at(PRIOR.open, 'unread'));
+    expect(at(floored, 'unread')).toBe(0);
+    // None of the floored ones is under the prior's; what is not floored still learns from the same rows.
+    for (const f of FLOORED) expect(at(floored, f)).toBeGreaterThanOrEqual(at(PRIOR.open, f));
+    expect(at(floored, 'formula')).not.toBe(at(PRIOR.open, 'formula'));
+    // Step by step, as the hub fits, it is the same answer.
+    expect(drain(fitSteps(unreadIgnored, PRIOR.open, LAMBDA, 25, FLOORED))).toEqual(floored);
+    expect(drain(fitSteps(unreadIgnored, PRIOR.open))).toEqual(free);
+  });
+
+  test('every floored feature holds, each against rows that say it counts against', () => {
+    const cases: [(typeof FEATURES)[number], Partial<ScoreInput>][] = [
+      ['unread', { unread: 6 }],
+      ['mentions', { unread: 3, mentions: 3 }],
+      ['pinged', { unread: 1, pinged: 'A direct message' }],
+      ['direct', { shape: 'direct' }],
+    ];
+    for (const [k, o] of cases) {
+      const data = rows(400, (i) => (i % 2 ? [o, 0] : [{}, 1]));
+      expect(feats(o)[k]).toBeGreaterThan(0);
+      expect(at(fitLogistic(data, PRIOR.open), k)).toBeLessThan(0);
+      const w = fitLogistic(data, PRIOR.open, LAMBDA, 25, FLOORED);
+      for (const f of FLOORED) expect(at(w, f)).toBeGreaterThanOrEqual(at(PRIOR.open, f));
+    }
+  });
+
+  test('it is a floor, not a pin: the fit may raise a floored weight, and one not named is free to fall', () => {
+    const opened = rows(400, (i) => (i % 2 ? [{ unread: 6 }, 1] : [{ unread: 0 }, 0]));
+    const raised = at(fitLogistic(opened, PRIOR.open, LAMBDA, 25, FLOORED), 'unread');
+    expect(raised).toBeGreaterThan(0.05);
+    // Above the floor it is the fit it would have been without one.
+    expect(raised).toBe(at(fitLogistic(opened, PRIOR.open), 'unread'));
+    // Only what is named: with another feature floored, unread falls as it does without a floor.
+    expect(at(fitLogistic(unreadIgnored, PRIOR.open, LAMBDA, 25, ['direct']), 'unread')).toBe(at(fitLogistic(unreadIgnored, PRIOR.open), 'unread'));
+  });
+
+  test('the floor is the prior’s own weight, not zero', () => {
+    const prior = { ...PRIOR.open, direct: 0.8 };
+    const dmsIgnored = rows(400, (i) => (i % 2 ? [{ shape: 'direct' }, 0] : [{ shape: 'group' }, 1]));
+    expect(at(fitLogistic(dmsIgnored, prior), 'direct')).toBeLessThan(0.8);
+    expect(at(fitLogistic(dmsIgnored, prior, LAMBDA, 25, FLOORED), 'direct')).toBe(0.8);
+  });
+
+  test('a whole fit takes it as an option: the open chance is floored, with it and with the curve', () => {
+    const quiet = feats({ unread: 0 });
+    const unread = feats({ unread: 6 });
+    const moments: Moment[] = Array.from({ length: 200 }, (_, i) => ({
+      at: T0 + i * HOUR,
+      rows: [
+        { x: unread, weight: 1, open: null, chosen: false, pos: 0 },
+        { x: quiet, weight: 1, open: { source: 'inbox', rank: 1, after: MIN }, chosen: true, sent: false, pos: 1 },
+      ],
+    }));
+    expect(at(fitRank(moments, T0, { cov: false }).open, 'unread')).toBeLessThan(-0.1);
+    expect(at(fitRank(moments, T0, { cov: false, floor: FLOORED }).open, 'unread')).toBe(0);
+    expect(at(fitRank(moments, T0, { ...FIT, cov: false }).open, 'unread')).toBe(0);
+    expect(at(fitRank(moments, T0, { ...FIT, cov: false, floor: [] }).open, 'unread')).toBeLessThan(-0.1);
   });
 });
 

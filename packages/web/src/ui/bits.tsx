@@ -202,7 +202,3 @@ export function variantIcon(v: P.Variant, shape?: P.Shape): string {
   return { text: 'hash', announcement: 'announcement', forum: 'forum', voice: 'voice', stage: 'stage', media: 'media', rules: 'rules' }[v] ?? 'hash';
 }
 
-export function levelIcon(l: P.NotifyLevel): string {
-  return { all: 'bell', smart: 'sparkles', mentions: 'at', digest: 'layers', none: 'bellOff' }[l];
-}
-

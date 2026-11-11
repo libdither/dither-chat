@@ -106,8 +106,15 @@ Reply sends through the hub. Which devices get a message at all is up to each de
 
 ### How a message notification looks
 
-A message is a **conversation notification**, as Discord, Signal and Google Messages post them (`Notifications.kt`,
-design in [research/notification-design.md](research/notification-design.md) §7–8):
+A push says which tier its message is in ([notifications.md](notifications.md)): `tier` is `push` for an alert,
+`quiet` for a Conversation and `digest` for a row of the ranked list, and `importance` (0 to 1) says where a list row
+comes. A hub from before the tiers sends only `level`, which is read as a Conversation when it is `quiet` and as an
+alert otherwise. Each tier has a channel, so Android's own settings can change one and leave the others:
+**Alerts** (`messages`, the only one that sounds), **Conversations (silent)** (`messages-quiet`) and **Ranked list
+(silent)** (`list`). The first two ids are older than the tiers, so a sound someone set on them stays.
+
+**An alert or a Conversation** is a conversation notification, as Discord, Signal and Google Messages post them
+(`Notifications.kt`, design in [research/notification-design.md](research/notification-design.md) §7–8):
 
 - **One per conversation** (tag = conversation id), in `Notification.MessagingStyle` with the push's `lines`: the last
   few messages from others since you last read or wrote there, each with its author as a `Person` (name, key, round
@@ -119,27 +126,78 @@ design in [research/notification-design.md](research/notification-design.md) §7
   `setLocusId`, so Android 11+ draws it in the conversation layout: the shortcut's picture in the icon slot, with the
   small icon, the network's mark in its colour, as a badge on it. No large icon. The shortcut opens the conversation.
   Without a valid long-lived shortcut Android falls back to the plain layout, with the picture missing.
+- **A row of its own.** Each is in a group of its own (`conv:<id>`, the shortcut's id) that never gets a summary, and
+  Android shows a notification like that as a separate row in its Conversations section. There is no shared group and
+  no "N conversations" summary any more. With no group at all, Android 15 gathers an app's notifications into a
+  bundle of its own making (`ranker_group`); it did that to five Conversations.
+- **One row through a change of tier.** The tag is the same for both tiers, so a Conversation that gets an alert, or
+  an alert followed by a Conversation, stays one row and moves to the other channel.
 - **Bursts.** `setOnlyAlertOnce(!alert)`: a push with `alert: false` changes the text without sound, vibration or
-  heads-up. When it is the conversation's first notification it is muted with `GROUP_ALERT_SUMMARY`, which is what
-  `setSilent(true)` does on Android 12+ but also works on 10 and 11 (a group child that leaves alerting to a summary
-  which leaves it to its children never alerts). Active (`level: 'quiet'`) still goes to the silent channel.
-- **One group, `dither-messages`, with a summary** (`InboxStyle`, a line per conversation, `GROUP_ALERT_CHILDREN` so
-  it never sounds itself) once two conversations are showing. Cancelling a summary cancels its children, so it stays
-  while one is left (the system then shows that one alone) and goes with the last. The digest has its own group.
-- **Read elsewhere.** A `{ clear: <conversationId> }` push cancels that conversation's notification and updates the
-  summary, without any outcome event. Opening the conversation in the app does the same, and tells the system it is on
+  heads-up. When it is the conversation's first notification it is muted with `GROUP_ALERT_SUMMARY`: a notification
+  in a group that leaves alerting to the group's summary never alerts, and its group has none. That is what
+  `setSilent(true)` does on Android 12+, and it also works on 10 and 11.
+- **Read elsewhere.** A `{ clear: <conversationId> }` push cancels that conversation's notification, whichever kind
+  it has, without any outcome event. Opening the conversation in the app does the same, and tells the system it is on
   screen (`setLocusContext`).
 - **Reply** sends through the hub, then re-posts the notification (recovered from the one showing) with what you wrote
   as its newest message, quietly, and reports the shortcut as used. On failure it says why, with what you typed.
 
-Checked on the emulator's Android 15: the DM with three messages and the picture on the left with the badge, a group
-with several senders, a silent update and a silent new conversation (no heads-up, no `notification_alert` event in
-`logcat -b events`), the summary over two conversations, a clear, and a reply appended.
+**A row of the ranked list** is a plain notification: no shortcut and no `MessagingStyle`, so it stays out of the
+Conversations section.
+
+- **One per chat**, tag `list:<conversation id>`, on the `list` channel: the chat's title, its newest line as the
+  text, and the push's `lines` in `InboxStyle`, each as "author: body" (only the body in a DM). A single message is
+  shown whole, in `BigTextStyle`. The large icon is the chat's picture, round, with the network's badge; the small
+  icon is the network's mark. A tap opens the chat. A request waiting on you is a row too (`list:request:<id>`,
+  opening it under Requests).
+- **One bundle.** Every row is in the group `dither-list`, with a summary ("N chats", the first six rows in the
+  bundle's order, `GROUP_ALERT_CHILDREN` so it never sounds). Android shows the group collapsed in its Silent
+  section. A tap on the collapsed bundle opens the inbox and takes the bundle off the shade.
+- **Sorted.** `setSortKey` is `%04d-%014d` of 1000 − importance × 1000 and 99999999999999 − the newest line's time,
+  so text order is the order wanted: the more important first and, between two as important, the newer first. A push
+  without `importance` counts as 0.5. Android ranks a group's children by this key.
+- **At most 20 rows.** A 21st takes the place of the row that comes last; if it would be last itself it is not shown
+  (and reports no `shown`).
+- **A chat shows once.** An alert or a Conversation cancels the chat's list row, and a list row cancels the chat's
+  conversation notification. A clear cancels whichever is there. The hub sends a push at the highest tier among the
+  unread lines it carries, so a list message arriving in a chat whose alert or Conversation is still unread comes as
+  that tier and only adds a line to the row that is there.
+- **The summary's upkeep.** It is posted with the first row and re-posted on every change, from the rows the system
+  says are showing. The system adds and removes them asynchronously, so for five seconds the app goes by its own note
+  of what it just posted or cancelled. Cancelling a summary cancels its children, so it goes only once no row is
+  left; with one row the system shows that row alone. A tap closes a row without telling the app, so the summary
+  keeps its row count in its extras and is put right when the page opens the chat. Android drops updates beyond about
+  five a second from one app, so after a burst the summary's own text can be a row behind until the next change; the
+  bundle on screen is made of the rows themselves.
+
+**Swiped away.** Every kind reports `dismissed` from its delete intent, a list row also when the whole bundle is
+swiped. What the app cancels itself (a clear, a row that left the list, a mark) reports nothing.
+
+**Marks** ([notifications.md](notifications.md)) are buttons, after Reply where there is one:
+
+| Row | Button | Sent to `/api/messages/<id>/feedback` | The row |
+|---|---|---|---|
+| Alert | Not urgent | `{ "alert": false }` | goes |
+| Conversation | Should have alerted | `{ "alert": true }` | stays |
+| List | Less like this | `{ "less": true }` | goes |
+| List | Should have alerted | `{ "alert": true }` | stays |
+| Mail (`mailThreadId`), any tier | Less like this | `{ "less": true }`, to `/api/mail/triage/<id>/vote` | goes |
+
+A row that stays loses the button once the hub has taken the mark, so it shows that it went; if the hub could not be
+reached the button is still there. A push without `messageId` (a request) has no marks.
+
+Checked on the emulator's Android 15 (2026-11-10), with payloads from adb and a stand-in for the hub that wrote down
+what the app sent: five Conversations as five rows in the Conversations section (one bundle without the group keys);
+an alert in one of them, with sound and heads-up, the same row on the Alerts channel; a silent update and a silent
+new conversation on that channel (no heads-up, no `notification_alert` event in `logcat -b events`); six list rows in
+one bundle in the Silent section in the order of their sort keys, the summary listing them in that order; a 21st row
+replacing the last; a chat moving between the list and a conversation notification, one row each time; a clear; a
+swipe of one row and of the whole bundle; every mark; a reply appended, and one refused.
 
 **Trying it without a hub's push.** A debug build (`src/debug`, never in a release) has a receiver that shows a
 payload from adb: `adb shell am broadcast -a org.libdither.chat.DEBUG_PUSH -n org.libdither.chat/.DebugPushReceiver
---es b64 <the payload's JSON in base64>`. `--es hub <origin>` sets the hub (for Reply), `--es cancel <tag>` cancels a
-notification.
+--es b64 <the payload's JSON in base64>`. `--es hub <origin>` sets the hub (for Reply and the marks), `--es cancel
+<tag>` cancels a notification.
 
 ### Which servers the hub sends to
 
@@ -373,8 +431,11 @@ For debugging, `./gradlew assembleDebug` builds an 8.8 MB debuggable APK. Its We
   the page, the WebRTC features direct mode uses. Audio routing has only been seen on the emulator, which offers a
   speaker and nothing else.
 - Not tried on a physical phone.
-- Conversation notifications were checked on Android 15 only. A conversation archived or left keeps its shortcut until
-  Android drops it (`removeLongLivedShortcuts` is not called yet), and there are no bubbles.
+- Notifications were checked on Android 15 only: not on 10 and 11, and not on Android 16, whose rules for bundling
+  an app's notifications by itself may differ (a group without a summary is how a conversation gets a row of its own
+  here; if a later Android bundles those, the Conversations show as one bundle inside their section). A conversation
+  archived or left keeps its shortcut until Android drops it (`removeLongLivedShortcuts` is not called yet), and
+  there are no bubbles.
 - Changing the hub address leaves the old hub's push registration in place. Remove it in that hub's settings first.
 - The first render still builds the whole conversation list; rendering only what is visible would cut the remaining
   cold-start time further.

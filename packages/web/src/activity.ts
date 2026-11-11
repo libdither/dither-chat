@@ -10,7 +10,7 @@
 import { effect, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { placeConv, rootCommunity } from './model.ts';
-import { api, apiHooks, db, eventHooks, href, listUnderHooks, parseHash, quietHere, route, type Route } from './state.ts';
+import { api, apiHooks, db, eventHooks, href, listUnderHooks, parseHash, route, showsHere, type Route } from './state.ts';
 import { NEW_VISIT_AFTER } from './tracker.ts';
 import { inUse } from './usage.ts';
 import { VisitLog, samePlace, type Arrival, type Place } from './visits.ts';
@@ -332,7 +332,7 @@ export function startActivity() {
 
   // The in-app notification, shown instead of a system one while the app is open.
   eventHooks.add((ev) => {
-    if (ev.t !== 'notify' || !ev.nid || quietHere(ev)) return;
+    if (ev.t !== 'notify' || !ev.nid || !showsHere(ev)) return;
     toastNid.set(ev.conversationId ?? '', ev.nid);
     if (document.visibilityState === 'visible') event(ev.nid, 'inapp');
   });

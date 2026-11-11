@@ -1,59 +1,63 @@
 /**
- * Where triage put each message this week, and every count shown from that: How it sorts (ui/HowItSorts.tsx), its
- * numbers, and the badge on the inbox button and the phone's Catch up tab. One place, so they cannot disagree
- * (docs/notifications.md#voting). Pure: model.ts and the page hand it what they know.
+ * Which tier triage put each message in this week, and every count shown from that: How it sorts
+ * (ui/HowItSorts.tsx), its numbers, and the badge on the inbox button and the phone's Catch up tab. One place, so
+ * they cannot disagree (docs/notifications.md). Pure: model.ts and the page hand it what they know.
+ *
+ * A message is listed by what was decided. Your marks on it (marks.ts) teach the next decision; they do not move this
+ * one, and neither does a vote from before the tiers.
  */
 import type * as P from '@dither-chat/protocol';
 
-/** Where a message is now: your vote, else the decision. */
-export const levelOf = (t: P.TriageView): P.TriageDecision => t.feedback ?? t.decision;
-
-/** Important, Active and Digest cover the last week, as the hub's inbox does. */
+/** Alerts, Conversations and the list cover the last week, as the hub's inbox does. */
 export const BOARD_DAYS = 7;
-/** Not interesting covers the last two days (the hub sends those only), the closest first. */
+/** Below the list covers the last two days (the hub sends those only), the most important first. */
 export const BELOW_DAYS = 2;
-export const BELOW_SHOWN = 30;
+export const BELOW_SHOWN = 40;
 
-/** A chat message, or a mail message triage decided on (slice 9): both are listed by the same levels. */
+/** A chat message, or a mail message triage decided on (slice 9): both are listed by the same tiers. */
 export type BoardItem = P.MessageView | P.MailTriageItem;
 export const isMailItem = (m: BoardItem): m is P.MailTriageItem => (m as P.MailTriageItem).kind === 'mail';
 
-export interface Board<T extends { ts: number; triage?: P.TriageView | null } = BoardItem> {
-  important: T[];
-  active: T[];
-  digest: T[];
+export interface Board<T extends { id: string; ts: number; triage?: P.TriageView | null } = BoardItem> {
+  alerts: T[];
+  conversations: T[];
+  list: T[];
   below: T[];
-  /** Important messages you have not read: the badge. */
-  importantUnread: number;
+  /** Alerts you have not read, and Conversation messages you have not read: together, the badge. */
+  alertsUnread: number;
+  conversationsUnread: number;
 }
 
-export function triageBoard<T extends { ts: number; triage?: P.TriageView | null }>(items: T[], o: { now: number; shown: (m: T) => boolean; unread: (m: T) => boolean }): Board<T> {
+export function triageBoard<T extends { id: string; ts: number; triage?: P.TriageView | null }>(items: T[], o: { now: number; shown: (m: T) => boolean; unread: (m: T) => boolean }): Board<T> {
   const week = o.now - BOARD_DAYS * 86_400_000;
   const recent = items.filter((m) => m.triage && m.triage.decision !== 'silent' && m.ts > week && o.shown(m));
-  const at = (l: P.TriageDecision) => recent.filter((m) => levelOf(m.triage!) === l);
-  const newest = (a: T, b: T) => b.ts - a.ts;
-  // What matters most first, as the model sees it; then the newest.
-  const byScore = (a: T, b: T) => (b.triage!.score ?? 0) - (a.triage!.score ?? 0) || b.ts - a.ts;
-  const important = at('push').sort(newest);
+  const at = (d: P.TriageDecision) => recent.filter((m) => m.triage!.decision === d);
+  // Two that came at once keep one order, whichever of them the hub sent last: a mark must not make a line jump.
+  const newest = (a: T, b: T) => b.ts - a.ts || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  // The most important first, as the model sees it; then the newest.
+  const byImportance = (a: T, b: T) => (b.triage!.score ?? 0) - (a.triage!.score ?? 0) || newest(a, b);
+  const alerts = at('push').sort(newest);
+  const conversations = at('quiet').sort(newest);
   const twoDays = o.now - BELOW_DAYS * 86_400_000;
   return {
-    important,
-    active: at('quiet').sort(newest),
-    digest: at('digest').sort(byScore),
+    alerts,
+    conversations,
+    list: at('digest').sort(byImportance),
     below: at('drop')
       .filter((m) => m.ts > twoDays)
-      .sort(byScore)
+      .sort(byImportance)
       .slice(0, BELOW_SHOWN),
-    importantUnread: important.filter(o.unread).length,
+    alertsUnread: alerts.filter(o.unread).length,
+    conversationsUnread: conversations.filter(o.unread).length,
   };
 }
 
-/** One line of How it sorts: a conversation's (or a mail thread's) messages at one level. */
+/** One line of How it sorts: a conversation's (or a mail thread's) messages in one tier. */
 export interface BoardLine<T extends { ts: number } = BoardItem> {
   key: string;
   /** In the list's order. */
   items: T[];
-  /** The newest of them: the line's vote is on it. */
+  /** The newest of them: the line's marks are on it. */
   newest: T;
 }
 
@@ -82,10 +86,27 @@ export function reasonsOf(items: { triage?: P.TriageView | null }[]): { text: st
   return [...out].map(([text, n]) => ({ text, n })).sort((a, b) => b.n - a.n);
 }
 
-/** The highest level among these messages, by where each is now; null for none. */
-export function topLevel(items: { triage?: P.TriageView | null }[]): P.NotifyTier | null {
+/** The highest importance among these messages, 0 to 1; null when none has one. */
+export function topImportance(items: { triage?: P.TriageView | null }[]): number | null {
+  let best: number | null = null;
+  for (const m of items) if (typeof m.triage?.score === 'number' && (best === null || m.triage.score > best)) best = m.triage.score;
+  return best;
+}
+
+/** The highest tier among these messages; null for none. */
+export function topTier(items: { triage?: P.TriageView | null }[]): P.NotifyTier | null {
   const order: P.TriageDecision[] = ['drop', 'digest', 'quiet', 'push'];
   let best = -1;
-  for (const m of items) if (m.triage && m.triage.decision !== 'silent') best = Math.max(best, order.indexOf(levelOf(m.triage)));
+  for (const m of items) if (m.triage && m.triage.decision !== 'silent') best = Math.max(best, order.indexOf(m.triage.decision));
   return best < 0 ? null : (order[best] as P.NotifyTier);
+}
+
+/**
+ * "about 17 chats a day at this level (last week)": what the list would have held at a level, from the hub's preview
+ * (one row for each tenth). Whole numbers, and one decimal under three a day; null when the hub has no row for it.
+ */
+export function listPreview(preview: P.TriagePolicyView['preview'], level: number): string | null {
+  const step = Math.round(level * 10);
+  const n = preview.find((x) => Math.round(x.level * 10) === step)?.perDay;
+  return n === undefined ? null : `about ${n < 3 ? n : Math.round(n)} ${n === 1 ? 'chat' : 'chats'} a day at this level (last week)`;
 }

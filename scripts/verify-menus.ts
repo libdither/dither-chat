@@ -1,10 +1,12 @@
 /**
  * Right-click menus and forwarding, end to end against a demo hub, in headless Chromium: desktop menus by
- * mouse and keyboard, Shift+right-click left alone, the menu kept inside the window, the forward dialog, both
- * kinds of forward arriving, and the phone's long-press sheet.
+ * mouse and keyboard, Shift+right-click left alone, the menu kept inside the window, a triaged message's two marks
+ * ("Should have alerted", "Less like this") as ticked entries, a channel's notification rule (Automatic, Always
+ * alert, List only, Mute), the forward dialog, both kinds of forward arriving, and the phone's long-press sheet with
+ * the marks under the reasons.
  *
  *   bun scripts/verify-menus.ts http://127.0.0.1:8531 /tmp/shots
- * The hub must be a demo hub (--demo) with its own data dir: this sends messages.
+ * The hub must be a demo hub (--demo) with its own data dir: this sends messages, marks one and sets a rule.
  */
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -55,8 +57,9 @@ async function key(k: string, code = k) {
 const center = (sel: string) => p.eval<{ x: number; y: number } | null>(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null; e.scrollIntoView({ block: 'center' }); const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
 const labels = (sel = '.cm:last-of-type') => p.eval<string[]>(`[...document.querySelectorAll('${sel} .cm-item, ${sel} .cm-sep, ${sel} .cm-row')].map((e) => e.classList.contains('cm-sep') ? '—' : e.classList.contains('cm-row') ? '[quick reactions]' : e.querySelector('.cm-text').textContent + (e.classList.contains('danger') ? ' (red)' : '') + (e.querySelector('.cm-hint') ? ' [' + e.querySelector('.cm-hint').textContent + ']' : ''))`);
 const menuOpen = () => p.eval<number>(`document.querySelectorAll('.cm').length`);
-const clickItem = async (label: string) => {
-  const at = await p.eval<{ x: number; y: number } | null>(`(() => { const e = [...document.querySelectorAll('.cm-item, .sheet-action')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(label)})); if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+/** `within`: only items under this selector (a submenu), where the menu above it has one that starts the same. */
+const clickItem = async (label: string, within = '') => {
+  const at = await p.eval<{ x: number; y: number } | null>(`(() => { const e = [...document.querySelectorAll('${within} .cm-item, ${within} .sheet-action')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(label)})); if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
   if (!at) throw new Error(`no item ${label}`);
   await click(at.x, at.y);
 };
@@ -109,15 +112,68 @@ const notif = await p.eval<{ x: number; y: number }>(`(() => { const e = [...doc
 await mouse('mouseMoved', notif.x, notif.y);
 await Bun.sleep(300);
 check((await menuOpen()) === 2, 'hovering Notification Settings opens its submenu');
-console.log('     notification submenu:', (await labels('.cm-sub')).join(' | '));
+const rules = await labels('.cm-sub');
+console.log('     notification submenu:', rules.join(' | '));
+const ruleOf = async () => (await fetch(`${hub}/api/bootstrap`).then((r) => r.json()) as any).rules.find((r: any) => r.scope === 'conversation' && r.target === general.id)?.level ?? null;
+/** The submenu's ticked entry, and the line under Automatic. */
+const chosen = () => p.eval<{ on: string[]; note: string }>(`({ on: [...document.querySelectorAll('.cm-sub .cm-item[aria-checked=true]')].map((e) => e.querySelector('.cm-text').textContent), note: document.querySelector('.cm-sub .cm-label.note')?.textContent ?? '' })`);
+check(rules.join() === 'Automatic,—,Always alert,List only,Mute', 'its choices are Automatic, then Always alert, List only and Mute');
+let now = await chosen();
+check(now.on.join() === 'Automatic' && now.note === 'Discord notifies only mentions here', `Automatic is chosen, with what the network does here under it (${JSON.stringify(now)})`);
 await p.shot(join(shots, 'desktop-channel-menu.png'));
-await clickItem('Nothing');
+await clickItem('List only', '.cm-sub');
 await Bun.sleep(400);
-const rule = (await fetch(`${hub}/api/bootstrap`).then((r) => r.json()) as any).rules.find((r: any) => r.scope === 'conversation' && r.target === general.id);
-check(rule?.level === 'none', 'choosing Nothing sets the rule on the hub');
+check((await ruleOf()) === 'digest', 'choosing List only sets the rule on the hub');
 await rightClick(at.x, at.y);
+await mouse('mouseMoved', notif.x, notif.y);
+await Bun.sleep(300);
+now = await chosen();
+check(now.on.join() === 'List only' && now.note === '', `the submenu then has List only chosen, and no line under Automatic (${JSON.stringify(now)})`);
+await clickItem('Mute', '.cm-sub');
+await Bun.sleep(400);
+check((await ruleOf()) === 'none', 'choosing Mute sets the rule on the hub');
+await rightClick(at.x, at.y);
+check((await labels()).includes('Unmute Channel'), 'a muted channel offers Unmute');
 await clickItem('Unmute Channel');
 await Bun.sleep(300);
+check((await ruleOf()) === null, 'Unmute takes the rule away: Automatic again');
+
+// a triaged message from someone else: the two marks, ticked entries in a group of their own
+const triaged = ((await fetch(`${hub}/api/inbox`).then((r) => r.json())) as any).items.map((i: any) => i.message).find((m: any) => m.triage?.decision === 'quiet' && !m.triage.marks);
+const marksOf = async () => ((await fetch(`${hub}/api/inbox`).then((r) => r.json())) as any).items.find((i: any) => i.message.id === triaged.id)?.message.triage.marks ?? {};
+await p.goto(`${hub}/#/inbox/c/${triaged.conversationId}?m=${triaged.id}`);
+await p.until(`!!document.querySelector('#m-${triaged.id} .msg-body')`, 15000);
+await Bun.sleep(400);
+const markAt = (await center(`#m-${triaged.id} .msg-body`))!;
+/** The marks in the open menu: each entry's words and whether it is ticked. */
+const marksShown = () => p.eval<string[]>(`[...document.querySelectorAll('.cm .cm-item[role=menuitemcheckbox]')].map((e) => e.querySelector('.cm-text').textContent + (e.getAttribute('aria-checked') === 'true' ? ' ✓' : ''))`);
+await rightClick(markAt.x, markAt.y);
+const withMarks = await labels();
+console.log('     triaged message menu:', withMarks.join(' | '));
+const mi = withMarks.indexOf('Should have alerted');
+check(mi > 0 && withMarks[mi - 1] === '—' && withMarks[mi + 1] === 'Less like this' && withMarks[mi + 2] === '—', 'a triaged message has "Should have alerted" and "Less like this" in a group of their own');
+check((await marksShown()).join() === 'Should have alerted,Less like this', 'neither is ticked at first');
+check(!withMarks.some((l) => /Important|Active|Digest|Not interesting/.test(l)), 'and no level to vote it to');
+await p.shot(join(shots, 'desktop-message-marks.png'));
+await clickItem('Less like this');
+await Bun.sleep(500);
+check((await menuOpen()) === 0 && (await marksOf()).less === true, 'choosing "Less like this" closes the menu and marks it on the hub');
+await rightClick(markAt.x, markAt.y);
+check((await marksShown()).join() === 'Should have alerted,Less like this ✓', 'the menu then shows it ticked');
+await clickItem('Less like this');
+await Bun.sleep(500);
+check((await marksOf()).less === undefined, 'choosing the ticked one takes the mark back');
+await rightClick(markAt.x, markAt.y);
+await clickItem('Should have alerted');
+await Bun.sleep(500);
+check((await marksOf()).alert === true, '"Should have alerted" marks it on the hub');
+await rightClick(markAt.x, markAt.y);
+check((await marksShown()).join() === 'Should have alerted ✓,Less like this', 'and shows ticked');
+await clickItem('Should have alerted');
+await Bun.sleep(500);
+check((await marksOf()).alert === undefined, 'and is taken back the same way');
+await p.goto(`${hub}/#/s/${dither.id}/c/${general.id}`);
+await p.until(`document.querySelectorAll('.msg:not(.system) .msg-body').length > 2`, 15000);
 
 // the server in the rail, the accounts button
 at = (await center(`.rail-item[data-dnd-key^="space:"] .rail-btn`))!;
@@ -211,6 +267,26 @@ await p.eval(`[...document.querySelectorAll('.cm-sheet .sheet-action')].find((b)
 await Bun.sleep(200);
 check(await p.eval(`!!document.querySelector('.cm-sheet-back')`), 'a submenu opens inside the sheet, with a way back');
 await p.shot(join(shots, 'phone-submenu.png'));
+
+// A triaged message's sheet: which tier and why, then the two marks, once.
+await p.goto(`${hub}/#/inbox/c/${triaged.conversationId}?m=${triaged.id}`);
+await p.until(`!!document.querySelector('#m-${triaged.id} .msg-body')`, 15000);
+await Bun.sleep(600);
+at = (await center(`#m-${triaged.id} .msg-body`))!;
+await p.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: at.x, y: at.y }] });
+await Bun.sleep(650);
+await p.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+await Bun.sleep(400);
+const foot = await p.eval<{ title: string; reasons: number; marks: string[]; actions: string[]; order: boolean }>(
+  `(() => { const f = document.querySelector('.cm-sheet .sheet-triage'); const ul = f?.querySelector('ul'); const fb = f?.querySelector('.triage-fb'); return { title: f?.querySelector('h4')?.textContent ?? '', reasons: ul?.querySelectorAll('li').length ?? 0, marks: [...(f?.querySelectorAll('[data-mark]') ?? [])].map((b) => b.textContent.trim()), actions: [...document.querySelectorAll('.cm-sheet .sheet-action')].map((b) => b.textContent.trim()), order: !!ul && !!fb && !!(ul.compareDocumentPosition(fb) & Node.DOCUMENT_POSITION_FOLLOWING) }; })()`,
+);
+console.log('     phone sheet, triaged:', foot.title, '|', foot.marks.join(' | '));
+check(foot.title.startsWith('Conversation:') && foot.reasons > 0 && foot.order && foot.marks.join() === 'Should have alerted,Less like this', 'a triaged message’s sheet says its tier and why, then has the two marks');
+check(!foot.actions.includes('Should have alerted') && !foot.actions.includes('Less like this'), 'and its actions do not repeat them');
+await p.shot(join(shots, 'phone-message-marks.png'));
+await p.eval(`document.querySelector('.cm-sheet .sheet-triage [data-mark=alert]').click()`);
+await Bun.sleep(600);
+check((await p.eval<boolean>(`!document.querySelector('.cm-sheet')`)) && (await marksOf()).alert === true, 'tapping "Should have alerted" closes the sheet and marks it on the hub');
 
 console.log(p.errors.length ? `page errors:\n${p.errors.join('\n')}` : 'no page errors');
 await b.close();

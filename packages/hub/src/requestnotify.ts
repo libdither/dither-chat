@@ -1,21 +1,20 @@
 /**
- * A new request from someone you know notifies once (docs/add.md "Requests"): at the Active level, a silent
- * notification on phones, through the hub's push path like a message's (main.ts). Requests from strangers, message
- * requests among them, only count on the inbox's Requests row.
+ * A new request from someone you know notifies once (docs/add.md "Requests"): a silent row on the phone's list,
+ * through the hub's push path like a message's (main.ts). Requests from strangers, message requests among them, only
+ * count on the inbox's Requests row.
  *
  * Someone you know: they have a person here, or they share a group, a conversation or a server with the account the
  * request came to. A message request's own conversation makes a person and a shared conversation, which say nothing.
  *
  * Each request is judged once (add_request_seen), a little after it arrives, so an account's first sync has said who
- * people are. Quiet hours hold it as they hold chat (people set to always notify through, where you let them), and a
- * place set to Nothing or the digest, for the person, the account, the network or everything, keeps it silent.
+ * people are. Quiet hours do not hold it: they hold alerts, and this is silent. A mute on the account, the network or
+ * everything keeps it off the list too.
  */
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { addTables, onRequestsHeard } from './add.ts';
 import type { Store } from './store.ts';
-import { inQuietHours } from './triage.ts';
 
 type Row = Record<string, any>;
 
@@ -71,7 +70,7 @@ export function knownTo(db: Database, accountId: string, identityId: string, hel
   return !!shares;
 }
 
-/** A person, the account, its network or everything set to Nothing or the digest: no notification for requests either. */
+/** The account, its network or everything muted: no row for requests either. */
 function silenced(store: Store, accountId: string, network: string, personId: string | null): string | null {
   const rules = new Map(store.rules().map((r) => [`${r.scope}:${r.target ?? ''}`, r.level]));
   for (const [key, what] of [
@@ -82,7 +81,7 @@ function silenced(store: Store, accountId: string, network: string, personId: st
   ] as const) {
     if (key === 'person:') continue;
     const l = rules.get(key);
-    if (l) return l === 'none' || l === 'digest' ? what : null;
+    if (l) return l === 'none' ? what : null;
   }
   return null;
 }
@@ -115,8 +114,6 @@ export function judgeRequest(store: Store, accountId: string, nativeId: string, 
   const held = r.kind === 'message' && r.target_kind === 'conversation' ? r.target_id : null;
   if (!knownTo(db, accountId, r.from_id, held)) return null;
   if (silenced(store, accountId, r.network, r.person_id)) return null;
-  const q = store.quietHours();
-  if (inQuietHours(q, now) && !(q!.allowStarred && r.person_id && store.rules().some((x) => x.scope === 'person' && x.target === r.person_id && x.level === 'all'))) return null;
   const net = NETWORK_META[r.network as P.Network].name;
   const who = r.person_name ?? r.display_name ?? r.handle ?? 'Someone';
   const icon = r.avatar_url ? store.media(r.avatar_url, r.seen_via ?? accountId) : null;

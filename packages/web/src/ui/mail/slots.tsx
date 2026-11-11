@@ -64,7 +64,7 @@ export const MESSAGE_ACTIONS: MessageAction[] = [
   { id: 'forward', label: 'Forward', icon: 'forward', show: (m, _t, a) => underMessage(m, a), run: (m) => answer('forward', m) },
   // Slice 4: a message's star.
   ...FILING_MESSAGE_ACTIONS,
-  // Slice 9: its notification level, why, and the vote.
+  // Slice 9: its tier, why, and "Less like this".
   ...TRIAGE_MESSAGE_ACTIONS,
 ];
 export const THREAD_ACTIONS: ThreadAction[] = [

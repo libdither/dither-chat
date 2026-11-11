@@ -19,7 +19,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { decayed } from '@dither-chat/protocol';
-import { emptyTally, foldMessage, freshState, scoreConversation, sumTallies, type Attention, type AttentionSource, type ConvState, type FoldMessage, type Place, type ScoreInput, type Scored, type Tally } from '../attention.ts';
+import { ALERT_PIN, emptyTally, foldMessage, freshState, PIN_FOR, scoreConversation, sumTallies, type Attention, type AttentionSource, type ConvState, type FoldMessage, type Place, type ScoreInput, type Scored, type Tally } from '../attention.ts';
 import type { Store } from '../store.ts';
 import { mailClassifier } from './classify.ts';
 import type { MailHub } from './index.ts';
@@ -58,11 +58,15 @@ const json = <T>(s: string | null | undefined, fallback: T): T => {
 const lc = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
 const has = (roles: string, role: string) => json<string[]>(roles, []).includes(role);
 
-/** What triage (slice 9) knows of a message, for the fold: it pushed it, or its reasons say it asks a question. */
+/** What triage (slice 9) knows of a message, for the fold: it notified about it, or its reasons say it asks a question. */
 export interface MailTriageFacts {
   pushed: boolean;
+  /** That notification was an alert. */
+  alert?: boolean;
+  /** Its importance, 0 to 1, when it notified. */
+  importance?: number | null;
   question: boolean;
-  /** Its first reason, for "Pinged you: …". */
+  /** Its first reason, to say why it is where it is. */
   reason?: string | null;
 }
 
@@ -292,8 +296,10 @@ export class MailAttention implements AttentionSource {
     const unread = this.hub.store.all<{ addressed: string; id: string }>(`SELECT id, addressed FROM mail_message WHERE thread_id = ? AND seen = 0 AND seen_local = 0 AND draft = 0 AND addressed != 'self'`, threadId);
     const turn = state.turn?.addressed != null ? state.turn : null;
     const other = turn?.author ?? this.lastOther(threadId);
-    // Triage pushed a message you have not read (slice 9).
-    const push = state.lastPush && unread.some((m) => m.id === state.lastPush!.id) ? this.triageFacts([state.lastPush.id]).get(state.lastPush.id) : null;
+    // Triage notified you about a message you have not read (slice 9), and you have not swiped that away since.
+    const told = state.lastPush && unread.some((m) => m.id === state.lastPush!.id) ? this.triageFacts([state.lastPush.id]).get(state.lastPush.id) : null;
+    const seen = !!told?.pushed && (this.hub.store.one<{ at: number | null }>('SELECT MAX(dismissed_at) AS at FROM notification WHERE conversation_id = ?', threadId)?.at ?? 0) >= state.lastPush!.ts;
+    const push = seen ? null : told;
     return {
       listed: true,
       thread: t,
@@ -306,7 +312,10 @@ export class MailAttention implements AttentionSource {
       authorName: this.nameOf(other, t),
       unread: unread.length,
       mentions: unread.filter((m) => m.addressed === 'to').length,
-      pinged: push?.pushed ? (push.reason ?? 'a message you have not read') : null,
+      // Mail has no Conversation tier: only an alert is pinned, and a list row counts by its importance.
+      pinged: push?.pushed && push.alert ? (push.reason ?? 'a message you have not read') : null,
+      alerted: !!push?.pushed && !!push.alert && now - state.lastPush!.ts <= PIN_FOR,
+      importance: push?.pushed ? (push.importance ?? null) : null,
       muted: null,
       // You were here: opened_at (MailStore.opened), and the time spent there once something counts it.
       usage: t.opened_at ? { score: (t.opened_ms ?? 0) / 1000, visitScore: 1, at: t.opened_at, lastVisit: t.opened_at } : null,
@@ -322,7 +331,8 @@ export class MailAttention implements AttentionSource {
     const x = this.input(threadId, now);
     if (!x) return null;
     const s = scoreConversation(x);
-    return { id: threadId, kind: 'mail', score: s.score, needs: s.needs, reasons: s.reasons, owedSince: s.owedSince, at: now };
+    // An alert you have not seen comes before everything (attention.ts).
+    return { id: threadId, kind: 'mail', score: s.score + (x.alerted ? ALERT_PIN : 0), needs: s.needs, reasons: s.reasons, owedSince: s.owedSince, at: now };
   }
 
   /** Threads that may be listed now: the SQL side of isListed, so a year of mail is not read every few minutes. */

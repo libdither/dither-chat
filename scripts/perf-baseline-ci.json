@@ -1,6 +1,6 @@
 {
- "note": "bun scripts/verify-perf.ts --ci --update --runs 5 (docs/perf.md). CI judges the counts marked gate, never the times.",
- "at": "2026-11-10",
+ "note": "bun scripts/verify-perf.ts --ci --update --runs 5 (docs/perf.md). CI judges the counts marked gate, never the times. Two layout tallies (cold, first opens) are kept at their values of 2026-11-10: this machine measured them lower than a CI runner does.",
+ "at": "2026-11-11",
  "runs": 5,
  "pages": 5,
  "scale": 0.1,
@@ -16,36 +16,36 @@
  },
  "metrics": {
   "hub.bootstrap.bytes": {
-   "v": 539665,
+   "v": 541207,
    "kind": "bytes",
    "gate": true
   },
   "hub.bootstrap.ms": {
-   "v": 15,
+   "v": 10,
    "kind": "ms"
   },
   "hub.inbox.ms": {
-   "v": 34,
+   "v": 19,
    "kind": "ms"
   },
   "1x.cold.list": {
-   "v": 725,
+   "v": 379,
    "kind": "ms"
   },
   "1x.cold.fresh": {
-   "v": 284,
+   "v": 158,
    "kind": "ms"
   },
   "1x.cold.longest": {
-   "v": 369,
+   "v": 154,
    "kind": "ms"
   },
   "1x.cold.longTasks": {
-   "v": 512,
+   "v": 208,
    "kind": "ms"
   },
   "1x.cold.renders": {
-   "v": 2,
+   "v": 3,
    "kind": "tally",
    "gate": true
   },
@@ -55,25 +55,25 @@
    "gate": true
   },
   "1x.cold.nodes": {
-   "v": 2349,
+   "v": 2353,
    "kind": "count",
    "gate": true
   },
   "1x.cold.bootstrapBytes": {
-   "v": 539932,
+   "v": 541504,
    "kind": "bytes",
    "gate": true
   },
   "1x.open.first": {
-   "v": 114,
+   "v": 67,
    "kind": "ms"
   },
   "1x.open.first.max": {
-   "v": 166,
+   "v": 97,
    "kind": "ms"
   },
   "1x.open.first.longest": {
-   "v": 103,
+   "v": 0,
    "kind": "ms"
   },
   "1x.open.first.renders": {
@@ -82,7 +82,7 @@
    "gate": true
   },
   "1x.open.first.sidebarRenders": {
-   "v": 7,
+   "v": 9,
    "kind": "tally",
    "gate": true
   },
@@ -97,11 +97,11 @@
    "gate": true
   },
   "1x.open.again": {
-   "v": 54,
+   "v": 39,
    "kind": "ms"
   },
   "1x.open.again.max": {
-   "v": 72,
+   "v": 43,
    "kind": "ms"
   },
   "1x.open.again.longest": {
@@ -129,11 +129,11 @@
    "gate": true
   },
   "1x.older.page": {
-   "v": 124,
+   "v": 68,
    "kind": "ms"
   },
   "1x.older.last": {
-   "v": 130,
+   "v": 93,
    "kind": "ms"
   },
   "1x.older.msgs": {
@@ -147,11 +147,11 @@
    "gate": true
   },
   "1x.long.reopen": {
-   "v": 109,
+   "v": 81,
    "kind": "ms"
   },
   "1x.long.reopen.longest": {
-   "v": 63,
+   "v": 51,
    "kind": "ms"
   },
   "1x.long.reopen.renders": {
@@ -170,7 +170,7 @@
    "gate": true
   },
   "1x.long.reopen.nodes": {
-   "v": 8205,
+   "v": 7875,
    "kind": "count",
    "gate": true
   },
@@ -185,11 +185,11 @@
    "gate": true
   },
   "1x.arrival.shown": {
-   "v": 89,
+   "v": 62,
    "kind": "ms"
   },
   "1x.arrival.busy": {
-   "v": 35,
+   "v": 32,
    "kind": "ms"
   },
   "1x.arrival.longest": {
@@ -217,11 +217,11 @@
    "gate": true
   },
   "1x.relaunch.list": {
-   "v": 153,
+   "v": 113,
    "kind": "ms"
   },
   "1x.relaunch.fresh": {
-   "v": 172,
+   "v": 114,
    "kind": "ms"
   },
   "1x.relaunch.longest": {
@@ -234,11 +234,11 @@
    "gate": true
   },
   "1x.relaunch.open": {
-   "v": 64,
+   "v": 45,
    "kind": "ms"
   },
   "1x.relaunch.open.max": {
-   "v": 107,
+   "v": 55,
    "kind": "ms"
   },
   "1x.relaunch.open.longest": {
@@ -261,7 +261,7 @@
    "gate": true
   },
   "1x.relaunch.open.layouts": {
-   "v": 17,
+   "v": 20,
    "kind": "tally",
    "gate": true
   }

@@ -1,7 +1,7 @@
 import { loadRetention } from '../history.ts';
 import type * as P from '@dither-chat/protocol';
 import { Fragment } from 'preact';
-import { accountsNeedingYou, convTitle, directsOf, folderConvs, people, pingedCount, placePref, railEntries, spaceUnread, sumUnread, netName, unreadOf, visibleConv, type RailEntry } from '../model.ts';
+import { accountsNeedingYou, convTitle, directsOf, folderConvs, people, inboxBadge, placePref, railEntries, spaceUnread, sumUnread, netName, unreadOf, visibleConv, type RailEntry } from '../model.ts';
 import { db, go, mailRev, markAllRead, patchPlaces, rev, route, type Route } from '../state.ts';
 import { unreadInbox } from '../mail/model.ts';
 import { preloadMail } from './mail/lazy.tsx';
@@ -223,7 +223,7 @@ function RailMail({ active }: { active: boolean }) {
 export function Rail() {
   rev.value;
   const r = route.value;
-  const priorityCount = pingedCount() + accountsNeedingYou().length;
+  const priorityCount = inboxBadge() + accountsNeedingYou().length;
   const peopleBadge = sumUnread(people().flatMap((p) => p.directs)).badge;
   const attention = [...db.accounts.values()].some((a) => a.attention);
   const is = (pred: (r: Route) => boolean) => pred(r);

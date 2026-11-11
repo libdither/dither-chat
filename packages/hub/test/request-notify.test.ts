@@ -2,7 +2,8 @@
  * A new request notifies once, and only from someone you know (requestnotify.ts, docs/add.md "Requests"), against the
  * demo world's adapters run in process: someone in a group with the account, a person here, someone who wrote in a
  * server the account sees; never a stranger, never a message request from one; once per request, also across a
- * reconnect; not when old, answered before it settled, in quiet hours, or where it was set to Nothing.
+ * reconnect; not when old, answered before it settled, or where it was muted. Quiet hours do not hold it: it is a
+ * silent row on the list, and they hold alerts.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
@@ -145,31 +146,26 @@ describe('when not', () => {
     expect(notifier.due(settled())).toHaveLength(1);
   });
 
-  test('quiet hours hold it; a person set to always notify gets through where you let them', () => {
+  test('quiet hours do not hold it: it is a silent row on the list, and they hold alerts', () => {
     const d = new Date(clock);
     const hhmm = (m: number) => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
     const now = d.getUTCHours() * 60 + d.getUTCMinutes();
     store.setQuietHours({ enabled: true, start: hhmm(now + 1440 - 60), end: hhmm(now + 60), timezone: 'UTC', allowStarred: true });
     request(MAIN, { nativeId: 'friend-quiet', from: alice().native_id });
-    expect(notifier.due(settled())).toEqual([]);
-    const pid = store.one<{ person_id: string }>('SELECT person_id FROM identity WHERE id = ?', alice().id)!.person_id;
-    store.setRule('person', pid, 'all');
-    request(MAIN, { nativeId: 'friend-always', from: alice().native_id });
     expect(notifier.due(settled())).toHaveLength(1);
-    store.setRule('person', pid, null);
     store.setQuietHours({ enabled: false, start: '22:00', end: '07:00', timezone: 'UTC', allowStarred: true });
   });
 
-  test('the account or the network set to Nothing or the digest: silent', () => {
+  test('the account or the network muted: silent; kept to the list, it is still a row there', () => {
     store.setRule('account', MAIN, 'none');
     request(MAIN, { nativeId: 'friend-muted', from: alice().native_id });
     expect(notifier.due(settled())).toEqual([]);
     store.setRule('account', MAIN, null);
     store.setRule('network', 'discord', 'digest');
     request(MAIN, { nativeId: 'friend-digest', from: alice().native_id });
-    expect(notifier.due(settled())).toEqual([]);
+    expect(notifier.due(settled())).toHaveLength(1);
     store.setRule('network', 'discord', null);
-    // A level that notifies leaves it be.
+    // An older level that notifies leaves it be.
     store.setRule('account', MAIN, 'mentions');
     request(MAIN, { nativeId: 'friend-mentions', from: alice().native_id });
     expect(notifier.due(settled())).toHaveLength(1);

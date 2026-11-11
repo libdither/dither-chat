@@ -5,10 +5,10 @@
  * where the network says your account may, with the reason where it may not.
  */
 import type * as P from '@dither-chat/protocol';
-import { ABOUT_LABEL, ABOUT_RULES, NETWORK_META } from '@dither-chat/protocol';
+import { ABOUT_LABEL, ABOUT_RULES, NETWORK_META, RULE_LABEL, RULE_LEVELS } from '@dither-chat/protocol';
 import { useState } from 'preact/hooks';
 import { fullTime } from '../format.ts';
-import { convTitle, deepLink, effectiveLevel, LEVEL_LABEL, netName, unreadOf } from '../model.ts';
+import { AUTOMATIC, convTitle, deepLink, effectiveLevel, heldHere, netName, OLDER_RULE, ruleHelp, ruleOn, unreadOf } from '../model.ts';
 import { db, go, href, isSelfIdentity, markRead, openMessage, rev, setRule } from '../state.ts';
 import { AccountChip, Empty, variantIcon } from './bits.tsx';
 import { copy } from './ContextMenu.tsx';
@@ -23,15 +23,6 @@ import { Action, Card, Columns, Facts, Hero, ProfilePage, Tag } from './ProfileS
 import { openConv } from './Sidebar.tsx';
 import { Loading } from './Loader.tsx';
 import { canIndex, startIndexing } from './Indexing.tsx';
-
-const LEVELS: P.NotifyLevel[] = ['all', 'smart', 'mentions', 'digest', 'none'];
-const LEVEL_HINT: Record<P.NotifyLevel, string> = {
-  all: 'Every message is Important.',
-  smart: 'Triage decides each one: Important, Active or Digest.',
-  mentions: 'Mentions and replies to you are Important; the rest goes to the digest.',
-  digest: 'Nothing notifies; it waits for the digest.',
-  none: 'Nothing at all, not even the digest.',
-};
 
 /** "Seen 12 of 1,287 listed (1%) · 214 online": honest about how little that may be. */
 export function coverageText(c: P.MemberCoverageView): string {
@@ -66,7 +57,7 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
   const peer = conv?.shape === 'direct' && conv.peerPersonId ? db.persons.get(conv.peerPersonId) : null;
   const children = space ? placeConvs('space', space.id) : [];
   const link = conv ? (deepLink(conv) ?? `${location.origin}${location.pathname}${href({ view: 'inbox', conv: conv.id })}`) : space?.network === 'discord' ? `https://discord.com/channels/${space.nativeId}` : space?.network === 'matrix' ? `https://matrix.to/#/${encodeURIComponent(space.nativeId)}` : null;
-  const ruleOf = db.rules.find((r) => r.scope === kind && r.target === id)?.level ?? null;
+  const ruleOf = ruleOn(kind, id);
   const eff = conv ? effectiveLevel(conv) : null;
   const unread = conv ? unreadOf(conv).unread : 0;
   // A section is a community's category: the community is what gets indexed.
@@ -199,14 +190,22 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
 
       <Card title="Notifications" icon="bell">
         <label class="pf-level">
-          <select class="select" value={ruleOf ?? ''} onChange={(e) => setRule(kind, id, ((e.target as HTMLSelectElement).value || null) as P.NotifyLevel | null)}>
-            <option value="">Default{eff && !eff.explicit ? ` (${LEVEL_LABEL[eff.level]})` : ''}</option>
-            {LEVELS.map((l) => (
-              <option value={l}>{LEVEL_LABEL[l]}</option>
+          <select class="select" value={ruleOf ?? ''} onChange={(e) => setRule(kind, id, ((e.target as HTMLSelectElement).value || null) as P.RuleLevel | null)}>
+            {/* A rule from before the tiers: shown as what is set, and any of the others replaces it. */}
+            {ruleOf === 'mentions' && (
+              <option value="mentions" disabled>
+                {OLDER_RULE}
+              </option>
+            )}
+            <option value="">{AUTOMATIC}</option>
+            {RULE_LEVELS.map((l) => (
+              <option value={l}>{RULE_LABEL[l]}</option>
             ))}
           </select>
         </label>
-        <p class="pf-hint">{ruleOf ? LEVEL_HINT[ruleOf] : eff ? `${LEVEL_LABEL[eff.level]}, from ${eff.source}. ${LEVEL_HINT[eff.level]}` : 'As your defaults say.'}</p>
+        <p class="pf-hint">
+          {ruleHelp(ruleOf)}.{!ruleOf && eff ? ` Now: ${heldHere(eff)}.` : ''}
+        </p>
       </Card>
 
       {conv && retention.value.adversarial && <KeptHere conversationId={conv.id} />}

@@ -1,11 +1,11 @@
 /**
- * Labels from what you did (docs/research/notification-design.md §3, docs/notifications.md): what happened after a
- * message, read from the future, and what that says about each of triage's three chances. Votes stay the gold
- * standard (votes.ts); these fill in where there are none, each with a weight and only for the chances it says
- * something about.
+ * Labels from what you did (docs/notifications.md): what happened after a message, read from the future, and what
+ * that says about its importance. Your marks stay the gold standard (votes.ts); these fill in where there are none,
+ * each with a weight. Nothing here says anything about alerts: answering or opening something says it mattered, not
+ * that it could not wait.
  *
  * `gatherOutcomes` reads the outcomes for a span of messages in one pass (messages, your reactions, notifications and
- * visits), for the live hub's candidate model and the replay alike. `implicitLabel` turns one outcome into a label.
+ * visits), for the live hub and the replay alike. `implicitLabel` turns one outcome into a label.
  * Nothing here reads what was said.
  */
 import type { Database } from 'bun:sqlite';
@@ -22,7 +22,7 @@ const DAY = 24 * HOUR;
 
 /** You wrote there this recently before it: you were already in the conversation. */
 export const ENGAGED_BEFORE = 15 * MIN;
-/** A quick answer: worth a ping. */
+/** A quick answer. */
 export const QUICK = 15 * MIN;
 /** An answer at all: worth seeing. */
 export const LATE = 3 * HOUR;
@@ -73,35 +73,31 @@ export interface Outcome {
   observed: number;
 }
 
-/** Weights of each kind of label, against a vote's 1 (design §3, "start here, then tune on held-out votes"). */
+/**
+ * Weights of each kind of label, against a mark's 1. Only what you did counts by default. The replay tried the two
+ * "you did not" labels on ten days of a real hub (2026-11, docs/triage-replay.md) and both made the list worse:
+ *  - with "nothing happened" as a no, the list at its strictest level (0.9) held 15 of the 54 chats you opened,
+ *    where what you did alone finds 30;
+ *  - a swipe as a no: 24 at that level against 30. A swipe says you read the row, not that it did not matter.
+ * "Less like this" is the way to say no (votes.ts).
+ */
 export interface LabelWeights {
-  quickAnswer: number;
-  lateAnswer: number;
-  tap: number;
-  openOnly: number;
+  /** You answered it within three hours, or reacted to it. */
+  answered: number;
+  /** You tapped its notification, or opened its chat within a day and stayed a few seconds. */
+  opened: number;
+  /** You swiped its list row away and did not open the chat within a day. Off: see above. */
   dismissed: number;
-  ignored: number;
-  bounce: number;
-  unprompted: number;
   /**
-   * Not in the design's table: nothing at all happened after the first message of a burst (no answer, reaction or
-   * open in three hours, not addressed to you). Without it almost every label is positive and the model only learns
-   * to notify more; the replay chose 0.03 (docs/triage-replay.md).
+   * Nothing at all happened after the first message of a burst (no answer, reaction or open in a day, not addressed
+   * to you). Off: see above.
    */
   nothing: number;
 }
 
-export const LABEL_WEIGHTS: LabelWeights = {
-  quickAnswer: 0.5,
-  lateAnswer: 0.3,
-  tap: 0.3,
-  openOnly: 0.1,
-  dismissed: 0.3,
-  ignored: 0.1,
-  bounce: 0.3,
-  unprompted: 0.2,
-  nothing: 0.03,
-};
+export const LABEL_WEIGHTS: LabelWeights = { answered: 0.5, opened: 0.5, dismissed: 0, nothing: 0 };
+/** An open counts when you stayed at least this many seconds. */
+export const OPEN_DWELL = 5;
 
 export interface Label {
   y: Partial<Record<Head, 0 | 1>>;
@@ -113,51 +109,29 @@ export interface Label {
 }
 
 /**
- * What an outcome says for each chance, or null when it says nothing. Positive evidence wins over negative for the
- * same chance; the weight is the strongest rule's. A ping label needs you not to have been there already (engaged,
- * watching, or a focused page): a buzz is worth nothing then.
+ * What an outcome says about importance, or null when it says nothing. Something you did (answered, reacted, opened)
+ * wins over something you did not; the weight is the strongest rule's. A message you watched arrive says nothing:
+ * you were already there.
  */
 export function implicitLabel(o: Outcome, w: LabelWeights = LABEL_WEIGHTS): Label | null {
-  const pos: Partial<Record<Head, true>> = {};
-  const neg: Partial<Record<Head, true>> = {};
-  let weight = 0;
-  const why: string[] = [];
-  let horizon = LATE;
-  // Already there: writing there, watching it arrive, or a page open that kept the notification to itself.
   const there = o.engaged || o.seenLive || o.suppressed;
-  const say = (rule: string, wt: number, p: Head[], n: Head[] = []) => {
-    if (!wt) return;
-    for (const h of p) pos[h] = true;
-    for (const h of n) neg[h] = true;
-    weight = Math.max(weight, wt);
-    why.push(rule);
-  };
-  const answer = o.answered && o.nextOwn !== null ? o.nextOwn : null;
-  const acted = (answer !== null && answer <= LATE) || o.reacted;
-  if (answer !== null && answer <= QUICK && !there) say('answered', w.quickAnswer, ['ping', 'active', 'interesting']);
-  else if ((answer !== null && answer <= LATE) || o.reacted) say(answer !== null && answer <= QUICK ? 'answered while there' : o.reacted && (answer === null || answer > LATE) ? 'reacted' : 'answered later', w.lateAnswer, ['active', 'interesting']);
-  const tapDwell = o.tapDwell ?? o.openDwell;
-  if (o.tapped !== null && o.tapped <= 5 * MIN && (tapDwell ?? 0) >= 20) say('tapped', w.tap, there ? ['active', 'interesting'] : ['ping', 'active', 'interesting']);
-  if (o.tapped !== null && tapDwell !== null && tapDwell < 5) say('tapped and left', w.bounce, [], ['ping']);
-  const opened = o.opened !== null && o.opened <= OPEN_WITHIN;
-  const bounced = why.includes('tapped and left');
-  if (opened && !acted && !bounced && !why.includes('tapped')) say('opened', w.openOnly, ['interesting']);
-  if (o.dismissed && !opened && o.tapped === null) say('dismissed', w.dismissed, [], ['ping']);
-  if (o.notified && o.shown && !o.suppressed && o.tapped === null && (o.opened === null || o.opened > IGNORED_AFTER) && !acted && o.observed >= IGNORED_AFTER) {
-    say('ignored', w.ignored, [], ['ping', 'active']);
-    horizon = IGNORED_AFTER;
+  const answer = o.answered && o.nextOwn !== null && o.nextOwn <= LATE ? o.nextOwn : null;
+  if (answer !== null || o.reacted) {
+    if (!w.answered) return null;
+    return { y: { important: 1 }, weight: w.answered, why: [answer !== null ? 'answered' : 'reacted'], knownAt: o.ts + (answer ?? LATE) };
   }
-  if (o.unprompted) say('opened unprompted', w.unprompted, ['active']);
-  if (!why.length && o.burstFirst && !there && !o.addressed && o.nextOwn === null && !o.reacted && o.opened === null && o.observed >= LATE)
-    say('nothing happened', w.nothing, [], ['ping', 'active']);
-  if (!why.length) return null;
-  const y: Label['y'] = {};
-  for (const h of ['ping', 'active', 'interesting'] as Head[]) {
-    if (pos[h]) y[h] = 1;
-    else if (neg[h]) y[h] = 0;
+  if (there) return null;
+  const tapped = o.tapped !== null && (o.tapDwell ?? o.openDwell ?? OPEN_DWELL) >= OPEN_DWELL;
+  const opened = o.opened !== null && o.opened <= IGNORED_AFTER && (o.openDwell ?? OPEN_DWELL) >= OPEN_DWELL;
+  if (tapped || opened) {
+    if (!w.opened) return null;
+    return { y: { important: 1 }, weight: w.opened, why: [tapped ? 'tapped' : 'opened'], knownAt: o.ts + (tapped ? o.tapped! : o.opened!) };
   }
-  if (!Object.keys(y).length) return null;
-  return { y, weight, why, knownAt: o.ts + horizon };
+  if (o.observed < IGNORED_AFTER) return null;
+  // Only a list row swiped away says "not this": swiping a Conversation row away says you saw it.
+  if (o.dismissed && o.decision === 'digest' && w.dismissed) return { y: { important: 0 }, weight: w.dismissed, why: ['dismissed'], knownAt: o.ts + IGNORED_AFTER };
+  if (o.burstFirst && !o.addressed && o.nextOwn === null && o.opened === null && w.nothing) return { y: { important: 0 }, weight: w.nothing, why: ['nothing happened'], knownAt: o.ts + IGNORED_AFTER };
+  return null;
 }
 
 export interface GatherOptions {

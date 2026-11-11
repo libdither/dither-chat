@@ -146,6 +146,14 @@ export const LAMBDA: Record<Feature, number> = Object.fromEntries(
   FEATURES.map((f) => [f, f === 'bias' || f === 'formula' ? 1 : TRIAGE_FEATURES.includes(f) ? Infinity : 30]),
 ) as Record<Feature, number>;
 
+/**
+ * What can only count for a row, never against it: something unread, a mention, a reply you owe, a conversation going
+ * on, an alert or a Conversation message waiting, a DM. The fit may raise their weights above the prior's and not
+ * lower them. A week of opens once taught it that unread DMs you owe are opened less (they were at the top anyway, so
+ * every open elsewhere counted against them), and a fresh DM sank to row 14; in the replay the floor costs nothing.
+ */
+export const FLOORED: readonly Feature[] = ['unread', 'mentions', 'owed', 'live', 'pinged', 'direct'];
+
 const sigmoid = (z: number) => 1 / (1 + Math.exp(-z));
 const logit = (p: number) => Math.log(p / (1 - p));
 const dot = (w: Weights, f: Features) => FEATURES.reduce((a, k) => a + (w[k] ?? 0) * f[k], 0);
@@ -232,15 +240,16 @@ export function drain<T>(g: Generator<undefined, T>): T {
  * L2-regularised logistic regression toward `prior`, by coordinate Newton steps (as learn.ts). Dense: every row has
  * every feature.
  */
-export function fitLogistic(rows: readonly RankRow[], prior: Weights, lambda: Record<Feature, number> = LAMBDA, sweeps = 25): Weights {
-  return drain(fitSteps(rows, prior, lambda, sweeps));
+export function fitLogistic(rows: readonly RankRow[], prior: Weights, lambda: Record<Feature, number> = LAMBDA, sweeps = 25, floor: readonly Feature[] = []): Weights {
+  return drain(fitSteps(rows, prior, lambda, sweeps, floor));
 }
 
 /** `fitLogistic`, a feature at a time: the hub pauses between steps. */
-export function* fitSteps(rows: readonly RankRow[], prior: Weights, lambda: Record<Feature, number> = LAMBDA, sweeps = 25): Generator<undefined, Weights> {
+export function* fitSteps(rows: readonly RankRow[], prior: Weights, lambda: Record<Feature, number> = LAMBDA, sweeps = 25, floor: readonly Feature[] = []): Generator<undefined, Weights> {
   const xs = rows.map((r) => vector(r.x));
   const w = FEATURES.map((k) => prior[k] ?? 0);
   const p0 = [...w];
+  const floored = FEATURES.map((k) => floor.includes(k));
   const z = xs.map((x) => x.reduce((a, v, j) => a + v * w[j], 0));
   for (let s = 0; s < sweeps; s++) {
     let moved = 0;
@@ -256,7 +265,9 @@ export function* fitSteps(rows: readonly RankRow[], prior: Weights, lambda: Reco
         g += rows[i].w * (p - rows[i].y) * x;
         H += rows[i].w * p * (1 - p) * x * x;
       }
-      const d = Math.max(-2, Math.min(2, -g / H));
+      let d = Math.max(-2, Math.min(2, -g / H));
+      // Floored: never below the prior's weight.
+      if (floored[j] && w[j] + d < p0[j]) d = p0[j] - w[j];
       if (!d) continue;
       w[j] += d;
       for (let i = 0; i < rows.length; i++) if (xs[i][j]) z[i] += d * xs[i][j];
@@ -302,6 +313,8 @@ export interface FitOptions {
   rounds?: number;
   /** False: skip working out how sure it is (the replay's grid, which never explores). */
   cov?: boolean;
+  /** Features whose open weight may not fall below the prior's (`FLOORED`). */
+  floor?: readonly Feature[];
 }
 
 /** Fit both chances from the moments, starting from the prior. `eta` is the position correction (`examination`). */
@@ -309,8 +322,8 @@ export function fitRank(moments: readonly Moment[], at: number, o: FitOptions = 
   return drain(fitRankSteps(moments, at, o));
 }
 
-/** How the hub fits: the examination curve fitted to your opens, each inbox open weighted by 1/examination. */
-export const FIT: FitOptions = { eta: EXAMINATION_ETA, curve: 'ipw' };
+/** How the hub fits: the examination curve fitted to your opens, each inbox open weighted by 1/examination, and the floor. */
+export const FIT: FitOptions = { eta: EXAMINATION_ETA, curve: 'ipw', floor: FLOORED };
 
 /** One row as the fit sees it: opened within the horizon or not, and where it stood. */
 export interface FitRow {
@@ -332,7 +345,7 @@ export function* fitRankSteps(moments: readonly Moment[], at: number, o: FitOpti
     }
   // The guess first: an inbox open counts 1/examination times.
   let labelled = rows.map((r) => ({ x: r.x, y: r.opened ? 1 : 0, w: r.w * openWeight(r.opened, o.eta, o.cap) }));
-  let open = yield* fitSteps(labelled, PRIOR.open, o.lambda);
+  let open = yield* fitSteps(labelled, PRIOR.open, o.lambda, 25, o.floor);
   let curve: number[] | null = null;
   let curveFrom = 0;
   if (o.curve && rows.length) {
@@ -340,7 +353,7 @@ export function* fitRankSteps(moments: readonly Moment[], at: number, o: FitOpti
       ({ curve, from: curveFrom } = curveFit(rows, open));
       yield;
       labelled = o.curve === 'ipw' ? rows.map((r) => ({ x: r.x, y: r.opened ? 1 : 0, w: r.w * openWeight(r.opened, o.eta, o.cap, curve) })) : emRows(rows, open, curve);
-      open = yield* fitSteps(labelled, PRIOR.open, o.lambda);
+      open = yield* fitSteps(labelled, PRIOR.open, o.lambda, 25, o.floor);
     }
   }
   const sendW = send.length ? yield* fitSteps(send, PRIOR.send, o.lambda) : { ...PRIOR.send };

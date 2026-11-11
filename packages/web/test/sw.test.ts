@@ -50,10 +50,10 @@ test('a text action only where the browser can read the text and the hub said it
   await encrypted.push({ title: 't', conversationId: 'cnv_1' });
   expect(actions(encrypted)).toEqual(['open']);
 
-  const digest = worker();
-  await digest.push({ title: 't', inbox: true });
-  expect(actions(digest)).toEqual([]);
-  expect(digest.shown[0].o.tag).toBe('dither-digest');
+  const inbox = worker();
+  await inbox.push({ title: 't', inbox: true });
+  expect(actions(inbox)).toEqual([]);
+  expect(inbox.shown[0].o.tag).toBe('dither-inbox');
 });
 
 test('a reply goes through the normal send, and clears the notification', async () => {
@@ -217,13 +217,97 @@ test("a group's or channel's own picture over the sender's; a DM, or a group wit
   }
 });
 
-test('votes come first: Important down to Active or right; Active up to Important or down to the digest', async () => {
-  const loud = worker();
-  await loud.push({ title: 't', conversationId: 'cnv_1', messageId: 'msg_1', level: 'push' });
-  expect(actions(loud).slice(0, 2)).toEqual(['down', 'up']);
-  const quiet = worker();
-  await quiet.push({ title: 't', conversationId: 'cnv_1', messageId: 'msg_1', level: 'quiet' });
-  expect(quiet.shown[0].o.actions.slice(0, 2).map((a: any) => a.title)).toEqual(['▲ Important', '▼ Digest']);
+const titles = (w: ReturnType<typeof worker>) => w.shown.at(-1)!.o.actions.map((a: any) => a.title);
+const base = { title: 't', conversationId: 'cnv_1', messageId: 'msg_1' };
+
+test('the actions go by the tier: an alert Reply and "Not urgent", a Conversation Reply and "Should have alerted", a list row both marks', async () => {
+  const w = worker();
+  await w.push({ ...base, canReply: true, tier: 'push', level: 'push' });
+  expect(titles(w)).toEqual(['Reply', 'Not urgent']);
+  expect(actions(w)).toEqual(['reply', 'wrong']);
+  await w.push({ ...base, canReply: true, tier: 'quiet', level: 'quiet' });
+  expect(titles(w)).toEqual(['Reply', 'Should have alerted']);
+  expect(actions(w)).toEqual(['reply', 'alert']);
+  await w.push({ ...base, canReply: true, tier: 'digest', level: 'quiet' });
+  expect(titles(w)).toEqual(['Less like this', 'Should have alerted']);
+  expect(actions(w)).toEqual(['less', 'alert']);
+  // Where no reply can be typed, or the hub said it may not go out: the mark alone, and for a list row both.
+  const firefox = worker({ canReply: false });
+  await firefox.push({ ...base, canReply: true, tier: 'push' });
+  expect(titles(firefox)).toEqual(['Not urgent']);
+  await firefox.push({ ...base, tier: 'quiet' });
+  expect(titles(firefox)).toEqual(['Should have alerted']);
+  await firefox.push({ ...base, tier: 'digest' });
+  expect(titles(firefox)).toEqual(['Less like this', 'Should have alerted']);
+  // Without the message's id there is nothing to mark: it opens, as before.
+  await w.push({ title: 't', conversationId: 'cnv_1', tier: 'quiet' });
+  expect(actions(w)).toEqual(['open']);
+  // Mail takes only "Less like this", and has no alert marks.
+  await w.push({ ...base, messageId: 'mml_1', mailThreadId: 'cnv_1', tier: 'digest', level: 'quiet' });
+  expect(titles(w)).toEqual(['Less like this']);
+  await w.push({ ...base, messageId: 'mml_1', mailThreadId: 'cnv_1', tier: 'push', level: 'push' });
+  expect(actions(w)).toEqual(['open']);
+});
+
+test('only an alert may sound: a Conversation and a list row are silent, whatever else the push says', async () => {
+  const w = worker();
+  const said = () => {
+    const o = w.shown.at(-1)!.o;
+    return { silent: o.silent, renotify: o.renotify };
+  };
+  await w.push({ ...base, tier: 'push', level: 'push' });
+  expect(said()).toEqual({ silent: false, renotify: true });
+  await w.push({ ...base, tier: 'quiet', level: 'quiet' });
+  expect(said()).toEqual({ silent: true, renotify: false });
+  await w.push({ ...base, tier: 'digest', level: 'quiet' });
+  expect(said()).toEqual({ silent: true, renotify: false });
+  await w.push({ ...base, tier: 'quiet', level: 'quiet', alert: true });
+  expect(said()).toEqual({ silent: true, renotify: false });
+  await w.push({ ...base, tier: 'digest', level: 'quiet', alert: true });
+  expect(said()).toEqual({ silent: true, renotify: false });
+  // An alert the hub sends as an update to one already showing: no second sound.
+  await w.push({ ...base, tier: 'push', level: 'push', alert: false });
+  expect(said()).toEqual({ silent: true, renotify: false });
+  // The tier wins over the level beside it.
+  await w.push({ ...base, tier: 'digest', level: 'push' });
+  expect(said()).toEqual({ silent: true, renotify: false });
+  expect(titles(w)).toEqual(['Less like this', 'Should have alerted']);
+});
+
+test('a hub from before the tiers says only the level: quiet is a silent Conversation, anything else an alert', async () => {
+  const w = worker();
+  await w.push({ ...base, canReply: true, level: 'quiet' });
+  expect(w.shown.at(-1)!.o).toMatchObject({ silent: true, renotify: false });
+  expect(titles(w)).toEqual(['Reply', 'Should have alerted']);
+  await w.push({ ...base, canReply: true, level: 'push' });
+  expect(w.shown.at(-1)!.o).toMatchObject({ silent: false, renotify: true });
+  expect(titles(w)).toEqual(['Reply', 'Not urgent']);
+  await w.push({ ...base, canReply: true });
+  expect(w.shown.at(-1)!.o).toMatchObject({ silent: false, renotify: true });
+  expect(titles(w)).toEqual(['Reply', 'Not urgent']);
+});
+
+test('a mark from the notification tells the hub what it says, closes it, and opens nothing', async () => {
+  for (const [action, body] of [
+    ['wrong', { alert: false }],
+    ['alert', { alert: true }],
+    ['less', { less: true }],
+  ] as const) {
+    const w = worker();
+    await w.click({ conversationId: 'cnv_1', messageId: 'msg_1' }, action);
+    expect(w.fetched).toEqual([{ url: '/api/messages/msg_1/feedback', method: 'POST', body }]);
+    expect(w.closed).toEqual(['it']);
+    expect(w.opened).toEqual([]);
+  }
+  // Without a message, or with an action from a notification shown before the tiers, it opens the conversation.
+  const none = worker();
+  await none.click({ conversationId: 'cnv_1' }, 'less');
+  expect(none.fetched).toEqual([]);
+  expect(none.opened).toEqual(['/#/inbox/c/cnv_1']);
+  const old = worker();
+  await old.click({ conversationId: 'cnv_1', messageId: 'msg_1' }, 'up');
+  expect(old.fetched).toEqual([]);
+  expect(old.opened).toEqual(['/#/inbox/c/cnv_1']);
 });
 
 test('a conversation shows its unread lines, and sounds only when the hub says so', async () => {
@@ -232,23 +316,31 @@ test('a conversation shows its unread lines, and sounds only when the hub says s
     { author: 'Ann', key: 'p1', body: 'are you coming', ts: 1 },
     { author: 'Bo', key: 'p2', body: 'leaving at 6', ts: 2 },
   ];
-  await w.push({ title: 'Family', body: 'Bo: leaving at 6', conversationId: 'cnv_1', level: 'push', alert: false, count: 3, conv: { title: 'Family', shape: 'group' }, lines });
+  await w.push({ title: 'Family', body: 'Bo: leaving at 6', conversationId: 'cnv_1', tier: 'push', level: 'push', alert: false, count: 3, conv: { title: 'Family', shape: 'group' }, lines });
   expect(w.shown.at(-1)!.title).toBe('Family (3)');
   expect(w.shown.at(-1)!.o.body).toBe('Ann: are you coming\nBo: leaving at 6');
   expect(w.shown.at(-1)!.o).toMatchObject({ tag: 'cnv_1', renotify: false, silent: true });
-  await w.push({ title: 'Ann · Signal', conversationId: 'cnv_2', level: 'push', alert: true, conv: { title: 'Ann', shape: 'direct' }, lines: lines.slice(0, 1).concat({ ...lines[0], body: 'hello?' }) });
+  await w.push({ title: 'Ann · Signal', conversationId: 'cnv_2', tier: 'push', level: 'push', alert: true, conv: { title: 'Ann', shape: 'direct' }, lines: lines.slice(0, 1).concat({ ...lines[0], body: 'hello?' }) });
   expect(w.shown.at(-1)!.title).toBe('Ann · Signal');
   expect(w.shown.at(-1)!.o.body).toBe('are you coming\nhello?');
   expect(w.shown.at(-1)!.o).toMatchObject({ renotify: true, silent: false });
-  // An older hub: no lines, and Important always sounds.
+  // An older hub: no lines, and an alert always sounds.
   await w.push({ title: 'Old', body: 'hi', conversationId: 'cnv_3', level: 'push' });
   expect(w.shown.at(-1)!.o).toMatchObject({ body: 'hi', renotify: true, silent: false });
+  // A list row's lines are grouped the same way, silently.
+  await w.push({ title: 'Family', conversationId: 'cnv_1', tier: 'digest', level: 'quiet', count: 2, conv: { title: 'Family', shape: 'group' }, lines });
+  expect(w.shown.at(-1)!.title).toBe('Family (2)');
+  expect(w.shown.at(-1)!.o).toMatchObject({ tag: 'cnv_1', body: 'Ann: are you coming\nBo: leaving at 6', renotify: false, silent: true });
 });
 
 test('a request (docs/add.md): silent, a notification of its own, and a tap opens it under Requests', async () => {
   const w = worker();
-  await w.push({ title: 'Jules invited you to Nix Hackathon 2026', body: 'On Matrix matrix.org. It waits under Requests.', requestId: 'req_abc', level: 'quiet', nid: 'n7', device: 'd' });
+  await w.push({ title: 'Jules invited you to Nix Hackathon 2026', body: 'On Matrix matrix.org. It waits under Requests.', requestId: 'req_abc', level: 'quiet', tier: 'digest', importance: 0.7, nid: 'n7', device: 'd' });
   expect(w.shown.at(-1)!.o).toMatchObject({ tag: 'request:req_abc', silent: true, renotify: false, actions: [] });
+  // From a hub before the tiers, the same.
+  await w.push({ title: 'Jules invited you', requestId: 'req_old', level: 'quiet' });
+  expect(w.shown.at(-1)!.o).toMatchObject({ tag: 'request:req_old', silent: true, renotify: false, actions: [] });
+  w.shown.pop();
   await w.click(w.shown.at(-1)!.o.data);
   expect(w.opened).toEqual(['/#/requests/req_abc?n=n7']);
 });

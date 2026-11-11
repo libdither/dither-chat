@@ -15,10 +15,10 @@ CREATE TABLE IF NOT EXISTS mail_triage (
   decided_by  TEXT NOT NULL,                    -- rules | learned
   facts       TEXT,                             -- JSON learn.ts Facts; NULL for a silent one
   words       TEXT,                             -- JSON string[]: the model's words of it, kept for learning
-  probs       TEXT,                             -- JSON { ping, active, interesting }
+  probs       TEXT,                             -- JSON { alert, important } ({ ping, active, interesting } before the tiers)
   delivered   INTEGER NOT NULL DEFAULT 0,       -- a notification went out
   quiet       INTEGER NOT NULL DEFAULT 0,       -- rated after a sync found it, not as it arrived: never notifies, never a line
-  feedback    TEXT,                             -- your vote: push | quiet | digest | drop
+  feedback    TEXT,                             -- 'drop': less like this; before the tiers, the level you voted it to
   feedback_at INTEGER,
   created_at  INTEGER NOT NULL
 );

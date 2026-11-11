@@ -1,7 +1,8 @@
 /**
  * The hub started on a database an older hub left (test/fixtures/old-db, made by scripts/old-db-fixture.ts): it copies
  * the database aside, migrates, says it is ready, and what the old hub stored reads back through the API. One fixture
- * per schema era; a new era gets one when its migration matters.
+ * per schema era; a new era gets one when its migration matters. Both eras here are from before the tiers
+ * (docs/notifications.md): their decisions move from the four levels, their Smart rules go.
  */
 import { describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
@@ -47,6 +48,14 @@ for (const name of readdirSync(fixtures).filter((f) => f.endsWith('.json')).map(
       const data = join(work, 'data');
       mkdirSync(data, { mode: 0o700 });
       writeFileSync(join(data, 'hub.sqlite'), Bun.gunzipSync(readFileSync(join(fixtures, `${name}.sqlite.gz`))), { mode: 0o600 });
+      // What the old hub decided and what rules it held, read before this hub touches them.
+      const old = new Database(join(data, 'hub.sqlite'), { readonly: true });
+      const decided = old.query('SELECT message_id AS id, decision, created_at FROM triage').all() as { id: string; decision: string; created_at: number }[];
+      const ruled = (old.query('SELECT scope, target, level FROM notify_rule').all() as { scope: string; target: string | null; level: string }[]).map((r) => `${r.scope} ${r.target} ${r.level}`);
+      const hadPolicy = !!old.query(`SELECT 1 FROM meta WHERE key = 'triage_policy'`).get();
+      old.close();
+      expect(decided.length).toBeGreaterThan(0);
+      expect(ruled.some((r) => r.endsWith(' smart'))).toBe(true);
       const [port] = freePorts();
       const base = `http://127.0.0.1:${port}`;
       // None of the caller's hub settings (a manager's address, a model): a demo hub on the fixture alone.
@@ -97,6 +106,35 @@ for (const name of readdirSync(fixtures).filter((f) => f.endsWith('.json')).map(
       try {
         expect((db.query(`SELECT value FROM meta WHERE key = 'schema_sig'`).get() as { value: string }).value).toBe(currentSig());
         expect((db.query('SELECT count(*) AS n FROM message').get() as { n: number }).n).toBeGreaterThanOrEqual(fx.counts.messages);
+        // The four levels became three tiers: every decision the old hub made keeps what it was, and sits where the
+        // tiers put it (a Conversation in a DM or a group chat, the list elsewhere, Digest and below under the list).
+        expect(Number((db.query(`SELECT value FROM meta WHERE key = 'tiers_at'`).get() as { value: string }).value)).toBeGreaterThan(0);
+        const now = db.query('SELECT t.decision, t.was, t.created_at, c.shape FROM triage t JOIN message m ON m.id = t.message_id JOIN conversation c ON c.id = m.conversation_id WHERE t.message_id = ?');
+        let moved = 0;
+        for (const o of decided) {
+          const r = now.get(o.id) as { decision: string; was: string | null; created_at: number; shape: string } | null;
+          if (!r) continue;
+          if (o.decision === 'silent') {
+            expect(r).toMatchObject({ decision: 'silent', was: null });
+            continue;
+          }
+          expect(r.was).toBe(o.decision);
+          // Unless this hub decided on it again since (a message its queue still held).
+          if (r.created_at !== o.created_at) continue;
+          const tier = o.decision === 'push' || o.decision === 'quiet' ? (r.shape === 'direct' || r.shape === 'group' ? 'quiet' : 'digest') : 'drop';
+          expect(r.decision).toBe(tier);
+          moved++;
+        }
+        expect(moved).toBeGreaterThan(decided.length / 2);
+        // Smart rules are gone; every other rule is as it was.
+        const rules = (db.query('SELECT scope, target, level FROM notify_rule').all() as { scope: string; target: string | null; level: string }[]).map((r) => `${r.scope} ${r.target} ${r.level}`);
+        expect(rules.some((r) => r.endsWith(' smart'))).toBe(false);
+        for (const r of ruled.filter((x) => !x.endsWith(' smart'))) expect(rules).toContain(r);
+        // What the old model learned was three other chances: the hub started over with the two.
+        if (hadPolicy) {
+          const policy = JSON.parse((db.query(`SELECT value FROM meta WHERE key = 'triage_policy'`).get() as { value: string }).value);
+          expect(Object.keys(policy.model.w).sort()).toEqual(['alert', 'important']);
+        }
       } finally {
         db.close();
         rmSync(work, { recursive: true, force: true });

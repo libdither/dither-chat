@@ -750,8 +750,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
               }}
             />
             <span>
-              <b>Always notify</b>
-              <small>For their messages on every network, even in busy groups. A place set to Off still stays silent.</small>
+              <b>Always alert</b>
+              <small>Every message of theirs is an alert, on every network, even in busy groups. A place you muted still stays silent.</small>
             </span>
           </label>
         </Card>

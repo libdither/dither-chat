@@ -1,8 +1,9 @@
 # Notifications per device, and what they look like
 
-The notification rules in Settings apply to every device. Triage reads them once per message and decides whether it
-is worth a notification at all (push, digest or silent), and the inbox ranks conversations by the same rules. Some
-choices belong to one device only, though. On a phone that also has the Signal app, a Signal message should come
+The notification rules you set on a chat, a server or a person apply to every device. Triage reads them once per
+message and decides which tier it lands in (an alert, a Conversation, the list, below it, or silent:
+[notifications.md](notifications.md)), and the inbox ranks conversations by the same decisions. Some choices belong
+to one device only, though. On a phone that also has the Signal app, a Signal message should come
 from Signal there, while the laptop, with no Signal app, should show it from dither. Muting Signal everywhere did that
 for the phone, but it also took Signal off the laptop and sank every Signal chat to the bottom of the inbox.
 
@@ -22,8 +23,12 @@ The most specific rule on the device wins, in triage's own order: conversation, 
 first), accounts, network (`devices.ts` `chain`). For mail (docs/mail.md) the chain is the mail thread, its mail
 account, then Email, so "Email off" on a phone leaves mail to the phone's mail app; "Mentions only" keeps mail with
 you in To or answering you. Device rules only ever take notifications away. They do not
-change triage's decision, the digest, quiet hours or the inbox's ranking, and they never make a device show what the
+change the tier triage chose, quiet hours or the inbox's ranking, and they never make a device show what the
 shared rules hold back. Notify on a conversation is kept only to override a wider rule on the same device.
+
+They hold every tier alike: an alert, a Conversation's silent row, a row on the list, and a request's row (by its
+account and network). Apart from them, a Conversation message and a list row only ever go to phones, and only an
+alert reaches a computer ([notifications.md](notifications.md#one-notification-per-conversation)).
 
 "Off" covers everything that device would show: its push, the in-app toast, and the browser notification an open
 page raises. The hub works out which devices stay quiet (`Devices.quietOn`), leaves them out when it sends the push,

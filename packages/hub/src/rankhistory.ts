@@ -10,7 +10,7 @@
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
 import { decayed } from '@dither-chat/protocol';
-import { emptyTally, foldMessage, freshState, scoreConversation, sumTallies, voteDirection, votesAt, type ConvState, type ScoreInput, type Scored, type Tally } from './attention.ts';
+import { emptyTally, foldMessage, freshState, PIN_FOR, scoreConversation, sumTallies, voteDirection, votesAt, type ConvState, type ScoreInput, type Scored, type Tally } from './attention.ts';
 import { HORIZON, rankFeatures, type Moment, type Opened } from './rank.ts';
 import type { Triage } from './triage.ts';
 
@@ -35,10 +35,11 @@ export interface Conv {
   state: ConvState;
   lastMessageAt: number | null;
   /**
-   * Messages from others since the log began, in order: when, a mention of you, pushed, and where triage put it
-   * (null: not decided, or silent) with your vote and when. Older ones count as read.
+   * Messages from others since the log began, in order: when, a mention of you, whether triage put it in a tier
+   * (`pushed`), which (null: not decided, or silent) and its importance, with your vote and when. Older ones count as
+   * read.
    */
-  incoming: { ts: number; mention: boolean; pushed: boolean; level: P.TriageDecision | null; vote: P.TriageDecision | null; votedAt: number | null }[];
+  incoming: { ts: number; mention: boolean; pushed: boolean; level: P.TriageDecision | null; score: number | null; vote: P.TriageDecision | null; votedAt: number | null }[];
   /** When you last wrote. */
   lastOwn: number | null;
 }
@@ -115,11 +116,16 @@ export function seenAt(w: World, t: number, usage = usageAt(w.stays, t)): Seen[]
     let mentions = 0;
     let pushedUnread = false;
     let level: P.TriageDecision | null = null;
+    // The newest unread message triage put in a tier, as Attention.input reads it (`lastPush`).
+    let told: (typeof c.incoming)[number] | null = null;
     for (let i = c.incoming.length - 1; i >= 0 && c.incoming[i].ts > read; i--) {
       const m = c.incoming[i];
       unread++;
       if (m.mention) mentions++;
-      if (m.pushed) pushedUnread = true;
+      if (m.pushed) {
+        pushedUnread = true;
+        told ??= m;
+      }
       // The newest one triage decided on, with your vote only once you had cast it.
       if (!level && m.level) level = m.vote && m.votedAt != null && m.votedAt <= t ? m.vote : m.level;
     }
@@ -139,7 +145,11 @@ export function seenAt(w: World, t: number, usage = usageAt(w.stays, t)): Seen[]
         authorName: null,
         unread,
         mentions,
-        pinged: pushedUnread ? 'a push' : null,
+        // As the live inbox has it: an alert or a Conversation is pinged, an alert is pinned while fresh, and any tier
+        // brings its importance. (A swipe since is not replayed: the row then counts a little more than it did.)
+        pinged: told && (told.level === 'push' || told.level === 'quiet') ? 'a push' : null,
+        alerted: !!told && told.level === 'push' && t - told.ts <= PIN_FOR,
+        importance: told?.score ?? null,
         muted: c.muted,
         usage: u,
         level,
@@ -155,7 +165,7 @@ export function* flagged(db: Database, slice = 10_000): Generator<undefined, Set
   const out = new Set<string>();
   const max = ((db.query('SELECT MAX(rowid) AS n FROM message').get() as Row).n as number | null) ?? 0;
   const q = db.query(
-    `SELECT DISTINCT m.conversation_id AS id FROM message m LEFT JOIN triage t ON t.message_id = m.id WHERE m.rowid > ? AND m.rowid <= ? AND (m.mentions_self = 1 OR t.decision IN ('push', 'quiet'))`,
+    `SELECT DISTINCT m.conversation_id AS id FROM message m LEFT JOIN triage t ON t.message_id = m.id WHERE m.rowid > ? AND m.rowid <= ? AND (m.mentions_self = 1 OR t.decision IN ('push', 'quiet', 'digest'))`,
   );
   for (let a = 0; a < max; a += slice) {
     for (const r of q.all(a, a + slice) as Row[]) out.add(r.id);
@@ -188,7 +198,7 @@ export function loadWorld(db: Database, mutedOf: (id: string, shape: string) => 
   const extra = flaggedIds
     ? `c.id IN (SELECT value FROM json_each(?))`
     : `c.id IN (SELECT conversation_id FROM message WHERE mentions_self = 1)
-          OR c.id IN (SELECT m.conversation_id FROM triage t JOIN message m ON m.id = t.message_id WHERE t.decision IN ('push', 'quiet'))`;
+          OR c.id IN (SELECT m.conversation_id FROM triage t JOIN message m ON m.id = t.message_id WHERE t.decision IN ('push', 'quiet', 'digest'))`;
   for (const r of db
     .query(`SELECT c.id, c.shape, ${LISTED} AS listed, (SELECT COUNT(*) FROM participant WHERE conversation_id = c.id) AS members FROM conversation c WHERE ${LISTED} OR ${extra}`)
     .all(...(flaggedIds ? [JSON.stringify([...flaggedIds])] : [])) as Row[]) {
@@ -230,8 +240,8 @@ const FOLD = `
   SELECT m.id, m.ts, m.conversation_id AS cid, m.author_id, m.mentions_self, m.mentions_all, m.kind, m.deleted, i.is_bot, i.person_id,
          r.author_id AS reply_author,
          EXISTS (SELECT 1 FROM reaction x WHERE x.message_id = m.id AND x.identity_id IN ${SELF_SQL}) AS reacted,
-         t.decision IN ('push', 'quiet') AS pushed, t.reasons LIKE '%asks a question%' AS question,
-         t.decision, t.feedback, t.feedback_at
+         t.decision IN ('push', 'quiet', 'digest') AS pushed, t.reasons LIKE '%asks a question%' AS question,
+         t.decision, t.score, t.feedback, t.feedback_at
   FROM message m INDEXED BY message_ts LEFT JOIN identity i ON i.id = m.author_id LEFT JOIN message r ON r.id = m.reply_to_id LEFT JOIN triage t ON t.message_id = m.id
   WHERE m.conversation_id IN (SELECT value FROM json_each(?)) ORDER BY m.ts, m.rowid`;
 
@@ -307,6 +317,7 @@ export class Rebuild {
           mention: !!r.mentions_self,
           pushed: !!r.pushed,
           level: r.decision && r.decision !== 'silent' ? r.decision : null,
+          score: r.score ?? null,
           vote: r.feedback ?? null,
           votedAt: r.feedback_at ?? null,
         });

@@ -246,6 +246,8 @@ class MainActivity : Activity() {
             // Opening a conversation clears its notification, as the service worker does in a browser.
             val conv = Regex("""#/.*?/?c/([\w-]+)""").find(url ?: "")?.groupValues?.get(1)
             conv?.let { Notifications.clear(this@MainActivity, it) }
+            // A request opened: its row on the list goes the same way.
+            Regex("""#/requests/([\w-]+)""").find(url ?: "")?.groupValues?.get(1)?.let { Notifications.clear(this@MainActivity, "request:$it") }
             // And tells the system which conversation is on screen, the one its shortcut and notification name.
             if (Build.VERSION.SDK_INT >= 30) setLocusContext(conv?.let { LocusId(Notifications.shortcutId(it)) }, null)
         }
