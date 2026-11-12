@@ -7,6 +7,10 @@
  *
  *   stall: 23.8 s from 10.4 s after start: embeddings refit, GET /api/bootstrap
  *   stalls: 3 of 200 ms or more in the first 10 min, the longest 23.8 s (embeddings refit)
+ *
+ * Every hold of `overMs` or more, at any time, also goes to `record` (docs/tracing.md): main.ts writes them to
+ * event-loop-stalls.ndjson beside the trace, with the spans that were on the thread and what the process did while it
+ * was held (CPU time, page faults, context switches), which tells JavaScript work from a wait on the disk or on memory.
  */
 type Note = { at: number; what: string };
 
@@ -40,6 +44,33 @@ export function pathShape(path: string): string {
 
 const secs = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`);
 
+/** The process's counters that say what a hold was made of (process.resourceUsage(), in µs and counts). */
+export interface Usage {
+  userCPUTime: number;
+  systemCPUTime: number;
+  minorPageFault: number;
+  majorPageFault: number;
+  voluntaryContextSwitches: number;
+  involuntaryContextSwitches: number;
+}
+
+/** One hold, as event-loop-stalls.ndjson keeps it. */
+export interface StallRecord {
+  /** Unix ms when it ended. */
+  atMs: number;
+  heldMs: number;
+  afterStartMs: number;
+  work: string;
+  spans: { name: string; traceId: string; spanId: string; open?: true }[];
+  /** What the process did from the last tick to this one: CPU in ms, the rest counts. */
+  cpuUserMs?: number;
+  cpuSystemMs?: number;
+  minorFaults?: number;
+  majorFaults?: number;
+  voluntarySwitches?: number;
+  involuntarySwitches?: number;
+}
+
 export interface StallOptions {
   everyMs?: number;
   /** Holds this long or longer are logged while `forMs` lasts... */
@@ -49,6 +80,13 @@ export interface StallOptions {
   laterOverMs?: number;
   log?: (line: string) => void;
   now?: () => number;
+  /** Every hold of `overMs` or more, at any time (not only the first `forMs`). */
+  record?: ((r: StallRecord) => void) | null;
+  /** The spans on the thread between two times (trace.ts spansBetween). */
+  spans?: (from: number, to: number) => StallRecord['spans'];
+  /** The process's counters; null leaves them out. */
+  usage?: (() => Usage) | null;
+  wallNow?: () => number;
 }
 
 export class StallWatch {
@@ -57,12 +95,25 @@ export class StallWatch {
   private last = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
   private summed = false;
+  private lastUsage: Usage | null = null;
   /** Holds logged in the first `forMs`, and the longest with what began in it. */
   count = 0;
   longest: { ms: number; what: string } | null = null;
 
   constructor(o: StallOptions = {}) {
-    this.o = { everyMs: 100, overMs: 200, forMs: 10 * 60_000, laterOverMs: 2000, log: (l) => console.log(l), now: () => performance.now(), ...o };
+    this.o = {
+      everyMs: 100,
+      overMs: 200,
+      forMs: 10 * 60_000,
+      laterOverMs: 2000,
+      log: (l) => console.log(l),
+      now: () => performance.now(),
+      record: null,
+      spans: () => [],
+      usage: () => process.resourceUsage(),
+      wallNow: () => Date.now(),
+      ...o,
+    };
   }
 
   /** Watch from now: a timer every `everyMs`. */
@@ -76,6 +127,7 @@ export class StallWatch {
   /** Count from `t` (a test's clock, without the timer). */
   from(t: number) {
     this.start = this.last = t;
+    this.lastUsage = this.o.usage ? this.o.usage() : null;
     return this;
   }
 
@@ -83,6 +135,29 @@ export class StallWatch {
   check(t = this.o.now()) {
     const held = t - this.last - this.o.everyMs;
     const early = this.last - this.start < this.o.forMs;
+    const usage = this.o.usage ? this.o.usage() : null;
+    if (held >= this.o.overMs && this.o.record) {
+      const u = usage && this.lastUsage ? usage : null;
+      const was = this.lastUsage!;
+      this.o.record({
+        atMs: this.o.wallNow(),
+        heldMs: Math.round(held),
+        afterStartMs: Math.round(this.last - this.start),
+        work: workBetween(this.last, t),
+        spans: this.o.spans(this.last, t),
+        ...(u
+          ? {
+              cpuUserMs: Math.round((u.userCPUTime - was.userCPUTime) / 1000),
+              cpuSystemMs: Math.round((u.systemCPUTime - was.systemCPUTime) / 1000),
+              minorFaults: u.minorPageFault - was.minorPageFault,
+              majorFaults: u.majorPageFault - was.majorPageFault,
+              voluntarySwitches: u.voluntaryContextSwitches - was.voluntaryContextSwitches,
+              involuntarySwitches: u.involuntaryContextSwitches - was.involuntaryContextSwitches,
+            }
+          : {}),
+      });
+    }
+    this.lastUsage = usage;
     if (held >= (early ? this.o.overMs : this.o.laterOverMs)) {
       const what = workBetween(this.last, t);
       this.o.log(`stall: ${secs(held)} from ${secs(this.last - this.start)} after start: ${what}`);

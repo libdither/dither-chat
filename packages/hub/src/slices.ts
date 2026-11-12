@@ -8,6 +8,7 @@
  * once): `onSlice` is told each slice's sum, which is how a test sees that no slice does too much without a clock.
  */
 import { noteWork } from './stalls.ts';
+import { span } from './trace.ts';
 
 export interface SliceOptions {
   /** How long a slice may run, in the clock's ms. */
@@ -28,28 +29,35 @@ export const SLICE_ROWS = 4096;
 const turn = () => new Promise<void>((r) => setTimeout(r, 0));
 
 /** Run `g` to its end, `budgetMs` at a time, with a turn of the event loop between. `name` is for the stall log. */
-export async function sliced<T>(name: string, g: Generator<number | undefined, T>, o: SliceOptions = {}): Promise<T> {
-  const clock = o.clock ?? (() => performance.now());
-  const budget = o.budgetMs ?? SLICE_MS;
-  const pause = o.pause ?? turn;
-  noteWork(name);
-  let start = clock();
-  let rows = 0;
-  for (;;) {
-    const r = g.next();
-    if (r.done) {
-      if (rows) o.onSlice?.(rows);
-      return r.value;
+export function sliced<T>(name: string, g: Generator<number | undefined, T>, o: SliceOptions = {}): Promise<T> {
+  // The whole job is one span (docs/tracing.md): how many slices, and how long they held the thread in all.
+  return span(name, {}, async (s) => {
+    const clock = o.clock ?? (() => performance.now());
+    const budget = o.budgetMs ?? SLICE_MS;
+    const pause = o.pause ?? turn;
+    let start = clock();
+    let rows = 0;
+    let slices = 1;
+    let busy = 0;
+    for (;;) {
+      const r = g.next();
+      if (r.done) {
+        if (rows) o.onSlice?.(rows);
+        s.set({ slices, busyMs: Math.round(busy + clock() - start) });
+        return r.value;
+      }
+      rows += r.value ?? 0;
+      if (clock() - start >= budget) {
+        o.onSlice?.(rows);
+        rows = 0;
+        busy += clock() - start;
+        await pause();
+        noteWork(name);
+        slices++;
+        start = clock();
+      }
     }
-    rows += r.value ?? 0;
-    if (clock() - start >= budget) {
-      o.onSlice?.(rows);
-      rows = 0;
-      await pause();
-      noteWork(name);
-      start = clock();
-    }
-  }
+  });
 }
 
 /**

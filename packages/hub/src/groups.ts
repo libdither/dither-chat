@@ -10,6 +10,7 @@ import { AboutError, candidatePool, caps } from './about.ts';
 import { givePace, type PaceKind, takePace } from './add.ts';
 import type { Attempt } from './attempts.ts';
 import type { Store } from './store.ts';
+import { currentSpan } from './trace.ts';
 
 export interface GroupDeps {
   store: Store;
@@ -102,6 +103,8 @@ export class Groups {
       taken.push('members');
     }
 
+    // On the request's span (docs/tracing.md): counts and the network, never who.
+    const sp = currentSpan().set({ network, people: people.length, named: !!name }).event('paced');
     let r: P.CreateGroupResult;
     try {
       r = await this.d.command<P.CreateGroupResult>(acc.id, { t: 'createGroup', ...(name ? { name } : {}), people: people.map((p) => p.nativeId) }, CREATE_GROUP_TIMEOUT);
@@ -112,6 +115,7 @@ export class Groups {
       if (!/disconnected|not connected/i.test(msg)) giveBack();
       throw new AboutError(msg, 502);
     }
+    sp.event('adapter answered');
     // The adapter's facts came before its reply, so the conversation is in the store by now.
     const native = r && typeof r.conversation === 'string' ? r.conversation : '';
     const conversation = native ? s.conversationView(hubId('cnv', network, native)) : null;
@@ -129,6 +133,7 @@ export class Groups {
       const by = new Map(s.identitiesByIds(xs).map((i) => [i.id, i.handle ?? i.displayName ?? i.nativeId]));
       return xs.map((x) => by.get(x) ?? x).join(', ');
     };
+    sp.set({ added: added.length, invited: invited.length, failed: failed.length });
     const called = name ?? conversation.name;
     this.d.note?.(
       acc.id,
