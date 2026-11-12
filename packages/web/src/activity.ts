@@ -9,9 +9,10 @@
  */
 import { effect, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { placeConv, rootCommunity } from './model.ts';
+import { inboxKeyOf, inboxRows, placeConv, rootCommunity } from './model.ts';
 import { api, apiHooks, db, eventHooks, href, listUnderHooks, parseHash, route, showsHere, type Route } from './state.ts';
 import { NEW_VISIT_AFTER } from './tracker.ts';
+import { typedHooks } from './typing.ts';
 import { inUse } from './usage.ts';
 import { VisitLog, firstTap, samePlace, type Arrival, type Place } from './visits.ts';
 import { viewer } from './ui/Viewer.tsx';
@@ -138,11 +139,13 @@ const trail: string[] = [];
 /** Snapshots not yet on the hub, by visit id: a later snapshot replaces an earlier one. */
 let outbox = new Map<string, P.VisitRecord>();
 let events: P.NotificationEvent[] = [];
+/** Inbox actions not yet on the hub (Mark As Read on a row owing a reply). */
+let actions: P.InboxAction[] = [];
 const sentIds = new Set<string>();
 
 const save = () => {
   try {
-    localStorage.setItem(OUTBOX_KEY, JSON.stringify({ visits: [...outbox.values()], events }));
+    localStorage.setItem(OUTBOX_KEY, JSON.stringify({ visits: [...outbox.values()], events, actions }));
   } catch {}
 };
 function load() {
@@ -150,7 +153,54 @@ function load() {
     const o = JSON.parse(localStorage.getItem(OUTBOX_KEY) ?? 'null');
     outbox = new Map((o?.visits ?? []).map((v: P.VisitRecord) => [v.id, v]));
     events = o?.events ?? [];
+    actions = o?.actions ?? [];
   } catch {}
+}
+
+/** Whether a draft waits in a conversation's message box (Timeline keeps it in localStorage). */
+function draftIn(conversationId: string): boolean {
+  try {
+    return !!localStorage.getItem(`dither-chat:draft:${conversationId}`);
+  } catch {
+    return false;
+  }
+}
+
+/** The reply owed at a conversation, as its inbox row has it: when it began, and whether the row shows ↩. */
+function owedAt(conversationId: string): { since: number | null; shown: boolean } | null {
+  const key = inboxKeyOf(conversationId);
+  const row = inboxRows().find((r) => r.key === key);
+  const own = db.attention.get(conversationId);
+  if (!row && !own) return null;
+  const since = row?.owedSince ?? own?.owedSince ?? null;
+  return { since, shown: !!row?.needs && since !== null };
+}
+
+/**
+ * Mark As Read on inbox rows (each route of a chat of several, or a mail thread): logged when the row showed a reply
+ * you owe, since reading it there says something about whether you will answer (docs/activity.md).
+ */
+export function noteRowRead(kind: 'conversation' | 'mail', ids: string[]) {
+  if (!log || !enabled) return;
+  const at = Date.now();
+  let n = 0;
+  for (const id of ids) {
+    // The row's ↩, and the route (or thread) whose turn it is.
+    const shown = kind === 'mail' ? !!db.attention.get(id)?.needs : !!owedAt(id)?.shown;
+    const since = db.attention.get(id)?.owedSince ?? null;
+    if (!shown || since === null) continue;
+    actions.push({ id: `${at.toString(36)}-${Math.random().toString(36).slice(2, 10)}`, device: deviceId(), action: 'read', targetKind: kind, targetId: id, at, owedSince: since });
+    n++;
+  }
+  if (!n) return;
+  save();
+  void flush();
+}
+
+/** The newest message of these conversations (a chat's routes) is on screen, at `ts`. */
+export function noteSeen(conversationIds: string[], ts: number) {
+  if (!log || !enabled) return;
+  log.seen(conversationIds, ts);
 }
 
 function collect() {
@@ -241,6 +291,12 @@ async function flush(leaving = false) {
       if (r) events = events.filter((e) => !batch.includes(e));
       if (r?.enabled === false) stopRecording();
     }
+    if (actions.length) {
+      const batch = actions.slice(0, 200);
+      const r = await post('/api/activity/actions', { actions: batch });
+      if (r) actions = actions.filter((a) => !batch.includes(a));
+      if (r?.enabled === false) stopRecording();
+    }
     if (outbox.size) {
       const batch = [...outbox.values()].slice(0, 300);
       const r = await post('/api/activity/visits', { visits: batch });
@@ -260,6 +316,7 @@ function stopRecording() {
   enabled = false;
   outbox.clear();
   events = [];
+  actions = [];
   log?.close(null);
   log?.take();
   save();
@@ -295,7 +352,8 @@ export async function deleteActivity() {
 export function startActivity() {
   if (log || typeof window === 'undefined') return;
   load();
-  log = new VisitLog(deviceId(), deviceLabel(), Date.now());
+  log = new VisitLog(deviceId(), deviceLabel(), Date.now(), undefined, draftIn, owedAt);
+  typedHooks.add((cid) => enabled && log?.typed(cid));
   // Opened by a tap on a notification: the hash carries its id. The address bar does not keep it. The Android app made
   // again after Android stopped it starts from the hash it was first launched with: an old push's id is a start.
   const hashId = pushIdOf(location.hash);
@@ -383,9 +441,12 @@ export function startActivity() {
     tick();
     if (document.visibilityState === 'hidden') {
       hiddenAt = Date.now();
+      log?.away('hidden');
+      collect();
       void flush(true);
       return;
     }
+    log?.away(null);
     // Back after a long time away: the place still open is a new stay.
     if (hiddenAt && Date.now() - hiddenAt > NEW_VISIT_AFTER && enabled) log?.restart(Date.now(), { source: 'resume' }, inUse());
     if (hiddenAt && Date.now() - hiddenAt > 60_000) void fetchActivity();
@@ -393,7 +454,11 @@ export function startActivity() {
   });
   window.addEventListener('focus', tick);
   window.addEventListener('blur', tick);
-  window.addEventListener('pagehide', () => void flush(true));
+  window.addEventListener('pagehide', () => {
+    log?.away('closed');
+    collect();
+    void flush(true);
+  });
   setInterval(tick, 5000);
   setInterval(() => void flush(), 60_000);
   void fetchActivity().then(() => flush());

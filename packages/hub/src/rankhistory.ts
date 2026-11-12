@@ -13,6 +13,7 @@ import { decayed } from '@dither-chat/protocol';
 import { emptyTally, foldMessage, freshState, PIN_FOR, scoreConversation, sumTallies, voteDirection, votesAt, type ConvState, type ScoreInput, type Scored, type Tally } from './attention.ts';
 import { HORIZON, rankFeatures, type Moment, type Opened } from './rank.ts';
 import type { Triage } from './triage.ts';
+import type { OwedTable } from './owed.ts';
 
 type Row = Record<string, any>;
 
@@ -73,6 +74,8 @@ export interface World {
   selfPerson: string | null;
   /** Your votes on each conversation's messages: when, and up (1), down (−1) or right (0). */
   votes: Map<string, { at: number; dir: number }[]>;
+  /** The owed table to score with (owed.ts): the hub's, else the default. */
+  owedTable?: OwedTable;
 }
 
 /** Where you had been by `t`: per usage key, decayed seconds and visits and when you were last there. */
@@ -154,6 +157,7 @@ export function seenAt(w: World, t: number, usage = usageAt(w.stays, t)): Seen[]
         usage: u,
         level,
         votes: votesAt(w.votes.get(c.id), t),
+        owedTable: w.owedTable ?? null,
       },
     });
   }

@@ -1232,6 +1232,10 @@ export class HubServer {
         const b = await body<{ visits?: Partial<P.VisitRecord>[] }>();
         return ok({ applied: a.visits(Array.isArray(b.visits) ? b.visits : []), enabled: a.enabled });
       }
+      if (path === '/api/activity/actions' && method === 'POST') {
+        const b = await body<{ actions?: Partial<P.InboxAction>[] }>();
+        return ok({ applied: a.actions(Array.isArray(b.actions) ? b.actions : []), enabled: a.enabled });
+      }
       if (path === '/api/activity/notifications' && method === 'POST') {
         const b = await body<{ events?: Partial<P.NotificationEvent>[] }>();
         const events = Array.isArray(b.events) ? b.events : [];

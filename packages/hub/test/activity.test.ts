@@ -275,6 +275,32 @@ describe('the log on the hub', () => {
     expect(a.setSettings({ retentionDays: 3 }).retentionDays).toBe(30);
   });
 
+  test('what a stay could see and left behind: the newest on screen, the reply owed as it began, typing, a draft and how it ended', () => {
+    const v = visit({ id: 'owed', closed: false, conversationId: dm, owedSince: T0 - HOUR, owedShown: true, seenToTs: T0 + 5, typed: 3, draftLeft: true, exit: 'hidden' });
+    a.visits([v], NOW);
+    // It went on: more seen and typed, the draft sent, and it ended by going elsewhere.
+    a.visits([{ ...v, owedSince: null, owedShown: false, seenToTs: T0 + 9, typed: 7, draftLeft: false, exit: 'route', next: 'inbox', closed: true }], NOW);
+    // A copy from before it closed, arriving late, takes nothing back.
+    a.visits([{ ...v, seenToTs: T0 + 1, typed: 1 }], NOW);
+    expect(store.db.query('SELECT seen_to_ts, owed_since, owed_shown, typed, draft_left, exit FROM visit').get()).toEqual({ seen_to_ts: T0 + 9, owed_since: T0 - HOUR, owed_shown: 1, typed: 7, draft_left: 0, exit: 'route' });
+    const out = JSON.parse([...a.exportLog()][1]);
+    expect(out).toMatchObject({ seenToTs: T0 + 9, owedSince: T0 - HOUR, owedShown: true, typed: 7, draftLeft: false, exit: 'route' });
+    // Nonsense is dropped.
+    a.visits([visit({ id: 'odd', exit: 'teleported' as any, typed: -4, owedShown: 'yes' as any })], NOW);
+    expect(store.db.query(`SELECT typed, owed_shown, exit FROM visit WHERE id = 'odd'`).get()).toEqual({ typed: 0, owed_shown: null, exit: null });
+  });
+
+  test('Mark As Read on a row owing a reply: kept once, deleted with the log', () => {
+    const r = { id: 'r1', device: 'phone', action: 'read' as const, targetKind: 'conversation' as const, targetId: dm, at: T0, owedSince: T0 - HOUR };
+    expect(a.actions([r, r, { ...r, id: 'bad', action: 'archive' as any }], NOW)).toBe(1);
+    expect(store.db.query('SELECT target_kind, target_id, at, owed_since FROM inbox_action').all()).toEqual([{ target_kind: 'conversation', target_id: dm, at: T0, owed_since: T0 - HOUR }]);
+    expect([...a.exportLog()].some((l) => JSON.parse(l).type === 'inbox-action')).toBe(true);
+    a.clear();
+    expect(store.db.query('SELECT COUNT(*) AS n FROM inbox_action').get()).toEqual({ n: 0 });
+    a.setSettings({ enabled: false });
+    expect(a.actions([r], NOW)).toBe(0);
+  });
+
   test('delete everything', () => {
     a.visits([visit({})], NOW);
     a.notification({ kind: 'digest' }, NOW);

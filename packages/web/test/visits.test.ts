@@ -49,6 +49,33 @@ test('passing through is not kept, unless a notification led there or something 
   ]);
 });
 
+test('what the stay could see and left behind: the newest on screen, the reply owed as it began, typing, a draft and how it ended', () => {
+  const drafts = new Set<string>();
+  const log = new VisitLog('dev1', 'Firefox on Linux', T0, () => `v${++n}`, (c) => drafts.has(c), (c) => (c === 'c1' ? { since: T0 - 3600 * S, shown: true } : null));
+  log.enter(T0, dm, { source: 'inbox' }, true);
+  expect(log.current).toMatchObject({ owedSince: T0 - 3600 * S, owedShown: true, typed: 0, seenToTs: null, exit: null });
+  log.seen(['c1', 'c9'], T0 + 7);
+  log.seen(['c1'], T0 + 3);
+  log.seen(['other'], T0 + 99);
+  log.typed('c1');
+  log.typed('c1');
+  log.typed('other');
+  drafts.add('c1');
+  // Hidden for a moment, then back: how it ends is not known yet.
+  log.away('hidden');
+  expect(log.current).toMatchObject({ exit: 'hidden', draftLeft: true });
+  log.away(null);
+  log.update(T0 + 10 * S, true);
+  log.enter(T0 + 10 * S, { view: 'conversation', conversationId: 'c2' }, { source: 'list' }, true);
+  const [v] = log.take();
+  expect(v).toMatchObject({ seenToTs: T0 + 7, typed: 2, draftLeft: true, exit: 'route', next: 'conversation' });
+  expect(log.current).toMatchObject({ owedSince: null, owedShown: null });
+  // Back after a long time away: the stay before ended with the app hidden.
+  log.restart(T0 + 3600 * S, { source: 'resume' }, true);
+  log.update(T0 + 3610 * S, true);
+  expect(log.take()[0]).toMatchObject({ conversationId: 'c2', exit: 'hidden', draftLeft: false });
+});
+
 test('what happened during the stay, only for the conversation that is open', () => {
   const log = fresh();
   log.enter(T0, dm, { source: 'inbox' }, true);

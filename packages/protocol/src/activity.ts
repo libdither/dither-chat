@@ -75,6 +75,37 @@ export interface VisitRecord {
   next?: VisitView | null;
   /** Over: no more updates will come. */
   closed: boolean;
+  /** The newest message on screen in the conversation, read or not (its time): what the stay could have seen. */
+  seenToTs?: number | null;
+  /** When the reply you owe there began, as the stay began (attention's `owedSince`), and whether its row showed ↩. */
+  owedSince?: number | null;
+  owedShown?: boolean | null;
+  /** Edits to the message box during the stay (a count, nothing of what was typed), and whether a draft was left in it. */
+  typed?: number;
+  draftLeft?: boolean | null;
+  /** How the stay ended: another place in the app (`route`), the app hidden (`hidden`) or closed (`closed`). */
+  exit?: VisitExit | null;
+}
+
+export type VisitExit = 'route' | 'hidden' | 'closed';
+export const VISIT_EXITS: readonly VisitExit[] = ['route', 'hidden', 'closed'];
+
+/**
+ * Something done to an inbox row that says what you made of it (docs/activity.md): `read`, Mark As Read on a row that
+ * showed a reply you owe. Kept in the activity log with the stays; ids and times only.
+ */
+export type InboxActionKind = 'read';
+export interface InboxAction {
+  /** Made by the device: the same action sent twice is kept once. */
+  id: string;
+  device: string;
+  action: InboxActionKind;
+  /** The row's conversation (each route of a chat of several), or mail thread. */
+  targetKind: 'conversation' | 'mail';
+  targetId: string;
+  at: number;
+  /** The row's owed turn, as it showed: when it began. */
+  owedSince?: number | null;
 }
 
 /**

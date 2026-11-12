@@ -24,7 +24,8 @@ same way, with every route's messages.
 What needs you shows on the row, not in a section. A reply you owe that the hub still counts (they wrote last, the
 row's `owedSince`, and it needs you, `needs`) has ↩ and how long it has waited, in the accent colour, beside the
 unread count when there is one. An unanswered message from long ago, or from someone you rarely answer, has faded
-below `needs` and has no ↩. Accounts that need you and the Requests row stay above the list.
+below `needs` and has no ↩. A turn whose chance of an answer has fallen under 5% (`OWED_SHOWN`, owed.ts) has no
+`owedSince` at all, so a row that needs you for something else does not say "↩ 14w". Accounts that need you and the Requests row stay above the list.
 
 **Sections, tried and removed.** From 2026-11-09 to 2026-11-10 the list had three sections, each in the learned order:
 Waiting on you (a reply you owe that needs you), New (unread) and Earlier (the rest). They were removed because hard
@@ -72,7 +73,7 @@ lately moves a row, it does not make it need you.
 score = max(owed, unread + pinged, live) + importance + relationship + noise + recency + visited
                                                                        (muted: −50 + recency)
 
-owed         = 60 × p × curve(age)
+owed         = 60 × chance(shape, p, age)                              the owed table (owed.ts)
 unread       = 8 + 12 × min(addressed, 3) + 3 × min(other, 3)         when anything is unread
 pinged       = 15, and 40 more for an alert                            an alert or Conversation message, unread, unseen
 importance   = 25 × triage's importance, 0..1                          of the newest message in a tier, unread, unseen
@@ -113,15 +114,36 @@ the start (`Store.selfReacted`), a few seconds later.
 
 While a turn is open, `age` is the time since its first addressed message, and
 
-- `curve(age)` is 1 from the moment the message arrives through the first day, then halves every 2 days. After
-  3 days it is 0.5, after a week 0.125. (It used to rise over the time you usually take to answer, which made a
-  just-read message weigh almost nothing.)
 - `p` is your reply rate: answered turns over addressed ones, decayed (half-life 30 days). It is pooled per
   person over all your conversations with them, pulled toward ½ while there are few, and then used as the prior
   for this conversation's own rate: `p = (answered_here + 2·p_person) / (addressed_here + 2)`.
+- `chance(shape, p, age)` is the **owed table** (owed.ts): of your past turns of that shape (a DM, or anything else)
+  and reply rate that were still open at that age, the share you answered within the 3 days. It falls as the turn
+  ages, since every hour it stays open says something, and it is 0 from 3 days on. Rates fall in five buckets (edges
+  0.8, 0.9, 0.95, 0.98); between two buckets' mean rates, and between the table's ages (0, 15 and 30 minutes, 1, 2,
+  3, 6, 12 and 18 hours, 1, 1.5, 2 and 2.5 days), it is drawn straight, so a higher rate never weighs less. Below the
+  lowest bucket it falls to 0 at a rate of 0. A bucket with few turns leans on its shape's row, and a shape with
+  fewer than 200 on the default table (DEFAULT_OWED_TABLE, fitted on one person's history before 2025).
 
-So someone you answer 9 times in 10 is worth about 50 points as soon as they write, and needs you. Someone you answer
-1 time in 10 stays near 10 and does not.
+With the default table, someone you answer 97 times in 100 is worth about 57 points as soon as they write and about
+40 six hours later, and needs you; after a day and a half about 20, after two and a half days under 10. Someone you
+answer 1 time in 10 stays under 10 and does not.
+
+**Fitted on your history.** The fold keeps every turn it closes (`owed_turn`: when it began, whether and when you
+answered, the shape and the author, never what was said), and the turns still open count as unanswered once their 3
+days are over. A reaction carries no time, so reacted turns count toward the reply rates but not toward the table.
+Each turn is rated as it began, from the turns over by then. The hub fits the table once a day, when the fold has
+nothing left to do (after a `FEATURE_VERSION` bump it folds everything again first), keeps it in `meta`
+(`owed_table`), and scores everything again with it; mail and the learned order use the same table. `explain` shows
+`owed`: the age, the rate and its bucket, the chance and its points, what the formula before gave (`before`), and the
+table's fit time and turns per bucket.
+
+**Why.** Until 2026-11-12 the owed points were `60 × p × curve(age)`, with `curve` 1 through the first day and then
+halving every 2 days: a turn kept almost all its weight for a day whatever its age said. In
+`scripts/owed-replay.ts` (fitted on turns before 2025, measured after), 64% of the hours DMs spent above the line on
+their owed points alone in 2025-26 were on turns you never answered; with the table 42%, keeping 83% of the hours on
+turns you did answer, with the same order among open turns (AUC 0.75 at 1 h and 6 h against 0.76) and a far better
+log loss (0.50 against 0.66 at 1 h). In the hub era: 53% to 25%, keeping 86%.
 
 ### Unread, alerts and importance
 

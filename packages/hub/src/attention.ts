@@ -17,6 +17,7 @@ import type { Triage } from './triage.ts';
 import type { ActivityStore } from './activity.ts';
 import { requestHeld } from './add.ts';
 import { noteWork } from './stalls.ts';
+import { DEFAULT_OWED_TABLE, fitOwedTable, OWED_SHOWN, owedChance, rateBucket, turnRate, validTable, type OwedTable, type OwedTurn } from './owed.ts';
 
 type Row = Record<string, any>;
 
@@ -34,8 +35,8 @@ export const FOLLOW_UP = HOUR;
 export const SMALL_GROUP = 6;
 /** Reply latency histogram: bucket i counts replies within LATENCY_EDGES[i] and after the edge before it. */
 export const LATENCY_EDGES = [5 * MIN, 15 * MIN, 30 * MIN, HOUR, 2 * HOUR, 4 * HOUR, 8 * HOUR, 16 * HOUR, DAY, 2 * DAY, REPLY_WINDOW];
-/** Bumped when the fold changes meaning: every conversation folds again, in the background. */
-export const FEATURE_VERSION = 3;
+/** Bumped when the fold changes meaning: every conversation folds again, in the background. 4: turns kept (owed_turn). */
+export const FEATURE_VERSION = 4;
 /** A conversation that got older messages folds again once none have arrived for this long. */
 const QUIET = 5_000;
 /** Scores move with time (an unanswered message ages, recency fades): all are recomputed this often. */
@@ -174,24 +175,38 @@ function addressedKind(m: FoldMessage, place: Place, s: ConvState): OwedKind | n
   return null;
 }
 
+/** A turn the fold closed: answered at `answeredAt` (`timed`: whether that is when, false for a reaction), or (null) it ran out. */
+export interface Settled {
+  addressed: number;
+  kind: OwedKind | null;
+  authorKey: string | null;
+  answeredAt: number | null;
+  timed: boolean;
+}
+export type OnSettle = (t: Settled) => void;
+
 /** The open turn is over: answered at `answeredAt`, or (null) it ran out. `timed`: whether that is when you answered. */
-function settle(s: ConvState, tallyOf: (key: string) => Tally, answeredAt: number | null, timed = true) {
+function settle(s: ConvState, tallyOf: (key: string) => Tally, answeredAt: number | null, timed = true, onSettle?: OnSettle) {
   const t = s.turn;
   if (!t || t.addressed === null) return;
   const latency = answeredAt === null ? null : answeredAt - t.addressed;
   const when = answeredAt ?? t.addressed + REPLY_WINDOW;
   record(s.tally, when, latency, timed);
   if (t.authorKey) record(tallyOf(t.authorKey), when, latency, timed);
+  onSettle?.({ addressed: t.addressed, kind: t.kind, authorKey: t.authorKey, answeredAt, timed });
 }
 
-/** Add one message, in (ts, rowid) order. `tallyOf` gives this conversation's tally for an author, to update. */
-export function foldMessage(s: ConvState, tallyOf: (key: string) => Tally, m: FoldMessage, place: Place) {
+/**
+ * Add one message, in (ts, rowid) order. `tallyOf` gives this conversation's tally for an author, to update;
+ * `onSettle` hears of each turn it closes (the owed table learns from them: owed.ts).
+ */
+export function foldMessage(s: ConvState, tallyOf: (key: string) => Tally, m: FoldMessage, place: Place, onSettle?: OnSettle) {
   if (m.ignore) return;
   if (m.mine) {
     s.sent += advance(s, m.ts);
     s.totalSent++;
     s.lastSent = Math.max(s.lastSent ?? 0, m.ts);
-    settle(s, tallyOf, m.ts);
+    settle(s, tallyOf, m.ts, true, onSettle);
     s.turn = null;
     s.lastWasMine = true;
     return;
@@ -208,14 +223,14 @@ export function foldMessage(s: ConvState, tallyOf: (key: string) => Tally, m: Fo
   s.lastWasMine = false;
   s.turn ??= { since: m.ts, count: 0, addressed: null, kind: null, author: null, authorKey: null };
   s.turn.count++;
-  if (!kind) return acknowledge(s, tallyOf, m);
+  if (!kind) return acknowledge(s, tallyOf, m, onSettle);
   // Unanswered for so long it ran out: that turn is over, and this one starts the clock again.
   if (s.turn.addressed !== null && m.ts - s.turn.addressed > REPLY_WINDOW) {
-    settle(s, tallyOf, null);
+    settle(s, tallyOf, null, true, onSettle);
     s.turn = { since: m.ts, count: 1, addressed: null, kind: null, author: null, authorKey: null };
   }
   if (s.turn.addressed === null) Object.assign(s.turn, { addressed: m.ts, kind, author: m.author, authorKey: m.authorKey });
-  acknowledge(s, tallyOf, m);
+  acknowledge(s, tallyOf, m, onSettle);
 }
 
 /**
@@ -223,9 +238,9 @@ export function foldMessage(s: ConvState, tallyOf: (key: string) => Tally, m: Fo
  * It counts where the message is, since reactions carry no time, so what they wrote after it is owed afresh. It
  * counts toward how often you answer, not how fast.
  */
-function acknowledge(s: ConvState, tallyOf: (key: string) => Tally, m: FoldMessage) {
+function acknowledge(s: ConvState, tallyOf: (key: string) => Tally, m: FoldMessage, onSettle?: OnSettle) {
   if (!m.reactedByMe || s.turn?.addressed == null) return;
-  settle(s, tallyOf, m.ts, false);
+  settle(s, tallyOf, m.ts, false, onSettle);
   s.turn = null;
 }
 
@@ -281,9 +296,9 @@ export function medianLatency(t: Tally | null): number | null {
 }
 
 /**
- * How much an unanswered message weighs as it ages: all of it from the moment it arrives, through the first day,
- * then half every two days. It used to rise over the time you usually take to answer, so a message just read
- * weighed almost nothing and sank below chats you had finished with (docs/inbox.md).
+ * How an unanswered message used to weigh as it aged: all of it through the first day, then half every two days.
+ * Replaced by the owed table (owed.ts), which asks how likely an answer still is at that age; kept for `explain` and
+ * the replays, to compare.
  */
 export function owedCurve(age: number): number {
   if (age < 0) return 0;
@@ -296,7 +311,7 @@ const perDay = (sum: number, h: number) => (sum * Math.LN2) / (h / DAY);
 // ------------------------------------------------------------------ the score
 
 export const WEIGHTS = {
-  /** An unanswered message at its peak, times how often you answer. */
+  /** An unanswered message, times the chance you still answer it in time (owed.ts). */
   owed: 60,
   /** Per unread DM message or mention, up to `unreadCap` of them. */
   unreadAddressed: 12,
@@ -366,6 +381,8 @@ export interface ScoreInput {
    */
   level?: P.TriageDecision | null;
   votes?: { up: number; down: number } | null;
+  /** The owed table to weigh an unanswered turn by (owed.ts); the default one when not given. */
+  owedTable?: OwedTable | null;
 }
 
 /** Added to the score of a conversation with an alert you have not seen: above any score the formula or the model gives. */
@@ -419,7 +436,10 @@ export interface Scored {
   parts: Record<string, number>;
   noise: Noise;
   relationship: number;
+  /** When the turn you owe began, while its chance is worth showing (OWED_SHOWN); null otherwise. */
   owedSince: number | null;
+  /** The open turn as weighed: its age, your reply rate there, and the chance you still answer it in time. */
+  owed: { age: number; rate: number; chance: number } | null;
 }
 
 export function noiseOf(s: ConvState, usage: ScoreInput['usage'], now: number): Noise {
@@ -480,24 +500,32 @@ export function scoreConversation(x: ScoreInput): Scored {
   const noise = noiseOf(s, x.usage, now);
   const rel = relationshipOf(s, x.usage, now);
   const turn = s.turn?.addressed != null && x.shape !== 'self' ? s.turn : null;
+  // Owed reply: the chance you still answer it in time, at its age and how often you answer this person (everywhere),
+  // then this conversation (owed.ts).
+  let owed: Scored['owed'] = null;
+  const person = turn && x.author ? tallyAt(x.author, now) : null;
+  const conv = tallyAt(s.tally, now);
+  if (turn) {
+    let rate = turnRate(conv, person);
+    if (x.judged) rate = (rate + x.judged.needsReply) / 2;
+    const age = Math.max(0, now - turn.addressed!);
+    owed = { age, rate, chance: owedChance(x.owedTable ?? DEFAULT_OWED_TABLE, x.shape, rate, age) };
+  }
+  const owedSince = turn && owed && owed.chance >= OWED_SHOWN ? turn.addressed : null;
 
   if (x.muted) {
     const score = W.mutedFloor + parts.recency;
     const why = [`Muted: ${x.muted}`];
     if (x.unread) why.push(`${plural(x.unread, 'unread message')}`);
-    return { score: round(score), needs: false, reasons: why, parts, noise, relationship: rel.strength, owedSince: turn?.addressed ?? null };
+    return { score: round(score), needs: false, reasons: why, parts, noise, relationship: rel.strength, owedSince, owed };
   }
 
-  // Owed reply: weighted by how often you answer this person (everywhere), then this conversation.
-  if (turn) {
-    const owedAge = now - turn.addressed!;
-    const person = x.author ? tallyAt(x.author, now) : null;
-    const conv = tallyAt(s.tally, now);
-    let p = replyRate(conv, replyRate(person, 0.5));
-    if (x.judged) p = (p + x.judged.needsReply) / 2;
+  if (turn && owed) {
+    const owedAge = owed.age;
+    const p = owed.rate;
     const personUsual = medianLatency(person);
     const usual = personUsual ?? medianLatency(conv);
-    parts.owed = W.owed * p * owedCurve(owedAge);
+    parts.owed = W.owed * owed.chance;
     const who = x.authorName ?? (x.shape === 'direct' ? 'They' : 'Someone');
     const since = duration(owedAge);
     let text: string;
@@ -589,7 +617,8 @@ export function scoreConversation(x: ScoreInput): Scored {
     parts: Object.fromEntries(Object.entries(parts).map(([k, v]) => [k, round(v)])),
     noise,
     relationship: rel.strength,
-    owedSince: turn?.addressed ?? null,
+    owedSince,
+    owed,
   };
 }
 
@@ -665,6 +694,10 @@ export class Attention {
   otherTallies?: (authorKey: string) => Tally[];
   /** The clock the pump's and a sync's time budgets are kept by, in ms (a test's stands in for it). */
   budgetClock: () => number = () => performance.now();
+  /** What an unanswered turn weighs at its age (owed.ts): fitted on this hub's turns, else the default. */
+  owedTable: OwedTable = DEFAULT_OWED_TABLE;
+  /** The pump had nothing left to fold last time: the turns are all in, and the table may be fitted. */
+  private caughtUp = false;
 
   constructor(
     private store: Store,
@@ -675,9 +708,47 @@ export class Attention {
     const v = db.query(`SELECT value FROM meta WHERE key = 'attention_version'`).get() as Row | null;
     if (v?.value !== String(FEATURE_VERSION)) {
       // Rows from another version mean something else: drop them, and the pump folds everything again.
-      db.exec('DELETE FROM conv_feature; DELETE FROM conv_author_feature;');
+      db.exec('DELETE FROM conv_feature; DELETE FROM conv_author_feature; DELETE FROM owed_turn;');
       db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('attention_version', ?)`).run(String(FEATURE_VERSION));
     }
+    try {
+      const t = JSON.parse((db.query(`SELECT value FROM meta WHERE key = 'owed_table'`).get() as Row | null)?.value ?? 'null');
+      if (validTable(t)) this.owedTable = t;
+    } catch {
+      // A table from another shape of the code: the default until the next fit.
+    }
+  }
+
+  // ---------------------------------------------------------------- the owed table (owed.ts)
+
+  /** Every turn the fold closed, and those still open: what the owed table is fitted on. */
+  owedTurns(): OwedTurn[] {
+    const db = this.store.db;
+    const out = (db.query(`SELECT conversation_id, shape, author_key, addressed, answered_at, timed FROM owed_turn`).all() as Row[]).map(
+      (r): OwedTurn => ({ conversationId: r.conversation_id, shape: r.shape, authorKey: r.author_key, addressed: r.addressed, answeredAt: r.answered_at, timed: !!r.timed }),
+    );
+    const open = db
+      .query(
+        `SELECT f.conversation_id, c.shape, json_extract(f.state, '$.turn.authorKey') AS author_key, json_extract(f.state, '$.turn.addressed') AS addressed
+         FROM conv_feature f JOIN conversation c ON c.id = f.conversation_id WHERE json_extract(f.state, '$.turn.addressed') IS NOT NULL`,
+      )
+      .all() as Row[];
+    for (const r of open) out.push({ conversationId: r.conversation_id, shape: r.shape, authorKey: r.author_key, addressed: r.addressed, answeredAt: null, timed: true });
+    return out;
+  }
+
+  /** Fit the owed table on this hub's turns, keep it, and use it. */
+  fitOwed(now = this.now()): OwedTable {
+    noteWork('owed table fit');
+    const t = fitOwedTable(this.owedTurns(), { now });
+    this.owedTable = t;
+    this.store.db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('owed_table', ?)`).run(JSON.stringify(t));
+    return t;
+  }
+
+  /** A fit is due: none yet, or a day old, and the fold has caught up (after a version bump it refolds everything). */
+  private owedDue(now: number) {
+    return this.caughtUp && (this.owedTable.fittedAt === null || now - this.owedTable.fittedAt >= DAY);
   }
 
   // ---------------------------------------------------------------- folding
@@ -711,6 +782,7 @@ export class Attention {
       return 0;
     }
     const s: ConvState = row ? JSON.parse(row.state) : freshState();
+    const closed: Settled[] = [];
     const authors = new Map<string, Tally>();
     const tallyOf = (key: string) => {
       let t = authors.get(key);
@@ -740,6 +812,7 @@ export class Attention {
           reactedByMe: !!r.reacted,
         },
         place,
+        (t) => closed.push(t),
       );
     }
     const last = rows[rows.length - 1];
@@ -749,12 +822,15 @@ export class Attention {
          ON CONFLICT (conversation_id) DO UPDATE SET cursor_ts = excluded.cursor_ts, cursor_rid = excluded.cursor_rid, state = excluded.state`,
       ).run(cid, last.ts, last.rid, JSON.stringify(s));
       for (const [key, t] of authors) db.query('INSERT OR REPLACE INTO conv_author_feature (conversation_id, author_key, tally) VALUES (?, ?, ?)').run(cid, key, JSON.stringify(t));
+      const put = db.query('INSERT OR REPLACE INTO owed_turn (conversation_id, addressed, shape, author_key, answered_at, timed) VALUES (?, ?, ?, ?, ?, ?)');
+      for (const t of closed) put.run(cid, t.addressed, place.shape, t.authorKey, t.answeredAt, +t.timed);
     })();
     return rows.length;
   }
 
   /** Start a conversation's features over; the pump folds it again. */
   private reset(cid: string) {
+    this.store.db.query('DELETE FROM owed_turn WHERE conversation_id = ?').run(cid);
     this.store.db.query('DELETE FROM conv_author_feature WHERE conversation_id = ?').run(cid);
     this.store.db.query('DELETE FROM conv_feature WHERE conversation_id = ?').run(cid);
   }
@@ -907,6 +983,7 @@ export class Attention {
       muted,
       usage: u ? { score: u.score, visitScore: u.visit_score, at: u.score_at, lastVisit: u.last_visit } : null,
       judged: this.judged.get(cid) ?? null,
+      owedTable: this.owedTable,
     };
   }
 
@@ -936,6 +1013,14 @@ export class Attention {
         replyRate: replyRate(tallyAt(f.tally, now), 0, 1),
         usualReply: medianLatency(tallyAt(f.tally, now)),
         owedKind: f.turn?.kind ?? null,
+      },
+      owed: s.owed && {
+        ...s.owed,
+        bucket: rateBucket(s.owed.rate, this.owedTable.rateEdges),
+        points: s.parts.owed ?? 0,
+        // What the formula before the owed table gave (rate × owedCurve), to compare.
+        before: Math.round(WEIGHTS.owed * s.owed.rate * owedCurve(s.owed.age) * 10) / 10,
+        table: { fittedAt: this.owedTable.fittedAt, turns: this.owedTable.turns },
       },
       activity: this.activity?.features(cid, now) ?? null,
       learned: this.judge?.explain?.(cid) ?? null,
@@ -1096,6 +1181,7 @@ export class Attention {
       busy = true;
       const step = () => {
         const n = this.pump();
+        this.caughtUp = n === 0;
         if (n > 0) setTimeout(step, 5);
         else busy = false;
       };
@@ -1105,6 +1191,14 @@ export class Attention {
     this.timers.push(setInterval(pumpSoon, 2000));
     this.timers.push(
       setInterval(() => {
+        // The owed table, once a day, when the fold has nothing left to do: the scores below use it at once.
+        if (this.owedDue(this.now())) {
+          try {
+            this.fitOwed();
+          } catch (e) {
+            console.error('attention: owed table fit failed', e);
+          }
+        }
         noteWork('attention: rescore all');
         send(this.rescoreAll());
       }, RESCORE_EVERY),

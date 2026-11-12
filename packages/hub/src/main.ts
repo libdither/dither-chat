@@ -84,6 +84,8 @@ const attention = new Attention(store, triage);
 // DITHER_INBOX_EXPLORE=0 sorts by its mean instead of a Thompson sample.
 const ranker = new InboxRanker(store, triage, rankMode(process.env.DITHER_INBOX_RANK), join(dataDir, 'hub.sqlite'), Date.now, exploreOn(process.env.DITHER_INBOX_EXPLORE));
 attention.judge = ranker;
+// The learned order learns from rows weighed as the inbox weighs them now.
+ranker.owedTable = () => attention.owedTable;
 // Per-device notification rules (docs/devices.md).
 const devices = new Devices(store, triage);
 // One notification per conversation, buzzing once a burst (docs/notifications.md).

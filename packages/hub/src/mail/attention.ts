@@ -77,6 +77,8 @@ export class MailAttention implements AttentionSource {
   /** Threads to score again. */
   private pending = new Set<string>();
   private chat: Store | null = null;
+  /** The chat inbox's: its owed table (owed.ts) weighs what you owe by mail too. */
+  private attention: Attention | null = null;
   private now: () => number = Date.now;
   /** Whether any mail tally exists: chat's scoring asks nothing of mail until one does. */
   private tallies = false;
@@ -117,6 +119,7 @@ export class MailAttention implements AttentionSource {
   /** Into the chat inbox: listed and sent with the conversations, author tallies summed both ways. */
   connect(chat: Store, attention: Attention, now: () => number = Date.now) {
     this.chat = chat;
+    this.attention = attention;
     this.now = now;
     if (!attention.sources.includes(this)) attention.sources.push(this);
     attention.otherTallies = (key) => this.mailTallies(key);
@@ -320,6 +323,7 @@ export class MailAttention implements AttentionSource {
       // You were here: opened_at (MailStore.opened), and the time spent there once something counts it.
       usage: t.opened_at ? { score: (t.opened_ms ?? 0) / 1000, visitScore: 1, at: t.opened_at, lastVisit: t.opened_at } : null,
       judged: null,
+      owedTable: this.attention?.owedTable ?? null,
     };
   }
 

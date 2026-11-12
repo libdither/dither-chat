@@ -5,6 +5,7 @@
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, RULE_LABEL, RULE_LEVELS, showsInline } from '@dither-chat/protocol';
 import { fullTime } from '../format.ts';
+import { noteRowRead } from '../activity.ts';
 import { AUTOMATIC, OLDER_RULE, authorName, convTitle, deepLink, directsOf, effectiveLevel, externalProfile, heldHere, netName, plainBody, ruleOn, sumUnread, unreadOf, type Level } from '../model.ts';
 import { deviceRule, myDevice, setDeviceRule } from '../devices.ts';
 import { android } from '../android.ts';
@@ -336,7 +337,7 @@ export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpe
     head: <div class="cm-sheet-title">{convTitle(c)}</div>,
     items: groups(
       why?.length ? [{ kind: 'row', render: () => <WhyHere reasons={why} /> }] : [],
-      [{ label: 'Mark As Read', icon: 'check', disabled: !unreadOf(c).unread, run: () => markRead(c.id) }],
+      [{ label: 'Mark As Read', icon: 'check', disabled: !unreadOf(c).unread, run: () => (noteRowRead('conversation', [c.id]), markRead(c.id)) }],
       [
         person && { label: 'Profile', icon: 'user', run: () => go({ view: 'profile', person: person.id }) },
         { label: `About This ${c.shape === 'direct' ? 'Chat' : noun}`, icon: 'info', run: () => openAbout('conversation', c.id) },
@@ -373,7 +374,7 @@ export function chatMenu(p: P.PersonView, routes: P.ConversationView[], why?: st
     head: <div class="cm-sheet-title">{p.name}</div>,
     items: groups(
       why?.length ? [{ kind: 'row', render: () => <WhyHere reasons={why} /> }] : [],
-      [{ label: 'Mark As Read', icon: 'check', disabled: !routes.some((c) => unreadOf(c).unread), run: () => routes.forEach((c) => markRead(c.id)) }],
+      [{ label: 'Mark As Read', icon: 'check', disabled: !routes.some((c) => unreadOf(c).unread), run: () => (noteRowRead('conversation', ids), routes.forEach((c) => markRead(c.id))) }],
       [
         { label: 'Profile', icon: 'user', run: () => go({ view: 'profile', person: p.id }) },
         { label: 'Search in Chat', icon: 'search', run: () => go({ view: 'search', q: `in:${p.id}` }) },
