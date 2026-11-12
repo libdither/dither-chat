@@ -538,6 +538,35 @@ CREATE TABLE IF NOT EXISTS notification_event (
   PRIMARY KEY (notification_id, device, event)
 ) WITHOUT ROWID;
 
+-- The phone's list (phonelist.ts, docs/notifications.md "The phone's list"): one row per episode of a chat on the
+-- list, from its first list message that asked for the phone until the row went (or, held, would have gone). Kept
+-- whether or not the activity log is on, so the cap, the snoozes and the day's coins outlast a restart. Ids, times
+-- and counts only.
+CREATE TABLE IF NOT EXISTS phone_episode (
+  id              INTEGER PRIMARY KEY,
+  conversation_id TEXT NOT NULL,             -- the chat, or the mail thread
+  day             TEXT NOT NULL,             -- the hub's local day it began, YYYY-MM-DD: one coin per chat per day
+  mode            TEXT NOT NULL,             -- DITHER_PHONE_LIST when it began: 'on' or 'shadow'
+  arm             TEXT NOT NULL,             -- why: 'prior' (the network notifies, or it is to you), 'keep' (marked), 'trial', 'gated'
+  propensity      REAL,                      -- 'trial' and 'gated': the coin's exact chance of a trial
+  sent            INTEGER NOT NULL,          -- 1 when the gate sends its rows to the phones (in shadow: would have)
+  first_ts        INTEGER NOT NULL,          -- the first message's time: read past it, a held episode ends
+  started_at      INTEGER NOT NULL,
+  last_at         INTEGER NOT NULL,          -- its last push
+  posts           INTEGER NOT NULL DEFAULT 0,
+  ended_at        INTEGER,
+  outcome         TEXT,                      -- 'tapped', 'dismissed' (one swipe), 'cleared' (clear-all), 'read', 'expired', 'superseded'
+  outcome_at      INTEGER
+);
+CREATE INDEX IF NOT EXISTS phone_episode_open ON phone_episode(conversation_id) WHERE ended_at IS NULL;
+CREATE INDEX IF NOT EXISTS phone_episode_day ON phone_episode(day, conversation_id);
+CREATE INDEX IF NOT EXISTS phone_episode_ended ON phone_episode(outcome_at) WHERE outcome = 'dismissed';
+-- A chat whose row the phone swiped away: its list rows wait until this, or until something above the list comes.
+CREATE TABLE IF NOT EXISTS phone_snooze (
+  conversation_id TEXT PRIMARY KEY,
+  until           INTEGER NOT NULL
+) WITHOUT ROWID;
+
 -- What triage knew from the log when it decided (DITHER_ACTIVITY_FEATURES), so training sees no later outcomes.
 CREATE TABLE IF NOT EXISTS triage_input (
   message_id TEXT PRIMARY KEY,

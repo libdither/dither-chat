@@ -11,6 +11,8 @@ import { mailPeople } from './mail/people.ts';
 import { mailAttention } from './mail/attention.ts';
 import { mailTriage, type MailNotice } from './mail/triage.ts';
 import { Delivery } from './delivery.ts';
+import { Notifier } from './notify.ts';
+import { listByPrior, PhoneList, phoneListMode } from './phonelist.ts';
 import { RequestNotifier, requestChain, type RequestNotice } from './requestnotify.ts';
 import { Devices } from './devices.ts';
 import { Embeddings, Jev } from './embeddings.ts';
@@ -153,7 +155,7 @@ async function triageNow(ids: string[]) {
       })();
       done = true;
       store.dirty.messages.set(id, true);
-      if (d.decision === 'push' || d.decision === 'quiet' || d.decision === 'digest') deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', d.decision, d.score);
+      if (d.decision === 'push' || d.decision === 'quiet' || d.decision === 'digest') deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', d.decision, d.score, listByPrior(d.facts));
       // The local model was too slow: the message went out silent, and is read again once it has had time.
       if (d.unjudged) setTimeout(() => void judgeLate(id), LATE_JUDGE_MS);
     } catch (e) {
@@ -183,61 +185,10 @@ async function judgeLate(id: string) {
   }
 }
 
-/** Each one gets an id the devices see (`nid`), so what they say happened to it lands in the activity log. */
-/**
- * An alert ('push') goes everywhere and sounds. A Conversation ('quiet') and a list row ('digest') go only to phones,
- * silently, and to open pages as an entry in the list rather than a notification (docs/notifications.md). A message's
- * push carries its tier, its importance and its id, so the row can be sorted and marked from where it shows. `level`
- * says the same to an app from before the tiers, which knows only 'push' and 'quiet'.
- */
-function deliver(title: string, body: string, conversationId: string, messageId: string, reasons: string[], pushExtra: Record<string, unknown> = {}, kind: 'message' | 'held' = 'held', tier: 'push' | 'quiet' | 'digest' = 'push', importance: number | null = null) {
-  // A chat's row in the list is brought up to date now and then, not with every message.
-  if (tier === 'digest' && !delivery.listDue(conversationId)) return;
-  const nid = activity.notification({ kind, messageId, conversationId });
-  // Devices whose own rules keep this off them: their push is not sent, and their open pages show no toast.
-  const addressed = kind === 'message' && devices.addressed(messageId);
-  const quiet = devices.quietOn(conversationId, addressed);
-  const level = tier === 'push' ? 'push' : 'quiet';
-  const skip = tier === 'push' ? quiet : [...quiet, ...push.desktops()];
-  const look = store.notifyLook(conversationId, kind === 'message' ? messageId : undefined);
-  const vote = kind === 'message' ? { messageId, level, tier, ...(importance !== null ? { importance } : {}) } : {};
-  const grouped = kind === 'message' ? delivery.plan(conversationId, messageId, tier, addressed) : null;
-  // The row keeps the highest tier of what it shows (delivery.ts `Grouped.tier`); only this message's own tier sounds.
-  if (grouped?.tier && kind === 'message') Object.assign(vote, { tier: grouped.tier, level: grouped.tier === 'push' ? 'push' : 'quiet' });
-  server.notify({ t: 'notify', messageId, conversationId, title, body, reasons, ...look, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(tier !== 'push' ? { level: tier } : {}) });
-  server
-    .warm(pictures(look, grouped))
-    .then(() => push.notify(title, body, conversationId, { ...pushExtra, ...look, ...vote, ...grouped, ...(nid ? { nid } : {}) }, skip, level))
-    .then((r) => nid && activity.sent(nid, r))
-    .catch((e) => console.error('push failed', e));
-}
-
-/** The pictures a push names: the phone fetches each from the hub while it draws the notification. */
-function pictures(look: { icon?: string } | undefined, g: { conv?: { icon?: string }; sender?: { icon?: string }; icons?: Record<string, string> } | null): (string | undefined)[] {
-  return [look?.icon, g?.conv?.icon, g?.sender?.icon, ...Object.values(g?.icons ?? {})];
-}
-
-/**
- * Mail's notifications (mail/triage.ts), as `deliver` sends chat's: an alert for mail from someone set to always
- * alert, else a row on the list; one notification per thread (delivery.ts), the devices whose rules keep Email or that
- * account off left out (devices.ts), marks from the notification itself. The push's conversation is the thread, which
- * the app and the worker open beside the inbox.
- */
-function deliverMail(n: MailNotice) {
-  if (n.level === 'digest' && !delivery.listDue(n.threadId)) return;
-  const nid = activity.notification({ kind: 'message', messageId: n.messageId, conversationId: n.threadId });
-  const quiet = devices.quietOn(n.threadId, n.addressed);
-  const level = n.level === 'push' ? 'push' : 'quiet';
-  const skip = n.level === 'push' ? quiet : [...quiet, ...push.desktops()];
-  const grouped = delivery.plan(n.threadId, n.messageId, n.level, n.addressed);
-  const mail = { mailThreadId: n.threadId };
-  server.notify({ t: 'notify', messageId: n.messageId, conversationId: n.threadId, title: n.title, body: n.body, reasons: n.reasons, ...n.look, ...mail, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(n.level !== 'push' ? { level: n.level } : {}) });
-  server
-    .warm(pictures(n.look, grouped))
-    .then(() => push.notify(n.title, n.body, n.threadId, { ...n.look, ...mail, messageId: n.messageId, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) }, skip, level))
-    .then((r) => nid && activity.sent(nid, r))
-    .catch((e) => console.error('push failed', e));
-}
+/** Chat's and mail's notifications (notify.ts), through the phone's list (phonelist.ts). Made once push and server are. */
+let notifier: Notifier | null = null;
+const deliver: Notifier['message'] = (...a) => notifier?.message(...a);
+const deliverMail = (n: MailNotice) => notifier?.mail(n);
 
 /** A request's row on the list sorts as something the network would have notified you about. */
 const REQUEST_IMPORTANCE = 0.8;
@@ -273,7 +224,12 @@ const reminders = new ReminderDelivery({
 // Read anywhere since its notification went out: off the phones. New requests that settled: judged, once each.
 setInterval(() => {
   noteWork('notifications: read and requests');
-  for (const cid of delivery.read()) push.clear(cid).catch((e) => console.error('push clear failed', e));
+  for (const cid of delivery.read()) {
+    phone.read(cid);
+    push.clear(cid).catch((e) => console.error('push clear failed', e));
+  }
+  // List rows 12 hours old leave the phones; held ones whose chat was read are over (phonelist.ts).
+  for (const cid of phone.sweep()) push.clear(cid).catch((e) => console.error('push clear failed', e));
   for (const n of requestNotices.due()) deliverRequest(n);
 }, 5_000);
 
@@ -309,6 +265,11 @@ setInterval(() => {
 }, 60_000);
 
 const push = new PushService(store, loadVapidKeys(dataDir), process.env.DITHER_PUSH_SUBJECT ?? process.env.DITHER_PUBLIC_URL ?? 'https://github.com/libdither/dither-chat');
+// Which list rows reach the phones (docs/notifications.md, "The phone's list"). DITHER_PHONE_LIST=shadow sends them all
+// and logs what it would have held; off, as before it.
+const phone = new PhoneList(store.db, { mode: phoneListMode(process.env.DITHER_PHONE_LIST), kept: (now) => triage.marked(now).convs, readTs: (cid) => delivery.readTs(cid) });
+activity.noted = (w) => phone.noted(w);
+if (phone.mode !== 'on') console.log(`phone list: ${phone.mode} (DITHER_PHONE_LIST)`);
 
 /**
  * jev, the machine's reranker, unless DITHER_CATEGORY_MODEL says otherwise ("keyword", or an Ollama model name). A demo
@@ -414,6 +375,8 @@ const server = new HubServer(store, sup, triage, {
     }
   },
 });
+
+notifier = new Notifier({ store, activity, devices, push, delivery, server, phone });
 
 const realAccounts = store.accounts().filter((a) => !a.demo);
 if (demo && realAccounts.length) {

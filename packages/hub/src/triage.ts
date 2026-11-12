@@ -33,7 +33,7 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { previewText, type Store } from './store.ts';
 import { describeActivity, type ActivityStore, type Features } from './activity.ts';
-import { ALERT_BAR, alertBar, describeWeight, emptyModel, importance, predict, prior, THRESHOLDS, tierFrom, TIER_NAME, words, type Facts, type Level, type Model, type Namer, type TierContext } from './learn.ts';
+import { ALERT_BAR, alertBar, describeWeight, emptyModel, importance, learnedFrom, predict, prior, THRESHOLDS, tierFrom, TIER_NAME, words, type Facts, type Level, type Model, type Namer, type TierContext } from './learn.ts';
 import { InteractionLog } from './interact.ts';
 import { conversing, CONVERSING_REASON } from './tiers.ts';
 import { requestHeld } from './add.ts';
@@ -386,7 +386,7 @@ export class Triage {
             .slice(0, 2)
             .map((w) => describeWeight(w.feature, w.head, w.by, n))
         : [];
-      d.reasons.unshift(`${TIER_NAME[tier]}, learned from your marks (was ${TIER_NAME[before]})`, ...said);
+      d.reasons.unshift(`${TIER_NAME[tier]}, ${learnedFrom(tier, before)} (was ${TIER_NAME[before]})`, ...said);
       d.decidedBy = 'learned';
     }
   }

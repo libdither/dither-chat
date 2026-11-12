@@ -1,6 +1,6 @@
 /** The visit recorder behind activity.ts (docs/activity.md): stays, how they began, what happened, what gets sent. */
 import { expect, test } from 'bun:test';
-import { VisitLog } from '../src/visits.ts';
+import { firstTap, TAPS_KEPT, VisitLog } from '../src/visits.ts';
 
 const T0 = Date.UTC(2026, 9, 1, 9);
 const S = 1000;
@@ -105,4 +105,23 @@ test('how far down the inbox was on screen: the deepest row of the stay, none wh
   // A new stay starts over.
   log.enter(T0 + 10 * S, { view: 'inbox' }, { source: 'rail' }, true);
   expect(log.current!.depth).toBeNull();
+});
+
+test('a push opened from again is not a tap: the Android app made again starts from the intent that first launched it', () => {
+  let seen: string[] = [];
+  const open = (id: string) => {
+    const t = firstTap(seen, id);
+    seen = t.seen;
+    return t.fresh;
+  };
+  expect(open('n1')).toBe(true);
+  expect(open('n2')).toBe(true);
+  // Android stopped the app; opened again later, it replays n1's hash.
+  expect(open('n1')).toBe(false);
+  expect(open('n1')).toBe(false);
+  expect(seen).toEqual(['n1', 'n2']);
+  // Bounded: the oldest go first.
+  for (let i = 0; i < TAPS_KEPT; i++) open(`x${i}`);
+  expect(seen).toHaveLength(TAPS_KEPT);
+  expect(open('n1')).toBe(true);
 });

@@ -6,7 +6,7 @@ Triage puts every new message from someone else in one of three tiers, below the
 | --- | --- | --- | --- | --- | --- |
 | **Alert** | `push` | the alert chance at 0.5 or more, or a rule of yours (a person or place set to Always alert, a keyword) | sounds, with a heads-up | a notification, and a toast in an open page | first in the list until you have seen it |
 | **Conversation** | `quiet` | a rule, no model: a DM, a mention of you or a reply to you, a chat you wrote in during the last day, or one where you usually answer | a silent row of its own, in Android's Conversations section | nothing | a boost while it is unread |
-| **List** | `digest` | its importance is at or above your level (0.6 until you set it) | a silent row in one collapsed bundle, sorted by importance | nothing | listed, and its importance counts toward its place |
+| **List** | `digest` | its importance is at or above your level (0.6 until you set it) | a silent row in one collapsed bundle, sorted by importance, when [the phone's list](#the-phones-list) lets it through | nothing | listed, and its importance counts toward its place |
 | **Below the list** | `drop` | its importance is under your level | nothing | nothing | unread in its chat, nowhere else |
 | silent | `silent` | a place you muted, a message request you have not accepted | nothing | nothing | the unread badge only |
 
@@ -27,9 +27,9 @@ The numbers quoted on this page come from replaying ten days of one person's hub
 Code: `packages/hub/src/triage.ts` (the decision, the rules, quiet hours), `tiers.ts` (the Conversation rule),
 `learn.ts` (the two chances and how they are learned, pure), `votes.ts` (marks, training, the policy view, the
 candidate model), `labels.ts` (labels from what you did), `interact.ts` (who wrote when: the openings tally, and the
-interaction features), `shadow.ts` (the shadow summary), `delivery.ts` (one notification per conversation), `main.ts`
-(`deliver`, `judgeLate`, `alertJudge`), `attention.ts` and `rank.ts` (the inbox, [inbox.md](inbox.md)),
-`mail/triage.ts` (mail); `scripts/triage-replay.ts` (the offline replay); `packages/web/src/triage.ts`,
+interaction features), `shadow.ts` (the shadow summary), `delivery.ts` (one notification per conversation),
+`phonelist.ts` (which list rows reach the phones), `notify.ts` (sending), `main.ts` (`judgeLate`, `alertJudge`),
+`attention.ts` and `rank.ts` (the inbox, [inbox.md](inbox.md)), `mail/triage.ts` (mail); `scripts/triage-replay.ts` (the offline replay); `packages/web/src/triage.ts`,
 `ui/HowItSorts.tsx` (How it sorts), `public/sw.js`; `apps/android/.../Notifications.kt` ([android.md](android.md)).
 
 ## The decision
@@ -56,6 +56,8 @@ local model's answer is 0.31 against a bar of 0.05", "On the list: importance 72
 the app can say why, and with the facts it was made from (`learn.ts` `Facts`), so your marks can be learned from. When
 what was learned moved a message out of the tier it would have started in, the first reason says so ("Alert, learned
 from your marks (was Conversation)") with the one or two features that moved it most, and `decidedBy` is `learned`.
+Raised onto the list it says "List, learned from what you opened (was Below the list)": importance learns its yes from
+what you opened and answered, and only "Less like this" says no (`learn.ts` `learnedFrom`).
 
 Triage decides one message at a time, in the order they came, so notifications keep that order. A message waiting
 when the hub stops is decided at the next start if it is under half an hour old.
@@ -369,7 +371,7 @@ Triage decides per message; delivery is per conversation (`packages/hub/src/deli
 notification for each conversation (its tag is the conversation id), and every push about it carries the
 conversation's unread lines, so the notification grows instead of being replaced by the latest message.
 
-- **Who gets what** (`main.ts` `deliver`). An alert goes to every device its own rules do not keep it off
+- **Who gets what** (`notify.ts` `Notifier.message`). An alert goes to every device its own rules do not keep it off
   ([devices.md](devices.md)) and to open pages. A Conversation message and a list row go only to push registrations
   whose label says they are a phone (Android, iPhone, iPad, iOS), and to open pages as an entry in the list, never as
   a toast or a desktop notification: the live event is `{ t: 'notify', …, level }` with `level` `quiet` or `digest`,
@@ -391,6 +393,7 @@ conversation's unread lines, so the notification grows instead of being replaced
   (`BURST_MS`), or comes after only silent ones in this burst, or mentions or replies to you. Every other update
   changes the notification silently. Nothing sounds while a page on a computer has been in use in the last two
   minutes (a visit from a device whose label is not a phone's): you are already looking.
+- **The phone's list.** A list row reaches the phones only as [the phone's list](#the-phones-list) allows.
 - **The list's ten minutes** (`LIST_EVERY`). A list row is not pushed when any push about its chat went out in the
   last ten minutes, so a busy channel is one row brought up to date now and then, not a stream of pushes. The message
   is still on the list in the app, and the row's next push carries it among its lines. In the replay that was about
@@ -418,6 +421,57 @@ conversation's unread lines, so the notification grows instead of being replaced
 The burst state is kept in memory. At start the hub rebuilds it from the activity log's notifications of the last
 three days (`Delivery.restore`), so a chat notified before a restart still leaves the phones when it is read, and its
 burst goes on where it was. Mail threads are not rebuilt, and with the activity log off nothing is.
+
+## The phone's list
+
+Triage puts a message on the list; what reaches the phone is decided once more, per chat
+(`packages/hub/src/phonelist.ts`), because what importance learns from is "you opened this chat somewhere within a
+day", mostly at a computer, and that lifts channels the network itself keeps silent. Since the tiers, 3,661 list
+decisions in 34 hours came from 29 chats, and 3,404 of them were neither something the network would have notified you
+about nor to you: learning alone had lifted them. The decision, its tier, How it sorts and the inbox do not change: only which list rows go to phones
+(and to the ntfy topic). A held row is sent nowhere, as one within the list's ten minutes is.
+
+- **The gate.** A list row goes to the phones when the start alone puts it on the list: the network would have
+  notified you (`Facts.notify`), or it is to you (a mention of you, a reply to you, a DM). Or the chat has a keep mark:
+  a message in it marked **Should have alerted** in the last 90 days (`MARKED_FOR`), the one mark that says "more from
+  here" (there is no mark of its own for "keep these rows"). Everything else on the list stays off the phones. Of the
+  3,661 list decisions above, 257 (in 19 chats) pass, all because the network would notify; of the 394 list rows that
+  were sent, 105.
+- **Trials.** So a held chat can still show it is worth a row, up to three a day (`TRIALS_PER_DAY`) go anyway. At a
+  chat's first held message of the day (the hub's local day) one coin is tossed for it, with the chance
+  `3 / the chats held a day`, read from the coins of up to seven days before (from two days of them on; before that,
+  from the last three days' list decisions the gate would have held), and 0 once the day's three are spent. A won coin
+  sends the row as any list row. One coin a chat a day, so a busy channel is no likelier to be tried than a quiet one,
+  and the chance kept is exactly the one tossed with.
+- **Eight at most.** At most eight list rows are open on the phones at once (`LIST_CAP`), by the hub's own count of
+  what it sent and has not seen tapped, swiped, read anywhere, replaced by a Conversation or an alert, or expired. At
+  eight, a new chat's row waits; a chat already showing is still brought up to date.
+- **A swipe snoozes.** After the phone swipes a chat's row away (one row, or Clear all), that chat's list rows wait six
+  hours (`SNOOZE_MS`), or until a Conversation or an alert comes in it. Dismissals from one device within two seconds
+  (`BULK_MS`) are a clear-all: the episodes end as `cleared`, never as a swipe of that chat, and nothing learns a "no"
+  from either (`labels.ts` weighs dismissals at 0). Only a phone's word counts: its push registration, or the page of
+  the app that registered it (`push_subscription.device`); a computer's toast or tap says nothing here.
+- **Twelve hours.** A list row twelve hours old (`EXPIRE_MS`) leaves the phones: a `{ clear }` push to the
+  registrations that take one, so the shade matches the hub's count. The Android app's own cap of 20 rows stays, above
+  the hub's eight.
+
+**Episodes** (`phone_episode`): a chat's run on the list, from its first list message that asked for the phone until
+it ended, with its day, why it went (`arm`: `prior`, `keep`, `trial`) or was held (`gated`), the coin's chance
+(`propensity`) for `trial` and `gated`, how many pushes it took, and how it ended (`outcome`: `tapped`, `dismissed`,
+`cleared`, `read`, `expired`, `superseded`). A held episode ends when its chat is read anywhere past its first message,
+or at twelve hours. Snoozes are in `phone_snooze`. Both are kept whether or not the activity log is on, so a restart
+keeps the count, the snoozes and the day's coins; taps and swipes come through the activity log, so with it off only
+reading and expiry end an episode. Episodes go after 90 days. Once an hour the log has a line: what was sent and held,
+and how many rows are open.
+
+**`DITHER_PHONE_LIST`**: `on` (the default); `shadow`, every list row goes out as before and the episodes and the
+hourly line say what the gate would have done (`sent` is what it would have sent; nothing is cleared at twelve hours);
+`off`, as before this, nothing kept. Turning it off is the rollback: no app change was needed for any of it.
+
+Alerts and Conversations are not touched: their pushes are the same byte for byte with the gate on
+(`test/phonelist.test.ts`). They end a chat's list episode and lift its snooze. Requests (a row on the list) and
+mail's list rows: requests are not gated; mail goes through the same gate (the start puts it on the list for someone
+you correspond with who wrote to you or copied you in).
 
 ## Mail
 
@@ -564,5 +618,5 @@ before the tiers).
 Storage: `triage` (`decision`, `score`, `reasons`, `decided_by`, `facts` as JSON, `probs` and `shadow` as JSON
 chances, `alert_mark`, `less_mark`, `marked_at`, `was`, and from before the tiers `feedback`, `explore`,
 `propensity`); the models in `meta` (`triage_policy`: `model`, `rejected`, and `candidate` for the shadow);
-`list_level`, `quiet_hours` and `tiers_at` in `meta` too. Triage rows older than 90 days go when nothing can be
+`list_level`, `quiet_hours` and `tiers_at` in `meta` too; the phone's list in `phone_episode` and `phone_snooze`. Triage rows older than 90 days go when nothing can be
 learned from them ([deploy.md](deploy.md#backups-and-upkeep)).

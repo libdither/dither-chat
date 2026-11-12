@@ -11,6 +11,7 @@ import type * as P from '@dither-chat/protocol';
 import { DEFAULT_ACTIVITY, NOTIFICATION_EVENTS, RETENTION_CHOICES, VISIT_SOURCES, VISIT_VIEWS } from '@dither-chat/protocol';
 import type { Store } from './store.ts';
 import type { NumericFeatures } from './interact.ts';
+import type { DeviceWord } from './phonelist.ts';
 import { sliced, whole, type SliceOptions } from './slices.ts';
 
 type Row = Record<string, any>;
@@ -224,6 +225,8 @@ export class ActivityStore {
   private cache = new Map<string, { at: number; v: Features | null }>();
   /** DITHER_ACTIVITY_FEATURES: triage adds the features to its reasons and keeps them with each decision. */
   featuresInTriage: boolean;
+  /** Told each new word from a device about a notification: a tap or a swipe ends a phone list row (phonelist.ts). */
+  noted: ((w: DeviceWord) => void) | null = null;
 
   constructor(
     private store: Store,
@@ -302,6 +305,7 @@ export class ActivityStore {
         const col = EVENT_COLUMN[e.event as P.NotificationEventKind];
         if (col) this.db.query(`UPDATE notification SET ${col} = MIN(COALESCE(${col}, ?), ?) WHERE id = ?`).run(at, at, id);
         this.changed(row.conversation_id);
+        this.noted?.({ event: e.event!, conversationId: row.conversation_id, device: str(e.device, 64) ?? '', at });
       }
     })();
     return n;
@@ -352,12 +356,13 @@ export class ActivityStore {
 
   /** A visit that started from a tap: the notification's first visit, and its tap if no device said so. */
   private link(v: P.VisitRecord) {
-    const n = this.db.query('SELECT id, sent_at FROM notification WHERE id = ?').get(v.pushId!) as Row | null;
+    const n = this.db.query('SELECT id, sent_at, conversation_id FROM notification WHERE id = ?').get(v.pushId!) as Row | null;
     if (!n) return;
     this.db.query('UPDATE notification SET visit_id = COALESCE(visit_id, ?) WHERE id = ?').run(v.id, n.id);
     const at = Math.max(v.start, n.sent_at);
-    this.db.query('INSERT OR IGNORE INTO notification_event (notification_id, device, event, at) VALUES (?, ?, ?, ?)').run(n.id, v.device, 'tapped', at);
+    const fresh = this.db.query('INSERT OR IGNORE INTO notification_event (notification_id, device, event, at) VALUES (?, ?, ?, ?)').run(n.id, v.device, 'tapped', at).changes;
     this.db.query('UPDATE notification SET tapped_at = MIN(COALESCE(tapped_at, ?), ?) WHERE id = ?').run(at, at, n.id);
+    if (fresh) this.noted?.({ event: 'tapped', conversationId: n.conversation_id ?? null, device: v.device, at });
   }
 
   /** The conversations these notifications were about. */

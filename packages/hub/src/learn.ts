@@ -392,6 +392,14 @@ export interface Namer {
 }
 
 export const TIER_NAME: Record<Level, string> = { push: 'Alert', quiet: 'Conversation', digest: 'List', drop: 'Below the list' };
+/**
+ * What moved a message out of the tier its start gave it, in the words of a reason. Raised onto the list, it was what
+ * you opened and answered: importance learns its yes from those, its no only from "Less like this". Anything else
+ * (an alert raised or lowered, a message lowered off the list) came from your marks.
+ */
+export function learnedFrom(tier: Level, before: Level): string {
+  return tier === 'digest' && before === 'drop' ? 'learned from what you opened' : 'learned from your marks';
+}
 export const HEAD_NAME: Record<Head, string> = { alert: 'alert', important: 'matter' };
 const SHAPES: Record<string, string> = { direct: 'DMs', group: 'group chats', channel: 'channels', thread: 'threads', self: 'notes to self' };
 const FLAG_WORDS: Record<string, string> = {
