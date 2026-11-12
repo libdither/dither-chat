@@ -61,6 +61,11 @@ export interface IdentityView {
   avatar: string | null;
   isBot: boolean;
   personId: string | null;
+  /**
+   * Your own name for this account (docs/chats.md, Names): only you see it, it stands for the account's name wherever
+   * that shows, and a network never sets it. Absent when you gave none.
+   */
+  nickname?: string;
   /** Their custom status or About as last heard (docs/history.md). */
   status?: { text?: string; emoji?: string; at: number };
 }
@@ -77,10 +82,11 @@ export interface PersonView {
 }
 
 /**
- * Where a person's name came from: `network`, their one account's own name, kept up to date; `merge`, the name a merge
- * of their accounts kept; `user`, a nickname you gave them, which shows in place of the names their accounts go by.
+ * Where a person's name came from, always from their accounts' names as you see them (a nickname you gave an account
+ * counts): `network`, their one account's; `merge`, one account's of several. A person has no nickname of their own
+ * since 2026-11-11 (docs/chats.md, Names).
  */
-export type NameSource = 'network' | 'merge' | 'user';
+export type NameSource = 'network' | 'merge';
 
 /**
  * One way to reach a chat (docs/chats.md): a conversation and one of your accounts in it. A person reached from two of

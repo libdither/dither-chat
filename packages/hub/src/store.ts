@@ -108,6 +108,14 @@ export function previewText(body: string, kind: string): string {
   return t.length > PREVIEW_LEN ? t.slice(0, PREVIEW_LEN - 1) + '…' : t;
 }
 
+/**
+ * An account's name as you see it: your nickname for it, else its display name, else its handle, else its id. A
+ * person's name is made of these (docs/chats.md, Names); `SHOWN` is the same in SQL, on a table aliased `i`.
+ */
+export const shownName = (r: Row): string =>
+  r.nickname || r.display_name || r.handle || r.native_id;
+export const SHOWN = `COALESCE(NULLIF(i.nickname, ''), i.display_name, i.handle, i.native_id)`;
+
 const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => '\\' + c);
 
 /** A snippet for a match SQLite's tokens could not see. */
@@ -162,7 +170,7 @@ const PRESENCE_DEVICES = new Set<string>(['desktop', 'mobile', 'web']);
  * Bump when a migration step changes without schema.sql changing, so the database is copied before it runs. Mail's
  * migration steps (mail/store.ts) count here too, when no mail schema file changes with them.
  */
-const MIGRATIONS = 4;
+const MIGRATIONS = 5;
 
 /** mail/schema*.sql as MailStore runs them (mail/store.ts mailSchemas), read here without importing mail's store. */
 function mailSchemaText(): string {
@@ -216,7 +224,7 @@ export class Store {
       const reactionsBefore = this.oldReactions();
       const broadcastsUnknown = this.addMentionsAll();
       this.addColumns('message', { gone_how: 'TEXT', gone_at: 'INTEGER', imported: 'INTEGER NOT NULL DEFAULT 0' });
-      this.addColumns('identity', { status: 'TEXT' });
+      this.addColumns('identity', { status: 'TEXT', nickname: 'TEXT' });
       this.addColumns('category', { threshold: 'REAL' });
       this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL', was: 'TEXT', alert_mark: 'INTEGER', less_mark: 'INTEGER', marked_at: 'INTEGER' });
       this.addColumns('visit', { depth: 'INTEGER' });
@@ -231,6 +239,7 @@ export class Store {
       this.clearStars();
       this.toTiers();
       this.sourceNames();
+      this.nicknamesToAccounts();
       this.db.query(`INSERT INTO meta (key, value) VALUES ('schema_sig', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(sig);
     })();
     timer.step('migrations');
@@ -314,6 +323,24 @@ export class Store {
       .run();
     if (r.changes) console.log(`names: where ${r.changes} merged or renamed ${r.changes === 1 ? 'name' : 'names'} came from`);
     this.db.query(`INSERT INTO meta (key, value) VALUES ('name_source_set', ?)`).run(String(Date.now()));
+  }
+
+  /**
+   * Nicknames belong to accounts since 2026-11-11, once: a person you had named (`user`) gives that name to each of
+   * their accounts that has none of its own, and their name is then made from their accounts' names again.
+   */
+  private nicknamesToAccounts() {
+    if (this.db.query(`SELECT 1 FROM meta WHERE key = 'nicknames_by_account'`).get()) return;
+    const named = this.db.query(`SELECT id, name FROM person WHERE name_source = 'user'`).all() as Row[];
+    for (const p of named) {
+      this.db.query(`UPDATE identity SET nickname = ? WHERE person_id = ? AND (nickname IS NULL OR nickname = '')`).run(p.name, p.id);
+      const n = (this.db.query('SELECT COUNT(*) AS n FROM identity WHERE person_id = ?').get(p.id) as Row).n as number;
+      // One account: its name now, which is the nickname. Several keep the name, an account's now (`merge`).
+      if (n === 1) this.derivePersonName(p.id);
+      else this.db.query(`UPDATE person SET manual = 1, name_source = 'merge' WHERE id = ?`).run(p.id);
+    }
+    if (named.length) console.log(`names: ${named.length} nickname${named.length === 1 ? '' : 's'} moved onto the accounts of the person named`);
+    this.db.query(`INSERT INTO meta (key, value) VALUES ('nicknames_by_account', ?)`).run(String(Date.now()));
   }
 
   /** backups/pre-migrate-<time>.sqlite next to the database, the newest five kept. Not for an in-memory database. */
@@ -856,12 +883,10 @@ export class Store {
 
   /** Give an identity a Person if it has none. Deterministic id so replays don't duplicate. */
   ensurePerson(identityId: string): string {
-    const r = this.db.query('SELECT person_id, display_name, handle, native_id, avatar_url FROM identity WHERE id = ?').get(identityId) as Row;
+    const r = this.db.query('SELECT person_id, nickname, display_name, handle, native_id, avatar_url FROM identity WHERE id = ?').get(identityId) as Row;
     if (r.person_id) return r.person_id;
     const pid = 'per_' + identityId.slice(4);
-    this.db
-      .query('INSERT OR IGNORE INTO person (id, name, avatar_url, created_at) VALUES (?, ?, ?, ?)')
-      .run(pid, r.display_name ?? r.handle ?? r.native_id, r.avatar_url, Date.now());
+    this.db.query('INSERT OR IGNORE INTO person (id, name, avatar_url, created_at) VALUES (?, ?, ?, ?)').run(pid, shownName(r), r.avatar_url, Date.now());
     this.db.query('UPDATE identity SET person_id = ? WHERE id = ?').run(pid, identityId);
     this.dirty.persons.add(pid);
     this.dirty.identities.add(identityId);
@@ -875,11 +900,52 @@ export class Store {
   private syncAutoPerson(pid: string) {
     const p = this.db.query('SELECT manual, is_self FROM person WHERE id = ?').get(pid) as Row | null;
     if (!p || p.manual || p.is_self) return;
-    const ids = this.db.query('SELECT display_name, handle, native_id, avatar_url FROM identity WHERE person_id = ?').all(pid) as Row[];
+    const ids = this.db.query('SELECT nickname, display_name, handle, native_id, avatar_url FROM identity WHERE person_id = ?').all(pid) as Row[];
     if (ids.length !== 1) return;
     const i = ids[0];
-    this.db.query('UPDATE person SET name = ?, avatar_url = ? WHERE id = ?').run(i.display_name ?? i.handle ?? i.native_id, i.avatar_url, pid);
+    this.db.query('UPDATE person SET name = ?, avatar_url = ? WHERE id = ?').run(shownName(i), i.avatar_url, pid);
     this.dirty.persons.add(pid);
+  }
+
+  /**
+   * A person's name, made again from their accounts' names as you see them (docs/chats.md, Names): with one account,
+   * its name (`network`, which then follows it); with several, the name of one you gave a nickname, else of the one
+   * heard from last (`merge`). Your own person is named by your accounts' networks, not here.
+   */
+  private derivePersonName(pid: string) {
+    const p = this.db.query('SELECT is_self FROM person WHERE id = ?').get(pid) as Row | null;
+    if (!p || p.is_self) return;
+    const ids = this.db
+      .query(`SELECT nickname, display_name, handle, native_id, avatar_url FROM identity WHERE person_id = ? ORDER BY COALESCE(nickname, '') = '', updated_at DESC`)
+      .all(pid) as Row[];
+    if (!ids.length) return;
+    if (ids.length === 1) this.db.query(`UPDATE person SET name = ?, avatar_url = COALESCE(?, avatar_url), manual = 0, name_source = 'network' WHERE id = ?`).run(shownName(ids[0]), ids[0].avatar_url, pid);
+    else this.db.query(`UPDATE person SET name = ?, manual = 1, name_source = 'merge' WHERE id = ?`).run(shownName(ids[0]), pid);
+    this.dirty.persons.add(pid);
+  }
+
+  /**
+   * Your nickname for one account of someone's (docs/chats.md, Names), or none (null or empty): only you see it, it
+   * stands for the account's name wherever that shows, and their person's name follows. False for an unknown identity.
+   */
+  setIdentityNickname(identityId: string, nickname: string | null): boolean {
+    const r = this.db.query('SELECT * FROM identity WHERE id = ?').get(identityId) as Row | null;
+    if (!r) return false;
+    const was = shownName(r);
+    const nick = nickname?.trim() || null;
+    this.db.query('UPDATE identity SET nickname = ? WHERE id = ?').run(nick, identityId);
+    this.dirty.identities.add(identityId);
+    const p = r.person_id ? (this.db.query('SELECT name, is_self FROM person WHERE id = ?').get(r.person_id) as Row | null) : null;
+    if (!p || p.is_self) return true;
+    const n = (this.db.query('SELECT COUNT(*) AS n FROM identity WHERE person_id = ?').get(r.person_id) as Row).n as number;
+    // One account names them. Of several, the name follows the account it was taken from, and only that one: a
+    // nickname that tells one alt apart does not rename them.
+    if (n === 1) this.derivePersonName(r.person_id);
+    else if (p.name === was) {
+      this.db.query(`UPDATE person SET name = ? WHERE id = ?`).run(shownName({ ...r, nickname: nick }), r.person_id);
+      this.dirty.persons.add(r.person_id);
+    }
+    return true;
   }
 
   /**
@@ -1363,10 +1429,8 @@ export class Store {
     if (intoId === fromId) return;
     const tx = this.db.transaction(() => {
       this.db.query('UPDATE identity SET person_id = ? WHERE person_id = ?').run(intoId, fromId);
-      // A nickname on either side stays a nickname: the one kept, else the other's, which then names them both.
-      const nick = this.db.query(`SELECT id, name FROM person WHERE id IN (?, ?) AND name_source = 'user' ORDER BY id = ? DESC LIMIT 1`).get(intoId, fromId, intoId) as Row | null;
-      if (nick) this.db.query(`UPDATE person SET manual = 1, name = ?, name_source = 'user' WHERE id = ?`).run(nick.name, intoId);
-      else this.db.query(`UPDATE person SET manual = 1, name_source = 'merge' WHERE id = ?`).run(intoId);
+      // The one kept keeps its name, an account's as you see it. Nicknames are the accounts' and go along with them.
+      this.db.query(`UPDATE person SET manual = 1, name_source = 'merge' WHERE id = ?`).run(intoId);
       // The route chosen for them goes along, unless the one kept had its own.
       this.db.query(`UPDATE OR IGNORE chat_route SET chat_id = ? WHERE chat_id = ?`).run(`person:${intoId}`, `person:${fromId}`);
       this.db.query(`DELETE FROM chat_route WHERE chat_id = ?`).run(`person:${fromId}`);
@@ -1394,9 +1458,9 @@ export class Store {
     const natural = 'per_' + identityId.slice(4);
     let pid: string;
     if (natural === old && left) {
-      const i = this.db.query('SELECT display_name, handle, native_id, avatar_url FROM identity WHERE id = ?').get(identityId) as Row;
+      const i = this.db.query('SELECT nickname, display_name, handle, native_id, avatar_url FROM identity WHERE id = ?').get(identityId) as Row;
       pid = randomId('per');
-      this.db.query('INSERT INTO person (id, name, avatar_url, created_at) VALUES (?, ?, ?, ?)').run(pid, i.display_name ?? i.handle ?? i.native_id, i.avatar_url, Date.now());
+      this.db.query('INSERT INTO person (id, name, avatar_url, created_at) VALUES (?, ?, ?, ?)').run(pid, shownName(i), i.avatar_url, Date.now());
       this.db.query('UPDATE identity SET person_id = ? WHERE id = ?').run(pid, identityId);
     } else {
       if (natural === old) this.db.query('DELETE FROM person WHERE id = ?').run(old);
@@ -1406,7 +1470,13 @@ export class Store {
     if (!left && natural !== old) {
       this.db.query('DELETE FROM person WHERE id = ?').run(old);
       this.dirty.removed.push({ t: 'person.removed', id: old });
-    } else if (left) this.dirty.persons.add(old);
+    } else if (left) {
+      // One account left names them now, as does another when the name was the one that went's.
+      const went = shownName(this.db.query('SELECT * FROM identity WHERE id = ?').get(identityId) as Row);
+      const name = (this.db.query('SELECT name FROM person WHERE id = ?').get(old) as Row | null)?.name;
+      if (left === 1 || name === went) this.derivePersonName(old);
+      this.dirty.persons.add(old);
+    }
     this.dirty.persons.add(pid);
     this.touchDirectsOf(pid);
     this.touchDirectsOf(old);
@@ -1416,10 +1486,11 @@ export class Store {
 
   /**
    * `starred`, which clients from before stars left the app may still send, is ignored: Always notify is a person rule.
-   * A name given here is a nickname (`user`) unless `source` says otherwise (the demo names the people it merges).
+   * A name is not yours to give a person (a nickname is an account's, setIdentityNickname): only the demo names the
+   * people it merges, as a merge would.
    */
-  updatePerson(id: string, patch: { name?: string; note?: string }, source: P.NameSource = 'user') {
-    if (patch.name !== undefined) this.db.query(`UPDATE person SET name = ?, manual = 1, name_source = ? WHERE id = ?`).run(patch.name, source, id);
+  updatePerson(id: string, patch: { name?: string; note?: string }) {
+    if (patch.name !== undefined) this.db.query(`UPDATE person SET name = ?, manual = 1, name_source = 'merge' WHERE id = ?`).run(patch.name, id);
     if (patch.note !== undefined) this.db.query('UPDATE person SET note = ? WHERE id = ?').run(patch.note, id);
     this.dirty.persons.add(id);
   }
@@ -2092,6 +2163,7 @@ export class Store {
       avatar: this.media(r.avatar_url, r.seen_via),
       isBot: !!r.is_bot,
       personId: r.person_id,
+      ...(r.nickname ? { nickname: r.nickname } : {}),
       ...(r.status ? { status: json<NonNullable<P.IdentityView['status']>>(r.status, { at: 0 }) } : {}),
     };
   }
@@ -2517,9 +2589,9 @@ export class Store {
     if (!c) return null;
     if (c.shape === 'direct') {
       const peer = c.participantIds.find((p) => !this.isSelf(p));
-      const r = peer ? (this.db.query('SELECT display_name, handle FROM identity WHERE id = ?').get(peer) as Row | null) : null;
+      const r = peer ? (this.db.query('SELECT nickname, display_name, handle, native_id FROM identity WHERE id = ?').get(peer) as Row | null) : null;
       const person = c.peerPersonId ? (this.db.query('SELECT name FROM person WHERE id = ?').get(c.peerPersonId) as Row | null) : null;
-      return person?.name ?? r?.display_name ?? r?.handle ?? 'a direct message';
+      return person?.name ?? (r ? shownName(r) : 'a direct message');
     }
     if (c.shape === 'self') return 'Notes to self';
     const name = c.name ?? 'a conversation';
@@ -2562,8 +2634,8 @@ export class Store {
   /** A person's name for an identity: the merged person, else what the network calls them. */
   identityLabel(identityId: string | null): string | null {
     if (!identityId) return null;
-    const r = this.db.query('SELECT i.display_name, i.handle, p.name AS person FROM identity i LEFT JOIN person p ON p.id = i.person_id WHERE i.id = ?').get(identityId) as Row | null;
-    return r ? (r.person ?? r.display_name ?? r.handle ?? null) : null;
+    const r = this.db.query('SELECT i.nickname, i.display_name, i.handle, p.name AS person FROM identity i LEFT JOIN person p ON p.id = i.person_id WHERE i.id = ?').get(identityId) as Row | null;
+    return r ? (r.person ?? (r.nickname || r.display_name || r.handle) ?? null) : null;
   }
 
   messageView(id: string): P.MessageView | null {
@@ -2637,21 +2709,6 @@ export class Store {
     const replyIds = [...new Set(msgs.map((m) => m.replyToId).filter((x): x is string => !!x && !page.some((p) => p.id === x)))];
     const quoted = replyIds.length ? this.messageViews(this.db.query(`SELECT * FROM message WHERE id IN (${replyIds.map(() => '?').join(',')})`).all(...replyIds) as Row[]) : [];
     return { messages: msgs, identities: this.identitiesOf([...msgs, ...quoted]), hasMore, conversationIds: convs, ...(quoted.length ? { quoted } : {}) } as P.MessagePage & { conversationIds: string[] };
-  }
-
-  /**
-   * Your nickname for someone, or none (null): their name goes back to what their accounts say, the one they wrote in
-   * most recently, and a person of one account follows that account's name again.
-   */
-  setNickname(id: string, name: string | null) {
-    if (name !== null) return this.updatePerson(id, { name });
-    const ids = this.db.query('SELECT display_name, handle, native_id, avatar_url FROM identity WHERE person_id = ? ORDER BY updated_at DESC').all(id) as Row[];
-    if (!ids.length) return;
-    const i = ids[0];
-    const name0 = i.display_name ?? i.handle ?? i.native_id;
-    if (ids.length === 1) this.db.query(`UPDATE person SET name = ?, manual = 0, name_source = 'network' WHERE id = ?`).run(name0, id);
-    else this.db.query(`UPDATE person SET name = ?, name_source = 'merge' WHERE id = ?`).run(name0, id);
-    this.dirty.persons.add(id);
   }
 
   /** By person, or by identity for someone who is only a name in a channel so far. */
@@ -2779,7 +2836,7 @@ export class Store {
       this.db
         .query(
           `SELECT i.id FROM identity i LEFT JOIN person p ON p.id = i.person_id
-           WHERE i.display_name LIKE ?1 ESCAPE '\\' OR i.handle LIKE ?1 ESCAPE '\\' OR i.native_id = ?2 OR p.name LIKE ?1 ESCAPE '\\'`,
+           WHERE i.nickname LIKE ?1 ESCAPE '\\' OR i.display_name LIKE ?1 ESCAPE '\\' OR i.handle LIKE ?1 ESCAPE '\\' OR i.native_id = ?2 OR p.name LIKE ?1 ESCAPE '\\'`,
         )
         .all(like, name) as Row[]
     ).map((r) => r.id);
@@ -2796,7 +2853,7 @@ export class Store {
     const persons = this.db
       .query(
         `SELECT p.* FROM person p WHERE p.is_self = 0 AND p.id != ?2 AND (p.name LIKE ?1 ESCAPE '\\' OR EXISTS (SELECT 1 FROM identity i WHERE i.person_id = p.id
-           AND (i.display_name LIKE ?1 ESCAPE '\\' OR i.handle LIKE ?1 ESCAPE '\\' OR i.native_id LIKE ?1 ESCAPE '\\')))
+           AND (i.nickname LIKE ?1 ESCAPE '\\' OR i.display_name LIKE ?1 ESCAPE '\\' OR i.handle LIKE ?1 ESCAPE '\\' OR i.native_id LIKE ?1 ESCAPE '\\')))
          ORDER BY p.name LIMIT ?3`,
       )
       .all(like, exceptPersonId ?? '', limit) as Row[];

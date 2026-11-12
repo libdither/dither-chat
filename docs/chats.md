@@ -59,53 +59,78 @@ opens, then leaves the browser.
 
 ## Names
 
-The chat has one name, the person's: the header, the inbox row, the people list and the message box's line ("Message
-Kit on Telegram") say it, and a nickname you gave them is that name. **The messages name accounts.** On a page of
-several routes every message head shows the sending account's own picture and its own name (its display name, else
-its handle, else its id), theirs and yours alike, so Kit's Discord account and Kit's Telegram account look like what
-they are, and so do yours. A bot or anyone else in a DM keeps its own name, as before.
+**A nickname is one account's.** You can give any account of someone's a nickname of your own (`identity.nickname`):
+only you see it, the hub never sends it to a network, and no sync overwrites it (a network's own nicknames, a Discord
+friend nickname or a Signal contact name, stay what the account's display name says). Wherever that account's name
+shows, the nickname shows instead: an account's name as you see it is your nickname for it, else its display name,
+else its handle, else its id (`accountName` in `chatroutes.ts`, `identityName` in `model.ts`, `shownName` and `SHOWN`
+in the hub's `store.ts`).
 
-Two accounts on one side of the chat can say the same name on the same network: Mo is "Mo" on two Discord accounts.
+**A person's name is made of their accounts' names**, never set on the person:
+
+- one account: that account's name as you see it, so a nickname for it is their name everywhere (header, inbox row,
+  people list, message box, notifications), and the network renaming the account changes nothing while it has one;
+- several accounts: the name a merge kept, one of their accounts' names. It follows the account it was taken from:
+  giving that account a nickname, or taking it away, renames them. A nickname on another of their accounts names only
+  that account, so telling one alt apart ("Kit, raid nights") does not rename Kit.
+
+Merging two people keeps the name of the one kept; the nicknames are the accounts' and go along with them. Splitting
+an account off keeps its nickname, which names the new person; the person it left takes their name from their
+accounts again when one is left, or when the name was the account's that went.
+
+The chat has one name, the person's: the header, the inbox row, the people list and the message box's line ("Message
+Kit on Telegram") say it. **The messages name accounts.** On a page of several routes every message head shows the
+sending account's own picture and its name as you see it, theirs and yours alike, so Kit's Discord account and Kit's
+Telegram account look like what they are, and so do yours. A bot or anyone else in a DM keeps its own name, as before.
+
+Two accounts on one side of the chat can show the same name on the same network: Mo is "Mo" on two Discord accounts.
 Then, and only then, the head adds that account's handle after the name, muted (`Mo  mo.codes`, `Mo  mo.draws`), and
 leaves it out where it would say no more than the name. The same name on two networks needs no handle, because the
 network's badge on the picture already tells them apart: Kit is "Kit" on Discord and on Telegram, and Sam Rivera's
-Signal phone number never lands beside their name. Names are compared ignoring case, among the accounts in the routes
-the page shows (`headIdents` in `chatroutes.ts`, `headNames` in `Pairs.tsx`). Messages group only while the same account writes on the same route: another account of theirs starts
-a new head, since its picture and name differ.
+Signal phone number never lands beside their name. Names are compared as you see them (a nickname counts), ignoring
+case, among the accounts in the routes the page shows (`headIdents` in `chatroutes.ts`, `headNames` in `Pairs.tsx`).
+Messages group only while the same account writes on the same route: another account of theirs starts a new head,
+since its picture and name differ.
 
 With one route picked from the list, the page shows that route alone: each side has one account, so the names are
 plain. A person with one route has no chat page of its own: theirs is the conversation's page, which names them by
 the person's name as every conversation does.
 
-Until 2026-11-11 (an earlier review of this page) every message of theirs showed the person's name and yours your
-own person's name, and only the picture varied, by account; the route tag said which account. Before that, the page
-renamed messages by account (`kit.exe`, `@kit:matrix.org`) unless you gave a nickname, and with one showed the account
-in a pill beside it.
+**Where you set one.** On a person's profile, each account's tile has Set Nickname…, Change Nickname… and Remove
+Nickname in its menu (⋯), which edit the name on the tile in place; a tile with a nickname shows it as the name and
+the account's own beneath it, muted ("their name: kitty"). A person of one account has a pencil by the name at the
+top of their profile, and the same entries under More. The menu of an author, a picture or a mention has them for that
+account. A chat of one route has the pencil by its name, for the account at the other end; a chat of several routes
+has none, since its name is made of the accounts' (it links to the profile, where the tiles are). Leaving the editor
+empty takes the nickname away. Your own accounts take none.
 
 `person.name_source` says where a person's name came from:
 
 | value | means |
 | --- | --- |
-| `network` | one account, its own name, kept up to date |
-| `merge` | a merge kept this name (one of their accounts' names) |
-| `user` | your nickname for them |
+| `network` | one account: its name as you see it, kept up to date |
+| `merge` | several accounts: the name a merge kept, one account's |
 
-A rename (`PATCH /api/persons/:id` with `name`, or `PATCH /api/chats/person:<id>` with `name`) makes the name a
-nickname. Saving an empty name, or sending `name: null`, removes the nickname. A person with one account then follows
-that account's name again. A merged person takes the name of the account that wrote most recently. A merge keeps a
-nickname from either side.
+Until 2026-11-11 a nickname was the person's (`user`), set with `PATCH /api/persons/:id` or `PATCH
+/api/chats/person:<id>` with `name`, and it stood for every account's name in the chat's title while the messages
+showed the accounts' own. Those calls now answer 400 and name the new one. On its first start with nicknames by
+account, the hub moves them once (`nicknamesToAccounts`, meta `nicknames_by_account`; MIGRATIONS 4 → 5, so the
+database is copied first): each person named `user` gives that name as a nickname to each of their accounts that has
+none, then has one account's name (`network`) or keeps the name, now an account's (`merge`).
 
-Before this, the hub had only `manual` ("merged or renamed by you"). On its first start with `name_source`, the hub
-sorts out the old names once (meta `name_source_set`; MIGRATIONS 2 → 3, so the database is copied first). A merged or
-renamed person whose name is one of their accounts' display names or handles becomes `merge`. Any other name becomes
-`user`.
+Earlier still (an earlier review of this page) every message of theirs showed the person's name and yours your own
+person's name, and only the picture varied, by account; the route tag said which account. Before that, the page
+renamed messages by account (`kit.exe`, `@kit:matrix.org`) unless you gave a nickname, and with one showed the account
+in a pill beside it. Before `name_source` the hub had only `manual` ("merged or renamed by you"); it sorted those out
+once (meta `name_source_set`, MIGRATIONS 2 → 3): a name one of their accounts went by became `merge`, any other `user`.
 
 ## API
 
 | call | does |
 | --- | --- |
 | `GET /api/chats/:id` | `ChatView`: name, `nameSource`, `routes` (each with their identity, yours, last message time, unread), `route` (the default route, with `why: 'chosen' \| 'latest'`) |
-| `PATCH /api/chats/:id` | `{ route: { conversationId, accountId } \| null }` chooses a route, or forgets the choice (409 if it is not a route of this chat). `{ name: string \| null }` sets or removes the nickname (persons only) |
+| `PATCH /api/chats/:id` | `{ route: { conversationId, accountId } \| null }` chooses a route, or forgets the choice (409 if it is not a route of this chat). `name` is refused (400): a nickname is an account's |
+| `PATCH /api/identities/:id` | `{ nickname: string \| null }` gives one account your nickname, or takes it away (null or empty); answers `{ identity }`, and other open views hear of it as an `identity` event (and a `person` event when their name follows). 400 for your own accounts, 404 for an unknown one |
 | `GET /api/chats/:id/messages?before=<ts>:<id>&limit=` | every route's messages as one timeline, newest page first |
 | `POST /api/chats/:id/messages` | sends. The route is the one in `route` if given (409 if it is not this chat's), else the route of the message in `replyTo`, else the default route. Otherwise it behaves like `POST /api/conversations/:id/send`: the same body, the same `clientId` retry handling |
 | `POST /api/chats/:id/read` | reads every route, here and on each network |
@@ -160,7 +185,8 @@ What it adds to a conversation's page:
   in full (their name ⇄ yours, the network, unread), the one place that does. Picking a route shows its history alone
   and sends through it, without leaving the address; the button then shows that route's label, and the list's first
   row, All chats together, returns to all.
-- **The name** has a pencil, shown on hover, for the nickname.
+- **The name** links to their profile, with no pencil: it is made of their accounts' names, and each account's
+  nickname is set on its tile there (Names, above).
 - **The message box's line** takes the placeholder's place and says where a message goes, by the same rule and no
   more (`leadTells`): "Message Kit on Signal", "Message Kit on Discord (kit.work)", and "from zyn.alt" only when the
   account of theirs it goes to can be reached from several of yours. The parts that can change switch: two options

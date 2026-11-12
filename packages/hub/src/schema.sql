@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS person (
   is_self    INTEGER NOT NULL DEFAULT 0,
   manual     INTEGER NOT NULL DEFAULT 0,      -- the user merged or renamed it; ingest won't touch the name
   created_at INTEGER NOT NULL,
-  name_source TEXT NOT NULL DEFAULT 'network' -- network | merge | user (a nickname you gave): P.NameSource
+  name_source TEXT NOT NULL DEFAULT 'network' -- network | merge (P.NameSource); 'user' until 2026-11-11, when nicknames moved to identity
 );
 
 CREATE TABLE IF NOT EXISTS identity (
@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS identity (
   person_id    TEXT REFERENCES person(id) ON DELETE SET NULL,
   seen_via     TEXT,                           -- an account id that can fetch this identity's media
   status       TEXT,                           -- JSON { text, emoji, at }: their custom status or About, as last heard
+  nickname     TEXT,                           -- your own name for this account, only you see it: set here, never by a network
   updated_at   INTEGER NOT NULL,
   UNIQUE (network, native_id)
 );

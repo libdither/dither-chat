@@ -24,6 +24,7 @@ import {
   heldHere,
   identityName,
   netName,
+  peerIdentity,
   personOf,
   ruleIcon,
   ruleName,
@@ -98,13 +99,15 @@ import { memo } from './memo.ts';
 import { heldRequest } from '../requests.ts';
 import { LinkBanner, RequestBar } from './Requests.tsx';
 import { countKey } from '../clicklog.ts';
-import { badgeShows, focusedPair, focusPair, headNames, loadChat, Nickname, PairDropdown, PairLead, RouteTag, setView, viewOf } from './Pairs.tsx';
+import { badgeShows, focusedPair, focusPair, headNames, loadChat, PairDropdown, PairLead, RouteTag, setView, viewOf } from './Pairs.tsx';
+import { nicknamable, NicknamedName, ownName } from './Nickname.tsx';
 import { Loading } from './Loader.tsx';
 
 
 // ------------------------------------------------------------------ header
 
 function Crumbs({ c }: { c: P.ConversationView }) {
+  metaRev.value; // a DM's crumb is the person's name, which changes without `c` changing
   const r = route.value;
   const within = r.view === 'space' ? r.space : undefined;
   const cs = crumbs(c, within);
@@ -220,12 +223,17 @@ export function LevelMenu({ c, also }: { c: P.ConversationView; /** A person's o
  * to choose the pair from, in place of the network and your account, and `c` is the pair messages go through.
  */
 function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () => void; chat?: { person: P.PersonView; directs: P.ConversationView[]; all: boolean; onView: (view: string) => void } }) {
+  // Names it shows come from people and accounts, which change without `c` changing (a nickname, a rename).
+  metaRev.value;
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && visibleAccount(a.id));
   const isDirect = c.shape === 'direct';
   const person = chat?.person ?? (c.peerPersonId ? db.persons.get(c.peerPersonId) : null);
   // All chats together: the header is the person's, not one conversation's.
   const all = !!chat?.all;
   const whoTitle = person && isDirect ? `${person.name}'s profile` : `About ${convTitle(c)}`;
+  // One route: the pencil by the name is for the nickname of their account in it. Several: the name is made of
+  // their accounts' names, each with its own nickname on their profile, so it has none.
+  const peer = isDirect && !chat ? db.identities.get(peerIdentity(c) ?? '') : null;
   const openWho = () => go(person && isDirect ? { view: 'profile', person: person.id } : { view: 'profile', conv: c.id });
   return (
     <header class="conv-head" data-track-area="chat header" onContextMenu={onMenu(() => (all ? personMenu(chat!.person) : conversationMenu(c)))}>
@@ -247,7 +255,11 @@ function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () =>
       <div class="conv-head-text">
         <h2>
           {chat ? (
-            <Nickname person={chat.person} onOpen={openWho} />
+            <button class="conv-head-name" data-track="name" title={whoTitle} onClick={openWho}>
+              {chat.person.name}
+            </button>
+          ) : nicknamable(peer) && !peer.isBot ? (
+            <NicknamedName i={peer} label={convTitle(c)} title={peer.nickname ? `${whoTitle} (your nickname for ${ownName(peer)})` : whoTitle} onOpen={openWho} />
           ) : (
             <button class="conv-head-name" data-track="name" title={whoTitle} onClick={openWho}>
               {convTitle(c)}
@@ -584,7 +596,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
       <div class="msg-main">
         {!grouped && (
           <div class="msg-head">
-            <span class={`msg-author ${self ? 'self' : ''}`} data-identity={m.authorId ?? undefined} role="link" tabindex={0} onClick={() => openProfile(m.authorId)} onKeyDown={(e) => e.key === 'Enter' && openProfile(m.authorId)} title={author ? `${author.displayName ?? ''} ${author.handle ? '· ' + author.handle : ''} on ${netName(author.network)}` : ''}>
+            <span class={`msg-author ${self ? 'self' : ''}`} data-identity={m.authorId ?? undefined} role="link" tabindex={0} onClick={() => openProfile(m.authorId)} onKeyDown={(e) => e.key === 'Enter' && openProfile(m.authorId)} title={author ? `${author.nickname ? `${author.nickname} (your nickname; their name: ${author.displayName ?? author.handle ?? author.nativeId})` : (author.displayName ?? '')} ${author.handle ? '· ' + author.handle : ''} on ${netName(author.network)}` : ''}>
               {name}
             </span>
             {whoIdent && (

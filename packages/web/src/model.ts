@@ -10,7 +10,7 @@ import { dataVersion, db, inbox, isSelfIdentity, mailTriage, prefs } from './sta
 import { mailDataVersion } from './versions.ts';
 import { isMailItem, triageBoard, type Board, type BoardItem } from './board.ts';
 import { mailInboxRows, mailNames } from './mail/model.ts';
-import { chatKey, groupChats } from './chatroutes.ts';
+import { accountName, chatKey, groupChats } from './chatroutes.ts';
 
 const memos = new Map<string, { rev: number; value: unknown }>();
 function memo<T>(key: string, fn: () => T): T {
@@ -92,7 +92,7 @@ export function identityName(id: string | null | undefined): string {
   if (!id) return 'Unknown';
   const i = db.identities.get(id);
   if (!i) return 'Unknown';
-  return i.displayName || i.handle || i.nativeId;
+  return accountName(i);
 }
 
 // "Mail with Sam": a `w:` list's heading names the person (mail/model.ts).

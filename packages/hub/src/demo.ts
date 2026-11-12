@@ -2692,8 +2692,8 @@ export function applyDemoOverlay(store: Store) {
   const merge = (name: string, ...ids: [P.Network, P.IdentityFact][]) => {
     const [first, ...rest] = ids.map(([n, i]) => personOf(n, i));
     for (const r of rest) store.mergePersons(first, r);
-    // The name a merge settled on, not a nickname: theirs show beside it only where you gave one.
-    store.updatePerson(first, { name }, 'merge');
+    // The name a merge settled on, as a merge would.
+    store.updatePerson(first, { name });
     return first;
   };
   const alice = merge('Alice Chen', ['signal', S.alice], ['discord', D.alice], ['matrix', M.alice], ['whatsapp', W.alice], ['telegram', TG.alice]);
@@ -2702,6 +2702,8 @@ export function applyDemoOverlay(store: Store) {
   merge('Quinn', ['discord', D.quinn], ['signal', S.quinn]);
   if (MULTI_ACCOUNT) merge('Mo', ['discord', MO.main], ['discord', MO.art]);
   if (MULTI_ACCOUNT) merge('Kit', ['discord', KIT.exe], ['discord', KIT.alt], ['discord', KIT.work], ['signal', KIT.sig], ['matrix', KIT.mx], ['matrix', KIT.nix], ['telegram', KIT.tg]);
+  // Your nickname for one of Kit's accounts (docs/chats.md, Names): its heads and its tile say it, and Kit stays Kit.
+  if (MULTI_ACCOUNT) store.setIdentityNickname(idn('discord', KIT.alt), 'Kit, raid nights');
 
   const cnv = (net: P.Network, nativeId: string) => hubId('cnv', net, nativeId);
   const spc = (net: P.Network, nativeId: string) => hubId('spc', net, nativeId);

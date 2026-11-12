@@ -1,8 +1,8 @@
 /**
  * Chats (chats.ts, docs/chats.md) through the hub with a stand-in supervisor: a person's routes, the route a message
  * goes through when nobody says, the one you chose and what a merge or a split does to it, paging across
- * conversations that share a time, searching and reading every route, and nicknames, including where old names came
- * from.
+ * conversations that share a time, searching and reading every route, and names: nicknames by account, the person's
+ * name made of them, and where old names came from.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -161,36 +161,84 @@ describe('messages', () => {
 });
 
 describe('names', () => {
-  test('a nickname says so; taking it away gives back the name of the account they wrote in last', async () => {
-    let c = (await call<P.ChatView>('PATCH', `/api/chats/person:${kit}`, { name: ' Kitty ' })).json;
-    expect(c).toMatchObject({ name: 'Kitty', nameSource: 'user' });
-    expect(store.personView(store.one('SELECT * FROM person WHERE id = ?', kit)!).nameSource).toBe('user');
-    c = (await call<P.ChatView>('PATCH', `/api/chats/person:${kit}`, { name: null })).json;
-    expect(c.nameSource).toBe('merge');
-    expect(['Kit', 'Kit (work)']).toContain(c.name);
-    expect((await call('PATCH', `/api/chats/person:${kit}`, { name: '  ' })).status).toBe(400);
-    expect((await call('PATCH', `/api/chats/${cnv('signal', 'dm-kit')}`, { name: 'x' })).status).toBe(400);
+  const kitName = () => store.one<{ name: string; name_source: string }>('SELECT name, name_source FROM person WHERE id = ?', kit)!;
+  const nick = (id: string) => store.identitiesByIds([id])[0].nickname;
+
+  test('a nickname is one account’s: it names that account, and the person only where their name was that account’s', async () => {
+    const work = idn('discord', 'k-work');
+    const exe = idn('discord', 'k-exe');
+    expect(kitName()).toEqual({ name: 'Kit', name_source: 'merge' });
+    // Kit (work) becomes Kitty: Kit is still Kit, named after another account.
+    let r = await call<{ identity: P.IdentityView }>('PATCH', `/api/identities/${work}`, { nickname: ' Kitty ' });
+    expect(r.status).toBe(200);
+    expect(r.json.identity).toMatchObject({ id: work, nickname: 'Kitty', displayName: 'Kit (work)' });
+    expect(kitName().name).toBe('Kit');
+    // kit.exe is the account Kit was named after: the name follows its nickname, and back.
+    await call('PATCH', `/api/identities/${exe}`, { nickname: 'Kitkat' });
+    expect(kitName()).toEqual({ name: 'Kitkat', name_source: 'merge' });
+    expect((await chat()).name).toBe('Kitkat');
+    await call('PATCH', `/api/identities/${exe}`, { nickname: '' });
+    expect(nick(exe)).toBeUndefined();
+    expect(kitName().name).toBe('Kit');
+    expect((await call('PATCH', `/api/identities/${work}`, { nickname: null })).status).toBe(200);
+    expect(nick(work)).toBeUndefined();
+    // Nobody else's to set, and only a name or null.
+    expect((await call('PATCH', `/api/identities/${work}`, { nickname: 3 })).status).toBe(400);
+    expect((await call('PATCH', '/api/identities/idn_nobody', { nickname: 'x' })).status).toBe(404);
+    expect((await call('PATCH', `/api/identities/${idn('discord', 'me1')}`, { nickname: 'me' })).status).toBe(400);
   });
 
-  test('a merge keeps a nickname from either side, and takes the chosen route along', () => {
+  test('a person has no nickname of their own: the old routes say where it went, and a note still saves', async () => {
+    let r = await call<{ error: string }>('PATCH', `/api/chats/person:${kit}`, { name: 'Kitty' });
+    expect(r.status).toBe(400);
+    expect(r.json.error).toContain('/api/identities/:id');
+    r = await call<{ error: string }>('PATCH', `/api/persons/${kit}`, { name: 'Kitty' });
+    expect(r.status).toBe(400);
+    expect(r.json.error).toContain('nickname');
+    expect(kitName().name).toBe('Kit');
+    expect((await call('PATCH', `/api/persons/${kit}`, { note: 'met at the meetup' })).status).toBe(200);
+    expect(store.one<{ note: string }>('SELECT note FROM person WHERE id = ?', kit)!.note).toBe('met at the meetup');
+    expect((await call('PATCH', `/api/chats/person:${kit}`, { route: null })).status).toBe(200);
+  });
+
+  test('one account: its name as you see it is theirs, and stays yours while the network renames it', async () => {
+    store.ingest(main, { t: 'identity', identity: { nativeId: 'solo', handle: 'solo.one', displayName: 'Solo', contact: true } });
+    const id = idn('discord', 'solo');
+    const pid = store.one<{ person_id: string }>('SELECT person_id FROM identity WHERE id = ?', id)!.person_id;
+    const name = () => store.one<{ name: string; name_source: string }>('SELECT name, name_source FROM person WHERE id = ?', pid)!;
+    await call('PATCH', `/api/identities/${id}`, { nickname: 'Sol' });
+    expect(name()).toEqual({ name: 'Sol', name_source: 'network' });
+    store.ingest(main, { t: 'identity', identity: { nativeId: 'solo', handle: 'solo.one', displayName: 'Solo Again' } });
+    expect(name().name).toBe('Sol');
+    await call('PATCH', `/api/identities/${id}`, { nickname: null });
+    expect(name()).toEqual({ name: 'Solo Again', name_source: 'network' });
+  });
+
+  test('a merge and a split keep each account’s nickname; the chosen route goes along with the merge', () => {
     store.ingest(main, { t: 'identity', identity: { nativeId: 'k-3', handle: 'kit3', displayName: 'k3' } });
     store.ingest(main, { t: 'conversation', conversation: { nativeId: 'dm-3', shape: 'direct', participants: ['k-3', 'me1'] } });
-    const other = store.one<{ person_id: string }>('SELECT person_id FROM identity WHERE id = ?', idn('discord', 'k-3'))!.person_id;
-    store.setNickname(other, 'Kit three');
+    const k3 = idn('discord', 'k-3');
+    const other = store.one<{ person_id: string }>('SELECT person_id FROM identity WHERE id = ?', k3)!.person_id;
+    store.setIdentityNickname(k3, 'Kit three');
+    expect(store.one('SELECT name FROM person WHERE id = ?', other)).toEqual({ name: 'Kit three' });
     store.db.query('INSERT INTO chat_route (chat_id, conversation_id, account_id, set_at) VALUES (?, ?, ?, 1)').run(`person:${other}`, cnv('discord', 'dm-3'), main.id);
     store.mergePersons(kit, other);
-    expect(store.one('SELECT name, name_source FROM person WHERE id = ?', kit)).toEqual({ name: 'Kit three', name_source: 'user' });
+    expect(kitName()).toEqual({ name: 'Kit', name_source: 'merge' });
+    expect(nick(k3)).toBe('Kit three');
     expect(store.one('SELECT conversation_id FROM chat_route WHERE chat_id = ?', `person:${kit}`)).toEqual({ conversation_id: cnv('discord', 'dm-3') });
     expect(store.one('SELECT 1 FROM chat_route WHERE chat_id = ?', `person:${other}`)).toBeNull();
   });
 
   test('a split leaves the chosen route behind: the chat goes back to the latest message’s', async () => {
-    store.splitIdentity(idn('discord', 'k-3'));
+    const pid = store.splitIdentity(idn('discord', 'k-3'))!;
+    expect(nick(idn('discord', 'k-3'))).toBe('Kit three');
+    expect(store.one('SELECT name, name_source FROM person WHERE id = ?', pid)).toEqual({ name: 'Kit three', name_source: 'network' });
+    expect(kitName().name).toBe('Kit');
     expect((await chat()).route?.why).toBe('latest');
   });
 });
 
-test('where old names came from: merged under an account’s name is a merge, anything else a nickname', () => {
+test('where old names came from: merged under an account’s name is a merge, anything else a nickname, on their account', () => {
   const d2 = mkdtempSync(join(tmpdir(), 'dither-names-'));
   try {
     const path = join(d2, 'hub.sqlite');
@@ -203,11 +251,53 @@ test('where old names came from: merged under an account’s name is a merge, an
     s.db.query(`UPDATE person SET manual = 1, name = 'Bobby' WHERE id = ?`).run(bo);
     s.db.query(`UPDATE person SET manual = 1, name = '@ann' WHERE id = ?`).run(ann);
     s.db.query(`UPDATE person SET name_source = 'network'`).run();
-    s.db.query(`DELETE FROM meta WHERE key = 'name_source_set'`).run();
+    s.db.query(`DELETE FROM meta WHERE key IN ('name_source_set', 'nicknames_by_account')`).run();
     s.db.close();
     s = new Store(path, mediaSigner('s'));
-    const src = (id: string) => s.one<{ name_source: string }>('SELECT name_source FROM person WHERE id = ?', id)!.name_source;
-    expect([src(ann), src(bo), src(cy)]).toEqual(['merge', 'user', 'network']);
+    const src = (id: string) => s.one<{ name: string; name_source: string }>('SELECT name, name_source FROM person WHERE id = ?', id)!;
+    // Bobby was a nickname of the person's, and is their one account's now.
+    expect([src(ann), src(bo), src(cy)]).toEqual([
+      { name: '@ann', name_source: 'merge' },
+      { name: 'Bobby', name_source: 'network' },
+      { name: 'Cy', name_source: 'network' },
+    ]);
+    expect(s.identitiesByIds([hubId('idn', 'discord', 'u2')])[0].nickname).toBe('Bobby');
+    s.db.close();
+  } finally {
+    rmSync(d2, { recursive: true, force: true });
+  }
+});
+
+test('nicknames move onto the accounts, once: a named person’s name goes to each of their accounts without one', () => {
+  const d2 = mkdtempSync(join(tmpdir(), 'dither-nicks-'));
+  try {
+    const path = join(d2, 'hub.sqlite');
+    let s = new Store(path, mediaSigner('s'));
+    const a = s.createAccount({ network: 'discord', label: 'x', color: '#000', adapter: 'discord' });
+    for (const [id, name] of [['v1', 'Dee'], ['v2', 'Dee two'], ['v3', 'Dee three'], ['w1', 'Eve']]) s.ingest(s.account(a.id)!, { t: 'identity', identity: { nativeId: id, handle: name.toLowerCase().replace(' ', '.'), displayName: name } });
+    const i = (n: string) => hubId('idn', 'discord', n);
+    const pid = (n: string) => s.ensurePerson(i(n));
+    const [dee, eve] = [pid('v1'), pid('w1')];
+    s.mergePersons(dee, pid('v2'));
+    s.mergePersons(dee, pid('v3'));
+    s.setIdentityNickname(i('v3'), 'D3');
+    // As a hub from before 2026-11-11 wrote them: a nickname on the person (Dee as "Deedee", Eve as "Evie").
+    s.db.query(`UPDATE person SET name = 'Deedee', name_source = 'user' WHERE id = ?`).run(dee);
+    s.db.query(`UPDATE person SET name = 'Evie', name_source = 'user', manual = 1 WHERE id = ?`).run(eve);
+    s.db.query(`DELETE FROM meta WHERE key = 'nicknames_by_account'`).run();
+    s.db.close();
+    s = new Store(path, mediaSigner('s'));
+    const nick = (n: string) => s.identitiesByIds([i(n)])[0].nickname;
+    expect([nick('v1'), nick('v2'), nick('v3'), nick('w1')]).toEqual(['Deedee', 'Deedee', 'D3', 'Evie']);
+    const row = (id: string) => s.one('SELECT name, name_source, manual FROM person WHERE id = ?', id);
+    expect(row(dee)).toEqual({ name: 'Deedee', name_source: 'merge', manual: 1 });
+    expect(row(eve)).toEqual({ name: 'Evie', name_source: 'network', manual: 0 });
+    expect(s.one(`SELECT COUNT(*) AS n FROM person WHERE name_source = 'user'`)).toEqual({ n: 0 });
+    // Once: a name set the old way afterwards stays as it is.
+    s.db.query(`UPDATE person SET name_source = 'user' WHERE id = ?`).run(eve);
+    s.db.close();
+    s = new Store(path, mediaSigner('s'));
+    expect(s.one('SELECT name_source FROM person WHERE id = ?', eve)).toEqual({ name_source: 'user' });
     s.db.close();
   } finally {
     rmSync(d2, { recursive: true, force: true });

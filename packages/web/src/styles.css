@@ -10068,6 +10068,22 @@ a.pf-link:hover {
   white-space: nowrap;
   font-size: 14px;
 }
+.pf-acct-nick-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  font-size: 14px;
+  font-weight: 600;
+}
+/* The account's own name, under your nickname for it. */
+.pf-acct-own {
+  margin-top: -2px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .pf-acct-handle {
   display: flex;
   flex-wrap: wrap;
@@ -13218,7 +13234,8 @@ html.kb-open .ss-foot {
   pointer-events: auto;
   white-space: normal;
 }
-/* Nickname: the person's name with a pencil that shows on hover. */
+/* Nickname (ui/Nickname.tsx): a one-route chat's name, or a one-account profile's, with a pencil that shows on hover
+   for your nickname for their account. */
 .pair-nick-edit {
   margin-left: 4px;
   padding: 0 4px;
@@ -13227,6 +13244,7 @@ html.kb-open .ss-foot {
   opacity: 0;
 }
 .conv-head h2:hover .pair-nick-edit,
+h1:hover > .pair-nick-edit,
 .pair-nick-edit:focus-visible {
   opacity: 1;
 }

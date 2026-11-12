@@ -19,6 +19,7 @@ import { messageSomeone } from './Palette.tsx';
 import { Avatar, Empty, NetBadge, NetGlyph } from './bits.tsx';
 import { copy, groups, openMenu, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
+import { nicknamable, nicknameEntries, NicknamedName, NicknameInput, ownName } from './Nickname.tsx';
 import { ActivityCard } from './ActivityCard.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
 import { identityMenu, personMenu } from './menus.tsx';
@@ -79,9 +80,12 @@ function HandleChip({ i }: { i: P.IdentityView }) {
 /**
  * One of several accounts of a person, on their profile: its own picture with its network's badge, its own name, its
  * handle (copies), what it says about itself (`bio`), and when it joined its network. A button goes to it (its chat,
- * or starts one, or a mail), and its menu (⋯, right-click or hold) has the rest: copy, open on the network, split.
+ * or starts one, or a mail), and its menu (⋯, right-click or hold) has the rest: your nickname for it, copy, open
+ * on the network, split. With a nickname, the tile says it as the name and the account's own beneath it.
  */
-function AccountTile({ i, bio, since, go: open, goLabel, menu }: { i: P.IdentityView; bio?: string; since?: string; go?: () => void; goLabel?: string; menu: () => MenuSpec }) {
+function AccountTile({ i, bio, since, go: open, goLabel, menu: menuOf }: { i: P.IdentityView; bio?: string; since?: string; go?: () => void; goLabel?: string; menu: (editNickname: () => void) => MenuSpec }) {
+  const [editing, setEditing] = useState(false);
+  const menu = () => menuOf(() => setEditing(true));
   const ctx = useMenu(menu);
   const name = identityName(i.id);
   return (
@@ -89,9 +93,13 @@ function AccountTile({ i, bio, since, go: open, goLabel, menu }: { i: P.Identity
       <Avatar id={i.id} name={name} url={i.avatar} size={44} network={i.network} />
       <div class="pf-acct-text">
         <div class="pf-acct-top">
-          <b class="pf-acct-name" title={name}>
-            {name}
-          </b>
+          {editing ? (
+            <NicknameInput i={i} onDone={() => setEditing(false)} class="pair-nick-input pf-acct-nick-input" />
+          ) : (
+            <b class="pf-acct-name" title={i.nickname ? `${name}: your nickname (only you see it)` : name}>
+              {name}
+            </b>
+          )}
           {open && (
             <button class="icon-btn small" title={goLabel} aria-label={goLabel} onClick={open}>
               <Icon name={i.network === 'email' ? 'mail' : 'send'} size={14} />
@@ -101,6 +109,7 @@ function AccountTile({ i, bio, since, go: open, goLabel, menu }: { i: P.Identity
             <Icon name="more" size={14} />
           </button>
         </div>
+        {i.nickname && <small class="pf-acct-own">their name: {ownName(i)}</small>}
         <span class="pf-acct-handle">
           <HandleChip i={i} />
           <small>
@@ -290,6 +299,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   rev.value;
   const { profile, abouts, counts, learn, asking, refresh } = useProfile(personId, identityId);
   const [merging, setMerging] = useState(false);
+  // The hero's pencil, for a person of one account: its nickname (Nickname.tsx).
+  const [naming, setNaming] = useState(false);
   // Links ended from this page (`account|identity`), until the profile is fetched again.
   const [ended, setEnded] = useState<string[]>([]);
   useEffect(() => setEnded([]), [personId, identityId]);
@@ -467,7 +478,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   };
   const moreMenu = (): MenuSpec | null => {
     const base = person ? personMenu(person) : identityMenu(first?.id);
-    const extra: MenuEntry[] = groups([!isSelf && { label: 'Merge Another Identity In', icon: 'merge', run: () => setMerging(true) }, { label: 'Ask the Networks Again', icon: 'refresh', run: refresh }]);
+    const extra: MenuEntry[] = groups(
+      // One account's nickname is theirs (with several, each tile has its own).
+      ids.length === 1 && !first?.isBot ? nicknameEntries(first, () => setNaming(true)) : [],
+      [!isSelf && { label: 'Merge Another Identity In', icon: 'merge', run: () => setMerging(true) }, { label: 'Ask the Networks Again', icon: 'refresh', run: refresh }],
+    );
     // What the page already shows as a button is not repeated.
     const shown = new Set(['Profile', 'Message']);
     const items = (base?.items ?? [])
@@ -491,13 +506,14 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     return null;
   };
   const split = (i: P.IdentityView) => api(`/api/identities/${i.id}/split`, { body: {} }).then(() => toast({ kind: 'info', title: 'Split', body: `${i.displayName ?? i.handle ?? 'That identity'} is its own person again.` }));
-  const accountMenu = (i: P.IdentityView): MenuSpec => {
+  const accountMenu = (i: P.IdentityView, editNickname?: () => void): MenuSpec => {
     const r = reach(i);
     const link = externalProfile(i);
     return {
       label: `${identityName(i.id)} on ${netName(i.network)}`,
       items: groups(
         [r && { label: r.label, icon: i.network === 'email' ? 'mail' : 'send', run: r.run }],
+        nicknameEntries(i, editNickname),
         [
           { label: i.handle ? `Copy ${i.handle}` : 'Copy ID', icon: 'copy', run: () => copy(i.handle ?? i.nativeId, 'Copied') },
           !!i.handle && i.handle !== i.nativeId && { label: 'Copy ID', icon: 'copy', run: () => copy(i.nativeId, 'Copied') },
@@ -523,7 +539,10 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       banner={banner}
       accent={accent}
       title={
-        <h1>{name}</h1>
+        <h1>
+          {/* One account: their name is its name, and the pencil gives that account a nickname. */}
+          {!several && nicknamable(first) && !first.isBot ? <NicknamedName i={first} label={name} title={first.nickname ? `Your nickname for ${ownName(first)}` : name} editing={naming} setEditing={setNaming} class="pf-name" /> : name}
+        </h1>
       }
       sub={
         <span class="pf-handles">
@@ -621,7 +640,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           <div class="pf-acct-grid">
             {tiles.map((i) => {
               const r = reach(i);
-              return <AccountTile i={i} bio={bioOf.get(i.id)} since={sinceOf.get(i.id)} go={r?.run} goLabel={r?.label} menu={() => accountMenu(i)} />;
+              return <AccountTile i={i} bio={bioOf.get(i.id)} since={sinceOf.get(i.id)} go={r?.run} goLabel={r?.label} menu={(edit) => accountMenu(i, edit)} />;
             })}
           </div>
           {mergeUi}
@@ -827,9 +846,10 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
               <div class="pf-identity">
                 <NetBadge network={i.network} size={24} />
                 <span class="pf-row-text">
-                  <b>{i.displayName ?? i.handle ?? i.nativeId}</b>
+                  <b>{identityName(i.id)}</b>
                   <small>
                     {netName(i.network)} · {i.handle ?? i.nativeId}
+                    {i.nickname ? ` · their name: ${ownName(i)}` : ''}
                   </small>
                 </span>
                 {link && (

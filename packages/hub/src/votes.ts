@@ -18,7 +18,7 @@
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { ALERT_BAR, backtest, describe, emptyModel, isTier, OLD_VOTE, STOOD, STOOD_PER_PLACE, topWeights, train, validModel, voteWeight, words, features, type Example, type Facts, type Model, type Namer } from './learn.ts';
-import type { Store } from './store.ts';
+import { SHOWN, type Store } from './store.ts';
 import type { Triage } from './triage.ts';
 import { gatherOutcomes, implicitLabel } from './labels.ts';
 import { shadowSummary } from './shadow.ts';
@@ -371,7 +371,7 @@ export class TriageVotes {
       space: (id) => s.one<Row>('SELECT name FROM space WHERE id = ?', id)?.name ?? this.otherName('space', id) ?? 'a server',
       person: (id) =>
         s.one<Row>('SELECT name FROM person WHERE id = ?', id)?.name ??
-        s.one<Row>('SELECT COALESCE(display_name, handle, native_id) AS n FROM identity WHERE id = ?', id)?.n ??
+        s.one<Row>(`SELECT ${SHOWN} AS n FROM identity i WHERE id = ?`, id)?.n ??
         'someone',
       network: (id) => NETWORK_META[id as P.Network]?.name ?? id,
     };

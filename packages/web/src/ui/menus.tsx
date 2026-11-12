@@ -23,6 +23,7 @@ import { DEVICE_LEVELS } from './DeviceRules.tsx';
 import { forwarding } from './Forward.tsx';
 import { addLook } from './Reactions.tsx';
 import { Icon } from './icons.tsx';
+import { nicknameEntries } from './Nickname.tsx';
 import { openAbout } from './About.tsx';
 import { canIndex, startIndexing } from './Indexing.tsx';
 import { arrangeEntries, folderEntries, placeConvs } from './Organize.tsx';
@@ -495,7 +496,11 @@ export function identityMenu(identityId: string | null | undefined): MenuSpec | 
   if (!identityId) return null;
   const ident = db.identities.get(identityId);
   const person = ident?.personId ? db.persons.get(ident.personId) : null;
-  if (person) return personMenu(person);
+  // Their nickname is this account's (docs/chats.md, Names), so it goes with the person's entries.
+  if (person) {
+    const m = personMenu(person);
+    return { ...m, items: groups(m.items, nicknameEntries(ident)) };
+  }
   if (!ident) return null;
   const name = isSelfIdentity(identityId) ? 'You' : authorName(identityId);
   return {
@@ -506,6 +511,7 @@ export function identityMenu(identityId: string | null | undefined): MenuSpec | 
         { label: 'Profile', icon: 'user', run: () => openProfile(identityId) },
         !isSelfIdentity(identityId) && canStartDirect(ident.network) && { label: 'Message', icon: 'groups', run: () => messageSomeone(identityId) },
       ],
+      nicknameEntries(ident),
       identityCopies([ident]),
     ),
   };

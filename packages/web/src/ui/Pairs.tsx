@@ -316,49 +316,6 @@ export function PairLead({ person, directs, focus, onFocus }: { person: P.Person
   );
 }
 
-/** The person's name: click the pencil to give them a nickname, or to take it away (this hub only, nobody is told). */
-export function Nickname({ person, onOpen }: { person: P.PersonView; onOpen: () => void }) {
-  const [editing, setEditing] = useState(false);
-  // Left empty, the nickname goes: they are called what their accounts say again.
-  const save = async (name: string) => {
-    setEditing(false);
-    const v = name.trim();
-    if (v === person.name || (!v && person.nameSource !== 'user')) return;
-    await api(`/api/chats/person:${person.id}`, { method: 'PATCH', body: { name: v || null } }).catch((e) => toast({ kind: 'error', title: 'Could not save that', body: e.message }));
-  };
-  if (editing)
-    return (
-      <input
-        class="pair-nick-input"
-        value={person.nameSource === 'user' ? person.name : ''}
-        placeholder={person.name}
-        aria-label="Nickname"
-        title="Leave it empty to call them what their accounts say"
-        ref={(el) => {
-          if (el && document.activeElement !== el) {
-            el.focus();
-            el.select();
-          }
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') void save((e.target as HTMLInputElement).value);
-          if (e.key === 'Escape') setEditing(false);
-        }}
-        onBlur={(e) => void save((e.target as HTMLInputElement).value)}
-      />
-    );
-  return (
-    <>
-      <button class="conv-head-name" data-track="name" title={`${person.name}'s profile`} onClick={onOpen}>
-        {person.name}
-      </button>
-      <button class="pair-nick-edit" data-track="nickname" title={person.nameSource === 'user' ? 'Change or remove the nickname (only you see it)' : 'Give them a nickname (only you see it)'} aria-label="Nickname" onClick={() => setEditing(true)}>
-        ✎
-      </button>
-    </>
-  );
-}
-
 // ------------------------------------------------------------------ the page's parts
 
 /** What the page shows, per person this session: every route (the default) or one route's, picked from the list. */

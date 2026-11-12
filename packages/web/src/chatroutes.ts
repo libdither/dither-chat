@@ -96,7 +96,14 @@ export function tagText(t: Tells, n: RouteNames, side: Side): string {
   return '';
 }
 
-/** An account as a message head names it: its own name, and what identifies it on its network (a handle, else an id). */
+/**
+ * An account's name as you see it (docs/chats.md, Names): your nickname for it, else its display name, else its
+ * handle, else its id. A person's name is made of these on the hub, so it follows.
+ */
+export const accountName = (i: { nickname?: string | null; displayName?: string | null; handle?: string | null; nativeId: string }): string =>
+  i.nickname || i.displayName || i.handle || i.nativeId;
+
+/** An account as a message head names it: its name as you see it, and what identifies it on its network (a handle, else an id). */
 export interface HeadName {
   id: string;
   network: string;

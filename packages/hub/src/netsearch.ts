@@ -14,7 +14,7 @@ import type * as P from '@dither-chat/protocol';
 import { parseSearch } from '@dither-chat/protocol';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import { type Clock, realClock, sleep } from './clock.ts';
-import { markSnippet, type Store } from './store.ts';
+import { markSnippet, SHOWN, type Store } from './store.ts';
 
 type Row = Record<string, any>;
 
@@ -284,7 +284,7 @@ export class NetSearch {
 
   private directName(cid: string): string {
     const r = this.store.one<Row>(
-      `SELECT GROUP_CONCAT(COALESCE(i.display_name, i.handle, i.native_id), ', ') AS n FROM participant p JOIN identity i ON i.id = p.identity_id
+      `SELECT GROUP_CONCAT(${SHOWN}, ', ') AS n FROM participant p JOIN identity i ON i.id = p.identity_id
        WHERE p.conversation_id = ? AND i.id NOT IN (SELECT self_identity FROM account WHERE self_identity IS NOT NULL)`,
       cid,
     );

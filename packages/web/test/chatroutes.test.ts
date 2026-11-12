@@ -4,7 +4,7 @@
  * checked in a browser against the multiaccount demo.
  */
 import { expect, test } from 'bun:test';
-import { badgeDiffers, chatKey, groupChats, headIdents, labelText, leadTells, mergeRoutes, tagTells, tagText, tells, type HeadName, type RouteKey, type RoutePart } from '../src/chatroutes.ts';
+import { accountName, badgeDiffers, chatKey, groupChats, headIdents, labelText, leadTells, mergeRoutes, tagTells, tagText, tells, type HeadName, type RouteKey, type RoutePart } from '../src/chatroutes.ts';
 import { inboxSnapshot, inboxView, rank, type Ranked } from '../src/ordering.ts';
 
 const r = (id: string, network: string, theirs: string, mine: string): RouteKey => ({ id, network, theirs, mine });
@@ -174,4 +174,23 @@ test('the inbox lists a person of several routes once, under person:<id>, ranked
   const later = ranked.map((x) => (x.key === 'person:per_kit' ? { ...x, score: 1 } : x));
   const held = inboxSnapshot(later, { key: 'person:per_kit', prev: snap });
   expect(inboxView(held, later, () => true)[0]).toBe('person:per_kit');
+});
+
+test('an account goes by your nickname for it, and the handle rule compares the names as you see them', () => {
+  const mo = { nativeId: '1', handle: 'mo.codes', displayName: 'Mo' };
+  expect(accountName(mo)).toBe('Mo');
+  expect(accountName({ ...mo, nickname: 'Mo at work' })).toBe('Mo at work');
+  expect(accountName({ nativeId: '2', handle: 'mo.draws', displayName: null })).toBe('mo.draws');
+  expect(accountName({ nativeId: '3', displayName: '', handle: null })).toBe('3');
+  const head = (id: string, i: Parameters<typeof accountName>[0]): HeadName => ({ id, network: 'discord', name: accountName(i), ident: i.handle ?? i.nativeId });
+  // Both "Mo": the handle tells them apart. A nickname on one tells them apart already.
+  expect(headIdents([head('a', mo), head('b', { nativeId: '2', handle: 'mo.draws', displayName: 'Mo' })]).size).toBe(2);
+  expect(headIdents([head('a', { ...mo, nickname: 'Mo at work' }), head('b', { nativeId: '2', handle: 'mo.draws', displayName: 'Mo' })]).size).toBe(0);
+  // Two accounts you gave the same nickname are told apart again by their handles.
+  expect(headIdents([head('a', { ...mo, nickname: 'Momo' }), head('b', { nativeId: '2', handle: 'mo.draws', displayName: 'Mo', nickname: 'momo' })])).toEqual(
+    new Map([
+      ['a', 'mo.codes'],
+      ['b', 'mo.draws'],
+    ]),
+  );
 });

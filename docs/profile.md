@@ -15,7 +15,8 @@ command (`packages/protocol/src/about.ts` `PersonAbout`).
 ## The frame
 
 - **Hero.** A banner (their Discord banner, else their accent colour, else the network's), the picture overlapping it,
-  the name, then a line of what it is: a person's handle (click to copy), or for someone with several accounts their
+  the name (for a person of one account, with a pencil on hover for that account's nickname, also under More), then a
+  line of what it is: a person's handle (click to copy), or for someone with several accounts their
   networks' marks and "N accounts", which scrolls to them; a place's network, kind,
   member and channel counts. Tags under it: pronouns, Friend / In your contacts (with the networks' marks), You, Bot;
   for a place End-to-end encrypted, Age-restricted, Only admins send, your role there, Muted. A person's status line
@@ -34,12 +35,14 @@ bio in About, the account on the right. Someone with several gets **Accounts** a
 
 Left:
 - **Accounts**, for someone with several accounts (Kit's seven, Mo's two, yours): a tile each, grouped by network
-  (`AccountTile` in ui/Profile.tsx). Each has the account's own picture with its network's badge, its own name (its
-  display name, else handle, else id), its handle or address as a chip that copies, the network and since when
+  (`AccountTile` in ui/Profile.tsx). Each has the account's own picture with its network's badge, its name as you see
+  it (your nickname for it, else its display name, else handle, else id; with a nickname, the account's own name
+  beneath it, muted: "their name: kitty"), its handle or address as a chip that copies, the network and since when
   they are on it, and that account's bio (three lines, the network's stock lines left out). A button goes to the
   account: its chat (the person's page, sending there), else Start a chat on that network where an account of yours
-  can, else Email. ⋯, a right-click or a hold opens the account's menu: the same, Copy the handle and the id, Open on
-  the network, Split Into Its Own Person. The merge hint and search sit under the tiles. Before 2026-11-11 the hero
+  can, else Email. ⋯, a right-click or a hold opens the account's menu: the same, Set Nickname… (Change Nickname… and
+  Remove Nickname once it has one, editing the name on the tile in place; only you see it, docs/chats.md "Names"),
+  Copy the handle and the id, Open on the network, Split Into Its Own Person. The merge hint and search sit under the tiles. Before 2026-11-11 the hero
   had a chip per handle and the right column a plain row per identity, with one picture for the person.
 - **About**: each network's bio (on the account tiles instead, for someone with several), the longest first, labelled
   by network when there is more than one (a network's
@@ -67,7 +70,8 @@ Right:
 - **How you stand**: each of your accounts that has them on its list (friend, request sent, blocked, contact,
   following), from the accounts' own lists, else what a profile said, with Remove friend, Cancel request, Unblock,
   Remove contact or Unfollow where the account can; each asks first (docs/add.md, "Relationships").
-- **Accounts**, for someone with one account: it, with Open on the network; a hint when someone elsewhere has the
+- **Accounts**, for someone with one account: it (by its name as you see it, and its own beside the handle when you
+  gave it a nickname), with Open on the network; a hint when someone elsewhere has the
   same name, saying where ("Alice Chen on Signal", "Alice Chen <alice@…>"), and the merge search, which finds people by any name
   or handle (an email address too) and email addresses no person holds yet (`GET /api/persons/candidates`).
 - **Notifications**: Always alert, a person rule `all`: every message of theirs is an alert
