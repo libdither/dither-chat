@@ -182,18 +182,21 @@ describe('the store and the endpoint', () => {
     store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
     const d = store.createAccount({ network: 'discord', label: 'd', color: '#111', adapter: 'discord' });
     const m = store.createAccount({ network: 'matrix', label: 'm', color: '#111', adapter: 'matrix' });
-    store.ingest(d, { t: 'status', status: 'online', self: { nativeId: 'dme', isSelf: true } });
-    store.ingest(d, { t: 'space', space: { nativeId: GUILD, kind: 'community', name: 'Guild' } });
-    store.ingest(d, { t: 'conversation', conversation: { nativeId: GENERAL, shape: 'channel', name: 'general', spaces: [{ nativeId: GUILD }] } });
-    store.ingest(m, { t: 'status', status: 'online', self: { nativeId: '@me:x.org', isSelf: true } });
-    store.ingest(m, { t: 'space', space: { nativeId: '!space:x.org', kind: 'community', name: 'Matrix space' } });
-    store.ingest(m, { t: 'conversation', conversation: { nativeId: ROOM, shape: 'channel', name: 'room', spaces: [{ nativeId: '!space:x.org' }] } });
-    for (let i = 0; i < 500; i++) {
-      const ts = NOW - 50 * DAY + Math.floor(i * (50 * DAY / 500)) + shift;
-      const author = i % 10 === 0 ? sf(NOW - 3000 * DAY, 2) : `u${i % 7}`;
-      store.ingest(d, { t: 'message', message: { nativeId: sf(ts - shift, 100 + i), conversation: GENERAL, author, ts, body: 'x' } });
-    }
-    for (let i = 0; i < 30; i++) store.ingest(m, { t: 'message', message: { nativeId: `$e${i}`, conversation: ROOM, author: i < 3 ? '@ann:x.org' : '@bob:x.org', ts: now - i * DAY, body: 'y' } });
+    // One transaction: 536 writes, each its own commit and fsync, took over 5 s on a busy machine's disk.
+    store.db.transaction(() => {
+      store.ingest(d, { t: 'status', status: 'online', self: { nativeId: 'dme', isSelf: true } });
+      store.ingest(d, { t: 'space', space: { nativeId: GUILD, kind: 'community', name: 'Guild' } });
+      store.ingest(d, { t: 'conversation', conversation: { nativeId: GENERAL, shape: 'channel', name: 'general', spaces: [{ nativeId: GUILD }] } });
+      store.ingest(m, { t: 'status', status: 'online', self: { nativeId: '@me:x.org', isSelf: true } });
+      store.ingest(m, { t: 'space', space: { nativeId: '!space:x.org', kind: 'community', name: 'Matrix space' } });
+      store.ingest(m, { t: 'conversation', conversation: { nativeId: ROOM, shape: 'channel', name: 'room', spaces: [{ nativeId: '!space:x.org' }] } });
+      for (let i = 0; i < 500; i++) {
+        const ts = NOW - 50 * DAY + Math.floor(i * (50 * DAY / 500)) + shift;
+        const author = i % 10 === 0 ? sf(NOW - 3000 * DAY, 2) : `u${i % 7}`;
+        store.ingest(d, { t: 'message', message: { nativeId: sf(ts - shift, 100 + i), conversation: GENERAL, author, ts, body: 'x' } });
+      }
+      for (let i = 0; i < 30; i++) store.ingest(m, { t: 'message', message: { nativeId: `$e${i}`, conversation: ROOM, author: i < 3 ? '@ann:x.org' : '@bob:x.org', ts: now - i * DAY, body: 'y' } });
+    })();
     store.flush();
     hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
     port = hub.start().port!;

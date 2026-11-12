@@ -1,10 +1,7 @@
 /**
  * Index jobs (jobs.ts) and network search (netsearch.ts), against fake networks served a page or a search at a time.
  */
-import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
 import { Jobs, PAUSE_MS } from '../src/jobs.ts';
 import { BATCH, GAP_MS, HOURLY_CAP, NetSearch } from '../src/netsearch.ts';
@@ -12,17 +9,18 @@ import { mediaSigner } from '../src/server.ts';
 import { Store } from '../src/store.ts';
 import { FakeClock } from './fixtures/clock.ts';
 
-const dir = mkdtempSync(join(tmpdir(), 'dither-jobs-'));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
-
 const ME = '1';
 const PEER = '2';
 const minute = 60_000;
 const T0 = Date.UTC(2026, 4, 1);
 const n = (store: Store, sql: string, ...args: any[]) => (store.db.query(sql).get(...args) as any).n as number;
 
-function world(name: string, caps: P.Capability[] = ['history', 'walkMembers', 'search']) {
-  const store = new Store(join(dir, `${name}.sqlite`), mediaSigner('s'));
+/**
+ * In memory: the fake networks store each message on its own, 500 or so in a test, and on disk each was a commit and
+ * an fsync, over 5 s on a busy machine. Nothing here has to outlive the process.
+ */
+function world(caps: P.Capability[] = ['history', 'walkMembers', 'search']) {
+  const store = new Store(':memory:', mediaSigner('s'));
   let acc = store.createAccount({ id: 'acc_dc', network: 'discord', label: 'main', color: '#000', adapter: 'discord' });
   store.ingest(acc, { t: 'hello', network: 'discord', version: 'test', capabilities: caps });
   store.ingest(acc, { t: 'status', status: 'online', self: { nativeId: ME, isSelf: true } });
@@ -47,7 +45,7 @@ const hub = (store: Store, network: P.Network, kind: 'conversation' | 'space', n
 
 describe('index jobs', () => {
   test('page every channel of a server back to its start, then a repeat run fetches only what is new', async () => {
-    const { store, acc } = world('history');
+    const { store, acc } = world();
     const net = guild(store, acc, 'g1', 'Guild', ['c1', 'c2'], 250);
     // The hub has the newest 10 of c1 already, from live sync.
     for (const m of net.c1.slice(-10)) store.ingest(acc, { t: 'message', message: m, live: false });
@@ -81,14 +79,23 @@ describe('index jobs', () => {
     // A day later, three new messages in c1: the next run asks one page per channel and stops at the span.
     net.c1.push(...[0, 1, 2].map((i) => ({ nativeId: `c1-new${i}`, conversation: 'c1', author: PEER, ts: clock.now() + i, body: 'new' })));
     asked.length = 0;
-    await clock.until(() => jobs.get(v.id)!.state === 'done' && asked.length > 0, 26 * 3_600_000, 'the repeat');
+    // The loop is stopped while the clock skips to a minute before the repeat is due (stepping it through the day
+    // fired 17,000 empty ticks), then started: it waits for that minute, and then starts the run.
+    jobs.stop();
+    await clock.advance(done.nextRunAt! - minute - clock.now());
+    jobs.start();
+    await clock.settle();
+    expect(asked.length).toBe(0);
+    expect(jobs.get(v.id)!.state).toBe('done');
+    await clock.until(() => jobs.get(v.id)!.state === 'done' && asked.length > 0, 2 * minute, 'the repeat');
+    expect(clock.now()).toBeGreaterThanOrEqual(done.nextRunAt!);
     jobs.stop();
     expect(asked.length).toBe(2);
     expect(jobs.get(v.id)).toMatchObject({ fetched: 3, pages: 2 });
   });
 
   test('threads under a channel and every server in a folder are planned; a place no account can fetch is skipped', () => {
-    const { store, acc } = world('plan');
+    const { store, acc } = world();
     guild(store, acc, 'g1', 'One', ['a'], 0);
     guild(store, acc, 'g2', 'Two', ['b', 'c'], 0);
     store.ingest(acc, { t: 'conversation', conversation: { nativeId: 't1', shape: 'thread', name: 'a thread', parentConversation: 'a' } });
@@ -100,7 +107,7 @@ describe('index jobs', () => {
     const v = jobs.create({ target: { kind: 'folder', id: 'fld_x' }, history: true, members: true });
     expect(v).toMatchObject({ tasks: 6, skipped: 0, target: { name: 'Work', network: null } });
 
-    const { store: s2, acc: a2 } = world('plan-none', ['send']);
+    const { store: s2, acc: a2 } = world(['send']);
     guild(s2, a2, 'g1', 'One', ['a'], 0);
     const j2 = new Jobs(s2, { online: () => true, command: async () => null });
     const none = j2.create({ target: { kind: 'space', id: hub(s2, 'discord', 'space', 'g1') }, history: true, members: true });
@@ -109,7 +116,7 @@ describe('index jobs', () => {
     expect(j2.get(none.id)).toMatchObject({ state: 'failed', error: 'None of your accounts can fetch this.' });
 
     // A voice channel's chat is paged but has no threads to list; a forum's posts are threads, with no history of its own.
-    const { store: s3, acc: a3 } = world('plan-variants', ['history', 'listThreads']);
+    const { store: s3, acc: a3 } = world(['history', 'listThreads']);
     guild(s3, a3, 'g1', 'One', ['text'], 0);
     for (const [c, variant] of [['voice', 'voice'], ['forum', 'forum']] as const)
       s3.ingest(a3, { t: 'conversation', conversation: { nativeId: c, shape: 'channel', variant, name: c, spaces: [{ nativeId: 'g1-cat' }] } });
@@ -120,7 +127,7 @@ describe('index jobs', () => {
   });
 
   test('threads under a channel are listed, archived ones too, and each found gets its history paged', async () => {
-    const { store, acc } = world('threads', ['history', 'listThreads']);
+    const { store, acc } = world(['history', 'listThreads']);
     const net = guild(store, acc, 'g1', 'Guild', ['c1'], 5);
     // An archived thread under c1 the hub has never seen, with 3 messages.
     const thread: P.ConversationFact = { nativeId: 't9', shape: 'thread', name: 'old thread', parentConversation: 'c1' };
@@ -159,7 +166,7 @@ describe('index jobs', () => {
   });
 
   test('a member walk widens a prefix that came back full, and keeps who it listed', async () => {
-    const { store, acc } = world('members');
+    const { store, acc } = world();
     guild(store, acc, 'g1', 'Big', [], 0);
     // 150 people named a…, 30 named b…: '' and 'a' come back full.
     const people = [...Array.from({ length: 150 }, (_, i) => `a${String(i).padStart(3, '0')}`), ...Array.from({ length: 30 }, (_, i) => `b${i}`)];
@@ -195,7 +202,7 @@ describe('index jobs', () => {
   });
 
   test('a member walk pages the recent members to the end, and walks a server too big for them by name', async () => {
-    const { store, acc } = world('recent');
+    const { store, acc } = world();
     guild(store, acc, 'g1', 'Mid', [], 0);
     guild(store, acc, 'g2', 'Huge', [], 0);
     // g1: 2,390 members in pages of 1,000, newest first, each page's `next` its oldest member.
@@ -236,7 +243,7 @@ describe('index jobs', () => {
   });
 
   test('pausing holds a job; a restart carries on from the cursor', async () => {
-    const { store, acc } = world('pause');
+    const { store, acc } = world();
     const net = guild(store, acc, 'g1', 'Guild', ['c1'], 500);
     const clock = new FakeClock(T0 + 1000 * minute);
     let pages = 0;
@@ -269,7 +276,7 @@ describe('index jobs', () => {
 
 describe('network search', () => {
   test('asks the places jev ranks first, a few at a time and paced; keeps what it finds', async () => {
-    const { store, acc } = world('search');
+    const { store, acc } = world();
     const names = ['Rust', 'Climbing', 'Cooking', 'Speedrun', 'Music', 'Gardening', 'Chess', 'Films'];
     for (const [i, nm] of names.entries()) guild(store, acc, `g${i}`, nm, [`c${i}`], 0);
     // The Rust server has a message about lifetimes the hub has not stored.
@@ -313,7 +320,7 @@ describe('network search', () => {
   });
 
   test('a place Discord is still indexing is asked again after its wait, and if it still is, says so', async () => {
-    const { store, acc } = world('search-indexing');
+    const { store, acc } = world();
     guild(store, acc, 'g1', 'New', ['a'], 0);
     guild(store, acc, 'g2', 'Slow', ['b'], 0);
     const clock = new FakeClock(T0);
@@ -338,7 +345,7 @@ describe('network search', () => {
   });
 
   test('filters narrow the places; no capable account, deleted messages and an hourly cap say why', async () => {
-    const { store, acc } = world('search-filters');
+    const { store, acc } = world();
     guild(store, acc, 'g1', 'One', ['a'], 0);
     guild(store, acc, 'g2', 'Two', ['b'], 0);
     const clock = new FakeClock(T0);
@@ -354,7 +361,7 @@ describe('network search', () => {
     expect(ns.start('').note).toContain('Type');
     expect(ns.start('hello network:matrix').note).toContain('no place');
 
-    const { store: s2 } = world('search-none', ['history']);
+    const { store: s2 } = world(['history']);
     expect(new NetSearch(s2, { online: () => true, command: async () => null }).start('hi').note).toContain('None of your accounts');
 
     // Past the hourly cap, a place is held back rather than asked.

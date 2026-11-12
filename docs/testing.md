@@ -110,8 +110,12 @@ kill %1 %2 %3 %4                                                       # or let 
 - A `beforeAll` that times out under load is often many small writes, each its own transaction and its own fsync.
   On a busy disk one fsync can take tens of milliseconds; one transaction around the setup makes it one. When the
   writes are the code under test, one at a time (the media archiver's, in gapfill.test.ts), `PRAGMA synchronous = OFF`
-  on the test's database drops their fsyncs: nothing in a test has to outlive the process. `strace -f -c -e
-  trace=fsync bun test <file>` counts them.
+  on the test's database drops their fsyncs: nothing in a test has to outlive the process. A store the test never
+  opens again from its file can be `new Store(':memory:', …)`, with no disk at all (jobs.test.ts). `strace -f -c -e
+  trace=fsync bun test <file>` counts them, and `strace -f -w -c` shows the wall time they take.
+- A test clock moved hours on steps through every timer due on the way: a loop that looks for work every 5 s fires
+  17,000 times in a day, each with a few turns of the event loop and its queries (0.6 s of jobs.test.ts's repeat run).
+  Stop the loop, `advance` the clock to just before what the test waits for, then start the loop again.
 
 ### The hygiene check
 
