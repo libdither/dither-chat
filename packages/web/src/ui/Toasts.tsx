@@ -84,6 +84,7 @@ function ToastItem({ t }: { t: Toast }) {
         <span>{t.body}</span>
         {t.reasons && t.reasons.length > 0 && <small class="toast-reason">{t.reasons[0]}</small>}
       </span>
+      {t.actionLabel && <span class="toast-action">{t.actionLabel}</span>}
       <span
         class="toast-x"
         role="button"

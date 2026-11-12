@@ -17,6 +17,7 @@ import type { Triage } from './triage.ts';
 import type { ActivityStore } from './activity.ts';
 import { requestHeld } from './add.ts';
 import { noteWork } from './stalls.ts';
+import { foldMark, NEEDS_HOLD } from './replymarks.ts';
 import { DEFAULT_OWED_TABLE, fitOwedTable, OWED_SHOWN, owedChance, rateBucket, turnRate, validTable, type OwedTable, type OwedTurn } from './owed.ts';
 
 type Row = Record<string, any>;
@@ -50,10 +51,13 @@ export interface Tally {
   addressed: number;
   replied: number;
   latency: number[];
+  /** Turns you marked "No reply needed": not addressed, not answered, counted apart (replymarks.ts). */
+  dismissed?: number;
 }
 export const emptyTally = (): Tally => ({ at: 0, addressed: 0, replied: 0, latency: LATENCY_EDGES.map(() => 0) });
 
-export type OwedKind = 'direct' | 'mention' | 'reply' | 'question' | 'answer';
+/** How a turn came to be owed; `marked`: you marked one of its messages "Reply needed". */
+export type OwedKind = 'direct' | 'mention' | 'reply' | 'question' | 'answer' | 'marked';
 
 /** Messages from others since your last one; `addressed` is the first of them meant for you. */
 export interface Turn {
@@ -63,6 +67,8 @@ export interface Turn {
   kind: OwedKind | null;
   author: string | null;
   authorKey: string | null;
+  /** When you marked one of its messages "Reply needed": owed in full for NEEDS_HOLD from then, until you answer. */
+  held?: number | null;
 }
 
 export interface ConvState {
@@ -117,6 +123,10 @@ export interface FoldMessage {
   ignore: boolean;
   /** You reacted to it: an answer, as far as what you owe goes. */
   reactedByMe?: boolean;
+  /** You marked it "No reply needed": what was owed up to it is settled, as dismissed (replymarks.ts). */
+  clearedByMe?: boolean;
+  /** You marked it "Reply needed", at this time: the turn is held (replymarks.ts). */
+  neededByMe?: number | null;
 }
 
 export interface Place {
@@ -149,18 +159,30 @@ const bucketOf = (latency: number) => {
  */
 export function record(t: Tally, when: number, latency: number | null, timed = true) {
   let w = 1;
-  if (when >= t.at) {
-    const f = toward(t.at, when);
-    t.addressed *= f;
-    t.replied *= f;
-    t.latency = t.latency.map((x) => x * f);
-    t.at = when;
-  } else w = toward(when, t.at);
+  if (when >= t.at) decayTo(t, when);
+  else w = toward(when, t.at);
   t.addressed += w;
   if (latency !== null && latency <= REPLY_WINDOW) {
     t.replied += w;
     if (timed) t.latency[bucketOf(Math.max(0, latency))] += w;
   }
+}
+
+function decayTo(t: Tally, when: number) {
+  const f = toward(t.at, when);
+  t.addressed *= f;
+  t.replied *= f;
+  t.latency = t.latency.map((x) => x * f);
+  if (t.dismissed) t.dismissed *= f;
+  t.at = when;
+}
+
+/** Count one turn you marked "No reply needed", at `when`: apart from addressed and answered. */
+export function recordDismissed(t: Tally, when: number) {
+  if (when >= t.at) {
+    decayTo(t, when);
+    t.dismissed = (t.dismissed ?? 0) + 1;
+  } else t.dismissed = (t.dismissed ?? 0) + toward(when, t.at);
 }
 
 /** Whether a message from someone else is meant for you, and how. */
@@ -182,6 +204,8 @@ export interface Settled {
   authorKey: string | null;
   answeredAt: number | null;
   timed: boolean;
+  /** You marked it "No reply needed". */
+  dismissed?: boolean;
 }
 export type OnSettle = (t: Settled) => void;
 
@@ -219,7 +243,8 @@ export function foldMessage(s: ConvState, tallyOf: (key: string) => Tally, m: Fo
     s.pushed += w;
     if (!s.lastPush || m.ts >= s.lastPush.ts) s.lastPush = { ts: m.ts, id: m.id };
   }
-  const kind = addressedKind(m, place, s);
+  // A message you marked "Reply needed" is meant for you, whatever else it is.
+  const kind = addressedKind(m, place, s) ?? (m.neededByMe != null && !m.bot && place.shape !== 'self' ? 'marked' : null);
   s.lastWasMine = false;
   s.turn ??= { since: m.ts, count: 0, addressed: null, kind: null, author: null, authorKey: null };
   s.turn.count++;
@@ -231,6 +256,7 @@ export function foldMessage(s: ConvState, tallyOf: (key: string) => Tally, m: Fo
   }
   if (s.turn.addressed === null) Object.assign(s.turn, { addressed: m.ts, kind, author: m.author, authorKey: m.authorKey });
   acknowledge(s, tallyOf, m, onSettle);
+  if (m.neededByMe != null && s.turn) s.turn.held = Math.max(s.turn.held ?? 0, m.neededByMe);
 }
 
 /**
@@ -239,8 +265,22 @@ export function foldMessage(s: ConvState, tallyOf: (key: string) => Tally, m: Fo
  * counts toward how often you answer, not how fast.
  */
 function acknowledge(s: ConvState, tallyOf: (key: string) => Tally, m: FoldMessage, onSettle?: OnSettle) {
-  if (!m.reactedByMe || s.turn?.addressed == null) return;
-  settle(s, tallyOf, m.ts, false, onSettle);
+  if (s.turn?.addressed == null) return;
+  if (m.reactedByMe) {
+    settle(s, tallyOf, m.ts, false, onSettle);
+    s.turn = null;
+  } else if (m.clearedByMe) dismiss(s, tallyOf, m, onSettle);
+}
+
+/**
+ * "No reply needed" on a message settles what was owed up to it, as a reaction does, but as dismissed: it counts
+ * neither as addressed nor as answered, so how often you answer is what you answer of what you meant to.
+ */
+function dismiss(s: ConvState, tallyOf: (key: string) => Tally, m: FoldMessage, onSettle?: OnSettle) {
+  const t = s.turn!;
+  recordDismissed(s.tally, m.ts);
+  if (t.authorKey) recordDismissed(tallyOf(t.authorKey), m.ts);
+  onSettle?.({ addressed: t.addressed!, kind: t.kind, authorKey: t.authorKey, answeredAt: null, timed: false, dismissed: true });
   s.turn = null;
 }
 
@@ -266,7 +306,7 @@ export function lateTriage(s: ConvState, place: Place, m: Pick<FoldMessage, 'id'
 /** A tally as seen from `now`. */
 export function tallyAt(t: Tally, now: number): Tally {
   const f = toward(t.at, Math.max(now, t.at));
-  return { at: Math.max(now, t.at), addressed: t.addressed * f, replied: t.replied * f, latency: t.latency.map((x) => x * f) };
+  return { at: Math.max(now, t.at), addressed: t.addressed * f, replied: t.replied * f, latency: t.latency.map((x) => x * f), ...(t.dismissed ? { dismissed: t.dismissed * f } : {}) };
 }
 
 export function sumTallies(ts: Tally[], now: number): Tally {
@@ -275,6 +315,7 @@ export function sumTallies(ts: Tally[], now: number): Tally {
   for (const t of ts.map((x) => tallyAt(x, now))) {
     out.addressed += t.addressed;
     out.replied += t.replied;
+    if (t.dismissed) out.dismissed = (out.dismissed ?? 0) + t.dismissed;
     t.latency.forEach((x, i) => (out.latency[i] += x));
   }
   return out;
@@ -438,8 +479,8 @@ export interface Scored {
   relationship: number;
   /** When the turn you owe began, while its chance is worth showing (OWED_SHOWN); null otherwise. */
   owedSince: number | null;
-  /** The open turn as weighed: its age, your reply rate there, and the chance you still answer it in time. */
-  owed: { age: number; rate: number; chance: number } | null;
+  /** The open turn as weighed: its age, your reply rate there, and the chance you still answer it in time (1 while held). */
+  owed: { age: number; rate: number; chance: number; held?: boolean } | null;
 }
 
 export function noiseOf(s: ConvState, usage: ScoreInput['usage'], now: number): Noise {
@@ -509,7 +550,9 @@ export function scoreConversation(x: ScoreInput): Scored {
     let rate = turnRate(conv, person);
     if (x.judged) rate = (rate + x.judged.needsReply) / 2;
     const age = Math.max(0, now - turn.addressed!);
-    owed = { age, rate, chance: owedChance(x.owedTable ?? DEFAULT_OWED_TABLE, x.shape, rate, age) };
+    // Marked "Reply needed": owed in full, at any age, for a week from the mark.
+    const held = turn.held != null && now - turn.held < NEEDS_HOLD;
+    owed = { age, rate, chance: held ? 1 : owedChance(x.owedTable ?? DEFAULT_OWED_TABLE, x.shape, rate, age), ...(held ? { held: true } : {}) };
   }
   const owedSince = turn && owed && owed.chance >= OWED_SHOWN ? turn.addressed : null;
 
@@ -529,11 +572,12 @@ export function scoreConversation(x: ScoreInput): Scored {
     const who = x.authorName ?? (x.shape === 'direct' ? 'They' : 'Someone');
     const since = duration(owedAge);
     let text: string;
-    if (personUsual !== null) text = `You usually reply to ${who} within ${duration(personUsual)}; unanswered for ${since}`;
+    if (owed.held) text = `You marked it Reply needed; unanswered for ${since}`;
+    else if (personUsual !== null) text = `You usually reply to ${who} within ${duration(personUsual)}; unanswered for ${since}`;
     else if (usual !== null) text = `You usually reply here within ${duration(usual)}; unanswered for ${since}`;
     else if ((person?.addressed ?? 0) >= 3) text = `You reply to ${who} ${p >= 0.7 ? 'most of the time' : p >= 0.35 ? 'about half the time' : 'rarely'}; unanswered for ${since}`;
     else {
-      const did = { direct: 'wrote to you', mention: 'mentioned you', reply: 'replied to you', question: 'asked the group something', answer: 'answered you' }[turn.kind ?? 'direct'];
+      const did = { direct: 'wrote to you', mention: 'mentioned you', reply: 'replied to you', question: 'asked the group something', answer: 'answered you', marked: 'wrote' }[turn.kind ?? 'direct'];
       text = `${who} ${did} ${since} ago; not answered yet`;
     }
     reasons.push({ w: parts.owed, text });
@@ -660,7 +704,8 @@ const FOLD_SQL = `
   SELECT m.id, m.rowid AS rid, m.ts, m.author_id, m.mentions_self, m.mentions_all, m.kind, m.deleted, i.is_bot, i.person_id,
          r.author_id AS reply_author,
          EXISTS (SELECT 1 FROM reaction x JOIN identity xi ON xi.id = x.identity_id LEFT JOIN person xp ON xp.id = xi.person_id
-                 WHERE x.message_id = m.id AND (xp.is_self = 1 OR xi.id IN (SELECT self_identity FROM account))) AS reacted, t.decision IN ('push', 'quiet', 'digest') AS pushed, t.reasons LIKE '%asks a question%' AS question
+                 WHERE x.message_id = m.id AND (xp.is_self = 1 OR xi.id IN (SELECT self_identity FROM account))) AS reacted, t.decision IN ('push', 'quiet', 'digest') AS pushed, t.reasons LIKE '%asks a question%' AS question,
+         (SELECT rm.mark || ':' || rm.at FROM reply_mark rm WHERE rm.message_id = m.id AND rm.undone_at IS NULL) AS reply_mark
   FROM message m
   LEFT JOIN identity i ON i.id = m.author_id
   LEFT JOIN message r ON r.id = m.reply_to_id
@@ -672,7 +717,7 @@ const LISTED = `(c.shape IN ('direct', 'group', 'self') OR (c.shape = 'channel' 
   SELECT 1 FROM space_edge e WHERE e.child_kind = 'conversation' AND e.child_id = c.id)))`;
 
 const sameView = (a: P.AttentionView, b: P.AttentionView) =>
-  Math.abs(a.score - b.score) < 0.5 && a.needs === b.needs && a.owedSince === b.owedSince && a.reasons.join('\n') === b.reasons.join('\n');
+  Math.abs(a.score - b.score) < 0.5 && a.needs === b.needs && a.owedSince === b.owedSince && a.replyMark === b.replyMark && a.reasons.join('\n') === b.reasons.join('\n');
 
 export class Attention {
   /** What the inbox lists, as last computed. */
@@ -724,8 +769,8 @@ export class Attention {
   /** Every turn the fold closed, and those still open: what the owed table is fitted on. */
   owedTurns(): OwedTurn[] {
     const db = this.store.db;
-    const out = (db.query(`SELECT conversation_id, shape, author_key, addressed, answered_at, timed FROM owed_turn`).all() as Row[]).map(
-      (r): OwedTurn => ({ conversationId: r.conversation_id, shape: r.shape, authorKey: r.author_key, addressed: r.addressed, answeredAt: r.answered_at, timed: !!r.timed }),
+    const out = (db.query(`SELECT conversation_id, shape, author_key, addressed, answered_at, timed, dismissed FROM owed_turn`).all() as Row[]).map(
+      (r): OwedTurn => ({ conversationId: r.conversation_id, shape: r.shape, authorKey: r.author_key, addressed: r.addressed, answeredAt: r.answered_at, timed: !!r.timed, ...(r.dismissed ? { dismissed: true } : {}) }),
     );
     const open = db
       .query(
@@ -810,6 +855,7 @@ export class Attention {
           pushed: !!r.pushed,
           ignore: !!r.deleted || r.kind === 'system',
           reactedByMe: !!r.reacted,
+          ...foldMark(r.reply_mark),
         },
         place,
         (t) => closed.push(t),
@@ -822,8 +868,8 @@ export class Attention {
          ON CONFLICT (conversation_id) DO UPDATE SET cursor_ts = excluded.cursor_ts, cursor_rid = excluded.cursor_rid, state = excluded.state`,
       ).run(cid, last.ts, last.rid, JSON.stringify(s));
       for (const [key, t] of authors) db.query('INSERT OR REPLACE INTO conv_author_feature (conversation_id, author_key, tally) VALUES (?, ?, ?)').run(cid, key, JSON.stringify(t));
-      const put = db.query('INSERT OR REPLACE INTO owed_turn (conversation_id, addressed, shape, author_key, answered_at, timed) VALUES (?, ?, ?, ?, ?, ?)');
-      for (const t of closed) put.run(cid, t.addressed, place.shape, t.authorKey, t.answeredAt, +t.timed);
+      const put = db.query('INSERT OR REPLACE INTO owed_turn (conversation_id, addressed, shape, author_key, answered_at, timed, dismissed) VALUES (?, ?, ?, ?, ?, ?, ?)');
+      for (const t of closed) put.run(cid, t.addressed, place.shape, t.authorKey, t.answeredAt, +t.timed, +!!t.dismissed);
     })();
     return rows.length;
   }
@@ -1012,6 +1058,8 @@ export class Attention {
         lastSent: f.lastSent,
         replyRate: replyRate(tallyAt(f.tally, now), 0, 1),
         usualReply: medianLatency(tallyAt(f.tally, now)),
+        // Turns you marked "No reply needed" here, decayed as the rest.
+        dismissed: Math.round((tallyAt(f.tally, now).dismissed ?? 0) * 100) / 100,
         owedKind: f.turn?.kind ?? null,
       },
       owed: s.owed && {
@@ -1043,7 +1091,7 @@ export class Attention {
     // Lifted to learn about it: that comes first, since it is why the row is where it is.
     const reasons = !r?.reason ? s.reasons : r.reason === EXPLORE_REASON ? [r.reason, ...s.reasons.slice(0, 3)] : [...s.reasons.slice(0, 3), r.reason];
     // An alert you have not seen comes before everything, whatever the order learned.
-    return { id: cid, score: (r ? r.score : s.score) + (x.alerted ? ALERT_PIN : 0), needs: s.needs, reasons, owedSince: s.owedSince, at: now };
+    return { id: cid, score: (r ? r.score : s.score) + (x.alerted ? ALERT_PIN : 0), needs: s.needs, reasons, owedSince: s.owedSince, ...(s.owed?.held ? { replyMark: 'needs' as const } : {}), at: now };
   }
 
   /** The view if it changed, 'removed' if the inbox no longer lists it, null if nothing changed. */

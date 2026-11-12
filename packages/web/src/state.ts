@@ -108,6 +108,8 @@ export interface Toast {
   network?: P.Network;
   /** Where a tap goes, for a toast that is not about a conversation. */
   action?: () => void;
+  /** What the tap does, shown on the toast ("Undo"). */
+  actionLabel?: string;
 }
 export const toasts = signal<Toast[]>([]);
 let toastSeq = 0;

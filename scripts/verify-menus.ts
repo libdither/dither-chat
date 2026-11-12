@@ -146,7 +146,8 @@ await p.until(`!!document.querySelector('#m-${triaged.id} .msg-body')`, 15000);
 await Bun.sleep(400);
 const markAt = (await center(`#m-${triaged.id} .msg-body`))!;
 /** The marks in the open menu: each entry's words and whether it is ticked. */
-const marksShown = () => p.eval<string[]>(`[...document.querySelectorAll('.cm .cm-item[role=menuitemcheckbox]')].map((e) => e.querySelector('.cm-text').textContent + (e.getAttribute('aria-checked') === 'true' ? ' ✓' : ''))`);
+// (Reply marks, "No reply needed" and "Reply needed", are a group of their own before them: verify-reply-marks.ts.)
+const marksShown = () => p.eval<string[]>(`[...document.querySelectorAll('.cm .cm-item[role=menuitemcheckbox]')].map((e) => e.querySelector('.cm-text').textContent + (e.getAttribute('aria-checked') === 'true' ? ' ✓' : '')).filter((t) => !/^(No reply needed|Reply needed)/.test(t))`);
 await rightClick(markAt.x, markAt.y);
 const withMarks = await labels();
 console.log('     triaged message menu:', withMarks.join(' | '));

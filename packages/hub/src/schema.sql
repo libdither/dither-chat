@@ -454,6 +454,23 @@ CREATE TABLE IF NOT EXISTS conv_author_feature (
 CREATE INDEX IF NOT EXISTS conv_author_feature_author ON conv_author_feature(author_key);
 -- Every turn addressed to you that the fold closed (attention.ts, owed.ts): when it began, whether and when you
 -- answered, so the owed table can be fitted. Rebuilt with the conversation's features; times and keys only.
+-- Your marks on whether a message needs a reply (replymarks.ts, docs/inbox.md "Marks"): none or needs. One per
+-- message (a chat message, or mail's with target_kind 'mail'); undone ones are kept with undone_at. `origin_id` is the
+-- mark you made when this row was made for another route of the same chat. Not part of the activity log.
+CREATE TABLE IF NOT EXISTS reply_mark (
+  message_id      TEXT PRIMARY KEY,
+  target_kind     TEXT NOT NULL DEFAULT 'message',   -- message, mail
+  conversation_id TEXT NOT NULL,                     -- its conversation, or mail thread
+  mark            TEXT NOT NULL,                     -- none, needs
+  at              INTEGER NOT NULL,
+  surface         TEXT,                              -- row, message, notification
+  device          TEXT,
+  undone_at       INTEGER,
+  origin_id       TEXT
+);
+CREATE INDEX IF NOT EXISTS reply_mark_conversation ON reply_mark(conversation_id);
+CREATE INDEX IF NOT EXISTS reply_mark_origin ON reply_mark(origin_id) WHERE origin_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS owed_turn (
   conversation_id TEXT NOT NULL,
   addressed       INTEGER NOT NULL,            -- its first message for you
@@ -461,6 +478,7 @@ CREATE TABLE IF NOT EXISTS owed_turn (
   author_key      TEXT,
   answered_at     INTEGER,                     -- your answer (or the message you reacted to); NULL: it ran out
   timed           INTEGER NOT NULL DEFAULT 1,  -- 0: a reaction answered it, at no known time
+  dismissed       INTEGER NOT NULL DEFAULT 0,  -- 1: you marked it "No reply needed" (reply_mark)
   PRIMARY KEY (conversation_id, addressed)
 ) WITHOUT ROWID;
 

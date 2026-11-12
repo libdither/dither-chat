@@ -47,7 +47,7 @@ import { Icon } from './icons.tsx';
 import { phone } from '../phone.ts';
 import { dropPlace, openPlaceMenu, placeLabel } from './Organize.tsx';
 import { contextMenu, Menuable, onMenu, openMenu, useMenu, type MenuEntry } from './ContextMenu.tsx';
-import { accountMenu, chatMenu, conversationMenu, folderMenuSpec, personMenu, spaceMenu, WhyHere } from './menus.tsx';
+import { accountMenu, chatMenu, conversationMenu, folderMenuSpec, owedEntries, personMenu, spaceMenu, WhyHere } from './menus.tsx';
 import { pickedRoute } from './Pairs.tsx';
 import { chatKey } from '../chatroutes.ts';
 import { groups, type MenuSpec } from './ContextMenu.tsx';
@@ -163,7 +163,7 @@ export const ConvRow = memo(function ConvRow({ c, active, onClick, showPlace = t
   const place = showPlace ? placeLine(c) : '';
   const isChannel = c.shape === 'channel' || c.shape === 'thread';
   const com = communitiesOf(c)[0];
-  const ctx = useMenu(() => (chat ? chatMenu(chat.person, chat.routes, why) : conversationMenu(c, why)));
+  const ctx = useMenu(() => (chat ? chatMenu(chat.person, chat.routes, why, owedSince) : conversationMenu(c, why, owedSince)));
   return (
     <button
       class={`row conv-row ${active ? 'active' : ''} ${u.unread ? 'unread' : ''} ${u.muted ? 'muted' : ''}`}
@@ -232,12 +232,12 @@ function chatOpens(personId: string): string | undefined {
 }
 
 /** A thread's menu in the inbox: why it is here, where it lives in Mail, and whether it is from a person. */
-function mailRowMenu(t: P.MailThreadView, why?: string[]): MenuSpec {
+function mailRowMenu(t: P.MailThreadView, why?: string[], owedSince?: number | null): MenuSpec {
   const title = t.subject || '(no subject)';
   return {
     label: `${title} actions`,
     head: <div class="cm-sheet-title">{title}</div>,
-    items: groups(why?.length ? [{ kind: 'row', render: () => <WhyHere reasons={why} /> }] : [], [{ label: 'Open in Mail', icon: 'mail', run: () => go({ view: 'mail', thread: t.id }) }], personItems([t])),
+    items: groups(why?.length ? [{ kind: 'row', render: () => <WhyHere reasons={why} /> }] : [], owedEntries('mail', [t.id], owedSince), [{ label: 'Open in Mail', icon: 'mail', run: () => go({ view: 'mail', thread: t.id }) }], personItems([t])),
   };
 }
 
@@ -250,7 +250,7 @@ export const MailRow = memo(function MailRow({ id, active, why, owedSince }: { i
   mailRev.value;
   metaRev.value;
   const t = db.mail.threads.get(id);
-  const ctx = useMenu(() => (t ? mailRowMenu(t, why) : null));
+  const ctx = useMenu(() => (t ? mailRowMenu(t, why, owedSince) : null));
   if (!t) return null;
   const other = [...t.from].reverse().find((f) => !f.self) ?? t.from[t.from.length - 1];
   const person = other?.personId ? db.persons.get(other.personId) : undefined;

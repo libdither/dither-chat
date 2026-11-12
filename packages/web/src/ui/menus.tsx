@@ -6,6 +6,7 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, RULE_LABEL, RULE_LEVELS, showsInline } from '@dither-chat/protocol';
 import { fullTime } from '../format.ts';
 import { noteRowRead } from '../activity.ts';
+import { markMessage, markRow, replyMarkEntries } from '../replymarks.ts';
 import { AUTOMATIC, OLDER_RULE, authorName, convTitle, deepLink, directsOf, effectiveLevel, externalProfile, heldHere, netName, plainBody, ruleOn, sumUnread, unreadOf, type Level } from '../model.ts';
 import { deviceRule, myDevice, setDeviceRule } from '../devices.ts';
 import { android } from '../android.ts';
@@ -147,7 +148,12 @@ function markEntries(m: P.MessageView): MenuEntry[] {
   ];
 }
 
-/** `marks` false leaves the two marks out: the phone's sheet has them under the reasons (`TriageFoot`). */
+/** Whether it needs a reply, on any message from someone else (docs/inbox.md, "Marks"). */
+function replyEntries(m: P.MessageView): MenuEntry[] {
+  return !isSelfIdentity(m.authorId) && !m.deleted && m.kind !== 'system' ? replyMarkEntries(m.replyMark, (mark) => void markMessage(m, mark)) : [];
+}
+
+/** `marks` false leaves the two triage marks out: the phone's sheet has them under the reasons (`TriageFoot`). */
 function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): MenuEntry[] {
   const scope = reactionScope(m.conversationId);
   const self = isSelfIdentity(m.authorId);
@@ -190,6 +196,7 @@ function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): M
       m.authorId && { label: self ? 'Your Profile' : 'Profile', icon: 'user', track: 'profile', run: () => openProfile(m.authorId) },
       hasHistory(m) && { label: 'Message History', icon: 'clock', track: 'history', run: () => (historyOf.value = m) },
     ],
+    replyEntries(m),
     marks ? markEntries(m) : [],
     // Google Messages has no unsend: a delete only takes it off your phone.
     [canDelete(m) && { label: m.network === 'gmessages' ? 'Delete From Your Phone' : 'Delete Message', icon: 'trash', hint: 'Del', danger: true, track: 'delete', run: () => deleteMessage(m) }],
@@ -322,8 +329,18 @@ export function WhyHere({ reasons }: { reasons: string[] }) {
   );
 }
 
-/** `why`: the inbox's reasons for where this row sits (docs/inbox.md), shown first. */
-export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpec {
+/**
+ * A row that shows a reply you owe (↩): "No reply needed" and "Reply needed" (ticked while held), under "Why it's here"
+ * (docs/inbox.md, "Marks"). For a chat of several routes they act on the whole chat.
+ */
+export function owedEntries(kind: 'conversation' | 'mail', ids: string[], owedSince: number | null | undefined): MenuEntry[] {
+  if (owedSince == null) return [];
+  const held = ids.some((id) => db.attention.get(id)?.replyMark === 'needs');
+  return replyMarkEntries(held ? 'needs' : null, (mark) => void markRow(kind, ids, mark, held));
+}
+
+/** `why`: the inbox's reasons for where this row sits (docs/inbox.md), shown first; `owedSince`: the row's ↩. */
+export function conversationMenu(c: P.ConversationView, why?: string[], owedSince?: number | null): MenuSpec {
   const eff = effectiveLevel(c);
   const own = ruleOn('conversation', c.id);
   const muted = own === 'none';
@@ -337,6 +354,7 @@ export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpe
     head: <div class="cm-sheet-title">{convTitle(c)}</div>,
     items: groups(
       why?.length ? [{ kind: 'row', render: () => <WhyHere reasons={why} /> }] : [],
+      owedEntries('conversation', [c.id], owedSince),
       [{ label: 'Mark As Read', icon: 'check', disabled: !unreadOf(c).unread, run: () => (noteRowRead('conversation', [c.id]), markRead(c.id)) }],
       [
         person && { label: 'Profile', icon: 'user', run: () => go({ view: 'profile', person: person.id }) },
@@ -363,7 +381,7 @@ export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpe
  * The inbox's row for a person reached by several routes (model.ts): its actions act on the whole chat. Mark As Read
  * reads every route, Mute and the rule go on each, search looks in every chat with them.
  */
-export function chatMenu(p: P.PersonView, routes: P.ConversationView[], why?: string[]): MenuSpec {
+export function chatMenu(p: P.PersonView, routes: P.ConversationView[], why?: string[], owedSince?: number | null): MenuSpec {
   const rules = routes.map((c) => ruleOn('conversation', c.id));
   // The rule they all have, if they agree; otherwise none is shown as set.
   const own = rules.every((r) => r === rules[0]) ? rules[0] : null;
@@ -374,6 +392,7 @@ export function chatMenu(p: P.PersonView, routes: P.ConversationView[], why?: st
     head: <div class="cm-sheet-title">{p.name}</div>,
     items: groups(
       why?.length ? [{ kind: 'row', render: () => <WhyHere reasons={why} /> }] : [],
+      owedEntries('conversation', ids, owedSince),
       [{ label: 'Mark As Read', icon: 'check', disabled: !routes.some((c) => unreadOf(c).unread), run: () => (noteRowRead('conversation', ids), routes.forEach((c) => markRead(c.id))) }],
       [
         { label: 'Profile', icon: 'user', run: () => go({ view: 'profile', person: p.id }) },

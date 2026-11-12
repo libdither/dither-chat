@@ -21,6 +21,7 @@ import type * as P from '@dither-chat/protocol';
 import { decayed } from '@dither-chat/protocol';
 import { ALERT_PIN, emptyTally, foldMessage, freshState, PIN_FOR, scoreConversation, sumTallies, type Attention, type AttentionSource, type ConvState, type FoldMessage, type Place, type ScoreInput, type Scored, type Tally } from '../attention.ts';
 import type { Store } from '../store.ts';
+import { foldMark } from '../replymarks.ts';
 import { mailClassifier } from './classify.ts';
 import type { MailHub } from './index.ts';
 import type { MailRouter } from './routes.ts';
@@ -160,6 +161,11 @@ export class MailAttention implements AttentionSource {
     if (ids.length === 300) this.later(20);
   }
 
+  /** A reply mark on this thread changed: fold it again at the next flush. */
+  marked(threadId: string) {
+    this.touch(threadId, true);
+  }
+
   private touch(threadId: string, refold: boolean) {
     if (refold) this.refold.add(threadId);
     this.pending.add(threadId);
@@ -188,6 +194,12 @@ export class MailAttention implements AttentionSource {
     const mine = ms.filter((m) => m.addressed === 'self' && !m.draft);
     const mineIds = new Set(mine.map((m) => m.message_id_hdr).filter(Boolean));
     const facts = this.triageFacts(ms.map((m) => m.id));
+    // Your reply marks (replymarks.ts): "No reply needed" settles, "Reply needed" holds, as in a chat.
+    const marks = new Map(
+      this.hub.store
+        .all<{ message_id: string; v: string }>(`SELECT message_id, mark || ':' || at AS v FROM reply_mark WHERE target_kind = 'mail' AND conversation_id = ? AND undone_at IS NULL`, threadId)
+        .map((r) => [r.message_id, r.v]),
+    );
     const list: FoldMessage[] = ms
       .filter((m) => !m.draft)
       .map((m) => ({
@@ -203,6 +215,7 @@ export class MailAttention implements AttentionSource {
         question: !!facts.get(m.id)?.question,
         pushed: !!facts.get(m.id)?.pushed,
         ignore: false,
+        ...foldMark(marks.get(m.id)),
       }));
     const sentAt = feature?.sent_at ?? null;
     if (sentAt && !mine.some((m) => m.received_at >= sentAt - SENT_SLACK)) {
@@ -336,7 +349,7 @@ export class MailAttention implements AttentionSource {
     if (!x) return null;
     const s = scoreConversation(x);
     // An alert you have not seen comes before everything (attention.ts).
-    return { id: threadId, kind: 'mail', score: s.score + (x.alerted ? ALERT_PIN : 0), needs: s.needs, reasons: s.reasons, owedSince: s.owedSince, at: now };
+    return { id: threadId, kind: 'mail', score: s.score + (x.alerted ? ALERT_PIN : 0), needs: s.needs, reasons: s.reasons, owedSince: s.owedSince, ...(s.owed?.held ? { replyMark: 'needs' as const } : {}), at: now };
   }
 
   /** Threads that may be listed now: the SQL side of isListed, so a year of mail is not read every few minutes. */
@@ -392,7 +405,7 @@ export class MailAttention implements AttentionSource {
         }
         continue;
       }
-      if (prev && Math.abs(prev.score - v.score) < 0.5 && prev.needs === v.needs && prev.owedSince === v.owedSince && prev.reasons.join('\n') === v.reasons.join('\n')) continue;
+      if (prev && Math.abs(prev.score - v.score) < 0.5 && prev.needs === v.needs && prev.owedSince === v.owedSince && prev.replyMark === v.replyMark && prev.reasons.join('\n') === v.reasons.join('\n')) continue;
       this.views.set(id, v);
       items.push(v);
     }

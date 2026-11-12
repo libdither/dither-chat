@@ -555,6 +555,8 @@ export interface MessageView {
   reactions: ReactionView[];
   seenVia: string[];
   triage: TriageView | null;
+  /** Your mark on whether it needs a reply, when there is one. */
+  replyMark?: ReplyMark;
   /** This message forwards another: body and attachments are what was forwarded. */
   forward?: ForwardView;
 }
@@ -1064,9 +1066,17 @@ export interface AttentionView {
   reasons: string[];
   /** The first message addressed to you that you have not answered, if any. */
   owedSince: number | null;
+  /** You marked what you owe here "Reply needed": it is held up until you answer (docs/inbox.md, "Marks"). */
+  replyMark?: 'needs';
   /** When the hub computed it. */
   at: number;
 }
+
+/**
+ * Your mark on whether a message needs a reply (docs/inbox.md, "Marks"): `none`, no reply needed (it settles what was
+ * owed up to it, as a reaction would); `needs`, reply needed (held up until you answer; it never notifies).
+ */
+export type ReplyMark = 'none' | 'needs';
 
 export interface MessagePage {
   messages: MessageView[];

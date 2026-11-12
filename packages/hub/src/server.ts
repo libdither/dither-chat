@@ -46,6 +46,8 @@ import type { MailHub } from './mail/index.ts';
 import { mailPeople } from './mail/people.ts';
 import { Adding, linksOf, requestHeld, requestViews } from './add.ts';
 import { calendarOff, checkNotice, notifyAllowed, type CalendarLink } from './calendar.ts';
+import { ReplyMarks, type ReplyMark } from './replymarks.ts';
+import { mailAttention } from './mail/attention.ts';
 
 
 type ClientData = { kind: 'client' };
@@ -209,6 +211,11 @@ export class HubServer {
   readonly people: People;
   /** Joining, adding people, and requests waiting on you (add.ts, docs/add.md). */
   readonly adding: Adding;
+  /** Your marks on whether a message needs a reply (replymarks.ts). */
+  private get marks(): ReplyMarks {
+    return (this._marks ??= new ReplyMarks(this.store));
+  }
+  private _marks: ReplyMarks | null = null;
   /** This process. A client that sees it change knows the hub restarted, and may have a new web build. */
   readonly boot = Buffer.from(crypto.getRandomValues(new Uint8Array(6))).toString('base64url');
   /** Sends by the client's id for them, so one retried after a lost answer goes out once (state.ts queues sends). */
@@ -598,6 +605,41 @@ export class HubServer {
     }
     // Joining and adding, and requests (add.ts).
     if (path === '/api/add' || path.startsWith('/api/add/') || path.startsWith('/api/requests') || path === '/api/people' || /^\/api\/people\/[\w-]+\/remove$/.test(path)) return (await this.adding.route(req, url, path))!;
+    // Reply marks (replymarks.ts, docs/inbox.md "Marks"): on a message, its mail twin, and on an inbox row.
+    if ((m = path.match(/^\/api\/(mail\/)?messages\/([\w-]+)\/reply-mark$/)) && method === 'POST') {
+      const b = await body<{ mark?: unknown; surface?: unknown; device?: unknown }>();
+      if (b.mark !== null && b.mark !== 'none' && b.mark !== 'needs') return bad('Say mark: "none", "needs" or null');
+      const o = { surface: typeof b.surface === 'string' ? b.surface : 'message', device: typeof b.device === 'string' ? b.device : null };
+      if (m[1]) {
+        const r = this.opts.mail ? this.marks.setMail(m[2], b.mark as ReplyMark | null, o) : null;
+        if (!r) return bad('No such mail message from someone else', 404);
+        mailAttention(this.opts.mail)?.marked(r.threadId);
+        this.flush();
+        return ok({ mark: b.mark, marked: [m[2]] });
+      }
+      const r = this.marks.setMessage(m[2], b.mark as ReplyMark | null, o);
+      if (!r) return bad('No such message from someone else', 404);
+      this.flush();
+      return ok({ mark: b.mark, marked: r.marked });
+    }
+    if (path === '/api/reply-mark' && method === 'POST') {
+      const b = await body<{ targetKind?: unknown; ids?: unknown; mark?: unknown; device?: unknown }>();
+      // null takes back "Reply needed" on the row's open turn; "No reply needed" is taken back on its message.
+      if (b.mark !== 'none' && b.mark !== 'needs' && b.mark !== null) return bad('Say mark: "none", "needs" or null');
+      const ids = Array.isArray(b.ids) ? b.ids.filter((x): x is string => typeof x === 'string').slice(0, 50) : [];
+      if (!ids.length) return bad('Say which conversations (ids)');
+      const o = { surface: 'row', device: typeof b.device === 'string' ? b.device : null };
+      if (b.targetKind === 'mail') {
+        if (!this.opts.mail) return bad('mail is off on this hub', 404);
+        const marked = ids.flatMap((t) => this.marks.setMailRow(t, b.mark as ReplyMark | null, o).marked);
+        for (const t of ids) mailAttention(this.opts.mail)?.marked(t);
+        this.flush();
+        return ok({ mark: b.mark, marked, kind: 'mail' });
+      }
+      const r = this.marks.setRow(ids, b.mark as ReplyMark | null, o);
+      this.flush();
+      return ok({ mark: b.mark, marked: r.marked, kind: 'message' });
+    }
     // Mail (mail/routes.ts).
     if (path === '/api/mail' || path.startsWith('/api/mail/')) {
       const r = this.opts.mail ? await this.opts.mail.route(req, url) : null;
