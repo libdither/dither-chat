@@ -6,6 +6,17 @@ const BUILD = '__BUILD__';
 const PRECACHE = '__PRECACHE__';
 const CACHE = `dither-shell-${BUILD}`;
 
+// Pictures the hub serves (/media/, /emoji/), kept across builds in a cache of their own and served from it first. A
+// signed media path stands for one stored URL for good, and the hub keeps that URL's bytes (server.ts mediaSigner,
+// fetchMedia), so a kept copy is never stale. Only whole images up to MEDIA_ITEM bytes; past MEDIA_COUNT entries or
+// MEDIA_BYTES the oldest go. A WebView's own HTTP cache is small and shared with everything else (docs/android.md).
+const MEDIA = 'dither-media-v1';
+const MEDIA_ITEM = 512 * 1024;
+const MEDIA_BYTES = 64 * 1024 * 1024;
+const MEDIA_COUNT = 4000;
+/** The bounds are checked after this many new entries. */
+const TRIM_EVERY = 25;
+
 self.addEventListener('install', (e) => {
   const assets = PRECACHE.startsWith('[') ? JSON.parse(PRECACHE) : [];
   // Fetched fresh: an HTTP-cached index.html could name files from the previous build.
@@ -13,7 +24,8 @@ self.addEventListener('install', (e) => {
   // No skipWaiting: the page asks for it (pwa.ts), since old pages may still load old chunks.
 });
 self.addEventListener('activate', (e) => {
-  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k.startsWith('dither-shell-') && k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
+  const old = (k) => (k.startsWith('dither-shell-') && k !== CACHE) || (k.startsWith('dither-media-') && k !== MEDIA);
+  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter(old).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
 });
 // Typing into a notification is a Chromium extension, not in the Notifications standard. Elsewhere there is no way to
 // read what was typed, so it is not offered there at all and the notification opens the conversation as usual.
@@ -27,6 +39,8 @@ self.addEventListener('message', (e) => {
   if (e.data === 'canReply') e.source?.postMessage({ t: 'canReply', value: CAN_REPLY });
   // An open page without push hands its notifications here, so they look the same as pushed ones.
   if (e.data?.t === 'notify' && e.data.d) e.waitUntil(show(e.data.d));
+  // The hub's accounts, after each catch-up (pwa.ts): pictures fetched through one that left go from this device too.
+  if (e.data?.t === 'keepAccounts' && Array.isArray(e.data.ids)) e.waitUntil(keepAccounts(e.data.ids));
 });
 
 self.addEventListener('fetch', (e) => {
@@ -42,6 +56,13 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(
       caches.open(CACHE).then(async (c) => (await c.match('/index.html')) ?? fetch(e.request)),
     );
+    return;
+  }
+  // A picture (<img>, or the page's own fetch ahead of one). A video or a download goes past: it asks for ranges, or
+  // is not something an <img> shows.
+  const dest = e.request.destination;
+  if ((p.startsWith('/media/') || p.startsWith('/emoji/')) && (dest === 'image' || dest === '') && !e.request.headers.has('range')) {
+    e.respondWith(media(e));
     return;
   }
   if (hubOwn) return;
@@ -69,6 +90,59 @@ self.addEventListener('fetch', (e) => {
     ),
   );
 });
+
+// ------------------------------------------------------------------ pictures
+
+/** A whole image from this origin (a 'basic' response, not an opaque one), small enough to keep. */
+function keepable(res) {
+  const size = Number(res.headers.get('content-length') ?? NaN);
+  return res.status === 200 && res.type === 'basic' && /^image\//i.test(res.headers.get('content-type') ?? '') && size >= 0 && size <= MEDIA_ITEM;
+}
+
+let added = 0;
+async function media(e) {
+  const c = await caches.open(MEDIA);
+  const hit = await c.match(e.request);
+  if (hit) return hit;
+  const res = await fetch(e.request);
+  if (keepable(res)) {
+    e.waitUntil(
+      c
+        .put(e.request, res.clone())
+        .then(() => ++added % TRIM_EVERY === 0 && trimMedia())
+        .catch(() => {}),
+    );
+  }
+  return res;
+}
+
+/** Oldest first (a cache lists its entries in the order they went in), until within both bounds. */
+async function trimMedia() {
+  const c = await caches.open(MEDIA);
+  const keys = await c.keys();
+  const sizes = await Promise.all(keys.map((k) => c.match(k).then((r) => Number(r?.headers.get('content-length') ?? 0) || 0)));
+  let total = sizes.reduce((a, b) => a + b, 0);
+  let count = keys.length;
+  for (let i = 0; i < keys.length && (count > MEDIA_COUNT || total > MEDIA_BYTES); i++) {
+    await c.delete(keys[i]);
+    count--;
+    total -= sizes[i];
+  }
+}
+
+let kept = '';
+/** Drops every kept picture fetched through an account (the signed path's `?a=`) that is not one of `ids`. */
+async function keepAccounts(ids) {
+  const key = [...ids].sort().join(',');
+  if (key === kept) return;
+  const live = new Set(ids);
+  const c = await caches.open(MEDIA);
+  for (const k of await c.keys()) {
+    const a = new URL(k.url).searchParams.get('a');
+    if (a !== null && !live.has(a)) await c.delete(k);
+  }
+  kept = key;
+}
 
 /**
  * What became of a notification, for the activity log (docs/activity.md). Only pushes that carry an id (`nid`) are

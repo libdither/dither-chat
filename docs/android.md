@@ -301,7 +301,11 @@ These live in the web app, so the PWA gets them too.
 
    On the emulator, a reload's main-thread layout and paint went from 1,109 ms to 201 ms, its JavaScript from 1.9 s
    to 1.3 s, and each later re-render from about 120 ms to about 60 ms.
-5. **Ordering**: the live socket opens first, a warm-up request opens the HTTP connection the bootstrap will use at
+5. **Pictures from the service worker's cache** (`dither-media-v1`, [files.md](files.md#serving)): avatars,
+   emoji and image attachments, kept across deploys and starts. The WebView uses its HTTP cache and the service
+   worker with its default settings (no `setCacheMode` here), but a WebView's HTTP cache is one fixed-size cache for
+   everything the app loads, much smaller than Chrome's; Cache Storage is held to the origin's storage quota instead.
+6. **Ordering**: the live socket opens first, a warm-up request opens the HTTP connection the bootstrap will use at
    the same time, and an open conversation asks for its page only once the socket is open, so nothing falls between
    the two and the bootstrap does not refetch it.
 

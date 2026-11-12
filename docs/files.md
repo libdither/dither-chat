@@ -55,6 +55,18 @@ picture, video, audio, PDF or plain text as a download. Once the hub knows what 
 it said. A PNG sent as octet-stream then shows inline, and an HTML page sent as octet-stream is served as `text/html`,
 which is still a download under the sandbox.
 
+Devices keep what `/media` and `/emoji` send for a year without asking again (`private, max-age=31536000, immutable`,
+`MEDIA_CACHE`): a signed path stands for one stored URL, and the hub keeps that URL's bytes once fetched (an expired
+Discord link's too, under the old link), so the same path never means other bytes. Bytes the hub has no type for yet
+get a day (`UNTYPED_CACHE`), since the path is served as what it is once the hub has looked. A refusal (a bad
+signature, a fetch that failed) says nothing about caching and is not kept.
+
+The service worker (`public/sw.js`) keeps the pictures among them in a cache of its own, `dither-media-v1`, and
+answers from it first: whole images (no range requests, no video or audio) of up to 512 KB, at most 4,000 of them and
+64 MB, the oldest going first. It outlasts deploys, which replace only the shell's cache. After every catch-up with
+the hub the page tells it which accounts there are (pwa.ts), and pictures fetched through one that left (the path's
+`?a=`) go.
+
 ## The viewers
 
 On a phone a viewer fills the screen. Wider than a phone it is a box over the app, below the title bar, with the app

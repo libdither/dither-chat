@@ -374,3 +374,117 @@ test('a page out of sight lets a new build in only while no window of the app is
   expect(await run({ t: 'skipWaiting', unlessSeen: true }, [hidden, visible])).toBe(0);
   expect(await run('skipWaiting', [visible])).toBe(1);
 });
+
+/** A cache as the Cache API keeps one: entries in the order they went in, a put of the same URL going last. */
+function fakeCache() {
+  const m = new Map<string, any>();
+  return {
+    m,
+    match: async (r: any) => m.get(typeof r === 'string' ? r : r.url),
+    put: async (r: any, res: any) => void (m.delete(r.url), m.set(r.url, res)),
+    delete: async (r: any) => m.delete(typeof r === 'string' ? r : r.url),
+    keys: async () => [...m.keys()].map((url) => ({ url })),
+  };
+}
+
+/** A response from this origin ('basic'), as the browser hands the worker one. */
+function served(type: string, size: number, status = 200) {
+  const r = new Response('x'.repeat(Math.min(size, 16)), { status, headers: { 'content-type': type, 'content-length': String(size) } });
+  Object.defineProperty(r, 'type', { value: 'basic' });
+  return r;
+}
+
+/** The fetch and message handlers, with pictures served from `net` and kept in a cache of their own. */
+function pictures(net: (url: string) => Response = () => served('image/png', 2000)) {
+  const on: Record<string, (e: any) => void> = {};
+  const self: any = { addEventListener: (t: string, fn: (e: any) => void) => (on[t] = fn), location: { origin: 'https://hub.example' } };
+  const fetched: string[] = [];
+  const media = fakeCache();
+  const caches = { open: async (name: string) => (name.startsWith('dither-media-') ? media : fakeCache()) };
+  new Function('self', 'fetch', 'NotificationEvent', 'caches', 'location', src)(self, async (r: any) => (fetched.push(r.url), net(r.url)), function () {}, caches, self.location);
+  return {
+    fetched,
+    media,
+    /** null: the worker left it to the network. */
+    async get(path: string, o: { destination?: string; range?: boolean } = {}): Promise<Response | null> {
+      let res: Promise<Response> | null = null;
+      const later: Promise<unknown>[] = [];
+      on.fetch({
+        request: { method: 'GET', url: 'https://hub.example' + path, mode: 'no-cors', destination: o.destination ?? 'image', headers: new Headers(o.range ? { range: 'bytes=0-' } : {}) },
+        respondWith: (p: Promise<Response>) => (res = p),
+        waitUntil: (p: Promise<unknown>) => void later.push(p),
+      });
+      const out = res ? await res : null;
+      await Promise.all(later);
+      return out;
+    },
+    async message(data: unknown) {
+      let done: Promise<unknown> = Promise.resolve();
+      on.message({ data, waitUntil: (p: Promise<unknown>) => (done = p) });
+      await done;
+    },
+  };
+}
+
+test('a picture is fetched once, then comes from the cache, a page’s own fetch of it too', async () => {
+  const w = pictures();
+  expect((await w.get('/media/sig/abc?a=acc_1'))?.status).toBe(200);
+  expect((await w.get('/media/sig/abc?a=acc_1'))?.status).toBe(200);
+  expect((await w.get('/media/sig/abc?a=acc_1', { destination: '' }))?.status).toBe(200);
+  expect((await w.get('/emoji/discord/123'))?.status).toBe(200);
+  await w.get('/emoji/discord/123');
+  expect(w.fetched).toEqual(['https://hub.example/media/sig/abc?a=acc_1', 'https://hub.example/emoji/discord/123']);
+});
+
+test('only whole, small images are kept: not a range, a video, a refusal, or something too big or of no stated size', async () => {
+  const types: Record<string, Response> = {};
+  const w = pictures((url) => types[new URL(url).pathname]!);
+  // A range request (a video seeking) and a video element's request go straight to the network.
+  expect(await w.get('/media/sig/vid', { range: true })).toBeNull();
+  expect(await w.get('/media/sig/vid', { destination: 'video' })).toBeNull();
+  const kinds: [string, () => Response][] = [
+    ['/media/sig/mp4', () => served('video/mp4', 2000)],
+    ['/media/sig/gone', () => served('image/png', 9, 404)],
+    ['/media/sig/huge', () => served('image/jpeg', 600 * 1024)],
+    ['/media/sig/pdf', () => served('application/pdf', 2000)],
+    ['/media/sig/unsized', () => {
+      const r = new Response('x', { headers: { 'content-type': 'image/png' } });
+      r.headers.delete('content-length');
+      Object.defineProperty(r, 'type', { value: 'basic' });
+      return r;
+    }],
+  ];
+  for (const [p, make] of kinds) {
+    types[p] = make();
+    await w.get(p, { destination: '' });
+    types[p] = make();
+    await w.get(p, { destination: '' });
+  }
+  expect(w.media.m.size).toBe(0);
+  expect(w.fetched.length).toBe(kinds.length * 2);
+});
+
+test('past its bounds the oldest pictures go first', async () => {
+  const w = pictures();
+  // Already full to the count, every entry small: the next 25 new ones push out the 25 oldest.
+  for (let i = 0; i < 4000; i++) w.media.m.set(`https://hub.example/media/s/old${i}`, served('image/png', 100));
+  for (let i = 0; i < 25; i++) await w.get(`/media/s/new${i}`);
+  expect(w.media.m.size).toBe(4000);
+  expect(w.media.m.has('https://hub.example/media/s/old24')).toBe(false);
+  expect(w.media.m.has('https://hub.example/media/s/old25')).toBe(true);
+  expect(w.media.m.has('https://hub.example/media/s/new24')).toBe(true);
+  // By bytes: 127 kept and 25 new of 512 KB are 76 MB; the 24 oldest go, leaving 64 MB.
+  const big = pictures(() => served('image/png', 512 * 1024));
+  for (let i = 0; i < 127; i++) big.media.m.set(`https://hub.example/media/s/big${i}`, served('image/png', 512 * 1024));
+  for (let i = 0; i < 25; i++) await big.get(`/media/s/more${i}`);
+  expect(big.media.m.size).toBe(128);
+  expect(big.media.m.has('https://hub.example/media/s/big23')).toBe(false);
+  expect(big.media.m.has('https://hub.example/media/s/big24')).toBe(true);
+});
+
+test('pictures fetched through an account that left go; the rest, and emoji, stay', async () => {
+  const w = pictures();
+  for (const p of ['/media/s/a?a=acc_1', '/media/s/b?a=acc_2', '/media/s/c?a=acc_2', '/media/s/d', '/emoji/discord/1']) await w.get(p);
+  await w.message({ t: 'keepAccounts', ids: ['acc_1'] });
+  expect([...w.media.m.keys()].map((u) => u.slice('https://hub.example'.length))).toEqual(['/media/s/a?a=acc_1', '/media/s/d', '/emoji/discord/1']);
+});
