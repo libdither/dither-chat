@@ -366,7 +366,7 @@ Tests: `hub/test/mail-classify.test.ts`, `mail-attention.test.ts`, `web/test/inb
   (silent) are rated but notify nobody.
 - **The body first.** A new personal message's body is fetched on arrival (slice 2) and moved up to keep-up priority
   when it may notify; triage waits for it at most 5 s, then decides on what is there.
-- **One notification per thread** (`deliverMail` in `hub/src/main.ts`, `delivery.ts`): the sender as the title,
+- **One notification per thread** (`Notifier.mail` in `hub/src/notify.ts`, `delivery.ts`): the sender as the title,
   "subject — start of the text" as the body, the person's picture with the email mark, and the thread's unread lines,
   the subject before the first. A list row is silent, goes only to phones, sorts by its importance, and is brought up
   to date at most every ten minutes a thread; an alert sounds once a burst, as chat's. Reading the thread anywhere

@@ -40,7 +40,8 @@
 import type * as P from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { fit, type Grouped, type Line } from '../delivery.ts';
-import { describeWeight, importance, isTier, OLD_VOTE, predict, prior, TIER_NAME, voteWeight, words as wordsOf, type Example, type Facts, type Level } from '../learn.ts';
+import { listByPrior } from '../phonelist.ts';
+import { describeWeight, importance, learnedFrom, isTier, OLD_VOTE, predict, prior, TIER_NAME, voteWeight, words as wordsOf, type Example, type Facts, type Level } from '../learn.ts';
 import type { Store } from '../store.ts';
 import { inQuietHours, URGENT, type Triage } from '../triage.ts';
 import type { OtherVotes, TriageVotes } from '../votes.ts';
@@ -97,6 +98,8 @@ export interface MailNotice {
   importance: number | null;
   /** You in To, or a reply to you: what a device set to "Mentions only" still shows. */
   addressed: boolean;
+  /** The start alone puts it on the list (phonelist.ts `listByPrior`): its row may go to the phones. */
+  prior?: boolean;
   look: { network: 'email'; icon?: string };
 }
 
@@ -496,7 +499,7 @@ export class MailTriage {
             .slice(0, 2)
             .map((w) => describeWeight(w.feature, w.head, w.by, n))
         : [];
-      reasons.unshift(`${TIER_NAME[level]}, learned from your marks (was ${TIER_NAME[before]})`, ...words);
+      reasons.unshift(`${TIER_NAME[level]}, ${learnedFrom(level, before)} (was ${TIER_NAME[before]})`, ...words);
       decidedBy = 'learned';
     } else if (level === 'drop') reasons.unshift(`Below the list: importance ${Math.round(p.probs.important * 100)}%`);
     if (starred && body.spoof) reasons.unshift(`No alert: ${body.spoof}`);
@@ -551,6 +554,7 @@ export class MailTriage {
       level: x.decision as 'push' | 'digest',
       importance: x.score,
       addressed: !!x.facts?.mention || !!x.facts?.reply,
+      prior: listByPrior(x.facts),
       look: { network: 'email', ...(w.icon ? { icon: w.icon } : {}) },
     };
   }

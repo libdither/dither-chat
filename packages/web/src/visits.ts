@@ -16,6 +16,19 @@ export const samePlace = (a: Place, b: Place) =>
 export const worthKeeping = (v: VisitRecord) =>
   v.active >= VISIT_AFTER || v.source === 'notification' || v.source === 'toast' || v.sent > 0 || v.reactions > 0 || v.history > 0 || v.threads > 0 || v.attachments > 0;
 
+/** How many tapped push ids a device remembers. */
+export const TAPS_KEPT = 200;
+
+/**
+ * Is this the first time this device opens from this push? The Android app's activity, made again after Android
+ * stopped it, starts from the intent that first launched it: an old notification's, with its push id. That is not a
+ * tap. Returns whether it is new, and what to remember (newest last, at most TAPS_KEPT).
+ */
+export function firstTap(seen: readonly string[], id: string): { fresh: boolean; seen: string[] } {
+  if (seen.includes(id)) return { fresh: false, seen: [...seen] };
+  return { fresh: true, seen: [...seen, id].slice(-TAPS_KEPT) };
+}
+
 const randomId = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
 export class VisitLog {

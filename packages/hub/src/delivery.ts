@@ -131,12 +131,16 @@ export class Delivery {
   read(now = Date.now()): string[] {
     const out: string[] = [];
     for (const [cid, s] of this.showing) {
-      const ts = this.other?.readTs(cid) ?? this.store.one<Row>(`SELECT MAX(last_read_ts) AS ts FROM vantage WHERE target_kind = 'conversation' AND target_id = ?`, cid)?.ts;
-      if ((ts ?? 0) >= s.ts) out.push(cid);
+      if (this.readTs(cid) >= s.ts) out.push(cid);
       else if (now - s.at > FORGET_MS) this.showing.delete(cid);
     }
     for (const cid of out) this.showing.delete(cid);
     return out;
+  }
+
+  /** Read up to this time anywhere: a chat's read marker, or a mail thread's own (OtherThreads). */
+  readTs(conversationId: string): number {
+    return this.other?.readTs(conversationId) ?? this.store.one<Row>(`SELECT MAX(last_read_ts) AS ts FROM vantage WHERE target_kind = 'conversation' AND target_id = ?`, conversationId)?.ts ?? 0;
   }
 
   /** The conversation's unread lines from others, oldest first and ending with this message, within the push's budget. */

@@ -13,11 +13,13 @@ import { placeConv, rootCommunity } from './model.ts';
 import { api, apiHooks, db, eventHooks, href, listUnderHooks, parseHash, route, showsHere, type Route } from './state.ts';
 import { NEW_VISIT_AFTER } from './tracker.ts';
 import { inUse } from './usage.ts';
-import { VisitLog, samePlace, type Arrival, type Place } from './visits.ts';
+import { VisitLog, firstTap, samePlace, type Arrival, type Place } from './visits.ts';
 import { viewer } from './ui/Viewer.tsx';
 
 const DEVICE_KEY = 'dither-chat:device';
 const OUTBOX_KEY = 'dither-chat:activity-outbox';
+/** Push ids this device already opened from (visits.ts `firstTap`). */
+const TAPPED_KEY = 'dither-chat:tapped';
 /** A click this recent decides how the next place was reached. */
 const CLICK_WINDOW = 2000;
 
@@ -160,6 +162,22 @@ function collect() {
 /** A tap's id from a notification's hash (`…?n=<id>`). */
 export const pushIdOf = (hash: string): string | null => new URLSearchParams(hash.split('?')[1] ?? '').get('n');
 
+/** A tap's id, if this device has not opened from that push before; a replayed launch intent gives null. */
+function freshTap(id: string | null): string | null {
+  if (!id) return null;
+  let seen: string[] = [];
+  try {
+    seen = JSON.parse(localStorage.getItem(TAPPED_KEY) ?? '[]');
+    if (!Array.isArray(seen)) seen = [];
+  } catch {}
+  const t = firstTap(seen, id);
+  if (!t.fresh) return null;
+  try {
+    localStorage.setItem(TAPPED_KEY, JSON.stringify(t.seen));
+  } catch {}
+  return id;
+}
+
 function event(id: string, kind: P.NotificationEventKind) {
   if (!enabled) return;
   events.push({ id, event: kind, device: deviceId(), at: Date.now() });
@@ -173,7 +191,10 @@ function event(id: string, kind: P.NotificationEventKind) {
  */
 export function noteOpen(hash: string) {
   if (!log || !enabled) return;
-  const pushId = pushIdOf(hash);
+  const id = pushIdOf(hash);
+  const pushId = freshTap(id);
+  // The same push again is the app replaying how it was launched, not a tap.
+  if (id && !pushId) return;
   const arrival: Arrival = { source: 'notification', pushId };
   if (pushId) event(pushId, 'tapped');
   const now = Date.now();
@@ -275,13 +296,15 @@ export function startActivity() {
   if (log || typeof window === 'undefined') return;
   load();
   log = new VisitLog(deviceId(), deviceLabel(), Date.now());
-  // Opened by a tap on a notification: the hash carries its id. The address bar does not keep it.
-  const nid = pushIdOf(location.hash);
+  // Opened by a tap on a notification: the hash carries its id. The address bar does not keep it. The Android app made
+  // again after Android stopped it starts from the hash it was first launched with: an old push's id is a start.
+  const hashId = pushIdOf(location.hash);
+  const nid = freshTap(hashId);
   if (nid) {
     pending = { source: 'notification', pushId: nid, at: Date.now() };
     event(nid, 'tapped');
-    history.replaceState(history.state, '', href(route.value));
   } else pending = { source: 'start', at: Date.now() };
+  if (hashId) history.replaceState(history.state, '', href(route.value));
 
   document.addEventListener('click', (e) => (pending = { ...arrivalOf(e.target as Element), at: Date.now() }), true);
   document.addEventListener(

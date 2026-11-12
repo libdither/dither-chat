@@ -443,7 +443,7 @@ describe('marks', () => {
     await until(() => w.row('<theo-old1@x>') && w.row('<kit-old1@x>'), 3000, 'the quiet ratings');
     const theo = w.row('<theo-old1@x>')!;
     expect(theo).toMatchObject({ decision: 'digest', level: 'digest', delivered: 0, quiet: 1, decided_by: 'learned' });
-    expect(JSON.parse(theo.reasons)[0]).toBe('List, learned from your marks (was Below the list)');
+    expect(JSON.parse(theo.reasons)[0]).toBe('List, learned from what you opened (was Below the list)');
     expect(JSON.parse(theo.reasons)).toContain(QUIET_REASON);
     // Its body was waited for: the model read the text.
     expect(JSON.parse(theo.words)).toContain('harness');

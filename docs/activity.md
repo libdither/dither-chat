@@ -49,10 +49,14 @@ Passing through on the way elsewhere is not kept.
 
 ### `notification` and `notification_event`: every notification, and what came of it
 
-Each notification gets an id when it is sent (`activity.notification` in `main.ts`): an alert, a Conversation's
+Each notification gets an id when it is sent (`activity.notification` in `notify.ts`): an alert, a Conversation's
 silent row, a row on the list, a request, the quiet-hours summary. It rides in the payload as `nid`, with `device`,
 the push registration it was sent to, and in the in-app `notify` event. A tap opens the app at a hash carrying it
-(`#/inbox/c/<conv>?n=<nid>`), so the page knows which visit it led to and the address bar drops it.
+(`#/inbox/c/<conv>?n=<nid>`), so the page knows which visit it led to and the address bar drops it. A device opens
+from one push only once (`visits.ts` `firstTap`, the last 200 ids in `localStorage`): the Android app's activity, made
+again after Android stopped it, starts from the intent that first launched it, so an old push's hash comes back, and
+before 2026-11-12 each such start was logged as another tap of that push, a stay of no time (29 of the phone's 81
+"tap" visits, from 4 pushes). Now it is a `start`.
 
 `notification` keeps the kind (`message`, `held` for the quiet-hours summary, `request` for a request waiting on you,
 docs/add.md; rows of kind `digest` are from before the tiers, when a daily digest notification existed), the message and
