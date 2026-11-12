@@ -108,7 +108,7 @@ try {
   let s = await at();
   check(s.depth === 1 && s.title === 'New' && s.crumbs.join() === '⌕' && s.focus === 'input' && s.q === '', 'the + opens the palette at New, its bottom page, the input ready', s);
   const menu = await rowKeys();
-  check(menu.slice(0, 3).join() === 'n:add,n:scan,n:mine' && menu.length > 4, 'New with nothing typed: Add people to a group, Scan a code, My code, then people', menu);
+  check(menu.slice(0, 4).join() === 'n:add,n:group,n:scan,n:mine' && menu.length > 5, 'New with nothing typed: Add people to a group, New group, Scan a code, My code, then people', menu);
   await shot('palette-01-new');
   await key('Escape');
   await pageIs(null);
@@ -342,6 +342,7 @@ try {
   );
   check(fit.w === 390 && Math.abs(fit.bottom - fit.h) <= 1 && fit.scroll <= 390 && fit.inside, 'on a phone New is a bottom sheet, full width, nothing sideways', fit);
   check((await at()).focus === 'input', 'New is about typing: its input has focus, as the New box did');
+  check((await p.eval(`document.querySelector('.palette-input').placeholder`)) === 'Name, link, @name or phone', 'its placeholder is the short one, whole');
   await shot('palette-07-phone-new');
   await click('.palette [data-key="n:add"]');
   await pageIs('groups');
@@ -355,6 +356,10 @@ try {
     `(() => { const b = document.querySelector('.palette'); const r = b.getBoundingClientRect(); return { w: Math.round(r.width), bottom: Math.round(r.bottom), h: innerHeight, scroll: document.documentElement.scrollWidth, inside: b.scrollWidth <= b.clientWidth + 1, focus: document.activeElement?.classList.contains('palette-input') }; })()`,
   );
   check(pick.w === 390 && Math.abs(pick.bottom - pick.h) <= 1 && pick.scroll <= 390 && pick.inside && !pick.focus, 'the picker on a phone: fits, no keyboard unasked', pick);
+  const head = await p.eval<{ chevron: boolean; crumbs: number; title: string; whole: boolean }>(
+    `(() => { const t = document.querySelector('.palette-title'); return { chevron: !!document.querySelector('.palette-back-btn'), crumbs: document.querySelectorAll('.palette-crumb').length, title: t.textContent, whole: t.scrollWidth <= t.clientWidth + 1 && t.scrollHeight <= t.clientHeight + 1 }; })()`,
+  );
+  check(head.chevron && !head.crumbs && head.title.includes('Climbing crew') && head.whole, 'on a phone: a back chevron in place of the crumbs, and the title whole', head);
   await shot('palette-08-phone-picker');
   await p.eval('history.back()');
   await pageIs('groups');
@@ -362,9 +367,9 @@ try {
   await p.eval('history.back()');
   await pageIs('new');
   check((await at()).depth === 1, 'and another');
-  await click('.palette-crumb-root');
+  await click('.palette-back-btn');
   await pageIs('root');
-  check((await at()).depth === 1, 'the root crumb reaches Ctrl+K’s root on a phone');
+  check((await at()).depth === 1, 'the chevron on the bottom page reaches Ctrl+K’s root on a phone');
   await p.eval('history.back()');
   await pageIs(null);
   check(!(await has('.palette')), 'and the back button at the bottom page closes it');
