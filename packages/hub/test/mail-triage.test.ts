@@ -59,6 +59,8 @@ let seq = 0;
 async function world(seed: (put: (i: FakeInput) => void) => void = () => {}, late = false) {
   const dir = mkdtempSync(join(tmpdir(), 'dither-mail-triage-'));
   const chat = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
+  // No fsync per write (1,200 in this file), and nothing here has to outlive the process.
+  chat.db.exec('PRAGMA synchronous = OFF');
   let sg: AccountRow = chat.createAccount({ network: 'signal', label: 'phone', color: '#000', adapter: 'signal' });
   chat.ingest(sg, { t: 'status', status: 'online', self: { nativeId: 'me', displayName: 'Me' } });
   sg = chat.accounts().find((a) => a.id === sg.id)!;

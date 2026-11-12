@@ -124,6 +124,19 @@ startup: ready in 1.1 s (code 81 ms, data dir 1 ms, db open 6 ms, pre-migrate co
 back; `journalctl --user -u dither-chat | grep 'startup: ready'` shows where a start's time went. The old process's
 stop is not in it. Nothing waits on it or fails on it.
 
+Being ready is not the end of it: whatever holds the hub's one thread afterwards holds up every request
+(docs/perf.md, "The hub's own stalls"). For ten minutes from when it listens, the hub logs each hold of 200 ms or more
+with the work that began in it, then only those of two seconds or more, and at ten minutes one line sums them up
+(`packages/hub/src/stalls.ts`):
+
+```
+stall: 475 ms from 10.7 s after start: embeddings refit ×4, GET /api/bootstrap
+stalls: 46 of 200 ms or more in the first 10 min, the longest 802 ms (GET /api/health)
+```
+
+A request's own work is a hold of its own: a bootstrap is 0.25–0.7 s of it on the live hub's database. `nothing
+noted` means the work that held it does not note itself yet (`noteWork`).
+
 CI starts the hub on databases older hubs left (`packages/hub/test/old-database.test.ts`, fixtures in
 `packages/hub/test/fixtures/old-db/`): it must copy the database aside, migrate, log that line and read back what the old
 hub stored. `bun scripts/old-db-fixture.ts <commit> <name>` makes another fixture from an older commit's demo hub

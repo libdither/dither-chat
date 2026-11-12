@@ -88,6 +88,12 @@ stuck. A test that wants everything done calls again while `busy`. A test about 
 `budgetClock` to a test clock, and sees the cut every time instead of now and then (mail-attention.test.ts,
 attention.test.ts).
 
+Longer background jobs are generators that yield the rows they worked through every few thousand (`slices.ts`): the
+embedder's refit and the media archiver's walks (docs/perf.md, "After a restart"). `sliced` runs one with a turn of the
+event loop between slices; `whole` runs it straight through. A test passes slice options that end a slice at every
+chance (`clock: () => 0, budgetMs: 0`) and an `onSlice` that collects each slice's rows: it then holds the most rows
+a slice may work through, and the answer to be the same as straight through (stalls.test.ts). No times.
+
 ### Finding a race
 
 A race rarely shows on an idle machine. Run the test many times with the machine busy:
@@ -110,8 +116,12 @@ kill %1 %2 %3 %4                                                       # or let 
 - A `beforeAll` that times out under load is often many small writes, each its own transaction and its own fsync.
   On a busy disk one fsync can take tens of milliseconds; one transaction around the setup makes it one. When the
   writes are the code under test, one at a time (the media archiver's, in gapfill.test.ts), `PRAGMA synchronous = OFF`
-  on the test's database drops their fsyncs: nothing in a test has to outlive the process. `strace -f -c -e
-  trace=fsync bun test <file>` counts them.
+  on the test's database drops their fsyncs: nothing in a test has to outlive the process. A store the test never
+  opens again from its file can be `new Store(':memory:', …)`, with no disk at all (jobs.test.ts). `strace -f -c -e
+  trace=fsync bun test <file>` counts them, and `strace -f -w -c` shows the wall time they take.
+- A test clock moved hours on steps through every timer due on the way: a loop that looks for work every 5 s fires
+  17,000 times in a day, each with a few turns of the event loop and its queries (0.6 s of jobs.test.ts's repeat run).
+  Stop the loop, `advance` the clock to just before what the test waits for, then start the loop again.
 
 ### The hygiene check
 

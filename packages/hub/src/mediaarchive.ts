@@ -13,6 +13,7 @@
  */
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { asyncSlices, type SliceOptions } from './slices.ts';
 import type { Store } from './store.ts';
 
 type Row = Record<string, any>;
@@ -21,6 +22,8 @@ const MAX_TRIES = 3;
 const RETRY_MS = 6 * 3_600_000;
 /** Links in one refresh-urls request, as Discord's client sends them. */
 export const REFRESH_BATCH = 50;
+/** Attachments read between looks at the slice's time, in the scans for a link by its key. */
+const SCAN_ROWS = 256;
 /** After the account could not refresh (offline, an older extractor), wait this long before asking again. */
 const REFRESH_PAUSE_MS = 10 * 60_000;
 
@@ -50,6 +53,8 @@ export class MediaArchiver {
   private refreshPausedUntil = 0;
   /** Accounts that could not refresh lately, until when. */
   private accountPausedUntil = new Map<string, number>();
+  /** How the scans below share the hub's thread (slices.ts); a test's clock and pauses. */
+  slices: SliceOptions = {};
 
   constructor(
     private store: Store,
@@ -98,6 +103,8 @@ export class MediaArchiver {
     if (this.busy || this.stopped) return;
     this.busy = true;
     try {
+      // Files already in the cache cost no await of their own: a long run of them is a slice at a time too.
+      const walk = asyncSlices('media archive', this.slices);
       for (;;) {
         const rows = this.store.db
           .query(
@@ -110,8 +117,10 @@ export class MediaArchiver {
           if (this.stopped) return;
           if (MediaArchiver.remote(r.url) && (await this.keep(r.url, r.account))) await this.onKept?.({ url: r.url, name: r.name, mime: r.mime, messageId: r.message_id });
           this.cursor = r.rid;
+          await walk.rows(1);
         }
       }
+      walk.end();
       await this.retry();
       await this.refreshExpired();
     } catch (e: any) {
@@ -159,8 +168,12 @@ export class MediaArchiver {
     const byAccount = new Map<string, { key: string; url: string; name: string | null; mime: string | null; messageId: string }[]>();
     let n = 0;
     let waiting = 0;
+    // Every attachment, to find the links by their keys: a slice at a time, so the hub answers meanwhile.
+    const scan = asyncSlices('media archive: expired links', this.slices);
+    let read = 0;
     for (const r of this.store.db.query(`SELECT a.url, a.name, a.mime, a.message_id, (SELECT group_concat(account_id, ' ') FROM message_seen s WHERE s.message_id = a.message_id) AS accounts FROM attachment a`).iterate() as Iterable<Row>) {
       if (!want.size || n >= maxBatches * REFRESH_BATCH) break;
+      if (++read % SCAN_ROWS === 0) await scan.rows(SCAN_ROWS);
       if (!r.accounts || !MediaArchiver.expired(r.url)) continue;
       const key = new Bun.CryptoHasher('sha256').update(r.url).digest('hex');
       if (!want.delete(key)) continue;
@@ -175,6 +188,7 @@ export class MediaArchiver {
       byAccount.set(account, list);
       n++;
     }
+    scan.end();
     const mark = this.store.db.query('UPDATE media_archive_fail SET tries = ?, last_at = ?, error = ? WHERE key = ?');
     accounts: for (const [account, list] of byAccount) {
       for (let i = 0; i < list.length; i += REFRESH_BATCH) {
@@ -219,9 +233,12 @@ export class MediaArchiver {
     const due = this.store.db.query('SELECT key FROM media_archive_fail WHERE tries < ? AND last_at < ? LIMIT 50').all(MAX_TRIES, Date.now() - RETRY_MS) as Row[];
     if (!due.length) return;
     const keys = new Set(due.map((d) => d.key as string));
-    // Find their URLs again: a failure keeps only the key.
+    // Find their URLs again (a failure keeps only the key): every attachment, a slice at a time.
+    const scan = asyncSlices('media archive: retries', this.slices);
+    let read = 0;
     for (const r of this.store.db.query(`SELECT a.url, a.name, a.mime, a.message_id, (SELECT account_id FROM message_seen s WHERE s.message_id = a.message_id LIMIT 1) AS account FROM attachment a`).iterate() as Iterable<Row>) {
       if (!keys.size || this.stopped) break;
+      if (++read % SCAN_ROWS === 0) await scan.rows(SCAN_ROWS);
       if (!MediaArchiver.remote(r.url)) continue;
       const key = new Bun.CryptoHasher('sha256').update(r.url).digest('hex');
       if (!keys.delete(key)) continue;
@@ -238,6 +255,8 @@ export class MediaArchiver {
         this.store.db.query('DELETE FROM media_archive_fail WHERE key = ?').run(key);
         await this.onKept?.({ url: r.url, name: r.name, mime: r.mime, messageId: r.message_id });
       } else this.store.db.query('UPDATE media_archive_fail SET tries = tries + 1, last_at = ? WHERE key = ?').run(Date.now(), key);
+      scan.fresh();
     }
+    scan.end();
   }
 }

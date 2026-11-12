@@ -25,6 +25,7 @@ import { TriageVotes } from './votes.ts';
 import { loadVapidKeys } from './webpush.ts';
 import { NightlyBackup, pruneMediaCache, rotateAdapterLogs, tightenPermissions } from './housekeeping.ts';
 import { StartupTrace } from './startup.ts';
+import { noteWork, StallWatch } from './stalls.ts';
 
 // Each part of the start, logged in one line once requests are answered (startup.ts).
 const startup = new StartupTrace();
@@ -124,6 +125,7 @@ async function triageNow(ids: string[]) {
   await embeddings?.prepare(ids, 800).catch(() => {});
   for (const id of ids) {
     try {
+      noteWork('triage');
       const d = await triage.decide(id);
       if (!d) continue;
       // The message may have gone while it was decided (a leave, a deleted account).
@@ -400,8 +402,13 @@ if (store.accounts().some((a) => a.demo)) applyDemoOverlay(store);
 startup.mark('adapters');
 server.start();
 startup.mark('http listen');
+// Every hold-up of the event loop from here on, with what began in it, for the first ten minutes (stalls.ts).
+const stalls = new StallWatch().begin();
 attention.start((events) => server.broadcast(events));
-ranker.onFit = () => server.broadcast(attention.rescoreAll());
+ranker.onFit = () => {
+  noteWork('attention: rescore all');
+  server.broadcast(attention.rescoreAll());
+};
 ranker.start();
 // Scores live in memory and were worked out afresh: a client resuming from before this start takes the whole list.
 server.broadcast([{ t: 'attention', items: attention.list(), removed: [], replace: true }]);
@@ -428,6 +435,7 @@ const shutdown = async () => {
   // What is being triaged finishes first (a few seconds at most); the rest waits in triage_pending for the next start.
   await Promise.race([queue, new Promise((r) => setTimeout(r, 5_000))]);
   backup.stop();
+  stalls.stop();
   ranker.stop();
   attention.stop();
   mail.stop();

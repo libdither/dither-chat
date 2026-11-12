@@ -393,6 +393,60 @@ found two:
   ones: 0.9 s on the live copy with none old enough. It walks by age now (`triage_created`): 0 ms.
   `test/pick-account.test.ts` and the prune's plan test in `test/hardening.test.ts` keep them so.
 
+### After a restart (2026-11-12)
+
+After each restart of the live hub its `startup: ready` came in 2.5–12 s, but `/api/bootstrap` then took 2–56 s, twice
+over 60 s, for two to six minutes. A copy of the live database (878k messages) on a hub sealed off from the network
+did the same: a network namespace with only loopback, a stand-in for dither-accounts' client that lists the nine
+accounts as online (and can replay adapter events as the manager does after a restart), a stand-in jev, and a timer
+in the process that logged how late it fired. A CPU profile put the holds on the embedder's refit
+(docs/embeddings.md):
+
+- Its models live in memory, so a start refits at the embedder's first step, 10 s in. "Caught up" lived in memory
+  too, so a start that had new messages to embed (every live one) refit again at its first idle step.
+- A refit ran straight through with three pauses: `loadTurns` (3–9 s: its half for the conversations you reacted in
+  read every message in conversation order rather than starting from your 57k reactions), then 26 fits of the probe
+  (20 to choose λ, five out-of-fold, one more).
+- New messages after a start were looked into for jev's questions: two reads of each conversation's last 30 days,
+  3.6 s for 2,000 messages in busy channels, though no questions are asked.
+- Smaller, every minute while any are due: the media archiver found its retries' and expired links' attachments by
+  hashing every attachment's URL, 1–3 s at once.
+
+What changed:
+
+- **Slices** (`packages/hub/src/slices.ts`). Work of seconds is a generator that yields the rows it worked through
+  every few thousand (`SLICE_ROWS`: a row read, or an example visited once), and `sliced` runs it 20 ms at a time with
+  a turn of the event loop between. The refit (`loadTurns` a page at a time, the probe's fits, reading and marking
+  vectors) and the media archiver's three walks run so. The probe's loops are plain functions over a range of rows that
+  the generator calls (written inside the generator they ran 30% slower), and its answers are the same to the last bit:
+  checked against main's at three sizes, and in the test.
+- `loadTurns` starts from your reactions: the same 118 conversations in the same order, 0.2 s instead of 3.4 s.
+- A start refits once: a backfill done before the start does not finish again.
+- `askJev` returns at once while there are no questions.
+
+The copy, sealed, at a load of 6 to 25 on 16 cores; `/api/bootstrap` every 5 s from the hub's first answer:
+
+| | main | this |
+|---|---|---|
+| no events: bootstrap, slowest of 60 | 28.1 s (11.4, 28.1, 7.1 s in the first minute) | 0.75 s (median 0.28 s) |
+| no events: longest hold after it listens | 28.0 s | 0.84 s (attention's first scoring, before `ready`) |
+| 2,000 messages replayed: bootstrap, slowest | over 90 s (83, 13, 3, >90, 33, 19, 3.5 s, then 0.3 s from 278 s) | 0.57 s (median 0.28 s) |
+| 2,000 messages replayed: longest hold | 125 s | 0.53 s |
+
+What is left: a bootstrap is itself 0.25–0.7 s of the hub's thread on this database, and attention's rescoring of
+everything (every five minutes, and after the inbox ranking refits) 0.4–0.8 s.
+
+**The stall log** (`stalls.ts`, docs/deploy.md). For ten minutes from when it listens, the hub logs every hold of
+200 ms or more with the work that began in it (`noteWork`: each slice of a job, each request by its path without
+ids, each batch of adapter events, triage, the five-minute rescore), then holds of two seconds or more; at ten
+minutes one line sums them up. After a restart, `grep -E '^stalls?:'` in the hub's log says whether anything still
+holds it.
+
+`test/stalls.test.ts` keeps it so by counts: a clock that ends a slice at every chance, and `onSlice` for each
+slice's rows. No slice of the refit, the probe or the archiver's walks goes over its rows; the refit's features and the
+probe's weights sliced are the same as straight through; a start refits once; picking for jev with no questions looks
+into nothing. The refit's times are printed (and on GitHub Actions put in the job's summary), not judged.
+
 ## The snapshot after each open (2026-11-11)
 
 Opening a conversation saves the device's snapshot 1.5 s later, when the page is idle (snapshot.ts). Opening one marks
@@ -459,3 +513,6 @@ What these numbers point at, not done yet:
   it is a change of its own.
 - **A first open's longest task** is the first render of a conversation's page, 60 messages at once. Drawing the
   newest screenful first would split it.
+- **Attention's rescoring of everything** (`rescoreAll`, every five minutes and after the inbox ranking refits) is
+  one run of 0.4–0.8 s on the live copy: after a bootstrap's own, the longest hold left after a restart. A sliced one would
+  need care where `list()` and `sync` read the views it is writing.

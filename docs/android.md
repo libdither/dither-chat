@@ -277,15 +277,17 @@ These live in the web app, so the PWA gets them too.
    sight, and after the reload the new worker serves its own cache. A new deploy shows up one start later (or at
    the bar), not on the first start after it.
 2. **A snapshot of the last screen** (`src/snapshot.ts`), in IndexedDB. It holds the bootstrap (every sidebar list,
-   unread counts and last messages), the inbox, and the newest 40 messages of the 12 most recently opened
-   conversations, with their authors, reactors and quoted messages. It is read before the network and painted at
-   once. It also keeps its place in the hub's change journal, so the app then asks only for what changed since
+   unread counts and last messages) and the inbox, and beside it the newest 40 messages of the 40 most recently
+   opened conversations, a record each with their authors, reactors and quoted messages ([sync.md](sync.md#kept-pages)).
+   It is read before the network and painted at once. It also keeps its place in the hub's change journal, so the app then asks only for what changed since
    ([sync.md](sync.md)); a full bootstrap replaces it only when the hub cannot say. A kept conversation catches up
    the same way when opened. It is saved when the bootstrap arrives (the hub's own text, without
    serializing it again) and again whenever the app goes out of sight. While the app stays open, the save after
-   a conversation opens writes only the rest (a record of its own) and keeps the stored bootstrap, unless that is
+   a conversation opens writes only the rest (a record of its own) and the pages that changed, and keeps the stored
+   bootstrap, unless that is
    over ten minutes old: writing the bootstrap again cost a phone a few hundred milliseconds each time. Caps: 12 MB of bootstrap (above that it is
-   not kept, because reading it back would cost about what the network does) and 1.5 MB for the rest. Only a build
+   not kept, because reading it back would cost about what the network does), 1.5 MB for the rest and 3 million
+   characters for the kept pages. Only a build
    with the same `packages/protocol` reads it back (the vite config hashes the protocol into
    `__SNAPSHOT_SCHEMA__`), and one that fails to render is dropped and the page reloads from the hub. Nothing in it
    is ever sent anywhere.
@@ -301,7 +303,11 @@ These live in the web app, so the PWA gets them too.
 
    On the emulator, a reload's main-thread layout and paint went from 1,109 ms to 201 ms, its JavaScript from 1.9 s
    to 1.3 s, and each later re-render from about 120 ms to about 60 ms.
-5. **Ordering**: the live socket opens first, a warm-up request opens the HTTP connection the bootstrap will use at
+5. **Pictures from the service worker's cache** (`dither-media-v1`, [files.md](files.md#serving)): avatars,
+   emoji and image attachments, kept across deploys and starts. The WebView uses its HTTP cache and the service
+   worker with its default settings (no `setCacheMode` here), but a WebView's HTTP cache is one fixed-size cache for
+   everything the app loads, much smaller than Chrome's; Cache Storage is held to the origin's storage quota instead.
+6. **Ordering**: the live socket opens first, a warm-up request opens the HTTP connection the bootstrap will use at
    the same time, and an open conversation asks for its page only once the socket is open, so nothing falls between
    the two and the bootstrap does not refetch it.
 

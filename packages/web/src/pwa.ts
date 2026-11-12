@@ -12,7 +12,7 @@ import { signal } from '@preact/signals';
 import { noteOpen } from './activity.ts';
 import { activeCall } from './call.ts';
 import { layerCount } from './phone.ts';
-import { go, parseHash, pending, toast } from './state.ts';
+import { db, go, parseHash, pending, toast } from './state.ts';
 import { busyReasons, nextStep } from './update.ts';
 
 export const updateReady = signal(false);
@@ -102,6 +102,10 @@ export function registerServiceWorker() {
       go(parseHash(e.data.hash), false);
     }
   });
+  // Each time the hub's data is in, the worker hears which accounts there are: pictures kept for one that left go.
+  new PerformanceObserver((list) => {
+    if (list.getEntriesByName('dither:fresh').length) navigator.serviceWorker.controller?.postMessage({ t: 'keepAccounts', ids: [...db.accounts.keys()] });
+  }).observe({ type: 'mark', buffered: true });
   navigator.serviceWorker
     .register('/sw.js', { updateViaCache: 'none' })
     .then((reg) => {

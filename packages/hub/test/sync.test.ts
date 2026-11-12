@@ -34,6 +34,7 @@ import {
   type Db,
   type TimelineCopy,
 } from '../../web/src/syncmodel.ts';
+import { pageText, type KeptPage } from '../../web/src/keptpages.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'dither-sync-'));
 let port = 0;
@@ -216,6 +217,14 @@ let live: Client;
 let step: Client;
 let late: Client;
 let ws: WebSocket;
+/**
+ * Pages a device kept (keptpages.ts), as stored text: at the start with the start's position, and after the edits with
+ * that same older position (a page that did not change keeps its record, and its position, when it is saved again).
+ */
+const kept: { what: string; key: string; text: string }[] = [];
+const keep = (what: string, c: Client, pos: P.SyncPosition) => {
+  for (const [key, t] of c.timelines) kept.push({ what, key, text: pageText(key, { ...t, sync: pos }, c.db.identities, new Map()) });
+};
 
 beforeAll(async () => {
   store = new Store(join(dir, 'hub.sqlite'), mediaSigner('s'));
@@ -271,6 +280,7 @@ beforeAll(async () => {
   // Live from here; the bootstrap above is from before the socket, so the first sync covers the gap.
   ws.onmessage = (e) => applyLive(live, JSON.parse(String(e.data)));
   await resync(live);
+  keep('kept at the start', late, late.db.sync!);
 });
 
 afterAll(() => {
@@ -386,12 +396,14 @@ const steps: [string, () => void | Promise<unknown>][] = [
 describe('a client applying deltas ends up where a fresh bootstrap puts it', () => {
   for (const [name, run] of steps) {
     test(name, async () => {
+      const before = step.db.sync!;
       await run();
       await settle();
       await resync(step);
       await expectCurrent('step', step);
       await catchUpLive(live);
       await expectCurrent('live', live);
+      if (name === 'edits, deletions, reactions') keep('kept after the edits, at the position before them', step, before);
     });
   }
 
@@ -399,6 +411,22 @@ describe('a client applying deltas ends up where a fresh bootstrap puts it', () 
     const r = await resync(late);
     expect(r.events.length).toBeGreaterThan(10);
     await expectCurrent('late', late);
+  });
+
+  test("pages a device kept, caught up from where they were kept, are the hub's pages", async () => {
+    expect(kept.length).toBe(6);
+    for (const k of kept) {
+      const p = JSON.parse(k.text) as KeptPage;
+      const t: TimelineCopy = { messages: p.messages, hasMore: true, conversationIds: p.conversationIds };
+      const r = await syncReq({ v: p.sync!.v, epoch: p.sync!.epoch, timelines: [timelineReq(k.key, t, p.sync!.seq)] });
+      if (r.full) throw new Error(`refused: ${r.reason}`);
+      applyTimelineDelta(t, r.timelines[0]);
+      const fresh = await page(k.key);
+      const from = fresh.messages[0]?.ts ?? -Infinity;
+      expect({ kept: k.what, key: k.key, messages: t.messages.filter((m) => m.ts >= from) }).toEqual({ kept: k.what, key: k.key, messages: fresh.messages });
+      expect(t.messages.map((m) => m.ts)).toEqual(t.messages.map((m) => m.ts).sort((a, b) => a - b));
+      expect(new Set(t.messages.map((m) => m.id)).size).toBe(t.messages.length);
+    }
   });
 
   test('nothing changed: an empty answer', async () => {

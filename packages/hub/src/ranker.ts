@@ -19,6 +19,7 @@ import type { AttentionJudge, ScoreInput, Scored } from './attention.ts';
 import { EXPLORE_REASON } from '@dither-chat/protocol';
 import { drawZ, epochOf, EXAM_AT, EXPLORE_EPOCH, EXPLORE_SCALE, FEATURES, FIT, fitRankSteps, GUESSED_CURVE, HORIZON, predict, PRIOR, rankFeatures, Z_CLIP, type Moment, type Prediction, type RankModel } from './rank.ts';
 import { flagged, isChoice, loadWorld, momentOf, mutedBy, Rebuild } from './rankhistory.ts';
+import { noteWork } from './stalls.ts';
 import type { Store } from './store.ts';
 import type { Triage } from './triage.ts';
 
@@ -162,6 +163,7 @@ export class InboxRanker implements AttentionJudge {
   }
 
   private async fit(stepMs: number, pauseMs: number): Promise<RankModel> {
+    noteWork('inbox ranking refit');
     const now = this.now();
     const own = this.file ? new Database(this.file, { readonly: true }) : null;
     const db = own ?? this.store.db;
@@ -174,6 +176,7 @@ export class InboxRanker implements AttentionJudge {
         if (r.done) return r.value;
         if (performance.now() - start >= stepMs) {
           await pause();
+          noteWork('inbox ranking refit');
           start = performance.now();
         }
       }
@@ -189,7 +192,10 @@ export class InboxRanker implements AttentionJudge {
         const m = momentOf(world, opens[i++], t);
         if (m) moments.push(m);
       });
-      while (!rebuild.step(stepMs)) await pause();
+      while (!rebuild.step(stepMs)) {
+        await pause();
+        noteWork('inbox ranking refit');
+      }
       this.model = moments.length ? await run(fitRankSteps(moments, now, FIT)) : { ...PRIOR, fitAt: now };
       this.store.db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)`).run(KEY, JSON.stringify(this.model));
       this.onFit?.();

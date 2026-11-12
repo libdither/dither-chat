@@ -12,6 +12,7 @@
  * its script, if any, in their own origin.
  */
 import { showsInline } from '@dither-chat/protocol';
+import { genericType } from './fileinfo.ts';
 
 /** Every response: a document opened in a tab gets an opaque origin and no script, and loads only the file itself. */
 export const SANDBOX_CSP = "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'";
@@ -66,13 +67,25 @@ export function attachmentDisposition(raw: string, key: string, mime: string): s
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
+/**
+ * How long a device keeps media. A signed path stands for one stored URL (server.ts mediaSigner), whose bytes the hub
+ * keeps once fetched, an expired Discord link's included (fetchMedia): the same path never means other bytes. So a
+ * year, and no revalidation on reload; the browser's own eviction comes first.
+ */
+export const MEDIA_CACHE = 'private, max-age=31536000, immutable';
+/**
+ * Bytes of no stated type are served as what they are once the hub has looked (mediainfo.ts, docs/files.md), under the
+ * same path: a day, so a device that fetched them before then gets the type within one.
+ */
+export const UNTYPED_CACHE = 'private, max-age=86400';
+
 /** Every header of a media response. `raw` is the stored URL, `key` its cache key. */
-export function mediaHeaders(raw: string, key: string, mime: string, cache = 'private, max-age=604800, immutable'): Record<string, string> {
+export function mediaHeaders(raw: string, key: string, mime: string): Record<string, string> {
   const type = safeMime(mime);
   const inline = inlineType(type);
   return {
     'content-type': type,
-    'cache-control': cache,
+    'cache-control': genericType(type) ? UNTYPED_CACHE : MEDIA_CACHE,
     'x-content-type-options': 'nosniff',
     'content-security-policy': inline && /^(video|audio)\//i.test(type) ? PLAYER_CSP : SANDBOX_CSP,
     ...(inline ? {} : { 'content-disposition': attachmentDisposition(raw, key, type) }),

@@ -477,9 +477,15 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
   }
   let stale: Set<string> | null = null;
   if (!t) {
-    // What this device kept from last time shows at once; the hub brings it up to date.
+    // What this device kept from last time shows at once; the hub brings it up to date. Who wrote it and what it
+    // quotes come along where the client holds no copies of its own, without moving `metaRev`: only this timeline
+    // shows them, and it draws again below.
     const c = cachedTimeline(key);
     stale = c ? new Set(c.messages.map((m) => m.id)) : null;
+    if (c) {
+      for (const i of c.identities ?? []) if (!db.identities.has(i.id)) put(db, i);
+      for (const m of c.quoted ?? []) if (!quoted.has(m.id)) quoted.set(m.id, m);
+    }
     t = { key, messages: c?.messages ?? [], hasMore: true, loading: false, conversationIds: c?.conversationIds, from: c?.sync };
     timelines.set(key, t);
     if (o.glance) t.glance = true;
@@ -502,8 +508,9 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
     // A kept copy needs only what changed since it was kept: messages after its newest, and edits inside it.
     const from = t.from;
     const caught = !older && !!from && t.messages.length > 0 ? await syncTimelines([t], () => from) : 'refused';
-    // No network: what is shown stays, and the sync after the next connection brings it up to date.
-    if (caught === 'failed') return;
+    // No network: what is shown stays, and the sync after the next connection brings it up to date, or a try of its
+    // own when the socket outlived the blip.
+    if (caught === 'failed') return void retryKept(key);
     if (!older) t.from = undefined;
     let got = t.messages.length;
     if (caught === 'refused') {
@@ -609,6 +616,27 @@ function reload(key: string) {
     if (fresh) for (const m of t.messages) if (!fresh.messages.some((x) => x.id === m.id)) upsertInto(fresh.messages, m);
     timelineChanged(key);
   });
+}
+
+/**
+ * A kept copy whose catch-up got no answer (fillTimeline), tried again a few times, waiting longer each time,
+ * unless a reconnect's sync caught it up first (that clears `from`). Where the hub cannot say, it loads afresh.
+ */
+function retryKept(key: string, wait = 2000) {
+  setTimeout(async () => {
+    const t = timelines.get(key);
+    const from = t?.from;
+    if (!t || !from || t.loading) return;
+    const r = await syncTimelines([t], () => from);
+    if (r === 'ok') {
+      if (t.from === from) t.from = undefined;
+      timelineChanged(key);
+      persistSoon();
+    } else if (r === 'refused') {
+      timelines.delete(key);
+      void loadTimeline(key);
+    } else if (wait < 30_000) retryKept(key, wait * 2);
+  }, wait);
 }
 
 const catching = new Set<string>();

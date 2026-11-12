@@ -1,36 +1,19 @@
-/** src/snapshot.ts: what the start-up snapshot keeps, and its caps. IndexedDB itself: docs/android.md's measurements. */
+/** src/snapshot.ts: what the start-up snapshot keeps, and its caps. Kept message pages: keptpages.test.ts. IndexedDB itself: docs/android.md's measurements. */
 import { expect, mock, test } from 'bun:test';
 
-mock.module('../src/state.ts', () => ({ db: {}, inbox: { value: [] }, mailTriage: { value: [] }, loaded: { value: false }, quoted: new Map(), rev: { value: 0 }, timelines: new Map() }));
-const { buildRest, mailRest, MAX_MAIL_BODIES, MAX_MAIL_CHARS, MAX_MESSAGES, MAX_REST_CHARS, MAX_TIMELINES } = await import('../src/snapshot.ts');
+mock.module('../src/state.ts', () => ({ db: {}, eventHooks: new Set(), inbox: { value: [] }, mailTriage: { value: [] }, loaded: { value: false }, quoted: new Map(), rev: { value: 0 }, timelines: new Map() }));
+const { buildRest, mailRest, MAX_MAIL_BODIES, MAX_MAIL_CHARS } = await import('../src/snapshot.ts');
 
 const msg = (id: string, ts: number, extra: Record<string, unknown> = {}): any => ({ id, conversationId: 'c', ts, authorId: `idn_${id}`, body: 'x', replyToId: null, reactions: [], attachments: [], embeds: [], ...extra });
 const tl = (key: string, n: number, extra: Record<string, unknown> = {}): any => ({ key, messages: Array.from({ length: n }, (_, i) => msg(`${key}-${i}`, i)), hasMore: true, loading: false, ...extra });
 const ids = new Map([['idn_a-59', { id: 'idn_a-59' }], ['idn_q', { id: 'idn_q' }], ['idn_r', { id: 'idn_r' }], ['idn_unused', { id: 'idn_unused' }]] as any);
 
-test('keeps the newest messages of the most recently opened conversations', () => {
-  const rest = JSON.parse(buildRest({ inbox: [], timelines: [tl('a', 60), tl('b', 5)], identities: ids, quoted: new Map() }));
-  expect(rest.timelines.map((t: any) => t.key)).toEqual(['a', 'b']);
-  expect(rest.timelines[0].messages).toHaveLength(MAX_MESSAGES);
-  expect(rest.timelines[0].messages.at(-1).id).toBe('a-59');
-  expect(rest.identities.map((i: any) => i.id)).toEqual(['idn_a-59']);
-});
-
-test('no window around an old message, and no more than the caps', () => {
-  const many = Array.from({ length: MAX_TIMELINES + 5 }, (_, i) => tl(`t${i}`, 1));
-  const rest = JSON.parse(buildRest({ inbox: [], timelines: [tl('old', 3, { detached: true }), ...many], identities: ids, quoted: new Map() }));
-  expect(rest.timelines.some((t: any) => t.key === 'old')).toBe(false);
-  expect(rest.timelines.length).toBeLessThanOrEqual(MAX_TIMELINES);
-  const huge = [tl('h1', 1, { messages: [msg('big', 1, { body: 'x'.repeat(MAX_REST_CHARS) })] }), tl('h2', 2)];
-  expect(JSON.parse(buildRest({ inbox: [], timelines: huge, identities: ids, quoted: new Map() })).timelines.map((t: any) => t.key)).toEqual([]);
-});
-
-test('brings along what replies quote and who reacted', () => {
+test('the inbox brings along what its messages quote and who reacted; kept pages are not in the rest', () => {
   const quoted = new Map([['q', msg('q', 0)]]) as any;
-  const t = tl('a', 0, { messages: [msg('m', 1, { replyToId: 'q', authorId: null, reactions: [{ identityIds: ['idn_r'] }] })] });
-  const rest = JSON.parse(buildRest({ inbox: [], timelines: [t], identities: ids, quoted }));
+  const rest = JSON.parse(buildRest({ inbox: [msg('m', 1, { replyToId: 'q', authorId: null, reactions: [{ identityIds: ['idn_r'] }] }), msg('a-59', 2)], identities: ids, quoted }));
   expect(rest.quoted.map((m: any) => m.id)).toEqual(['q']);
-  expect(rest.identities.map((i: any) => i.id).sort()).toEqual(['idn_q', 'idn_r']);
+  expect(rest.identities.map((i: any) => i.id).sort()).toEqual(['idn_a-59', 'idn_q', 'idn_r']);
+  expect(rest.timelines).toBeUndefined();
 });
 
 test('mail: the threads and bodies the reader opened last, within the caps', () => {
@@ -42,14 +25,14 @@ test('mail: the threads and bodies the reader opened last, within the caps', () 
   expect(kept.bodies[0].messageId).toBe(`m${MAX_MAIL_BODIES + 4}`);
   // One too big is left out; smaller ones still fit.
   expect(mailRest({ details: [], bodies: [body(1, 10), body(2, MAX_MAIL_CHARS)] }).bodies.map((b: any) => b.messageId)).toEqual(['m1']);
-  const rest = JSON.parse(buildRest({ inbox: [], timelines: [], identities: new Map(), quoted: new Map(), mail: { details: [detail(1)], bodies: [] } }));
+  const rest = JSON.parse(buildRest({ inbox: [], identities: new Map(), quoted: new Map(), mail: { details: [detail(1)], bodies: [] } }));
   expect(rest.mail.details).toHaveLength(1);
 });
 
 test('keeps the Triage board’s mail, newest first, as many as the inbox (slice 9)', () => {
   const item = (i: number): any => ({ kind: 'mail', id: `mml_${i}`, threadId: 'mth_a', accountId: 'a', from: { name: null, email: 'x@y.example' }, subject: 's', preview: null, ts: i, unread: true, triage: { decision: 'push', score: 1, reasons: [], decidedBy: 'rules', feedback: null } });
-  const rest = JSON.parse(buildRest({ inbox: [], timelines: [], identities: ids, quoted: new Map(), mailTriage: Array.from({ length: 150 }, (_, i) => item(150 - i)) }));
+  const rest = JSON.parse(buildRest({ inbox: [], identities: ids, quoted: new Map(), mailTriage: Array.from({ length: 150 }, (_, i) => item(150 - i)) }));
   expect(rest.mailTriage).toHaveLength(100);
   expect(rest.mailTriage[0].id).toBe('mml_150');
-  expect(JSON.parse(buildRest({ inbox: [], timelines: [], identities: ids, quoted: new Map() })).mailTriage).toBeUndefined();
+  expect(JSON.parse(buildRest({ inbox: [], identities: ids, quoted: new Map() })).mailTriage).toBeUndefined();
 });
