@@ -1,5 +1,5 @@
 {
- "note": "bun scripts/verify-perf.ts --update (docs/perf.md). Times are of the machine it ran on. Times: the slower of two runs on 2026-11-10 (load 3-7 on a shared machine). Counts, renders and layouts: two runs on 2026-11-11, once the perf world's decisions followed the three tiers (the higher of the two for renders and layouts). DOM node counts (cold, long reopen) set by hand on 2026-11-11 when long lists began drawing a window of their rows (ui/more.tsx).",
+ "note": "bun scripts/verify-perf.ts --update (docs/perf.md). Times are of the machine it ran on. Times: the slower of two runs on 2026-11-10 (load 3-7 on a shared machine). Counts, renders and layouts: two runs on 2026-11-11, once the perf world's decisions followed the three tiers (the higher of the two for renders and layouts). DOM node counts (cold, long reopen) set by hand on 2026-11-11 when long lists began drawing a window of their rows (ui/more.tsx). The phone pass (p4x.*) was added on 2026-11-11 from three runs at a load of 20-40: medians, but the higher of the three for its DOM node counts, which moved by up to seven between runs (a page left loading or not).",
  "at": "2026-11-11",
  "runs": 3,
  "pages": 15,
@@ -442,6 +442,174 @@
   "4x.relaunch.open.layouts": {
    "v": 21,
    "kind": "tally"
+  },
+  "p4x.cold.list": {
+   "v": 2174,
+   "kind": "ms"
+  },
+  "p4x.cold.longest": {
+   "v": 615,
+   "kind": "ms"
+  },
+  "p4x.cold.layouts": {
+   "v": 10,
+   "kind": "tally"
+  },
+  "p4x.cold.nodes": {
+   "v": 2125,
+   "kind": "count"
+  },
+  "p4x.listScroll.sidebarRenders": {
+   "v": 0,
+   "kind": "tally"
+  },
+  "p4x.listScroll.layouts": {
+   "v": 0,
+   "kind": "tally"
+  },
+  "p4x.listScroll.slowFrames": {
+   "v": 0,
+   "kind": "frames"
+  },
+  "p4x.open.ms": {
+   "v": 733,
+   "kind": "ms"
+  },
+  "p4x.open.longest": {
+   "v": 303,
+   "kind": "ms"
+  },
+  "p4x.open.layouts": {
+   "v": 8,
+   "kind": "tally"
+  },
+  "p4x.open.messageRenders": {
+   "v": 60,
+   "kind": "tally"
+  },
+  "p4x.tlScroll.messageRenders": {
+   "v": 0,
+   "kind": "tally"
+  },
+  "p4x.tlScroll.longest": {
+   "v": 0,
+   "kind": "ms"
+  },
+  "p4x.tlScroll.slowFrames": {
+   "v": 0,
+   "kind": "frames"
+  },
+  "p4x.typing.renders": {
+   "v": 0,
+   "kind": "tally"
+  },
+  "p4x.typing.sidebarRenders": {
+   "v": 0,
+   "kind": "tally"
+  },
+  "p4x.typing.messageRenders": {
+   "v": 0,
+   "kind": "tally"
+  },
+  "p4x.typing.layouts": {
+   "v": 32,
+   "kind": "tally"
+  },
+  "p4x.typing.keyP90": {
+   "v": 32,
+   "kind": "ms"
+  },
+  "p4x.typing.keyMax": {
+   "v": 53,
+   "kind": "ms"
+  },
+  "p4x.home.nodes": {
+   "v": 4704,
+   "kind": "count"
+  },
+  "p4x.home.sidebarRenders": {
+   "v": 1,
+   "kind": "tally"
+  },
+  "p4x.home.longest": {
+   "v": 0,
+   "kind": "ms"
+  },
+  "p4x.catchUp.nodes": {
+   "v": 2562,
+   "kind": "count"
+  },
+  "p4x.catchUp.renders": {
+   "v": 1,
+   "kind": "tally"
+  },
+  "p4x.catchUp.longest": {
+   "v": 113,
+   "kind": "ms"
+  },
+  "p4x.search.nodes": {
+   "v": 3182,
+   "kind": "count"
+  },
+  "p4x.search.renders": {
+   "v": 1,
+   "kind": "tally"
+  },
+  "p4x.search.longest": {
+   "v": 76,
+   "kind": "ms"
+  },
+  "p4x.you.nodes": {
+   "v": 1645,
+   "kind": "count"
+  },
+  "p4x.you.renders": {
+   "v": 1,
+   "kind": "tally"
+  },
+  "p4x.you.longest": {
+   "v": 101,
+   "kind": "ms"
+  },
+  "p4x.homeTab.nodes": {
+   "v": 4703,
+   "kind": "count"
+  },
+  "p4x.homeTab.sidebarRenders": {
+   "v": 1,
+   "kind": "tally"
+  },
+  "p4x.homeTab.longest": {
+   "v": 272,
+   "kind": "ms"
+  },
+  "p4x.people.nodes": {
+   "v": 4565,
+   "kind": "count"
+  },
+  "p4x.people.longest": {
+   "v": 116,
+   "kind": "ms"
+  },
+  "p4x.person.nodes": {
+   "v": 4549,
+   "kind": "count"
+  },
+  "p4x.person.messageRenders": {
+   "v": 60,
+   "kind": "tally"
+  },
+  "p4x.person.longest": {
+   "v": 160,
+   "kind": "ms"
+  },
+  "p4x.mail.nodes": {
+   "v": 3663,
+   "kind": "count"
+  },
+  "p4x.mail.longest": {
+   "v": 127,
+   "kind": "ms"
   }
  }
 }

@@ -3,7 +3,7 @@
  *
  *   bun scripts/verify-perf.ts [--port 8620] [--runs 3] [--cpu 1,4] [--pages 15] [--web <built dist>]
  *                              [--update] [--out results.json] [--baseline scripts/perf-baseline.json] [--css <css>]
- *                              [--work <empty dir>] [--keep] [--size 390x844] [--scale 1] [--ci]
+ *                              [--work <empty dir>] [--keep] [--size 390x844] [--scale 1] [--phone-cpu 4] [--ci]
  *
  * Builds the web app (unless --web names a build), seeds a fresh world (scripts/perf-world.ts) in a temp dir, starts
  * a hub on it, and measures in headless Chromium at each CPU throttle, `runs` times each:
@@ -11,7 +11,8 @@
  *   cold load to the list; first open of six conversations, reopening them, `pages` older pages in the biggest, the
  *   long timeline reopened, a message arriving while it is open; then a relaunch from the device's snapshot and the
  *   same six opened again. Times, long tasks, and counts: renders of App, the inbox list and messages, LayoutCount,
- *   DOM nodes, .msg elements.
+ *   DOM nodes, .msg elements. Then a phone's pass (`--phone-cpu`, 4× here and 1× in CI): flicking the lists, typing,
+ *   the tabs, a person's page and Mail (phoneRun).
  *
  * Medians go against the baseline: a count over its baseline fails (bytes get 1%), a time over baseline × 1.25 +
  * 50 ms fails. --update writes the medians as the new baseline.
@@ -41,7 +42,9 @@ const RUNS = Number(opt('runs', CI ? '1' : '3'));
  * whole run at the real pace; a hurried one leaves that to the first counted run (docs/perf.md).
  */
 const WARMUP = Number(opt('warmup', CI ? '1' : '0'));
-const CPUS = opt('cpu', CI ? '1' : '1,4').split(',').map(Number);
+const CPUS = opt('cpu', CI ? '1' : '1,4').split(',').map(Number).filter((x) => x > 0);
+/** Throttles for the phone pass (phoneRun), after the desktop's; `--phone-cpu 0` leaves it out. */
+const PHONE_CPUS = opt('phone-cpu', CI ? '1' : '4').split(',').map(Number).filter((x) => x > 0);
 const PAGES = Number(opt('pages', CI ? '5' : '15'));
 /** The world's size against the live hub's (perf-world.ts). */
 const SCALE = Number(opt('scale', CI ? '0.1' : '1'));
@@ -55,8 +58,11 @@ const root = resolve(import.meta.dir, '..');
 const BASELINE = resolve(opt('baseline', join(root, CI ? 'scripts/perf-baseline-ci.json' : 'scripts/perf-baseline.json')));
 const base = `http://127.0.0.1:${PORT}`;
 
-/** count: the page's structure (nodes, messages), exact. tally: renders and layouts, which a frame boundary can move by one or two. */
-type Kind = 'ms' | 'count' | 'tally' | 'bytes';
+/**
+ * count: the page's structure (nodes, messages), exact. tally: renders and layouts, which a frame boundary can move by
+ * one or two. frames: frames slower than 50 ms during a flick, a time in all but name, never judged in CI.
+ */
+type Kind = 'ms' | 'count' | 'tally' | 'bytes' | 'frames';
 /** gate (CI's baseline only): whether CI judges it; false for one that moved between runs of the same code. */
 type Metrics = Record<string, { v: number; kind: Kind; gate?: boolean }>;
 /**
@@ -135,27 +141,33 @@ async function main() {
   if (!WARMUP) await hubSide();
 
   // ------------------------------------------------------------------ the browser's
-  const runs: Record<number, Metrics[]> = {};
-  for (const cpu of CPUS) {
-    runs[cpu] = [];
-    for (let i = 0; i < WARMUP; i++) {
+  // Desktop passes ("4x.…"), then the phone's ("p4x.…").
+  const runs: Record<string, Metrics[]> = {};
+  const passes = [...CPUS.map((cpu) => ({ key: String(cpu), cpu, phone: false })), ...PHONE_CPUS.map((cpu) => ({ key: `p${cpu}`, cpu, phone: true }))];
+  for (const { key, cpu, phone } of passes) {
+    runs[key] = [];
+    const go = () => (phone ? phoneRun(cpu, world) : run(cpu, world));
+    for (let i = 0; i < (phone ? 0 : WARMUP); i++) {
       const m = await run(cpu, world);
       console.log(`${cpu}× warm-up run, not counted: cold ${m['cold.list'].v} ms, first open ${m['open.first'].v} ms, message renders ${m['open.first.messageRenders'].v}`);
     }
     if (!metrics['hub.bootstrap.bytes']) await hubSide();
     for (let i = 0; i < RUNS; i++) {
       // A run that fails (a timeout on a busy machine) is tried once more, but not in CI; its error and the hub's log are shown.
-      const m = await run(cpu, world).catch((e) => {
-        console.warn(`${cpu}× run ${i + 1} failed${CI ? '' : ', trying again'}: ${e.message}\n${readFileSync(join(work, 'hub.log'), 'utf8').split('\n').slice(-15).join('\n')}`);
+      const m = await go().catch((e) => {
+        console.warn(`${key}× run ${i + 1} failed${CI ? '' : ', trying again'}: ${e.message}\n${readFileSync(join(work, 'hub.log'), 'utf8').split('\n').slice(-15).join('\n')}`);
         if (CI) throw e;
-        return run(cpu, world);
+        return go();
       });
-      runs[cpu].push(m);
-      console.log(`${cpu}× run ${i + 1}: cold ${m['cold.list'].v} ms, first open ${m['open.first'].v} ms, reopen ${m['open.again'].v} ms, older page ${m['older.page'].v} ms, long reopen ${m['long.reopen'].v} ms, arrival ${m['arrival.busy'].v} ms busy, relaunch ${m['relaunch.list'].v} ms, open after ${m['relaunch.open'].v} ms`);
+      runs[key].push(m);
+      if (phone)
+        console.log(`phone ${cpu}× run ${i + 1}: cold ${m['cold.list'].v} ms, ${m['cold.nodes'].v} nodes; open ${m['open.ms'].v} ms; keystroke to frame p90 ${m['typing.keyP90'].v} ms; slow frames: list ${m['listScroll.slowFrames'].v}, timeline ${m['tlScroll.slowFrames'].v}; longest task: Home ${m['homeTab.longest'].v}, Catch up ${m['catchUp.longest'].v}, person ${m['person.longest'].v}, Mail ${m['mail.longest'].v} ms`);
+      else
+        console.log(`${cpu}× run ${i + 1}: cold ${m['cold.list'].v} ms, first open ${m['open.first'].v} ms, reopen ${m['open.again'].v} ms, older page ${m['older.page'].v} ms, long reopen ${m['long.reopen'].v} ms, arrival ${m['arrival.busy'].v} ms busy, relaunch ${m['relaunch.list'].v} ms, open after ${m['relaunch.open'].v} ms`);
     }
-    for (const k of Object.keys(runs[cpu][0])) {
-      const xs = runs[cpu].map((r) => r[k]?.v).filter((x) => x !== undefined);
-      metrics[`${cpu}x.${k}`] = { v: median(xs), kind: runs[cpu][0][k].kind };
+    for (const k of Object.keys(runs[key][0])) {
+      const xs = runs[key].map((r) => r[k]?.v).filter((x) => x !== undefined);
+      metrics[`${key}x.${k}`] = { v: median(xs), kind: runs[key][0][k].kind };
     }
   }
 
@@ -171,15 +183,15 @@ async function main() {
   console.log(`\n${'metric'.padEnd(34)} ${'baseline'.padStart(10)} ${'now'.padStart(10)}  change`);
   for (const [k, m] of Object.entries(metrics)) {
     const b = old?.metrics[k];
-    const ceiling = CEILINGS[k.replace(/^\d+x\./, '')];
+    const ceiling = CEILINGS[k.replace(/^p?\d+x\./, '')];
     const capped = ceiling !== undefined && m.v > ceiling;
     if (capped) failed++;
     // In CI: times never, and of the rest only what the baseline found steady.
-    const judged = !CI || (m.kind !== 'ms' && (UPDATE ? m.gate : b?.gate) !== false);
+    const judged = !CI || (m.kind !== 'ms' && m.kind !== 'frames' && (UPDATE ? m.gate : b?.gate) !== false);
     const over = judged && b && m.v > b.v + allowed(m.kind, b.v);
     if (over && !UPDATE) failed++;
     const change = b ? `${m.v >= b.v ? '+' : ''}${b.v ? Math.round(((m.v - b.v) / b.v) * 100) : 0}%` : 'new';
-    const verdict = over || capped ? 'FAIL' : judged ? '' : m.kind === 'ms' ? 'not judged' : 'not steady';
+    const verdict = over || capped ? 'FAIL' : judged ? '' : m.kind === 'ms' || m.kind === 'frames' ? 'not judged' : 'not steady';
     const xs = spread(k, runs) ?? [m.v];
     rows.push({ k, b: b?.v, v: m.v, kind: m.kind, change, verdict, runs: xs });
     const note = [m.kind === 'ms' ? '' : `(${m.kind})`, capped ? `over its ceiling of ${ceiling}` : '', CI && !judged ? `${verdict}: ${xs.join(' ')}` : ''].filter(Boolean).join(' ');
@@ -294,6 +306,111 @@ async function run(cpu: number, world: World): Promise<Metrics> {
     put('relaunch.longest', warm.longest);
     put('relaunch.renders', warm.renders.App ?? 0, 'tally');
     await pass('relaunch.open');
+    if (page.errors.length) console.warn('page errors:', page.errors.slice(0, 5));
+  } finally {
+    await b.close();
+  }
+  return m;
+}
+
+/**
+ * A phone (390 × 844, touch): a cold load, then what the desktop run does not cover: flicking the inbox list and a long
+ * timeline, typing in the composer, the tabs (Catch up, Search, You, Home), People and a person's page, and Mail's list.
+ * Each step's DOM nodes, renders and layouts, its longest task, and for a flick its frames slower than 50 ms.
+ */
+async function phoneRun(cpu: number, world: World): Promise<Metrics> {
+  const b = await launch();
+  const page = b.page;
+  const m: Metrics = {};
+  const put = (k: string, v: number, kind: Kind = 'ms') => (m[k] = { v: Math.round(v), kind });
+  type Part = 'nodes' | 'renders' | 'sidebarRenders' | 'messageRenders' | 'layouts' | 'longest';
+  const step = async (name: string, fn: () => Promise<Record<string, number> | void>, keep: Part[]) => {
+    const m0 = await metrics(page);
+    const r0 = await renders(page);
+    const lt0 = await page.eval<number>('__perf.lt.length');
+    const extra = (await fn()) ?? {};
+    await settle(page);
+    const lts = await page.eval<[number, number][]>(`__perf.lt.slice(${lt0})`);
+    const d = diff(r0, await renders(page));
+    const all: Record<Part, number> = {
+      nodes: await page.eval<number>(`document.getElementsByTagName('*').length`),
+      renders: d.App ?? 0,
+      sidebarRenders: d.InboxSidebar ?? 0,
+      messageRenders: d.MessageItem ?? 0,
+      layouts: (await metrics(page)).LayoutCount - m0.LayoutCount,
+      longest: Math.max(0, ...lts.map((t) => t[1])),
+    };
+    for (const k of keep) put(`${name}.${k}`, all[k], k === 'nodes' ? 'count' : k === 'longest' ? 'ms' : 'tally');
+    for (const [k, v] of Object.entries(extra)) put(`${name}.${k}`, v, k === 'slowFrames' ? 'frames' : 'ms');
+  };
+  /** A touch flick over `sel` (positive dy scrolls up), counting frames over 50 ms while it runs. */
+  const flick = (sel: string, dy: number) => async () => {
+    await page.eval(`(() => { window.__fr = []; let on = true; window.__frStop = () => (on = false); const f = (t) => { __fr.push(t); if (on) requestAnimationFrame(f); }; requestAnimationFrame(f); })()`);
+    const at = await page.eval<{ x: number; y: number }>(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`);
+    await page.send('Input.synthesizeScrollGesture', { x: at.x, y: at.y, yDistance: dy, speed: 1500, gestureSourceType: 'touch' });
+    await page.eval('__frStop()');
+    const fr = await page.eval<number[]>('__fr');
+    return { slowFrames: fr.slice(1).filter((t, i) => t - fr[i] > 50).length };
+  };
+  const key = async (k: string) => {
+    const named = k === 'Backspace' ? { key: k, code: k, windowsVirtualKeyCode: 8 } : { key: k, code: k === ' ' ? 'Space' : `Key${k.toUpperCase()}`, text: k, windowsVirtualKeyCode: k === ' ' ? 32 : k.toUpperCase().charCodeAt(0) };
+    await page.send('Input.dispatchKeyEvent', { type: 'keyDown', ...named });
+    await page.send('Input.dispatchKeyEvent', { type: 'keyUp', ...named, text: undefined });
+  };
+  /** Keystrokes into the composer, each timed from the key to the frame after it; then taken back, never sent. */
+  const typing = async () => {
+    await page.eval(`(() => { document.querySelector('.composer textarea').focus(); window.__keys = []; document.addEventListener('keydown', (e) => { const ts = e.timeStamp; requestAnimationFrame(() => setTimeout(() => __keys.push(performance.now() - ts))); }, true); })()`);
+    for (const ch of 'the deploy went fine tonight') {
+      await key(ch);
+      await Bun.sleep(120);
+    }
+    await Bun.sleep(300);
+    const ks = (await page.eval<number[]>('__keys')).sort((a, b) => a - b);
+    await page.eval(`document.querySelector('.composer textarea').select()`);
+    await key('Backspace');
+    return { keyP90: ks[Math.floor(ks.length * 0.9)] ?? 0, keyMax: ks.at(-1) ?? 0 };
+  };
+  const tab = (label: string) => async () => {
+    const ok = await page.eval<boolean>(`(() => { const t = document.querySelector(${JSON.stringify(`.tabbar .tab[data-track="tabs: ${label}"]`)}); t?.click(); return !!t; })()`);
+    if (!ok) throw new Error(`no ${label} tab`);
+  };
+  const hash = (h: string) => async () => void (await page.eval(`location.hash = ${JSON.stringify(h)}`));
+  try {
+    await page.size(390, 844, true);
+    await page.send('Performance.enable');
+    if (cpu > 1) await page.send('Emulation.setCPUThrottlingRate', { rate: cpu });
+    await page.send('Page.addScriptToEvaluateOnNewDocument', { source: INIT });
+    const big = world.open[0];
+    const lastId = (await getJson(`/api/conversations/${big.id}/messages?limit=1`)).messages.at(-1).id;
+    const boot = await getJson('/api/bootstrap');
+    const person = boot.identities.find((i: any) => i.nativeId === world.open[2].member)?.personId;
+    if (!person) throw new Error('no person for the biggest direct conversation');
+
+    await page.goto(`${base}/?perf=1#/inbox`);
+    const cold = await loaded(page);
+    put('cold.list', cold.list);
+    put('cold.longest', cold.longest);
+    put('cold.layouts', cold.layouts, 'tally');
+    put('cold.nodes', cold.nodes, 'count');
+    await step('listScroll', flick('.side-scroll', -4000), ['sidebarRenders', 'layouts']);
+    const o = await open(page, big, lastId);
+    put('open.ms', o.painted);
+    put('open.longest', o.longest);
+    put('open.layouts', o.layouts, 'tally');
+    put('open.messageRenders', o.messageRenders, 'tally');
+    await step('tlScroll', flick('.timeline-scroll', 3000), ['messageRenders', 'longest']);
+    // Past what opening it set off (marked read, the snapshot saved), so the keys are counted alone.
+    await Bun.sleep(2000);
+    await settle(page);
+    await step('typing', typing, ['renders', 'sidebarRenders', 'messageRenders', 'layouts']);
+    await step('home', hash('#/inbox'), ['nodes', 'sidebarRenders', 'longest']);
+    await step('catchUp', tab('Catch up'), ['nodes', 'renders', 'longest']);
+    await step('search', tab('Search'), ['nodes', 'renders', 'longest']);
+    await step('you', tab('You'), ['nodes', 'renders', 'longest']);
+    await step('homeTab', tab('Home'), ['nodes', 'sidebarRenders', 'longest']);
+    await step('people', async () => void (await page.eval(`document.querySelector('.rail-btn[data-track="people"]').click()`)), ['nodes', 'longest']);
+    await step('person', hash(`#/people/${person}`), ['nodes', 'messageRenders', 'longest']);
+    await step('mail', hash('#/mail'), ['nodes', 'longest']);
     if (page.errors.length) console.warn('page errors:', page.errors.slice(0, 5));
   } finally {
     await b.close();
@@ -440,9 +557,9 @@ const SNAPSHOT_TIMELINES = `new Promise((res) => {
 // ------------------------------------------------------------------ helpers
 
 /** Every run's value of a per-throttle metric ("1x.cold.nodes"), or null for the hub's own. */
-function spread(k: string, runs: Record<number, Metrics[]>): number[] | null {
-  const m = k.match(/^(\d+)x\.(.+)$/);
-  return m ? runs[Number(m[1])].map((r) => r[m[2]]?.v).filter((x) => x !== undefined) : null;
+function spread(k: string, runs: Record<string, Metrics[]>): number[] | null {
+  const m = k.match(/^(p?\d+)x\.(.+)$/);
+  return m ? runs[m[1]].map((r) => r[m[2]]?.v).filter((x) => x !== undefined) : null;
 }
 /**
  * How far over its baseline a value may go. A time: a quarter and 50 ms. Renders and layouts: two or 10% (a frame
@@ -450,12 +567,12 @@ function spread(k: string, runs: Record<number, Metrics[]>): number[] | null {
  * arriving message moves the long timeline's window by one message and the runs it is the median of are always the same.
  */
 function allowed(kind: Kind, b: number): number {
-  return kind === 'ms' ? b * 0.25 + 50 : kind === 'tally' ? Math.max(2, b * 0.1) : kind === 'bytes' ? b * 0.01 : CI ? Math.max(2, b * 0.01) : 0;
+  return kind === 'ms' ? b * 0.25 + 50 : kind === 'frames' ? Math.max(3, b) : kind === 'tally' ? Math.max(2, b * 0.1) : kind === 'bytes' ? b * 0.01 : CI ? Math.max(2, b * 0.01) : 0;
 }
 /** Steady enough to judge: its runs spread over at most half what it may go over by (a tally: one), so noise cannot fail it. */
 function steady(kind: Kind, xs: number[]): boolean {
   const d = Math.max(...xs) - Math.min(...xs);
-  return kind === 'ms' ? false : kind === 'tally' ? d <= 1 : d <= allowed(kind, Math.min(...xs)) / 2;
+  return kind === 'ms' || kind === 'frames' ? false : kind === 'tally' ? d <= 1 : d <= allowed(kind, Math.min(...xs)) / 2;
 }
 
 /** The job's summary (GitHub Actions): what was judged and how it went, then the times, for reading only. */
