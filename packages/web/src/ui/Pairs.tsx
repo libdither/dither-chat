@@ -284,11 +284,15 @@ export function PairLead({ person, directs, focus, onFocus }: { person: P.Person
   const mine = pairs.filter((p) => p.theirs?.id === cur.theirs?.id && p.conv.network === focus.network);
   const theirLabel = (p: Pair) => {
     const lt = leadTells(routeKey(p.conv), keys);
-    return `${person.name}${lt.network ? ` on ${netName(p.conv.network)}` : ''}${lt.theirs ? ` (${theirName(p)})` : ''}`;
+    // A phone has room for one name: their account's where it tells (`To kit.work`), else theirs on the network.
+    if (phone.value && lt.theirs) return theirName(p);
+    return `${person.name}${lt.network ? ` on ${netName(p.conv.network)}` : ''}${lt.theirs ? ` · to ${theirName(p)}` : ''}`;
   };
   return (
     <span class="pair-lead-line">
-      {phone.value ? 'To' : 'Message'}{' '}
+      {/* As the line under the name says it: "Message Kit on Discord · to kit.work · via zyn.alt"; on a phone
+          "To kit.work · via zyn.alt". */}
+      {phone.value ? 'To ' : 'Message '}
       <Token
         label={theirLabel(cur)}
         options={theirs.map((p) => ({ id: p.theirs?.id ?? p.conv.id, label: theirLabel(p), picture: <Avatar id={p.theirs?.id ?? p.conv.id} name={theirName(p)} url={p.theirs?.avatar} size={16} network={p.conv.network} /> }))}
@@ -296,8 +300,7 @@ export function PairLead({ person, directs, focus, onFocus }: { person: P.Person
       />
       {t.mine && (
         <>
-          {' '}
-          from{' '}
+          {' · via '}
           <Token label={myName(cur)} picture={<MyPicture p={cur} size={16} />} options={mine.map((p) => ({ id: p.conv.id, label: myName(p), picture: <MyPicture p={p} size={16} /> }))} onPick={onFocus} />
         </>
       )}
@@ -327,7 +330,7 @@ export function SendLine({ c, accounts, to }: { c: P.ConversationView; accounts:
   return (
     <span class="send-line" style={{ '--net': netColor(c.network) } as Record<string, string>}>
       <span class="crumb net">
-        <NetGlyph network={c.network} size={11} /> {netName(c.network)}
+        <NetGlyph network={c.network} size={11} /> <span class="send-net-name">{netName(c.network)}</span>
       </span>
       {to && (
         <span class="send-to">
