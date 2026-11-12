@@ -753,7 +753,7 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   const drawn = useRef<Drawn>({ key: tkey, from: null, to: null });
   if (drawn.current.key !== tkey) drawn.current = { key: tkey, from: null, to: null };
   // And of that, the newest FIRST when it shows, then a slice more each time the page is idle (slices.ts).
-  const slices = useRef(new Slices()).current;
+  const [slices] = useState(() => new Slices());
   slices.begin(tkey);
   const draw = (from: string | null, to: string | null) => {
     drawn.current = { key: tkey, from, to };
@@ -849,7 +849,7 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     const id = setTimeout(() => onScroll(), 300);
     return () => clearTimeout(id);
   });
-  // The next slice once the page is idle. Above the view it would move what is in it, so the first message drawn is
+  // The next slice once the page is idle. Above the view it would move what is in it, so the first message in view is
   // held where it is; at the newest end (column-reverse) nothing moves.
   useEffect(() => {
     if (!more) return;
