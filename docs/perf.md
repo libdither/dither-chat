@@ -423,6 +423,10 @@ Phone size (390 × 844), 4× CPU, one run each, the branch first (load 15, then 
 The baselines' DOM node counts moved by hand: `cold.nodes` 11,402 to 2,562 and `long.reopen.nodes` 16,984 to 8,133
 (desktop, full size), and in CI's 2,353 to 2,111 and 7,875 to 7,634.
 
+CI's `1x.cold.layouts` is no longer judged (`"gate": false`): its first run of this change read 12 against 9, and runs
+of main and branches of it had read 9, 9, 9, 10, 10 and 11, more than a steady tally spreads. Traced on CI's world, a
+cold load lays out the same 15 times for either build, then a varying few more as Catch up's cards fill in.
+
 ## Next
 
 What these numbers point at, not done yet:
