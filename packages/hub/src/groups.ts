@@ -8,6 +8,7 @@ import { createGroupNotBuilt, createGroupProblem, GROUP_RULES, NETWORK_META } fr
 import { hubId } from '@dither-chat/protocol/ids';
 import { AboutError, candidatePool, caps } from './about.ts';
 import { givePace, type PaceKind, takePace } from './add.ts';
+import type { Attempt } from './attempts.ts';
 import type { Store } from './store.ts';
 
 export interface GroupDeps {
@@ -52,8 +53,9 @@ export class Groups {
   /**
    * POST /api/groups { accountId, name?, identities }: make the group through that account. The rules first, then one
    * `groups` slot and one `members` slot per person, all or none; the adapter's own refusal gives them back.
+   * `a` is filled in as the account and network become known, for the hub's log (attempts.ts).
    */
-  async create(b: { accountId?: unknown; name?: unknown; identities?: unknown }): Promise<P.CreateGroupView> {
+  async create(b: { accountId?: unknown; name?: unknown; identities?: unknown }, a?: Attempt): Promise<P.CreateGroupView> {
     const s = this.d.store;
     if (typeof b.accountId !== 'string' || !b.accountId) throw new AboutError('Which account makes it?', 400);
     if (b.name !== undefined && b.name !== null && typeof b.name !== 'string') throw new AboutError('A name is words', 400);
@@ -64,6 +66,7 @@ export class Groups {
     const network = acc.network as P.Network;
     const net = NETWORK_META[network].name;
     const rule = GROUP_RULES[network];
+    if (a) Object.assign(a, { accountId: acc.id, network, what: rule?.noun ?? 'a group' });
     if (!rule || !caps(s, acc.id).includes('createGroup')) throw new AboutError(createGroupNotBuilt(network), 409);
     const name = typeof b.name === 'string' ? b.name.trim() || undefined : undefined;
     const problem = createGroupProblem(network, name, wanted.length);
@@ -73,7 +76,9 @@ export class Groups {
       const n = s.nativeOf('identity', identityId);
       if (!n) throw new AboutError('Nobody by that id', 404);
       if (n.network !== network) throw new AboutError(`Only ${net} people can be in a ${net} ${rule.noun}`, 400);
-      if (identityId === acc.self_identity || s.isSelf(identityId)) throw new AboutError('That is this account', 400);
+      if (identityId === acc.self_identity) throw new AboutError('That is this account', 400);
+      // Left out of the candidates on purpose, as adding people does.
+      if (s.isSelf(identityId)) throw new AboutError('That is one of your own accounts', 400);
       people.push({ identityId, nativeId: n.nativeId });
     }
     if (!this.d.online(acc.id)) throw new AboutError(`${net} · ${acc.label} is not connected`, 409);

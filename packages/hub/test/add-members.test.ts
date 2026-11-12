@@ -4,7 +4,7 @@
  * does with the people (Discord only friends, Signal adds, Matrix invites), the pace per account, and the line a
  * network without it shows instead of a button.
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +12,7 @@ import type * as P from '@dither-chat/protocol';
 import { addMembersNotBuilt } from '@dither-chat/protocol';
 import { AboutError, Abouts } from '../src/about.ts';
 import { ADD_LIMITS } from '../src/add.ts';
+import { asked, attempt, candidatesAttempt } from '../src/attempts.ts';
 import { createDemoAccounts, demoFactory } from '../src/demo.ts';
 import { mediaSigner } from '../src/server.ts';
 import { Store } from '../src/store.ts';
@@ -68,23 +69,34 @@ beforeAll(() => {
     }
   })();
   store.flush();
-  abouts = new Abouts({
-    store,
-    online: () => true,
-    command: <T>(account: string, cmd: any) =>
-      new Promise<T>((resolve, rej) => {
-        const id = crypto.randomUUID();
-        sent.push({ account, cmd });
-        pending.set(id, { resolve: resolve as (v: unknown) => void, reject: rej });
-        adapters.get(account)!.command({ ...cmd, id });
-      }),
-    pickAccount: (c, requested) => {
-      const vs = store.vantageAccounts('conversation', c);
-      return requested && vs.includes(requested) ? requested : (vs[0] ?? null);
-    },
-    note: (_a, line) => notes.push(line),
-  });
+  abouts = new Abouts({ ...deps, note: (_a, line) => notes.push(line) });
 });
+
+/** An answer the next addMembers gets instead of the adapter's, to see what the hub does with it. */
+let instead: (() => Promise<unknown>) | null = null;
+const deps = {
+  get store() {
+    return store;
+  },
+  online: () => true,
+  command: <T>(account: string, cmd: any) => {
+    sent.push({ account, cmd });
+    if (instead && cmd.t === 'addMembers') {
+      const f = instead;
+      instead = null;
+      return f() as Promise<T>;
+    }
+    return new Promise<T>((resolve, rej) => {
+      const id = crypto.randomUUID();
+      pending.set(id, { resolve: resolve as (v: unknown) => void, reject: rej });
+      adapters.get(account)!.command({ ...cmd, id });
+    });
+  },
+  pickAccount: (c: string, requested?: string) => {
+    const vs = store.vantageAccounts('conversation', c);
+    return requested && vs.includes(requested) ? requested : (vs[0] ?? null);
+  },
+};
 
 afterAll(() => {
   for (const a of adapters.values()) (a as unknown as { stop(): void }).stop();
@@ -221,5 +233,100 @@ describe('pace', () => {
     expect((store.db.query(`SELECT COUNT(*) AS n FROM add_pace WHERE account_id = ? AND kind = 'members'`).get(acc) as { n: number }).n).toBe(ADD_LIMITS.members.max - 1);
     const r = await abouts.addMembers(id, { identities: [who('signal', 'Mom')] });
     expect(r.added).toEqual([who('signal', 'Mom')]);
+  });
+});
+
+describe("in the hub's log", () => {
+  /** What console.warn got while `f` ran, and what `f` threw. */
+  const warned = async (f: () => unknown) => {
+    const lines: string[] = [];
+    const spy = spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(' ')));
+    let error: Error | null = null;
+    try {
+      await f();
+    } catch (e) {
+      error = e as Error;
+    } finally {
+      spy.mockRestore();
+    }
+    return { lines, error };
+  };
+  const accountLog: string[] = [];
+  /** The attempt as the route runs it. */
+  const add = (id: string, b: { identities?: unknown; accountId?: unknown }, a = abouts) =>
+    attempt({ kind: 'add', conversation: id, people: asked(b.identities) }, (x) => a.addMembers(id, b, x), (acc, line) => accountLog.push(`${acc} ${line}`));
+  const nameOf = (id: string) => store.one<{ name: string }>('SELECT name FROM conversation WHERE id = ?', id)!.name;
+
+  test('added, with someone refused: one added line, and failed counts them', async () => {
+    const id = conv('discord', 'weekend raid');
+    const { lines, error } = await warned(() => add(id, { identities: [who('discord', 'Jordan'), who('discord', 'Mara')] }));
+    expect(error).toBeNull();
+    expect(lines).toEqual([`members: added conversation=${id} account=acc_demo-discord-main network=discord added=1 invited=0 failed=1`]);
+  });
+
+  test("a bad shape: no account, nothing in an account's log; another of your accounts", async () => {
+    const id = conv('signal', 'Climbing crew');
+    const before = accountLog.length;
+    const { lines } = await warned(() => add(id, { identities: [] }));
+    expect(lines).toEqual([`members: add failed conversation=${id} account=- network=signal people=0 status=400 error="Pick 1 to 10 people"`]);
+    expect(accountLog.length).toBe(before);
+    const raid = conv('discord', 'weekend raid');
+    const alt = store.account('acc_demo-discord-alt')!.self_identity!;
+    const own = await warned(() => add(raid, { identities: [alt], accountId: 'acc_demo-discord-main' }));
+    expect(own.lines).toEqual([`members: add failed conversation=${raid} account=acc_demo-discord-main network=discord people=1 status=400 error="That is one of your own accounts"`]);
+  });
+
+  test("a rule's refusal (403, 400), and the line in the account's log", async () => {
+    const family = conv('signal', 'Family');
+    const { lines } = await warned(() => add(family, { identities: [who('signal', 'Quinn')] }));
+    expect(lines).toEqual([`members: add failed conversation=${family} account=acc_demo-signal network=signal people=1 status=403 error="Only admins can add members."`]);
+    expect(accountLog.at(-1)).toBe(`acc_demo-signal [add] could not add people to ${nameOf(family)}: Only admins can add members.`);
+    const crew = conv('signal', 'Climbing crew');
+    const other = await warned(() => add(crew, { identities: [who('matrix', 'Ben')] }));
+    expect(other.lines).toEqual([`members: add failed conversation=${crew} account=acc_demo-signal network=signal people=1 status=400 error="Only Signal people can be added to a Signal group"`]);
+    expect(accountLog.at(-1)).toBe(`acc_demo-signal [add] could not add people to ${nameOf(crew)}: Only Signal people can be added to a Signal group`);
+  });
+
+  test('the pace (429)', async () => {
+    // Signal's day is full since "pace", above.
+    const id = conv('signal', 'dither core');
+    const { lines, error } = await warned(() => add(id, { identities: [who('signal', 'Mei')] }));
+    expect(error).toMatchObject({ status: 429 });
+    expect(lines).toEqual([`members: add failed conversation=${id} account=acc_demo-signal network=signal people=1 status=429 error=${JSON.stringify(error!.message)}`]);
+  });
+
+  test("the adapter's refusal (502), and no answer (504)", async () => {
+    const id = conv('matrix', 'Housemates');
+    instead = async () => {
+      throw new Error('M_FORBIDDEN: not allowed');
+    };
+    const refused = await warned(() => add(id, { identities: [who('matrix', 'Lina')] }));
+    expect(refused.lines).toEqual([`members: add failed conversation=${id} account=acc_demo-matrix network=matrix people=1 status=502 error="M_FORBIDDEN: not allowed"`]);
+    expect(accountLog.at(-1)).toBe(`acc_demo-matrix [add] could not add people to ${nameOf(id)}: M_FORBIDDEN: not allowed`);
+    instead = async () => {
+      throw new Error('adapter timed out on addMembers');
+    };
+    const slow = await warned(() => add(id, { identities: [who('matrix', 'Lina')] }));
+    expect(slow.lines).toEqual([`members: add failed conversation=${id} account=acc_demo-matrix network=matrix people=1 status=504 error="Matrix did not answer in 90 seconds. It may still have gone through: look again in a minute."`]);
+  });
+
+  test('anything else (500) is logged, then thrown on as it was', async () => {
+    const broken = new Abouts({
+      ...deps,
+      note: () => {
+        throw new TypeError('the log is full');
+      },
+    });
+    const id = conv('matrix', 'Housemates');
+    const { lines, error } = await warned(() => add(id, { identities: [who('matrix', 'Lina')] }, broken));
+    expect(error).toBeInstanceOf(TypeError);
+    expect(lines).toEqual([`members: add failed conversation=${id} account=acc_demo-matrix network=matrix people=1 status=500 error="the log is full"`]);
+  });
+
+  test('candidates that fail; no such conversation, nothing known', async () => {
+    const { lines } = await warned(() => candidatesAttempt('cnv_nope', () => abouts.candidates('cnv_nope')));
+    expect(lines).toEqual(['members: candidates failed conversation=cnv_nope status=404 error="no such conversation"']);
+    const gone = await warned(() => add('cnv_nope', { identities: ['idn_x'] }));
+    expect(gone.lines).toEqual(['members: add failed conversation=cnv_nope account=- network=- people=1 status=404 error="no such conversation"']);
   });
 });

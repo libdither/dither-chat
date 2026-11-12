@@ -38,6 +38,7 @@ import { hostAllowed, hostNames } from './hosts.ts';
 import { noteWork, pathShape } from './stalls.ts';
 import { fetchPublicToFile } from './fetchsafe.ts';
 import { AboutError, Abouts } from './about.ts';
+import { asked, attempt, candidatesAttempt } from './attempts.ts';
 import { Groups } from './groups.ts';
 import { People } from './people.ts';
 import { peopleGraph } from './graph.ts';
@@ -817,12 +818,21 @@ export class HubServer {
     }
     // Adding people to a group (about.ts, docs/group-settings.md): whom this account could add, and adding them.
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/members(\/candidates)?$/))) {
+      const id = m[1];
       try {
-        if (m[2] && method === 'GET') return ok(await this.abouts.candidates(m[1], url.searchParams.get('account') ?? undefined));
+        if (m[2] && method === 'GET') return ok(await candidatesAttempt(id, () => this.abouts.candidates(id, url.searchParams.get('account') ?? undefined)));
         if (!m[2] && method === 'POST') {
-          // A click on the hub's own page: a browser sends Origin, and the server has refused any other site's.
-          if (!req.headers.get('origin')) return bad('People are added from the app itself', 403);
-          const v = await this.abouts.addMembers(m[1], await body<{ identities?: unknown; accountId?: unknown }>());
+          const b = await body<{ identities?: unknown; accountId?: unknown }>();
+          // Every attempt leaves one line in the hub's log, whatever came of it (attempts.ts).
+          const v = await attempt(
+            { kind: 'add', conversation: id, people: asked(b.identities) },
+            (a) => {
+              // A click on the hub's own page: a browser sends Origin, and the server has refused any other site's.
+              if (!req.headers.get('origin')) throw new AboutError('People are added from the app itself', 403);
+              return this.abouts.addMembers(id, b, a);
+            },
+            (acc, line) => this.sup.note(acc, line),
+          );
           this.flush();
           return ok(v);
         }
@@ -832,12 +842,27 @@ export class HubServer {
       }
     }
     // Making a group (groups.ts, docs/group-settings.md): who each account could put in one, and making it.
-    if (path === '/api/groups/candidates' && method === 'GET') return ok(this.groups.candidates(url.searchParams.get('account') ?? undefined));
-    if (path === '/api/groups' && method === 'POST') {
-      // A click on the hub's own page: a browser sends Origin, and the server has refused any other site's.
-      if (!req.headers.get('origin')) return bad('Groups are made from the app itself', 403);
+    if (path === '/api/groups/candidates' && method === 'GET') {
       try {
-        const v = await this.groups.create(await body<{ accountId?: unknown; name?: unknown; identities?: unknown }>());
+        return ok(await candidatesAttempt(null, () => this.groups.candidates(url.searchParams.get('account') ?? undefined)));
+      } catch (e) {
+        if (e instanceof AboutError) return bad(e.message, e.status);
+        throw e;
+      }
+    }
+    if (path === '/api/groups' && method === 'POST') {
+      try {
+        const b = await body<{ accountId?: unknown; name?: unknown; identities?: unknown }>();
+        // Every attempt leaves one line in the hub's log, whatever came of it (attempts.ts).
+        const v = await attempt(
+          { kind: 'create', people: asked(b.identities) },
+          (a) => {
+            // A click on the hub's own page: a browser sends Origin, and the server has refused any other site's.
+            if (!req.headers.get('origin')) throw new AboutError('Groups are made from the app itself', 403);
+            return this.groups.create(b, a);
+          },
+          (acc, line) => this.sup.note(acc, line),
+        );
         this.flush();
         return ok(v);
       } catch (e) {

@@ -205,6 +205,21 @@ The rules the hub keeps:
 - One person refused (privacy settings, not a friend, banned) does not stop the others: each comes back with its
   sentence. A timeout may still have gone through, and the panel says so.
 
+In the hub's log, every POST `/api/conversations/:id/members` leaves one line, whatever came of it, and a candidates
+lookup leaves one when it fails:
+
+```
+members: added conversation=<id> account=<accountId> network=<network> added=<n> invited=<n> failed=<n>
+members: add failed conversation=<id> account=<accountId or -> network=<network or -> people=<n> status=<status> error=<JSON string>
+members: candidates failed conversation=<id> status=<status> error=<JSON string>
+```
+
+`status` is what the page got, 500 for anything else (then thrown on as before). `people` is how many were asked for;
+`error` is the page's sentence, at most 300 characters. Some people refused while others were added is an `added`
+line with `failed=<n>`. A failure where the account is known also goes in its log: `[add] could not add people to
+<group's name, or "a group">: <sentence>`. No name, handle or id of a person goes in these lines
+(packages/hub/src/attempts.ts).
+
 ## Making a group
 
 One of your accounts makes a new group on its own network, with people that account knows. A group lives on one
@@ -257,7 +272,8 @@ The rules the hub keeps:
 
 - **Only from a click** on the hub's page: POST `/api/groups` wants a browser's Origin.
 - **The rules first** (`createGroupProblem`): too few or too many people, no name where one is needed, a name too
-  long. Then each person: someone of another network or the account itself is refused. Nothing reaches the network.
+  long. Then each person: someone of another network, the account itself ("That is this account") or another of your
+  accounts ("That is one of your own accounts") is refused. Nothing reaches the network.
 - **Paced per account**, in `add_pace` (docs/add.md): one `groups` slot, 5 a day and 3 on Telegram, and one `members`
   slot per person, the same slots adding people takes. All or none: past either, nothing goes out and nothing is
   taken. A refusal by the adapter (the group was not made) gives every slot back. A timeout does not: the group may
@@ -268,6 +284,18 @@ The rules the hub keeps:
 - **Logged** in the account's log: `[add] made <noun> "<name>" with …; invited …; could not add …`.
 - One person refused does not stop the others, as long as the group is made. On Discord, fewer than 2 friends left
   means no group, and the network's sentence comes back.
+
+In the hub's log, every POST `/api/groups` leaves one line, whatever came of it, and a candidates lookup leaves one
+when it fails:
+
+```
+groups: created account=<accountId> network=<network> added=<n> invited=<n> failed=<n>
+groups: create failed account=<accountId or -> network=<network or -> people=<n> status=<status> error=<JSON string>
+groups: candidates failed status=<status> error=<JSON string>
+```
+
+The fields mean what they do for adding people, above. A group made with some people refused is a `created` line with
+`failed=<n>`. A failure where the account is known also goes in its log: `[add] could not make <noun>: <sentence>`.
 
 The protocol: capability `createGroup`, command `{ t: 'createGroup', name?, people }` (native ids), answered after
 the new conversation's fact with
