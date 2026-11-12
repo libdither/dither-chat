@@ -1,5 +1,5 @@
 {
- "note": "bun scripts/verify-perf.ts --ci --update --runs 5 (docs/perf.md). CI judges the counts marked gate, never the times. Two layout tallies (cold, first opens) are kept at their values of 2026-11-10: this machine measured them lower than a CI runner does. 1x.cold.nodes and 1x.long.reopen.nodes set by hand on 2026-11-11 when long lists began drawing a window of their rows (ui/more.tsx). 1x.cold.layouts is not judged since 2026-11-11: CI read 9, 9, 9, 10, 10 and 11 on main and branches of it in a row, more than the one a steady tally may spread (traces: the same layouts each time, and a varying few at the end as Catch up's cards fill in). The phone pass (p1x.*) was added on 2026-11-11 from five runs on GitHub's runners (the pull request's and four dispatched): 24 of its 25 counts came out the same in all five and are judged; p1x.cold.layouts (8 to 10) is not. a1x.* (fetching ahead, aheadRun) added by hand on 2026-11-11 from three runs of the pass alone: its counts the same in each (12 pages, 12 requests, 5 of 5 and 3 of 3 served), its bytes not (17,909 to 23,262: each run opens rows, which moves the inbox), so not judged.",
+ "note": "bun scripts/verify-perf.ts --ci --update --runs 5 (docs/perf.md). CI judges the counts marked gate, never the times. Two layout tallies (cold, first opens) are kept at their values of 2026-11-10: this machine measured them lower than a CI runner does. 1x.cold.nodes and 1x.long.reopen.nodes set by hand on 2026-11-11 when long lists began drawing a window of their rows (ui/more.tsx). 1x.cold.layouts is not judged since 2026-11-11: CI read 9, 9, 9, 10, 10 and 11 on main and branches of it in a row, more than the one a steady tally may spread (traces: the same layouts each time, and a varying few at the end as Catch up's cards fill in). The phone pass (p1x.*) was added on 2026-11-11 from five runs on GitHub's runners (the pull request's and four dispatched): 24 of its 25 counts came out the same in all five and are judged; p1x.cold.layouts (8 to 10) is not. a1x.* (fetching ahead, aheadRun) added by hand on 2026-11-11 from three runs of the pass alone: its counts the same in each (12 pages, 12 requests, 5 of 5 and 3 of 3 served), its bytes not (17,909 to 23,262: each run opens rows, which moves the inbox), so not judged. On 2026-11-11 the first opens began drawing in slices (docs/perf.md, \"First opens draw in slices\"), set by hand from local runs of --ci against main: each slice is a layout, so the layouts of the first opens (19 to 34-36), the opens again (6 to 21), the long reopen (1 to 10), the opens after a relaunch (20 to 29-30) and the phone's open (6 to 10-12) went up, and are printed only until five runs on GitHub's runners show how they spread; the phone's screens lost a third to a half of their DOM nodes (a message's hover bar is not drawn on a touch screen, lists draw a screenful first); the Home tab draws the list in two parts (2 list renders). The phone pass's new counts (the Home tab's message renders, the person's and Mail's App renders) are printed only, for the same reason.",
  "at": "2026-11-11",
  "runs": 5,
  "pages": 5,
@@ -92,9 +92,9 @@
    "gate": true
   },
   "1x.open.first.layouts": {
-   "v": 18,
+   "v": 36,
    "kind": "tally",
-   "gate": true
+   "gate": false
   },
   "1x.open.again": {
    "v": 39,
@@ -124,9 +124,9 @@
    "gate": true
   },
   "1x.open.again.layouts": {
-   "v": 6,
+   "v": 21,
    "kind": "tally",
-   "gate": true
+   "gate": false
   },
   "1x.older.page": {
    "v": 68,
@@ -165,9 +165,9 @@
    "gate": true
   },
   "1x.long.reopen.layouts": {
-   "v": 1,
+   "v": 10,
    "kind": "tally",
-   "gate": true
+   "gate": false
   },
   "1x.long.reopen.nodes": {
    "v": 7634,
@@ -261,9 +261,9 @@
    "gate": true
   },
   "1x.relaunch.open.layouts": {
-   "v": 20,
+   "v": 30,
    "kind": "tally",
-   "gate": true
+   "gate": false
   },
   "p1x.cold.layouts": {
    "v": 9,
@@ -286,9 +286,9 @@
    "gate": true
   },
   "p1x.open.layouts": {
-   "v": 6,
+   "v": 12,
    "kind": "tally",
-   "gate": true
+   "gate": false
   },
   "p1x.open.messageRenders": {
    "v": 60,
@@ -321,7 +321,7 @@
    "gate": true
   },
   "p1x.home.nodes": {
-   "v": 4185,
+   "v": 2479,
    "kind": "count",
    "gate": true
   },
@@ -361,24 +361,34 @@
    "gate": true
   },
   "p1x.homeTab.nodes": {
-   "v": 4186,
+   "v": 2479,
    "kind": "count",
    "gate": true
   },
   "p1x.homeTab.sidebarRenders": {
-   "v": 1,
+   "v": 2,
    "kind": "tally",
    "gate": true
   },
+  "p1x.homeTab.messageRenders": {
+   "v": 60,
+   "kind": "tally",
+   "gate": false
+  },
   "p1x.people.nodes": {
-   "v": 3717,
+   "v": 2031,
    "kind": "count",
    "gate": true
   },
   "p1x.person.nodes": {
-   "v": 3782,
+   "v": 2045,
    "kind": "count",
    "gate": true
+  },
+  "p1x.person.renders": {
+   "v": 1,
+   "kind": "tally",
+   "gate": false
   },
   "p1x.person.messageRenders": {
    "v": 60,
@@ -386,9 +396,14 @@
    "gate": true
   },
   "p1x.mail.nodes": {
-   "v": 3244,
+   "v": 1507,
    "kind": "count",
    "gate": true
+  },
+  "p1x.mail.renders": {
+   "v": 1,
+   "kind": "tally",
+   "gate": false
   },
   "a1x.ahead.pages": {
    "v": 12,
