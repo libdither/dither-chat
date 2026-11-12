@@ -639,8 +639,32 @@ What changed:
   phone has no pointer to hover the rail with. Mail opening on its first chip no longer measures the chip row before
   it is painted (a ResizeObserver sets its edges once it is laid out).
 
-Phone size, 4× CPU, the phone pass of `verify-perf --cpu 0 --phone-cpu 4`, three runs each, medians (runs in
-brackets). FIRST_TABLE
+Phone size, 4× CPU, the phone pass of `verify-perf --cpu 0 --phone-cpu 4`, five runs each on the same machine, the
+branch first (load 7–11), then `main` (11–27): medians, and the spread of the longest task.
+
+| first open | longest task, main | this | main thread, main | this | DOM nodes, main | this |
+|---|---|---|---|---|---|---|
+| a conversation (the biggest channel) | 490 ms (426–572) | **137 ms** (108–181) | 1,535 ms | 773 ms | – | – |
+| Catch up | 183 ms (172–217) | **103 ms** (94–125) | 948 ms | 533 ms | 2,562 | 2,563 |
+| You | 167 ms (156–207) | **56 ms** (53–98) | 669 ms | 529 ms | 1,645 | 1,645 |
+| the Home tab, after You | 485 ms (464–587) | **133 ms** (93–172) | 967 ms | 619 ms | 4,703 | 3,023 |
+| People | 211 ms (190–264) | **125 ms** (89–142) | 657 ms | 431 ms | 4,564 | 2,884 |
+| a person's page | 223 ms (201–290) | **69 ms** (55–74) | 715 ms | 542 ms | 4,546 | 2,806 |
+| Mail | 162 ms (139–241) | **73 ms** (62–101) | 469 ms | 384 ms | 3,661 | 1,921 |
+| the flick up its timeline | 0 ms (0–0) | 66 ms (0–70) | | | | |
+
+`main`'s runs met more load than the branch's. Three runs each an hour earlier, at a load of 11–13 for both, moved
+less and not all one way: the open 234 → 177 ms, the Home tab 237 → 170, the person 115 → 74, You 112 → 75, but
+Catch up 99 → 164, People 108 → 130 and Mail 85 → 110, with more main-thread time on the branch. Traced at a load of
+7–13 (one run each, the CPU profile cut by long task), the branch was shorter on every one: the open 350 → 134 ms,
+Catch up 112 → 91, You 115 → 52, the Home tab 295 → 102, People 136 → 91, Mail 270 → 88. Times on this shared machine
+move by tens of percent between runs; the DOM nodes, renders and the traces' make-up of each task do not.
+
+The longest task left in most of them is the frame's layout after the first slice is drawn (Next, below). The flick's
+task is the rail, the badge and the list drawn again after the conversation is marked read, 300 ms after it last
+drew: the same work `main` does (without the walk under every server since the next section), which the slices move
+later, into the flick. Messages are drawn once each (61 for 60: the first one drawn is drawn again when the one before
+it comes, to group with it).
 
 The layouts went up: each slice is one, so a first open has three or four more on a phone and on a desktop. On a
 phone, messages and rows off screen skip their layout (`content-visibility`), so a slice's layout is small; on a
@@ -661,7 +685,8 @@ what is where (which servers, channels and threads there are, your rules and set
 - the map of conversations by their network's id that room links read (`convByNative`), 5,600 entries.
 
 Opening a conversation marks it read 300 ms after it draws, so this ran in the middle of the first flick up its
-timeline: the flick's slow frame on the phone pass (a task of 100–120 ms at 4×, two thirds of it the rail).
+timeline: the flick's slow frame on the phone pass (a task of 100–120 ms at 4×, more than half of it the rail).
+Traced after the change, at a load of 18: the same task 92 ms, the rail 23 ms of it, the walk gone (`metaMemo` 3 ms).
 
 Now those are memoized on `metaDataVersion` (versions.ts), which moves only with `changed('meta')`: names and
 settings and what is where, the changes that move `metaRev`. They hold conversations' ids, not the objects (a message
@@ -669,7 +694,9 @@ replaces its conversation's object), and what reads the objects (unread counts, 
 `dataVersion`, from the ids. A notification level that depends on a native mute with an end is kept no later than
 that end (`metaMemo`'s `until`). Two kinds of change moved `metaRev` without changing what is where, and now say so
 (`changed('shown')`): people's names and pictures arriving with a page of messages, and what a message's reaction row
-offers once a conversation's reaction context is known; both came with every first open.
+offers once a conversation's reaction context is known, both of which came with every first open; and a person, or an
+account already here, changing (the walk came back once in a trace of Mail's first open, after a meta change this
+did not name; these two are the likely ones, not checked).
 
 `test/model-memo.test.ts` holds it: a read changes the counts and the order at once, with the same walk; the walk is
 done again on a meta change; a level holds until a rule changes or a mute runs out.
