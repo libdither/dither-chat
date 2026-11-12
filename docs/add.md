@@ -1,17 +1,18 @@
 # Adding: joining servers and groups, adding people, answering requests
 
-One box does it all: the **New** box (the + in the sidebar, "New message", "Join a server or group" and "Add
-someone" in Ctrl+K, or an invite link pasted into Ctrl+K). Type a name to message someone you know, as before, or
-paste or type what you have from elsewhere: an invite link, a Matrix address, an @username, a phone number. The box
-says what it could be, an account on that network looks it up, and you get a preview card with what you can do:
-Join, Ask to join, Add friend, Follow, Add contact, Message.
+One page does it all: **New**, a page of the Ctrl+K palette ([palette.md](palette.md)). It opens from the + in the
+sidebar, from "New…", "New message", "Join a server or group" and "Add someone" in Ctrl+K, and from an invite link
+pasted into Ctrl+K. Type a name to message someone you know, as before, or paste or type what you have from
+elsewhere: an invite link, a Matrix address, an @username, a phone number. New says what it could be, an account on
+that network looks it up, and you get a preview card, a page of its own, with what you can do: Join, Ask to join, Add
+friend, Follow, Add contact, Message.
 
-Adding someone to a group you are already in is not here: it is **Add people** on the group's page
-(docs/group-settings.md, "Adding people").
+Adding someone to a group you are already in is **Add people**: on the group's page, and as "Add people to a group"
+in New and in Ctrl+K (docs/group-settings.md, "Adding people").
 
 Status (2026-11-08): the protocol, the hub, the page and the demo adapters are done (slice A). **No real adapter has
 it yet**: the adapters live in dither-accounts and are built from this contract next. Until an account says it can
-(the capabilities below), the box says so in a plain line ("Joining from Discord invites isn't built for this account
+(the capabilities below), New says so in a plain line ("Joining from Discord invites isn't built for this account
 yet") and offers no button. Messaging someone by Matrix ID, phone or Telegram @name works as it always did.
 
 Slice B shows requests in the inbox with Accept, Decline and Block, notifies them, and puts buttons on profiles
@@ -19,7 +20,7 @@ Slice B shows requests in the inbox with Accept, Decline and Block, notifies the
 below) adds the network's warning and confirm to requests, each account's list of friends, contacts and follows, a
 DM's friend-request banner, and Remove friend and the like.
 
-## What the box reads
+## What New reads
 
 `parseAdd` (packages/protocol/src/add.ts) gives every reading of the input, most specific first. A link gives one; a
 bare word or an @name may give several, one row per network that has a connected account here.
@@ -51,7 +52,7 @@ else.
 
 - **Only from a click.** Every lookup, join, request and answer happens because you clicked on the hub's page. There is
   no background or bulk path. A link resolves when it is pasted or Enter is pressed; a bare word or an @name only when
-  its row is clicked; nothing per keystroke.
+  its row is clicked or taken with Enter; nothing per keystroke.
 - **Look before acting.** `resolve` says what it is without joining, following or telling anyone. Some networks will
   not say more without acting (a Signal group link, a Discord username): the preview is then *partial*, the card says
   "Can't preview this without joining" (or "without asking"), and the buttons are still there. Not found and expired
@@ -69,7 +70,7 @@ else.
   Past it the hub answers 429 with a sentence that says when the next frees up. A network's own flood wait comes back
   as its error sentence, saying when, and is shown as it is.
 - **Waiting:** 30 s for a lookup, 90 s for a join, a request or an answer (a join may wait on the network). A join that
-  times out may still have gone through, and the box says so.
+  times out may still have gone through, and the card says so.
 - **A check is never an error.** When the network wants something only you can do (a captcha, proving it is you, a
   verified phone, Discord's server rules), the card says "Discord wants a check first … Nothing was done", with a
   button to the account's live view: on this hub when it carries one, else the account's page on dither-accounts,
@@ -180,20 +181,20 @@ relationship }`) puts someone on its list, for a kind no demo network has (follo
 
 ## QR codes
 
-The New box has **Scan a code** and **My code** under its input, and a place's invite link has **Show QR** beside it.
+New has **Scan a code** and **My code** among its rows (each a page), and a place's invite link has **Show QR** beside it.
 The code is in packages/web/src/qr.ts (pure: the links, what a scan is, drawing) and ui/QrCodes.tsx.
 
 ### Scan
 
 Scan opens the camera (packages/web/src/qrscan.ts: the browser's BarcodeDetector where it has one, else jsQR). Where
-there is no camera, as on most desktops, or it is not allowed, the box says so; a picture of the code works
-everywhere: choose one, paste one (Ctrl+V) or drop one on the box.
+there is no camera, as on most desktops, or it is not allowed, the page says so; a picture of the code works
+everywhere: choose one, paste one (Ctrl+V) or drop one on the page.
 
-- A code that holds a link or an address `parseAdd` reads goes into the box exactly as a paste would: a link is
+- A code that holds a link or an address `parseAdd` reads goes into New exactly as a paste would: a link is
   looked up at once and lands on its preview card; an `@name`, `+phone` or `#alias:server` shows its readings. So a
   Signal group code, a WhatsApp group or contact link, a `t.me` link, a `matrix.to` link and a Discord invite code all
   work, and so does every code in My code below.
-- **A scan never acts.** It only fills the box: joining, asking, adding and messaging stay buttons on the card.
+- **A scan never acts.** It only fills New: joining, asking, adding and messaging stay buttons on the card.
 - Anything else (a Wi-Fi code, a plain web page, a bare word) is shown as text with "This code isn't an invite or a
   profile link". A Telegram sign-in code (`tg://login`) also says to approve sign-ins only from the Telegram account's
   page (docs/accounts.md), never from here.
@@ -212,7 +213,7 @@ opens it in the app, which is the point for networks with no QR codes of their o
 | Telegram | `https://t.me/<username>` | without a username: `https://t.me/+<number>`, hidden until tapped, which Telegram opens only for people your privacy settings let find you by number |
 | WhatsApp | `https://wa.me/<number>` | always a number: hidden until tapped. An account known only by its LID has none |
 | Discord | `https://discord.com/users/<id>` | opens your profile, where they can send a friend request |
-| Signal | `https://signal.me/#p/+<number>` | hidden until tapped. A username code needs the adapter: Signal makes username links (`signal.me/#eu/…`) on its servers, and the box says so |
+| Signal | `https://signal.me/#p/+<number>` | hidden until tapped. A username code needs the adapter: Signal makes username links (`signal.me/#eu/…`) on its servers, and the page says so |
 | X | `https://x.com/<handle>` | |
 | Instagram | `https://instagram.com/<username>` | |
 | Messenger | `https://m.me/<username>`, else `https://www.facebook.com/profile.php?id=<id>` | |
@@ -234,7 +235,7 @@ those stay the buttons below it.
 ### Drawing
 
 Codes are always black on white with a four-module quiet zone and square edges (`qrSvg`, uqr, error correction M), on
-a white tile whatever the theme: phone scanners need the contrast. They are at most 264 px wide in the box (220 px in
+a white tile whatever the theme: phone scanners need the contrast. They are at most 264 px wide in the palette (220 px in
 About), and fit a phone's sheet.
 
 scripts/verify-qr.ts checks all of it against a demo hub: every demo account's code decodes (from a screenshot, with
@@ -253,9 +254,9 @@ person get no card, and one message gets at most three. Mail is not covered.
 - **What it is at once, looked up only on a click.** The card shows the network, what kind of link it is ("Discord
   server invite", "Matrix room") and a Preview button. Nothing is asked of a network while chats scroll by: each look
   is a request from your account and counts against the pace. Preview asks the account the message came through, when
-  it can, and then the card shows what the New box shows (name, picture, members and online, description, who invited,
+  it can, and then the card shows what New's card shows (name, picture, members and online, description, who invited,
   when it runs out, partial and other notes) with the same actions and the same check and pending screens, from the
-  New box's own components (`AddCard`, `actOn` in packages/web/src/ui/NewMessage.tsx). An expired or revoked invite
+  same components (`AddCard`, `actOn` in packages/web/src/ui/NewMessage.tsx). An expired or revoked invite
   shows the network's sentence.
 - **Kept for an hour.** The hub keeps each preview it got, per account and reading, for an hour (`PREVIEW_CACHE` in
   packages/hub/src/add.ts: in memory, up to 500, the least recently used out first; a restart forgets them, and errors
@@ -267,10 +268,10 @@ person get no card, and one message gets at most three. Mail is not covered.
   |---|---|
   | POST /api/add/cached `{refs}` | `{ previews: AddPreviewView[] }`: what the hub kept of these readings (up to 50), one per account that looked. Never a request to a network, never paced |
 
-- **Joined.** After a join from a card or from the box, the kept preview says joined; after an ask, that you asked. A
+- **Joined.** After a join from a card or from New, the kept preview says joined; after an ask, that you asked. A
   preview of a server, group or room the hub already holds says joined too, and so does a Matrix room link by its
   `!id`, without any lookup. The card then says Joined, with Open.
-- **A click on the link** opens the New box on it, as if it were pasted, instead of the browser or the desktop helper.
+- **A click on the link** opens New on it, at its card, as if it were pasted, instead of the browser or the desktop helper.
   Its menu (right-click, or hold) has Preview Invite, Open in Browser and Copy Link. A click with Ctrl, Cmd, Shift or
   the middle button opens it in a tab as before.
 - **No account can look it up:** the card still says what it is, with the plain line ("Joining from Discord invites
@@ -296,7 +297,7 @@ someone you know notifies once; and a profile has the buttons for how you stand 
   (Accept, Decline, Block, from its `answers`). Block asks once more. An error from the network shows on the card. An
   accepted invite or message request lands where it leads (the room, the server, the conversation), with the
   network's notes as a note; an accepted friend request says so. A `check` result shows the same "Discord wants a
-  check first … Nothing was done" as the New box, with the live-view button (`CheckFirst` in NewMessage.tsx), and the
+  check first … Nothing was done" as New's card, with the live-view button (`CheckFirst` in NewMessage.tsx), and the
   request stays.
 - **A message request opens read-only.** Its card shows the last thing they wrote and says plainly: accepting tells
   them you saw it, and on Signal, Instagram, Messenger and X even opening it on another device does; here it does not,

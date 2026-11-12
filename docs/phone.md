@@ -49,8 +49,9 @@ on a pull crossing its line, and nowhere else.
 
 **Back.** Every sheet, menu, dialog, viewer and the details panel is a layer with a history entry of its own,
 so Android's back button (or `history.back()`) closes the top one before it leaves the page. Navigating from
-inside one takes over its entry instead of stacking a new one. Installed iOS apps have no back gesture of their
-own; the swipe right is it.
+inside one takes over its entry instead of stacking a new one. The palette ([palette.md](palette.md)) is one layer
+whose entry is made again while pages are left, so back takes one page off at a time and closes it at its bottom
+page. Installed iOS apps have no back gesture of their own; the swipe right is it.
 
 Leaving a page, as in Discord, shows the list it belongs to: a channel's server, the inbox for a conversation
 opened there (a notification opens one there too) and for Requests, People for a person, Mail's list for a
@@ -107,8 +108,8 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Details panel: source, accounts, native id, open in the network's app, notification rule, members, threads | Toggle in the header | Full-screen overlay | Swipe left, or the header button; a panel with the page peeking |
 | Person details: identities, split, merge, always alert, chats | Details panel | Full-screen overlay | Panel |
 | Profile and the merge flow | Avatar, member or mention | Reachable | Reachable; swipe back |
-| New message (start a DM), send-as account | Plus in the Inbox and People headers; dialog | Centered dialog | Plus in the headers; bottom sheet |
-| Quick switcher | Ctrl+K | **Keyboard only** | Search tab: searching a name lists people, communities and channels to jump to |
+| New message (start a DM), send-as account, join, add, scan, add people to a group | Plus in the Inbox and People headers, Ctrl+K's "New…"; the palette's New page ([palette.md](palette.md)) | Centered dialog | Plus in the headers; the palette as a bottom sheet, each page a step the back button undoes; the keyboard only on New itself |
+| Quick switcher | Ctrl+K, the title bar's button | **Keyboard only** | Search tab: searching a name lists people, communities and channels to jump to; the palette's root is the crumb before New |
 | Search with filters, scope to one conversation, jump to a message | Sidebar box, header button | Reachable | Search tab; searching a conversation is a page with a way back to it |
 | Hover bar on a message: three reactions, picker, edit, delete, reply | Hover | Long-press: reactions, reply, copy, edit, delete | Long-press: also the author's profile, the thread, the message it replies to |
 | Exact time of a grouped message | Hover | **Hidden** | Sheet header |

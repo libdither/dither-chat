@@ -170,9 +170,15 @@ Notes:
 
 **Add people** (Invite people on Matrix) is on a group's page: the Members card and the row of actions under its name.
 It shows only where the account may add someone now; where it may not, the Members card says why (only admins add
-here, a Discord group is full, WhatsApp is left out). It opens a picker of the people this account could add, as the
-network allows, people you talked with lately first: you pick a few, and who could not be added stays listed with the
-network's own reason.
+here, a Discord group is full, WhatsApp is left out). It opens the palette ([palette.md](palette.md)) at a picker of the
+people this account could add, as the network allows, people you talked with lately first: you pick a few, and who
+could not be added stays listed with the network's own reason. Escape closes it; an add refreshes the page's members.
+
+The same picker is reachable without the group's page: "Add people to a group" in New and in Ctrl+K lists the groups
+one of your accounts could add to (its network has `addMembers` for it), most recent first, and typing narrows them;
+picking one opens its picker, a page you can back out of to the list. When the group on screen is one of them, New
+offers "Add people to <its name>" first. Where the group's About says this account may not add people now, the picker
+says why and offers nothing.
 
 | Network | Where | Who can be picked | What adding does | Gated by |
 |---|---|---|---|---|

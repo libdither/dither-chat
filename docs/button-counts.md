@@ -64,6 +64,7 @@ their label, which can hold a name ("Message Ann").
 | `tabs` (phone) | `Home`, `Catch up`, `Search`, `You` |
 | `settings` | `section <name>` for each section, from the side list or the phone's Sections sheet; `how it sorts` |
 | `pager` | `back button`, `swipe back`, `swipe to details`, `swipe from details`, `swipe forward`, `swipe to reply`, `pull to refresh`, `back to the page`, `close details` |
+| `palette` (Ctrl+K and New, from 2026-11-11; [palette.md](palette.md)) | `crumb (jump to)`, `crumb`, `close`; the root's `row (view\|action\|mailbox\|person\|community\|folder\|place\|join\|search\|new)`; New's `menu (add\|add-here\|group\|scan\|mine)`, `reading`, `reading (message)`, `row (person)`; `row (network)`, `open conversation`; `row (group)`; the picker's `pick`, `pick (off)`, `chip (un-pick)`, `add`, `invite`. Until then the switcher's rows and the New box counted as `<page>: other`; the + is still `new message` |
 | `keys` | `Ctrl+K (switcher)`, `Ctrl+F (search)`, `mail e\|#\|!\|s\|u` |
 
 Android's own back button is not counted: it reaches the page as a history step, like any other.
