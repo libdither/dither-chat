@@ -14,7 +14,8 @@ import { senderLine } from '../mail/model.ts';
 import { countText, countTitle } from '../msgcount.ts';
 import { communitiesOf, convLabel, convTitle, directsOf, externalProfile, identityName, kindLabel, netName, plainBody, rootCommunity } from '../model.ts';
 import { profileLinks } from '../requests.ts';
-import { api, db, go, isSelfIdentity, newMessage, openMessage, openProfile, rev, setRule, toast } from '../state.ts';
+import { api, db, go, isSelfIdentity, openMessage, openProfile, rev, setRule, toast } from '../state.ts';
+import { messageSomeone } from './Palette.tsx';
 import { Avatar, Empty, NetBadge, NetGlyph } from './bits.tsx';
 import { copy, groups, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
@@ -400,14 +401,14 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     items: groups(
       directs.length > 1 && person ? [{ label: 'All Chats Together', icon: 'merge', run: () => go({ view: 'people', person: person.id }) }] : [],
       directs.map((d): MenuEntry => ({ label: `On ${netName(d.network)}`, icon: 'send', run: () => go({ view: 'inbox', conv: d.id }) })),
-      startable.map((i): MenuEntry => ({ label: `Start on ${netName(i.network)}`, icon: 'plus', run: () => (newMessage.value = { identityId: i.id }) })),
+      startable.map((i): MenuEntry => ({ label: `Start on ${netName(i.network)}`, icon: 'plus', run: () => messageSomeone(i.id) })),
       emails.map((i): MenuEntry => ({ label: `Email ${i.nativeId}`, icon: 'mail', run: () => email(i) })),
     ),
   });
   const messageOptions = (directs.length > 1 ? 1 : 0) + directs.length + startable.length + emails.length;
   const message = () => {
     if (directs.length === 1) go({ view: 'inbox', conv: directs[0].id });
-    else if (startable.length === 1) newMessage.value = { identityId: startable[0].id };
+    else if (startable.length === 1) messageSomeone(startable[0].id);
     else if (emails.length === 1) email(emails[0]);
   };
   const moreMenu = (): MenuSpec | null => {

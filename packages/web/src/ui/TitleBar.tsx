@@ -13,7 +13,7 @@ import { convTitle } from '../model.ts';
 import { db, mailRev, rev, route, type Route } from '../state.ts';
 import { variantIcon } from './bits.tsx';
 import { Icon } from './icons.tsx';
-import { switcherOpen } from './Switcher.tsx';
+import { openPalette } from './Palette.tsx';
 import { ThemeButton } from './Themes.tsx';
 
 function placeTitle(r: Route): { title: string; icon: string } {
@@ -63,7 +63,7 @@ export function TitleBar() {
           <span>{title}</span>
         </span>
         <div class="tb-actions">
-          <button class="tb-btn" title="Jump to a conversation (Ctrl+K)" aria-label="Jump to a conversation" onClick={() => (switcherOpen.value = true)}>
+          <button class="tb-btn" title="Jump to a conversation (Ctrl+K)" aria-label="Jump to a conversation" onClick={() => openPalette()}>
             <Icon name="search" size={15} />
           </button>
           <ThemeButton />

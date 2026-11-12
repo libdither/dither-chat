@@ -15,7 +15,7 @@ import { ForwardLayer } from './Forward.tsx';
 import { IndexLayer } from './Indexing.tsx';
 import { CatchUp } from './CatchUp.tsx';
 import { HowItSorts } from './HowItSorts.tsx';
-import { NewMessage } from './NewMessage.tsx';
+import { Palette } from './Palette.tsx';
 import { ReactionLayer } from './Reactions.tsx';
 import { ProfilePane } from './Profile.tsx';
 import { PlaceProfile } from './PlaceProfile.tsx';
@@ -28,7 +28,6 @@ import { SECTIONS, SettingsPane } from './Settings.tsx';
 import { showSection } from './bits.tsx';
 import { FolderSidebar, homeRoute, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar } from './Sidebar.tsx';
 import { ConversationPane, PersonPane } from './Timeline.tsx';
-import { Switcher } from './Switcher.tsx';
 import { Toasts } from './Toasts.tsx';
 import { CallDock } from './Call.tsx';
 import { Viewer } from './Viewer.tsx';
@@ -361,9 +360,8 @@ export function App() {
       <TooltipLayer />
       <ForwardLayer />
       <IndexLayer />
-      <Switcher />
+      <Palette />
       <FindShortcut />
-      <NewMessage />
       <MailComposerLazy />
       <Viewer />
     </div>

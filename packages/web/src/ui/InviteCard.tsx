@@ -1,7 +1,7 @@
 /**
  * Invite links in a message (docs/add.md, "Invites in messages"): a card under the message for each, the way Discord
  * shows invites. It says what kind of link it is at once and asks the network only when Preview is clicked: each look
- * is a request from your account, and paced. Then it shows what the New box shows, with the same actions
+ * is a request from your account, and paced. Then it shows what New's card shows, with the same actions
  * (NewMessage.tsx). A preview any page looked up within the hour comes from the hub without asking again.
  */
 import type * as P from '@dither-chat/protocol';
@@ -11,7 +11,8 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { addRows } from '../add.ts';
 import { findInvites, inviteKind, shortLink, type FoundInvite } from '../invites.ts';
 import { netName } from '../model.ts';
-import { api, applyEvents, db, metaRev, newMessage } from '../state.ts';
+import { api, applyEvents, db, metaRev } from '../state.ts';
+import { cardOpen } from '../palette.ts';
 import { NetBadge } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { actOn, AddCard, openAdded, type Card } from './NewMessage.tsx';
@@ -87,8 +88,8 @@ function InviteCard({ f, seenVia }: { f: FoundInvite; seenVia: string[] }) {
   const [card, setCard] = useState<Card | null>(null);
   const [live, setLive] = useState(false);
   const seq = useRef(0);
-  // Asked once; and again after the New box closes, which may have looked it up (a click on the link opens it).
-  const boxOpen = !!newMessage.value;
+  // Asked once; and again after the palette's card goes, which may have looked it up (a click on the link opens it).
+  const boxOpen = cardOpen.value;
   const wasOpen = useRef(false);
   useEffect(() => {
     if (boxOpen) return void (wasOpen.current = true);

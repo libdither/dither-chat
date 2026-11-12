@@ -33,7 +33,8 @@ import {
   type InboxRow,
   type RailEntry,
 } from '../model.ts';
-import { db, go, mailRev, metaRev, newMessage, prefs, rev, route, setPrefs, type InboxFilter, type Route } from '../state.ts';
+import { db, go, mailRev, metaRev, prefs, rev, route, setPrefs, type InboxFilter, type Route } from '../state.ts';
+import { openPalette } from './Palette.tsx';
 import { INBOX_FILTERS } from '../ordering.ts';
 import { senderLine } from '../mail/model.ts';
 import { personItems } from './mail/Classify.tsx';
@@ -83,7 +84,7 @@ export function homeRoute(c: P.ConversationView): Route {
 function NewMessageButton() {
   if (![...db.accounts.values()].some((a) => a.status === 'online' && (a.capabilities.includes('openDirect') || a.capabilities.includes('resolve')))) return null;
   return (
-    <button class="icon-btn small side-new" data-track="new message" title="New message, join or add" aria-label="New message" onClick={() => (newMessage.value = {})}>
+    <button class="icon-btn small side-new" data-track="new message" title="New message, join or add" aria-label="New message" onClick={() => openPalette({ kind: 'new' })}>
       <Icon name="plus" size={16} />
     </button>
   );
