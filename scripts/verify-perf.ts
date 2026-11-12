@@ -626,11 +626,12 @@ async function older(page: Page) {
     return { ms: performance.now() - t0, msgs: el.querySelectorAll('.msg').length };
   })()`);
   await settle(page);
-  const moved = await page.eval<number | null>(`(() => {
+  // The page shows a slice at a time (slices.ts): what it drew once it is all in.
+  const x = await page.eval<{ moved: number | null; msgs: number }>(`(() => {
     const first = document.getElementById(window.__first.id);
-    return first ? Math.round(first.getBoundingClientRect().top - window.__first.top) : null;
+    return { moved: first ? Math.round(first.getBoundingClientRect().top - window.__first.top) : null, msgs: document.querySelectorAll('.timeline-scroll .msg').length };
   })()`);
-  return { ...r, moved: moved === null || Math.abs(moved) > 2 };
+  return { ...r, msgs: x.msgs, moved: x.moved === null || Math.abs(x.moved) > 2 };
 }
 
 /** A message from someone else arriving in the open conversation. */

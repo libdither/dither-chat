@@ -794,6 +794,18 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     const node = m && document.getElementById(`m-${m.id}`);
     if (node) anchor.current = { id: m.id, y: node.getBoundingClientRect().top, edge };
   };
+  // A slice drawn above holds the first message in view, not the first drawn: that one loses its name line when the
+  // message before it is drawn (grouped with it), which would move everything below it by a line.
+  const firstInView = () => {
+    const el = scroller.current;
+    if (!el) return first;
+    const top = el.getBoundingClientRect().top;
+    for (let i = start; i < end; i++) {
+      const node = document.getElementById(`m-${all[i].id}`);
+      if (node && node.getBoundingClientRect().bottom > top) return all[i];
+    }
+    return first;
+  };
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
@@ -801,7 +813,7 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     if (el.scrollHeight + el.scrollTop - el.clientHeight < 400) {
       if (more) {
         // Nearer the top of what is drawn than its slices have come: the next one now.
-        hold(first, 'first');
+        hold(firstInView(), 'first');
         slices.next(want.start, end);
         redraw((n) => n + 1);
       } else if (start > 0) {
@@ -842,7 +854,7 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   useEffect(() => {
     if (!more) return;
     return whenIdle(() => {
-      if (Math.abs(scroller.current?.scrollTop ?? 0) > 1) hold(first, 'first');
+      if (Math.abs(scroller.current?.scrollTop ?? 0) > 1) hold(firstInView(), 'first');
       slices.next(want.start, end);
       redraw((n) => n + 1);
     });
