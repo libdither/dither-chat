@@ -417,16 +417,22 @@ async function arrival(page: Page, c: WorldConv) {
   return { shown, busy: (m1.TaskDuration - m0.TaskDuration) * 1000, layouts: m1.LayoutCount - m0.LayoutCount, longest: Math.max(0, ...lts.map((t) => t[1])), renders: diff(r0, await renders(page)) };
 }
 
-/** How many timelines the device's snapshot holds (snapshot.ts). */
+/** How many timelines the device's snapshot holds (snapshot.ts): the rest written alone, when newer than the bootstrap's. */
 const SNAPSHOT_TIMELINES = `new Promise((res) => {
   const r = indexedDB.open('dither-chat', 1);
   r.onupgradeneeded = () => r.result.createObjectStore('snapshot');
   r.onerror = () => res(null);
   r.onsuccess = () => {
     try {
-      const g = r.result.transaction('snapshot').objectStore('snapshot').get('last');
-      g.onsuccess = () => res(g.result ? JSON.parse(g.result.rest).timelines.length : null);
-      g.onerror = () => res(null);
+      const t = r.result.transaction('snapshot');
+      const last = t.objectStore('snapshot').get('last');
+      const rest = t.objectStore('snapshot').get('rest');
+      t.oncomplete = () => {
+        const s = last.result, x = rest.result;
+        const text = x && s && x.savedAt > s.savedAt ? x.rest : s?.rest;
+        res(text ? JSON.parse(text).timelines.length : null);
+      };
+      t.onerror = () => res(null);
     } catch (e) { res(null); }
   };
 })`;

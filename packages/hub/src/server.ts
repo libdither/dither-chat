@@ -148,6 +148,25 @@ export function mediaSigner(secret: string) {
 /** An error after the command went to the adapter: whether it was carried out is not known. */
 const unknownOutcome = (e: unknown) => /timed out|disconnected mid/i.test(String((e as Error)?.message ?? e));
 
+/**
+ * Which account sends into a conversation: the requested one, else the last one you used there, else any connected.
+ * With one connected account to choose from (nearly every conversation) the messages are not read: finding the last
+ * one you wrote reads every message of a conversation you never wrote in, a second or more for one of 100k on the
+ * live hub, and this is asked on every open (reactions, history) and every push (docs/perf.md).
+ */
+export function pickAccount(store: Store, online: (accountId: string) => boolean, conversationId: string, requested?: string): string | null {
+  const vs = store.vantageAccounts('conversation', conversationId);
+  if (requested && vs.includes(requested)) return requested;
+  const live = vs.filter(online);
+  if (live.length <= 1) return live[0] ?? vs[0] ?? null;
+  const last = store.one<{ account_id: string }>(
+    `SELECT s.account_id FROM message m JOIN message_seen s ON s.message_id = m.id JOIN account a ON a.id = s.account_id
+     WHERE m.conversation_id = ? AND m.author_id = a.self_identity ORDER BY m.ts DESC LIMIT 1`,
+    conversationId,
+  );
+  return last && live.includes(last.account_id) ? last.account_id : live[0];
+}
+
 export class HubServer {
   server!: Server<WsData>;
   /** The plain HTTP listener beside TLS (plainPort), for adapters and the CA download; its port is the one it got when plainPort is 0. */
@@ -1552,17 +1571,8 @@ export class HubServer {
     return this.store.conversationView(conversationId)?.shape === 'direct' ? { canReply: true } : { canReply: true, replyTo: messageId };
   }
 
-  /** Which account sends into a conversation: the requested one, else the last one you used there, else any connected. */
   private pickAccount(conversationId: string, requested?: string): string | null {
-    const vs = this.store.vantageAccounts('conversation', conversationId);
-    if (requested && vs.includes(requested)) return requested;
-    const last = this.store.one<{ account_id: string }>(
-      `SELECT s.account_id FROM message m JOIN message_seen s ON s.message_id = m.id JOIN account a ON a.id = s.account_id
-       WHERE m.conversation_id = ? AND m.author_id = a.self_identity ORDER BY m.ts DESC LIMIT 1`,
-      conversationId,
-    );
-    if (last && vs.includes(last.account_id) && this.sup.online(last.account_id)) return last.account_id;
-    return vs.find((a) => this.sup.online(a)) ?? vs[0] ?? null;
+    return pickAccount(this.store, (a) => this.sup.online(a), conversationId, requested);
   }
 
   // ---------------------------------------------------------------- voice crypto

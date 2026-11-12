@@ -354,6 +354,51 @@ of it, everything only it imports included:
 Those twelve together are about 280 KB (93 KB gzip), more than a third of the startup JS. The emoji data (429 KB, 82 KB
 gzip) is not in the set: Reactions.tsx loads it four seconds after a conversation opens.
 
+## The hub's own stalls (2026-11-11)
+
+The hub answers everything on one thread, so a slow query holds up every device's requests behind it, the page of
+messages a phone is waiting for included. A CPU profile of a demo hub while a browser opened the six (`bun --cpu-prof`)
+found two:
+
+- **Which account sends** (`pickAccount` in server.ts), asked when a conversation opens (its history from the
+  network), for every push (whether to offer Reply) and before a send. It looked for the last message you wrote
+  there, newest first, which reads every message of a conversation you never wrote in, or wrote in long ago. On a copy
+  of the live hub's database that took 0.2 to 3.4 s for 9 of its 12 biggest channels (on a busy machine), and each of those
+  has one account, so there was nothing to choose. Now it reads messages only when two or more connected accounts can
+  act there (11 of 6,388 conversations on the live hub). The perf world's biggest channel: `POST /history` 1.9–2.8 s
+  before, 1 ms after; while it ran, the timeline's own page, a script file and everything else waited.
+- **The triage prune** (`pruneTriage`, every six hours) walked every row below the list by tier to find the old
+  ones: 0.9 s on the live copy with none old enough. It walks by age now (`triage_created`): 0 ms.
+  `test/pick-account.test.ts` and the prune's plan test in `test/hardening.test.ts` keep them so.
+
+## The snapshot after each open (2026-11-11)
+
+Opening a conversation saves the device's snapshot 1.5 s later, when the page is idle (snapshot.ts). Opening one marks
+it read, which changes `db`, so that save serialized the whole bootstrap again (4.5 MB on the perf world) and stored it
+with the rest. Now it writes only the rest, as a record of its own (`rest`, newer than the one beside the bootstrap
+when its `savedAt` is), and leaves the stored bootstrap, which carries its own sync position, to the save when the app
+goes out of sight, or to the next quiet save once it is ten minutes old. Counted in the page at phone size and 4× CPU
+over four opens: main wrote 4,544,244 to 4,655,541 characters per save, 134–156 ms in `JSON.stringify` and 116–154 ms
+in the store's `put`, all on the main thread; the branch writes 98,213 to 164,072 characters in 2–6 ms.
+
+## The loading orb (2026-11-11)
+
+`1x.open.first.layouts` read 48–50 on main on 2026-11-11 against the baseline's 17 (#85, 2026-11-10), in two runs of
+three at 1×; the counts in CI's smaller world did not move. Two things made it:
+
+- **The orb** (#89, 8245b7b) replaced the timeline's CSS skeleton and spinner. It turned by writing its SVG path's `d`
+  every 85 ms, and each write is a style recalculation and a layout: 12 a second for as long as anything loads.
+- **The hub stalled** on the two biggest channels (`pickAccount`, above), so their pages loaded for seconds and the
+  orb turned all that time. A trace of one first-open pass: 73 frame layouts during the 40k channel's open, 28 during
+  the 6,000 one's, each with an "SVG resource invalidated" from Loader.tsx.
+
+The same hub as main before the hub fix (it stalls) with three builds of the web app, one run each at 1×, `--pages 2`,
+load about 4: from before #89, 36 layouts on the six first opens; #89, 78; this change, 38. The orb now shows its
+frames side by side in a strip (an SVG `<symbol>` for the whole page) and slides it one frame at a time with a CSS
+`steps()` animation of `transform`, which the compositor runs without the page: while a timeline's first page was held
+back for three seconds at phone size and 4×, 2 layouts and 297–373 ms of main thread, against 42 layouts and 751 ms.
+It looks the same: the same 36 frames, 85 ms apart, and the 600 ms dither-in, as a strip of its 16 steps.
+
 ## Next
 
 What these numbers point at, not done yet:
