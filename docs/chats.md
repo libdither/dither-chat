@@ -205,10 +205,11 @@ What it adds to a conversation's page:
 - **The name** links to their profile, with no pencil: it is made of their accounts' names, and each account's
   nickname is set on its tile there (Names, above).
 - **The message box's line** takes the placeholder's place and says where a message goes, by the same rule and no
-  more (`leadTells`): "Message Kit on Signal", "Message Kit on Discord (kit.work)", and "from zyn.alt" only when the
-  account of theirs it goes to can be reached from several of yours. The parts that can change switch: two options
-  toggle, more open a menu. On a phone the line only says where the message goes ("To Kit on Signal") and can't be
-  tapped. Tapping the box is for typing, so the route is switched from the list or a tag.
+  more (`leadTells`), in the words of the line under the name: "Message Kit on Signal", "Message Kit on Discord · to
+  kit.work", and "· via zyn.alt" only when the account of theirs it goes to can be reached from several of yours. The
+  parts that can change switch: two options toggle, more open a menu. It sits exactly where the box's own text will
+  (its top padding and line height). On a phone the line only says where the message goes ("To Kit on Signal", or
+  "Kit on Discord · to kit.work" where a "to" follows) and can't be tapped. Tapping the box is for typing, so the route is switched from the list or a tag.
 - **The header's buttons** are a conversation's: profile, call, search, notifications, details. With all chats shown
   they act on every route: search is `in:<person id>` (the hub reads a person's id as every direct conversation with
   them), and a notification rule is set on each. With one route picked, search is `in:<conversation>`. A call goes

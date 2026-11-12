@@ -4824,6 +4824,15 @@ code {
     -webkit-mask-image: none;
     mask-image: none;
   }
+  /* Where an account follows, the network is its icon alone (the picture's badge says it too), so "to kit.work"
+     keeps its room beside the +7. */
+  .conv-head .send-line:has(.send-to) .send-net-name,
+  .conv-head .send-line:has(.send-to) .send-to > .send-sep {
+    display: none;
+  }
+  .conv-head .send-to {
+    flex-shrink: 0;
+  }
   .conv-head .hdr-btn-label,
   .conv-head .via,
   .conv-head .hdr-btn.phone-hide {
@@ -4939,6 +4948,10 @@ code {
     gap: 2px;
     padding: 2px 2px 2px 14px;
     border-radius: 22px;
+  }
+  .composer-row .pair-lead:not(.raised) .pair-lead-slot {
+    top: 8px;
+    font-size: 16px; /* a phone's fields are 16px (below), so the line is the size of what you will type */
   }
   .composer-row .composer-box textarea {
     padding: 8px 0;
@@ -13197,11 +13210,16 @@ html.kb-open .ss-foot {
 .pair-lead-slot {
   position: absolute;
   left: 0;
+  /* On the line the box's own text takes: its top padding, its line height (and a phone's, below). */
   top: 6px;
+  line-height: 1.45;
   right: 0;
   pointer-events: none;
   color: var(--text-faint);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: inherit;
   transition: top 0.12s, font-size 0.12s, left 0.12s;
 }
 .pair-lead.raised .pair-lead-slot {
@@ -13226,8 +13244,13 @@ html.kb-open .ss-foot {
   color: var(--text-dim);
   border-bottom: 1px dashed var(--text-faint);
   border-radius: 0;
-  vertical-align: bottom;
-  line-height: 1.35;
+  vertical-align: baseline;
+  line-height: inherit;
+  /* The text sits on the line's baseline; a picture beside it is centred, not stood on the baseline. */
+  align-items: baseline;
+}
+.pair-token > * {
+  align-self: center;
 }
 .pair-token:hover {
   color: var(--text);
