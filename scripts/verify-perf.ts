@@ -177,7 +177,7 @@ async function main() {
       if (ahead)
         console.log(`ahead ${cpu}× run ${i + 1}: ${m['ahead.pages'].v} pages and ${m['ahead.pictures'].v} pictures fetched ahead, ${m['ahead.requests'].v} requests, ${m['ahead.bytes'].v} B; the first five rows open in ${m['ahead.open'].v} ms (${m['ahead.served'].v} of 5 from it), ${m['noahead.open']?.v ?? '-'} ms without; right after a relaunch ${m['ahead.relaunch'].v} ms (${m['ahead.relaunchServed'].v} of 3 kept), ${m['noahead.relaunch']?.v ?? '-'} ms without`);
       else if (phone)
-        console.log(`phone ${cpu}× run ${i + 1}: cold ${m['cold.list'].v} ms, ${m['cold.nodes'].v} nodes; open ${m['open.ms'].v} ms; keystroke to frame p90 ${m['typing.keyP90'].v} ms; slow frames: list ${m['listScroll.slowFrames'].v}, timeline ${m['tlScroll.slowFrames'].v}; longest task: Home ${m['homeTab.longest'].v}, Catch up ${m['catchUp.longest'].v}, person ${m['person.longest'].v}, Mail ${m['mail.longest'].v} ms`);
+        console.log(`phone ${cpu}× run ${i + 1}: cold ${m['cold.list'].v} ms, ${m['cold.nodes'].v} nodes; open ${m['open.ms'].v} ms; keystroke to frame p90 ${m['typing.keyP90'].v} ms; slow frames: list ${m['listScroll.slowFrames'].v}, timeline ${m['tlScroll.slowFrames'].v}; longest task: open ${m['open.longest'].v}, Home ${m['homeTab.longest'].v}, Catch up ${m['catchUp.longest'].v}, You ${m['you.longest'].v}, person ${m['person.longest'].v}, Mail ${m['mail.longest'].v} ms`);
       else
         console.log(`${cpu}× run ${i + 1}: cold ${m['cold.list'].v} ms, first open ${m['open.first'].v} ms, reopen ${m['open.again'].v} ms, older page ${m['older.page'].v} ms, long reopen ${m['long.reopen'].v} ms, arrival ${m['arrival.busy'].v} ms busy, relaunch ${m['relaunch.list'].v} ms, open after ${m['relaunch.open'].v} ms`);
     }
@@ -340,7 +340,7 @@ async function phoneRun(cpu: number, world: World): Promise<Metrics> {
   const page = b.page;
   const m: Metrics = {};
   const put = (k: string, v: number, kind: Kind = 'ms') => (m[k] = { v: Math.round(v), kind });
-  type Part = 'nodes' | 'renders' | 'sidebarRenders' | 'messageRenders' | 'layouts' | 'longest';
+  type Part = 'nodes' | 'renders' | 'sidebarRenders' | 'messageRenders' | 'layouts' | 'longest' | 'busy';
   const step = async (name: string, fn: () => Promise<Record<string, number> | void>, keep: Part[]) => {
     const m0 = await metrics(page);
     const r0 = await renders(page);
@@ -349,15 +349,17 @@ async function phoneRun(cpu: number, world: World): Promise<Metrics> {
     await settle(page);
     const lts = await page.eval<[number, number][]>(`__perf.lt.slice(${lt0})`);
     const d = diff(r0, await renders(page));
+    const m1 = await metrics(page);
     const all: Record<Part, number> = {
       nodes: await page.eval<number>(`document.getElementsByTagName('*').length`),
       renders: d.App ?? 0,
       sidebarRenders: d.InboxSidebar ?? 0,
       messageRenders: d.MessageItem ?? 0,
-      layouts: (await metrics(page)).LayoutCount - m0.LayoutCount,
+      layouts: m1.LayoutCount - m0.LayoutCount,
       longest: Math.max(0, ...lts.map((t) => t[1])),
+      busy: (m1.TaskDuration - m0.TaskDuration) * 1000,
     };
-    for (const k of keep) put(`${name}.${k}`, all[k], k === 'nodes' ? 'count' : k === 'longest' ? 'ms' : 'tally');
+    for (const k of keep) put(`${name}.${k}`, all[k], k === 'nodes' ? 'count' : k === 'longest' || k === 'busy' ? 'ms' : 'tally');
     for (const [k, v] of Object.entries(extra)) put(`${name}.${k}`, v, k === 'slowFrames' ? 'frames' : 'ms');
   };
   /** A touch flick over `sel` (positive dy scrolls up), counting frames over 50 ms while it runs. */
@@ -410,9 +412,11 @@ async function phoneRun(cpu: number, world: World): Promise<Metrics> {
     put('cold.layouts', cold.layouts, 'tally');
     put('cold.nodes', cold.nodes, 'count');
     await step('listScroll', flick('.side-scroll', -4000), ['sidebarRenders', 'layouts']);
+    const t0 = (await metrics(page)).TaskDuration;
     const o = await open(page, big, lastId);
     put('open.ms', o.painted);
     put('open.longest', o.longest);
+    put('open.busy', ((await metrics(page)).TaskDuration - t0) * 1000);
     put('open.layouts', o.layouts, 'tally');
     put('open.messageRenders', o.messageRenders, 'tally');
     await step('tlScroll', flick('.timeline-scroll', 3000), ['messageRenders', 'longest']);
@@ -420,14 +424,16 @@ async function phoneRun(cpu: number, world: World): Promise<Metrics> {
     await Bun.sleep(2000);
     await settle(page);
     await step('typing', typing, ['renders', 'sidebarRenders', 'messageRenders', 'layouts']);
-    await step('home', hash('#/inbox'), ['nodes', 'sidebarRenders', 'longest']);
-    await step('catchUp', tab('Catch up'), ['nodes', 'renders', 'longest']);
-    await step('search', tab('Search'), ['nodes', 'renders', 'longest']);
-    await step('you', tab('You'), ['nodes', 'renders', 'longest']);
-    await step('homeTab', tab('Home'), ['nodes', 'sidebarRenders', 'longest']);
-    await step('people', async () => void (await page.eval(`document.querySelector('.rail-btn[data-track="people"]').click()`)), ['nodes', 'longest']);
-    await step('person', hash(`#/people/${person}`), ['nodes', 'messageRenders', 'longest']);
-    await step('mail', hash('#/mail'), ['nodes', 'longest']);
+    // Each first open: its longest task and main-thread time (`busy`), and what it drew.
+    await step('home', hash('#/inbox'), ['nodes', 'sidebarRenders', 'longest', 'busy']);
+    await step('catchUp', tab('Catch up'), ['nodes', 'renders', 'longest', 'busy']);
+    await step('search', tab('Search'), ['nodes', 'renders', 'longest', 'busy']);
+    await step('you', tab('You'), ['nodes', 'renders', 'longest', 'busy']);
+    // The Home tab brings back the conversation that was open, under the list: its messages are drawn again.
+    await step('homeTab', tab('Home'), ['nodes', 'sidebarRenders', 'messageRenders', 'longest', 'busy']);
+    await step('people', async () => void (await page.eval(`document.querySelector('.rail-btn[data-track="people"]').click()`)), ['nodes', 'longest', 'busy']);
+    await step('person', hash(`#/people/${person}`), ['nodes', 'renders', 'messageRenders', 'longest', 'busy']);
+    await step('mail', hash('#/mail'), ['nodes', 'renders', 'longest', 'busy']);
     if (page.errors.length) console.warn('page errors:', page.errors.slice(0, 5));
   } finally {
     await b.close();

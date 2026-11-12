@@ -85,7 +85,7 @@ import { TypingBar } from './Typing.tsx';
 import { useGrow } from './grow.ts';
 import { AttachSheet, CameraView, SendScreen } from './Attach.tsx';
 import { CAPTURE_ACCEPT, MEDIA_ACCEPT, opensSendScreen } from '../camera.ts';
-import { phone } from '../phone.ts';
+import { phone, touchOnly } from '../phone.ts';
 import { composerDone, composerTyped } from '../typing.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { ForwardCard, forwarding } from './Forward.tsx';
@@ -102,6 +102,7 @@ import { countKey } from '../clicklog.ts';
 import { badgeShows, focusedPair, focusPair, headNames, loadChat, PairDropdown, PairLead, RouteTag, setView, viewOf } from './Pairs.tsx';
 import { nicknamable, NicknamedName, ownName } from './Nickname.tsx';
 import { Loading } from './Loader.tsx';
+import { Slices, whenIdle } from '../slices.ts';
 
 
 // ------------------------------------------------------------------ header
@@ -525,6 +526,9 @@ function TriageNote({ m }: { m: P.MessageView }) {
 const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, highlight, target, thread, who, whoIdent, net, tag, onTag }: { m: P.MessageView; grouped: boolean; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; who?: string; whoIdent?: string; net?: boolean; tag?: boolean; onTag?: (convId: string) => void }) {
   if (counting) rendered('MessageItem');
   metaRev.value;
+  // On a touch screen the action bar (it shows on hover) and the tooltips are not drawn: a long-press opens the same
+  // actions. That is a third of a message's DOM nodes on a phone (docs/perf.md).
+  const hover = !touchOnly.value;
   const author = m.authorId ? db.identities.get(m.authorId) : null;
   const person = personOf(m.authorId);
   const self = isSelfIdentity(m.authorId);
@@ -584,7 +588,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
       )}
       <div class="msg-gutter">
         {grouped ? (
-          <span class="msg-time-hover" title={fullTime(m.ts)}>
+          <span class="msg-time-hover" title={hover ? fullTime(m.ts) : undefined}>
             {clock(m.ts)}
           </span>
         ) : (
@@ -605,7 +609,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
               </span>
             )}
             {author?.isBot && <span class="bot-tag">BOT</span>}
-            <span class="msg-time" title={fullTime(m.ts)}>
+            <span class="msg-time" title={hover ? fullTime(m.ts) : undefined}>
               {clock(m.ts)}
             </span>
             {/* A person's chat (ui/Pairs.tsx): where the route changes, which one, quietly. A click sends through it. */}
@@ -652,40 +656,42 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           </button>
         )}
       </div>
-      <div class="msg-actions" data-track-area="message">
-        <HoverReactions m={m} />
-        {canEdit(m) && (
-          <button class="icon-btn small" data-track="edit" title="Edit" onClick={() => startEditing(m)}>
-            <Icon name="pencil" size={14} />
+      {hover && (
+        <div class="msg-actions" data-track-area="message">
+          <HoverReactions m={m} />
+          {canEdit(m) && (
+            <button class="icon-btn small" data-track="edit" title="Edit" onClick={() => startEditing(m)}>
+              <Icon name="pencil" size={14} />
+            </button>
+          )}
+          {canDelete(m) && (
+            <button class="icon-btn small" data-track="delete" title="Delete" onClick={() => deleteMessage(m)}>
+              <Icon name="trash" size={14} />
+            </button>
+          )}
+          <button class="icon-btn small" data-track="reply" title="Reply" onClick={() => onReply(m)}>
+            <Icon name="reply" size={15} />
           </button>
-        )}
-        {canDelete(m) && (
-          <button class="icon-btn small" data-track="delete" title="Delete" onClick={() => deleteMessage(m)}>
-            <Icon name="trash" size={14} />
+          {!m.deleted && m.kind !== 'encrypted' && (
+            <button class="icon-btn small" data-track="forward" title="Forward" aria-label="Forward" onClick={() => (forwarding.value = m)}>
+              <Icon name="forward" size={15} />
+            </button>
+          )}
+          <button
+            class="icon-btn small"
+            data-track="more"
+            title="More"
+            aria-label="More"
+            onClick={(e) => {
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              openMenu({ x: r.left, y: r.bottom + 4 }, messageMenu(m, reply));
+            }}
+          >
+            <Icon name="more" size={15} />
           </button>
-        )}
-        <button class="icon-btn small" data-track="reply" title="Reply" onClick={() => onReply(m)}>
-          <Icon name="reply" size={15} />
-        </button>
-        {!m.deleted && m.kind !== 'encrypted' && (
-          <button class="icon-btn small" data-track="forward" title="Forward" aria-label="Forward" onClick={() => (forwarding.value = m)}>
-            <Icon name="forward" size={15} />
-          </button>
-        )}
-        <button
-          class="icon-btn small"
-          data-track="more"
-          title="More"
-          aria-label="More"
-          onClick={(e) => {
-            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            openMenu({ x: r.left, y: r.bottom + 4 }, messageMenu(m, reply));
-          }}
-        >
-          <Icon name="more" size={15} />
-        </button>
-        <TriageNote m={m} />
-      </div>
+          <TriageNote m={m} />
+        </div>
+      )}
     </div>
   );
 });
@@ -746,8 +752,12 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   const [, redraw] = useState(0);
   const drawn = useRef<Drawn>({ key: tkey, from: null, to: null });
   if (drawn.current.key !== tkey) drawn.current = { key: tkey, from: null, to: null };
+  // And of that, the newest FIRST when it shows, then a slice more each time the page is idle (slices.ts).
+  const slices = useRef(new Slices()).current;
+  slices.begin(tkey);
   const draw = (from: string | null, to: string | null) => {
     drawn.current = { key: tkey, from, to };
+    slices.whole();
     redraw((n) => n + 1);
   };
   const around = (i: number): [string, string | null] => [all[Math.max(0, i - STEP / 2)].id, i + STEP / 2 >= all.length - 1 ? null : all[i + STEP / 2].id];
@@ -766,8 +776,13 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
       const [from, to] = around(i);
       drawn.current = { key: tkey, from, to };
     }
+    slices.whole();
   }
-  const { start, end } = bounds();
+  const want = bounds();
+  const end = want.end;
+  const start = slices.start(want.start, end);
+  /** Slices still to draw. */
+  const more = start > want.start;
   const first = all[start];
   const last = all[end - 1];
 
@@ -784,14 +799,22 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     if (!el) return;
     // column-reverse: scrollTop is 0 at the bottom and negative going up.
     if (el.scrollHeight + el.scrollTop - el.clientHeight < 400) {
-      if (start > 0) {
+      if (more) {
+        // Nearer the top of what is drawn than its slices have come: the next one now.
         hold(first, 'first');
-        draw(all[Math.max(0, start - STEP)].id, drawn.current.to);
+        slices.next(want.start, end);
+        redraw((n) => n + 1);
+      } else if (start > 0) {
+        hold(first, 'first');
+        drawn.current = { key: tkey, from: all[Math.max(0, start - STEP)].id, to: drawn.current.to };
+        slices.extend(end - start);
+        redraw((n) => n + 1);
       } else {
         if (t && !t.loading && t.hasMore) {
           hold(first, 'first');
-          // The page coming is drawn whole, as is everything above it.
+          // The page coming is drawn, as is everything above it: a slice at once, the rest in slices.
           if (drawn.current.from !== '^') drawn.current = { ...drawn.current, from: '^' };
+          slices.extend(end - start);
         }
         loadTimeline(tkey, true);
       }
@@ -813,6 +836,27 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   useEffect(() => {
     const id = setTimeout(() => onScroll(), 300);
     return () => clearTimeout(id);
+  });
+  // The next slice once the page is idle. Above the view it would move what is in it, so the first message drawn is
+  // held where it is; at the newest end (column-reverse) nothing moves.
+  useEffect(() => {
+    if (!more) return;
+    return whenIdle(() => {
+      if (Math.abs(scroller.current?.scrollTop ?? 0) > 1) hold(first, 'first');
+      slices.next(want.start, end);
+      redraw((n) => n + 1);
+    });
+  });
+  // Until the drawn messages fill the view, a slice more before it is painted: short ones may not, the first time.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    // A view not laid out (a page out of sight) has nothing to fill.
+    if (!more || !el || !el.clientHeight || slices.filled === tkey) return;
+    if (el.scrollHeight > el.clientHeight) slices.filled = tkey;
+    else {
+      slices.next(want.start, end);
+      redraw((n) => n + 1);
+    }
   });
 
   // A copy whose message came before the hub's answer is not shown: the message is (outbox.ts).

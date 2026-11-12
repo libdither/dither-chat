@@ -11,6 +11,15 @@ const phoneQuery = typeof matchMedia === 'function' ? matchMedia(PHONE) : null;
 export const phone = signal(!!phoneQuery?.matches);
 phoneQuery?.addEventListener('change', () => (phone.value = phoneQuery.matches));
 
+/**
+ * A touch screen and no pointer that hovers, as styles.css's `(hover: none) and (pointer: coarse)`: what shows only on
+ * hover (a message's action bar, the browser's tooltips) is not drawn at all.
+ */
+const TOUCH_ONLY = '(hover: none) and (pointer: coarse)';
+const touchQuery = typeof matchMedia === 'function' ? matchMedia(TOUCH_ONLY) : null;
+export const touchOnly = signal(!!touchQuery?.matches);
+touchQuery?.addEventListener('change', () => (touchOnly.value = touchQuery.matches));
+
 export const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /** A short tick where the platform has one. Used sparingly: long-press, and a swipe crossing its threshold. */
