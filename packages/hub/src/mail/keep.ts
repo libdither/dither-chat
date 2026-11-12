@@ -22,6 +22,13 @@
  * answers 503 `paused`, all of this stops for the account at once and nothing is tried again until a status no longer
  * says so (AccountSync.archiveGoes).
  *
+ * A Google account (dither-accounts' google kind: Gmail through its own web page, under the owner's real sign-in) whose
+ * status has not said it has a lane keeps only what any account keeps (a year, all of Inbox, the bodies fetched ahead,
+ * the cap): none of the above, so the hub's two calls a second never go through that session. Its row says 'waiting',
+ * it is not searched locally, and its archive starts by itself once a status says `backgroundLane: true`. One gate,
+ * MailStore.keeping, holds all three (the walk's legs, the bodies, the audits); the owner's Resume does not lift it,
+ * and it does not touch mail_keep.
+ *
  * Coverage, per account (GET /api/mail/keep, Settings → Indexing):
  *
  *   - each walked mailbox's server count against the hub's locations there, and whether it is listed to its end;
@@ -74,6 +81,8 @@ export const AUDIT_MIN_MS = 3_600_000;
 export const LOCAL_SEARCHES = 20;
 /** The search measure the page shows: this many days. */
 export const MEASURE_DAYS = 30;
+/** Why a Google account's mail is not all here yet while it waits for a lane (MailStore.laneWaits). */
+export const LANE_WAIT = "Waiting for dither-accounts' slow lane for Gmail";
 const GB = 1024 ** 3;
 
 /** An ids-only search's answer (details.searchIds): native ids, the next page's cursor, Gmail's estimate. */
@@ -193,8 +202,7 @@ export class Keeper {
   kick(accountId: string) {
     const s = this.hub.sync(accountId);
     if (!s || this.stopped) return;
-    const k = this.store.keepState(accountId);
-    if (!k.keep || k.paused || !s.archiveGoes) return;
+    if (!this.store.keeping(accountId) || !s.archiveGoes) return;
     s.backfill.start();
     this.counts(accountId, s);
     this.pump(accountId, s);
@@ -318,8 +326,7 @@ export class Keeper {
   }
 
   private mayAudit(accountId: string, s: AccountSync): boolean {
-    const k = this.store.keepState(accountId);
-    return !this.stopped && k.keep && !k.paused && s.archiveGoes && this.store.gmail(accountId) && this.walkDone(accountId);
+    return !this.stopped && this.store.keeping(accountId) && s.archiveGoes && this.store.gmail(accountId) && this.walkDone(accountId);
   }
 
   /** Windows due, one after another, until none is (the next tick looks again). */
@@ -494,7 +501,7 @@ export class Keeper {
   /** server=auto may leave this account's server out (search.ts): its mail is all here. The cheap answers first. */
   searchedLocally(accountId: string): boolean {
     const a = this.store.account(accountId);
-    if (!a || !this.store.kept(accountId)) return false;
+    if (!a || !this.store.kept(accountId) || this.store.laneWaits(accountId)) return false;
     const last = this.store.all<{ found: number; held: number }>('SELECT found, held FROM mail_search_measure WHERE account_id = ? ORDER BY n DESC LIMIT ?', accountId, LOCAL_SEARCHES);
     if (last.length < LOCAL_SEARCHES || last.some((r) => r.held < r.found)) return false;
     return this.view(a).local.on;
@@ -540,9 +547,11 @@ export class Keeper {
     const m = st.one<Row>('SELECT COUNT(*) AS searches, SUM(found) AS found, SUM(held) AS held, SUM(bodies) AS bodies, SUM(local) AS local FROM mail_search_measure WHERE account_id = ? AND at >= ?', id, since)!;
     const measure = { searches: m.searches, found: m.found ?? 0, held: m.held ?? 0, bodies: m.bodies ?? 0, local: m.local ?? 0 };
 
+    const waits = st.laneWaits(id);
     const missing: string[] = [];
     if (!k.keep) missing.push('Not kept: turn on Keep all mail');
     else {
+      if (waits) missing.push(LANE_WAIT);
       if (!walkComplete) missing.push('The walk through its mailboxes is not done');
       if (bodies < held) missing.push(`${(held - bodies).toLocaleString('en')} messages without their text here`);
       if (gmail) {
@@ -564,13 +573,15 @@ export class Keeper {
         ? 'offline'
         : stopped
           ? 'stopped'
-          : k.paused
-            ? 'paused'
-            : this.diskLow() && bodies < held
-              ? 'disk'
-              : left
-                ? 'running'
-                : 'idle';
+          : waits
+            ? 'waiting'
+            : k.paused
+              ? 'paused'
+              : this.diskLow() && bodies < held
+                ? 'disk'
+                : left
+                  ? 'running'
+                  : 'idle';
     return {
       accountId: id,
       keep: k.keep,
@@ -618,6 +629,8 @@ export const keepRoutes: MailRouter = (hub) => {
   hub.on('account', (e) => {
     if (e.state === 'added' || e.state === 'changed') k.kick(e.accountId);
   });
+  // A Google account's archive waited for its lane (MailStore.laneWaits): it starts now, not at the next tick.
+  hub.on('lane', (e) => k.kick(e.accountId));
   k.start();
   hub.stopping.push(() => k.stop());
   return [

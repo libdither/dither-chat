@@ -12,8 +12,9 @@
  *
  * An account that keeps all its mail (keep.ts, on by default) goes on after those: every mailbox to its end, All mail
  * (else Archive), Inbox, Sent, Trash, Junk, Drafts, then each label or folder (`walkBoxes`), each kept up from then on
- * ('open'). The cap does not apply to it. Its pages are archive reads (AccountSync.background). Paused here, only these
- * extra legs wait; stopped by the account (details.backgroundStopped), the whole backfill does.
+ * ('open'). The cap does not apply to it. Its pages are archive reads (AccountSync.background). Paused here, or a Google
+ * account waiting for a lane (MailStore.laneWaits, with the cap), only these extra legs wait (MailStore.keeping);
+ * stopped by the account (details.backgroundStopped), the whole backfill does.
  *
  * Budget: the queue's P2 (prefetch) and P3 (backfill) work, one call each, start at most
  * MAIL_LIMITS.backgroundPerSec a second, on at most MAIL_LIMITS.backgroundSlots of the queue's two slots, and not at
@@ -144,8 +145,7 @@ export class Backfill {
     const all = of('all') ?? of('archive');
     const h = syncHorizon(this.s.now);
     const legs: (Leg | null)[] = [inbox ? { mailboxId: inbox.id, until: h } : null, sent ? { mailboxId: sent.id, until: h } : null, all ? { mailboxId: all.id, until: h } : null, inbox ? { mailboxId: inbox.id, until: null } : null];
-    const k = this.store.keepState(this.s.accountId);
-    if (k.keep && !k.paused) for (const b of this.walkBoxes()) if (b.id !== inbox?.id) legs.push({ mailboxId: b.id, until: null });
+    if (this.store.keeping(this.s.accountId)) for (const b of this.walkBoxes()) if (b.id !== inbox?.id) legs.push({ mailboxId: b.id, until: null });
     return legs.filter((l): l is Leg => !!l && !this.done(l));
   }
 
@@ -168,7 +168,9 @@ export class Backfill {
     for (;;) {
       if (!this.s.archiveGoes) return;
       const leg = this.legs()[0];
-      if (!leg || (!this.store.kept(this.s.accountId) && this.held() >= MAIL_LIMITS.maxPerAccount)) return;
+      // The cap holds for one not kept, and for one whose archive waits for a lane (MailStore.laneWaits).
+      const capped = !this.store.kept(this.s.accountId) || this.store.laneWaits(this.s.accountId);
+      if (!leg || (capped && this.held() >= MAIL_LIMITS.maxPerAccount)) return;
       this.active = true;
       if (this.s.phase === 'idle' || this.s.phase === 'first') this.s.setPhase('backfill');
       const b = this.store.mailbox(leg.mailboxId);

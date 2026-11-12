@@ -341,6 +341,26 @@ export class MailStore {
     return !!this.account(accountId)?.background_lane;
   }
 
+  /**
+   * A Google account (dither-accounts' google kind: Gmail through its own web page, under the owner's real sign-in)
+   * whose status has not said it has a background lane: its archive waits for one (keep.ts), so the hub's two calls a
+   * second never go through that session. Until a status says so, it keeps what any account keeps.
+   */
+  laneWaits(accountId: string): boolean {
+    const a = this.account(accountId);
+    return a?.kind === 'google' && !a.background_lane;
+  }
+
+  /**
+   * The gate of the archive's work beyond what any account keeps (keep.ts: the walk's legs past the year, kept bodies,
+   * Gmail's audits), as far as the hub's own say goes: kept, not paused here, and not waiting for a lane (laneWaits).
+   * Whether the account stopped background reads is AccountSync.archiveGoes.
+   */
+  keeping(accountId: string): boolean {
+    const k = this.keepState(accountId);
+    return k.keep && !k.paused && !this.laneWaits(accountId);
+  }
+
   /** Background reads are stopped (`details.backgroundStopped`, or a background call's 503 `paused`): why, else null. */
   backgroundStopped(accountId: string): string | null {
     return this.account(accountId)?.background_stopped ?? null;

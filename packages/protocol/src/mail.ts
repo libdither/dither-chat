@@ -449,10 +449,11 @@ export interface MailKeepView {
   paused: boolean;
   /**
    * `running`: walking or fetching bodies; `idle`: nothing left to do now; `paused`; `disk`: the disk guard stopped body
-   * fetching; `stopped`: the account stopped background reads (`stopped` says why); `offline`: the account or the
-   * manager cannot be reached; `off`: not kept.
+   * fetching; `stopped`: the account stopped background reads (`stopped` says why); `waiting`: a Google account whose
+   * status has not said it has a background lane keeps only what any account keeps (a year and all of Inbox) until it
+   * does; `offline`: the account or the manager cannot be reached; `off`: not kept.
    */
-  state: 'running' | 'idle' | 'paused' | 'disk' | 'stopped' | 'offline' | 'off';
+  state: 'running' | 'idle' | 'paused' | 'disk' | 'stopped' | 'waiting' | 'offline' | 'off';
   stopped: MailKeepStop | null;
   /** The account's status says it has a background lane: the archive's reads go in it (`background: true`). */
   backgroundLane: boolean;
