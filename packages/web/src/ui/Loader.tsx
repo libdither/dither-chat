@@ -4,7 +4,7 @@
  * cell by cell in Bayer order. Used while the app starts (and by index.html before the script runs: the same sphere,
  * still), and for anything that takes longer than a moment.
  */
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 /** Finer than the 12-cell mark, so the light's edge reads as a gradient. */
@@ -39,37 +39,52 @@ const allFrames = () => (frames ??= Array.from({ length: FRAMES }, (_, i) => fra
 /** index.html drew the first frame already: carry on from it rather than dithering in again. */
 const drawnByPage = typeof document !== 'undefined' && !!document.getElementById('boot-static');
 
+/** A frame every 85 ms, about 12 a second, a little coarse on purpose; the first 600 ms dither it in, in 16 steps. */
+const FRAME_MS = 85;
+const REVEAL_MS = 600;
+const REVEAL = 16;
+const SVG = 'http://www.w3.org/2000/svg';
+/** A frame moved `i` frames to the right, to sit in a strip. */
+const shift = (d: string, i: number) => (i ? d.replace(/M(\d+) /g, (_, x: string) => `M${Number(x) + i * N} `) : d);
+
+let sprite = false;
+/**
+ * The frames side by side, once for the whole page: each orb shows one at a time by sliding the strip (styles.css),
+ * which the compositor does without the page. Redrawing the path each frame was a layout each frame, 12 a second for
+ * as long as anything loaded (docs/perf.md).
+ */
+function ensureSprite() {
+  if (sprite || typeof document === 'undefined') return;
+  sprite = true;
+  const turn = allFrames().map(shift).join('');
+  const reveal = Array.from({ length: REVEAL }, (_, k) => {
+    const i = Math.floor((k * REVEAL_MS) / REVEAL / FRAME_MS);
+    return shift(frame(-Math.PI * 0.75 + (i / FRAMES) * Math.PI * 2, k + 1), k);
+  }).join('');
+  const el = document.createElementNS(SVG, 'svg');
+  el.setAttribute('aria-hidden', 'true');
+  el.setAttribute('style', 'position:absolute;width:0;height:0;overflow:hidden');
+  el.innerHTML = `<symbol id="orb-turn" viewBox="0 0 ${N * FRAMES} ${N}"><path fill="currentColor" d="${turn}"/></symbol><symbol id="orb-in" viewBox="0 0 ${N * REVEAL} ${N}"><path fill="currentColor" d="${reveal}"/></symbol>`;
+  document.body.append(el);
+}
+
 export function DitherOrb({ size = 88, class: cls, appear = true }: { size?: number; class?: string; appear?: boolean }) {
-  const path = useRef<SVGPathElement>(null);
-  useEffect(() => {
-    const p = path.current;
-    if (!p) return;
-    const fs = allFrames();
-    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduce) return void p.setAttribute('d', fs[0]);
-    const start = performance.now();
-    let raf = 0;
-    let last = -1;
-    const tick = (now: number) => {
-      // A frame's time can be from just before the effect ran: below zero, the frame index was too, and `d` undefined.
-      const t = Math.max(0, now - start);
-      // About 12 frames a second, a little coarse on purpose; the first 600 ms dither it in.
-      const i = Math.floor(t / 85) % FRAMES;
-      const reveal = appear ? Math.min(16, Math.floor((t / 600) * 16) + 1) : 16;
-      const key = i * 17 + reveal;
-      if (key !== last) {
-        last = key;
-        p.setAttribute('d', reveal < 16 ? frame(-Math.PI * 0.75 + (i / FRAMES) * Math.PI * 2, reveal) : fs[i]);
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, []);
+  ensureSprite();
   return (
-    <svg class={`dither-orb ${cls ?? ''}`} width={size} height={size} viewBox={`0 0 ${N} ${N}`} shape-rendering="crispEdges" aria-hidden="true">
-      <path ref={path} fill="currentColor" />
-    </svg>
+    <span class={`dither-orb ${appear ? 'appear' : ''} ${cls ?? ''}`} style={{ width: `${size}px`, height: `${size}px` }} aria-hidden="true">
+      {appear && (
+        <span class="orb-in">
+          <svg width={size * REVEAL} height={size} shape-rendering="crispEdges">
+            <use href="#orb-in" width="100%" height="100%" />
+          </svg>
+        </span>
+      )}
+      <span class="orb-turn">
+        <svg width={size * FRAMES} height={size} shape-rendering="crispEdges">
+          <use href="#orb-turn" width="100%" height="100%" />
+        </svg>
+      </span>
+    </span>
   );
 }
 
@@ -78,8 +93,8 @@ export const LOADING_DELAY_MS = 180;
 
 /**
  * Something about to land: the orb, small, with what it is waiting for. Inline sits in a row or a line of text;
- * fill takes the height of its pane, to centre the orb in it. The orb redraws its path about 12 times a second, and
- * each redraw is a layout, so it starts only once the load has taken a moment: before that the space is held, empty.
+ * fill takes the height of its pane, to centre the orb in it. It starts only once the load has taken a moment, when
+ * its fade-in begins, so it dithers in where it is seen: before that the space is held, empty.
  */
 export function Loading({ label, size, inline, fill }: { label?: string; size?: number; inline?: boolean; fill?: boolean }) {
   const px = inline ? 16 : size ?? 32;
