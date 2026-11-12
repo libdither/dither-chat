@@ -1,5 +1,5 @@
 {
- "note": "bun scripts/verify-perf.ts --ci --update --runs 5 (docs/perf.md). CI judges the counts marked gate, never the times. Two layout tallies (cold, first opens) are kept at their values of 2026-11-10: this machine measured them lower than a CI runner does. 1x.cold.nodes and 1x.long.reopen.nodes set by hand on 2026-11-11 when long lists began drawing a window of their rows (ui/more.tsx). 1x.cold.layouts is not judged since 2026-11-11: CI read 9, 9, 9, 10, 10 and 11 on main and branches of it in a row, more than the one a steady tally may spread (traces: the same layouts each time, and a varying few at the end as Catch up's cards fill in).",
+ "note": "bun scripts/verify-perf.ts --ci --update --runs 5 (docs/perf.md). CI judges the counts marked gate, never the times. Two layout tallies (cold, first opens) are kept at their values of 2026-11-10: this machine measured them lower than a CI runner does. 1x.cold.nodes and 1x.long.reopen.nodes set by hand on 2026-11-11 when long lists began drawing a window of their rows (ui/more.tsx). 1x.cold.layouts is not judged since 2026-11-11: CI read 9, 9, 9, 10, 10 and 11 on main and branches of it in a row, more than the one a steady tally may spread (traces: the same layouts each time, and a varying few at the end as Catch up's cards fill in). The phone pass (p1x.*) was added on 2026-11-11 from five runs on GitHub's runners (the pull request's and four dispatched): 24 of its 25 counts came out the same in all five and are judged; p1x.cold.layouts (8 to 10) is not.",
  "at": "2026-11-11",
  "runs": 5,
  "pages": 5,
@@ -263,6 +263,131 @@
   "1x.relaunch.open.layouts": {
    "v": 20,
    "kind": "tally",
+   "gate": true
+  },
+  "p1x.cold.layouts": {
+   "v": 9,
+   "kind": "tally",
+   "gate": false
+  },
+  "p1x.cold.nodes": {
+   "v": 1663,
+   "kind": "count",
+   "gate": true
+  },
+  "p1x.listScroll.sidebarRenders": {
+   "v": 0,
+   "kind": "tally",
+   "gate": true
+  },
+  "p1x.listScroll.layouts": {
+   "v": 1,
+   "kind": "tally",
+   "gate": true
+  },
+  "p1x.open.layouts": {
+   "v": 6,
+   "kind": "tally",
+   "gate": true
+  },
+  "p1x.open.messageRenders": {
+   "v": 60,
+   "kind": "tally",
+   "gate": true
+  },
+  "p1x.tlScroll.messageRenders": {
+   "v": 0,
+   "kind": "tally",
+   "gate": true
+  },
+  "p1x.typing.renders": {
+   "v": 0,
+   "kind": "tally",
+   "gate": true
+  },
+  "p1x.typing.sidebarRenders": {
+   "v": 1,
+   "kind": "tally",
+   "gate": true
+  },
+  "p1x.typing.messageRenders": {
+   "v": 0,
+   "kind": "tally",
+   "gate": true
+  },
+  "p1x.typing.layouts": {
+   "v": 35,
+   "kind": "tally",
+   "gate": true
+  },
+  "p1x.home.nodes": {
+   "v": 4185,
+   "kind": "count",
+   "gate": true
+  },
+  "p1x.home.sidebarRenders": {
+   "v": 1,
+   "kind": "tally",
+   "gate": true
+  },
+  "p1x.catchUp.nodes": {
+   "v": 2112,
+   "kind": "count",
+   "gate": true
+  },
+  "p1x.catchUp.renders": {
+   "v": 1,
+   "kind": "tally",
+   "gate": true
+  },
+  "p1x.search.nodes": {
+   "v": 2121,
+   "kind": "count",
+   "gate": true
+  },
+  "p1x.search.renders": {
+   "v": 1,
+   "kind": "tally",
+   "gate": true
+  },
+  "p1x.you.nodes": {
+   "v": 1200,
+   "kind": "count",
+   "gate": true
+  },
+  "p1x.you.renders": {
+   "v": 1,
+   "kind": "tally",
+   "gate": true
+  },
+  "p1x.homeTab.nodes": {
+   "v": 4186,
+   "kind": "count",
+   "gate": true
+  },
+  "p1x.homeTab.sidebarRenders": {
+   "v": 1,
+   "kind": "tally",
+   "gate": true
+  },
+  "p1x.people.nodes": {
+   "v": 3717,
+   "kind": "count",
+   "gate": true
+  },
+  "p1x.person.nodes": {
+   "v": 3782,
+   "kind": "count",
+   "gate": true
+  },
+  "p1x.person.messageRenders": {
+   "v": 60,
+   "kind": "tally",
+   "gate": true
+  },
+  "p1x.mail.nodes": {
+   "v": 3244,
+   "kind": "count",
    "gate": true
   }
  }

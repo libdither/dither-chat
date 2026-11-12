@@ -11,7 +11,8 @@ bun scripts/verify-perf.ts --update        # the same, then writes the medians a
 bun scripts/verify-perf.ts --runs 1 --cpu 4 --pages 5   # a quick look
 ```
 
-Options: `--port` (8620; the hub it starts listens there), `--runs`, `--cpu 1,4`, `--pages` (older pages to load in the
+Options: `--port` (8620; the hub it starts listens there), `--runs`, `--cpu 1,4` (`0`: no desktop pass), `--phone-cpu 4`
+(the phone pass's throttles, below; `0` leaves it out), `--pages` (older pages to load in the
 biggest conversation, 15), `--web <dist>` (a build to use instead of building one), `--out <file.json>` (every run's
 numbers), `--baseline <file>`, `--keep` (leave the temp dir with the world, the build and the hub's log), `--css <css>`
 (added to every page, to try a style change without a build), `--work <dir>` (an empty dir to work in instead of a
@@ -56,6 +57,21 @@ Desktop size (1280 × 800) unless `--size` says otherwise, at each CPU throttle,
 | `arrival.*` | a message from someone else arriving while it is open (the demo's `say` action): time to show, main-thread busy until things settle, App, message and inbox list renders, layouts |
 | `relaunch.*` | the app opened again later, from the device's snapshot: time to the list, to fresh data, longest task, renders; then the six opened again |
 
+Then a phone (390 × 844, touch), `--phone-cpu` (4× here, 1× in CI), its keys starting `p4x.`: a cold load, then what
+a phone does that the desktop run does not:
+
+| metric | what |
+|---|---|
+| `cold.*` | time to the list, longest task, layouts, DOM nodes |
+| `listScroll.*` | a touch flick down the inbox list: frames slower than 50 ms (`slowFrames`), list renders, layouts |
+| `open.*` | the biggest channel opened: time, longest task, layouts, message renders |
+| `tlScroll.*` | a flick up its timeline: slow frames, message renders, longest task |
+| `typing.*` | 28 keys into the composer, two seconds after the open settled, then taken back (nothing is sent): each key to the frame after it (`keyP90`, `keyMax`), and renders of App, the list and messages (none) and layouts (about one a key) |
+| `home`, `catchUp`, `search`, `you`, `homeTab` | back to the list, then each tab: DOM nodes, App or list renders, longest task |
+| `people`, `person`, `mail` | People from the rail, a person's page (the biggest direct conversation's), Mail's list: DOM nodes, longest task, message renders |
+
+Slow frames are a time in all but name (kind `frames`): judged locally like a time, never in CI.
+
 Each step waits until nothing has rendered for half a second before it counts. A plain reload is not measured: it
 swings 30–80% between runs, because the old page is still saving its snapshot on the way out.
 
@@ -82,6 +98,12 @@ runner's browser, beside the other jobs:
 bun scripts/verify-perf.ts --ci                          # what CI runs: compared with scripts/perf-baseline-ci.json
 bun scripts/verify-perf.ts --ci --update --runs 5        # a new CI baseline, and which of its numbers are steady
 ```
+
+Its phone pass runs once at 1× after the desktop's (about 20 s more), and CI judges only those of its counts that came
+out the same in five runs on GitHub's runners. On 2026-11-11 (#103's run and four dispatched with `gh workflow run
+ci.yml --ref <branch>`) 24 of its 25 did: DOM nodes on each screen, renders and layouts of the flicks, the open and
+typing (none of App or messages, one of the list, 35 layouts), the tabs, the person's page. Its cold load's layouts
+(8 to 10) did not, and are printed only.
 
 It seeds the same world at a tenth of the size (`--scale 0.1`: 574 conversations, 150 with messages, 22k messages,
 the biggest 8,000), then does a warm-up run that is not counted and one run at 1×, with five older pages. Only
