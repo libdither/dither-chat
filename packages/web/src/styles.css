@@ -1214,16 +1214,6 @@ code {
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }
-.msg-src {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10.5px;
-  color: var(--text-faint);
-  background: var(--bg-raised);
-  padding: 0 6px;
-  border-radius: 10px;
-}
 .msg-time {
   font-size: 11px;
   color: var(--text-faint);
@@ -4883,9 +4873,6 @@ code {
   .reply-quote::before {
     width: 24px;
     margin-left: -28px;
-  }
-  .pair-chunk-head {
-    margin-left: 47px;
   }
   .msg-body {
     font-size: 15.5px;
@@ -10044,6 +10031,91 @@ a.pf-link:hover {
   gap: 10px;
   min-width: 0;
 }
+/* A person's several accounts (Profile.tsx AccountTile): each its own picture, name, handle and bio, by network. */
+.pf-acct-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 8px;
+}
+.pf-acct {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border-radius: var(--radius);
+  background: var(--bg-center);
+  border: 1px solid var(--border-soft);
+}
+.pf-acct-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.pf-acct-top {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.pf-acct-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+.pf-acct-nick-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  font-size: 14px;
+  font-weight: 600;
+}
+/* The account's own name, under your nickname for it. */
+.pf-acct-own {
+  margin-top: -2px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-acct-handle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+.pf-acct-handle .pf-handle {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--bg-raised);
+}
+.pf-acct-handle small {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.pf-acct-bio {
+  margin: 2px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.pf-acct-sum {
+  cursor: pointer;
+}
 .pf-note {
   width: 100%;
   resize: vertical;
@@ -13162,7 +13234,8 @@ html.kb-open .ss-foot {
   pointer-events: auto;
   white-space: normal;
 }
-/* Nickname: the person's name with a pencil that shows on hover. */
+/* Nickname (ui/Nickname.tsx): a one-route chat's name, or a one-account profile's, with a pencil that shows on hover
+   for your nickname for their account. */
 .pair-nick-edit {
   margin-left: 4px;
   padding: 0 4px;
@@ -13171,6 +13244,7 @@ html.kb-open .ss-foot {
   opacity: 0;
 }
 .conv-head h2:hover .pair-nick-edit,
+h1:hover > .pair-nick-edit,
 .pair-nick-edit:focus-visible {
   opacity: 1;
 }
@@ -13184,13 +13258,6 @@ html.kb-open .ss-foot {
   width: 12em;
 }
 
-/* Messages from someone you gave a nickname: their account's name in a pill beside it. */
-.msg-via-their {
-  color: var(--text-dim);
-}
-.msg-via-their:not(.on) {
-  color: var(--text-faint);
-}
 /* The list under the name, where any conversation says its network and your account: all chats, or one pair's. */
 .pair-dd {
   position: relative;
@@ -13277,30 +13344,50 @@ html.kb-open .ss-foot {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* All chats together: a label where the pair changes, in line with the text. */
-.pair-chunk-head {
-  margin: 8px 0 0 51px;
-}
-.pair-chunk-head button {
+/* Under the name with all chats shown: the networks' icons, then "N chats". */
+.pair-dd-all {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 2px 8px 2px 5px;
-  border-radius: 7px;
-  font-size: 11.5px;
+}
+/* The networks' badges, as a person's row in People has them. */
+.pair-dd-nets {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.pair-dd-btn .route-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Where the route changes in the timeline: its label after the time, quietly. A click sends through it. */
+.route-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 0 5px;
+  margin-left: -2px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  line-height: 16px;
   color: var(--text-faint);
+  white-space: nowrap;
 }
-.pair-chunk-head.on button {
-  color: var(--text-dim);
-}
-.pair-chunk-head button:hover {
+.route-tag:hover {
   background: var(--bg-raised);
   color: var(--text);
 }
-.pair-chunk-sending {
-  margin-left: 4px;
-  color: var(--accent);
-  font-size: 10.5px;
+/* After an account's name in a person's chat, where another account on its side has the same name: its handle. */
+.msg-ident {
+  margin-left: -3px;
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-dim);
 }
 /* The network on each picture there, ringed in the timeline's colour. */
 .msg .avatar-net {

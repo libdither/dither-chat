@@ -104,6 +104,8 @@ export interface ServerOpts {
 
 /** A category's threshold from a request: a probability, or null for the provider's default. */
 const threshold = (t: unknown): number | null => (typeof t === 'number' && t > 0 && t <= 1 ? t : null);
+/** A person has no nickname of their own since 2026-11-11: each account of theirs has (docs/chats.md, Names). */
+const NICKNAME_MOVED = 'A nickname belongs to one account of theirs now, not to the person: PATCH /api/identities/:id with { nickname }';
 const v4 = (ip: string) => ip.replace(/^::ffff:/, '');
 export function isLoopback(ip: string) {
   return ip === '::1' || v4(ip).startsWith('127.');
@@ -756,16 +758,10 @@ export class HubServer {
       if (!m[2] && method === 'GET') return ok(chatView(s, ref));
       if (!m[2] && method === 'PATCH') {
         const b = await body<{ route?: { conversationId?: unknown; accountId?: unknown } | null; name?: unknown }>();
+        if (b.name !== undefined) return bad(NICKNAME_MOVED);
         if (b.route !== undefined) {
           const r = b.route === null ? null : { conversationId: String(b.route.conversationId ?? ''), accountId: String(b.route.accountId ?? '') };
           if (!chooseRoute(s, ref, r)) return bad('that is not a route of this chat', 409);
-        }
-        if (b.name !== undefined) {
-          if (ref.kind !== 'person') return bad('a conversation is named on its network');
-          const name = typeof b.name === 'string' ? b.name.trim().slice(0, 200) : null;
-          if (b.name !== null && !name) return bad('which name?');
-          s.setNickname(ref.personId, name);
-          this.flush();
         }
         return ok(chatView(s, ref));
       }
@@ -1169,9 +1165,20 @@ export class HubServer {
       return ok();
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)$/)) && method === 'PATCH') {
-      s.updatePerson(m[1], await body());
+      const b = await body<{ name?: unknown; note?: unknown }>();
+      if (b.name !== undefined) return bad(NICKNAME_MOVED);
+      s.updatePerson(m[1], { ...(typeof b.note === 'string' ? { note: b.note } : {}) });
       this.flush();
       return ok();
+    }
+    // Your nickname for one account of someone's (docs/chats.md, Names): a string sets it, null or '' takes it away.
+    if ((m = path.match(/^\/api\/identities\/([\w-]+)$/)) && method === 'PATCH') {
+      const b = await body<{ nickname?: unknown }>();
+      if (b.nickname !== null && typeof b.nickname !== 'string') return bad('Say nickname: a name, or null to take it away');
+      if (s.isSelf(m[1])) return bad('your own accounts go by the names you gave them on their networks');
+      if (!s.setIdentityNickname(m[1], b.nickname ? b.nickname.trim().slice(0, 200) : null)) return bad('no such identity', 404);
+      this.flush();
+      return ok({ identity: s.identitiesByIds([m[1]])[0] });
     }
     if ((m = path.match(/^\/api\/identities\/([\w-]+)\/split$/)) && method === 'POST') {
       const personId = s.splitIdentity(m[1]);

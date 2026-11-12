@@ -22,7 +22,8 @@ type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa' | 'tg';
 
 /**
  * DITHER_DEMO_SCENARIO=multiaccount adds Kit, one person on seven accounts across five networks, talking with several
- * of yours (eight pairs), and names your demo accounts by their usernames. Off by default: the default world's counts
+ * of yours (eight pairs), and Mo, two Discord accounts of theirs talking with one of yours, and names your demo
+ * accounts by their usernames. Off by default: the default world's counts
  * are what the tests and perf baselines expect.
  */
 export const MULTI_ACCOUNT = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('multiaccount');
@@ -104,7 +105,8 @@ const W = {
 const wgroup = (k: string) => `120363${BigInt('0x' + h('w' + k).toString('hex').slice(0, 12)).toString().padStart(12, '0').slice(0, 12)}@g.us`;
 const mid = (user: string, displayName: string, x: Partial<P.IdentityFact> = {}): P.IdentityFact => ({ nativeId: user, handle: user, displayName, ...x });
 const M = {
-  self: mid('@zyansheep:matrix.org', 'zyan'),
+  // Multi-account: your accounts' own names differ a little, as people's do (docs/chats.md "Names").
+  self: mid('@zyansheep:matrix.org', named('zyan', 'zyansheep')),
   alice: mid('@alicechen:matrix.org', 'Alice Chen', { contact: true }),
   kai: mid('@kai:nixos.dev', 'kai', { contact: true }),
   sam: mid('@samr:matrix.org', 'Sam Rivera', { contact: true }),
@@ -120,7 +122,7 @@ const M = {
 /** Telegram: numeric user ids, @usernames as handles. */
 const tid = (k: string, username: string, displayName: string, contact = true): P.IdentityFact => ({ nativeId: String(100_000_000 + (h('t' + k).readUInt32BE(0) % 6_000_000_000)), handle: `@${username}`, displayName, contact });
 const TG = {
-  self: tid('self', 'zyansheep', 'zyan', false),
+  self: tid('self', 'zyansheep', named('zyan', 'zyan s.'), false),
   alice: tid('alice', 'alicechen', 'Alice Chen'),
   noor: tid('noor', 'noor_h', 'Noor'),
   lena: tid('lena', 'lena_k', 'Lena K', false),
@@ -148,25 +150,36 @@ const PFP = {
   lake: pfp('#f2a07b', `<circle cx="32" cy="34" r="12" fill="#ffd36e"/><rect y="34" width="64" height="30" fill="#2f5d7c"/><g stroke="#ffd36e" stroke-width="2"><line x1="22" y1="40" x2="42" y2="40"/><line x1="26" y1="45" x2="38" y2="45"/><line x1="29" y1="50" x2="35" y2="50"/></g><path d="M0 34 L10 22 L16 30 L22 24 L28 34Z" fill="#26313f"/>`),
   catline: pfp('#0dbd8b', `<path d="M16 24 L20 10 L28 20 L36 20 L44 10 L48 24 C 50 36, 44 48, 32 48 C 20 48, 14 36, 16 24Z" fill="none" stroke="#06382a" stroke-width="4" stroke-linejoin="round"/><path d="M24 32 L28 32 M36 32 L40 32" stroke="#06382a" stroke-width="3" stroke-linecap="round"/>`),
   flake: pfp('#5277c3', `<g stroke="#e6eefc" stroke-width="5" stroke-linecap="round">${[0, 60, 120].map((r) => `<line x1="32" y1="12" x2="32" y2="52" transform="rotate(${r} 32 32)"/>`).join('')}</g><circle cx="32" cy="32" r="6" fill="#5277c3" stroke="#e6eefc" stroke-width="3"/>`),
+  // Mo's.
+  code: pfp('#263238', `<path d="M24 20 L12 32 L24 44 M40 20 L52 32 L40 44" fill="none" stroke="#7fd1ae" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><path d="M36 14 L28 50" stroke="#f7d154" stroke-width="4" stroke-linecap="round"/>`),
+  brush: pfp('#fff1d6', `<path d="M46 8 L56 18 L30 44 L20 34Z" fill="#7a4b2a"/><path d="M20 34 L30 44 C 26 54, 16 56, 8 56 C 10 48, 10 38, 20 34Z" fill="#e86a92"/><circle cx="48" cy="48" r="5" fill="#5cc8ff"/><circle cx="14" cy="18" r="4" fill="#f2a541"/>`),
   heart: pfp('#ffb3c7', `<path d="M32 52 C 10 38, 8 22, 20 16 C 26 13, 31 17, 32 21 C 33 17, 38 13, 44 16 C 56 22, 54 38, 32 52Z" fill="#b3123f"/><path d="M18 22 C 20 19, 23 18, 25 19" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/>`),
 };
 /** Kit (MULTI_ACCOUNT): three Discord accounts, Signal, two Matrix accounts on different servers, Telegram. */
 const KIT = {
-  exe: did('kit', 'kit.exe', 'kit', { contact: true }),
+  // Their own names: two say "Kit", here and on Telegram. The network's badge tells those apart, so no handle shows.
+  exe: did('kit', 'kit.exe', 'Kit', { contact: true }),
   alt: did('kit-alt', 'kit_alt', 'kit (raid)', { contact: true }),
   work: did('kit-work', 'kit.work', 'Kit Okafor', { contact: true }),
-  sig: sid('kit', '+1 555 0144', 'Kit'),
-  mx: mid('@kit:matrix.org', 'kit', { contact: true }),
+  sig: sid('kit', '+1 555 0144', 'Kit O.'),
+  mx: mid('@kit:matrix.org', 'kitty', { contact: true }),
   nix: mid('@kit:nixos.dev', 'kit (nixos)', { contact: true }),
   tg: tid('kit', 'kitkat', 'Kit', true),
+};
+/** Mo (MULTI_ACCOUNT): two Discord accounts of theirs, both named "Mo", each in a DM with the same one of yours. The
+ * names and the network are the same, so a message head adds the handle (`Mo  mo.codes`, `Mo  mo.draws`). */
+const MO = {
+  main: did('mo', 'mo.codes', 'Mo', { contact: true }),
+  art: did('mo-art', 'mo.draws', 'Mo', { contact: true }),
 };
 if (MULTI_ACCOUNT) {
   const pics: [P.IdentityFact, string][] = [
     [D.zyan, PFP.sheep], [D.zyn, PFP.invader], [S.self, PFP.peak], [M.self, PFP.rings], [W.self, PFP.moon], [TG.self, PFP.leaf],
     [KIT.exe, PFP.cat], [KIT.alt, PFP.sword], [KIT.work, PFP.suit], [KIT.sig, PFP.lake], [KIT.mx, PFP.catline], [KIT.nix, PFP.flake], [KIT.tg, PFP.heart],
+    [MO.main, PFP.code], [MO.art, PFP.brush],
   ];
   for (const [who, url] of pics) who.avatarUrl = url;
-  Object.assign(D, { kit: KIT.exe, kitAlt: KIT.alt, kitWork: KIT.work });
+  Object.assign(D, { kit: KIT.exe, kitAlt: KIT.alt, kitWork: KIT.work, mo: MO.main, moArt: MO.art });
   Object.assign(S, { kit: KIT.sig });
   Object.assign(M, { kit: KIT.mx, kitNix: KIT.nix });
   Object.assign(TG, { kit: KIT.tg });
@@ -1118,7 +1131,28 @@ const KIT_CONVS: DemoConv[] = [
     ],
   },
 ];
-if (MULTI_ACCOUNT) CONVS.push(...KIT_CONVS);
+/** Mo's two Discord accounts, both talking with your main one: a chat whose routes differ in their account alone. */
+const MO_CONVS: DemoConv[] = [
+  {
+    acc: ['dmain'],
+    fact: { nativeId: snow('dm-mo-main'), shape: 'direct', participants: [D.zyan.nativeId, MO.main.nativeId] },
+    msgs: [
+      [2 * DAY + 200, MO.main, 'can you look at the sprite sheet tonight?'],
+      [2 * DAY + 190, D.zyan, 'sure, send it over'],
+      [45, MO.main, 'sending it from my art account, it has the files'],
+    ],
+  },
+  {
+    acc: ['dmain'],
+    fact: { nativeId: snow('dm-moart-main'), shape: 'direct', participants: [D.zyan.nativeId, MO.art.nativeId] },
+    msgs: [
+      [40, MO.art, 'here, the walk cycle is frames 4 to 9'],
+      [38, MO.art, 'the run cycle still needs work'],
+    ],
+    unread: 2,
+  },
+];
+if (MULTI_ACCOUNT) CONVS.push(...KIT_CONVS, ...MO_CONVS);
 
 // ------------------------------------------------------------------ live behaviour
 
@@ -1145,6 +1179,8 @@ const REPLIES: Record<string, string[]> = {
   [KIT.exe.nativeId]: ['wait which account is this', 'ok cool', 'lol'],
   [KIT.sig.nativeId]: ['perfect', 'see you friday', '🚗'],
   [KIT.work.nativeId]: ['thanks!', 'merging'],
+  [MO.main.nativeId]: ['ok!', 'let me check'],
+  [MO.art.nativeId]: ['nice', 'I will fix the run cycle'],
   [M.alice.nativeId]: ['let me know what you think of section 3'],
   [S.mom.nativeId]: ['Ok sweetie', 'Love you! See you Sunday', '❤️'],
   [W.nana.nativeId]: ['❤️', 'Good. Eat vegetables too'],
@@ -1273,11 +1309,18 @@ const DISCORD_PROFILES: Record<string, { bio?: string; pronouns?: string; status
   jordan: { pronouns: 'he/him', servers: ['hk'], friends: ['alice'] },
   theo: { bio: 'has your belay device', servers: ['dither'], friends: ['alice', 'quinn'] },
   lev: { bio: 'p2p, routing, coffee', servers: ['dither', 'rust'], roles: { dither: [{ name: 'Maintainer', color: '#E91E63' }] } },
+  // Multi-account only (these accounts exist only there): each of someone's accounts says its own thing.
+  kit: { bio: 'makes things, breaks things, fixes most of them', pronouns: 'they/them', friends: ['alice'] },
+  kitWork: { bio: 'infra at a small co-op. work account, slow replies' },
+  kitAlt: { bio: 'raid alt. tuesdays only' },
+  mo: { bio: 'writes rust, mostly' },
+  moArt: { bio: 'one drawing a day in november' },
 };
 const SIGNAL_ABOUT: Record<string, { text: string; emoji: string }> = {
   alice: { text: 'on the wall, back at 8', emoji: '🧗' },
   mom: { text: 'Call me!', emoji: '☎️' },
   sam: { text: 'Busy, text me', emoji: '📵' },
+  kit: { text: 'out climbing, back sunday', emoji: '🧗' },
 };
 /** Bios the demo's own accounts set (setProfile), by `${network}:${native id}`, over the ones above. */
 const OWN_BIO = new Map<string, string>();
@@ -2649,15 +2692,18 @@ export function applyDemoOverlay(store: Store) {
   const merge = (name: string, ...ids: [P.Network, P.IdentityFact][]) => {
     const [first, ...rest] = ids.map(([n, i]) => personOf(n, i));
     for (const r of rest) store.mergePersons(first, r);
-    // The name a merge settled on, not a nickname: theirs show beside it only where you gave one.
-    store.updatePerson(first, { name }, 'merge');
+    // The name a merge settled on, as a merge would.
+    store.updatePerson(first, { name });
     return first;
   };
   const alice = merge('Alice Chen', ['signal', S.alice], ['discord', D.alice], ['matrix', M.alice], ['whatsapp', W.alice], ['telegram', TG.alice]);
   const sam = merge('Sam Rivera', ['signal', S.sam], ['matrix', M.sam]);
   merge('Theo', ['signal', S.theo], ['discord', D.theo]);
   merge('Quinn', ['discord', D.quinn], ['signal', S.quinn]);
+  if (MULTI_ACCOUNT) merge('Mo', ['discord', MO.main], ['discord', MO.art]);
   if (MULTI_ACCOUNT) merge('Kit', ['discord', KIT.exe], ['discord', KIT.alt], ['discord', KIT.work], ['signal', KIT.sig], ['matrix', KIT.mx], ['matrix', KIT.nix], ['telegram', KIT.tg]);
+  // Your nickname for one of Kit's accounts (docs/chats.md, Names): its heads and its tile say it, and Kit stays Kit.
+  if (MULTI_ACCOUNT) store.setIdentityNickname(idn('discord', KIT.alt), 'Kit, raid nights');
 
   const cnv = (net: P.Network, nativeId: string) => hubId('cnv', net, nativeId);
   const spc = (net: P.Network, nativeId: string) => hubId('spc', net, nativeId);

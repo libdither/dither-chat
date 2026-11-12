@@ -321,10 +321,11 @@ const steps: [string, () => void | Promise<unknown>][] = [
     store.ingest(d1, { t: 'identity', identity: { nativeId: 'dee', displayName: 'Dee', contact: true } });
     store.ingest(d1, { t: 'conversation', conversation: { nativeId: 'dm-dee', shape: 'direct', participants: ['me1', 'dee'] } });
   }],
-  ['people: rename (an old client\'s star, ignored), merge, split', async () => {
+  ['people: a nickname on an account, which renames its person; a note (an old client\'s star, ignored); merge, split', async () => {
     const ann = store.one<{ person_id: string }>('SELECT person_id FROM identity WHERE id = ?', idn(d1, 'ann'))!.person_id;
     const annSig = store.one<{ person_id: string }>('SELECT person_id FROM identity WHERE id = ?', idn(sig, 'ann-sig'))!.person_id;
-    await call('PATCH', `/api/persons/${ann}`, { name: 'Ann A.', starred: true });
+    await call('PATCH', `/api/identities/${idn(d1, 'ann')}`, { nickname: 'Ann A.' });
+    await call('PATCH', `/api/persons/${ann}`, { note: 'from the climbing gym', starred: true });
     await call('POST', '/api/persons/merge', { into: ann, from: annSig });
     const dee = store.one<{ person_id: string }>('SELECT person_id FROM identity WHERE id = ?', idn(d1, 'dee'))!.person_id;
     await call('POST', '/api/persons/merge', { into: dee, from: ann });

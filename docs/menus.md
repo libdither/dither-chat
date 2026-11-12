@@ -58,11 +58,15 @@ button that opens this menu.
 
 ### A conversation or channel (sidebar rows, the channel tree, the header)
 
-Mark As Read · Profile and All Chats with Them (DMs) · About This Channel (or Group, Chat: its settings,
+Mark As Read · Profile (DMs) · About This Channel (or Group, Chat: its settings,
 members and who may change what, [group-settings.md](group-settings.md)) · Search in Channel · Copy Link ·
 Mute Channel and Notification Settings › (Automatic, Always alert, List only, Mute: the hub's own rules,
 [notifications.md](notifications.md#rules)) · Pin to Top, Add to Sidebar, Move Up/Down, Move to Folder › (with
 New Folder…), Take Out of folder, Hide · Copy Channel ID, Copy dither-chat ID.
+
+A person reached by several routes is one row in the inbox ([chats.md](chats.md)), and that row's menu acts on the
+whole chat: Mark As Read (every route) · Profile · Search in Chat · Copy Link · Mute Chat and Notification Settings ›
+(set on every route) · Copy ›. "All Chats with Them" went on 2026-11-11: any DM of theirs is now the whole chat.
 
 Under Automatic the submenu says what holds instead: a rule set above this place and where, else what the
 network does here. A rule of Mentions from before the tiers shows as "Mentions only (older setting)", ticked

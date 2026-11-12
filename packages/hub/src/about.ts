@@ -344,7 +344,7 @@ export function candidatePool(store: Store, accountId: string, network: P.Networ
   const asking = new Set((db.query('SELECT from_id FROM add_request WHERE account_id = ? AND from_id IS NOT NULL').all(accountId) as { from_id: string }[]).map((r) => r.from_id));
   const ids = [...pool].filter((i) => !inIt.has(i) && !asking.has(i) && i !== acc.self_identity && !store.isSelf(i));
   const rows = store.identitiesByIds(ids).filter((i) => i.network === network && !i.isBot);
-  const name = (i: P.IdentityView) => (i.personId ? store.one<{ name: string }>('SELECT name FROM person WHERE id = ?', i.personId)?.name : null) ?? i.displayName ?? i.handle ?? i.nativeId;
+  const name = (i: P.IdentityView) => (i.personId ? store.one<{ name: string }>('SELECT name FROM person WHERE id = ?', i.personId)?.name : null) ?? i.nickname ?? i.displayName ?? i.handle ?? i.nativeId;
   const named = rows.map((i) => ({ i, at: talked.get(i.id) ?? 0, name: name(i).toLocaleLowerCase() }));
   named.sort((a, b) => b.at - a.at || a.name.localeCompare(b.name));
   const shown = named.slice(0, CANDIDATES_MAX);

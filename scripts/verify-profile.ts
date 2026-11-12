@@ -124,12 +124,14 @@ async function mailPeople() {
   await p.eval(`[...document.querySelectorAll('.merge-box .link-row')].find((r) => r.textContent.includes('Alice Chen')).click()`);
   await p.until(`!!document.querySelector('.pf-mail')`, 8000).catch(() => {});
   const merged = await p.eval<{ mail: string; hash: string; accounts: string }>(
-    `({ mail: document.querySelector('.pf-mail')?.innerText ?? '', hash: location.hash, accounts: [...document.querySelectorAll('.pf-identity')].map((e) => e.innerText).join(' | ') })`,
+    `({ mail: document.querySelector('.pf-mail')?.innerText ?? '', hash: location.hash, accounts: [...document.querySelectorAll('.pf-identity, .pf-acct')].map((e) => e.innerText).join(' | ') })`,
   );
   check(merged.hash === `#/p/${alice.id}` && merged.mail.includes('Re: Lease renewal') && merged.accounts.includes('alice.chen@example.org'), 'merged in, her mail comes with her address', merged);
   if (shots) await p.shot(`${shots}/profile-mail-merged.png`);
-  // Split again: the mail goes back with the address.
-  await p.eval(`[...document.querySelectorAll('.pf-identity')].find((e) => e.innerText.includes('alice.chen@example.org')).querySelector('button[title^="Unmerge"]').click()`);
+  // Split again, from the address's own tile and its menu: the mail goes back with the address.
+  await p.eval(`[...document.querySelectorAll('.pf-acct')].find((e) => e.innerText.includes('alice.chen@example.org')).querySelector('button[aria-label^="More for"]').click()`);
+  await p.until(`[...document.querySelectorAll('[role="menuitem"]')].some((b) => b.textContent.trim() === 'Split Into Its Own Person')`, 3000).catch(() => {});
+  await p.eval(`[...document.querySelectorAll('[role="menuitem"]')].find((b) => b.textContent.trim() === 'Split Into Its Own Person').click()`);
   await p.until(`!document.querySelector('.pf-mail')`, 8000).catch(() => {});
   check(!(await p.eval<boolean>(`!!document.querySelector('.pf-mail')`)), 'split again, the mail goes back with the address');
 }
@@ -143,8 +145,13 @@ try {
   check((await p.eval('location.hash')) === `#/p/${alice.id}`, 'the name at the top of a DM opens their profile', await p.eval('location.hash'));
   check((await text('.pf-title h1')).startsWith('Alice Chen'), 'the hero names them');
   const about = await card('About');
-  check(about.includes('film photography'), 'their Discord bio', about.split('\n').slice(0, 3));
-  check(!/\bAvailable\b/.test(about), 'not WhatsApp’s stock “Available”');
+  // Several accounts: each is a tile with its own picture, name, handle and bio (docs/profile.md).
+  const accounts = await card('Accounts');
+  const tiles = await p.eval<{ n: number; pics: number; chips: number }>(`({ n: document.querySelectorAll('.pf-acct').length, pics: document.querySelectorAll('.pf-acct .avatar').length, chips: document.querySelectorAll('.pf-acct .pf-handle').length })`);
+  check(tiles.n >= 5 && tiles.pics === tiles.n && tiles.chips === tiles.n, 'each of her accounts is a tile with its picture and handle', tiles);
+  check(!(await p.eval<boolean>(`!!document.querySelector('.pf-hero .pf-handles .pf-handle:not(.pf-acct-sum)')`)), 'and the hero says how many, not a chip each');
+  check(accounts.includes('film photography'), 'their Discord bio, on the Discord tile', accounts.split('\n').slice(0, 6));
+  check(!/\bAvailable\b/.test(about + accounts), 'not WhatsApp’s stock “Available”');
   check((await text('.pf-status')).includes('at the crag'), 'their status, with its text');
   const tags = await text('.pf-tags');
   check(tags.includes('she/her') && tags.includes('Friend') && tags.includes('In your contacts'), 'pronouns and how you stand with them, once each', tags);

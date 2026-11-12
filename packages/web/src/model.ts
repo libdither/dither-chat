@@ -10,6 +10,7 @@ import { dataVersion, db, inbox, isSelfIdentity, mailTriage, prefs } from './sta
 import { mailDataVersion } from './versions.ts';
 import { isMailItem, triageBoard, type Board, type BoardItem } from './board.ts';
 import { mailInboxRows, mailNames } from './mail/model.ts';
+import { accountName, chatKey, groupChats } from './chatroutes.ts';
 
 const memos = new Map<string, { rev: number; value: unknown }>();
 function memo<T>(key: string, fn: () => T): T {
@@ -91,7 +92,7 @@ export function identityName(id: string | null | undefined): string {
   if (!id) return 'Unknown';
   const i = db.identities.get(id);
   if (!i) return 'Unknown';
-  return i.displayName || i.handle || i.nativeId;
+  return accountName(i);
 }
 
 // "Mail with Sam": a `w:` list's heading names the person (mail/model.ts).
@@ -631,21 +632,29 @@ interface InboxScore {
 export type InboxRow = ConvInboxRow | MailInboxRow;
 export interface ConvInboxRow extends InboxScore {
   kind: 'conv';
+  /** The conversation; for a chat of several routes, the one with the latest message (what a click opens). */
   conv: P.ConversationView;
+  /**
+   * A person reached by several routes is one row (docs/inbox.md, chatroutes.ts): every route of theirs in the inbox,
+   * newest first, and the person. Its key is `person:<id>`.
+   */
+  chat?: { person: P.PersonView; routes: P.ConversationView[] };
 }
 export interface MailInboxRow extends InboxScore {
   kind: 'mail';
   thread: P.MailThreadView;
 }
 
+/** A conversation row's conversations: its one, or every route of a chat. */
+export const rowConvs = (r: ConvInboxRow) => r.chat?.routes ?? [r.conv];
 /** The latest message of a row, anyone's. */
 export const rowLast = (r: InboxRow) => (r.kind === 'conv' ? (r.conv.lastMessageAt ?? 0) : r.thread.lastAt);
 /** Something in it you have not read. */
-export const rowUnread = (r: InboxRow) => (r.kind === 'conv' ? unreadOf(r.conv).unread > 0 : r.thread.unread > 0);
+export const rowUnread = (r: InboxRow) => (r.kind === 'conv' ? rowConvs(r).some((c) => unreadOf(c).unread > 0) : r.thread.unread > 0);
 /** One other person: a DM, or a mail thread between you and one other. */
 export const rowDirect = (r: InboxRow) => (r.kind === 'conv' ? r.conv.shape === 'direct' : r.thread.participants <= 2);
 /** Muted here or on its network: below everything else. Notes to self notify nobody, which is not the same. */
-export const rowMuted = (r: InboxRow) => (r.kind === 'conv' ? r.conv.shape !== 'self' && unreadOf(r.conv).muted : r.thread.muted);
+export const rowMuted = (r: InboxRow) => (r.kind === 'conv' ? r.conv.shape !== 'self' && rowConvs(r).every((c) => unreadOf(c).muted) : r.thread.muted);
 
 /** DMs, group chats, notes to self and rooms outside a space are always in the inbox; anything else only while the hub lists it. */
 export const inboxShape = (c: P.ConversationView) => c.shape === 'direct' || c.shape === 'group' || c.shape === 'self' || (c.shape === 'channel' && !c.spaceIds.length);
@@ -669,17 +678,39 @@ export function heldByRequest(): Set<string> {
   return out;
 }
 
+/**
+ * The person whose chat a conversation is a route of, when they have several routes (docs/chats.md): then a DM of
+ * theirs opens their whole chat, and the inbox lists them once. Null for anything else.
+ */
+export function chatPersonOf(c: P.ConversationView | null | undefined): P.PersonView | null {
+  if (c?.shape !== 'direct' || !c.peerPersonId) return null;
+  const p = db.persons.get(c.peerPersonId);
+  return p && !p.isSelf && directsOf(p.id).length > 1 ? p : null;
+}
+
+/** A conversation's row in the inbox: its own id, or `person:<id>` for a route of a chat of several. */
+export function inboxKeyOf(convId: string): string {
+  const p = chatPersonOf(db.conversations.get(convId));
+  return p ? chatKey(p.id) : convId;
+}
+
 function convRows(): ConvInboxRow[] {
   return memo('inboxConvRows', () => {
-    const out: ConvInboxRow[] = [];
+    const rows: (ConvInboxRow & { last: number; unread: number; muted: boolean })[] = [];
     const held = heldByRequest();
     for (const c of db.conversations.values()) {
       const a = db.attention.get(c.id);
       if ((!a && !inboxShape(c)) || !visibleConv(c) || held.has(c.id)) continue;
       const row: ConvInboxRow = a ? { kind: 'conv', key: c.id, conv: c, score: a.score, needs: a.needs, reasons: a.reasons, owedSince: a.owedSince } : unscored(c);
       if (!row.needs && c.shape !== 'self' && placePref('conversation', c.id).hidden) continue;
-      out.push(row);
+      const u = unreadOf(c);
+      rows.push({ ...row, last: c.lastMessageAt ?? 0, unread: u.unread, muted: u.muted });
     }
+    // A person's routes as one row: ranked, kept and drawn as one (chatroutes.ts).
+    const g = groupChats(rows, (r) => chatPersonOf(r.conv)?.id ?? null);
+    const out: ConvInboxRow[] = g.rows;
+    for (const ch of g.chats)
+      out.push({ kind: 'conv', key: ch.key, conv: ch.latest.conv, score: ch.score, needs: ch.needs, reasons: ch.reasons, owedSince: ch.owedSince, chat: { person: db.persons.get(ch.personId)!, routes: ch.parts.map((r) => r.conv) } });
     return out;
   });
 }

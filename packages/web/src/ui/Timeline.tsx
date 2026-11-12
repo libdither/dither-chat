@@ -13,6 +13,7 @@ import {
   OLDER_RULE_HELP,
   RULE_HELP,
   authorName,
+  chatPersonOf,
   plainBody,
   convByNative,
   convLabel,
@@ -23,6 +24,7 @@ import {
   heldHere,
   identityName,
   netName,
+  peerIdentity,
   personOf,
   ruleIcon,
   ruleName,
@@ -55,6 +57,7 @@ import {
   editMessage,
   editing,
   retrySend,
+  jumpInChat,
   jumpTo,
   startEditing,
   loadNewer,
@@ -96,13 +99,15 @@ import { memo } from './memo.ts';
 import { heldRequest } from '../requests.ts';
 import { LinkBanner, RequestBar } from './Requests.tsx';
 import { countKey } from '../clicklog.ts';
-import { ChunkHead, focusedPair, focusPair, hasNickname, loadChat, myName, Nickname, pairOf, PairDropdown, PairLead, setView, theirName, viewOf } from './Pairs.tsx';
+import { badgeShows, focusedPair, focusPair, headNames, loadChat, PairDropdown, PairLead, RouteTag, setView, viewOf } from './Pairs.tsx';
+import { nicknamable, NicknamedName, ownName } from './Nickname.tsx';
 import { Loading } from './Loader.tsx';
 
 
 // ------------------------------------------------------------------ header
 
 function Crumbs({ c }: { c: P.ConversationView }) {
+  metaRev.value; // a DM's crumb is the person's name, which changes without `c` changing
   const r = route.value;
   const within = r.view === 'space' ? r.space : undefined;
   const cs = crumbs(c, within);
@@ -218,12 +223,17 @@ export function LevelMenu({ c, also }: { c: P.ConversationView; /** A person's o
  * to choose the pair from, in place of the network and your account, and `c` is the pair messages go through.
  */
 function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () => void; chat?: { person: P.PersonView; directs: P.ConversationView[]; all: boolean; onView: (view: string) => void } }) {
+  // Names it shows come from people and accounts, which change without `c` changing (a nickname, a rename).
+  metaRev.value;
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && visibleAccount(a.id));
   const isDirect = c.shape === 'direct';
   const person = chat?.person ?? (c.peerPersonId ? db.persons.get(c.peerPersonId) : null);
   // All chats together: the header is the person's, not one conversation's.
   const all = !!chat?.all;
   const whoTitle = person && isDirect ? `${person.name}'s profile` : `About ${convTitle(c)}`;
+  // One route: the pencil by the name is for the nickname of their account in it. Several: the name is made of
+  // their accounts' names, each with its own nickname on their profile, so it has none.
+  const peer = isDirect && !chat ? db.identities.get(peerIdentity(c) ?? '') : null;
   const openWho = () => go(person && isDirect ? { view: 'profile', person: person.id } : { view: 'profile', conv: c.id });
   return (
     <header class="conv-head" data-track-area="chat header" onContextMenu={onMenu(() => (all ? personMenu(chat!.person) : conversationMenu(c)))}>
@@ -245,7 +255,11 @@ function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () =>
       <div class="conv-head-text">
         <h2>
           {chat ? (
-            <Nickname person={chat.person} onOpen={openWho} />
+            <button class="conv-head-name" data-track="name" title={whoTitle} onClick={openWho}>
+              {chat.person.name}
+            </button>
+          ) : nicknamable(peer) && !peer.isBot ? (
+            <NicknamedName i={peer} label={convTitle(c)} title={peer.nickname ? `${whoTitle} (your nickname for ${ownName(peer)})` : whoTitle} onOpen={openWho} />
           ) : (
             <button class="conv-head-name" data-track="name" title={whoTitle} onClick={openWho}>
               {convTitle(c)}
@@ -502,17 +516,23 @@ function TriageNote({ m }: { m: P.MessageView }) {
  * Drawn again only when its props change (memo.ts) or a name or setting does (`metaRev`): a message arriving draws
  * itself and the one before it, not the whole timeline. The timeline looks up what it would read that changes with
  * each message: `target`, the message it replies to (a map per render, not a search per message); `thread`, its
- * thread's conversation. `onQuote` shows the quoted message. In a person's chat over several pairs of accounts
- * (ui/Pairs.tsx): `alias`, the name the account that wrote it goes by; `via`, that name beside a nickname; `net`, the
- * network on the picture, where networks mix.
+ * thread's conversation. `onQuote` shows the quoted message. In a person's chat over several routes (ui/Pairs.tsx):
+ * `who`, the author's account's own name (theirs or yours; their picture is the account's too), and `whoIdent`, the
+ * account's identifier where another account on the same side shares that name; `net`, the network's badge on the
+ * picture, where it would differ between the routes; `tag`, where the route changes, what of the route the head does
+ * not say, after the time, which `onTag` sends through.
  */
-const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, highlight, target, thread, via, viaOn, alias, net }: { m: P.MessageView; grouped: boolean; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; via?: string; viaOn?: boolean; alias?: string; net?: boolean }) {
+const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, highlight, target, thread, who, whoIdent, net, tag, onTag }: { m: P.MessageView; grouped: boolean; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; who?: string; whoIdent?: string; net?: boolean; tag?: boolean; onTag?: (convId: string) => void }) {
   if (counting) rendered('MessageItem');
   metaRev.value;
   const author = m.authorId ? db.identities.get(m.authorId) : null;
   const person = personOf(m.authorId);
   const self = isSelfIdentity(m.authorId);
-  const name = alias ?? (self ? identityName(m.authorId) || 'You' : authorName(m.authorId));
+  // In a person's chat, each account by its own name and picture (`who`); elsewhere theirs by the person's name.
+  const name = who ?? (self ? identityName(m.authorId) || 'You' : authorName(m.authorId));
+  const picture = who !== undefined ? author?.avatar : (person?.avatar ?? author?.avatar);
+  const conv = net || tag ? db.conversations.get(m.conversationId) : undefined;
+  const chatPerson = tag ? chatPersonOf(conv) : null;
   const reply = () => onReply(m);
   // Right-click or hold: the innermost thing that has a menu of its own (a file, a link, a person), else the message.
   const menuAt = (target: EventTarget | null): MenuSpec | null => {
@@ -569,27 +589,27 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           </span>
         ) : (
           <button class="avatar-btn" data-identity={m.authorId ?? undefined} onClick={() => openProfile(m.authorId)} aria-label={`Profile of ${name}`}>
-            <Avatar id={person?.id ?? m.authorId ?? m.id} name={name} url={person?.avatar ?? author?.avatar} size={36} network={net ? m.network : undefined} />
+            <Avatar id={(who !== undefined ? m.authorId : person?.id) ?? m.authorId ?? m.id} name={name} url={picture} size={36} network={net ? m.network : undefined} accountIds={net ? conv?.vantages.map((v) => v.accountId) : undefined} />
           </button>
         )}
       </div>
       <div class="msg-main">
         {!grouped && (
           <div class="msg-head">
-            <span class={`msg-author ${self ? 'self' : ''}`} data-identity={m.authorId ?? undefined} role="link" tabindex={0} onClick={() => openProfile(m.authorId)} onKeyDown={(e) => e.key === 'Enter' && openProfile(m.authorId)} title={author ? `${author.displayName ?? ''} ${author.handle ? '· ' + author.handle : ''} on ${netName(author.network)}` : ''}>
+            <span class={`msg-author ${self ? 'self' : ''}`} data-identity={m.authorId ?? undefined} role="link" tabindex={0} onClick={() => openProfile(m.authorId)} onKeyDown={(e) => e.key === 'Enter' && openProfile(m.authorId)} title={author ? `${author.nickname ? `${author.nickname} (your nickname; their name: ${author.displayName ?? author.handle ?? author.nativeId})` : (author.displayName ?? '')} ${author.handle ? '· ' + author.handle : ''} on ${netName(author.network)}` : ''}>
               {name}
             </span>
-            {author?.isBot && <span class="bot-tag">BOT</span>}
-            {/* A person page (ui/Pairs.tsx), someone with a nickname: which of their accounts wrote it. */}
-            {via !== undefined && (
-              <span class={`msg-src msg-via-their ${viaOn ? 'on' : ''}`} title={`${via} on ${netName(m.network)}`}>
-                <NetGlyph network={m.network} size={11} />
-                {via}
+            {whoIdent && (
+              <span class="msg-ident" title={`${name} on ${netName(m.network)}`}>
+                {whoIdent}
               </span>
             )}
+            {author?.isBot && <span class="bot-tag">BOT</span>}
             <span class="msg-time" title={fullTime(m.ts)}>
               {clock(m.ts)}
             </span>
+            {/* A person's chat (ui/Pairs.tsx): where the route changes, which one, quietly. A click sends through it. */}
+            {conv && chatPerson && onTag && <RouteTag c={conv} directs={directsOf(chatPerson.id)} side={self ? 'mine' : who !== undefined ? 'theirs' : 'other'} onPick={() => onTag(conv.id)} />}
             {(m.editedTs || m.edits) && <Edited m={m} />}
             <Marks m={m} />
             {m.encryptionWarning && (
@@ -684,7 +704,13 @@ interface Drawn {
   to: string | null;
 }
 
-function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, pairs }: { tkey: string; convIds: string[]; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; pairs?: { focus: string; onFocus: (convId: string) => void } }) {
+/**
+ * `chat`: a person's chat over several routes (PersonChat): messages name each account by its own name and picture
+ * (Pairs.tsx headNames, over the routes shown); `badge`, whether pictures
+ * carry the network's badge; `onFocus`, a route tag's click; `onMissing`, a message linked to (`focus`) that paging
+ * back through the chat did not reach.
+ */
+function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey: string; convIds: string[]; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; chat?: { badge: boolean; onFocus: (convId: string) => void; onMissing: () => void } }) {
   if (counting) rendered('Timeline');
   timelineRev(tkey).value;
   const scroller = useRef<HTMLDivElement>(null);
@@ -692,7 +718,9 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, pairs }: { tke
   const [flash, setFlash] = useState<string | null>(null);
   const scrolledTo = useRef<string | null>(null);
   useEffect(() => {
-    if (focus) void jumpTo(convIds[0], focus);
+    // A person's chat pages back through every route to the message; one too far back shows its route alone.
+    if (focus && tkey.startsWith('p:')) void jumpInChat(tkey, focus).then((found) => !found && chat?.onMissing());
+    else if (focus) void jumpTo(convIds[0], focus);
     else loadTimeline(tkey);
     scrolledTo.current = null;
   }, [tkey, focus]);
@@ -811,6 +839,10 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, pairs }: { tke
     draw(...around(i));
   };
   const onQuote = useMemo(() => (id: string) => quote.current(id), []);
+  // The same function from one render to the next, so a message is not drawn again for a new one (memo.ts).
+  const tagTo = useRef(chat?.onFocus);
+  tagTo.current = chat?.onFocus;
+  const onTag = useMemo(() => (id: string) => tagTo.current?.(id), []);
   useLayoutEffect(() => {
     const id = revealing.current;
     const el = id && document.getElementById(`m-${id}`);
@@ -832,6 +864,8 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, pairs }: { tke
   const items: any[] = [];
   let prev: P.MessageView | null = null;
   const byId = new Map(msgs.map((x) => [x.id, x]));
+  // A person's chat: how each account in it is named (the routes shown; a bot in a DM is not among them).
+  const heads = chat ? headNames(convIds) : null;
   const unreadFrom = firstUnreadTs === null ? -1 : all.findIndex((m) => m.ts > firstUnreadTs && !isSelfIdentity(m.authorId));
   for (let i = start; i < end; i++) {
     const m = all[i];
@@ -840,22 +874,10 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, pairs }: { tke
     const grouped = !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId;
     const target = m.replyToId ? (byId.get(m.replyToId) ?? quoted.get(m.replyToId) ?? null) : null;
     const thread = m.threadId ? (db.conversations.get(m.threadId) ?? null) : null;
-    let via: string | undefined;
-    let alias: string | undefined;
-    const c = pairs ? db.conversations.get(m.conversationId) : undefined;
-    if (pairs && c) {
-      const pr = pairOf(c);
-      // The pair's two accounts go by the names the network has (your account's, their username), unless you gave
-      // them a nickname. Anyone else who wrote there (a bot, the network itself) keeps their own name.
-      if (m.authorId && m.authorId === pr.mine?.id) alias = myName(pr);
-      else if (m.authorId && m.authorId === pr.theirs?.id) {
-        if (hasNickname(personOf(m.authorId))) via = theirName(pr);
-        else alias = theirName(pr);
-      }
-      // All chats together: a label where the pair changes, to say which and to send through it.
-      if (convIds.length > 1 && (!prev || prev.conversationId !== m.conversationId)) items.push(<ChunkHead key={`ch-${m.id}`} p={pr} focused={m.conversationId === pairs.focus} onPick={() => pairs.onFocus(c.id)} />);
-    }
-    items.push(<MessageItem key={m.id} m={m} grouped={grouped} onReply={onReply} onQuote={onQuote} highlight={m.id === flash} target={target} thread={thread} via={via} viaOn={!!pairs && m.conversationId === pairs.focus} alias={alias} net={!!pairs && convIds.length > 1} />);
+    // All chats together: where the route changes, grouping breaks (above) and the head line says which route.
+    const tag = !!chat && convIds.length > 1 && !grouped && (!prev || prev.conversationId !== m.conversationId);
+    const head = heads && m.authorId ? heads.get(m.authorId) : undefined;
+    items.push(<MessageItem key={m.id} m={m} grouped={grouped} onReply={onReply} onQuote={onQuote} highlight={m.id === flash} target={target} thread={thread} who={head?.name} whoIdent={head?.ident} net={!!chat?.badge} tag={tag} onTag={chat ? onTag : undefined} />);
     prev = m;
   }
 
@@ -1286,13 +1308,15 @@ function NotStartedNote({ c }: { c: P.ConversationView }) {
   return <div class="voice-note"><Icon name="info" size={14} /> Nothing exists on Signal yet. {convTitle(c)} sees this conversation when you send the first message.</div>;
 }
 
+/**
+ * A conversation's page. A DM with someone you reach by several routes is their chat (PersonChat), whichever DM of
+ * theirs the address names: the page is the same, and sends through that DM.
+ */
 export function ConversationPane({ convId, onBack, focus }: { convId: string; onBack?: () => void; focus?: string }) {
   rev.value;
   const c = db.conversations.get(convId);
-  // A DM with someone you reach through several pairs of accounts is their chat, showing this pair.
-  const person = c?.shape === 'direct' && c.peerPersonId ? db.persons.get(c.peerPersonId) : null;
-  const directs = person && !person.isSelf ? directsOf(person.id) : [];
-  if (c && person && directs.length > 1 && directs.some((d) => d.id === c.id)) return <PersonChat person={person} directs={directs} only={c} onBack={onBack} msg={focus} />;
+  const person = chatPersonOf(c);
+  if (c && person) return <PersonChat person={person} directs={directsOf(person.id)} at={c} onBack={onBack} msg={focus} />;
   return <PlainPane convId={convId} onBack={onBack} focus={focus} />;
 }
 
@@ -1359,48 +1383,54 @@ export function PersonPane({ personId, onBack }: { personId: string; onBack?: ()
 }
 
 /**
- * Someone you reach through several pairs of your account and theirs (ui/Pairs.tsx, docs/chats.md), as one chat: the
- * page any conversation has, with the pair to choose under the name and in the message box. `only`: opened as one of
- * their DMs, which shows that pair alone. Otherwise all chats together, or the pair picked from the list.
+ * Someone you reach by several routes (ui/Pairs.tsx, docs/chats.md), as one chat: the page any conversation has,
+ * every route interleaved, adding only what the chat needs (chatroutes.ts). `at`: the DM the address names, which
+ * messages go through until another route is picked. The list under the name filters to one route without leaving.
+ * `msg`: a message to open at, in the interleaved timeline when paging back reaches it, else in its route alone.
  */
-function PersonChat({ person, directs, only, onBack, msg }: { person: P.PersonView; directs: P.ConversationView[]; only?: P.ConversationView; onBack?: () => void; msg?: string }) {
+function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView; directs: P.ConversationView[]; at?: P.ConversationView; onBack?: () => void; msg?: string }) {
   const [reply, setReply] = useState<P.MessageView | null>(null);
-  const unreadAt = useMemo(() => firstUnread(only ? [only] : directs), [person.id, only?.id]);
-  useEffect(() => setReply(null), [person.id, only?.id]);
+  const unreadAt = useMemo(() => firstUnread(directs), [person.id]);
+  useEffect(() => setReply(null), [person.id]);
   useEffect(() => void loadChat(person.id), [person.id]);
-  // Where a message goes: the DM that is open, else the pair of the message you are replying to, else the pair in use.
-  const focus = only ?? (reply && directs.find((d) => d.id === reply.conversationId)) ?? focusedPair(person.id, directs);
+  // Where a message goes: the route of the message you are replying to, else the route in use (Pairs.tsx).
+  const focus = (reply && directs.find((d) => d.id === reply.conversationId)) || focusedPair(person.id, directs, at?.id);
   useEffect(() => void reactionContext(focus.id), [focus.id]);
-  // Showing one pair's history follows the pair you send through, so switching it in the message box switches both.
-  const view = only || viewOf(person.id, directs) !== 'all' ? focus.id : 'all';
+  // Showing one route's history follows the route you send through, so switching it in the message box switches both.
+  const view = viewOf(person.id, directs) !== 'all' ? focus.id : 'all';
   const shown = view === 'all' ? directs : [focus];
   const onFocus = (id: string) => {
     if (reply && reply.conversationId !== id) setReply(null);
-    focusPair(person.id, focus.id, id);
-    // Opened as one DM: another pair is another DM's page.
-    const other = only && id !== only.id ? db.conversations.get(id) : null;
-    if (other) openConv(other);
+    focusPair(person.id, focus.id, id, at?.id);
   };
   const onView = (v: string) => {
-    if (!only || v === 'all') setView(person.id, v);
+    setView(person.id, v);
     if (v !== 'all') onFocus(v);
-    else if (only) go({ view: 'people', person: person.id });
   };
-  const cur = pairOf(focus);
+  // A message too far back to page to: its route alone (the list under the name says so; one pick returns to all).
+  const onMissing = () => at && onView(at.id);
   const held = heldRequest(db.requests, focus.id);
   return (
     <section class="pane">
       <ConvHeader c={focus} onBack={onBack} chat={{ person, directs, all: view === 'all', onView }} />
       {!held && shown.filter((d) => d.pending).map((d) => <LinkBanner key={d.id} c={d} />)}
       <NotStartedNote c={focus} />
-      <Timeline key={view} tkey={view === 'all' ? timelineKey('p', person.id) : timelineKey('c', view)} convIds={shown.map((d) => d.id)} onReply={setReply} firstUnreadTs={unreadAt} focus={msg} pairs={{ focus: focus.id, onFocus }} />
+      <Timeline
+        key={view}
+        tkey={view === 'all' ? timelineKey('p', person.id) : timelineKey('c', view)}
+        convIds={shown.map((d) => d.id)}
+        onReply={setReply}
+        firstUnreadTs={unreadAt}
+        focus={msg}
+        chat={{ badge: view === 'all' && badgeShows(directs), onFocus, onMissing }}
+      />
       <TypingBar convIds={shown.map((d) => d.id)} />
       {held ? (
         <RequestBar r={held} />
       ) : (
         <Composer
           targets={{ convId: focus.id }}
-          placeholder={`Message ${theirName(cur)} from ${myName(cur)} on ${netName(cur.conv.network)}`}
+          placeholder={`Message ${person.name}`}
           reply={reply}
           clearReply={() => setReply(null)}
           disabledReason={composerBlocker(focus)}
