@@ -118,20 +118,22 @@ test('a message head names the account; the tag says only what the head does not
   for (const side of ['theirs', 'mine', 'other'] as const) expect(tagTells(nana[0], nana, side)).toEqual({ network: false, theirs: false, mine: false });
 });
 
-test('an account shows its handle after its name only where another on its side shares the name', () => {
-  const h = (id: string, name: string, ident: string | null): HeadName => ({ id, name, ident });
-  // Kit says "Kit" on Discord and on Telegram (case aside), and other names elsewhere.
-  const kit = [h('exe', 'Kit', 'kit.exe'), h('work', 'Kit Okafor', 'kit.work'), h('tg', 'kit', '@kitkat'), h('mx', 'kitty', '@kit:matrix.org')];
-  expect([...headIdents(kit)]).toEqual([
-    ['exe', 'kit.exe'],
-    ['tg', '@kitkat'],
+test('an account shows its handle after its name only where another on its side and network shares the name', () => {
+  const h = (id: string, network: string, name: string, ident: string | null): HeadName => ({ id, network, name, ident });
+  // Kit says "Kit" on Discord and on Telegram (case aside): the badge tells them apart, so no handle.
+  const kit = [h('exe', 'discord', 'Kit', 'kit.exe'), h('work', 'discord', 'Kit Okafor', 'kit.work'), h('tg', 'telegram', 'kit', '@kitkat'), h('mx', 'matrix', 'kitty', '@kit:matrix.org')];
+  expect(headIdents(kit).size).toBe(0);
+  // Mo is "Mo" on two Discord accounts: both show their handle.
+  expect([...headIdents([h('a', 'discord', 'Mo', 'mo.codes'), h('b', 'discord', 'mo', 'mo.draws')])]).toEqual([
+    ['a', 'mo.codes'],
+    ['b', 'mo.draws'],
   ]);
   // All different: no handles.
-  expect(headIdents([h('a', 'Mo', 'mo.codes'), h('b', 'mo (art)', 'mo.draws')]).size).toBe(0);
+  expect(headIdents([h('a', 'discord', 'Mo', 'mo.codes'), h('b', 'discord', 'mo (art)', 'mo.draws')]).size).toBe(0);
   // One account seen on several routes counts once.
-  expect(headIdents([h('exe', 'Kit', 'kit.exe'), h('exe', 'Kit', 'kit.exe')]).size).toBe(0);
+  expect(headIdents([h('exe', 'discord', 'Kit', 'kit.exe'), h('exe', 'discord', 'Kit', 'kit.exe')]).size).toBe(0);
   // A handle that says no more than the name is left out; one with no handle has nothing to add.
-  expect([...headIdents([h('a', 'zyan', 'zyan'), h('b', 'zyan', '+1 555 0100'), h('c', 'Zyan ', null)])]).toEqual([['b', '+1 555 0100']]);
+  expect([...headIdents([h('a', 'signal', 'zyan', 'zyan'), h('b', 'signal', 'zyan', '+1 555 0100'), h('c', 'signal', 'Zyan ', null)])]).toEqual([['b', '+1 555 0100']]);
 });
 
 test('a chat’s row: the highest score, needs you if any route does, owed since the earliest, unread summed, muted only if all are', () => {

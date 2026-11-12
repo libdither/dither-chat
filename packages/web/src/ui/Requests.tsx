@@ -572,6 +572,12 @@ export function ProfileLinks({ identities, links, abouts, onEnded }: { identitie
   const [ending, setEnding] = useState<{ identityId: string; accountId: string; relationship: P.LinkRelationship } | null>(null);
   const rows = profileLinks(identities, links, abouts);
   if (!rows.length) return null;
+  // With several accounts of theirs, each row says which one it is about, as a route's label does: theirs ⇄ yours.
+  const several = new Set(rows.map((x) => x.identityId)).size > 1;
+  const theirs = (id: string) => {
+    const i = identities.find((x) => x.id === id);
+    return i?.handle ?? identityName(id);
+  };
   return (
     <div class="pf-links-list">
       {rows.map((x) => {
@@ -582,7 +588,7 @@ export function ProfileLinks({ identities, links, abouts, onEnded }: { identitie
               <b>{RELATIONSHIP_LABEL[x.relationship]}</b>
               <small>
                 {account && <span class="acc-dot" style={{ background: account.color }} />}
-                {account ? `${netName(x.network)} ${account.label}` : 'an account no longer here'}
+                {account ? `${netName(x.network)} ${several ? `${theirs(x.identityId)} ⇄ ` : ''}${account.label}` : 'an account no longer here'}
               </small>
             </span>
             {canRemove(account) && (

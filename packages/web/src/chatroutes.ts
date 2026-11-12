@@ -99,6 +99,7 @@ export function tagText(t: Tells, n: RouteNames, side: Side): string {
 /** An account as a message head names it: its own name, and what identifies it on its network (a handle, else an id). */
 export interface HeadName {
   id: string;
+  network: string;
   name: string;
   ident: string | null;
 }
@@ -107,15 +108,18 @@ const sameName = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
 
 /**
  * Which accounts on one side of a chat need their identifier after their name, and what it is: only those whose name
- * another account on the same side would also show ("Kit" on Telegram and on Discord), compared ignoring case. An
- * identifier that says no more than the name is left out. Call it once for their side and once for yours.
+ * another account on the same side and the same network would also show (Mo is "Mo" on two Discord accounts),
+ * compared ignoring case. Two networks never need it: the network's badge on the picture already tells them apart, so
+ * "Kit" on Discord and "Kit" on Telegram stay "Kit", and no phone number lands in a head. An identifier that says no
+ * more than the name is left out. Call it once for their side and once for yours.
  */
 export function headIdents(accounts: HeadName[]): Map<string, string> {
   const out = new Map<string, string>();
   const seen = new Map<string, number>();
   const each = accounts.filter((a, i) => accounts.findIndex((b) => b.id === a.id) === i);
-  for (const a of each) seen.set(sameName(a.name), (seen.get(sameName(a.name)) ?? 0) + 1);
-  for (const a of each) if ((seen.get(sameName(a.name)) ?? 0) > 1 && a.ident && sameName(a.ident) !== sameName(a.name)) out.set(a.id, a.ident);
+  const key = (a: HeadName) => `${a.network}\n${sameName(a.name)}`;
+  for (const a of each) seen.set(key(a), (seen.get(key(a)) ?? 0) + 1);
+  for (const a of each) if ((seen.get(key(a)) ?? 0) > 1 && a.ident && sameName(a.ident) !== sameName(a.name)) out.set(a.id, a.ident);
   return out;
 }
 

@@ -157,7 +157,7 @@ const PFP = {
 };
 /** Kit (MULTI_ACCOUNT): three Discord accounts, Signal, two Matrix accounts on different servers, Telegram. */
 const KIT = {
-  // Their own names: two say "Kit" (here and on Telegram), so a message head adds the handle to those two.
+  // Their own names: two say "Kit", here and on Telegram. The network's badge tells those apart, so no handle shows.
   exe: did('kit', 'kit.exe', 'Kit', { contact: true }),
   alt: did('kit-alt', 'kit_alt', 'kit (raid)', { contact: true }),
   work: did('kit-work', 'kit.work', 'Kit Okafor', { contact: true }),
@@ -166,10 +166,11 @@ const KIT = {
   nix: mid('@kit:nixos.dev', 'kit (nixos)', { contact: true }),
   tg: tid('kit', 'kitkat', 'Kit', true),
 };
-/** Mo (MULTI_ACCOUNT): two Discord accounts of theirs, each in a DM with the same one of yours. */
+/** Mo (MULTI_ACCOUNT): two Discord accounts of theirs, both named "Mo", each in a DM with the same one of yours. The
+ * names and the network are the same, so a message head adds the handle (`Mo  mo.codes`, `Mo  mo.draws`). */
 const MO = {
   main: did('mo', 'mo.codes', 'Mo', { contact: true }),
-  art: did('mo-art', 'mo.draws', 'mo (art)', { contact: true }),
+  art: did('mo-art', 'mo.draws', 'Mo', { contact: true }),
 };
 if (MULTI_ACCOUNT) {
   const pics: [P.IdentityFact, string][] = [

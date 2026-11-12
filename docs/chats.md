@@ -65,11 +65,12 @@ several routes every message head shows the sending account's own picture and it
 its handle, else its id), theirs and yours alike, so Kit's Discord account and Kit's Telegram account look like what
 they are, and so do yours. A bot or anyone else in a DM keeps its own name, as before.
 
-Two accounts on one side of the chat can say the same name: Kit is "Kit" on Discord and on Telegram, and you may be
-"zyan" on Discord and on Signal. Then, and only then, the head adds that account's handle after the name, muted
-(`Kit  kit.exe`, `Kit  @kitkat`), and leaves it out where it would say no more than the name. Names are compared
-ignoring case, among the accounts in the routes the page shows (`headIdents` in `chatroutes.ts`, `headNames` in
-`Pairs.tsx`). Messages group only while the same account writes on the same route: another account of theirs starts
+Two accounts on one side of the chat can say the same name on the same network: Mo is "Mo" on two Discord accounts.
+Then, and only then, the head adds that account's handle after the name, muted (`Mo  mo.codes`, `Mo  mo.draws`), and
+leaves it out where it would say no more than the name. The same name on two networks needs no handle, because the
+network's badge on the picture already tells them apart: Kit is "Kit" on Discord and on Telegram, and Sam Rivera's
+Signal phone number never lands beside their name. Names are compared ignoring case, among the accounts in the routes
+the page shows (`headIdents` in `chatroutes.ts`, `headNames` in `Pairs.tsx`). Messages group only while the same account writes on the same route: another account of theirs starts
 a new head, since its picture and name differ.
 
 With one route picked from the list, the page shows that route alone: each side has one account, so the names are

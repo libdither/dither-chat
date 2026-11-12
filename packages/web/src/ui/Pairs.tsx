@@ -104,7 +104,7 @@ export function RouteTag({ c, directs, side, onPick }: { c: P.ConversationView; 
 export function headNames(convIds: string[]): Map<string, { name: string; ident?: string }> {
   const theirs: HeadName[] = [];
   const mine: HeadName[] = [];
-  const head = (i: P.IdentityView): HeadName => ({ id: i.id, name: identityName(i.id), ident: i.handle ?? i.nativeId });
+  const head = (i: P.IdentityView): HeadName => ({ id: i.id, network: i.network, name: identityName(i.id), ident: i.handle ?? i.nativeId });
   for (const id of convIds) {
     const c = db.conversations.get(id);
     if (!c) continue;
