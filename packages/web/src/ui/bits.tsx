@@ -10,6 +10,7 @@ import { Icon } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
 import { onMenu } from './ContextMenu.tsx';
 import { accountMenu } from './menus.tsx';
+import { drawLater } from './Later.tsx';
 
 export function NetGlyph({ network, size = 14, color }: { network: P.Network; size?: number; color?: string }) {
   return (
@@ -152,14 +153,18 @@ export function Modal({ title, onClose, children, wide }: { title: ComponentChil
 }
 
 /** Scrolls Settings to one of its sections (`set-adversarial`). */
-export function showSection(id: string) {
-  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+export function showSection(id: string, behavior: ScrollBehavior = 'smooth') {
+  const to = () => document.getElementById(id)?.scrollIntoView({ behavior, block: 'start' });
+  // Parts of the page drawn later (Later.tsx) are drawn first, the section's own or those below it, and it is gone to
+  // once they are.
+  if (drawLater()) requestAnimationFrame(to);
+  else to();
 }
 
 /** Opens Settings at Adversarial features. */
 export function openAdversarial() {
   go({ view: 'settings' });
-  setTimeout(() => document.getElementById('set-adversarial')?.scrollIntoView({ block: 'start' }), 120);
+  setTimeout(() => showSection('set-adversarial', 'auto'), 120);
 }
 
 /** Small anchored menu that closes on outside click. */

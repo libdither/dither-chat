@@ -7,7 +7,7 @@
 import type * as P from '@dither-chat/protocol';
 import { categoryThreshold, NETWORK_META, RULE_LABEL } from '@dither-chat/protocol';
 import { dataVersion, db, inbox, isSelfIdentity, mailTriage, prefs } from './state.ts';
-import { mailDataVersion } from './versions.ts';
+import { mailDataVersion, metaDataVersion } from './versions.ts';
 import { isMailItem, triageBoard, type Board, type BoardItem } from './board.ts';
 import { mailInboxRows, mailNames } from './mail/model.ts';
 import { accountName, chatKey, groupChats } from './chatroutes.ts';
@@ -19,6 +19,26 @@ function memo<T>(key: string, fn: () => T): T {
   if (m && m.rev === v) return m.value as T;
   const value = fn();
   memos.set(key, { rev: v, value });
+  return value;
+}
+
+const metaMemos = new Map<string, { rev: number; value: unknown; until: number }>();
+/** The soonest a native mute looked at while working something out runs out (nativeLevel): no later than that is it kept. */
+let expires = Infinity;
+/**
+ * The same, for what depends only on names, settings and what is where (versions.ts `metaDataVersion`): a message
+ * arriving or a conversation read does not work it out again, where it did for every conversation under every server
+ * the rail shows (docs/perf.md). It holds conversations' ids, never the objects, which a message replaces.
+ */
+function metaMemo<T>(key: string, fn: () => T): T {
+  const m = metaMemos.get(key);
+  const v = metaDataVersion();
+  if (m && m.rev === v && (m.until === Infinity || Date.now() < m.until)) return m.value as T;
+  const outer = expires;
+  expires = Infinity;
+  const value = fn();
+  metaMemos.set(key, { rev: v, value, until: expires });
+  expires = Math.min(outer, expires);
   return value;
 }
 
@@ -63,13 +83,17 @@ export function resolveTokens(text: string, network: P.Network): string {
     .replace(/<a?:(\w+):\d+>/g, ':$1:');
 }
 
-/** A conversation by its network's own id, as room links name them: one map per `rev`, not a scan per link. */
+/**
+ * A conversation by its network's own id, as room links name them: one map of ids while what is where stays the same
+ * (`metaMemo`), not a scan per link, nor a new map for every message or read.
+ */
 export function convByNative(network: P.Network, nativeId: string): P.ConversationView | undefined {
-  return memo('convByNative', () => {
-    const m = new Map<string, P.ConversationView>();
-    for (const c of db.conversations.values()) if (!m.has(`${c.network}:${c.nativeId}`)) m.set(`${c.network}:${c.nativeId}`, c);
+  const id = metaMemo('convByNative', () => {
+    const m = new Map<string, string>();
+    for (const c of db.conversations.values()) if (!m.has(`${c.network}:${c.nativeId}`)) m.set(`${c.network}:${c.nativeId}`, c.id);
     return m;
   }).get(`${network}:${nativeId}`);
+  return id ? db.conversations.get(id) : undefined;
 }
 
 /** A message body as one plain line, for quotes and previews. */
@@ -292,27 +316,34 @@ const placeActivity = (e: RailEntry) =>
  */
 export function railEntries(which: 'shown' | 'hidden' = 'shown'): RailEntry[] {
   return memo('rail:' + which, () => {
-    const inFolder = new Set(db.folders.flatMap((f) => f.items.map((i) => `${i.kind}:${i.id}`)));
+    // Conversations you added to the rail and not to a folder: by id, since what is where moves only with settings.
+    const railed = metaMemo('railed', () => {
+      const inFolder = new Set(db.folders.flatMap((f) => f.items.map((i) => `${i.kind}:${i.id}`)));
+      return { inFolder, convs: [...db.conversations.values()].filter((c) => visibleConv(c) && !inFolder.has(`conversation:${c.id}`) && placePref('conversation', c.id).railed).map((c) => c.id) };
+    });
     const entries: RailEntry[] = [
       ...db.folders.map((folder): RailEntry => ({ key: `folder:${folder.id}`, kind: 'folder', folder })),
       ...allCommunities()
-        .filter((s) => !inFolder.has(`space:${s.id}`))
+        .filter((s) => !railed.inFolder.has(`space:${s.id}`))
         .map((space): RailEntry => ({ key: `space:${space.id}`, kind: 'space', space })),
-      ...[...db.conversations.values()]
-        .filter((c) => visibleConv(c) && !inFolder.has(`conversation:${c.id}`) && placePref('conversation', c.id).railed)
-        .map((conv): RailEntry => ({ key: `conversation:${conv.id}`, kind: 'conversation', conv })),
+      ...railed.convs.flatMap((id): RailEntry[] => {
+        const conv = db.conversations.get(id);
+        return conv ? [{ key: `conversation:${id}`, kind: 'conversation', conv }] : [];
+      }),
     ];
-    const pref = (e: RailEntry) => placePref(e.kind, e.key.slice(e.key.indexOf(':') + 1));
-    return entries
-      .filter((e) => pref(e).hidden === (which === 'hidden'))
+    // Each entry's place and activity once, not in every comparison of the sort.
+    const all = entries.map((e) => ({ e, pref: placePref(e.kind, e.key.slice(e.key.indexOf(':') + 1)), act: placeActivity(e) }));
+    return all
+      .filter((x) => x.pref.hidden === (which === 'hidden'))
       .sort((a, b) => {
-        const pa = pref(a), pb = pref(b);
+        const pa = a.pref, pb = b.pref;
         if (pa.pinned !== pb.pinned) return pa.pinned ? -1 : 1;
         if ((pa.position === null) !== (pb.position === null)) return pa.position !== null ? -1 : 1;
         if (pa.position !== null && pb.position !== null) return pa.position - pb.position;
-        if ((a.kind === 'folder') !== (b.kind === 'folder')) return a.kind === 'folder' ? -1 : 1;
-        return placeActivity(b) - placeActivity(a);
-      });
+        if ((a.e.kind === 'folder') !== (b.e.kind === 'folder')) return a.e.kind === 'folder' ? -1 : 1;
+        return b.act - a.act;
+      })
+      .map((x) => x.e);
   });
 }
 
@@ -322,17 +353,29 @@ export function railCommunities(): P.SpaceView[] {
 }
 
 export function allCommunities(): P.SpaceView[] {
-  return memo('allCommunities', () =>
-    [...db.spaces.values()]
-      .filter((s) => s.kind === 'community' && visibleSpace(s) && !spaceParents(s.id).some((p) => p.kind === 'community' && visibleSpace(p)))
-      .sort((a, b) => activityOfSpace(b.id) - activityOfSpace(a.id)),
-  );
+  return memo('allCommunities', () => {
+    const top = metaMemo('communities', () => [...db.spaces.values()].filter((s) => s.kind === 'community' && visibleSpace(s) && !spaceParents(s.id).some((p) => p.kind === 'community' && visibleSpace(p))));
+    const act = new Map(top.map((s) => [s.id, activityOfSpace(s.id)]));
+    return [...top].sort((a, b) => act.get(b.id)! - act.get(a.id)!);
+  });
 }
 
 /** Every conversation under a space, through sections, subspaces and threads. */
 export function convsUnder(id: string): P.ConversationView[] {
   return memo('under:' + id, () => {
-    const out = new Map<string, P.ConversationView>();
+    const out: P.ConversationView[] = [];
+    for (const cid of idsUnder(id)) {
+      const c = db.conversations.get(cid);
+      if (c) out.push(c);
+    }
+    return out;
+  });
+}
+
+/** Their ids: the walk is done again only when what is where may have changed. */
+function idsUnder(id: string): string[] {
+  return metaMemo('under:' + id, () => {
+    const out = new Set<string>();
     const seen = new Set<string>();
     const walk = (sid: string) => {
       if (seen.has(sid)) return;
@@ -342,14 +385,17 @@ export function convsUnder(id: string): P.ConversationView[] {
         else {
           const c = db.conversations.get(e.childId);
           if (c && visibleConv(c)) {
-            out.set(c.id, c);
-            for (const t of threadsOf(c.id)) out.set(t.id, t);
+            out.add(c.id);
+            for (const t of db.threads.get(c.id) ?? []) {
+              const th = db.conversations.get(t);
+              if (th && visibleConv(th)) out.add(th.id);
+            }
           }
         }
       }
     };
     walk(id);
-    return [...out.values()];
+    return [...out];
   });
 }
 
@@ -397,7 +443,8 @@ export interface Effective {
 }
 
 export function effectiveLevel(c: P.ConversationView): Effective {
-  return memo('lvl:' + c.id, () => {
+  // From rules, places and native mutes, all of which move metaRev: not worked out again for a message or a read.
+  return metaMemo('lvl:' + c.id, () => {
     const rules = ruleMap();
     const hit = (scope: string, target: string | null) => rules.get(`${scope}:${target ?? ''}`);
     const set = (level: Level, source: string, explicit: boolean, scope: Effective['scope']): Effective => ({ level, rule: level, source, explicit, scope });
@@ -445,7 +492,10 @@ export function effectiveLevel(c: P.ConversationView): Effective {
 /** What the network itself does here: the most specific setting that has not run out, nearest first. */
 function nativeLevel(c: P.ConversationView, parent?: P.ConversationView): 'all' | 'mentions' | 'none' {
   const now = Date.now();
-  const at = (m: P.NativeMute | null | undefined) => (!m || (m.until !== undefined && m.until <= now) ? null : m.until !== undefined ? 'none' : (m.level ?? null));
+  const at = (m: P.NativeMute | null | undefined) => {
+    if (m?.until !== undefined && m.until > now) expires = Math.min(expires, m.until);
+    return !m || (m.until !== undefined && m.until <= now) ? null : m.until !== undefined ? 'none' : (m.level ?? null);
+  };
   for (const m of [c.nativeMute, parent?.nativeMute]) {
     const lv = at(m);
     if (lv) return lv;
@@ -472,6 +522,7 @@ function nativeMuteLevel(c: P.ConversationView, parent?: P.ConversationView): Le
   let best: Level | null = null;
   for (const m of mutes) {
     if (!m) continue;
+    if (m.until && m.until > now) expires = Math.min(expires, m.until);
     const lv: Level | null = m.level === 'none' || (m.until && m.until > now) ? 'digest' : m.level === 'mentions' ? 'mentions' : null;
     if (lv && (!best || rank(lv) < rank(best))) best = lv;
   }

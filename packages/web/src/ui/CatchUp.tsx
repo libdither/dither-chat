@@ -270,9 +270,16 @@ export function CatchUp() {
   }, [shown]);
 
   const [drawn, setDrawn] = useState(DRAWN);
-  // After Done, Later or a reply, the focused card comes into view.
+  // After Done, Later or a reply, the focused card comes into view. Opening on the first card, it is in view already:
+  // asking would lay the whole page out inside the task that draws it (60-130 ms at 4x on a phone).
   const focus = s?.focus ?? null;
-  useLayoutEffect(() => void scrollToCard(focus), [focus]);
+  const opened = useRef(false);
+  useLayoutEffect(() => {
+    const first = !opened.current;
+    opened.current = true;
+    if (first && focus && document.querySelector('.catchup [data-card]')?.getAttribute('data-card') === focus) return;
+    scrollToCard(focus);
+  }, [focus]);
 
   // Each card's tier, from what triage decided on its messages since it joined. Not before there are cards.
   const decided = useMemo(() => {

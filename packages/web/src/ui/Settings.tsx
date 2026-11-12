@@ -6,6 +6,7 @@ import { api, db, go, mailRev, prefs, rev, setPrefs, setRule, toast } from '../s
 import { loadPolicy, setListLevel, triagePolicy } from '../triage.ts';
 import { STATUS, addingAccount } from './Accounts.tsx';
 import { AccountChip, NetBadge, showSection } from './bits.tsx';
+import { drawLater, Later } from './Later.tsx';
 import { Icon } from './icons.tsx';
 import { DeviceRules } from './DeviceRules.tsx';
 import { percent } from './Marks.tsx';
@@ -47,7 +48,16 @@ function SectionsButton() {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button class="btn ghost small set-jump" data-track="settings: sections" aria-haspopup="dialog" onClick={() => setOpen(true)}>
+      <button
+        class="btn ghost small set-jump"
+        data-track="settings: sections"
+        aria-haspopup="dialog"
+        onClick={() => {
+          // The sheet lists the sections there are: all of them drawn first.
+          drawLater();
+          requestAnimationFrame(() => setOpen(true));
+        }}
+      >
         <Icon name="list" size={15} /> Sections
       </button>
       {open && (
@@ -296,127 +306,135 @@ export function SettingsPane() {
           </div>
         </section>
 
-        <PushSettings />
+        {/* Below a phone's first screen: drawn once it is up, a part at a time (Later.tsx). */}
+        <Later>
+          <PushSettings />
 
-        <DeviceRules />
+          <DeviceRules />
 
-        <QuietHoursSettings />
+          <QuietHoursSettings />
 
-        <section class="set-block" id="set-keywords">
-          <h3>Keywords that always alert</h3>
-          <p class="set-help">A message with one of these words is an alert, wherever it lands (unless that place is muted).</p>
-          <div class="keyword-list">
-            {keywordRules.map((r) => (
-              <span class="keyword-chip">
-                {r.target}
-                <button class="icon-btn small" onClick={() => setRule('keyword', r.target, null)} aria-label="Remove">
-                  <Icon name="x" size={12} />
-                </button>
-              </span>
-            ))}
-          </div>
-          <form
-            class="keyword-add"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const k = keyword.trim();
-              if (k) {
-                setRule('keyword', k, 'all');
-                setKeyword('');
-              }
-            }}
-          >
-            <input class="input" placeholder="Add a keyword (your name, a project, a release)" value={keyword} onInput={(e) => setKeyword((e.target as HTMLInputElement).value)} />
-            <button class="btn ghost small" type="submit">
-              <Icon name="plus" size={13} /> Add
-            </button>
-          </form>
-        </section>
-
-        {scoped.length > 0 && (
-          <section class="set-block" id="set-overrides">
-            <h3>Your rules</h3>
-            {scoped.map((r) => {
-              const l = ruleLabel(r);
-              return (
-                <div class="set-rule">
-                  <span class="set-rule-label">
-                    {l.icon ? <NetBadge network={l.icon} size={16} /> : <Icon name="at" size={15} />} {l.text}
-                  </span>
-                  <span class={`level-tag ${r.level}`}>
-                    <Icon name={ruleIcon(r.level)} size={12} /> {ruleName(r.level)}
-                  </span>
-                  <button class="icon-btn small" title="Clear" onClick={() => setRule(r.scope, r.target, null)}>
-                    <Icon name="x" size={13} />
+          <section class="set-block" id="set-keywords">
+            <h3>Keywords that always alert</h3>
+            <p class="set-help">A message with one of these words is an alert, wherever it lands (unless that place is muted).</p>
+            <div class="keyword-list">
+              {keywordRules.map((r) => (
+                <span class="keyword-chip">
+                  {r.target}
+                  <button class="icon-btn small" onClick={() => setRule('keyword', r.target, null)} aria-label="Remove">
+                    <Icon name="x" size={12} />
                   </button>
-                </div>
-              );
-            })}
-          </section>
-        )}
-
-        <PrivacySettings />
-        <HistorySettings />
-        <IndexingSettings />
-        <AdversarialSettings />
-        <UsageSettings />
-
-        <section class="set-block" id="set-appearance">
-          <h3>Appearance</h3>
-          <AppearanceTheme />
-        </section>
-
-        <DeskSettings />
-
-        <MailSettings />
-
-        <section class="set-block" id="set-calls">
-          <h3>Calls</h3>
-          <div class="set-rule">
-            <span class="set-rule-label">Connect through</span>
-            <div class="level-picker">
-              {(
-                [
-                  ['bridge', 'The account'],
-                  ['direct', 'This device'],
-                ] as const
-              ).map(([m, label]) => (
-                <button class={`chip-btn ${p.callMode === m ? 'on' : ''}`} onClick={() => setPrefs({ callMode: m })}>
-                  {label}
-                </button>
+                </span>
               ))}
             </div>
-          </div>
-          <p class="set-help">
-            {p.callMode === 'bridge'
-              ? "The account's own client on the hub joins the call, and its audio is passed to this device. Works the way the network's app does, at the cost of the hub's CPU."
-              : 'This device joins the call itself, with a one-call token from the account. Its connection still goes through the hub. Lighter on the hub, a little more work for the device.'}
-          </p>
-        </section>
-
-        <section class="set-block">
-          <h3>About</h3>
-          <p class="set-help">
-            dither-chat runs entirely on your hub and is served to your devices over Tailscale. It aggregates Discord, Signal, Matrix and WhatsApp into one ontology: people, groups, and
-            communities with channels and threads, each annotated with the account it came through.
-          </p>
-          <div class="btn-row">
-            <a class="btn ghost small" href="https://github.com/libdither/dither-chat" target="_blank" rel="noreferrer">
-              <Icon name="external" size={13} /> Source
-            </a>
-            {/* Only a demo hub (started with --demo, its own data dir) has demo accounts. */}
-            {[...db.accounts.values()].some((a) => a.demo) && (
-              <button
-                class="btn ghost small"
-                onClick={() => {
-                  if (confirm('Reset the demo world to its starting state?')) api('/api/demo/reset', { body: {} }).then(() => toast({ kind: 'info', title: 'Demo reset', body: 'Fresh demo data loaded.' }));
-                }}
-              >
-                <Icon name="refresh" size={13} /> Reset demo data
+            <form
+              class="keyword-add"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const k = keyword.trim();
+                if (k) {
+                  setRule('keyword', k, 'all');
+                  setKeyword('');
+                }
+              }}
+            >
+              <input class="input" placeholder="Add a keyword (your name, a project, a release)" value={keyword} onInput={(e) => setKeyword((e.target as HTMLInputElement).value)} />
+              <button class="btn ghost small" type="submit">
+                <Icon name="plus" size={13} /> Add
               </button>
-            )}
-          </div>
-        </section>
+            </form>
+          </section>
+
+          {scoped.length > 0 && (
+            <section class="set-block" id="set-overrides">
+              <h3>Your rules</h3>
+              {scoped.map((r) => {
+                const l = ruleLabel(r);
+                return (
+                  <div class="set-rule">
+                    <span class="set-rule-label">
+                      {l.icon ? <NetBadge network={l.icon} size={16} /> : <Icon name="at" size={15} />} {l.text}
+                    </span>
+                    <span class={`level-tag ${r.level}`}>
+                      <Icon name={ruleIcon(r.level)} size={12} /> {ruleName(r.level)}
+                    </span>
+                    <button class="icon-btn small" title="Clear" onClick={() => setRule(r.scope, r.target, null)}>
+                      <Icon name="x" size={13} />
+                    </button>
+                  </div>
+                );
+              })}
+            </section>
+          )}
+        </Later>
+
+        <Later>
+          <PrivacySettings />
+          <HistorySettings />
+          <IndexingSettings />
+          <AdversarialSettings />
+        </Later>
+        <Later>
+          <UsageSettings />
+
+          <section class="set-block" id="set-appearance">
+            <h3>Appearance</h3>
+            <AppearanceTheme />
+          </section>
+
+          <DeskSettings />
+
+          <MailSettings />
+        </Later>
+        <Later>
+          <section class="set-block" id="set-calls">
+            <h3>Calls</h3>
+            <div class="set-rule">
+              <span class="set-rule-label">Connect through</span>
+              <div class="level-picker">
+                {(
+                  [
+                    ['bridge', 'The account'],
+                    ['direct', 'This device'],
+                  ] as const
+                ).map(([m, label]) => (
+                  <button class={`chip-btn ${p.callMode === m ? 'on' : ''}`} onClick={() => setPrefs({ callMode: m })}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p class="set-help">
+              {p.callMode === 'bridge'
+                ? "The account's own client on the hub joins the call, and its audio is passed to this device. Works the way the network's app does, at the cost of the hub's CPU."
+                : 'This device joins the call itself, with a one-call token from the account. Its connection still goes through the hub. Lighter on the hub, a little more work for the device.'}
+            </p>
+          </section>
+
+          <section class="set-block">
+            <h3>About</h3>
+            <p class="set-help">
+              dither-chat runs entirely on your hub and is served to your devices over Tailscale. It aggregates Discord, Signal, Matrix and WhatsApp into one ontology: people, groups, and
+              communities with channels and threads, each annotated with the account it came through.
+            </p>
+            <div class="btn-row">
+              <a class="btn ghost small" href="https://github.com/libdither/dither-chat" target="_blank" rel="noreferrer">
+                <Icon name="external" size={13} /> Source
+              </a>
+              {/* Only a demo hub (started with --demo, its own data dir) has demo accounts. */}
+              {[...db.accounts.values()].some((a) => a.demo) && (
+                <button
+                  class="btn ghost small"
+                  onClick={() => {
+                    if (confirm('Reset the demo world to its starting state?')) api('/api/demo/reset', { body: {} }).then(() => toast({ kind: 'info', title: 'Demo reset', body: 'Fresh demo data loaded.' }));
+                  }}
+                >
+                  <Icon name="refresh" size={13} /> Reset demo data
+                </button>
+              )}
+            </div>
+          </section>
+        </Later>
       </div>
     </section>
   );

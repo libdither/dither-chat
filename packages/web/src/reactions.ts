@@ -55,7 +55,7 @@ export function reactionContext(conversationId: string): Promise<P.ReactionConte
     entry.known = v;
     // The messages redraw only when what their reaction row offers changes (reactionScope); the picker asks for
     // the context itself. So a conversation already in memory is not drawn twice as it opens.
-    if (scopeOf(v) !== drawn) changed('meta');
+    if (scopeOf(v) !== drawn) changed('shown');
   });
   return value;
 }
@@ -107,7 +107,7 @@ function bumpUsage(network: P.Network, picked: Picked) {
   else db.reactionUsage.push({ key, network, count: 1, ...(picked.emoji ? { emoji: picked.emoji } : {}) });
   db.reactionUsage.sort((a, b) => b.count - a.count);
   // The quick reactions over every message come from this.
-  changed('meta');
+  changed('shown');
 }
 
 // ------------------------------------------------------------------ acting
