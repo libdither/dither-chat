@@ -524,6 +524,25 @@ describe('incremental features in the hub', () => {
     while (att.pump() > 0);
     expect(state('dm').turn?.addressed).toBe(owed);
   });
+
+  test('keeps the turns it closed, fits the owed table on them, and explains the weight', () => {
+    const turns = store.db.query('SELECT shape, answered_at, timed FROM owed_turn WHERE conversation_id = ?').all(cid('dm')) as { shape: string; answered_at: number | null; timed: number }[];
+    expect(turns.length).toBeGreaterThan(0);
+    expect(turns.every((t) => t.shape === 'direct')).toBe(true);
+    // Folding again from the start keeps the same turns, once each.
+    const before = store.one<{ n: number }>('SELECT COUNT(*) AS n FROM owed_turn')!.n;
+    fromScratch('dm');
+    expect(store.one<{ n: number }>('SELECT COUNT(*) AS n FROM owed_turn')!.n).toBe(before);
+    // Too few turns to fit: the default's rows, but fitted now and kept for the next start.
+    const t = att.fitOwed(clock);
+    expect(t.fittedAt).toBe(clock);
+    expect(t.chance.direct).toEqual(att.owedTable.chance.direct);
+    expect(new Attention(store, new Triage(store), () => clock).owedTable.fittedAt).toBe(clock);
+    const e = att.explain(cid('dm')) as any;
+    expect(e.owed.chance).toBeGreaterThan(0);
+    expect(e.owed.points).toBeCloseTo(WEIGHTS.owed * e.owed.chance, 0);
+    expect(typeof e.owed.before).toBe('number');
+  });
 });
 
 // ------------------------------------------------------------------ the tiers

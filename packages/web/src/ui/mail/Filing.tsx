@@ -19,6 +19,7 @@ import { Icon } from '../icons.tsx';
 import type { MessageAction, RowWrapper, ThreadAction } from './slots.tsx';
 import { personItems } from './Classify.tsx';
 import { countKey } from '../../clicklog.ts';
+import { noteRowRead } from '../../activity.ts';
 
 const acc = (t: P.MailThreadView) => db.mail.accounts.get(t.accountId);
 const inInbox = (t: P.MailThreadView) => t.roles.includes('inbox');
@@ -55,7 +56,7 @@ export function threadMenu(ts: P.MailThreadView[], from: 'row' | 'reader' | 'sel
   const anyIn = (role: string) => ts.some((t) => t.roles.includes(role as P.MailboxRole));
   const items = groups(
     [
-      write && ts.every((t) => canWrite(acc(t), 'flag.seen')) && { label: unread ? 'Mark read' : 'Mark unread', icon: unread ? 'eye' : 'mail', hint: unread ? undefined : 'U', run: () => (markRead(ids, unread), !unread && leave(ids), clearSelected()) },
+      write && ts.every((t) => canWrite(acc(t), 'flag.seen')) && { label: unread ? 'Mark read' : 'Mark unread', icon: unread ? 'eye' : 'mail', hint: unread ? undefined : 'U', run: () => (unread && noteRowRead('mail', ids), markRead(ids, unread), !unread && leave(ids), clearSelected()) },
       write && ts.every((t) => canWrite(acc(t), 'flag.flagged')) && { label: flagged ? 'Unstar' : 'Star', icon: 'star', hint: 'S', run: () => (star(ids, !flagged), clearSelected()) },
     ],
     [
@@ -283,7 +284,7 @@ export function FilingBar({ list }: { list: string }) {
             </button>
           )}
           {write && ts.every((t) => canWrite(acc(t), 'flag.seen')) && (
-            <button class="icon-btn" aria-label={unread ? 'Mark read' : 'Mark unread'} title={unread ? 'Mark read' : 'Mark unread'} onClick={() => (markRead(ts.map((t) => t.id), unread), clearSelected())}>
+            <button class="icon-btn" aria-label={unread ? 'Mark read' : 'Mark unread'} title={unread ? 'Mark read' : 'Mark unread'} onClick={() => (unread && noteRowRead('mail', ts.map((t) => t.id)), markRead(ts.map((t) => t.id), unread), clearSelected())}>
               <Icon name={unread ? 'eye' : 'mail'} size={17} />
             </button>
           )}

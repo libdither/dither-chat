@@ -452,6 +452,17 @@ CREATE TABLE IF NOT EXISTS conv_author_feature (
   PRIMARY KEY (conversation_id, author_key)
 );
 CREATE INDEX IF NOT EXISTS conv_author_feature_author ON conv_author_feature(author_key);
+-- Every turn addressed to you that the fold closed (attention.ts, owed.ts): when it began, whether and when you
+-- answered, so the owed table can be fitted. Rebuilt with the conversation's features; times and keys only.
+CREATE TABLE IF NOT EXISTS owed_turn (
+  conversation_id TEXT NOT NULL,
+  addressed       INTEGER NOT NULL,            -- its first message for you
+  shape           TEXT NOT NULL,
+  author_key      TEXT,
+  answered_at     INTEGER,                     -- your answer (or the message you reacted to); NULL: it ran out
+  timed           INTEGER NOT NULL DEFAULT 1,  -- 0: a reaction answered it, at no known time
+  PRIMARY KEY (conversation_id, addressed)
+) WITHOUT ROWID;
 
 -- ------------------------------------------------------------------ the change journal (journal.ts, docs/sync.md)
 -- What changed, by object, at which position, so a client that comes back asks only for that. Compacted: one row
@@ -502,12 +513,31 @@ CREATE TABLE IF NOT EXISTS visit (
   attachments     INTEGER NOT NULL DEFAULT 0,
   next_view       TEXT,
   closed          INTEGER NOT NULL DEFAULT 0,
-  updated_at      INTEGER NOT NULL
+  updated_at      INTEGER NOT NULL,
+  seen_to_ts      INTEGER,                   -- the newest message on screen, read or not
+  owed_since      INTEGER,                   -- the reply you owed there as the stay began (attention's owedSince)
+  owed_shown      INTEGER,                   -- and whether its row showed it (↩)
+  typed           INTEGER NOT NULL DEFAULT 0,   -- edits to the message box: a count only
+  draft_left      INTEGER,                   -- a draft was left in the message box
+  exit            TEXT                       -- VisitExit: route, hidden, closed
 );
 CREATE INDEX IF NOT EXISTS visit_start ON visit(start_at);
 CREATE INDEX IF NOT EXISTS visit_conv ON visit(conversation_id, start_at) WHERE conversation_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS visit_person ON visit(person_id, start_at) WHERE person_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS visit_push ON visit(push_id) WHERE push_id IS NOT NULL;
+
+-- What you did to an inbox row that says what you made of it (InboxAction): Mark As Read on a row showing a reply
+-- you owed. Ids and times only; part of the log (deleted with it, kept for its retention).
+CREATE TABLE IF NOT EXISTS inbox_action (
+  id          TEXT PRIMARY KEY,               -- made by the device
+  device      TEXT NOT NULL,
+  action      TEXT NOT NULL,                  -- read
+  target_kind TEXT NOT NULL,                  -- conversation, mail
+  target_id   TEXT NOT NULL,
+  at          INTEGER NOT NULL,
+  owed_since  INTEGER
+);
+CREATE INDEX IF NOT EXISTS inbox_action_at ON inbox_action(at);
 
 -- Every push the hub sends, by the id the device sees (`nid` in the payload), and what came of it.
 -- The *_at columns are the first time any device said so; notification_event has each device's word.

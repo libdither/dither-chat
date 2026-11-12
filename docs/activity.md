@@ -35,6 +35,21 @@ Devices only send to it.
 | `sent`, `reactions`, `history`, `threads`, `attachments` | messages sent, reactions added, older pages loaded, threads and attachments opened |
 | `next_view` | where you went next; null while it lasts or when the app went away |
 | `closed` | over: no more updates will come |
+| `seen_to_ts` | the newest message on screen in the conversation, read or not (its time), when the timeline was at its newest end (since 2026-11-12) |
+| `owed_since`, `owed_shown` | the reply you owed there as the stay began (the row's `owedSince`, docs/inbox.md), and whether its row showed ↩ |
+| `typed` | edits to the message box during the stay: a count, nothing of what was typed |
+| `draft_left` | a draft was left in the message box when the stay ended (or the app went away) |
+| `exit` | how it ended: `route` (another place in the app), `hidden` (the app went to the background, and the stay ended there) or `closed` (the page closed) |
+
+`seen_to_ts`, `owed_since`, `typed`, `draft_left` and `exit` tell a stay that saw a reply owed and left it on purpose
+from one cut short: the plan is to use them as features that lower the chance of an answer, never as a label that
+clears a turn (opened and left is answered about 72% of the time anyway).
+
+### `inbox_action`: what you did to a row
+
+Mark As Read on an inbox row that showed ↩ (a reply you owe) sends `{ id, device, action: 'read', targetKind:
+'conversation' | 'mail', targetId, at, owedSince }` to `POST /api/activity/actions`: one per route (or thread) whose
+turn it was. A resent one is kept once. Deleted with the log, and kept for its retention.
 
 **Sources.** `notification` (a tap on a push: sw.js or the Android app), `toast` (the in-app notification),
 `inbox` (a row of the ranked inbox), `triage` (Catch up or How it sorts), `rail` (the rail or the phone's tab bar), `list`
@@ -211,6 +226,7 @@ only grow), so a resent batch changes nothing.
 | `PUT /api/activity/settings` | `{ enabled?, retentionDays? }` (30, 90, 180, 365) |
 | `POST /api/activity/visits` | `{ visits: VisitRecord[] }` → `{ applied, enabled }` |
 | `POST /api/activity/notifications` | `{ events: [{ id, event, device?, at? }] }` → `{ applied, enabled }` |
+| `POST /api/activity/actions` | `{ actions: [{ id, device, action: 'read', targetKind, targetId, at, owedSince? }] }` → `{ applied, enabled }` |
 | `GET /api/activity/features` | `?conversation=<id>`: `{ conversation, person }`; without: `{ places }`, the busiest |
 | `GET /api/activity/export`, `/examples` | JSON lines, as attachments |
 | `DELETE /api/activity` | delete everything |

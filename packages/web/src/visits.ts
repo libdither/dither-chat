@@ -2,11 +2,13 @@
  * The recording behind activity.ts, with the clock passed in: one record per stay on a screen or place, how the
  * user got there and what they did, counted by the same rules as tracker.ts (docs/activity.md).
  */
-import type { VisitRecord, VisitSource, VisitView } from '@dither-chat/protocol';
+import type { VisitExit, VisitRecord, VisitSource, VisitView } from '@dither-chat/protocol';
 import { MAX_TICK, VISIT_AFTER } from './tracker.ts';
 
 export type Place = { view: VisitView; conversationId?: string | null; spaceId?: string | null; personId?: string | null };
 export type Arrival = { source: VisitSource; pushId?: string | null; rank?: number | null; score?: number | null; needs?: boolean | null };
+/** The reply you owe at a place as a stay there begins, and whether its inbox row shows it (↩). */
+export type Owed = { since: number | null; shown: boolean };
 export type Action = 'sent' | 'reactions' | 'history' | 'threads' | 'attachments';
 
 export const samePlace = (a: Place, b: Place) =>
@@ -42,6 +44,10 @@ export class VisitLog {
     private label: string,
     now: number,
     private newId = randomId,
+    /** Whether a draft waits in a conversation's message box. */
+    private draftIn: (conversationId: string) => boolean = () => false,
+    /** The reply owed at a conversation, as a stay begins. */
+    private owedAt: (conversationId: string) => Owed | null = () => null,
   ) {
     this.last = now;
   }
@@ -62,7 +68,7 @@ export class VisitLog {
   enter(now: number, place: Place, arrival: Arrival, active: boolean) {
     this.update(now, active);
     if (this.current && samePlace(this.current, place)) return false;
-    this.close(place.view);
+    this.close(place.view, 'route');
     this.open(now, place, arrival);
     return true;
   }
@@ -72,8 +78,17 @@ export class VisitLog {
     this.update(now, active);
     const cur = this.current;
     if (!cur) return;
-    this.close(cur.view);
+    // The stay before ended when the app went away.
+    this.close(cur.view, 'hidden');
     this.open(now, cur, arrival);
+  }
+
+  /** The app went away (`hidden`) or is closing (`closed`): how the stay ends unless it goes on. Null: it is back. */
+  away(exit: VisitExit | null) {
+    const v = this.current;
+    if (!v) return;
+    v.exit = exit;
+    if (exit && v.conversationId) v.draftLeft = this.draftIn(v.conversationId);
   }
 
   /** The stay that just began came from somewhere better known (a notification tap arriving after the app came forward). */
@@ -85,6 +100,7 @@ export class VisitLog {
   }
 
   private open(now: number, place: Place, a: Arrival) {
+    const owed = place.conversationId ? this.owedAt(place.conversationId) : null;
     this.current = {
       id: this.newId(),
       device: this.device,
@@ -111,17 +127,39 @@ export class VisitLog {
       attachments: 0,
       next: null,
       closed: false,
+      seenToTs: null,
+      owedSince: owed?.since ?? null,
+      owedShown: owed ? owed.shown : null,
+      typed: 0,
+      draftLeft: null,
+      exit: null,
     };
   }
 
   /** Over: kept if it was worth keeping. `next` is where the user went, null when the app went away. */
-  close(next: VisitView | null) {
+  close(next: VisitView | null, exit: VisitExit = next ? 'route' : 'closed') {
     const v = this.current;
     if (!v) return;
     v.closed = true;
     v.next = next;
+    v.exit = exit;
+    if (v.conversationId) v.draftLeft = this.draftIn(v.conversationId);
     if (worthKeeping(v)) this.done.push(v);
     this.current = null;
+  }
+
+  /** The message box of the conversation open was edited. */
+  typed(conversationId: string) {
+    const v = this.current;
+    if (!v || v.conversationId !== conversationId) return;
+    v.typed = (v.typed ?? 0) + 1;
+  }
+
+  /** The newest message of the conversation open is on screen (one of its routes, for a chat of several). */
+  seen(conversationIds: string[], ts: number) {
+    const v = this.current;
+    if (!v || !v.conversationId || !conversationIds.includes(v.conversationId) || (v.seenToTs ?? 0) >= ts) return;
+    v.seenToTs = ts;
   }
 
   /** Something done during the stay. With a conversation, only if it is the one open. */

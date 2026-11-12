@@ -87,6 +87,7 @@ import { AttachSheet, CameraView, SendScreen } from './Attach.tsx';
 import { CAPTURE_ACCEPT, MEDIA_ACCEPT, opensSendScreen } from '../camera.ts';
 import { phone, touchOnly } from '../phone.ts';
 import { composerDone, composerTyped } from '../typing.ts';
+import { noteSeen } from '../activity.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { ForwardCard, forwarding } from './Forward.tsx';
 import { InviteCards } from './InviteCard.tsx';
@@ -851,6 +852,9 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
       if (Math.abs(el.scrollTop) < 400) void loadNewer(tkey);
     } else if (Math.abs(el.scrollTop) < 40 && document.visibilityState === 'visible') {
       convIds.forEach(markRead);
+      // The newest message is on screen, read or not: what this stay could have seen (activity.ts).
+      const newest = all[all.length - 1];
+      if (newest) noteSeen(convIds, newest.ts);
       // Back at the newest after drawing far up: only the newest again. What goes is above the view.
       if (d.from !== null && end - start > WINDOW + STEP) draw(null, null);
     }

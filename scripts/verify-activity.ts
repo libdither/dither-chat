@@ -1,6 +1,6 @@
 /**
  * The activity log (docs/activity.md), end to end in headless Chromium against a demo hub: a visit from an inbox
- * row with its rank and score and a message sent during it, the rail, going back, a notification tap that opens the
+ * row with its rank and score, a message sent during it and what it saw and left behind, the rail, going back, a notification tap that opens the
  * app (its id in the hash, then gone from the address bar) linked to its visit, Settings → Privacy, the features,
  * and both exports without message text.
  *
@@ -76,6 +76,11 @@ try {
   check(fromInbox?.sent === 1, '…the message sent during it', fromInbox?.sent);
   check(fromInbox?.active >= 3 && fromInbox?.next === 'settings' && fromInbox?.closed, '…its time in use, and where the user went next', { active: fromInbox?.active, next: fromInbox?.next });
   check(fromInbox?.device && fromInbox?.deviceLabel === 'Chrome on Linux', '…and the device', [fromInbox?.device, fromInbox?.deviceLabel]);
+  check(
+    typeof fromInbox?.seenToTs === 'number' && fromInbox?.typed >= 1 && fromInbox?.draftLeft === false && fromInbox?.exit === 'route' && typeof fromInbox?.owedShown === 'boolean',
+    '…what it saw and left behind: the newest message on screen, typing, no draft, ended by going elsewhere',
+    { seenToTs: fromInbox?.seenToTs != null, typed: fromInbox?.typed, draftLeft: fromInbox?.draftLeft, exit: fromInbox?.exit, owedShown: fromInbox?.owedShown },
+  );
   check(visits.some((v) => v.view === 'settings' && v.source === 'rail'), 'settings, from the rail');
   check(visits.some((v) => v.conversationId === second && v.source === 'back'), 'back to the conversation, from history');
 

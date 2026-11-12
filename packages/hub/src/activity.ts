@@ -8,7 +8,7 @@
  * in the push payload; devices report what happened to it, and a visit that started from a tap names it.
  */
 import type * as P from '@dither-chat/protocol';
-import { DEFAULT_ACTIVITY, NOTIFICATION_EVENTS, RETENTION_CHOICES, VISIT_SOURCES, VISIT_VIEWS } from '@dither-chat/protocol';
+import { DEFAULT_ACTIVITY, NOTIFICATION_EVENTS, RETENTION_CHOICES, VISIT_EXITS, VISIT_SOURCES, VISIT_VIEWS } from '@dither-chat/protocol';
 import type { Store } from './store.ts';
 import type { NumericFeatures } from './interact.ts';
 import type { DeviceWord } from './phonelist.ts';
@@ -87,7 +87,23 @@ export function cleanVisit(v: Partial<P.VisitRecord>, now: number): P.VisitRecor
     attachments: int(v.attachments, 0, 10_000),
     next: VISIT_VIEWS.includes(v.next as P.VisitView) ? (v.next as P.VisitView) : null,
     closed: !!v.closed,
+    seenToTs: num(v.seenToTs),
+    owedSince: num(v.owedSince),
+    owedShown: typeof v.owedShown === 'boolean' ? v.owedShown : null,
+    typed: int(v.typed, 0, 100_000),
+    draftLeft: typeof v.draftLeft === 'boolean' ? v.draftLeft : null,
+    exit: VISIT_EXITS.includes(v.exit as P.VisitExit) ? (v.exit as P.VisitExit) : null,
   };
+}
+
+/** Hub-side sanity for one inbox action from a device, or null to drop it. */
+export function cleanAction(a: Partial<P.InboxAction>, now: number): P.InboxAction | null {
+  const id = str(a?.id, 64);
+  const device = str(a?.device, 64);
+  const targetId = str(a?.targetId, 200);
+  if (!id || !device || !targetId || a.action !== 'read' || (a.targetKind !== 'conversation' && a.targetKind !== 'mail')) return null;
+  const at = Math.min(Math.max(Number(a.at) || now, now - 30 * DAY), now + MIN);
+  return { id, device, action: a.action, targetKind: a.targetKind, targetId, at, owedSince: num(a.owedSince) };
 }
 
 // ------------------------------------------------------------------ derivation, pure
@@ -324,8 +340,9 @@ export class ActivityStore {
         this.db
           .query(
             `INSERT INTO visit (id, device, device_label, view, conversation_id, space_id, person_id, start_at, end_at, active, source, push_id, rank, score, needs,
-               depth, read_to_id, read_to_ts, sent, reactions, history, threads, attachments, next_view, closed, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               depth, read_to_id, read_to_ts, sent, reactions, history, threads, attachments, next_view, closed, updated_at,
+               seen_to_ts, owed_since, owed_shown, typed, draft_left, exit)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT (id) DO UPDATE SET
                device_label = COALESCE(excluded.device_label, device_label),
                start_at = MIN(start_at, excluded.start_at), end_at = MAX(end_at, excluded.end_at), active = MAX(active, excluded.active),
@@ -334,12 +351,20 @@ export class ActivityStore {
                read_to_ts = MAX(COALESCE(read_to_ts, 0), COALESCE(excluded.read_to_ts, 0)),
                sent = MAX(sent, excluded.sent), reactions = MAX(reactions, excluded.reactions), history = MAX(history, excluded.history),
                threads = MAX(threads, excluded.threads), attachments = MAX(attachments, excluded.attachments),
-               next_view = COALESCE(next_view, excluded.next_view), closed = MAX(closed, excluded.closed), updated_at = excluded.updated_at`,
+               next_view = COALESCE(next_view, excluded.next_view),
+               seen_to_ts = CASE WHEN excluded.seen_to_ts IS NULL THEN seen_to_ts ELSE MAX(COALESCE(seen_to_ts, 0), excluded.seen_to_ts) END,
+               owed_since = COALESCE(owed_since, excluded.owed_since), owed_shown = COALESCE(owed_shown, excluded.owed_shown),
+               typed = MAX(typed, excluded.typed),
+               -- What the stay ended as: a closed stay's word stands against a late copy from before it closed.
+               draft_left = CASE WHEN closed = 1 AND excluded.closed = 0 THEN draft_left ELSE COALESCE(excluded.draft_left, draft_left) END,
+               exit = CASE WHEN closed = 1 AND excluded.closed = 0 THEN exit ELSE excluded.exit END,
+               closed = MAX(closed, excluded.closed), updated_at = excluded.updated_at`,
           )
           .run(
             v.id, v.device, v.deviceLabel ?? null, v.view, v.conversationId ?? null, v.spaceId ?? null, v.personId ?? null, v.start, v.end, v.active, v.source,
             v.pushId ?? null, v.rank ?? null, v.score ?? null, v.needs == null ? null : +v.needs, v.depth ?? null, v.readToId ?? null, v.readToTs || null,
             v.sent, v.reactions, v.history, v.threads, v.attachments, v.next ?? null, +v.closed, now,
+            v.seenToTs ?? null, v.owedSince ?? null, v.owedShown == null ? null : +v.owedShown, v.typed ?? 0, v.draftLeft == null ? null : +v.draftLeft, v.exit ?? null,
           );
         // read_to_ts of 0 means none: MAX above turns a missing one into 0.
         this.db.query('UPDATE visit SET read_to_ts = NULL WHERE id = ? AND read_to_ts = 0').run(v.id);
@@ -403,14 +428,30 @@ export class ActivityStore {
       if (k) n += this.db.query('DELETE FROM notification WHERE id IN (SELECT id FROM notification ORDER BY sent_at LIMIT ?)').run(k).changes;
       this.db.query('DELETE FROM notification_event WHERE notification_id NOT IN (SELECT id FROM notification)').run();
       this.db.query('DELETE FROM triage_input WHERE at < ?').run(cutoff);
+      n += this.db.query('DELETE FROM inbox_action WHERE at < ?').run(cutoff).changes;
     })();
     if (n) this.cache.clear();
     return n;
   }
 
+  /** Inbox actions from a device (Mark As Read on a row you owed a reply on); a resent one is kept once. */
+  actions(list: Partial<P.InboxAction>[], now = Date.now()): number {
+    if (!this.enabled) return 0;
+    let n = 0;
+    const put = this.db.query('INSERT OR IGNORE INTO inbox_action (id, device, action, target_kind, target_id, at, owed_since) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    this.db.transaction(() => {
+      for (const r of list.slice(0, 500)) {
+        const a = cleanAction(r, now);
+        if (a) n += put.run(a.id, a.device, a.action, a.targetKind, a.targetId, a.at, a.owedSince ?? null).changes;
+      }
+    })();
+    this.maybePrune(now);
+    return n;
+  }
+
   /** Everything in the log. Usage totals (place_usage) are separate and stay. */
   clear() {
-    this.db.exec('DELETE FROM visit; DELETE FROM notification; DELETE FROM notification_event; DELETE FROM triage_input;');
+    this.db.exec('DELETE FROM visit; DELETE FROM notification; DELETE FROM notification_event; DELETE FROM triage_input; DELETE FROM inbox_action;');
     this.cache.clear();
   }
 
@@ -545,6 +586,8 @@ export class ActivityStore {
     for (const r of this.db.query('SELECT * FROM notification ORDER BY sent_at').iterate() as Iterable<Row>) {
       yield JSON.stringify({ type: 'notification', ...notificationOut(r), events: events.all(r.id) });
     }
+    for (const r of this.db.query('SELECT * FROM inbox_action ORDER BY at').iterate() as Iterable<Row>)
+      yield JSON.stringify({ type: 'inbox-action', id: r.id, device: r.device, action: r.action, targetKind: r.target_kind, targetId: r.target_id, at: r.at, owedSince: r.owed_since });
   }
 
   /**
@@ -689,6 +732,12 @@ function visitOut(r: Row) {
     attachments: r.attachments,
     next: r.next_view,
     closed: !!r.closed,
+    seenToTs: r.seen_to_ts,
+    owedSince: r.owed_since,
+    owedShown: r.owed_shown == null ? null : !!r.owed_shown,
+    typed: r.typed,
+    draftLeft: r.draft_left == null ? null : !!r.draft_left,
+    exit: r.exit,
   };
 }
 
