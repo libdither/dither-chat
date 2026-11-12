@@ -286,6 +286,8 @@ export function patchMessage(id: string, patch: (m: P.MessageView) => P.MessageV
 const NOT_DB = new Set<P.ClientEvent['t']>(['typing', 'notify', 'sync', 'readProgress', 'resync', 'sent']);
 /** Events that change what lists show but no names or settings: `metaRev` stays. */
 const LIST_ONLY = new Set<P.ClientEvent['t']>(['message', 'message.deleted', 'identity', 'attention', 'usage', 'arrange', 'requests']);
+/** Events that change names (`metaRev` moves) but not what is where (versions.ts `changed('shown')`): people. */
+const SHOWN_ONLY = new Set<P.ClientEvent['t']>(['person', 'person.removed']);
 
 /** Others react to events too (usage.ts: time spent in places, sort settings), without state.ts knowing them. */
 export const eventHooks = new Set<(ev: P.ClientEvent) => void>();
@@ -297,6 +299,7 @@ export function applyEvents(events: P.ClientEvent[]) {
   const ids = identityVersion();
   let list = false;
   let meta = false;
+  let shown = false;
   let mail = false;
   for (const ev of events) {
     // Mail has its own signal: chat's lists do not draw again for it.
@@ -306,6 +309,8 @@ export function applyEvents(events: P.ClientEvent[]) {
       // What only moves a conversation's last message and counts, or the inbox's order, leaves names alone. An
       // identity that changed moves them (identityVersion, below).
       if (ev.t === 'conversation') meta ||= conversationMetaChanged(db.conversations.get(ev.conversation.id), ev.conversation);
+      // An account already here changing its status or name: the set of accounts, which decides what is shown, stays.
+      else if (SHOWN_ONLY.has(ev.t) || (ev.t === 'account' && db.accounts.has(ev.account.id))) shown = true;
       else if (!LIST_ONLY.has(ev.t)) meta = true;
     }
     threadsDirty = applyEventTo(db, ev) || threadsDirty;
@@ -381,7 +386,7 @@ export function applyEvents(events: P.ClientEvent[]) {
   for (const key of regrouped) if (!timelines.get(key)?.loading) void catchUp(key);
   settle();
   if (meta) changed('meta');
-  else if (identityVersion() !== ids) changed('shown');
+  else if (shown || identityVersion() !== ids) changed('shown');
   else if (list) changed('list');
   if (mail) mailChanged();
 }
