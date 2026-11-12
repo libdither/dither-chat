@@ -7,6 +7,7 @@ import type * as P from '@dither-chat/protocol';
 import { effect } from '@preact/signals';
 import { deviceId } from './activity.ts';
 import { android } from './android.ts';
+import { takesClear } from './appversion.ts';
 import { api, connected, db } from './state.ts';
 
 export { deviceId };
@@ -35,7 +36,9 @@ let said = '';
 /** Tell the hub who this is. Again whenever the push endpoint may have changed; repeats are skipped. */
 export async function sayHello(force = false) {
   if (!connected.value) return;
-  const body = { id: deviceId(), label: thisDeviceLabel(), endpoint: await pushEndpoint() };
+  const endpoint = await pushEndpoint();
+  const clears = !!android && !!endpoint && takesClear(android.info.value?.version);
+  const body = { id: deviceId(), label: thisDeviceLabel(), endpoint, ...(clears ? { clears } : {}) };
   const key = JSON.stringify(body);
   if (!force && key === said) return;
   said = key;
@@ -47,6 +50,7 @@ export function startDevices() {
     // On every (re)connect, and when the Android app reports its push registration.
     if (connected.value) void sayHello(true);
     android?.push.value;
+    android?.info.value;
     void sayHello();
   });
 }

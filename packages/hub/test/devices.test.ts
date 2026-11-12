@@ -72,6 +72,24 @@ describe('per-device notification rules', () => {
     expect(devices.quietOn(conv('discord', 'gen'), false)).toContain('dev-phone');
   });
 
+  test('the app’s page says its app takes a clear push: a registration from before it said so when registering learns it', () => {
+    const push = new PushService(store, generateVapidKeys(), 's');
+    push.allow = () => true;
+    const pid = push.subscribe({ endpoint: 'https://push.example/up/old-app', p256dh: 'k', auth: 'a' }, 'Android app, Pixel')!;
+    const clears = () => store.one<{ clears: number | null }>('SELECT clears FROM push_subscription WHERE id = ?', pid)!.clears;
+    expect(clears()).toBe(0);
+    // A browser's hello, or an older app's page, says nothing of it: nothing changes.
+    devices.hello('dev-old', 'Android app, Pixel', 'https://push.example/up/old-app');
+    expect(clears()).toBe(0);
+    devices.hello('dev-old', 'Android app, Pixel', 'https://push.example/up/old-app', Date.now(), true);
+    expect(clears()).toBe(1);
+    // Never taken back by a hello: only registering again says what the app takes.
+    devices.hello('dev-old', 'Android app, Pixel', 'https://push.example/up/old-app');
+    expect(clears()).toBe(1);
+    store.db.query('DELETE FROM push_subscription WHERE id = ?').run(pid);
+    devices.forget('dev-old');
+  });
+
   test('push skips the devices the rules keep quiet', async () => {
     const push = new PushService(store, generateVapidKeys(), 's');
     push.allow = () => true;

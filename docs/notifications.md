@@ -399,7 +399,10 @@ conversation's unread lines, so the notification grows instead of being replaced
   since then (in the app, in the network's own client when it reports reads, or by writing there) gets a push
   `{ clear: conversationId }`, which closes it. That goes only to registrations that said they take it
   (`clears: true` on `POST /api/push/subscribe`, the Android app from 0.7): a browser must show something for every
-  push, and an older app would show an empty one.
+  push, and an older app would show an empty one. A registration made before an app said so keeps its endpoint and
+  so never registers again: the app's page also says it in its device hello (`clears: true` on
+  `POST /api/devices/hello`, sent when the app reports version 0.7 or later), which sets it on that endpoint's
+  registration. Notifications are followed for three days (`FORGET_MS`).
 - **Seen.** Swiping a notification away is reported as `dismissed` (`POST /api/activity/notifications`), and the hub
   reads that as seen: the conversation stays unread, but its place at the top, its boost and its importance stop
   counting in the inbox until something new arrives ([inbox.md](inbox.md#unread-alerts-and-importance)).
@@ -412,8 +415,9 @@ conversation's unread lines, so the notification grows instead of being replaced
   3 s at most, since the device fetches them while it draws the notification and a busy hub could take longer than
   that for one it had never seen. The Android app keeps the last 300 on disk, fetches a push's at once, and waits 8 s.
 
-The burst state is kept in memory: after a restart, the next alert in each conversation sounds, and the next list
-row goes out at once.
+The burst state is kept in memory. At start the hub rebuilds it from the activity log's notifications of the last
+three days (`Delivery.restore`), so a chat notified before a restart still leaves the phones when it is read, and its
+burst goes on where it was. Mail threads are not rebuilt, and with the activity log off nothing is.
 
 ## Mail
 
