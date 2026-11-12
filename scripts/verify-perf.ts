@@ -534,20 +534,27 @@ async function arrival(page: Page, c: WorldConv) {
   return { shown, busy: (m1.TaskDuration - m0.TaskDuration) * 1000, layouts: m1.LayoutCount - m0.LayoutCount, longest: Math.max(0, ...lts.map((t) => t[1])), renders: diff(r0, await renders(page)) };
 }
 
-/** How many timelines the device's snapshot holds (snapshot.ts): the rest written alone, when newer than the bootstrap's. */
+/** How many message pages the device keeps (keptpages.ts): records in the page store, or in an older build's rest. */
 const SNAPSHOT_TIMELINES = `new Promise((res) => {
-  const r = indexedDB.open('dither-chat', 1);
-  r.onupgradeneeded = () => r.result.createObjectStore('snapshot');
+  const r = indexedDB.open('dither-chat');
   r.onerror = () => res(null);
   r.onsuccess = () => {
     try {
-      const t = r.result.transaction('snapshot');
+      const d = r.result;
+      if (d.objectStoreNames.contains('pages')) {
+        const t = d.transaction('pages');
+        const keys = t.objectStore('pages').getAllKeys();
+        t.oncomplete = () => res(keys.result.filter((k) => !String(k).startsWith('#')).length);
+        t.onerror = () => res(null);
+        return;
+      }
+      const t = d.transaction('snapshot');
       const last = t.objectStore('snapshot').get('last');
       const rest = t.objectStore('snapshot').get('rest');
       t.oncomplete = () => {
         const s = last.result, x = rest.result;
         const text = x && s && x.savedAt > s.savedAt ? x.rest : s?.rest;
-        res(text ? JSON.parse(text).timelines.length : null);
+        res(text ? (JSON.parse(text).timelines ?? []).length : null);
       };
       t.onerror = () => res(null);
     } catch (e) { res(null); }
