@@ -27,16 +27,17 @@ test('a page keeps its newest messages, the people they name and what replies qu
   expect(p.identities.map((i: any) => i.id).sort()).toEqual(['idn_a-59', 'idn_q', 'idn_r']);
 });
 
-test('opened and fetched-ahead pages are kept; a window around an old message, one loading, a glance or nothing are not', () => {
+test('opened and fetched-ahead pages are kept; one never opened or fetched ahead, a window around an old message, one loading or nothing are not', () => {
   const k = cache();
-  for (const [key, t] of [['c:a', tl('a', 3)], ['c:old', tl('old', 3, { detached: true })], ['c:busy', tl('busy', 3, { loading: true })], ['c:look', tl('look', 3, { glance: true })], ['c:none', tl('none', 0)]] as const) {
+  for (const [key, t] of [['c:a', tl('a', 3)], ['c:ahead', { ...tl('ahead', 3), glance: true } as LiveTimeline], ['c:old', tl('old', 3, { detached: true })], ['c:busy', tl('busy', 3, { loading: true })], ['c:none', tl('none', 0)]] as const) {
     k.live.set(key, t);
     k.c.touch(key);
   }
-  k.live.set('c:untouched', tl('untouched', 3));
+  // Catch up's glance: in memory, never touched.
+  k.live.set('c:look', { ...tl('look', 3), glance: true } as LiveTimeline);
   const w = k.save();
-  expect(w.put.map((r) => r.key)).toEqual(['c:a']);
-  expect(w.index.at.map(([key]) => key)).toEqual(['c:a']);
+  expect(w.put.map((r) => r.key)).toEqual(['c:a', 'c:ahead']);
+  expect(w.index.at.map(([key]) => key)).toEqual(['c:a', 'c:ahead']);
   expect(w.del).toEqual([]);
 });
 

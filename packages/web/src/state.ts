@@ -450,6 +450,16 @@ export function timelineKey(kind: 'c' | 'p', id: string) {
 const glancing = new Map<string, Promise<void>>();
 
 /**
+ * Where a timeline opened came from (prefetch.ts counts them): already in memory, a glance (Catch up's, or one fetched
+ * ahead), a page kept on this device (keptpages.ts), or nothing until the hub answers.
+ */
+export type OpenedFrom = 'memory' | 'glance' | 'kept' | 'hub';
+export const openHooks = new Set<(key: string, from: OpenedFrom) => void>();
+const servedFrom = (key: string, from: OpenedFrom) => {
+  for (const h of openHooks) h(key, from);
+};
+
+/**
  * `glance`: for a look at the newest messages without opening it (Catch up's cards): what the hub stored, not asking
  * the network for more, and not a timeline this device keeps for its next start. Opening it later does both.
  */
@@ -468,6 +478,7 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
   let t = timelines.get(key);
   if (t?.loading) return;
   if (t && !older) {
+    if (!o.glance) servedFrom(key, t.glance ? 'glance' : 'memory');
     if (t.glance && !o.glance) {
       t.glance = false;
       touchTimeline(key);
@@ -488,6 +499,7 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
     }
     t = { key, messages: c?.messages ?? [], hasMore: true, loading: false, conversationIds: c?.conversationIds, from: c?.sync };
     timelines.set(key, t);
+    if (!o.glance && !older) servedFrom(key, c ? 'kept' : 'hub');
     if (o.glance) t.glance = true;
     else touchTimeline(key);
   }
@@ -515,7 +527,9 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
     let got = t.messages.length;
     if (caught === 'refused') {
       const page = await api<P.MessagePage & { quoted?: P.MessageView[]; conversationIds?: string[] }>(`${url}?limit=60${before ? `&before=${before}` : ''}`);
-      page.identities.forEach(putIdentity);
+      // A glance (Catch up's, or fetched ahead) is shown nowhere else: people the client did not know yet go in without
+      // moving `metaRev`, which would draw every row of the lists again. One it knew and that changed still does.
+      page.identities.forEach(t.glance ? (i) => (db.identities.has(i.id) ? putIdentity(i) : void put(db, i)) : putIdentity);
       if (page.quoted?.length) {
         page.quoted.forEach((m) => quoted.set(m.id, m));
         timelineChanged();

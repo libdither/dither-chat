@@ -1,5 +1,5 @@
 {
- "note": "bun scripts/verify-perf.ts --ci --update --runs 5 (docs/perf.md). CI judges the counts marked gate, never the times. Two layout tallies (cold, first opens) are kept at their values of 2026-11-10: this machine measured them lower than a CI runner does. 1x.cold.nodes and 1x.long.reopen.nodes set by hand on 2026-11-11 when long lists began drawing a window of their rows (ui/more.tsx). 1x.cold.layouts is not judged since 2026-11-11: CI read 9, 9, 9, 10, 10 and 11 on main and branches of it in a row, more than the one a steady tally may spread (traces: the same layouts each time, and a varying few at the end as Catch up's cards fill in). The phone pass (p1x.*) was added on 2026-11-11 from five runs on GitHub's runners (the pull request's and four dispatched): 24 of its 25 counts came out the same in all five and are judged; p1x.cold.layouts (8 to 10) is not.",
+ "note": "bun scripts/verify-perf.ts --ci --update --runs 5 (docs/perf.md). CI judges the counts marked gate, never the times. Two layout tallies (cold, first opens) are kept at their values of 2026-11-10: this machine measured them lower than a CI runner does. 1x.cold.nodes and 1x.long.reopen.nodes set by hand on 2026-11-11 when long lists began drawing a window of their rows (ui/more.tsx). 1x.cold.layouts is not judged since 2026-11-11: CI read 9, 9, 9, 10, 10 and 11 on main and branches of it in a row, more than the one a steady tally may spread (traces: the same layouts each time, and a varying few at the end as Catch up's cards fill in). The phone pass (p1x.*) was added on 2026-11-11 from five runs on GitHub's runners (the pull request's and four dispatched): 24 of its 25 counts came out the same in all five and are judged; p1x.cold.layouts (8 to 10) is not. a1x.* (fetching ahead, aheadRun) added by hand on 2026-11-11 from three runs of the pass alone: its counts the same in each (12 pages, 12 requests, 5 of 5 and 3 of 3 served), its bytes not (17,909 to 23,262: each run opens rows, which moves the inbox), so not judged.",
  "at": "2026-11-11",
  "runs": 5,
  "pages": 5,
@@ -387,6 +387,46 @@
   },
   "p1x.mail.nodes": {
    "v": 3244,
+   "kind": "count",
+   "gate": true
+  },
+  "a1x.ahead.pages": {
+   "v": 12,
+   "kind": "count",
+   "gate": true
+  },
+  "a1x.ahead.pictures": {
+   "v": 0,
+   "kind": "count",
+   "gate": true
+  },
+  "a1x.ahead.requests": {
+   "v": 12,
+   "kind": "count",
+   "gate": true
+  },
+  "a1x.ahead.bytes": {
+   "v": 21038,
+   "kind": "bytes",
+   "gate": false
+  },
+  "a1x.ahead.open": {
+   "v": 42,
+   "kind": "ms",
+   "gate": false
+  },
+  "a1x.ahead.served": {
+   "v": 5,
+   "kind": "count",
+   "gate": true
+  },
+  "a1x.ahead.relaunch": {
+   "v": 40,
+   "kind": "ms",
+   "gate": false
+  },
+  "a1x.ahead.relaunchServed": {
+   "v": 3,
    "kind": "count",
    "gate": true
   }
