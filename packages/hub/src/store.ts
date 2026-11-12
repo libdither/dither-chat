@@ -1917,7 +1917,7 @@ export class Store {
         : [];
     if (!person && !ids.length) return null;
     // Your own page has no back-and-forth to show.
-    const own = (this.db.query('SELECT i.id FROM identity i JOIN person p ON p.id = i.person_id WHERE p.is_self = 1').all() as Row[]).map((r) => r.id as string);
+    const own = (this.db.query('SELECT i.id FROM person p CROSS JOIN identity i ON i.person_id = p.id WHERE p.is_self = 1 ORDER BY i.id').all() as Row[]).map((r) => r.id as string);
     const selves = [...new Set([...this.selfIdentities, ...own])];
     const self = !!person?.is_self || ids.some((id) => selves.includes(id));
     const r = this.retention();

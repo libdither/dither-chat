@@ -118,7 +118,10 @@ counts so a consumer can weigh small numbers (smoothing toward a prior is the co
 | `unpushedBursts`, `openedWithoutPush`, `openedWithoutPushRate` | bursts nobody was pushed for, and how many you opened within an hour anyway |
 | `visits`, `activeSeconds` | stays in the place and their time |
 
-`ActivityStore.features(conversationId)` gives `{ conversation, person }` and caches it for 5 minutes. Settings →
+`ActivityStore.features(conversationId)` gives `{ conversation, person }` and caches it for 5 minutes. A busy channel's
+90 days are tens of thousands of messages, most of a second to read, so triage uses `featuresSliced`, which reads
+them a page at a time with a turn of the hub's event loop between (docs/perf.md, "Live traffic"); the features are
+the same. Settings →
 Privacy → "What it has learned" shows them for the busiest places; `GET /api/activity/features` returns them.
 
 ### Where they plug in

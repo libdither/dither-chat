@@ -21,7 +21,7 @@ export function peopleGraph(s: Store): P.PeopleGraph {
   const accIx = new Map(accounts.map((a, i) => [a.id as string, i]));
 
   const self = new Set<string>(accounts.map((a) => a.self_identity).filter(Boolean));
-  for (const r of db.query('SELECT i.id FROM identity i JOIN person p ON p.id = i.person_id WHERE p.is_self = 1').all() as Row[]) self.add(r.id);
+  for (const r of db.query('SELECT i.id FROM person p CROSS JOIN identity i ON i.person_id = p.id WHERE p.is_self = 1 ORDER BY i.id').all() as Row[]) self.add(r.id);
 
   // Communities, and the community each section or subspace sits in.
   const spaces = new Map<string, Row>((db.query('SELECT id, network, kind, name FROM space').all() as Row[]).map((r) => [r.id, r]));

@@ -328,7 +328,7 @@ export class Triage {
 
   async decide(messageId: string, now = Date.now()): Promise<Decision | null> {
     const d = this.decideByRules(messageId);
-    if (d) this.withActivity(d, messageId, now);
+    if (d) await this.withActivity(d, messageId, now);
     if (d?.facts) await this.withModel(d, messageId, now);
     if (d?.decision !== 'push') return d;
     const q = this.store.quietHours();
@@ -477,11 +477,12 @@ export class Triage {
    * go with the decision so the model's training sees what was known then (docs/activity.md), interaction features
    * (interact.ts) among them. The live decision does not use them; the shadow model does.
    */
-  private withActivity(d: Decision, messageId: string, now: number) {
+  private async withActivity(d: Decision, messageId: string, now: number) {
     const a = this.activity;
     if (!a?.featuresInTriage || !a.enabled) return;
     const cid = this.store.one<Row>('SELECT conversation_id FROM message WHERE id = ?', messageId)?.conversation_id;
-    const f = cid ? a.features(cid, now) : null;
+    // A busy channel's log is most of a second to read: a slice at a time, while the hub answers.
+    const f = cid ? await a.featuresSliced(cid, now) : null;
     if (!f) return;
     const m = this.store.one<Row>('SELECT m.ts, COALESCE(i.person_id, m.author_id) AS author FROM message m LEFT JOIN identity i ON i.id = m.author_id WHERE m.id = ?', messageId);
     this.interactions ??= new InteractionLog(this.store.db);

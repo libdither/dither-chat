@@ -15,6 +15,7 @@
 import type * as P from '@dither-chat/protocol';
 import type * as M from '@dither-chat/protocol/mail-iface';
 import { type Clock, realClock } from '../clock.ts';
+import { noteWork } from '../stalls.ts';
 import { asMailError, type MailBackend } from './backend.ts';
 import { Backfill, Budget } from './backfill.ts';
 import { storeBody } from './cache.ts';
@@ -249,6 +250,7 @@ export class AccountSync {
    * goes on.
    */
   private tick() {
+    noteWork('mail sync');
     if (!this.workable) return;
     if (!this.store.account(this.accountId)?.synced_at) {
       if (!this.first) void this.firstSync();

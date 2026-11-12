@@ -15,6 +15,7 @@ import { join, normalize, resolve } from 'node:path';
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
 import { analyze, fileSource, SNIFF_VERSION } from './fileinfo.ts';
+import { noteWork } from './stalls.ts';
 import type { Store } from './store.ts';
 
 type Row = Record<string, any>;
@@ -155,6 +156,7 @@ export class MediaInfo {
   async tick(): Promise<void> {
     if (this.busy || this.stopped) return;
     this.busy = true;
+    noteWork('media info');
     const until = Date.now() + TICK_MS;
     try {
       for (;;) {
