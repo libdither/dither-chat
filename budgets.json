@@ -56,7 +56,7 @@
     "js/shared/api.bytes": { "measured": 1964, "budget": 2004 },
     "js/shared/api.gzip": { "measured": 845, "budget": 861 },
     "js/shared/call.bytes": { "measured": 6293, "budget": 6419 },
-    "js/shared/call.gzip": { "measured": 2878, "budget": 2932 },
+    "js/shared/call.gzip": { "measured": 2878, "budget": 2931 },
     "js/shared/hooks.bytes": { "measured": 13668, "budget": 13942 },
     "js/shared/hooks.gzip": { "measured": 5734, "budget": 5849 },
     "js/shared/load.bytes": { "measured": 1758, "budget": 1794 },
