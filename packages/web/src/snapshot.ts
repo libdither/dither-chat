@@ -5,16 +5,17 @@
  * phone that is seconds. With it, the start is a read from IndexedDB and a JSON.parse, and the hub's answer
  * replaces it a moment later (applyBootstrap replaces the whole `db`, and open timelines are fetched as before).
  *
- * Kept: the bootstrap (every list in the sidebar, unread counts, last messages), the inbox, and the newest messages
- * of the conversations opened most recently, with the people who wrote them. Capped, see the limits below.
- * The hub stays the only source of truth: nothing here is ever sent back.
+ * Kept: the bootstrap (every list in the sidebar, unread counts, last messages) and the inbox, in one store, and the
+ * newest messages of the conversations opened most recently or fetched ahead, a record each in another (keptpages.ts).
+ * Capped, see the limits below and there. The hub stays the only source of truth: nothing here is ever sent back.
  *
  * A snapshot is only read by a build of the same protocol (the vite config hashes packages/protocol into
  * __SNAPSHOT_SCHEMA__), so a deploy that changes the shapes starts once from the network instead of from data
  * the new code does not expect.
  */
 import type * as P from '@dither-chat/protocol';
-import { db, inbox, loaded, mailTriage, quoted, timelines, type Timeline } from './state.ts';
+import { INDEX_KEY, PageCache, type IndexRecord, type KeptPage, type PageRecord, type PageWrites } from './keptpages.ts';
+import { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines } from './state.ts';
 import { changed, dataVersion, mailChanged, timelineChanged } from './versions.ts';
 import { bodies as mailBodies, details as mailDetails } from './mail/held.ts';
 
@@ -23,9 +24,6 @@ const SCHEMA = typeof __SNAPSHOT_SCHEMA__ === 'string' ? __SNAPSHOT_SCHEMA__ : '
 
 /** Past this the bootstrap is not kept at all: reading it back would cost about what the network does. */
 export const MAX_BOOTSTRAP_CHARS = 12_000_000;
-/** Conversations whose newest messages are kept, most recently opened first. */
-export const MAX_TIMELINES = 12;
-export const MAX_MESSAGES = 40;
 export const MAX_REST_CHARS = 1_500_000;
 export const MAX_INBOX = 100;
 /** Mail the reader opened last (docs/mail.md): its threads and bodies, so they open offline too. */
@@ -35,18 +33,19 @@ export const MAX_MAIL_CHARS = 600_000;
 /** Threads the bootstrap keeps of mail, newest first. */
 export const MAX_MAIL_WINDOW = 300;
 
-export interface CachedTimeline {
+/** A kept page as a snapshot from before the page store held it (keptpages.ts). */
+interface LegacyTimeline {
   key: string;
   messages: P.MessageView[];
   conversationIds?: string[];
-  /** The journal position these messages are current to: opening it again asks only for what changed since (docs/sync.md). */
   sync?: P.SyncPosition;
 }
 
 /** Everything but the bootstrap. */
 export interface SnapshotRest {
   inbox: P.MessageView[];
-  timelines: CachedTimeline[];
+  /** Only in a snapshot of an older build: kept pages are records of their own now (keptpages.ts). */
+  timelines?: LegacyTimeline[];
   /** Authors and reactors of the messages above, which the bootstrap may not have. */
   identities: P.IdentityView[];
   /** Messages the ones above reply to, when they are not loaded themselves. */
@@ -69,24 +68,13 @@ export interface Snapshot {
 
 export function buildRest(input: {
   inbox: P.MessageView[];
-  timelines: (Timeline & { sync?: P.SyncPosition })[];
   identities: Map<string, P.IdentityView>;
   quoted: Map<string, P.MessageView>;
   mail?: { details: P.MailThreadDetail[]; bodies: P.MailBodyView[] };
   mailTriage?: P.MailTriageItem[];
 }): string {
-  const out: SnapshotRest = { inbox: input.inbox.slice(0, MAX_INBOX), timelines: [], identities: [], quoted: [] };
-  let size = JSON.stringify(out.inbox).length;
-  for (const t of input.timelines.slice(0, MAX_TIMELINES)) {
-    // A window around an old message is not the end anyone reopens at.
-    if (t.detached || !t.messages.length) continue;
-    const c: CachedTimeline = { key: t.key, messages: t.messages.slice(-MAX_MESSAGES), conversationIds: t.conversationIds, ...(t.sync ? { sync: t.sync } : {}) };
-    const n = JSON.stringify(c).length;
-    if (size + n > MAX_REST_CHARS) break;
-    size += n;
-    out.timelines.push(c);
-  }
-  const msgs = [...out.inbox, ...out.timelines.flatMap((t) => t.messages)];
+  const out: SnapshotRest = { inbox: input.inbox.slice(0, MAX_INBOX), identities: [], quoted: [] };
+  const msgs = out.inbox;
   const have = new Set(msgs.map((m) => m.id));
   const people = new Set<string>();
   for (const m of msgs) {
@@ -167,6 +155,8 @@ export function currentBootstrap(): P.Bootstrap {
 
 const DB_NAME = 'dither-chat';
 const STORE = 'snapshot';
+/** Kept message pages, one record per timeline, and their index (keptpages.ts). */
+const PAGES = 'pages';
 const KEY = 'last';
 /** The rest alone, written while the app stays open; newer than KEY's rest when its savedAt is. */
 const REST_KEY = 'rest';
@@ -178,9 +168,21 @@ interface RestRecord {
 
 function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-    req.onsuccess = () => resolve(req.result);
+    // 2: the page store. A build from before it cannot open this database, and starts from the hub.
+    const req = indexedDB.open(DB_NAME, 2);
+    req.onupgradeneeded = () => {
+      const d = req.result;
+      if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE);
+      if (!d.objectStoreNames.contains(PAGES)) d.createObjectStore(PAGES);
+    };
+    req.onsuccess = () => {
+      // A newer build's tab upgrading the database waits for this one to let go.
+      req.result.onversionchange = () => {
+        req.result.close();
+        dbp = null;
+      };
+      resolve(req.result);
+    };
     req.onerror = () => reject(req.error);
   });
 }
@@ -202,20 +204,42 @@ function tx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T
   );
 }
 
+/** The kept message pages (keptpages.ts): read with the snapshot, opened from here. */
+export const pages = new PageCache(SCHEMA);
+
+/**
+ * A conversation or person gone from the hub (an account removed with them) takes its kept page along. Added at the
+ * first read, not when this module loads: state.ts imports this one, so its hooks may not exist yet then.
+ */
+let listening = false;
+function forgetRemoved() {
+  if (listening) return;
+  listening = true;
+  eventHooks.add((ev) => {
+    if (ev.t !== 'conversation.removed' && ev.t !== 'person.removed') return;
+    pages.forget(`${ev.t === 'conversation.removed' ? 'c' : 'p'}:${ev.id}`);
+    persistSoon();
+  });
+}
+
+/** The snapshot, if one of this schema is kept; the kept pages go to `pages` either way. */
 export async function readSnapshot(): Promise<Snapshot | null> {
+  forgetRemoved();
   if (typeof indexedDB === 'undefined') return null;
-  const [s, r] = await idb()
+  const [s, r, kept] = await idb()
     .then(
       (d) =>
-        new Promise<[Snapshot | undefined, RestRecord | undefined]>((resolve, reject) => {
-          const t = d.transaction(STORE, 'readonly');
+        new Promise<[Snapshot | undefined, RestRecord | undefined, (PageRecord | IndexRecord)[]]>((resolve, reject) => {
+          const t = d.transaction([STORE, PAGES], 'readonly');
           const a = t.objectStore(STORE).get(KEY);
           const b = t.objectStore(STORE).get(REST_KEY);
-          t.oncomplete = () => resolve([a.result, b.result]);
+          const c = t.objectStore(PAGES).getAll();
+          t.oncomplete = () => resolve([a.result, b.result, c.result]);
           t.onerror = t.onabort = () => reject(t.error);
         }),
     )
-    .catch(() => [undefined, undefined] as const);
+    .catch(() => [undefined, undefined, [] as (PageRecord | IndexRecord)[]] as const);
+  pages.adopt(kept);
   if (!s || s.schema !== SCHEMA) return null;
   // savedAt stays the bootstrap's.
   return r && r.schema === SCHEMA && r.savedAt > s.savedAt ? { ...s, rest: r.rest } : s;
@@ -227,27 +251,33 @@ export const dropSnapshot = () =>
     return st.delete(KEY);
   }).catch(() => {});
 
+/** Every kept page too: what a start that could not render drops (main.tsx). */
+export const dropPages = () =>
+  idb()
+    .then(
+      (d) =>
+        new Promise<void>((resolve, reject) => {
+          const t = d.transaction(PAGES, 'readwrite');
+          t.objectStore(PAGES).clear();
+          t.oncomplete = () => resolve();
+          t.onerror = t.onabort = () => reject(t.error);
+        }),
+    )
+    .catch(() => {});
+
 // ------------------------------------------------------------------ restoring
 
-/** Most recently opened first. */
-const recent: string[] = [];
-const cached = new Map<string, CachedTimeline>();
 /** Set while what is on screen came from this device, not yet from the hub. */
 export let fromSnapshot = false;
 
-/** The cached end of a conversation, given once, to show while its first page loads. */
-export function cachedTimeline(key: string): CachedTimeline | undefined {
-  const c = cached.get(key);
-  cached.delete(key);
-  return c;
+/** The kept end of a conversation, given once, to show while its first page loads. */
+export function cachedTimeline(key: string): KeptPage | undefined {
+  return pages.take(key);
 }
 
-/** A timeline was opened: it goes first in the next snapshot. */
+/** A timeline was opened: it goes first in what is kept. */
 export function touchTimeline(key: string) {
-  const i = recent.indexOf(key);
-  if (i >= 0) recent.splice(i, 1);
-  recent.unshift(key);
-  if (recent.length > MAX_TIMELINES * 2) recent.length = MAX_TIMELINES * 2;
+  pages.touch(key);
 }
 
 /**
@@ -256,10 +286,7 @@ export function touchTimeline(key: string) {
  */
 export function restore(s: Snapshot, apply: (b: P.Bootstrap) => void, putIdentities: (i: P.IdentityView[]) => void): boolean {
   const rest = JSON.parse(s.rest) as SnapshotRest;
-  for (const t of rest.timelines) {
-    cached.set(t.key, t);
-    recent.push(t.key);
-  }
+  if (rest.timelines?.length) pages.adoptLegacy(legacyPages(rest));
   if (loaded.value) return false;
   bootstrapAt = s.savedAt;
   apply(JSON.parse(s.bootstrap) as P.Bootstrap);
@@ -274,6 +301,18 @@ export function restore(s: Snapshot, apply: (b: P.Bootstrap) => void, putIdentit
   mailChanged();
   timelineChanged();
   return true;
+}
+
+/** An older build's rest kept its pages inside it, with one list of people and quoted messages for all of them. */
+function legacyPages(rest: SnapshotRest): KeptPage[] {
+  const ids = new Map(rest.identities.map((i) => [i.id, i]));
+  const qs = new Map(rest.quoted.map((m) => [m.id, m]));
+  return (rest.timelines ?? []).map((t) => {
+    const people = new Set(t.messages.flatMap((m) => [m.authorId, ...m.reactions.flatMap((r) => r.identityIds)]));
+    const quotedHere = t.messages.map((m) => (m.replyToId ? qs.get(m.replyToId) : undefined)).filter((m): m is P.MessageView => !!m);
+    for (const q of quotedHere) people.add(q.authorId);
+    return { ...t, identities: [...people].map((p) => (p ? ids.get(p) : undefined)).filter((i): i is P.IdentityView => !!i), quoted: quotedHere };
+  });
 }
 
 /** The hub's own bootstrap is in. */
@@ -324,17 +363,9 @@ export async function persistNow(full = true) {
     savedRev = dataVersion();
     text = JSON.stringify(currentBootstrap());
   }
-  // What a timeline is current to: a kept copy not yet caught up, its own position; one loaded here, the client's.
-  const live = recent
-    .map((k) => {
-      const t = timelines.get(k);
-      if (t) return { ...t, sync: t.from ?? (t.fetchedAt && !t.loading ? (db.sync ?? undefined) : undefined) };
-      const c = cached.get(k);
-      return c ? { ...c, hasMore: true, loading: false } : undefined;
-    })
-    .filter((t): t is Timeline & { sync?: P.SyncPosition } => !!t);
+  await savePages();
   const mail = { details: [...mailDetails.values()].filter((d) => !d.loading && !d.error && d.messages.length), bodies: [...mailBodies.values()] };
-  const rest = buildRest({ inbox: inbox.value, timelines: live, identities: db.identities, quoted, mail, mailTriage: mailTriage.value });
+  const rest = buildRest({ inbox: inbox.value, identities: db.identities, quoted, mail, mailTriage: mailTriage.value });
   if (text === null) return void (await patchRest(rest));
   if (text.length > MAX_BOOTSTRAP_CHARS) {
     console.warn(`snapshot: the bootstrap is ${text.length} characters, over ${MAX_BOOTSTRAP_CHARS}; not kept`);
@@ -349,7 +380,39 @@ export async function persistNow(full = true) {
   }).catch((e) => console.warn('snapshot not saved', e));
 }
 
-/** Only the timelines and inbox changed: the stored bootstrap stays, unread and unwritten. */
+let lastIndex = '';
+/** The kept pages that changed, and those that go (keptpages.ts). */
+async function savePages() {
+  const w: PageWrites = pages.save({
+    // What a timeline is current to: a kept copy not yet caught up, its own position; one loaded here, the client's.
+    live: (k) => {
+      const t = timelines.get(k);
+      return t ? { ...t, sync: t.from ?? (t.fetchedAt && !t.loading ? (db.sync ?? undefined) : undefined) } : undefined;
+    },
+    exists: (k) => (k.startsWith('c:') ? db.conversations.has(k.slice(2)) : k.startsWith('p:') && db.persons.has(k.slice(2))),
+    identities: db.identities,
+    quoted,
+  });
+  const index = JSON.stringify(w.index);
+  if (!w.put.length && !w.del.length && index === lastIndex) return;
+  lastIndex = index;
+  await idb()
+    .then(
+      (d) =>
+        new Promise<void>((resolve, reject) => {
+          const t = d.transaction(PAGES, 'readwrite');
+          const st = t.objectStore(PAGES);
+          for (const k of w.del) st.delete(k);
+          for (const r of w.put) st.put(r, r.key);
+          st.put(w.index, INDEX_KEY);
+          t.oncomplete = () => resolve();
+          t.onerror = t.onabort = () => reject(t.error);
+        }),
+    )
+    .catch((e) => console.warn('kept pages not saved', e));
+}
+
+/** Only the inbox changed: the stored bootstrap stays, unread and unwritten. */
 async function patchRest(rest: string) {
   if (!bootstrapAt) return;
   const r: RestRecord = { schema: SCHEMA, savedAt: Date.now(), rest };

@@ -88,8 +88,8 @@ adapter announcing the same things again, and a send retried after a lost answer
   keeps too, so a cold start resumes from the snapshot rather than starting over. It waits for the snapshot read
   (at most 1.5 s) before asking. Only a refusal leads to a full bootstrap. Frames that arrive while a sync is in
   flight are held and applied after its answer, in order, so the answer cannot undo them.
-- **Timelines**: held ones are caught up in the same request; one kept in the snapshot catches up from its own
-  position when opened. A pull to refresh still reloads everything.
+- **Timelines**: held ones are caught up in the same request; a kept page ([below](#kept-pages)) catches up from its
+  own position when opened. A pull to refresh still reloads everything.
 - **Heartbeat**: a `ping` text frame every 25 s while in sight, and at once on `visibilitychange`, `focus`, `online`
   and `pageshow`. Without a `pong` within 3 s the socket is dropped and a new one opens at once, rather than waiting
   for TCP to notice a socket that died while the phone slept.
@@ -169,13 +169,44 @@ being applied, 231 ms of it parsing and applying (and then the whole app rendere
 took 17 ms from the network coming back to the data being current, for a 332-byte answer. In `verify-sync.ts` on a demo
 hub, a message sent while the browser was offline was on screen 100 ms after the network came back.
 
+## Kept pages
+
+The newest 40 messages of each conversation (or person's chat) opened most recently are kept on the device, a record
+each in IndexedDB beside the snapshot (`packages/web/src/keptpages.ts`, store `pages` of the `dither-chat` database),
+with the journal position they are current to, the people they name and the messages their replies quote. Opening one
+shows them at once, before the hub has answered, after a start or while the hub is restarting or out of reach; then
+`POST /api/sync` with that position brings it up to date: messages after the newest, and edits, deletions and
+reactions inside it. A page too far behind (more than a page new, or a position older than the journal or of another
+epoch) is replaced by the hub's newest page; when the hub cannot say at all, the page is fetched and kept messages the
+hub no longer has in its range go. A catch-up that got no answer while the socket stayed up is tried again by itself
+(2 s, then twice as long each time, up to 30 s), unless a reconnect's sync caught it up first.
+
+- **Bounds**: 40 pages and 3 million characters of JSON, the least recently opened going first.
+- **Writes**: a page is written only when its messages changed (a new one, an edit, a reaction: the client replaces
+  the message object), the conversations a person's chat spans changed, or its position's epoch did. The live socket
+  moving the position along is not a change: the page keeps its older position, which is still right (catching up
+  from it asks for a little more). One loading, a window around an old message, or a glance (Catch up's cards) is not
+  written.
+- **Reads**: at start every record is read as text in the snapshot's transaction, and a page is parsed only when it
+  is opened. Who wrote it and what it quotes go into the client's state then, where it holds no copies of its own.
+- **Removal**: a conversation or person the hub removes (an account removed takes what only it saw) takes its page
+  along, and every save drops the pages of conversations the hub no longer lists. A start that cannot render the
+  snapshot drops all of them.
+- Before 2026-11-11 the snapshot's rest held the 12 most recently opened timelines. A build with the page store
+  reads those once as kept pages and writes them as records; an older build cannot open the database (version 2) and
+  starts from the hub.
+
+`test/sync.test.ts` keeps pages through the whole list of changes above, at the start and after the edits at the
+position from before them, and checks each one caught up from where it was kept is the hub's page.
+
 ## Verifying
 
 - `bun test packages/hub/test/sync.test.ts`
 - `bun scripts/verify-sync.ts <demo hub> [--restart "<command that restarts it>"]`, in a browser: a short drop shows
   nothing and costs one delta; a message sent meanwhile appears from it; a long drop shows the notice and it goes; a
-  send without the hub waits and goes out once; a cold start from the snapshot resumes with a delta; and a restarted
-  hub is caught up from its journal.
+  send without the hub waits and goes out once; a cold start from the snapshot resumes with a delta; pages opened before
+  it are kept, open without the hub at once, and are caught up with a delta when it is back; and a restarted hub is
+  caught up from its journal.
 - `bun scripts/verify-sends.ts <demo hub> --stop "<cmd>" --start "<cmd>"`: one send is one message after its echo,
   two identical sends stay two; with the answer to a send held back 3 s (the socket not), never two on screen, by the
   hub's `sent` event and by the page alone, for two identical quick sends too, and a 504 whose message came shows no

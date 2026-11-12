@@ -6,6 +6,8 @@
  *   - a long drop shows the small notice, and it goes once the hub is back;
  *   - a send without the hub waits, says so, and goes out by itself when the hub is back;
  *   - a cold start from the device's snapshot resumes with a delta too;
+ *   - conversations opened before it open again at once from the pages the device kept, without the hub, and are
+ *     caught up with a delta when it is back;
  *   - with --restart, a restarted hub (a deploy) is caught up from its journal as well.
  *
  *   bun scripts/verify-sync.ts http://127.0.0.1:8472 [--restart "<command that restarts that hub>"]
@@ -37,6 +39,12 @@ const boot = await hub('/api/bootstrap');
 const sender = new Set(boot.accounts.filter((a: any) => a.status === 'online' && a.capabilities.includes('send')).map((a: any) => a.id));
 const conv = boot.conversations.find((c: any) => c.shape === 'direct' && c.vantages.some((v: any) => sender.has(v.accountId)));
 if (!conv) throw new Error('no direct conversation to send in');
+// Two more with messages, opened before the cold start: their pages are kept on the device. The first one we can send in.
+const others = boot.conversations
+  .filter((c: any) => c.id !== conv.id && c.lastMessage && (c.shape === 'group' || c.shape === 'direct'))
+  .sort((a: any, b: any) => Number(b.vantages.some((v: any) => sender.has(v.accountId))) - Number(a.vantages.some((v: any) => sender.has(v.accountId))))
+  .slice(0, 2);
+if (others.length < 2 || !others[0].vantages.some((v: any) => sender.has(v.accountId))) throw new Error('not enough conversations with messages');
 
 const { page, close } = await launch();
 await page.size(1200, 800);
@@ -149,6 +157,12 @@ check('…once', sends === 1, sends);
 
 // ------------------------------------------------------------------ a cold start from the snapshot
 
+// Two more conversations opened first, and back: the device keeps all three pages.
+for (const c of [...others, conv]) {
+  const last = (await hub(`/api/conversations/${c.id}/messages?limit=1`)).messages.at(-1).id;
+  await page.eval(`location.hash = '#/inbox/c/${c.id}'`);
+  await page.until(`!!document.getElementById(${JSON.stringify(`m-${last}`)})`, 15000);
+}
 // The snapshot is written when the app goes out of sight.
 await page.eval(`Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }), document.dispatchEvent(new Event('visibilitychange'))`);
 await Bun.sleep(1500);
@@ -158,6 +172,34 @@ await Bun.sleep(300);
 await page.until(`performance.getEntriesByName('dither:fresh').length > 0`, 15000);
 check('a cold start from the snapshot resumes with a delta', since(t0, /\/api\/sync/).length >= 1 && !since(t0, /\/api\/bootstrap/).length, since(t0, /\/api\//).map((d) => `${d.url.split('?')[0]} ${d.bytes} B`));
 check('…and shows what was sent offline', await page.until(`[...document.querySelectorAll('.timeline-scroll .msg-body')].some(e => e.textContent.includes(${JSON.stringify(queued)}))`, 8000).then(() => true, () => false));
+
+// ------------------------------------------------------------------ kept pages, without the hub
+
+const keptPages = await page.eval<number>(`new Promise((res) => {
+  const r = indexedDB.open('dither-chat');
+  r.onsuccess = () => {
+    const t = r.result.transaction('pages');
+    const k = t.objectStore('pages').getAllKeys();
+    t.oncomplete = () => res(k.result.filter((x) => !String(x).startsWith('#')).length);
+  };
+})`);
+check('the pages opened are kept on the device', keptPages >= 3, keptPages);
+await offline(true);
+t0 = Date.now();
+await page.eval(`location.hash = '#/inbox/c/${others[0].id}'`);
+const atOnce = await page.until(`document.querySelectorAll('.timeline-scroll .msg').length > 0`, 3000).then(() => Date.now() - t0, () => -1);
+check('a kept page opens without the hub, at once', atOnce >= 0, `${atOnce} ms, ${await page.eval('document.querySelectorAll(".timeline-scroll .msg").length')} messages`);
+// Written meanwhile, from elsewhere: the kept page does not have it.
+const meanwhile = `while the page was kept ${Date.now().toString(36)}`;
+await hub(`/api/conversations/${others[0].id}/send`, { body: meanwhile });
+const tBack = Date.now();
+await offline(false);
+await wake();
+const caught = await page.until(`[...document.querySelectorAll('.timeline-scroll .msg-body')].some(e => e.textContent.includes(${JSON.stringify(meanwhile)}))`, 20000).then(() => Date.now() - tBack, () => -1);
+// Its catch-up failed while offline; the socket may have outlived that, so it is tried again by itself.
+for (let i = 0; i < 100 && !since(tBack, /\/api\/sync/).length; i++) await Bun.sleep(100);
+await Bun.sleep(500);
+check('…and is caught up with a delta when the hub is back', caught >= 0 && since(tBack, /\/api\/sync/).length >= 1 && !since(tBack, /\/messages\?limit=60$/).length, [`${caught} ms`, ...since(tBack, /\/api\//).map((d) => `${d.url.split('?')[0]} ${d.bytes} B`)]);
 
 // ------------------------------------------------------------------ a restarted hub
 

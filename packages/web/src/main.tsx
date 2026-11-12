@@ -8,7 +8,7 @@ import { startDevices } from './devices.ts';
 import { installDeskLinks } from './desk.ts';
 import { trackViewport } from './phone.ts';
 import { registerServiceWorker } from './pwa.ts';
-import { dropSnapshot, readSnapshot, restore } from './snapshot.ts';
+import { dropPages, dropSnapshot, readSnapshot, restore } from './snapshot.ts';
 import { applyBootstrap, applyEvents, beforeSync, connect, loaded, restoreOutbox } from './state.ts';
 import './styles.css';
 
@@ -67,7 +67,7 @@ try {
   // A snapshot the code cannot render is dropped, once, and the app starts from the hub.
   if (source !== 'snapshot') throw e;
   console.error('the snapshot did not render; starting from the hub', e);
-  await dropSnapshot();
+  await Promise.all([dropSnapshot(), dropPages()]);
   location.reload();
 }
 
