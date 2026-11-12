@@ -8,9 +8,9 @@ import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { api, db, mailRev, toast } from '../../state.ts';
 
-const STATE_LABEL: Record<P.MailKeepView['state'], string> = { running: 'Running', idle: 'Up to date', paused: 'Paused', disk: 'Disk guard', stopped: 'Stopped', offline: 'Offline', off: 'Not kept' };
+const STATE_LABEL: Record<P.MailKeepView['state'], string> = { running: 'Running', idle: 'Up to date', paused: 'Paused', disk: 'Disk guard', stopped: 'Stopped', waiting: 'Waiting', offline: 'Offline', off: 'Not kept' };
 /** The pills' looks, from the index jobs' (Indexing.tsx). */
-const STATE_CLASS: Record<P.MailKeepView['state'], string> = { running: 'running', idle: 'done', paused: 'paused', disk: 'failed', stopped: 'failed', offline: 'paused', off: '' };
+const STATE_CLASS: Record<P.MailKeepView['state'], string> = { running: 'running', idle: 'done', paused: 'paused', disk: 'failed', stopped: 'failed', waiting: 'paused', offline: 'paused', off: '' };
 const STOP_LABEL: Record<string, string> = { challenge: 'a sign-in check is waiting', signedOut: 'signed out', quota: 'over its quota', paused: 'it paused background reads' };
 
 const n = (x: number) => x.toLocaleString();
@@ -52,8 +52,8 @@ function KeepRow({ a, reload }: { a: P.MailKeepView; reload: () => void }) {
   const lines: (string | null)[] = [
     `${n(a.messages.held)}${total !== null ? ` of ${n(total)}` : ''} messages held · ${n(a.bodies)} with their text · ${size(a.bytes.bodies + a.bytes.text)} here`,
     a.storage ? `The account says it uses ${a.storage.text ?? `${size(a.storage.used ?? 0)}${a.storage.total ? ` of ${size(a.storage.total)}` : ''}`}` : null,
-    a.keep ? (a.walk.complete ? `Every mailbox listed to its end (${plural(a.walk.mailboxes, 'mailbox', 'mailboxes')})` : `Walking ${a.walk.mailbox ?? 'its mailboxes'}${a.walk.back ? `: back to ${day(a.walk.back)}` : ''} · ${n(a.walk.done)} of ${plural(a.walk.mailboxes, 'mailbox', 'mailboxes')} listed`) : 'A year of mail and all of Inbox; bodies as they are read',
-    a.audit ? `${n(a.audit.matched)} of ${plural(a.audit.windows, 'month')} match Gmail${a.audit.missed ? ` · ${n(a.audit.missed)} missing mail` : ''}${a.audit.caught ? ` · ${n(a.audit.caught)} caught` : ''}${a.audit.estimate !== null ? ` · Gmail counts ${n(a.audit.estimate)} in the months searched` : ''}` : null,
+    a.state === 'waiting' ? null : a.keep ? (a.walk.complete ? `Every mailbox listed to its end (${plural(a.walk.mailboxes, 'mailbox', 'mailboxes')})` : `Walking ${a.walk.mailbox ?? 'its mailboxes'}${a.walk.back ? `: back to ${day(a.walk.back)}` : ''} · ${n(a.walk.done)} of ${plural(a.walk.mailboxes, 'mailbox', 'mailboxes')} listed`) : 'A year of mail and all of Inbox; bodies as they are read',
+    a.audit && a.state !== 'waiting' ? `${n(a.audit.matched)} of ${plural(a.audit.windows, 'month')} match Gmail${a.audit.missed ? ` · ${n(a.audit.missed)} missing mail` : ''}${a.audit.caught ? ` · ${n(a.audit.caught)} caught` : ''}${a.audit.estimate !== null ? ` · Gmail counts ${n(a.audit.estimate)} in the months searched` : ''}` : null,
     a.measure.searches ? `${searchName(a, acc?.kind)} found ${n(a.measure.found)} in your last 30 days of searches: ${n(a.measure.held)} held here, ${n(a.measure.local)} found here` : null,
   ];
   return (
@@ -80,6 +80,11 @@ function KeepRow({ a, reload }: { a: P.MailKeepView; reload: () => void }) {
       {a.state === 'disk' && (
         <p class="job-line job-error" role="alert">
           Stopped by the disk guard: bodies wait until the disk has more room.
+        </p>
+      )}
+      {a.state === 'waiting' && (
+        <p class="job-line job-when">
+          Waiting for dither-accounts' slow lane for Gmail. Until it has one, only the last year and all of Inbox are kept, as for any account.
         </p>
       )}
       {a.state === 'offline' && <p class="job-line job-when">Waiting for the account to be online.</p>}

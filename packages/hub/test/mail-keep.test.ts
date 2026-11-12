@@ -2,7 +2,8 @@
  * Keeping all mail (mail/keep.ts; docs/mail.md "Keeping all mail") on FakeMailBackend in its imap, proton, gmail and
  * gmail-web modes: the walk to the end of every mailbox and every body fetched; no eviction, no summary sweep and no
  * index cap for a kept account while one not kept behaves as before; the whole text found past 16 KB; attachments'
- * names; the disk guard; the background lane and an account that stops background reads; the search measure; Gmail's
+ * names; the disk guard; the background lane and an account that stops background reads; a Google account waiting for
+ * its lane (a year only, then the archive once a status brings it; Proton and IMAP not held); the search measure; Gmail's
  * audits, split when full or paged by ids, catching a message the hub lacked; "searched locally" on and off again;
  * server=auto leaving such an account out while server=1 asks it; an opaque cursor kept across a restart; the route.
  */
@@ -14,8 +15,9 @@ import { bigSweep } from '../src/mail/backfill.ts';
 import { BodyCache, searchText } from '../src/mail/cache.ts';
 import { FakeMailBackend, fillMailbox, GMAIL, GMAIL_WEB, GMAIL_WEB_DETAILS, type FakeOpts } from '../src/mail/fake.ts';
 import { MailCallError, MailHub } from '../src/mail/index.ts';
-import { AUDIT_LIMIT, auditQuery, keepOf, LOCAL_SEARCHES } from '../src/mail/keep.ts';
+import { AUDIT_LIMIT, auditQuery, keepOf, LANE_WAIT, LOCAL_SEARCHES } from '../src/mail/keep.ts';
 import { MAIL_LIMITS } from '../src/mail/limits.ts';
+import { P4, type Priority } from '../src/mail/queue.ts';
 import { mailSearchOf, serverQuery } from '../src/mail/search.ts';
 import { MailStore } from '../src/mail/store.ts';
 import { parseSearch } from '@dither-chat/protocol';
@@ -258,13 +260,14 @@ describe('the walk and the bodies', () => {
     const db = new Database(':memory:', { strict: true });
     clock = new FakeClock(NOW);
     const seed = (f: FakeMailBackend) => fillMailbox(f, ACC, GMAIL_WEB.all, 900, { newest: NOW - 60_000, oldest: NOW - 4 * 365 * DAY, self: ME });
-    const w = await world({ ids: 'gmail-web', seed, db, budget: true });
+    // With the lane: without one, a Google account's walk stops at the year (below).
+    const w = await world({ ids: 'gmail-web', seed, db, budget: true, details: { backgroundLane: true } });
     const all = () => w.hub.store.mailboxByNative(ACC, GMAIL_WEB.all)!;
     await clock.until(() => all().list_next && all().horizon! < NOW - 400 * DAY, 3_600_000, 'the walk past a year');
     const cursor = all().list_next as string;
     w.hub.stop();
     // A new hub on the same database: its first page of All Mail starts at that cursor.
-    const w2 = await world({ ids: 'gmail-web', seed, db, budget: true });
+    const w2 = await world({ ids: 'gmail-web', seed, db, budget: true, details: { backgroundLane: true } });
     await clock.until(() => w2.fake.calls.some((c) => c.op === 'mail.list' && c.input.mailboxId === GMAIL_WEB.all && c.input.before), 600_000, 'the walk going on');
     expect(w2.fake.calls.find((c) => c.op === 'mail.list' && c.input.mailboxId === GMAIL_WEB.all && c.input.before)!.input.before).toBe(cursor);
   });
@@ -314,6 +317,101 @@ describe('the background lane, and an account that stops background reads', () =
     expect(view(w).state).toBe('stopped');
     w.fake.setStatus(ACC, { status: 'online', self: { email: ME }, details: { idPerMessage: true, backgroundLane: true } });
     await kept(w);
+  });
+});
+
+describe('a Google account waiting for its lane', () => {
+  /** Gmail on the web over four years: All Mail, a month of Inbox, and Trash, which only the walk lists. */
+  function seedWeb(f: FakeMailBackend) {
+    fillMailbox(f, ACC, GMAIL_WEB.all, 200, { newest: NOW - 20 * DAY, oldest: NOW - 4 * 365 * DAY, self: ME, tag: 'old' });
+    fillMailbox(f, ACC, GMAIL_WEB.inbox, 30, { newest: NOW - 60_000, oldest: NOW - 30 * DAY, self: ME, tag: 'new' });
+    fillMailbox(f, ACC, GMAIL_WEB.trash, 6, { newest: NOW - 400 * DAY, oldest: NOW - 2 * 365 * DAY, self: ME, tag: 'bin' });
+  }
+  const WALK_ONLY: string[] = [GMAIL_WEB.trash, GMAIL_WEB.spam, GMAIL_WEB.drafts];
+  const walkOnly = (w: World) => w.fake.calls.filter((c) => c.op === 'mail.list' && WALK_ONLY.includes(c.input.mailboxId));
+  const searches = (w: World) => w.fake.calls.filter((c) => c.op === 'mail.search');
+  /** The priorities of the account's queued work from now on. */
+  const watchQueue = (w: World) => {
+    const seen: number[] = [];
+    const q = w.hub.sync(ACC)!.queue;
+    const run = q.run.bind(q);
+    q.run = ((p: Priority, key: string | null, fn: () => Promise<unknown>) => (seen.push(p), run(p, key, fn))) as typeof q.run;
+    return seen;
+  };
+
+  test("no walk past the year, no kept bodies, no audits; the row says why; the owner's Resume does not lift it", async () => {
+    const w = await world({ ids: 'gmail-web', seed: seedWeb });
+    const seen = watchQueue(w);
+    await clock.advance(3 * 3_600_000);
+    expect(w.hub.store.laneWaits(ACC)).toBe(true);
+    // A year and all of Inbox, as any account: nothing older is listed, and nothing is left to list.
+    expect(w.hub.sync(ACC)!.backfill.running).toBe(false);
+    expect(w.hub.sync(ACC)!.backfill.legs()).toEqual([]);
+    expect(held(w)).toBeGreaterThan(30);
+    expect(count(w, 'mail_message WHERE account_id = ? AND received_at < ?', ACC, NOW - 366 * DAY)).toBe(0);
+    expect(walkOnly(w)).toHaveLength(0);
+    // No P4 (kept bodies, counts) or P5 (audits) work; only the bodies fetched ahead.
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.filter((p) => p >= P4)).toEqual([]);
+    expect(view(w).bodies).toBeLessThan(held(w));
+    expect(searches(w)).toHaveLength(0);
+    expect(count(w, 'mail_audit WHERE account_id = ?', ACC)).toBe(0);
+    expect(w.fake.calls.some((c) => 'background' in c.input)).toBe(false);
+    // The row says why, and it is not searched locally.
+    const v = view(w);
+    expect(v).toMatchObject({ keep: true, paused: false, state: 'waiting', stopped: null, backgroundLane: false });
+    expect(v.local.on).toBe(false);
+    expect(v.local.missing[0]).toBe(LANE_WAIT);
+    expect(keeper(w).searchedLocally(ACC)).toBe(false);
+    const page = (await (await route(w, 'GET', '/api/mail/keep')).json()) as P.MailKeepPage;
+    expect(page.accounts[0]).toMatchObject({ accountId: ACC, state: 'waiting' });
+    // The guard is not the owner's switch: it wrote nothing to mail_keep, and Pause then Resume leaves it waiting.
+    expect(count(w, 'mail_keep WHERE account_id = ?', ACC)).toBe(0);
+    expect(await (await route(w, 'PUT', `/api/mail/keep/${ACC}`, { paused: true })).json()).toMatchObject({ paused: true, state: 'waiting' });
+    expect(await (await route(w, 'PUT', `/api/mail/keep/${ACC}`, { paused: false })).json()).toMatchObject({ paused: false, state: 'waiting' });
+    expect(w.hub.store.keepState(ACC)).toEqual({ keep: true, paused: false });
+    await clock.advance(30 * 60_000);
+    expect(seen.filter((p) => p >= P4)).toEqual([]);
+    expect(walkOnly(w)).toHaveLength(0);
+    expect(searches(w)).toHaveLength(0);
+  });
+
+  test('a status with backgroundLane: true starts the archive at once, every archive read saying background', async () => {
+    const w = await world({ ids: 'gmail-web', seed: seedWeb });
+    await clock.advance(3 * 3_600_000);
+    expect(view(w).state).toBe('waiting');
+    const before = w.fake.calls.length;
+    w.fake.setStatus(ACC, { status: 'online', self: { email: ME }, details: { ...GMAIL_WEB_DETAILS, backgroundLane: true } });
+    // Before the keeper's next look (every 30 s): the status itself started it.
+    await clock.advance(5_000);
+    expect(w.fake.calls.slice(before).some((c) => c.input.background === true)).toBe(true);
+    await kept(w);
+    await clock.until(() => searches(w).length > 0, 3_600_000, 'an audit search');
+    const v = view(w);
+    expect(v.backgroundLane).toBe(true);
+    expect(v.state).not.toBe('waiting');
+    expect(v.local.missing).not.toContain(LANE_WAIT);
+    expect(held(w)).toBe(236);
+    expect(walkOnly(w).length).toBeGreaterThan(0);
+    const after = w.fake.calls.slice(before);
+    const archive = after.filter((c) => (c.op === 'mail.list' && c.input.limit === MAIL_LIMITS.backfillPage) || c.op === 'mail.get' || c.op === 'mail.search');
+    expect(archive.length).toBeGreaterThan(held(w) / 2);
+    expect(archive.filter((c) => c.input.background !== true)).toEqual([]);
+  });
+
+  test('Proton and IMAP (Gmail over IMAP among them) are not held: without a lane their archive goes as before', async () => {
+    for (const [ids, seed] of [
+      ['proton', seedProton],
+      ['gmail', (f: FakeMailBackend) => fillMailbox(f, ACC, GMAIL.all, 80, { newest: NOW - 20 * DAY, oldest: NOW - 3 * 365 * DAY, self: ME })],
+    ] as const) {
+      const w = await world({ ids, seed });
+      expect(w.hub.store.laneWaits(ACC)).toBe(false);
+      await kept(w);
+      if (ids === 'gmail') await clock.until(() => searches(w).length > 0, 3_600_000, 'an audit search');
+      expect(view(w).state).not.toBe('waiting');
+      expect(view(w).local.missing).not.toContain(LANE_WAIT);
+      expect(w.fake.calls.some((c) => 'background' in c.input)).toBe(false);
+    }
   });
 });
 

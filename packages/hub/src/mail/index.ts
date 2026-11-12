@@ -35,6 +35,8 @@ export interface MailHubEvents {
   read: { threadIds: string[] };
   body: { messageId: string };
   account: { accountId: string; state: 'added' | 'changed' | 'ended' | 'deleted' };
+  /** A status said the account has a background lane, where none was before (keep.ts: an archive waiting for it starts). */
+  lane: { accountId: string };
   sent: { accountId: string; outboxId: string; messageId: string | null; replyTo: string | null; threadId: string | null; dryRun: boolean };
 }
 export type MailHubEvent = keyof MailHubEvents;
@@ -213,9 +215,11 @@ export class MailHub {
       switch (ev.t) {
         case 'status': {
           const was = !!this.store.account(account)?.online;
+          const lane = this.store.backgroundLane(account);
           this.store.setStatus(account, ev);
           // Back online: whatever happened meanwhile.
           if (!was && this.store.account(account)?.online) s.start();
+          if (!lane && this.store.backgroundLane(account)) this.emit('lane', { accountId: account });
           break;
         }
         case 'mail.arrived':

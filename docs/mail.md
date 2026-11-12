@@ -450,7 +450,7 @@ until one says, the hub goes by the account's kind as it did before they existed
 | `maxRecipients` | `max_recipients` | the most recipients, To, Cc and Bcc together | 100 on Proton, 500 elsewhere |
 | `provider: 'Gmail'` | `provider` | the account is Gmail (`MailStore.gmail`), whatever its address or mailboxes | its address or its `[Gmail]` mailboxes |
 | `summaryHeaders` | `summary_headers` | "Summaries without headers" above | a summary that carried them |
-| `backgroundLane: true` | `background_lane` | the archive's reads say `background: true` ("Keeping all mail") | never sent |
+| `backgroundLane: true` | `background_lane` | the archive's reads say `background: true` ("Keeping all mail"); a google-kind account's archive waits for it | never sent; a google-kind account keeps only a year |
 | `searchIds: true` | `search_ids` | Gmail's audits page by ids instead of splitting windows ("Keeping all mail") | split |
 | `backgroundStopped` | `background_stopped` | the archive stops (`challenge`, `signedOut`, `quota`, or a call's 503 `paused`); cleared by a status without it | going |
 | `storage`, `storageUsed`, `storageTotal` | `storage` | shown on Settings → Indexing | not shown |
@@ -687,8 +687,8 @@ hub holds, at 390 px and on a desktop in both themes, before its usual checks.
 The aim, in the owner's words: keep scraping until all search can be done locally, found out by seeing how much of the
 server's search results the hub does not have, so that eventually all mail is stored in the same database. It is on
 for every mail account (`MailHub`'s `keepAll`, which main.ts sets), with a switch per account on Settings → Indexing.
-Gmail gets it when dither-accounts ships Gmail reads; Proton's accounts have it now. `hub/src/mail/keep.ts`,
-`schema-keep.sql`; tests in `hub/test/mail-keep.test.ts`.
+Gmail on the web gets it once its account has dither-accounts' slow lane (below); Proton's accounts have it now.
+`hub/src/mail/keep.ts`, `schema-keep.sql`; tests in `hub/test/mail-keep.test.ts`.
 
 **For a kept account:**
 
@@ -735,6 +735,16 @@ and nothing is tried again until a status no longer says so; the row says "Stopp
 reads goes on as usual. `details.storage` ("4.2 GB of 15 GB" as Gmail shows it), `storageUsed` and `storageTotal`, when
 the status has them, show on the row beside what the hub holds.
 
+**A Google account waits for its lane.** dither-accounts' google kind reads Gmail through its own web page, under the
+owner's real Google sign-in, so the hub's two calls a second must not go through it. While such an account's status
+has not said `details.backgroundLane: true` (`MailStore.laneWaits`), it keeps only what any account keeps: the year,
+all of Inbox, the cap, and the bodies fetched ahead (P2). The walk past the year, the kept bodies at P4, the counts and
+Gmail's audits do not run; all three read one gate, `MailStore.keeping` (kept, not paused here, not waiting). Its row
+says "Waiting" with the reason, `GET /api/mail/keep` reports `state: 'waiting'`, and it is not searched locally. It is
+not the owner's Pause: it writes nothing to `mail_keep`, and Resume does not lift it. The first status that says
+`backgroundLane: true` starts the archive at once (MailHub's `lane` event), with no restart. Proton and IMAP accounts,
+Gmail over IMAP among them, are not held.
+
 **Coverage** (`GET /api/mail/keep`, protocol `MailKeepPage`), per account:
 
 - **Totals**: each walked mailbox's server count against the hub's locations there, and whether it is listed to its
@@ -772,10 +782,10 @@ mail account with the Keep all mail switch (turning it off asks first), "12,400 
 their text · 1.2 GB here", what the account says it uses, the walk ("Walking Archive: back to 3 Mar 2014 · 4 of 9
 mailboxes listed", or "Every mailbox listed to its end"), Gmail's audits ("312 of 340 months match Gmail"), the search
 measure, why searches still ask the server (or "Searched locally"), the state (Running, Up to date, Paused, Disk guard,
-Stopped, Offline, Not kept), and Pause or Resume. It asks the hub every 5 s while an account is running, else every 30 s.
-`PUT /api/mail/keep/:accountId { keep?, paused? }` changes it. `scripts/verify-mail-keep.ts` drives it on a demo hub, on
-a desktop in the dark theme and a phone in the light one. A demo hub keeps a year unless it is started with
-`DITHER_DEMO_MAIL_KEEP=1` (the other verify scripts count on its receipt being found only on the server).
+Stopped, Waiting, Offline, Not kept), and Pause or Resume. It asks the hub every 5 s while an account is running, else
+every 30 s. `PUT /api/mail/keep/:accountId { keep?, paused? }` changes it. `scripts/verify-mail-keep.ts` drives it on a
+demo hub, on a desktop in the dark theme and a phone in the light one. A demo hub keeps a year unless it is started
+with `DITHER_DEMO_MAIL_KEEP=1` (the other verify scripts count on its receipt being found only on the server).
 
 **Measured** (2026-11-11, on the shared 16-core machine while other agents ran, load 6 to 30, so the numbers are
 rough):
