@@ -13,12 +13,12 @@ import type * as P from '@dither-chat/protocol';
 import { effect, signal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { badgeDiffers, headIdents, labelText, leadTells, tagTells, tagText, tells, type HeadName, type RouteKey, type Side, type Tells } from '../chatroutes.ts';
-import { hueOf, initials } from '../format.ts';
-import { identityName, netName } from '../model.ts';
+import { badgeDiffers, headIdents, leadTells, tagTells, tagText, tells, type HeadName, type RouteKey, type Side } from '../chatroutes.ts';
+import { ago, hueOf, initials } from '../format.ts';
+import { identityName, netColor, netName, visibleAccount } from '../model.ts';
 import { phone } from '../phone.ts';
-import { api, db, isSelfIdentity, prefs, route, setPrefs, toast } from '../state.ts';
-import { Avatar, Menu, NetBadge, NetGlyph } from './bits.tsx';
+import { api, db, go, isSelfIdentity, prefs, route, setPrefs, toast } from '../state.ts';
+import { AccountChip, Avatar, Count, Menu, NetBadge, NetGlyph } from './bits.tsx';
 
 // ------------------------------------------------------------------ pairs
 
@@ -39,10 +39,13 @@ export function pairOf(conv: P.ConversationView): Pair {
   return { conv, acc, mine, theirs };
 }
 
+/** A handle that is a phone number (Signal, WhatsApp): never shown beside a name. */
+const PHONE = /^\+?[\d\s()-]{6,}$/;
+
 /** Their name on the network: the username, or the profile name where the handle is a phone number (Signal, WhatsApp). */
 export const theirName = (p: Pair) => {
   const h = p.theirs?.handle;
-  if (h && /^\+?[\d\s()-]{6,}$/.test(h) && p.theirs?.displayName) return p.theirs.displayName;
+  if (h && PHONE.test(h) && p.theirs?.displayName) return p.theirs.displayName;
   return h ?? p.theirs?.displayName ?? netName(p.conv.network);
 };
 export const myName = (p: Pair) => p.acc?.label || identityName(p.mine?.id) || 'you';
@@ -54,8 +57,6 @@ export function routeKey(c: P.ConversationView): RouteKey {
 }
 
 /** What tells this route from the chat's others (chatroutes.ts). */
-const routeTells = (c: P.ConversationView, directs: P.ConversationView[]): Tells => tells(routeKey(c), directs.map(routeKey));
-
 /** Whether message pictures carry the network's badge in this chat: only when it would differ between its routes. */
 export const badgeShows = (directs: P.ConversationView[]) => badgeDiffers(directs.map(routeKey));
 
@@ -63,18 +64,6 @@ export const badgeShows = (directs: P.ConversationView[]) => badgeDiffers(direct
 export function routeTitle(c: P.ConversationView): string {
   const p = pairOf(c);
   return `Send as ${myName(p)} to ${theirName(p)} on ${netName(c.network)}`;
-}
-
-/** A route's label by the rule: `Signal`, `kit.work`, `via zyn.alt` or `kit.work ⇄ zyn.alt`, the network's icon first where networks mix. */
-export function RouteLabel({ c, directs, size = 12 }: { c: P.ConversationView; directs: P.ConversationView[]; size?: number }) {
-  const t = routeTells(c, directs);
-  const p = pairOf(c);
-  return (
-    <>
-      {t.network && <NetGlyph network={c.network} size={size} />}
-      <span class="route-label">{labelText(t, { network: netName(c.network), theirs: theirName(p), mine: myName(p) }, false)}</span>
-    </>
-  );
 }
 
 /**
@@ -326,49 +315,104 @@ export const viewOf = (personId: string, directs: P.ConversationView[]) => {
 };
 export const setView = (personId: string, v: string) => void (viewing.value = { ...viewing.value, [personId]: v });
 
-/** A route in full, for the list: the network's icon, their name there, ⇄, yours. */
-function PairLine({ p, size = 16 }: { p: Pair; size?: number }) {
+
+/**
+ * The line under the name, in the same words for a direct conversation and for a person's chat: where your message
+ * goes. The network (its icon and name); their account, where theirs on that network differ (`to mo.codes`); and the
+ * account of yours it goes from, where you have more than one, as every conversation's header says it (`via ●
+ * zyansheep`, which a narrow window leaves out everywhere).
+ */
+export function SendLine({ c, accounts, to }: { c: P.ConversationView; accounts: P.AccountView[]; to?: string }) {
+  const via = accounts.length > 0 && (accounts.length > 1 || db.accounts.size > 1);
   return (
-    <>
-      <NetBadge network={p.conv.network} size={size} />
-      <span class="pair-line-theirs">{theirName(p)}</span>
-      <span class="pair-line-arrow">⇄</span>
-      <span class="pair-line-mine">{myName(p)}</span>
-    </>
+    <span class="send-line" style={{ '--net': netColor(c.network) } as Record<string, string>}>
+      <span class="crumb net">
+        <NetGlyph network={c.network} size={11} /> {netName(c.network)}
+      </span>
+      {to && (
+        <span class="send-to">
+          <span class="send-sep">·</span> to {to}
+        </span>
+      )}
+      {via && (
+        <span class="via">
+          <span class="send-sep">·</span> via
+          {accounts.map((a) => (
+            <AccountChip account={a} small />
+          ))}
+        </span>
+      )}
+    </span>
   );
 }
 
+/** The account of yours a route goes from, as the line under the name lists it. */
+const routeAccounts = (c: P.ConversationView): P.AccountView[] => {
+  const a = pairOf(c).acc;
+  return a && visibleAccount(a.id) ? [a] : [];
+};
+
+const sameText = (s: string) => s.trim().toLowerCase();
+const counted = (n: number, what: string) => (n > 1 ? `${n} ${what}s` : null);
+
+interface ListRow {
+  p: Pair;
+  unread: number;
+  last: number;
+}
+
 /**
- * Under the name, where any conversation says its network and your account: the networks' icons and "N chats", or
- * the route picked, by its label. The list keeps every route in full, the one place that does. Press and drag down to
- * a row and let go to pick it, or click to open and click a row. Picking filters the page; it never navigates.
- * `view`: 'all' or the route's conversation.
+ * Under the name of a person's chat: the line any conversation has there (where your message goes, `SendLine`), and
+ * one control more, a pill of the other routes' networks and their number (`+7 ▾`), or `only this ✕` while the page
+ * shows one route. The whole line opens the list: press and drag down to a row and let go, or click and click a row,
+ * or the arrow keys and Enter. Picking a route shows its history alone and sends through it; it never navigates.
+ *
+ * The list is a card: the person, how many accounts, chats and networks, and All; then the routes, under their
+ * network's name where a network has two or more, the rest after them, each by their account's own picture and name,
+ * its handle, your account where yours differ there (chatroutes.ts tells), unread, and when it was last active. The
+ * route messages go to says "sending". `view`: 'all' or the route's conversation. `focus`: where messages go now.
  */
-export function PairDropdown({ directs, view: v, onPick }: { directs: P.ConversationView[]; view: string; onPick: (view: string) => void }) {
+export function PairDropdown({ person, directs, focus, view: v, onPick }: { person: P.PersonView; directs: P.ConversationView[]; focus: P.ConversationView; view: string; onPick: (view: string) => void }) {
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
-  // The header clips what overflows it, so the list is placed on the page, under the button.
-  const [at, setAt] = useState<{ left: number; top: number } | null>(null);
+  // The header clips what overflows it, so the card is placed on the page, under the line.
+  const [at, setAt] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const btn = useRef<HTMLButtonElement>(null);
-  const show = () => {
+  const card = useRef<HTMLDivElement>(null);
+  // Opened from the keyboard: the row to put the focus on once the card is drawn.
+  const keyTo = useRef<string | null>(null);
+  const show = (fromKeys = false) => {
     const r = btn.current?.getBoundingClientRect();
-    if (r) setAt({ left: Math.max(8, Math.min(r.left, innerWidth - 320)), top: r.bottom + 4 });
+    if (r) {
+      const w = Math.min(360, innerWidth - 16);
+      setAt({ left: Math.max(8, Math.min(r.left, innerWidth - w - 8)), top: r.bottom + 4, maxHeight: Math.max(200, innerHeight - r.bottom - 16) });
+    }
+    keyTo.current = fromKeys ? v : null;
     setOpen(true);
   };
   const press = useRef<{ x: number; y: number; moved: boolean } | null>(null);
-  const pairs = directs.map(pairOf).sort((a, b) => a.conv.network.localeCompare(b.conv.network) || theirName(a).localeCompare(theirName(b)) || myName(a).localeCompare(myName(b)));
-  const nets = [...new Set(directs.map((d) => d.network))];
-  const shown = directs.find((d) => d.id === v);
   const pick = (id: string) => {
+    const inside = !!root.current?.contains(document.activeElement);
     setOpen(false);
     setHover(null);
     onPick(id);
+    if (inside) btn.current?.focus();
   };
   useEffect(() => {
     if (!open) return;
+    if (keyTo.current) {
+      const to = keyTo.current;
+      keyTo.current = null;
+      [...(card.current?.querySelectorAll<HTMLElement>('[data-pair-row]') ?? [])].find((e) => e.dataset.pairRow === to)?.focus();
+    }
     const away = (e: PointerEvent) => root.current && !root.current.contains(e.target as Node) && setOpen(false);
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const inside = !!root.current?.contains(document.activeElement);
+      setOpen(false);
+      if (inside) btn.current?.focus();
+    };
     document.addEventListener('pointerdown', away);
     document.addEventListener('keydown', esc);
     return () => {
@@ -377,6 +421,87 @@ export function PairDropdown({ directs, view: v, onPick }: { directs: P.Conversa
     };
   }, [open]);
   const rowAt = (x: number, y: number) => (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>('[data-pair-row]')?.dataset.pairRow ?? null;
+  const onCardKey = (e: KeyboardEvent) => {
+    const rows = [...(card.current?.querySelectorAll<HTMLElement>('[data-pair-row]') ?? [])];
+    const i = rows.indexOf(document.activeElement as HTMLElement);
+    const last = rows.length - 1;
+    const j = e.key === 'ArrowDown' ? (i < 0 ? 0 : Math.min(last, i + 1)) : e.key === 'ArrowUp' ? Math.max(0, i - 1) : e.key === 'Home' ? 0 : e.key === 'End' ? last : null;
+    if (j === null) return;
+    e.preventDefault();
+    rows[j]?.focus();
+  };
+
+  const keys = directs.map(routeKey);
+  const fp = pairOf(focus);
+  const to = tells(routeKey(focus), keys).theirs ? theirName(fp) : undefined;
+  const others = directs.filter((d) => d.id !== focus.id);
+  const otherNets = [...new Set(others.map((d) => d.network))].slice(0, 3);
+  const nets = new Set(directs.map((d) => d.network));
+  const summary = [counted(new Set(directs.map((d) => pairOf(d).theirs?.id ?? d.id)).size, 'account'), counted(directs.length, 'chat'), counted(nets.size, 'network')].filter(Boolean).join(' · ');
+  const rows: ListRow[] = directs.map((d) => ({ p: pairOf(d), unread: d.vantages.reduce((n, x) => n + x.unread, 0), last: d.lastMessageAt ?? 0 })).sort((a, b) => b.last - a.last);
+  const byNet = new Map<P.Network, ListRow[]>();
+  for (const r of rows) byNet.set(r.p.conv.network, [...(byNet.get(r.p.conv.network) ?? []), r]);
+  const groups = [...byNet].filter(([, rs]) => rs.length > 1).sort((a, b) => b[1].length - a[1].length || b[1][0].last - a[1][0].last);
+  const singles = rows.filter((r) => byNet.get(r.p.conv.network)!.length === 1);
+
+  const row = ({ p, unread }: ListRow, single: boolean) => {
+    const id = p.conv.id;
+    const name = p.theirs ? identityName(p.theirs.id) : theirName(p);
+    const handle = p.theirs?.handle;
+    const t = tells(routeKey(p.conv), keys);
+    const sending = id === focus.id;
+    const sub: ComponentChildren[] = [];
+    if (single)
+      sub.push(
+        <span class="pair-row-net" style={{ '--net': netColor(p.conv.network) } as Record<string, string>}>
+          {netName(p.conv.network)}
+        </span>,
+      );
+    if (handle && !PHONE.test(handle) && sameText(handle) !== sameText(name)) sub.push(<span class="pair-row-handle">{handle}</span>);
+    if (t.mine)
+      sub.push(
+        <span class="pair-row-via">
+          via <span class="acc-dot" style={{ background: p.acc?.color ?? hueOf(id) }} />
+          {myName(p)}
+        </span>,
+      );
+    return (
+      <button
+        role="option"
+        aria-selected={v === id}
+        data-pair-row={id}
+        data-track="chats list (pair)"
+        title={routeTitle(p.conv)}
+        class={`pair-row ${v === id ? 'on' : ''} ${hover === id ? 'hover' : ''} ${sending ? 'sending' : ''}`}
+        onClick={() => pick(id)}
+      >
+        <Avatar id={p.theirs?.id ?? id} name={name} url={p.theirs?.avatar} size={26} network={p.conv.network} />
+        <span class="pair-row-text">
+          <span class="pair-row-name">{name}</span>
+          {sub.length > 0 && (
+            <span class="pair-row-sub">
+              {sub.map((x, i) => (
+                <>
+                  {i > 0 && <span class="send-sep">·</span>}
+                  {x}
+                </>
+              ))}
+            </span>
+          )}
+        </span>
+        <span class="pair-row-end">
+          <span class="pair-row-ago">{ago(p.conv.lastMessageAt)}</span>
+          {(unread > 0 || sending) && (
+            <span class="pair-row-marks">
+              {unread > 0 && <Count n={unread} />}
+              {sending && <span class="pair-row-sending">➤ sending</span>}
+            </span>
+          )}
+        </span>
+      </button>
+    );
+  };
+
   return (
     <div class="pair-dd" ref={root}>
       <button
@@ -385,7 +510,7 @@ export function PairDropdown({ directs, view: v, onPick }: { directs: P.Conversa
         data-track="chats list"
         aria-haspopup="listbox"
         aria-expanded={open}
-        title={shown ? `Showing only this chat (${routeTitle(shown).replace(/^Send/, 'sending')}). Press and drag to pick, or click` : 'Which chats to show. Press and drag to pick, or click'}
+        title={`${routeTitle(focus).replace(/^Send/, 'Sending')}. ${v === 'all' ? `${others.length} more ${others.length === 1 ? 'chat' : 'chats'} with them` : 'Showing only this chat'}: press and drag to pick, or click`}
         onPointerDown={(e) => {
           if (e.button !== 0) return;
           press.current = { x: e.clientX, y: e.clientY, moved: false };
@@ -409,8 +534,8 @@ export function PairDropdown({ directs, view: v, onPick }: { directs: P.Conversa
               setOpen(false);
               return;
             }
-            const row = rowAt(ev.clientX, ev.clientY);
-            if (p0.moved && row) pick(row);
+            const r = rowAt(ev.clientX, ev.clientY);
+            if (p0.moved && r) pick(r);
             else if (p0.moved) setOpen(false);
           };
           document.addEventListener('pointermove', move);
@@ -419,42 +544,70 @@ export function PairDropdown({ directs, view: v, onPick }: { directs: P.Conversa
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
             e.preventDefault();
-            show();
+            show(true);
           }
         }}
       >
-        {shown ? (
-          <RouteLabel c={shown} directs={directs} size={12} />
-        ) : (
-          <span class="pair-dd-all">
-            <span class="pair-dd-nets">
-              {nets.map((n) => (
-                <NetBadge network={n} size={14} />
+        <SendLine c={focus} accounts={routeAccounts(focus)} to={to} />
+        {v === 'all' && (
+          <span class="pair-more">
+            <span class="pair-more-nets">
+              {otherNets.map((n) => (
+                <NetGlyph network={n} size={11} color={netColor(n)} />
               ))}
             </span>
-            <span>{directs.length} chats</span>
+            +{others.length}
+            <span class="pair-dd-caret" aria-hidden="true">
+              ▾
+            </span>
           </span>
         )}
-        <span class="pair-dd-caret" aria-hidden="true">
-          ▾
-        </span>
       </button>
+      {v !== 'all' && (
+        <button class="pair-more pair-only" data-track="chats list (back to all)" title="Showing only this chat: show all chats together" aria-label="Showing only this chat. Show all chats together" onClick={() => onPick('all')}>
+          only this
+          <span class="pair-only-x" aria-hidden="true">
+            ✕
+          </span>
+        </button>
+      )}
       {open && (
-        <div class="pair-dd-menu" role="listbox" aria-label="Show" style={at ? { left: `${at.left}px`, top: `${at.top}px` } : undefined}>
-          <button role="option" aria-selected={v === 'all'} data-pair-row="all" data-track="chats list (all)" class={`pair-dd-row ${v === 'all' ? 'on' : ''} ${hover === 'all' ? 'hover' : ''}`} onClick={() => pick('all')}>
-            <span class="pair-dd-all">All chats together</span>
-            <span class="pair-dd-count">{directs.length}</span>
+        <div class="pair-card" ref={card} role="dialog" aria-label={`Chats with ${person.name}`} style={at ? { left: `${at.left}px`, top: `${at.top}px`, maxHeight: `${at.maxHeight}px` } : undefined} onKeyDown={onCardKey}>
+          <div class="pair-card-top">
+            <Avatar id={person.id} name={person.name} url={person.avatar} size={36} />
+            <span class="pair-card-who">
+              <b>{person.name}</b>
+              <small>{summary}</small>
+            </span>
+            <button aria-pressed={v === 'all'} data-pair-row="all" data-track="chats list (all)" title="Show all chats together" class={`pair-card-all ${v === 'all' ? 'on' : ''} ${hover === 'all' ? 'hover' : ''}`} onClick={() => pick('all')}>
+              All
+            </button>
+          </div>
+          <div class="pair-card-rows" role="listbox" aria-label="Chats">
+            {groups.map(([n, rs]) => (
+              <div role="group" aria-label={netName(n)}>
+                <div class="pair-card-net" style={{ '--net': netColor(n) } as Record<string, string>} aria-hidden="true">
+                  <NetGlyph network={n} size={11} /> {netName(n)}
+                </div>
+                {rs.map((r) => row(r, false))}
+              </div>
+            ))}
+            {singles.length > 0 && (
+              <div role="group" aria-label={groups.length ? 'Other networks' : 'Networks'} class={groups.length ? 'pair-card-rest' : ''}>
+                {singles.map((r) => row(r, true))}
+              </div>
+            )}
+          </div>
+          <button
+            class="pair-card-foot"
+            data-track="chats list (profile)"
+            onClick={() => {
+              setOpen(false);
+              go({ view: 'profile', person: person.id });
+            }}
+          >
+            {person.name}’s profile →
           </button>
-          {pairs.map((p) => {
-            const unread = p.conv.vantages.reduce((n, x) => n + x.unread, 0);
-            return (
-              <button role="option" aria-selected={v === p.conv.id} data-pair-row={p.conv.id} data-track="chats list (pair)" class={`pair-dd-row ${v === p.conv.id ? 'on' : ''} ${hover === p.conv.id ? 'hover' : ''}`} onClick={() => pick(p.conv.id)}>
-                <PairLine p={p} size={18} />
-                <span class="pair-dd-net">{netName(p.conv.network)}</span>
-                {unread > 0 && <span class="pair-dd-unread">{unread}</span>}
-              </button>
-            );
-          })}
         </div>
       )}
     </div>

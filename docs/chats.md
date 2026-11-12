@@ -180,11 +180,28 @@ What it adds to a conversation's page:
 - **The picture's badge**, the same badge an inbox row has (the network, and dots for your account), only when it
   would differ between the chat's routes: more than one network, or more than one of your accounts on a network
   (`badgeDiffers`). Mo's page has none, and neither has a page showing one route picked from the list.
-- **Under the name**, where a conversation says its network and your account: the networks' icons and "N chats", the
-  button of the list. Press and drag down to a row and let go, or click and click again. The list keeps every route
-  in full (their name ⇄ yours, the network, unread), the one place that does. Picking a route shows its history alone
-  and sends through it, without leaving the address; the button then shows that route's label, and the list's first
-  row, All chats together, returns to all.
+- **Under the name, where your message goes**, in the same words as a direct conversation of one route says it
+  (`SendLine` in `Pairs.tsx`): the network's icon and name, then `via` and your account's chip where you have more
+  than one account (the rule every conversation's header has, and a window under 820 px wide leaves the chip out, as
+  everywhere). Where their accounts on that network differ, it names theirs too (`Discord · to mo.draws · via
+  zyansheep`), by the same rule as the tags. It is the route messages go to now, the one the message box's line names.
+  The picture's badge in the header is that route's network, always. A direct conversation's header says no more
+  (until 2026-11-11 it had a crumb, `Discord › Direct messages › Ahzek`, that repeated the name; groups, channels and
+  servers keep their crumbs). **A chat of several routes adds one control after the line**, a pill of the other
+  routes' networks (their icons, at most three, left out on a phone) and how many routes more: `+7 ▾`. The whole line
+  opens the list: press and drag down to a row and let go, click and click again, or Enter (or ↓) then the arrows,
+  Enter and Escape. Picking a route shows its history alone and sends through it, without leaving the address; the
+  line then says that route and the pill becomes `only this ✕`, whose ✕ returns to all chats together.
+- **The list** is a card: their picture, name and what they come to ("7 accounts · 8 chats · 4 networks", leaving out
+  a count of one), with All, which shows every route together. Then the routes. A network with two or more routes
+  has a small heading in its colour (Discord, Matrix) over them; routes alone on their network come after those,
+  without a heading, and their small line starts with the network's name in its colour. Each row is their account
+  there, by its own picture with the network's badge and its name as you see it, its handle where that says more than
+  the name (never a phone number), and `via ● zyn.alt` where your accounts on that network differ (`tells`); on the
+  right, unread, and when it was last active. Rows go newest first within their part. The route messages go to says
+  `➤ sending`, and the one the page shows alone is highlighted. The foot links to their profile. Until 2026-11-11 the
+  line under the name was the networks' icons and "N chats", which said nothing of where a message went, and the list
+  was rows of `their handle ⇄ yours  Network`.
 - **The name** links to their profile, with no pencil: it is made of their accounts' names, and each account's
   nickname is set on its tile there (Names, above).
 - **The message box's line** takes the placeholder's place and says where a message goes, by the same rule and no

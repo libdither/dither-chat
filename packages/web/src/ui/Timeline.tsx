@@ -99,7 +99,7 @@ import { memo } from './memo.ts';
 import { heldRequest } from '../requests.ts';
 import { LinkBanner, RequestBar } from './Requests.tsx';
 import { countKey } from '../clicklog.ts';
-import { badgeShows, focusedPair, focusPair, headNames, loadChat, PairDropdown, PairLead, RouteTag, setView, viewOf } from './Pairs.tsx';
+import { badgeShows, focusedPair, focusPair, headNames, loadChat, PairDropdown, PairLead, RouteTag, SendLine, setView, viewOf } from './Pairs.tsx';
 import { nicknamable, NicknamedName, ownName } from './Nickname.tsx';
 import { Loading } from './Loader.tsx';
 import { Slices, whenIdle } from '../slices.ts';
@@ -220,8 +220,12 @@ export function LevelMenu({ c, also }: { c: P.ConversationView; /** A person's o
 }
 
 /**
- * `chat`: someone you reach through several pairs of accounts (PersonChat). The line under the name is then the list
- * to choose the pair from, in place of the network and your account, and `c` is the pair messages go through.
+ * A conversation's header. Under the name of a direct conversation, one line says where your message goes: the
+ * network and, where you have several accounts, yours (`SendLine`); a group, a channel or a server says where it is
+ * (the crumbs) and your account. The picture's badge is the network you send on.
+ *
+ * `chat`: someone you reach through several routes (PersonChat), and `c` the route messages go through. The header is
+ * the same, saying the same of that route; it adds one control, the pill that opens the list of routes (Pairs.tsx).
  */
 function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () => void; chat?: { person: P.PersonView; directs: P.ConversationView[]; all: boolean; onView: (view: string) => void } }) {
   // Names it shows come from people and accounts, which change without `c` changing (a nickname, a rename).
@@ -246,7 +250,7 @@ function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () =>
       {/* The picture and the name open its profile page: theirs for a DM, the place's otherwise. */}
       <button class="conv-head-icon conv-head-who" tabIndex={-1} data-track="picture" title={whoTitle} onClick={openWho}>
         {isDirect || c.shape === 'group' || c.shape === 'self' ? (
-          <Avatar id={person?.id ?? c.id} name={convTitle(c)} url={person?.avatar ?? c.avatar} size={34} square={!isDirect} network={all ? undefined : c.network} />
+          <Avatar id={person?.id ?? c.id} name={convTitle(c)} url={person?.avatar ?? c.avatar} size={34} square={!isDirect} network={c.network} />
         ) : (
           <span class="conv-head-variant">
             <Icon name={variantIcon(c.variant, c.shape)} size={20} />
@@ -274,7 +278,9 @@ function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () =>
         </h2>
         <div class="conv-head-sub">
           {chat ? (
-            <PairDropdown directs={chat.directs} view={all ? 'all' : c.id} onPick={chat.onView} />
+            <PairDropdown person={chat.person} directs={chat.directs} focus={c} view={all ? 'all' : c.id} onPick={chat.onView} />
+          ) : isDirect ? (
+            <SendLine c={c} accounts={accounts} />
           ) : (
             <>
               <Crumbs c={c} />
