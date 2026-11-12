@@ -207,7 +207,8 @@ describe("the embedder's refit", () => {
 describe('the media archiver', () => {
   test('its walks over every attachment give the event loop a turn every few hundred', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dither-stalls-media-'));
-    const store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
+    // In memory: the walk records each of the 1,500 files in a commit of its own, an fsync each on a file database.
+    const store = new Store(':memory:', (raw) => raw ?? null);
     try {
       const acc = store.createAccount({ network: 'discord', label: 'main', color: '#000', adapter: 'discord' });
       store.ingest(acc, { t: 'status', status: 'online', self: { nativeId: 'me', displayName: 'Me' } });
