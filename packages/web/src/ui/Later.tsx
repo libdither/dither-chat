@@ -9,9 +9,14 @@ import { inTurn } from '../slices.ts';
 
 const waiting = new Set<() => void>();
 
-/** Draws every part still waiting, now: before going to a section that may be in one (showSection). */
-export function drawLater() {
+/**
+ * Draws every part still waiting, now: before going to a section, which may be in one, and which needs the page's
+ * whole height below it to come to the top (showSection). Whether any was waiting.
+ */
+export function drawLater(): boolean {
+  const any = waiting.size > 0;
   for (const show of [...waiting]) show();
+  return any;
 }
 
 export function Later({ children }: { children: ComponentChildren }) {

@@ -155,10 +155,10 @@ export function Modal({ title, onClose, children, wide }: { title: ComponentChil
 /** Scrolls Settings to one of its sections (`set-adversarial`). */
 export function showSection(id: string, behavior: ScrollBehavior = 'smooth') {
   const to = () => document.getElementById(id)?.scrollIntoView({ behavior, block: 'start' });
-  if (document.getElementById(id)) return void to();
-  // In a part of the page drawn later (Later.tsx): drawn now, and gone to once it is.
-  drawLater();
-  requestAnimationFrame(to);
+  // Parts of the page drawn later (Later.tsx) are drawn first, the section's own or those below it, and it is gone to
+  // once they are.
+  if (drawLater()) requestAnimationFrame(to);
+  else to();
 }
 
 /** Opens Settings at Adversarial features. */
