@@ -1714,7 +1714,7 @@ export class HubServer {
       const f = Bun.file(p);
       const named = f.type.split(';')[0];
       const type = named !== 'application/octet-stream' ? f.type : (sniffMime(new Uint8Array(await f.slice(0, 16).arrayBuffer())) ?? this.trueType(key, named));
-      return new Response(f, { headers: mediaHeaders(raw, key, type, 'private, max-age=604800') });
+      return new Response(f, { headers: mediaHeaders(raw, key, type) });
     } else {
       if (!accountId) return new Response('no account to resolve media', { status: 404 });
       const r = await this.sup.command<{ mime: string; base64: string }>(accountId, { t: 'fetchMedia', url: raw }, 30_000).catch(() => null);

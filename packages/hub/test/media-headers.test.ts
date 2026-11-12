@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { showsInline } from '@dither-chat/protocol';
-import { attachmentDisposition, inlineType, mediaHeaders, PLAYER_CSP, SANDBOX_CSP, safeFilename, safeMime, sniffMime } from '../src/mediaheaders.ts';
+import { attachmentDisposition, inlineType, MEDIA_CACHE, mediaHeaders, PLAYER_CSP, UNTYPED_CACHE, SANDBOX_CSP, safeFilename, safeMime, sniffMime } from '../src/mediaheaders.ts';
 import { HubServer, mediaSigner } from '../src/server.ts';
 import { Store } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
@@ -201,6 +201,26 @@ describe('the media route', () => {
     expect(sent.headers.get('content-type')).toBe('image/png');
     expect(sent.headers.get('content-disposition')).toBeNull();
     await Promise.all([pic, other, sent].map((r) => r.arrayBuffer()));
+  });
+
+  test('a device keeps media for a year without asking again, wherever the bytes came from; a refusal is not kept', async () => {
+    expect(MEDIA_CACHE).toBe('private, max-age=31536000, immutable');
+    writeFileSync(join(dir, 'data', 'kept.png'), 'png');
+    for (const [raw, a] of [['mxc://hs/png', acc], ['mxc://hs/png', acc], [`file://${join(dir, 'data', 'kept.png')}`, null]] as const) {
+      const r = await get(raw, a);
+      expect(r.status).toBe(200);
+      expect(r.headers.get('cache-control'), raw).toBe(MEDIA_CACHE);
+      await r.arrayBuffer();
+    }
+    // Untyped bytes may be served as what they are once the hub has looked: kept a day, not a year.
+    const odd = await get('mxc://hs/odd');
+    expect(odd.headers.get('content-type')).toBe('application/octet-stream');
+    expect(odd.headers.get('cache-control')).toBe(UNTYPED_CACHE);
+    await odd.arrayBuffer();
+    const forged = await fetch(`${url}/media/AAAAAAAAAAAAAAAA/${Buffer.from('mxc://hs/png').toString('base64url')}?a=${acc}`);
+    expect(forged.status).toBe(403);
+    expect(forged.headers.get('cache-control')).toBeNull();
+    await forged.text();
   });
 
   test("an account's log is plain text that is never sniffed or run", async () => {
