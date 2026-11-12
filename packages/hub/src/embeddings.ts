@@ -737,7 +737,7 @@ const MESSAGE_SQL = `
 /** Your identities: each account's own, and every identity of the person that is you. */
 export function selfIdentities(hub: Database): Set<string> {
   const rows = hub
-    .query(`SELECT self_identity AS id FROM account WHERE self_identity IS NOT NULL UNION SELECT i.id FROM identity i JOIN person p ON p.id = i.person_id WHERE p.is_self = 1`)
+    .query(`SELECT self_identity AS id FROM account WHERE self_identity IS NOT NULL UNION SELECT i.id FROM person p CROSS JOIN identity i ON i.person_id = p.id WHERE p.is_self = 1`)
     .all() as { id: string }[];
   return new Set(rows.map((r) => r.id));
 }

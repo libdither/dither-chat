@@ -135,6 +135,7 @@ async function triageNow(ids: string[]) {
   // stops waiting for a minute after jev was slow, so a hung jev cannot hold notifications up).
   await embeddings?.prepare(ids, 800).catch(() => {});
   for (const id of ids) {
+    let done = false;
     try {
       noteWork('triage');
       const d = await triage.decide(id);
@@ -142,17 +143,23 @@ async function triageNow(ids: string[]) {
       // The message may have gone while it was decided (a leave, a deleted account).
       const conversationId = store.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', id)?.conversation_id;
       if (!conversationId) continue;
-      store.setTriage(id, d, d.facts);
-      if (d.features) activity.keepInputs(id, d.features);
+      // What the decision writes, in one commit rather than four: each commit waits for the disk, and on a busy
+      // machine that wait holds the hub.
+      store.db.transaction(() => {
+        store.setTriage(id, d, d.facts);
+        if (d.features) activity.keepInputs(id, d.features);
+        attention.triaged(id, d);
+        store.triageDone(id);
+      })();
+      done = true;
       store.dirty.messages.set(id, true);
-      attention.triaged(id, d);
       if (d.decision === 'push' || d.decision === 'quiet' || d.decision === 'digest') deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', d.decision, d.score);
       // The local model was too slow: the message went out silent, and is read again once it has had time.
       if (d.unjudged) setTimeout(() => void judgeLate(id), LATE_JUDGE_MS);
     } catch (e) {
       console.error('triage failed', id, e);
     } finally {
-      store.triageDone(id);
+      if (!done) store.triageDone(id);
     }
   }
 }
@@ -265,6 +272,7 @@ const reminders = new ReminderDelivery({
 
 // Read anywhere since its notification went out: off the phones. New requests that settled: judged, once each.
 setInterval(() => {
+  noteWork('notifications: read and requests');
   for (const cid of delivery.read()) push.clear(cid).catch((e) => console.error('push clear failed', e));
   for (const n of requestNotices.due()) deliverRequest(n);
 }, 5_000);
@@ -274,6 +282,7 @@ setInterval(() => {
 const backup = new NightlyBackup({ dataDir, db: join(dataDir, 'hub.sqlite') });
 if (!demo) backup.start();
 const upkeep = async () => {
+  noteWork('upkeep');
   try {
     const m = pruneMediaCache(join(dataDir, 'media-cache'));
     if (m.removed) console.log(`media cache: removed ${m.removed} files, ${Math.round(m.bytes / 1048576)} MB kept`);
@@ -293,6 +302,7 @@ setTimeout(() => void upkeep(), 60_000);
 setInterval(() => void upkeep(), 6 * 3_600_000);
 
 setInterval(() => {
+  noteWork('votes and held alerts');
   votes.daily();
   const held = triage.takeHeldSummary();
   if (held) deliver(held.title, held.body, held.conversationId, held.messageId, ['Quiet hours ended']);
@@ -439,6 +449,7 @@ startup.mark('http listen');
 // Every hold-up of the event loop from here on, with what began in it, for the first ten minutes (stalls.ts).
 const stalls = new StallWatch().begin();
 calendar?.start();
+noteWork('attention: first scoring');
 attention.start((events) => server.broadcast(events));
 ranker.onFit = () => {
   noteWork('attention: rescore all');
@@ -457,7 +468,10 @@ if (leftover.length) {
 }
 // New servers and renamed channels turn up whenever an adapter says so; unchanged places cost a hash.
 void categorizer.refresh();
-setInterval(() => void categorizer.refresh(), 5 * 60_000);
+setInterval(() => {
+  noteWork('categories');
+  void categorizer.refresh();
+}, 5 * 60_000);
 console.log(`dither-chat hub on ${tls ? 'https' : 'http'}://${hostname}:${port}${tls ? ` (plain http on ${plainPort}: adapters, CA download)` : ''}  data=${dataDir}${calendarAt ? `  calendar=${calendarAt}` : ''}`);
 startup.mark('the rest');
 // Ready once the event loop is free to answer: what the start queued (adapters starting, the first refresh) runs first.

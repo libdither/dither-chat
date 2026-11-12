@@ -2,7 +2,8 @@
  * The hub's background work in slices (docs/perf.md, "The hub's own stalls"). After a restart the embedder's refit
  * held the event loop for 10 to 40 s at a time, and the media archiver's scans for a second or more every minute, so
  * devices waited minutes for their bootstrap. Each is now a generator or loop that gives the loop a turn every few
- * thousand rows (slices.ts).
+ * thousand rows (slices.ts). Then live traffic: triage of each arriving message read its conversation's last 90 days
+ * for the activity features, 0.6 to 1.2 s for a busy channel every five minutes; it reads them a page at a time now.
  *
  * Counted, never timed: a test clock ends a slice at every chance, `onSlice` says what each one worked through, and no
  * slice may go over SLICE_ROWS (a row read, or an example visited once) by more than one step. The answers are the
@@ -12,11 +13,16 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ActivityStore } from '../src/activity.ts';
 import { DIMS, EmbeddingStore, Embeddings, fitProbe, fitProbeSteps, unit, type JevClient } from '../src/embeddings.ts';
 import { MediaArchiver } from '../src/mediaarchive.ts';
 import { SLICE_ROWS, sliced, whole, type SliceOptions } from '../src/slices.ts';
 import { noteWork, pathShape, StallWatch } from '../src/stalls.ts';
 import { Store, type AccountRow } from '../src/store.ts';
+import { Triage } from '../src/triage.ts';
+import { SELF_SQL } from '../src/interact.ts';
+import { SELF_SQL as RANK_SELF_SQL } from '../src/rankhistory.ts';
+import { selfIdentities } from '../src/embeddings.ts';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -233,6 +239,82 @@ describe('the media archiver', () => {
       expect(Math.max(...slices)).toBeLessThanOrEqual(256);
       // The walk turns at each file; the retries' scan read N - 100 and the expired links' all N, 256 at a time.
       expect(slices.filter((n) => n === 256).length).toBe(Math.floor((N - 100) / 256) + Math.floor(N / 256));
+    } finally {
+      store.db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('the adapter-event path', () => {
+  test("deciding on a message in a busy channel reads its log a page at a time, with the features read in one go", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dither-stalls-activity-'));
+    const store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
+    try {
+      const acc = store.createAccount({ network: 'discord', label: 'main', color: '#000', adapter: 'discord' });
+      store.ingest(acc, { t: 'status', status: 'online', self: { nativeId: 'me', displayName: 'Me' } });
+      store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'busy', shape: 'channel', name: 'busy' } });
+      const now = Date.UTC(2026, 10, 12, 12);
+      const N = 1200;
+      // Two months of a busy channel: others write, triage decided on each, a push now and then; you write now and then.
+      store.db.transaction(() => {
+        for (let i = 0; i < N; i++) {
+          const ts = now - 60 * DAY + i * 70 * MIN;
+          const mine = i % 10 === 9;
+          store.ingest(acc, { t: 'message', message: { nativeId: `m${i}`, conversation: 'busy', author: mine ? 'me' : `friend${i % 7}`, ts, body: `message ${i}` } });
+          if (!mine) {
+            const id = store.one<{ id: string }>('SELECT id FROM message WHERE native_id = ?', `m${i}`)!.id;
+            store.db.query(`INSERT INTO triage (message_id, decision, reasons, decided_by, created_at) VALUES (?, ?, '[]', 'rules', ?)`).run(id, i % 13 === 0 ? 'push' : 'drop', ts);
+          }
+        }
+      })();
+      const cid = store.one<{ id: string }>(`SELECT id FROM conversation WHERE native_id = 'busy'`)!.id;
+      const a = new ActivityStore(store, { featuresInTriage: true });
+      a.setSettings({ enabled: true, retentionDays: 365 });
+      a.featurePage = 100;
+      for (let k = 0; k < 4; k++) {
+        const t = now - (k + 1) * 7 * DAY;
+        const nid = a.notification({ kind: 'message', conversationId: cid }, t)!;
+        a.visits([{ id: `v${k}`, view: 'conversation', conversationId: cid, start: t + 3 * MIN, end: t + 5 * MIN, active: 90, source: 'notification', pushId: nid, closed: true, sent: 0 } as any], t + 6 * MIN);
+      }
+      const straight = new ActivityStore(store, { featuresInTriage: true }).features(cid, now)!;
+      expect(straight.conversation.pushes).toBe(4);
+      expect(straight.conversation.unpushedBursts).toBeGreaterThan(10);
+
+      store.ingest(acc, { t: 'message', message: { nativeId: 'new', conversation: 'busy', author: 'friend1', ts: now, body: 'are we on for tonight?' }, live: true });
+      const id = store.one<{ id: string }>(`SELECT id FROM message WHERE native_id = 'new'`)!.id;
+      const slices: number[] = [];
+      a.slices = everyChance(slices);
+      const d = await new Triage(store, a).decide(id, now);
+      expect(d!.features!.conversation).toEqual(straight.conversation);
+      // Pages of a hundred messages, a turn of the event loop after each: at most a page and one between turns.
+      expect(Math.max(...slices)).toBeLessThanOrEqual(a.featurePage + 1);
+      expect(slices.filter((n) => n > 1).length).toBeGreaterThanOrEqual(Math.floor(N / a.featurePage));
+      // Cached: the next message there reads nothing.
+      slices.length = 0;
+      await new Triage(store, a).decide(id, now + MIN);
+      expect(slices).toEqual([]);
+    } finally {
+      store.db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('the identities that are you', () => {
+  test('are found from the person that is you, not by reading every identity: once or twice for every message', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dither-stalls-self-'));
+    const store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
+    try {
+      const acc = store.createAccount({ network: 'discord', label: 'main', color: '#000', adapter: 'discord' });
+      store.ingest(acc, { t: 'status', status: 'online', self: { nativeId: 'me', displayName: 'Me' } });
+      const plan = (sql: string) => (store.db.query(`EXPLAIN QUERY PLAN ${sql}`).all() as { detail: string }[]).map((r) => r.detail);
+      for (const sql of [`SELECT * FROM ${SELF_SQL}`, `SELECT * FROM ${RANK_SELF_SQL}`]) {
+        const steps = plan(sql);
+        expect(steps).toContain('SEARCH i USING INDEX identity_person (person_id=?)');
+        expect(steps.some((d) => /^SCAN i\b/.test(d))).toBe(false);
+      }
+      expect([...selfIdentities(store.db)]).toEqual([store.accounts()[0].self_identity]);
     } finally {
       store.db.close();
       rmSync(dir, { recursive: true, force: true });

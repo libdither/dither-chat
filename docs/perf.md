@@ -462,6 +462,60 @@ slice's rows. No slice of the refit, the probe or the archiver's walks goes over
 probe's weights sliced are the same as straight through; a start refits once; picking for jev with no questions looks
 into nothing. The refit's times are printed (and on GitHub Actions put in the job's summary), not judged.
 
+### Live traffic (2026-11-12)
+
+With #107 deployed, the first restart's bootstrap answered in 0.4–1.1 s from the first poll, but the stall log's ten
+minutes said `82 of 200 ms or more`, the longest 7.2 s, 11 over a second, nearly all of them `triage` and small
+batches of adapter events: ordinary traffic, every minute or so, not only after the start. The same sealed copy with
+the copy's own last eleven minutes of traffic replayed through the manager's stand-in, at their pace (353 messages,
+mostly in busy Discord channels, with their replies, mentions and attachment kinds but made-up text, each author
+typing first, a tenth edited, presence changes and reactions at the copy's rates), did the same. The profile put it
+on triage's activity features (`activity.ts`, docs/activity.md), on with `DITHER_ACTIVITY_FEATURES=1` as on the live
+hub: for each conversation a decision read every message of its last 90 days with its triage row, and again every
+one of them to find yours, cached for five minutes. A busy channel is 80k messages there: 0.6–1.2 s at a load of 5,
+on the first message after each five minutes, and at a start for every busy channel at once. Over ten minutes it was
+10.5 s of the holds.
+
+- **Activity's features**: the messages come a page of 2,048 at a time, as a generator that triage runs in slices
+  (`featuresSliced`), and one walk gives both what others wrote and what you wrote. The features are the same: 100
+  of the copy's conversations (the 40 busiest, 60 DMs) compared with main's, sliced and straight through; worked out
+  straight through, those 100 took 3.4 s against main's 13.8 s (with the change below).
+- **The identities that are you** (`SELF_SQL` in interact.ts and rankhistory.ts, activity's, the embedder's
+  `selfIdentities`, the profile's and the graph's) are found from the person marked as you: the hub has 690 persons
+  and 15,791 identities, and the old plan read every identity and looked up its person, 28–55 ms (at a load of 15
+  to 60) each time, at least twice for every message triage decided on (the interaction fold's catch-up, the embedder
+  getting a new message ready) and once more for every read of activity's pages. 0.05 ms now, the same identities;
+  `test/stalls.test.ts` checks the plan.
+- Work that the stall log showed as `nothing noted` notes itself: attention's first scoring (the 702 ms at 0 ms),
+  the five-second notification sweep, the minute's votes, upkeep, categories, media info, mail's sync, and a flush
+  that sent something.
+- **One commit for a decision**: what triage writes for a message (the decision, the features it saw, attention's
+  note of it, the end of its pending row) is one transaction instead of four. The hub's database keeps SQLite's
+  default `synchronous` (FULL) in WAL mode, so every commit waits for an fsync, and bun:sqlite waits on the hub's
+  thread: on a machine whose disk is busy that wait is most of what is left. Counted with `strace -c` over three
+  minutes of the replay (86 messages): 876 fsyncs on main, 666 with this, about 7.7 a message (the ingest, its pending
+  row, the decision, the flush's journal and attention writes, the embedding, presence lines).
+
+The copy, sealed, main and this side by side over the same ten minutes of replayed traffic (each pair at the same
+load, which other work on the machine moved a lot), the hub's own stall lines; "without polls" leaves out the holds
+that had one of the test's own bootstrap requests in them (60 in ten minutes, each 0.2–1.5 s of the hub's thread):
+
+| | main | this |
+|---|---|---|
+| load 14 → 6: holds of 200 ms or more, their sum, the longest | 90, 41.9 s, 3.1 s | 64, 34.5 s, 2.7 s |
+| the same without polls | 58, 29.0 s, 1.5 s | 37, 23.5 s, 1.7 s |
+| load 3 → 42: holds, sum, longest | 118, 58.8 s, 1.9 s | 82, 40.1 s, 1.8 s |
+| the same without polls | 62, 29.5 s, 1.8 s | 24, 13.1 s, 1.7 s |
+| load 3–5, three minutes, under the profiler | | 10, 2.3 s, 0.38 s (none over 700 ms) |
+
+What is left is mostly the machine's load: at a load of 3 to 5 nothing of the traffic holds the hub for long, and
+under 40 to 80 the same few hundred milliseconds of writes and fsyncs a message take seconds. `PRAGMA synchronous =
+NORMAL`, the usual setting with WAL, would take the fsync out of each commit (they would come at checkpoints): no
+corruption on a crash, but a power cut could lose the last commits. That is a choice about the data, not made here.
+
+`test/stalls.test.ts` holds it: deciding on a message in a channel of 1,200 messages reads them a hundred at a time
+(a test's page) with a turn between, gets the features one read gets, and reads nothing the next time.
+
 ## The snapshot after each open (2026-11-11)
 
 Opening a conversation saves the device's snapshot 1.5 s later, when the page is idle (snapshot.ts). Opening one marks

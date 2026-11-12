@@ -17,7 +17,7 @@ import type { Triage } from './triage.ts';
 type Row = Record<string, any>;
 
 /** Ids that are you: the accounts' own, and the identities of the person marked as you. */
-export const SELF_SQL = `(SELECT self_identity FROM account WHERE self_identity IS NOT NULL UNION SELECT i.id FROM identity i JOIN person p ON p.id = i.person_id WHERE p.is_self = 1)`;
+export const SELF_SQL = `(SELECT self_identity FROM account WHERE self_identity IS NOT NULL UNION SELECT i.id FROM person p CROSS JOIN identity i ON i.person_id = p.id WHERE p.is_self = 1)`;
 /** What the inbox always lists (attention.ts LISTED). */
 const LISTED = `(c.shape IN ('direct', 'group', 'self') OR (c.shape = 'channel' AND NOT EXISTS (
   SELECT 1 FROM space_edge e WHERE e.child_kind = 'conversation' AND e.child_id = c.id)))`;

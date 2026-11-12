@@ -11,6 +11,7 @@ import type * as P from '@dither-chat/protocol';
 import { DEFAULT_ACTIVITY, NOTIFICATION_EVENTS, RETENTION_CHOICES, VISIT_SOURCES, VISIT_VIEWS } from '@dither-chat/protocol';
 import type { Store } from './store.ts';
 import type { NumericFeatures } from './interact.ts';
+import { sliced, whole, type SliceOptions } from './slices.ts';
 
 type Row = Record<string, any>;
 
@@ -43,7 +44,7 @@ const EVENT_COLUMN: Partial<Record<P.NotificationEventKind, string>> = {
 };
 
 /** Identities that are you: the accounts' own, and the identities of the person marked as you. */
-const SELF = `(SELECT self_identity FROM account WHERE self_identity IS NOT NULL UNION SELECT i.id FROM identity i JOIN person p ON p.id = i.person_id WHERE p.is_self = 1)`;
+const SELF = `(SELECT self_identity FROM account WHERE self_identity IS NOT NULL UNION SELECT i.id FROM person p CROSS JOIN identity i ON i.person_id = p.id WHERE p.is_self = 1)`;
 
 const str = (v: unknown, max: number): string | null => (typeof v === 'string' && v && v.length <= max ? v : null);
 const int = (v: unknown, lo: number, hi: number): number => Math.min(Math.max(Math.floor(Number(v) || 0), lo), hi);
@@ -421,7 +422,12 @@ export class ActivityStore {
     return r?.person_id ?? null;
   }
 
-  private gather(convs: string[], personId: string | null, since: number): FeatureInput {
+  /**
+   * What the features are made of. The messages are a busy channel's whole 90 days (80k rows on the live hub, most of
+   * a second), so they come a page at a time, conversation by conversation in the order one read over the list gave
+   * them (an IN list is taken sorted), then by time and row: a generator, which triage runs in slices.
+   */
+  private *gatherSteps(convs: string[], personId: string | null, since: number): Generator<number, FeatureInput> {
     const ph = convs.map(() => '?').join(',');
     const pushes = (this.db.query(`SELECT id, sent_at, tapped_at, visit_id FROM notification WHERE kind = 'message' AND conversation_id IN (${ph}) AND sent_at >= ?`).all(...convs, since) as Row[]).map((r) => ({
       id: r.id,
@@ -429,44 +435,79 @@ export class ActivityStore {
       tappedAt: r.tapped_at,
       visitId: r.visit_id,
     }));
-    const incoming = (
-      this.db
-        .query(`SELECT m.ts, t.decision FROM message m JOIN triage t ON t.message_id = m.id WHERE m.conversation_id IN (${ph}) AND m.ts >= ? AND (m.author_id IS NULL OR m.author_id NOT IN ${SELF})`)
-        .all(...convs, since) as Row[]
-    ).map((r) => ({ ts: r.ts, pushed: r.decision === 'push' || r.decision === 'quiet' || r.decision === 'digest' }));
+    yield pushes.length + 1;
+    // One walk over the conversation's window gives both what others wrote that triage decided on and what you wrote.
+    const incoming: FeatureInput['incoming'] = [];
+    const own: number[] = [];
+    const page = this.featurePage;
+    const q = this.db.query(
+      `SELECT m.rowid AS rid, m.ts, t.decision, t.message_id IS NOT NULL AS triaged, m.author_id IN ${SELF} AS mine
+       FROM message m LEFT JOIN triage t ON t.message_id = m.id
+       WHERE m.conversation_id = ?1 AND m.ts >= ?2 AND (m.ts > ?2 OR m.rowid > ?3) ORDER BY m.ts, m.rowid LIMIT ?4`,
+    );
+    for (const c of [...convs].sort()) {
+      // A page starts where the last ended: (ts, row) after its last one.
+      for (let after: [number, number] = [since, -1]; ; ) {
+        const rows = q.all(c, after[0], after[1], page) as Row[];
+        for (const r of rows) {
+          if (r.mine) own.push(r.ts);
+          else if (r.triaged) incoming.push({ ts: r.ts, pushed: r.decision === 'push' || r.decision === 'quiet' || r.decision === 'digest' });
+        }
+        yield rows.length + 1;
+        if (rows.length < page) break;
+        after = [rows[rows.length - 1].ts, rows[rows.length - 1].rid];
+      }
+    }
     const visits = (
       this.db
         .query(`SELECT id, start_at, end_at, active FROM visit WHERE (conversation_id IN (${ph}) OR (? IS NOT NULL AND person_id = ?)) AND view IN ('conversation', 'person') AND start_at >= ? ORDER BY start_at`)
         .all(...convs, personId, personId, since) as Row[]
     ).map((r) => ({ id: r.id, start: r.start_at, end: r.end_at, active: r.active }));
-    const own = (this.db.query(`SELECT ts FROM message WHERE conversation_id IN (${ph}) AND ts >= ? AND author_id IN ${SELF}`).all(...convs, since) as Row[]).map((r) => r.ts as number);
+    yield visits.length + 1;
     return { pushes, incoming, visits, own };
   }
+
+  /** Messages read a page at a time by `gatherSteps` (a test's smaller one shows the pages). */
+  featurePage = 2048;
+  /** How `featuresSliced` shares the hub's thread (slices.ts); a test's clock and pauses. */
+  slices: SliceOptions = {};
 
   /** What the log says about a conversation (and, for a DM, the person), cached for a few minutes. */
   features(cid: string, now = Date.now()): Features | null {
     const hit = this.cache.get(cid);
     if (hit && now - hit.at < FEATURE_TTL) return hit.v;
-    const c = this.db.query('SELECT id, shape FROM conversation WHERE id = ?').get(cid) as Row | null;
-    let v: Features | null = null;
-    if (c) {
-      const since = now - FEATURE_WINDOW;
-      const peer = c.shape === 'direct' ? this.peerOf(cid) : null;
-      const conversation = placeFeatures('conversation', cid, this.gather([cid], null, since));
-      let person: P.PlaceActivity | null = null;
-      if (peer) {
-        const convs = (
-          this.db
-            .query(`SELECT DISTINCT c.id FROM conversation c JOIN participant pa ON pa.conversation_id = c.id JOIN identity i ON i.id = pa.identity_id WHERE c.shape = 'direct' AND i.person_id = ?`)
-            .all(peer) as Row[]
-        ).map((r) => r.id as string);
-        person = placeFeatures('person', peer, this.gather(convs.length ? convs : [cid], peer, since));
-      }
-      v = { conversation, person };
-    }
+    return this.keepFeatures(cid, now, whole(this.featuresSteps(cid, now)));
+  }
+
+  /** The same, worked out a slice at a time when it is not cached (slices.ts): triage's way, so the hub answers meanwhile. */
+  async featuresSliced(cid: string, now = Date.now(), o: SliceOptions = this.slices): Promise<Features | null> {
+    const hit = this.cache.get(cid);
+    if (hit && now - hit.at < FEATURE_TTL) return hit.v;
+    return this.keepFeatures(cid, now, await sliced('activity features', this.featuresSteps(cid, now), o));
+  }
+
+  private keepFeatures(cid: string, now: number, v: Features | null): Features | null {
     if (this.cache.size > 2000) this.cache.clear();
     this.cache.set(cid, { at: now, v });
     return v;
+  }
+
+  private *featuresSteps(cid: string, now: number): Generator<number, Features | null> {
+    const c = this.db.query('SELECT id, shape FROM conversation WHERE id = ?').get(cid) as Row | null;
+    if (!c) return null;
+    const since = now - FEATURE_WINDOW;
+    const peer = c.shape === 'direct' ? this.peerOf(cid) : null;
+    const conversation = placeFeatures('conversation', cid, yield* this.gatherSteps([cid], null, since));
+    let person: P.PlaceActivity | null = null;
+    if (peer) {
+      const convs = (
+        this.db
+          .query(`SELECT DISTINCT c.id FROM conversation c JOIN participant pa ON pa.conversation_id = c.id JOIN identity i ON i.id = pa.identity_id WHERE c.shape = 'direct' AND i.person_id = ?`)
+          .all(peer) as Row[]
+      ).map((r) => r.id as string);
+      person = placeFeatures('person', peer, yield* this.gatherSteps(convs.length ? convs : [cid], peer, since));
+    }
+    return { conversation, person };
   }
 
   /** The features triage saw, kept with its decision. */

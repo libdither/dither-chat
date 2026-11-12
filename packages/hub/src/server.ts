@@ -367,6 +367,7 @@ export class HubServer {
 
   flush() {
     const events = this.store.flush();
+    if (events.length) noteWork('flush');
     if (this.opts.mail) events.push(...this.opts.mail.flush());
     const a = this.opts.attention;
     if (a) {
