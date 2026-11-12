@@ -63,3 +63,28 @@ export function whenIdle(fn: () => void, timeout = 300): () => void {
   const id = setTimeout(fn, 16);
   return () => clearTimeout(id);
 }
+
+const turns: (() => void)[] = [];
+let waiting: (() => void) | null = null;
+
+/**
+ * `fn` in an idle moment of its own, after those asked for before it: parts of a page drawn later (ui/Later.tsx) come
+ * one per task, not all in the first idle one. Returns a cancel.
+ */
+export function inTurn(fn: () => void): () => void {
+  turns.push(fn);
+  pump();
+  return () => {
+    const i = turns.indexOf(fn);
+    if (i >= 0) turns.splice(i, 1);
+  };
+}
+
+function pump() {
+  if (waiting || !turns.length) return;
+  waiting = whenIdle(() => {
+    waiting = null;
+    turns.shift()?.();
+    pump();
+  });
+}

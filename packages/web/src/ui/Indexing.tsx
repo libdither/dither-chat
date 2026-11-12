@@ -12,7 +12,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { clock, dayLabel } from '../format.ts';
 import { convLabel, convTitle } from '../model.ts';
 import { api, db, go, rev, toast } from '../state.ts';
-import { Modal, NetGlyph } from './bits.tsx';
+import { Modal, NetGlyph, showSection } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { Loading } from './Loader.tsx';
 import { MailKeepLazy } from './mail/lazy.tsx';
@@ -28,7 +28,7 @@ const STATE_LABEL: Record<P.JobState, string> = { queued: 'Queued', running: 'Ru
 /** Opens Settings at Indexing. */
 export function openIndexing() {
   go({ view: 'settings' });
-  setTimeout(() => document.getElementById('set-indexing')?.scrollIntoView({ block: 'start' }), 120);
+  setTimeout(() => showSection('set-indexing', 'auto'), 120);
 }
 
 const able = (ids: Iterable<string>, capability: P.Capability) => [...ids].some((id) => {

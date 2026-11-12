@@ -108,9 +108,15 @@ export function MailSidebar({ list, active }: { list?: string; active?: string }
     el.classList.toggle('fade-r', el.scrollLeft + el.clientWidth < el.scrollWidth - 2);
   };
   // One row that scrolls sideways: the chosen chip is brought into it.
+  const opened = useRef(false);
   useLayoutEffect(() => {
     const el = row.current;
     const on = el?.querySelector<HTMLElement>('.chip-btn.on');
+    // Mail opening on its first chip: nothing to scroll, and the ResizeObserver below sets the edges once the row is
+    // laid out. Measuring here forced the layout of the whole page into the task that drew it (140 ms at 4x on a phone).
+    const first = !opened.current && on === el?.querySelector('.chip-btn');
+    if (el) opened.current = true;
+    if (first) return;
     if (el && on) {
       const r = el.getBoundingClientRect();
       const c = on.getBoundingClientRect();

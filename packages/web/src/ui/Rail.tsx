@@ -19,6 +19,7 @@ import { OrganizeView, SortIcon, sortEntries, startOrganize, useFlip } from './R
 import { startInbox } from '../inbox.ts';
 import { openMenu } from './ContextMenu.tsx';
 import { useShown } from './more.tsx';
+import { whenIdle } from '../slices.ts';
 
 /** `track`: its key for button counts (clicks.ts), never the title, which may be a name. */
 function RailItem({ active, unread, badge, title, sub, onClick, children, dnd, menu, class: cls, track }: { active: boolean; unread?: boolean; badge?: number; title: string; sub?: string; onClick: () => void; children: any; dnd?: Record<string, unknown>; menu?: () => MenuSpec | null; class?: string; track: string }) {
@@ -209,6 +210,16 @@ function inboxMenu(): MenuSpec {
 function RailMail({ active }: { active: boolean }) {
   mailRev.value;
   const s = db.mail;
+  // Nothing hovers on a phone: Mail's chunk loads once the app has been up a while and is idle, so its first open
+  // draws at once instead of fetching, parsing and drawing in one go (docs/perf.md).
+  useEffect(() => {
+    let cancel = () => {};
+    const t = setTimeout(() => (cancel = whenIdle(() => db.mail.access.state !== 'off' && void preloadMail().catch(() => {}), 3000)), 3000);
+    return () => {
+      clearTimeout(t);
+      cancel();
+    };
+  }, []);
   if (s.access.state === 'off') return null;
   const unread = unreadInbox(s);
   return (
