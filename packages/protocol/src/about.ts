@@ -156,6 +156,66 @@ export function addMembersNotBuilt(network: Network): string {
   return `Adding people on ${NETWORK_META[network].name} isn't built for this account yet.`;
 }
 
+/** What making a group takes on one network (the `createGroup` command). */
+export interface GroupRule {
+  /** What the network calls it, lower case, for sentences: "group DM", "group", "room". */
+  noun: string;
+  /** Whom the account may put in it, as for adding people (AddWho). */
+  who: AddWho;
+  /** add: they are in at once. invite: they get an invite and are in once they accept (Matrix). */
+  mode: 'add' | 'invite';
+  name: 'required' | 'optional';
+  nameMax: number;
+  /** The fewest and the most other people at the start. */
+  min: number;
+  max: number;
+}
+
+/** The networks where a group can be made from here. WhatsApp is left out on purpose (createGroupNotBuilt). */
+export const GROUP_RULES: Partial<Record<Network, GroupRule>> = {
+  discord: { noun: 'group DM', who: 'friends', mode: 'add', name: 'optional', nameMax: 100, min: 2, max: 9 },
+  signal: { noun: 'group', who: 'known', mode: 'add', name: 'required', nameMax: 32, min: 1, max: 10 },
+  matrix: { noun: 'room', who: 'known', mode: 'invite', name: 'required', nameMax: 255, min: 1, max: 10 },
+  telegram: { noun: 'group', who: 'known', mode: 'add', name: 'required', nameMax: 128, min: 1, max: 10 },
+};
+
+/** What `createGroup` answers, in native ids. */
+export interface CreateGroupResult {
+  /** The new conversation. */
+  conversation: string;
+  /** In it now. */
+  added: string[];
+  /** Invited: in once they accept (Matrix; Signal when it does not have their profile yet). */
+  invited?: string[];
+  /** Refused by the network, each with its sentence. */
+  failed?: { id: string; reason: string }[];
+  /** Anything the owner should know ("Telegram made it a basic group"). */
+  notes?: string[];
+}
+
+/**
+ * What is wrong with a new group before anything is asked of the network, in words; null when it may go. The name is
+ * trimmed first, an empty optional name is no name, and its length is counted in characters (code points).
+ */
+export function createGroupProblem(network: Network, name: string | undefined, people: number): string | null {
+  const r = GROUP_RULES[network];
+  if (!r) return createGroupNotBuilt(network);
+  const what = `A ${NETWORK_META[network].name} ${r.noun}`;
+  const them = (n: number) => (r.who === 'friends' ? (n === 1 ? 'friend' : 'friends') : n === 1 ? 'person' : 'people');
+  if (people < r.min) return `${what} starts with at least ${r.min} ${them(r.min)}`;
+  if (people > r.max) return `${what} starts with at most ${r.max} ${them(r.max)}`;
+  const n = (name ?? '').trim();
+  if (!n) return r.name === 'required' ? `Give the ${r.noun} a name` : null;
+  if ([...n].length > r.nameMax) return `${what}'s name is at most ${r.nameMax} characters`;
+  return null;
+}
+
+/** What a network or account that cannot make a group says instead. */
+export function createGroupNotBuilt(network: Network): string {
+  if (network === 'whatsapp') return 'Making groups from here is left out on WhatsApp, which watches for it: make it on your phone and it shows up here.';
+  return `Making groups on ${NETWORK_META[network].name} isn't built for this account yet.`;
+}
+
 /** What `about` answers, in native ids. */
 export interface About {
   /** The network's word for it: "Group", "Server", "Room", "Channel", "Community". */

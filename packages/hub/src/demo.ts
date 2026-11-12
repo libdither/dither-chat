@@ -1224,6 +1224,10 @@ const FIRST_SPACES = new Map(SPACES.map((x) => [x, x.fact]));
 
 const lc = (s: string) => s[0].toUpperCase() + s.slice(1);
 const ADDS_MEMBERS = new Set<P.Network>(['discord', 'signal', 'matrix']);
+/** Making groups (docs/group-settings.md "Making a group"): not WhatsApp, which leaves it out on purpose. */
+const MAKES_GROUPS = new Set<P.Network>(['discord', 'signal', 'matrix', 'telegram']);
+/** Telegram's privacy refusal when making a group: Noor lets nobody add her to groups. */
+const TG_PRIVATE = TG.noor.nativeId;
 const NETWORK_META_NAME: Record<P.Network, string> = Object.fromEntries(Object.entries(NETWORK_META).map(([k, m]) => [k, m.name])) as Record<P.Network, string>;
 
 const running = new Map<AccKey, DemoAdapter>();
@@ -1772,7 +1776,7 @@ class DemoAdapter implements InprocAdapter {
   }
 
   private findConv(nativeId: string): DemoConv | undefined {
-    return CONVS.find((c) => c.fact.nativeId === nativeId && c.acc.includes(this.key));
+    return this.made.get(nativeId) ?? CONVS.find((c) => c.fact.nativeId === nativeId && c.acc.includes(this.key));
   }
 
   private findSpace(nativeId: string): DemoSpace | undefined {
@@ -2087,16 +2091,55 @@ class DemoAdapter implements InprocAdapter {
     return { added, ...(invited.length ? { invited } : {}), ...(failed.length ? { failed } : {}), about: this.about(target) };
   }
 
+  /**
+   * Make a group as each network would: Discord only with friends (at least 2 of them, or no group), Signal adds
+   * (someone whose profile it lacks, Dad here, comes in invited), Matrix invites everyone, Telegram refuses Noor for her
+   * privacy settings. The new conversation's fact goes out before the reply; it takes sends, and this account is its admin.
+   */
+  private made = new Map<string, DemoConv>();
+  private createGroup(name: string | undefined, people: string[]): P.CreateGroupResult {
+    const net = NETWORK_META_NAME[this.network];
+    const added: string[] = [];
+    const invited: string[] = [];
+    const failed: { id: string; reason: string }[] = [];
+    const known = Object.values(POOLS[this.network] ?? {});
+    for (const id of people) {
+      if (!known.some((i) => i.nativeId === id)) failed.push({ id, reason: `${net} does not know them.` });
+      else if (this.network === 'discord' && this.adds.current(id) !== 'friend') failed.push({ id, reason: 'Discord adds only your friends to a group.' });
+      else if (this.network === 'telegram' && id === TG_PRIVATE) failed.push({ id, reason: "Their privacy settings don't let you add them to groups." });
+      else if (this.network === 'matrix' || (this.network === 'signal' && id === S.dad.nativeId)) invited.push(id);
+      else added.push(id);
+    }
+    if (this.network === 'discord' && added.length < 2) throw new Error(failed.length ? `${failed[0].reason} A group DM needs at least 2 of your friends.` : 'A group DM needs at least 2 of your friends.');
+    const k = `made-${this.key}-${Date.now()}-${this.made.size}`;
+    const nativeId =
+      this.network === 'signal' ? sgroup(k, '', []).nativeId : this.network === 'matrix' ? room(k, 'matrix.org') : this.network === 'telegram' ? `chat:${h('tc' + k).readUInt32BE(0)}` : snow(k);
+    const fact: P.ConversationFact = {
+      nativeId,
+      shape: 'group',
+      ...(name ? { name } : {}),
+      participants: [this.self.nativeId, ...added],
+      ...(this.network === 'signal' || this.network === 'matrix' ? { encrypted: true } : {}),
+    };
+    this.made.set(nativeId, { acc: [this.key], fact, msgs: [] });
+    ADMIN_IN[this.key].push(nativeId);
+    this.emit({ t: 'conversation', conversation: fact });
+    if (this.network === 'signal' || this.network === 'telegram')
+      this.emit({ t: 'message', live: false, message: { nativeId: `${nativeId}~made`, conversation: nativeId, author: this.self.nativeId, ts: Date.now(), kind: 'system', body: `You created the group${name ? ` "${name}"` : ''}.` } });
+    return { conversation: nativeId, added, ...(invited.length ? { invited } : {}), ...(failed.length ? { failed } : {}), ...(this.network === 'telegram' ? { notes: ['Telegram made it a basic group'] } : {}) };
+  }
+
   private hello() {
     // Discord's demo accounts forward natively, as the real adapter does; the others leave it to the hub.
     // Matrix has no bio, so its demo account cannot edit one.
     const caps: P.Capability[] = ['send', 'history', 'react', 'markRead', 'threads', 'edit', 'redact', 'sendMedia', 'openDirect', 'typing', 'about', 'configure', 'profile', ...(this.network === 'matrix' ? [] : (['editProfile'] as const)), 'resolve', 'join', 'connect', 'requests', ...(LISTED.has(this.network) ? (['relationships', 'disconnect'] as const) : [])];
     // Adding people to groups on Discord, Signal and Matrix; WhatsApp's adapter leaves it out on purpose
-    // (docs/group-settings.md), and the demo Telegram has no group About of its own.
+    // (docs/group-settings.md), and the demo Telegram has no group About of its own. Making groups everywhere but WhatsApp.
     const all: P.Capability[] = [
       ...caps,
       ...(this.network === 'discord' ? (['forward', 'members', 'walkMembers', 'listThreads'] as const) : []),
       ...(ADDS_MEMBERS.has(this.network) ? (['addMembers'] as const) : []),
+      ...(MAKES_GROUPS.has(this.network) ? (['createGroup'] as const) : []),
       // The networks whose servers search (netsearch.ts).
       ...(this.network === 'discord' || this.network === 'matrix' ? (['search'] as const) : []),
     ];
@@ -2488,6 +2531,13 @@ class DemoAdapter implements InprocAdapter {
       case 'configure':
         try {
           reply(cmd.t === 'about' ? this.about(cmd.target) : this.configure(cmd.target, cmd.change));
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
+        break;
+      case 'createGroup':
+        try {
+          reply(this.createGroup(cmd.name, cmd.people));
         } catch (e) {
           this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
         }

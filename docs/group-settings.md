@@ -205,6 +205,70 @@ The rules the hub keeps:
 - One person refused (privacy settings, not a friend, banned) does not stop the others: each comes back with its
   sentence. A timeout may still have gone through, and the panel says so.
 
+## Making a group
+
+One of your accounts makes a new group on its own network, with people that account knows. A group lives on one
+network: nothing bridges two. It follows the rules of adding people, above.
+
+| Network | What is made | Who can be picked | How many | Name | What making it does |
+|---|---|---|---|---|---|
+| Discord | a group DM | your friends | 2 to 9 others (10 in all) | optional, up to 100; without one the client names it after its people | the web client's own action for a new group DM, in the sandbox; the name is set after |
+| Signal | a group | anyone the account knows | 1 to 10 | required, up to 32 | one signal-cli `updateGroup` with a name and members and no group id; someone whose profile key it lacks comes in invited |
+| Matrix | a room | anyone the account knows | 1 to 10 | required, up to 255 | `POST /createRoom` `{ name, invite, preset: 'private_chat' }`, encrypted as the adapter's own DMs are where it can; everyone is invited, in once they accept |
+| Telegram | a group | anyone the account knows (their privacy settings may refuse) | 1 to 10 | required, up to 128 | `messages.createChat { users, title }`; whom it could not add (`missingInvitees`) comes back refused with the privacy sentence |
+| WhatsApp | — | — | — | — | left out, for the reason adding people is: make it on your phone and it shows up here. The bridge has a test that it never creates a group |
+
+The numbers are `GROUP_RULES` in `packages/protocol/src/about.ts`. "How many" counts the others, not you. A name is
+trimmed first, and its length is counted in characters.
+
+The rules the hub keeps:
+
+- **Only from a click** on the hub's page: POST `/api/groups` wants a browser's Origin.
+- **The rules first** (`createGroupProblem`): too few or too many people, no name where one is needed, a name too
+  long. Then each person: someone of another network or the account itself is refused. Nothing reaches the network.
+- **Paced per account**, in `add_pace` (docs/add.md): one `groups` slot, 5 a day and 3 on Telegram, and one `members`
+  slot per person, the same slots adding people takes. All or none: past either, nothing goes out and nothing is
+  taken. A refusal by the adapter (the group was not made) gives every slot back. A timeout does not: the group may
+  have been made.
+- **Who is offered** is the pool adding people offers, for the rule's `who`: friends on Discord, everyone the account
+  knows elsewhere. Being in a group already is no reason to leave someone out. Never the account itself, a bot, or
+  someone whose request still waits on you.
+- **Logged** in the account's log: `[add] made <noun> "<name>" with …; invited …; could not add …`.
+- One person refused does not stop the others, as long as the group is made. On Discord, fewer than 2 friends left
+  means no group, and the network's sentence comes back.
+
+The protocol: capability `createGroup`, command `{ t: 'createGroup', name?, people }` (native ids), answered after
+the new conversation's fact with
+
+```ts
+interface CreateGroupResult { conversation: string; added: string[]; invited?: string[]; failed?: { id; reason }[]; notes?: string[] }
+```
+
+The routes:
+
+| Route | Answers |
+|---|---|
+| GET `/api/groups/candidates` (`?account=` for one) | `GroupCandidatesView`: each connected account that can make a group, its rule and whom it could put in one, people it talked with lately first; `unable`: your other connected chat accounts and why each cannot |
+| POST `/api/groups` `{ accountId, name?, identities }` | `CreateGroupView`: the new conversation's view, `added`, `invited`, `failed` with each sentence, `notes` (identity ids) |
+
+400 for a bad shape or a rule, 404 for no such account or person, 400 for someone of another network or the account
+itself, 409 for an account that cannot (`createGroupNotBuilt`) or is not connected, 429 past the pace, 502 the
+network's sentence (or an answer naming no conversation the hub has), 504 no answer in 90 seconds ("It may still have
+gone through: look again in a minute").
+
+The demo accounts make groups as the real ones would: Discord refuses anyone who is not a friend, Signal invites Dad
+(whose profile it lacks), Matrix invites everyone, and Telegram refuses Noor for her privacy settings and notes that
+it made a basic group. A demo group takes sends.
+
+Checked: the rules (`packages/protocol/test/groups.test.ts`) and the hub (`packages/hub/test/create-group.test.ts`,
+against the demo adapters run in process): who is offered per account, the refusals before anything reaches an
+adapter, the pace for both kinds and its give-back, each network's answer, WhatsApp's line, the conversation view in
+the answer, the log line, and the route's Origin.
+
+Not checked: no group has been made on a real network. Worth a live look first, on a test account: Discord's
+client action and what it does with a name and with someone who is not a friend; which Signal members come back
+pending; whether a Matrix room comes out encrypted; Telegram's `missingInvitees` and how it paces new groups.
+
 ## The protocol
 
 ```ts

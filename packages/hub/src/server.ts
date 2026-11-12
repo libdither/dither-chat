@@ -37,6 +37,7 @@ import { TypingGate } from './typing.ts';
 import { hostAllowed, hostNames } from './hosts.ts';
 import { fetchPublicToFile } from './fetchsafe.ts';
 import { AboutError, Abouts } from './about.ts';
+import { Groups } from './groups.ts';
 import { People } from './people.ts';
 import { peopleGraph } from './graph.ts';
 import type { MailHub } from './mail/index.ts';
@@ -176,6 +177,7 @@ export class HubServer {
   private clicks: ClickCounts;
   readonly calls: Calls;
   readonly abouts: Abouts;
+  readonly groups: Groups;
   readonly people: People;
   /** Joining, adding people, and requests waiting on you (add.ts, docs/add.md). */
   readonly adding: Adding;
@@ -220,6 +222,7 @@ export class HubServer {
       pickAccount: (c, a) => this.pickAccount(c, a),
       note: (a, line) => sup.note(a, line),
     });
+    this.groups = new Groups({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line) });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.adding = new Adding({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), liveView: (a) => !!sup.liveViewUrl?.(a) || !!store.account(a)?.live_view });
     sup.calls = this.calls;
@@ -802,6 +805,20 @@ export class HubServer {
           this.flush();
           return ok(v);
         }
+      } catch (e) {
+        if (e instanceof AboutError) return bad(e.message, e.status);
+        throw e;
+      }
+    }
+    // Making a group (groups.ts, docs/group-settings.md): who each account could put in one, and making it.
+    if (path === '/api/groups/candidates' && method === 'GET') return ok(this.groups.candidates(url.searchParams.get('account') ?? undefined));
+    if (path === '/api/groups' && method === 'POST') {
+      // A click on the hub's own page: a browser sends Origin, and the server has refused any other site's.
+      if (!req.headers.get('origin')) return bad('Groups are made from the app itself', 403);
+      try {
+        const v = await this.groups.create(await body<{ accountId?: unknown; name?: unknown; identities?: unknown }>());
+        this.flush();
+        return ok(v);
       } catch (e) {
         if (e instanceof AboutError) return bad(e.message, e.status);
         throw e;

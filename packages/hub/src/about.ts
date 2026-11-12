@@ -40,7 +40,7 @@ export class AboutError extends Error {
   }
 }
 
-const caps = (store: Store, accountId: string): P.Capability[] => JSON.parse(store.account(accountId)?.capabilities ?? '[]');
+export const caps = (store: Store, accountId: string): P.Capability[] => JSON.parse(store.account(accountId)?.capabilities ?? '[]');
 
 export class Abouts {
   constructor(private d: AboutDeps) {}
@@ -117,7 +117,6 @@ export class Abouts {
     if (!t) throw new AboutError('no such conversation', 404);
     const accountId = this.account('conversation', id, requested);
     if (!accountId) throw new AboutError('None of your accounts is in this conversation.', 409);
-    const acc = this.d.store.account(accountId)!;
     let about = this.kept(id, accountId)?.about ?? null;
     if (!about && this.d.online(accountId) && caps(this.d.store, accountId).includes('about')) {
       about = await this.d.command<P.About>(accountId, { t: 'about', target: { kind: 'conversation', nativeId: t.nativeId } }, 30_000).catch(() => null);
@@ -125,43 +124,14 @@ export class Abouts {
     }
     const adding = about?.adding;
     const who: P.AddWho = adding?.who ?? 'known';
-    const db = this.d.store.db;
-    addTables(db);
-    const inIt = new Set((db.query('SELECT identity_id FROM participant WHERE conversation_id = ?').all(id) as { identity_id: string }[]).map((r) => r.identity_id));
+    const inIt = new Set((this.d.store.db.query('SELECT identity_id FROM participant WHERE conversation_id = ?').all(id) as { identity_id: string }[]).map((r) => r.identity_id));
     for (const m of about?.members?.list ?? []) inIt.add(hubId('idn', t.network, m.id));
-    const links = new Map((db.query(`SELECT identity_id, relationship FROM person_link WHERE account_id = ? AND relationship IN ('friend', 'contact')`).all(accountId) as { identity_id: string; relationship: P.PersonRelationship }[]).map((r) => [r.identity_id, r.relationship]));
-    // When this account last had a message with each person in a direct conversation.
-    const talked = new Map(
-      (
-        db
-          .query(
-            `SELECT p.identity_id AS id, MAX(c.last_message_at) AS at FROM vantage v JOIN conversation c ON c.id = v.target_id AND c.shape = 'direct'
-             JOIN participant p ON p.conversation_id = c.id WHERE v.account_id = ? AND v.target_kind = 'conversation' GROUP BY p.identity_id`,
-          )
-          .all(accountId) as { id: string; at: number | null }[]
-      ).map((r) => [r.id, r.at ?? 0]),
-    );
-    const pool = new Set<string>(who === 'friends' ? [...links].filter(([, r]) => r === 'friend').map(([i]) => i) : [...links.keys(), ...talked.keys()]);
-    if (who === 'known')
-      for (const r of db
-        .query(`SELECT DISTINCT p.identity_id AS id FROM vantage v JOIN conversation c ON c.id = v.target_id AND c.shape = 'group' JOIN participant p ON p.conversation_id = c.id WHERE v.account_id = ? AND v.target_kind = 'conversation'`)
-        .all(accountId) as { id: string }[])
-        pool.add(r.id);
-    // Nobody whose request is still waiting on you (a message request, a friend request): adding them would answer it.
-    const asking = new Set((db.query('SELECT from_id FROM add_request WHERE account_id = ? AND from_id IS NOT NULL').all(accountId) as { from_id: string }[]).map((r) => r.from_id));
-    const ids = [...pool].filter((i) => !inIt.has(i) && !asking.has(i) && i !== acc.self_identity && !this.d.store.isSelf(i));
-    const rows = this.d.store.identitiesByIds(ids).filter((i) => i.network === t.network && !i.isBot);
-    const name = (i: P.IdentityView) => (i.personId ? this.d.store.one<{ name: string }>('SELECT name FROM person WHERE id = ?', i.personId)?.name : null) ?? i.displayName ?? i.handle ?? i.nativeId;
-    const named = rows.map((i) => ({ i, at: talked.get(i.id) ?? 0, name: name(i).toLocaleLowerCase() }));
-    named.sort((a, b) => b.at - a.at || a.name.localeCompare(b.name));
-    const shown = named.slice(0, CANDIDATES_MAX);
     return {
       accountId,
       who,
       mode: adding?.mode ?? 'add',
       ...(adding?.room !== undefined ? { room: adding.room } : {}),
-      candidates: shown.map(({ i, at }) => ({ identityId: i.id, ...(links.get(i.id) ? { relationship: links.get(i.id) } : {}), ...(at ? { lastTalked: at } : {}) })),
-      identities: shown.map((x) => x.i),
+      ...candidatePool(this.d.store, accountId, t.network, who, inIt),
     };
   }
 
@@ -335,6 +305,47 @@ export class Abouts {
       canConfigure,
     };
   }
+}
+
+/**
+ * Whom this account could put in a group on its network (adding people, making a group): its friends where the network
+ * takes only friends, else its contacts and the people it has a direct conversation with, else also everyone in its
+ * other groups. People it talked with lately first, at most CANDIDATES_MAX; nobody in `inIt`, nobody whose request
+ * still waits on you (adding them would answer it), and never the account itself or a bot.
+ */
+export function candidatePool(store: Store, accountId: string, network: P.Network, who: P.AddWho, inIt: ReadonlySet<string> = new Set()): Pick<P.MemberCandidatesView, 'candidates' | 'identities'> {
+  const db = store.db;
+  addTables(db);
+  const acc = store.account(accountId)!;
+  const links = new Map((db.query(`SELECT identity_id, relationship FROM person_link WHERE account_id = ? AND relationship IN ('friend', 'contact')`).all(accountId) as { identity_id: string; relationship: P.PersonRelationship }[]).map((r) => [r.identity_id, r.relationship]));
+  // When this account last had a message with each person in a direct conversation.
+  const talked = new Map(
+    (
+      db
+        .query(
+          `SELECT p.identity_id AS id, MAX(c.last_message_at) AS at FROM vantage v JOIN conversation c ON c.id = v.target_id AND c.shape = 'direct'
+           JOIN participant p ON p.conversation_id = c.id WHERE v.account_id = ? AND v.target_kind = 'conversation' GROUP BY p.identity_id`,
+        )
+        .all(accountId) as { id: string; at: number | null }[]
+    ).map((r) => [r.id, r.at ?? 0]),
+  );
+  const pool = new Set<string>(who === 'friends' ? [...links].filter(([, r]) => r === 'friend').map(([i]) => i) : [...links.keys(), ...talked.keys()]);
+  if (who === 'known')
+    for (const r of db
+      .query(`SELECT DISTINCT p.identity_id AS id FROM vantage v JOIN conversation c ON c.id = v.target_id AND c.shape = 'group' JOIN participant p ON p.conversation_id = c.id WHERE v.account_id = ? AND v.target_kind = 'conversation'`)
+      .all(accountId) as { id: string }[])
+      pool.add(r.id);
+  const asking = new Set((db.query('SELECT from_id FROM add_request WHERE account_id = ? AND from_id IS NOT NULL').all(accountId) as { from_id: string }[]).map((r) => r.from_id));
+  const ids = [...pool].filter((i) => !inIt.has(i) && !asking.has(i) && i !== acc.self_identity && !store.isSelf(i));
+  const rows = store.identitiesByIds(ids).filter((i) => i.network === network && !i.isBot);
+  const name = (i: P.IdentityView) => (i.personId ? store.one<{ name: string }>('SELECT name FROM person WHERE id = ?', i.personId)?.name : null) ?? i.displayName ?? i.handle ?? i.nativeId;
+  const named = rows.map((i) => ({ i, at: talked.get(i.id) ?? 0, name: name(i).toLocaleLowerCase() }));
+  named.sort((a, b) => b.at - a.at || a.name.localeCompare(b.name));
+  const shown = named.slice(0, CANDIDATES_MAX);
+  return {
+    candidates: shown.map(({ i, at }) => ({ identityId: i.id, ...(links.get(i.id) ? { relationship: links.get(i.id) } : {}), ...(at ? { lastTalked: at } : {}) })),
+    identities: shown.map((x) => x.i),
+  };
 }
 
 /** Why this account may not make this change, by the About it just gave; null if it may. */
