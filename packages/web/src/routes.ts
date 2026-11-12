@@ -20,9 +20,17 @@ export type Route =
   /** Mail (docs/mail.md): a list (a view or a mailbox, mail/model.ts keys), and the thread open beside it. */
   | { view: 'mail'; list?: string; thread?: string }
   /** Requests waiting on you (docs/add.md), `request` the one to show. */
-  | { view: 'requests'; request?: string };
+  | { view: 'requests'; request?: string }
+  /** dither-calendar beside the hub (docs/calendar.md): `at` is the calendar's own hash without "#/", query and all. */
+  | { view: 'calendar'; at?: string };
 
 export function parseHash(h = location.hash): Route {
+  // The calendar's address is its own, kept verbatim (#/calendar/day/2026-11-14?e=…).
+  const raw = h.replace(/^#\/?/, '');
+  if (raw === 'calendar' || raw.startsWith('calendar/')) {
+    const at = raw.slice('calendar/'.length);
+    return at ? { view: 'calendar', at } : { view: 'calendar' };
+  }
   const [path, query] = h.replace(/^#\/?/, '').split('?');
   const p = path.split('/').filter(Boolean).map(decodeURIComponent);
   const q = new URLSearchParams(query ?? '');
@@ -101,6 +109,8 @@ export function href(r: Route): string {
       return `#/mail${r.list ? `/l/${e(r.list)}` : ''}${r.thread ? `/t/${e(r.thread)}` : ''}`;
     case 'requests':
       return `#/requests${r.request ? `/${e(r.request)}` : ''}`;
+    case 'calendar':
+      return r.at ? `#/calendar/${r.at}` : '#/calendar';
   }
 }
 

@@ -32,7 +32,7 @@ const check = (ok: boolean, what: string, detail?: unknown) => {
 };
 
 const web = process.env.DITHER_WEB_DIST ? ['--web', process.env.DITHER_WEB_DIST] : [];
-const hub = Bun.spawn(['bun', 'packages/hub/src/main.ts', '--data', data, '--port', String(PORT), '--host', '127.0.0.1', ...web], { cwd: REPO, stdout: 'ignore', stderr: 'inherit' });
+const hub = Bun.spawn(['bun', 'packages/hub/src/main.ts', '--data', data, '--port', String(PORT), '--host', '127.0.0.1', ...web], { cwd: REPO, env: { ...process.env, DITHER_CALENDAR_URL: 'off' }, stdout: 'ignore', stderr: 'inherit' });
 const proxy = new FlakyProxy(tb.baseUrl).start();
 const api = async (path: string, body?: unknown) => {
   const r = await fetch(url + path, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });

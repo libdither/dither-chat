@@ -52,11 +52,22 @@ const ROUTES: [hash: string, kind: 'list' | 'tab' | 'page' | 'over', own: string
   ['#/mail/t/th', 'page', '#/mail'],
   ['#/requests', 'page', '#/inbox'],
   ['#/requests/req1', 'page', '#/inbox'],
+  ['#/calendar', 'tab', '#/calendar'],
+  ['#/calendar/day/2026-11-14?x', 'tab', '#/calendar/day/2026-11-14?x'],
 ];
 
 test('the table covers every kind of route', () => {
   const views = new Set(ROUTES.map(([h]) => R(h).view));
-  expect([...views].sort()).toEqual(['accounts', 'directory', 'folder', 'inbox', 'mail', 'model', 'people', 'profile', 'requests', 'search', 'settings', 'space', 'spaces', 'triage']);
+  expect([...views].sort()).toEqual(['accounts', 'calendar', 'directory', 'folder', 'inbox', 'mail', 'model', 'people', 'profile', 'requests', 'search', 'settings', 'space', 'spaces', 'triage']);
+});
+
+test("the calendar's own hash is kept verbatim, query and all, both ways", () => {
+  expect(R('#/calendar/day/2026-11-14?x')).toEqual({ view: 'calendar', at: 'day/2026-11-14?x' });
+  expect(R('#/calendar/day/2026-11-14?e=evt_1%7C1800000000000')).toEqual({ view: 'calendar', at: 'day/2026-11-14?e=evt_1%7C1800000000000' });
+  expect(R('#/calendar/search?q=dinner%20alice')).toEqual({ view: 'calendar', at: 'search?q=dinner%20alice' });
+  expect(R('#/calendar')).toEqual({ view: 'calendar' });
+  expect(R('#/calendar/')).toEqual({ view: 'calendar' });
+  for (const h of ['#/calendar', '#/calendar/day/2026-11-14?x', '#/calendar/week/2026-11-09', '#/calendar/chats']) expect(href(R(h))).toBe(h);
 });
 
 test('pages, tabs and lists are told apart', () => {

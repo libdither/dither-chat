@@ -13599,3 +13599,85 @@ h1:hover > .pair-nick-edit,
 .msg .avatar-net {
   box-shadow: 0 0 0 2px var(--bg-center);
 }
+
+/* ---------------------------------------------------------------- calendar (docs/calendar.md) */
+
+.calendar-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.calendar-frame {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--bg);
+}
+.plan-chip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+  max-width: 520px;
+}
+.plan-open,
+.plan-open:hover {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 6px 11px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--plan-color, var(--accent));
+  border-radius: 9px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+.plan-open:hover {
+  border-color: var(--accent);
+}
+.plan-open b {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plan-open span {
+  white-space: nowrap;
+  color: var(--text-faint);
+}
+.plan-open span + span::before,
+.plan-open b + span::before,
+.plan-open span + b::before {
+  content: '· ';
+}
+.plan-chip.cancelled .plan-open {
+  opacity: 0.6;
+}
+.plan-chip.cancelled .plan-open b {
+  text-decoration: line-through;
+}
+.plan-actions {
+  display: flex;
+  gap: 6px;
+}
+.plan-btn {
+  padding: 5px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-raised);
+  color: var(--text);
+  font-size: 12.5px;
+}
+.plan-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent, #fff);
+}
+.plan-btn:disabled {
+  opacity: 0.6;
+}

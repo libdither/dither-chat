@@ -46,7 +46,7 @@ export function isPage(r: Route): boolean {
 }
 
 /** A tab's own page: full screen, with the tab bar under it. */
-export const isTabRoot = (r: Route) => r.view === 'triage' || r.view === 'settings' || (r.view === 'search' && !isPage(r));
+export const isTabRoot = (r: Route) => r.view === 'triage' || r.view === 'settings' || r.view === 'calendar' || (r.view === 'search' && !isPage(r));
 
 /** A page opened on top of the page you were on, rather than one of a list's own. */
 export function opensOver(r: Route): boolean {

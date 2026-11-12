@@ -27,7 +27,9 @@ export function pickEncoding(accept: string | null): Encoding | null {
 export async function compress(req: Request, res: Response | undefined): Promise<Response | undefined> {
   if (!res || res.status !== 200 || !res.body || req.method === 'HEAD') return res;
   if (res.headers.has('content-encoding') || res.headers.has('content-range') || /no-transform/.test(res.headers.get('cache-control') ?? '')) return res;
-  if (!TEXT.test(res.headers.get('content-type') ?? '')) return res;
+  const type = res.headers.get('content-type') ?? '';
+  // An event stream (the calendar's, through /calendar/) never ends: reading it whole would hold it forever.
+  if (type.startsWith('text/event-stream') || !TEXT.test(type)) return res;
   const enc = pickEncoding(req.headers.get('accept-encoding'));
   if (!enc) return res;
   const raw = new Uint8Array(await res.arrayBuffer());

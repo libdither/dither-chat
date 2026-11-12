@@ -133,7 +133,9 @@ test('without a cached shell, the network', async () => {
 
 test("the hub's own pages are never the app", async () => {
   const s = shell({ '/index.html': 'cached shell' });
-  for (const p of ['/api/bootstrap', '/media/x/y', '/ca.crt', '/voice/dave/0123456789abcdef/libdave.mjs']) expect(await s.get(p)).toBeNull();
+  for (const p of ['/api/bootstrap', '/media/x/y', '/ca.crt', '/voice/dave/0123456789abcdef/libdave.mjs', '/calendar', '/calendar/', '/calendar/index.html']) expect(await s.get(p)).toBeNull();
+  // The calendar's files (docs/calendar.md) are its own, not this build's.
+  for (const p of ['/calendar/assets/index-abc.js', '/calendar/api/stream', '/calendar/sw.js']) expect(await s.get(p, 'cors')).toBeNull();
   expect(await s.get('/api/live', 'cors')).toBeNull();
 });
 
@@ -343,6 +345,24 @@ test('a request (docs/add.md): silent, a notification of its own, and a tap open
   w.shown.pop();
   await w.click(w.shown.at(-1)!.o.data);
   expect(w.opened).toEqual(['/#/requests/req_abc?n=n7']);
+});
+
+test('a calendar reminder (docs/calendar.md): one per event, Join opens the meeting, a tap opens the calendar there', async () => {
+  const w = worker();
+  const calendar = { open: '#/day/2026-11-14', eventKey: 'evt_1', reminderId: 'evt_1|1|10', meetingUrl: 'https://meet.example/abc' };
+  await w.push({ title: 'Standup', body: 'in 10 min · 10:00–10:15', calendar, tier: 'push', level: 'push', nid: 'n9', device: 'd' });
+  expect(w.shown.at(-1)!.o).toMatchObject({ tag: 'calendar:evt_1', silent: false, renotify: true });
+  expect(actions(w)).toEqual(['join']);
+  await w.click(w.shown.at(-1)!.o.data, 'join');
+  expect(w.opened).toEqual(['https://meet.example/abc']);
+  await w.click(w.shown.at(-1)!.o.data);
+  expect(w.opened.at(-1)).toBe('/#/calendar/day/2026-11-14');
+  // Without a meeting, no action; held by quiet hours, silent.
+  await w.push({ title: 'Dentist', calendar: { ...calendar, eventKey: 'evt_2', meetingUrl: null }, tier: 'quiet', level: 'quiet' });
+  expect(w.shown.at(-1)!.o).toMatchObject({ tag: 'calendar:evt_2', silent: true, actions: [] });
+  // Join with a link that is not a web page opens the calendar instead.
+  await w.click({ calendar: { ...calendar, meetingUrl: 'javascript:alert(1)' } }, 'join');
+  expect(w.opened.at(-1)).toBe('/#/calendar/day/2026-11-14');
 });
 
 test('a clear push closes the conversation and shows nothing', async () => {

@@ -45,6 +45,7 @@ import { peopleGraph } from './graph.ts';
 import type { MailHub } from './mail/index.ts';
 import { mailPeople } from './mail/people.ts';
 import { Adding, linksOf, requestHeld, requestViews } from './add.ts';
+import { calendarOff, checkNotice, notifyAllowed, type CalendarLink } from './calendar.ts';
 
 
 type ClientData = { kind: 'client' };
@@ -98,6 +99,10 @@ export interface ServerOpts {
   archiveMedia?: boolean;
   /** Mail (mail/index.ts, docs/mail.md): its routes, its part of the bootstrap and of each flush. */
   mail?: MailHub;
+  /** dither-calendar beside the hub (calendar.ts, docs/calendar.md): /calendar/*, GET /api/plans, the bootstrap's `calendar`. */
+  calendar?: CalendarLink;
+  /** A reminder from the calendar (POST /api/calendar/notify, loopback only). */
+  onReminder?: (n: P.ReminderNotice) => Promise<P.ReminderResult>;
 }
 
 // ------------------------------------------------------------------ access
@@ -497,6 +502,23 @@ export class HubServer {
     // And only under a name this hub has (hosts.ts), so a page that rebinds its own domain here gets nothing.
     if (!hostAllowed(req.headers.get('host'), this.names)) return unknownHost();
 
+    // dither-calendar (calendar.ts, docs/calendar.md). Its paths are not under /api/, so the cross-site check is here too.
+    if (path === '/calendar' || path.startsWith('/calendar/')) {
+      if (req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) return new Response('cross-site request refused', { status: 403 });
+      return this.opts.calendar ? this.opts.calendar.proxy(req, url) : calendarOff(path);
+    }
+    // A reminder from the calendar: a process on this machine, never a browser and never another device.
+    if (path === '/api/calendar/notify') {
+      if (!notifyAllowed(ip, req)) return Response.json({ ok: false, error: 'reminders come from this machine only' }, { status: 403 });
+      if (req.method !== 'POST') return Response.json({ ok: false, error: 'POST only' }, { status: 405 });
+      if (!this.opts.onReminder) return Response.json({ ok: false, error: 'reminders are off on this hub' }, { status: 503 });
+      const n = await req.json().catch(() => null);
+      const why = checkNotice(n);
+      if (why) return Response.json({ ok: false, error: `bad reminder: ${why}` }, { status: 400 });
+      const r = await this.opts.onReminder(n as P.ReminderNotice);
+      return Response.json(r, { status: r.ok ? 200 : 503 });
+    }
+
     if (path.startsWith('/api/') && req.method !== 'GET' && !sameOrigin(req)) return new Response('cross-site request refused', { status: 403 });
     if ((path === '/api/live' || path.startsWith('/api/liveview/') || path.startsWith('/api/call')) && !sameOrigin(req)) return new Response('cross-site socket refused', { status: 403 });
     if (path === '/ca.crt') return this.caCert();
@@ -563,8 +585,11 @@ export class HubServer {
     if (path === '/api/bootstrap') {
       // Everything changed so far is in the journal, so the position below covers what this reads.
       this.flush();
-      return ok({ ...s.bootstrap(), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), ...(this.opts.mail ? { mail: this.opts.mail.bootstrap() } : {}), requests: requestViews(s), sync: s.journal.position() } satisfies P.Bootstrap);
+      const calendar = this.opts.calendar;
+      return ok({ ...s.bootstrap(), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), ...(this.opts.mail ? { mail: this.opts.mail.bootstrap() } : {}), requests: requestViews(s), ...(calendar ? { calendar: calendar.view() } : {}), sync: s.journal.position() } satisfies P.Bootstrap);
     }
+    // Plans the calendar found in chats, from the hub's cache (calendar.ts): the chips under messages.
+    if (path === '/api/plans' && method === 'GET') return this.opts.calendar ? ok(this.opts.calendar.plansView() satisfies P.PlansView) : bad('calendar is off on this hub', 404);
     if (path === '/api/sync' && method === 'POST') {
       const b = await body<P.SyncRequest>();
       this.flush();

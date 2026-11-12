@@ -34,3 +34,10 @@ test('small, binary, failed and upgraded responses pass through', async () => {
   const plain = Response.json(big);
   expect(await compress(req(null), plain)).toBe(plain);
 });
+
+test('an event stream passes through unread: it never ends', async () => {
+  const sse = new Response(new ReadableStream<Uint8Array>({}), { headers: { 'content-type': 'text/event-stream' } });
+  // Resolves at once with the same response: nothing waited for a body that never ends.
+  expect(await compress(req('gzip, zstd'), sse)).toBe(sse);
+  expect(sse.bodyUsed).toBe(false);
+});

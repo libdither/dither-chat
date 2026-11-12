@@ -5,6 +5,7 @@ import { accountsNeedingYou, convTitle, directsOf, folderConvs, people, inboxBad
 import { db, go, mailRev, markAllRead, patchPlaces, rev, route, type Route } from '../state.ts';
 import { unreadInbox } from '../mail/model.ts';
 import { preloadMail } from './mail/lazy.tsx';
+import { calendarLink, calendarOn } from '../plans.ts';
 import { AccountDots, Avatar, Count, NetBadge } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { DitherMark, Icon } from './icons.tsx';
@@ -232,6 +233,22 @@ function RailMail({ active }: { active: boolean }) {
   );
 }
 
+/** dither-calendar, when the hub has it (docs/calendar.md): a dot while plans from chats wait for you there. */
+function RailCalendar({ active }: { active: boolean }) {
+  const link = calendarLink.value;
+  if (!calendarOn) return null;
+  const waiting = link?.waiting ?? 0;
+  const sub = link && !link.reachable ? 'The calendar is not answering' : waiting ? `${waiting} ${waiting === 1 ? 'plan' : 'plans'} from chats waiting` : 'Your calendar, beside the chats';
+  return (
+    <RailItem active={active} unread={waiting > 0} title="Calendar" track="calendar" sub={sub} onClick={() => go({ view: 'calendar' })}>
+      <span class="rail-mail">
+        <Icon name="calendar" size={21} />
+        {waiting > 0 && <span class="rail-mail-dot" />}
+      </span>
+    </RailItem>
+  );
+}
+
 export function Rail() {
   rev.value;
   const r = route.value;
@@ -260,6 +277,7 @@ export function Rail() {
         <Icon name="users" size={22} />
       </RailItem>
       <RailMail active={r.view === 'mail'} />
+      <RailCalendar active={r.view === 'calendar'} />
       <div class="rail-sep" />
       <div class="rail-scroll" ref={scroll}>
         {entries.slice(0, drawn).map((e, i) => (

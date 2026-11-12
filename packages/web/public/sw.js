@@ -48,7 +48,8 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (url.origin !== location.origin) return;
   const p = url.pathname;
-  const hubOwn = p.startsWith('/api/') || p.startsWith('/media/') || p.startsWith('/emoji/') || p.startsWith('/voice/') || p === '/sw.js' || p === '/ca.crt';
+  // /calendar/ is dither-calendar through the hub (docs/calendar.md): its pages and files are never this app's.
+  const hubOwn = p.startsWith('/api/') || p.startsWith('/media/') || p.startsWith('/emoji/') || p.startsWith('/voice/') || p === '/sw.js' || p === '/ca.crt' || p === '/calendar' || p.startsWith('/calendar/');
   if (e.request.mode === 'navigate') {
     if (hubOwn) return;
     // Every other path is the app (routes live in the hash). Cache first: the cached index.html names exactly the
@@ -296,8 +297,10 @@ function grouped(d) {
 
 /** Shows a notification from the hub's payload (webpush.ts pushPayload, or a page's notify event). Returns its tag. */
 async function show(d) {
-  // A request waiting on you (docs/add.md) has one of its own, and opens under Requests.
-  const tag = d.conversationId ?? (d.requestId ? `request:${d.requestId}` : d.inbox ? 'dither-inbox' : 'dither');
+  // A request waiting on you (docs/add.md) has one of its own, and opens under Requests. A calendar reminder has one
+  // per event (docs/calendar.md), so a second lead time takes the first one's place.
+  const cal = d.calendar && typeof d.calendar.open === 'string' ? d.calendar : null;
+  const tag = cal ? `calendar:${cal.eventKey}` : d.conversationId ?? (d.requestId ? `request:${d.requestId}` : d.inbox ? 'dither-inbox' : 'dither');
   const look = await looks(d);
   // Its tier (docs/notifications.md): an alert, a Conversation or a list row. A hub from before the tiers says only
   // `level`: 'quiet' for what is silent, else an alert.
@@ -306,7 +309,7 @@ async function show(d) {
   // Mail takes only "Less like this" (docs/mail.md).
   const marks = (d.messageId ? TIER_MARKS[tier] ?? [] : []).filter((a) => !d.mailThreadId || a === 'less').map((a) => ({ action: a, title: MARKS[a].title }));
   // A browser shows two actions: Reply and the mark for an alert or a Conversation, both marks for a list row.
-  const actions = d.conversationId ? (tier === 'digest' ? [...marks, ...reply] : [...reply, ...marks, ...(marks.length ? [] : [{ action: 'open', title: 'Open' }])]) : [];
+  const actions = cal ? (cal.meetingUrl ? [{ action: 'join', title: 'Join' }] : []) : d.conversationId ? (tier === 'digest' ? [...marks, ...reply] : [...reply, ...marks, ...(marks.length ? [] : [{ action: 'open', title: 'Open' }])]) : [];
   // One notification per conversation (docs/notifications.md): its unread lines. Only an alert may sound, and only
   // when the hub says so; an older hub does not say, and every alert sounds. A Conversation and a list row are shown
   // without sound or vibration.
@@ -319,7 +322,7 @@ async function show(d) {
     silent: !alert,
     icon: look.icon,
     badge: look.badge,
-    data: { conversationId: d.conversationId, request: d.requestId, inbox: d.inbox, test: d.test, replyTo: d.replyTo, nid: d.nid, device: d.device, messageId: d.messageId },
+    data: { conversationId: d.conversationId, request: d.requestId, inbox: d.inbox, test: d.test, replyTo: d.replyTo, nid: d.nid, device: d.device, messageId: d.messageId, calendar: cal },
     actions: actions.slice(0, self.Notification?.maxActions ?? 2),
   });
   return tag;
@@ -399,10 +402,16 @@ self.addEventListener('notificationclick', (e) => {
     return;
   }
   e.notification.close();
+  // A calendar reminder: Join opens the meeting; anything else, the calendar where the event is (docs/calendar.md).
+  const cal = e.notification.data?.calendar;
+  if (cal && e.action === 'join' && /^https?:\/\//i.test(cal.meetingUrl ?? '')) {
+    e.waitUntil(outcome(e.notification.data, 'tapped').then(() => self.clients.openWindow(cal.meetingUrl)));
+    return;
+  }
   // The push's id rides in the hash, so the page can say which visit the tap led to (activity.ts).
   const nid = e.notification.data?.nid;
   const request = e.notification.data?.request;
-  const target = (conv ? `/#/inbox/c/${conv}` : request ? `/#/requests/${request}` : inbox ? '/#/inbox' : '/') + (nid && (conv || request || inbox) ? `?n=${encodeURIComponent(nid)}` : '');
+  const target = cal ? '/#/calendar/' + String(cal.open).replace(/^#\/?/, '') : (conv ? `/#/inbox/c/${conv}` : request ? `/#/requests/${request}` : inbox ? '/#/inbox' : '/') + (nid && (conv || request || inbox) ? `?n=${encodeURIComponent(nid)}` : '');
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (cs) => {
       await outcome(e.notification.data, 'tapped');

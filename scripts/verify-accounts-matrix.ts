@@ -65,7 +65,8 @@ const stopProc = async (p: Subprocess | null) => {
   clearTimeout(killer);
 };
 const hubEnv = (remote: boolean) => {
-  const e: Record<string, string | undefined> = { ...process.env, DITHER_DATA: undefined, DITHER_PORT: undefined, DITHER_PUBLIC_URL: undefined };
+  // DITHER_CALENDAR_URL=off: a hub that is not a demo would otherwise hold the live calendar's stream (docs/calendar.md).
+  const e: Record<string, string | undefined> = { ...process.env, DITHER_DATA: undefined, DITHER_PORT: undefined, DITHER_PUBLIC_URL: undefined, DITHER_CALENDAR_URL: 'off' };
   if (remote) e.DITHER_ACCOUNTS_URL = MGR;
   else delete e.DITHER_ACCOUNTS_URL;
   return e;

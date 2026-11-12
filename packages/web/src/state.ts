@@ -10,6 +10,7 @@ import { ECHO_SKEW, mayBeOut, openOutbox, settled, type Echo, type OutboxEntry }
 import { hubTransport, UploadJob } from './upload.ts';
 import { href, parseHash, type Route } from './routes.ts';
 import { inboxFilterOf, type InboxFilter } from './ordering.ts';
+import { applyPlanEvent, calendarAt, calendarFromBootstrap, loadPlans } from './plans.ts';
 
 // ------------------------------------------------------------------ data
 
@@ -261,6 +262,8 @@ const putIdentity = (i: P.IdentityView) => void (put(db, i) && changed('shown'))
 
 export function applyBootstrap(b: P.Bootstrap) {
   applyBootstrapTo(db, b);
+  // A calendar beside the hub (plans.ts, docs/calendar.md): its plans once the socket is up (now, if it is).
+  if (calendarFromBootstrap(b) && ws?.readyState === WebSocket.OPEN) void loadPlans();
   loaded.value = true;
   changed('meta');
   mailChanged();
@@ -283,7 +286,7 @@ export function patchMessage(id: string, patch: (m: P.MessageView) => P.MessageV
 }
 
 /** Events that change nothing in `db`: typing, toasts and read progress have signals of their own. */
-const NOT_DB = new Set<P.ClientEvent['t']>(['typing', 'notify', 'sync', 'readProgress', 'resync', 'sent']);
+const NOT_DB = new Set<P.ClientEvent['t']>(['typing', 'notify', 'sync', 'readProgress', 'resync', 'sent', 'plans', 'calendar']);
 /** Events that change what lists show but no names or settings: `metaRev` stays. */
 const LIST_ONLY = new Set<P.ClientEvent['t']>(['message', 'message.deleted', 'identity', 'attention', 'usage', 'arrange', 'requests']);
 /** Events that change names (`metaRev` moves) but not what is where (versions.ts `changed('shown')`): people. */
@@ -373,6 +376,12 @@ export function applyEvents(events: P.ClientEvent[]) {
       }
       case 'resync':
         void bootstrap();
+        void loadPlans();
+        break;
+      // The calendar's plans and whether it answers (plans.ts): signals of their own, nothing in `db`.
+      case 'plans':
+      case 'calendar':
+        applyPlanEvent(ev);
         break;
     }
     if (eventHooks.size) for (const h of eventHooks) h(ev);
@@ -428,17 +437,20 @@ function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
   const here = (!!ev.conversationId && 'conv' in r && r.conv === ev.conversationId) || (!!ev.mailThreadId && r.view === 'mail' && r.thread === ev.mailThreadId);
   const viewing = here && document.visibilityState === 'visible';
   if (viewing) return;
-  toast({ kind: 'notify', title: ev.title, body: ev.body, conversationId: ev.conversationId, reasons: ev.reasons, icon: ev.icon, network: ev.network }, 8000);
+  // A calendar reminder (docs/calendar.md) opens the calendar where it is.
+  const cal = ev.calendar;
+  const openCal = cal ? () => go({ view: 'calendar', at: calendarAt(cal.open) }) : undefined;
+  toast({ kind: 'notify', title: ev.title, body: ev.body, conversationId: ev.conversationId, reasons: ev.reasons, icon: ev.icon, network: ev.network, ...(openCal ? { action: openCal } : {}) }, 8000);
   if (!prefs.value.pushEnabled && prefs.value.notifications && 'Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
     // A group's own picture goes over the sender's, as in a push (delivery.ts conv).
     const c = ev.conversationId ? db.conversations.get(ev.conversationId) : undefined;
     const conv = c && c.shape !== 'direct' && c.avatar ? { shape: c.shape === 'channel' || c.shape === 'thread' ? 'channel' : 'group', icon: c.avatar } : undefined;
     const show = (reg?: ServiceWorkerRegistration) => {
       // The worker draws the picture and the network's badge, as it does for a push (sw.js).
-      if (reg?.active) return reg.active.postMessage({ t: 'notify', d: { title: ev.title, body: ev.body, conversationId: ev.conversationId, inbox: !ev.conversationId, icon: ev.icon, network: ev.network, nid: ev.nid, ...(conv ? { conv } : {}) } });
-      const opts = { body: ev.body, tag: ev.conversationId ?? 'dither-inbox', icon: conv?.icon ?? ev.icon, data: { conversationId: ev.conversationId, inbox: !ev.conversationId } };
+      if (reg?.active) return reg.active.postMessage({ t: 'notify', d: { title: ev.title, body: ev.body, conversationId: ev.conversationId, inbox: !ev.conversationId && !cal, icon: ev.icon, network: ev.network, nid: ev.nid, ...(conv ? { conv } : {}), ...(cal ? { calendar: cal } : {}) } });
+      const opts = { body: ev.body, tag: cal ? `calendar:${cal.eventKey}` : (ev.conversationId ?? 'dither-inbox'), icon: conv?.icon ?? ev.icon, data: { conversationId: ev.conversationId, inbox: !ev.conversationId && !cal, calendar: cal } };
       if (reg) reg.showNotification(ev.title, opts);
-      else new Notification(ev.title, opts).onclick = () => go({ view: 'inbox', conv: ev.conversationId });
+      else new Notification(ev.title, opts).onclick = openCal ?? (() => go({ view: 'inbox', conv: ev.conversationId }));
     };
     // Not every browser has service workers, and none has them outside a secure context.
     if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistration().then(show, () => show());
@@ -1270,6 +1282,7 @@ export function connect() {
     opened = markOpen = null;
     held ??= [];
     void resync();
+    void loadPlans();
   };
   sock.onmessage = (e) => {
     if (ws !== sock) return;
