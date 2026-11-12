@@ -1400,9 +1400,9 @@ export class HubServer {
       if (!d) return bad('per-device rules are not available', 404);
       if (path === '/api/devices' && method === 'GET') return ok({ devices: d.list() });
       if (path === '/api/devices/hello' && method === 'POST') {
-        const b = await body<{ id?: string; label?: string; endpoint?: string | null }>();
+        const b = await body<{ id?: string; label?: string; endpoint?: string | null; clears?: boolean }>();
         if (!Devices.validId(b.id)) return bad('which device?');
-        d.hello(b.id, typeof b.label === 'string' ? b.label : '', typeof b.endpoint === 'string' ? b.endpoint : null);
+        d.hello(b.id, typeof b.label === 'string' ? b.label : '', typeof b.endpoint === 'string' ? b.endpoint : null, Date.now(), b.clears === true);
         return ok();
       }
       if (path === '/api/devices/rules' && method === 'PUT') {

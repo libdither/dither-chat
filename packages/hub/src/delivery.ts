@@ -17,8 +17,11 @@ const LINES = 6;
 const BODY = 200;
 /** A push carries about 4 KB, encrypted; what goes in stays under this. */
 const BUDGET = 3500;
-/** A notification nobody read for a day is not followed any more. */
-const FORGET_MS = 24 * 3_600_000;
+/**
+ * A notification nobody read for this long is not followed any more. Rows stay in the phone's shade for days, and
+ * reading one then still takes it away.
+ */
+export const FORGET_MS = 3 * 24 * 3_600_000;
 const PHONE = /android|iphone|ipad|\bios\b/i;
 
 export interface Line {
@@ -73,6 +76,22 @@ export class Delivery {
     private store: Store,
     private triage: Triage,
   ) {}
+
+  /**
+   * After a restart: what went out lately and may still be showing, from the activity log's notifications, so reading
+   * those chats still takes them off the phones. Without the log (activity off) nothing is known, as before.
+   */
+  restore(now = Date.now()): number {
+    const rows = this.store.raw<Row>(
+      `SELECT n.conversation_id AS cid, MAX(n.sent_at) AS at, MAX(m.ts) AS ts, MAX(CASE t.decision WHEN 'push' THEN 2 WHEN 'quiet' THEN 1 ELSE 0 END) AS top
+       FROM notification n JOIN message m ON m.id = n.message_id LEFT JOIN triage t ON t.message_id = n.message_id
+       WHERE n.kind = 'message' AND n.conversation_id IS NOT NULL AND n.sent_at > ? GROUP BY n.conversation_id`,
+      now - FORGET_MS,
+    );
+    const tops: Level[] = ['digest', 'quiet', 'push'];
+    for (const r of rows) if (!this.showing.has(r.cid)) this.showing.set(r.cid, { at: r.at, ts: r.ts, top: tops[r.top ?? 0] });
+    return rows.length;
+  }
 
   /** The rule alone, for one message in one conversation. */
   static alert(prev: Showing | undefined, level: Level, addressed: boolean, now: number): boolean {

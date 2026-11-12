@@ -331,6 +331,8 @@ if (mailTriaged) {
   devices.otherChain = (id) => (id.startsWith('req_') ? requestChain(store.db, id) : mailTriaged.chain(id));
   delivery.other = mailTriaged;
 }
+// Notifications sent before a restart still leave the phones when their chat is read (delivery.ts).
+delivery.restore();
 
 const readQueue = new ReadQueue(store, sup);
 readQueue.start();

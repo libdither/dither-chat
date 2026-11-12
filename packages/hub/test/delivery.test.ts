@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BURST_MS, Delivery, LIST_EVERY } from '../src/delivery.ts';
+import { BURST_MS, Delivery, FORGET_MS, LIST_EVERY } from '../src/delivery.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
 
@@ -79,6 +79,29 @@ describe('one notification per conversation', () => {
     store.markRead(conv('fam'), Date.now());
     expect(delivery.read()).toEqual([conv('fam')]);
     expect(delivery.read()).toEqual([]);
+  });
+
+  test('after a restart, what went out lately still leaves the phones when read; older and unsent notifications are not followed', () => {
+    const t = Date.now() + 4 * 60 * 60_000;
+    for (const g of ['pod', 'den']) store.ingest(sg, { t: 'conversation', conversation: { nativeId: g, shape: 'group', name: g, participants: ['ann', 'bo'] } });
+    say('k1', 'pod', 'ann', t, 'are you around', 'quiet');
+    say('k2', 'den', 'bo', t, 'long ago', 'digest');
+    const sent = (id: string, cid: string, at: number) =>
+      store.db.query(`INSERT INTO notification (id, kind, message_id, conversation_id, sent_at) VALUES (?, 'message', ?, ?, ?)`).run(id, msg(id), cid, at);
+    sent('k1', conv('pod'), t);
+    sent('k2', conv('den'), t - FORGET_MS - 1);
+    const d = new Delivery(store, new Triage(store));
+    expect(d.restore(t + 1)).toBe(1);
+    expect(d.read(t + 2)).toEqual([]);
+    store.markRead(conv('den'), t);
+    expect(d.read(t + 3)).toEqual([]);
+    store.markRead(conv('pod'), t);
+    expect(d.read(t + 4)).toEqual([conv('pod')]);
+    // The burst it was in is known too: a Conversation's, so an alert in it sounds.
+    const again = new Delivery(store, new Triage(store));
+    again.restore(t + 1);
+    say('k3', 'pod', 'bo', t + 60_000, 'come now', 'push');
+    expect(again.plan(conv('pod'), msg('k3'), 'push', false, t + 60_000)!.alert).toBe(true);
   });
 
   test('a burst keeps its highest tier: after an alert, a silent row in between does not make the next alert sound again', () => {

@@ -40,6 +40,7 @@ export class Devices {
     )`);
     const cols = (db.query('PRAGMA table_info(push_subscription)').all() as Row[]).map((c) => c.name);
     if (!cols.includes('device')) db.exec('ALTER TABLE push_subscription ADD COLUMN device TEXT');
+    if (!cols.includes('clears')) db.exec('ALTER TABLE push_subscription ADD COLUMN clears INTEGER');
   }
 
   static validId = (id: unknown): id is string => typeof id === 'string' && /^[\w-]{4,64}$/.test(id);
@@ -48,7 +49,7 @@ export class Devices {
    * A page says which device it is, and which push endpoint it holds, if any. Returns true when the list changed.
    * Rules set on the push registration before it was linked move to the device.
    */
-  hello(id: string, label: string, endpoint: string | null, now = Date.now()): boolean {
+  hello(id: string, label: string, endpoint: string | null, now = Date.now(), clears = false): boolean {
     const db = this.store.db;
     const name = label.trim().slice(0, 80) || 'A device';
     const before = db.query('SELECT label FROM device WHERE id = ?').get(id) as Row | null;
@@ -56,6 +57,9 @@ export class Devices {
     let changed = !before || before.label !== name;
     if (endpoint) {
       const sub = db.query('SELECT id, device FROM push_subscription WHERE endpoint = ?').get(endpoint) as Row | null;
+      // The Android app's page says its app takes a `{ clear }` push (push.ts): a registration made before the app
+      // said so when it registered keeps the endpoint it had, so it never said so again until now.
+      if (sub && clears) db.query('UPDATE push_subscription SET clears = 1 WHERE id = ? AND clears IS NOT 1').run(sub.id);
       if (sub && sub.device !== id) {
         db.transaction(() => {
           db.query('UPDATE push_subscription SET device = ? WHERE id = ?').run(id, sub.id);
