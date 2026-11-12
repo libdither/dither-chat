@@ -112,7 +112,7 @@ View File first. Files, video and audio say Open/Save File (Video, Audio); a fil
 ([desktop.md](desktop.md#opening-links-and-files-in-your-own-apps)), every file has Open, which opens it in the
 desktop's app for its type, and Open With… lists the others; in the Android app, Open offers it with the system's
 chooser. A link: Open Link · Copy Link, then the message's menu; Open Link goes to the default browser through the
-helper when it is on. An invite link (a click opens the New box on it, [add.md](add.md#invites-in-messages)): Preview
+helper when it is on. An invite link (a click opens New on it, at its card, [add.md](add.md#invites-in-messages)): Preview
 Invite · Open in Browser · Copy Link.
 
 ## Forwarding

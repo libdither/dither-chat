@@ -13,7 +13,8 @@ import { phone } from '../phone.ts';
 import { mark } from '../triage.ts';
 import { desk, openLink } from '../desk.ts';
 import { pickerFor, quickReactions, reactionScope, reactorsFor, replacing, toggleReaction } from '../reactions.ts';
-import { api, canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, newMessage, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
+import { api, canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
+import { messageSomeone, openPalette } from './Palette.tsx';
 import { hasHistory, historyOf } from './MessageHistory.tsx';
 import { MarkToggles, tierHeading, tierIcon } from './Marks.tsx';
 import { Avatar } from './bits.tsx';
@@ -259,7 +260,7 @@ export function linkMenu(url: string, m: P.MessageView | null, onReply?: () => v
     track: 'link menu',
     items: groups(
       [
-        ...(invite ? [{ label: 'Preview Invite', icon: 'eye', run: () => void (newMessage.value = { q: url, mode: 'join' }) } as MenuEntry] : []),
+        ...(invite ? [{ label: 'Preview Invite', icon: 'eye', run: () => openPalette({ kind: 'new', mode: 'join' }, url) } as MenuEntry] : []),
         { label: invite ? 'Open in Browser' : 'Open Link', icon: 'external', run: open },
         { label: 'Copy Link', icon: 'link', run: () => copy(url, 'Link copied') },
       ],
@@ -431,7 +432,7 @@ export function personMenu(p: P.PersonView, placeKey?: string): MenuSpec {
       [
         { label: 'Profile', icon: 'user', run: () => go({ view: 'profile', person: p.id }) },
         !p.isSelf && directs.length > 0 && { label: 'Message', icon: 'groups', run: () => go({ view: 'people', person: p.id }) },
-        !p.isSelf && !directs.length && idents[0] && canStartDirect() && { label: 'Message', icon: 'groups', run: () => (newMessage.value = { identityId: idents[0].id }) },
+        !p.isSelf && !directs.length && idents[0] && canStartDirect() && { label: 'Message', icon: 'groups', run: () => messageSomeone(idents[0].id) },
       ],
       [directs.length > 0 && { label: 'Mark As Read', icon: 'check', disabled: !sumUnread(directs).unread, run: () => markAllRead(directs, p.name) }],
       placeKey ? arrangeEntries(placeKey) : [],
@@ -472,7 +473,7 @@ export function identityMenu(identityId: string | null | undefined): MenuSpec | 
     items: groups(
       [
         { label: 'Profile', icon: 'user', run: () => openProfile(identityId) },
-        !isSelfIdentity(identityId) && canStartDirect(ident.network) && { label: 'Message', icon: 'groups', run: () => (newMessage.value = { identityId }) },
+        !isSelfIdentity(identityId) && canStartDirect(ident.network) && { label: 'Message', icon: 'groups', run: () => messageSomeone(identityId) },
       ],
       identityCopies([ident]),
     ),

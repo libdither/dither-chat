@@ -5437,10 +5437,6 @@ code {
     padding: 14px 16px 18px;
     overscroll-behavior: contain;
   }
-  .switcher-back {
-    place-items: start stretch;
-    padding: calc(8px + env(safe-area-inset-top)) 8px 0;
-  }
 }
 
 /* ---- swipe to reply ---- */
@@ -6084,6 +6080,7 @@ pre.fv-md-html {
   .sheet-layer::before,
   .modal-backdrop::before,
   .modal,
+  .switcher.palette,
   .viewer,
   .fviewer,
   .menu {
@@ -6871,6 +6868,179 @@ body.dragging * {
   color: var(--text-faint);
   white-space: nowrap;
 }
+/* The palette (docs/palette.md): the switcher's box, with pages. Crumbs and the page's title sit before the input; a
+   page with a body (a preview card, a code, the people picker) is the same box grown taller. */
+.switcher.palette {
+  display: flex;
+  flex-direction: column;
+  max-height: 80dvh;
+  outline: none;
+}
+.palette > .sheet-grip {
+  display: none;
+}
+.palette-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.palette-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+.palette-head .switcher-input {
+  flex: 1 1 220px;
+  width: auto;
+  min-width: 0;
+  border-bottom: 0;
+}
+.palette-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  /* Room for Close beside them on a page with no input. */
+  max-width: calc(100% - 44px);
+  overflow: hidden;
+  padding: 8px 0 8px 10px;
+}
+.palette-crumb {
+  flex: none;
+  max-width: 9em;
+  padding: 3px 6px;
+  border-radius: 6px;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.palette-crumb:hover,
+.palette-crumb:focus-visible {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.palette-crumb-root {
+  display: inline-flex;
+  flex: none;
+  padding: 4px 5px;
+}
+.palette-sep {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+.palette-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 3px 4px;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.palette-close {
+  flex: none;
+  margin: 0 8px 0 auto;
+}
+.palette .switcher-list {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.palette-before {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 4px;
+}
+.palette-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 14px 16px 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.palette-after {
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--border-soft);
+}
+.palette-note,
+.palette-help {
+  margin: 0;
+  padding: 7px 10px;
+}
+.palette .fwd-list {
+  margin: 0;
+}
+.fwd-row.active {
+  background: var(--bg-active);
+}
+/* On a phone the palette is a bottom sheet, like the dialogs it replaced: full width, its list scrolling inside it. */
+@media (max-width: 820px) {
+  .switcher-back {
+    place-items: end stretch;
+    padding: 0;
+  }
+  .switcher.palette {
+    width: 100%;
+    max-height: calc(100dvh - 40px - env(safe-area-inset-top));
+    padding-bottom: env(safe-area-inset-bottom);
+    border: none;
+    border-radius: 16px 16px 0 0;
+    animation: sheet-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .palette > .sheet-grip {
+    display: block;
+    position: relative;
+  }
+  .palette > .sheet-grip::after {
+    content: '';
+    position: absolute;
+    inset: -12px -60px;
+  }
+  .palette-crumbs {
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+  /* One step back and the page's whole title, up to two lines; Close beside it; the input on a line of its own. */
+  .palette-crumbs-phone {
+    flex: 1 1 0;
+    max-width: none;
+    gap: 4px;
+    padding-left: 6px;
+  }
+  .palette-crumbs-phone .palette-title {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .palette-back-btn {
+    flex: none;
+  }
+  .palette-head .palette-close {
+    order: 1;
+  }
+  .palette-crumbs-phone ~ .switcher-input {
+    order: 2;
+    flex-basis: 100%;
+    border-top: 1px solid var(--border-soft);
+  }
+  .palette .switcher-list {
+    max-height: none;
+    overscroll-behavior: contain;
+  }
+  .palette .fwd-list {
+    height: auto;
+    min-height: min(40dvh, 300px);
+  }
+}
 @media (max-width: 820px) {
   .search-fields {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -6966,25 +7136,16 @@ body.dragging * {
   }
 }
 
-/* ---- starting a direct conversation ---- */
+/* ---- starting a direct conversation: New, a page of the palette ---- */
 .side-new {
   margin-left: auto;
-}
-.new-message .input {
-  width: 100%;
-}
-.new-message-list {
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
 }
 .new-message-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 6px 4px;
+  cursor: pointer;
 }
 .new-message-name {
   flex: 1;
@@ -7935,7 +8096,7 @@ html[data-theme='light'] .acc-dot {
   color: var(--text);
 }
 
-/* Add people to a group (AddMembers.tsx): the Forward dialog's list, with who could not be added and why. */
+/* Add people to a group (AddMembers.tsx), and picking several in the palette (MultiPick.tsx): the Forward dialog's list, with who could not be added and why. */
 .add-mem-error {
   display: flex;
   align-items: center;
@@ -7948,18 +8109,77 @@ html[data-theme='light'] .acc-dot {
   color: var(--danger);
   white-space: normal;
 }
-.add-mem-send {
+.pick-send {
   align-items: center;
   justify-content: space-between;
 }
-.add-mem-count {
+.pick-count {
   color: var(--text-faint);
   font-size: 12.5px;
 }
-.add-mem-send .btn {
+.pick-send .btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+/* New group (NewGroup.tsx): the networks someone can be put in a group on, where the picked fit, and the summary. */
+.group-nets {
+  display: inline-flex;
+  flex: none;
+  gap: 3px;
+}
+.group-net {
+  display: inline-flex;
+}
+.group-fit {
+  color: var(--text-dim);
+}
+.palette-note.group-unable,
+.palette-note.group-why {
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.group-none {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.group-none .set-help {
+  margin: 0;
+}
+.group-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.group-summary .set-help {
+  margin: 0;
+}
+.group-people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+.group-person {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13.5px;
+}
+.group-make-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.group-make {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.group-problem {
+  color: var(--text-faint);
 }
 .about-members-head {
   display: flex;
@@ -11980,14 +12200,8 @@ button.msg-edited.link:hover {
   color: var(--text-muted);
 }
 
-/* QR codes (docs/add.md, "QR codes"): Scan and My code in the New box, and a place's invite link as a code. A code is
+/* QR codes (docs/add.md, "QR codes"): Scan a code and My code, pages of New, and a place's invite link as a code. A code is
    always black on white with its quiet zone, whatever the theme: scanners need the contrast. */
-.new-message-qr {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
 .qr-code {
   width: min(100%, 264px);
   aspect-ratio: 1;

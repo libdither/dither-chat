@@ -138,12 +138,12 @@ try {
   const tgBefore = await looks(TG);
   const where = await hash();
   await click('.msg-body a[href="https://t.me/+FilmSwap2026x"]');
-  await p.until(`!!document.querySelector('.new-message')`, 4000).catch(() => {});
+  await p.until(`!!document.querySelector('.palette')`, 4000).catch(() => {});
   await p.until(`!!document.querySelector('.new-message .add-card-name, .new-message .add-error') && !document.querySelector('.new-message .add-loading')`, 8000).catch(() => {});
   check((await text('.new-message .add-card-name')) === 'Film Photo Swap' && (await hash()) === where, 'a click on the link opens the New box on it, previewed, and the page stays', { name: await text('.new-message .add-card-name'), hash: await hash() });
   check((await looks(TG)) === tgBefore + 1, 'one lookup, from the click', await looks(TG));
   await shot('invites-04-newbox');
-  await click('.new-message .modal-head [aria-label="Close"]');
+  await click('.palette-close');
   await p.until(`!!document.querySelector(${JSON.stringify(`${FILM} .add-card-name`)})`, 4000).catch(() => {});
   check((await text(`${FILM} .add-card-name`)) === 'Film Photo Swap' && (await looks(TG)) === tgBefore + 1, 'closed, the card under the message shows what the box found, without asking again', await text(FILM));
 

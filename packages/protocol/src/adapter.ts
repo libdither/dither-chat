@@ -79,6 +79,8 @@ export type Capability =
   | 'disconnect'
   /** Adds people to a group the account is in (the `addMembers` command), where its About's `adding` says it may. */
   | 'addMembers'
+  /** Makes a new group with people the account knows (the `createGroup` command, about.ts GROUP_RULES). */
+  | 'createGroup'
   /** Searches messages on the network's own servers, one place at a time (the `search` command, jobs.ts NetworkQuery). */
   | 'search'
   /** Lists a space's members on request, by name prefix (the `walkMembers` command): an active walk, not only what was seen. */
@@ -550,6 +552,13 @@ export type AdapterCommand =
    * Identity and conversation facts first (its new participants), then reply.result: AddMembersResult.
    */
   | { t: 'addMembers'; id: string; target: AboutTarget; people: string[] }
+  /**
+   * Make a new group (capability 'createGroup'): a Discord group DM, a Signal group, a Matrix room, a Telegram group.
+   * `people` are native identity ids; the hub has checked them and `name` against GROUP_RULES and paced it. One person
+   * refused does not stop the rest, as long as the group is made; when it is not, an error sentence.
+   * Identity facts, then the new conversation's fact (shape 'group', its participants), then reply.result: CreateGroupResult.
+   */
+  | { t: 'createGroup'; id: string; name?: string; people: string[] }
   /** Account-specific actions, e.g. 'relogin', 'startLink', 'resync'. */
   | { t: 'action'; id: string; action: string; args?: unknown }
   | { t: 'shutdown' };

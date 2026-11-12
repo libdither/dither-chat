@@ -894,12 +894,6 @@ function settle() {
   if (next !== was) pending.value = next;
 }
 
-/**
- * The New box: start a direct conversation, join a server or group, add someone (docs/add.md). Open at a known
- * identity when given one; `q` fills the box (a link resolves at once), `mode` says which of the three it is for.
- */
-export const newMessage = signal<{ identityId?: string; q?: string; mode?: 'join' | 'add' } | null>(null);
-
 export async function openDirect(accountId: string, peer: string): Promise<P.OpenedDirect> {
   const r = await api<P.OpenedDirect>('/api/directs', { body: { accountId, peer } });
   if (r.conversation) applyEvents([{ t: 'conversation', conversation: r.conversation }]);

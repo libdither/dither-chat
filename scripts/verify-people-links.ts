@@ -347,8 +347,8 @@ try {
   // 8. Add friend on a username Discord wants confirmed: its words, then Add anyway.
   await open('#/inbox', '.side-new');
   await click('.side-new');
-  await p.until(`!!document.querySelector('.new-message input.input')`, 3000);
-  await p.eval(`document.querySelector('.new-message input.input').focus()`);
+  await p.until(`!!document.querySelector('.palette-input')`, 3000);
+  await p.eval(`document.querySelector('.palette-input').focus()`);
   await p.send('Input.insertText', { text: 'kestrel.dev' });
   await Bun.sleep(200);
   await click('.add-reading[data-network="discord"]');

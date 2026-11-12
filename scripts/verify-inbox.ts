@@ -11,9 +11,10 @@
  * The hub must be a fresh demo hub (--demo) with its own data dir: this sends a message.
  */
 import { mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { ALERT_PIN } from '../packages/hub/src/attention.ts';
 import { inboxLift } from '../packages/web/src/ordering.ts';
+// The palette's name match, as the root ranks by it (packages/web/test/switcher.test.ts).
+import { fuzzyScore } from '../packages/web/src/palette.ts';
 import { launch } from './browser.ts';
 
 const hub = process.argv[2] ?? 'http://127.0.0.1:8472';
@@ -29,11 +30,6 @@ const mailThreads = new Map<string, any>((boot.mail?.threads ?? []).map((t: any)
 for (const t of mailThreads.values()) shapeOf.set(t.id, t.participants <= 2 ? 'direct' : 'group');
 const isMail = (k: string) => k.startsWith('mth_');
 const peerOf = new Map<string, string>(boot.conversations.filter((c: any) => c.shape === 'direct' && c.peerPersonId).map((c: any) => [c.id, c.peerPersonId]));
-// Switcher.tsx needs a browser; its name match is small enough to read from source (as packages/web/test/switcher.test.ts).
-const src = await Bun.file(resolve(import.meta.dir, '../packages/web/src/ui/Switcher.tsx')).text();
-const fuzzyScore: (name: string, q: string) => number | null = new Function(
-  `${src.slice(src.indexOf('export function fuzzyScore'), src.indexOf('interface Item')).replace('export function', 'function').replace(/: string|: number \| null/g, '')}; return fuzzyScore;`,
-)();
 
 let failures = 0;
 const check = (ok: unknown, what: string, detail: unknown = '') => {
@@ -306,7 +302,10 @@ try {
   const ctrlK = () => p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'k', code: 'KeyK', modifiers: 2, windowsVirtualKeyCode: 75 });
   await ctrlK();
   await p.until(`!!document.querySelector('.switcher-row')`, 3000);
-  const opening = await p.eval<string[]>(`[...document.querySelectorAll('.switcher-row')].map((el) => el.dataset.key)`);
+  // New… is the root's last row with nothing typed, not a place.
+  const rowKeys = await p.eval<string[]>(`[...document.querySelectorAll('.switcher-row')].map((el) => el.dataset.key)`);
+  check(rowKeys[rowKeys.length - 1] === 'new', 'with nothing typed, New… is the last row', rowKeys.slice(-2));
+  const opening = rowKeys.slice(0, -1);
   // Mail threads are not places the switcher lists.
   const inboxTop = [...new Set((await shown()).keys.filter((k) => !isMail(k)).map((k) => peerOf.get(k) ?? k))].slice(0, opening.length);
   check(opening.length > 3 && opening.join() === inboxTop.join(), 'Ctrl+K opens on the top of the inbox', { opening, inboxTop });

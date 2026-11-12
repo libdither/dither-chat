@@ -170,9 +170,15 @@ Notes:
 
 **Add people** (Invite people on Matrix) is on a group's page: the Members card and the row of actions under its name.
 It shows only where the account may add someone now; where it may not, the Members card says why (only admins add
-here, a Discord group is full, WhatsApp is left out). It opens a picker of the people this account could add, as the
-network allows, people you talked with lately first: you pick a few, and who could not be added stays listed with the
-network's own reason.
+here, a Discord group is full, WhatsApp is left out). It opens the palette ([palette.md](palette.md)) at a picker of the
+people this account could add, as the network allows, people you talked with lately first: you pick a few, and who
+could not be added stays listed with the network's own reason. Escape closes it; an add refreshes the page's members.
+
+The same picker is reachable without the group's page: "Add people to a group" in New and in Ctrl+K lists the groups
+one of your accounts could add to (its network has `addMembers` for it), most recent first, and typing narrows them;
+picking one opens its picker, a page you can back out of to the list. When the group on screen is one of them, New
+offers "Add people to <its name>" first. Where the group's About says this account may not add people now, the picker
+says why and offers nothing.
 
 | Network | Where | Who can be picked | What adding does | Gated by |
 |---|---|---|---|---|
@@ -198,6 +204,102 @@ The rules the hub keeps:
 - **Logged** in the account's log: `[add] added …; invited …; could not add … (group)`.
 - One person refused (privacy settings, not a friend, banned) does not stop the others: each comes back with its
   sentence. A timeout may still have gone through, and the panel says so.
+
+## Making a group
+
+One of your accounts makes a new group on its own network, with people that account knows. A group lives on one
+network: nothing bridges two. It follows the rules of adding people, above.
+
+| Network | What is made | Who can be picked | How many | Name | What making it does |
+|---|---|---|---|---|---|
+| Discord | a group DM | your friends | 2 to 9 others (10 in all) | optional, up to 100; without one the client names it after its people | the web client's own action for a new group DM, in the sandbox; the name is set after |
+| Signal | a group | anyone the account knows | 1 to 10 | required, up to 32 | one signal-cli `updateGroup` with a name and members and no group id; someone whose profile key it lacks comes in invited |
+| Matrix | a room | anyone the account knows | 1 to 10 | required, up to 255 | `POST /createRoom` `{ name, invite, preset: 'private_chat' }`, encrypted as the adapter's own DMs are where it can; everyone is invited, in once they accept |
+| Telegram | a group | anyone the account knows (their privacy settings may refuse) | 1 to 10 | required, up to 128 | `messages.createChat { users, title }`; whom it could not add (`missingInvitees`) comes back refused with the privacy sentence |
+| WhatsApp | — | — | — | — | left out, for the reason adding people is: make it on your phone and it shows up here. The bridge has a test that it never creates a group |
+
+The numbers are `GROUP_RULES` in `packages/protocol/src/about.ts`. "How many" counts the others, not you. A name is
+trimmed first, and its length is counted in characters.
+
+### From the page
+
+**New group** is in New (the + in the sidebar) and in Ctrl+K ("group", "new group", "group chat", "gc"), as pages of the
+palette ([palette.md](palette.md)). With a 1:1 DM on screen New also offers "New group with <them>", first, with that
+person picked.
+
+1. **People.** One list for all your accounts at once: one row per person (an identity no person holds is its own
+   row), people you talked with lately first, each with a small badge per network they can be put in a group on (the
+   account in the tooltip where you have two on one network). Typing searches names and handles; picks are chips;
+   up to 10. A line above the list says where the picked fit so far: "Only Discord reaches both", "Fits Signal and
+   Matrix", "No one network reaches all 3: Discord reaches 2, Signal 1". Nobody is greyed out for being on another
+   network. WhatsApp's line is at the end of the list, once. With no account that can make a group, the page says so,
+   with each account's reason.
+2. **Where.** Each account that could take at least its rule's fewest of the picked, best first: reaches everyone,
+   then most people, then the account you talked on most lately with them. Each says what it makes and with whom
+   ("Group DM with all 3", "Room, invites all 3: in once they accept", "Group with 1 of 3: not Ravi and Jordan"). Under
+   them, as plain lines, why each other account cannot ("Matrix: a room starts with at least 1 person, and none of
+   them is known there") and WhatsApp's line. Skipped when exactly one account qualifies and it reaches everyone.
+3. **Name and make.** The palette's input is the name ("Name the group", "Name the room", "Name (optional)" on
+   Discord). Under it the account, the people, who is left out and why ("Not in it: Mom, who is not a Discord friend
+   here"), and for a Matrix room that they are invited. The button (Make group DM, Make group, Make room; Enter too) is
+   off, with `createGroupProblem`'s sentence beside it, while the name is missing or too long: nothing the rules
+   refuse is sent. While it is made the button says "Making…" and nothing leaves the page. Made: the palette closes,
+   the new conversation opens, and a toast says who was invited, who could not be added and the network's reason, and
+   the notes ("Telegram made it a basic group"); if nobody could be added it says so, and the group is there anyway.
+   A refusal (the day's limit, not connected, the network's sentence, no answer in 90 seconds) shows on the page,
+   with the button back and nothing lost.
+
+Backing out keeps everything: the picks stay on the people page, and the name with them, so going forward again finds
+both. The rules that need no browser are packages/web/src/groups.ts (tested in packages/web/test/groups.test.ts); the
+pages are packages/web/src/ui/NewGroup.tsx. scripts/verify-groups.ts drives them against a demo hub.
+
+The rules the hub keeps:
+
+- **Only from a click** on the hub's page: POST `/api/groups` wants a browser's Origin.
+- **The rules first** (`createGroupProblem`): too few or too many people, no name where one is needed, a name too
+  long. Then each person: someone of another network or the account itself is refused. Nothing reaches the network.
+- **Paced per account**, in `add_pace` (docs/add.md): one `groups` slot, 5 a day and 3 on Telegram, and one `members`
+  slot per person, the same slots adding people takes. All or none: past either, nothing goes out and nothing is
+  taken. A refusal by the adapter (the group was not made) gives every slot back. A timeout does not: the group may
+  have been made.
+- **Who is offered** is the pool adding people offers, for the rule's `who`: friends on Discord, everyone the account
+  knows elsewhere. Being in a group already is no reason to leave someone out. Never the account itself, a bot, or
+  someone whose request still waits on you.
+- **Logged** in the account's log: `[add] made <noun> "<name>" with …; invited …; could not add …`.
+- One person refused does not stop the others, as long as the group is made. On Discord, fewer than 2 friends left
+  means no group, and the network's sentence comes back.
+
+The protocol: capability `createGroup`, command `{ t: 'createGroup', name?, people }` (native ids), answered after
+the new conversation's fact with
+
+```ts
+interface CreateGroupResult { conversation: string; added: string[]; invited?: string[]; failed?: { id; reason }[]; notes?: string[] }
+```
+
+The routes:
+
+| Route | Answers |
+|---|---|
+| GET `/api/groups/candidates` (`?account=` for one) | `GroupCandidatesView`: each connected account that can make a group, its rule and whom it could put in one, people it talked with lately first; `unable`: your other connected chat accounts and why each cannot |
+| POST `/api/groups` `{ accountId, name?, identities }` | `CreateGroupView`: the new conversation's view, `added`, `invited`, `failed` with each sentence, `notes` (identity ids) |
+
+400 for a bad shape or a rule, 404 for no such account or person, 400 for someone of another network or the account
+itself, 409 for an account that cannot (`createGroupNotBuilt`) or is not connected, 429 past the pace, 502 the
+network's sentence (or an answer naming no conversation the hub has), 504 no answer in 90 seconds ("It may still have
+gone through: look again in a minute").
+
+The demo accounts make groups as the real ones would: Discord refuses anyone who is not a friend, Signal invites Dad
+(whose profile it lacks), Matrix invites everyone, and Telegram refuses Noor for her privacy settings and notes that
+it made a basic group. A demo group takes sends.
+
+Checked: the rules (`packages/protocol/test/groups.test.ts`) and the hub (`packages/hub/test/create-group.test.ts`,
+against the demo adapters run in process): who is offered per account, the refusals before anything reaches an
+adapter, the pace for both kinds and its give-back, each network's answer, WhatsApp's line, the conversation view in
+the answer, the log line, and the route's Origin.
+
+Not checked: no group has been made on a real network. Worth a live look first, on a test account: Discord's
+client action and what it does with a name and with someone who is not a friend; which Signal members come back
+pending; whether a Matrix room comes out encrypted; Telegram's `missingInvitees` and how it paces new groups.
 
 ## The protocol
 

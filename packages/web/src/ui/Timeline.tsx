@@ -42,7 +42,6 @@ import {
   prefs,
   quoted,
   metaRev,
-  newMessage,
   rev,
   route,
   send,
@@ -65,6 +64,7 @@ import {
   timelineRev,
   timelines,
 } from '../state.ts';
+import { openPalette } from './Palette.tsx';
 import { reactionContext } from '../reactions.ts';
 import { openAbout } from './About.tsx';
 import { AccountChip, Avatar, Empty, Menu, NetGlyph, variantIcon } from './bits.tsx';
@@ -337,7 +337,7 @@ function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
     const a = el.closest?.('a[href]') as HTMLAnchorElement | null;
     if (a && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && inviteRef(a.href)) {
       e.preventDefault();
-      newMessage.value = { q: a.href, mode: 'join' };
+      openPalette({ kind: 'new', mode: 'join' }, a.href);
     }
   };
   if (tail)
