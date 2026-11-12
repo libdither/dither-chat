@@ -7,6 +7,7 @@ import type * as P from '@dither-chat/protocol';
 import { ABOUT_LABEL, aboutChangeProblem, ADD_MEMBERS_MAX, addMembersNotBuilt, NETWORK_META } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { addTables, givePace, takePace } from './add.ts';
+import type { Attempt } from './attempts.ts';
 import type { Store } from './store.ts';
 
 export interface AboutDeps {
@@ -139,21 +140,27 @@ export class Abouts {
    * POST /api/conversations/:id/members { identities, accountId? }: add these people through the account whose view
    * this is, when a fresh About says it may and there is room. Each person counts once against the account's day.
    */
-  async addMembers(id: string, b: { identities?: unknown; accountId?: unknown }): Promise<P.AddMembersView> {
+  async addMembers(id: string, b: { identities?: unknown; accountId?: unknown }, a?: Attempt): Promise<P.AddMembersView> {
     const t = this.target('conversation', id);
     if (!t) throw new AboutError('no such conversation', 404);
+    // For the hub's log (attempts.ts), filled in as it becomes known.
+    if (a) a.network = t.network;
     const wanted = Array.isArray(b.identities) ? [...new Set(b.identities)] : [];
     if (!wanted.length || wanted.length > ADD_MEMBERS_MAX || !wanted.every((x) => typeof x === 'string' && x)) throw new AboutError(`Pick 1 to ${ADD_MEMBERS_MAX} people`, 400);
     const accountId = this.account('conversation', id, typeof b.accountId === 'string' ? b.accountId : undefined);
     if (!accountId) throw new AboutError('None of your accounts is in this conversation.', 409);
     const acc = this.d.store.account(accountId)!;
     const net = NETWORK_META[t.network].name;
+    const group = this.d.store.one<{ name: string | null }>('SELECT name FROM conversation WHERE id = ?', id)?.name ?? 'a group';
+    if (a) Object.assign(a, { accountId, what: group });
     const people: { identityId: string; nativeId: string }[] = [];
     for (const identityId of wanted as string[]) {
       const n = this.d.store.nativeOf('identity', identityId);
       if (!n) throw new AboutError('Nobody by that id', 404);
       if (n.network !== t.network) throw new AboutError(`Only ${net} people can be added to a ${net} group`, 400);
       if (identityId === acc.self_identity) throw new AboutError('That is this account', 400);
+      // Left out of the candidates on purpose.
+      if (this.d.store.isSelf(identityId)) throw new AboutError('That is one of your own accounts', 400);
       people.push({ identityId, nativeId: n.nativeId });
     }
     if (!caps(this.d.store, accountId).includes('addMembers')) throw new AboutError(addMembersNotBuilt(t.network), 409);
@@ -198,7 +205,6 @@ export class Abouts {
     const failed = (Array.isArray(r.failed) ? r.failed : [])
       .map((f) => ({ identityId: byNative.get(String(f?.id)) ?? '', reason: typeof f?.reason === 'string' && f.reason ? f.reason.slice(0, 300) : `${net} refused` }))
       .filter((f) => f.identityId);
-    const group = this.d.store.one<{ name: string | null }>('SELECT name FROM conversation WHERE id = ?', id)?.name ?? 'a group';
     const names = (xs: string[]) => this.d.store.identitiesByIds(xs).map((i) => i.handle ?? i.displayName ?? i.nativeId).join(', ');
     this.d.note?.(
       accountId,

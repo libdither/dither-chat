@@ -4,14 +4,15 @@
  * each network does with the people (Discord only friends, Signal adds, Matrix invites, Telegram's privacy refusal),
  * the pace for both kinds and its give-back, the log line, and the route's Origin.
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { createGroupNotBuilt, GROUP_RULES } from '@dither-chat/protocol';
-import type { AboutError } from '../src/about.ts';
+import { AboutError } from '../src/about.ts';
 import { ADD_LIMITS } from '../src/add.ts';
+import { asked, attempt, candidatesAttempt } from '../src/attempts.ts';
 import { createDemoAccounts, demoFactory } from '../src/demo.ts';
 import { Groups } from '../src/groups.ts';
 import { HubServer, mediaSigner } from '../src/server.ts';
@@ -30,6 +31,7 @@ const offline = new Set<string>();
 let instead: ((cmd: { t: string }) => Promise<unknown>) | null = null;
 
 const MAIN = 'acc_demo-discord-main';
+const ALT = 'acc_demo-discord-alt';
 const SIG = 'acc_demo-signal';
 const MX = 'acc_demo-matrix';
 const WA = 'acc_demo-whatsapp';
@@ -166,6 +168,8 @@ describe('the rules, before anything reaches an adapter', () => {
     expect((await reject(groups.create({ accountId: SIG, name: 'x', identities: ['idn_nobody'] }))).status).toBe(404);
     expect(await reject(groups.create({ accountId: SIG, name: 'x', identities: [who('matrix', 'Ben')] }))).toMatchObject({ status: 400, message: 'Only Signal people can be in a Signal group' });
     expect(await reject(groups.create({ accountId: SIG, name: 'x', identities: [selfOf(SIG)] }))).toMatchObject({ status: 400, message: 'That is this account' });
+    // Another of your own accounts is refused too (the candidates leave it out), and said so.
+    expect(await reject(groups.create({ accountId: MAIN, identities: [selfOf(ALT), who('discord', 'Alice')] }))).toMatchObject({ status: 400, message: 'That is one of your own accounts' });
     expect(makes().length).toBe(before);
     expect(paced(SIG, 'groups')).toBe(0);
   });
@@ -323,6 +327,110 @@ describe('the routes', () => {
       expect(v.added).toEqual([who('signal', 'Lev')]);
       const wa = await fetch(`${base}/api/groups`, { method: 'POST', body: JSON.stringify({ accountId: WA, identities: ['x'] }), headers: { origin: base } });
       expect(wa.status).toBe(409);
+    } finally {
+      hub.stop();
+    }
+  });
+});
+
+describe("in the hub's log", () => {
+  /** What console.warn got while `f` ran, and what `f` threw. */
+  const warned = async (f: () => unknown) => {
+    const lines: string[] = [];
+    const spy = spyOn(console, 'warn').mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(' ')));
+    let error: AboutError | Error | null = null;
+    try {
+      await f();
+    } catch (e) {
+      error = e as Error;
+    } finally {
+      spy.mockRestore();
+    }
+    return { lines, error };
+  };
+  const accountLog: string[] = [];
+  /** The attempt as the route runs it. */
+  const make = (b: { accountId?: unknown; name?: unknown; identities?: unknown }, g = groups) =>
+    attempt({ kind: 'create', people: asked(b.identities) }, (a) => g.create(b, a), (acc, line) => accountLog.push(`${acc} ${line}`));
+
+  test('made, with someone refused: one created line, and failed counts them', async () => {
+    const { lines, error } = await warned(() => make({ accountId: MAIN, identities: [who('discord', 'Alice'), who('discord', 'Jordan'), who('discord', 'Mara')] }));
+    expect(error).toBeNull();
+    expect(lines).toEqual(['groups: created account=acc_demo-discord-main network=discord added=2 invited=0 failed=1']);
+  });
+
+  test("a bad shape: account and network unknown, nothing in an account's log", async () => {
+    const before = accountLog.length;
+    const { lines } = await warned(() => make({ identities: [who('signal', 'Quinn')] }));
+    expect(lines).toEqual(['groups: create failed account=- network=- people=1 status=400 error="Which account makes it?"']);
+    expect(accountLog.length).toBe(before);
+  });
+
+  test("a rule's refusal (400), and the line in the account's log", async () => {
+    const { lines } = await warned(() => make({ accountId: SIG, name: 'x', identities: [] }));
+    expect(lines).toEqual(['groups: create failed account=acc_demo-signal network=signal people=0 status=400 error="A Signal group starts with at least 1 person"']);
+    expect(accountLog.at(-1)).toBe('acc_demo-signal [add] could not make group: A Signal group starts with at least 1 person');
+    const own = await warned(() => make({ accountId: MAIN, identities: [selfOf(ALT), who('discord', 'Alice')] }));
+    expect(own.lines).toEqual(['groups: create failed account=acc_demo-discord-main network=discord people=2 status=400 error="That is one of your own accounts"']);
+    expect(accountLog.at(-1)).toBe('acc_demo-discord-main [add] could not make group DM: That is one of your own accounts');
+  });
+
+  test('the pace (429)', async () => {
+    // Telegram is at its 3 a day since "pace", above.
+    const { lines, error } = await warned(() => make({ accountId: TG, name: 'Again', identities: [who('telegram', 'Alice Chen')] }));
+    expect(error).toMatchObject({ status: 429 });
+    expect(error!.message).toContain('has made 3 groups in the last day');
+    expect(lines).toEqual([`groups: create failed account=acc_demo-telegram network=telegram people=1 status=429 error=${JSON.stringify(error!.message)}`]);
+  });
+
+  test("the adapter's refusal (502), and no answer (504)", async () => {
+    instead = async () => {
+      throw new Error('the server said "no"');
+    };
+    const refused = await warned(() => make({ accountId: MX, name: 'Refused', identities: [who('matrix', 'kai')] }));
+    expect(refused.lines).toEqual(['groups: create failed account=acc_demo-matrix network=matrix people=1 status=502 error="the server said \\"no\\""']);
+    expect(accountLog.at(-1)).toBe('acc_demo-matrix [add] could not make room: the server said "no"');
+    instead = async () => {
+      throw new Error('adapter timed out on createGroup');
+    };
+    const slow = await warned(() => make({ accountId: MX, name: 'Slow', identities: [who('matrix', 'kai')] }));
+    expect(slow.lines).toEqual(['groups: create failed account=acc_demo-matrix network=matrix people=1 status=504 error="Matrix did not answer in 90 seconds. It may still have gone through: look again in a minute."']);
+  });
+
+  test('anything else (500) is logged, then thrown on as it was; a long sentence is cut to 300 characters', async () => {
+    const broken = new Groups({
+      store,
+      online: () => true,
+      command,
+      note: () => {
+        throw new TypeError(`the log is full ${'x'.repeat(400)}`);
+      },
+    });
+    const { lines, error } = await warned(() => make({ accountId: MAIN, identities: [who('discord', 'Alice'), who('discord', 'Jordan')] }, broken));
+    expect(error).toBeInstanceOf(TypeError);
+    expect(lines).toEqual([`groups: create failed account=acc_demo-discord-main network=discord people=2 status=500 error=${JSON.stringify(`the log is full ${'x'.repeat(400)}`.slice(0, 300))}`]);
+    expect(accountLog.at(-1)).toStartWith('acc_demo-discord-main [add] could not make group DM: the log is full xxx');
+  });
+
+  test('candidates that fail', async () => {
+    const { lines } = await warned(() =>
+      candidatesAttempt(null, () => {
+        throw new AboutError('No such account', 404);
+      }),
+    );
+    expect(lines).toEqual(['groups: candidates failed status=404 error="No such account"']);
+  });
+
+  test('through the route: the refusal without an Origin (403) and a group made', async () => {
+    const sup = { authorize: () => null, online: () => true, command: (a: string, c: any) => command(a, c), note: (a: string, line: string) => accountLog.push(`${a} ${line}`), liveViewUrl: () => null } as any;
+    const hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    const base = `http://127.0.0.1:${hub.start().port}`;
+    try {
+      const b = JSON.stringify({ accountId: MAIN, identities: [who('discord', 'Alice'), who('discord', 'Jordan')] });
+      const bare = await warned(() => fetch(`${base}/api/groups`, { method: 'POST', body: b }));
+      expect(bare.lines).toEqual(['groups: create failed account=- network=- people=2 status=403 error="Groups are made from the app itself"']);
+      const made = await warned(async () => expect((await fetch(`${base}/api/groups`, { method: 'POST', body: b, headers: { origin: base } })).status).toBe(200));
+      expect(made.lines).toEqual(['groups: created account=acc_demo-discord-main network=discord added=2 invited=0 failed=0']);
     } finally {
       hub.stop();
     }
