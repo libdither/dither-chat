@@ -16,6 +16,7 @@ import type { Store } from './store.ts';
 import type { Triage } from './triage.ts';
 import type { ActivityStore } from './activity.ts';
 import { requestHeld } from './add.ts';
+import { noteWork } from './stalls.ts';
 
 type Row = Record<string, any>;
 
@@ -1102,7 +1103,12 @@ export class Attention {
     };
     pumpSoon();
     this.timers.push(setInterval(pumpSoon, 2000));
-    this.timers.push(setInterval(() => send(this.rescoreAll()), RESCORE_EVERY));
+    this.timers.push(
+      setInterval(() => {
+        noteWork('attention: rescore all');
+        send(this.rescoreAll());
+      }, RESCORE_EVERY),
+    );
   }
 
   stop() {

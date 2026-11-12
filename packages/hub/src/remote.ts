@@ -24,6 +24,7 @@ import { join, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { NETWORKS } from '@dither-chat/protocol';
 import { ACCOUNT_COLORS, type AccountRow } from './store.ts';
+import { noteWork } from './stalls.ts';
 import { Supervisor } from './supervisor.ts';
 import type { MailSink } from './mail/backend.ts';
 
@@ -262,6 +263,7 @@ export class RoutedSupervisor extends Supervisor {
         if (this.mailWaiting) void this.readMailAccess();
       },
       onEvents: (account, events) => {
+        noteWork(`adapter events (${events.length})`);
         this.mail?.events(account, events);
         if (!this.remote.has(account)) return;
         for (const ev of events) this.handle(account, ev as P.AdapterEvent);
