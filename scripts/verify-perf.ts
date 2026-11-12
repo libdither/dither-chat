@@ -12,7 +12,8 @@
  *   long timeline reopened, a message arriving while it is open; then a relaunch from the device's snapshot and the
  *   same six opened again. Times, long tasks, and counts: renders of App, the inbox list and messages, LayoutCount,
  *   DOM nodes, .msg elements. Then a phone's pass (`--phone-cpu`, 4× here and 1× in CI): flicking the lists, typing,
- *   the tabs, a person's page and Mail (phoneRun).
+ *   the tabs, a person's page and Mail (phoneRun). Those passes fetch nothing ahead (?ahead=0); the phone's `ahead` pass
+ *   measures fetching ahead (prefetch.ts) against the same steps without it (aheadRun).
  *
  * Medians go against the baseline: a count over its baseline fails (bytes get 1%), a time over baseline × 1.25 +
  * 50 ms fails. --update writes the medians as the new baseline.
@@ -45,6 +46,10 @@ const WARMUP = Number(opt('warmup', CI ? '1' : '0'));
 const CPUS = opt('cpu', CI ? '1' : '1,4').split(',').map(Number).filter((x) => x > 0);
 /** Throttles for the phone pass (phoneRun), after the desktop's; `--phone-cpu 0` leaves it out. */
 const PHONE_CPUS = opt('phone-cpu', CI ? '1' : '4').split(',').map(Number).filter((x) => x > 0);
+/** Throttles for fetching ahead (aheadRun), at a phone's size; `--ahead-cpu 0` leaves it out. */
+const AHEAD_CPUS = opt('ahead-cpu', CI ? '1' : '4').split(',').map(Number).filter((x) => x > 0);
+/** The round trip the ahead pass puts between page and hub, as a phone on the tailnet has (docs/android.md: 80 ms, 20/10 Mbit/s). */
+const AHEAD_RTT = Number(opt('ahead-rtt', '80'));
 const PAGES = Number(opt('pages', CI ? '5' : '15'));
 /** The world's size against the live hub's (perf-world.ts). */
 const SCALE = Number(opt('scale', CI ? '0.1' : '1'));
@@ -78,6 +83,11 @@ const CEILINGS: Record<string, number> = {
   'arrival.messageRenders': 5, // the new message and its neighbours
   'arrival.sidebarRenders': 2,
   'long.reopen.msgs': 250, // the window
+};
+/** Counts no run may come under, whatever the baseline says: every open fetching ahead was meant to serve did (aheadRun). */
+const FLOORS: Record<string, number> = {
+  'ahead.served': 5,
+  'ahead.relaunchServed': 3,
 };
 // The world, the build and the hub's log. Its own prefix: a cleanup of someone else's temp dirs must not take it.
 const work = args.includes('--work') ? opt('work', '') : mkdtempSync(join(tmpdir(), `dither-verify-perf-${PORT}-`));
@@ -143,10 +153,14 @@ async function main() {
   // ------------------------------------------------------------------ the browser's
   // Desktop passes ("4x.…"), then the phone's ("p4x.…").
   const runs: Record<string, Metrics[]> = {};
-  const passes = [...CPUS.map((cpu) => ({ key: String(cpu), cpu, phone: false })), ...PHONE_CPUS.map((cpu) => ({ key: `p${cpu}`, cpu, phone: true }))];
-  for (const { key, cpu, phone } of passes) {
+  const passes = [
+    ...CPUS.map((cpu) => ({ key: String(cpu), cpu, phone: false, ahead: false })),
+    ...PHONE_CPUS.map((cpu) => ({ key: `p${cpu}`, cpu, phone: true, ahead: false })),
+    ...AHEAD_CPUS.map((cpu) => ({ key: `a${cpu}`, cpu, phone: true, ahead: true })),
+  ];
+  for (const { key, cpu, phone, ahead } of passes) {
     runs[key] = [];
-    const go = () => (phone ? phoneRun(cpu, world) : run(cpu, world));
+    const go = () => (ahead ? aheadRun(cpu) : phone ? phoneRun(cpu, world) : run(cpu, world));
     for (let i = 0; i < (phone ? 0 : WARMUP); i++) {
       const m = await run(cpu, world);
       console.log(`${cpu}× warm-up run, not counted: cold ${m['cold.list'].v} ms, first open ${m['open.first'].v} ms, message renders ${m['open.first.messageRenders'].v}`);
@@ -160,7 +174,9 @@ async function main() {
         return go();
       });
       runs[key].push(m);
-      if (phone)
+      if (ahead)
+        console.log(`ahead ${cpu}× run ${i + 1}: ${m['ahead.pages'].v} pages and ${m['ahead.pictures'].v} pictures fetched ahead, ${m['ahead.requests'].v} requests, ${m['ahead.bytes'].v} B; the first five rows open in ${m['ahead.open'].v} ms (${m['ahead.served'].v} of 5 from it), ${m['noahead.open']?.v ?? '-'} ms without; right after a relaunch ${m['ahead.relaunch'].v} ms (${m['ahead.relaunchServed'].v} of 3 kept), ${m['noahead.relaunch']?.v ?? '-'} ms without`);
+      else if (phone)
         console.log(`phone ${cpu}× run ${i + 1}: cold ${m['cold.list'].v} ms, ${m['cold.nodes'].v} nodes; open ${m['open.ms'].v} ms; keystroke to frame p90 ${m['typing.keyP90'].v} ms; slow frames: list ${m['listScroll.slowFrames'].v}, timeline ${m['tlScroll.slowFrames'].v}; longest task: Home ${m['homeTab.longest'].v}, Catch up ${m['catchUp.longest'].v}, person ${m['person.longest'].v}, Mail ${m['mail.longest'].v} ms`);
       else
         console.log(`${cpu}× run ${i + 1}: cold ${m['cold.list'].v} ms, first open ${m['open.first'].v} ms, reopen ${m['open.again'].v} ms, older page ${m['older.page'].v} ms, long reopen ${m['long.reopen'].v} ms, arrival ${m['arrival.busy'].v} ms busy, relaunch ${m['relaunch.list'].v} ms, open after ${m['relaunch.open'].v} ms`);
@@ -183,8 +199,9 @@ async function main() {
   console.log(`\n${'metric'.padEnd(34)} ${'baseline'.padStart(10)} ${'now'.padStart(10)}  change`);
   for (const [k, m] of Object.entries(metrics)) {
     const b = old?.metrics[k];
-    const ceiling = CEILINGS[k.replace(/^p?\d+x\./, '')];
-    const capped = ceiling !== undefined && m.v > ceiling;
+    const ceiling = CEILINGS[k.replace(/^[pa]?\d+x\./, '')];
+    const floor = FLOORS[k.replace(/^[pa]?\d+x\./, '')];
+    const capped = (ceiling !== undefined && m.v > ceiling) || (floor !== undefined && m.v < floor);
     if (capped) failed++;
     // In CI: times never, and of the rest only what the baseline found steady.
     const judged = !CI || (m.kind !== 'ms' && m.kind !== 'frames' && (UPDATE ? m.gate : b?.gate) !== false);
@@ -194,7 +211,7 @@ async function main() {
     const verdict = over || capped ? 'FAIL' : judged ? '' : m.kind === 'ms' || m.kind === 'frames' ? 'not judged' : 'not steady';
     const xs = spread(k, runs) ?? [m.v];
     rows.push({ k, b: b?.v, v: m.v, kind: m.kind, change, verdict, runs: xs });
-    const note = [m.kind === 'ms' ? '' : `(${m.kind})`, capped ? `over its ceiling of ${ceiling}` : '', CI && !judged ? `${verdict}: ${xs.join(' ')}` : ''].filter(Boolean).join(' ');
+    const note = [m.kind === 'ms' ? '' : `(${m.kind})`, capped ? (floor !== undefined ? `under its floor of ${floor}` : `over its ceiling of ${ceiling}`) : '', CI && !judged ? `${verdict}: ${xs.join(' ')}` : ''].filter(Boolean).join(' ');
     console.log(`${(over || capped ? 'FAIL ' : '     ') + k.padEnd(29)} ${String(b?.v ?? '').padStart(10)} ${String(m.v).padStart(10)}  ${change}${note ? ' ' + note : ''}`);
   }
   if (UPDATE && failed) console.log(`\n${failed} over their ceilings: the baseline is not written`);
@@ -241,7 +258,7 @@ async function run(cpu: number, world: World): Promise<Metrics> {
     for (const c of world.open) lastIds.set(c.id, (await getJson(`/api/conversations/${c.id}/messages?limit=1`)).messages.at(-1).id);
 
     // Cold: a device that has never seen this hub.
-    await page.goto(`${base}/?perf=1#/inbox`);
+    await page.goto(`${base}/?perf=1&ahead=0#/inbox`);
     const cold = await loaded(page);
     put('cold.list', cold.list);
     put('cold.fresh', cold.fresh);
@@ -298,7 +315,7 @@ async function run(cpu: number, world: World): Promise<Metrics> {
     await until(async () => ((await page.eval<number | null>(SNAPSHOT_TIMELINES)) ?? 0) >= world.open.length, 20_000, 'the snapshot did not keep the timelines').catch((e) => console.warn(e.message));
     await page.goto(`${base}/api/health`);
     await Bun.sleep(1000);
-    await page.goto(`${base}/?perf=1#/inbox`);
+    await page.goto(`${base}/?perf=1&ahead=0#/inbox`);
     const warm = await loaded(page);
     if (warm.source !== 'snapshot') console.warn(`relaunch loaded from the ${warm.source}, not the snapshot`);
     put('relaunch.list', warm.list);
@@ -386,7 +403,7 @@ async function phoneRun(cpu: number, world: World): Promise<Metrics> {
     const person = boot.identities.find((i: any) => i.nativeId === world.open[2].member)?.personId;
     if (!person) throw new Error('no person for the biggest direct conversation');
 
-    await page.goto(`${base}/?perf=1#/inbox`);
+    await page.goto(`${base}/?perf=1&ahead=0#/inbox`);
     const cold = await loaded(page);
     put('cold.list', cold.list);
     put('cold.longest', cold.longest);
@@ -416,6 +433,107 @@ async function phoneRun(cpu: number, world: World): Promise<Metrics> {
     await b.close();
   }
   return m;
+}
+
+/**
+ * Fetching ahead at a phone's size (prefetch.ts, docs/perf.md "Fetching ahead"). A device that never saw the hub loads
+ * the inbox and waits until fetching ahead is done: pages, pictures, requests and bytes it took. Then the first five
+ * rows open one after another, each timed to its `dither:timeline` mark, with where each came from; then the app is
+ * opened again and the next three rows open at once, before anything is fetched ahead in that start. The same in a
+ * browser that fetches nothing ahead (?ahead=0) for the times to compare (not in CI). Both over a phone's link (AHEAD_RTT): on
+ * loopback a page from the hub takes no time to come, and fetching ahead saves only that.
+ */
+async function aheadRun(cpu: number): Promise<Metrics> {
+  const m: Metrics = {};
+  const put = (k: string, v: number, kind: Kind = 'ms') => (m[k] = { v: Math.round(v), kind });
+  const one = async (ahead: boolean) => {
+    const b = await launch();
+    const page = b.page;
+    try {
+      await page.size(390, 844, true);
+      await page.send('Performance.enable');
+      if (cpu > 1) await page.send('Emulation.setCPUThrottlingRate', { rate: cpu });
+      await page.send('Network.enable');
+      if (AHEAD_RTT) await page.send('Network.emulateNetworkConditions', { offline: false, latency: AHEAD_RTT, downloadThroughput: 2.5e6, uploadThroughput: 1.25e6 });
+      await page.send('Page.addScriptToEvaluateOnNewDocument', { source: INIT });
+      const url = `${base}/?perf=1${ahead ? '' : '&ahead=0'}#/inbox`;
+      await page.goto(url);
+      await loaded(page);
+      const out: Record<string, number> = {};
+      if (ahead) {
+        await page.until(`window.__ditherAhead?.idle && __ditherAhead.pages.length > 0`, 60_000).catch(() => console.warn('fetching ahead did not finish'));
+        await settle(page);
+        const x = await page.eval<{ pages: number; pictures: number; requests: number; bytes: number }>(`(() => {
+          // A conversation's page, or a person's chat of several routes (docs/chats.md), and pictures.
+          const ids = new Set(__ditherAhead.pages.map((k) => k.slice(2)));
+          const mine = performance.getEntriesByType('resource').filter((r) => {
+            const p = new URL(r.name).pathname.split('/');
+            return (p[2] === 'conversations' && ids.has(p[3]) && /^(messages|history)$/.test(p[4])) || (p[2] === 'chats' && ids.has(p[3].replace(/^person:/, '')) && p[4] === 'messages') || p[1] === 'media';
+          });
+          return { pages: __ditherAhead.pages.length, pictures: __ditherAhead.pictures, requests: mine.length, bytes: mine.reduce((s, r) => s + r.transferSize, 0) };
+        })()`);
+        Object.assign(out, x);
+      }
+      // Conversations, not mail threads, in the order on screen.
+      const rows = await page.eval<string[]>(`[...document.querySelectorAll('.side-scroll [data-row]')].map((e) => e.getAttribute('data-row')).filter((id) => id.startsWith('cnv_')).slice(0, 8)`);
+      if (rows.length < 8) throw new Error(`only ${rows.length} conversations in the inbox`);
+      const before = ahead ? await page.eval<number>('__ditherAhead.opens.ahead') : 0;
+      const times: number[] = [];
+      for (const id of rows.slice(0, 5)) times.push(await openRow(page, id));
+      out.open = median(times);
+      if (ahead) out.served = (await page.eval<number>('__ditherAhead.opens.ahead')) - before;
+      // Away and back: the page saves what it keeps as it goes out of sight. With fetching ahead, until the next three
+      // rows' pages are stored: a slow save cut short by the relaunch is not what this measures.
+      await page.eval(`Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }), document.dispatchEvent(new Event('visibilitychange'))`);
+      await Bun.sleep(1500);
+      if (ahead)
+        await page.until(`new Promise((res) => { const r = indexedDB.open('dither-chat'); r.onsuccess = () => { const t = r.result.transaction('pages'); const k = t.objectStore('pages').getAllKeys(); t.oncomplete = () => { r.result.close(); res(${JSON.stringify(rows.slice(5, 8).map((id) => `c:${id}`))}.every((x) => k.result.includes(x))); }; }; r.onerror = () => res(false); })`, 15_000).catch(() => console.warn('the next three rows were not all kept'));
+      await page.goto(`${base}/api/health`);
+      await page.goto(url);
+      await page.until(`window.__perf?.list != null`, 30_000);
+      const again: number[] = [];
+      for (const id of rows.slice(5, 8)) again.push(await openRow(page, id));
+      out.relaunch = median(again);
+      // From the device: kept, or caught up ahead if that started first.
+      if (ahead) out.relaunchServed = await page.eval<number>('__ditherAhead.opens.kept + __ditherAhead.opens.ahead');
+      return out;
+    } finally {
+      await b.close();
+    }
+  };
+  const a = await one(true);
+  // CI judges no times, so it leaves out the run that is only there for them.
+  const n = CI ? null : await one(false);
+  put('ahead.pages', a.pages, 'count');
+  put('ahead.pictures', a.pictures, 'count');
+  put('ahead.requests', a.requests, 'count');
+  put('ahead.bytes', a.bytes, 'bytes');
+  put('ahead.open', a.open);
+  put('ahead.served', a.served, 'count');
+  if (n) put('noahead.open', n.open);
+  put('ahead.relaunch', a.relaunch);
+  put('ahead.relaunchServed', a.relaunchServed, 'count');
+  if (n) put('noahead.relaunch', n.relaunch);
+  return m;
+}
+
+/** On a phone: from the inbox to a row's conversation, timed to its `dither:timeline` mark; then back to the inbox. */
+async function openRow(page: Page, id: string): Promise<number> {
+  const ms = await page.eval<number>(`(async () => {
+    const key = 'c:${id}';
+    const t0 = performance.now();
+    const seen = new Promise((res, rej) => {
+      const o = new PerformanceObserver((l) => { for (const e of l.getEntries()) if (e.name === 'dither:timeline' && e.detail?.key === key && e.startTime >= t0) { o.disconnect(); res(e.startTime - t0); } });
+      o.observe({ type: 'mark' });
+      setTimeout(() => rej(new Error('no dither:timeline mark for ' + key)), 30000);
+    });
+    location.hash = '#/inbox/c/${id}';
+    return seen;
+  })()`);
+  await settle(page);
+  await page.eval(`location.hash = '#/inbox'`);
+  await settle(page);
+  return ms;
 }
 
 async function metrics(page: Page) {
@@ -565,7 +683,7 @@ const SNAPSHOT_TIMELINES = `new Promise((res) => {
 
 /** Every run's value of a per-throttle metric ("1x.cold.nodes"), or null for the hub's own. */
 function spread(k: string, runs: Record<string, Metrics[]>): number[] | null {
-  const m = k.match(/^(p?\d+)x\.(.+)$/);
+  const m = k.match(/^([pa]?\d+)x\.(.+)$/);
   return m ? runs[m[1]].map((r) => r[m[2]]?.v).filter((x) => x !== undefined) : null;
 }
 /**

@@ -277,8 +277,9 @@ These live in the web app, so the PWA gets them too.
    sight, and after the reload the new worker serves its own cache. A new deploy shows up one start later (or at
    the bar), not on the first start after it.
 2. **A snapshot of the last screen** (`src/snapshot.ts`), in IndexedDB. It holds the bootstrap (every sidebar list,
-   unread counts and last messages) and the inbox, and beside it the newest 40 messages of the 40 most recently
-   opened conversations, a record each with their authors, reactors and quoted messages ([sync.md](sync.md#kept-pages)).
+   unread counts and last messages) and the inbox, and beside it the newest 40 messages of the 60 conversations opened
+   or fetched ahead most recently, a record each with their authors, reactors and quoted messages
+   ([sync.md](sync.md#kept-pages), [perf.md](perf.md#fetching-ahead-and-kept-pages-2026-11-11)).
    It is read before the network and painted at once. It also keeps its place in the hub's change journal, so the app then asks only for what changed since
    ([sync.md](sync.md)); a full bootstrap replaces it only when the hub cannot say. A kept conversation catches up
    the same way when opened. It is saved when the bootstrap arrives (the hub's own text, without

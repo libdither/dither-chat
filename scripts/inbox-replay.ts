@@ -10,6 +10,7 @@
  *   bun scripts/inbox-replay.ts ... --triage       (also: the learned order with triage's level and your votes as features)
  *   bun scripts/inbox-replay.ts ... --explore [--explore-scale 1]   (also: what exploring costs, over 20 seeds)
  *   bun scripts/inbox-replay.ts ... --calibrate    (the learned order's prior: open chance against the formula alone)
+ *   bun scripts/inbox-replay.ts ... --prefetch     (pages kept on the device and fetched ahead: how many opens they serve, at what cost)
  *
  * It never opens the live database for writing: it copies it with VACUUM INTO (read-only) and works on the copy. It
  * writes `inbox-replay.md` and `inbox-replay.json` to --out: counts, ranks and rates, never message text, names or ids.
@@ -67,9 +68,9 @@ function copyLive(): string {
 
 // ------------------------------------------------------------------ the world, rebuilt (rankhistory.ts)
 
-function load(path: string): World & { db: Database } {
+function load(path: string): World & { db: Database; store: Store } {
   const store = new Store(path, () => null);
-  return { ...loadWorld(store.db, mutedBy(new Triage(store))), db: store.db };
+  return { ...loadWorld(store.db, mutedBy(new Triage(store))), db: store.db, store };
 }
 
 // ------------------------------------------------------------------ orderings
@@ -253,6 +254,94 @@ function learned(ms: Moment[], opens: Open[], snaps: Snap[], id: string, o: Sett
     if (sectionedId) x.ranks[sectionedId] = modelRank(models[x.day], snaps[i], true);
   });
   return models;
+}
+
+// ------------------------------------------------------------------ fetching ahead (docs/perf.md, "Fetching ahead")
+
+/** The first `k` of a moment's candidates in a model's order, muted last, as the inbox shows them. */
+function topOf(m: RankModel, s: Snap, k: number): string[] {
+  return s.cands
+    .map((c) => ({ id: c.id, v: predict(m, c.x).value, muted: c.muted }))
+    .sort((a, b) => Number(a.muted) - Number(b.muted) || b.v - a.v || (a.id < b.id ? -1 : 1))
+    .slice(0, k)
+    .map((c) => c.id);
+}
+
+/** In use just before: the stay before it ended this recently, and it was not a tap on a system notification. */
+const IN_USE = 2 * MIN;
+
+/**
+ * Every chosen open in time order, against the pages a device keeps (keptpages.ts: the `kept` most recently used) and
+ * the first `k` rows of the learned order fetched ahead (prefetch.ts). An open is served from the device when what it
+ * opens is kept, or was among the first `k` then. Fetching ahead only counts while the app was in use just before (a
+ * notification may wake it from the background, where nothing is fetched), and what it fetched is kept like the rest.
+ * `fetched`: pages fetched ahead that were not kept already.
+ */
+function prefetchReplay(l: ReturnType<typeof load>, opens: Open[], snaps: Snap[], models: Record<number, RankModel>, kept: number, k: number) {
+  const choices = l.stays.filter((s) => isChoice(s) && s.targets.length);
+  const at = new Map(opens.map((o, i) => [o.t, i]));
+  const lru = new Map<string, true>();
+  const touch = (id: string) => {
+    lru.delete(id);
+    lru.set(id, true);
+    while (lru.size > kept) lru.delete(lru.keys().next().value!);
+  };
+  let n = 0;
+  let fromKept = 0;
+  let fromAhead = 0;
+  let fetched = 0;
+  let lastEnd = -Infinity;
+  for (const s of choices) {
+    n++;
+    const i = at.get(s.start);
+    const inUse = s.start - lastEnd <= IN_USE && s.source !== 'notification';
+    const ahead = i !== undefined && k && inUse ? topOf(models[opens[i].day], snaps[i], k) : [];
+    if (s.targets.some((x) => lru.has(x))) fromKept++;
+    else if (s.targets.some((x) => ahead.includes(x))) fromAhead++;
+    for (const id of ahead) {
+      if (!lru.has(id)) fetched++;
+      touch(id);
+    }
+    for (const x of s.targets) touch(x);
+    lastEnd = Math.max(lastEnd, s.end);
+  }
+  return { n, fromKept, fromAhead, fetched };
+}
+
+/** What a first page of `limit` costs on the wire (zstd, as the hub sends it), over the conversations opened. */
+function pageBytes(l: ReturnType<typeof load>, limit: number) {
+  const ids = [...new Set(l.stays.filter(isChoice).flatMap((s) => s.targets))].slice(0, 400);
+  const sizes = ids
+    .map((id) => {
+      const page = l.store.messages(id, null, limit);
+      return page.messages.length ? Bun.zstdCompressSync(new TextEncoder().encode(JSON.stringify(page)), { level: 3 }).byteLength : null;
+    })
+    .filter((x): x is number => x !== null)
+    .sort((a, b) => a - b);
+  return { n: sizes.length, mean: sizes.reduce((a, b) => a + b, 0) / (sizes.length || 1), median: sizes[sizes.length >> 1] ?? 0, p90: sizes[Math.floor(sizes.length * 0.9)] ?? 0 };
+}
+
+function prefetchReport(l: ReturnType<typeof load>, opens: Open[], snaps: Snap[], models: Record<number, RankModel>, days: number): string[] {
+  const bytes40 = pageBytes(l, 40);
+  const bytes60 = pageBytes(l, 60);
+  const pct = (a: number, n: number) => `${((100 * a) / (n || 1)).toFixed(1)}%`;
+  const rows: string[] = [];
+  for (const kept of [12, 40, 60, 100]) {
+    for (const k of [0, 3, 5, 8, 12, 20]) {
+      const r = prefetchReplay(l, opens, snaps, models, kept, k);
+      rows.push(`| ${kept} | ${k} | ${pct(r.fromKept + r.fromAhead, r.n)} | ${pct(r.fromKept, r.n)} | ${pct(r.fromAhead, r.n)} | ${(r.fetched / days).toFixed(0)} | ${Math.round((r.fetched / days) * bytes40.mean / 1024)} KB |`);
+    }
+  }
+  return [
+    '### Fetching ahead',
+    '',
+    `Every chosen open (${prefetchReplay(l, opens, snaps, models, 0, 0).n}), against the pages the device keeps (the most recently used) and the first k rows of the learned order fetched ahead while the app was in use. A first page of 40 messages is ${Math.round(bytes40.median)} B on the wire as zstd (median; mean ${Math.round(bytes40.mean)}, p90 ${bytes40.p90}, over ${bytes40.n} conversations); of 60, ${Math.round(bytes60.median)} B.`,
+    '',
+    '| kept | ahead | from the device | kept | fetched ahead | pages fetched a day | bytes a day |',
+    '|---|---|---|---|---|---|---|',
+    ...rows,
+    '',
+  ];
 }
 
 // ------------------------------------------------------------------ exploring
@@ -458,6 +547,7 @@ if (import.meta.main) {
     '',
     ...gridGaps,
     ...exploring,
+    ...(flag('prefetch') ? prefetchReport(l, opens, snaps, models, days.length) : []),
     'Sectioned minus the learned order (what hard sections cost), MRR on the same opens:',
     '',
     gapLine('choosing days', val, 'sectioned', 'learned'),

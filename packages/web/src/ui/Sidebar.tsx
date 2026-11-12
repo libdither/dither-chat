@@ -437,7 +437,7 @@ export const PersonRow = memo(function PersonRow({ person, directs, active, onCl
   const nets = [...new Set(directs.map((d) => d.network))];
   const ctx = useMenu(() => personMenu(person));
   return (
-    <button class={`row conv-row ${active ? 'active' : ''} ${u.unread ? 'unread' : ''}`} data-track={rowTrack('person', !!u.unread)} onClick={onClick} {...ctx}>
+    <button class={`row conv-row ${active ? 'active' : ''} ${u.unread ? 'unread' : ''}`} data-person={person.id} data-track={rowTrack('person', !!u.unread)} onClick={onClick} {...ctx}>
       <span class="row-avatar">
         <Avatar id={person.id} name={person.name} url={person.avatar} size={36} />
         <RowTyping convIds={directs.map((d) => d.id)} />

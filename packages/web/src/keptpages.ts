@@ -10,8 +10,8 @@
  */
 import type * as P from '@dither-chat/protocol';
 
-/** Pages kept, most recently used first. */
-export const MAX_PAGES = 40;
+/** Pages kept, most recently used first. 60 served 80% of a week's opens in a replay, 40 77.5%, 12 60.5% (docs/perf.md). */
+export const MAX_PAGES = 60;
 /** The newest messages kept of each. */
 export const MAX_PAGE_MESSAGES = 40;
 /** All of them together, in characters of JSON. */
@@ -54,7 +54,6 @@ export interface LiveTimeline {
   conversationIds?: string[];
   detached?: boolean;
   loading?: boolean;
-  glance?: boolean;
   sync?: P.SyncPosition;
 }
 
@@ -182,7 +181,8 @@ export class PageCache {
     const keep = new Set<string>();
     for (const key of order) {
       const t = o.live(key);
-      const usable = t && !t.detached && !t.loading && !t.glance && t.messages.length > 0;
+      // A glance only when it was fetched ahead (touched): Catch up's cards never are.
+      const usable = t && !t.detached && !t.loading && t.messages.length > 0;
       let text: string | null = null;
       let made: { msgs: P.MessageView[]; convs: string; epoch: string } | null = null;
       if (usable) {

@@ -171,7 +171,8 @@ hub, a message sent while the browser was offline was on screen 100 ms after the
 
 ## Kept pages
 
-The newest 40 messages of each conversation (or person's chat) opened most recently are kept on the device, a record
+The newest 40 messages of each conversation (or person's chat) opened most recently, or fetched ahead
+([perf.md](perf.md#fetching-ahead-and-kept-pages-2026-11-11)), are kept on the device, a record
 each in IndexedDB beside the snapshot (`packages/web/src/keptpages.ts`, store `pages` of the `dither-chat` database),
 with the journal position they are current to, the people they name and the messages their replies quote. Opening one
 shows them at once, before the hub has answered, after a start or while the hub is restarting or out of reach; then
@@ -181,12 +182,13 @@ epoch) is replaced by the hub's newest page; when the hub cannot say at all, the
 hub no longer has in its range go. A catch-up that got no answer while the socket stayed up is tried again by itself
 (2 s, then twice as long each time, up to 30 s), unless a reconnect's sync caught it up first.
 
-- **Bounds**: 40 pages and 3 million characters of JSON, the least recently opened going first.
+- **Bounds**: 60 pages and 3 million characters of JSON, the least recently used going first. 60 kept served 80% of
+  a week's opens from the device in a replay, 40 77.5%, the 12 of before 60.5% (perf.md).
 - **Writes**: a page is written only when its messages changed (a new one, an edit, a reaction: the client replaces
   the message object), the conversations a person's chat spans changed, or its position's epoch did. The live socket
   moving the position along is not a change: the page keeps its older position, which is still right (catching up
-  from it asks for a little more). One loading, a window around an old message, or a glance (Catch up's cards) is not
-  written.
+  from it asks for a little more). One loading, a window around an old message, or one never opened or fetched ahead
+  (Catch up's cards) is not written.
 - **Reads**: at start every record is read as text in the snapshot's transaction, and a page is parsed only when it
   is opened. Who wrote it and what it quotes go into the client's state then, where it holds no copies of its own.
 - **Removal**: a conversation or person the hub removes (an account removed takes what only it saw) takes its page

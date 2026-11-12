@@ -12,7 +12,8 @@ bun scripts/verify-perf.ts --runs 1 --cpu 4 --pages 5   # a quick look
 ```
 
 Options: `--port` (8620; the hub it starts listens there), `--runs`, `--cpu 1,4` (`0`: no desktop pass), `--phone-cpu 4`
-(the phone pass's throttles, below; `0` leaves it out), `--pages` (older pages to load in the
+(the phone pass's throttles, below; `0` leaves it out), `--ahead-cpu 4` (the fetching-ahead pass's, below; `0` leaves it
+out), `--ahead-rtt 80` (its link's round trip in ms), `--pages` (older pages to load in the
 biggest conversation, 15), `--web <dist>` (a build to use instead of building one), `--out <file.json>` (every run's
 numbers), `--baseline <file>`, `--keep` (leave the temp dir with the world, the build and the hub's log), `--css <css>`
 (added to every page, to try a style change without a build), `--work <dir>` (an empty dir to work in instead of a
@@ -71,6 +72,20 @@ a phone does that the desktop run does not:
 | `people`, `person`, `mail` | People from the rail, a person's page (the biggest direct conversation's), Mail's list: DOM nodes, longest task, message renders |
 
 Slow frames are a time in all but name (kind `frames`): judged locally like a time, never in CI.
+
+Those passes fetch nothing ahead (`?ahead=0`), so their counts stay what they were. Then fetching ahead
+([below](#fetching-ahead-and-kept-pages-2026-11-11)) at a phone's size and over a phone's link (80 ms round trip,
+20/10 Mbit/s: on loopback a page from the hub takes no time to come, and fetching ahead saves only that),
+`--ahead-cpu` (4× here, 1× in CI), its keys starting `a4x.`:
+
+| metric | what |
+|---|---|
+| `ahead.pages`, `ahead.pictures`, `ahead.requests`, `ahead.bytes` | a device that never saw the hub loads the inbox and waits until fetching ahead is done: pages and pictures it fetched, its requests and their bytes on the wire |
+| `ahead.open`, `ahead.served` | then the first five conversations of the inbox open one after another (median time to `dither:timeline`), and how many came from what was fetched ahead |
+| `ahead.relaunch`, `ahead.relaunchServed` | the app opened again, and the next three rows open at once, before this start fetched anything: time, and how many came from the device |
+| `noahead.open`, `noahead.relaunch` | the same in a browser that fetches nothing ahead (not in CI, which judges no times) |
+
+`ahead.served` and `ahead.relaunchServed` have floors (`FLOORS`): every open there should come from the device.
 
 Each step waits until nothing has rendered for half a second before it counts. A plain reload is not measured: it
 swings 30–80% between runs, because the old page is still saving its snapshot on the way out.
@@ -502,6 +517,89 @@ The baselines' DOM node counts moved by hand: `cold.nodes` 11,402 to 2,562 and `
 CI's `1x.cold.layouts` is no longer judged (`"gate": false`): its first run of this change read 12 against 9, and runs
 of main and branches of it had read 9, 9, 9, 10, 10 and 11, more than a steady tally spreads. Traced on CI's world, a
 cold load lays out the same 15 times for either build, then a varying few more as Catch up's cards fill in.
+
+## Fetching ahead and kept pages (2026-11-11)
+
+Asked: open the conversation or person you are likely to open next at once, from the device, even right after a
+start or while the hub restarts, without hammering the hub or the phone's data.
+
+**What there was.**
+
+| | |
+|---|---|
+| Message pages | asked of the hub on open: `GET …/messages?limit=60` after the socket is open, then the network's latest (`POST …/history`). Nothing fetched before a click |
+| The snapshot | the bootstrap, the inbox and the newest 40 messages of the 12 conversations opened last, in one record that was written whole after every open; a kept one opened at once and caught up with a delta |
+| The service worker | the shell (index.html and this build's assets), cache first; nothing of the API or `/media` |
+| The hub's headers | `/assets/` a year, immutable; index.html and other static files `no-cache`; `/media` and `/emoji` 7 days (files on disk without `immutable`); the API none |
+| Android | the WebView's defaults (HTTP cache on, `LOAD_DEFAULT`, the service worker works); its own cache is only for notification pictures. A WebView's HTTP cache is one small fixed-size cache for everything the app loads |
+
+**Gaps**: a conversation not among the last 12 opened always waited for the hub, after a start too; pictures lived
+only in the HTTP cache; a kept page whose catch-up got no answer while the socket stayed up stayed stale until the next
+reconnect; and nothing measured how often an open came from the device.
+
+**What changed** (#104, #106, and this):
+
+- **Pictures** ([files.md](files.md#serving)): `/media` and `/emoji` a year, immutable (a signed path stands for one
+  stored URL's bytes for good); untyped bytes a day. The service worker keeps images up to 512 KB in a cache of its
+  own, at most 4,000 or 64 MB, oldest out first, and answers from it first; those of an account that left go.
+- **Kept pages** ([sync.md](sync.md#kept-pages)): a record per conversation in IndexedDB, 60 at most (3 million
+  characters), least recently used out first, written only when its messages changed and parsed only when opened. A
+  catch-up that got no answer tries again by itself.
+- **Fetching ahead** (`prefetch.ts`, `ahead.ts`): the first 12 rows of the inbox (conversations, and a person's chat
+  of several routes as the one timeline it opens) in its own (learned) order,
+  once the hub's data is in and again as the order changes. Those not held are fetched as Catch up's cards are (what
+  the hub stored, no network history); those kept on the device are caught up with a delta, so the open shows what is
+  there now. One page at a time, 1.5 s after the last touch or key and when the page is idle, never while out of
+  sight, on Save-Data, a cellular network or 2G, at most 30 pages in ten minutes; then the avatars and small images of
+  each page (at most 12). A row or person pressed (a mouse at once, a finger after 40 ms unless it turns into a
+  scroll) or rested on by a mouse for 120 ms is fetched at once, within a budget of its own. Fetched pages are kept
+  like opened ones, so the next start has them; at most 24 fetched and not opened stay in memory, since each one in
+  memory is in every reconnect's catch-up (the hub reads 100). The page counts where each open came from
+  (`window.__ditherAhead` under `?perf=1`).
+
+**Choosing how many** (`bun scripts/inbox-replay.ts … --prefetch`, a copy of the live database, 9 days, 521 chosen
+opens): every open against the pages a device keeps (the most recently used) and the first k rows of the learned order
+fetched ahead while the app was in use just before (not after a tap on a system notification, which may wake it from
+the background). A first page of 40 messages is 4.7 KB on the wire as zstd (median; mean 5.9 KB, p90 10.4 KB).
+
+| kept | ahead | from the device | pages fetched ahead a day |
+|---|---|---|---|
+| 12 (before) | 0 | 60.5% | 0 |
+| 40 | 0 | 77.5% | 0 |
+| 40 | 12 | 83.5% | 6 |
+| 60 | 0 | 80.2% | 0 |
+| **60** | **12** | **86.2%** | **5** |
+| 60 | 20 | 89.4% | 10 |
+| 100 | 20 | 90.8% | 9 |
+
+Keeping more is most of it; fetching ahead adds 6 points at 12 rows and 9 at 20. With 12 kept, fetching more than 8
+ahead does worse: what it fetches pushes out what you opened. Pages fetched a day are counted only at the moments you
+opened something, so the real number is higher, but each is a few kilobytes. 12 rows ahead and 60 kept.
+
+**Measured** (verify-perf's `ahead` pass: a phone's size, an 80 ms link at 20/10 Mbit/s, medians of three runs; the
+machine's load was 20 to 70, so the times are rough and the counts are what holds):
+
+| | CI's world, 1× | full size, 4× |
+|---|---|---|
+| fetched ahead on a cold load: pages, requests, bytes | 12, 12, 17.9–23.3 KB | 12, 12, 26–32 KB |
+| the first five rows opened: from what was fetched ahead | 5 of 5 | 5 of 5 |
+| …time to their newest message, median (without fetching ahead) | 42 ms (175 ms) | 311 ms (363 ms); runs 303–405 (282–602) |
+| the next three right after a relaunch: from the device | 3 of 3 | 3 of 3 |
+| …time, median (without) | 40 ms (137 ms) | 311 ms (402 ms); runs 213–486 (350–493) |
+
+What fetching ahead saves is the wait for the hub over the link: about two round trips and the page, more when the
+hub is slow, as right after it restarts. What is left at 4× is the first render of a conversation's page, the same
+either way.
+
+Not done:
+
+- The hit rate is the replay's and the demo world's. The page counts its own (`__ditherAhead`), but nothing reports it
+  to the hub; the activity log's visits could carry where each open came from.
+- Fetching ahead is off on a cellular network, so a phone away from Wi-Fi gets only its kept pages.
+- Changing the hub (Android: Settings, Use another hub) leaves the old hub's kept pages and pictures on the device,
+  in that origin's storage, until Android clears it; removing them needs the app (`WebStorage.deleteOrigin`), a new APK.
+- Kept pages among the first rows are caught up ahead one `POST /api/sync` each (about 330 bytes); one request for
+  all of them would do.
 
 ## Next
 
