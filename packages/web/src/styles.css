@@ -4554,6 +4554,15 @@ code {
   color: var(--text-faint);
   padding: 2px;
 }
+/* What a tap on the toast does ("Undo"). */
+.toast-action {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 2px 6px;
+  align-self: center;
+  white-space: nowrap;
+}
 
 .tabbar,
 .ptr,

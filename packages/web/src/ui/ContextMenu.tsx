@@ -136,8 +136,9 @@ function Panel({ items, x, y, flipX, depth, onClose, onBack, autoFocus, track }:
   useLayoutEffect(() => {
     const el = box.current;
     if (!el) return;
-    const r = el.getBoundingClientRect();
-    const p = place(x, y, r.width, r.height, innerWidth, innerHeight, flipX);
+    // Its size without the opening animation's scale: measured mid-animation, a tall menu came out a few pixels
+    // short and hung past the window's edge.
+    const p = place(x, y, el.offsetWidth, el.offsetHeight, innerWidth, innerHeight, flipX);
     el.style.left = `${p.left}px`;
     el.style.top = `${p.top}px`;
     el.style.visibility = 'visible';

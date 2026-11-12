@@ -187,7 +187,10 @@ export class Store {
   readonly dirty = new Dirty();
   /** Conversation -> the oldest new message stored since attention.ts last looked, so it can tell appends from backfill. */
   readonly ingested = new Map<string, number>();
-  /** Conversations where your own reactions changed since attention.ts last looked: a reaction answers what you owed. */
+  /**
+   * Conversations where your own reactions or reply marks changed since attention.ts last looked: a reaction answers
+   * what you owed, a mark settles or holds it (replymarks.ts). They fold again.
+   */
   readonly selfReacted = new Set<string>();
   /** What changed at which position, for clients that come back (journal.ts, docs/sync.md). */
   readonly journal: Journal;
@@ -227,6 +230,7 @@ export class Store {
       this.addColumns('identity', { status: 'TEXT', nickname: 'TEXT' });
       this.addColumns('category', { threshold: 'REAL' });
       this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL', was: 'TEXT', alert_mark: 'INTEGER', less_mark: 'INTEGER', marked_at: 'INTEGER' });
+      this.addColumns('owed_turn', { dismissed: 'INTEGER NOT NULL DEFAULT 0' });
       this.addColumns('visit', { depth: 'INTEGER', seen_to_ts: 'INTEGER', owed_since: 'INTEGER', owed_shown: 'INTEGER', typed: 'INTEGER NOT NULL DEFAULT 0', draft_left: 'INTEGER', exit: 'TEXT' });
       this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'" });
       const oldTriage = this.setAsideTriage();
@@ -2476,6 +2480,7 @@ export class Store {
     );
     const seen = this.db.query(`SELECT * FROM message_seen WHERE message_id IN (${ph})`).all(...ids) as Row[];
     const tri = this.db.query(`SELECT * FROM triage WHERE message_id IN (${ph})`).all(...ids) as Row[];
+    const marks = new Map((this.db.query(`SELECT message_id, mark FROM reply_mark WHERE message_id IN (${ph}) AND undone_at IS NULL`).all(...ids) as Row[]).map((r) => [r.message_id as string, r.mark as P.ReplyMark]));
     const sentForwards = new Map((this.db.query(`SELECT * FROM forward_sent WHERE message_id IN (${ph})`).all(...ids) as Row[]).map((f) => [f.message_id, json<P.ForwardView | null>(f.data, null)]));
     const by = <T extends Row>(xs: T[]) => {
       const m = new Map<string, T[]>();
@@ -2558,6 +2563,7 @@ export class Store {
           .filter((x) => x.count > 0),
         seenVia,
         triage: t ? triageView(t) : null,
+        ...(marks.has(r.id) ? { replyMark: marks.get(r.id) } : {}),
       };
     });
   }

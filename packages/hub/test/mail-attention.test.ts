@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { hubId, mailId } from '@dither-chat/protocol/ids';
+import { ReplyMarks } from '../src/replymarks.ts';
 import { Attention } from '../src/attention.ts';
 import { mailAttention, MAIL_INBOX } from '../src/mail/attention.ts';
 import { mailClassifier } from '../src/mail/classify.ts';
@@ -106,6 +107,24 @@ describe('owed and unread', () => {
     w.fake.deliver(ACC, { mailboxId: 'INBOX', messageId: '<s2@x>', inReplyTo: '<s1@x>', references: ['<s1@x>'], from: [ME], to: [SAM], subject: 'Re: Dinner?', receivedAt: w.clock.now, flags: { seen: true } });
     await until(() => w.mail().get(t)?.owedSince === null, 3000, 'the answer');
     expect(w.hub.store.threadView(w.hub.store.thread(t)!).owedSince).toBeNull();
+  });
+
+  test('marks on mail: "No reply needed" settles the thread, "Reply needed" holds it, as in a chat', async () => {
+    const w = await world((put) => put({ messageId: '<k1@x>', from: [SAM], to: [ME], subject: 'Lunch?', receivedAt: T0 + 10 * DAY - 2 * H, flags: { seen: false } }));
+    const t = tid(w.hub, '<k1@x>');
+    const marks = new ReplyMarks(w.chat);
+    expect(w.mail().get(t)?.owedSince).toBe(T0 + 10 * DAY - 2 * H);
+    expect(marks.setMailRow(t, 'none').marked).toHaveLength(1);
+    mailAttention(w.hub)!.marked(t);
+    expect(w.mail().get(t)?.owedSince ?? null).toBeNull();
+    // Undone on the message, then held: owed in full days later.
+    const id = mailId('mml', ACC, 'm:<k1@x>');
+    marks.setMail(id, 'needs');
+    mailAttention(w.hub)!.marked(t);
+    w.clock.now += 4 * DAY;
+    w.attention.rescoreAll();
+    expect(w.mail().get(t)).toMatchObject({ owedSince: T0 + 10 * DAY - 2 * H, replyMark: 'needs', needs: true });
+    expect(marks.setMail(id, null)).toEqual({ threadId: t });
   });
 
   test('a flush out of time leaves the read for the next one, which shows it', async () => {

@@ -127,8 +127,10 @@ export interface OwedTurn {
   addressed: number;
   /** When you answered (your next message, or the message you reacted to); null: not yet, or it ran out. */
   answeredAt: number | null;
-  /** False when a reaction answered it: at no known time. */
+  /** False when a reaction answered it, or you marked it "No reply needed": at no known time. */
   timed: boolean;
+  /** You marked it "No reply needed" (replymarks.ts): neither addressed nor answered, as the fold counts it. */
+  dismissed?: boolean;
 }
 
 export interface FitOptions {
@@ -152,7 +154,8 @@ export interface RatedTurn extends OwedTurn {
  */
 export function rateTurns(turns: OwedTurn[]): RatedTurn[] {
   const byStart = [...turns].sort((a, b) => a.addressed - b.addressed);
-  const over = byStart.map((t) => ({ t, at: t.answeredAt ?? t.addressed + WINDOW })).sort((a, b) => a.at - b.at);
+  // A dismissed turn counts toward no rate, as in the fold (attention.ts `dismiss`).
+  const over = byStart.filter((t) => !t.dismissed).map((t) => ({ t, at: t.answeredAt ?? t.addressed + WINDOW })).sort((a, b) => a.at - b.at);
   const conv = new Map<string, Tally>();
   const person = new Map<string, Tally>();
   const get = (m: Map<string, Tally>, k: string) => m.get(k) ?? m.set(k, emptyTally()).get(k)!;

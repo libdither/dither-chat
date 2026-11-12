@@ -145,6 +145,35 @@ their owed points alone in 2025-26 were on turns you never answered; with the ta
 turns you did answer, with the same order among open turns (AUC 0.75 at 1 h and 6 h against 0.76) and a far better
 log loss (0.50 against 0.66 at 1 h). In the hub era: 53% to 25%, keeping 86%.
 
+### Marks: "No reply needed" and "Reply needed"
+
+What the table learns from is whether you answered. That stands in for what matters, whether you will want to answer.
+A mark says that outright, and overrides it (replymarks.ts, since 2026-11-12):
+
+- **No reply needed** (`none`) on a message settles what was owed up to it, as a reaction does. It counts as
+  dismissed (the tally's `dismissed`, and `owed_turn.dismissed`), not as answered and not as addressed, so it does not
+  change how often you answer. What they write after it is owed afresh.
+- **Reply needed** (`needs`) keeps the turn owed in full (60 points, `owed.held`) at any age for a week from the mark
+  (`NEEDS_HOLD`), until you answer. On a message that was not meant for you (a group's chatter) it makes a turn of
+  its own (`kind: 'marked'`). The row says "You marked it Reply needed", and its `AttentionView` has
+  `replyMark: 'needs'`. It moves the row and never notifies: triage and the phone do not read it.
+
+A mark is on a message, and covers the whole chat as you see it. On a DM of a chat of several routes
+(docs/chats.md), No reply needed also settles each other route whose open turn began by then, up to its newest
+message from them at or before the one you marked (rows with `origin_id`); undoing it undoes those. The person and
+the chat are things a model may learn from later, not rules a mark sets.
+
+**Where.** A row showing ↩ has both in its menu, under "Why it's here", on a computer and in the phone's long-press
+sheet: No reply needed marks the newest message from them in each route's open turn, Reply needed the newest of them
+all, and a held row has Reply needed ticked. A message from someone else has both in its menu, in a group of their
+own. The ↩ goes at once; the hub folds the conversation again a few seconds later, as for your reactions. A toast
+offers Undo, and picking the ticked mark again takes it back. Mail threads in the inbox have the same, on the
+thread's newest message from them since the reply you owe began.
+
+**Kept.** `reply_mark` (one row per message: `target_kind` message or mail, its conversation or thread, the mark,
+when, where it was made, the device, `undone_at`). A change goes out with the message's view (`MessageView.replyMark`)
+and through the journal like any message change. Marks are not part of the activity log: deleting the log keeps them.
+
 ### Unread, alerts and importance
 
 DM messages and mentions count 12 each (up to 3). Other unread messages count 3 each (up to 3). Anything unread
@@ -387,12 +416,15 @@ in the order on screen, a DM as its person, then the rest by the latest message.
 
 | | |
 |---|---|
-| bootstrap `attention` | `AttentionView[]`: `{ id, score, needs, reasons, owedSince, at }` for every listed conversation, and `kind: 'mail'` with a mail thread's id for each listed thread |
+| bootstrap `attention` | `AttentionView[]`: `{ id, score, needs, reasons, owedSince, replyMark?, at }` for every listed conversation, and `kind: 'mail'` with a mail thread's id for each listed thread |
 | event `{ t: 'attention', items, removed }` | changed scores, and conversations no longer listed |
 | `GET /api/attention` | `{ now, items }` |
 | `GET /api/attention/:conversationId` | everything about one score: the formula's parts, noise, relationship, reply rate, usual reply time; `learned`: the model's open and send chances and points, and the sampled points the inbox sorts by while exploring |
 | `GET /api/attention/model` | the learned order: its mode, when it last learned and from how many opens, its prior, what it learned as changes to weights on named features, the examination curve (fitted, the guess, and how often the list was on screen down to each row), and exploring (`explore`) |
 | `POST /api/attention/rebuild` | `{ conversations?: string[] }`: fold these, or all, again from the start |
+| `POST /api/messages/:id/reply-mark` | `{ mark: 'none' \| 'needs' \| null, surface?, device? }` on a message from someone else: set, change or take back a mark (null) → `{ mark, marked }`, the messages it touched (other routes included) |
+| `POST /api/mail/messages/:id/reply-mark` | the same on a mail message |
+| `POST /api/reply-mark` | `{ targetKind: 'conversation' \| 'mail', ids, mark, device? }`: an inbox row (each route of a chat, or a thread). `none` and `needs` as above; null takes back Reply needed on the open turn → `{ mark, marked }` |
 
 The bootstrap's and the events' `score` is the learned order's when it is on (the default), the formula's otherwise.
 A mail thread keeps the formula's until the learned order learns mail (mail-design.md §12, slice 10).
