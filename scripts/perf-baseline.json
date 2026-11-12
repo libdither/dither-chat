@@ -1,5 +1,5 @@
 {
- "note": "bun scripts/verify-perf.ts --update (docs/perf.md). Times are of the machine it ran on. Times: the slower of two runs on 2026-11-10 (load 3-7 on a shared machine). Counts, renders and layouts: two runs on 2026-11-11, once the perf world's decisions followed the three tiers (the higher of the two for renders and layouts). DOM node counts (cold, long reopen) set by hand on 2026-11-11 when long lists began drawing a window of their rows (ui/more.tsx). The phone pass (p4x.*) was added on 2026-11-11 from three runs at a load of 20-40: medians, but the higher of the three for its DOM node counts, which moved by up to seven between runs (a page left loading or not). On 2026-11-11 (first opens drawn in slices, docs/perf.md) its counts, renders and layouts were written from three runs at a load of 15-20 (the highest of the three for DOM node counts), and the phone pass's new keys (main-thread time of each first open, the Home tab's message renders, the person's and Mail's App renders) added, times and all; the older times were kept, the machine being busy.",
+ "note": "bun scripts/verify-perf.ts --update (docs/perf.md). Times are of the machine it ran on. Times: the slower of two runs on 2026-11-10 (load 3-7 on a shared machine). Counts, renders and layouts: two runs on 2026-11-11, once the perf world's decisions followed the three tiers (the higher of the two for renders and layouts). DOM node counts (cold, long reopen) set by hand on 2026-11-11 when long lists began drawing a window of their rows (ui/more.tsx). The phone pass (p4x.*) was added on 2026-11-11 from three runs at a load of 20-40: medians, but the higher of the three for its DOM node counts, which moved by up to seven between runs (a page left loading or not). On 2026-11-11 (first opens drawn in slices, docs/perf.md) its counts, renders and layouts were written from three runs at a load of 6-23 (the highest of the three for DOM node counts), and the phone pass's new keys (main-thread time of each first open, the Home tab's message renders, the person's and Mail's App renders) added, times and all; the older times were kept, the machine being busy.",
  "at": "2026-11-11",
  "runs": 3,
  "pages": 15,
@@ -16,7 +16,7 @@
  },
  "metrics": {
   "hub.bootstrap.bytes": {
-   "v": 4474894,
+   "v": 4474900,
    "kind": "bytes"
   },
   "hub.bootstrap.ms": {
@@ -48,15 +48,15 @@
    "kind": "tally"
   },
   "1x.cold.layouts": {
-   "v": 12,
+   "v": 11,
    "kind": "tally"
   },
   "1x.cold.nodes": {
-   "v": 2568,
+   "v": 2560,
    "kind": "count"
   },
   "1x.cold.bootstrapBytes": {
-   "v": 4474576,
+   "v": 4474580,
    "kind": "bytes"
   },
   "1x.open.first": {
@@ -152,7 +152,7 @@
    "kind": "tally"
   },
   "1x.long.reopen.nodes": {
-   "v": 8142,
+   "v": 8138,
    "kind": "count"
   },
   "1x.long.reopen.msgs": {
@@ -232,7 +232,7 @@
    "kind": "tally"
   },
   "1x.relaunch.open.layouts": {
-   "v": 51,
+   "v": 52,
    "kind": "tally"
   },
   "4x.cold.list": {
@@ -252,19 +252,19 @@
    "kind": "ms"
   },
   "4x.cold.renders": {
-   "v": 3,
+   "v": 2,
    "kind": "tally"
   },
   "4x.cold.layouts": {
-   "v": 13,
+   "v": 11,
    "kind": "tally"
   },
   "4x.cold.nodes": {
-   "v": 2559,
+   "v": 2555,
    "kind": "count"
   },
   "4x.cold.bootstrapBytes": {
-   "v": 4474774,
+   "v": 4474778,
    "kind": "bytes"
   },
   "4x.open.first": {
@@ -360,7 +360,7 @@
    "kind": "tally"
   },
   "4x.long.reopen.nodes": {
-   "v": 8135,
+   "v": 8131,
    "kind": "count"
   },
   "4x.long.reopen.msgs": {
@@ -440,7 +440,7 @@
    "kind": "tally"
   },
   "4x.relaunch.open.layouts": {
-   "v": 39,
+   "v": 34,
    "kind": "tally"
   },
   "p4x.cold.list": {
@@ -456,7 +456,7 @@
    "kind": "tally"
   },
   "p4x.cold.nodes": {
-   "v": 2124,
+   "v": 2120,
    "kind": "count"
   },
   "p4x.listScroll.sidebarRenders": {
@@ -480,11 +480,11 @@
    "kind": "ms"
   },
   "p4x.open.busy": {
-   "v": 760,
+   "v": 931,
    "kind": "ms"
   },
   "p4x.open.layouts": {
-   "v": 11,
+   "v": 12,
    "kind": "tally"
   },
   "p4x.open.messageRenders": {
@@ -528,7 +528,7 @@
    "kind": "ms"
   },
   "p4x.home.nodes": {
-   "v": 2990,
+   "v": 2986,
    "kind": "count"
   },
   "p4x.home.sidebarRenders": {
@@ -540,11 +540,11 @@
    "kind": "ms"
   },
   "p4x.home.busy": {
-   "v": 133,
+   "v": 161,
    "kind": "ms"
   },
   "p4x.catchUp.nodes": {
-   "v": 2563,
+   "v": 2559,
    "kind": "count"
   },
   "p4x.catchUp.renders": {
@@ -556,11 +556,11 @@
    "kind": "ms"
   },
   "p4x.catchUp.busy": {
-   "v": 592,
+   "v": 541,
    "kind": "ms"
   },
   "p4x.search.nodes": {
-   "v": 3182,
+   "v": 3178,
    "kind": "count"
   },
   "p4x.search.renders": {
@@ -572,7 +572,7 @@
    "kind": "ms"
   },
   "p4x.search.busy": {
-   "v": 367,
+   "v": 326,
    "kind": "ms"
   },
   "p4x.you.nodes": {
@@ -588,11 +588,11 @@
    "kind": "ms"
   },
   "p4x.you.busy": {
-   "v": 623,
+   "v": 624,
    "kind": "ms"
   },
   "p4x.homeTab.nodes": {
-   "v": 2990,
+   "v": 2986,
    "kind": "count"
   },
   "p4x.homeTab.sidebarRenders": {
@@ -608,7 +608,7 @@
    "kind": "ms"
   },
   "p4x.homeTab.busy": {
-   "v": 974,
+   "v": 684,
    "kind": "ms"
   },
   "p4x.people.nodes": {
@@ -620,11 +620,11 @@
    "kind": "ms"
   },
   "p4x.people.busy": {
-   "v": 485,
+   "v": 452,
    "kind": "ms"
   },
   "p4x.person.nodes": {
-   "v": 2806,
+   "v": 2809,
    "kind": "count"
   },
   "p4x.person.renders": {
@@ -640,11 +640,11 @@
    "kind": "ms"
   },
   "p4x.person.busy": {
-   "v": 556,
+   "v": 432,
    "kind": "ms"
   },
   "p4x.mail.nodes": {
-   "v": 1921,
+   "v": 1924,
    "kind": "count"
   },
   "p4x.mail.renders": {
@@ -656,7 +656,7 @@
    "kind": "ms"
   },
   "p4x.mail.busy": {
-   "v": 362,
+   "v": 347,
    "kind": "ms"
   }
  }
