@@ -100,7 +100,10 @@ bun scripts/verify-perf.ts --ci --update --runs 5        # a new CI baseline, an
 ```
 
 Its phone pass runs once at 1× after the desktop's (about 20 s more), and CI judges only those of its counts that came
-out the same in five runs on GitHub's runners (below, "The phone pass in CI").
+out the same in five runs on GitHub's runners. On 2026-11-11 (#103's run and four dispatched with `gh workflow run
+ci.yml --ref <branch>`) 24 of its 25 did: DOM nodes on each screen, renders and layouts of the flicks, the open and
+typing (none of App or messages, one of the list, 35 layouts), the tabs, the person's page. Its cold load's layouts
+(8 to 10) did not, and are printed only.
 
 It seeds the same world at a tenth of the size (`--scale 0.1`: 574 conversations, 150 with messages, 22k messages,
 the biggest 8,000), then does a warm-up run that is not counted and one run at 1×, with five older pages. Only
