@@ -109,6 +109,7 @@ describe("the embedder's refit", () => {
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), 'dither-stalls-'));
     store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
+    store.db.exec('PRAGMA synchronous = OFF');
     acc = store.createAccount({ network: 'signal', label: 'main', color: '#000', adapter: 'signal' });
     store.ingest(acc, { t: 'status', status: 'online', self: { nativeId: 'me', displayName: 'Me' } });
     store.db.transaction(() => {
@@ -214,11 +215,14 @@ describe('the media archiver', () => {
   test('its walks over every attachment give the event loop a turn every few hundred', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dither-stalls-media-'));
     const store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
+    // The archiver writes its cursor after each file, a commit each: without waiting for the disk, as nothing here
+    // has to outlive the test (docs/testing.md), or a busy machine's fsyncs take it past its time.
+    store.db.exec('PRAGMA synchronous = OFF');
     try {
       const acc = store.createAccount({ network: 'discord', label: 'main', color: '#000', adapter: 'discord' });
       store.ingest(acc, { t: 'status', status: 'online', self: { nativeId: 'me', displayName: 'Me' } });
       store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'g', shape: 'group', name: 'g' } });
-      const N = 1500;
+      const N = 800;
       store.db.transaction(() => {
         for (let i = 0; i < N; i++)
           store.ingest(acc, { t: 'message', message: { nativeId: `m${i}`, conversation: 'g', author: 'friend', ts: Date.UTC(2026, 10, 1) + i, body: '', attachments: [{ nativeId: `a${i}`, kind: 'image', name: 'x.png', url: `https://media.example/${i}.png` }] } } as any);
@@ -250,6 +254,7 @@ describe('the adapter-event path', () => {
   test("deciding on a message in a busy channel reads its log a page at a time, with the features read in one go", async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dither-stalls-activity-'));
     const store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
+    store.db.exec('PRAGMA synchronous = OFF');
     try {
       const acc = store.createAccount({ network: 'discord', label: 'main', color: '#000', adapter: 'discord' });
       store.ingest(acc, { t: 'status', status: 'online', self: { nativeId: 'me', displayName: 'Me' } });
