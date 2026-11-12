@@ -221,6 +221,38 @@ network: nothing bridges two. It follows the rules of adding people, above.
 The numbers are `GROUP_RULES` in `packages/protocol/src/about.ts`. "How many" counts the others, not you. A name is
 trimmed first, and its length is counted in characters.
 
+### From the page
+
+**New group** is in New (the + in the sidebar) and in Ctrl+K ("group", "new group", "group chat", "gc"), as pages of the
+palette ([palette.md](palette.md)). With a 1:1 DM on screen New also offers "New group with <them>", first, with that
+person picked.
+
+1. **People.** One list for all your accounts at once: one row per person (an identity no person holds is its own
+   row), people you talked with lately first, each with a small badge per network they can be put in a group on (the
+   account in the tooltip where you have two on one network). Typing searches names and handles; picks are chips;
+   up to 10. A line above the list says where the picked fit so far: "Only Discord reaches both", "Fits Signal and
+   Matrix", "No one network reaches all 3: Discord reaches 2, Signal 1". Nobody is greyed out for being on another
+   network. WhatsApp's line is at the end of the list, once. With no account that can make a group, the page says so,
+   with each account's reason.
+2. **Where.** Each account that could take at least its rule's fewest of the picked, best first: reaches everyone,
+   then most people, then the account you talked on most lately with them. Each says what it makes and with whom
+   ("Group DM with all 3", "Room, invites all 3: in once they accept", "Group with 1 of 3: not Ravi and Jordan"). Under
+   them, as plain lines, why each other account cannot ("Matrix: a room starts with at least 1 person, and none of
+   them is known there") and WhatsApp's line. Skipped when exactly one account qualifies and it reaches everyone.
+3. **Name and make.** The palette's input is the name ("Name the group", "Name the room", "Name (optional)" on
+   Discord). Under it the account, the people, who is left out and why ("Not in it: Mom, who is not a Discord friend
+   here"), and for a Matrix room that they are invited. The button (Make group DM, Make group, Make room; Enter too) is
+   off, with `createGroupProblem`'s sentence beside it, while the name is missing or too long: nothing the rules
+   refuse is sent. While it is made the button says "Making…" and nothing leaves the page. Made: the palette closes,
+   the new conversation opens, and a toast says who was invited, who could not be added and the network's reason, and
+   the notes ("Telegram made it a basic group"); if nobody could be added it says so, and the group is there anyway.
+   A refusal (the day's limit, not connected, the network's sentence, no answer in 90 seconds) shows on the page,
+   with the button back and nothing lost.
+
+Backing out keeps everything: the picks stay on the people page, and the name with them, so going forward again finds
+both. The rules that need no browser are packages/web/src/groups.ts (tested in packages/web/test/groups.test.ts); the
+pages are packages/web/src/ui/NewGroup.tsx. scripts/verify-groups.ts drives them against a demo hub.
+
 The rules the hub keeps:
 
 - **Only from a click** on the hub's page: POST `/api/groups` wants a browser's Origin.

@@ -109,6 +109,7 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Person details: identities, split, merge, always alert, chats | Details panel | Full-screen overlay | Panel |
 | Profile and the merge flow | Avatar, member or mention | Reachable | Reachable; swipe back |
 | New message (start a DM), send-as account, join, add, scan, add people to a group | Plus in the Inbox and People headers, Ctrl+K's "New…"; the palette's New page ([palette.md](palette.md)) | Centered dialog | Plus in the headers; the palette as a bottom sheet, each page a step the back button undoes; the keyboard only on New itself |
+| Make a group (pick people across your accounts, where, a name) | New group in the palette's New and Ctrl+K ([group-settings.md](group-settings.md), "Making a group") | **Unreachable** | The palette's New group pages as a bottom sheet; a back arrow and the whole title in place of the crumbs; the keyboard only on the name |
 | Quick switcher | Ctrl+K, the title bar's button | **Keyboard only** | Search tab: searching a name lists people, communities and channels to jump to; the palette's root is the crumb before New |
 | Search with filters, scope to one conversation, jump to a message | Sidebar box, header button | Reachable | Search tab; searching a conversation is a page with a way back to it |
 | Hover bar on a message: three reactions, picker, edit, delete, reply | Hover | Long-press: reactions, reply, copy, edit, delete | Long-press: also the author's profile, the thread, the message it replies to |
