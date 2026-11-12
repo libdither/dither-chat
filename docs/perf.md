@@ -381,6 +381,24 @@ goes out of sight, or to the next quiet save once it is ten minutes old. Counted
 over four opens: main wrote 4,544,244 to 4,655,541 characters per save, 134–156 ms in `JSON.stringify` and 116–154 ms
 in the store's `put`, all on the main thread; the branch writes 98,213 to 164,072 characters in 2–6 ms.
 
+## The loading orb (2026-11-11)
+
+`1x.open.first.layouts` read 48–50 on main on 2026-11-11 against the baseline's 17 (#85, 2026-11-10), in two runs of
+three at 1×; the counts in CI's smaller world did not move. Two things made it:
+
+- **The orb** (#89, 8245b7b) replaced the timeline's CSS skeleton and spinner. It turned by writing its SVG path's `d`
+  every 85 ms, and each write is a style recalculation and a layout: 12 a second for as long as anything loads.
+- **The hub stalled** on the two biggest channels (`pickAccount`, above), so their pages loaded for seconds and the
+  orb turned all that time. A trace of one first-open pass: 73 frame layouts during the 40k channel's open, 28 during
+  the 6,000 one's, each with an "SVG resource invalidated" from Loader.tsx.
+
+The same hub as main before the hub fix (it stalls) with three builds of the web app, one run each at 1×, `--pages 2`,
+load about 4: from before #89, 36 layouts on the six first opens; #89, 78; this change, 38. The orb now shows its
+frames side by side in a strip (an SVG `<symbol>` for the whole page) and slides it one frame at a time with a CSS
+`steps()` animation of `transform`, which the compositor runs without the page: while a timeline's first page was held
+back for three seconds at phone size and 4×, 2 layouts and 297–373 ms of main thread, against 42 layouts and 751 ms.
+It looks the same: the same 36 frames, 85 ms apart, and the 600 ms dither-in, as a strip of its 16 steps.
+
 ## Next
 
 What these numbers point at, not done yet:
