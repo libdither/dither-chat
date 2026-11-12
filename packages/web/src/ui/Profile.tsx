@@ -17,7 +17,7 @@ import { profileLinks } from '../requests.ts';
 import { api, db, go, isSelfIdentity, openMessage, openProfile, rev, setRule, toast } from '../state.ts';
 import { messageSomeone } from './Palette.tsx';
 import { Avatar, Empty, NetBadge, NetGlyph } from './bits.tsx';
-import { copy, groups, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
+import { copy, groups, openMenu, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import { ActivityCard } from './ActivityCard.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
@@ -65,6 +65,60 @@ export function PlaceIcon({ c, size = 22 }: { c: P.ConversationView; size?: numb
   const person = c.peerPersonId ? db.persons.get(c.peerPersonId) : null;
   return <Avatar id={person?.id ?? c.id} name={convTitle(c)} url={person?.avatar ?? c.avatar} size={size} square={c.shape !== 'direct'} network={c.network} />;
 }
+
+/** One account's handle or id, a button that copies it. */
+function HandleChip({ i }: { i: P.IdentityView }) {
+  return (
+    <button class="pf-handle" title={i.network === 'email' ? 'Copy address' : `Copy ${netName(i.network)} ${i.handle ? 'username' : 'id'}`} onClick={() => copy(i.handle ?? i.nativeId, 'Copied')}>
+      <NetGlyph network={i.network} size={12} />
+      {i.handle ?? i.displayName ?? i.nativeId}
+    </button>
+  );
+}
+
+/**
+ * One of several accounts of a person, on their profile: its own picture with its network's badge, its own name, its
+ * handle (copies), what it says about itself (`bio`), and when it joined its network. A button goes to it (its chat,
+ * or starts one, or a mail), and its menu (⋯, right-click or hold) has the rest: copy, open on the network, split.
+ */
+function AccountTile({ i, bio, since, go: open, goLabel, menu }: { i: P.IdentityView; bio?: string; since?: string; go?: () => void; goLabel?: string; menu: () => MenuSpec }) {
+  const ctx = useMenu(menu);
+  const name = identityName(i.id);
+  return (
+    <div class="pf-acct" data-identity={i.id} {...ctx}>
+      <Avatar id={i.id} name={name} url={i.avatar} size={44} network={i.network} />
+      <div class="pf-acct-text">
+        <div class="pf-acct-top">
+          <b class="pf-acct-name" title={name}>
+            {name}
+          </b>
+          {open && (
+            <button class="icon-btn small" title={goLabel} aria-label={goLabel} onClick={open}>
+              <Icon name={i.network === 'email' ? 'mail' : 'send'} size={14} />
+            </button>
+          )}
+          <button class="icon-btn small" title={`${name} on ${netName(i.network)}`} aria-label={`More for ${name} on ${netName(i.network)}`} onClick={(e) => openMenu(anchorOf(e), menu())}>
+            <Icon name="more" size={14} />
+          </button>
+        </div>
+        <span class="pf-acct-handle">
+          <HandleChip i={i} />
+          <small>
+            {netName(i.network)}
+            {since ? ` · since ${since}` : ''}
+          </small>
+        </span>
+        {bio && <p class="pf-acct-bio">{plainBody(bio, i.network)}</p>}
+      </div>
+    </div>
+  );
+}
+
+/** Where a menu opened from a button goes: under it. */
+const anchorOf = (e: MouseEvent) => {
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  return { x: r.left, y: r.bottom + 4 };
+};
 
 /** The profile and what each network says, the kept answers first and fresh ones as they come. */
 function useProfile(personId?: string, identityId?: string) {
@@ -422,6 +476,40 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     return { label: `${name} actions`, items: groups(items, extra) };
   };
 
+  // ---- each account: one account is the hero's chip and a row on the right; several are tiles of their own
+  const several = ids.length > 1;
+  const bioOf = new Map(bios.map((a) => [a.identityId, a.bio!]));
+  const sinceOf = new Map(said.filter((a) => a.createdAt).map((a) => [a.identityId, monthYear(a.createdAt!)]));
+  /** How to reach one account: its chat (the person's page, sending there), else start one, else mail it. */
+  const reach = (i: P.IdentityView): { run: () => void; label: string } | null => {
+    if (isSelf) return null;
+    const who = `${identityName(i.id)} on ${netName(i.network)}`;
+    if (i.network === 'email') return composeTo.run ? { run: () => email(i), label: `Email ${i.nativeId}` } : null;
+    const dm = directs.filter((d) => d.participantIds.includes(i.id)).sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))[0];
+    if (dm) return { run: () => go({ view: 'inbox', conv: dm.id }), label: `Message ${who}` };
+    if (openers(accounts, i.network).length) return { run: () => messageSomeone(i.id), label: `Start a chat with ${who}` };
+    return null;
+  };
+  const split = (i: P.IdentityView) => api(`/api/identities/${i.id}/split`, { body: {} }).then(() => toast({ kind: 'info', title: 'Split', body: `${i.displayName ?? i.handle ?? 'That identity'} is its own person again.` }));
+  const accountMenu = (i: P.IdentityView): MenuSpec => {
+    const r = reach(i);
+    const link = externalProfile(i);
+    return {
+      label: `${identityName(i.id)} on ${netName(i.network)}`,
+      items: groups(
+        [r && { label: r.label, icon: i.network === 'email' ? 'mail' : 'send', run: r.run }],
+        [
+          { label: i.handle ? `Copy ${i.handle}` : 'Copy ID', icon: 'copy', run: () => copy(i.handle ?? i.nativeId, 'Copied') },
+          !!i.handle && i.handle !== i.nativeId && { label: 'Copy ID', icon: 'copy', run: () => copy(i.nativeId, 'Copied') },
+          !!link && { label: `Open on ${netName(i.network)}`, icon: 'external', run: () => void window.open(link, '_blank', 'noreferrer') },
+        ],
+        [several && !isSelf && { label: 'Split Into Its Own Person', icon: 'unlink', run: () => void split(i) }],
+      ),
+    };
+  };
+  // Grouped by network, in the order the person's accounts first name them.
+  const tiles = [...ids].sort((a, b) => nets.indexOf(a.network) - nets.indexOf(b.network));
+
   const accent = discord?.accent ?? null;
   const banner = discord?.banner ?? null;
   const picture = person?.avatar ?? first?.avatar ?? said.find((a) => a.avatar)?.avatar;
@@ -439,12 +527,16 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       }
       sub={
         <span class="pf-handles">
-          {ids.map((i) => (
-            <button class="pf-handle" title={i.network === 'email' ? 'Copy address' : `Copy ${netName(i.network)} ${i.handle ? 'username' : 'id'}`} onClick={() => copy(i.handle ?? i.nativeId, 'Copied')}>
-              <NetGlyph network={i.network} size={12} />
-              {i.handle ?? i.displayName ?? i.nativeId}
+          {several ? (
+            <button class="pf-handle pf-acct-sum" title="Their accounts, below" onClick={() => document.querySelector('.pf-accounts')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+              {nets.map((n) => (
+                <NetGlyph network={n} size={12} />
+              ))}
+              {ids.length} accounts
             </button>
-          ))}
+          ) : (
+            ids.map((i) => <HandleChip i={i} />)
+          )}
         </span>
       }
       tags={
@@ -482,13 +574,67 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     />
   );
 
+  const mergeUi = (
+    <>
+      {!isSelf && similar.length > 0 && !merging && (
+        <p class="pf-hint">
+          Same name elsewhere: {similar.slice(0, 3).map(elsewhere).join(', ')}.{' '}
+          <button class="link-btn" onClick={() => setMerging(true)}>
+            Merge?
+          </button>
+        </p>
+      )}
+      {!isSelf && merging && (
+        <div class="merge-box">
+          <input class="input" placeholder="Search people to merge in" value={filter} onInput={(e) => setFilter((e.target as HTMLInputElement).value)} ref={(el) => void (el && document.activeElement !== el && !filter && el.focus())} />
+          {matches.map((o) => (
+            <button class="link-row" onClick={() => merge(o.id)}>
+              <Avatar id={o.id} name={o.name} url={o.avatar} size={22} /> {o.name}
+              <span class="row-nets">
+                {[...new Set(o.identityIds.map((x) => db.identities.get(x)?.network).filter(Boolean))].map((n) => (
+                  <NetBadge network={n as P.Network} size={13} />
+                ))}
+              </span>
+            </button>
+          ))}
+          {looseMail.map((i) => (
+            <button class="link-row" onClick={() => mergeIdentity(i.id)}>
+              <Avatar id={i.id} name={i.displayName ?? i.nativeId} size={22} /> {i.displayName ? `${i.displayName} <${i.nativeId}>` : i.nativeId}
+              <span class="row-nets">
+                <NetBadge network="email" size={13} />
+              </span>
+            </button>
+          ))}
+          {needle && !matches.length && !looseMail.length && <p class="pf-hint">Nobody by that name.</p>}
+          <button class="btn ghost small" onClick={() => setMerging(false)}>
+            Done
+          </button>
+        </div>
+      )}
+    </>
+  );
+
   const main = (
     <>
+      {several && (
+        <Card title="Accounts" icon="idBadge" count={ids.length} class="pf-accounts">
+          <div class="pf-acct-grid">
+            {tiles.map((i) => {
+              const r = reach(i);
+              return <AccountTile i={i} bio={bioOf.get(i.id)} since={sinceOf.get(i.id)} go={r?.run} goLabel={r?.label} menu={() => accountMenu(i)} />;
+            })}
+          </div>
+          {mergeUi}
+        </Card>
+      )}
       <Card title="About" icon="info" extra={asking ? <span class="pf-asking">Asking…</span> : undefined}>
         {editable.map(({ i, account }) => (
           <OwnBio identity={i} about={abouts[i.id]} account={account} label={editable.length + bios.length > 1 || nets.length > 1} onSaved={learn} />
         ))}
-        {bios.length || editable.length ? (
+        {several ? (
+          // Each account's bio is on its tile (Accounts, above).
+          !bios.length && !editable.length && !asking && <p class="pf-empty">No bio on any of their accounts.</p>
+        ) : bios.length || editable.length ? (
           bios.map((a) => (
             <div class="pf-bio">
               {(bios.length > 1 || nets.length > 1) && (
@@ -673,71 +819,30 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         />
       )}
 
-      <Card title="Accounts" icon="idBadge" count={ids.length > 1 ? ids.length : undefined}>
-        {ids.map((i) => {
-          const link = externalProfile(i);
-          return (
-            <div class="pf-identity">
-              <NetBadge network={i.network} size={24} />
-              <span class="pf-row-text">
-                <b>{i.displayName ?? i.handle ?? i.nativeId}</b>
-                <small>
-                  {netName(i.network)} · {i.handle ?? i.nativeId}
-                </small>
-              </span>
-              {link && (
-                <a class="icon-btn small" href={link} target="_blank" rel="noreferrer" title={`Open on ${netName(i.network)}`}>
-                  <Icon name="external" size={14} />
-                </a>
-              )}
-              {ids.length > 1 && !isSelf && (
-                <button
-                  class="icon-btn small"
-                  title="Unmerge: split this identity into its own person"
-                  onClick={() => api(`/api/identities/${i.id}/split`, { body: {} }).then(() => toast({ kind: 'info', title: 'Split', body: `${i.displayName ?? i.handle ?? 'That identity'} is its own person again.` }))}
-                >
-                  <Icon name="unlink" size={14} />
-                </button>
-              )}
-            </div>
-          );
-        })}
-        {!isSelf && similar.length > 0 && !merging && (
-          <p class="pf-hint">
-            Same name elsewhere: {similar.slice(0, 3).map(elsewhere).join(', ')}.{' '}
-            <button class="link-btn" onClick={() => setMerging(true)}>
-              Merge?
-            </button>
-          </p>
-        )}
-        {!isSelf && merging && (
-          <div class="merge-box">
-            <input class="input" placeholder="Search people to merge in" value={filter} onInput={(e) => setFilter((e.target as HTMLInputElement).value)} ref={(el) => void (el && document.activeElement !== el && !filter && el.focus())} />
-            {matches.map((o) => (
-              <button class="link-row" onClick={() => merge(o.id)}>
-                <Avatar id={o.id} name={o.name} url={o.avatar} size={22} /> {o.name}
-                <span class="row-nets">
-                  {[...new Set(o.identityIds.map((x) => db.identities.get(x)?.network).filter(Boolean))].map((n) => (
-                    <NetBadge network={n as P.Network} size={13} />
-                  ))}
+      {!several && (
+        <Card title="Accounts" icon="idBadge">
+          {ids.map((i) => {
+            const link = externalProfile(i);
+            return (
+              <div class="pf-identity">
+                <NetBadge network={i.network} size={24} />
+                <span class="pf-row-text">
+                  <b>{i.displayName ?? i.handle ?? i.nativeId}</b>
+                  <small>
+                    {netName(i.network)} · {i.handle ?? i.nativeId}
+                  </small>
                 </span>
-              </button>
-            ))}
-            {looseMail.map((i) => (
-              <button class="link-row" onClick={() => mergeIdentity(i.id)}>
-                <Avatar id={i.id} name={i.displayName ?? i.nativeId} size={22} /> {i.displayName ? `${i.displayName} <${i.nativeId}>` : i.nativeId}
-                <span class="row-nets">
-                  <NetBadge network="email" size={13} />
-                </span>
-              </button>
-            ))}
-            {needle && !matches.length && !looseMail.length && <p class="pf-hint">Nobody by that name.</p>}
-            <button class="btn ghost small" onClick={() => setMerging(false)}>
-              Done
-            </button>
-          </div>
-        )}
-      </Card>
+                {link && (
+                  <a class="icon-btn small" href={link} target="_blank" rel="noreferrer" title={`Open on ${netName(i.network)}`}>
+                    <Icon name="external" size={14} />
+                  </a>
+                )}
+              </div>
+            );
+          })}
+          {mergeUi}
+        </Card>
+      )}
 
       {!isSelf && (
         <Card title="Notifications" icon="bell">

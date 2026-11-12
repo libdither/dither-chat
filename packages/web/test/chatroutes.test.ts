@@ -4,7 +4,7 @@
  * checked in a browser against the multiaccount demo.
  */
 import { expect, test } from 'bun:test';
-import { badgeDiffers, chatKey, groupChats, labelText, leadTells, mergeRoutes, tells, type RouteKey, type RoutePart } from '../src/chatroutes.ts';
+import { badgeDiffers, chatKey, groupChats, headIdents, labelText, leadTells, mergeRoutes, tagTells, tagText, tells, type HeadName, type RouteKey, type RoutePart } from '../src/chatroutes.ts';
 import { inboxSnapshot, inboxView, rank, type Ranked } from '../src/ordering.ts';
 
 const r = (id: string, network: string, theirs: string, mine: string): RouteKey => ({ id, network, theirs, mine });
@@ -93,6 +93,46 @@ test('two conversations between the same two accounts: both names, which is all 
 
 const NOW = 1_800_000_000_000;
 const part = (key: string, o: Partial<RoutePart> = {}): RoutePart => ({ key, score: 10, needs: false, reasons: [`${key} reason`], owedSince: null, last: NOW, unread: 0, muted: false, ...o });
+
+test('a message head names the account; the tag says only what the head does not', () => {
+  // Kit's message on Discord through zyansheep: the head says kit.exe, so the tag says yours, and the icon.
+  const fromThem = tagTells(KIT[0], KIT, 'theirs');
+  expect(fromThem).toEqual({ network: true, theirs: false, mine: true });
+  expect(tagText(fromThem, names('kit.exe', 'zyansheep'), 'theirs')).toBe('via zyansheep');
+  // Yours there: the head says zyansheep, so the tag says which of theirs it went to.
+  const fromMe = tagTells(KIT[0], KIT, 'mine');
+  expect(fromMe).toEqual({ network: true, theirs: true, mine: false });
+  expect(tagText(fromMe, names('kit.exe', 'zyansheep'), 'mine')).toBe('to kit.exe');
+  // Telegram, the only route there: the network's icon and no words.
+  expect(tagTells(KIT[7], KIT, 'theirs')).toEqual({ network: true, theirs: false, mine: false });
+  expect(tagText(tagTells(KIT[7], KIT, 'theirs'), names('@kitkat', '@zyansheep', 'Telegram'), 'theirs')).toBe('');
+  // Mo, two of theirs and one of yours on one network: the head says it all after theirs; after yours, which of theirs.
+  const mo = [r('a', 'discord', 'mo.codes', 'zyansheep'), r('b', 'discord', 'mo.draws', 'zyansheep')];
+  expect(tagText(tagTells(mo[1], mo, 'theirs'), names('mo.draws', 'zyansheep'), 'theirs')).toBe('');
+  expect(tagTells(mo[1], mo, 'theirs')).toEqual({ network: false, theirs: false, mine: false });
+  expect(tagText(tagTells(mo[1], mo, 'mine'), names('mo.draws', 'zyansheep'), 'mine')).toBe('to mo.draws');
+  // A bot in the DM: the whole label, as before.
+  expect(tagText(tagTells(mo[1], mo, 'other'), names('mo.draws', 'zyansheep'), 'other')).toBe('mo.draws');
+  // One route: nothing, whoever wrote.
+  const nana = [r('wa', 'whatsapp', 'nana', 'zyan')];
+  for (const side of ['theirs', 'mine', 'other'] as const) expect(tagTells(nana[0], nana, side)).toEqual({ network: false, theirs: false, mine: false });
+});
+
+test('an account shows its handle after its name only where another on its side shares the name', () => {
+  const h = (id: string, name: string, ident: string | null): HeadName => ({ id, name, ident });
+  // Kit says "Kit" on Discord and on Telegram (case aside), and other names elsewhere.
+  const kit = [h('exe', 'Kit', 'kit.exe'), h('work', 'Kit Okafor', 'kit.work'), h('tg', 'kit', '@kitkat'), h('mx', 'kitty', '@kit:matrix.org')];
+  expect([...headIdents(kit)]).toEqual([
+    ['exe', 'kit.exe'],
+    ['tg', '@kitkat'],
+  ]);
+  // All different: no handles.
+  expect(headIdents([h('a', 'Mo', 'mo.codes'), h('b', 'mo (art)', 'mo.draws')]).size).toBe(0);
+  // One account seen on several routes counts once.
+  expect(headIdents([h('exe', 'Kit', 'kit.exe'), h('exe', 'Kit', 'kit.exe')]).size).toBe(0);
+  // A handle that says no more than the name is left out; one with no handle has nothing to add.
+  expect([...headIdents([h('a', 'zyan', 'zyan'), h('b', 'zyan', '+1 555 0100'), h('c', 'Zyan ', null)])]).toEqual([['b', '+1 555 0100']]);
+});
 
 test('a chat’s row: the highest score, needs you if any route does, owed since the earliest, unread summed, muted only if all are', () => {
   const m = mergeRoutes([

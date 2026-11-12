@@ -1,7 +1,9 @@
 /**
  * What tells one route of a chat from the others (docs/chats.md): the one rule every part of a person's page asks
  * before it adds anything, so a simple chat looks simple and each extra piece appears only when the chat needs it.
- * Pure, so tests can import it; ui/Pairs.tsx puts names to what it says.
+ * Pure, so tests can import it; ui/Pairs.tsx puts names to what it says. The same thinking names a message's
+ * author: by its account's own name, with the account's identifier only where two accounts on one side share a name
+ * (`headIdents`).
  *
  * A route is a conversation with them and the account of yours in it. Of a chat's routes, look at those on the same
  * network as this one:
@@ -64,6 +66,57 @@ export function labelText(t: Tells, n: RouteNames, withNetwork = true): string {
   const who = t.theirs && t.mine ? `${n.theirs} ⇄ ${n.mine}` : t.theirs ? n.theirs : t.mine ? `via ${n.mine}` : '';
   if (!who) return t.network ? n.network : '';
   return t.network && withNetwork ? `${n.network} ${who}` : who;
+}
+
+/** Whose account a message head names: theirs, yours, or someone else's (a bot in a DM). */
+export type Side = 'theirs' | 'mine' | 'other';
+
+/**
+ * What a route tag still has to say once the message head has named the author's account: the route's label without
+ * the author's side. Their message drops their account (`via zyn.alt` is left where yours differ); yours drops yours
+ * (`to kit.work` is left where theirs differ). The network stays where networks mix, as an icon.
+ */
+export function tagTells(route: RouteKey, routes: RouteKey[], side: Side): Tells {
+  const t = tells(route, routes);
+  if (side === 'theirs') return { ...t, theirs: false };
+  if (side === 'mine') return { ...t, mine: false };
+  return t;
+}
+
+/**
+ * A route tag's words (the page draws the network's icon in front where `t.network`): `via zyn.alt` after their
+ * message, `to kit.work` after yours, nothing where the head already said it all. Someone else's message keeps the
+ * whole label.
+ */
+export function tagText(t: Tells, n: RouteNames, side: Side): string {
+  if (side === 'other') return labelText(t, n, false);
+  if (t.theirs && t.mine) return `${n.theirs} ⇄ ${n.mine}`;
+  if (t.mine) return `via ${n.mine}`;
+  if (t.theirs) return `to ${n.theirs}`;
+  return '';
+}
+
+/** An account as a message head names it: its own name, and what identifies it on its network (a handle, else an id). */
+export interface HeadName {
+  id: string;
+  name: string;
+  ident: string | null;
+}
+
+const sameName = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
+
+/**
+ * Which accounts on one side of a chat need their identifier after their name, and what it is: only those whose name
+ * another account on the same side would also show ("Kit" on Telegram and on Discord), compared ignoring case. An
+ * identifier that says no more than the name is left out. Call it once for their side and once for yours.
+ */
+export function headIdents(accounts: HeadName[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const seen = new Map<string, number>();
+  const each = accounts.filter((a, i) => accounts.findIndex((b) => b.id === a.id) === i);
+  for (const a of each) seen.set(sameName(a.name), (seen.get(sameName(a.name)) ?? 0) + 1);
+  for (const a of each) if ((seen.get(sameName(a.name)) ?? 0) > 1 && a.ident && sameName(a.ident) !== sameName(a.name)) out.set(a.id, a.ident);
+  return out;
 }
 
 /**

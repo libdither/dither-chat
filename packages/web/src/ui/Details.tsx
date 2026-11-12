@@ -239,9 +239,10 @@ export function PersonDetails({ personId }: { personId: string }) {
           <p class="det-note">A person is hub-only: it joins identities you know are the same human. Networks never see it.</p>
           {ids.map((i) => (
             <div class="identity">
-              <NetBadge network={i.network} size={22} />
+              {/* Each account by its own picture, its network on it (docs/profile.md). */}
+              <Avatar id={i.id} name={identityName(i.id)} url={i.avatar} size={26} network={i.network} />
               <span>
-                <b>{i.displayName ?? i.handle}</b>
+                <b>{identityName(i.id)}</b>
                 <small>
                   {netName(i.network)} · {i.handle ?? i.nativeId}
                 </small>

@@ -13,7 +13,7 @@ import type * as P from '@dither-chat/protocol';
 import { effect, signal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { badgeDiffers, labelText, leadTells, tells, type RouteKey, type Tells } from '../chatroutes.ts';
+import { badgeDiffers, headIdents, labelText, leadTells, tagTells, tagText, tells, type HeadName, type RouteKey, type Side, type Tells } from '../chatroutes.ts';
 import { hueOf, initials } from '../format.ts';
 import { identityName, netName } from '../model.ts';
 import { phone } from '../phone.ts';
@@ -78,15 +78,46 @@ export function RouteLabel({ c, directs, size = 12 }: { c: P.ConversationView; d
 }
 
 /**
- * Where the route changes in the timeline, after the time on the message's head line: the route's label, quietly. A
- * click sends through it.
+ * Where the route changes in the timeline, after the time on the message's head line: what of the route the head has
+ * not already said (chatroutes.ts tagTells), quietly. The head names the author's account, so after their message
+ * it is your account where yours differ (`via zyn.alt`), after yours theirs (`to kit.work`), and the network's icon
+ * where networks mix. Nothing left to say, no tag. A click sends through it.
  */
-export function RouteTag({ c, directs, onPick }: { c: P.ConversationView; directs: P.ConversationView[]; onPick: () => void }) {
+export function RouteTag({ c, directs, side, onPick }: { c: P.ConversationView; directs: P.ConversationView[]; side: Side; onPick: () => void }) {
+  const t = tagTells(routeKey(c), directs.map(routeKey), side);
+  const p = pairOf(c);
+  const text = tagText(t, { network: netName(c.network), theirs: theirName(p), mine: myName(p) }, side);
+  if (!t.network && !text) return null;
   return (
-    <button class="route-tag" data-track="route tag" title={routeTitle(c)} onClick={onPick}>
-      <RouteLabel c={c} directs={directs} size={10} />
+    <button class="route-tag" data-track="route tag" title={routeTitle(c)} aria-label={routeTitle(c)} onClick={onPick}>
+      {t.network && <NetGlyph network={c.network} size={10} />}
+      {text && <span class="route-label">{text}</span>}
     </button>
   );
+}
+
+/**
+ * How the message heads of a chat name each account in it, theirs and yours: the account's own name (its display
+ * name, else handle, else id), and its identifier after it, muted, where another account on the same side would show
+ * the same name (chatroutes.ts headIdents). Keyed by identity. Someone else in a DM (a bot) is not in it.
+ */
+export function headNames(convIds: string[]): Map<string, { name: string; ident?: string }> {
+  const theirs: HeadName[] = [];
+  const mine: HeadName[] = [];
+  const head = (i: P.IdentityView): HeadName => ({ id: i.id, name: identityName(i.id), ident: i.handle ?? i.nativeId });
+  for (const id of convIds) {
+    const c = db.conversations.get(id);
+    if (!c) continue;
+    const p = pairOf(c);
+    if (p.theirs) theirs.push(head(p.theirs));
+    if (p.mine) mine.push(head(p.mine));
+  }
+  const out = new Map<string, { name: string; ident?: string }>();
+  for (const side of [theirs, mine]) {
+    const idents = headIdents(side);
+    for (const a of side) out.set(a.id, idents.has(a.id) ? { name: a.name, ident: idents.get(a.id) } : { name: a.name });
+  }
+  return out;
 }
 
 /**

@@ -59,10 +59,27 @@ opens, then leaves the browser.
 
 ## Names
 
-One person, one name: on their page every message of theirs shows the person's name, on every route, whether it is
-your nickname or not. Which account wrote it is the route tag's job (below). Your own messages show one name too, the
-name of your own person (`db.selfPersonId`), or else what a plain conversation shows. A bot or anyone else in a DM
-keeps its own name.
+The chat has one name, the person's: the header, the inbox row, the people list and the message box's line ("Message
+Kit on Telegram") say it, and a nickname you gave them is that name. **The messages name accounts.** On a page of
+several routes every message head shows the sending account's own picture and its own name (its display name, else
+its handle, else its id), theirs and yours alike, so Kit's Discord account and Kit's Telegram account look like what
+they are, and so do yours. A bot or anyone else in a DM keeps its own name, as before.
+
+Two accounts on one side of the chat can say the same name: Kit is "Kit" on Discord and on Telegram, and you may be
+"zyan" on Discord and on Signal. Then, and only then, the head adds that account's handle after the name, muted
+(`Kit  kit.exe`, `Kit  @kitkat`), and leaves it out where it would say no more than the name. Names are compared
+ignoring case, among the accounts in the routes the page shows (`headIdents` in `chatroutes.ts`, `headNames` in
+`Pairs.tsx`). Messages group only while the same account writes on the same route: another account of theirs starts
+a new head, since its picture and name differ.
+
+With one route picked from the list, the page shows that route alone: each side has one account, so the names are
+plain. A person with one route has no chat page of its own: theirs is the conversation's page, which names them by
+the person's name as every conversation does.
+
+Until 2026-11-11 (an earlier review of this page) every message of theirs showed the person's name and yours your
+own person's name, and only the picture varied, by account; the route tag said which account. Before that, the page
+renamed messages by account (`kit.exe`, `@kit:matrix.org`) unless you gave a nickname, and with one showed the account
+in a pill beside it.
 
 `person.name_source` says where a person's name came from:
 
@@ -76,9 +93,6 @@ A rename (`PATCH /api/persons/:id` with `name`, or `PATCH /api/chats/person:<id>
 nickname. Saving an empty name, or sending `name: null`, removes the nickname. A person with one account then follows
 that account's name again. A merged person takes the name of the account that wrote most recently. A merge keeps a
 nickname from either side.
-
-Until 2026-11-11 the page renamed messages by account (`kit.exe`, `@kit:matrix.org`) unless you gave a nickname, and
-with one showed the account in a pill beside it. The route tag replaced both.
 
 Before this, the hub had only `manual` ("merged or renamed by you"). On its first start with `name_source`, the hub
 sorts out the old names once (meta `name_source_set`; MIGRATIONS 2 → 3, so the database is copied first). A merged or
@@ -127,11 +141,16 @@ these at once.
 
 What it adds to a conversation's page:
 
+- **The message heads** name the account that wrote, by its own picture and name (above, [Names](#names)).
 - **The route tag.** Where the route changes between two messages, grouping breaks (the message gets its picture and
-  head line), and the head line has a small, quiet tag after the time: the route's label. It is a button: a click
-  sends through that route, and its title says so in full ("Send as zyn.alt to kit.work on Discord"). A long run on
-  one route looks exactly like that conversation's own page. Until 2026-11-11 a row of its own (the network's icon,
-  their name, yours, and "sending here") stood above each run.
+  head line), and the head line has a small, quiet tag after the time: what of the route's label the head has not
+  already said (`tagTells`). The head names the author's account, so after their message the tag is your account
+  where yours differ (`via zyn.alt`), after yours it is theirs where theirs differ (`to kit.work`), and the network's
+  icon leads where the chat spans networks. Where nothing is left (Mo's messages: the head already says `mo.codes` or
+  `mo.draws`), there is no tag. It is a button: a click sends through that route, and its title says so in full
+  ("Send as zyn.alt to kit.work on Discord"). A long run on one route reads like that conversation's own page, with
+  the accounts' names. Until 2026-11-11 a row of its own (the network's icon, their name, yours, and "sending here")
+  stood above each run, and then, for a day, the tag said the route's whole label.
 - **The picture's badge**, the same badge an inbox row has (the network, and dots for your account), only when it
   would differ between the chat's routes: more than one network, or more than one of your accounts on a network
   (`badgeDiffers`). Mo's page has none, and neither has a page showing one route picked from the list.
