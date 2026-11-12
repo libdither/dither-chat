@@ -1,7 +1,8 @@
 /** src/snapshot.ts: what the start-up snapshot keeps, and its caps. Kept message pages: keptpages.test.ts. IndexedDB itself: docs/android.md's measurements. */
 import { expect, mock, test } from 'bun:test';
+import { stateMock } from './fixtures/state.ts';
 
-mock.module('../src/state.ts', () => ({ db: {}, eventHooks: new Set(), inbox: { value: [] }, mailTriage: { value: [] }, loaded: { value: false }, quoted: new Map(), rev: { value: 0 }, timelines: new Map() }));
+mock.module('../src/state.ts', stateMock);
 const { buildRest, mailRest, MAX_MAIL_BODIES, MAX_MAIL_CHARS } = await import('../src/snapshot.ts');
 
 const msg = (id: string, ts: number, extra: Record<string, unknown> = {}): any => ({ id, conversationId: 'c', ts, authorId: `idn_${id}`, body: 'x', replyToId: null, reactions: [], attachments: [], embeds: [], ...extra });

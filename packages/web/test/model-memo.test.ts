@@ -4,12 +4,10 @@
  */
 import { expect, mock, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
-import { changed, dataVersion } from '../src/versions.ts';
-import { emptyDb } from '../src/syncmodel.ts';
+import { changed } from '../src/versions.ts';
+import { db, stateMock } from './fixtures/state.ts';
 
-const db = emptyDb();
-// Mocks are the whole process's: what the other tests' mock of state.ts has (snapshot.test.ts) is here too.
-mock.module('../src/state.ts', () => ({ db, dataVersion, inbox: { value: [] }, mailTriage: { value: [] }, prefs: { value: {} }, isSelfIdentity: () => false, loaded: { value: false }, quoted: new Map(), rev: { value: 0 }, timelines: new Map() }));
+mock.module('../src/state.ts', stateMock);
 const { activityOfSpace, allCommunities, convsUnder, effectiveLevel, railEntries, spaceUnread } = await import('../src/model.ts');
 
 const acc = { id: 'acc', network: 'discord', label: 'me' } as unknown as P.AccountView;
