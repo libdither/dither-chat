@@ -19,6 +19,8 @@
 import { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
 import { isPrivateUrl } from './categorize.ts';
+import { SLICE_ROWS, sliced, whole, type SliceOptions } from './slices.ts';
+import { noteWork } from './stalls.ts';
 
 type Head = P.TriageHead;
 
@@ -216,39 +218,39 @@ export interface ProbeOptions {
  * factor of that (plus λ) serves every step. Each step costs one pass over the data and converges monotonically.
  */
 export function fitProbe(X: readonly ArrayLike<number>[], y: readonly number[], o: ProbeOptions = {}): Probe {
+  return whole(fitProbeSteps(X, y, o));
+}
+
+/**
+ * `fitProbe` as steps (slices.ts): the same arithmetic in the same order, yielding the rows it worked through about
+ * every `SLICE_ROWS`. A row of the bound costs about d/4 rows of a gradient pass, so it counts as that many. The loops
+ * themselves are plain functions over a range of rows, which the engine optimises better than a generator's body.
+ */
+export function* fitProbeSteps(X: readonly ArrayLike<number>[], y: readonly number[], o: ProbeOptions = {}): Generator<number, Probe> {
   const n = X.length;
   const d = X[0]?.length ?? DIMS;
   const D = d + 1;
   const lambda = o.lambda ?? 10;
-  const c = (i: number) => o.weight?.[i] ?? 1;
   const H = new Float64Array(D * D);
   const row = new Float64Array(D);
-  for (let i = 0; i < n; i++) {
-    const x = X[i];
-    for (let j = 0; j < d; j++) row[j] = x[j];
-    row[d] = 1;
-    const s = c(i) / 4;
-    for (let j = 0; j < D; j++) {
-      const sj = s * row[j];
-      if (!sj) continue;
-      const base = j * D;
-      for (let k = 0; k <= j; k++) H[base + k] += sj * row[k];
-    }
+  const boundRow = Math.max(1, Math.round(D / 4));
+  const boundChunk = Math.max(1, Math.floor(SLICE_ROWS / boundRow));
+  for (let i = 0; i < n; i += boundChunk) {
+    const end = Math.min(n, i + boundChunk);
+    addBound(H, row, X, o.weight, d, i, end);
+    yield (end - i) * boundRow;
   }
   for (let j = 0; j < d; j++) H[j * D + j] += lambda;
   H[d * D + d] += 1e-3;
-  const L = cholesky(H, D);
+  const L = yield* choleskySteps(H, D);
   const w = new Float64Array(D);
   const g = new Float64Array(D);
   for (let it = 0; it < (o.iters ?? 60); it++) {
     g.fill(0);
-    for (let i = 0; i < n; i++) {
-      const x = X[i];
-      let z = (o.offset?.[i] ?? 0) + w[d];
-      for (let j = 0; j < d; j++) z += w[j] * x[j];
-      const r = c(i) * (sigmoid(z) - y[i]);
-      for (let j = 0; j < d; j++) g[j] += r * x[j];
-      g[d] += r;
+    for (let i = 0; i < n; i += SLICE_ROWS) {
+      const end = Math.min(n, i + SLICE_ROWS);
+      addGradient(g, w, X, y, o.offset, o.weight, d, i, end);
+      yield end - i;
     }
     for (let j = 0; j < d; j++) g[j] += lambda * w[j];
     const step = solve(L, D, g);
@@ -262,19 +264,62 @@ export function fitProbe(X: readonly ArrayLike<number>[], y: readonly number[], 
   return { w: w.slice(0, d), b: w[d] };
 }
 
+/** Rows [from, to) of the bound XᵀCX/4, into H's lower triangle. */
+function addBound(H: Float64Array, row: Float64Array, X: readonly ArrayLike<number>[], weight: readonly number[] | undefined, d: number, from: number, to: number) {
+  const D = d + 1;
+  for (let i = from; i < to; i++) {
+    const x = X[i];
+    for (let j = 0; j < d; j++) row[j] = x[j];
+    row[d] = 1;
+    const s = (weight?.[i] ?? 1) / 4;
+    for (let j = 0; j < D; j++) {
+      const sj = s * row[j];
+      if (!sj) continue;
+      const base = j * D;
+      for (let k = 0; k <= j; k++) H[base + k] += sj * row[k];
+    }
+  }
+}
+
+/** Rows [from, to) of the log loss's gradient at w, into g. */
+function addGradient(g: Float64Array, w: Float64Array, X: readonly ArrayLike<number>[], y: readonly number[], offset: readonly number[] | undefined, weight: readonly number[] | undefined, d: number, from: number, to: number) {
+  for (let i = from; i < to; i++) {
+    const x = X[i];
+    let z = (offset?.[i] ?? 0) + w[d];
+    for (let j = 0; j < d; j++) z += w[j] * x[j];
+    const r = (weight?.[i] ?? 1) * (sigmoid(z) - y[i]);
+    for (let j = 0; j < d; j++) g[j] += r * x[j];
+    g[d] += r;
+  }
+}
+
 export const probeLogit = (p: Probe, x: ArrayLike<number>) => p.b + dot(p.w, x);
 
-/** Lower-triangular L with LLᵀ = A (A given in its lower triangle, row-major). */
-function cholesky(A: Float64Array, D: number): Float64Array {
+/** Lower-triangular L with LLᵀ = A (A given in its lower triangle, row-major), a few rows at a time. */
+function* choleskySteps(A: Float64Array, D: number): Generator<number, Float64Array> {
   const L = new Float64Array(D * D);
-  for (let i = 0; i < D; i++) {
+  // Row i costs about i²/2 multiply-adds, a gradient row about 2D: rows up to about SLICE_ROWS of those at a time.
+  for (let i = 0; i < D; ) {
+    let cost = 0;
+    const from = i;
+    while (i < D && (i === from || cost + (i * i) / (4 * D) <= SLICE_ROWS)) {
+      cost += (i * i) / (4 * D);
+      i++;
+    }
+    choleskyRows(A, L, D, from, i);
+    yield Math.ceil(cost);
+  }
+  return L;
+}
+
+function choleskyRows(A: Float64Array, L: Float64Array, D: number, from: number, to: number) {
+  for (let i = from; i < to; i++) {
     for (let j = 0; j <= i; j++) {
       let s = A[i * D + j];
       for (let k = 0; k < j; k++) s -= L[i * D + k] * L[j * D + k];
       L[i * D + j] = i === j ? Math.sqrt(Math.max(s, 1e-12)) : s / L[j * D + j];
     }
   }
-  return L;
 }
 
 function solve(L: Float64Array, D: number, b: Float64Array): Float64Array {
@@ -303,16 +348,29 @@ export function timeFolds(n: number, k = 5): number[] {
  * learn to trust a probe that memorised its own labels. Folds with no positive or no negative left score null.
  */
 export function crossFit(X: readonly ArrayLike<number>[], y: readonly number[], folds: readonly number[], o: ProbeOptions = {}): (number | null)[] {
+  return whole(crossFitSteps(X, y, folds, o));
+}
+
+export function* crossFitSteps(X: readonly ArrayLike<number>[], y: readonly number[], folds: readonly number[], o: ProbeOptions = {}): Generator<number, (number | null)[]> {
   const out: (number | null)[] = X.map(() => null);
   for (const f of new Set(folds)) {
     const tr = folds.flatMap((g, i) => (g === f ? [] : [i]));
     if (!tr.some((i) => y[i]) || !tr.some((i) => !y[i])) continue;
-    const p = fitProbe(
+    const p = yield* fitProbeSteps(
       tr.map((i) => X[i]),
       tr.map((i) => y[i]),
       { ...o, offset: o.offset && tr.map((i) => o.offset![i]), weight: o.weight && tr.map((i) => o.weight![i]) },
     );
-    folds.forEach((g, i) => g === f && (out[i] = probeLogit(p, X[i])));
+    let done = 0;
+    for (let i = 0; i < folds.length; i++) {
+      if (folds[i] !== f) continue;
+      out[i] = probeLogit(p, X[i]);
+      if (++done >= SLICE_ROWS) {
+        yield done;
+        done = 0;
+      }
+    }
+    if (done) yield done;
   }
   return out;
 }
@@ -325,9 +383,13 @@ export const LAMBDAS = [1, 3, 10, 30];
  * the lowest weighted log loss. Picking it on the days it is judged on would flatter it.
  */
 export function chooseLambda(X: readonly ArrayLike<number>[], y: readonly number[], folds: readonly number[], o: ProbeOptions = {}, grid = LAMBDAS): number {
+  return whole(chooseLambdaSteps(X, y, folds, o, grid));
+}
+
+export function* chooseLambdaSteps(X: readonly ArrayLike<number>[], y: readonly number[], folds: readonly number[], o: ProbeOptions = {}, grid = LAMBDAS): Generator<number, number> {
   let best = { lambda: o.lambda ?? 10, loss: Infinity };
   for (const lambda of grid) {
-    const oof = crossFit(X, y, folds, { ...o, lambda });
+    const oof = yield* crossFitSteps(X, y, folds, { ...o, lambda });
     let loss = 0;
     let n = 0;
     oof.forEach((z, i) => {
@@ -546,12 +608,22 @@ export class EmbeddingStore {
   }
 
   many(ids: readonly string[]): Map<string, Stored> {
+    return whole(this.manySteps(ids));
+  }
+
+  *manySteps(ids: readonly string[]): Generator<number, Map<string, Stored>> {
     const out = new Map<string, Stored>();
     const q = this.db.query('SELECT message_id, conversation_id, author, ts, v, scale, norm FROM embedding WHERE message_id = ?');
+    let done = 0;
     for (const id of ids) {
       const r = q.get(id) as { message_id: string; conversation_id: string; author: string | null; ts: number; v: Uint8Array; scale: number; norm: number } | null;
       if (r) out.set(id, { conversation: r.conversation_id, author: r.author, ts: r.ts, v: dequantize(new Int8Array(new Uint8Array(r.v).buffer), r.scale), norm: r.norm });
+      if (++done >= SLICE_ROWS / 4) {
+        yield done;
+        done = 0;
+      }
     }
+    if (done) yield done;
     return out;
   }
 
@@ -566,11 +638,21 @@ export class EmbeddingStore {
   }
 
   /** Mark labelled examples: they are kept past the retention window. */
-  keep(ids: Iterable<string>) {
+  keep(ids: readonly string[]) {
+    whole(this.keepSteps(ids));
+  }
+
+  /** `keep`, a transaction of a few thousand at a time. */
+  *keepSteps(ids: readonly string[]): Generator<number, void> {
     const q = this.db.query('UPDATE embedding SET kept = 1 WHERE message_id = ?');
-    this.db.transaction(() => {
-      for (const id of ids) q.run(id);
-    })();
+    const step = SLICE_ROWS / 2;
+    for (let i = 0; i < ids.length; i += step) {
+      const part = ids.slice(i, i + step);
+      this.db.transaction(() => {
+        for (const id of part) q.run(id);
+      })();
+      yield part.length;
+    }
   }
 
   /** Forget what is older than the window and not a labelled example, and answers whose embedding went. */
@@ -675,29 +757,48 @@ export function inputFor(hub: Database, m: MessageRow, self: ReadonlySet<string>
 }
 
 /** Messages from others with what you did about them, in conversations where you wrote or reacted since `since`. */
-export function loadTurns(hub: Database, since: number, self: ReadonlySet<string>): { turns: Turn[]; rows: Map<string, { conversation: string; author: string | null; ts: number }> } {
+export function loadTurns(hub: Database, since: number, self: ReadonlySet<string>): Turns {
+  return whole(loadTurnsSteps(hub, since, self));
+}
+
+type Turns = { turns: Turn[]; rows: Map<string, { conversation: string; author: string | null; ts: number }> };
+
+/** `loadTurns` as steps (slices.ts): a page of a conversation's messages at a time, in the same order. */
+export function* loadTurnsSteps(hub: Database, since: number, self: ReadonlySet<string>): Generator<number, Turns> {
   const ids = [...self];
   if (!ids.length) return { turns: [], rows: new Map() };
   const mark = ids.map(() => '?').join(',');
+  // Your reactions first, then their messages: there are far fewer of them than messages since `since`.
   const convs = hub
     .query(
       `SELECT DISTINCT conversation_id AS c FROM message WHERE ts >= ? AND author_id IN (${mark})
-       UNION SELECT m.conversation_id FROM reaction x JOIN message m ON m.id = x.message_id WHERE m.ts >= ? AND x.identity_id IN (${mark})`,
+       UNION SELECT m.conversation_id FROM reaction x CROSS JOIN message m ON m.id = x.message_id WHERE m.ts >= ? AND x.identity_id IN (${mark})
+       ORDER BY 1`,
     )
     .all(since, ...ids, since, ...ids) as { c: string }[];
+  yield convs.length;
   const turns: Turn[] = [];
   const rows = new Map<string, { conversation: string; author: string | null; ts: number }>();
+  const page = Math.min(2048, SLICE_ROWS);
+  // In (ts, rowid) order, as the index on (conversation, ts) gives them: a page starts after the last one's end.
   const q = hub.query(
-    `SELECT m.id, m.ts, m.author_id, i.person_id, m.reply_to_id,
+    `SELECT m.id, m.rowid AS rid, m.ts, m.author_id, i.person_id, m.reply_to_id,
             EXISTS (SELECT 1 FROM reaction x WHERE x.message_id = m.id AND x.identity_id IN (${mark})) AS reacted
      FROM message m LEFT JOIN identity i ON i.id = m.author_id
-     WHERE m.conversation_id = ? AND m.ts >= ? AND m.deleted = 0 ORDER BY m.ts`,
+     WHERE m.conversation_id = ? AND m.ts >= ? AND (m.ts, m.rowid) > (?, ?) AND m.deleted = 0 ORDER BY m.ts, m.rowid LIMIT ?`,
   );
   for (const { c } of convs) {
-    for (const r of q.all(...ids, c, since) as { id: string; ts: number; author_id: string | null; person_id: string | null; reply_to_id: string | null; reacted: number }[]) {
-      const mine = !!r.author_id && self.has(r.author_id);
-      turns.push({ id: r.id, conversation: c, ts: r.ts, mine, replyTo: r.reply_to_id, reacted: !!r.reacted });
-      if (!mine) rows.set(r.id, { conversation: c, author: r.person_id ?? r.author_id, ts: r.ts });
+    let after = [since, -1];
+    for (;;) {
+      const got = q.all(...ids, c, since, after[0], after[1], page) as { id: string; rid: number; ts: number; author_id: string | null; person_id: string | null; reply_to_id: string | null; reacted: number }[];
+      for (const r of got) {
+        const mine = !!r.author_id && self.has(r.author_id);
+        turns.push({ id: r.id, conversation: c, ts: r.ts, mine, replyTo: r.reply_to_id, reacted: !!r.reacted });
+        if (!mine) rows.set(r.id, { conversation: c, author: r.person_id ?? r.author_id, ts: r.ts });
+      }
+      yield got.length + 1;
+      if (got.length < page) break;
+      after = [got.at(-1)!.ts, got.at(-1)!.rid];
     }
   }
   return { turns, rows };
@@ -741,6 +842,19 @@ export class Embeddings {
     this.jev = opts.jev ?? new Jev();
     this.now = opts.now ?? Date.now;
     this.batch = opts.batch ?? 64;
+    // A backfill that finished before this start has nothing more to give the start's own refit.
+    const low = this.store.get('backfill');
+    this.caughtUp = low !== null && Number(low) <= 1;
+  }
+
+  /**
+   * After a step: refit daily (a start's first step, since the models live in memory), and once more when the backfill
+   * first runs out, as most labelled messages only have vectors from then.
+   */
+  refitDue(did: 'mean' | 'new' | 'backfill' | 'idle'): boolean {
+    const caughtUp = did === 'idle' && !this.caughtUp;
+    if (caughtUp) this.caughtUp = true;
+    return caughtUp || this.now() - this.lastRefit > DAY;
   }
 
   start() {
@@ -749,10 +863,7 @@ export class Embeddings {
       try {
         const did = await this.tick();
         next = did === 'new' ? 1_000 : did === 'backfill' ? 4_000 : 20_000;
-        // Daily, and once more when the backfill is done: most labelled messages only have vectors from then.
-        const caughtUp = did === 'idle' && !this.caughtUp;
-        if (caughtUp) this.caughtUp = true;
-        if (caughtUp || this.now() - this.lastRefit > DAY) await this.refitSoftly();
+        if (this.refitDue(did)) await this.refitSoftly();
       } catch (e) {
         // jev down or busy: the features are missing meanwhile, and triage goes on without them.
         console.error(`embeddings: ${(e as Error).message}; trying again in 5 min`);
@@ -776,6 +887,7 @@ export class Embeddings {
   }
 
   private async step(): Promise<'mean' | 'new' | 'backfill' | 'idle'> {
+    noteWork('embeddings step');
     const self = selfIdentities(this.hub);
     const since = this.now() - RETENTION_DAYS * DAY;
     if (!this.store.mean()) {
@@ -846,6 +958,8 @@ export class Embeddings {
    * docs/embeddings.md.)
    */
   async askJev(ids: readonly string[]) {
+    // No questions, nothing to pick for: picking reads every message's conversation, which is seconds on a big hub.
+    if (!Object.keys(QUESTIONS).length) return;
     const day = new Date(this.now()).toISOString().slice(0, 10);
     if (this.asked.day !== day) this.asked = { day, n: 0 };
     const budget = (this.opts.jevPerDay ?? 2000) - this.asked.n;
@@ -859,7 +973,7 @@ export class Embeddings {
       const text = inputFor(this.hub, row, self);
       if (text) pick.push({ id, ts: row.ts, text });
     }
-    if (!pick.length || !Object.keys(QUESTIONS).length) return;
+    if (!pick.length) return;
     const answers = pick.map(() => ({}) as Record<string, number>);
     for (const [k, question] of Object.entries(QUESTIONS)) {
       const ps = await this.jev.judge(question, pick.map((p) => p.text));
@@ -913,10 +1027,10 @@ export class Embeddings {
   private preparing: Promise<void> | null = null;
   private prepareQuietUntil = 0;
 
-  /** Refit, giving the event loop room between the fits. */
+  /** Refit in slices (slices.ts), so requests are answered while it runs. */
   private async refitSoftly() {
     this.lastRefit = this.now();
-    await this.refit(() => new Promise((r) => setTimeout(r, 0)));
+    await this.refit();
     this.store.prune(this.now());
   }
 
@@ -924,19 +1038,28 @@ export class Embeddings {
    * Relearn from the labels: replies and reactions, votes from before the tiers, and "less like this". For importance,
    * given at least ten positives and ten negatives: a probe on top of the conversation's answer rate, cross-fitted logits
    * for the examples themselves, and the kNN examples. Labelled messages are kept past the retention window.
+   * Seconds of work on a big hub, so it runs a slice at a time (`o`: a test's clock and pauses).
    */
-  async refit(yieldNow: () => Promise<unknown> = async () => {}) {
+  async refit(o: SliceOptions = {}) {
+    this.heads = await sliced('embeddings refit', this.refitSteps(), o);
+    this.lastRefit = this.now();
+  }
+
+  private *refitSteps(): Generator<number, Partial<Record<Head, HeadModel>>> {
     const self = selfIdentities(this.hub);
     const since = this.now() - RETENTION_DAYS * DAY;
-    const { turns, rows } = loadTurns(this.hub, since, self);
+    const { turns, rows } = yield* loadTurnsSteps(this.hub, since, self);
     const labels = new Map<string, { y: Partial<Record<Head, 0 | 1>>; weight: number }>();
     const ripe = this.now() - ACTIVE_MS;
     for (const [id, o] of outcomes(turns)) if (rows.get(id)!.ts < ripe) labels.set(id, { y: outcomeLabels(o), weight: 0.5 });
+    // Work in memory, a few milliseconds: a chance to pause, not rows.
+    yield 0;
     const votes = this.hub.query('SELECT t.message_id AS id, t.feedback, t.less_mark FROM triage t WHERE t.feedback IS NOT NULL OR t.less_mark = 1').all() as { id: string; feedback: P.NotifyTier | null; less_mark: number | null }[];
     for (const v of votes) labels.set(v.id, { y: v.less_mark ? { important: 0 } : voteLabels(v.feedback!), weight: 1 });
-    const vectors = this.store.many([...labels.keys()]);
+    yield votes.length + 1;
+    const vectors = yield* this.store.manySteps([...labels.keys()]);
     const notified = this.hub.query('SELECT DISTINCT message_id AS id FROM notification WHERE message_id IS NOT NULL').all() as { id: string }[];
-    this.store.keep([...labels.keys(), ...notified.map((n) => n.id)]);
+    yield* this.store.keepSteps([...labels.keys(), ...notified.map((n) => n.id)]);
 
     const heads: Partial<Record<Head, HeadModel>> = {};
     // Importance only: nothing you did says a message could not wait.
@@ -961,18 +1084,15 @@ export class Embeddings {
       const y = ex.map((e) => e.y);
       const weight = ex.map((e) => e.weight);
       const folds = timeFolds(ex.length);
-      const lambda = chooseLambda(X, y, folds, { offset, weight });
-      await yieldNow();
-      const oofs = crossFit(X, y, folds, { offset, weight, lambda });
-      await yieldNow();
-      const probe = fitProbe(X, y, { offset, weight, lambda });
-      await yieldNow();
+      yield 0;
+      const lambda = yield* chooseLambdaSteps(X, y, folds, { offset, weight });
+      const oofs = yield* crossFitSteps(X, y, folds, { offset, weight, lambda });
+      const probe = yield* fitProbeSteps(X, y, { offset, weight, lambda });
       const oof = new Map<string, number>();
       ex.forEach((e, i) => oofs[i] !== null && oof.set(e.id, oofs[i]!));
       heads[h] = { probe, oof, knn: new KnnIndex(ex.map((e) => ({ id: e.id, conversation: e.s.conversation, author: e.s.author, x: e.s.v, y: e.y as 0 | 1 }))) };
     }
-    this.heads = heads;
-    this.lastRefit = this.now();
+    return heads;
   }
 
   /**

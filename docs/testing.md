@@ -88,6 +88,12 @@ stuck. A test that wants everything done calls again while `busy`. A test about 
 `budgetClock` to a test clock, and sees the cut every time instead of now and then (mail-attention.test.ts,
 attention.test.ts).
 
+Longer background jobs are generators that yield the rows they worked through every few thousand (`slices.ts`): the
+embedder's refit and the media archiver's walks (docs/perf.md, "After a restart"). `sliced` runs one with a turn of the
+event loop between slices; `whole` runs it straight through. A test passes slice options that end a slice at every
+chance (`clock: () => 0, budgetMs: 0`) and an `onSlice` that collects each slice's rows: it then holds the most rows
+a slice may work through, and the answer to be the same as straight through (stalls.test.ts). No times.
+
 ### Finding a race
 
 A race rarely shows on an idle machine. Run the test many times with the machine busy:

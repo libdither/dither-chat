@@ -55,7 +55,9 @@ from before the tiers: they scored the old ping label, an answer within 15 minut
 | `knn` | The mean cosine to the 5 nearest labelled positives minus the same for negatives. It uses the narrowest scope (the same author, else the conversation, else everything) that has ≥10 examples of both kinds. An example leaves itself out. |
 | `jev:<q>` | `logit(P(yes))`, clipped at 0.001. P(yes) is uncalibrated, and the learning model's weight calibrates it. |
 
-Labels for the probe and kNN, refitted daily (`refit()`):
+Labels for the probe and kNN, refitted daily (`refit()`), at each start (the models live in memory), and once more when
+the backfill first runs out. A refit is seconds of work on the live hub, so it runs a slice at a time (`slices.ts`,
+docs/perf.md "After a restart"):
 
 - important: answered (a reply, a reaction, or your next message there) within 3 hours; not important: not
   answered by then. Only messages from others in conversations where you wrote or reacted in the last 30 days, and

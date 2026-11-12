@@ -35,6 +35,7 @@ import { changesOf } from './journal.ts';
 import { syncResponse } from './sync.ts';
 import { TypingGate } from './typing.ts';
 import { hostAllowed, hostNames } from './hosts.ts';
+import { noteWork, pathShape } from './stalls.ts';
 import { fetchPublicToFile } from './fetchsafe.ts';
 import { AboutError, Abouts } from './about.ts';
 import { Groups } from './groups.ts';
@@ -477,6 +478,7 @@ export class HubServer {
   private async route(req: Request, server: Server<WsData>): Promise<Response | undefined> {
     const url = new URL(req.url);
     const path = url.pathname;
+    noteWork(`${req.method} ${pathShape(path)}`);
     const ip = server.requestIP(req)?.address ?? '';
 
     if (path === '/adapter') {
