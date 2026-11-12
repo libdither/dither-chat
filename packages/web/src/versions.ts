@@ -22,6 +22,12 @@ const timelineRevs = new Map<string, Signal<number>>();
 let version = 0;
 /** Moves on every change to `db` at once, before the signals do: memos keyed on it are never stale. */
 export const dataVersion = () => version;
+let metaVersion = 0;
+/**
+ * The same for names, settings and what is where (a change that moves `metaRev`), not a conversation's last message
+ * or counts: what is worked out from those alone (model.ts `metaMemo`) is not worked out again for a message or a read.
+ */
+export const metaDataVersion = () => metaVersion;
 let mailVersion = 0;
 /** The same for mail (`mailChanged`): the inbox's mail rows are memoized on both. */
 export const mailDataVersion = () => mailVersion;
@@ -35,11 +41,16 @@ export function timelineRev(key: string): Signal<number> {
 const dirty = { list: false, meta: false, all: false, mail: false, keys: new Set<string>() };
 let scheduled = false;
 
-/** Something in `db` changed. 'meta': names or settings too, not only a conversation's last message and counts. */
-export function changed(kind: 'list' | 'meta') {
+/**
+ * Something in `db` changed. 'meta': names or settings too, not only a conversation's last message and counts.
+ * 'shown': only how things already where they are look (people's names and pictures, what a message's reaction row
+ * offers), which moves `metaRev` but not what is where.
+ */
+export function changed(kind: 'list' | 'meta' | 'shown') {
   version++;
   dirty.list = true;
-  if (kind === 'meta') dirty.meta = true;
+  if (kind !== 'list') dirty.meta = true;
+  if (kind === 'meta') metaVersion++;
   schedule();
 }
 

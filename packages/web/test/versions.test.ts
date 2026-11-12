@@ -2,7 +2,7 @@
 import { expect, test } from 'bun:test';
 import { effect } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { changed, dataVersion, flush, metaRev, rev, timelineChanged, timelineRev } from '../src/versions.ts';
+import { changed, dataVersion, flush, metaDataVersion, metaRev, rev, timelineChanged, timelineRev } from '../src/versions.ts';
 import { conversationMetaChanged, emptyDb, identityVersion, putIdentity } from '../src/syncmodel.ts';
 import { sameProps } from '../src/ui/memo.ts';
 
@@ -40,6 +40,17 @@ test('names and settings move both; a timeline only its own', () => {
   // Quoted messages are every timeline's.
   expect(moves(() => timelineChanged(), { a, b })).toEqual({ rev: 0, metaRev: 0, a: 1, b: 1 });
   expect(moves(() => {}, { a })).toEqual({ rev: 0, metaRev: 0, a: 0 });
+});
+
+test('how things look moves metaRev but not what is where; a read moves neither', () => {
+  const m = metaDataVersion();
+  expect(moves(() => changed('shown'))).toEqual({ rev: 1, metaRev: 1 });
+  expect(metaDataVersion()).toBe(m);
+  expect(moves(() => changed('list'))).toEqual({ rev: 1, metaRev: 0 });
+  expect(metaDataVersion()).toBe(m);
+  changed('meta');
+  flush();
+  expect(metaDataVersion()).toBe(m + 1);
 });
 
 test('the signals move by themselves', async () => {

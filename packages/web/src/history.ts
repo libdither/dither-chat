@@ -109,6 +109,6 @@ export function presenceText(p: P.PresenceView | null | undefined): string {
 export async function loadChanges(path: string): Promise<P.ChangeView[]> {
   const r = await api<{ changes: P.ChangeView[]; identities: P.IdentityView[] }>(path);
   for (const i of r.identities) if (!db.identities.has(i.id)) db.identities.set(i.id, i);
-  if (r.identities.length) changed('meta');
+  if (r.identities.length) changed('shown');
   return r.changes;
 }

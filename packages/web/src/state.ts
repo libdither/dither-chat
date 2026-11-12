@@ -257,7 +257,7 @@ export async function api<T = any>(path: string, init?: { method?: string; body?
 
 // ------------------------------------------------------------------ applying hub data
 
-const putIdentity = (i: P.IdentityView) => void (put(db, i) && changed('meta'));
+const putIdentity = (i: P.IdentityView) => void (put(db, i) && changed('shown'));
 
 export function applyBootstrap(b: P.Bootstrap) {
   applyBootstrapTo(db, b);
@@ -380,7 +380,8 @@ export function applyEvents(events: P.ClientEvent[]) {
   }
   for (const key of regrouped) if (!timelines.get(key)?.loading) void catchUp(key);
   settle();
-  if (meta || identityVersion() !== ids) changed('meta');
+  if (meta) changed('meta');
+  else if (identityVersion() !== ids) changed('shown');
   else if (list) changed('list');
   if (mail) mailChanged();
 }
