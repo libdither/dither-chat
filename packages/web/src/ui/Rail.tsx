@@ -18,6 +18,7 @@ import { arrangeDrop, arrangedFolderItems, arrangedRail, snapshot, sortOf, SORT_
 import { OrganizeView, SortIcon, sortEntries, startOrganize, useFlip } from './Reorganize.tsx';
 import { startInbox } from '../inbox.ts';
 import { openMenu } from './ContextMenu.tsx';
+import { useShown } from './more.tsx';
 
 /** `track`: its key for button counts (clicks.ts), never the title, which may be a name. */
 function RailItem({ active, unread, badge, title, sub, onClick, children, dnd, menu, class: cls, track }: { active: boolean; unread?: boolean; badge?: number; title: string; sub?: string; onClick: () => void; children: any; dnd?: Record<string, unknown>; menu?: () => MenuSpec | null; class?: string; track: string }) {
@@ -234,6 +235,8 @@ export function Rail() {
     void loadRetention();
   }, []);
   useFlip(scroll, snapshot.value.v);
+  const entries = arrangedRail();
+  const [drawn, more] = useShown(entries.length);
 
   return (
     <nav class="rail" aria-label="Places" data-track-area="rail">
@@ -248,12 +251,13 @@ export function Rail() {
       <RailMail active={r.view === 'mail'} />
       <div class="rail-sep" />
       <div class="rail-scroll" ref={scroll}>
-        {arrangedRail().map((e, i, all) => (
+        {entries.slice(0, drawn).map((e, i) => (
           <Fragment key={e.key}>
             <RailEntryView entry={e} route={r} />
-            {placePref(e.kind, entryId(e)).pinned && !placePref(all[i + 1]?.kind ?? 'space', all[i + 1] ? entryId(all[i + 1]) : '').pinned && <div class="rail-sep small" />}
+            {placePref(e.kind, entryId(e)).pinned && !placePref(entries[i + 1]?.kind ?? 'space', entries[i + 1] ? entryId(entries[i + 1]) : '').pinned && <div class="rail-sep small" />}
           </Fragment>
         ))}
+        {more}
         <RailItem active={r.view === 'directory'} title="All communities" track="all communities" sub="Browse, sort and categorise" onClick={() => go({ view: 'directory' })}>
           <Icon name="grid" size={20} />
         </RailItem>

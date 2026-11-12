@@ -1,5 +1,5 @@
 {
- "note": "bun scripts/verify-perf.ts --ci --update --runs 5 (docs/perf.md). CI judges the counts marked gate, never the times. Two layout tallies (cold, first opens) are kept at their values of 2026-11-10: this machine measured them lower than a CI runner does.",
+ "note": "bun scripts/verify-perf.ts --ci --update --runs 5 (docs/perf.md). CI judges the counts marked gate, never the times. Two layout tallies (cold, first opens) are kept at their values of 2026-11-10: this machine measured them lower than a CI runner does. 1x.cold.nodes and 1x.long.reopen.nodes set by hand on 2026-11-11 when long lists began drawing a window of their rows (ui/more.tsx). 1x.cold.layouts is not judged since 2026-11-11: CI read 9, 9, 9, 10, 10 and 11 on main and branches of it in a row, more than the one a steady tally may spread (traces: the same layouts each time, and a varying few at the end as Catch up's cards fill in).",
  "at": "2026-11-11",
  "runs": 5,
  "pages": 5,
@@ -52,10 +52,10 @@
   "1x.cold.layouts": {
    "v": 9,
    "kind": "tally",
-   "gate": true
+   "gate": false
   },
   "1x.cold.nodes": {
-   "v": 2353,
+   "v": 2111,
    "kind": "count",
    "gate": true
   },
@@ -170,7 +170,7 @@
    "gate": true
   },
   "1x.long.reopen.nodes": {
-   "v": 7875,
+   "v": 7634,
    "kind": "count",
    "gate": true
   },

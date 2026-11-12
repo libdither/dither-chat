@@ -1,5 +1,5 @@
 {
- "note": "bun scripts/verify-perf.ts --update (docs/perf.md). Times are of the machine it ran on. Times: the slower of two runs on 2026-11-10 (load 3-7 on a shared machine). Counts, renders and layouts: two runs on 2026-11-11, once the perf world's decisions followed the three tiers (the higher of the two for renders and layouts).",
+ "note": "bun scripts/verify-perf.ts --update (docs/perf.md). Times are of the machine it ran on. Times: the slower of two runs on 2026-11-10 (load 3-7 on a shared machine). Counts, renders and layouts: two runs on 2026-11-11, once the perf world's decisions followed the three tiers (the higher of the two for renders and layouts). DOM node counts (cold, long reopen) set by hand on 2026-11-11 when long lists began drawing a window of their rows (ui/more.tsx).",
  "at": "2026-11-11",
  "runs": 3,
  "pages": 15,
@@ -52,7 +52,7 @@
    "kind": "tally"
   },
   "1x.cold.nodes": {
-   "v": 11402,
+   "v": 2562,
    "kind": "count"
   },
   "1x.cold.bootstrapBytes": {
@@ -152,7 +152,7 @@
    "kind": "tally"
   },
   "1x.long.reopen.nodes": {
-   "v": 16984,
+   "v": 8133,
    "kind": "count"
   },
   "1x.long.reopen.msgs": {
@@ -260,7 +260,7 @@
    "kind": "tally"
   },
   "4x.cold.nodes": {
-   "v": 11402,
+   "v": 2562,
    "kind": "count"
   },
   "4x.cold.bootstrapBytes": {
@@ -360,7 +360,7 @@
    "kind": "tally"
   },
   "4x.long.reopen.nodes": {
-   "v": 16960,
+   "v": 8135,
    "kind": "count"
   },
   "4x.long.reopen.msgs": {
