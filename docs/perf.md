@@ -68,8 +68,8 @@ a phone does that the desktop run does not:
 | `open.*` | the biggest channel opened: time, longest task, layouts, message renders |
 | `tlScroll.*` | a flick up its timeline: slow frames, message renders, longest task |
 | `typing.*` | 28 keys into the composer, two seconds after the open settled, then taken back (nothing is sent): each key to the frame after it (`keyP90`, `keyMax`), and renders of App, the list and messages (none) and layouts (about one a key) |
-| `home`, `catchUp`, `search`, `you`, `homeTab` | back to the list, then each tab: DOM nodes, App or list renders, longest task |
-| `people`, `person`, `mail` | People from the rail, a person's page (the biggest direct conversation's), Mail's list: DOM nodes, longest task, message renders |
+| `home`, `catchUp`, `search`, `you`, `homeTab` | back to the list, then each tab: DOM nodes, App or list renders (and the Home tab's message renders: it brings back the conversation that was open), longest task, main-thread time (`busy`) |
+| `people`, `person`, `mail` | People from the rail, a person's page (the biggest direct conversation's), Mail's list: DOM nodes, App and message renders, longest task, main-thread time |
 
 Slow frames are a time in all but name (kind `frames`): judged locally like a time, never in CI.
 
@@ -601,6 +601,79 @@ Not done:
 - Kept pages among the first rows are caught up ahead one `POST /api/sync` each (about 330 bytes); one request for
   all of them would do.
 
+## First opens draw in slices (2026-11-11)
+
+The phone audit left a person's page, Mail and the You tab with a long task of 0.2–0.7 s on their first open at 4×,
+and a slow frame in the first flick up a long timeline. Traced at phone size and 4× (scripts/browser.ts with the
+DevTools `Tracing` and `Profiler` domains, the profile's samples cut by each long task), on an unminified build:
+
+- **A conversation's page drew its 60 messages in one task.** Most of it was Preact making DOM nodes, about 40 a
+  message, and a third of those were the hover bar (quick reactions, reply, forward, more and their icons), which a
+  touch screen never shows (`display: none` under `(hover: none) and (pointer: coarse)`). The person's page is one
+  conversation's page; the Home tab after another tab draws the list and the conversation that was open again.
+- **Lists drew 60 rows at once** (#101): the inbox and People, where a phone shows 11–14.
+- **You drew every Settings section**, 1,600 nodes, then laid them all out in the next task.
+- **Mail measured its chip row in a layout effect**, which laid out the whole page inside the task that drew it.
+- **The flick's slow frame was not the timeline.** The open marks the conversation read 300 ms after it draws, and the
+  rail and the app's badge then worked everything out again: the walk under each of 1,100 servers for their unread
+  counts and activity, and each unread conversation's notification level (model.ts). That is the next section.
+
+What changed:
+
+- **A timeline draws in slices** (`packages/web/src/slices.ts`): its newest 15 messages when it shows, then 15 more each
+  time the page is idle, up to its window of 150. Until the drawn ones fill the view, a slice more before it is
+  painted. Nearing the top of what is drawn draws the next slice at once, and an older page from the hub comes in the
+  same way, a slice at a time. Counted from the newest end, so a message arriving or a page coming in moves nothing
+  drawn. A slice drawn above holds the first message in view where it is: the first one drawn can lose its name line
+  to the message drawn before it (grouped with it), and holding that one moved the view by a line (one older page of
+  five, in CI's world, until it was the one in view).
+- **No hover bar on a touch screen** (`touchOnly`, phone.ts), nor the time's tooltip: a long-press opens the same
+  actions. The open timeline went from 4,700 DOM nodes to 3,000.
+- **Long lists draw a screenful first** (ui/more.tsx): rows for the screen's height (the screen's, since reading the
+  window's while drawing lays the page out), the rest of the first 60 once the page is idle, then 100 at a time as
+  the view nears the end, as before.
+- **Settings draws what is below the first screen once it is up** (ui/Later.tsx), in four parts, one per idle
+  moment. Going to a section (the desktop's list, the phone's Sections sheet, the links to Adversarial features and
+  Indexing) draws them all first.
+- **Mail's chunk loads while the app is idle**, three seconds after it starts (Rail.tsx), as the palette's does: a
+  phone has no pointer to hover the rail with. Mail opening on its first chip no longer measures the chip row before
+  it is painted (a ResizeObserver sets its edges once it is laid out).
+
+Phone size, 4× CPU, the phone pass of `verify-perf --cpu 0 --phone-cpu 4`, three runs each, medians (runs in
+brackets). FIRST_TABLE
+
+The layouts went up: each slice is one, so a first open has three or four more on a phone and on a desktop. On a
+phone, messages and rows off screen skip their layout (`content-visibility`), so a slice's layout is small; on a
+desktop it lays out only the slice's own messages above the view. CI's baseline was set by hand for these
+(`perf-baseline-ci.json`'s note), and the changed layout tallies are printed, not judged, until five runs on GitHub's
+runners show how they spread.
+
+## What depends on what is where (2026-11-11)
+
+model.ts memoizes on `dataVersion`, which moves with every change: a message arriving, a conversation read. What the
+rail and the app's badge show was then worked out again from the start each time, though most of it depends only on
+what is where (which servers, channels and threads there are, your rules and settings, the networks' own mutes):
+
+- the walk under each of the world's 1,100 servers for the conversations in it (`convsUnder`), for its unread count
+  and its activity, with each conversation's threads sorted on the way;
+- each unread conversation's notification level (`effectiveLevel`, 970 of them), for the badge;
+- the rail's sort, which looked up each entry's place settings (a string key and a map) in every comparison;
+- the map of conversations by their network's id that room links read (`convByNative`), 5,600 entries.
+
+Opening a conversation marks it read 300 ms after it draws, so this ran in the middle of the first flick up its
+timeline: the flick's slow frame on the phone pass (a task of 100–120 ms at 4×, two thirds of it the rail).
+
+Now those are memoized on `metaDataVersion` (versions.ts), which moves only with `changed('meta')`: names and
+settings and what is where, the changes that move `metaRev`. They hold conversations' ids, not the objects (a message
+replaces its conversation's object), and what reads the objects (unread counts, activity) is still worked out on
+`dataVersion`, from the ids. A notification level that depends on a native mute with an end is kept no later than
+that end (`metaMemo`'s `until`). Two kinds of change moved `metaRev` without changing what is where, and now say so
+(`changed('shown')`): people's names and pictures arriving with a page of messages, and what a message's reaction row
+offers once a conversation's reaction context is known; both came with every first open.
+
+`test/model-memo.test.ts` holds it: a read changes the counts and the order at once, with the same walk; the walk is
+done again on a meta change; a level holds until a rule changes or a mute runs out.
+
 ## Next
 
 What these numbers point at, not done yet:
@@ -609,8 +682,10 @@ What these numbers point at, not done yet:
   On the live hub's copy, leaving out null and default fields saves 25%, leaving out the 3,489 channels without
   messages 43%, both 55%. It needs a snapshot schema change (snapshot.ts keeps the bootstrap as the hub sent it), so
   it is a change of its own.
-- **A first open's longest task** is the first render of a conversation's page, 60 messages at once. Drawing the
-  newest screenful first would split it.
+- **A layout of a new page** is now the longest task of most first opens on a phone at 4×: 70–150 ms for the frame
+  after a conversation, the Home tab or People is drawn, 2,000 to 2,500 layout objects, a few hundred of them dirty
+  (traced on 2026-11-11). The `.app` element's classes change with every page on a phone (`rest-*`, `narrow`, `tabs`),
+  which restyles and lays out the whole tree; scoping those to the parts that move would shrink it.
 - **Attention's rescoring of everything** (`rescoreAll`, every five minutes and after the inbox ranking refits) is
   one run of 0.4–0.8 s on the live copy: after a bootstrap's own, the longest hold left after a restart. A sliced one would
   need care where `list()` and `sync` read the views it is writing.
