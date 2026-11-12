@@ -16,6 +16,7 @@
 import type * as P from '@dither-chat/protocol';
 import { INDEX_KEY, PageCache, type IndexRecord, type KeptPage, type PageRecord, type PageWrites } from './keptpages.ts';
 import { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines } from './state.ts';
+import { calendarLink } from './plans.ts';
 import { changed, dataVersion, mailChanged, timelineChanged } from './versions.ts';
 import { bodies as mailBodies, details as mailDetails } from './mail/held.ts';
 
@@ -136,6 +137,7 @@ export function currentBootstrap(): P.Bootstrap {
     reactionUsage: db.reactionUsage,
     attention: [...db.attention.values()],
     requests: db.requests,
+    ...(calendarLink.value ? { calendar: calendarLink.value } : {}),
     now: Date.now(),
     ...(db.sync ? { sync: db.sync } : {}),
     ...(db.mail.access.state !== 'off' || db.mail.accounts.size

@@ -24,6 +24,7 @@ import type {
 import type { ArrangeSettings, UsageKind, UsageView } from './usage.ts';
 import type { FileInfo } from './files.ts';
 import type { MailAccess, MailAccountView, MailboxView, MailBootstrap, MailOutboxView, MailThreadView } from './mail.ts';
+import type { CalendarLinkView, CalendarNotifyRef, CalendarPlanView } from './calendar.ts';
 
 export interface AccountView {
   id: string;
@@ -1038,6 +1039,8 @@ export interface Bootstrap {
   mail?: MailBootstrap;
   /** Requests waiting on you (docs/add.md). Absent from hubs that predate them. */
   requests?: RequestView[];
+  /** dither-calendar beside the hub (docs/calendar.md). Absent when the hub has none. */
+  calendar?: CalendarLinkView;
 }
 
 /**
@@ -1094,7 +1097,7 @@ export type ClientEvent =
   | { t: 'message'; message: MessageView; identities: IdentityView[]; live: boolean }
   | { t: 'message.deleted'; id: string; conversationId: string }
   /** No conversation: it is about a request, or about what quiet hours held. */
-  | { t: 'notify'; messageId?: string; conversationId?: string; title: string; body: string; reasons: string[]; /** Its tier; absent is an alert. */ level?: 'push' | 'quiet' | 'digest'; /** The notification's id in the activity log (docs/activity.md). */ nid?: string; /** Devices whose own rules keep this quiet (docs/devices.md). */ quiet?: string[]; /** The sender's (or the place's) picture, a hub media path. */ icon?: string; network?: Network; /** About a mail thread (slice 9): `conversationId` is the thread too. */ mailThreadId?: string; /** About a request waiting on you (docs/add.md): it opens under Requests. */ requestId?: string }
+  | { t: 'notify'; messageId?: string; conversationId?: string; title: string; body: string; reasons: string[]; /** Its tier; absent is an alert. */ level?: 'push' | 'quiet' | 'digest'; /** The notification's id in the activity log (docs/activity.md). */ nid?: string; /** Devices whose own rules keep this quiet (docs/devices.md). */ quiet?: string[]; /** The sender's (or the place's) picture, a hub media path. */ icon?: string; network?: Network; /** About a mail thread (slice 9): `conversationId` is the thread too. */ mailThreadId?: string; /** About a request waiting on you (docs/add.md): it opens under Requests. */ requestId?: string; /** A calendar reminder (docs/calendar.md): it opens the calendar there. */ calendar?: CalendarNotifyRef }
   /**
    * Someone started typing (it lasts `ttl` ms unless another start comes) or `stop`ped. Of the moment: not journaled,
    * and a client that reconnects simply does not see it. `name` only when the hub knows no name for the identity.
@@ -1105,6 +1108,13 @@ export type ClientEvent =
    * pending copy by id before the answer to its POST arrives. Of the moment, like `typing`: not journaled.
    */
   | { t: 'sent'; conversationId: string; clientId: string; messageId: string }
+  /**
+   * Plans the calendar found in chats changed (docs/calendar.md): these, or all of them with `replace`. Of the moment,
+   * like `typing`: not journaled. A page asks GET /api/plans again whenever its live socket (re)opens and on `resync`.
+   */
+  | { t: 'plans'; plans: CalendarPlanView[]; replace?: true }
+  /** Whether the hub reaches the calendar, and how many plans wait for you there. Of the moment too. */
+  | { t: 'calendar'; reachable: boolean; waiting: number }
   | { t: 'folders'; folders: FolderView[] }
   | { t: 'placePrefs'; prefs: PlacePrefView[] }
   | { t: 'categories'; categories: CategoryView[]; placeCategories: PlaceCategoryView[] }

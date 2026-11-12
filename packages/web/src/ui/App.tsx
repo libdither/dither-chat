@@ -37,6 +37,8 @@ import { applyUpdate, updateReady } from '../pwa.ts';
 import { counting, rendered } from '../perf.ts';
 import { MailCenterLazy, MailComposerLazy, MailSidebarLazy } from './mail/lazy.tsx';
 import { RequestsPane } from './Requests.tsx';
+import { CalendarPane } from './calendar/CalendarPane.tsx';
+import { calendarOn } from '../plans.ts';
 import { countKey } from '../clicklog.ts';
 
 /** A conversation's details panel: the person's, for a DM of someone reached by several routes (their chat's page). */
@@ -84,6 +86,8 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       return { pane: <MailCenterLazy thread={r.thread} onBack={back} /> };
     case 'requests':
       return { pane: <RequestsPane focus={r.request} onBack={back} /> };
+    case 'calendar':
+      return { pane: <CalendarPane at={r.at} /> };
   }
 }
 
@@ -122,6 +126,8 @@ function sidebarFor(r: Route, onAdd: () => void): ComponentChildren {
       return <MailSidebarLazy list={r.list} active={r.thread} />;
     case 'requests':
       return <InboxSidebar />;
+    case 'calendar':
+      return null;
   }
 }
 
@@ -199,8 +205,8 @@ function leave(r: Route) {
   else go(way.to, true);
 }
 
-type Tab = 'home' | 'triage' | 'search' | 'you';
-const tabOf = (r: Route): Tab => (r.view === 'triage' || r.view === 'model' ? 'triage' : r.view === 'search' ? 'search' : r.view === 'settings' || r.view === 'accounts' ? 'you' : 'home');
+type Tab = 'home' | 'triage' | 'search' | 'calendar' | 'you';
+const tabOf = (r: Route): Tab => (r.view === 'triage' || r.view === 'model' ? 'triage' : r.view === 'search' ? 'search' : r.view === 'calendar' ? 'calendar' : r.view === 'settings' || r.view === 'accounts' ? 'you' : 'home');
 
 /** The last page and the last list on the Home tab, which a phone keeps while you look elsewhere. */
 let lastDetail: Route | null = null;
@@ -216,6 +222,8 @@ function TabBar({ r }: { r: Route }) {
     // Its badge is the unread alerts and Conversation messages, and accounts that need you.
     { id: 'triage', label: 'Catch up', icon: 'checks', to: () => ({ view: 'triage' }), badge: inboxBadge() + accountsNeedingYou().length },
     { id: 'search', label: 'Search', icon: 'search', to: () => ({ view: 'search', q: '' }) },
+    // A hub with dither-calendar beside it (docs/calendar.md).
+    ...(calendarOn ? [{ id: 'calendar' as const, label: 'Calendar', icon: 'calendar', to: (): Route => ({ view: 'calendar' }) }] : []),
     { id: 'you', label: 'You', icon: 'user', to: () => ({ view: 'settings' }), dot: attention },
   ];
   return (
@@ -304,7 +312,7 @@ export function App() {
       <Boot connected={connected.value} />
     );
 
-  const full = r.view === 'directory';
+  const full = r.view === 'directory' || r.view === 'calendar';
   const tabs = p && (tabRoot || rest === 'peek' || rest === 'away');
   // While a page is open or peeking, the list beside it leaves room for its edge.
   const narrow = p && (detailRoute || rest === 'peek');

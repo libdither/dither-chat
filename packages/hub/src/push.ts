@@ -65,6 +65,14 @@ const originOf = (endpoint: string) => {
 /** A phone, going by a registration's label ("Android app, Pixel", "Chrome on Android", "Safari on iOS"). */
 const PHONE = /android|iphone|ipad|\bios\b/i;
 
+/** Where a tap on an ntfy topic message opens, as a hash: a request under Requests, a reminder in the calendar. */
+export function clickHash(extra: Record<string, unknown>): string | undefined {
+  if (typeof extra.requestId === 'string') return `#/requests/${extra.requestId}`;
+  const cal = extra.calendar as { open?: unknown } | undefined;
+  if (cal && typeof cal.open === 'string') return `#/calendar/${cal.open.replace(/^#\/?/, '')}`;
+  return undefined;
+}
+
 const NO_SUBSCRIBER = /\b50701\b|without previously active subscriber/;
 
 /** What a push server said, short enough for Settings. */
@@ -319,7 +327,7 @@ export class PushService {
   async notify(title: string, body: string, conversationId: string | undefined, extra: Record<string, unknown>, quiet: string[] = [], level: 'push' | 'quiet' = 'push'): Promise<{ devices: number; accepted: number }> {
     const skip = new Set(quiet);
     const rows = (this.store.db.query('SELECT * FROM push_subscription').all() as Row[]).filter((r) => !skip.has(r.device || r.id));
-    const [results] = await Promise.all([Promise.all(rows.map((r) => this.deliver(r, pushPayload(title, body, conversationId, { ...extra, device: r.id })))), this.toTopic(title, body, conversationId, level, typeof extra.requestId === 'string' ? extra.requestId : undefined)]);
+    const [results] = await Promise.all([Promise.all(rows.map((r) => this.deliver(r, pushPayload(title, body, conversationId, { ...extra, device: r.id })))), this.toTopic(title, body, conversationId, level, clickHash(extra))]);
     return { devices: rows.length, accepted: results.filter((r) => r.ok).length };
   }
 
@@ -346,12 +354,13 @@ export class PushService {
   }
 
   /** The older route: plain ntfy messages to one topic, readable by that server. Off unless DITHER_NTFY_URL is set. */
-  private async toTopic(title: string, body: string, conversationId?: string, level: 'push' | 'quiet' = 'push', requestId?: string): Promise<{ ok: boolean; error?: string }> {
+  /** `click`: where a tap opens, as a hash (a request, a calendar reminder); else the conversation, else the inbox. */
+  private async toTopic(title: string, body: string, conversationId?: string, level: 'push' | 'quiet' = 'push', click?: string): Promise<{ ok: boolean; error?: string }> {
     const t = this.topic;
     if (!t) return { ok: true };
     const headers: Record<string, string> = { Title: title, Tags: 'speech_balloon', ...(level === 'quiet' ? { Priority: 'low' } : {}) };
     if (t.token) headers.Authorization = `Bearer ${t.token}`;
-    if (t.click) headers.Click = requestId ? `${t.click}/#/requests/${requestId}` : `${t.click}/#/inbox${conversationId ? `/c/${conversationId}` : ''}`;
+    if (t.click) headers.Click = click ? `${t.click}/${click}` : `${t.click}/#/inbox${conversationId ? `/c/${conversationId}` : ''}`;
     try {
       const res = await this.transport(t.url, { method: 'POST', body, headers, signal: AbortSignal.timeout(5000) });
       if (!res.ok) throw new Error(explain(res.status, await res.text().catch(() => '')));

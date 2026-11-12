@@ -139,7 +139,7 @@ try {
     stderr: Bun.file(join(T, 'manager.err')),
   });
   check(await until(async () => (await fetch(`${MGR}/api/health`)).ok, 20_000, 'the manager'), `a throwaway manager with the fake Telegram on ${MGR_PORT}`);
-  const hubEnv: Record<string, string | undefined> = { ...process.env, DITHER_DATA: undefined, DITHER_PORT: undefined, DITHER_PUBLIC_URL: undefined, DITHER_ACCOUNTS_URL: MGR, DITHER_ACCOUNTS_CLIENT: join(ACC, 'packages/client/src/index.ts') };
+  const hubEnv: Record<string, string | undefined> = { ...process.env, DITHER_DATA: undefined, DITHER_PORT: undefined, DITHER_PUBLIC_URL: undefined, DITHER_ACCOUNTS_URL: MGR, DITHER_ACCOUNTS_CLIENT: join(ACC, 'packages/client/src/index.ts'), DITHER_CALENDAR_URL: 'off' };
   hub = Bun.spawn(['bun', 'packages/hub/src/main.ts', '--data', join(T, 'hub'), '--port', String(HUB_PORT), '--host', '127.0.0.1', '--web', WEB], {
     cwd: REPO,
     env: hubEnv as Record<string, string>,

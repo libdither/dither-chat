@@ -26,6 +26,8 @@ import { loadVapidKeys } from './webpush.ts';
 import { NightlyBackup, pruneMediaCache, rotateAdapterLogs, tightenPermissions } from './housekeeping.ts';
 import { StartupTrace } from './startup.ts';
 import { noteWork, StallWatch } from './stalls.ts';
+import { CalendarLink, calendarChain, calendarUrl, ReminderDelivery, REMINDER_RULE_ID } from './calendar.ts';
+import { inQuietHours } from './triage.ts';
 
 // Each part of the start, logged in one line once requests are answered (startup.ts).
 const startup = new StartupTrace();
@@ -86,7 +88,16 @@ const devices = new Devices(store, triage);
 const delivery = new Delivery(store, triage);
 // New requests from someone you know notify once (docs/add.md "Requests").
 const requestNotices = new RequestNotifier(store);
-devices.otherChain = (id) => (id.startsWith('req_') ? requestChain(store.db, id) : null);
+devices.otherChain = (id) => otherChain(id);
+/**
+ * Rule keys for what is not a chat conversation: a request (its account, its network), a calendar reminder (the
+ * calendar as a network of its own, `network:calendar`), a mail thread once mail is on (below).
+ */
+let mailChain: ((id: string) => string[] | null) | null = null;
+function otherChain(id: string): string[] | null {
+  if (id.startsWith('req_')) return requestChain(store.db, id);
+  return calendarChain(id) ?? mailChain?.(id) ?? null;
+}
 attention.activity = activity;
 // Message embeddings and jev's answers as content features (docs/embeddings.md): made in the background, never blocking.
 const embeddings = flag('embeddings') ? new Embeddings(store.db, join(dataDir, 'embeddings.sqlite'), { jev: new Jev(process.env.DITHER_JEV_URL ?? 'http://127.0.0.1:7862') }) : null;
@@ -238,6 +249,20 @@ function deliverRequest(n: RequestNotice) {
     .catch((e) => console.error('push failed', e));
 }
 
+/**
+ * A calendar reminder (calendar.ts, docs/calendar.md): an alert that sounds on every device, or held quiet (phones only,
+ * silent) in quiet hours. Device rules on `network:calendar` keep it off a device. Not part of quiet hours' summary.
+ */
+const reminders = new ReminderDelivery({
+  inQuietHours: (now) => inQuietHours(store.quietHours(), now),
+  quietDevices: () => devices.quietOn(REMINDER_RULE_ID, false),
+  desktops: () => push.desktops(),
+  notification: () => activity.notification({ kind: 'reminder' }),
+  sent: (nid, r) => activity.sent(nid, r),
+  notify: (ev) => server.notify(ev),
+  push: (title, body, extra, skip, level) => push.notify(title, body, undefined, extra, skip, level),
+});
+
 // Read anywhere since its notification went out: off the phones. New requests that settled: judged, once each.
 setInterval(() => {
   for (const cid of delivery.read()) push.clear(cid).catch((e) => console.error('push clear failed', e));
@@ -328,11 +353,16 @@ mailAttention(mail)?.connect(store, attention);
 const mailTriaged = mailTriage(mail);
 if (mailTriaged) {
   mailTriaged.connect({ store, triage, votes, deliver: (n) => deliverMail(n) });
-  devices.otherChain = (id) => (id.startsWith('req_') ? requestChain(store.db, id) : mailTriaged.chain(id));
+  mailChain = (id) => mailTriaged.chain(id);
   delivery.other = mailTriaged;
 }
 // Notifications sent before a restart still leave the phones when their chat is read (delivery.ts).
 delivery.restore();
+
+// dither-calendar beside the hub (docs/calendar.md): DITHER_CALENDAR_URL, http://127.0.0.1:8470 by default; `off` or
+// empty for none. Never on a demo hub, so check:boot and the verify scripts never reach a live calendar.
+const calendarAt = calendarUrl(process.env, demo);
+const calendar = calendarAt ? new CalendarLink({ url: calendarAt, broadcast: (evs) => server.broadcast(evs) }) : undefined;
 
 const readQueue = new ReadQueue(store, sup);
 readQueue.start();
@@ -356,6 +386,8 @@ const server = new HubServer(store, sup, triage, {
   votes,
   archiveMedia: !demo,
   mail,
+  calendar,
+  onReminder: (n) => reminders.deliver(n),
   turn: process.env.DITHER_TURN_URLS && process.env.DITHER_TURN_SECRET ? { urls: process.env.DITHER_TURN_URLS.split(',').map((u) => u.trim()), secret: process.env.DITHER_TURN_SECRET } : undefined,
   onDemoReset: !demo ? undefined : async () => {
     for (const a of store.accounts().filter((a) => a.demo)) {
@@ -406,6 +438,7 @@ server.start();
 startup.mark('http listen');
 // Every hold-up of the event loop from here on, with what began in it, for the first ten minutes (stalls.ts).
 const stalls = new StallWatch().begin();
+calendar?.start();
 attention.start((events) => server.broadcast(events));
 ranker.onFit = () => {
   noteWork('attention: rescore all');
@@ -425,7 +458,7 @@ if (leftover.length) {
 // New servers and renamed channels turn up whenever an adapter says so; unchanged places cost a hash.
 void categorizer.refresh();
 setInterval(() => void categorizer.refresh(), 5 * 60_000);
-console.log(`dither-chat hub on ${tls ? 'https' : 'http'}://${hostname}:${port}${tls ? ` (plain http on ${plainPort}: adapters, CA download)` : ''}  data=${dataDir}`);
+console.log(`dither-chat hub on ${tls ? 'https' : 'http'}://${hostname}:${port}${tls ? ` (plain http on ${plainPort}: adapters, CA download)` : ''}  data=${dataDir}${calendarAt ? `  calendar=${calendarAt}` : ''}`);
 startup.mark('the rest');
 // Ready once the event loop is free to answer: what the start queued (adapters starting, the first refresh) runs first.
 setTimeout(() => {
@@ -441,6 +474,7 @@ const shutdown = async () => {
   ranker.stop();
   attention.stop();
   mail.stop();
+  calendar?.stop();
   embeddings?.close();
   server.stop();
   await sup.stopAll();

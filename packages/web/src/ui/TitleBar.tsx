@@ -43,6 +43,8 @@ function placeTitle(r: Route): { title: string; icon: string } {
       return { title: 'Search', icon: 'search' };
     case 'mail':
       return { title: (r.thread && db.mail.threads.get(r.thread)?.subject) || 'Mail', icon: 'mail' };
+    case 'calendar':
+      return { title: 'Calendar', icon: 'calendar' };
     default:
       return { title: 'Inbox', icon: 'inbox' };
   }

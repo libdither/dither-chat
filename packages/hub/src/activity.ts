@@ -207,7 +207,8 @@ export function describeActivity(f: P.PlaceActivity): string | null {
 
 // ------------------------------------------------------------------ the store
 
-export type NotificationKind = 'message' | 'held' | 'digest' | 'request';
+/** `reminder`: a calendar reminder (calendar.ts), with no message or conversation. */
+export type NotificationKind = 'message' | 'held' | 'digest' | 'request' | 'reminder';
 
 export interface Features {
   conversation: P.PlaceActivity;

@@ -103,6 +103,8 @@ import { badgeShows, focusedPair, focusPair, headNames, loadChat, PairDropdown, 
 import { nicknamable, NicknamedName, ownName } from './Nickname.tsx';
 import { Loading } from './Loader.tsx';
 import { Slices, whenIdle } from '../slices.ts';
+import { calendarOn } from '../plans.ts';
+import { PlanChipLazy } from './calendar/lazy.tsx';
 
 
 // ------------------------------------------------------------------ header
@@ -654,6 +656,8 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           </span>
         )}
         <ReactionBar m={m} />
+        {/* A plan the calendar found in this message (docs/calendar.md): nothing at all on a hub without a calendar. */}
+        {calendarOn && <PlanChipLazy messageId={m.id} />}
         {thread && (
           <button class="thread-chip" onClick={() => openConv(thread)}>
             <Icon name="thread" size={13} />

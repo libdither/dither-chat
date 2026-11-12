@@ -40,6 +40,8 @@ export default defineConfig({
     proxy: {
       '/api': { target: 'http://127.0.0.1:8460', ws: true, changeOrigin: true },
       '/media': { target: 'http://127.0.0.1:8460', changeOrigin: true },
+      // dither-calendar through the hub (docs/calendar.md); without it the dev server would answer /calendar/ with this app.
+      '/calendar': { target: 'http://127.0.0.1:8460' },
     },
   },
   build: { target: 'es2022', sourcemap: true },

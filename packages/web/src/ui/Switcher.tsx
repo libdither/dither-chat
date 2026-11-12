@@ -10,6 +10,7 @@ import { shownInbox } from '../inbox.ts';
 import { db, go, type Route } from '../state.ts';
 import { describeAddRef, joinsSomething, mailboxList, parseAdd, viewList } from '@dither-chat/protocol';
 import { holdsOnlyMailboxes, MAIL_VIEWS } from '../mail/model.ts';
+import { calendarOn } from '../plans.ts';
 import { JOIN, NEW, rootKeys, SEARCH, type Entry, type PageRef } from '../palette.ts';
 import { addableGroups } from './AddMembers.tsx';
 import { Avatar, NetGlyph } from './bits.tsx';
@@ -42,6 +43,13 @@ const scoreOf = (ids: string[]) => {
 /** New group (the next step): its page. Set, it shows as a row of New and of the root; null keeps both off. */
 export const NEW_GROUP: PageRef | null = { kind: 'group' };
 
+/** This device's date, `days` from today, as the calendar's hash writes it (YYYY-MM-DD). */
+function localDate(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function items(): Item[] {
   const view = (key: string, label: string, icon: string, to: Route): Item => ({ key, label, sub: 'View', icon: <Icon name={icon as any} size={18} />, to, last: 0, track: 'row (view)' });
   const action = (key: string, label: string, sub: string, icon: string, page: PageRef): Item => ({ key, label, sub, icon: <Icon name={icon as any} size={18} />, page, last: 0, track: 'row (action)' });
@@ -51,6 +59,13 @@ function items(): Item[] {
     view('v:settings', 'Settings', 'settings', { view: 'settings' }),
     view('v:accounts', 'Accounts', 'power', { view: 'accounts' }),
   ];
+  // dither-calendar beside the hub (docs/calendar.md), and its days.
+  if (calendarOn) {
+    out.push(view('v:calendar', 'Calendar', 'calendar', { view: 'calendar' }));
+    out.push(view('v:calendar:today', 'Calendar: Today', 'calendar', { view: 'calendar', at: `day/${localDate(0)}` }));
+    out.push(view('v:calendar:tomorrow', 'Calendar: Tomorrow', 'calendar', { view: 'calendar', at: `day/${localDate(1)}` }));
+    out.push(view('v:calendar:chats', 'Calendar: Plans from chats', 'calendar', { view: 'calendar', at: 'chats' }));
+  }
   // Mail, its views and each account's mailboxes (docs/mail.md).
   if (db.mail.access.state !== 'off') {
     out.push(view('v:mail', 'Mail', 'mail', { view: 'mail' }));
