@@ -62,10 +62,10 @@ const click = async (sel: string) => {
 const text = (sel: string) => p.eval<string>(`[...document.querySelectorAll(${JSON.stringify(sel)})].map((e) => e.innerText).join(' | ')`);
 const has = (sel: string) => p.eval<boolean>(`!!document.querySelector(${JSON.stringify(sel)})`);
 const shot = async (name: string) => shots && (await p.shot(join(shots, `${name}.png`)));
-const box = '.new-message input.input';
+const box = '.palette-input';
 const openBox = async () => {
-  if (await has('.new-message')) await click('.new-message .modal-head [aria-label="Close"]');
-  await p.until(`!document.querySelector('.new-message')`, 3000);
+  if (await has('.palette')) await click('.palette-close');
+  await p.until(`!document.querySelector('.palette')`, 3000);
   await click('.side-new');
   await p.until(`!!document.querySelector(${JSON.stringify(box)})`, 3000);
 };
@@ -141,7 +141,7 @@ try {
   check(await has('.new-message .qr-scan-btn') && (await has('.new-message .qr-mine-btn')), 'the New box has Scan a code and My code');
   await click('.qr-mine-btn');
   await p.until(`!!document.querySelector('.qr-mine')`, 3000);
-  check((await text('.new-message h2')) === 'My code', 'My code opens in the box');
+  check((await text('.palette-title')) === 'My code', 'My code opens in the box');
   const chips = await p.eval<string[]>(`[...document.querySelectorAll('.qr-accounts [data-account]')].map((b) => b.dataset.account)`);
   check(chips.length === boot.accounts.length, 'one chip per account', chips);
   check(await has('.qr-mine .qr-copy'), 'a code has Copy');
@@ -172,7 +172,7 @@ try {
   await openBox();
   await click('.qr-scan-btn');
   await p.until(`!!document.querySelector('.qr-scan')`, 3000);
-  check((await text('.new-message h2')) === 'Scan a code', 'Scan opens in the box');
+  check((await text('.palette-title')) === 'Scan a code', 'Scan opens in the box');
   // Headless Chromium has no camera: it says so, and a picture still works.
   await p.until(`!['off', 'starting'].includes(document.querySelector('.qr-camera')?.dataset.camera)`, 8000);
   const camera = await p.eval<string>(`document.querySelector('.qr-camera').dataset.camera`);
@@ -187,7 +187,9 @@ try {
   await click('.add-actions .btn.ghost:last-child');
   check((await p.eval(`document.querySelector(${JSON.stringify(box)})?.value`)) === 'https://discord.gg/pixelart', 'Back shows the box filled with the scanned link');
 
-  // 3. A pasted picture of a code that is not a link: its text and the plain line, nothing filled.
+  // 3. A pasted picture of a code that is not a link: its text and the plain line, nothing filled. Scan a code is
+  // among New's rows while nothing is typed: empty the box first.
+  await p.eval(`(() => { const i = document.querySelector(${JSON.stringify(box)}); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await click('.qr-scan-btn');
   await p.until(`!!document.querySelector('.qr-scan')`, 3000);
   const wifi = 'WIFI:S:DemoCafe;T:WPA;P:example;;';
@@ -217,7 +219,7 @@ try {
   await click('.qr-mine-btn');
   await p.until(`!!document.querySelector('.qr-mine .qr-code')`, 3000);
   const fit = await p.eval<{ right: number; code: number; scroll: number }>(
-    `(() => { const m = document.querySelector('.new-message').getBoundingClientRect(); const c = document.querySelector('.qr-mine .qr-code').getBoundingClientRect(); return { right: m.right, code: c.right <= 390 && c.left >= 0 ? c.width : -1, scroll: document.documentElement.scrollWidth }; })()`,
+    `(() => { const m = document.querySelector('.palette').getBoundingClientRect(); const c = document.querySelector('.qr-mine .qr-code').getBoundingClientRect(); return { right: m.right, code: c.right <= 390 && c.left >= 0 ? c.width : -1, scroll: document.documentElement.scrollWidth }; })()`,
   );
   const phone = await decodeOnScreen('.qr-mine .qr-code');
   check(fit.right <= 391 && fit.scroll <= 391 && fit.code >= 200 && phone.text?.startsWith('https://'), 'on a phone the code fits the sheet and decodes', { ...fit, got: phone.text });

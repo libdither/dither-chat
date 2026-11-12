@@ -70,10 +70,10 @@ try {
   check((await sub()).includes('privacy settings'), 'it says the network may still refuse someone', await sub());
   if (shots) await p.shot(`${shots}/add-signal-picker.png`);
   // Search narrows it.
-  await p.eval(`(() => { const i = document.querySelector('.add-mem .fwd-search input'); i.value = 'qui'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await p.eval(`(() => { const i = document.querySelector('.add-mem .palette-input'); i.value = 'qui'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await p.until(`document.querySelectorAll('.add-mem .fwd-row').length === 1`, 3000);
   await click('.add-mem .fwd-row', 'Quinn');
-  await p.eval(`(() => { const i = document.querySelector('.add-mem .fwd-search input'); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await p.eval(`(() => { const i = document.querySelector('.add-mem .palette-input'); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await p.until(`document.querySelectorAll('.add-mem .fwd-row').length > 1`, 3000);
   await click('.add-mem .fwd-row', 'Dad');
   check((await p.eval<string[]>(`[...document.querySelectorAll('.add-mem .fwd-chip')].map((c) => c.textContent)`)).length === 2, 'two picked, as chips');
@@ -104,7 +104,7 @@ try {
   if (shots) await p.shot(`${shots}/add-discord-picker.png`);
   await click('.add-mem-send .btn').catch(() => {});
   check(await p.eval(`document.querySelector('.add-mem-send .btn').disabled`), 'nothing picked: the button does nothing');
-  await p.eval(`document.querySelector('.modal-head .icon-btn[aria-label="Close"]').click()`);
+  await p.eval(`document.querySelector('.palette-close').click()`);
   await Bun.sleep(400); // a closed dialog steps history back (phone.ts layers): let it before going elsewhere
 
   // A Matrix room invites.
@@ -131,7 +131,7 @@ try {
   await p.eval(`document.querySelector('.about-members .about-add-people').click()`);
   await dialogOpen();
   await Bun.sleep(400);
-  const box = await p.eval<{ w: number; overflow: boolean }>(`(() => { const m = document.querySelector('.modal'); const b = m.getBoundingClientRect(); return { w: Math.round(b.width), overflow: document.documentElement.scrollWidth > innerWidth || m.scrollWidth > m.clientWidth + 1 }; })()`);
+  const box = await p.eval<{ w: number; overflow: boolean }>(`(() => { const m = document.querySelector('.palette'); const b = m.getBoundingClientRect(); return { w: Math.round(b.width), overflow: document.documentElement.scrollWidth > innerWidth || m.scrollWidth > m.clientWidth + 1 }; })()`);
   check(box.w >= 360 && !box.overflow, 'on a phone the picker is full width, with nothing sideways', box);
   if (shots) await p.shot(`${shots}/add-phone.png`);
 

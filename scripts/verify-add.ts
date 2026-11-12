@@ -40,11 +40,11 @@ const key = async (k: string, code: number, modifiers = 0) => {
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code: k.length === 1 ? `Key${k.toUpperCase()}` : k, modifiers, windowsVirtualKeyCode: code, ...(k === 'Enter' ? { text: '\r' } : {}) });
   await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code: k.length === 1 ? `Key${k.toUpperCase()}` : k, modifiers, windowsVirtualKeyCode: code });
 };
-const box = '.new-message input.input';
+const box = '.palette-input';
 /** The New box from the sidebar's +, empty. */
 const openBox = async () => {
-  if (await has('.new-message')) await click('.new-message .modal-head [aria-label="Close"]');
-  await p.until(`!document.querySelector('.new-message')`, 3000);
+  if (await has('.palette')) await click('.palette-close');
+  await p.until(`!document.querySelector('.palette')`, 3000);
   await click('.side-new');
   await p.until(`!!document.querySelector(${JSON.stringify(box)})`, 3000);
 };
@@ -84,7 +84,7 @@ try {
   check(await has('.new-message-from .chip-btn'), 'two Discord accounts can: an account picker');
   await shot('add-01-preview');
   await click('.add-actions [data-action="join"]');
-  await p.until(`!document.querySelector('.new-message')`, 8000);
+  await p.until(`!document.querySelector('.palette')`, 8000);
   await Bun.sleep(400);
   const space = (await bootstrap()).spaces.find((s: any) => s.name === 'Pixel Art Club');
   check(space && (await hash()).startsWith(`#/s/${space.id}`), 'Join lands in the new server', await hash());
@@ -100,14 +100,14 @@ try {
   check(top === 'a:join', 'Ctrl+K has "Join a server or group"', { top, entries: entries.length });
   await key('Enter', 13);
   await p.until(`!!document.querySelector(${JSON.stringify(box)})`, 3000);
-  check((await text('.new-message h2')) === 'Join a server or group', 'and it opens the same box');
+  check((await text('.palette-title')) === 'Join a server or group', 'and it opens the same box');
   await type('#rust-gamedev:matrix.org');
   check((await text('.add-reading')).includes('Matrix address #rust-gamedev:matrix.org'), 'the reading says what it is');
   await key('Enter', 13);
   await card();
   check((await text('.add-card')).includes('Rust Gamedev'), 'Enter resolves an address');
   await click('.add-actions [data-action="join"]');
-  await p.until(`!document.querySelector('.new-message')`, 8000);
+  await p.until(`!document.querySelector('.palette')`, 8000);
   await Bun.sleep(400);
   const room = (await bootstrap()).conversations.find((c: any) => c.name === 'Rust Gamedev');
   check(room && (await hash()).includes(room.id), 'Join lands in the room', await hash());
@@ -123,7 +123,7 @@ try {
   const lena = await text('.add-card');
   check(lena.includes('Lena K') && lena.includes('Person on Telegram') && (await has('[data-action="contact"]')), 'it is a person, with Message and Add contact', lena);
   await click('.add-actions [data-action="message"]');
-  await p.until(`!document.querySelector('.new-message')`, 8000);
+  await p.until(`!document.querySelector('.palette')`, 8000);
   await Bun.sleep(400);
   const after = await bootstrap();
   const lenaId = after.identities.find((i: any) => i.network === 'telegram' && i.handle === '@lena_k')?.id;
@@ -170,7 +170,7 @@ try {
   await fetch(`${hub}/api/accounts/${wa.id}/action`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'capabilities', args: {} }) });
 
   // 8. An invite pasted into Ctrl+K offers Join, which opens the box on it.
-  await click('.new-message .modal-head [aria-label="Close"]');
+  await click('.palette-close');
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'k', code: 'KeyK', modifiers: 2, windowsVirtualKeyCode: 75 });
   await p.until(`!!document.querySelector('.switcher-row')`, 3000);
   await p.eval(`document.querySelector('.switcher-input').focus()`);
@@ -189,7 +189,7 @@ try {
   await openBox();
   await paste('https://t.me/+FilmSwap2026x');
   await card();
-  const fit = await p.eval<{ w: number; right: number; scroll: number }>(`(() => { const m = document.querySelector('.new-message').getBoundingClientRect(); return { w: m.width, right: m.right, scroll: document.documentElement.scrollWidth }; })()`);
+  const fit = await p.eval<{ w: number; right: number; scroll: number }>(`(() => { const m = document.querySelector('.palette').getBoundingClientRect(); return { w: m.width, right: m.right, scroll: document.documentElement.scrollWidth }; })()`);
   check((await text('.add-card')).includes('Film Photo Swap') && fit.right <= 391 && fit.scroll <= 391, 'on a phone the box is a sheet that fits, with the preview', fit);
   await shot('add-06-phone');
 
