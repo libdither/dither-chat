@@ -131,8 +131,9 @@ await p.until(`document.activeElement?.classList.contains('pair-nick-input')`, 3
 await typeEnter('Buddy');
 await p.until(`document.querySelector('.conv-head .conv-head-name')?.innerText === 'Buddy'`, 5000).catch(() => {});
 check((await p.eval<string>(`document.querySelector('.conv-head .conv-head-name')?.innerText ?? ''`)) === 'Buddy', 'the header says the nickname');
-const crumb = await p.eval<string>(`[...document.querySelectorAll('.conv-head .crumb')].at(-1)?.innerText ?? ''`);
-check(crumb === 'Buddy', 'and so does the crumb under it', crumb);
+// The line under it says where a message goes (the network, your account), not the name again (docs/chats.md, The page).
+const line = await p.eval<string>(`document.querySelector('.conv-head .send-line')?.innerText ?? ''`);
+check(!!line && !line.includes('Buddy') && !line.includes(solo.name), 'the line under it says where a message goes, not the name again', line);
 const r1 = await row();
 check(r1.includes('Buddy'), 'the inbox row follows', r1.slice(0, 80));
 const sb = (await fetch(`${hub}/api/bootstrap`).then((r) => r.json())) as any;
