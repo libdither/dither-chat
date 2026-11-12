@@ -188,3 +188,17 @@ describe('picking several', () => {
     expect(matches('Dad', 'qui')).toBe(false);
   });
 });
+
+describe('New group in the palette', () => {
+  test('a DM on screen: "New group with <name>" first, before Add people', () => {
+    expect(newMenu({ newGroup: true, canAdd: true, groupWith: 'Ravi' }).map((m) => m.label)).toEqual(['New group with Ravi', 'Add people to a group', 'New group', 'Scan a code', 'My code']);
+    expect(newMenu({ newGroup: false, canAdd: true, groupWith: 'Ravi' }).map((m) => m.key)).toEqual(['n:add', 'n:scan', 'n:mine']);
+  });
+  test('the root finds it by its other words', () => {
+    const items = [
+      { key: 'a:group', label: 'New group', last: 0, also: ['group chat', 'gc'] },
+      { key: 'p:greg', label: 'Greg Cole', last: 5 },
+    ];
+    for (const q of ['group', 'new group', 'group chat', 'gc']) expect(rootKeys(items, q, [])[0]).toBe('a:group');
+  });
+});

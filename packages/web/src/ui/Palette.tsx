@@ -9,7 +9,7 @@ import { signal } from '@preact/signals';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { addRows, isLink } from '../add.ts';
 import { convTitle, identityName, netName } from '../model.ts';
-import { backTo, entry, paletteStack, pop, push, replaceTop, toRoot, update, type Entry, type PageRef } from '../palette.ts';
+import { backTo, entry, paletteHeld, paletteStack, pop, push, replaceTop, toRoot, update, type Entry, type PageRef } from '../palette.ts';
 import { dropLayer, phone, pushLayer, slideAway, useSheetDrag } from '../phone.ts';
 import { countKey } from '../clicklog.ts';
 import { db } from '../state.ts';
@@ -54,6 +54,14 @@ export function titleOf(ref: PageRef): string {
       return 'Add people to a group';
     case 'add':
       return `Add people to ${convTitle(db.conversations.get(ref.conversationId))}`;
+    case 'group':
+      return 'New group';
+    case 'group-where':
+      return 'Where to make it';
+    case 'group-name': {
+      const a = db.accounts.get(ref.accountId);
+      return a ? `New group on ${netName(a.network)}` : 'New group';
+    }
   }
 }
 
@@ -87,7 +95,15 @@ export function messageSomeone(identityId: string) {
   if (i) openPalette({ kind: 'message', network: i.network, peer: i.nativeId, name: identityName(i.id) });
 }
 
+/** Closed, unless a page holds it (a group being made). */
 export function closePalette() {
+  if (paletteHeld.value) return;
+  paletteStack.value = null;
+}
+
+/** A page that held the palette is done with it: let go, and close. */
+export function releasePalette() {
+  paletteHeld.value = false;
   paletteStack.value = null;
 }
 
@@ -100,18 +116,21 @@ export function pushPage(ref: PageRef, q = '') {
 
 /** Back one page; from the bottom page, closed. */
 export function backPage() {
+  if (paletteHeld.value) return;
   const s = paletteStack.value;
   if (s) paletteStack.value = pop(s);
 }
 
 /** Back to the page at `i`. */
 export function crumbTo(i: number) {
+  if (paletteHeld.value) return;
   const s = paletteStack.value;
   if (s) paletteStack.value = backTo(s, i);
 }
 
 /** The root under everything: the one at the bottom, or a fresh one in place of the pages. */
 export function rootPage() {
+  if (paletteHeld.value) return;
   const s = paletteStack.value;
   if (s) paletteStack.value = toRoot(s, () => make({ kind: 'root' }));
 }
@@ -190,6 +209,8 @@ function usePaletteLayer() {
       if (gone) return;
       const s = paletteStack.value;
       if (history.state?.layer === id || !s) return void (paletteStack.value = null);
+      // A page that must not be left: the back button is taken back, the page stays.
+      if (paletteHeld.value) return void queueMicrotask(() => !gone && (id = pushLayer(onBack)));
       const next = pop(s);
       paletteStack.value = next;
       // After the popstate handler that called this has finished going through the layers.
@@ -207,13 +228,27 @@ function PaletteBox({ stack }: { stack: Entry[] }) {
   const box = useRef<HTMLDivElement>(null);
   const top = stack[stack.length - 1];
   usePaletteLayer();
-  useSheetDrag(box, closePalette, phone.value);
+  // Dragged away while a page holds it: it springs back.
+  useSheetDrag(box, () => (paletteHeld.value ? box.current && (box.current.style.transform = '') : closePalette()), phone.value);
   const dismiss = () => (phone.value ? slideAway(box.current, closePalette) : closePalette());
   const m = pages.value;
   useEffect(() => void (m || preloadPalette().catch(() => {})), []);
+  // The keys are the palette's while it is open: a page behind it that takes the focus as it loads (a conversation's
+  // message box) gives it back. Toasts, menus and other layers keep theirs.
+  useEffect(() => {
+    const f = (ev: FocusEvent) => {
+      const b = box.current;
+      const t = ev.target as Element | null;
+      if (!b || !t || b.contains(t) || t.closest?.('.toast, .toasts, .cm, .sheet-layer, .viewer, .fviewer, .modal-backdrop:not(.palette-back)')) return;
+      // On a phone the box itself: no keyboard unasked.
+      ((!phone.value && b.querySelector<HTMLElement>('.palette-input:not(:disabled)')) || b).focus({ preventScroll: true });
+    };
+    document.addEventListener('focusin', f);
+    return () => document.removeEventListener('focusin', f);
+  }, []);
   return (
     <div class="modal-backdrop switcher-back palette-back" onClick={(e) => e.target === e.currentTarget && dismiss()}>
-      <div ref={box} class="switcher palette" role="dialog" aria-modal="true" aria-label={top.title} data-page={top.kind} data-depth={stack.length} data-track-area="palette" tabIndex={-1}>
+      <div ref={box} class={`switcher palette ${paletteHeld.value ? 'held' : ''}`} role="dialog" aria-modal="true" aria-label={top.title} data-page={top.kind} data-depth={stack.length} data-track-area="palette" tabIndex={-1}>
         <div class="sheet-grip" aria-hidden="true" />
         {m ? <m.PageOf key={top.id} e={top} /> : <Loading inline label="Loading…" />}
       </div>

@@ -4,6 +4,7 @@
  */
 import type { Entry } from '../palette.ts';
 import { AddPage, GroupsPage } from './AddMembers.tsx';
+import { GroupPage, NamePage, WherePage } from './NewGroup.tsx';
 import { CardPage, MessagePage, MinePage, NewPage, ReachPage, ScanPage } from './NewPages.tsx';
 import { RootPage } from './Switcher.tsx';
 
@@ -27,5 +28,11 @@ export function PageOf({ e }: { e: Entry }) {
       return <GroupsPage e={e} />;
     case 'add':
       return <AddPage e={e} />;
+    case 'group':
+      return <GroupPage e={e} />;
+    case 'group-where':
+      return <WherePage e={e} />;
+    case 'group-name':
+      return <NamePage e={e} />;
   }
 }

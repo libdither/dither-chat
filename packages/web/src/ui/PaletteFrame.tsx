@@ -4,7 +4,7 @@
  */
 import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
-import { keyAct, moveSel, paletteStack, type Entry, type KeyTarget } from '../palette.ts';
+import { keyAct, moveSel, paletteHeld, paletteStack, type Entry, type KeyTarget } from '../palette.ts';
 import { phone } from '../phone.ts';
 import { Icon } from './icons.tsx';
 import { backPage, closePalette, crumbTo, rootPage, setEntry } from './Palette.tsx';
@@ -76,6 +76,8 @@ export function Frame({ e, title, placeholder, typing, rows = [], empty, class: 
   const activeKey = live[at]?.key;
   const index = stack.findIndex((x) => x.id === e.id);
   const rootBelow = stack[0]?.kind === 'root';
+  // A page that must not be left now (a group being made): no way out, nothing typed.
+  const held = paletteHeld.value;
 
   // Focus: the input, except on a phone where the page is not about typing (no keyboard unasked); else the box.
   useLayoutEffect(() => {
@@ -128,15 +130,33 @@ export function Frame({ e, title, placeholder, typing, rows = [], empty, class: 
   return (
     <div ref={page} class={`palette-page ${cls ?? ''}`}>
       <div class="palette-head">
-        {e.kind !== 'root' && (
+        {e.kind !== 'root' && phone.value && (
+          // A phone has no room for crumbs: one step back, then the page's whole title.
+          <nav class="palette-crumbs palette-crumbs-phone" aria-label="Pages">
+            <button
+              class="icon-btn small palette-back-btn"
+              data-track="back"
+              disabled={held}
+              aria-label={index > 0 ? `Back to ${stack[index - 1].title}` : 'Jump to'}
+              title={index > 0 ? stack[index - 1].title : 'Jump to'}
+              onClick={() => (index > 0 ? backPage() : rootPage())}
+            >
+              <Icon name="back" size={16} />
+            </button>
+            <h2 class="palette-title" title={heading}>
+              {heading}
+            </h2>
+          </nav>
+        )}
+        {e.kind !== 'root' && !phone.value && (
           <nav class="palette-crumbs" aria-label="Pages">
-            <button class="palette-crumb palette-crumb-root" data-track="crumb (jump to)" title="Jump to (Ctrl+K)" aria-label={rootBelow ? 'Back to Jump to' : 'Jump to'} onClick={rootPage}>
+            <button class="palette-crumb palette-crumb-root" data-track="crumb (jump to)" disabled={held} title="Jump to (Ctrl+K)" aria-label={rootBelow ? 'Back to Jump to' : 'Jump to'} onClick={rootPage}>
               <Icon name="search" size={14} />
             </button>
             <span class="palette-sep" aria-hidden="true">›</span>
             {crumbs.map(({ x, i }) => (
               <>
-                <button class="palette-crumb" data-crumb={x.kind} data-track="crumb" title={x.title} onClick={() => crumbTo(i)}>
+                <button class="palette-crumb" data-crumb={x.kind} data-track="crumb" disabled={held} title={x.title} onClick={() => crumbTo(i)}>
                   {x.title}
                 </button>
                 <span class="palette-sep" aria-hidden="true">›</span>
@@ -156,6 +176,7 @@ export function Frame({ e, title, placeholder, typing, rows = [], empty, class: 
             class="switcher-input palette-input"
             placeholder={placeholder}
             value={e.q}
+            disabled={held}
             aria-label={placeholder}
             onPaste={() => (pasted.current = true)}
             onInput={(ev) => {
@@ -169,7 +190,7 @@ export function Frame({ e, title, placeholder, typing, rows = [], empty, class: 
           />
         )}
         {(e.kind !== 'root' || phone.value) && (
-          <button class="icon-btn small palette-close" data-track="close" aria-label="Close" title="Close (Esc)" onClick={closePalette}>
+          <button class="icon-btn small palette-close" data-track="close" disabled={held} aria-label="Close" title="Close (Esc)" onClick={() => closePalette()}>
             <Icon name="x" size={15} />
           </button>
         )}

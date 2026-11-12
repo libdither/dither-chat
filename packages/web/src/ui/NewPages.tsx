@@ -11,6 +11,7 @@ import { directNote, openers } from '../direct.ts';
 import { directsOf, identityName, netName } from '../model.ts';
 import { newMenu, paletteStack, rankPeople, type Entry, type Reachable } from '../palette.ts';
 import { api, applyEvents, db, go, openDirect, rev, route } from '../state.ts';
+import { phone } from '../phone.ts';
 import { addableGroups } from './AddMembers.tsx';
 import { AccountChip, Avatar, NetBadge } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -57,6 +58,21 @@ function choose(i: P.IdentityView) {
   pushPage({ kind: 'message', network: i.network, peer: i.nativeId, name: identityName(i.id) });
 }
 
+/**
+ * The 1:1 DM on screen, when its network has an account that can make a group: whom a new group would start with
+ * (their person, else their identity). Whether they are a candidate is known only once New group asks; it drops them if not.
+ */
+function dmHere(): { key: string; name: string } | undefined {
+  const r = route.value as { conv?: string };
+  const c = r.conv ? db.conversations.get(r.conv) : undefined;
+  if (!c || c.shape !== 'direct') return undefined;
+  if (![...db.accounts.values()].some((a) => a.network === c.network && a.status === 'online' && a.capabilities.includes('createGroup'))) return undefined;
+  const person = c.peerPersonId ? db.persons.get(c.peerPersonId) : undefined;
+  if (person) return { key: person.id, name: person.name };
+  const peer = c.participantIds.find((id) => ![...db.accounts.values()].some((a) => a.selfIdentityId === id));
+  return peer ? { key: peer, name: identityName(peer) } : undefined;
+}
+
 /** The group on screen, when one of your accounts could add people to it. */
 function groupHere() {
   const r = route.value as { conv?: string };
@@ -64,7 +80,7 @@ function groupHere() {
 }
 
 const PLACEHOLDER = { message: 'Name, @username or phone', join: 'Invite link or address', add: 'Username, @handle or phone' } as const;
-const MENU_ICON: Record<string, string> = { 'n:add-here': 'userPlus', 'n:add': 'userPlus', 'n:group': 'groups', 'n:scan': 'scan', 'n:mine': 'qr' };
+const MENU_ICON: Record<string, string> = { 'n:group-with': 'groups', 'n:add-here': 'userPlus', 'n:add': 'userPlus', 'n:group': 'groups', 'n:scan': 'scan', 'n:mine': 'qr' };
 
 /** New: its menu and the people you would most likely message; typed or pasted, everything the box reads. */
 export function NewPage({ e }: { e: Entry & { kind: 'new' } }) {
@@ -77,7 +93,8 @@ export function NewPage({ e }: { e: Entry & { kind: 'new' } }) {
   const people = needle || !e.mode || e.mode === 'message' ? rankPeople(knownPeople().filter((r) => r.identities.some((i) => canStart(i.network))), needle) : [];
 
   const here = needle ? undefined : groupHere();
-  const menu = needle ? [] : newMenu({ mode: e.mode, newGroup: !!NEW_GROUP, canAdd: addableGroups().length > 0, here: here ? here.title : null });
+  const dm = needle ? undefined : dmHere();
+  const menu = needle ? [] : newMenu({ mode: e.mode, newGroup: !!NEW_GROUP, canAdd: addableGroups().length > 0, here: here ? here.title : null, groupWith: dm?.name });
   const menuRows = menu.map(
     (m): Row => ({
       key: m.key,
@@ -94,7 +111,9 @@ export function NewPage({ e }: { e: Entry & { kind: 'new' } }) {
               ? pushPage({ kind: 'add', conversationId: here!.conv.id, accountId: here!.accountId })
               : m.key === 'n:add'
                 ? pushPage({ kind: 'groups' })
-                : pushPage(NEW_GROUP!),
+                : m.key === 'n:group-with'
+                  ? pushPage({ kind: 'group', with: [dm!.key] })
+                  : pushPage(NEW_GROUP!),
     }),
   );
 
@@ -174,7 +193,7 @@ export function NewPage({ e }: { e: Entry & { kind: 'new' } }) {
     <Frame
       e={e}
       class="new-message"
-      placeholder={e.mode ? PLACEHOLDER[e.mode] : 'Name, invite link, @username or phone'}
+      placeholder={e.mode ? PLACEHOLDER[e.mode] : phone.value ? 'Name, link, @name or phone' : 'Name, invite link, @username or phone'}
       typing
       rows={rows}
       empty={nobody || undefined}

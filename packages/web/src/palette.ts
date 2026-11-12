@@ -51,7 +51,13 @@ export type PageRef =
   /** The groups one of your accounts might add people to. */
   | { kind: 'groups' }
   /** Add people to one group, as `accountId`. `adding`: what its About said, when the opener knows. */
-  | { kind: 'add'; conversationId: string; accountId?: string | null; adding?: P.AboutAdding; onDone?: (about: P.AboutView) => void };
+  | { kind: 'add'; conversationId: string; accountId?: string | null; adding?: P.AboutAdding; onDone?: (about: P.AboutView) => void }
+  /** New group: pick people across every account. `with`: person or identity keys picked to start with. */
+  | { kind: 'group'; with?: string[] }
+  /** Which account holds the picked: `from` is the people page's entry, which keeps the picks. */
+  | { kind: 'group-where'; from: number }
+  /** Name it and make it, as `accountId`, with these identities. */
+  | { kind: 'group-name'; from: number; accountId: string; identities: string[] };
 
 /** A page on the stack: what was asked for, its title for the crumbs, and what it keeps while you are elsewhere. */
 export type Entry = PageRef & {
@@ -63,6 +69,8 @@ export type Entry = PageRef & {
   sel: number;
   /** People picked on a page that picks several (identity ids, or a page's own keys). */
   picked?: string[];
+  /** New group's people page: the name typed on the name page, kept when backing out of it. */
+  draft?: string;
 };
 
 let seq = 0;
@@ -70,6 +78,8 @@ export const entry = (ref: PageRef, title: string, q = ''): Entry => ({ ...ref, 
 
 /** The open palette's pages, bottom first; null while it is closed. */
 export const paletteStack = signal<Entry[] | null>(null);
+/** A page that must not be left now (a group being made): backing out, crumbs and closing wait until it is done. */
+export const paletteHeld = signal(false);
 /** A preview card is on the stack: something may be being looked up. Changes only when one comes or goes, not as you type. */
 export const cardOpen = computed(() => !!paletteStack.value?.some((e) => e.kind === 'card'));
 
@@ -126,6 +136,8 @@ export interface RootItem {
   label: string;
   last: number;
   score?: number | null;
+  /** Other words it is found by ("gc" for New group). */
+  also?: string[];
 }
 
 /** Rows that are not items: Join a pasted invite, Search messages for it, and New… with nothing typed. */
@@ -147,7 +159,8 @@ export function rootKeys(all: readonly RootItem[], needle: string, top: readonly
     return [...[...first, ...rest].slice(0, 9), NEW];
   }
   const matched = all.flatMap((i) => {
-    const match = fuzzyScore(i.label, needle);
+    const scores = [i.label, ...(i.also ?? [])].map((w) => fuzzyScore(w, needle)).filter((x): x is number => x !== null);
+    const match = scores.length ? Math.max(...scores) : null;
     return match === null ? [] : [{ key: i.key, match, score: i.score ?? null, last: i.last }];
   });
   const found = switcherOrder(matched).slice(0, 9);
@@ -157,12 +170,14 @@ export function rootKeys(all: readonly RootItem[], needle: string, top: readonly
 // ------------------------------------------------------------------ New
 
 /** The rows New shows with nothing typed, before the people. `here`: the group on screen, when you could add people to it. */
-export function newMenu(o: { mode?: NewMode; newGroup: boolean; canAdd: boolean; here?: string | null }): { key: string; label: string }[] {
+export function newMenu(o: { mode?: NewMode; newGroup: boolean; canAdd: boolean; here?: string | null; groupWith?: string | null }): { key: string; label: string }[] {
   if (o.mode === 'message') return [];
   if (o.mode === 'join') return [{ key: 'n:scan', label: 'Scan a code' }];
   if (o.mode === 'add') return [{ key: 'n:scan', label: 'Scan a code' }, { key: 'n:mine', label: 'My code' }];
   const add = o.here ? [{ key: 'n:add-here', label: `Add people to ${o.here}` }] : o.canAdd ? [{ key: 'n:add', label: 'Add people to a group' }] : [];
-  return [...add, ...(o.newGroup ? [{ key: 'n:group', label: 'New group' }] : []), { key: 'n:scan', label: 'Scan a code' }, { key: 'n:mine', label: 'My code' }];
+  // A 1:1 DM on screen: a group with that person, first.
+  const withThem = o.newGroup && o.groupWith ? [{ key: 'n:group-with', label: `New group with ${o.groupWith}` }] : [];
+  return [...withThem, ...add, ...(o.newGroup ? [{ key: 'n:group', label: 'New group' }] : []), { key: 'n:scan', label: 'Scan a code' }, { key: 'n:mine', label: 'My code' }];
 }
 
 /** Someone New could message: a person, or an identity not merged into one. */

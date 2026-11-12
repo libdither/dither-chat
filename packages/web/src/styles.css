@@ -6958,6 +6958,31 @@ body.dragging * {
     padding-top: 4px;
     padding-bottom: 4px;
   }
+  /* One step back and the page's whole title, up to two lines; Close beside it; the input on a line of its own. */
+  .palette-crumbs-phone {
+    flex: 1 1 0;
+    max-width: none;
+    gap: 4px;
+    padding-left: 6px;
+  }
+  .palette-crumbs-phone .palette-title {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .palette-back-btn {
+    flex: none;
+  }
+  .palette-head .palette-close {
+    order: 1;
+  }
+  .palette-crumbs-phone ~ .switcher-input {
+    order: 2;
+    flex-basis: 100%;
+    border-top: 1px solid var(--border-soft);
+  }
   .palette .switcher-list {
     max-height: none;
     overscroll-behavior: contain;
@@ -8047,6 +8072,65 @@ html[data-theme='light'] .acc-dot {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+/* New group (NewGroup.tsx): the networks someone can be put in a group on, where the picked fit, and the summary. */
+.group-nets {
+  display: inline-flex;
+  flex: none;
+  gap: 3px;
+}
+.group-net {
+  display: inline-flex;
+}
+.group-fit {
+  color: var(--text-dim);
+}
+.palette-note.group-unable,
+.palette-note.group-why {
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.group-none {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.group-none .set-help {
+  margin: 0;
+}
+.group-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.group-summary .set-help {
+  margin: 0;
+}
+.group-people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+.group-person {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13.5px;
+}
+.group-make-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.group-make {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.group-problem {
+  color: var(--text-faint);
 }
 .about-members-head {
   display: flex;

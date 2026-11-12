@@ -30,6 +30,8 @@ interface Item {
   /** The inbox's score (docs/inbox.md): a person's is their best DM's. */
   score?: number | null;
   track: string;
+  /** Other words it is found by. */
+  also?: string[];
 }
 
 const scoreOf = (ids: string[]) => {
@@ -38,7 +40,7 @@ const scoreOf = (ids: string[]) => {
 };
 
 /** New group (the next step): its page. Set, it shows as a row of New and of the root; null keeps both off. */
-export const NEW_GROUP: PageRef | null = null;
+export const NEW_GROUP: PageRef | null = { kind: 'group' };
 
 function items(): Item[] {
   const view = (key: string, label: string, icon: string, to: Route): Item => ({ key, label, sub: 'View', icon: <Icon name={icon as any} size={18} />, to, last: 0, track: 'row (view)' });
@@ -65,7 +67,7 @@ function items(): Item[] {
   if (online.length) {
     out.push(action('a:join', 'Join a server or group', 'From an invite link or address', 'link', { kind: 'new', mode: 'join' }));
     out.push(action('a:add', 'Add someone', 'By username, handle or phone', 'user', { kind: 'new', mode: 'add' }));
-    if (NEW_GROUP) out.push(action('a:group', 'New group', 'Pick people, then where', 'groups', NEW_GROUP));
+    if (NEW_GROUP) out.push({ ...action('a:group', 'New group', 'Pick people across your accounts, then where', 'groups', NEW_GROUP), also: ['group chat', 'gc', 'make a group'] });
     if (addableGroups().length) out.push(action('a:add-people', 'Add people to a group', 'Pick a group, then the people', 'userPlus', { kind: 'groups' }));
     out.push(action('a:scan', 'Scan a code', 'An invite or a profile, with the camera or a picture', 'scan', { kind: 'scan' }));
     out.push(action('a:mine', 'My code', "Your accounts' codes, for someone to scan", 'qr', { kind: 'mine' }));
