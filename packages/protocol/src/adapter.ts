@@ -27,7 +27,7 @@ import type { AboutChange, AboutTarget, PersonRelationship } from './about.ts';
 import type { AddAction, AddRef, RelationshipFact, RequestAnswer, RequestFact } from './add.ts';
 import type { AttentionCapability, AttentionCommand } from './attention.ts';
 import type { PollCapability, PollCommand, PollUpdate } from './poll.ts';
-import type { CallFact, CallMode, CallState, VoiceMember } from './call.ts';
+import type { CallEffect, CallFact, CallInput, CallMode, CallState, StageAction, VoiceMember } from './call.ts';
 import type { GateAnswer, ScheduledEventFact, SpaceGate } from './servers.ts';
 import type { MessageModeration, ModAction, ReactionClear } from './moderation.ts';
 import type { LinkPreviewOut } from './extra.ts';
@@ -71,6 +71,14 @@ export type Capability =
    * sent anyway, no request of its own. Kept only with the adversarial `voice` setting on.
    */
   | 'voicePresence'
+  /** In a call: one person's volume and mute for this account only (the call's `local` op), and their values in its state. */
+  | 'callVolume'
+  /** In a call: the account's own client takes the device's noise suppression and sensitivity (the call's `input` op). */
+  | 'callInput'
+  /** In a stage call: speakers, audience, raised hands and the topic in its state, and the call's `stage` op. */
+  | 'stage'
+  /** In a call: the sounds this account may play (the call's `sounds` and `sound` ops), and effects others send (the call event's `effect`). */
+  | 'soundboard'
   /** Forwarding a message it can read into another conversation, the network's own way (the `forward` command). */
   | 'forward'
   /** Reads a conversation's or space's settings, members and permissions (the `about` command, about.ts). */
@@ -497,7 +505,7 @@ export type AdapterEvent =
    */
   | { t: 'typing'; conversation: string; author: string; stop?: boolean; ttl?: number; name?: string }
   /** A call this hub started: bridge signalling for the device, the call's state, or its end. */
-  | { t: 'call'; call: string; signal?: unknown; state?: CallState; ended?: string }
+  | { t: 'call'; call: string; signal?: unknown; state?: CallState; ended?: string; effect?: CallEffect }
   /** A call ringing you, going on, or over (capability 'callStates', call.ts CallFact): the whole fact each time. */
   | { t: 'callState'; call: CallFact }
   /**
@@ -731,12 +739,21 @@ export type AdapterCommand =
    * reply.result for join: { direct?: DirectVoiceSession }. One call per account at a time. `ring` (capability
    * 'ringCalls'): in a direct or group conversation, ring the others as the network's own call button does.
    */
-  | { t: 'call'; id: string; call: string; op: 'join'; conversation: string; mode: CallMode; muted?: boolean; deafened?: boolean; ring?: boolean }
+  | { t: 'call'; id: string; call: string; op: 'join'; conversation: string; mode: CallMode; muted?: boolean; deafened?: boolean; ring?: boolean; input?: CallInput }
   /** Stop a call ringing for you (capability 'declineCall'): `call` is the CallFact's nativeId. reply.result: {} */
   | { t: 'declineCall'; id: string; conversation: string; call: string }
   | { t: 'call'; id: string; call: string; op: 'leave' }
   | { t: 'call'; id: string; call: string; op: 'mute'; muted: boolean; deafened: boolean }
   | { t: 'call'; id: string; call: string; op: 'signal' | 'note'; data: unknown }
+  /** One person's volume (0 to VOLUME_MAX) or mute, for this account only (capability 'callVolume'). `user` native. */
+  | { t: 'call'; id: string; call: string; op: 'local'; user: string; volume?: number; muted?: boolean }
+  /** The microphone's handling for the account's own client (capability 'callInput'). */
+  | { t: 'call'; id: string; call: string; op: 'input'; input: CallInput }
+  /** A stage action (capability 'stage'); `user` native, for invite and audience. */
+  | { t: 'call'; id: string; call: string; op: 'stage'; action: StageAction; user?: string }
+  /** reply.result: { sounds: CallSound[]; reason?: string } (capability 'soundboard'). */
+  | { t: 'call'; id: string; call: string; op: 'sounds' }
+  | { t: 'call'; id: string; call: string; op: 'sound'; sound: string; guild: string }
   /**
    * What an invite, address, name or handle is, without joining, following or telling anyone (capability 'resolve').
    * Identity facts it names first, then reply.result: AddPreview. Not found or expired: an error sentence.

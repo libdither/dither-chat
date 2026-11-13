@@ -221,3 +221,43 @@ client's own `CHANNEL_INFO`) is the channel's, kept whatever the setting. `GET /
 
 Not built: voice history and hangouts (`/channels/{id}/voice-history`): a request of ours, not something the client is
 sent.
+
+## In a call: what each of Discord's call features takes here
+
+Plan and state for the rows of docs/research/discord-gaps.md "Voice, video, calls, streaming" beyond ringing and
+presence (net-gaps, package discord-video). Nothing here has been tested live: only against fakes (the hook's
+replica clients, the hub's tests, the web's unit tests). The client modules named are as read from Discord's web
+build of 2026-11-12, never copied or run.
+
+How audio flows decides most of it:
+
+- **Bridge mode**: the sandbox's own Discord client is in the call. It receives every person's audio on its own peer
+  connection and plays each through an `<audio>` element of its own (its browser engine's per-user output: that is
+  where its per-user volume and local mute apply). The hook taps those same remote tracks, mixes them in its own
+  Web Audio graph and sends one mixed track to the device. So the device cannot tell people apart: anything per
+  person happens in the sandbox. Anything the client does for itself (settings, soundboard, stage requests,
+  moderator actions) is the client's own action, as a click would run it.
+- **Direct mode**: the device speaks the voice protocol, with one receive slot per person (`voice/discord.ts`
+  `assigned`: mid → user). Per-person audio exists on the device. The page in the sandbox joined the channel but
+  never connected media, so it still has the voice states, and its actions that are plain gateway or REST requests
+  (stage, moderation, soundboard) work the same in both modes.
+
+| Row | Bridge mode | Direct mode | Here |
+|---|---|---|---|
+| Per-user volume, mute for me | The client's own `AudioActions.setLocalVolume(user, volume)` and `toggleLocalMute(user)` (its user menu's slider and Mute). Its browser engine applies them to its own `<audio>` elements, which the bridge does not hear, so the hook also puts a gain per tapped track in its mix: it finds the track's owner among the client's per-user outputs (`MediaEngineStore.getMediaEngine().eachConnection` → `outputs[user].stream`) and reads the volume back from `MediaEngineStore.getLocalVolume/isLocalMute`. A track whose owner it cannot find stays at full volume, as before | The same client settings are kept (so both modes and Discord's own app on that profile agree), and the device applies them itself: a muted person's track is left out of what plays, and a person at another volume plays through a gain node | **built** |
+| Input sensitivity, noise suppression | The device's microphone keeps the browser's noise suppression (or not), and the client's own `AudioActions.setNoiseSuppression` and `setMode('VOICE_ACTIVITY', {threshold, autoThreshold})` decide when it sends: it is the client that transmits | The browser's noise suppression on the microphone, and the device's own level gate (`startVad`) at the chosen threshold | **built**, per device (Settings → Calls) |
+| Server mute, deafen, move, disconnect | The client's own `GuildActions.setServerMute`, `setServerDeaf`, `setChannel` (null disconnects), as its member menu runs them, after `PermissionStore.can(MUTE_MEMBERS / DEAFEN_MEMBERS / MOVE_MEMBERS, channel)` | the same: it is the page's action, not the media's | **built** as `moderate` actions (voiceMute, voiceDeafen, move, disconnect), one click and a confirm each |
+| Stage channels | Who speaks and who listens, and raised hands, are voice-state fields (`suppress`, `requestToSpeakTimestamp`); the topic is the stage instance's (`StageInstanceStore`). Raise or lower your hand, become a speaker when invited, move back to the audience: `PATCH /guilds/{g}/voice-states/@me`, the requests the client's stage module sends; a moderator's invite to speak and move to the audience: `PATCH /guilds/{g}/voice-states/{user}` | the same | **built** |
+| Seeing camera and Go Live | `selfVideo` and `selfStream` on voice states | the same | **built**: shown on the call's people and in voice channels |
+| Receiving camera video | Possible in principle: the client receives a person's video only while its call view asks for it (its media sink wants), then the hook would forward the remote video track over the bridge's peer connection (device offers recvonly video slots up front; the hook `replaceTrack`s into them, no renegotiation). Cost measured above: a core or more of the sandbox per call for decoding and re-encoding | Needs: identify with `video: true` and a `streams` list; codecs H264/VP8/VP9 with RTX in select protocol; the server's op 12 (each user's video SSRCs) and op 15 media sink wants to ask for a stream; a receive-only video section per wanted SSRC in the made-up answer; and DAVE decryption of video frames (libdave's Decryptor is codec-aware; the worker is told the audio codec only) | **not built**: design below |
+| Watching Go Live | The client's own watch (it dispatches `STREAM_WATCH` with the stream key `guild:<g>:<channel>:<user>` or `call:<channel>:<user>`; the gateway answers `STREAM_CREATE` and `STREAM_SERVER_UPDATE`) opens a second connection; the hook would tap its video track like a camera | A second voice-gateway session to the stream server (`STREAM_SERVER_UPDATE`'s endpoint and token, `server_id` = the stream's `rtc_server_id`), with its own DAVE group: the hook would intercept `STREAM_SERVER_UPDATE` the way it intercepts `VOICE_SERVER_UPDATE` | **not built**: design below |
+| Sending camera video, sharing a screen | The device's camera or screen would become the client's camera (`getUserMedia` / `getDisplayMedia` patched like the microphone, `MediaEngine setVideoEnabled`, `STREAM_START`), and the client encodes again: a core or more | op 12 with our own video SSRCs, simulcast encodings, DAVE encryption of video frames; Go Live a second session again | **not built**: design below |
+| Soundboard | Play: `POST /channels/{id}/send-soundboard-sound` with the sound's id (and its server, when not a default sound), as the client's soundboard sends it, from the sounds `SoundboardStore` has for this server and Discord's defaults, where `USE_SOUNDBOARD` allows. Hear: a sound is not in anyone's audio; every client plays it itself on `VOICE_CHANNEL_EFFECT_SEND`, so the hook plays it into the bridge's mix | Play the same way. Hear: the device would fetch the sound itself, which shows Discord the device's address: not done | **built** (play; heard in bridge mode only) |
+| Voice channel effects (emoji bursts) | Shown: `VOICE_CHANNEL_EFFECT_SEND` with an emoji, in the call you are in | the same | **built** (shown); sending one is **not built**: its animation ids and Nitro-only kinds come from the client's own tables |
+| Activities | An app in an iframe from the activity's own origin, with its own SDK talking to the client over postMessage | — | **not built**: it would mean running a third party's app on the device with the account's client as its host |
+| Clips | A desktop-app feature (it records the last seconds of the call locally) | — | **not built**: not in the web client |
+| Custom call sounds | The join sound someone with Nitro picked, played by each client (`CUSTOM_CALL_SOUNDS`) | — | **not built**: cosmetic, Nitro-only |
+
+Whatever shows other people's behaviour beyond the call you are in (who is in voice elsewhere, who is streaming
+there) stays behind the adversarial `voice` setting, as before. What happens in the call you are in (who speaks,
+raised hands, sounds and effects played in it) is shown as Discord's own call view shows it.

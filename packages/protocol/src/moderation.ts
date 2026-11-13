@@ -34,6 +34,12 @@ export interface AboutModeration {
   timeout?: ModPower & { durations: number[] };
   /** End the group for everyone (Signal): nobody can send or change anything in it again. */
   end?: ModPower;
+  /** Server mute or unmute someone in voice (Discord: Mute Members, in the voice channel). */
+  voiceMute?: ModPower;
+  /** Server deafen or undeafen someone in voice (Discord: Deafen Members). */
+  voiceDeafen?: ModPower;
+  /** Move someone in voice to another voice channel, or disconnect them (Discord: Move Members). */
+  voiceMove?: ModPower;
   /** Who is banned, as native identity ids, when the network lists them without being asked (Signal). */
   banned?: string[];
   /** The banned list is read on a click, through the `bans` command (Discord). */
@@ -64,7 +70,18 @@ export type ModAction =
   | { op: 'role'; who: string; role: string; remove?: true }
   /** 0 ends a timeout. */
   | { op: 'timeout'; who: string; seconds: number }
-  | { op: 'end' };
+  | { op: 'end' }
+  /** Server mute (on) or unmute someone in voice. */
+  | { op: 'voiceMute'; who: string; on: boolean }
+  /** Server deafen (on) or undeafen someone in voice. */
+  | { op: 'voiceDeafen'; who: string; on: boolean }
+  /** Move someone in voice to another voice channel of the same server: `to` its native id (the hub's API takes a hub conversation id). */
+  | { op: 'move'; who: string; to: string }
+  /** Take someone out of voice. */
+  | { op: 'disconnect'; who: string };
+
+/** The actions on someone in voice: no rank above theirs is needed, only the permission (Discord's own member menu). */
+export const VOICE_MOD_OPS: readonly ModOp[] = ['voiceMute', 'voiceDeafen', 'move', 'disconnect'];
 
 export type ModOp = ModAction['op'];
 
@@ -89,10 +106,11 @@ export const TIMEOUT_MAX = 28 * 86400;
 /** Discord's ban dialog: delete none of their messages, or the last hour, 6 or 12 hours, a day, 3 or 7 days. */
 export const BAN_DELETE_CHOICES = [0, 3600, 6 * 3600, 12 * 3600, 86400, 3 * 86400, 7 * 86400];
 
-const OPS: readonly ModOp[] = ['remove', 'ban', 'unban', 'admin', 'role', 'timeout', 'end'];
+const OPS: readonly ModOp[] = ['remove', 'ban', 'unban', 'admin', 'role', 'timeout', 'end', 'voiceMute', 'voiceDeafen', 'move', 'disconnect'];
 
 /** The power an action needs, in About.moderation. */
-export function modPowerOf(op: ModOp): keyof Pick<AboutModeration, 'remove' | 'ban' | 'admins' | 'roles' | 'timeout' | 'end'> {
+export function modPowerOf(op: ModOp): keyof Pick<AboutModeration, 'remove' | 'ban' | 'admins' | 'roles' | 'timeout' | 'end' | 'voiceMute' | 'voiceDeafen' | 'voiceMove'> {
+  if (op === 'move' || op === 'disconnect') return 'voiceMove';
   return op === 'unban' ? 'ban' : op === 'admin' ? 'admins' : op === 'role' ? 'roles' : op === 'end' ? 'end' : op;
 }
 
@@ -105,6 +123,8 @@ export function modActionProblem(a: unknown): string | null {
   if (typeof x.who !== 'string' || !x.who) return 'to whom?';
   if (x.op === 'ban' && x.deleteSeconds !== undefined && !BAN_DELETE_CHOICES.includes(x.deleteSeconds as number)) return 'not one of the choices for deleting their messages';
   if (x.op === 'role' && (typeof x.role !== 'string' || !x.role)) return 'which role?';
+  if ((x.op === 'voiceMute' || x.op === 'voiceDeafen') && typeof x.on !== 'boolean') return 'on or off?';
+  if (x.op === 'move' && (typeof x.to !== 'string' || !x.to)) return 'to which voice channel?';
   if (x.op === 'timeout') {
     const s = x.seconds;
     if (typeof s !== 'number' || !Number.isInteger(s) || s < 0 || s > TIMEOUT_MAX) return 'a timeout is a whole number of seconds, at most 28 days';
@@ -121,6 +141,8 @@ export function modRefusal(m: AboutModeration | undefined, a: ModAction, member?
   if (!p?.can) return p?.reason ?? 'You cannot do that here.';
   if (a.op === 'end') return null;
   if (a.op === 'unban') return null;
+  // Someone in voice: whether they are in a voice channel now is the network's to say (the adapter checks it).
+  if (VOICE_MOD_OPS.includes(a.op)) return null;
   if (!isMember && a.op !== 'ban') return 'They are not in it now.';
   if (member?.above) return member.reason ?? 'They outrank you here.';
   if (a.op === 'role') {
@@ -150,6 +172,14 @@ export function modVerb(network: Network, a: ModAction): string {
       return a.seconds ? 'Time out' : 'End timeout';
     case 'end':
       return 'End the group';
+    case 'voiceMute':
+      return a.on ? 'Server mute' : 'Server unmute';
+    case 'voiceDeafen':
+      return a.on ? 'Server deafen' : 'Server undeafen';
+    case 'move':
+      return 'Move';
+    case 'disconnect':
+      return 'Disconnect';
   }
 }
 

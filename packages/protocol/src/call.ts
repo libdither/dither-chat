@@ -31,20 +31,113 @@ export interface CallParticipant {
   muted: boolean;
   deafened: boolean;
   speaking: boolean;
+  /** Camera on. */
   video?: boolean;
+  /** Sharing their screen (Go Live). */
+  streaming?: boolean;
+  /** Muted or deafened by a moderator (a server mute), rather than by themselves. */
+  serverMuted?: boolean;
+  serverDeafened?: boolean;
+  /** How loud they are for this account only, percent: 100 as they are, 0 to VOLUME_MAX (the network's per-person volume). Absent: 100. */
+  volume?: number;
+  /** Muted for this account only. */
+  localMute?: boolean;
+  /** On a stage: what they are there (StageRole). Absent outside a stage. */
+  stage?: StageRole;
+}
+
+/**
+ * On a stage channel: speaking; listening; listening with a hand up (asking to speak); or invited to speak by a
+ * moderator and not yet answered.
+ */
+export type StageRole = 'speaker' | 'audience' | 'hand' | 'invited';
+
+/** A stage call's own facts (CallState.stage). */
+export interface CallStage {
+  /** What the stage is about, when someone started it with a topic. */
+  topic: string | null;
+  /** This account may invite people to speak and move speakers back to the audience (Discord: Mute Members there). */
+  moderator: boolean;
 }
 
 export interface CallState {
   conversation: string;
   participants: CallParticipant[];
+  /** Present when the call is a stage. */
+  stage?: CallStage;
+}
+
+/** A person's volume goes up to twice as loud, as Discord's own slider does. */
+export const VOLUME_MAX = 200;
+
+/**
+ * How this device's microphone is handled (Settings → Calls, kept per device). In bridge mode the account's client is
+ * what sends, so it gets the same choices for its own processing; in direct mode the device applies them itself.
+ */
+export interface CallInput {
+  /** The browser's noise suppression on the microphone (and the account client's own, in bridge mode). */
+  noiseSuppression: boolean;
+  /** When the microphone counts as speaking: 'auto' (the network's or the device's own judgement), or a level in dB from -100 (everything) to 0. */
+  sensitivity: 'auto' | number;
+}
+
+export const CALL_INPUT_DEFAULT: CallInput = { noiseSuppression: true, sensitivity: 'auto' };
+
+/** A CallInput as it may go to the account: anything out of range becomes the default. */
+export function callInput(x: unknown): CallInput {
+  const o = (x && typeof x === 'object' ? x : {}) as Record<string, unknown>;
+  const s = o.sensitivity;
+  return {
+    noiseSuppression: typeof o.noiseSuppression === 'boolean' ? o.noiseSuppression : CALL_INPUT_DEFAULT.noiseSuppression,
+    sensitivity: typeof s === 'number' && Number.isFinite(s) && s >= -100 && s <= 0 ? Math.round(s) : 'auto',
+  };
+}
+
+/**
+ * What a stage asks of you or a moderator: put your own hand up or down; speak (taking a moderator's invitation, or
+ * as a moderator yourself); go back to listening; and, as a moderator, invite `user` to speak or move them to the
+ * audience.
+ */
+export type StageAction = 'raiseHand' | 'lowerHand' | 'speak' | 'listen' | 'invite' | 'audience';
+export const STAGE_ACTIONS: readonly StageAction[] = ['raiseHand', 'lowerHand', 'speak', 'listen', 'invite', 'audience'];
+
+/** A sound someone played or an emoji they sent in the call you are in (Discord's soundboard and voice effects). */
+export interface CallEffect {
+  /** Who: a native user id from the adapter, a hub identity id from the hub. */
+  who: string;
+  /** A Unicode emoji, or a custom emoji's name. */
+  emoji?: string;
+  /** A custom emoji's picture. */
+  emojiUrl?: string;
+  sound?: { id: string; name: string };
+}
+
+/** A soundboard sound this account may play in the call (the `sounds` call op). */
+export interface CallSound {
+  id: string;
+  name: string;
+  /** The server it belongs to; '0' for the network's own defaults. */
+  guild: string;
+  emoji?: string;
+  emojiUrl?: string;
 }
 
 /** Device -> hub, on /api/call. One socket is one call; closing it leaves. */
 export type CallClientMessage =
   /** `ring`: in a direct or group conversation, ring the others (the account's adapter has 'ringCalls'). */
-  | { op: 'join'; account: string; conversation: string; mode: CallMode; muted?: boolean; deafened?: boolean; ring?: boolean }
+  | { op: 'join'; account: string; conversation: string; mode: CallMode; muted?: boolean; deafened?: boolean; ring?: boolean; input?: CallInput }
   | { op: 'leave' }
   | { op: 'mute'; muted: boolean; deafened: boolean }
+  /** One person's volume or mute, for this account only (capability 'callVolume'). `user`: a hub identity id. */
+  | { op: 'local'; user: string; volume?: number; muted?: boolean }
+  /** The microphone's handling changed (capability 'callInput'). */
+  | { op: 'input'; input: CallInput }
+  /** A stage action (capability 'stage'); `user` (a hub identity id) for a moderator's invite or move to the audience. */
+  | { op: 'stage'; action: StageAction; user?: string }
+  /** The sounds this account may play here (capability 'soundboard'): answered with `sounds`. */
+  | { op: 'sounds' }
+  /** Play one of them. */
+  | { op: 'sound'; sound: string; guild: string }
   /** Bridge mode's WebRTC offer, answer and candidates. The hub passes it through. */
   | { op: 'signal'; data: unknown }
   /** Direct mode: speaking state and similar news the sandbox's view of the call should reflect. */
@@ -61,6 +154,10 @@ export type CallServerMessage =
   | { t: 'joined'; call: string; mode: CallMode; iceServers: IceServer[]; direct?: { session: DirectVoiceSession; socket: string; relayOnly: boolean } }
   | { t: 'state'; state: CallState }
   | { t: 'signal'; data: unknown }
+  /** Someone played a sound or sent an emoji in the call (`who` a hub identity id). */
+  | { t: 'effect'; effect: CallEffect }
+  /** The answer to `sounds`: what this account may play, or why nothing. */
+  | { t: 'sounds'; sounds: CallSound[]; reason?: string }
   | { t: 'ended'; reason: string }
   | { t: 'error'; message: string };
 

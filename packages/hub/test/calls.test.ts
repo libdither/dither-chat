@@ -3,15 +3,16 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { createHmac } from 'node:crypto';
+import { hubId } from '@dither-chat/protocol/ids';
 import { Calls } from '../src/calls.ts';
 
 type Sent = any[];
 
-function setup(reply: (cmd: any) => unknown = () => ({})) {
+function setup(reply: (cmd: any) => unknown = () => ({}), caps: string[] = ['calls']) {
   const commands: any[] = [];
   const store = {
-    account: (id: string) => ({ id, network: 'discord', capabilities: '["calls"]' }),
-    nativeOf: () => ({ network: 'discord', nativeId: '1100000000000000001' }),
+    account: (id: string) => ({ id, network: 'discord', capabilities: JSON.stringify(caps) }),
+    nativeOf: (kind: string, id: string) => ({ network: id.startsWith('idn_signal_') ? 'signal' : 'discord', nativeId: kind === 'identity' ? id.replace(/^idn_[a-z]+_/, '') : '1100000000000000001' }),
     identitiesByIds: () => [],
   } as any;
   const sup = {
@@ -104,5 +105,69 @@ describe('calls', () => {
     const st = ws.sent.find((m) => m.t === 'state').state;
     expect(st.conversation).toBe('cnv_x');
     expect(st.participants[0].id).toStartWith('idn_');
+  });
+
+  test('in a call: one person\'s volume and mute, the microphone, a stage, the soundboard, each only where the account can', async () => {
+    const all = ['calls', 'callVolume', 'callInput', 'stage', 'soundboard'];
+    const { calls, commands, socket } = setup((c) => (c.op === 'sounds' ? { sounds: [{ id: '5', name: 'airhorn', guild: '0' }] } : {}), all);
+    const ws = socket();
+    calls.message(ws as any, JSON.stringify({ op: 'join', account: 'acc_a', conversation: 'cnv_x', mode: 'bridge', input: { noiseSuppression: false, sensitivity: -50.4 } }));
+    await tick();
+    expect(commands[0]).toMatchObject({ op: 'join', input: { noiseSuppression: false, sensitivity: -50 } });
+    const send = (m: unknown) => calls.message(ws as any, JSON.stringify(m));
+    send({ op: 'local', user: 'idn_discord_42', volume: 350 });
+    send({ op: 'local', user: 'idn_discord_42', muted: true });
+    send({ op: 'input', input: { noiseSuppression: true, sensitivity: 7 } });
+    send({ op: 'stage', action: 'raiseHand' });
+    send({ op: 'stage', action: 'invite', user: 'idn_discord_43' });
+    send({ op: 'sounds' });
+    send({ op: 'sound', sound: '5', guild: '0' });
+    await tick();
+    expect(commands.slice(1).map(({ call: _c, t: _t, ...rest }) => rest)).toEqual([
+      { op: 'local', user: '42', volume: 200 },
+      { op: 'local', user: '42', muted: true },
+      { op: 'input', input: { noiseSuppression: true, sensitivity: 'auto' } },
+      { op: 'stage', action: 'raiseHand' },
+      { op: 'stage', action: 'invite', user: '43' },
+      { op: 'sounds' },
+      { op: 'sound', sound: '5', guild: '0' },
+    ]);
+    expect(ws.sent.find((m) => m.t === 'sounds')).toEqual({ t: 'sounds', sounds: [{ id: '5', name: 'airhorn', guild: '0' }] });
+    // Out of shape: refused here, nothing asked.
+    const before = commands.length;
+    send({ op: 'stage', action: 'invite' });
+    send({ op: 'stage', action: 'raiseHand', user: 'idn_discord_43' });
+    send({ op: 'stage', action: 'dance' });
+    send({ op: 'sound', sound: '../x', guild: '0' });
+    send({ op: 'local', user: 'idn_signal_42', volume: 50 });
+    await tick();
+    expect(commands.length).toBe(before);
+    expect(ws.sent.filter((m) => m.t === 'error').map((m) => m.message)).toEqual(['Whom?', 'That is about yourself.', 'Not a stage action.', 'Which sound?', 'Nobody by that id in this call.']);
+  });
+
+  test("an old adapter: volume, stages and sounds are refused in words; the microphone's handling is kept on the device", async () => {
+    const { calls, commands, socket } = setup();
+    const ws = socket();
+    calls.message(ws as any, JSON.stringify({ op: 'join', account: 'acc_a', conversation: 'cnv_x', mode: 'bridge', input: { noiseSuppression: false, sensitivity: 'auto' } }));
+    await tick();
+    expect(commands[0].input).toBeUndefined();
+    for (const m of [{ op: 'local', user: 'idn_discord_42', volume: 50 }, { op: 'input', input: {} }, { op: 'stage', action: 'raiseHand' }, { op: 'sounds' }]) calls.message(ws as any, JSON.stringify(m));
+    await tick();
+    expect(commands.length).toBe(1);
+    expect(ws.sent.filter((m) => m.t === 'error').map((m) => m.message)).toEqual(["Changing one person's volume isn't available for this account.", "Stages isn't available for this account.", "The soundboard isn't available for this account."]);
+  });
+
+  test("the adapter's effects and stage reach the device in hub ids", async () => {
+    const { calls, socket } = setup();
+    const ws = socket();
+    calls.message(ws as any, join('bridge'));
+    await tick();
+    const id = ws.sent.find((m) => m.t === 'joined').call;
+    calls.onAdapterEvent('acc_a', { t: 'call', call: id, effect: { who: '42', emoji: '🎉' } });
+    calls.onAdapterEvent('acc_a', { t: 'call', call: id, state: { conversation: 'c', participants: [{ id: '42', muted: false, deafened: false, speaking: false, stage: 'hand', volume: 50 }], stage: { topic: 'Town hall', moderator: true } } });
+    expect(ws.sent.find((m) => m.t === 'effect')).toEqual({ t: 'effect', effect: { who: hubId('idn', 'discord', '42'), emoji: '🎉' } });
+    const st = ws.sent.find((m) => m.t === 'state').state;
+    expect(st.stage).toEqual({ topic: 'Town hall', moderator: true });
+    expect(st.participants[0]).toMatchObject({ id: hubId('idn', 'discord', '42'), stage: 'hand', volume: 50 });
   });
 });

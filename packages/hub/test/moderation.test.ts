@@ -213,6 +213,32 @@ describe('a Discord server you moderate', () => {
     expect(notes.at(-1)).toMatch(/^\[moderate\] kicked .+ in libdither$/);
   });
 
+  test('someone in voice: server mute and deafen, move to another voice channel, disconnect; no rank needed', async () => {
+    const id = conv('discord', 'hangout');
+    const v = await abouts.get('conversation', id, MAIN);
+    expect(v.moderation).toMatchObject({ voiceMute: { can: true }, voiceDeafen: { can: true }, voiceMove: { can: true } });
+    // Someone as high as you: kicking them is refused, muting them in voice is not (Discord's own member menu).
+    const members = (await abouts.get('space', space('libdither'), MAIN)).members!.list;
+    const someone = members.find((m) => m.mod?.above && !store.isSelf(m.identityId))!;
+    await mod.moderate('conversation', id, { action: { op: 'voiceMute', who: someone.identityId, on: true }, accountId: MAIN });
+    expect(sent.at(-1)!.cmd).toMatchObject({ t: 'moderate', action: { op: 'voiceMute', on: true, who: store.nativeOf('identity', someone.identityId)!.nativeId } });
+    expect(notes.at(-1)).toMatch(/^\[moderate\] server-muted .+ in hangout$/);
+    await mod.moderate('conversation', id, { action: { op: 'voiceDeafen', who: someone.identityId, on: false }, accountId: MAIN });
+    expect(notes.at(-1)).toMatch(/^\[moderate\] server-undeafened /);
+    // A move names the voice channel by its hub id; the adapter gets its native id.
+    const other = conv('discord', 'hangout');
+    await mod.moderate('conversation', id, { action: { op: 'move', who: someone.identityId, to: other }, accountId: MAIN });
+    expect(sent.at(-1)!.cmd.action).toMatchObject({ op: 'move', to: store.nativeOf('conversation', other)!.nativeId });
+    expect((await reject(mod.moderate('conversation', id, { action: { op: 'move', who: someone.identityId, to: conv('discord', 'general') }, accountId: MAIN }))).message).toBe('Move them to a voice channel of the same server');
+    expect((await reject(mod.moderate('conversation', id, { action: { op: 'move', who: someone.identityId, to: conv('discord', 'General') }, accountId: MAIN }))).message).toBe('That voice channel is in another server.');
+    await mod.moderate('conversation', id, { action: { op: 'disconnect', who: someone.identityId }, accountId: MAIN });
+    expect(notes.at(-1)).toMatch(/^\[moderate\] disconnected .+ from voice in hangout$/);
+    expect(modActionProblem({ op: 'voiceMute', who: 'x' })).toBe('on or off?');
+    expect(modActionProblem({ op: 'move', who: 'x' })).toBe('to which voice channel?');
+    expect(modRefusal({ voiceMove: { can: false, reason: 'You need the Move Members permission.' } }, { op: 'disconnect', who: 'x' })).toBe('You need the Move Members permission.');
+    clock += 3_600_001;
+  });
+
   test('an account without the permission is told which one', async () => {
     const e = await reject(mod.moderate('space', space('Rust Programming Language'), { action: { op: 'remove', who: hubId('idn', 'discord', 'x') } }));
     expect(e.status).toBe(404);

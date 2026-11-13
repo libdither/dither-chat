@@ -32,6 +32,8 @@ interface Place {
   roles: Map<string, Set<string>>;
   timeouts: Map<string, number>;
   labels: Map<string, { text?: string; emoji?: string }>;
+  /** Server-muted and server-deafened people, and where people were moved (null: disconnected). */
+  voice: Map<string, { muted?: boolean; deafened?: boolean; channel?: string | null }>;
   ended: boolean;
 }
 
@@ -46,7 +48,7 @@ export class DemoModeration {
 
   private place(id: string): Place {
     let p = this.places.get(id);
-    if (!p) this.places.set(id, (p = { removed: new Set(), banned: new Set(), admins: new Map(), roles: new Map(), timeouts: new Map(), labels: new Map(), ended: false }));
+    if (!p) this.places.set(id, (p = { removed: new Set(), banned: new Set(), admins: new Map(), roles: new Map(), timeouts: new Map(), labels: new Map(), voice: new Map(), ended: false }));
     return p;
   }
 
@@ -125,6 +127,9 @@ export class DemoModeration {
         ban: admin ? { can: true, deleteHistory: BAN_DELETE_CHOICES } : need('Ban Members'),
         roles: admin ? { can: true, assignable } : { ...need('Manage Roles'), assignable: [] },
         timeout: admin ? { can: true, durations: TIMEOUT_DURATIONS } : { ...need('Timeout Members'), durations: TIMEOUT_DURATIONS },
+        voiceMute: admin ? yes : need('Mute Members'),
+        voiceDeafen: admin ? yes : need('Deafen Members'),
+        voiceMove: admin ? yes : need('Move Members'),
         bansOnRequest: true,
         elsewhere: ELSEWHERE,
       },
@@ -214,6 +219,20 @@ export class DemoModeration {
         p.ended = true;
         line('You ended the group.');
         break;
+      case 'voiceMute':
+      case 'voiceDeafen':
+      case 'move':
+      case 'disconnect': {
+        const v = p.voice.get(a.who) ?? {};
+        if (a.op === 'voiceMute') v.muted = a.on;
+        else if (a.op === 'voiceDeafen') v.deafened = a.on;
+        else if (a.op === 'move') {
+          if (this.h.guildOf({ kind: 'conversation', nativeId: a.to }) !== this.key(target)) throw new Error('That voice channel is in another server.');
+          v.channel = a.to;
+        } else v.channel = null;
+        p.voice.set(a.who, v);
+        break;
+      }
     }
     return this.about(target, this.h.about(target));
   }

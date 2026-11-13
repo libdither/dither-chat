@@ -6,7 +6,7 @@
  * again, and the network has the last word. Every one leaves a line in the account's log.
  */
 import type * as P from '@dither-chat/protocol';
-import { memberLabelProblem, modActionProblem, modRefusal, modVerb, NETWORK_META, reactionClearProblem, spanLabel } from '@dither-chat/protocol';
+import { memberLabelProblem, modActionProblem, modRefusal, modVerb, NETWORK_META, reactionClearProblem, spanLabel, VOICE_MOD_OPS } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
 
@@ -124,11 +124,19 @@ export class Moderation {
       whoId = a.who;
       action = { ...a, who: n.nativeId };
     }
+    // A move names a voice channel of the same server, by its hub id.
+    if (action.op === 'move') {
+      const to = this.d.store.nativeOf('conversation', action.to);
+      // The adapter checks it is in the same server: the hub keeps channels under categories, not under one server id.
+      const voice = to && this.d.store.one<{ ok: number }>(`SELECT 1 AS ok FROM conversation WHERE id = ? AND variant IN ('voice', 'stage')`, action.to);
+      if (!to || to.network !== t.network || !voice) throw new ModerationError('Move them to a voice channel of the same server', 400);
+      action = { ...action, to: to.nativeId };
+    }
     const target = { kind, nativeId: t.nativeId };
     // Never on a stale answer: who may do what, and who is in it, can have changed since the page opened.
     const fresh = await this.fresh(acc.id, t.network, target);
     const member = action.op === 'end' ? undefined : fresh.members?.list.find((m) => m.id === (action as { who: string }).who);
-    if (action.op !== 'end' && action.op !== 'ban' && action.op !== 'unban' && !member && fresh.members && !fresh.members.complete) {
+    if (action.op !== 'end' && action.op !== 'ban' && action.op !== 'unban' && !VOICE_MOD_OPS.includes(action.op) && !member && fresh.members && !fresh.members.complete) {
       throw new ModerationError(`${NETWORK_META[t.network].name} has not loaded them as a member here: open the member list in ${NETWORK_META[t.network].name} first.`, 409);
     }
     if (action.op === 'unban' && fresh.moderation?.banned && !fresh.moderation.banned.includes(action.who)) throw new ModerationError('They are not banned here', 409);
@@ -308,6 +316,14 @@ export function logLine(network: P.Network, a: P.ModAction, who: string, roles?:
       return a.seconds ? `timed out ${who} for ${spanLabel(a.seconds)}` : `ended ${who}'s timeout`;
     case 'end':
       return modVerb(network, a).toLowerCase();
+    case 'voiceMute':
+      return a.on ? `server-muted ${who}` : `server-unmuted ${who}`;
+    case 'voiceDeafen':
+      return a.on ? `server-deafened ${who}` : `server-undeafened ${who}`;
+    case 'move':
+      return `moved ${who} to another voice channel`;
+    case 'disconnect':
+      return `disconnected ${who} from voice`;
   }
 }
 
@@ -324,6 +340,6 @@ export function moderationView(store: Store, acc: AccountRow | null, network: P.
 /** The same moderation with every power locked, saying why (a stale About). */
 export function lockedModeration(m: P.AboutModeration, reason: string): P.AboutModeration {
   const out: P.AboutModeration = { ...m };
-  for (const k of ['remove', 'ban', 'admins', 'roles', 'timeout', 'end'] as const) if (out[k]) (out as Record<string, unknown>)[k] = { ...out[k], can: false, reason };
+  for (const k of ['remove', 'ban', 'admins', 'roles', 'timeout', 'end', 'voiceMute', 'voiceDeafen', 'voiceMove'] as const) if (out[k]) (out as Record<string, unknown>)[k] = { ...out[k], can: false, reason };
   return out;
 }
