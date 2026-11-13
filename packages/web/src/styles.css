@@ -13721,6 +13721,94 @@ h1:hover > .pair-nick-edit,
   opacity: 0.6;
 }
 
+/* Calls ringing you (ui/Ringing.tsx): over everything, top right on a desktop, across the top on a phone. */
+.ring-cards {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(360px, calc(100vw - 32px));
+}
+.ring-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--bg-active);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.3);
+  color: var(--text);
+}
+.ring-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+}
+.ring-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ring-text small {
+  color: var(--text-muted);
+}
+.ring-buttons {
+  display: flex;
+  gap: 8px;
+}
+.call-btn.answer {
+  background: #2f9e58;
+  color: #fff;
+}
+@media (max-width: 720px) {
+  .ring-cards {
+    left: 16px;
+    right: 16px;
+    width: auto;
+  }
+}
+/* Who is in a voice channel, on its row and its page. */
+.voice-people {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.voice-status {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.voice-person {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.voice-people.chan-voice {
+  display: flex;
+  padding: 2px 8px 4px;
+}
+.voice-people.voice-here {
+  display: flex;
+  padding: 6px 16px;
+  gap: 10px;
+}
 /* What a message carries besides its text (ui/MessageExtras.tsx, docs/messages.md). */
 .reply-quote-own {
   cursor: default;

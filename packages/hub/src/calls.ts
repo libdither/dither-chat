@@ -141,7 +141,9 @@ export class Calls {
 
     let result: { direct?: P.DirectVoiceSession } | undefined;
     try {
-      result = await this.sup.command(accountId, { t: 'call', call: id, op: 'join', conversation: native.nativeId, mode: msg.mode, muted: msg.muted, deafened: msg.deafened }, 45_000);
+      // Ringing the others only where the adapter can, and only in a direct or group conversation.
+      const ring = !!msg.ring && JSON.parse(acc.capabilities || '[]').includes('ringCalls') && !!this.store.db.query(`SELECT 1 FROM conversation WHERE id = ? AND shape IN ('direct', 'group')`).get(msg.conversation);
+      result = await this.sup.command(accountId, { t: 'call', call: id, op: 'join', conversation: native.nativeId, mode: msg.mode, muted: msg.muted, deafened: msg.deafened, ...(ring ? { ring: true } : {}) }, 45_000);
     } catch (e) {
       this.end(call, 'join failed', false);
       throw e;

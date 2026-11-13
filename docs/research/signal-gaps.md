@@ -138,13 +138,19 @@ A side finding: `MessageFact.extra` (quote, poll, sticker, storyReply, viewOnce,
 - (d) M: only an incoming offer is mapped ("📞 Incoming voice call"). `callMessage.hangupMessage{type, deviceId}`,
   `busyMessage`, `answerMessage` and `iceUpdateMessages` are ignored, so there is no "missed call", "declined",
   "answered on another device" (hangup types `acceptedonanotherdevice/declinedonanotherdevice/busyonanotherdevice`
-  exist in CallManager) and no duration. ROADMAP "Calls without media: … hangups … do not" covers this.
+  exist in CallManager) and no duration. ROADMAP "Calls without media: … hangups … do not" covers this. **done** (net-gaps):
+  offers ring, hangups say answered/declined/busy on another device or missed, with how long where known (calls.md
+  "Signal").
 - (a) L (ROADMAP rates it L/H cost): 1:1 voice calls. JSON-RPC `startCall <recipient>`, `acceptCall --call-id`,
   `rejectCall`, `hangupCall`, `listCalls` (`callId, state, number, uuid, isOutgoing, input/outputDeviceName`) and the
   `subscribeCallEvents` → `callEvent` notification (`JsonCallEvent{callId, state, isOutgoing, reason, …}`) are all
   unused. The capability `calls` is not advertised for Signal. Media goes through an external tunnel binary that
   signal-cli spawns (`CallManager.findTunnelBinary`, `spawnMediaTunnel`), with virtual input and output audio devices.
-- (a) L: rejecting an incoming call from dither (`rejectCall`) would not need the media tunnel.
+  **not built**: the nix signal-cli 0.14.8 ships no `signal-call-tunnel`, and a subscribed signal-cli without one hangs
+  up on every caller (`endCall` 'tunnel_spawn_error' sends a hangup); what it would take is in calls.md "Signal".
+- (a) L: rejecting an incoming call from dither (`rejectCall`) would not need the media tunnel. **not built**: it does
+  in effect: `rejectCall` needs a call signal-cli tracks, which it does only while subscribed to call events, and a
+  subscribed signal-cli without the tunnel ends every incoming call (calls.md "Signal").
 
 ## Stickers
 

@@ -158,3 +158,66 @@ Video, both clients' own (not yet through dither-chat):
 Go Live is a second peer connection to a separate stream server. A sandbox that relays video would
 spend one to one and a half cores per call on software encoding, decoding and drawing the call view, so video
 belongs in direct mode.
+
+## Ringing: calls you are not in from here
+
+Every call the networks tell an account about, apart from the ones a device joined through the hub, goes through one
+model (`packages/hub/src/callstate.ts`, the adapter's `callState` event, `CallFact` in `packages/protocol/src/call.ts`):
+ringing, going on, or over, with how it ended for you (answered, answered on another device, missed, declined, busy,
+no answer) and how long it lasted where the network says.
+
+- **A ring alerts once.** A call that rings you is an alert on every device (the highest tier), titled "Ann is
+  calling", with Answer where the account can join calls from here and Decline where it can stop the ringing. Open
+  pages show a ring card instead (`ui/Ringing.tsx`). A mute on the chat, the caller, the account, the network or
+  everything, quiet hours, and a device's own rules keep it off devices; the card shows either way.
+- **It stops everywhere.** As soon as the network says it no longer rings you (answered or declined on any device, or
+  given up), or you decline here, the ring card goes and the Android app's notification is taken back (`push.clear`).
+  A browser keeps its notification until it is tapped: a browser must show something for every push.
+- **Never again.** The hub remembers each call it rang for, so an adapter reconnecting and saying it all again rings
+  nothing. A call that started more than 90 s (`RING.freshMs`) before the hub heard it ring is old news and never
+  rings: the call's own time, not the hub's. A ring left hanging for 3 minutes (`RING.maxMs`) is over, as missed.
+- **Forward only.** A call goes ringing → going on → over; an over call heard ringing again (an old event replayed)
+  stays over. Declined here stays declined, though Discord only says you were not in it.
+- **The call line.** Each call's own message in the timeline is worded as the call went, the same on every network
+  (`callLine`): "📞 Missed call", "📞 Call, 12 min", "📞 Declined call", "📞 Call, answered on another device".
+  Rewording it is not an edit.
+
+`GET /api/calls/ringing` (what rings and goes on now, and the last hour's; `?conversation=` for one chat's), `POST
+/api/calls/<id>/decline`, and the `calls` client event. `GET /api/calls` is the calls this hub carries (`Calls.stats`).
+
+### Discord
+
+The hook listens to what the gateway tells the client: `CALL_CREATE`/`CALL_UPDATE` (`ongoingRings`: who is rung, and by
+whom), `CALL_DELETE`, and the voice states of the call's channel. A call is its call message (type 3), so its start
+time is the message's snowflake. Decline is the client's own incoming-call Decline, `CallActions.stopRinging(channel)`
+(`POST /channels/{id}/call/stop-ringing`). Answer is the existing join. The header's Call button in a DM or group DM
+(capability `ringCalls`) joins, then rings the others with the client's own `CallActions.ring`, as its call button
+does; with a call going on there it says Join. The call message reads its `call.participants` and `ended_timestamp`.
+
+### Signal
+
+Passive: what a linked device already receives. An offer rings you. The caller's hangup to your other devices says how
+it went: ACCEPTED (answered on another device; once they hang up, how long), DECLINED, BUSY (on another device),
+NEED_PERMISSION or NORMAL before anyone answered (missed). Busy and answer messages only answer offers this device
+made, which it never makes.
+
+Not built: Decline and Answer from dither. signal-cli 0.14.8 tracks a call only while some client is subscribed to call
+events (`subscribeCallEvents`); a subscribed signal-cli answers every incoming offer by spawning its media tunnel
+(`signal-call-tunnel`, found through `SIGNAL_CALL_TUNNEL_BIN` or next to its install), and the nix build ships no
+tunnel. The spawn fails and signal-cli ends the call with `tunnel_spawn_error`, which sends the caller a hangup: every
+call to you would end on your phone too. `rejectCall` needs that tracked call. What it would take: a packaged
+`signal-call-tunnel` (RingRTC built for this machine), virtual audio devices for its input and output, and a bridge from
+those to the device's WebRTC, the same shape as Discord's bridge mode. Nothing of it is small, and none of it can be
+tested against the fake signal-cli.
+
+### Voice channels
+
+Who is in which Discord voice channel when you are not in it comes from `VOICE_STATE_UPDATES` for the servers the
+client has loaded, and the client's voice state store after it connects: what it was sent anyway, never a request. It is
+someone's behaviour, so the hub keeps it only with the adversarial `voice` setting on (docs/history.md): who is in each
+channel now, on the channel's row, its page and its chat, and each join and leave in the change log under the person,
+like presence (their newest 1000). A channel's status line ("playing chess", `VOICE_CHANNEL_STATUS_UPDATE` and the
+client's own `CHANNEL_INFO`) is the channel's, kept whatever the setting. `GET /api/voice`, the `voice` client event.
+
+Not built: voice history and hangouts (`/channels/{id}/voice-history`): a request of ours, not something the client is
+sent.

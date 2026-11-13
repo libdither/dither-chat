@@ -1,28 +1,38 @@
 import { useEffect, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
-import { activeCall, canCall, leaveCall, setDeafened, setMuted, startCall } from '../call.ts';
+import { activeCall, canCall, canRing, leaveCall, setDeafened, setMuted, startCall } from '../call.ts';
+import { callIn } from '../ringing.ts';
 import { db, go, prefs, rev } from '../state.ts';
 import { convTitle } from '../model.ts';
 import { Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';
 
-/** The header's join button, on conversations an online account can call in. */
+/**
+ * The header's call button: Join on voice channels an online account can call in; Call on a DM or group whose account
+ * can ring the others (or Join, when a call is going on there already).
+ */
 export function JoinCallButton({ c }: { c: P.ConversationView }) {
   rev.value;
-  const accountId = canCall(c);
+  const voiceAccount = canCall(c);
+  const ringAccount = voiceAccount ? null : canRing(c);
+  const accountId = voiceAccount ?? ringAccount;
   const call = activeCall.value;
   if (!accountId) return null;
   const here = call && call.conversationId === c.id && call.phase !== 'ended';
+  const going = !!ringAccount && !!callIn(c.id);
+  const ring = !!ringAccount && !going;
+  const label = here ? 'Leave' : ring ? 'Call' : 'Join';
+  const title = here ? 'Leave the call' : ring ? 'Call: ring everyone here' : 'Join the call';
   return (
     <button
       class={`hdr-btn call-join ${here ? 'on' : ''}`}
-      data-track={here ? 'leave call' : 'join call'}
-      title={here ? 'Leave the call' : 'Join the call'}
-      aria-label={here ? 'Leave the call' : 'Join the call'}
-      onClick={() => (here ? leaveCall() : void startCall(c.id, accountId, prefs.value.callMode))}
+      data-track={here ? 'leave call' : ring ? 'start call' : 'join call'}
+      title={title}
+      aria-label={title}
+      onClick={() => (here ? leaveCall() : void startCall(c.id, accountId, prefs.value.callMode, ring))}
     >
       <Icon name={here ? 'phoneOff' : 'phone'} size={16} />
-      <span class="hdr-btn-label">{here ? 'Leave' : 'Join'}</span>
+      <span class="hdr-btn-label">{label}</span>
     </button>
   );
 }

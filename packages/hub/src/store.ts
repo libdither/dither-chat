@@ -14,6 +14,7 @@ import { TypingRelay, typingTtl } from './typing.ts';
 import { stepTimer } from './startup.ts';
 import { addTables, ingestRelationships, ingestRequests, pendingLinks } from './add.ts';
 import { lateNews } from './latenews.ts';
+import { eraseVoice, ingestCallEvent, voiceKept } from './callstate.ts';
 import { alertBar, type Facts } from './learn.ts';
 
 type Row = Record<string, any>;
@@ -743,6 +744,12 @@ export class Store {
         case 'relationship':
           ingestRelationships(this, acc, ev);
           break;
+        // Calls ringing you, voice channels' people and status lines (callstate.ts).
+        case 'callState':
+        case 'voice':
+        case 'voiceStatus':
+          ingestCallEvent(this, acc, ev);
+          break;
         case 'reply':
         case 'log':
           break;
@@ -1131,8 +1138,8 @@ export class Store {
     const thread = f.threadRoot ? hubId('cnv', acc.network, f.threadRoot) : null;
     // An edit: the words it had before, if this source's edits are kept (docs/history.md). A system line or a sticker
     // that comes back worded otherwise (an extractor that learned a new message type, or to show a sticker as itself)
-    // was never edited by anyone.
-    const reworded = old && [old.kind, f.kind].some((k) => k === 'system' || k === 'sticker');
+    // was never edited by anyone, nor was a call line saying how the call went.
+    const reworded = old && [old.kind, f.kind].some((k) => k === 'system' || k === 'sticker' || k === 'call');
     if (old && !old.deleted && old.body && f.body !== old.body && !reworded && this.keeps('edits', acc)) this.messageEvent(id, 'edit', { body: old.body }, author, acc.id, f.editedTs ?? Date.now());
     this.db
       .query(
@@ -2077,6 +2084,7 @@ export class Store {
       statuses: any(logged, 'status'),
       presence: any(logged, 'presence'),
       members: any('SELECT 1 FROM membership'),
+      voice: voiceKept(this),
     };
   }
 
@@ -2086,6 +2094,7 @@ export class Store {
       this.db.query('DELETE FROM member_coverage').run();
       return this.db.query('DELETE FROM membership').run().changes;
     }
+    if (what === 'voice') return eraseVoice(this);
     if (what === 'statuses' || what === 'presence')
       return this.db.query(`DELETE FROM change_log WHERE target_kind = 'identity' AND field = ?`).run(what === 'statuses' ? 'status' : 'presence').changes;
     const touched = (sql: string) => (this.db.query(sql).all() as Row[]).forEach((r) => this.dirty.messages.set(r.message_id, true));

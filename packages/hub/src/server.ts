@@ -51,6 +51,7 @@ import { Adding, linksOf, requestHeld, requestViews } from './add.ts';
 import { calendarOff, checkNotice, notifyAllowed, type CalendarLink } from './calendar.ts';
 import { ReplyMarks, type ReplyMark } from './replymarks.ts';
 import { mailAttention } from './mail/attention.ts';
+import { callRoute } from './callstate.ts';
 
 
 type ClientData = { kind: 'client' };
@@ -607,6 +608,11 @@ export class HubServer {
       const b = await body<P.SyncRequest>();
       this.flush();
       return ok(syncResponse({ store: s, attention: this.opts.attention, usage: this.usage, devices: this.opts.devices, mail: this.opts.mail, boot: this.boot }, b));
+    }
+    // Calls ringing you and voice channels (callstate.ts, docs/calls.md "Ringing").
+    if (path.startsWith('/api/calls/') || path === '/api/voice') {
+      const r = await callRoute({ store: s, online: (a) => this.sup.online(a), command: (a, c, t) => this.sup.command(a, c, t), flush: () => this.flush() }, req, url, path);
+      if (r) return r;
     }
     // Joining and adding, and requests (add.ts).
     if (path === '/api/add' || path.startsWith('/api/add/') || path.startsWith('/api/requests') || path === '/api/people' || /^\/api\/people\/[\w-]+\/remove$/.test(path)) return (await this.adding.route(req, url, path))!;

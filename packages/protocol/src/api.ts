@@ -1135,6 +1135,10 @@ export type ClientEvent =
    * pending copy by id before the answer to its POST arrives. Of the moment, like `typing`: not journaled.
    */
   | { t: 'sent'; conversationId: string; clientId: string; messageId: string }
+  /** Calls that changed: ringing you, going on, or just over (call.ts CallView, docs/calls.md "Ringing"). Of the moment. */
+  | { t: 'calls'; calls: import('./call.ts').CallView[] }
+  /** Voice channels whose people or status line changed (call.ts VoiceChannelView). Of the moment. */
+  | { t: 'voice'; channels: import('./call.ts').VoiceChannelView[] }
   /**
    * Plans the calendar found in chats changed (docs/calendar.md): these, or all of them with `replace`. Of the moment,
    * like `typing`: not journaled. A page asks GET /api/plans again whenever its live socket (re)opens and on `resync`.
@@ -1266,6 +1270,11 @@ export interface RetentionSettings extends KeepSettings {
   /** Who is in which server, from what the network's client loads anyway (passive). Adversarial. */
   members: boolean;
   /**
+   * Who is in which voice channel when you are not, from what the network's client is sent anyway (passive), and when
+   * each of them joined and left. Adversarial. Absent (a hub from before it): off.
+   */
+  voice?: boolean;
+  /**
    * Adversarial features shown, after the warning (docs/history.md): their switches, and what they kept, in sight.
    * Statuses, presence and members are logged only while shown. Deleted and disappearing messages are kept as their
    * switches say whether shown or not: hiding never loses a message, it only keeps what was kept out of sight.
@@ -1289,6 +1298,7 @@ export const DEFAULT_RETENTION: RetentionSettings = {
   statuses: false,
   presence: false,
   members: false,
+  voice: false,
   adversarial: false,
   show: 'shown',
   showIn: {},
@@ -1303,7 +1313,7 @@ export interface RetentionChange {
 }
 
 /** Switches whose turning off is confirmed (PUT /api/retention takes `confirm: true` for it). */
-export const RETENTION_GUARDED = ['deleted', 'disappearing', 'statuses', 'presence', 'members', 'adversarial'] as const satisfies readonly (keyof RetentionSettings)[];
+export const RETENTION_GUARDED = ['deleted', 'disappearing', 'statuses', 'presence', 'members', 'voice', 'adversarial'] as const satisfies readonly (keyof RetentionSettings)[];
 
 /** Whether kept deleted and disappeared messages show in this chat. */
 export const showsGone = (r: RetentionSettings, conversationId: string | null | undefined): boolean =>
@@ -1320,7 +1330,7 @@ export interface PresenceView {
 export const ADVERSARIAL_KEEPS = ['deleted', 'disappearing'] as const satisfies readonly (keyof KeepSettings)[];
 
 /** What Forget erases, one kind at a time (POST /api/retention/erase); GET /api/retention/kept says which have anything kept. */
-export const KEPT_KINDS = ['deleted', 'disappeared', 'edits', 'reactions', 'receipts', 'changes', 'statuses', 'presence', 'members'] as const;
+export const KEPT_KINDS = ['deleted', 'disappeared', 'edits', 'reactions', 'receipts', 'changes', 'statuses', 'presence', 'members', 'voice'] as const;
 export type KeptKind = (typeof KEPT_KINDS)[number];
 
 /**
