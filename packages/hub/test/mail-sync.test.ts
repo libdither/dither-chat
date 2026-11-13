@@ -7,6 +7,7 @@ import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
 import { mailId } from '@dither-chat/protocol/ids';
+import { type ErrorRecord, ErrorLog, setErrorLog } from '../src/errors.ts';
 import { MailCallError } from '../src/mail/backend.ts';
 import { FakeMailBackend, type FakeOpts } from '../src/mail/fake.ts';
 import { MailHub } from '../src/mail/index.ts';
@@ -208,6 +209,36 @@ describe('keeping up', () => {
     await clock.settle();
     fake.setFlags(ACC, fake.messages(ACC)[0].id, { seen: true });
     await until(() => st.one<{ seen: number }>('SELECT seen FROM mail_message')?.seen === 1, 3000, 'the flag');
+  });
+
+  test("the manager's `offline` (an extractor reconnecting) is logged, not reported as a bug; other failures are", async () => {
+    const reported: ErrorRecord[] = [];
+    setErrorLog(new ErrorLog((r) => reported.push(r), { now: () => clock.now(), dedupMs: 0 }));
+    try {
+      const { fake, synced } = world();
+      await synced();
+      fake.fail('mail.changes', new MailCallError('the account is not connected', 503, 'offline'));
+      fake.deliver(ACC, { messageId: '<off@x>', receivedAt: T0 });
+      await clock.settle();
+      expect(fake.calls.filter((c) => c.op === 'mail.changes').length).toBeGreaterThan(0);
+      expect(reported.filter((r) => r.where === 'mail: changes')).toEqual([]);
+      fake.fail('mail.changes', new MailCallError('Internal Server Error', 500));
+      fake.deliver(ACC, { messageId: '<boom@x>', receivedAt: T0 + H });
+      await clock.settle();
+      expect(reported.filter((r) => r.where === 'mail: changes').map((r) => r.message)).toEqual(['Internal Server Error']);
+    } finally {
+      setErrorLog(null);
+    }
+  });
+
+  test('a changes pass queued while online does not call once the account is offline', async () => {
+    const { fake, hub, st, synced } = world();
+    await synced();
+    const box = st.followed(ACC)[0];
+    st.setOnline(ACC, false);
+    const before = fake.calls.length;
+    await clock.wait(hub.sync(ACC)!.changes(box.id));
+    expect(fake.calls.length).toBe(before);
   });
 
   test('`limited`: the work waits and runs again', async () => {
