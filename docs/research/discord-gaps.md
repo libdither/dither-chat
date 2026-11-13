@@ -40,9 +40,9 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 | Spoilered attachments | IS_SPOILER / `SPOILER_` filename | not picked | d | M | `\|\|text\|\|` spoilers render, but spoilered images show unblurred. **done** (net-gaps): blurred until clicked |
 | Explicit-media flags | CONTAINS_EXPLICIT_MEDIA, EXPLICIT_MEDIA_SCAN_* | not picked | a | L | Discord blurs these. dither shows them raw. **done** (net-gaps): CONTAINS_EXPLICIT_MEDIA blurred as a spoiler; the EXPLICIT_MEDIA_SCAN_* settings are not read |
 | Stickers | `sticker_items`, STICKER, STICKER_ASSET, STICKER_PACKS, MESSAGES_GREET | body becomes `[sticker: name]`; no image | d | M | The sticker CDN url comes from id + format_type; Lottie needs a player. **done** (#123): checked in net-gaps, nothing missing for reading |
-| Polls, results | `poll` object (answers, counts, expiry, multiselect), MESSAGE_POLL_VOTE_ADD, POLL_RESULT type 46 | question + answer texts as markdown; result as a system line | d | M | No counts, no expiry, no "you voted" |
-| Poll voting | POLL_ANSWERS (put/del `/polls/{id}/answers/@me`) | none | a | M | client-path: one request, like a click |
-| Poll create / end early | CREATE_POLL, POLL_EXPIRE | none | a | L | ROADMAP lists "polls" as later |
+| Polls, results | `poll` object (answers, counts, expiry, multiselect), MESSAGE_POLL_VOTE_ADD, POLL_RESULT type 46 | question + answer texts as markdown; result as a system line | d | M | No counts, no expiry, no "you voted" **done** (net-gaps): the poll as data on its message (counts, expiry, your vote), votes as they come, POLL_RESULT closes its poll; voters never asked for ([polls.md](../polls.md)) |
+| Poll voting | POLL_ANSWERS (put/del `/polls/{id}/answers/@me`) | none | a | M | client-path: one request, like a click **done** (net-gaps): the client's poll actions (its REST helper when that chunk is not loaded) |
+| Poll create / end early | CREATE_POLL, POLL_EXPIRE | none | a | L | ROADMAP lists "polls" as later **done** (net-gaps): its own sendPollMessage, with the durations its dialog offers; End Now through its poll actions |
 | Timestamp tags `<t:…:R>` | markdown rule | rendered as raw `<t:1731…:R>` | a | M | Easy win in web/src/markdown.ts. **done** (net-gaps): every style, relative ones moving on |
 | Markdown: masked links, headings, lists, subtext | client markdown rules | headings→bold, `-#`→small, lists, quotes, custom emoji | d | L | Numbered lists, nested lists and code highlighting look unchecked. **done** (net-gaps): numbered and nested lists; masked links checked. Code highlighting **not built**: a fence keeps its language only |
 | Role mentions | `mention_roles`, `<@&id>` | `mention_roles` not picked; `mentionsSelf` = by name or @everyone | a | H | A ping to a role you hold does not count as a mention, which matters for triage. Needs your roles (GuildMemberStore, self only). **done** (net-gaps): your roles from the snapshot and your own member updates; a ping to one is `mentionsSelf` |
@@ -64,36 +64,36 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 
 | Feature | Discord has | dither has | Class | Value | Notes |
 |---|---|---|---|---|---|
-| Pin / unpin a message | PIN (`/channels/{c}/messages/pins/{m}` put/del) | read (pin events, PlaceProfile pinned list, Unpin button); about.ts throws "Pinning is not supported on Discord yet" | b | M | Protocol `AboutChange {key:'pin'}` and UI exist; only the adapter refuses. client-path |
-| Pinned list fetch | PINS (`/messages/pins`), PINS_ACK | pins seen only as they happen or via loaded messages | d | M | A channel's existing pins are unknown until messages load |
+| Pin / unpin a message | PIN (`/channels/{c}/messages/pins/{m}` put/del) | read (pin events, PlaceProfile pinned list, Unpin button); about.ts throws "Pinning is not supported on Discord yet" | b | M | Protocol `AboutChange {key:'pin'}` and UI exist; only the adapter refuses. client-path **done** (net-gaps): the pin button's request through the client's REST helper (its pinMessage turns a refusal into a dialog in the page) |
+| Pinned list fetch | PINS (`/messages/pins`), PINS_ACK | pins seen only as they happen or via loaded messages | d | M | A channel's existing pins are unknown until messages load **done** (net-gaps): read when the About is opened, the popout's pages (up to 100), then acked as the popout does |
 | Mark unread | MESSAGE_ACK with `manual: true` | markRead only | a | M | Hub has "Later" but cannot push an unread state back to Discord **done** (net-gaps): Mark Unread in the message menu (hub `unread.ts`) sends a manual ack; one made in Discord comes back as `read` with `manual` and moves the hub's read point back |
 | Bulk ack | BULK_ACK (`/read-states/ack-bulk`) | markRead one channel at a time | d | L | The hub's paced mark-all queue could use one request **done** (net-gaps): the read queue sends up to 50 per request (`markReadMany`) through the client's BULK_ACK |
 | Read-state sync for non-channel things (forum unread, guild events, profile) | USER_NON_CHANNEL_ACK, PROFILE_READ_STATE, FORUM_UNREADS | none | a | L | **not built**: L, and no forum unreads, event or profile read state in the hub to sync |
-| Saved messages / bookmarks | GET_SAVED_MESSAGES, PUT/DELETE_SAVED_MESSAGE, GET_BOOKMARKS, SAVED_MESSAGE_CREATE/DELETE, SAVED_MESSAGES_UPDATE | none | a | M | Pull them in as hub-side "kept"/marks; two-way sync is cheap. client-path |
-| Reminders ("Remind me") | MESSAGE_REMINDER_DUE, saved-messages `due_at` | none (hub has its own Later) | a | M | Could map onto dither's Later both ways |
-| Scheduled messages | SCHEDULED_MESSAGES (+ _SEND, _UPDATE, _DELETE), SCHEDULED_MESSAGE_DRAFT_CHANGE | none | a | M | Send later, natively (survives the hub being down). A hub-side send-later would work on every network |
+| Saved messages / bookmarks | GET_SAVED_MESSAGES, PUT/DELETE_SAVED_MESSAGE, GET_BOOKMARKS, SAVED_MESSAGE_CREATE/DELETE, SAVED_MESSAGES_UPDATE | none | a | M | Pull them in as hub-side "kept"/marks; two-way sync is cheap. client-path **done** (net-gaps): read when the list opens, Save Message / Remove From Saved through the client's own functions; kept beside the hub's marks, not mapped onto them ([sending.md](../sending.md)) |
+| Reminders ("Remind me") | MESSAGE_REMINDER_DUE, saved-messages `due_at` | none (hub has its own Later) | a | M | Could map onto dither's Later both ways **done** (net-gaps): Remind Me in the message menu, a due reminder notifies like an alert; not mapped onto Catch up's Later, which lasts a session ([sending.md](../sending.md)) |
+| Scheduled messages | SCHEDULED_MESSAGES (+ _SEND, _UPDATE, _DELETE), SCHEDULED_MESSAGE_DRAFT_CHANGE | none | a | M | Send later, natively (survives the hub being down). A hub-side send-later would work on every network **done** (net-gaps): the hub's Send later on every network (held when more than 30 min late), Discord's own read into the same list and cancellable where its experiment offers them; creating natively not built ([sending.md](../sending.md)) |
 | Send voice message | RECORD_VOICE_MESSAGE, IS_VOICE_MESSAGE upload with waveform | files only | a | L | **done** (net-gaps): recorded in the composer, rewrapped as Ogg Opus, sent through the upload path with the flag, length and waveform ([media-kinds.md](../media-kinds.md)) |
 | Send stickers | STICKER_PACKS, `sticker_ids` on send | none | a | L | ROADMAP: later. **done** (net-gaps): a picker of what the client's stores hold and its own sendability rule allows, sent with MessageActions.sendStickers; packs it has not loaded are not fetched ([media-kinds.md](../media-kinds.md)) |
 | GIF picker | GIFS_SEARCH/TRENDING/SUGGEST (Tenor/Klipy) | none | a | L | Pasting a link already works. **not built**: the results' pictures come from Tenor's or Klipy's servers, which the hub or the page would then load too ([media-kinds.md](../media-kinds.md)) |
-| Silent send (@silent) | SUPPRESS_NOTIFICATIONS on send | none | a | L | One flag in the send payload |
-| Reply without ping | `allowed_mentions.replied_user` (SET_PENDING_REPLY_SHOULD_MENTION) | hook sends `messageReference` only, so every reply pings | d | M | A toggle in the composer; one field in sendMessage options |
-| Suppress embeds on own message | MESSAGE patch flags 4 | none | a | L | |
-| Publish (crosspost) in announcement channel | MESSAGE_CROSSPOST | none | a | L | |
-| Create thread from message / in channel | CHANNEL_MESSAGE_THREADS, CHANNEL_THREADS (post) | reads threads only | b | M | |
-| Create forum post (title + tags) | CHANNEL_THREADS with `applied_tags`, FORUM_TAGS | none | a | M | Forums are read-only in dither |
-| Join / leave a thread; thread notification setting | THREAD_MEMBER_SETTINGS, THREAD_MEMBERS_UPDATE, THREAD_MEMBER_UPDATE | not subscribed | a | M | Discord only notifies for joined threads; dither cannot follow one |
-| Archive/lock/rename thread | CHANNEL patch `archived`/`locked` | configure does name/topic/slowmode/nsfw on channels | d | L | |
+| Silent send (@silent) | SUPPRESS_NOTIFICATIONS on send | none | a | L | One flag in the send payload **done** (net-gaps): Send silently in the send menu, capability `silentSend` ([sending.md](../sending.md)) |
+| Reply without ping | `allowed_mentions.replied_user` (SET_PENDING_REPLY_SHOULD_MENTION) | hook sends `messageReference` only, so every reply pings | d | M | A toggle in the composer; one field in sendMessage options **done** (net-gaps): the reply bar's @ toggle, remembered per account, capability `replyMention` ([sending.md](../sending.md)) |
+| Suppress embeds on own message | MESSAGE patch flags 4 | none | a | L | **done** (net-gaps): Remove Embeds in the message menu ([sending.md](../sending.md)) |
+| Publish (crosspost) in announcement channel | MESSAGE_CROSSPOST | none | a | L | **done** (net-gaps): Publish on your own message, after a confirm; a published one is marked |
+| Create thread from message / in channel | CHANNEL_MESSAGE_THREADS, CHANNEL_THREADS (post) | reads threads only | b | M | **done** (net-gaps): Create Thread on a message, Start Thread in a channel, private ones too |
+| Create forum post (title + tags) | CHANNEL_THREADS with `applied_tags`, FORUM_TAGS | none | a | M | Forums are read-only in dither **done** (net-gaps): title, message, tags, files |
+| Join / leave a thread; thread notification setting | THREAD_MEMBER_SETTINGS, THREAD_MEMBERS_UPDATE, THREAD_MEMBER_UPDATE | not subscribed | a | M | Discord only notifies for joined threads; dither cannot follow one **done** (net-gaps): follow and unfollow, all/mentions/nothing and a mute; membership reaches triage as the thread's native mute |
+| Archive/lock/rename thread | CHANNEL patch `archived`/`locked` | configure does name/topic/slowmode/nsfw on channels | d | L | **done** (net-gaps): archive, unarchive, lock, unlock where a fresh About says so; rename as before |
 | Slash commands (bot apps) | APPLICATION_COMMAND_INDEX_CHANNEL/GUILD/USER, INTERACTIONS, opcode 24, APPLICATION_COMMAND_AUTOCOMPLETE_* | none; body `/foo` is sent as text | a | M | Big for bot-heavy servers. client-path via the client's own command executor; ToS-neutral as it is a user action |
 | Click a button / pick a select | INTERACTIONS (type 3), QUEUE_INTERACTION_COMPONENT_STATE | none | a | M | Needs components ingested first |
 | Modals from bots | INTERACTION_MODAL_CREATE, TEXT_INPUT, LABEL, FILE_UPLOAD | none | a | L | |
 | User-installed apps / context-menu commands | APPLICATION_COMMAND_INDEX_USER, type 23 | none | a | L | |
-| Report a message/user | REPORT_V2, GET_REPORT_MENU, SUBMIT_REPORT_MENU | none | a | L | Linking out to Discord is enough |
-| AI: translate, summarize thread, fix grammar, title | AI_TRANSLATE, AI_SUMMARIZE_THREAD, AI_FIX_GRAMMAR, AI_TEXT_TRANSFORM, AI_TITLE | none | a | L | The hub has local models; Discord's are gated and server-side |
-| Channel summaries ("conversations") | CHANNEL_SUMMARIES, CHANNEL_CONVERSATIONS (+ _MESSAGES), CONVERSATION_SUMMARY_UPDATE, RECEIVE_CHANNEL_SUMMARIES_BULK | none | a | M | Discord's own topic clustering of busy channels; could seed dither's catch-up for big servers. Gated per guild |
+| Report a message/user | REPORT_V2, GET_REPORT_MENU, SUBMIT_REPORT_MENU | none | a | L | Linking out to Discord is enough **done** (net-gaps): Report on Discord opens the message in Discord's app; no report request |
+| AI: translate, summarize thread, fix grammar, title | AI_TRANSLATE, AI_SUMMARIZE_THREAD, AI_FIX_GRAMMAR, AI_TEXT_TRANSFORM, AI_TITLE | none | a | L | The hub has local models; Discord's are gated and server-side **not built**: gated and server-side |
+| Channel summaries ("conversations") | CHANNEL_SUMMARIES, CHANNEL_CONVERSATIONS (+ _MESSAGES), CONVERSATION_SUMMARY_UPDATE, RECEIVE_CHANNEL_SUMMARIES_BULK | none | a | M | Discord's own topic clustering of busy channels; could seed dither's catch-up for big servers. Gated per guild **not built**: they come only when a channel is opened in Discord's own UI, behind a per-server gate |
 | Message edit while the hub thinks an older body | – | hub keeps edit log (message_event 'edit') | – | – | Not a gap |
-| Delete someone else's message (moderator) | MESSAGE del with MANAGE_MESSAGES | redact is own messages in UI? | d | L | Check whether the UI offers delete when the About says moderator |
-| Remove all reactions / one emoji (mod) | REMOVE_REACTIONS, REMOVE_EMOJI_REACTIONS | read only | b | L | |
-| Remove someone else's reaction (mod) | REACTION with user id | none | a | L | |
+| Delete someone else's message (moderator) | MESSAGE del with MANAGE_MESSAGES | redact is own messages in UI? | d | L | Check whether the UI offers delete when the About says moderator | **done** (net-gaps): Delete Message (Moderator) in the message menu where the reaction context says Manage Messages
+| Remove all reactions / one emoji (mod) | REMOVE_REACTIONS, REMOVE_EMOJI_REACTIONS | read only | b | L | | **done** (net-gaps): Remove Reactions in the message menu
+| Remove someone else's reaction (mod) | REACTION with user id | none | a | L | | **done** (net-gaps): a × by each person in the list of who reacted
 
 ## Mentions, inbox, notifications
 
@@ -104,7 +104,7 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 | ICYMI / guild feed / highlights | ICYMI, GUILD_FEED, LOAD_ICYMI_*, DISABLE_SERVER_HIGHLIGHT_NOTIFICATIONS | none | a | L | Discord's own ranking; dither has its own **not built**: Discord's own ranking; dither ranks its inbox itself |
 | Per-guild/channel notification level (all/mentions/none, suppress @everyone/roles, mobile push) | USER_GUILD_SETTINGS(_BULK), USER_GUILD_SETTINGS_* actions | mute + level read once at snapshot; no live updates; no write | b | M | Changes made in Discord after start are missed until restart (USER_GUILD_SETTINGS_* not forwarded). Writing would sync dither's mute back **done** (net-gaps): USER_GUILD_SETTINGS_* and the mute expiries forwarded, the changed places' facts again (`{}` clears); suppress @everyone/roles read into NativeMute (suppressEveryone lowers triage's would-notify); writing levels other than mute **not built** |
 | Mute channel/guild/DM with a timer | USER_GUILD_SETTINGS patch `mute_config`, CHANNEL_MUTE_EXPIRED | read only | b | M | Hiding in dither does not mute on Discord, so phone Discord still buzzes **done** (net-gaps): "Mute on Discord…" with Discord's timers on a place's About, through NotificationSettingsActions; dither's own Mute unchanged and separate; CHANNEL_MUTE_EXPIRED/GUILD_MUTE_EXPIRED handled |
-| Thread notification settings | THREAD_MEMBER_SETTINGS | none | a | L | **not built**: L; thread member flags live in a store the hook does not read, and active threads are not in the snapshot |
+| Thread notification settings | THREAD_MEMBER_SETTINGS | none | a | L | **not built**: L; thread member flags live in a store the hook does not read, and active threads are not in the snapshot **done** (net-gaps, discord-threads): see Join / leave a thread above |
 | Account-wide notification settings | ACCOUNT_NOTIFICATION_SETTINGS, …_DECLARATIVE_SETTINGS | none | a | L | **not built**: no hub surface for them; dither's own rules and quiet hours decide |
 | Message requests (DMs from non-friends) | MESSAGE_REQUESTS, MESSAGE_REQUEST_ACCEPT_OPTIMISTIC, CHANNEL_RECIPIENT_REJECT_BATCH, channel `is_message_request` | not distinguished; a request DM looks like any DM | a | H | dither may alert on strangers Discord itself hides. The hub already has a requests inbox (add.md) that could hold them; accept/reject is client-path **done** (net-gaps): `is_message_request` DMs are `message` RequestFacts (`message:<channel>`), held silent under Requests; Accept (consent_status 2), Decline (batch-reject) and Block through the client's request module or its REST helper |
 | Spam-filtered DMs | channel `is_spam`, `2021-12_inferno_spam_redaction` | not distinguished | a | M | Same as above **done** (net-gaps): `is_spam` DMs are message requests with `spam`: never notified, last under Requests, off the Requests row's count |
@@ -115,23 +115,23 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 
 | Feature | Discord has | dither has | Class | Value | Notes |
 |---|---|---|---|---|---|
-| Forum tags on posts | FORUM_TAGS, `applied_tags`, `available_tags` | not picked | a | M | Filters and labels in a forum view |
-| Forum post list with previews / sort | FORUM_POSTS (`/post-data`), LOAD_FORUM_POSTS, FORUM_SEARCH_* | threads listed (`threads` command), no first-message preview | d | M | |
-| Forum unread state | REQUEST_FORUM_UNREADS op 28, FORUM_UNREADS | none | a | L | |
-| Media channels (type 16) | GUILD_MEDIA | mapped | d | L | Gallery layout absent |
-| Thread members | THREAD_MEMBERS_UPDATE, THREAD_MEMBER_LIST_UPDATE | none | a | L | |
-| Private archived threads you are in | MY_ARCHIVED_THREADS | `threads` lists public archived via search | d | L | |
-| Voice text chat (text in voice channels) | type 2 channels carry messages | mapped as 'voice' conversation | d | M | Check the web UI shows the voice channel's chat |
-| Channel types 17–21 (lobby, DM_SDK, media thread, guild space, guild app) | ChannelTypes | not mapped | a | L | GUILD_SPACE/rooms are an experiment (`2026-06_guild_rooms`, GUILD_ROOM*) |
-| Announcement channel follow | CHANNEL_FOLLOWERS, CHANNEL_FOLLOWER_CREATED | none | a | L | |
-| Channel permission overwrites | CHANNEL_PERMISSIONS_OVERWRITE | read (canAll / everyoneDenies in About) | b | L | Moderator feature |
-| Channel create/delete/reorder, categories | GUILD_CHANNELS post/patch | none | a | L | ROADMAP: reorder later, low |
+| Forum tags on posts | FORUM_TAGS, `applied_tags`, `available_tags` | not picked | a | M | Filters and labels in a forum view **done** (net-gaps): a forum's tags and each post's, as chips, filter by tag, tags on a new post (threads.md) |
+| Forum post list with previews / sort | FORUM_POSTS (`/post-data`), LOAD_FORUM_POSTS, FORUM_SEARCH_* | threads listed (`threads` command), no first-message preview | d | M | **done** (net-gaps): each post's first message from Discord's thread search (and LOAD_FORUM_POSTS when the client loads them), latest activity or newest first (threads.md) |
+| Forum unread state | REQUEST_FORUM_UNREADS op 28, FORUM_UNREADS | none | a | L | **not built**: FORUM_UNREADS comes only when the client's own forum view asks, which the sandbox never shows; the hub's own per-post unread counts stand in |
+| Media channels (type 16) | GUILD_MEDIA | mapped | d | L | Gallery layout absent **done** (net-gaps): a gallery of each post's first picture |
+| Thread members | THREAD_MEMBERS_UPDATE, THREAD_MEMBER_LIST_UPDATE | none | a | L | **not built**: no member lists (owner's decision); only this account's own membership is read (THREAD_MEMBER(S)_UPDATE) |
+| Private archived threads you are in | MY_ARCHIVED_THREADS | `threads` lists public archived via search | d | L | **done** (net-gaps): `threads` with `mine`, the thread browser's Private tab |
+| Voice text chat (text in voice channels) | type 2 channels carry messages | mapped as 'voice' conversation | d | M | Check the web UI shows the voice channel's chat **done**: already shown with a message box (checked, net-gaps) |
+| Channel types 17–21 (lobby, DM_SDK, media thread, guild space, guild app) | ChannelTypes | not mapped | a | L | GUILD_SPACE/rooms are an experiment (`2026-06_guild_rooms`, GUILD_ROOM*) **done** (net-gaps): media thread a thread, DM_SDK a DM, lobby a group, space and app a channel |
+| Announcement channel follow | CHANNEL_FOLLOWERS, CHANNEL_FOLLOWER_CREATED | none | a | L | **not built**: following a channel into one of your servers is a server-admin act (L); Publish is built |
+| Channel permission overwrites | CHANNEL_PERMISSIONS_OVERWRITE | read (canAll / everyoneDenies in About) | b | L | Moderator feature **not built**: moderator tool (L) |
+| Channel create/delete/reorder, categories | GUILD_CHANNELS post/patch | none | a | L | ROADMAP: reorder later, low **not built**: moderator tool (L) |
 | Voice channel status ("playing X") | UPDATE_VOICE_CHANNEL_STATUS, VOICE_CHANNEL_STATUS_UPDATE | none | a | L | **done** (net-gaps): VOICE_CHANNEL_STATUS_UPDATE and CHANNEL_INFO, shown with the channel's people |
-| Webhooks | CHANNEL_WEBHOOKS, GUILD_WEBHOOKS, WEBHOOKS_UPDATE | none | a | L | |
-| Linked lobbies / game SDK DMs | CHANNEL_LINKED_LOBBY, DM_SDK 18, CHANNEL_LINKED_TO_LOBBY type 49 | none | a | L | |
-| Channel icons / emoji in channel names | CHANNEL_ICON | none | a | L | |
-| Group DM: change icon, transfer owner, remove member, leave | CHANNEL patch icon/owner, CHANNEL_RECIPIENT del, USER_CHANNELS_BULK_LEAVE | rename/topic yes; avatar refused (`PICTURE`); add members yes | d | M | Leave a group DM / kick from one: client-path |
-| Close DM / bulk leave | USER_CHANNELS_BULK_LEAVE, CHANNEL del | none | a | L | |
+| Webhooks | CHANNEL_WEBHOOKS, GUILD_WEBHOOKS, WEBHOOKS_UPDATE | none | a | L | **not built**: moderator tool (L) |
+| Linked lobbies / game SDK DMs | CHANNEL_LINKED_LOBBY, DM_SDK 18, CHANNEL_LINKED_TO_LOBBY type 49 | none | a | L | **not built**: only shown (types 17, 18 above), nothing of the lobby itself (L) |
+| Channel icons / emoji in channel names | CHANNEL_ICON | none | a | L | **not built**: L, not read |
+| Group DM: change icon, transfer owner, remove member, leave | CHANNEL patch icon/owner, CHANNEL_RECIPIENT del, USER_CHANNELS_BULK_LEAVE | rename/topic yes; avatar refused (`PICTURE`); add members yes | d | M | Leave a group DM / kick from one: client-path **done** (net-gaps): leave (silently, asked), remove someone and make owner (the owner, confirmed), change or remove the picture (threads.md) |
+| Close DM / bulk leave | USER_CHANNELS_BULK_LEAVE, CHANNEL del | none | a | L | **done** (net-gaps): Close on a DM (only hidden in Discord; the hub keeps it); bulk leave not built (no such screen here) |
 
 ## Voice, video, calls, streaming
 
@@ -183,19 +183,19 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 
 | Feature | Discord has | dither has | Class | Value | Notes |
 |---|---|---|---|---|---|
-| Kick / ban / timeout | GUILD_MEMBER del, GUILD_BAN, BULK_GUILD_BAN_V2, `communication_disabled_until` | none | a | L | Only matters if the user moderates |
-| Audit log | GUILD_AUDIT_LOG, GUILD_AUDIT_LOG_ENTRY_CREATE | none | a | L | |
-| AutoMod rules | GUILD_AUTOMOD_RULES, GUILD_AUTOMOD_ALERT_ACTION, AUTO_MODERATION_MENTION_RAID_DETECTION | none | a | L | |
-| Raid / incident actions | GUILD_INCIDENT_ACTIONS, types 36–39 | system lines | d | L | |
-| Roles: create/edit/assign | GUILD_ROLES, GUILD_ROLE, GUILD_ROLE_CREATE/UPDATE | role names read, role changes logged (`role` event) | b | L | |
+| Kick / ban / timeout | GUILD_MEMBER del, GUILD_BAN, BULK_GUILD_BAN_V2, `communication_disabled_until` | none | a | L | Only matters if the user moderates | **done** (net-gaps): Kick, Ban (with the dialog's delete-history choices), Unban from the Bans list, Time Out with Discord's durations, in a member's menu where the client says this account may (docs/moderation.md)
+| Audit log | GUILD_AUDIT_LOG, GUILD_AUDIT_LOG_ENTRY_CREATE | none | a | L | | **not built**: L, open Discord
+| AutoMod rules | GUILD_AUTOMOD_RULES, GUILD_AUTOMOD_ALERT_ACTION, AUTO_MODERATION_MENTION_RAID_DETECTION | none | a | L | | **not built**: L, open Discord
+| Raid / incident actions | GUILD_INCIDENT_ACTIONS, types 36–39 | system lines | d | L | | **not built**: L, open Discord
+| Roles: create/edit/assign | GUILD_ROLES, GUILD_ROLE, GUILD_ROLE_CREATE/UPDATE | role names read, role changes logged (`role` event) | b | L | | assign and remove **done** (net-gaps): Roles in a member's menu, below your top role, never managed roles; create/edit **not built** (open Discord)
 | Role member lists | GUILD_ROLE_MEMBER_IDS, GUILD_ROLE_MEMBER_COUNTS | none | a | – | **no**: active member scraping |
 | Member search / safety (mods) | GUILD_MEMBER_SEARCH, MEMBER_SAFETY_SUPPLEMENTAL, GUILD_MEMBERS_UNUSUAL_DM_ACTIVITY | walkMembers (op 8, explicit index job) | d | – | **no** beyond what exists: active scraping |
-| Prune | GUILD_PRUNE(_V2) | none | a | L | |
-| Emoji/sticker/soundboard management | GUILD_EMOJIS, GUILD_STICKER, GUILD_SOUNDBOARD_SOUND, EMOJI_UPLOAD_* | none | a | L | |
-| Server settings beyond name | GUILD patch (icon, banner, description, verification level, system channel, AFK…) | name only (PATCHABLE.guild) | d | L | |
-| Channel settings beyond name/topic/slowmode/nsfw | CHANNEL patch (default auto-archive, user limit, bitrate, region, tags, default reaction, sort) | name/topic/slowmode/nsfw | d | L | announceOnly and avatar refused |
-| Moderator reports / DSA | MODERATOR_REPORT_CLOSE, SUBMIT_MODERATOR_MESSAGE_REPORT, REPORT_TO_MOD_REOPEN | none | a | L | |
-| Integrations / bots in a server | GUILD_INTEGRATIONS, GUILD_APPLICATIONS | none | a | L | |
+| Prune | GUILD_PRUNE(_V2) | none | a | L | | **not built**: L, a batch action, open Discord
+| Emoji/sticker/soundboard management | GUILD_EMOJIS, GUILD_STICKER, GUILD_SOUNDBOARD_SOUND, EMOJI_UPLOAD_* | none | a | L | | **not built**: L, open Discord
+| Server settings beyond name | GUILD patch (icon, banner, description, verification level, system channel, AFK…) | name only (PATCHABLE.guild) | d | L | | **done** (net-gaps): description (Community servers) and icon; banner, verification, system channel, AFK **not built** (L)
+| Channel settings beyond name/topic/slowmode/nsfw | CHANNEL patch (default auto-archive, user limit, bitrate, region, tags, default reaction, sort) | name/topic/slowmode/nsfw | d | L | announceOnly and avatar refused | **done** (net-gaps): default auto-archive, user limit, bitrate (by boosts); region, tags, default reaction, sort **not built** (L)
+| Moderator reports / DSA | MODERATOR_REPORT_CLOSE, SUBMIT_MODERATOR_MESSAGE_REPORT, REPORT_TO_MOD_REOPEN | none | a | L | | **not built**: L, open Discord
+| Integrations / bots in a server | GUILD_INTEGRATIONS, GUILD_APPLICATIONS | none | a | L | | **not built**: L, open Discord
 
 ## People, friends, profiles
 
@@ -236,12 +236,12 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 
 | Feature | Discord has | dither has | Class | Value | Notes |
 |---|---|---|---|---|---|
-| Message search, DMs-wide | SEARCH_TABS_DMS (`/users/@me/messages/search/tabs`) | search scope conversation/space/all; "all" across DMs? | d | M | Discord now searches all DMs in one request; the adapter searches one place at a time |
-| Search tabs (messages/media/files/links/pins) | SEARCH_TABS_CHANNEL/GUILD/DMS | one result list | d | L | |
-| Smart search (AI) | SMART_SEARCH (`/guilds/{id}/intelligence/search`) | none | a | L | Gated |
-| Suggested/recent searches synced | SUGGESTED_SEARCHES | dither keeps its own | – | – | |
+| Message search, DMs-wide | SEARCH_TABS_DMS (`/users/@me/messages/search/tabs`) | search scope conversation/space/all; "all" across DMs? | d | M | Discord now searches all DMs in one request; the adapter searches one place at a time **not built**: the request is made by a chunk not among those read, so its body is unknown; the hub asks each DM |
+| Search tabs (messages/media/files/links/pins) | SEARCH_TABS_CHANNEL/GUILD/DMS | one result list | d | L | **not built**: as DMs-wide search |
+| Smart search (AI) | SMART_SEARCH (`/guilds/{id}/intelligence/search`) | none | a | L | Gated **not built**: gated |
+| Suggested/recent searches synced | SUGGESTED_SEARCHES | dither keeps its own | – | – | **not built**: dither keeps its own |
 | Thread search | THREAD_SEARCH | used by `threads` | – | – | Done |
-| GIF/sticker/emoji search | GIFS_SEARCH, EMOJI_PACKS, TOP_EMOJIS_FOR_GUILD | emoji complete in composer; custom emoji in reaction picker | d | L | TOP_EMOJIS_FOR_GUILD could order dither's picker |
+| GIF/sticker/emoji search | GIFS_SEARCH, EMOJI_PACKS, TOP_EMOJIS_FOR_GUILD | emoji complete in composer; custom emoji in reaction picker | d | L | TOP_EMOJIS_FOR_GUILD could order dither's picker **done** (net-gaps) for emoji: the reaction picker orders each server's emoji by TopEmojiStore, no request; GIFs and stickers are media-kinds' |
 | Quick switcher (Ctrl+K) | QUICKSWITCHER_* | dither has its own | – | – | Not a gap |
 
 ## Nitro, monetization, social extras (low value; listed for completeness)
@@ -266,7 +266,7 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 | Roles/members seen | `members` event gated by adversarial setting | – | – | Intended |
 | Presence | `presence` event → profile Activity | – | – | ROADMAP: next |
 | `reactors` list | adapter + protocol + web Reactions.tsx | – | – | Done |
-| `threads` command | hub index jobs only | c | L | Not offered as a "show archived threads" button in a channel |
+| `threads` command | hub index jobs only | c | L | Not offered as a "show archived threads" button in a channel **done** (net-gaps): Browse Threads and Show archived threads; the page names its threads (`ThreadsResult.ids`) |
 | Discord `mute` in ConversationFact | read at snapshot | d | M | The hub uses it for triage, but it never updates live (above) **done** (net-gaps): live through the settings actions above |
 
 ## Counts

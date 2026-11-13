@@ -94,6 +94,8 @@ import { noteSeen } from '../activity.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { ForwardCard, forwarding } from './Forward.tsx';
 import { InviteCards } from './InviteCard.tsx';
+import { PollCardLazy, PollMakerLazy } from './PollLazy.tsx';
+import { pollMaker } from '../polls.ts';
 import { AttachmentNote, ContactCards, MissingFiles, played, QuoteFallback, SendFailures, StoryReplyLine, withoutCardLines } from './MessageExtras.tsx';
 import { attachmentMenu, conversationMenu, identityMenu, imageMenu, linkMenu, messageMenu, openAttachment, personMenu } from './menus.tsx';
 import { fileFacts, fileIcon, fileKind, openFileViewer, VIEWABLE } from '../files.ts';
@@ -112,6 +114,8 @@ import { calendarOn } from '../plans.ts';
 import { PlanChipLazy } from './calendar/lazy.tsx';
 import { AltBadge, EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voice } from './rich/parts.tsx';
 import { VoicePeople } from './Ringing.tsx';
+import { ForumLazy } from './ThreadsLazy.tsx';
+import { ScheduledStrip, useSendExtras } from './SendExtras.tsx';
 
 
 // ------------------------------------------------------------------ header
@@ -703,7 +707,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           <>
             <RichHead m={m} />
             <StoryReplyLine m={m} />
-            <Body m={m.contacts ? withoutCardLines(m) : m} tail={ticks} />
+            {m.poll ? <PollCardLazy m={m} fallback={<Body m={m} />} /> : <Body m={m.contacts ? withoutCardLines(m) : m} tail={ticks} />}
             <Attachments m={m} />
             <MissingFiles m={m} />
             <ContactCards m={m} />
@@ -713,7 +717,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           </>
         )}
         <SendFailures m={m} />
-        {ticks && (!m.body || m.deleted) && <span class="msg-marks">{ticks}</span>}
+        {ticks && (!m.body || m.deleted || (m.poll && !m.forward)) && <span class="msg-marks">{ticks}</span>}
         {grouped && (m.editedTs || m.edits) && <Edited m={m} />}
         {grouped && (m.pinned || m.rich?.silent || m.rich?.marks) && (
           <span class="msg-marks">
@@ -1169,7 +1173,8 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       if (body !== m.body) void editMessage(m, body);
       return;
     }
-    send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id, files: files.map((f) => f.file), uploads: files.map((f) => f.job!), ...(viewOnce && offer.viewOnce && files.length ? { media: { viewOnce: true } } : {}) });
+    send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id, files: files.map((f) => f.file), uploads: files.map((f) => f.job!), ...extras.opts, ...(viewOnce && offer.viewOnce && files.length ? { media: { viewOnce: true } } : {}) });
+    extras.sent();
     composerDone();
     type('');
     att.clear(true);
@@ -1184,6 +1189,21 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   };
   const canSend = !((!text.trim() && !files.length) || !!disabledReason || (att.failed && !edit));
   const sendTitle = att.failed && !edit ? 'A file did not upload: try it again or remove it' : undefined;
+  // Reply without a ping, send silently, send later (SendExtras.tsx, docs/sending.md).
+  const extras = useSendExtras({
+    conv,
+    sender,
+    reply,
+    canSend,
+    blocked: !!edit || !!disabledReason,
+    draft: async () => ({ body: text.trim(), attachments: (await Promise.all(files.map((f) => f.job!.settle()))).map((u) => u.id) }),
+    done: () => {
+      composerDone();
+      type('');
+      att.clear(true);
+      clearReply();
+    },
+  });
   const onText = (v: string) => {
     type(v);
     // Editing a sent message is not typing a new one.
@@ -1191,6 +1211,14 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   };
   const limit = conv ? `up to ${ATTACHMENT_LIMITS[conv.network].bytes / 1024 / 1024} MB each` : '';
   const attaching = canAttach && !edit && !disabledReason;
+  // Making a poll (docs/polls.md): where an account here makes them, not in an open message request.
+  const [polling, setPolling] = useState(false);
+  const pollAccount = conv && !edit && !disabledReason ? pollMaker(targets.convId, sender?.id) : null;
+  const pollBtn = pollAccount && !onPhone && (
+    <button class="icon-btn poll-btn" data-track="poll" onClick={() => setPolling(true)} title="New poll" aria-label="New poll">
+      <Icon name="list" size={17} />
+    </button>
+  );
   const openCamera = () => {
     // No camera API at all: the system's camera, from this tap.
     if (!navigator.mediaDevices?.getUserMedia) return capture.current?.click();
@@ -1299,6 +1327,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
         void addFiles([...e.dataTransfer.files]);
       }}
     >
+      <ScheduledStrip conversationId={targets.convId} />
       {edit && (
         <div class="composer-reply">
           <Icon name="pencil" size={13} /> Editing your message
@@ -1311,6 +1340,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
         <div class="composer-reply">
           <Icon name="reply" size={13} /> Replying to <b>{isSelfIdentity(reply.authorId) ? 'yourself' : authorName(reply.authorId)}</b>
           <span>{plainBody(reply.body, reply.network).slice(0, 80)}</span>
+          {extras.replyToggle}
           <button class="icon-btn small" data-track="cancel reply" onClick={clearReply} aria-label="Cancel reply">
             <Icon name="x" size={13} />
           </button>
@@ -1389,6 +1419,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
               </button>
             )}
           </div>
+          {extras.button}
           {sendBtn}
         </div>
       ) : (
@@ -1398,6 +1429,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
               <Icon name="paperclip" size={17} />
             </button>
           )}
+          {pollBtn}
           {sendAsMenu}
           {lead ? (
             <div class={`pair-lead ${text ? 'raised' : ''}`}>
@@ -1409,6 +1441,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           )}
           {emojiBtn}
           {stickerBtn}
+          {extras.button}
           {sendBtn}
         </div>
       )}
@@ -1427,9 +1460,11 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           onClose={() => setSheet(false)}
           onPhotos={() => photos.current?.click()}
           onFile={() => picker.current?.click()}
+          onPoll={pollAccount ? () => setPolling(true) : undefined}
           {...(offer.viewOnce ? { onViewOnce: () => (setViewOnce(true), photos.current?.click()) } : {})}
         />
       )}
+      {polling && conv && <PollMakerLazy conversationId={targets.convId} network={conv.network} accountId={pollAccount?.id} onClose={() => setPolling(false)} />}
       {camera && (
         <CameraView
           onClose={() => setCamera(false)}
@@ -1477,22 +1512,6 @@ function firstUnread(convs: P.ConversationView[]): number | null {
   return ts.length ? Math.min(...ts) : null;
 }
 
-function ForumView({ c }: { c: P.ConversationView }) {
-  const posts = threadsOf(c.id);
-  return (
-    <div class="forum">
-      {c.topic && <p class="forum-topic">{c.topic}</p>}
-      {posts.length === 0 && <Empty icon="forum" title="No posts loaded" />}
-      {posts.map((t) => (
-        <button class="forum-post" onClick={() => openConv(t)}>
-          <b>{convTitle(t)}</b>
-          <span>{t.lastMessage ? `${authorName(t.lastMessage.authorId)}: ${plainBody(t.lastMessage.text, t.network)}` : ''}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
 /** Signal's conversations exist only from the first message on, which is worth saying while there is none. */
 function NotStartedNote({ c }: { c: P.ConversationView }) {
   if (c.network !== 'signal' || c.shape !== 'direct' || c.lastMessage) return null;
@@ -1527,8 +1546,9 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
     <section class="pane">
       <ConvHeader c={c} onBack={onBack} />
       {!held && c.pending && <LinkBanner c={c} />}
-      {c.variant === 'forum' ? (
-        <ForumView c={c} />
+      {/* A forum's or media channel's messages are its posts (ui/Threads.tsx, docs/threads.md). */}
+      {c.variant === 'forum' || c.variant === 'media' ? (
+        <ForumLazy c={c} />
       ) : (
         <>
           {voice && <div class="voice-note"><Icon name="voice" size={14} /> Voice isn't relayed. This shows the channel's text chat.</div>}
@@ -1540,7 +1560,7 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
       <TypingBar convIds={[c.id]} />
       {held ? (
         <RequestBar r={held} />
-      ) : (
+      ) : c.variant === 'forum' || c.variant === 'media' ? null : (
         <Composer
           targets={{ convId: c.id, accountId: sendAsValue }}
           placeholder={`Message ${c.shape === 'direct' ? convTitle(c) : convLabel(c)}`}

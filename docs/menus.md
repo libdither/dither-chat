@@ -36,10 +36,11 @@ One component draws them all (`packages/web/src/ui/ContextMenu.tsx`); what each 
 | Group | Items |
 |---|---|
 | Reactions | quick-reaction row (your 4 most used here), Add Reaction › (6 + Other Reactions…), View Reactions › (who reacted, per emoji) |
-| Actions | Edit Message **E** (own, where the network allows), Reply **R**, Forward **F**, Open Thread, Copy Text **C**, Copy Message Link |
+| Actions | Edit Message **E** (own, where the network allows), Reply **R**, Forward **F**, Pin Message › / Unpin Message (where the account can pin; Signal asks how long), End Poll (your own poll), Open Thread, Create Thread (in a text or announcement channel, [threads.md](threads.md)), Publish (your own, in an announcement channel), Copy Text **C**, Copy Message Link |
 | Going places | Go to Replied Message, Go to Original Message (forwards), Profile |
 | Marks | Should have alerted (on a message that alerted it reads Alert was wrong), Less like this |
 | Red | Delete Message **Del** (own, where the network allows) |
+| On Discord | Save Message or Remove From Saved, Remind Me (times, or Pick a Time…), Saved Messages; Remove Embeds (own, with previews); Report on Discord (others': opens it in Discord). Each where the account can ([sending.md](sending.md)) |
 | Developer | Copy Message ID (the network's), Copy dither-chat ID |
 
 Copy Message Link gives the network's own link where there is one (`discord.com/channels/…/…/…`,
@@ -52,8 +53,7 @@ place's. A mark teaches the next decision and leaves this message where it is. O
 reasons at the bottom of the sheet, not among the items. They replaced the four levels a message could be
 voted to.
 
-Left out: **Pin** and **Mark Unread** (no adapter command, and read state cannot go backwards on the networks
-here), **Create Thread**, **Apps**, **Speak Message**, **Report**. The hover bar gains Forward and a More (…)
+Left out: **Mark Unread** where read state cannot go backwards on the network, **Apps**, **Speak Message**, **Report**. The hover bar gains Forward and a More (…)
 button that opens this menu.
 
 ### A conversation or channel (sidebar rows, the channel tree, the header)
@@ -62,7 +62,9 @@ Mark As Read · Profile (DMs) · About This Channel (or Group, Chat: its setting
 members and who may change what, [group-settings.md](group-settings.md)) · Search in Channel · Copy Link ·
 Mute Channel and Notification Settings › (Automatic, Always alert, List only, Mute: the hub's own rules,
 [notifications.md](notifications.md#rules)) · Pin to Top, Add to Sidebar, Move Up/Down, Move to Folder › (with
-New Folder…), Take Out of folder, Hide · Copy Channel ID, Copy dither-chat ID.
+New Folder…), Take Out of folder, Hide · the thread entries where an account can ([threads.md](threads.md)):
+Follow Thread / Unfollow Thread and Thread Notifications › (a thread), Start Thread (a text or announcement channel),
+New Post (a forum or media channel), Browse Threads or Archived Posts · Copy Channel ID, Copy dither-chat ID.
 
 A person reached by several routes is one row in the inbox ([chats.md](chats.md)), and that row's menu acts on the
 whole chat: Mark As Read (every route) · Profile · Search in Chat · Copy Link · Mute Chat and Notification Settings ›

@@ -66,6 +66,7 @@ export function RichMarks({ m }: { m: P.MessageView }) {
       {k.ephemeral && <span class="rich-mark" title="Only you can see this message">Only you</span>}
       {k.official && <span class="rich-mark" title="An official message of this server">Official</span>}
       {k.hiddenSuspended && <span class="rich-mark" title="Its author's account is suspended">Suspended</span>}
+      {k.published && <span class="rich-mark" title="Published to the channels that follow this one">Published</span>}
     </>
   );
 }

@@ -12,6 +12,7 @@ import { Icon } from './icons.tsx';
 import { ContextMenuLayer } from './ContextMenu.tsx';
 import { TooltipLayer } from './Tooltip.tsx';
 import { ForwardLayer } from './Forward.tsx';
+import { SendingLayer } from './SendExtras.tsx';
 import { IndexLayer } from './Indexing.tsx';
 import { CatchUp } from './CatchUp.tsx';
 import { HowItSorts } from './HowItSorts.tsx';
@@ -21,6 +22,7 @@ import { ProfilePane } from './Profile.tsx';
 import { PlaceProfile } from './PlaceProfile.tsx';
 import { GraphPane } from './GraphPane.tsx';
 import { MessageHistoryLayer } from './MessageHistory.tsx';
+import { ThreadsLayerLazy } from './ThreadsLazy.tsx';
 import { Rail } from './Rail.tsx';
 import { TitleBar } from './TitleBar.tsx';
 import { FindShortcut, SearchPane } from './Search.tsx';
@@ -370,11 +372,13 @@ export function App() {
       <RingCards />
       <ReactionLayer />
       <MessageHistoryLayer />
+      <ThreadsLayerLazy />
       <Toasts />
       <DragLayer />
       <ContextMenuLayer />
       <TooltipLayer />
       <ForwardLayer />
+      <SendingLayer />
       <IndexLayer />
       <Palette />
       <FindShortcut />

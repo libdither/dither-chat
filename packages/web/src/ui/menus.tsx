@@ -16,6 +16,7 @@ import { phone } from '../phone.ts';
 import { mark } from '../triage.ts';
 import { desk, openLink } from '../desk.ts';
 import { pickerFor, quickReactions, reactionScope, reactorsFor, replacing, toggleReaction } from '../reactions.ts';
+import { clearReactions, moderatorDelete, modOf } from '../moderate.ts';
 import { api, canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
 import { messageSomeone, openPalette } from './Palette.tsx';
 import { hasHistory, historyOf } from './MessageHistory.tsx';
@@ -37,6 +38,9 @@ import { openAttachment, openWith, save } from './fileopen.tsx';
 import { fileKind, fileMime, openFileViewer, VIEWABLE } from '../files.ts';
 import { inviteRef } from '../invites.ts';
 import { installStickerLink, stickerInstaller } from './ComposerMedia.tsx';
+import { canEndPoll, endPoll, pin, pinChoices, pinnable } from '../polls.ts';
+import { threadConvEntries, threadMessageEntries } from '../threads.ts';
+import { sendingEntries } from './sendingMenu.tsx';
 
 export { openAttachment };
 
@@ -189,7 +193,11 @@ function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): M
       canEdit(m) && { label: 'Edit Message', icon: 'pencil', hint: 'E', track: 'edit', run: () => startEditing(m) },
       live && onReply && { label: 'Reply', icon: 'reply', hint: 'R', track: 'reply', run: onReply },
       forwardable(m) && { label: 'Forward', icon: 'forward', hint: 'F', track: 'forward', run: () => (forwarding.value = m) },
+      pinnable(m) && pinEntry(m),
+      canEndPoll(m) && { label: 'End Poll', icon: 'list', track: 'end poll', run: () => confirm('End this poll now? Nobody can vote after.') && void endPoll(m) },
       thread && { label: 'Open Thread', icon: 'thread', track: 'open thread', run: () => openConv(thread) },
+      // Create Thread, Publish (threads.ts).
+      ...threadMessageEntries(m),
       !!text.trim() && !m.deleted && m.kind !== 'encrypted' && { label: 'Copy Text', icon: 'copy', hint: 'C', track: 'copy text', run: () => copy(plainBody(text, m.network), 'Text copied') },
       { label: 'Copy Message Link', icon: 'link', track: 'copy link', run: () => copy(messageLink(m), 'Link copied') },
     ],
@@ -200,15 +208,48 @@ function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): M
       hasHistory(m) && { label: 'Message History', icon: 'clock', track: 'history', run: () => (historyOf.value = m) },
     ],
     [canMarkUnread(m, self) && { label: 'Mark Unread', icon: 'mail', track: 'mark unread', run: () => void markUnreadFrom(m) }],
+    // Saved on Discord, Remind Me, Remove Embeds, Report (sendingMenu.tsx, docs/sending.md).
+    sendingEntries(m),
     replyEntries(m),
     marks ? markEntries(m) : [],
     // Google Messages has no unsend: a delete only takes it off your phone.
     [canDelete(m) && { label: m.network === 'gmessages' ? 'Delete From Your Phone' : 'Delete Message', icon: 'trash', hint: 'Del', danger: true, track: 'delete', run: () => deleteMessage(m) }],
+    moderatorEntries(m),
     [
       { label: 'Copy Message ID', icon: 'idBadge', track: 'copy message id', run: () => copy(m.nativeId, 'Message ID copied') },
       { label: 'Copy dither-chat ID', icon: 'idBadge', track: 'copy dither-chat id', run: () => copy(m.id, 'ID copied') },
     ],
   );
+}
+
+/** Pin or Unpin (docs/polls.md "Pins"), with how long where the network's pins run out (Signal). */
+function pinEntry(m: P.MessageView): MenuEntry {
+  if (m.pinned) return { label: 'Unpin Message', icon: 'pin', track: 'unpin', run: () => void pin(m, true) };
+  const choices = pinChoices(m.network);
+  if (!choices.length) return { label: 'Pin Message', icon: 'pin', track: 'pin', run: () => void pin(m, false) };
+  return { label: 'Pin Message', icon: 'pin', track: 'pin', sub: choices.map((c): MenuEntry => ({ label: c.label, track: 'pin (duration)', run: () => void pin(m, false, c.seconds) })) };
+}
+
+/** Someone else's message where this account moderates (docs/moderation.md): delete it, take reactions off. */
+function moderatorEntries(m: P.MessageView): MenuEntry[] {
+  const mod = modOf(m);
+  if (!mod) return [];
+  const label = (r: P.ReactionView) => (r.emoji ? `:${r.emoji.name}:` : r.key.match(/^(.+):\d+$/) ? `:${r.key.split(':')[0]}:` : r.key);
+  return [
+    mod.delete && m.kind !== 'system' && { label: 'Delete Message (Moderator)', icon: 'trash', danger: true, track: 'mod delete', run: () => moderatorDelete(m) },
+    mod.reactions &&
+      m.reactions.length > 0 && {
+        label: 'Remove Reactions',
+        icon: 'smile',
+        danger: true,
+        track: 'mod reactions',
+        sub: [
+          { label: 'All Reactions', danger: true, track: 'mod reactions (all)', run: () => clearReactions(m) },
+          { kind: 'sep' },
+          ...m.reactions.filter((r) => r.style !== 'super').map((r): MenuEntry => ({ label: `Every ${label(r)}`, track: 'mod reactions (one)', run: () => clearReactions(m, r.key, undefined, label(r)) })),
+        ],
+      },
+  ].filter(Boolean) as MenuEntry[];
 }
 
 export function messageMenu(m: P.MessageView, onReply?: () => void): MenuSpec {
@@ -377,6 +418,8 @@ export function conversationMenu(c: P.ConversationView, why?: string[], owedSinc
         deviceEntries('conversation', c.id),
       ],
       c.shape !== 'thread' ? arrangeEntries(placeKey) : [],
+      // Follow a thread and how it notifies; start, post, browse threads (threads.ts).
+      threadConvEntries(c),
       [
         { label: `Copy ${channel ? 'Channel' : 'Chat'} ID`, icon: 'idBadge', run: () => copy(c.nativeId, 'ID copied') },
         { label: 'Copy dither-chat ID', icon: 'idBadge', run: () => copy(c.id, 'ID copied') },

@@ -2,9 +2,10 @@ import type { Server, ServerWebSocket, Socket, WebSocketHandler } from 'bun';
 import { createHmac } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type * as P from '@dither-chat/protocol';
 import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, parseCursor } from './chats.ts';
-import { ATTACHMENT_LIMITS, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, RETENTION_GUARDED, RULE_LEVELS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { ACCOUNT_COLORS, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
@@ -43,6 +44,8 @@ import { fetchPublicToFile } from './fetchsafe.ts';
 import { AboutError, Abouts } from './about.ts';
 import { Servers } from './servers.ts';
 import { Media, MediaError, sendMediaProblem } from './media.ts';
+import { Threads } from './threads.ts';
+import { Moderation } from './moderation.ts';
 import { asked, attempt, candidatesAttempt } from './attempts.ts';
 import { Groups } from './groups.ts';
 import { People } from './people.ts';
@@ -55,6 +58,9 @@ import { calendarOff, checkNotice, notifyAllowed, type CalendarLink } from './ca
 import { ReplyMarks, type ReplyMark } from './replymarks.ts';
 import { mailAttention } from './mail/attention.ts';
 import { callRoute } from './callstate.ts';
+import { handlesPolls, pollRoute } from './polls.ts';
+import { SendExtras } from './sendextras.ts';
+import { reminderWords } from './saved.ts';
 
 
 type ClientData = { kind: 'client' };
@@ -71,6 +77,10 @@ type SendBody = {
   voice?: P.VoiceOut;
   /** The files open once (Signal's view-once). */
   viewOnce?: boolean;
+  /** capability 'silentSend' (sending.ts) */
+  silent?: boolean;
+  /** capability 'replyMention' */
+  mentionReplied?: boolean;
 };
 /** A browser's live view, carried to the account's VNC socket here, or (remote accounts) to dither-accounts' socket for it. */
 type LiveViewData = { kind: 'liveview'; accountId: string; socket?: string; url?: string; vnc?: Socket<unknown>; up?: WebSocket; queue: Uint8Array[]; closed?: boolean };
@@ -124,6 +134,8 @@ export interface ServerOpts {
   calendar?: CalendarLink;
   /** A reminder from the calendar (POST /api/calendar/notify, loopback only). */
   onReminder?: (n: P.ReminderNotice) => Promise<P.ReminderResult>;
+  /** A reminder set on a network came due (saved.ts): main.ts notifies it like an alert. */
+  onSavedReminder?: (n: { title: string; body: string; conversationId: string; messageId: string }) => void;
 }
 
 // ------------------------------------------------------------------ access
@@ -236,6 +248,12 @@ export class HubServer {
   readonly servers: Servers;
   /** Sticker pages, installing packs, stories (media.ts, docs/media-kinds.md). */
   readonly kinds: Media;
+  /** Following threads, starting threads and posts, archiving, publishing, running a group (threads.ts, docs/threads.md). */
+  readonly threads: Threads;
+  /** Removing, banning, roles and timeouts, others' messages and reactions, member labels (moderation.ts, docs/moderation.md). */
+  readonly moderation: Moderation;
+  /** Send later, saved on the network, previews off (sendextras.ts, docs/sending.md). */
+  readonly sendExtras: SendExtras;
   /** Your marks on whether a message needs a reply (replymarks.ts). */
   private get marks(): ReplyMarks {
     return (this._marks ??= new ReplyMarks(this.store));
@@ -291,9 +309,51 @@ export class HubServer {
     // A note joined from yours and the network's goes back to the network (store.ts networkNotes).
     store.contactNotesOut = (id, change) => this.people.pushContactNotes(id, change);
     this.adding = new Adding({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), liveView: (a) => !!sup.liveViewUrl?.(a) || !!store.account(a)?.live_view });
+    this.threads = new Threads({
+      store,
+      online: (a) => sup.online(a),
+      command: (a, c, t) => sup.command(a, c, t),
+      pickAccount: (c, a) => this.pickAccount(c, a),
+      uploads: this.uploads,
+      note: (a, line) => sup.note(a, line),
+      flush: () => this.flush(),
+      aboutView: (k, i, n, a, ab) => this.abouts.view(k, i, n, a, ab, Date.now(), undefined, true),
+    });
+    this.moderation = new Moderation({
+      store,
+      online: (a) => sup.online(a),
+      command: (a, c, t) => sup.command(a, c, t),
+      pickAccount: (c, a) => this.pickAccount(c, a),
+      keep: (k, i, n, a, ab) => (this.abouts.keep(i, a, ab), this.abouts.view(k, i, n, a, ab, Date.now(), undefined, true)),
+      note: (a, line) => sup.note(a, line),
+      flush: () => this.flush(),
+    });
     this.servers = new Servers({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a), note: (a, line) => sup.note(a, line), flush: () => this.flush(), aboutView: (k, i, n, a, ab) => this.abouts.view(k, i, n, a, ab, Date.now(), undefined, true) });
     this.kinds = new Media({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a), flush: () => this.flush() });
     sup.calls = this.calls;
+    this.sendExtras = new SendExtras({
+      store,
+      online: (a) => sup.online(a),
+      command: (a, c, t) => sup.command(a, c, t) as Promise<any>,
+      send: (cid, b) => this.sendOnce(cid, b),
+      chatRoute: (chatId, b) => this.chatRoute(chatId, b),
+      pickAccount: (c, a) => this.pickAccount(c, a),
+      files: (ids) => this.uploads.names(ids),
+      dropFiles: (ids) => this.uploads.remove(ids),
+      broadcast: (evs) => this.broadcast(evs),
+      flush: () => this.flush(),
+      messages: (ids) => {
+        const views = store.messageViews(store.raw(`SELECT * FROM message WHERE id IN (SELECT value FROM json_each(?))`, JSON.stringify(ids)));
+        return { messages: views, identities: store.identitiesOf(views) };
+      },
+    });
+    // Files waiting to be sent later stay; a reminder that came due on a network notifies (saved.ts).
+    this.uploads.held = () => this.sendExtras.later.heldUploads();
+    store.reminderDue = (r) => {
+      const w = reminderWords(store.db, r);
+      const cid = w.conversationId;
+      if (cid) queueMicrotask(() => this.opts.onSavedReminder?.({ title: w.title, body: w.body, conversationId: cid, messageId: r.messageId }));
+    };
     this.clicks = new ClickCounts(store.db);
     this.usage = new UsageStore(store.db, (changed, removed, all) => {
       const a = this.opts.attention;
@@ -388,12 +448,14 @@ export class HubServer {
     this.mediaInfo.start();
     this.store.journal.prune();
     this.pruneTimer = setInterval(() => this.store.journal.prune(), 3_600_000);
+    this.sendExtras.later.start();
     return this.server;
   }
 
   stop() {
     clearInterval(this.flushTimer);
     clearInterval(this.pruneTimer);
+    this.sendExtras.later.stop();
     this.importer.stop();
     this.gapfill.stopAll();
     this.jobs.stop();
@@ -642,12 +704,23 @@ export class HubServer {
       const r = await callRoute({ store: s, online: (a) => this.sup.online(a), command: (a, c, t) => this.sup.command(a, c, t), flush: () => this.flush() }, req, url, path);
       if (r) return r;
     }
+    // Voting in polls, making them and ending them early (polls.ts, docs/polls.md).
+    if (handlesPolls(path)) {
+      const r = await pollRoute({ store: s, online: (a) => this.sup.online(a), command: (a, c, t) => this.sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a), flush: () => this.flush() }, req, path);
+      if (r) return r;
+    }
     // Joining and adding, and requests (add.ts).
     if (path === '/api/add' || path.startsWith('/api/add/') || path.startsWith('/api/requests') || path === '/api/people' || /^\/api\/people\/[\w-]+\/remove$/.test(path)) return (await this.adding.route(req, url, path))!;
     // An account's own self, block, ignore and notes (accountself.ts).
     if (path.startsWith('/api/self/')) return (await this.self.route(req, url, path))!;
     // Scheduled events, leaving, and what a space asks on joining (servers.ts).
     if (Servers.handles(path)) return (await this.servers.route(req, url, path))!;
+    // Following threads, starting threads and posts, archiving, publishing, running a group (threads.ts).
+    if (Threads.handles(path)) return (await this.threads.route(req, url, path))!;
+    // Moderating members, others' messages and reactions, member labels (moderation.ts).
+    if (Moderation.handles(path)) return (await this.moderation.route(req, url, path))!;
+    // Send later, saved on the network, previews off (sendextras.ts, docs/sending.md).
+    if (SendExtras.handles(path)) return (await this.sendExtras.route(req, url, path))!;
     // Reply marks (replymarks.ts, docs/inbox.md "Marks"): on a message, its mail twin, and on an inbox row.
     if ((m = path.match(/^\/api\/(mail\/)?messages\/([\w-]+)\/reply-mark$/)) && method === 'POST') {
       const b = await body<{ mark?: unknown; surface?: unknown; device?: unknown }>();
@@ -950,14 +1023,8 @@ export class HubServer {
       }
       if (m[2] === '/messages' && method === 'POST') {
         const b = await body<SendBody & { route?: { conversationId?: string; accountId?: string } }>();
-        const routes = chatRoutes(s, ref);
-        // Said by the sender; else a reply goes where the message it answers is; else the chat's route.
-        const asked = b.route ? routes.find((r) => r.conversationId === b.route!.conversationId && (!b.route!.accountId || r.accountId === b.route!.accountId)) : undefined;
-        if (b.route && !asked) return bad('that is not a route of this chat', 409);
-        const replied = !asked && b.replyTo ? s.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', b.replyTo) : null;
-        const replyRoute = replied ? routes.find((r) => r.conversationId === replied.conversation_id) : undefined;
-        const r = asked ?? replyRoute ?? defaultRoute(s, id, routes);
-        if (!r) return bad('nowhere to send this', 409);
+        const r = this.chatRoute(id, b);
+        if (typeof r === 'string') return bad(r, 409);
         const { route: _, ...rest } = b;
         return this.sendOnce(r.conversationId, { ...rest, accountId: r.accountId });
       }
@@ -990,7 +1057,20 @@ export class HubServer {
       try {
         if (method === 'POST') {
           const b = await body<{ change?: P.AboutChange; accountId?: string }>();
-          const v = await this.abouts.configure(kind, m[2], b.change as P.AboutChange, b.accountId);
+          // A new picture comes as an upload id (/api/uploads); the adapter gets the file as a file:// URL.
+          let upload: string | null = null;
+          let change = b.change as P.AboutChange;
+          if (change?.key === 'avatar') {
+            if (!req.headers.get('origin')) return bad('The picture is changed from the app itself', 403);
+            upload = typeof change.value === 'string' ? change.value : null;
+            const file = upload ? this.uploads.get([upload])?.[0] : undefined;
+            if (!file) return bad('avatar: an upload id');
+            if (!P_PICTURE_TYPES.includes(file.mime)) return bad('A picture is a PNG, JPEG, GIF or WebP image', 415);
+            if (file.size > P_PICTURE_MAX) return bad(`A picture is at most ${P_PICTURE_MAX / 1024 / 1024} MB`, 413);
+            change = { key: 'avatar', value: pathToFileURL(file.path).href };
+          }
+          const v = await this.abouts.configure(kind, m[2], change, b.accountId);
+          if (upload) this.uploads.remove([upload]);
           this.flush();
           return ok(v);
         }
@@ -1744,6 +1824,23 @@ export class HubServer {
     return bad('not found', 404);
   }
 
+  /**
+   * Where a send in a chat goes: the route the sender said; else a reply goes where the message it answers is; else
+   * the chat's route. An error sentence when there is none.
+   */
+  private chatRoute(chatId: string, b: { route?: { conversationId?: string; accountId?: string }; replyTo?: string }): { conversationId: string; accountId: string } | string {
+    const s = this.store;
+    const ref = chatRef(s, chatId);
+    if (!ref) return 'no such chat';
+    const routes = chatRoutes(s, ref);
+    const asked = b.route ? routes.find((r) => r.conversationId === b.route!.conversationId && (!b.route!.accountId || r.accountId === b.route!.accountId)) : undefined;
+    if (b.route && !asked) return 'that is not a route of this chat';
+    const replied = !asked && b.replyTo ? s.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', b.replyTo) : null;
+    const replyRoute = replied ? routes.find((r) => r.conversationId === replied.conversation_id) : undefined;
+    const r = asked ?? replyRoute ?? defaultRoute(s, chatIdOf(ref), routes);
+    return r ? { conversationId: r.conversationId, accountId: r.accountId } : 'nowhere to send this';
+  }
+
   /** Read up to a time, here and on the network through each account in it. */
   private readConversation(conversationId: string, upToTs: number) {
     const s = this.store;
@@ -1807,6 +1904,12 @@ export class HubServer {
       if (files.length > limit.files) return bad(`${name} takes ${limit.files} files at a time`, 413);
       if (files.some((f) => f.size > limit.bytes)) return bad(`${name} takes files up to ${limit.bytes / 1024 / 1024} MB`, 413);
     }
+    // Asked for, but not something this account does: refused rather than sent with a ping or a sound after all.
+    const can = accCaps;
+    if (b.silent === true && !can.includes('silentSend')) return bad(`${acc.label} cannot send silently on ${name}`, 409);
+    const noPing = b.mentionReplied === false && !!replyTo;
+    if (noPing && !can.includes('replyMention')) return bad(`${acc.label} cannot reply without a ping on ${name}`, 409);
+    const extras = { ...(b.silent === true ? { silent: true } : {}), ...(noPing ? { mentionReplied: false } : {}) };
     const media = sendMediaProblem({ sticker, files: files.length, voice: b.voice, viewOnce: b.viewOnce === true }, accCaps, `${acc.label} on ${name}`);
     if (media.error) return bad(media.error, 409);
     if (media.voice) files = files.map((f, i) => (i === 0 ? { ...f, voice: media.voice } : f));
@@ -1815,7 +1918,7 @@ export class HubServer {
     try {
       result = await this.sup.command(
         accountId,
-        { t: 'send', conversation: conv.nativeId, body: b.body ?? '', replyTo, ...(files.length ? { attachments: files } : {}), ...(preview ? { preview } : {}), ...(sticker ? { sticker } : {}), ...(media.viewOnce ? { viewOnce: true } : {}) },
+        { t: 'send', conversation: conv.nativeId, body: b.body ?? '', replyTo, ...(files.length ? { attachments: files } : {}), ...(preview ? { preview } : {}), ...(sticker ? { sticker } : {}), ...(media.viewOnce ? { viewOnce: true } : {}), ...extras },
         files.length ? 180_000 : undefined,
       );
     } finally {
