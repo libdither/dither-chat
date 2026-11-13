@@ -9,6 +9,7 @@
  * slice may go over SLICE_ROWS (a row read, or an example visited once) by more than one step. The answers are the
  * same as running the work straight through, to the last bit. The refit's real times are printed, not judged.
  */
+import { Database } from 'bun:sqlite';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,8 +17,11 @@ import { join } from 'node:path';
 import { ActivityStore } from '../src/activity.ts';
 import { DIMS, EmbeddingStore, Embeddings, fitProbe, fitProbeSteps, unit, type JevClient } from '../src/embeddings.ts';
 import { MediaArchiver } from '../src/mediaarchive.ts';
+import { BodyCache, storeBody } from '../src/mail/cache.ts';
+import { MailStore } from '../src/mail/store.ts';
+import type * as M from '@dither-chat/protocol/mail-iface';
 import { SLICE_ROWS, sliced, whole, type SliceOptions } from '../src/slices.ts';
-import { noteWork, pathShape, SLOW_WRITE_MS, StallWatch, timedWrite } from '../src/stalls.ts';
+import { noteWork, pathShape, SLOW_WRITE_MS, StallWatch, timedWork, timedWrite } from '../src/stalls.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
 import { SELF_SQL } from '../src/interact.ts';
@@ -542,6 +546,53 @@ describe("attention's rescore of everything", () => {
   });
 });
 
+describe("mail's body cache", () => {
+  /** A mail store with one account and `n` messages with bodies; `kept`: the account keeps all its mail. */
+  function mailWorld(n: number, kept: boolean) {
+    const T0 = Date.UTC(2026, 10, 1, 12);
+    const db = new Database(':memory:', { strict: true });
+    const st = new MailStore(db, () => T0 + 3_600_000);
+    st.keepAll = kept;
+    st.upsertAccount({ id: 'acc_cacheTest1', kind: 'imap', label: 'Mail', level: 'write', dryRun: false, online: true });
+    st.putMailboxes('acc_cacheTest1', [{ id: 'INBOX', name: 'Inbox', path: 'INBOX', parentId: null, role: 'inbox', unread: 0, total: n }]);
+    const box = st.mailboxByNative('acc_cacheTest1', 'INBOX')!;
+    const sums: M.MailSummary[] = Array.from({ length: n }, (_, i) => ({
+      id: `INBOX.1.${i}`, mailboxId: 'INBOX', messageId: `<m${i}@example.org>`, threadId: null, from: [{ name: 'Al', email: 'al@example.org' }],
+      to: [{ name: null, email: 'me@example.com' }], cc: [], subject: `Hello ${i}`, date: T0 + i, receivedAt: T0 + i,
+      flags: { seen: true, flagged: false, answered: false, draft: false }, labels: [], size: 100, preview: null, hasAttachments: false,
+    }) as M.MailSummary);
+    st.ingest('acc_cacheTest1', box, sums);
+    for (const m of sums) {
+      const id = st.one<{ id: string }>('SELECT message_id AS id FROM mail_location WHERE native_id = ?', m.id)!.id;
+      storeBody(st, id, { ...m, bcc: [], replyTo: [], inReplyTo: null, references: [], text: 'a body '.repeat(50), html: null, attachments: [] } as M.MailMessage);
+    }
+    // Every statement the cache prepares, to count what it reads.
+    const asked: string[] = [];
+    const query = db.query.bind(db);
+    (db as unknown as { query: typeof db.query }).query = ((sql: string) => (asked.push(sql), query(sql))) as typeof db.query;
+    return { st, db, asked };
+  }
+
+  test('finds the bodies too big to cache by an index, not by reading every body to its keep column', () => {
+    const { db } = mailWorld(3, true);
+    for (const sql of ['SELECT message_id FROM mail_body WHERE keep = -1 AND used_at < ?', 'DELETE FROM mail_body WHERE keep = -1 AND used_at < ?'])
+      expect((db.query(`EXPLAIN QUERY PLAN ${sql}`).all(0) as { detail: string }[]).map((r) => r.detail)).toEqual(['SEARCH mail_body USING INDEX mail_body_big (used_at<?)']);
+  });
+
+  test('when every account keeps all its mail, a sweep adds up no row; when one does not, it adds up as before', () => {
+    const kept = mailWorld(40, true);
+    kept.asked.length = 0;
+    expect(new BodyCache(kept.st).sweep()).toEqual({ bodies: [], text: 0 });
+    expect(kept.asked.filter((q) => /SUM\(/.test(q))).toEqual([]);
+    const capped = mailWorld(40, false);
+    capped.asked.length = 0;
+    const sizes = new BodyCache(capped.st).sizes();
+    expect(capped.asked.filter((q) => /SUM\(/.test(q)).length).toBe(2);
+    expect(sizes.bodies).toBe(capped.st.one<{ n: number }>('SELECT SUM(bytes) AS n FROM mail_body')!.n);
+    expect(sizes.text).toBe(capped.st.one<{ n: number }>('SELECT SUM(bytes) AS n FROM mail_text')!.n);
+  });
+});
+
 describe('the stall log', () => {
   test('a late timer is a stall, with the work that began in it; ten minutes on, one line sums them up', () => {
     const lines: string[] = [];
@@ -574,6 +625,9 @@ describe('the stall log', () => {
     expect(timedWrite('flush', () => ((t += SLOW_WRITE_MS - 1), 'quick'), (l) => lines.push(l), now)).toBe('quick');
     expect(timedWrite('adapter events (2)', () => ((t += 5600), 'slow'), (l) => lines.push(l), now)).toBe('slow');
     expect(lines).toEqual(['slow write: 5.6 s in one transaction (adapter events (2))']);
+    // Work that runs in one piece and is not a transaction of its own (mail's applies): the same, worded for it.
+    expect(timedWork('mail: 300 summaries', () => ((t += 700), 3), (l) => lines.push(l), now)).toBe(3);
+    expect(lines.at(-1)).toBe('slow: 700 ms in mail: 300 summaries');
   });
 
   test('paths without their ids', () => {

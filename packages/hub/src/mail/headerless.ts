@@ -20,6 +20,7 @@
  * this lists its mail with the labels already, so it is marked done as it comes.
  */
 import type * as M from '@dither-chat/protocol/mail-iface';
+import { timedWork } from '../stalls.ts';
 import { asMailError } from './backend.ts';
 import type { Bodies } from './bodies.ts';
 import type { MailHub } from './index.ts';
@@ -147,7 +148,7 @@ export class Headerless {
         const r: Page = await s.queue.run(P3, `relabel:${b.id}`, () => s.call<Page>('mail.list', { mailboxId: b.native_id, limit: MAIL_LIMITS.backfillPage, ...(before ? { before } : {}) }));
         const row = st.mailbox(b.id);
         if (!row) break;
-        s.stored(st.ingest(s.accountId, row, r.messages), false);
+        timedWork(`mail: ${r.messages.length} summaries (headers)`, () => s.stored(st.ingest(s.accountId, row, r.messages), false));
         listed += r.messages.length;
         next = r.next;
         if (!next || !r.messages.length || listed >= MAIL_LIMITS.relabelMax) break;

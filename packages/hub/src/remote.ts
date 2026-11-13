@@ -24,7 +24,7 @@ import { join, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { NETWORKS } from '@dither-chat/protocol';
 import { ACCOUNT_COLORS, type AccountRow } from './store.ts';
-import { noteWork } from './stalls.ts';
+import { noteWork, timedWork } from './stalls.ts';
 import { Supervisor } from './supervisor.ts';
 import type { MailSink } from './mail/backend.ts';
 
@@ -265,7 +265,7 @@ export class RoutedSupervisor extends Supervisor {
       onEvents: (account, events) => {
         noteWork(`adapter events (${events.length})`);
         try {
-          this.mail?.events(account, events);
+          if (this.mail) timedWork('mail: events', () => this.mail!.events(account, events));
         } catch (e) {
           // Mail catches up by itself (mail.changes); the chat events below must not wait on it.
           console.error(`[${account}] mail events failed:`, e);

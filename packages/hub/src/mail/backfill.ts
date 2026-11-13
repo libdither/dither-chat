@@ -28,6 +28,7 @@ import type * as P from '@dither-chat/protocol';
 import { mailboxList, parseMailList, viewList } from '@dither-chat/protocol';
 import type * as M from '@dither-chat/protocol/mail-iface';
 import { sleep } from '../clock.ts';
+import { timedWork } from '../stalls.ts';
 import { asMailError } from './backend.ts';
 import { Bodies } from './bodies.ts';
 import { BodyCache } from './cache.ts';
@@ -265,8 +266,11 @@ export class Backfill {
       list = list.filter((m) => m.receivedAt >= until);
       crossed = list.length < r.messages.length;
     }
-    const ing = this.store.ingest(this.s.accountId, row, list);
-    this.s.stored(ing, false);
+    const ing = timedWork(`mail: ${list.length} summaries (walk)`, () => {
+      const ing = this.store.ingest(this.s.accountId, row, list);
+      this.s.stored(ing, false);
+      return ing;
+    });
     const oldest = list.length ? Math.min(...list.map((m) => m.receivedAt)) : null;
     const horizon = oldest === null ? row.horizon : Math.min(oldest, row.horizon ?? oldest);
     if (crossed) {

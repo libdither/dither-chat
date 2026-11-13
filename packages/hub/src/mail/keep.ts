@@ -54,6 +54,7 @@ import type * as P from '@dither-chat/protocol';
 import { mailId } from '@dither-chat/protocol/ids';
 import type * as M from '@dither-chat/protocol/mail-iface';
 import { unref } from '../clock.ts';
+import { timedWork } from '../stalls.ts';
 import { asMailError } from './backend.ts';
 import { walkBoxes } from './backfill.ts';
 import { putText, storeBody, TEXT_KEPT } from './cache.ts';
@@ -454,7 +455,7 @@ export class Keeper {
         caught++;
         const hid = this.heldNative(accountId, m.id);
         if (hid) {
-          storeBody(this.store, hid, m);
+          timedWork('mail: a body (archive)', () => storeBody(this.store, hid, m));
           this.hub.emit('body', { messageId: hid });
         }
       }
@@ -476,8 +477,11 @@ export class Keeper {
     for (const [native, ms] of by) {
       const box = this.store.mailboxByNative(accountId, native);
       if (!box) continue;
-      const ing = this.store.ingest(accountId, box, ms);
-      s.stored(ing, false);
+      const ing = timedWork(`mail: ${ms.length} summaries (archive)`, () => {
+        const ing = this.store.ingest(accountId, box, ms);
+        s.stored(ing, false);
+        return ing;
+      });
       n += ing.added.length;
     }
     return n;
