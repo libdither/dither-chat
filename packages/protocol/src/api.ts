@@ -615,6 +615,34 @@ export interface PostThreadView {
   identities: IdentityView[];
 }
 
+/** Someone who liked or reposted a post, and why they are where they are in the list (GET /api/posts/:network/:id/reactors). */
+export interface ReactorView {
+  identityId: string;
+  /** 0 to 1: how much they are likely to matter to you (docs/feed.md "Who reacted"). The list is sorted by it. */
+  score: number;
+  /** What put them there, in words: "You talk often", "Follows you", "12K followers", "Liked 4 of your posts". */
+  why: string[];
+  followers?: number;
+  followsYou?: boolean;
+  following?: boolean;
+  /** When they did it, where known (from your notifications). */
+  ts?: number;
+}
+
+export interface ReactorsView {
+  network: Network;
+  post: string;
+  kind: 'like' | 'repost';
+  people: ReactorView[];
+  /** More from the network with this cursor. */
+  more: string | null;
+  /** 'network': asked (X ranks them too); 'notifications': the people your notifications named, when it could not be asked. */
+  from: 'network' | 'notifications';
+  /** Why the list is what it is, when it is not the network's whole list. */
+  note?: string;
+  identities: IdentityView[];
+}
+
 /** A forward, shown as a card with where it came from. */
 export interface ForwardView {
   /** The original, when this hub has it. */

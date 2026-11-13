@@ -46,7 +46,7 @@ import type { MailHub } from './mail/index.ts';
 import { mailPeople } from './mail/people.ts';
 import { Adding, profileLinksOf, requestHeld, requestViews } from './add.ts';
 import { feedRefusalFor, isFeed } from './feed.ts';
-import { Posts } from './posts.ts';
+import { Posts, PostsError } from './posts.ts';
 import { calendarOff, checkNotice, notifyAllowed, type CalendarLink } from './calendar.ts';
 import { ReplyMarks, type ReplyMark } from './replymarks.ts';
 import { mailAttention } from './mail/attention.ts';
@@ -891,6 +891,44 @@ export class HubServer {
         return ok(v);
       } catch (e) {
         return bad((e as Error).message, 502);
+      }
+    }
+    // Answering on a network with posts (posts.ts, docs/feed.md "Answering"): like, repost, post. Each is one press.
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/act$/)) && method === 'POST') {
+      const network = m[1] as P.Network;
+      if (!(network in NETWORK_META)) return bad('no such network', 404);
+      const b = await body<{ act?: unknown }>();
+      try {
+        const r = await this.posts.act(network, m[2], String(b.act ?? '') as P.PostAct);
+        this.flush();
+        return ok(r);
+      } catch (e) {
+        return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
+      }
+    }
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/publish$/)) && method === 'POST') {
+      const network = m[1] as P.Network;
+      if (!(network in NETWORK_META)) return bad('no such network', 404);
+      const b = await body<{ text?: unknown; replyTo?: unknown; quote?: unknown; key?: unknown }>();
+      try {
+        const v = await this.posts.publish(network, b);
+        this.flush();
+        return ok(v);
+      } catch (e) {
+        return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
+      }
+    }
+    // Who liked or reposted a post, ranked for you (reactors.ts).
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/reactors$/)) && method === 'GET') {
+      const network = m[1] as P.Network;
+      if (!(network in NETWORK_META)) return bad('no such network', 404);
+      const kind = url.searchParams.get('kind') === 'repost' ? 'repost' : 'like';
+      const cursor = url.searchParams.get('cursor') ?? undefined;
+      if (cursor && cursor.length > 2000) return bad('cursor: too long');
+      try {
+        return ok(await this.posts.reactors(network, m[2], kind, cursor));
+      } catch (e) {
+        return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
       }
     }
     // Who liked, reposted, replied to or quoted a post, from the feeds the hub holds: nothing is asked of the network.

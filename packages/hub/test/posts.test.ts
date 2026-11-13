@@ -13,7 +13,7 @@ import { postNativeId } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { DEMO_X_ACCOUNT, DemoX, X } from '../src/demo-x.ts';
 import { People } from '../src/people.ts';
-import { Posts } from '../src/posts.ts';
+import { Posts, PostsError } from '../src/posts.ts';
 import { HubServer, mediaSigner } from '../src/server.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
@@ -229,6 +229,94 @@ describe('a profile', () => {
   });
 });
 
+describe('answering (docs/feed.md "Answering")', () => {
+  const extraOf = (post: string) => JSON.parse(store.one<{ extra: string }>('SELECT extra FROM message WHERE id = ?', msgOf(post))!.extra).post as P.PostFact;
+
+  test('a like is one press: X is told, the logged post says you liked it and counts one more; unlike takes it back', async () => {
+    const posts = new Posts(deps());
+    const id = routingId();
+    const before = extraOf(id).counts!.likes!;
+    const r = await posts.act('x', id, 'like');
+    expect(sent.at(-1)).toMatchObject({ t: 'postAct', post: id, act: 'like' });
+    expect(r.viewer.liked).toBe(true);
+    expect(r.post!.viewer!.liked).toBe(true);
+    expect(extraOf(id).counts!.likes).toBe(before + 1);
+    // Pressed again while liked: still one more, not two.
+    await posts.act('x', id, 'like');
+    expect(extraOf(id).counts!.likes).toBe(before + 1);
+    await posts.act('x', id, 'unlike');
+    expect(extraOf(id)).toMatchObject({ viewer: { liked: false }, counts: { likes: before } });
+    await expect(posts.act('x', id, 'boost' as P.PostAct)).rejects.toThrow(/like, unlike/);
+  });
+
+  test('a reply is posted once per key, logged under what it answers, and comes with the thread', async () => {
+    const posts = new Posts(deps());
+    const id = routingId();
+    const n = sent.filter((c) => c.t === 'publish').length;
+    const [a, b] = await Promise.all([posts.publish('x', { text: 'Thanks all, write-up soon.', replyTo: id, key: 'k1' }), posts.publish('x', { text: 'Thanks all, write-up soon.', replyTo: id, key: 'k1' })]);
+    expect(a.id).toBe(b.id);
+    expect(sent.filter((c) => c.t === 'publish').length).toBe(n + 1);
+    expect(sent.filter((c) => c.t === 'publish').at(-1)).toMatchObject({ text: 'Thanks all, write-up soon.', replyTo: id });
+    expect(a.author).toBe(idn(X.self));
+    expect(a.messageId).toBe(msgOf(a.id));
+    expect(store.one<{ reply_to_id: string }>('SELECT reply_to_id FROM message WHERE id = ?', msgOf(a.id))!.reply_to_id).toBe(msgOf(id));
+    const t = await posts.thread('x', id);
+    expect([...t.replies.flat(), ...(t.logged ?? [])].some((p) => p.id === a.id)).toBe(true);
+  });
+
+  test("a quote names the post it quotes; a post too long by X's count, or empty, is refused and nothing is sent", async () => {
+    const posts = new Posts(deps());
+    const n = sent.length;
+    await expect(posts.publish('x', { text: 'a'.repeat(281) })).rejects.toMatchObject({ status: 422, message: expect.stringContaining('1 over') });
+    // CJK counts two: 141 characters is over.
+    await expect(posts.publish('x', { text: '語'.repeat(141) })).rejects.toBeInstanceOf(PostsError);
+    await expect(posts.publish('x', { text: '   ' })).rejects.toMatchObject({ status: 422 });
+    await expect(posts.publish('x', { text: 'hi', replyTo: 'abc' })).rejects.toMatchObject({ status: 400 });
+    expect(sent.length).toBe(n);
+    const q = await posts.publish('x', { text: 'Still the best summary.', quote: routingId() });
+    expect(sent.at(-1)).toMatchObject({ t: 'publish', quote: routingId() });
+    expect(q.quoteOf?.id).toBe(routingId());
+  });
+
+  test('who liked your post comes from X, ranked: who you know and who many follow first, with why', async () => {
+    const posts = new Posts(deps());
+    const v = await posts.reactors('x', routingId(), 'like');
+    expect(sent.at(-1)).toMatchObject({ t: 'postReactors', post: routingId(), kind: 'like' });
+    expect(v.from).toBe('network');
+    expect(v.people.length).toBe(8);
+    expect(v.more).toBe('r-1');
+    const scores = v.people.map((p) => p.score);
+    expect(scores).toEqual([...scores].sort((a, b) => b - a));
+    const big = v.people.find((p) => p.identityId === hubId('idn', 'x', '1600000000000158380'));
+    expect(big?.why).toContain('184K followers');
+    // Someone in your notifications who follows you outranks a stranger with few followers.
+    const ravi = v.people.findIndex((p) => p.identityId === idn(X.ravi));
+    expect(v.people[ravi].why).toContain('Follows you');
+    expect(v.identities.some((i) => i.id === idn(X.ravi))).toBe(true);
+    const page2 = await posts.reactors('x', routingId(), 'like', 'r-1');
+    expect(page2.people.length).toBeGreaterThan(0);
+    expect(page2.more).toBeNull();
+  });
+
+  test("someone else's post: X names its likers only to its author, so the list says so; without X it is your notifications", async () => {
+    const posts = new Posts(deps());
+    const ravi = store.messageViews([store.one<Record<string, any>>(`SELECT * FROM message WHERE native_id LIKE 'reply:%'`)!])[0].feed!.theirs!;
+    const v = await posts.reactors('x', ravi.id, 'like');
+    expect(v.people).toEqual([]);
+    expect(v.note).toMatch(/only to its author/);
+    online = false;
+    try {
+      const off = await posts.reactors('x', routingId(), 'like');
+      expect(off.from).toBe('notifications');
+      expect(off.people.map((p) => p.identityId).sort()).toEqual([X.theo, X.maya, X.quinn, X.ravi, X.alice].map(idn).sort());
+      expect(off.note).toMatch(/notifications named/);
+      await expect(posts.act('x', routingId(), 'like')).rejects.toMatchObject({ status: 409 });
+    } finally {
+      online = true;
+    }
+  });
+});
+
 describe('the hub', () => {
   let hub: HubServer;
   let port = 0;
@@ -247,6 +335,16 @@ describe('the hub', () => {
     port = hub.start().port!;
   });
   afterAll(() => hub.stop());
+
+  test('the answering routes refuse what is wrong before anything is sent', async () => {
+    const n = hubSent.length;
+    const post = (path: string, b: unknown) => req(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) });
+    expect((await post(`/api/posts/x/${routingId()}/act`, { act: 'boost' })).status).toBe(400);
+    expect((await post('/api/posts/x/publish', { text: 'a'.repeat(281) })).status).toBe(422);
+    expect((await post('/api/posts/x/publish', { text: '' })).status).toBe(422);
+    expect((await post('/api/posts/nowhere/publish', { text: 'hi' })).status).toBe(404);
+    expect(hubSent.length).toBe(n);
+  });
 
   test('GET /api/posts/x/:id/thread reads it; a bad id or network is refused', async () => {
     const res = await req(`/api/posts/x/${routingId()}/thread`);

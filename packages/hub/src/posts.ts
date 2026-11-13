@@ -7,9 +7,10 @@
  * no persons made for everyone in a thread, nothing sent to the network.
  */
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META, postIdOf, postNativeId } from '@dither-chat/protocol';
+import { composeState, NETWORK_META, POST_ACTS, postIdOf, postNativeId, postRulesFor } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { postAuthors, postView } from './feed.ts';
+import { rankReactors, type ReactorIn } from './reactors.ts';
 import type { AccountRow, Store } from './store.ts';
 
 type Row = Record<string, any>;
@@ -17,7 +18,15 @@ type Row = Record<string, any>;
 export interface PostsDeps {
   store: Store;
   online: (accountId: string) => boolean;
-  command: <T>(accountId: string, cmd: { t: 'post'; post: string; cursor?: string }, timeoutMs?: number) => Promise<T>;
+  command: <T>(
+    accountId: string,
+    cmd:
+      | { t: 'post'; post: string; cursor?: string }
+      | { t: 'postAct'; post: string; act: P.PostAct }
+      | { t: 'publish'; text: string; replyTo?: string; quote?: string }
+      | { t: 'postReactors'; post: string; kind: 'like' | 'repost'; cursor?: string },
+    timeoutMs?: number,
+  ) => Promise<T>;
   /** After posts were logged: devices hear of them. */
   changed?: () => void;
 }
@@ -55,6 +64,21 @@ function withInner(p: P.PostFact, out: { p: P.PostFact; inner: boolean }[] = [],
 const CACHE_MS = 2 * 60_000;
 /** The hub waits this long for X: the extractor paces its reads, and a read may wait behind a long history read. */
 const THREAD_TIMEOUT_MS = 150_000;
+
+/** Like, repost and posting wait this long for X (a write is not paced behind reads as long). */
+const WRITE_TIMEOUT_MS = 60_000;
+/** A post sent with the same key within this long is the same post: a second press or a retried request posts once. */
+const PUBLISH_DEDUPE_MS = 10 * 60_000;
+
+/** A refusal in words, with the HTTP status the route answers with. */
+export class PostsError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
 
 /** A post as its message: its words, the post it answers, its pictures as attachments, the post itself in `extra`. */
 export function postMessage(p: P.PostFact, conversation: string): P.MessageFact | null {
@@ -121,6 +145,164 @@ export class Posts {
     })();
     this.d.changed?.();
     return fresh;
+  }
+
+  /** A connected account of the network that can do this, else why not in words. */
+  private able(network: P.Network, cap: P.Capability, doing: string): string {
+    const s = this.d.store;
+    const net = NETWORK_META[network].name;
+    const all = (s.db.query('SELECT id FROM account WHERE network = ? AND enabled = 1 ORDER BY created_at').all(network) as Row[]).map((r) => r.id as string);
+    const ok = all.find((a) => this.d.online(a) && caps(s, a).includes(cap));
+    if (ok) return ok;
+    if (!all.length) throw new PostsError(`None of your accounts is on ${net}.`, 409);
+    if (!all.some((a) => this.d.online(a))) throw new PostsError(`${net} is not connected, so it cannot ${doing} now.`, 409);
+    throw new PostsError(`The ${net} adapter cannot ${doing} yet.`, 409);
+  }
+
+  /** The post as logged, if it is. */
+  private loggedPost(network: P.Network, post: string): P.PostFact | null {
+    const r = this.d.store.one<Row>('SELECT * FROM message WHERE id = ? AND deleted = 0', hubId('msg', network, postNativeId(post)));
+    return r ? this.postOf(r) : null;
+  }
+
+  private viewOf(network: P.Network, accountId: string, p: P.PostFact): P.PostView {
+    const s = this.d.store;
+    const shown = p.repostOf ?? p;
+    const m = s.one<Row>('SELECT id FROM message WHERE id = ?', hubId('msg', network, postNativeId(shown.id)));
+    return { ...postView(p, network, (u) => s.mediaUrl(u, accountId)), messageId: m?.id ?? null };
+  }
+
+  /**
+   * Like, repost, or take either back: the network's own button, pressed once (docs/feed.md "Answering"). The logged
+   * post follows: what you did to it, and its count by one. Returns the post as it stands.
+   */
+  async act(network: P.Network, post: string, act: P.PostAct): Promise<{ post: P.PostView | null; viewer: P.PostViewer }> {
+    if (!POST_ACTS.includes(act)) throw new PostsError('act: like, unlike, repost or unrepost', 400);
+    const rules = postRulesFor(network);
+    if (!rules || !(act.endsWith('like') ? rules.actions.like : rules.actions.repost)) throw new PostsError(`${NETWORK_META[network].name} has no ${act.replace(/^un/, '')} here.`, 409);
+    const accountId = this.able(network, 'postActions', act.replace(/^un/, ''));
+    let viewer: P.PostViewer;
+    try {
+      viewer = (await this.d.command<P.PostViewer>(accountId, { t: 'postAct', post, act }, WRITE_TIMEOUT_MS)) ?? {};
+    } catch (e) {
+      throw new PostsError((e as Error).message, 502);
+    }
+    const had = this.loggedPost(network, post);
+    if (!had) return { post: null, viewer };
+    const key = act.endsWith('like') ? 'liked' : 'reposted';
+    const on = !act.startsWith('un');
+    const was = !!had.viewer?.[key];
+    const now = viewer[key] ?? on;
+    const count = key === 'liked' ? 'likes' : 'reposts';
+    const counts = { ...had.counts, ...(had.counts?.[count] !== undefined && was !== now ? { [count]: Math.max(0, had.counts[count]! + (now ? 1 : -1)) } : {}) };
+    const next: P.PostFact = { ...had, counts, viewer: { ...had.viewer, ...viewer, [key]: now } };
+    this.log(accountId, [next]);
+    this.forget(network, post);
+    return { post: this.viewOf(network, accountId, next), viewer: next.viewer! };
+  }
+
+  private publishing = new Map<string, { at: number; p: Promise<P.PostView> }>();
+
+  /**
+   * Write a post: a reply (`replyTo`), a quote (`quote`) or a new one, checked against the network's rules first
+   * (compose.ts, the count the page shows). `key`, the page's id for this post: the same key again within ten minutes
+   * is answered with the first, so a double press or a retried request posts once. Logged as soon as it is made.
+   */
+  publish(network: P.Network, b: { text?: unknown; replyTo?: unknown; quote?: unknown; key?: unknown }): Promise<P.PostView> {
+    const key = typeof b.key === 'string' && b.key.length <= 100 ? `${network}:${b.key}` : null;
+    for (const [k, v] of this.publishing) if (Date.now() - v.at > PUBLISH_DEDUPE_MS) this.publishing.delete(k);
+    const had = key ? this.publishing.get(key) : null;
+    if (had) return had.p;
+    const p = this.write(network, b);
+    if (key) {
+      this.publishing.set(key, { at: Date.now(), p });
+      // A refusal or a failure posted nothing: the same key may try again.
+      p.catch(() => this.publishing.delete(key));
+    }
+    return p;
+  }
+
+  private async write(network: P.Network, b: { text?: unknown; replyTo?: unknown; quote?: unknown }): Promise<P.PostView> {
+    const rules = postRulesFor(network);
+    const net = NETWORK_META[network].name;
+    if (!rules) throw new PostsError(`${net} has no posts here.`, 409);
+    const text = typeof b.text === 'string' ? b.text : '';
+    const id = (v: unknown, what: string) => {
+      if (v === undefined || v === null || v === '') return undefined;
+      if (typeof v !== 'string' || !/^\d{1,25}$/.test(v)) throw new PostsError(`${what}: not a post`, 400);
+      return v;
+    };
+    const replyTo = id(b.replyTo, 'replyTo');
+    const quote = id(b.quote, 'quote');
+    if (replyTo && !rules.actions.reply) throw new PostsError(`${net} has no replies here.`, 409);
+    if (quote && !rules.actions.quote) throw new PostsError(`${net} has no quotes here.`, 409);
+    const st = composeState(text, rules);
+    if (!st.sendable) throw new PostsError(st.remaining < 0 ? `Too long: ${-st.remaining} over ${net}'s ${rules.maxLength}.` : 'Nothing to post.', 422);
+    const accountId = this.able(network, 'publish', 'post');
+    let made: P.PostFact;
+    try {
+      made = await this.d.command<P.PostFact>(accountId, { t: 'publish', text, ...(replyTo ? { replyTo } : {}), ...(quote ? { quote } : {}) }, WRITE_TIMEOUT_MS);
+    } catch (e) {
+      throw new PostsError((e as Error).message, 502);
+    }
+    if (!made?.id) throw new PostsError(`${net} did not say what it posted.`, 502);
+    // What it answers, as X may leave it out of the made post.
+    const p: P.PostFact = { ...made, ...(replyTo && !made.replyTo ? { replyTo: { id: replyTo } } : {}) };
+    this.log(accountId, [p]);
+    if (replyTo) this.forget(network, replyTo);
+    return this.viewOf(network, accountId, p);
+  }
+
+  /** A post's thread is read from X again next time (it changed). */
+  private forget(network: P.Network, post: string) {
+    this.recent.delete(`${network}:${post}:`);
+  }
+
+  /**
+   * Who liked or reposted a post, ranked for you (reactors.ts). From the network when an account can ask (X shows
+   * likers only to the post's author); else the people your notifications named.
+   */
+  async reactors(network: P.Network, post: string, kind: 'like' | 'repost', cursor?: string): Promise<P.ReactorsView> {
+    const s = this.d.store;
+    const net = NETWORK_META[network].name;
+    const rules = postRulesFor(network);
+    const accounts = (s.db.query('SELECT id FROM account WHERE network = ? AND enabled = 1 ORDER BY created_at').all(network) as Row[]).map((r) => r.id as string);
+    const accountId = accounts.find((a) => this.d.online(a) && caps(s, a).includes('postReactors')) ?? null;
+    const view = (people: ReactorIn[], more: string | null, from: P.ReactorsView['from'], note?: string): P.ReactorsView => {
+      const ranked = rankReactors(s, people);
+      return { network, post, kind, people: ranked, more, from, ...(note ? { note } : {}), identities: s.identitiesByIds(new Set(ranked.map((r) => r.identityId))) };
+    };
+    const notified = (): ReactorIn[] => {
+      const page = s.postActivity(network, post);
+      const seen = new Set<string>();
+      return page.messages
+        .filter((m) => m.feed?.type === kind && m.authorId && !seen.has(m.authorId) && (seen.add(m.authorId), true))
+        .map((m) => ({ identityId: m.authorId!, ts: m.ts }));
+    };
+    let why = '';
+    if (kind === 'like' && rules?.likersVisible === 'none') why = `${net} does not say who liked a post.`;
+    else if (!accountId) why = accounts.length ? `${net} cannot be asked now.` : `None of your accounts is on ${net}.`;
+    if (accountId && !why) {
+      try {
+        const page = await this.d.command<P.ReactorsPage>(accountId, { t: 'postReactors', post, kind, ...(cursor ? { cursor } : {}) }, THREAD_TIMEOUT_MS);
+        const when = new Map(notified().map((r) => [r.identityId, r.ts]));
+        const people = (page?.who ?? []).map((w): ReactorIn => {
+          const identityId = hubId('idn', network, w.id);
+          return { identityId, ...(w.followers !== undefined ? { followers: w.followers } : {}), ...(w.followsYou !== undefined ? { followsYou: w.followsYou } : {}), ...(w.following !== undefined ? { following: w.following } : {}), ...(when.get(identityId) ? { ts: when.get(identityId) } : {}) };
+        });
+        // An empty first page for a post that is not yours: X shows likers to the author only.
+        if (!people.length && !cursor && kind === 'like' && rules?.likersVisible === 'author') {
+          const n = notified();
+          return view(n, null, 'notifications', n.length ? undefined : `${net} shows who liked a post only to its author.`);
+        }
+        return view(people, page?.more && page.more !== cursor ? page.more : null, 'network');
+      } catch (e) {
+        if (cursor) throw new PostsError((e as Error).message, 502);
+        why = `Could not ask ${net}: ${(e as Error).message}`;
+      }
+    }
+    if (cursor) throw new PostsError(why, 409);
+    return view(notified(), null, 'notifications', `${why} These are the people your notifications named.`);
   }
 
   /** A post's thread: from the network when an account can ask (and logged), else what the hub logged. */

@@ -150,7 +150,7 @@ function postsOf(who: Who, epoch: number): P.PostFact[] {
  * it: its replies, each with the first answers under it as a chain of up to three, so the tree's other branches come
  * only by opening them. Any other post the demo knows answers with what it answers.
  */
-function threads(epoch: number) {
+function threads(epoch: number, made: readonly P.PostFact[] = []) {
   const me = X.self;
   const mine = yourPosts(epoch);
   const r = mine.routing;
@@ -179,7 +179,8 @@ function threads(epoch: number) {
   const wasm = under(49, me, 55, 'It is about 400 lines of Rust with no threads, so wasm should be easy. Want to try?', theo, { counts: { likes: 3 } });
   const theo2 = under(50, X.theo, 50, 'On it this weekend.', wasm, { counts: { likes: 2 } });
   const quinn = under(37, X.quinn, 65, 'Saving this for the weekend.', r, { counts: { likes: 1 } });
-  const tree = [cont1, cont2, raviIn, ans, ravi2, pulled, noraChurn, alice, tail, alice2, nora, land, nora2, lee, sam, maya2, lee2, maya, theo, wasm, theo2, quinn];
+  // What you posted here (a reply goes under what it answers).
+  const tree = [cont1, cont2, raviIn, ans, ravi2, pulled, noraChurn, alice, tail, alice2, nora, land, nora2, lee, sam, maya2, lee2, maya, theo, wasm, theo2, quinn, ...made];
   const kids = (id: string) => tree.filter((p) => p.replyTo?.id === id);
   // Each post's reply count is what is under it, as X counts it.
   for (const p of [r, ...tree]) p.counts = { ...p.counts, replies: kids(p.id).length };
@@ -211,8 +212,20 @@ function threads(epoch: number) {
     const replies = kids(id).sort((a, b) => Number(b.author === known.author) - Number(a.author === known.author));
     return { focal: known, ancestors, replies: replies.map(chain), more: null };
   };
-  return thread;
+  return Object.assign(thread, { known: (id: string) => all.find((p) => p.id === id) ?? [...Object.values(mine), ...feed(epoch).flatMap((x) => [x.item.post, x.item.theirs]), ...(Object.keys(X) as Who[]).flatMap((w) => postsOf(w, epoch))].find((p) => p?.id === id) ?? null });
 }
+
+/** People who liked or reposted your routing post beyond those in your notifications (X names them on asking). */
+const FANS = [
+  person(20, 'graphs_daily', 'Graphs Daily', '#3b5bdb'),
+  person(21, 'kenji_net', 'Kenji', '#2f9e44'),
+  person(22, 'p2p_paula', 'Paula', '#c2255c'),
+  person(23, 'dist_sys_digest', 'Distributed Systems Digest', '#5f3dc4'),
+  person(24, 'oscar_o', 'Oscar', '#e8590c'),
+  person(25, 'mesh_mira', 'Mira', '#0c8599'),
+  person(26, 'b_routing', 'Bea', '#862e9c'),
+];
+const FAN_FOLLOWERS = [184_000, 2_100, 640, 51_000, 90, 12_400, 310];
 
 /**
  * X, played: the feed conversation and its messages, profiles of the people in it, their posts on asking. Nothing
@@ -226,6 +239,10 @@ export class DemoX implements InprocAdapter {
   private refused: string[] = [];
   /** Every command that is not a read (action writeLog): what would have changed something on X, sent or not. */
   private writes: string[] = [];
+  /** What you did here: posts liked and reposted, and posts written. */
+  private liked = new Set<string>();
+  private reposted = new Set<string>();
+  private made: P.PostFact[] = [];
   private postLog: { post: string; cursor?: string; at: number }[] = [];
 
   constructor(
@@ -239,7 +256,7 @@ export class DemoX implements InprocAdapter {
     const marker = join(this.dir, 'seeded');
     const firstRun = !existsSync(marker);
     // No `connect` or `disconnect`: it cannot follow or unfollow, as the real extractor cannot yet.
-    emit({ t: 'hello', network: 'x', version: 'demo', capabilities: ['send', 'history', 'markRead', 'typing', 'react', 'profile', 'posts', 'openDirect'] });
+    emit({ t: 'hello', network: 'x', version: 'demo', capabilities: ['send', 'history', 'markRead', 'typing', 'react', 'profile', 'posts', 'postActions', 'publish', 'postReactors', 'openDirect'] });
     emit({ t: 'status', status: 'online', self: { ...X.self, isSelf: true } });
     // Identity facts first, then what X showed about each of them (their profile came with the notification).
     for (const [k, i] of Object.entries(X)) if (k !== 'self') emit({ t: 'identity', identity: i });
@@ -275,7 +292,7 @@ export class DemoX implements InprocAdapter {
   command(cmd: P.AdapterCommand) {
     const reply = (result?: unknown) => 'id' in cmd && this.emit({ t: 'reply', id: cmd.id, ok: true, result });
     const fail = (error: string) => 'id' in cmd && this.emit({ t: 'reply', id: cmd.id, ok: false, error });
-    if (cmd.t !== 'profile' && cmd.t !== 'post' && cmd.t !== 'history' && cmd.t !== 'action') this.writes.push(cmd.t);
+    if (cmd.t !== 'profile' && cmd.t !== 'post' && cmd.t !== 'postReactors' && cmd.t !== 'history' && cmd.t !== 'action') this.writes.push(cmd.t === 'postAct' ? `postAct:${cmd.act}` : cmd.t);
     switch (cmd.t) {
       case 'profile': {
         const who = this.whoOf(cmd.who);
@@ -286,8 +303,53 @@ export class DemoX implements InprocAdapter {
       }
       case 'post': {
         this.postLog.push({ post: cmd.post, ...(cmd.cursor ? { cursor: cmd.cursor } : {}), at: Date.now() });
-        const t = threads(this.epoch)(cmd.post, cmd.cursor);
-        return t ? reply(t satisfies P.PostThread) : fail('X did not give this post');
+        const t = threads(this.epoch, this.made)(cmd.post, cmd.cursor);
+        if (!t) return fail('X did not give this post');
+        const v = (p: P.PostFact) => this.viewed(p);
+        return reply({ ...t, ...(t.focal ? { focal: v(t.focal) } : {}), ancestors: t.ancestors.map(v), replies: t.replies.map((c) => c.map(v)) } satisfies P.PostThread);
+      }
+      case 'postAct': {
+        const on = !cmd.act.startsWith('un');
+        const set = cmd.act.endsWith('like') ? this.liked : this.reposted;
+        if (on) set.add(cmd.post);
+        else set.delete(cmd.post);
+        return reply({ liked: this.liked.has(cmd.post), reposted: this.reposted.has(cmd.post) } satisfies P.PostViewer);
+      }
+      case 'publish': {
+        const known = threads(this.epoch, this.made).known;
+        const to = cmd.replyTo ? known(cmd.replyTo) : null;
+        if (cmd.replyTo && !to) return fail('That post is gone');
+        const quoted = cmd.quote ? known(cmd.quote) : null;
+        const id = pid(2000 + this.made.length);
+        const p: P.PostFact = {
+          id,
+          url: url(X.self, id),
+          ts: Date.now(),
+          author: X.self.nativeId,
+          text: cmd.text,
+          ...(to ? { replyTo: { id: to.id, ...(to.author ? { author: to.author } : {}) }, root: to.root ?? to.id } : {}),
+          ...(quoted ? { quoteOf: quoted } : {}),
+          counts: { replies: 0, reposts: 0, likes: 0, views: 0 },
+        };
+        this.made.push(p);
+        return reply(p satisfies P.PostFact);
+      }
+      case 'postReactors': {
+        const known = threads(this.epoch, this.made).known(cmd.post);
+        if (!known) return fail('X did not give this post');
+        // X names who liked a post only to its author.
+        if (cmd.kind === 'like' && known.author !== X.self.nativeId) return reply({ who: [], more: null } satisfies P.ReactorsPage);
+        const fromFeed = feed(this.epoch).filter((x) => x.item.type === cmd.kind && x.item.post?.id === cmd.post).map((x) => X[x.who]);
+        const fans = known.id === yourPosts(this.epoch).routing.id ? (cmd.kind === 'like' ? FANS : FANS.slice(0, 2)) : [];
+        const all = [...fans.slice(0, 2), ...fromFeed, ...fans.slice(2)];
+        all.forEach((i) => this.emit({ t: 'identity', identity: i }));
+        const page = cmd.cursor === 'r-1' ? all.slice(8) : all.slice(0, 8);
+        const who = page.map((i) => {
+          const fan = FANS.indexOf(i);
+          const k = (Object.keys(X) as Who[]).find((w) => X[w] === i);
+          return { id: i.nativeId, followers: fan >= 0 ? FAN_FOLLOWERS[fan] : k ? BIO[k].followers : undefined, followsYou: k ? !!BIO[k].followsYou : false };
+        });
+        return reply({ who, more: !cmd.cursor && all.length > 8 ? 'r-1' : null } satisfies P.ReactorsPage);
       }
       case 'history':
         return reply({ count: 0, done: true } satisfies P.HistoryResult);
@@ -309,6 +371,15 @@ export class DemoX implements InprocAdapter {
       default:
         if ('id' in cmd) fail('the demo X account cannot do that');
     }
+  }
+
+  /** A post as you see it: what you did to it, and its counts with it. */
+  private viewed(p: P.PostFact): P.PostFact {
+    const liked = this.liked.has(p.id);
+    const reposted = this.reposted.has(p.id);
+    if (!liked && !reposted) return p;
+    const c = p.counts ?? {};
+    return { ...p, viewer: { liked, reposted }, counts: { ...c, likes: (c.likes ?? 0) + Number(liked), reposts: (c.reposts ?? 0) + Number(reposted) } };
   }
 
   stop() {}
