@@ -161,8 +161,12 @@ no one who reacted shows the count alone: the line opens no list.
   under "Replying to @handle", a quote with the quoted post inside. Each has its words with links, pictures, counts
   (replies, reposts, likes, views) and time. Someone with several X
   accounts has each account's under its handle.
-- **About** gains followers, following and posts counts and a **Follows you** tag.
-- **Feed actors' profiles** show what the hub logged (bio, counts, links, Follows you) at once, without asking.
+- **About** gains followers, following and posts counts, as facts about the account. Whether you follow them and they
+  follow you is a connection, in the hero's tags and **Connections** in the same words as a Discord friend or a
+  contact: following each other is **Friend**, else **You follow** or **Follows you** (with **Follow back**)
+  ([profile.md](profile.md#connections)). Until 2026-11-13 About carried a **Follows you** tag.
+- **Feed actors' profiles** show what the hub logged (bio, counts, links, how you follow each other) at once, without
+  asking.
   Asking X then brings their posts. Their feed items are in **Recent messages** ("X notifications", "Liked your post:
   “…”") and open the feed. The feed is not listed in **In common**.
 
@@ -248,7 +252,7 @@ baselines predate it.
 - `scripts/verify-x-feed.ts`: against a fresh demo hub in a real browser, on a desktop and a phone, dark and light,
   with screenshots (`--shots <dir>`). It checks the row, the feed by post (your post small, the reply under it, the
   reactions line, the list of who liked and reposted it, the quote, the mention, the follows), Replies and mentions,
-  the bar, nothing sent to X, a profile's posts, counts and Follows you, and the decisions.
+  the bar, nothing sent to X, a profile's posts, counts and that you follow each other, and the decisions.
 - `packages/hub/test/posts.test.ts` also checks `GET /api/posts/:network/:post/activity`.
 
 Not run against a real X account.

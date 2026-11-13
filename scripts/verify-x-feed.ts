@@ -10,7 +10,7 @@
  * a quote and a mention with their words and pictures, your post quoted with a thumbnail); no composer, a bar with
  * Open on X; reading it marks it read on the hub and sends X no read mark, no typing and nothing else; sends there
  * are refused; likes never notify and the reply is a silent row on the list; a name opens the profile, which shows
- * their bio, follow counts, Follows you, and Recent posts (pinned, a repost, a reply, a quote) from asking X.
+ * their bio, follow counts, that you follow each other, and Recent posts (pinned, a repost, a reply, a quote) from asking X.
  */
 import { mkdirSync, mkdtempSync, openSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -183,11 +183,14 @@ try {
     replying: [...document.querySelectorAll('.pf-posts .post-mark')].some((m) => m.textContent.includes('Replying to')),
     quote: !!document.querySelector('.pf-posts .post-item .post-quoted'),
     counts: document.querySelector('.pf-follow')?.textContent ?? '',
+    connections: document.querySelector('.pf-standing')?.textContent ?? '',
+    tags: [...document.querySelectorAll('.pf-tag[data-kind]')].map((t) => t.dataset.kind),
     bio: document.querySelector('.pf-bio')?.textContent ?? '',
     recent: [...document.querySelectorAll('.pf-msg')].map((m) => m.textContent),
   }))()`);
   check('a name in the list of who liked it opens their profile, with Recent posts from X', prof.posts >= 4 && prof.pinned && prof.repost && prof.replying && prof.quote, prof);
-  check('…their bio, follow counts and Follows you', /Distributed systems/.test(prof.bio) && /2,310 followers/.test(prof.counts) && /512 following/.test(prof.counts) && /Follows you/.test(prof.counts), { bio: prof.bio, counts: prof.counts });
+  // Following each other is a connection (docs/profile.md "Connections"); the counts stay facts in About.
+  check('…their bio, follow counts, and that you follow each other', /Distributed systems/.test(prof.bio) && /2,310 followers/.test(prof.counts) && /512 following/.test(prof.counts) && /You follow each other on X/.test(prof.connections) && prof.tags.includes('friend'), { bio: prof.bio, counts: prof.counts, connections: prof.connections, tags: prof.tags });
   check('…and what they did in Recent messages', prof.recent.some((t: string) => /X notifications/.test(t) && /Liked your post/.test(t)), prof.recent);
   if (shots) await page.shot(join(shots, 'x-profile-desktop.png'));
 

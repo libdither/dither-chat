@@ -122,7 +122,8 @@ function aboutOf(who: Who): P.PersonAbout {
     bio: b.bio,
     createdAt: Date.UTC(2014 + (Number(i.nativeId.slice(-2)) % 9), Number(i.nativeId.slice(-3, -1)) % 12, 3),
     counts: { followers: b.followers, following: b.following, posts: b.posts },
-    ...(who === 'self' ? {} : { followsYou: !!b.followsYou, relationship: who === 'alice' || who === 'nora' ? ('following' as const) : ('stranger' as const) }),
+    // You follow Alice and Nora, who follow you back (Friends, docs/profile.md "Connections"), and Quinn, who does not.
+    ...(who === 'self' ? {} : { followsYou: !!b.followsYou, relationship: who === 'alice' || who === 'nora' || who === 'quinn' ? ('following' as const) : ('stranger' as const) }),
     links: [{ label: 'Website', value: `${i.handle}.example`, url: `https://${i.handle}.example` }],
   };
 }

@@ -116,7 +116,9 @@ describe('the lists', () => {
   });
 
   test('GET /api/people: by relationship and by account, by name, with the identities to draw them', async () => {
-    const all = (await call('GET', '/api/people?relationship=friend')).json as P.PeopleLinksView;
+    const both = (await call('GET', '/api/people?relationship=friend')).json as P.PeopleLinksView;
+    // The X accounts you follow each other with come too (below); the lists' friends here.
+    const all = { ...both, links: both.links.filter((l) => l.from !== 'profile') };
     expect(all.links.every((l) => l.relationship === 'friend')).toBe(true);
     expect(new Set(all.links.map((l) => l.accountId))).toEqual(new Set([MAIN, ALT]));
     const names = all.links.filter((l) => l.accountId === MAIN).map((l) => all.identities.find((i) => i.id === l.identityId)!.displayName);
@@ -125,9 +127,36 @@ describe('the lists', () => {
     expect(all.links.find((l) => l.identityId === idn('discord', 'alice.chen').id)!.personId).toStartWith('per_');
     const contacts = (await call('GET', `/api/people?relationship=contact&account=${TG}`)).json as P.PeopleLinksView;
     expect(contacts.links.map((l) => l.accountId)).toEqual([TG, TG]);
-    expect((await call('GET', `/api/people?relationship=following`)).json.links).toEqual([]);
+    expect(((await call('GET', `/api/people?relationship=following`)).json as P.PeopleLinksView).links.filter((l) => l.from !== 'profile')).toEqual([]);
     expect((await call('GET', '/api/people?relationship=requesting')).status).toBe(400);
     expect(((await call('GET', '/api/people')).json as P.PeopleLinksView).links.length).toBeGreaterThan(all.links.length);
+  });
+
+  test("follows from an account's kept profiles (X has no list): Following has them, Friends those who follow back; a list wins", async () => {
+    const X = 'acc_demo-x';
+    const nora = idn('x', 'nora_on_nets');
+    const quinn = idn('x', 'quinnwrites');
+    const ravi = idn('x', 'ravi_routes');
+    const friends = ((await call('GET', '/api/people?relationship=friend')).json as P.PeopleLinksView).links.filter((l) => l.accountId === X);
+    expect(friends.map((l) => l.identityId).sort()).toEqual([idn('x', 'alicechen_dev').id, nora.id].sort());
+    expect(friends.every((l) => l.relationship === 'following' && l.followsYou && l.from === 'profile' && typeof l.seenAt === 'number' && l.since === null)).toBe(true);
+    const following = ((await call('GET', `/api/people?relationship=following&account=${X}`)).json as P.PeopleLinksView).links;
+    expect(following.map((l) => [l.identityId, !!l.followsYou]).sort()).toEqual([[idn('x', 'alicechen_dev').id, true], [nora.id, true], [quinn.id, false]].sort());
+    // Ravi follows you and you do not follow him: a follower is no list entry.
+    expect(following.some((l) => l.identityId === ravi.id)).toBe(false);
+    expect(((await call('GET', `/api/people?relationship=contact`)).json as P.PeopleLinksView).links.some((l) => l.accountId === X)).toBe(false);
+    // Once the account keeps a list, the list says how you stand; its profile says only that they follow back.
+    const acc = store.account(X)!;
+    store.ingest(acc, { t: 'relationship', fact: { identity: nora.native_id, relationship: 'following', since: 7 } });
+    store.ingest(acc, { t: 'relationship', fact: { identity: quinn.native_id, relationship: 'blocked' } });
+    const after = ((await call('GET', `/api/people?account=${X}`)).json as P.PeopleLinksView).links;
+    expect(after.filter((l) => l.identityId === nora.id)).toEqual([{ accountId: X, identityId: nora.id, personId: expect.any(String), relationship: 'following', since: 7, followsYou: true }]);
+    expect(after.filter((l) => l.identityId === quinn.id).map((l) => l.relationship)).toEqual(['blocked']);
+    const mutual = ((await call('GET', `/api/people?relationship=friend&account=${X}`)).json as P.PeopleLinksView).links;
+    expect(mutual.find((l) => l.identityId === nora.id)).toMatchObject({ relationship: 'following', followsYou: true, since: 7 });
+    expect(mutual.find((l) => l.identityId === nora.id)!.from).toBeUndefined();
+    store.ingest(acc, { t: 'relationship', fact: { identity: nora.native_id, relationship: 'stranger' } });
+    store.ingest(acc, { t: 'relationship', fact: { identity: quinn.native_id, relationship: 'stranger' } });
   });
 
   test("a profile's relationship comes from the list when the account has them on it", () => {

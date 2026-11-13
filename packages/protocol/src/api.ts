@@ -202,9 +202,25 @@ export interface PersonLinkView {
   relationship: LinkRelationship;
   /** ms epoch, when the network said. */
   since: number | null;
+  /**
+   * They follow this account back, as its last profile of them said (X). With `relationship: 'following'`, you follow
+   * each other: People's Friends has them (docs/profile.md "Connections").
+   */
+  followsYou?: true;
+  /**
+   * Not from the account's list but from what its last profile of them said (an account with no list, such as X):
+   * as of then, not kept up to date. `since` is null; `seenAt` says when the profile said it.
+   */
+  from?: 'profile';
+  /** ms epoch, with `from: 'profile'`. */
+  seenAt?: number;
 }
 
-/** GET /api/people?relationship=friend&account=acc_…: who is on your accounts' lists, newest first. */
+/**
+ * GET /api/people?relationship=friend&account=acc_…: who is on your accounts' lists, newest first. Follows come from
+ * the accounts' lists and also from their kept profiles (`from: 'profile'`), and `friend` includes accounts that
+ * follow each other (`relationship: 'following'`, `followsYou`).
+ */
 export interface PeopleLinksView {
   links: PersonLinkView[];
   identities: IdentityView[];

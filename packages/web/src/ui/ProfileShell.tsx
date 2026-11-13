@@ -102,9 +102,10 @@ export function Card({ title, icon, count, extra, children, class: cls }: { titl
   );
 }
 
-export function Tag({ icon, children, tone, title }: { icon?: string; children: ComponentChildren; tone?: 'accent' | 'warn' | 'muted'; title?: string }) {
+/** A tag under the hero's name. `kind`: its data-kind, for scripts (a connection's kind, connections.ts). */
+export function Tag({ icon, children, tone, title, kind }: { icon?: string; children: ComponentChildren; tone?: 'accent' | 'warn' | 'muted'; title?: string; kind?: string }) {
   return (
-    <span class={`pf-tag ${tone ?? ''}`} title={title}>
+    <span class={`pf-tag ${tone ?? ''}`} title={title} data-kind={kind}>
       {icon && <Icon name={icon} size={11} />}
       {children}
     </span>

@@ -5,6 +5,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { RELATIONSHIP_LABEL, withList } from '@dither-chat/protocol';
+import { connections, connectionTags, type Connection } from '../connections.ts';
 import { useEffect, useState } from 'preact/hooks';
 import { ago, fullTime } from '../format.ts';
 import { bioEditor, bioLeft } from '../bio.ts';
@@ -13,7 +14,6 @@ import { composeTo } from '../mail/people.ts';
 import { senderLine } from '../mail/model.ts';
 import { countText, countTitle } from '../msgcount.ts';
 import { communitiesOf, convLabel, convTitle, directsOf, externalProfile, identityName, kindLabel, netName, bioText, plainBody, rootCommunity } from '../model.ts';
-import { profileLinks } from '../requests.ts';
 import { api, db, go, isSelfIdentity, openMessage, openProfile, rev, setRule, toast } from '../state.ts';
 import { messageSomeone } from './Palette.tsx';
 import { Avatar, Empty, Linked, NetBadge, NetGlyph } from './bits.tsx';
@@ -25,7 +25,7 @@ import { ActivityCard } from './ActivityCard.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
 import { identityMenu, personMenu } from './menus.tsx';
 import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, Tag } from './ProfileShell.tsx';
-import { ConnectActions, ProfileLinks } from './Requests.tsx';
+import { ConnectActions, ProfileConnections } from './Requests.tsx';
 import { openConv } from './Sidebar.tsx';
 import { Loading } from './Loader.tsx';
 import { RecentPostsLazy } from './feed/lazy.tsx';
@@ -262,12 +262,15 @@ function OwnBio({ identity, about, account, label, onSaved }: { identity: P.Iden
   );
 }
 
-/** How each of your accounts stands with them, from the accounts' own lists, with Remove friend and the like. */
-function ProfileLinksCard({ ids, links, abouts, onEnded }: { ids: P.IdentityView[]; links: P.PersonLinkView[]; abouts: Record<string, P.PersonAboutView | undefined>; onEnded: (identityId: string, accountId: string) => void }) {
-  if (!profileLinks(ids, links, abouts).length) return null;
+/**
+ * Connections (connections.ts): how each of your accounts stands with them, in one vocabulary across networks (a
+ * Discord friend and an X mutual follow are both Friends), with Remove friend, Unfollow and the like.
+ */
+function ConnectionsCard({ ids, list, onEnded }: { ids: P.IdentityView[]; list: Connection[]; onEnded: (identityId: string, accountId: string) => void }) {
+  if (!list.length) return null;
   return (
-    <Card title="How you stand" icon="users" class="pf-standing">
-      <ProfileLinks identities={ids} links={links} abouts={abouts} onEnded={onEnded} />
+    <Card title="Connections" icon="users" count={list.length > 1 ? list.length : undefined} class="pf-standing">
+      <ProfileConnections identities={ids} list={list} onEnded={onEnded} />
     </Card>
   );
 }
@@ -435,8 +438,16 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       return !seen.has(k) && seen.add(k);
     });
   const facts = said.flatMap((a) => (a.facts ?? []).map((f) => ({ ...f, network: a.network })));
-  // A sent request and following show as the buttons that say so (Requests.tsx ConnectActions).
-  const relations = said.filter((a) => a.relationship && a.relationship !== 'stranger' && (isSelf || (a.relationship !== 'requested' && a.relationship !== 'following')));
+  // How your accounts stand with them, in one vocabulary (connections.ts); one ended here is gone until fetched again.
+  const isEnded = (accountId: string | null, identityId: string) => !!accountId && ended.includes(`${accountId}|${identityId}`);
+  const conns = isSelf
+    ? []
+    : connections(
+        ids,
+        (profile.links ?? []).filter((l) => !isEnded(l.accountId, l.identityId)),
+        Object.fromEntries(Object.entries(abouts).map(([k, a]) => [k, a && isEnded(a.accountId, k) ? { ...a, relationship: 'stranger' as const } : a])),
+      );
+  const askedBy = said.filter((a) => a.relationship === 'requesting');
 
   // ---- merging
   const candidates = [...db.persons.values()].filter((x) => x.id !== person?.id && !x.isSelf);
@@ -575,15 +586,24 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           {isSelf && <Tag tone="accent">You</Tag>}
           {first?.isBot && <Tag tone="muted">Bot</Tag>}
           {pronouns && <Tag>{pronouns}</Tag>}
-          {[...new Set(relations.map((a) => a.relationship!))].map((rel) => {
-            const where = relations.filter((a) => a.relationship === rel).map((a) => a.network);
-            return (
-              <Tag icon={rel === 'friend' ? 'users' : rel === 'blocked' ? 'x' : 'user'} tone={rel === 'friend' ? 'accent' : rel === 'blocked' ? 'warn' : undefined} title={`${RELATIONSHIP_LABEL[rel]} on ${where.map(netName).join(' and ')}`}>
-                {RELATIONSHIP_LABEL[rel]}
-                {nets.length > 1 && where.map((n) => <NetGlyph network={n} size={11} />)}
-              </Tag>
-            );
-          })}
+          {/* One tag per kind of connection, with the networks it is on: Friend (Discord, X), Contact (Telegram, Signal). */}
+          {connectionTags(conns).map((t) => (
+            <Tag icon={t.kind === 'friend' ? 'users' : t.kind === 'blocked' ? 'x' : 'user'} tone={t.kind === 'friend' ? 'accent' : t.kind === 'blocked' ? 'warn' : undefined} title={t.title} kind={t.kind}>
+              {t.label}
+              {t.networks.map((n) => (
+                <NetGlyph network={n} size={11} />
+              ))}
+            </Tag>
+          ))}
+          {/* They asked you: a request, not a connection yet; Accept and Decline are in the row below. */}
+          {!isSelf && askedBy.length > 0 && (
+            <Tag icon="userPlus" tone="accent" title={`Wants to be friends on ${askedBy.map((a) => netName(a.network)).join(' and ')}`} kind="requesting">
+              {RELATIONSHIP_LABEL.requesting}
+              {askedBy.map((a) => (
+                <NetGlyph network={a.network} size={11} />
+              ))}
+            </Tag>
+          )}
         </>
       }
       status={
@@ -702,10 +722,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
             )}
           </div>
         )}
-        {said.some((a) => a.counts || a.followsYou) && (
+        {/* Counts are facts about their account; whether they follow you is a connection (Connections, the hero). */}
+        {said.some((a) => a.counts) && (
           <div class="pf-follow">
             {said
-              .filter((a) => a.counts || a.followsYou)
+              .filter((a) => a.counts)
               .map((a) => (
                 <span class="pf-follow-line" data-network={a.network}>
                   {(said.length > 1 || nets.length > 1) && <NetGlyph network={a.network} size={11} />}
@@ -724,7 +745,6 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
                       <b>{a.counts.posts.toLocaleString()}</b> posts
                     </span>
                   )}
-                  {a.followsYou && <Tag tone="accent">Follows you</Tag>}
                 </span>
               ))}
           </div>
@@ -878,10 +898,9 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           )}
 
       {!isSelf && (
-        <ProfileLinksCard
+        <ConnectionsCard
           ids={ids}
-          links={(profile.links ?? []).filter((l) => !ended.includes(`${l.accountId}|${l.identityId}`))}
-          abouts={Object.fromEntries(Object.entries(abouts).map(([k, a]) => [k, a && ended.includes(`${a.accountId}|${k}`) ? { ...a, relationship: 'stranger' as const } : a]))}
+          list={conns}
           onEnded={(identityId, accountId) => {
             setEnded((x) => [...x, `${accountId}|${identityId}`]);
             const a = abouts[identityId];

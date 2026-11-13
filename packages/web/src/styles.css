@@ -12795,31 +12795,57 @@ button.msg-edited.link:hover {
 .link-banner .request-answers .btn-row {
   flex-wrap: wrap;
 }
+/* A profile's Connections (connections.ts): grouped by kind, a row per account with its network's badge. */
 .pf-links-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 12px;
 }
+.pf-conn-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pf-conn-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+/* Where the words and the button do not both fit (the profile's narrow right column), the button goes under them. */
 .pf-link-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 6px 10px;
   min-width: 0;
 }
+.pf-link-row > .net-badge {
+  flex: none;
+  align-self: flex-start;
+  margin-top: 2px;
+}
 .pf-link-what {
-  flex: 1;
+  flex: 1 1 150px;
   min-width: 0;
   display: flex;
   flex-direction: column;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.pf-link-what b {
+  font-weight: 600;
 }
 .pf-link-what small {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   color: var(--text-dim);
+  font-size: 11.5px;
 }
 .pf-link-row .btn {
   flex: none;
+  margin-left: auto;
 }
 .remove-link p {
   margin: 0 0 8px;
@@ -12834,6 +12860,15 @@ button.msg-edited.link:hover {
 }
 .plink-talked:empty::before {
   content: '\00a0';
+}
+/* The networks a person is on this list through, when several (a Discord friend you also follow each other with on X). */
+.plink-nets {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  color: var(--text-faint);
 }
 .people-find {
   margin: 8px 12px 2px;

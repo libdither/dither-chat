@@ -12,10 +12,11 @@ import { ACTION_LABEL } from '../add.ts';
 import { identityPeer } from '../direct.ts';
 import { ago } from '../format.ts';
 import { directsOf, identityName, netName } from '../model.ts';
-import { accountLine, ANSWER_LABEL, canRemove, groupRequests, linkRows, linkSinceLine, messageRequestNote, nameMatches, profileLinks, relation, removeNote, removeQuestion, requestLine, requestsRow, sentence, sortLinkRows, talkedLine, targetMembers, type LinkSort } from '../requests.ts';
+import { CONNECTION_KINDS, CONNECTION_TITLE, connectionLine, linkKind, linksLine, type Connection } from '../connections.ts';
+import { accountLine, ANSWER_LABEL, canRemove, groupRequests, linkRows, linkSinceLine, messageRequestNote, nameMatches, relation, removeNote, removeQuestion, requestLine, requestsRow, sentence, sortLinkRows, talkedLine, targetMembers, type LinkSort } from '../requests.ts';
 import { api, applyEvents, db, go, openDirect, openProfile, rev, toast } from '../state.ts';
 import { LiveView } from './Accounts.tsx';
-import { Avatar, Empty, Modal } from './bits.tsx';
+import { Avatar, Empty, Modal, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { contextMenu, groups, openMenu, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { identityMenu, personMenu } from './menus.tsx';
@@ -360,16 +361,17 @@ export function ConnectActions({ identities, abouts, onChanged }: { identities: 
     const about = abouts[i.id];
     const rel = about ? relation(about, i, accounts, db.requests) : null;
     if (!about || !rel) return [];
-    if (rel.kind === 'state') return [<Action icon="check" label={`${rel.label}${on(i.network)}`} kind="relationship" disabled />];
     if (rel.kind === 'connect') {
       const key = `${i.id}:${rel.action}`;
+      // Someone who follows you is followed back (connections.ts: the two of you become Friends).
+      const word = rel.action === 'follow' && about.followsYou ? 'Follow back' : ACTION_LABEL[rel.action];
       return [
         <Action
           icon={CONNECT_ICON[rel.action]}
-          label={`${busy === key ? `${ACTION_LABEL[rel.action]}…` : ACTION_LABEL[rel.action]}${on(i.network)}`}
+          label={`${busy === key ? `${word}…` : word}${on(i.network)}`}
           kind={rel.action}
           disabled={!!busy}
-          title={`${ACTION_LABEL[rel.action]} on ${netName(i.network)}, as ${db.accounts.get(rel.accountId)?.label ?? 'your account'}`}
+          title={`${word} on ${netName(i.network)}, as ${db.accounts.get(rel.accountId)?.label ?? 'your account'}`}
           onClick={() => {
             const send = (confirm: boolean) => api<P.AddResultView>('/api/add', { body: { accountId: rel.accountId, ref: rel.ref, action: rel.action, ...(confirm ? { confirm: true } : {}) } });
             run(key, async () => done(about, await send(false), { key, verb: 'add', again: () => send(true) }));
@@ -565,40 +567,52 @@ export function LinkBanner({ c }: { c: P.ConversationView }) {
 }
 
 /**
- * A profile's list of how each of your accounts stands with them (requests.ts profileLinks), with the button that
- * ends each where the account can. `onEnded`: one ended, for the page to show.
+ * A profile's Connections (connections.ts, docs/profile.md "Connections"): how each of your accounts stands with them,
+ * in one vocabulary across networks, grouped by kind (Friends, Contacts, You follow, Follows you, Requests sent,
+ * Blocked). Each row is one account's: the network's badge, its own kind of it ("You follow each other on X"),
+ * whose account of theirs and which of yours, since when, and the button that ends it where the account can.
+ * `onEnded`: one ended, for the page to show.
  */
-export function ProfileLinks({ identities, links, abouts, onEnded }: { identities: P.IdentityView[]; links: P.PersonLinkView[]; abouts: Record<string, P.PersonAboutView | undefined>; onEnded: (identityId: string, accountId: string) => void }) {
+export function ProfileConnections({ identities, list, onEnded }: { identities: P.IdentityView[]; list: Connection[]; onEnded: (identityId: string, accountId: string) => void }) {
   const [ending, setEnding] = useState<{ identityId: string; accountId: string; relationship: P.LinkRelationship } | null>(null);
-  const rows = profileLinks(identities, links, abouts);
-  if (!rows.length) return null;
+  if (!list.length) return null;
   // With several accounts of theirs, each row says which one it is about, as a route's label does: theirs ⇄ yours.
-  const several = new Set(rows.map((x) => x.identityId)).size > 1;
+  const several = new Set(list.map((x) => x.identityId)).size > 1;
   const theirs = (id: string) => {
     const i = identities.find((x) => x.id === id);
     return i?.handle ?? identityName(id);
   };
+  const kinds = CONNECTION_KINDS.filter((k) => list.some((c) => c.kind === k));
   return (
     <div class="pf-links-list">
-      {rows.map((x) => {
-        const account = db.accounts.get(x.accountId);
-        return (
-          <div class="pf-link-row" data-rel={x.relationship} data-account={x.accountId}>
-            <span class="pf-link-what">
-              <b>{RELATIONSHIP_LABEL[x.relationship]}</b>
-              <small>
-                {account && <span class="acc-dot" style={{ background: account.color }} />}
-                {account ? `${netName(x.network)} ${several ? `${theirs(x.identityId)} ⇄ ` : ''}${account.label}` : 'an account no longer here'}
-              </small>
-            </span>
-            {canRemove(account) && (
-              <button class="btn ghost small" data-remove={x.relationship} onClick={() => setEnding(x)}>
-                {REMOVE_LABEL[x.relationship]}
-              </button>
-            )}
-          </div>
-        );
-      })}
+      {kinds.map((kind) => (
+        <div class="pf-conn-group" data-kind={kind}>
+          {kinds.length > 1 && <h4 class="pf-conn-title">{CONNECTION_TITLE[kind].group}</h4>}
+          {list
+            .filter((c) => c.kind === kind)
+            .map((x) => {
+              const account = db.accounts.get(x.accountId);
+              const since = x.since !== null && Number.isFinite(x.since) ? ` · since ${new Date(x.since).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}` : '';
+              return (
+                <div class="pf-link-row" data-rel={x.ends ?? 'follower'} data-kind={x.kind} data-network={x.network} data-account={x.accountId}>
+                  <NetBadge network={x.network} size={22} />
+                  <span class="pf-link-what">
+                    <b>{connectionLine(x)}</b>
+                    <small>
+                      {account && <span class="acc-dot" style={{ background: account.color }} />}
+                      {account ? `${several ? `${theirs(x.identityId)} ⇄ ` : ''}${account.label}${since}` : 'an account no longer here'}
+                    </small>
+                  </span>
+                  {x.ends && canRemove(account) && (
+                    <button class="btn ghost small" data-remove={x.ends} onClick={() => setEnding({ identityId: x.identityId, accountId: x.accountId, relationship: x.ends! })}>
+                      {REMOVE_LABEL[x.ends]}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+        </div>
+      ))}
       {ending && <RemoveDialog {...ending} onClose={() => setEnding(null)} onDone={() => onEnded(ending.identityId, ending.accountId)} />}
     </div>
   );
@@ -676,25 +690,45 @@ const rowName = (row: LinkRow) => rowPerson(row)?.name ?? identityName(row.ident
 /** When you last talked: the latest message in your DMs with them, on any network. */
 const lastTalked = (row: LinkRow) => (row.personId ? directsOf(row.personId).reduce<number | null>((a, c) => (c.lastMessageAt && c.lastMessageAt > (a ?? 0) ? c.lastMessageAt : a), null) : null);
 
-/** A row's menu: what a person's menu has, and ending it on each account that can. */
-function linkMenu(row: LinkRow, relationship: P.LinkRelationship, onEnd: (l: P.PersonLinkView) => void): MenuSpec {
+/** A row's menu: what a person's menu has, and ending it on each account that can, as that network ends it. */
+function linkMenu(row: LinkRow, onEnd: (l: P.PersonLinkView) => void): MenuSpec {
   const person = rowPerson(row);
   const name = rowName(row);
   const base = person ? personMenu(person) : identityMenu(row.identityId);
   // In the order the page lists accounts.
   const order = [...db.accounts.keys()];
   const ends = row.links.filter((l) => canRemove(db.accounts.get(l.accountId))).sort((a, b) => order.indexOf(a.accountId) - order.indexOf(b.accountId));
-  const label = REMOVE_LABEL[relationship];
   const removes = ends.map((l): MenuEntry => {
     const a = db.accounts.get(l.accountId);
-    return { label: row.links.length > 1 ? `${label} on ${a ? accountName(a) : 'that account'}` : label, icon: 'x', danger: true, track: `remove (${relationship})`, run: () => onEnd(l) };
+    const label = REMOVE_LABEL[l.relationship];
+    return { label: row.links.length > 1 ? `${label} on ${a ? accountName(a) : 'that account'}` : label, icon: 'x', danger: true, track: `remove (${l.relationship})`, run: () => onEnd(l) };
   });
   return { label: base?.label ?? `${name} actions`, head: base?.head ?? <div class="cm-sheet-title">{name}</div>, track: 'people', items: groups(base?.items ?? [], removes) };
 }
 
+/** A row's tooltip, a line per kind of link: "Friends since Mar 2023 on Discord main", "You follow each other on X (its profile, 12 Nov)". */
+function rowTitle(row: LinkRow): string {
+  const lines: string[] = [];
+  const listed = row.links.filter((l) => l.from !== 'profile');
+  for (const rel of [...new Set(listed.map((l) => l.relationship))]) {
+    const of = listed.filter((l) => l.relationship === rel);
+    const since = Math.min(...of.map((l) => l.since ?? Infinity));
+    const accounts = [...db.accounts.values()].filter((a) => of.some((l) => l.accountId === a.id));
+    lines.push(of.some((l) => l.followsYou) ? `You follow each other on ${accounts.map(accountName).join(' and ')}` : linkSinceLine(rel, Number.isFinite(since) ? since : null, accounts.map(accountName)));
+  }
+  for (const l of row.links.filter((l) => l.from === 'profile')) {
+    const a = db.accounts.get(l.accountId);
+    if (!a) continue;
+    const when = l.seenAt ? `, ${new Date(l.seenAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}` : '';
+    lines.push(`${connectionLine({ kind: linkKind(l), network: a.network, ends: l.relationship })} (as its profile of them said${when})`);
+  }
+  return lines.join('\n');
+}
+
 /**
- * One person on a list: their name, a dot for each account they are on (with several), and when you last talked. Its
- * menu (right-click, long press) ends it, per account; the tooltip says since when.
+ * One person on a list: their name, the networks it is on when several, a dot for each account they are on (with
+ * several), and when you last talked, else what the link is ("You follow each other on X"). Its menu (right-click,
+ * long press) ends it, per account; the tooltip says since when.
  */
 function LinkRowView({ row, relationship, active, dots, onEnd }: { row: LinkRow; relationship: P.LinkRelationship; active: boolean; dots: boolean; onEnd: (l: P.PersonLinkView) => void }) {
   const person = rowPerson(row);
@@ -703,14 +737,16 @@ function LinkRowView({ row, relationship, active, dots, onEnd }: { row: LinkRow;
   // In the order the page lists accounts, as the account menu does.
   const on = new Set(row.links.map((l) => l.accountId));
   const accounts = [...db.accounts.values()].filter((a) => on.has(a.id));
-  const since = Math.min(...row.links.map((l) => l.since ?? Infinity));
-  const ctx = useMenu(() => linkMenu(row, relationship, onEnd));
+  const nets = [...new Set(accounts.map((a) => a.network))];
+  const ctx = useMenu(() => linkMenu(row, onEnd));
+  const talked = talkedLine(lastTalked(row));
   return (
     <button
       class={`row conv-row plink-row ${active ? 'active' : ''}`}
       data-plink={row.identityId}
       data-track={`row (${relationship})`}
-      title={linkSinceLine(relationship, Number.isFinite(since) ? since : null, accounts.map(accountName))}
+      data-kinds={[...new Set(row.links.map(linkKind))].join(' ')}
+      title={rowTitle(row)}
       onClick={() => openProfile(row.identityId)}
       {...ctx}
     >
@@ -722,6 +758,13 @@ function LinkRowView({ row, relationship, active, dots, onEnd }: { row: LinkRow;
           <span class="row-title">
             {name}
           </span>
+          {nets.length > 1 && (
+            <span class="plink-nets" aria-label={nets.map(netName).join(', ')}>
+              {nets.map((n) => (
+                <NetGlyph network={n} size={11} />
+              ))}
+            </span>
+          )}
           {dots && (
             <span class="plink-dots" title={accounts.map(accountName).join(', ')} data-accounts={accounts.map((a) => a.id).join(' ')}>
               {accounts.map((a) => (
@@ -731,7 +774,7 @@ function LinkRowView({ row, relationship, active, dots, onEnd }: { row: LinkRow;
           )}
         </span>
         <span class="row-bottom">
-          <span class="row-preview plink-talked">{talkedLine(lastTalked(row))}</span>
+          <span class={`row-preview ${talked ? 'plink-talked' : 'plink-kind'}`}>{talked || linksLine(row.links, (id) => db.accounts.get(id)?.network)}</span>
         </span>
       </span>
     </button>
@@ -761,8 +804,8 @@ export function PeopleLinks({
   active?: string;
 }) {
   rev.value;
-  const [ending, setEnding] = useState<{ identityId: string; accountId: string } | null>(null);
-  const listing = [...db.accounts.values()].filter((a) => a.capabilities.includes('relationships'));
+  const [ending, setEnding] = useState<{ identityId: string; accountId: string; relationship: P.LinkRelationship } | null>(null);
+  const listing = [...db.accounts.values()].filter((a) => a.capabilities.includes('relationships') || ((a.network === 'x' || a.network === 'instagram') && a.capabilities.includes('profile')));
   if (links.error) return <p class="inbox-empty">{links.error}</p>;
   const view = links.view;
   if (!view) return <Loading label="Asking the hub…" />;
@@ -792,10 +835,10 @@ export function PeopleLinks({
           relationship={relationship}
           active={!!active && (active === row.personId || active === row.identityId)}
           dots={dots}
-          onEnd={(l) => setEnding({ identityId: l.identityId, accountId: l.accountId })}
+          onEnd={(l) => setEnding({ identityId: l.identityId, accountId: l.accountId, relationship: l.relationship })}
         />
       ))}
-      {ending && <RemoveDialog {...ending} relationship={relationship} onClose={() => setEnding(null)} onDone={() => links.reload()} />}
+      {ending && <RemoveDialog {...ending} onClose={() => setEnding(null)} onDone={() => links.reload()} />}
     </div>
   );
 }
