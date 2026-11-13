@@ -11,6 +11,7 @@ import type { PhoneList } from './phonelist.ts';
 import type { PushService } from './push.ts';
 import type { HubServer } from './server.ts';
 import type { Store } from './store.ts';
+import { jobFailed } from './errors.ts';
 
 export interface NotifierDeps {
   store: Pick<Store, 'notifyLook' | 'one'>;
@@ -70,7 +71,7 @@ export class Notifier {
       .warm(pictures(look, grouped))
       .then(() => push.notify(title, body, conversationId, { ...pushExtra, ...look, ...vote, ...grouped, ...(nid ? { nid } : {}) }, skip, level))
       .then((r) => nid && activity.sent(nid, r))
-      .catch((e) => console.error('push failed', e));
+      .catch((e) => (console.error('push failed', e), jobFailed('push: request', e)));
   }
 
   /**
@@ -95,7 +96,7 @@ export class Notifier {
       .warm(pictures(n.look, grouped))
       .then(() => push.notify(n.title, n.body, n.threadId, { ...n.look, ...mail, messageId: n.messageId, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) }, skip, level))
       .then((r) => nid && activity.sent(nid, r))
-      .catch((e) => console.error('push failed', e));
+      .catch((e) => (console.error('push failed', e), jobFailed('push: request', e)));
   }
 
   /**
@@ -118,7 +119,7 @@ export class Notifier {
     this.last = push
       .notify(n.title, n.body, n.group, { ...n.look, noticeId: n.id, messageId: n.id, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) }, skip, level)
       .then((r) => nid && activity.sent(nid, r))
-      .catch((e) => console.error('push failed', e));
+      .catch((e) => (console.error('push failed', e), jobFailed('push: request', e)));
     return true;
   }
 }

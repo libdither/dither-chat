@@ -11,6 +11,7 @@ import { hubTransport, UploadJob } from './upload.ts';
 import { href, parseHash, type Route } from './routes.ts';
 import { inboxFilterOf, type InboxFilter } from './ordering.ts';
 import { applyPlanEvent, calendarAt, calendarFromBootstrap, loadPlans } from './plans.ts';
+import { reportApiFailure } from './errors.ts';
 import { applyCalls, applyVoice, loadCalls } from './ringing.ts';
 
 // ------------------------------------------------------------------ data
@@ -250,16 +251,28 @@ export const apiHooks = new Set<(path: string, init?: { method?: string; body?: 
 
 export async function api<T = any>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
   for (const h of apiHooks) h(path, init);
-  const res = await fetch(path, {
-    method: init?.method ?? (init?.body !== undefined ? 'POST' : 'GET'),
-    body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
-    headers: init?.body !== undefined ? { 'content-type': 'application/json' } : undefined,
-  });
+  const method = init?.method ?? (init?.body !== undefined ? 'POST' : 'GET');
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method,
+      body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
+      headers: init?.body !== undefined ? { 'content-type': 'application/json' } : undefined,
+    });
+  } catch (e) {
+    // The hub not reached (not an abort, not while offline): to traces/errors.ndjson (errors.ts).
+    reportApiFailure(method, path, e);
+    throw e;
+  }
   const text = await res.text();
   // Not everything here is JSON: the account log and the access gate's refusals are plain text.
   const json = res.headers.get('content-type')?.includes('json');
   const data = json && text ? JSON.parse(text) : text || null;
-  if (!res.ok) throw Object.assign(new Error(data?.error ?? (text.slice(0, 200) || `${res.status}`)), { status: res.status });
+  if (!res.ok) {
+    const e = Object.assign(new Error(data?.error ?? (text.slice(0, 200) || `${res.status}`)), { status: res.status });
+    if (res.status >= 500) reportApiFailure(method, path, e, res.status);
+    throw e;
+  }
   return data as T;
 }
 

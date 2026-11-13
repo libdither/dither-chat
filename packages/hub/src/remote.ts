@@ -29,6 +29,7 @@ import { span } from './trace.ts';
 import { Supervisor } from './supervisor.ts';
 import type { MailSink } from './mail/backend.ts';
 import type { NoticeSink } from './notices/index.ts';
+import { jobFailed } from './errors.ts';
 
 /** A batch's event kinds with how many of each, for its span: `message×3,typing`. */
 function kindsOf(events: { t: string }[]): string {
@@ -236,6 +237,7 @@ export class RoutedSupervisor extends Supervisor {
       await this.connect();
     } catch (e) {
       console.error(`dither-accounts at ${this.remoteOpts.url} is not reachable (${(e as Error)?.message ?? e}); trying again in 30 s`);
+      jobFailed('dither-accounts: connect', e);
       setTimeout(() => void this.connectOrRetry(), 30_000);
     }
   }
@@ -260,19 +262,19 @@ export class RoutedSupervisor extends Supervisor {
         .requestAccess(url, this.saved!.app, this.saved!.token, [{ interface: 'accounts', level: 'manage', kinds: missing, reason: `Add, sign in and remove ${missing.join(' and ')} accounts too` }])
         .then(
           () => console.log(`dither-accounts: asked to manage ${missing.join(', ')} accounts as well; approve it on the manager's page`),
-          (e) => console.error('dither-accounts: asking for the new kinds failed:', e),
+          (e) => (console.error('dither-accounts: asking for the new kinds failed:', e), jobFailed('dither-accounts: ask for kinds', e)),
         );
     // Registered before mail (docs/mail.md): ask for it once, for you to approve on its page.
     if (known && info && this.mail && mailToAsk(info) && mod.requestAccess)
       await mod.requestAccess(url, this.saved!.app, this.saved!.token, [MAIL_REQUEST]).then(
         () => ((info = { ...info, requests: [...(info?.requests ?? []), { interface: 'mail', state: 'pending' }] }), console.log("dither-accounts: asked to read and send your mail; approve it on the manager's page")),
-        (e) => console.error('dither-accounts: asking for mail failed:', e),
+        (e) => (console.error('dither-accounts: asking for mail failed:', e), jobFailed('dither-accounts: ask for mail', e)),
       );
     // Registered before notices (docs/notices.md): ask for them once too.
     if (known && info && this.notices && noticesToAsk(info) && mod.requestAccess)
       await mod.requestAccess(url, this.saved!.app, this.saved!.token, [NOTICES_REQUEST]).then(
         () => ((info = { ...info, requests: [...(info?.requests ?? []), { interface: 'notifications', state: 'pending' }] }), console.log("dither-accounts: asked to read your accounts' notifications; approve it on the manager's page")),
-        (e) => console.error('dither-accounts: asking for notices failed:', e),
+        (e) => (console.error('dither-accounts: asking for notices failed:', e), jobFailed('dither-accounts: ask for notices', e)),
       );
     if (!known) {
       const reg = await mod.register(url, {
@@ -312,12 +314,14 @@ export class RoutedSupervisor extends Supervisor {
             } catch (e) {
               // Mail catches up by itself (mail.changes); the chat events below must not wait on it.
               console.error(`[${account}] mail events failed:`, e);
+              jobFailed('mail: events', e, { account });
             }
             try {
               if (this.notices) timedWork('notices: events', () => this.notices!.events(account, events));
             } catch (e) {
               // Notices catch up by themselves (notify.list); the chat events below must not wait on them.
               console.error(`[${account}] notices events failed:`, e);
+              jobFailed('notices: events', e, { account });
             }
             if (!this.remote.has(account)) return;
             void this.apply(account, events as P.AdapterEvent[]);
@@ -331,7 +335,7 @@ export class RoutedSupervisor extends Supervisor {
         if (this.mail?.gap(account)) return;
         if (notices && !this.remote.has(account)) return;
         console.warn(`[${account}] the manager dropped ${dropped} events while the hub was away; restarting the adapter for a fresh snapshot`);
-        this.client?.admin({ do: 'restart', account }).catch((e) => console.error(`[${account}] restart after a gap failed:`, e));
+        this.client?.admin({ do: 'restart', account }).catch((e) => (console.error(`[${account}] restart after a gap failed:`, e), jobFailed('dither-accounts: restart after a gap', e, { account })));
       },
       onConnection: (up) => {
         this.mail?.connection(up);
@@ -418,7 +422,7 @@ export class RoutedSupervisor extends Supervisor {
       // Newly the manager's: anything of ours for it stops (an adapter, a start waiting on the lock).
       void super.stop(id);
       // Already online there, so its snapshot went by before this hub could see it: start it over to get one.
-      if (view.online) this.client?.admin({ do: 'restart', account: id }).catch((e) => console.error(`[${id}] restart for a snapshot failed:`, e));
+      if (view.online) this.client?.admin({ do: 'restart', account: id }).catch((e) => (console.error(`[${id}] restart for a snapshot failed:`, e), jobFailed('dither-accounts: restart for a snapshot', e, { account: id })));
     }
     this.remote = now;
     // Views say who runs an account and who made it (managedBy): send again those that changed.
@@ -489,14 +493,14 @@ export class RoutedSupervisor extends Supervisor {
 
   override start(id: string) {
     if (!this.remote.has(id)) return super.start(id);
-    this.client?.admin({ do: 'update', account: id, enabled: true }).catch((e) => console.error(`[${id}] start through the manager failed:`, e));
+    this.client?.admin({ do: 'update', account: id, enabled: true }).catch((e) => (console.error(`[${id}] start through the manager failed:`, e), jobFailed('dither-accounts: start', e, { account: id })));
   }
 
   override async stop(id: string) {
     if (!this.remote.has(id)) return super.stop(id);
     // Disabled in the hub: disabled in the manager, so it stays off across the manager's restarts. Otherwise a stop.
     const disabled = this.storeRef.account(id)?.enabled === 0;
-    await this.client?.admin(disabled ? { do: 'update', account: id, enabled: false } : { do: 'stop', account: id }).catch((e) => console.error(`[${id}] stop through the manager failed:`, e));
+    await this.client?.admin(disabled ? { do: 'update', account: id, enabled: false } : { do: 'stop', account: id }).catch((e) => (console.error(`[${id}] stop through the manager failed:`, e), jobFailed('dither-accounts: stop', e, { account: id })));
   }
 
   override async restart(id: string) {
@@ -527,7 +531,7 @@ export class RoutedSupervisor extends Supervisor {
 
   override writeSecret(id: string, secret: unknown) {
     if (!this.remote.has(id)) return super.writeSecret(id, secret);
-    this.client?.admin({ do: 'secret', account: id, secret }).catch((e) => console.error(`[${id}] secret through the manager failed:`, e));
+    this.client?.admin({ do: 'secret', account: id, secret }).catch((e) => (console.error(`[${id}] secret through the manager failed:`, e), jobFailed('dither-accounts: secret', e, { account: id })));
   }
 
   /** managedBy for the account's view: set while the manager lists it. */
@@ -558,7 +562,7 @@ export class RoutedSupervisor extends Supervisor {
 
   override async renamed(id: string, label: string) {
     if (!this.remote.has(id)) return;
-    await this.client?.admin({ do: 'update', account: id, label }).catch((e) => console.error(`[${id}] rename through the manager failed:`, e));
+    await this.client?.admin({ do: 'update', account: id, label }).catch((e) => (console.error(`[${id}] rename through the manager failed:`, e), jobFailed('dither-accounts: rename', e, { account: id })));
   }
 
   /** The manager keeps the log where the account lives, which for one it made is not here. */

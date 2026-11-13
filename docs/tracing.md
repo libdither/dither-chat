@@ -11,6 +11,7 @@ bun scripts/trace-summary.ts --data ~/.local/share/dither-chat            # per 
 bun scripts/trace-summary.ts --data ~/.local/share/dither-chat --slow 20  # the slowest spans and their trace ids
 bun scripts/trace-summary.ts --data ~/.local/share/dither-chat --trace <id>   # one trace as a tree
 bun scripts/trace-summary.ts --data ~/.local/share/dither-chat --stalls   # holds of the event loop
+bun scripts/trace-summary.ts --data ~/.local/share/dither-chat --errors   # errors by source, where and name
 ```
 
 Other options: `--since 30m|6h|2d|all`, `--name <part of a name>`, `--failed`, `--top N`, `--json`. It reads the files
@@ -103,11 +104,78 @@ dither-accounts' client and spec; a client before it leaves it out). In dither-a
 `$DITHER_ACCOUNTS_DATA`, else `~/.local/share/dither-accounts`), so `--trace <id>` shows one request from the hub
 through the manager to Discord's client, and `--stalls` labels each hold with the process it held.
 
+## Errors
+
+Every real error, the hub's and the page's, is one line of `traces/errors.ndjson` in the data directory
+(`packages/hub/src/errors.ts`), rotated by size like the trace (5 MB, keeping 5 older files). It is off with the trace
+(`DITHER_TRACE=0`).
+
+**This format is a contract**, read by dither-accounts' bugwatch extractor (kind `bugwatch`): it groups the lines by
+fingerprint, raises a notice in dither-chat for each new bug and starts a thread to fix it. Fields may be added, as
+optional ones; none is renamed or dropped.
+
+```
+{ "v": 1,
+  "at": 1763000000000,            // ms epoch
+  "app": "hub" | "web",
+  "source": "uncaught" | "rejection" | "request" | "job" | "attempt" | "client",
+  "where": "POST /api/accounts/:id/action",   // route TEMPLATE (ids replaced by :id), span or job name, or the web page's route template
+  "name": "SQLiteError",          // error class / name
+  "message": "database is locked",// one line, at most 300 chars, from the Error only
+  "stack": ["at fn (packages/hub/src/x.ts:12:3)", ...],  // at most 10 frames, paths relative to the repo root (web: bundle file names as they are)
+  "status": 502,                  // optional: the HTTP status answered or received
+  "trace": "…",                   // optional: the trace id, so `bun scripts/trace-summary.ts` can show the trace
+  "version": "29d2d7ac",          // optional: the running build's git short sha, when known
+  "extra": { "account": "acc_…", "network": "discord" },   // optional, ids and short words only
+  "count": 3 }                    // optional: occurrences folded into this line (see dedup)
+```
+
+`count`, when present, is how many occurrences the line stands for; absent means one. `version` is `DITHER_VERSION`,
+else the checkout's `git rev-parse --short=8 HEAD`, for the hub; the page's is its build's (vite's `__BUILD_SHA__`).
+
+**Sources**, all through `reportError()`:
+
+| source | what | where |
+|---|---|---|
+| `uncaught`, `rejection` | `process.on('uncaughtException' / 'unhandledRejection')` in main.ts; the hub keeps running, and the console line stays | `process` |
+| `request` | a request answered with 5xx (server.ts `guarded`): a throw in a handler (500), or a 500/502 the handler answered, its message the answer's `error` | method and route template, `GET /api/conversations/:id/messages` |
+| `job` | a span a throw ended (trace.ts's hook, but for requests and `command <op>` spans: a command's caller says what came of it); the hub's `console.error` / `console.warn` sites that mean something went wrong: triage, upkeep, push, flush, attention, the ranker, embeddings, categorizing, backups, checkpoints, adapter events that failed or met a locked database, the manager's admin calls, mail's sync/outbox/ops/classify/people/triage, notices, jobs (but rate limits) | the span's or the job's name: `triage`, `flush: mail`, `adapter events`, `mail: changes` |
+| `attempt` | attempts.ts: making a group or adding people failed (500, 502, 504), or went through with someone refused (`name` `Partial`); a candidates lookup that failed. The hub.log lines stay | `groups: create`, `members: add`, `groups: candidates`, `members: candidates`; `extra` { what, account, network, conversation, people, failed } |
+| `client` (app `web`) | `POST /api/errors` from the page (packages/web/src/errors.ts): `window.onerror`, `unhandledrejection`, and `api()` fetches that did not reach the hub (not answers with a status: the hub wrote its own `request` line for each 5xx) | the page's route template, `#/inbox/c/:id` |
+
+**Left out:** 4xx answers, 429 and rate limits, captchas and terms prompts (refusals, 4xx), aborted requests and a
+client that went away, 503 (an account offline, the manager not reachable: a state the page shows), the hub stopping under a job (a closed database),
+adapters' own log lines, and the page's reports while it is offline. When unsure, it is reported: the watcher has an
+ignore list.
+
+**Storms.** The same (source, where, name, message) is written at most once per 10 s; the occurrences in between are
+folded into the `count` of the next line written for it (a sweep every 10 s writes the folded ones whose window ended).
+One Error object reported twice (thrown through a span, then caught and logged) is one line, and a request's 5xx is
+not a second line when something inside it was reported already (an attempt). The file takes at most 600 lines per
+10 min; hub.log says when the cap starts dropping (`errors: over the cap …`) and how many it dropped once the window
+ends.
+
+**The page** sends `POST /api/errors` with `{ name, message, stack, where, status?, version }` and `keepalive`,
+at most 20 reports a minute and the same one at most once a minute, never while offline, never throwing. The hub
+answers 204, 400 for a body that is not a report (a `where` that is not a route template, `#` or `/` then words, `:`
+and `/`), 413 over 16 KB, and 429 past 60 a minute from one address; it is authorised like every owner route (this
+machine or the tailnet, the page's own origin).
+
+**Privacy.** `message` is only ever an Error's message, one line of at most 300 characters. `where` is a template, never
+an id, a name, search text or a query string; stacks are code locations with the hub's address taken off; `extra` is ids
+and counts. No message content, drafts, names, request bodies or query strings.
+
+```sh
+bun scripts/trace-summary.ts --data ~/.local/share/dither-chat --errors --since 6h      # occurrences by source, where, name
+bun scripts/trace-summary.ts --data ~/.local/share/dither-chat --errors --name groups   # where containing "groups"
+```
+
 ## Next
 
 1. **The page.** `api()` sends a `traceparent` for actions a person waits on (making a group, sending, opening a
    chat), so the hub's span joins the page's trace, and the page reports its own span (click to drawn) to the hub,
    which writes it with the rest. T3 Code does this through its server.
-2. **The failure watcher** reads failed spans from the trace instead of matching lines of `hub.log`.
+2. **The failure watcher** reads `traces/errors.ndjson` (above) instead of matching lines of `hub.log`: dither-accounts'
+   bugwatch extractor.
 3. **More of the adapters' phases**, as the Discord hook's group making has them, where a command is slow.
 4. **OpenTelemetry export**, only if a Grafana stack is ever run: an OTLP exporter beside the file, off by default.

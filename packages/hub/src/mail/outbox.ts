@@ -32,6 +32,7 @@ import { MAIL_LIMITS } from './limits.ts';
 import { P0 } from './queue.ts';
 import type { MailRouter } from './routes.ts';
 import { maxRecipientsOf, sendCapOf } from './store.ts';
+import { jobFailed } from '../errors.ts';
 
 type Row = Record<string, any>;
 
@@ -512,6 +513,7 @@ export class MailOutbox {
       this.sent(this.row(id) ?? r, res ?? {});
     } catch (e) {
       this.log(`[outbox ${id}] ${asMailError(e).message}`);
+      jobFailed('mail: outbox', e, { outbox: id });
     } finally {
       this.running.delete(id);
       this.pump();

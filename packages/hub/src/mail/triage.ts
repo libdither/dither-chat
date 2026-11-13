@@ -52,6 +52,7 @@ import type { MailHub } from './index.ts';
 import { mailPeople, type MailSender } from './people.ts';
 import { P1 } from './queue.ts';
 import type { MailRouter } from './routes.ts';
+import { jobFailed } from '../errors.ts';
 
 type Row = Record<string, any>;
 
@@ -300,6 +301,7 @@ export class MailTriage {
     } catch (e) {
       // A closed database (the hub stopping), or a message gone meanwhile.
       console.warn(`mail triage: ${(e as Error)?.message ?? e}`);
+      jobFailed('mail: triage', e);
     }
   }
 
@@ -315,6 +317,7 @@ export class MailTriage {
       } catch (e) {
         // A closed database (the hub stopping).
         console.warn(`mail triage: ${(e as Error)?.message ?? e}`);
+        jobFailed('mail: triage sweep', e);
       }
     }, ms);
     this.sweepTimer.unref?.();

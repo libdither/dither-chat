@@ -22,6 +22,7 @@ import { isPrivateUrl } from './categorize.ts';
 import { BUSY_MS } from './store.ts';
 import { SLICE_ROWS, sliced, whole, type SliceOptions } from './slices.ts';
 import { noteWork } from './stalls.ts';
+import { jobFailed } from './errors.ts';
 
 type Head = P.TriageHead;
 
@@ -871,6 +872,7 @@ export class Embeddings {
       } catch (e) {
         // jev down or busy: the features are missing meanwhile, and triage goes on without them.
         console.error(`embeddings: ${(e as Error).message}; trying again in 5 min`);
+        jobFailed('embeddings', e);
         next = 5 * MIN;
       }
       if (this.timer) this.timer = setTimeout(loop, next);

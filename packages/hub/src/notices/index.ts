@@ -29,6 +29,7 @@ import type { Store } from '../store.ts';
 import type { Triage } from '../triage.ts';
 import type { OtherVotes, TriageVotes } from '../votes.ts';
 import { decideNotice, NOTICE_TRIAGE, sourceName, textOf, wantsJudge, type NoticeDecision, type NoticeInput, type NoticeRule, type Urgency } from './triage.ts';
+import { jobFailed } from '../errors.ts';
 
 type Row = Record<string, any>;
 
@@ -193,7 +194,7 @@ export class Notices implements NoticeSink {
   private run(what: string, fn: () => unknown): Promise<void> {
     this.queue = this.queue.then(fn).then(
       () => {},
-      (e) => console.error(`notices: ${what} failed:`, e),
+      (e) => (console.error(`notices: ${what} failed:`, e), jobFailed(`notices: ${what}`, e)),
     );
     return this.queue;
   }
@@ -307,6 +308,7 @@ export class Notices implements NoticeSink {
       // Tried again at the next connection, account list after this, or gap.
       this.caught.delete(account);
       console.warn(`notices: catching up ${account} failed: ${(e as Error)?.message ?? e}`);
+      jobFailed('notices: catch up', e, { account });
     } finally {
       this.catching.delete(account);
     }
@@ -339,7 +341,7 @@ export class Notices implements NoticeSink {
             this.decideNow(id, a);
           }),
         )
-        .catch((e) => console.error('notices: a decision failed:', e)),
+        .catch((e) => (console.error('notices: a decision failed:', e), jobFailed('notices: decide', e))),
     );
     this.steps.set(id, step);
     void step.finally(() => this.steps.get(id) === step && this.steps.delete(id));
@@ -496,7 +498,7 @@ export class Notices implements NoticeSink {
     if (!r.unread) return true;
     this.st.db.query('UPDATE notice SET unread = 0, read_at = ?, shown_ts = NULL WHERE id = ?').run(this.now(), id);
     if (this.accountsById.get(r.account)?.grants.notifications === 'write') {
-      this.o.link.call(r.account, 'notify.markRead', { ids: [r.native_id] }, 30_000).catch((e) => console.warn(`notices: marking read upstream failed: ${(e as Error)?.message ?? e}`));
+      this.o.link.call(r.account, 'notify.markRead', { ids: [r.native_id] }, 30_000).catch((e) => (console.warn(`notices: marking read upstream failed: ${(e as Error)?.message ?? e}`), jobFailed('notices: mark read upstream', e, { account: r.account })));
     }
     return true;
   }

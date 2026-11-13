@@ -11,9 +11,12 @@ import { startAhead } from './ahead.ts';
 import { registerServiceWorker } from './pwa.ts';
 import { dropPages, dropSnapshot, readSnapshot, restore } from './snapshot.ts';
 import { applyBootstrap, applyEvents, beforeSync, connect, loaded, restoreOutbox } from './state.ts';
+import { installErrorReports } from './errors.ts';
 import './styles.css';
 
 const scriptAt = performance.now();
+// The page's errors to the hub's traces/errors.ndjson (errors.ts, docs/tracing.md "Errors").
+installErrorReports();
 // The hub first, so the socket is on its way while this device's snapshot is read.
 connect();
 // Sends that were waiting for the hub when the app last closed: shown again, and sent after the first sync.

@@ -22,6 +22,7 @@ import type * as M from '@dither-chat/protocol/mail-iface';
 import type { Store } from '../store.ts';
 import type { MailHub } from './index.ts';
 import type { MailRouter } from './routes.ts';
+import { jobFailed } from '../errors.ts';
 
 type Row = Record<string, any>;
 
@@ -164,6 +165,7 @@ export class MailPeople {
     } catch (e) {
       // A closed database (the hub stopping) or a bad row: the rest waits for the next change.
       console.warn(`mail people: ${(e as Error)?.message ?? e}`);
+      jobFailed('mail: people', e);
       return;
     }
     if (this.rebuild.length || this.pending.size) this.schedule();

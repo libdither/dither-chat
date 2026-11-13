@@ -31,13 +31,17 @@ export function startCheckpointer(db: Database, file: string, o: { everyMs?: num
     stopped = true;
     db.exec(`PRAGMA wal_autocheckpoint = ${DEFAULT_PAGES}`);
     log(`checkpoints: the worker ${why}; the hub's connection checkpoints again`);
+    reportError({ source: 'job', where: 'checkpoint worker', name: 'Error', message: `the worker ${why}` });
   };
   worker.onmessage = (e: MessageEvent<{ t: 'done' | 'failed'; ms?: number; log?: number; checkpointed?: number; error?: string }>) => {
     if (e.data.t === 'done') {
       stats.done++;
       stats.longestMs = Math.max(stats.longestMs, e.data.ms ?? 0);
       o.onDone?.({ log: e.data.log ?? 0, checkpointed: e.data.checkpointed ?? 0 });
-    } else if (++stats.failed % 60 === 1) log(`checkpoints: ${e.data.error}`);
+    } else {
+      if (++stats.failed % 60 === 1) log(`checkpoints: ${e.data.error}`);
+      reportError({ source: 'job', where: 'checkpoint', name: 'SQLiteError', message: e.data.error ?? 'failed' });
+    }
   };
   worker.onerror = (e) => fallBack(`failed (${e.message})`);
   worker.addEventListener('close', () => fallBack('stopped'));

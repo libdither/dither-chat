@@ -8,6 +8,7 @@
  *   bun scripts/trace-summary.ts --failed              # every failed span
  *   bun scripts/trace-summary.ts --trace <traceId>     # one trace as a tree, each span at its offset
  *   bun scripts/trace-summary.ts --stalls              # holds of the event loop: what was on the thread, CPU or waiting
+ *   bun scripts/trace-summary.ts --errors              # traces/errors.ndjson: occurrences by source, where and name
  *   bun scripts/trace-summary.ts --json ...            # the same as JSON, for a script or an agent
  *
  * The data directory is --data, else $DITHER_DATA, else the repo's .data. --since takes 90s, 30m, 6h, 2d or "all".
@@ -20,6 +21,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { SpanRecord } from '../packages/hub/src/trace.ts';
 import type { StallRecord } from '../packages/hub/src/stalls.ts';
+import type { ErrorRecord } from '../packages/hub/src/errors.ts';
 
 /** Every line of `path` and its rotated files (path.1 is the newest of them) whose time is at or after `sinceMs`. */
 export function readNdjson<T>(path: string, sinceMs: number, time: (r: T) => number): T[] {
@@ -48,6 +50,40 @@ export const readSpans = (dirs: string | string[], sinceMs: number) =>
 /** Every stall in them, each with the process it held (`hub`, `manager`: its data directory's name). */
 export const readStalls = (dirs: string | string[], sinceMs: number) =>
   [dirs].flat().flatMap((d) => named(d, 'stalls.ndjson').flatMap((f) => readNdjson<StallRecord>(f, sinceMs, (r) => r.atMs).map((r) => ({ ...r, from: basename(dirname(d)) }))));
+
+/** The hub's error file (errors.ts), with what the page reported. */
+export const readErrors = (dir: string, sinceMs: number) => readNdjson<ErrorRecord>(join(dir, 'errors.ndjson'), sinceMs, (r) => r.at);
+
+export interface ErrorSummary {
+  source: string;
+  where: string;
+  name: string;
+  /** Occurrences (a line's `count`, else one). */
+  count: number;
+  lines: number;
+  lastAt: number;
+  lastMessage: string;
+  lastTrace?: string;
+}
+
+/** Occurrences by (app and source, where, name), the most first. */
+export function summarizeErrors(errors: ErrorRecord[]): ErrorSummary[] {
+  const by = new Map<string, ErrorSummary>();
+  for (const e of errors) {
+    const source = `${e.app}/${e.source}`;
+    const key = `${source}\u0000${e.where}\u0000${e.name}`;
+    let r = by.get(key);
+    if (!r) by.set(key, (r = { source, where: e.where, name: e.name, count: 0, lines: 0, lastAt: 0, lastMessage: '' }));
+    r.count += e.count ?? 1;
+    r.lines++;
+    if (e.at >= r.lastAt) {
+      r.lastAt = e.at;
+      r.lastMessage = e.message;
+      r.lastTrace = e.trace;
+    }
+  }
+  return [...by.values()].sort((a, b) => b.count - a.count || b.lastAt - a.lastAt);
+}
 
 const pct = (sorted: number[], p: number) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1)]! : 0);
 
@@ -140,6 +176,17 @@ function main() {
   if (!existsSync(dir)) {
     console.error(`no traces in ${dir} (is DITHER_TRACE=0, or is --data wrong?)`);
     process.exit(1);
+  }
+
+  if (has('errors')) {
+    let errs = readErrors(dir, since);
+    if (name) errs = errs.filter((e) => e.where.includes(name));
+    const rows = summarizeErrors(errs).slice(0, Number(val('top') ?? 40));
+    print(rows, () => [
+      `${rows.reduce((a, r) => a + r.count, 0)} errors in ${errs.length} lines, by source, where and name`,
+      ...rows.map((r) => `${lpad(String(r.count), 6)}  ${pad(r.source, 14)} ${pad(r.where, 40)} ${pad(r.name, 16)} last ${new Date(r.lastAt).toISOString()}  ${r.lastMessage}${r.lastTrace ? `  trace ${r.lastTrace}` : ''}`),
+    ]);
+    return;
   }
 
   if (has('stalls')) {

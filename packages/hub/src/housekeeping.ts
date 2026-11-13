@@ -6,6 +6,7 @@
 import { chmodSync, existsSync, mkdirSync, opendirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { whole } from './slices.ts';
+import { jobFailed } from './errors.ts';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -113,6 +114,7 @@ export class NightlyBackup {
       return to;
     } catch (e) {
       console.error('backup failed', e);
+      jobFailed('backup', e);
       return null;
     } finally {
       this.running = false;

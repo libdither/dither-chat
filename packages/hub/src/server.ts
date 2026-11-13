@@ -64,6 +64,7 @@ import { calendarOff, type CalendarLink } from './calendar.ts';
 import { markCalendarAdded } from './calendar-account.ts';
 import { ReplyMarks, type ReplyMark } from './replymarks.ts';
 import { mailAttention } from './mail/attention.ts';
+import { clientReport, jobFailed, PerClientCap, reportedInRequest, reportError, withRequest } from './errors.ts';
 import { callRoute } from './callstate.ts';
 import { handlesPolls, pollRoute } from './polls.ts';
 import { SendExtras } from './sendextras.ts';
@@ -204,6 +205,24 @@ export function mediaSigner(secret: string) {
     signed.set(key, out);
     return out;
   };
+}
+
+/**
+ * A request answered with 5xx, as a line of traces/errors.ndjson: the route's template, the status, and the answer's
+ * `error` (what the handler caught, an Error's message) when it is JSON. 503 (an account offline, the manager not
+ * reachable: a state the page shows) is left out. 504 is kept: one timeout is explained to you, but the same route
+ * timing out again and again is a bug, and the watcher's spike rule and ignore list tell the two apart.
+ */
+async function reportAnswer(req: Request, route: string, res: Response, trace: string | undefined) {
+  if (res.status === 503) return;
+  let message = `status ${res.status}`;
+  try {
+    if (res.headers.get('content-type')?.includes('json')) {
+      const e = ((await res.clone().json()) as { error?: unknown })?.error;
+      if (typeof e === 'string' && e) message = e;
+    }
+  } catch {}
+  reportError({ source: 'request', where: `${req.method} ${route}`, name: 'HttpError', message, status: res.status, trace });
 }
 
 /** An error after the command went to the adapter: whether it was carried out is not known. */
@@ -396,19 +415,25 @@ export class HubServer {
         return span(
           `${req.method} ${route}`,
           { 'http.method': req.method, 'http.route': route },
-          async (s) => {
-            try {
-              const res = await compress(req, await handler(req, server));
-              // No response: the socket was upgraded.
-              s.set({ 'http.status': res?.status ?? 101 });
-              if (res && res.status >= 500) s.fail(`status ${res.status}`);
-              return res;
-            } catch (e: any) {
-              console.error('request failed', req.method, new URL(req.url).pathname, e);
-              s.set({ 'http.status': 500 }).fail(e);
-              return Response.json({ error: String(e?.message ?? e) }, { status: 500 });
-            }
-          },
+          (s) =>
+            withRequest(async () => {
+              try {
+                const raw = await handler(req, server);
+                // An answer of 5xx is an error for traces/errors.ndjson (errors.ts), unless something inside the request
+                // was reported already (an attempt, a job) or the client went away.
+                if (raw && raw.status >= 500 && !reportedInRequest() && !req.signal.aborted) await reportAnswer(req, route, raw, s.traceId);
+                const res = await compress(req, raw);
+                // No response: the socket was upgraded.
+                s.set({ 'http.status': res?.status ?? 101 });
+                if (res && res.status >= 500) s.fail(`status ${res.status}`);
+                return res;
+              } catch (e: any) {
+                console.error('request failed', req.method, new URL(req.url).pathname, e);
+                s.set({ 'http.status': 500 }).fail(e);
+                if (!req.signal.aborted) reportError({ source: 'request', where: `${req.method} ${route}`, error: e, status: 500, trace: s.traceId });
+                return Response.json({ error: String(e?.message ?? e) }, { status: 500 });
+              }
+            }),
           { parent: parseTraceparent(req.headers.get('traceparent')) },
         );
       };
@@ -523,6 +548,7 @@ export class HubServer {
       // The commit failed (a lock held past busy_timeout): attention's folds are undone and fold again later; what
       // the store gave up goes out and into the journal on its own.
       console.error('flush: one transaction failed; sending what changed as it is', e);
+      jobFailed('flush', e);
       frame = this.record(events);
       s.fail(e);
     }
@@ -544,6 +570,7 @@ export class HubServer {
       if (this.opts.mail) events.push(...this.opts.mail.flush());
     } catch (e) {
       console.error('flush: mail failed', e);
+      jobFailed('flush: mail', e);
     }
     const a = this.opts.attention;
     if (a) {
@@ -559,6 +586,7 @@ export class HubServer {
         events.push(...(rules ? a.rescoreAll() : a.sync(changed, removed)));
       } catch (e) {
         console.error('flush: attention failed', e);
+        jobFailed('flush: attention', e);
       }
     }
     return events;
@@ -736,8 +764,31 @@ export class HubServer {
     if ((m = path.match(/^\/media\/([\w-]+)\/([\w-]+)$/))) return this.media(m[1], m[2], url.searchParams.get('a'));
     // Custom emoji inside message bodies: the id is all a body has, and it can only reach Discord's CDN.
     if ((m = path.match(/^\/emoji\/discord\/(\d+)(\.animated)?$/))) return this.fetchMedia(discordEmojiUrl(m[1], !!m[2]), null);
+    if (path === '/api/errors' && req.method === 'POST') return this.clientError(req, ip);
     if (path.startsWith('/api/')) return this.api(req, url, path);
     return this.static(path);
+  }
+
+  /** At most 60 of the page's error reports a minute from one address. */
+  private readonly errorCap = new PerClientCap(60, 60_000);
+
+  /**
+   * POST /api/errors: an error the page met (errors.ts `clientReport`), written to traces/errors.ndjson as app `web`,
+   * source `client`. Authorised like every owner route (this machine or the tailnet, the page's own origin).
+   */
+  private async clientError(req: Request, ip: string): Promise<Response> {
+    if (Number(req.headers.get('content-length') ?? 0) > 16_384) return Response.json({ error: 'too large' }, { status: 413 });
+    const text = await req.text().catch(() => '');
+    if (text.length > 16_384) return Response.json({ error: 'too large' }, { status: 413 });
+    let body: unknown = null;
+    try {
+      body = JSON.parse(text);
+    } catch {}
+    const r = clientReport(body);
+    if (!r) return Response.json({ error: 'Send { name, message, stack, where, status?, version }, where a route template like #/chat/:id' }, { status: 400 });
+    if (!this.errorCap.take(ip)) return Response.json({ error: 'too many reports' }, { status: 429 });
+    reportError(r);
+    return new Response(null, { status: 204 });
   }
 
   private async api(req: Request, url: URL, path: string): Promise<Response> {
