@@ -15,119 +15,9 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { api, db, loadTimeline, openProfile, timelineKey, timelines } from '../../state.ts';
 import { timelineRev } from '../../versions.ts';
 import type { Kit } from './lazy.tsx';
+import { Counts, Pics, QuotedIn, Row, Text, Who } from './Post.tsx';
 
 type Src = { network: P.Network; post: string } | { message: string };
-
-/** One post's text with its links (and on X its @handles). */
-function Text({ p, kit, network, cls }: { p: P.PostFact; kit: Kit; network: P.Network; cls: string }) {
-  if (!p.text) return null;
-  return (
-    <p class={cls}>
-      <kit.Linked text={p.text} network={network} markdown={false} />
-    </p>
-  );
-}
-
-/** Pictures in a thread: each opens the full picture. */
-function Pics({ media }: { media?: P.PostMedia[] }) {
-  const shown = (media ?? []).slice(0, 4);
-  if (!shown.length) return null;
-  return (
-    <div class={`post-media n${shown.length}`}>
-      {shown.map((m) => (
-        <a class="post-pic" href={m.url} target="_blank" rel="noreferrer" title={m.alt || 'Open the picture'}>
-          <img src={m.url} alt={m.alt ?? ''} loading="lazy" />
-          {m.kind !== 'image' && <span class="post-pic-kind">{m.kind === 'gif' ? 'GIF' : '▶'}</span>}
-        </a>
-      ))}
-    </div>
-  );
-}
-
-function Counts({ p, kit, big }: { p: P.PostFact; kit: Kit; big?: boolean }) {
-  const c = p.counts;
-  if (!c) return null;
-  const items: [number | undefined, string, string][] = [
-    [c.replies, 'reply', 'replies'],
-    [c.reposts, 'repost', 'reposts'],
-    [c.quotes, 'quote', 'quotes'],
-    [c.likes, 'like', 'likes'],
-    [c.views, 'view', 'views'],
-  ];
-  const shown = items.filter(([n]) => n !== undefined && (big || n > 0));
-  if (!shown.length) return null;
-  return (
-    <span class={`post-counts ${big ? 'big' : ''}`}>
-      {shown.map(([n, one, many]) => (
-        <span title={`${n!.toLocaleString()} ${n === 1 ? one : many}`}>
-          <b>{kit.feed.shortCount(n!)}</b> {n === 1 ? one : many}
-        </span>
-      ))}
-    </span>
-  );
-}
-
-/** A quoted post inside one: its byline and words, opening its own thread. */
-function QuotedIn({ p, kit, network }: { p: P.PostFact; kit: Kit; network: P.Network }) {
-  const who = p.author ?? null;
-  return (
-    <a class="post-quoted thread-quoted" href={kit.feed.postHref(network, p.id)} onClick={(e) => e.stopPropagation()}>
-      <span class="post-by">
-        <kit.Avatar id={who ?? p.id} name={kit.name(who)} url={kit.avatarUrl(who)} size={16} />
-        <b>{kit.name(who)}</b>
-        {kit.handle(who) && <span class="post-handle">@{kit.handle(who)}</span>}
-        <span class="post-handle">· {kit.ago(p.ts)}</span>
-      </span>
-      {p.text && <span class="post-clip">{p.text}</span>}
-      {p.media?.[0] && <img class="thread-quoted-pic" src={p.media[0].url} alt={p.media[0].alt ?? ''} loading="lazy" />}
-    </a>
-  );
-}
-
-/** Someone's name and handle, opening their profile. */
-function Who({ id, kit }: { id: string | null; kit: Kit }) {
-  const name = kit.name(id);
-  return (
-    <button class="post-who" onClick={(e) => (e.stopPropagation(), openProfile(id))} title={`${name}'s profile`}>
-      <b>{name}</b>
-      {kit.handle(id) && <span class="post-handle">@{kit.handle(id)}</span>}
-    </button>
-  );
-}
-
-/** A post in a thread, small: their picture on the left with the line down to the next, then who, when and what. */
-function Row({ p, kit, network, line, focal }: { p: P.PostView; kit: Kit; network: P.Network; line: boolean; focal?: boolean }) {
-  const shown = p.repostOf ?? p;
-  const who = shown.author ?? null;
-  const open = (e: MouseEvent) => {
-    if (focal || !kit.feed.opensPost(e)) return;
-    kit.openPost(network, shown.id);
-  };
-  return (
-    <article class={`thread-post ${line ? 'line' : ''}`} data-post={shown.id} onClick={open} tabIndex={focal ? undefined : 0} onKeyDown={(e) => !focal && e.key === 'Enter' && e.target === e.currentTarget && kit.openPost(network, shown.id)}>
-      <button class="thread-face" onClick={(e) => (e.stopPropagation(), openProfile(who))} aria-label={`${kit.name(who)}'s profile`}>
-        <kit.Avatar id={who ?? shown.id} name={kit.name(who)} url={kit.avatarUrl(who)} size={36} />
-      </button>
-      <div class="thread-main">
-        {p.repostOf && (
-          <span class="post-mark">
-            <kit.Icon name="repeat" size={11} /> {kit.name(p.author ?? null)} reposted
-          </span>
-        )}
-        <div class="thread-head">
-          <Who id={who} kit={kit} />
-          <span class="post-handle" title={kit.fullTime(shown.ts)}>
-            · {kit.ago(shown.ts)}
-          </span>
-        </div>
-        <Text p={shown} kit={kit} network={network} cls="post-text" />
-        <Pics media={shown.media} />
-        {shown.quoteOf && <QuotedIn p={shown.quoteOf} kit={kit} network={network} />}
-        <Counts p={shown} kit={kit} />
-      </div>
-    </article>
-  );
-}
 
 /** The post asked for, large: who, its words, pictures, the quote, its full time, counts, and Open on X. */
 function Focal({ p, kit, network, joined }: { p: P.PostView; kit: Kit; network: P.Network; joined: boolean }) {
@@ -289,7 +179,7 @@ export function PostsList({ c, kit }: { c: P.ConversationView; kit: Kit }) {
         </p>
         {posts.map((m) => (
           <div class="thread-chain">
-            <Row p={{ ...m.post!, messageId: m.id }} kit={kit} network={c.network} line={false} />
+            <Row p={m.post!} kit={kit} network={c.network} line={false} />
           </div>
         ))}
         {tl?.loading && <kit.Loading inline label="Loading posts…" />}

@@ -241,6 +241,20 @@ describe('the hub', () => {
     expect((await req(`/api/posts/nowhere/1/thread`)).status).toBe(404);
   });
 
+  test("GET /api/posts/x/:id/activity lists what the feed said about a post, without asking X", async () => {
+    const before = sent.length;
+    const res = await req(`/api/posts/x/${routingId()}/activity`);
+    expect(res.status).toBe(200);
+    const page = (await res.json()) as P.MessagePage;
+    const by = (type: string) => page.messages.filter((m) => m.feed?.type === type).map((m) => m.authorId);
+    expect(by('like')).toEqual([X.theo, X.maya, X.quinn, X.ravi, X.alice].map(idn));
+    expect(by('repost')).toEqual([idn(X.nora)]);
+    expect(by('reply')).toEqual([idn(X.ravi)]);
+    expect(page.identities.some((i) => i.id === idn(X.theo))).toBe(true);
+    expect(sent.length).toBe(before);
+    expect((await (await req('/api/posts/x/1/activity')).json()).messages).toEqual([]);
+    expect((await req('/api/posts/nowhere/1/activity')).status).toBe(404);
+  });
   test('asking the network for the history of the posts or the feed is refused on the hub', async () => {
     const n = hubSent.length;
     for (const c of [POSTS, hubId('cnv', 'x', 'feed')]) expect(await (await req(`/api/conversations/${c}/history`, { method: 'POST', body: '{}' })).json()).toEqual({ count: 0, done: true });

@@ -893,6 +893,12 @@ export class HubServer {
         return bad((e as Error).message, 502);
       }
     }
+    // Who liked, reposted, replied to or quoted a post, from the feeds the hub holds: nothing is asked of the network.
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/activity$/)) && method === 'GET') {
+      const network = m[1] as P.Network;
+      if (!(network in NETWORK_META)) return bad('no such network', 404);
+      return ok(s.postActivity(network, m[2]));
+    }
     if ((m = path.match(/^\/api\/identities\/([\w-]+)\/person$/)) && method === 'POST') {
       if (!s.nativeOf('identity', m[1])) return bad('no such identity', 404);
       const personId = s.ensurePerson(m[1]);

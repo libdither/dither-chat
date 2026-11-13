@@ -4,7 +4,7 @@
  */
 import { expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
-import { cardSentence, clip, feedCards, feedRow, isPostKey, namesPhrase, parsePostKey, postHref, postKey, postMessageKey, shortCount } from '../src/feed.ts';
+import { cardSentence, clip, feedCards, feedRow, feedUnits, isPostKey, namesPhrase, parsePostKey, postHref, postKey, postMessageKey, reactionCounts, reactorsPhrase, shortCount } from '../src/feed.ts';
 
 const post = (id: string, text = `post ${id}`): P.PostFact => ({ id, url: `https://x.com/me/status/${id}`, ts: 0, author: 'idn_me', text });
 let n = 0;
@@ -99,4 +99,48 @@ test('post keys: a post and a logged message, there and back', () => {
     expect(parsePostKey('pst_x_12ab')).toBeNull();
     expect(isPostKey('cnv_x')).toBe(false);
     expect(postHref('x', '5')).toBe('#/inbox/c/pst_x_5');
+});
+
+// ------------------------------------------------------------------ the feed by post
+
+test('by post: likes, reposts, replies and quotes on one post are one unit, by its newest activity', () => {
+  const p1 = post('1');
+  const p2 = post('2');
+  const units = feedUnits([
+    msg('like', 'a', 10, { post: p1 }),
+    msg('like', 'b', 20, { post: p2 }),
+    msg('repost', 'c', 30, { post: p1 }),
+    msg('reply', 'd', 40, { post: p1, theirs: post('9') }),
+    msg('like', 'e', 50, { post: p1 }),
+    msg('quote', 'a', 60, { post: p2, theirs: post('8') }),
+  ]);
+  expect(units.map((u) => u.key)).toEqual(['post:2', 'post:1']);
+  const u1 = units[1] as Extract<(typeof units)[0], { kind: 'post' }>;
+  expect(u1.reactors).toEqual({ like: ['e', 'a'], repost: ['c'] });
+  expect(u1.talk.map((t) => [t.type, t.message.authorId])).toEqual([['reply', 'd']]);
+  expect([u1.ts, u1.talkTs]).toEqual([50, 40]);
+});
+
+test('by post: a mention and a reply with no post of yours stand alone; follows in a row are one row', () => {
+  const units = feedUnits([msg('follow', 'a', 1), msg('follow', 'b', 2), msg('mention', 'c', 3, { theirs: post('7') }), msg('reply', 'd', 4, { theirs: post('6') }), msg('follow', 'e', 5)]);
+  expect(units.map((u) => (u.kind === 'follow' ? `follow:${u.actors.join('')}` : u.kind))).toEqual(['follow:e', 'said', 'said', 'follow:ba']);
+});
+
+test('by post: talk only leaves out likes, reposts and follows, ordered by when someone last said something', () => {
+  const p1 = post('1');
+  const p2 = post('2');
+  const units = feedUnits([msg('reply', 'a', 10, { post: p1, theirs: post('9') }), msg('like', 'b', 90, { post: p1 }), msg('like', 'c', 80, { post: p2 }), msg('follow', 'd', 70), msg('mention', 'e', 20, { theirs: post('5') })], Infinity, 'talk');
+  expect(units.map((u) => u.kind + ':' + u.talkTs)).toEqual(['said:20', 'post:10']);
+});
+
+test('by post: what is new, and the reactions line in words and counts', () => {
+  const p1 = { ...post('1'), counts: { likes: 41, reposts: 3 } };
+  const units = feedUnits([msg('like', 'a', 10, { post: p1 }), msg('like', 'b', 20, { post: p1 }), msg('like', 'c', 30, { post: p1 }), msg('like', 'd', 40, { post: p1 }), msg('reply', 'e', 50, { post: p1, theirs: post('9') })], 35);
+  const u = units[0] as Extract<(typeof units)[0], { kind: 'post' }>;
+  expect(u.fresh).toBe(true);
+  expect(u.talk[0].fresh).toBe(true);
+  expect(reactorsPhrase(u, name)).toBe('Liked by Dee, Cam and 2 others');
+  expect(reactionCounts(u)).toEqual({ like: 41, repost: 3, quote: 0, reply: 1 });
+  const old = feedUnits([msg('repost', 'a', 1, { post: post('3') })], 35)[0] as Extract<(typeof units)[0], { kind: 'post' }>;
+  expect([old.fresh, reactorsPhrase(old, name), reactionCounts(old).repost]).toEqual([false, 'Reposted by Alice', 1]);
 });

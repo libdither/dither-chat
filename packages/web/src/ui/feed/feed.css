@@ -517,6 +517,251 @@
   margin: 14px 0;
 }
 
+
+/* The feed by post (docs/feed.md "The feed's page"): your post small, what people said under it in full, who reacted
+   as one quiet line opening the list. */
+.feed-filter {
+  display: flex;
+  gap: 4px;
+  padding: 6px 4px 10px;
+}
+.feed-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 13px;
+}
+.feed-tab:hover {
+  background: var(--bg-hover);
+}
+.feed-tab.on {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.feed-tab-n {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.feed-unit {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 10px 12px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  border-left: 3px solid transparent;
+}
+.feed-unit.fresh {
+  border-left-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 5%, transparent);
+}
+.feed-unit > .thread-post {
+  padding-top: 0;
+}
+.feed-mine {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-decoration: none;
+}
+.feed-mine:hover {
+  border-color: var(--text-faint);
+}
+.feed-mine-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.feed-mine-head b {
+  color: var(--text);
+  font-weight: 600;
+}
+.feed-mine-pic {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+/* What people said under it: indented under your post, joined by a line on the left. */
+.feed-talk {
+  margin: 6px 0 0 10px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+}
+.feed-talk .thread-post {
+  padding-top: 6px;
+}
+.feed-talk .thread-main {
+  padding-bottom: 6px;
+}
+.post-tag {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-faint);
+}
+.post-tag.new {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.feed-unit-foot {
+  display: flex;
+  gap: 14px;
+  margin-left: 20px;
+}
+.feed-unit-foot:empty {
+  display: none;
+}
+.feed-link {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 13px;
+  text-decoration: none;
+  padding: 2px 0;
+}
+.feed-link:hover {
+  text-decoration: underline;
+}
+.feed-react {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: left;
+}
+.feed-react:hover {
+  background: var(--bg-hover);
+}
+.feed-react-counts {
+  display: inline-flex;
+  gap: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.feed-react-counts > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.feed-react-counts .like {
+  color: #f91880;
+}
+.feed-react-counts .like .icon {
+  fill: currentColor;
+}
+.feed-react-counts .repost {
+  color: #00ba7c;
+}
+.feed-react-who {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.feed-stack {
+  display: inline-flex;
+  flex: none;
+}
+.feed-stack > * + * {
+  margin-left: -6px;
+}
+.feed-stack .avatar,
+.feed-stack .feed-face {
+  box-shadow: 0 0 0 2px var(--bg-center);
+  border-radius: 50%;
+}
+.feed-reactors {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.feed-reactors-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.feed-person {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-soft);
+}
+.feed-person:hover {
+  background: var(--bg-hover);
+}
+.feed-person-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.feed-reactors-note {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+.feed-slim {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  color: var(--text-dim);
+  font-size: 13.5px;
+}
+.feed-slim-icon {
+  flex: none;
+  width: 30px;
+  display: flex;
+  justify-content: center;
+  color: var(--accent);
+}
+.feed-slim-what {
+  flex: 1;
+  min-width: 0;
+}
+.feed-slim-what b {
+  color: var(--text);
+}
+.post-item {
+  padding: 0;
+}
+/* A picture in the feed stays a glance: the thread shows it whole. */
+.feed-unit .post-media {
+  max-height: 260px;
+  overflow: hidden;
+}
+
 @media (max-width: 820px) {
   .thread-focal-text {
     font-size: 16px;

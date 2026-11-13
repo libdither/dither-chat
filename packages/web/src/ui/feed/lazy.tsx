@@ -12,7 +12,7 @@ import { db, go, isSelfIdentity } from '../../state.ts';
 import { Avatar, Empty, Linked } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
 import { Loading } from '../Loader.tsx';
-import { cardSentence, clip, FEED_VERB, feedBarLine, feedCards, notificationsUrl, opensPost, parsePostKey, postHref, postKey, shortCount } from '../../feed.ts';
+import { clip, feedBarLine, feedUnits, namesPhrase, notificationsUrl, opensPost, parsePostKey, postHref, postKey, reactionCounts, reactorsPhrase, shortCount } from '../../feed.ts';
 
 type Chunk = typeof import('./FeedView.tsx');
 let chunk: Chunk | null = null;
@@ -44,7 +44,7 @@ export const kit = {
   /** A post's thread, beside the inbox (docs/feed.md "Threads"). */
   openPost: (network: P.Network, post: string) => go({ view: 'inbox', conv: postKey(network, post) }),
   /** feed.ts, which the row draws with too: imported by the chunk, rolldown would split it into a startup file. */
-  feed: { cardSentence, clip, FEED_VERB, feedBarLine, feedCards, notificationsUrl, shortCount, opensPost, postHref },
+  feed: { clip, feedBarLine, feedUnits, namesPhrase, notificationsUrl, reactionCounts, reactorsPhrase, shortCount, opensPost, postHref },
 };
 export type Kit = typeof kit;
 

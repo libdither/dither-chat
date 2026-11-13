@@ -8,8 +8,8 @@ Only X has a feed so far. The shapes are not X's own, so another network's notif
 
 Code: `packages/protocol/src/feed.ts` (the shapes), `packages/hub/src/feed.ts` (what makes a feed, its refusals, its
 messages' `feed` for the page), `people.ts` (`keepAbout`: unasked profiles), `triage.ts` (its notifications),
-`demo-x.ts` (the demo's X account); `packages/web/src/feed.ts` (cards and the row's words, pure), `ui/FeedRow.tsx`
-(the row), `ui/feed/` (the page and a profile's posts, a lazy chunk). The X extractor is in dither-accounts.
+`demo-x.ts` (the demo's X account); `packages/web/src/feed.ts` (units by post, the row's words, pure), `ui/FeedRow.tsx`
+(the row), `ui/feed/` (the page, threads and a profile's posts, a lazy chunk; `Post.tsx` draws a post). The X extractor is in dither-accounts.
 
 ## What the network sends
 
@@ -98,29 +98,68 @@ desktop that is the main pane beside the inbox, and on a phone a full-screen pag
 
 ## The feed's page
 
-The conversation's header (search, mute, About), then cards, newest first, and no composer:
+The conversation's header (search, mute, About), then the feed **by post**, newest activity first, and no composer.
+It was a list of notifications, one card per thing that happened ("Theo, Maya K. and 3 others liked your post");
+drawn by post, it reads as what it is: your posts and what came of them.
 
-- **A card is one thing that happened.** The same type on the same post, one after another, is one card: "Theo, Maya
-  K. and 3 others liked your post", with their pictures in a row (up to eight, then +N). Each picture and name opens
-  their profile. Up to three people are named; more are two names and "N others", with the rest in the tooltip. Likes,
-  reposts and follows group (follows need no post). Something else in between splits a group, as X's own list does.
-- **Your post quoted under it**: who and when, its text clipped to three lines, its first picture as a thumbnail, each
-  linking to the post on x.com.
-- **A reply, mention or quote** is a card of its own: their picture with a small badge of what it is, name, handle
-  and time; "replied to your post: “…”" with your post clipped and linked; their words with links; their pictures (up
-  to four); for a quote, your post quoted under it; and Open on X.
+- **One card per post of yours** that something happened to (feed.ts `feedUnits`). At its head your post, small,
+  since you know it: "Your post", when, its words clipped to three lines, its first picture as a thumbnail; it opens
+  the post's thread. Under it, **what people said, in full**: each reply and quote as a post (picture, name, handle,
+  time, words with links, pictures, counts), newest first, joined by a line on the left, "new" on what came after
+  you last read, "quoted" on a quote. Three show, then "N more". **The thread: N replies** opens the whole thread.
+- **Likes and reposts are one quiet line** at the card's foot: the counts as X gives them (a heart 41, a repost
+  3; the faces named when X gave no count), "Liked by Theo, Maya K. and 3 others" and up to four faces. It opens
+  **who reacted**: Likes and Reposts, each person with their picture, name, handle and when, opening their profile.
+  The list comes from the hub (`GET /api/posts/:network/:post/activity`, every feed message about the post in any
+  account's feed, nothing asked of the network), so it is whole whatever pages of the feed the page holds. X names
+  only some of the people who liked a post in its notifications, so when it counts more the list says so: "X counts
+  41; your notifications named these 5."
+- **A mention**, or a reply the feed carries no post of yours for, is their post on its own card under "mentioned
+  you" ("replied to you", "quoted you").
+- **Follows** one after another are one slim row: their faces (each opening their profile), "Sam and Lee followed
+  you", when. Anything else X notifies about is a slim row in X's words.
+- **Everything / Replies and mentions.** The second leaves out likes, reposts and follows altogether, ordered by when
+  someone last said something, with how many said something new. The choice is kept on the device.
 - **What was new when it opened** is marked with a coloured edge, and stays marked while the page is open. The page
   marks the feed read on the hub as it shows.
 - **The bar** in place of the composer: "Replies, likes and follows happen on X." and **Open on X**
   (x.com/notifications).
 
-Older pages load as it scrolls. Likes are pink, reposts green, the rest the accent. Dark and light come from the theme.
+Older pages load as it scrolls; a post's card gathers what an older page adds to it. Dark and light come from the
+theme.
+
+**Why by post.** The notifications list said the same post again on every card about it, and gave likes, which come
+by the dozen and ask nothing of you, as much room as a reply. By post, the post shows once, what people said is what
+the card is about, and likes are a number with names behind it. Four layouts were drawn before this one (the PR has
+them): replies first with likes folded into lines; by post with mentions and followers in sections after; tabs as
+on X's own page; mentions in a section first and the like list open in place. By post, in one stream ordered by
+activity, kept the most context for the least reading, and the filter answers "don't show me likes" without a
+setting.
+
+### A feed of posts, for any network
+
+Nothing in the page is X's. A unit is **a post and what came of it**: the post, what people said under it (posts
+that answer it), and who reacted and how (identity ids by kind, with the network's own counts). That is also:
+
+| | The post | What people said | Who reacted |
+| --- | --- | --- | --- |
+| X | your post | replies, quotes | likes, reposts (named in notifications) |
+| Mastodon | your toot | replies, quote posts | favourites, boosts (named) |
+| Reddit | your post or comment | comments, as a tree | score only (no names) |
+| YouTube | your video or comment | comments, one level of replies | likes, a count only |
+| Discourse | your topic or post | replies | likes (named) |
+
+The pieces are shared: `ui/feed/Post.tsx` draws a post the same in a thread, under your post in the feed, in the
+posts the hub logged and on a profile (`Row`, `Pics`, `Counts`, `QuotedIn`); `feed.ts` `feedUnits` makes the units
+from a feed's messages, whatever network sent them; `PostThread` is a post's comment section. A network that names
+no one who reacted shows the count alone: the line opens no list.
 
 ## Profiles
 
-- **Recent posts** (X): a card from `PersonAboutView.posts`, after About. A pinned post first with "Pinned", a repost
-  under "<name> reposted", a reply under "Replying to @handle", a quote with the quoted post inside. Each has its words
-  with links, pictures, counts (replies, reposts, likes, views), time, and Open to x.com. Someone with several X
+- **Recent posts** (X): a card from `PersonAboutView.posts`, after About, each post drawn as a thread draws it
+  (`Post.tsx` `Row`), opening its thread. A pinned post first with "Pinned", a repost under "<name> reposted", a reply
+  under "Replying to @handle", a quote with the quoted post inside. Each has its words with links, pictures, counts
+  (replies, reposts, likes, views) and time. Someone with several X
   accounts has each account's under its handle.
 - **About** gains followers, following and posts counts and a **Follows you** tag.
 - **Feed actors' profiles** show what the hub logged (bio, counts, links, Follows you) at once, without asking.
@@ -129,7 +168,7 @@ Older pages load as it scrolls. Likes are pink, reposts green, the rest the acce
 
 ## Threads
 
-**Any post opens in the app.** A card in the feed (its words, your post quoted in it, its time), a profile's recent
+**Any post opens in the app.** Your post at the head of a card in the feed, a reply or mention in it, a profile's recent
 post, a post quoted in another, a reply in a thread: each opens that post's thread beside the inbox, where a
 conversation would open (`#/inbox/c/pst_<network>_<post id>`, feed.ts `postKey`), full screen with Back on a phone.
 Links, @handles, pictures, names and Open on X inside a card keep doing what they do.
@@ -196,7 +235,9 @@ baselines predate it.
   persons, `personAbout` kept unless older and logged in History, the profile still asks X after an unasked one and
   keeps the posts after, likes silent and replies on the list even from someone set to Always alert, a muted feed
   silent, and the hub refusing a send, a reaction, an edit and settings, keeping reads and typing from X.
-- `packages/web/test/feed.test.ts`: grouping into cards, names as X says them, what is new, the row's words.
+- `packages/web/test/feed.test.ts`: units by post (likes, reposts, replies and quotes on one post as one, by its
+  newest activity), mentions and follows on their own, Replies and mentions, what is new, the reactions line's words
+  and counts; the inbox row's cards, names as X says them.
 - `packages/hub/test/posts.test.ts`: a thread read in hub ids with the author's chain first, each post logged once as
   a quiet message (no unread, no triage, no persons), more replies by cursor, a reply's ancestors, search finding
   logged posts, the thread read back without X, a profile's posts logged, the routes, and nothing sent to X.
@@ -205,7 +246,9 @@ baselines predate it.
   a profile's post and a search hit opening their threads, chains and their lines, Show more replies, a reply with what
   it answers, the posts conversation out of the inbox, nothing sent to X but the reads.
 - `scripts/verify-x-feed.ts`: against a fresh demo hub in a real browser, on a desktop and a phone, dark and light,
-  with screenshots (`--shots <dir>`). It checks the row, the cards, the bar, nothing sent to X, a profile's posts,
-  counts and Follows you, and the decisions.
+  with screenshots (`--shots <dir>`). It checks the row, the feed by post (your post small, the reply under it, the
+  reactions line, the list of who liked and reposted it, the quote, the mention, the follows), Replies and mentions,
+  the bar, nothing sent to X, a profile's posts, counts and Follows you, and the decisions.
+- `packages/hub/test/posts.test.ts` also checks `GET /api/posts/:network/:post/activity`.
 
 Not run against a real X account.

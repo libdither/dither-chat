@@ -2716,6 +2716,23 @@ export class Store {
     return { messages: msgs, identities: this.identitiesOf([...msgs, ...quoted]), hasMore, ...(quoted.length ? { quoted } : {}) } as P.MessagePage;
   }
 
+  /**
+   * What the feeds said about one post (docs/feed.md "The feed's page"): every like, repost, reply and quote of it in
+   * any account's feed of its network, newest first, as a page. The page's list of who liked or reposted it reads
+   * this, whatever pages of the feed it holds.
+   */
+  postActivity(network: P.Network, postId: string, limit = 1000): P.MessagePage {
+    const rows = this.db
+      .query(
+        `SELECT m.* FROM message m JOIN conversation c ON c.id = m.conversation_id
+         WHERE c.variant = 'feed' AND c.network = ? AND m.deleted = 0 AND json_extract(m.extra, '$.feed.post.id') = ?
+         ORDER BY m.ts DESC LIMIT ?`,
+      )
+      .all(network, postId, limit + 1) as Row[];
+    const msgs = this.messageViews(rows.slice(0, limit));
+    return { messages: msgs, identities: this.identitiesOf(msgs), hasMore: rows.length > limit } as P.MessagePage;
+  }
+
   /** Every direct conversation with a person, merged into one timeline. */
   personTimeline(personId: string, before: number | { ts: number; id: string | null } | null, limit: number): P.MessagePage & { conversationIds: string[] } {
     return this.mergedTimeline(this.personDirects(personId), typeof before === 'number' ? { ts: before, id: null } : before, limit);

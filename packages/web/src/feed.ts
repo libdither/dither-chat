@@ -69,6 +69,120 @@ export function feedCards(messages: readonly P.MessageView[], readTs = Infinity)
   return out;
 }
 
+// ------------------------------------------------------------------ the feed by post
+
+/**
+ * The feed drawn by post (docs/feed.md "The feed's page"): one unit per post of yours that something happened to, with
+ * what people said under it (replies, quotes) and who reacted (likes, reposts) folded into one line; a post of
+ * theirs that talks to you without one of yours (a mention, a reply to a post the feed does not carry); follows in a
+ * row; anything else as the network said it. Newest activity first.
+ *
+ * Nothing in it is X's: a unit is a post and what came of it, which is also what a Mastodon post with its replies,
+ * favourites and boosts, a YouTube video with its comments, or a Reddit or Discourse post with its comments is.
+ */
+export type FeedUnit =
+  | {
+      kind: 'post';
+      key: string;
+      /** The post, as the newest message about it carried it (its counts change). */
+      post: P.PostFact;
+      /** What people said under it, newest first: their post, who, and whether it came after the read line. */
+      talk: FeedTalk[];
+      /** Who reacted, by how, newest first, each once. */
+      reactors: { like: string[]; repost: string[] };
+      ts: number;
+      /** When someone last said something under it (0: never). */
+      talkTs: number;
+      fresh: boolean;
+      network: P.Network;
+    }
+  | { kind: 'said'; key: string; talk: FeedTalk; ts: number; talkTs: number; fresh: boolean; network: P.Network }
+  | { kind: 'follow'; key: string; actors: string[]; ts: number; talkTs: 0; fresh: boolean; network: P.Network }
+  | { kind: 'other'; key: string; text: string; post?: P.PostFact; ts: number; talkTs: 0; fresh: boolean; network: P.Network };
+
+export interface FeedTalk {
+  type: 'reply' | 'mention' | 'quote';
+  /** Their post; absent when the network sent only words (the message's body). */
+  theirs?: P.PostFact;
+  message: P.MessageView;
+  fresh: boolean;
+}
+
+/** Which units a feed shows: everything, or only people talking (no likes, reposts or follows). */
+export type FeedFilter = 'all' | 'talk';
+
+/**
+ * A feed's messages (any order, any pages of it) as units, newest activity first. With `filter` 'talk', only units
+ * where someone said something, by when they last did. Each person reacting once per way is one face.
+ */
+export function feedUnits(messages: readonly P.MessageView[], readTs = Infinity, filter: FeedFilter = 'all'): FeedUnit[] {
+  const posts = new Map<string, Extract<FeedUnit, { kind: 'post' }>>();
+  const out: FeedUnit[] = [];
+  const sorted = messages.filter((m) => m.feed && !m.deleted).sort((a, b) => b.ts - a.ts || (a.id < b.id ? 1 : -1));
+  for (const m of sorted) {
+    const f = m.feed!;
+    const fresh = m.ts > readTs;
+    const said = f.type === 'reply' || f.type === 'mention' || f.type === 'quote';
+    if (f.post && (said || f.type === 'like' || f.type === 'repost')) {
+      let u = posts.get(f.post.id);
+      if (!u) {
+        u = { kind: 'post', key: `post:${f.post.id}`, post: f.post, talk: [], reactors: { like: [], repost: [] }, ts: m.ts, talkTs: 0, fresh: false, network: m.network };
+        posts.set(f.post.id, u);
+        out.push(u);
+      }
+      u.fresh ||= fresh;
+      if (said) {
+        u.talk.push({ type: f.type as FeedTalk['type'], ...(f.theirs ? { theirs: f.theirs } : {}), message: m, fresh });
+        u.talkTs ||= m.ts;
+      } else {
+        const list = u.reactors[f.type as 'like' | 'repost'];
+        if (m.authorId && !list.includes(m.authorId)) list.push(m.authorId);
+      }
+      continue;
+    }
+    if (said) {
+      out.push({ kind: 'said', key: m.id, talk: { type: f.type as FeedTalk['type'], ...(f.theirs ? { theirs: f.theirs } : {}), message: m, fresh }, ts: m.ts, talkTs: m.ts, fresh, network: m.network });
+      continue;
+    }
+    if (f.type === 'follow') {
+      out.push({ kind: 'follow', key: m.id, actors: m.authorId ? [m.authorId] : [], ts: m.ts, talkTs: 0, fresh, network: m.network });
+      continue;
+    }
+    out.push({ kind: 'other', key: m.id, text: f.text ?? m.body, ...(f.post ? { post: f.post } : {}), ts: m.ts, talkTs: 0, fresh, network: m.network });
+  }
+  if (filter === 'talk') return out.filter((u) => u.talkTs > 0).sort((a, b) => b.talkTs - a.talkTs);
+  // Follows one after another (nothing else newer between them) are one row.
+  const merged: FeedUnit[] = [];
+  for (const u of out) {
+    const last = merged[merged.length - 1];
+    if (u.kind === 'follow' && last?.kind === 'follow') {
+      for (const a of u.actors) if (!last.actors.includes(a)) last.actors.push(a);
+      last.fresh ||= u.fresh;
+    } else merged.push(u.kind === 'follow' ? { ...u, actors: [...u.actors] } : u);
+  }
+  return merged;
+}
+
+/** How many reacted each way: the network's count when it gave one (it counts everyone), else the faces named. */
+export function reactionCounts(u: Extract<FeedUnit, { kind: 'post' }>): { like: number; repost: number; quote: number; reply: number } {
+  const c = u.post.counts ?? {};
+  const quotes = u.talk.filter((t) => t.type === 'quote').length;
+  const replies = u.talk.filter((t) => t.type === 'reply').length;
+  return {
+    like: Math.max(c.likes ?? 0, u.reactors.like.length),
+    repost: Math.max(c.reposts ?? 0, u.reactors.repost.length),
+    quote: Math.max(c.quotes ?? 0, quotes),
+    reply: Math.max(c.replies ?? 0, replies),
+  };
+}
+
+/** The reactions line's words: "Liked by Theo, Maya K. and 3 others" (or reposted, when nobody liked it). */
+export function reactorsPhrase(u: Extract<FeedUnit, { kind: 'post' }>, nameOf: (identityId: string) => string): string {
+  const [verb, ids] = u.reactors.like.length ? ['Liked by', u.reactors.like] : u.reactors.repost.length ? ['Reposted by', u.reactors.repost] : ['', []];
+  if (!ids.length) return '';
+  return `${verb} ${namesPhrase(ids.slice(0, 3).map(nameOf), ids.length)}`;
+}
+
 /** "Alice", "Alice and Bob", "Alice, Bob and Cam", "Alice, Bob and 3 others". */
 export function namesPhrase(names: readonly string[], total = names.length): string {
   const n = Math.max(total, names.length);

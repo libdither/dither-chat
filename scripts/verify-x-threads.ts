@@ -103,8 +103,8 @@ try {
 
   // ------------------------------------------------------------------ a feed card opens the thread
   await load(`#/inbox/c/${feed.id}`);
-  await page.until(`document.querySelectorAll('.feed-card').length >= 7`, 20000);
-  await page.eval(`[...document.querySelectorAll('.feed-card[data-type="like"]')].find((c) => c.dataset.count === '5').querySelector('.feed-what').click()`);
+  await page.until(`document.querySelectorAll('.feed-unit').length >= 4`, 20000);
+  await page.eval(`[...document.querySelectorAll('.feed-unit[data-unit="post"] .feed-mine')].find((a) => /Greedy routing/.test(a.textContent)).click()`);
   await page.until(`location.hash.includes('pst_x_') && !!document.querySelector('.thread-focal') && document.querySelectorAll('.thread-chain').length > 0`, 20000);
   let t = await thread();
   check('a card in the feed opens its post in the app', /^#\/inbox\/c\/pst_x_\d+$/.test(t.hash) && /Greedy routing/.test(t.focal ?? ''), t.hash);
@@ -174,12 +174,12 @@ try {
   await page.eval(`localStorage.setItem('dither-chat:prefs', JSON.stringify({ ...JSON.parse(localStorage.getItem('dither-chat:prefs') || '{}'), theme: 'dither-dark' }))`);
   await page.size(390, 844, true);
   await load(`#/inbox/c/${feed.id}`);
-  await page.until(`document.querySelectorAll('.feed-card').length >= 7`, 20000);
-  await page.eval(`document.querySelector('.feed-card[data-type="reply"] .feed-text').click()`);
+  await page.until(`document.querySelectorAll('.feed-unit').length >= 4`, 20000);
+  await page.eval(`document.querySelector('.feed-talk .post-text').click()`);
   await page.until(`!!document.querySelector('.thread-focal') && document.querySelectorAll('.thread-list > .thread-post').length > 0`, 20000);
   await Bun.sleep(300);
   const ph = await page.eval<any>(`({ back: !!document.querySelector('.thread-pane .conv-head .back'), w: document.querySelector('.thread-pane').getBoundingClientRect().width })`);
-  check('on a phone: a reply card opens its thread full width with Back', ph.back && ph.w >= 380, ph);
+  check('on a phone: a reply under your post opens its thread full width with Back', ph.back && ph.w >= 380, ph);
   check('nothing sideways on a phone', (await overflow('.thread-scroll')) === 0, await overflow('.thread-scroll'));
   if (shots) await page.shot(join(shots, 'x-thread-phone.png'));
   await page.eval(`document.querySelector('.thread-pane .conv-head .back').click()`);
