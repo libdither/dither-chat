@@ -21,6 +21,7 @@ import { placeConvs } from './Organize.tsx';
 import { Action, Card, Columns, Facts, Hero, ProfilePage, Tag } from './ProfileShell.tsx';
 import { openConv } from './Sidebar.tsx';
 import { Loading } from './Loader.tsx';
+import { ResetSessionCard } from './ResetSession.tsx';
 import { canIndex, startIndexing } from './Indexing.tsx';
 
 /** "Seen 12 of 1,287 listed (1%) · 214 online": honest about how little that may be. */
@@ -206,6 +207,8 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
       </Card>
 
       {conv && retention.value.adversarial && <KeptHere conversationId={conv.id} />}
+
+      {conv && <ResetSessionCard conv={conv} />}
 
       {view?.invite && (
         <div class="pf-card pf-embed">
