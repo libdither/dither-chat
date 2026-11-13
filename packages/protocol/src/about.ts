@@ -484,6 +484,12 @@ export interface PersonAbout {
   links?: { label: string; value: string; url?: string; verified?: boolean }[];
   /** Anything else worth a line: "Business account", "Local time". */
   facts?: { label: string; value: string }[];
+  /** Badges the network shows on their profile, by name, with the network's picture. */
+  badges?: { name: string; icon?: MediaUrl }[];
+  /** A frame drawn around their picture (Discord's avatar decoration). */
+  decoration?: MediaUrl;
+  /** Their profile's own colours, as CSS hex, top first (Discord's theme colours). */
+  themeColors?: string[];
   /** Your safety number with them (capability 'safetyNumbers'). */
   safety?: SafetyNumber;
   /** When the person is you: what the `setProfile` command can change on this account. Absent: only the bio. */
@@ -492,8 +498,8 @@ export interface PersonAbout {
   username?: { name: string; link?: string };
 }
 
-/** What `setProfile` may change: the bio, the profile name, the emoji by the bio, the picture, the username. */
-export type ProfileField = 'bio' | 'name' | 'emoji' | 'avatar' | 'username';
+/** What `setProfile` may change: the bio, the profile name, the emoji by the bio, the picture, the username, pronouns, the banner and its colour. */
+export type ProfileField = 'bio' | 'name' | 'emoji' | 'avatar' | 'username' | 'pronouns' | 'banner' | 'accent';
 
 /**
  * A safety number (Signal): the digits two people compare to know nobody sits between them, and what their phones
