@@ -88,6 +88,7 @@ import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
 import { TypingBar } from './Typing.tsx';
 import { useGrow } from './grow.ts';
 import { AttachSheet, CameraView, SendScreen } from './Attach.tsx';
+import { mediaOffer, StickerButton, stickerInstaller, ViewOnceChip, VoiceButton } from './ComposerMedia.tsx';
 import { CAPTURE_ACCEPT, MEDIA_ACCEPT, opensSendScreen } from '../camera.ts';
 import { phone, touchOnly } from '../phone.ts';
 import { composerDone, composerTyped } from '../typing.ts';
@@ -95,6 +96,8 @@ import { noteSeen } from '../activity.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { ForwardCard, forwarding } from './Forward.tsx';
 import { InviteCards } from './InviteCard.tsx';
+import { PollCardLazy, PollMakerLazy } from './PollLazy.tsx';
+import { pollMaker } from '../polls.ts';
 import { AttachmentNote, ContactCards, MissingFiles, played, QuoteFallback, SendFailures, StoryReplyLine, withoutCardLines } from './MessageExtras.tsx';
 import { attachmentMenu, conversationMenu, identityMenu, imageMenu, linkMenu, messageMenu, openAttachment, personMenu } from './menus.tsx';
 import { fileFacts, fileIcon, fileKind, openFileViewer, VIEWABLE } from '../files.ts';
@@ -114,6 +117,7 @@ import { PlanChipLazy } from './calendar/lazy.tsx';
 import { AltBadge, EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voice } from './rich/parts.tsx';
 import { VoicePeople } from './Ringing.tsx';
 import { ForumLazy } from './ThreadsLazy.tsx';
+import { ScheduledStrip, useSendExtras } from './SendExtras.tsx';
 
 
 // ------------------------------------------------------------------ header
@@ -376,6 +380,11 @@ function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
     if (a && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && inviteRef(a.href)) {
       e.preventDefault();
       openPalette({ kind: 'new', mode: 'join' }, a.href);
+    }
+    // A sticker pack link opens its menu, where Install Sticker Pack is (ComposerMedia.tsx).
+    else if (a && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && stickerInstaller(a.href, m.seenVia)) {
+      e.preventDefault();
+      openMenu({ x: e.clientX, y: e.clientY }, linkMenu(a.href, m));
     }
   };
   if (tail)
@@ -700,7 +709,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           <>
             <RichHead m={m} />
             <StoryReplyLine m={m} />
-            <Body m={m.contacts ? withoutCardLines(m) : m} tail={ticks} />
+            {m.poll ? <PollCardLazy m={m} fallback={<Body m={m} />} /> : <Body m={m.contacts ? withoutCardLines(m) : m} tail={ticks} />}
             <Attachments m={m} />
             <MissingFiles m={m} />
             <ContactCards m={m} />
@@ -710,7 +719,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           </>
         )}
         <SendFailures m={m} />
-        {ticks && (!m.body || m.deleted) && <span class="msg-marks">{ticks}</span>}
+        {ticks && (!m.body || m.deleted || (m.poll && !m.forward)) && <span class="msg-marks">{ticks}</span>}
         {grouped && (m.editedTs || m.edits) && <Edited m={m} />}
         {grouped && (m.pinned || m.rich?.silent || m.rich?.marks) && (
           <span class="msg-marks">
@@ -1096,6 +1105,9 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   const [review, setReview] = useState(false);
   // The emoji button's picker, beside what opened it (Reactions.tsx).
   const [emojiAt, setEmojiAt] = useState<DOMRect | null>(null);
+  // Stickers, recording and view-once, where the sending account has them (ComposerMedia.tsx).
+  const offer = mediaOffer(sender, canAttach);
+  const [viewOnce, setViewOnce] = useState(false);
   const addFiles = async (list: File[]) => {
     if (!list.length || !conv) return;
     if (!canAttach) return toast({ kind: 'error', title: 'Cannot send files here', body: conv.encrypted ? 'Set up encryption on the account\'s page to send files in encrypted Matrix rooms.' : `${netName(conv.network)} is not set up to send files.` });
@@ -1111,6 +1123,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
     setCamera(false);
     setReview(false);
     setEmojiAt(null);
+    setViewOnce(false);
   }, [targets.convId]);
   const files = att.sendable;
   const draftKey = `dither-chat:draft:${targets.convId}`;
@@ -1164,15 +1177,37 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       if (body !== m.body) void editMessage(m, body);
       return;
     }
-    send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id, files: files.map((f) => f.file), uploads: files.map((f) => f.job!) });
+    send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id, files: files.map((f) => f.file), uploads: files.map((f) => f.job!), ...extras.opts, ...(viewOnce && offer.viewOnce && files.length ? { media: { viewOnce: true } } : {}) });
+    extras.sent();
     composerDone();
     type('');
     att.clear(true);
     clearReply();
     setReview(false);
+    setViewOnce(false);
+  };
+  /** A sticker or a recording goes at once, on its own, as a reply when one is open. */
+  const sendMedia = (opts: { files?: File[]; media?: { sticker?: string; voice?: P.VoiceOut } }) => {
+    send(targets.convId, '', { accountId: targets.accountId, replyTo: reply?.id, ...opts });
+    clearReply();
   };
   const canSend = !((!text.trim() && !files.length) || !!disabledReason || (att.failed && !edit));
   const sendTitle = att.failed && !edit ? 'A file did not upload: try it again or remove it' : undefined;
+  // Reply without a ping, send silently, send later (SendExtras.tsx, docs/sending.md).
+  const extras = useSendExtras({
+    conv,
+    sender,
+    reply,
+    canSend,
+    blocked: !!edit || !!disabledReason,
+    draft: async () => ({ body: text.trim(), attachments: (await Promise.all(files.map((f) => f.job!.settle()))).map((u) => u.id) }),
+    done: () => {
+      composerDone();
+      type('');
+      att.clear(true);
+      clearReply();
+    },
+  });
   const onText = (v: string) => {
     type(v);
     // Editing a sent message is not typing a new one.
@@ -1180,6 +1215,14 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   };
   const limit = conv ? `up to ${ATTACHMENT_LIMITS[conv.network].bytes / 1024 / 1024} MB each` : '';
   const attaching = canAttach && !edit && !disabledReason;
+  // Making a poll (docs/polls.md): where an account here makes them, not in an open message request.
+  const [polling, setPolling] = useState(false);
+  const pollAccount = conv && !edit && !disabledReason ? pollMaker(targets.convId, sender?.id) : null;
+  const pollBtn = pollAccount && !onPhone && (
+    <button class="icon-btn poll-btn" data-track="poll" onClick={() => setPolling(true)} title="New poll" aria-label="New poll">
+      <Icon name="list" size={17} />
+    </button>
+  );
   const openCamera = () => {
     // No camera API at all: the system's camera, from this tap.
     if (!navigator.mediaDevices?.getUserMedia) return capture.current?.click();
@@ -1259,11 +1302,18 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       <Icon name="smile" size={onPhone ? 20 : 18} />
     </button>
   );
-  const sendBtn = (
-    <button class="send-btn" data-track="send" disabled={!canSend} onClick={submit} aria-label="Send" title={sendTitle}>
-      <Icon name="send" size={17} />
-    </button>
+  const sendBtn =
+    attaching && offer.record && !text.trim() && !files.length ? (
+      <VoiceButton conversationId={targets.convId} onPhone={onPhone} voice={offer.voice} onSend={(f, voice) => sendMedia({ files: [f], ...(voice ? { media: { voice } } : {}) })} />
+    ) : (
+      <button class="send-btn" data-track="send" disabled={!canSend} onClick={submit} aria-label="Send" title={sendTitle}>
+        <Icon name="send" size={17} />
+      </button>
+    );
+  const stickerBtn = conv && !disabledReason && !edit && offer.stickers && (
+    <StickerButton conversationId={targets.convId} accountId={targets.accountId ?? sender?.id} onPhone={onPhone} onSend={(st) => sendMedia({ media: { sticker: st.id } })} />
   );
+  const viewOnceChip = offer.viewOnce && files.length > 0 && !edit && <ViewOnceChip on={viewOnce} set={setViewOnce} />;
   return (
     <div
       class={`composer ${dropping ? 'dropping' : ''}`}
@@ -1281,6 +1331,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
         void addFiles([...e.dataTransfer.files]);
       }}
     >
+      <ScheduledStrip conversationId={targets.convId} />
       {edit && (
         <div class="composer-reply">
           <Icon name="pencil" size={13} /> Editing your message
@@ -1293,12 +1344,14 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
         <div class="composer-reply">
           <Icon name="reply" size={13} /> Replying to <b>{isSelfIdentity(reply.authorId) ? 'yourself' : authorName(reply.authorId)}</b>
           <span>{plainBody(reply.body, reply.network).slice(0, 80)}</span>
+          {extras.replyToggle}
           <button class="icon-btn small" data-track="cancel reply" onClick={clearReply} aria-label="Cancel reply">
             <Icon name="x" size={13} />
           </button>
         </div>
       )}
       <AttachedFiles files={att.files} remove={att.remove} />
+      {viewOnceChip}
       <EmojiComplete ta={ta} convId={targets.convId} network={conv?.network} />
       {!edit && <SlashCommandsLazy ta={ta} convId={targets.convId} accountId={sender?.id} text={text} />}
       {attaching && (
@@ -1364,12 +1417,14 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
               box
             )}
             {emojiBtn}
+            {stickerBtn}
             {attaching && (
               <button class="icon-btn composer-camera" data-track="camera" onClick={openCamera} aria-label="Take a photo or video">
                 <Icon name="camera" size={20} />
               </button>
             )}
           </div>
+          {extras.button}
           {sendBtn}
         </div>
       ) : (
@@ -1379,6 +1434,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
               <Icon name="paperclip" size={17} />
             </button>
           )}
+          {pollBtn}
           {sendAsMenu}
           {lead ? (
             <div class={`pair-lead ${text ? 'raised' : ''}`}>
@@ -1389,6 +1445,8 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
             box
           )}
           {emojiBtn}
+          {stickerBtn}
+          {extras.button}
           {sendBtn}
         </div>
       )}
@@ -1401,7 +1459,17 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           onClose={() => setEmojiAt(null)}
         />
       )}
-      {sheet && <AttachSheet limit={limit} onClose={() => setSheet(false)} onPhotos={() => photos.current?.click()} onFile={() => picker.current?.click()} />}
+      {sheet && (
+        <AttachSheet
+          limit={limit}
+          onClose={() => setSheet(false)}
+          onPhotos={() => photos.current?.click()}
+          onFile={() => picker.current?.click()}
+          onPoll={pollAccount ? () => setPolling(true) : undefined}
+          {...(offer.viewOnce ? { onViewOnce: () => (setViewOnce(true), photos.current?.click()) } : {})}
+        />
+      )}
+      {polling && conv && <PollMakerLazy conversationId={targets.convId} network={conv.network} accountId={pollAccount?.id} onClose={() => setPolling(false)} />}
       {camera && (
         <CameraView
           onClose={() => setCamera(false)}
@@ -1425,6 +1493,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           onAddMore={() => photos.current?.click()}
           onClose={() => setReview(false)}
           enterSends={() => !touchKeyboard()}
+          extra={viewOnceChip}
         />
       )}
     </div>

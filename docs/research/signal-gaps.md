@@ -29,7 +29,7 @@ A side finding: `MessageFact.extra` (quote, poll, sticker, storyReply, viewOnce,
 - (a) L: outgoing link previews. `send --preview-url/--preview-title/--preview-description/--preview-image` is unused. **done** (net-gaps): the hub fetches the first link under the media proxy's rules (unfurl.ts: public addresses only, 512 KB page, 1 MB picture, 5 s) for an account offering `linkPreviews`, which Signal's offers only while the phone's link-preview setting is on; the adapter sends `previewUrl/Title/Description/Image`.
 - (d) L: an outgoing quote carries only the quoted text (`quoteTimestamp/quoteAuthor/quoteMessage`), not
   `--quote-attachment`, `--quote-mention` or `--quote-text-style`. A reply to a photo shows no thumbnail on the phone. **done** (net-gaps): `quoteMention`, `quoteTextStyle` and `quoteAttachment` (a picture of 256 KB or less as its own thumbnail) for messages this device has seen since; older ones keep the plain text.
-- (a) L: `send --no-urgent` (send without a push to the recipient) is unused. It could go with low-priority sends. **not built** (net-gaps): nothing in dither marks a send as low priority, so there is nothing to pass it for.
+- (a) L: `send --no-urgent` (send without a push to the recipient) is unused. It could go with low-priority sends. **not built** (net-gaps): nothing in dither marks a send as low priority, so there is nothing to pass it for. Not Send silently either (send-extras): it only leaves out the push that wakes their phone, and their app still notifies when it next connects ([sending.md](../sending.md)).
 - (a) L: `send --end-session` (reset the session, for decryption trouble) is unused. There is no "reset secure session". **done** (net-gaps): Reset secure session on a 1:1's About (`resetSession` command and capability), with a line in the conversation.
 - (d) L: a shared contact (`JsonSharedContact`) becomes one text line (name, phones, emails). `address[]`,
   `organization` (except as the name fallback), `avatar` and the contact's labels are lost, and there is no tap-to-message. **done** (net-gaps): a card with name, organisation, labelled numbers and emails, addresses and picture, and Message where someone the hub knows has that number (else New message with it); the body keeps the one line.
@@ -59,29 +59,29 @@ A side finding: `MessageFact.extra` (quote, poll, sticker, storyReply, viewOnce,
 ## Groups and admin
 
 - (a) M/H: you cannot leave a group. `quitGroup` (with `--admin` to hand over when you are the last admin, and
-  `--delete`) is used only to decline invitations. The protocol has no "leave conversation" command.
-- (a) M: removing a member is unused (`updateGroup -r/--remove-member`). `about.ts` AboutChange has no kick.
+  `--delete`) is used only to decline invitations. The protocol has no "leave conversation" command. **done** (net-gaps): the general `leave` runs `quitGroup`; as its only admin the page asks who takes over (`--admin`); `--delete` is a box with its own confirm; the history stays (docs/moderation.md).
+- (a) M: removing a member is unused (`updateGroup -r/--remove-member`). `about.ts` AboutChange has no kick. **done** (net-gaps): `moderate` remove, from a member's menu, admins only.
 - (a) M: adding or removing admins is unused (`updateGroup --admin / --remove-admin`). The adapter shows admins and
-  emits `role` events from re-reads, but protocol/About has no "make admin" change.
-- (a) L: ban and unban are unused (`updateGroup --ban/--unban`). `listGroups.banned[]` is read into types but never shown.
+  emits `role` events from re-reads, but protocol/About has no "make admin" change. **done** (net-gaps): Make Admin / Remove as Admin in a member's menu.
+- (a) L: ban and unban are unused (`updateGroup --ban/--unban`). `listGroups.banned[]` is read into types but never shown. **done** (net-gaps): Ban in a member's menu, the banned listed with Unban on the Moderation card.
 - (a) M: join requests to groups you admin go unanswered. `listGroups.requestingMembers[]` appears only as a count
   ("Asking to join"); approving (`updateGroup -m <requester>`) or refusing (`-r`) is not offered. docs/signal.md lists
-  it as not built.
+  it as not built. **done** (net-gaps): requests of kind `join` under Requests (`join:<group>:<person>`), Accept adds them, Decline turns them away.
 - (a) L/M: the group picture cannot be changed. `updateGroup -a/--avatar` exists, but groupAbout says "Changing the
-  picture is not supported yet".
+  picture is not supported yet". **done** (net-gaps): Change picture on the group's page (`configure` avatar, a `file://` path the hub gives).
 - (b) L: link approval can be set but not read. `updateGroup --link enabled-with-approval` exists, but
   `listGroups` JSON does not say whether approval is on (`groupInviteLink` only), so `joinApproval` is shown as
-  unknown and not editable. The write side could still be offered (see (e) for the read side).
+  unknown and not editable. The write side could still be offered (see (e) for the read side). **done** (net-gaps): the write side, offered as "Unknown: set it…" with the link on; the read side stays a signal-cli limit, said in the panel.
 - (a) L: member labels are a newer Signal feature: `listGroups.members[].label/labelEmoji` and `updateGroup
-  --member-label/--member-label-emoji` (your own label). They are not mapped or set.
-- (a) L: ending a group is unused (`terminateGroup -g`). `isTerminated` is read: it blocks changes and invitations.
+  --member-label/--member-label-emoji` (your own label). They are not mapped or set. **done** (net-gaps): everyone's labels by their names in the member list; your own on the "Your label" card (`setLabel`).
+- (a) L: ending a group is unused (`terminateGroup -g`). `isTerminated` is read: it blocks changes and invitations. **done** (net-gaps): End the group… on the Moderation card, after typing its name.
 - (a) M: admin delete is unused. `sendAdminDelete -a <author> -t <ts>` (and `--story`) exists, but `redact` refuses
   others' messages with "Signal only lets you delete your own messages for everyone". Incoming `adminDelete` is
-  mapped to `delete` (b).
+  mapped to `delete` (b). **done** (net-gaps): Delete Message (Moderator) in the message menu where you are an admin (`redact` with `moderator`, `sendAdminDelete`).
 - (d) L: the group revision (`JsonGroupInfo.revision`) is ignored. Every UPDATE triggers a full `listGroups` re-read
-  and a diff (`describeGroupChange`), which cannot name who acted when several changes arrive together.
+  and a diff (`describeGroupChange`), which cannot name who acted when several changes arrive together. **not built**: `listGroups` has no revision, so an update has no baseline to be compared with after a restart; not cheap.
 - (d) L: groups can only be made with 10 people at most (`GROUP_RULES.signal.max = 10`). signal-cli has no such cap.
-  This is the protocol's pacing choice, not Signal's.
+  This is the protocol's pacing choice, not Signal's. **not built**: kept on purpose; it is the hub's few-at-a-time pacing, the same as `ADD_MEMBERS_MAX`, and the adapter's `createGroupParams` guard relies on it.
 - (a) L: group calls cannot be started, and `groupCallUpdate.eraId` only gives "started a group call". See (e).
 
 ## Contacts, profiles, usernames
@@ -126,12 +126,17 @@ A side finding: `MessageFact.extra` (quote, poll, sticker, storyReply, viewOnce,
 
 - (a) L/M: stories are switched off entirely by `--ignore-stories`. `JsonStoryMessage` (`fileAttachment`,
   `textAttachment{text, style, colors, gradient, preview}`, `allowsReplies`, `groupId`) and
-  `syncMessage.sentStoryMessage` never arrive.
+  `syncMessage.sentStoryMessage` never arrive. **done** (net-gaps): behind a per-account setting, off by default, read
+  when the daemon starts; stories show on a contact's or group's page for their day, never in the inbox or as a
+  notification ([media-kinds.md](../media-kinds.md)). Your own from the phone are kept but not shown yet.
 - (c) L: a story reply arrives (`dataMessage.storyContext`) and the adapter sets `extra.storyReply`, but the web
   never shows "replied to your story". Story reactions (a reaction with `storyContext` and no text) are dropped
   ("e.g. a reaction to a story"). **done** (net-gaps) (display only): "Replied to your story", and a story reaction as "Reacted ❤️ to your story".
 - (a) L: posting stories (`sendStory -a <file> [-g group] [--no-replies]`), replying to them (`send
   --story-timestamp/--story-author`), reacting (`sendReaction --story`) and deleting (`sendAdminDelete --story`) are unused.
+  **done** (net-gaps) for replying and reacting, and a viewed receipt on opening one only with read receipts on.
+  **not built**: posting (without a group it goes to the phone's whole My Story audience, which dither cannot read) and
+  deleting.
 
 ## Calls
 
@@ -154,10 +159,13 @@ A side finding: `MessageFact.extra` (quote, poll, sticker, storyReply, viewOnce,
 
 ## Stickers
 
-- (a) M: sending stickers. `send --sticker <packId>:<stickerId>` is unused, and the UI has no sticker picker.
+- (a) M: sending stickers. `send --sticker <packId>:<stickerId>` is unused, and the UI has no sticker picker. **done**
+  (net-gaps): the composer's sticker picker ([media-kinds.md](../media-kinds.md)).
 - (a) L: listing installed packs (`listStickerPacks` → `packId, url, installed, title, author, cover, stickers[]`),
   installing from a signal.art link (`addStickerPack --uri`), fetching one sticker (`getSticker`) and making packs
   (`uploadStickerPack`) are unused. The adapter reads `stickers/<pack>/manifest.json` from disk for emoji and mime.
+  **done** (net-gaps) for listing, installing from a link (pasted, or a link's menu) and getSticker for a picture not on
+  disk yet. **not built**: making packs.
 - (c) L: incoming stickers come in as `kind: 'sticker'` with an image attachment and `extra.sticker`. The web has no
   sticker-specific rendering (no `'sticker'` match in web/src), so they render as an image.
 
@@ -190,13 +198,16 @@ A side finding: `MessageFact.extra` (quote, poll, sticker, storyReply, viewOnce,
 ## Attachments
 
 - (a) L/M: voice notes. `JsonAttachment.isVoiceNote` is ignored (no voice-note player or label), and `send
-  --voice-note` is never sent (no recording UI). **done** (net-gaps) for incoming: a "Voice message" label with the player (`attachmentNotes[].voiceNote`; Signal has no duration or waveform). **Not built**: `send --voice-note`, which waits on recording in the composer (another package).
+  --voice-note` is never sent (no recording UI). **done** (net-gaps) for incoming: a "Voice message" label with the player (`attachmentNotes[].voiceNote`; Signal has no duration or waveform). **Not built**: `send --voice-note`, which waits on recording in the composer (another package). **done** (net-gaps,
+  media-kinds): recorded in the composer and sent with `--voice-note` ([media-kinds.md](../media-kinds.md)).
 - (a) L: per-attachment captions. `JsonAttachment.caption` is ignored, and `send` has no caption flag (e). **done** (net-gaps) for incoming (`attachmentNotes[].caption`, under the file); sending stays (e) e19.
 - (a) L: `uploadTimestamp` and `size` (size is mapped) and `width/height` (mapped) are fine. Thumbnails of quoted
   attachments (`JsonQuotedAttachment.thumbnail`) are ignored. **done** (net-gaps) for quoted thumbnails (see the quote rows above).
 - (a) L: view-once sending. `send --view-once` is unused. Incoming view-once is deliberately shown as a placeholder
   ("open it on your phone"), though signal-cli did download the file. The file is kept on disk, not shown and never
   purged early. **not built** (net-gaps): it needs a composer switch and a way to show your own view-once message; incoming view-once stays a placeholder.
+  **done** (net-gaps, media-kinds): sent from a View once switch where files are attached (your copy is a placeholder),
+  and the file signal-cli downloaded for an incoming one is deleted once it is mapped.
 - (a) L: `getAttachment` (base64 by id) is unused, but the adapter reads `<dir>/attachments/<id>` directly, which is
   equivalent. Nothing to do (net-gaps): reading the file is equivalent.
 - (d) L: an attachment whose download failed or was skipped looks the same as a missing `id`, and is silently dropped
@@ -206,14 +217,17 @@ A side finding: `MessageFact.extra` (quote, poll, sticker, storyReply, viewOnce,
 
 - (a)/(d) M/H: poll votes are dropped (`dataMessage.pollVote` → "ignoring a poll vote", debug log), so no tally is
   ever shown. `pollCreate` becomes text lines plus `extra.poll`, which the web never renders as a poll (c).
-  `pollTerminate` becomes "ended the poll".
+  `pollTerminate` becomes "ended the poll". **done** (net-gaps): votes tallied by the hub (each voter's highest vote count wins), voters
+  named as Signal shows them, the poll card in the web ([polls.md](../polls.md)).
 - (a) M: no voting or poll-making. `sendPollVote --poll-author --poll-timestamp -o <idx…> --vote-count n`,
   `sendPollCreate -q -o … [--no-multi]` and `sendPollTerminate --poll-timestamp` are unused. The protocol has no poll
-  command or event.
+  command or event. **done** (net-gaps): `pollVote`, `pollCreate`, `pollEnd` commands and the `pollUpdate` event (protocol poll.ts);
+  quiet in a message request.
 - (b) M: pinning and unpinning. Incoming `pinMessage{…, pinDurationSeconds}` and `unpinMessage` become `pin` events
   (with duration timers), and the About shows pinned messages. But `sendPinMessage [-d secs] -a -t` and
   `sendUnpinMessage` are never called, and `configure {key:'pin'}` throws "Signal keeps no list of pinned messages to
-  change", which is wrong for 0.14.8.
+  change", which is wrong for 0.14.8. **done** (net-gaps): `sendPinMessage` with Signal's durations (1 day, 1 week, 30 days, for good) and
+  `sendUnpinMessage`; the hub lists the pins it saw.
 
 ## Misc
 

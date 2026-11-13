@@ -27,13 +27,17 @@ import type { AboutChange, AboutTarget, PersonRelationship } from './about.ts';
 import type { AddAction, AddRef, RelationshipFact, RequestAnswer, RequestFact } from './add.ts';
 import type { AttentionCapability, AttentionCommand } from './attention.ts';
 import type { InteractCapability, InteractCommand, InteractEvent } from './apps.ts';
+import type { PollCapability, PollCommand, PollUpdate } from './poll.ts';
 import type { CallFact, CallMode, CallState, VoiceMember } from './call.ts';
 import type { GateAnswer, ScheduledEventFact, SpaceGate } from './servers.ts';
+import type { MessageModeration, ModAction, ReactionClear } from './moderation.ts';
 import type { LinkPreviewOut } from './extra.ts';
 import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, ReactionStyle, Shape, SpaceKind, Variant } from './ontology.ts';
 import type { SelfCapability, SelfCommand, SelfEvent } from './self.ts';
 import type { VoiceFact } from './rich.ts';
+import type { MediaCapability, MediaCommand, MediaEvent, VoiceOut } from './media.ts';
 import type { ForumFact, ThreadFact, ThreadsCapability, ThreadsCommand } from './threads.ts';
+import type { SendCapability, SendCommand, SendEvent } from './sending.ts';
 
 /** How far a message got with someone: their device has it, they read it, they played it (a voice note, a video). */
 export type ReceiptState = 'delivered' | 'read' | 'played';
@@ -132,10 +136,25 @@ export type Capability =
   | 'linkPreviews'
   /** Resets the encrypted session with someone in a direct conversation (the `resetSession` command; Signal's end session). */
   | 'resetSession'
+  /**
+   * Moderates where the account may (moderation.ts): About.moderation and the `moderate` and `bans` commands for
+   * members, ReactionContext.moderation, `redact` with `moderator` and `clearReactions` for others' messages.
+   */
+  | 'moderate'
+  /** Shows members' labels in groups (AboutMember.label) and sets your own (About.label, the `setLabel` command; Signal). */
+  | 'memberLabels'
+  /** Changes a group's or server's picture through `configure` with key 'avatar' (a file:// URL the hub gives it). */
+  | 'setPicture'
   /** Mentions found late, native mutes, unread by hand, many read at once (attention.ts). */
   | AttentionCapability
   /** Bots' buttons, selects, slash commands and forms (apps.ts). */
   | InteractCapability
+  /** Stickers, voice messages, view-once, stories (media.ts). */
+  | MediaCapability
+  /** Polls read, voted in, made and ended; pins changed (poll.ts). */
+  | PollCapability
+  /** Silent sends, replies without a ping, previews taken off, saved messages, the network's scheduled messages (sending.ts). */
+  | SendCapability
   /** The account's own self and block, ignore, notes (self.ts, docs/account-self.md). */
   | SelfCapability
   /** Following threads, starting threads and posts, archiving, publishing, running a group (threads.ts). */
@@ -311,6 +330,8 @@ export interface ReactionContext {
   custom: { id: string; name: string; icon?: MediaUrl; emoji: CustomEmojiFact[] }[];
   /** Absent: this network has no super reactions. */
   super?: { available: boolean; reason?: string };
+  /** What this account may do to others' messages here (capability 'moderate'). Absent: nothing. */
+  moderation?: MessageModeration;
 }
 
 /**
@@ -346,6 +367,8 @@ export interface OutgoingAttachment {
   mime: string;
   size: number;
   kind: AttachmentKind;
+  /** Send it as the network's voice message (capability 'sendVoice', media.ts): the only file of its send. */
+  voice?: VoiceOut;
 }
 
 /** What the `setProfile` command changes: only the fields given (see it there). */
@@ -442,6 +465,8 @@ export type AdapterEvent =
    *
    * A message pinned or unpinned. */
   | { t: 'pin'; conversation: string; message: string; pinned: boolean; by?: string; ts?: number }
+  /** Votes in a poll as they come, or the poll closing (capability 'polls', poll.ts PollUpdate). */
+  | ({ t: 'pollUpdate' } & PollUpdate)
   /** Someone given a role or losing one: a Discord role by name, a Matrix power level ("Admin", "Moderator"), admin on Signal or WhatsApp. */
   | { t: 'role'; target: AboutTarget; member: string; role: string; given: boolean; color?: string; by?: string; ts?: number }
   /**
@@ -509,11 +534,15 @@ export type AdapterEvent =
   | { t: 'scheduledEventGone'; space: string; nativeId: string }
   /** What a space asks of this account now (capability 'gates'); null: nothing (passed, approved, or left). */
   | { t: 'gate'; space: string; gate: SpaceGate | null }
+  /** saved, unsaved, reminderDue (sending.ts). */
+  | SendEvent
   | { t: 'reply'; id: string; ok: true; result?: unknown }
   | { t: 'reply'; id: string; ok: false; error: string }
   | { t: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; msg: string; data?: unknown }
   /** interaction, appModal (apps.ts). */
   | InteractEvent
+  /** story, storyGone (media.ts). */
+  | MediaEvent
   /** Notices, own presence and settings, whom it ignores (self.ts). */
   | SelfEvent;
 
@@ -580,7 +609,24 @@ export type AdapterCommand =
   /** Call lab only (scripts/call-lab.ts, DITHER_LAB=1): a command for the lab probe in the sandbox. */
   | { t: 'lab'; id: string; lab: { op: string; [k: string]: unknown }; timeout?: number }
   /** reply.result: { nativeId } of the sent message if known (the echo still arrives as a message fact). */
-  | { t: 'send'; id: string; conversation: string; body: string; replyTo?: string; attachments?: OutgoingAttachment[]; /** capability 'linkPreviews' */ preview?: LinkPreviewOut }
+  | {
+      t: 'send';
+      id: string;
+      conversation: string;
+      body: string;
+      replyTo?: string;
+      attachments?: OutgoingAttachment[];
+      /** capability 'linkPreviews' */
+      preview?: LinkPreviewOut;
+      /** A sticker from the `stickers` reply, by its id (capability 'sendStickers'); body may be empty with it. */
+      sticker?: string;
+      /** The files open once (capability 'sendViewOnce'). */
+      viewOnce?: boolean;
+      /** capability 'silentSend': nobody is notified of it (Discord's @silent). Left out by the hub otherwise. */
+      silent?: boolean;
+      /** capability 'replyMention', with replyTo: false, the reply does not ping its author. Absent: the network's default (it pings). */
+      mentionReplied?: boolean;
+    }
   /**
    * Forward a message this account can read, the network's own way (capability 'forward'). `note` goes with it,
    * as the network's own client would send one. reply.result: { nativeId } of the forward, or { fallback: reason }
@@ -637,7 +683,28 @@ export type AdapterCommand =
   /** Name the people behind a total: identity facts first, then reply.result: { authors: string[] } */
   | { t: 'reactors'; id: string; conversation: string; message: string; key: string; style?: ReactionStyle }
   | { t: 'edit'; id: string; conversation: string; message: string; body: string }
-  | { t: 'redact'; id: string; conversation: string; message: string }
+  /**
+   * Delete a message for everyone. `moderator` (capability 'moderate'): it is someone else's, deleted as an admin or
+   * moderator may (Discord's Manage Messages, Signal's admin delete); the adapter checks it may first.
+   */
+  | { t: 'redact'; id: string; conversation: string; message: string; moderator?: true }
+  /**
+   * Take reactions off a message as a moderator (capability 'moderate', ReactionContext.moderation.reactions): all of
+   * them, one emoji's (`key`), or one person's (`key` and `who`, a native identity id). reply.result: {}
+   */
+  | ({ t: 'clearReactions'; id: string; conversation: string; message: string } & ReactionClear)
+  /**
+   * One moderating action on a group's or server's members (capability 'moderate', moderation.ts), checked by the hub
+   * against a fresh About.moderation. reply.result: the About as it now stands.
+   */
+  | { t: 'moderate'; id: string; target: AboutTarget; action: ModAction }
+  /** Who is banned from a server, one read as its own Bans list makes it (capability 'moderate'). Identity facts first, then reply.result: BansResult. */
+  | { t: 'bans'; id: string; target: AboutTarget }
+  /**
+   * Your own member label in a group, '' to clear it (capability 'memberLabels', checked against memberLabelProblem).
+   * reply.result: the About as it now stands.
+   */
+  | { t: 'setLabel'; id: string; conversation: string; text: string; emoji?: string }
   /** reply.result: { mime: string, base64: string } */
   | { t: 'fetchMedia'; id: string; url: MediaUrl }
   /** Settings, members and permissions of a conversation or space. Identity facts for members first, then reply.result: About */
@@ -722,7 +789,16 @@ export type AdapterCommand =
    * checked a fresh About's `leaving`. `silent`: without telling the others, where the network can. The leave event
    * first, then reply.result: LeaveResult.
    */
-  | { t: 'leave'; id: string; target: AboutTarget; silent?: boolean }
+  | {
+      t: 'leave';
+      id: string;
+      target: AboutTarget;
+      silent?: boolean;
+      /** Native identity ids made admin as you leave (AboutLeaving.needsAdmin; Signal's `--admin`). */
+      admins?: string[];
+      /** Forget the group's data on this device too (AboutLeaving.canForget; Signal's `--delete`). */
+      forget?: true;
+    }
   /** What a space asks of this account now (capability 'gates'). reply.result: SpaceGate | null. */
   | { t: 'gate'; id: string; space: string }
   /** The owner's answer to it, checked against gateAnswerProblem (capability 'gates'). reply.result: GateResult. */
@@ -753,6 +829,12 @@ export type AdapterCommand =
   | AttentionCommand
   /** appCommands, appAutocomplete, interact (apps.ts). */
   | InteractCommand
+  /** stickers, addStickerPack, storyViewed, storyReply (media.ts). */
+  | MediaCommand
+  /** pollVote, pollCreate, pollEnd (poll.ts). */
+  | PollCommand
+  /** suppressEmbeds, save, savedList, nativeScheduled, cancelScheduled (sending.ts). */
+  | SendCommand
   /** Block, ignore, notes, own presence, sessions (self.ts). */
   | SelfCommand
   /** followThread, threadNotify, threadState, createThread, createPost, crosspost, removeMember, setOwner, setPicture (threads.ts). */

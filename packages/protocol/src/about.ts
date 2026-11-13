@@ -12,7 +12,9 @@
 import type { MediaUrl } from './adapter.ts';
 import { NETWORK_META, type Network } from './ontology.ts';
 import type { AboutLeaving, InviteLinkFact, InviteOptions } from './servers.ts';
+import { PIN_DURATIONS } from './poll.ts';
 import type { AboutOwnership, AboutThread } from './threads.ts';
+import type { AboutLabel, AboutModeration, MemberMod } from './moderation.ts';
 
 /** Who may do something, as far as the networks agree. */
 export type Who = 'everyone' | 'admins';
@@ -50,11 +52,17 @@ export interface AboutValues {
   history: HistoryVisibility;
   /** End-to-end encrypted. On Matrix it can be turned on, never off. */
   encrypted: boolean;
+  /** Minutes of no activity before a new thread hides itself (Discord's default auto-archive): 60, 1440, 4320, 10080. */
+  autoArchive: number;
+  /** How many may be in a voice channel at once (Discord). 0: no limit. */
+  userLimit: number;
+  /** A voice channel's audio quality, bits a second (Discord). */
+  bitrate: number;
 }
 
 export type AboutKey = keyof AboutValues;
 
-export const ABOUT_KEYS: readonly AboutKey[] = ['name', 'topic', 'avatar', 'disappearing', 'slowMode', 'nsfw', 'announceOnly', 'editInfo', 'addMembers', 'joinApproval', 'joinRule', 'history', 'encrypted'];
+export const ABOUT_KEYS: readonly AboutKey[] = ['name', 'topic', 'avatar', 'disappearing', 'slowMode', 'nsfw', 'announceOnly', 'editInfo', 'addMembers', 'joinApproval', 'joinRule', 'history', 'encrypted', 'autoArchive', 'userLimit', 'bitrate'];
 
 /** One setting: its value, and whether this account may change it. */
 export interface AboutSetting<K extends AboutKey = AboutKey> {
@@ -63,6 +71,13 @@ export interface AboutSetting<K extends AboutKey = AboutKey> {
   canEdit: boolean;
   /** Why not, in words (shown on hover and under the setting). Also a limit worth knowing when canEdit is true. */
   reason?: string;
+  /** The values this account may pick here, where they depend on the place (Discord's bitrate by the server's boosts). */
+  options?: number[];
+  /**
+   * Only the change can be sent, not the value read back (Signal's join approval: signal-cli does not say whether it
+   * is on). The panel offers it as a choice, with the reason saying why the current value is unknown.
+   */
+  writeOnly?: boolean;
 }
 
 export type AboutFields = { [K in AboutKey]?: AboutSetting<K> };
@@ -76,6 +91,10 @@ export interface AboutMember {
   rank?: number;
   /** CSS colour of their role (Discord). */
   color?: string;
+  /** Their member label in a group (Signal), a few words and an emoji. */
+  label?: { text?: string; emoji?: string };
+  /** How this account stands to them, for moderating (capability 'moderate', moderation.ts). */
+  mod?: MemberMod;
 }
 
 export interface AboutRole {
@@ -118,6 +137,11 @@ export interface AboutPinned {
   messages: string[];
   canEdit: boolean;
   reason?: string;
+  /**
+   * The network's whole list, just read (Discord's pinned list). Absent: the network keeps none this account can read
+   * (Signal), so the hub adds the pins it saw itself.
+   */
+  complete?: boolean;
 }
 
 /**
@@ -255,6 +279,10 @@ export interface About {
   thread?: AboutThread;
   /** A group with an owner: who, and whether this account may remove people or hand it over (threads.ts). */
   ownership?: AboutOwnership;
+  /** What this account may do to its members (capability 'moderate', moderation.ts). */
+  moderation?: AboutModeration;
+  /** Your own member label here (Signal); `configure` with key 'label' changes it. */
+  label?: AboutLabel;
 }
 
 export interface AboutTarget {
@@ -266,7 +294,7 @@ export interface AboutTarget {
 export type AboutChange =
   | { [K in AboutKey]: { key: K; value: AboutValues[K] } }[AboutKey]
   | { key: 'invite'; op: 'create' | 'revoke'; /** create: seconds, 0 never. */ maxAge?: number; /** create: 0 no limit. */ maxUses?: number; temporary?: boolean; /** revoke: which link, else the newest. */ code?: string }
-  | { key: 'pin'; message: string; remove?: boolean };
+  | { key: 'pin'; message: string; remove?: boolean; /** How long it stays pinned, one of poll.ts PIN_DURATIONS for the network (null: until unpinned); absent: its default. */ seconds?: number | null };
 
 // ---------------------------------------------------------------- per network
 
@@ -280,6 +308,10 @@ export interface AboutRules {
   /** Any timer works, not just the ones offered (Signal sets any number of seconds). */
   disappearingFree?: boolean;
   slowMode?: number[];
+  /** Discord: thread auto-archive minutes, voice user limits and bitrates its own settings offer. */
+  autoArchive?: number[];
+  userLimit?: number[];
+  bitrate?: number[];
   nameMax?: number;
   topicMax?: number;
 }
@@ -289,9 +321,12 @@ const DAY = 24 * HOUR;
 
 export const ABOUT_RULES: Record<Network, AboutRules> = {
   discord: {
-    conversation: ['name', 'topic', 'avatar', 'slowMode', 'nsfw', 'announceOnly'],
+    conversation: ['name', 'topic', 'avatar', 'slowMode', 'nsfw', 'announceOnly', 'autoArchive', 'userLimit', 'bitrate'],
     space: ['name', 'topic', 'avatar', 'nsfw'],
     slowMode: [0, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, HOUR, 2 * HOUR, 6 * HOUR],
+    autoArchive: [60, 1440, 4320, 10080],
+    userLimit: [0, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 50, 75, 99],
+    bitrate: [8000, 16000, 24000, 32000, 48000, 64000, 80000, 96000, 128000, 256000, 384000],
     nameMax: 100,
     topicMax: 1024,
   },
@@ -362,6 +397,9 @@ export const ABOUT_LABEL: Record<AboutKey, string> = {
   joinRule: 'Who can join',
   history: 'Who can read history',
   encrypted: 'End-to-end encryption',
+  autoArchive: 'Hide threads after inactivity',
+  userLimit: 'User limit',
+  bitrate: 'Bitrate',
 };
 
 /** "5 minutes", "1 day", "Off". */
@@ -399,7 +437,11 @@ export const HISTORY_LABEL: Record<HistoryVisibility, string> = {
 export function aboutChangeProblem(network: Network, kind: AboutTarget['kind'], change: AboutChange): string | null {
   const rules = ABOUT_RULES[network];
   if (change.key === 'invite') return inviteChangeProblem(change);
-  if (change.key === 'pin') return typeof change.message === 'string' && change.message ? null : 'which message?';
+  if (change.key === 'pin') {
+    if (typeof change.message !== 'string' || !change.message) return 'which message?';
+    if (change.seconds === undefined || change.remove) return null;
+    return PIN_DURATIONS[network]?.includes(change.seconds) ? null : 'Not one of the pin durations this network offers';
+  }
   if (!ABOUT_KEYS.includes(change.key)) return `unknown setting ${String(change.key)}`;
   if (!rules[kind].includes(change.key)) return `${ABOUT_LABEL[change.key]} is not a setting here`;
   const v = change.value as unknown;
@@ -415,13 +457,20 @@ export function aboutChangeProblem(network: Network, kind: AboutTarget['kind'], 
       if (rules.topicMax && v.length > rules.topicMax) return `a description is at most ${rules.topicMax} characters here`;
       return null;
     case 'avatar':
-      return 'changing the picture is not supported yet';
+      // A new picture: the hub hands the adapter the uploaded file as a file:// URL in its spool (moderation.ts PICTURE_TYPES).
+      return typeof v === 'string' && v.startsWith('file://') ? null : 'which picture?';
     case 'disappearing':
       if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) return 'a timer is a whole number of seconds';
       if (!rules.disappearingFree && !rules.disappearing?.includes(v)) return `${durationLabel(v)} is not one of the timers offered here`;
       return null;
     case 'slowMode':
       return typeof v === 'number' && rules.slowMode?.includes(v) ? null : 'not one of the slow mode choices';
+    case 'autoArchive':
+      return typeof v === 'number' && rules.autoArchive?.includes(v) ? null : 'not one of the choices for hiding threads';
+    case 'userLimit':
+      return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 99 ? null : 'a user limit is 0 (none) to 99';
+    case 'bitrate':
+      return typeof v === 'number' && rules.bitrate?.includes(v) ? null : 'not one of the bitrate choices';
     case 'editInfo':
     case 'addMembers':
       return v === 'everyone' || v === 'admins' ? null : 'everyone or admins';

@@ -23,7 +23,9 @@ import type {
 } from './ontology.ts';
 import type { ArrangeSettings, UsageKind, UsageView } from './usage.ts';
 import type { FileInfo } from './files.ts';
+import type { AboutModerationView, MemberMod, MessageModeration } from './moderation.ts';
 import type { RichView, VoiceFact } from './rich.ts';
+import type { PollView } from './poll.ts';
 import type { MailAccess, MailAccountView, MailboxView, MailBootstrap, MailOutboxView, MailThreadView } from './mail.ts';
 import type { CalendarLinkView, CalendarNotifyRef, CalendarPlanView } from './calendar.ts';
 import type { AccountSelfView } from './self.ts';
@@ -398,7 +400,7 @@ export interface ReactionView {
  * A conversation's or space's About as the web app gets it (about.ts, docs/group-settings.md): the adapter's answer
  * in hub ids, from the account that asked. When no account could ask, the last answer the hub kept, with `stale`.
  */
-export interface AboutView extends Omit<About, 'members' | 'pinned' | 'fields'> {
+export interface AboutView extends Omit<About, 'members' | 'pinned' | 'fields' | 'moderation'> {
   target: { kind: 'conversation' | 'space'; id: string };
   network: Network;
   /** The account whose view this is. null: none could ask, and nothing was kept. */
@@ -410,10 +412,12 @@ export interface AboutView extends Omit<About, 'members' | 'pinned' | 'fields'> 
   canConfigure: boolean;
   fields: AboutFields;
   members?: {
-    list: { identityId: string; role?: string; rank?: number; color?: string }[];
+    list: { identityId: string; role?: string; rank?: number; color?: string; label?: { text?: string; emoji?: string }; mod?: MemberMod }[];
     total?: number;
     complete: boolean;
   };
+  /** About.moderation with hub identity ids for the banned and those asking to join. */
+  moderation?: AboutModerationView;
   /** The members' identities, since strangers in a big place are not in the bootstrap. */
   identities: IdentityView[];
   /** A space's members your accounts have seen, with the adversarial `members` setting on. */
@@ -543,6 +547,8 @@ export interface ReactionContextView {
   existingOnly?: boolean;
   custom: { id: string; name: string; icon: string | null; emoji: CustomEmojiView[] }[];
   super?: { available: boolean; reason?: string };
+  /** What this account may do to others' messages here (moderation.ts). */
+  moderation?: MessageModeration;
 }
 
 /** How often you have reacted with something: the quick row and "frequently used". */
@@ -603,6 +609,8 @@ export interface MessageView {
   failed?: SendFailureView[];
   /** Files it had that the account could not download. */
   missingAttachments?: MissingAttachmentFact[];
+  /** A poll, with its votes as the hub has them (poll.ts). */
+  poll?: PollView;
 }
 
 /** A forward, shown as a card with where it came from. */
@@ -1206,6 +1214,8 @@ export type ClientEvent =
   | { t: 'mail.progress'; accountId: string; sync: MailAccountView['sync'] }
   /** Every item the outbox still shows (held, queued, sending, failed, or sent a little while ago): the whole list. */
   | { t: 'mail.outbox'; items: MailOutboxView[] }
+  /** Messages to send later changed (sending.ts, docs/sending.md): the whole list the hub sends. Of the moment, not journaled. */
+  | { t: 'scheduled'; items: import('./sending.ts').ScheduledSendView[] }
   /** Ends a frame whose changes went into the journal: a client holding everything up to here can resume from `seq`. */
   | { t: 'sync'; seq: number }
   /** How an interaction with a bot went (apps.ts, docs/apps.md). Of the moment: not journaled. */

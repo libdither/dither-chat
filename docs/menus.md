@@ -36,10 +36,11 @@ One component draws them all (`packages/web/src/ui/ContextMenu.tsx`); what each 
 | Group | Items |
 |---|---|
 | Reactions | quick-reaction row (your 4 most used here), Add Reaction › (6 + Other Reactions…), View Reactions › (who reacted, per emoji) |
-| Actions | Edit Message **E** (own, where the network allows), Reply **R**, Forward **F**, Apps (apps' message commands, where the account has them: [apps.md](apps.md)), Open Thread, Create Thread (in a text or announcement channel, [threads.md](threads.md)), Publish (your own, in an announcement channel), Copy Text **C**, Copy Message Link |
+| Actions | Edit Message **E** (own, where the network allows), Reply **R**, Forward **F**, Apps (apps' message commands, where the account has them: [apps.md](apps.md)), Pin Message › / Unpin Message (where the account can pin; Signal asks how long), End Poll (your own poll), Open Thread, Create Thread (in a text or announcement channel, [threads.md](threads.md)), Publish (your own, in an announcement channel), Copy Text **C**, Copy Message Link |
 | Going places | Go to Replied Message, Go to Original Message (forwards), Profile |
 | Marks | Should have alerted (on a message that alerted it reads Alert was wrong), Less like this |
 | Red | Delete Message **Del** (own, where the network allows) |
+| On Discord | Save Message or Remove From Saved, Remind Me (times, or Pick a Time…), Saved Messages; Remove Embeds (own, with previews); Report on Discord (others': opens it in Discord). Each where the account can ([sending.md](sending.md)) |
 | Developer | Copy Message ID (the network's), Copy dither-chat ID |
 
 Copy Message Link gives the network's own link where there is one (`discord.com/channels/…/…/…`,
@@ -52,8 +53,7 @@ place's. A mark teaches the next decision and leaves this message where it is. O
 reasons at the bottom of the sheet, not among the items. They replaced the four levels a message could be
 voted to.
 
-Left out: **Pin** and **Mark Unread** (no adapter command, and read state cannot go backwards on the networks
-here), **Speak Message**, **Report**. The hover bar gains Forward and a More (…)
+Left out: **Mark Unread** where read state cannot go backwards on the network, **Speak Message**, **Report**. The hover bar gains Forward and a More (…)
 button that opens this menu.
 
 ### A conversation or channel (sidebar rows, the channel tree, the header)

@@ -28,6 +28,7 @@ import { ConnectActions, ProfileLinks } from './Requests.tsx';
 import { openConv } from './Sidebar.tsx';
 import { Loading } from './Loader.tsx';
 import { peopleExtras } from './peopleExtras.ts';
+import { Stories } from './StoriesLazy.tsx';
 
 import { signal } from '@preact/signals';
 
@@ -798,6 +799,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         </Card>
       )}
 
+      {ids
+        .filter((i) => i.network === 'signal' && !isSelfIdentity(i.id))
+        .map((i) => (
+          <Stories identityId={i.id} network={i.network} />
+        ))}
       {profile.mail && <MailCard mail={profile.mail} list={withList(person?.id ?? first.id)} name={name} />}
 
       {(profile.recent.length > 0 || chatNets.length > 0) && (
