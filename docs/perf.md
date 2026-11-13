@@ -456,6 +456,8 @@ everything (every five minutes, and after the inbox ranking refits) 0.4–0.8 s.
 ids, each batch of adapter events, triage, the five-minute rescore), then holds of two seconds or more; at ten
 minutes one line sums them up. After a restart, `grep -E '^stalls?:'` in the hub's log says whether anything still
 holds it.
+Since 2026-11-12 every hold of 200 ms or more, at any time, is also recorded with the spans on the thread and the
+process's CPU time and page faults (`traces/event-loop-stalls.ndjson`, docs/tracing.md).
 
 `test/stalls.test.ts` keeps it so by counts: a clock that ends a slice at every chance, and `onSlice` for each
 slice's rows. No slice of the refit, the probe or the archiver's walks goes over its rows; the refit's features and the
