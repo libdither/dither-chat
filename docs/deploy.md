@@ -111,6 +111,19 @@ silent, never marked (nor voted on before the tiers), in conversations you never
 To restore, stop the hub, move `hub.sqlite`, `hub.sqlite-wal` and `hub.sqlite-shm` aside, copy a backup to
 `hub.sqlite`, and start it. Clients notice and download everything again.
 
+**Durability.** The hub's database is in WAL mode with `synchronous = NORMAL` (`packages/hub/src/store.ts`; the
+embedder's database too), the owner's choice of 2026-11-13. A commit is written to the log and the hub goes on without
+waiting for the disk; the log reaches the disk at each checkpoint, which a thread of the hub's runs about every second
+(`checkpoint.ts`), and a clean stop checkpoints everything before it exits.
+
+- A crash of the hub alone loses nothing: what it committed is in the log, and the next start reads it.
+- A power cut, or a crash of the machine, can lose what was committed since the last checkpoint: about the last
+  second. It cannot corrupt the database.
+- The nightly copies, the copies before a migration and the ZFS snapshots are as before.
+
+Before, every commit waited for an fsync on the hub's one thread, about four for each message; on a busy disk that
+was most of what still held the hub (docs/perf.md, "synchronous = NORMAL (2026-11-13)").
+
 To deploy a new version: `git pull && bun install && bun run web:build && systemctl --user restart dither-chat`.
 Installed apps notice the new service worker when reopened, when the hub comes back after the restart, or within an
 hour, and show a reload bar. A page in sight never reloads by itself (`packages/web/src/update.ts`): the new build goes

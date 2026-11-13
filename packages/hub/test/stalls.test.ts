@@ -396,6 +396,18 @@ describe("a long batch of an adapter's events", () => {
 });
 
 describe('checkpoints', () => {
+  test("the hub's commits wait for no disk: they get there at checkpoints (synchronous NORMAL, the owner's choice)", () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dither-stalls-sync-'));
+    const store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
+    try {
+      expect(store.db.query('PRAGMA synchronous').get()).toEqual({ synchronous: 1 });
+      expect(store.db.query('PRAGMA journal_mode').get()).toEqual({ journal_mode: 'wal' });
+    } finally {
+      store.db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("the hub's commits leave the log to the checkpointer's thread, which copies all of it back", async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dither-stalls-checkpoint-'));
     const file = join(dir, 'hub.sqlite');

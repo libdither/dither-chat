@@ -532,6 +532,8 @@ export class EmbeddingStore {
     this.db = new Database(path, { create: true });
     this.db.exec(`PRAGMA busy_timeout = ${BUSY_MS}`);
     this.db.exec('PRAGMA journal_mode = WAL');
+    // As the hub's database (store.ts): to the disk at checkpoints, not at each commit.
+    this.db.exec('PRAGMA synchronous = NORMAL');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value BLOB);
       CREATE TABLE IF NOT EXISTS embedding (

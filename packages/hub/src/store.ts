@@ -225,6 +225,11 @@ export class Store {
     this.db.exec(`PRAGMA busy_timeout = ${BUSY_MS}`);
     // Outside any transaction: inside one, SQLite ignores foreign_keys.
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
+    // A commit is written to the log without waiting for the disk; the log reaches the disk at each checkpoint (about
+    // every second, checkpoint.ts). The owner's choice (2026-11-13): on a busy disk every fsync of a commit held the
+    // hub's one thread, four or so for each message. A power cut or a crash of the machine (not of the hub) can lose
+    // the commits since the last checkpoint; it cannot corrupt the database (docs/deploy.md, "Durability").
+    this.db.exec('PRAGMA synchronous = NORMAL');
     timer.step('db open');
     const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
     // A schema (or migration code) this database has not met yet: copy it first (backups/pre-migrate-*), then take

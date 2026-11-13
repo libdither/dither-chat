@@ -11,6 +11,8 @@ self.onmessage = (e: MessageEvent<{ file: string; everyMs: number }>) => {
   const { file, everyMs } = e.data;
   const db = new Database(file);
   db.exec('PRAGMA busy_timeout = 5000');
+  // A checkpoint syncs the log before it copies and the database file after (unless `synchronous` is OFF): with the
+  // hub's commits at NORMAL (store.ts), this is when they reach the disk.
   const timer = setInterval(() => {
     const t = performance.now();
     try {
