@@ -302,7 +302,7 @@ export class People {
     const network = s.nativeOf('identity', identityId)!.network;
     const acc = accountId ? s.account(accountId) : null;
     const ident = (native: string) => (acc ? s.ensureIdentity(acc, native) : hubId('idn', network, native));
-    const { avatar, banner, mutualSpaces, mutualFriends, friends, ...rest } = a;
+    const { avatar, banner, mutualSpaces, mutualFriends, friends, decoration, badges, ...rest } = a;
     const spaces = mutualSpaces?.map((m) => {
       const id = hubId('spc', network, m.id);
       const known = s.one<Row>('SELECT id FROM space WHERE id = ?', id);
@@ -322,6 +322,8 @@ export class People {
       ...(stale ? { stale } : {}),
       ...(avatar ? { avatar: s.mediaUrl(avatar, accountId) } : {}),
       ...(banner ? { banner: s.mediaUrl(banner, accountId) } : {}),
+      ...(decoration ? { decoration: s.mediaUrl(decoration, accountId) ?? undefined } : {}),
+      ...(badges?.length ? { badges: badges.map((b) => ({ name: b.name, ...(b.icon ? { icon: s.mediaUrl(b.icon, accountId) ?? undefined } : {}) })) } : {}),
       ...(spaces ? { mutualSpaces: spaces } : {}),
       ...(mf ? { mutualFriends: mf } : {}),
       ...(fr ? { friends: fr } : {}),

@@ -30,6 +30,14 @@ import { Loading } from './Loader.tsx';
 import { peopleExtras } from './peopleExtras.ts';
 import { Stories } from './StoriesLazy.tsx';
 
+import { signal } from '@preact/signals';
+
+/** Your note on their network, Block and Ignore, badges, your own fields (ProfileSelf.tsx): a chunk of its own, loaded with the first profile. */
+type Self = typeof import('./ProfileSelf.tsx');
+const selfParts = signal<Self | null>(null);
+let selfLoading: Promise<unknown> | null = null;
+const loadSelf = () => (selfLoading ??= import('./ProfileSelf.tsx').then((m) => (selfParts.value = m), () => (selfLoading = null)));
+
 /** What a network's profile holds at most, for when it says little. */
 const WHAT_NETWORKS_SHARE: Record<P.Network, string> = {
   discord: 'Bio, pronouns, status, banner, connections, mutual servers and friends, as Discord shows them on a profile.',
@@ -171,7 +179,9 @@ function useProfile(personId?: string, identityId?: string) {
       .catch(() => {});
     return () => void (live = false);
   }, [personId, identityId, signature]);
-  return { profile, abouts, counts, learn, asking: asking > 0, refresh: () => profile && profile !== 'none' && ask(profile.identityIds, true) };
+  // A change made from this page (ProfileSelf.tsx: a note, an ignore, a block), until the profile is fetched again.
+  const update = (patch: Partial<P.ProfileView>) => setProfile((p) => (p && p !== 'none' ? { ...p, ...patch } : p));
+  return { profile, abouts, counts, learn, update, asking: asking > 0, refresh: () => profile && profile !== 'none' && ask(profile.identityIds, true) };
 }
 
 /** Your own bio on one network, and a way to change it, within the network's limit. */
@@ -299,7 +309,9 @@ function MailCard({ mail, list, name }: { mail: NonNullable<P.ProfileView['mail'
 
 export function ProfilePane({ personId, identityId, onBack }: { personId?: string; identityId?: string; onBack: () => void }) {
   rev.value;
-  const { profile, abouts, counts, learn, asking, refresh } = useProfile(personId, identityId);
+  const { profile, abouts, counts, learn, update, asking, refresh } = useProfile(personId, identityId);
+  const S = selfParts.value;
+  useEffect(() => void loadSelf(), []);
   const [merging, setMerging] = useState(false);
   // The hero's pencil, for a person of one account: its nickname (Nickname.tsx).
   const [naming, setNaming] = useState(false);
@@ -488,6 +500,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       [!isSelf && { label: 'Merge Another Identity In', icon: 'merge', run: () => setMerging(true) }, { label: 'Ask the Networks Again', icon: 'refresh', run: refresh }],
       // Block or unblock, where an account can (Signal): asked again after, so the page says how you stand.
       isSelf ? [] : (peopleExtras()?.blockEntries(ids, profile.links ?? [], abouts, () => void refresh()) ?? []),
+      // Ignore on their networks (ProfileSelf.tsx).
+      isSelf || !S ? [] : S.selfEntries(ids, profile, profile.links ?? [], update),
     );
     // What the page already shows as a button is not repeated.
     const shown = new Set(['Profile', 'Message']);
@@ -578,6 +592,12 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
               </Tag>
             );
           })}
+          {!isSelf &&
+            S?.ignoredNets(ids, profile).map((n) => (
+              <Tag icon="bellOff" tone="muted" title={`You ignore them on ${netName(n)}: their messages never alert`}>
+                Ignored{nets.length > 1 && <NetGlyph network={n} size={11} />}
+              </Tag>
+            ))}
         </>
       }
       status={
@@ -659,6 +679,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
             {extras && <extras.OwnProfileExtras identity={i} about={abouts[i.id]} onSaved={learn} />}
           </>
         ))}
+        {isSelf && S && ids.map((i) => <S.OwnProfileFields identity={i} about={abouts[i.id]} onSaved={learn} />)}
         {several ? (
           // Each account's bio is on its tile (Accounts, above).
           !bios.length && !editable.length && !asking && <p class="pf-empty">No bio on any of their accounts.</p>
@@ -709,6 +730,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
             ],
           ]}
         />
+        {S && <S.ProfileExtras said={said} />}
         {said.filter((a) => a.stale).map((a) => (
           <p class="pf-stale">
             <NetGlyph network={a.network} size={11} /> {a.stale}

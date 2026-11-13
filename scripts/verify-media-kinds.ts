@@ -99,7 +99,8 @@ try {
   const att = vm.attachments.find((a: any) => a.kind === 'audio');
   check("Chromium's WebM recording went out as Ogg Opus", att.mime === 'audio/ogg' && /\.ogg$/.test(att.name), { mime: att.mime, name: att.name });
   check('with its length and a waveform', (att.voice?.seconds ?? 0) > 1 && (att.voice?.seconds ?? 9) < 4 && !!att.voice?.waveform, att.voice);
-  const bytes = new Uint8Array(await fetch(new URL(att.url, base)).then((r) => r.arrayBuffer()));
+  const res: Response = await fetch(new URL(String(att.url), base).href);
+  const bytes: Uint8Array = new Uint8Array(await res.arrayBuffer());
   check('the file is an Ogg stream that says Opus', new TextDecoder().decode(bytes.subarray(0, 4)) === 'OggS' && new TextDecoder().decode(bytes.subarray(28, 36)) === 'OpusHead');
   if (args.includes('--keep')) writeFileSync(join(work, 'voice.ogg'), bytes);
 
