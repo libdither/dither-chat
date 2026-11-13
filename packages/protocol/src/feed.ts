@@ -43,6 +43,28 @@ export interface PostFact {
   pinned?: boolean;
   /** The thread it belongs to: the id of the thread's first post (X: conversation_id_str). */
   root?: string;
+  /** What the account that read it has done to it (X: legacy.favorited, legacy.retweeted). */
+  viewer?: PostViewer;
+}
+
+/** What you have done to a post. */
+export interface PostViewer {
+  liked?: boolean;
+  reposted?: boolean;
+}
+
+/** Done to a post (capability 'postActions', the `postAct` command). */
+export type PostAct = 'like' | 'unlike' | 'repost' | 'unrepost';
+export const POST_ACTS: readonly PostAct[] = ['like', 'unlike', 'repost', 'unrepost'];
+
+/**
+ * Who liked or reposted a post, a page (capability 'postReactors', the `postReactors` command): native identity ids, in the
+ * network's order (X ranks them when asked: `enableRanking`), with what it said of each. Identity facts come first.
+ */
+export interface ReactorsPage {
+  who: { id: string; followers?: number; following?: boolean; followsYou?: boolean; verified?: boolean }[];
+  /** Ask again with this cursor for more, or null. */
+  more: string | null;
 }
 
 /**
