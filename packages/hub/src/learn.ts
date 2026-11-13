@@ -86,6 +86,11 @@ export interface Facts {
   judge?: number;
   /** Kept to the list: a rule of yours (List only), or the place is muted on its network. Never a Conversation or an alert. */
   cap?: boolean;
+  /**
+   * Where the two chances start, when its source says rather than the network (notices/triage.ts: from the notice's
+   * urgency). Kept with the facts, so learning and the backtest start from the same place as the decision did.
+   */
+  start?: P.TriageProbs;
 }
 
 export interface Example {
@@ -144,13 +149,17 @@ const clampP = (p: number, lo = 0.001, hi = 0.999) => Math.max(lo, Math.min(hi, 
 /** The bar the local model's answer is set against: lower where the message is to you. */
 export const alertBar = (f: Pick<Facts, 'shape' | 'mention' | 'reply'>) => (f.shape === 'direct' || f.mention || f.reply ? ALERT_BAR.direct : ALERT_BAR.other);
 
+/** The alert chance from the local model's answer and the bar it is held to: even odds exactly at the bar. */
+export const judgedAlert = (judge: number, bar: number) => clampP(sigmoid(logit(clampP(judge)) - logit(bar)));
+
 /**
  * Before any mark. Alert: the local model's answer against the bar, so it is even odds exactly at the bar. Important:
  * the network would have notified you (facts from before `notify` was kept say so by their base); below that, how
- * addressed to you it is; half of either from a bot.
+ * addressed to you it is; half of either from a bot. A notice's facts carry their own start (`start`).
  */
 export function prior(f: Facts): P.TriageProbs {
-  const alert = f.judge === undefined ? UNJUDGED : clampP(sigmoid(logit(clampP(f.judge)) - logit(alertBar(f))));
+  if (f.start) return f.start;
+  const alert = f.judge === undefined ? UNJUDGED : judgedAlert(f.judge, alertBar(f));
   const notified = f.notify ?? (f.base === 'push' || f.base === 'quiet');
   const important = (notified ? NOTIFIED : Math.min(0.6, 0.05 + 0.75 * (f.score ?? 0.15))) * (f.bot ? 0.5 : 1);
   return { alert, important };

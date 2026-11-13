@@ -43,6 +43,7 @@ import { Groups } from './groups.ts';
 import { People } from './people.ts';
 import { peopleGraph } from './graph.ts';
 import type { MailHub } from './mail/index.ts';
+import type { Notices } from './notices/index.ts';
 import { mailPeople } from './mail/people.ts';
 import { Adding, linksOf, requestHeld, requestViews } from './add.ts';
 import { feedRefusal, isFeed } from './feed.ts';
@@ -102,6 +103,8 @@ export interface ServerOpts {
   archiveMedia?: boolean;
   /** Mail (mail/index.ts, docs/mail.md): its routes, its part of the bootstrap and of each flush. */
   mail?: MailHub;
+  /** Notices (notices/, docs/notices.md): /api/notices, the bootstrap's `notices`. */
+  notices?: Notices;
   /** dither-calendar beside the hub (calendar.ts, docs/calendar.md): /calendar/*, GET /api/plans, the bootstrap's `calendar`. */
   calendar?: CalendarLink;
   /** A reminder from the calendar (POST /api/calendar/notify, loopback only). */
@@ -645,7 +648,7 @@ export class HubServer {
       // Everything changed so far is in the journal, so the position below covers what this reads.
       this.flush();
       const calendar = this.opts.calendar;
-      return ok({ ...s.bootstrap(), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), ...(this.opts.mail ? { mail: this.opts.mail.bootstrap() } : {}), requests: requestViews(s), ...(calendar ? { calendar: calendar.view() } : {}), sync: s.journal.position() } satisfies P.Bootstrap);
+      return ok({ ...s.bootstrap(), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), ...(this.opts.mail ? { mail: this.opts.mail.bootstrap() } : {}), requests: requestViews(s), ...(calendar ? { calendar: calendar.view() } : {}), ...(this.opts.notices ? { notices: this.opts.notices.boot() } : {}), sync: s.journal.position() } satisfies P.Bootstrap);
     }
     // Plans the calendar found in chats, from the hub's cache (calendar.ts): the chips under messages.
     if (path === '/api/plans' && method === 'GET') return this.opts.calendar ? ok(this.opts.calendar.plansView() satisfies P.PlansView) : bad('calendar is off on this hub', 404);
@@ -690,6 +693,11 @@ export class HubServer {
       const r = this.marks.setRow(ids, b.mark as ReplyMark | null, o);
       this.flush();
       return ok({ mark: b.mark, marked: r.marked, kind: 'message' });
+    }
+    // Notices (notices/index.ts).
+    if (path === '/api/notices' || path.startsWith('/api/notices/')) {
+      const r = this.opts.notices ? await this.opts.notices.route(req, url) : null;
+      return r ?? bad(this.opts.notices ? 'no such notices route' : 'notices are off on this hub', 404);
     }
     // Mail (mail/routes.ts).
     if (path === '/api/mail' || path.startsWith('/api/mail/')) {

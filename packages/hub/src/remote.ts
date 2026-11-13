@@ -27,6 +27,7 @@ import { ACCOUNT_COLORS, type AccountRow } from './store.ts';
 import { noteWork, timedWork } from './stalls.ts';
 import { Supervisor } from './supervisor.ts';
 import type { MailSink } from './mail/backend.ts';
+import type { NoticeSink } from './notices/index.ts';
 
 /** The kinds this hub hands to the manager when they are new. */
 export const MANAGED_KINDS = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x'];
@@ -100,6 +101,24 @@ export function mailAccessOf(info: AppSelf | null | undefined): 'granted' | 'pen
 export const mailToAsk = (info: AppSelf | null | undefined): boolean => mailAccessOf(info) === null;
 
 /**
+ * The hub's request for notices (docs/notices.md): what your accounts and services tell you, on every account that
+ * has the `notifications` interface (GitHub, dither-accounts' own), at write so reading one here reads it there.
+ */
+export const NOTICES_REQUEST = { interface: 'notifications', level: 'write', accounts: '*', reason: 'Notify you of what your accounts and services tell you, ranked with your chats; mark them read as you read them' } as const;
+
+/** Whether the hub may read notices, as mailAccessOf. */
+export function noticesAccessOf(info: AppSelf | null | undefined): 'granted' | 'pending' | 'denied' | null {
+  if (info?.grants?.some((g) => g.interface === 'notifications')) return 'granted';
+  const asked = (info?.requests ?? []).filter((r) => r.interface === 'notifications');
+  if (asked.some((r) => r.state === 'pending')) return 'pending';
+  if (asked.some((r) => r.state === 'denied')) return 'denied';
+  return null;
+}
+
+/** Ask for notices once, as mail. */
+export const noticesToAsk = (info: AppSelf | null | undefined): boolean => noticesAccessOf(info) === null;
+
+/**
  * The chat kinds this hub runs that it has neither a grant for nor asked about: an open request waits for you, and a
  * denied one is your answer, so neither is asked again.
  */
@@ -148,6 +167,8 @@ export class RoutedSupervisor extends Supervisor {
   private wasRemote = new Set<string>();
   /** Mail (mail/backend.ts ManagerMailBackend): its accounts' list and events go there, not to the chat side. */
   mail?: MailSink;
+  /** Notices (notices/index.ts): the notifications interface's accounts and events; a chat account's still go to chat too. */
+  notices?: NoticeSink;
   private mod: ClientModule | null = null;
   private mailTimer: Timer | null = null;
 
@@ -237,6 +258,12 @@ export class RoutedSupervisor extends Supervisor {
         () => ((info = { ...info, requests: [...(info?.requests ?? []), { interface: 'mail', state: 'pending' }] }), console.log("dither-accounts: asked to read and send your mail; approve it on the manager's page")),
         (e) => console.error('dither-accounts: asking for mail failed:', e),
       );
+    // Registered before notices (docs/notices.md): ask for them once too.
+    if (known && info && this.notices && noticesToAsk(info) && mod.requestAccess)
+      await mod.requestAccess(url, this.saved!.app, this.saved!.token, [NOTICES_REQUEST]).then(
+        () => ((info = { ...info, requests: [...(info?.requests ?? []), { interface: 'notifications', state: 'pending' }] }), console.log("dither-accounts: asked to read your accounts' notifications; approve it on the manager's page")),
+        (e) => console.error('dither-accounts: asking for notices failed:', e),
+      );
     if (!known) {
       const reg = await mod.register(url, {
         name: 'dither-chat',
@@ -245,14 +272,16 @@ export class RoutedSupervisor extends Supervisor {
           { interface: 'chat', level: 'manage', accounts: '*', reason: 'Show your chats, send what you write, and manage chats and servers as you ask' },
           { interface: 'accounts', level: 'manage', kinds: MANAGED_KINDS, reason: 'Add, sign in and remove the chat accounts you set up in the hub' },
           ...(this.mail ? [MAIL_REQUEST] : []),
+          ...(this.notices ? [NOTICES_REQUEST] : []),
         ],
       });
-      info = { requests: this.mail ? [{ interface: 'mail', state: 'pending' }] : [] };
+      info = { requests: [...(this.mail ? [{ interface: 'mail', state: 'pending' }] : []), ...(this.notices ? [{ interface: 'notifications', state: 'pending' }] : [])] };
       this.saved = { app: reg.app, token: reg.token, url, remote: [] };
       this.save();
       console.log(`dither-accounts: registered as ${reg.app}; approve its requests on the manager's page`);
     }
     this.mailAccess(mailAccessOf(info) ?? 'pending');
+    this.noticesAccess(noticesAccessOf(info) ?? 'pending');
     this.client = new mod.AccountsClient({
       url,
       app: this.saved!.app,
@@ -260,7 +289,8 @@ export class RoutedSupervisor extends Supervisor {
       onAccounts: (list) => {
         this.accountsChanged(list);
         this.mail?.accounts(list);
-        if (this.mailWaiting) void this.readMailAccess();
+        this.notices?.accounts(list);
+        if (this.mailWaiting || this.noticesWaiting) void this.readMailAccess();
       },
       onEvents: (account, events) => {
         noteWork(`adapter events (${events.length})`);
@@ -270,17 +300,27 @@ export class RoutedSupervisor extends Supervisor {
           // Mail catches up by itself (mail.changes); the chat events below must not wait on it.
           console.error(`[${account}] mail events failed:`, e);
         }
+        try {
+          if (this.notices) timedWork('notices: events', () => this.notices!.events(account, events));
+        } catch (e) {
+          // Notices catch up by themselves (notify.list); the chat events below must not wait on them.
+          console.error(`[${account}] notices events failed:`, e);
+        }
         if (!this.remote.has(account)) return;
         this.apply(account, events as P.AdapterEvent[]);
       },
       onGap: (account, dropped) => {
-        // A mail account catches up with mail.changes; nothing restarts.
+        // A mail account catches up with mail.changes, and notices with notify.list; nothing restarts, unless it is
+        // a chat account too.
+        const notices = this.notices?.gap(account) ?? false;
         if (this.mail?.gap(account)) return;
+        if (notices && !this.remote.has(account)) return;
         console.warn(`[${account}] the manager dropped ${dropped} events while the hub was away; restarting the adapter for a fresh snapshot`);
         this.client?.admin({ do: 'restart', account }).catch((e) => console.error(`[${account}] restart after a gap failed:`, e));
       },
       onConnection: (up) => {
         this.mail?.connection(up);
+        this.notices?.connection(up);
         if (up) return;
         for (const id of this.remote.keys()) this.markOffline(id);
       },
@@ -296,17 +336,43 @@ export class RoutedSupervisor extends Supervisor {
   private mailAccess(state: RoutedSupervisor['mailState']) {
     this.mailState = state;
     this.mail?.setAccess(state);
-    // While it waits for you: the manager is asked every minute (and on each account list) whether you answered.
-    if (this.mailWaiting && !this.mailTimer && this.mail) this.mailTimer = setInterval(() => void this.readMailAccess(), 60_000);
-    if (!this.mailWaiting && this.mailTimer) {
+    this.waitTimer();
+  }
+  /** While a grant waits for you: the manager is asked every minute (and on each account list) whether you answered. */
+  private waitTimer() {
+    const waiting = (this.mailWaiting && !!this.mail) || (this.noticesWaiting && !!this.notices);
+    if (waiting && !this.mailTimer) this.mailTimer = setInterval(() => void this.readMailAccess(), 60_000);
+    if (!waiting && this.mailTimer) {
       clearInterval(this.mailTimer);
       this.mailTimer = null;
     }
   }
+  /** Mail's grant and notices', as the manager says them now. */
   private async readMailAccess() {
     if (!this.mod || !this.saved) return;
     const info = (await this.mod.self(this.remoteOpts.url, this.saved.app, this.saved.token).catch(() => null)) as AppSelf | null;
-    if (info) this.mailAccess(mailAccessOf(info) ?? 'pending');
+    if (!info) return;
+    this.mailAccess(mailAccessOf(info) ?? 'pending');
+    this.noticesAccess(noticesAccessOf(info) ?? 'pending');
+  }
+
+  // ---------------------------------------------------------- notices' grant (as mail's)
+
+  private noticesState: 'granted' | 'pending' | 'denied' | 'unreachable' = 'unreachable';
+  private get noticesWaiting() {
+    return this.noticesState === 'pending' || this.noticesState === 'denied';
+  }
+  private noticesAccess(state: RoutedSupervisor['noticesState']) {
+    this.noticesState = state;
+    this.notices?.setAccess(state);
+    this.waitTimer();
+  }
+
+  /** "Ask again" for notices after you declined. */
+  async askNoticesAgain(): Promise<void> {
+    if (!this.mod?.requestAccess || !this.saved) throw new Error('dither-accounts is not reachable');
+    await this.mod.requestAccess(this.remoteOpts.url, this.saved.app, this.saved.token, [NOTICES_REQUEST]);
+    this.noticesAccess('pending');
   }
 
   /** "Ask again" after you declined: a new request on the manager's page. */
@@ -320,6 +386,11 @@ export class RoutedSupervisor extends Supervisor {
   callMail(account: string, op: string, input: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
     if (!this.client) return Promise.reject(Object.assign(new Error('dither-accounts is not reachable'), { code: 'offline' }));
     return this.client.callRaw(account, op, input, timeoutMs);
+  }
+
+  /** A notices call (notices/index.ts): the same path as mail's. */
+  callNotices(account: string, op: string, input: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
+    return this.callMail(account, op, input, timeoutMs);
   }
 
   private accountsChanged(list: AccountView[]) {
