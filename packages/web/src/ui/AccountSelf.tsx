@@ -5,6 +5,7 @@
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, OWN_PRESENCE_STATES, PRESENCE_LABEL, SELF_LIMITS } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
+import './self.css';
 import { api, toast } from '../state.ts';
 import { CLEAR_AFTER, clearsAt } from '../selfparts.ts';
 import { Loading } from './Loader.tsx';

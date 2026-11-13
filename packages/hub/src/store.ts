@@ -9,10 +9,12 @@ import { activityChart, type Zone } from './activitychart.ts';
 import { binsFor, estimateMessages, snowflakeTime, type ChannelInput } from './msgcount.ts';
 import { Journal } from './journal.ts';
 import { infoFor } from './mediainfo.ts';
+import { extraView, withNote } from './msgextra.ts';
 import { TypingRelay, typingTtl } from './typing.ts';
 import { stepTimer } from './startup.ts';
 import { addTables, ingestRelationships, ingestRequests, pendingLinks } from './add.ts';
 import { accountSelfView, ingestSelf } from './accountself.ts';
+import { eraseVoice, ingestCallEvent, voiceKept } from './callstate.ts';
 import { alertBar, type Facts } from './learn.ts';
 
 type Row = Record<string, any>;
@@ -746,6 +748,12 @@ export class Store {
         case 'ignored':
           ingestSelf(this, acc, ev);
           break;
+        // Calls ringing you, voice channels' people and status lines (callstate.ts).
+        case 'callState':
+        case 'voice':
+        case 'voiceStatus':
+          ingestCallEvent(this, acc, ev);
+          break;
         case 'reply':
         case 'log':
           break;
@@ -1133,8 +1141,8 @@ export class Store {
     const thread = f.threadRoot ? hubId('cnv', acc.network, f.threadRoot) : null;
     // An edit: the words it had before, if this source's edits are kept (docs/history.md). A system line or a sticker
     // that comes back worded otherwise (an extractor that learned a new message type, or to show a sticker as itself)
-    // was never edited by anyone.
-    const reworded = old && [old.kind, f.kind].some((k) => k === 'system' || k === 'sticker');
+    // was never edited by anyone, nor was a call line saying how the call went.
+    const reworded = old && [old.kind, f.kind].some((k) => k === 'system' || k === 'sticker' || k === 'call');
     if (old && !old.deleted && old.body && f.body !== old.body && !reworded && this.keeps('edits', acc)) this.messageEvent(id, 'edit', { body: old.body }, author, acc.id, f.editedTs ?? Date.now());
     this.db
       .query(
@@ -2079,6 +2087,7 @@ export class Store {
       statuses: any(logged, 'status'),
       presence: any(logged, 'presence'),
       members: any('SELECT 1 FROM membership'),
+      voice: voiceKept(this),
     };
   }
 
@@ -2088,6 +2097,7 @@ export class Store {
       this.db.query('DELETE FROM member_coverage').run();
       return this.db.query('DELETE FROM membership').run().changes;
     }
+    if (what === 'voice') return eraseVoice(this);
     if (what === 'statuses' || what === 'presence')
       return this.db.query(`DELETE FROM change_log WHERE target_kind = 'identity' AND field = ?`).run(what === 'statuses' ? 'status' : 'presence').changes;
     const touched = (sql: string) => (this.db.query(sql).all() as Row[]).forEach((r) => this.dirty.messages.set(r.message_id, true));
@@ -2532,9 +2542,11 @@ export class Store {
       const extra = json<{ encryptionWarning?: string; forward?: P.ForwardFact }>(r.extra, {});
       const encryptionWarning = extra.encryptionWarning;
       const forward = sentForwards.get(r.id) ?? (extra.forward ? this.forwardView(r.network, extra.forward) : null);
+      const { notes, ...extras } = r.extra && !sealed ? this.extraView(r, extra, seenVia[0]) : {};
       return {
         ...(encryptionWarning ? { encryptionWarning } : {}),
         ...(forward ? { forward } : {}),
+        ...extras,
         id: r.id,
         conversationId: r.conversation_id,
         network: r.network,
@@ -2553,17 +2565,22 @@ export class Store {
         ...(EV.get(r.id) ? { events: EV.get(r.id) } : {}),
         ...(PIN.get(r.id)?.pinned ? { pinned: true } : {}),
         ...(RC.get(r.id) ? { receipts: RC.get(r.id) } : {}),
-        attachments: (sealed ? [] : (A.get(r.id) ?? [])).map((a) => ({
-          id: a.id,
-          kind: a.kind,
-          mime: a.mime,
-          name: a.name,
-          size: a.size,
-          width: a.width,
-          height: a.height,
-          url: this.media(a.url, seenVia[0]) ?? '',
-          ...(infos?.get(a.url) ? { info: infos.get(a.url) } : {}),
-        })),
+        attachments: (sealed ? [] : (A.get(r.id) ?? [])).map((a) =>
+          withNote(
+            {
+              id: a.id,
+              kind: a.kind,
+              mime: a.mime,
+              name: a.name,
+              size: a.size,
+              width: a.width,
+              height: a.height,
+              url: this.media(a.url, seenVia[0]) ?? '',
+              ...(infos?.get(a.url) ? { info: infos.get(a.url) } : {}),
+            },
+            notes?.[a.position],
+          ),
+        ),
         embeds: json<{ embeds?: P.EmbedView[] }>(r.extra, {}).embeds?.map((e) => ({ ...e, image: this.media(e.image, seenVia[0]) ?? undefined })) ?? [],
         reactions: (RT.get(r.id) ?? [])
           .map((t): P.ReactionView => {
@@ -2577,6 +2594,21 @@ export class Store {
         triage: t ? triageView(t) : null,
         ...(marks.has(r.id) ? { replyMark: marks.get(r.id) } : {}),
       };
+    });
+  }
+
+  /** What a message's extra says beyond its text, as the web shows it (msgextra.ts). */
+  private extraView(r: Row, extra: Record<string, unknown>, via: string | undefined) {
+    return extraView(extra, r.reply_to_id, {
+      identity: (native) => {
+        const row = (/^\+\d+$/.test(native)
+          ? this.db.query('SELECT id FROM identity WHERE network = ? AND handle = ? LIMIT 1').get(r.network, native)
+          : this.db.query('SELECT id FROM identity WHERE id = ?').get(hubId('idn', r.network, native))) as Row | null;
+        return row?.id ?? null;
+      },
+      isSelf: (native) => this.isSelf(hubId('idn', r.network, native)),
+      media: (url) => this.media(url, via),
+      stored: (id) => !!this.db.query('SELECT 1 FROM message WHERE id = ?').get(id),
     });
   }
 

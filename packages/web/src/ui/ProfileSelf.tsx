@@ -6,6 +6,7 @@
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, SELF_LIMITS } from '@dither-chat/protocol';
 import { useState } from 'preact/hooks';
+import './self.css';
 import { api, db, toast } from '../state.ts';
 import { uploadFile } from '../upload.ts';
 import { selfOffers, withNetworkNote } from '../selfparts.ts';

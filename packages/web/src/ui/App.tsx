@@ -30,6 +30,7 @@ import { FolderSidebar, homeRoute, InboxSidebar, PeopleSidebar, SpaceSidebar, Sp
 import { ConversationPane, PersonPane } from './Timeline.tsx';
 import { Toasts } from './Toasts.tsx';
 import { CallDock } from './Call.tsx';
+import { RingCards } from './Ringing.tsx';
 import { Viewer } from './Viewer.tsx';
 import { PEEK, panel, usePager, type Rest } from './Pager.ts';
 import { Boot } from './Loader.tsx';
@@ -366,6 +367,7 @@ export function App() {
       )}
       {addingAccount.value && <AddAccount onClose={() => (addingAccount.value = false)} />}
       <CallDock />
+      <RingCards />
       <ReactionLayer />
       <MessageHistoryLayer />
       <Toasts />

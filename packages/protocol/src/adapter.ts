@@ -25,7 +25,8 @@
 
 import type { AboutChange, AboutTarget, PersonRelationship } from './about.ts';
 import type { AddAction, AddRef, RelationshipFact, RequestAnswer, RequestFact } from './add.ts';
-import type { CallMode, CallState } from './call.ts';
+import type { CallFact, CallMode, CallState, VoiceMember } from './call.ts';
+import type { LinkPreviewOut } from './extra.ts';
 import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, ReactionStyle, Shape, SpaceKind, Variant } from './ontology.ts';
 import type { ProfileChange, SelfCapability, SelfCommand, SelfEvent } from './self.ts';
 
@@ -51,6 +52,17 @@ export type Capability =
   | 'liveView'
   /** Voice calls (see call.ts). */
   | 'calls'
+  /** Says when calls ring you, go on and end, in conversations you are not calling in from here (the `callState` event). */
+  | 'callStates'
+  /** Stops a call ringing for you, the network's own way (the `declineCall` command). */
+  | 'declineCall'
+  /** A call joined in a direct or group conversation rings the others there (the call join's `ring`). */
+  | 'ringCalls'
+  /**
+   * Says who is in which voice channel when you are not in it (the `voice` event): only what the network's client was
+   * sent anyway, no request of its own. Kept only with the adversarial `voice` setting on.
+   */
+  | 'voicePresence'
   /** Forwarding a message it can read into another conversation, the network's own way (the `forward` command). */
   | 'forward'
   /** Reads a conversation's or space's settings, members and permissions (the `about` command, about.ts). */
@@ -88,6 +100,12 @@ export type Capability =
   | 'walkMembers'
   /** Lists a channel's threads, archived ones too (the `threads` command), so an index job finds threads nobody opened. */
   | 'listThreads'
+  /** Tells the sender you played a voice note or opened a video of theirs (the `viewed` command; Signal's viewed receipt). */
+  | 'viewed'
+  /** Sends a link preview with a message (`send`'s `preview`). Advertised only while the account's own setting allows previews. */
+  | 'linkPreviews'
+  /** Resets the encrypted session with someone in a direct conversation (the `resetSession` command; Signal's end session). */
+  | 'resetSession'
   /** The account's own self and block, ignore, notes (self.ts, docs/account-self.md). */
   | SelfCapability;
 
@@ -372,6 +390,15 @@ export type AdapterEvent =
   | { t: 'typing'; conversation: string; author: string; stop?: boolean; ttl?: number; name?: string }
   /** A call this hub started: bridge signalling for the device, the call's state, or its end. */
   | { t: 'call'; call: string; signal?: unknown; state?: CallState; ended?: string }
+  /** A call ringing you, going on, or over (capability 'callStates', call.ts CallFact): the whole fact each time. */
+  | { t: 'callState'; call: CallFact }
+  /**
+   * Everyone in one voice channel now (capability 'voicePresence'), replacing what the hub had for it; [] is nobody.
+   * `space`: its guild. Only what the network's client was sent anyway. Kept only with the adversarial `voice` setting.
+   */
+  | { t: 'voice'; conversation: string; space?: string; members: VoiceMember[]; ts?: number }
+  /** A voice channel's status line ("playing chess"), set by whoever is in it; null clears it. Not about anyone: kept like a topic. */
+  | { t: 'voiceStatus'; conversation: string; text: string | null }
   /**
    * Requests waiting on you (capability 'requests', add.ts): the account's whole list, sent after connect. It replaces
    * the hub's; until one comes the hub keeps what it had, so a network that knows its list only later loses nothing.
@@ -455,7 +482,7 @@ export type AdapterCommand =
   /** Call lab only (scripts/call-lab.ts, DITHER_LAB=1): a command for the lab probe in the sandbox. */
   | { t: 'lab'; id: string; lab: { op: string; [k: string]: unknown }; timeout?: number }
   /** reply.result: { nativeId } of the sent message if known (the echo still arrives as a message fact). */
-  | { t: 'send'; id: string; conversation: string; body: string; replyTo?: string; attachments?: OutgoingAttachment[] }
+  | { t: 'send'; id: string; conversation: string; body: string; replyTo?: string; attachments?: OutgoingAttachment[]; /** capability 'linkPreviews' */ preview?: LinkPreviewOut }
   /**
    * Forward a message this account can read, the network's own way (capability 'forward'). `note` goes with it,
    * as the network's own client would send one. reply.result: { nativeId } of the forward, or { fallback: reason }
@@ -496,6 +523,14 @@ export type AdapterCommand =
    */
   | { t: 'threads'; id: string; conversation: string; archived: boolean; offset: number }
   | { t: 'markRead'; id: string; conversation: string; upTo: string }
+  /**
+   * You played a voice note or opened a video in someone else's message (capability 'viewed'): tell them, the way the
+   * network's own client would. The adapter sends nothing where its rules say not to (a message request, read receipts
+   * off). reply.result: { sent: boolean }
+   */
+  | { t: 'viewed'; id: string; conversation: string; message: string }
+  /** Reset the encrypted session in a direct conversation (capability 'resetSession'). reply.result: {} */
+  | { t: 'resetSession'; id: string; conversation: string }
   /** You are typing here, or (`stop`) no longer: say so on the network, the way its own client would. Best effort. */
   | { t: 'typing'; id: string; conversation: string; stop?: boolean }
   | { t: 'react'; id: string; conversation: string; message: string; key: string; remove?: boolean; style?: ReactionStyle; emoji?: CustomEmojiFact }
@@ -528,8 +563,13 @@ export type AdapterCommand =
    * of the account itself as it now stands.
    */
   | { t: 'setProfile'; id: string; change: ProfileChange }
-  /** reply.result for join: { direct?: DirectVoiceSession }. One call per account at a time. */
-  | { t: 'call'; id: string; call: string; op: 'join'; conversation: string; mode: CallMode; muted?: boolean; deafened?: boolean }
+  /**
+   * reply.result for join: { direct?: DirectVoiceSession }. One call per account at a time. `ring` (capability
+   * 'ringCalls'): in a direct or group conversation, ring the others as the network's own call button does.
+   */
+  | { t: 'call'; id: string; call: string; op: 'join'; conversation: string; mode: CallMode; muted?: boolean; deafened?: boolean; ring?: boolean }
+  /** Stop a call ringing for you (capability 'declineCall'): `call` is the CallFact's nativeId. reply.result: {} */
+  | { t: 'declineCall'; id: string; conversation: string; call: string }
   | { t: 'call'; id: string; call: string; op: 'leave' }
   | { t: 'call'; id: string; call: string; op: 'mute'; muted: boolean; deafened: boolean }
   | { t: 'call'; id: string; call: string; op: 'signal' | 'note'; data: unknown }

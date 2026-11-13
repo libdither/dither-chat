@@ -13721,125 +13721,198 @@ h1:hover > .pair-nick-edit,
   opacity: 0.6;
 }
 
-/* An account's own self (AccountSelf.tsx, ProfileSelf.tsx; docs/account-self.md). */
-.self-presence .seg {
+/* Calls ringing you (ui/Ringing.tsx): over everything, top right on a desktop, across the top on a phone. */
+.ring-cards {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 60;
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 6px 0 10px;
+  flex-direction: column;
+  gap: 8px;
+  width: min(360px, calc(100vw - 32px));
 }
-.self-presence .seg-btn {
-  display: inline-flex;
+.ring-card {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: transparent;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--bg-active);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.3);
   color: var(--text);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
 }
-.self-presence .seg-btn.on {
-  border-color: var(--accent);
-  background: var(--accent-soft, transparent);
-}
-.self-presence .presence-dot.invisible {
-  background: transparent;
-  box-shadow: inset 0 0 0 2px var(--text-faint);
-}
-.self-status {
+.ring-who {
+  flex: 1;
+  min-width: 0;
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
 }
-.self-status .input {
-  flex: 1 1 160px;
+.ring-text {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
 }
-.self-status .self-emoji {
-  flex: 0 0 3.2em;
-  text-align: center;
+.ring-text small {
+  color: var(--text-muted);
 }
-.self-status select.input {
-  flex: 0 1 auto;
-}
-.self-sessions {
-  list-style: none;
-  margin: 6px 0;
-  padding: 0;
-  display: grid;
+.ring-buttons {
+  display: flex;
   gap: 8px;
 }
-.self-sessions li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 8px;
+.call-btn.answer {
+  background: #2f9e58;
+  color: #fff;
 }
-.self-sessions small {
-  flex-basis: 100%;
-  color: var(--text-faint);
+@media (max-width: 720px) {
+  .ring-cards {
+    left: 16px;
+    right: 16px;
+    width: auto;
+  }
 }
-.pf-badges {
-  display: flex;
+/* Who is in a voice channel, on its row and its page. */
+.voice-people {
+  display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  margin-top: 10px;
+  gap: 4px;
+  min-width: 0;
 }
-.pf-badge {
+.voice-status {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.voice-person {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
+}
+.voice-people.chan-voice {
+  display: flex;
+  padding: 2px 8px 4px;
+}
+.voice-people.voice-here {
+  display: flex;
+  padding: 6px 16px;
+  gap: 10px;
+}
+/* What a message carries besides its text (ui/MessageExtras.tsx, docs/messages.md). */
+.reply-quote-own {
+  cursor: default;
+}
+.reply-quote-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex: none;
+}
+.msg-story-reply {
+  display: flex;
+  align-items: center;
   gap: 5px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--bg-soft, var(--hover));
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.att-with-note {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 100%;
+}
+.att-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   font-size: 12px;
   color: var(--text-dim);
 }
-.pf-deco {
-  border-radius: 50%;
-}
-.pf-theme {
-  display: inline-flex;
-  gap: 3px;
-}
-.pf-swatch {
-  width: 14px;
-  height: 14px;
-  border-radius: 4px;
-  box-shadow: inset 0 0 0 1px var(--border);
-}
-.pf-net-note {
-  margin-top: 12px;
-}
-.pf-own-more {
-  margin-top: 6px;
-}
-.pf-own-fields {
-  display: grid;
-  gap: 10px;
-  margin-top: 10px;
-}
-.pf-own-fields .field {
-  display: grid;
-  gap: 4px;
-  font-size: 13px;
-  color: var(--text-dim);
-}
-.pf-own-fields .field-row {
-  display: flex;
-  gap: 6px;
-}
-.pf-own-fields .field-row .input {
-  flex: 1;
-  min-width: 0;
-}
-.pf-accent {
+.att-voice {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
+  color: var(--text-faint);
+}
+.atts-missing {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 5px;
+}
+.att-missing,
+.msg-failed {
+  display: flex;
+  align-items: flex-start;
   gap: 6px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.msg-failed {
+  margin-top: 3px;
+  color: var(--danger, var(--text-dim));
+}
+.msg-failed small {
+  color: var(--text-faint);
+}
+.contact-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 5px;
+}
+.contact-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  width: min(320px, 100%);
+  padding: 10px 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.contact-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.contact-card-head span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.contact-card-head small,
+.contact-card-row small {
+  color: var(--text-faint);
+}
+.contact-card-pic {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.contact-card-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.contact-card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
 }
