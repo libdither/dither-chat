@@ -181,6 +181,8 @@ export function kindLabel(c: P.ConversationView): string {
     case 'channel':
       if (c.network === 'discord') return `Discord ${variant}channel`;
       if (c.network === 'matrix') return c.spaceIds.length ? `Matrix ${variant}room` : 'Matrix room (no space)';
+      // A Telegram forum's topic (dither-accounts' forums as spaces); its "channels" are broadcast groups.
+      if (c.network === 'telegram') return 'Telegram topic';
       return `${n} ${variant}channel`;
   }
 }

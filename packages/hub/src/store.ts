@@ -1037,7 +1037,8 @@ export class Store {
         `INSERT INTO conversation (id, network, native_id, shape, variant, parent_id, name, topic, avatar_url, encrypted, archived, last_message_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (network, native_id) DO UPDATE SET
-           shape = excluded.shape, variant = excluded.variant, parent_id = COALESCE(excluded.parent_id, parent_id),
+           shape = excluded.shape, variant = excluded.variant,
+           parent_id = CASE WHEN excluded.shape = 'thread' THEN COALESCE(excluded.parent_id, parent_id) ELSE excluded.parent_id END,
            name = COALESCE(excluded.name, name), topic = COALESCE(excluded.topic, topic),
            avatar_url = COALESCE(excluded.avatar_url, avatar_url), encrypted = excluded.encrypted, archived = excluded.archived,
            last_message_at = CASE WHEN excluded.last_message_at IS NULL THEN last_message_at ELSE MAX(COALESCE(last_message_at, 0), excluded.last_message_at) END,
@@ -2616,7 +2617,8 @@ export class Store {
     if (c.shape === 'self') return 'Notes to self';
     const name = c.name ?? 'a conversation';
     const top = this.communityName(c.spaceIds[0] ?? (c.parentId ? this.conversationView(c.parentId)?.spaceIds[0] : undefined));
-    const label = c.shape === 'channel' || c.shape === 'thread' ? `#${name}` : name;
+    // Discord's channels go by #name, as in its client (model.ts convTitle); a Matrix room or a Telegram topic by its name.
+    const label = c.network === 'discord' && (c.shape === 'channel' || c.shape === 'thread') ? `#${name}` : name;
     return top ? `${label} · ${top}` : label;
   }
 
