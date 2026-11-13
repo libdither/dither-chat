@@ -16,6 +16,8 @@ export interface PeopleDeps {
   store: Store;
   online: (accountId: string) => boolean;
   command: <T>(accountId: string, cmd: { t: 'profile'; who: string } | { t: 'setProfile'; change: { bio?: string } }, timeoutMs?: number) => Promise<T>;
+  /** A profile's posts, logged as messages (posts.ts). */
+  posts?: (accountId: string, posts: P.PostFact[]) => void;
 }
 
 const caps = (store: Store, accountId: string): P.Capability[] => JSON.parse(store.account(accountId)?.capabilities ?? '[]');
@@ -97,6 +99,7 @@ export class People {
       try {
         const about = await this.d.command<P.PersonAbout>(accountId, { t: 'profile', who: n.nativeId }, 20_000);
         this.keep(identityId, accountId, n.network, about);
+        if (about?.posts?.length) this.d.posts?.(accountId, about.posts);
         return this.view(identityId, accountId, about ?? {}, Date.now(), undefined);
       } catch (e) {
         const stale = `Could not ask ${net}: ${(e as Error).message}`;

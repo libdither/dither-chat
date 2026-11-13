@@ -4,7 +4,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, utimesSync, w
 import { join, normalize, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, parseCursor } from './chats.ts';
-import { ATTACHMENT_LIMITS, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, RETENTION_GUARDED, RULE_LEVELS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, RETENTION_GUARDED, RULE_LEVELS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { ACCOUNT_COLORS, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
@@ -45,7 +45,8 @@ import { peopleGraph } from './graph.ts';
 import type { MailHub } from './mail/index.ts';
 import { mailPeople } from './mail/people.ts';
 import { Adding, linksOf, requestHeld, requestViews } from './add.ts';
-import { feedRefusal, isFeed } from './feed.ts';
+import { feedRefusalFor, isFeed } from './feed.ts';
+import { Posts } from './posts.ts';
 import { calendarOff, checkNotice, notifyAllowed, type CalendarLink } from './calendar.ts';
 import { ReplyMarks, type ReplyMark } from './replymarks.ts';
 import { mailAttention } from './mail/attention.ts';
@@ -219,6 +220,8 @@ export class HubServer {
   readonly abouts: Abouts;
   readonly groups: Groups;
   readonly people: People;
+  /** Public posts read and logged as messages (posts.ts, docs/feed.md "Threads"). */
+  readonly posts: Posts;
   /** Joining, adding people, and requests waiting on you (add.ts, docs/add.md). */
   readonly adding: Adding;
   /** Your marks on whether a message needs a reply (replymarks.ts). */
@@ -268,7 +271,8 @@ export class HubServer {
       note: (a, line) => sup.note(a, line),
     });
     this.groups = new Groups({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line) });
-    this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
+    this.posts = new Posts({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), changed: () => this.flush() });
+    this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), posts: (a, ps) => this.posts.log(a, ps) });
     this.adding = new Adding({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), liveView: (a) => !!sup.liveViewUrl?.(a) || !!store.account(a)?.live_view });
     sup.calls = this.calls;
     this.clicks = new ClickCounts(store.db);
@@ -862,6 +866,33 @@ export class HubServer {
       this.flush();
       return ok(v);
     }
+    // A post's thread (posts.ts, docs/feed.md "Threads"): read from the network and logged, else what the hub logged.
+    // The same for a logged post's message (search, a profile's Recent messages): its post's thread.
+    if ((m = path.match(/^\/api\/messages\/([\w-]+)\/thread$/)) && method === 'GET') {
+      const n = s.nativeOf('message', m[1]);
+      const post = n ? postIdOf(n.nativeId) : null;
+      if (!n || !post) return bad('not a post', 404);
+      try {
+        const v = await this.posts.thread(n.network, post);
+        this.flush();
+        return ok(v);
+      } catch (e) {
+        return bad((e as Error).message, 502);
+      }
+    }
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/thread$/)) && method === 'GET') {
+      const network = m[1] as P.Network;
+      if (!(network in NETWORK_META)) return bad('no such network', 404);
+      const cursor = url.searchParams.get('cursor') ?? undefined;
+      if (cursor && cursor.length > 2000) return bad('cursor: too long');
+      try {
+        const v = await this.posts.thread(network, m[2], cursor);
+        this.flush();
+        return ok(v);
+      } catch (e) {
+        return bad((e as Error).message, 502);
+      }
+    }
     if ((m = path.match(/^\/api\/identities\/([\w-]+)\/person$/)) && method === 'POST') {
       if (!s.nativeOf('identity', m[1])) return bad('no such identity', 404);
       const personId = s.ensurePerson(m[1]);
@@ -989,7 +1020,7 @@ export class HubServer {
       const conv = s.nativeOf('conversation', m[1]);
       if (!conv) return bad('no such conversation', 404);
       const accountId = this.pickAccount(m[1], url.searchParams.get('account') ?? undefined);
-      if (isFeed(s.db, m[1])) return ok({ accountId, canReact: false, reason: feedRefusal(conv.network), custom: [] } satisfies P.ReactionContextView);
+      if (isFeed(s.db, m[1])) return ok({ accountId, canReact: false, reason: feedRefusalFor(s.db, m[1])!, custom: [] } satisfies P.ReactionContextView);
       if (!accountId || !this.sup.online(accountId)) return ok({ accountId, canReact: false, reason: 'No connected account can react here.', custom: [] } satisfies P.ReactionContextView);
       const ctx = await this.sup.command<P.ReactionContext>(accountId, { t: 'reactionContext', conversation: conv.nativeId }, 15_000).catch(() => null);
       return ok(s.reactionContextView(accountId, conv.network, ctx ?? { canReact: true, custom: [] }));
@@ -1177,7 +1208,7 @@ export class HubServer {
       const msg = s.one<{ conversation_id: string; native_id: string }>('SELECT conversation_id, native_id FROM message WHERE id = ?', m[1]);
       if (!msg) return bad('no such message', 404);
       const conv = s.nativeOf('conversation', msg.conversation_id)!;
-      if (isFeed(s.db, msg.conversation_id)) return bad(feedRefusal(conv.network), 409);
+      if (isFeed(s.db, msg.conversation_id)) return bad(feedRefusalFor(s.db, msg.conversation_id)!, 409);
       const style = b.style ?? 'normal';
       // Taking a reaction back has to go through the account that made it.
       const accountId = (b.remove && s.reactionAccount(m[1], b.key, style)) || this.pickAccount(msg.conversation_id, b.accountId);
@@ -1213,7 +1244,7 @@ export class HubServer {
       if (edit && !b.body?.trim()) return bad('empty message');
       const msg = s.one<{ conversation_id: string; native_id: string; author_id: string }>('SELECT conversation_id, native_id, author_id FROM message WHERE id = ?', m[1]);
       if (!msg) return bad('no such message', 404);
-      if (isFeed(s.db, msg.conversation_id)) return bad(feedRefusal(s.nativeOf('conversation', msg.conversation_id)!.network), 409);
+      if (isFeed(s.db, msg.conversation_id)) return bad(feedRefusalFor(s.db, msg.conversation_id)!, 409);
       // Only the account that wrote it can change it, and only on a network that allows it.
       const acc = s.accounts().find((a) => a.self_identity === msg.author_id);
       if (!acc) return bad('this message is not yours', 403);
@@ -1720,8 +1751,8 @@ export class HubServer {
     // Writing to an open message request would answer it: Accept first, under Requests (docs/add.md).
     if (requestHeld(this.store.db, conversationId)) return 'Accept the message request first';
     // A network's notifications are read-only (docs/feed.md).
-    const feed = this.store.one<{ network: P.Network }>(`SELECT network FROM conversation WHERE id = ? AND variant = 'feed'`, conversationId);
-    if (feed) return feedRefusal(feed.network);
+    const feed = feedRefusalFor(this.store.db, conversationId);
+    if (feed) return feed;
     const c = this.store.conversationView(conversationId);
     const acc = accountId ? this.store.account(accountId) : null;
     return c ? sendBlocker(c, acc ? this.store.accountView(acc) : null) : 'No such conversation';

@@ -16,7 +16,8 @@ import { communitiesOf, convLabel, convTitle, directsOf, externalProfile, identi
 import { profileLinks } from '../requests.ts';
 import { api, db, go, isSelfIdentity, openMessage, openProfile, rev, setRule, toast } from '../state.ts';
 import { messageSomeone } from './Palette.tsx';
-import { Avatar, Empty, NetBadge, NetGlyph } from './bits.tsx';
+import { Avatar, Empty, Linked, NetBadge, NetGlyph } from './bits.tsx';
+import { isQuietConv } from '../feed.ts';
 import { copy, groups, openMenu, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import { nicknamable, nicknameEntries, NicknamedName, NicknameInput, ownName } from './Nickname.tsx';
@@ -127,7 +128,7 @@ function AccountTile({ i, bio, since, go: open, goLabel, menu: menuOf }: { i: P.
             {since ? ` · since ${since}` : ''}
           </small>
         </span>
-        {bio && <p class="pf-acct-bio">{plainBody(bio, i.network)}</p>}
+        {bio && <p class="pf-acct-bio"><Linked text={plainBody(bio, i.network, true)} network={i.network} /></p>}
       </div>
     </div>
   );
@@ -218,7 +219,7 @@ function OwnBio({ identity, about, account, label, onSaved }: { identity: P.Iden
       <div class="pf-bio pf-own-bio">
         {tag}
         <div class="about-text multi">
-          <p>{bio ? plainBody(bio, identity.network) : <em>No bio on {net} yet</em>}</p>
+          <p>{bio ? <Linked text={plainBody(bio, identity.network, true)} network={identity.network} /> : <em>No bio on {net} yet</em>}</p>
           <button class="icon-btn small about-pencil" title={`Change your bio on ${net}`} aria-label={`Change your bio on ${net}`} onClick={() => (setDraft(bio), setError(null))}>
             <Icon name="pencil" size={13} />
           </button>
@@ -397,7 +398,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   }
   const sharedSpaces = [...spaces.values()].sort((a, b) => b.messages - a.messages || a.s.name.localeCompare(b.s.name));
   // A network's notifications are not a place you share (docs/feed.md): what they did there is in Recent messages.
-  const groupChats = convs.filter((x) => x.c.variant !== 'feed' && (x.c.shape === 'group' || (x.c.shape === 'channel' && !x.c.spaceIds.length)));
+  const groupChats = convs.filter((x) => !isQuietConv(x.c) && (x.c.shape === 'group' || (x.c.shape === 'channel' && !x.c.spaceIds.length)));
   const mutualFriends = onePerPerson([...new Set(said.flatMap((a) => a.mutualFriends ?? []))]);
   const friends = onePerPerson([...new Set(said.flatMap((a) => a.friends ?? []))]).filter((iid) => !isSelfIdentity(iid));
 
@@ -672,7 +673,9 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
                   <NetGlyph network={a.network} size={11} /> {netName(a.network)}
                 </span>
               )}
-              <p>{plainBody(a.bio!, a.network)}</p>
+              <p>
+                <Linked text={plainBody(a.bio!, a.network, true)} network={a.network} />
+              </p>
             </div>
           ))
         ) : asking ? (
@@ -827,9 +830,9 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
               const c = db.conversations.get(m.conversationId);
               return (
                 <button class="pf-row pf-msg" onClick={() => openMessage(m.conversationId, m.id)} title={fullTime(m.ts)}>
-                  {c && c.variant !== 'feed' ? <PlaceIcon c={c} size={28} /> : <NetBadge network={m.network} size={28} />}
+                  {c && !isQuietConv(c) ? <PlaceIcon c={c} size={28} /> : <NetBadge network={m.network} size={28} />}
                   <span class="pf-row-text">
-                    <small class="pf-msg-where">{c ? (c.shape === 'direct' ? `Direct message · ${netName(c.network)}` : c.variant === 'feed' ? `${netName(c.network)} notifications` : convLabel(c)) : 'Unknown'}</small>
+                    <small class="pf-msg-where">{c ? (c.shape === 'direct' ? `Direct message · ${netName(c.network)}` : c.variant === 'feed' ? `${netName(c.network)} notifications` : c.variant === 'posts' ? `${netName(c.network)} posts` : convLabel(c)) : 'Unknown'}</small>
                     <span class="pf-msg-body">{m.feed ? feedLine(m.feed, m.body) : plainBody(m.body, m.network) || (m.attachments.length ? 'Attachment' : m.kind === 'encrypted' ? 'Encrypted message' : '')}</span>
                   </span>
                   <span class="pf-row-time">{ago(m.ts)}</span>

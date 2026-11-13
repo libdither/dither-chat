@@ -977,7 +977,7 @@ export class Attention {
     const c = db.query(`SELECT c.id, c.shape, c.variant, c.last_message_at, ${LISTED} AS listed FROM conversation c WHERE c.id = ?`).get(cid) as Row | null;
     // An open message request waits under Requests, not in the inbox (add.ts); a network's notifications have a row
     // of their own (docs/feed.md).
-    if (!c || c.variant === 'feed' || requestHeld(db, cid)) return null;
+    if (!c || c.variant === 'feed' || c.variant === 'posts' || requestHeld(db, cid)) return null;
     const v = db.query(`SELECT MAX(unread) AS unread, MAX(mentions) AS mentions, MIN(COALESCE(last_read_ts, 0)) AS read FROM vantage WHERE target_kind = 'conversation' AND target_id = ?`).get(cid) as Row;
     const unread = v?.unread ?? 0;
     const mentions = v?.mentions ?? 0;

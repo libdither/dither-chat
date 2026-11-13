@@ -101,9 +101,9 @@ const LIVE = 4;
 
 const BIO: Record<Who, { bio: string; followers: number; following: number; posts: number; followsYou?: boolean; location?: string }> = {
   self: { bio: 'Building dither: one inbox for every network. Routing, sheaves, sheep.', followers: 812, following: 301, posts: 2210 },
-  alice: { bio: 'Distributed systems at a small company. Rust, coffee, long walks.', followers: 2310, following: 512, posts: 8120, followsYou: true },
+  alice: { bio: 'Distributed systems at a small company. Rust, coffee, long walks. https://alicechen.dev/notes', followers: 2310, following: 512, posts: 8120, followsYou: true },
   ravi: { bio: 'Routing protocols and the people who break them.', followers: 640, following: 220, posts: 1900, followsYou: true },
-  quinn: { bio: 'Writer. Mostly about software, sometimes about birds.', followers: 15200, following: 870, posts: 22100 },
+  quinn: { bio: 'Writer. Mostly about software, sometimes about birds. quinnwrites.blog', followers: 15200, following: 870, posts: 22100 },
   maya: { bio: 'PhD student, networks and graphs.', followers: 410, following: 390, posts: 760, followsYou: true },
   theo: { bio: 'I make small tools for big repos.', followers: 980, following: 1020, posts: 5400 },
   nora: { bio: 'Networks researcher. Opinions are cached.', followers: 3300, following: 610, posts: 12000, followsYou: true },
@@ -143,6 +143,47 @@ function postsOf(who: Who, epoch: number): P.PostFact[] {
 }
 
 /**
+ * The threads (docs/feed.md "Threads"): your routing post continued by you and answered by five people (two on a
+ * second page), Ravi and you going back and forth under it; any other post the demo knows, with what it answers.
+ */
+function threads(epoch: number) {
+  const me = X.self;
+  const mine = yourPosts(epoch);
+  const r = mine.routing;
+  const under = (n: number, who: P.IdentityFact, min: number, text: string, to: P.PostFact, x: Partial<P.PostFact> = {}) =>
+    post(epoch, n, who, min, text, { replyTo: { id: to.id, author: to.author }, root: r.id, ...x });
+  const cont1 = under(30, me, 299, 'Setup: a random geometric graph, each node knowing only its 8 nearest neighbours. Stretch is the routed path over the shortest one.', r, { counts: { likes: 12, replies: 1 } });
+  const cont2 = under(31, me, 298, 'Median stretch 1.08, p99 1.29. The simulator is in sim/ and runs in about a minute.', cont1, { counts: { likes: 9 } });
+  const ravi = feed(epoch).find((x) => x.item.type === 'reply')!.item.theirs!;
+  const raviIn = { ...ravi, root: r.id };
+  const ans = under(32, me, 35, 'Under 20% churn stretch goes to about 1.6 until the neighbour tables refill, roughly ten seconds. Plot coming.', raviIn, { counts: { likes: 4, replies: 1 } });
+  const ravi2 = under(33, X.ravi, 30, 'Ten seconds is better than I guessed. Is the refill pushed or pulled?', ans, { counts: { likes: 1 } });
+  const alice = under(34, X.alice, 160, 'The plot in the repo is lovely. What does the tail look like at 10M?', r, { counts: { likes: 6 } });
+  const maya = under(35, X.maya, 95, 'Citing this in my qualifying exam, thank you.', r, { counts: { likes: 2 } });
+  const theo = under(36, X.theo, 70, 'Any chance the simulator runs in the browser?', r);
+  const quinn = under(37, X.quinn, 65, 'Saving this for the weekend.', r, { counts: { likes: 1 } });
+  const all = [r, cont1, cont2, raviIn, ans, ravi2, alice, maya, theo, quinn];
+  const thread = (id: string, cursor?: string): P.PostThread | null => {
+    if (id === r.id)
+      return cursor === 'more-1'
+        ? { focal: { ...r, root: r.id }, ancestors: [], replies: [[theo], [quinn]], more: null }
+        : { focal: { ...r, root: r.id }, ancestors: [], replies: [[cont1, cont2], [raviIn, ans, ravi2], [alice], [maya]], more: 'more-1' };
+    const at = all.find((p) => p.id === id);
+    const known = at ?? [...Object.values(mine), ...feed(epoch).flatMap((x) => [x.item.post, x.item.theirs]), ...(Object.keys(X) as Who[]).flatMap((w) => postsOf(w, epoch))].find((p) => p?.id === id);
+    if (!known) return null;
+    const ancestors: P.PostFact[] = [];
+    for (let p = known; p.replyTo; ) {
+      const up = all.find((q) => q.id === p.replyTo!.id);
+      if (!up) break;
+      ancestors.unshift(up);
+      p = up;
+    }
+    return { focal: known, ancestors, replies: all.filter((p) => p.replyTo?.id === id).map((p) => [p]), more: null };
+  };
+  return thread;
+}
+
+/**
  * X, played: the feed conversation and its messages, profiles of the people in it, their posts on asking. Nothing
  * here is ever sent anywhere; markRead and typing are logged for the verify script, which checks the hub sent none.
  */
@@ -152,6 +193,7 @@ export class DemoX implements InprocAdapter {
   private readLog: { conversation: string; upTo: string; at: number }[] = [];
   private typingLog: { conversation: string; at: number }[] = [];
   private refused: string[] = [];
+  private postLog: { post: string; cursor?: string; at: number }[] = [];
 
   constructor(
     private acc: AccountRow,
@@ -163,7 +205,7 @@ export class DemoX implements InprocAdapter {
     this.epoch = JSON.parse(this.acc.config || '{}').epoch ?? Date.now();
     const marker = join(this.dir, 'seeded');
     const firstRun = !existsSync(marker);
-    emit({ t: 'hello', network: 'x', version: 'demo', capabilities: ['send', 'history', 'markRead', 'typing', 'react', 'profile', 'connect', 'openDirect'] });
+    emit({ t: 'hello', network: 'x', version: 'demo', capabilities: ['send', 'history', 'markRead', 'typing', 'react', 'profile', 'posts', 'connect', 'openDirect'] });
     emit({ t: 'status', status: 'online', self: { ...X.self, isSelf: true } });
     // Identity facts first, then what X showed about each of them (their profile came with the notification).
     for (const [k, i] of Object.entries(X)) if (k !== 'self') emit({ t: 'identity', identity: i });
@@ -207,6 +249,11 @@ export class DemoX implements InprocAdapter {
         for (const k of ['quinn'] as Who[]) this.emit({ t: 'identity', identity: X[k] });
         return reply({ ...aboutOf(who), posts: postsOf(who, this.epoch) } satisfies P.PersonAbout);
       }
+      case 'post': {
+        this.postLog.push({ post: cmd.post, ...(cmd.cursor ? { cursor: cmd.cursor } : {}), at: Date.now() });
+        const t = threads(this.epoch)(cmd.post, cmd.cursor);
+        return t ? reply(t satisfies P.PostThread) : fail('X did not give this post');
+      }
       case 'history':
         return reply({ count: 0, done: true } satisfies P.HistoryResult);
       case 'markRead':
@@ -223,7 +270,7 @@ export class DemoX implements InprocAdapter {
         this.refused.push(`${cmd.t}:${cmd.conversation}`);
         return fail('the demo X account sends nothing');
       case 'action':
-        return reply(cmd.action === 'readLog' ? { reads: this.readLog } : cmd.action === 'typingLog' ? { typing: this.typingLog } : cmd.action === 'sendLog' ? { sent: this.refused } : { note: 'demo X has no such action' });
+        return reply(cmd.action === 'readLog' ? { reads: this.readLog } : cmd.action === 'typingLog' ? { typing: this.typingLog } : cmd.action === 'sendLog' ? { sent: this.refused } : cmd.action === 'postLog' ? { posts: this.postLog } : { note: 'demo X has no such action' });
       default:
         if ('id' in cmd) fail('the demo X account cannot do that');
     }

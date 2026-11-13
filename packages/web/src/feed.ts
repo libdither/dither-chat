@@ -7,6 +7,11 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 
 export const isFeedConv = (c: Pick<P.ConversationView, 'variant'> | null | undefined) => c?.variant === 'feed';
+/**
+ * A feed, or the posts the hub logged (variant 'posts', docs/feed.md "Threads"): neither is a chat. Out of the inbox's
+ * rows, every unread total and a profile's In common.
+ */
+export const isQuietConv = (c: Pick<P.ConversationView, 'variant'> | null | undefined) => c?.variant === 'feed' || c?.variant === 'posts';
 
 /** One card: what was done, by whom (newest first, each once), to which post, and when the newest was. */
 export interface FeedCard {
@@ -139,4 +144,33 @@ export function shortCount(n: number): string {
   if (n < 1000) return String(n);
   if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0).replace(/\.0$/, '')}K`;
   return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+}
+
+// ------------------------------------------------------------------ threads
+
+/**
+ * A post's thread opens beside the inbox as a conversation would (docs/feed.md "Threads"): its key stands where a
+ * conversation id would, `pst_<network>_<post id>`, or `pst_m_<message id>` for a logged post's message.
+ */
+export const postKey = (network: P.Network, post: string) => `pst_${network}_${post}`;
+export const postMessageKey = (messageId: string) => `pst_m_${messageId}`;
+export const isPostKey = (key: string | null | undefined) => !!key?.startsWith('pst_');
+
+/** What a post key names: a network's post, or a logged post's message. */
+export function parsePostKey(key: string): { network: P.Network; post: string } | { message: string } | null {
+  const m = key.match(/^pst_m_([\w-]+)$/);
+  if (m) return { message: m[1] };
+  const p = key.match(/^pst_([a-z]+)_(\d{1,25})$/);
+  return p && p[1] in NETWORK_META ? { network: p[1] as P.Network, post: p[2] } : null;
+}
+
+/** Where a post's thread opens in the app. */
+export const postHref = (network: P.Network, post: string) => `#/inbox/c/${postKey(network, post)}`;
+
+/** A click on a post's card that means "open it": not on a link or button inside it, and not the end of a selection. */
+export function opensPost(e: { target: EventTarget | null; currentTarget: EventTarget | null }, selection = typeof getSelection === 'function' ? getSelection()?.toString() : ''): boolean {
+  const t = e.target as Element | null;
+  if (selection) return false;
+  const hit = t?.closest?.('a, button, input, textarea, video, [role="button"]');
+  return !hit || hit === e.currentTarget;
 }

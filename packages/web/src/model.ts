@@ -11,6 +11,7 @@ import { mailDataVersion, metaDataVersion } from './versions.ts';
 import { isMailItem, triageBoard, type Board, type BoardItem } from './board.ts';
 import { mailInboxRows, mailNames } from './mail/model.ts';
 import { accountName, chatKey, groupChats } from './chatroutes.ts';
+import { isQuietConv } from './feed.ts';
 
 const memos = new Map<string, { rev: number; value: unknown }>();
 function memo<T>(key: string, fn: () => T): T {
@@ -97,19 +98,24 @@ export function convByNative(network: P.Network, nativeId: string): P.Conversati
 }
 
 /** A message body as one plain line, for quotes and previews. */
-export function plainBody(body: string, network: P.Network): string {
-  return plainMarkdown(resolveTokens(body, network).replace(/```[\s\S]*?```/g, '[code]').replace(/\|\|[\s\S]*?\|\|/g, '[spoiler]'));
+export function plainBody(body: string, network: P.Network, keepLinks = false): string {
+  return plainMarkdown(resolveTokens(body, network).replace(/```[\s\S]*?```/g, '[code]').replace(/\|\|[\s\S]*?\|\|/g, '[spoiler]'), keepLinks);
 }
 
-/** Markdown's marks taken out of text that is shown as one plain line: quotes, headings, lists, emphasis, links. */
-export function plainMarkdown(text: string): string {
-  return text
-    .replace(/```\w*/g, '')
-    .replace(/^\s*(?:>|-#|#{1,3}|[-*])\s+/gm, '')
-    .replace(/\[([^\]\n]+)\]\((https?:[^)\s]+)\)/g, '$1')
-    .replace(/\*\*|__|~~|\|\||[*`]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+/**
+ * Markdown's marks taken out of text that is shown as one plain line: quotes, headings, lists, emphasis, links.
+ * `keepLinks`: a Markdown link stays, for text drawn with its links (bits.tsx Linked).
+ */
+export function plainMarkdown(text: string, keepLinks = false): string {
+  // Links kept are set aside while the marks go, so an address's own underscores and stars stay.
+  const kept: string[] = [];
+  const keep = (s: string) => `\u0000${kept.push(s) - 1}\u0000`;
+  let t = text.replace(/```\w*/g, '').replace(/^\s*(?:>|-#|#{1,3}|[-*])\s+/gm, '');
+  t = keepLinks
+    ? t.replace(/\[[^\]\n]+\]\(https?:[^)\s]+\)|https?:\/\/[^\s<>]+/g, keep)
+    : t.replace(/\[([^\]\n]+)\]\((https?:[^)\s]+)\)/g, '$1');
+  t = t.replace(/\*\*|__|~~|\|\||[*`]/g, '').replace(/\s+/g, ' ').trim();
+  return keepLinks ? t.replace(/\u0000(\d+)\u0000/g, (_, i) => kept[Number(i)]) : t;
 }
 
 export function identityName(id: string | null | undefined): string {
@@ -166,7 +172,7 @@ export function convLabel(c: P.ConversationView): string {
 
 export function kindLabel(c: P.ConversationView): string {
   const n = netName(c.network);
-  const variant = { text: '', announcement: 'announcement ', forum: 'forum ', voice: 'voice ', stage: 'stage ', media: 'media ', rules: 'rules ', feed: 'notifications ' }[c.variant] ?? '';
+  const variant = { text: '', announcement: 'announcement ', forum: 'forum ', voice: 'voice ', stage: 'stage ', media: 'media ', rules: 'rules ', feed: 'notifications ', posts: 'posts ' }[c.variant] ?? '';
   switch (c.shape) {
     case 'direct':
       return c.network === 'discord' || c.network === 'matrix' ? `${n} DM` : `${n} chat`;
@@ -602,7 +608,7 @@ export function sumUnread(convs: P.ConversationView[]): Unread {
 export function totalUnread(): Unread {
   return memo('totalUnread', () => {
     const held = heldByRequest();
-    return sumUnread([...db.conversations.values()].filter((c) => visibleConv(c) && !held.has(c.id) && c.variant !== 'feed'));
+    return sumUnread([...db.conversations.values()].filter((c) => visibleConv(c) && !held.has(c.id) && !isQuietConv(c)));
   });
 }
 
@@ -754,8 +760,8 @@ function convRows(): ConvInboxRow[] {
     const held = heldByRequest();
     for (const c of db.conversations.values()) {
       const a = db.attention.get(c.id);
-      // A network's notifications are their own row, under Requests (ui/FeedRow.tsx, docs/feed.md).
-      if ((!a && !inboxShape(c)) || !visibleConv(c) || held.has(c.id) || c.variant === 'feed') continue;
+      // A network's notifications are their own row, under Requests (ui/FeedRow.tsx, docs/feed.md); logged posts none.
+      if ((!a && !inboxShape(c)) || !visibleConv(c) || held.has(c.id) || isQuietConv(c)) continue;
       const row: ConvInboxRow = a ? { kind: 'conv', key: c.id, conv: c, score: a.score, needs: a.needs, reasons: a.reasons, owedSince: a.owedSince } : unscored(c);
       if (!row.needs && c.shape !== 'self' && placePref('conversation', c.id).hidden) continue;
       const u = unreadOf(c);

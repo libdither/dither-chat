@@ -20,33 +20,17 @@ import { timelineRev } from '../../versions.ts';
 import type { Kit } from './lazy.tsx';
 import './feed.css';
 
+export { PostsList, ThreadView } from './Thread.tsx';
+
 const TYPE_ICON: Record<P.FeedItemType, string> = { like: 'heart', repost: 'repeat', reply: 'reply', mention: 'at', quote: 'quote', follow: 'userPlus', other: 'bell' };
 /** At most this many pictures in a card's row of faces. */
 const FACES = 8;
-
-/** Plain text with its links as links (X expands them). */
-function Linked({ text }: { text: string }) {
-  const parts = text.split(/(https?:\/\/[^\s]+)/g);
-  return (
-    <>
-      {parts.map((p, i) =>
-        i % 2 ? (
-          <a href={p} target="_blank" rel="noreferrer">
-            {p.replace(/^https?:\/\/(www\.)?/, '')}
-          </a>
-        ) : (
-          p
-        ),
-      )}
-    </>
-  );
-}
 
 function Pictures({ media, url, one }: { media?: P.PostMedia[]; url?: string; one?: boolean }) {
   const shown = (media ?? []).slice(0, one ? 1 : 4);
   if (!shown.length) return null;
   return (
-    <a class={`post-media ${one ? 'one' : `n${shown.length}`}`} href={url} target="_blank" rel="noreferrer" title="Open on the network">
+    <a class={`post-media ${one ? 'one' : `n${shown.length}`}`} href={url} {...(url?.startsWith('#') ? { title: 'Open the thread' } : { target: '_blank', rel: 'noreferrer', title: 'Open on the network' })} onClick={(e) => e.stopPropagation()}>
       {shown.map((m) => (
         <span class="post-pic">
           <img src={m.url} alt={m.alt ?? ''} loading="lazy" />
@@ -58,7 +42,7 @@ function Pictures({ media, url, one }: { media?: P.PostMedia[]; url?: string; on
 }
 
 /** Who wrote a post: their picture, name and handle, opening their profile; then when, linking to the post. */
-function Byline({ p, kit, size = 18 }: { p: P.PostFact; kit: Kit; size?: number }) {
+function Byline({ p, kit, size = 18, network = 'x' }: { p: P.PostFact; kit: Kit; size?: number; network?: P.Network }) {
   const who = p.author ?? null;
   const name = who ? kit.name(who) : 'Someone';
   const handle = kit.handle(who);
@@ -69,7 +53,7 @@ function Byline({ p, kit, size = 18 }: { p: P.PostFact; kit: Kit; size?: number 
         <b>{name}</b>
         {handle && <span class="post-handle">@{handle}</span>}
       </button>
-      <a class="post-time" href={p.url} target="_blank" rel="noreferrer" title={kit.fullTime(p.ts)}>
+      <a class="post-time" href={kit.feed.postHref(network, p.id)} title={`${kit.fullTime(p.ts)}: open the thread`} onClick={(e) => e.stopPropagation()}>
         {kit.ago(p.ts)}
       </a>
     </span>
@@ -77,22 +61,23 @@ function Byline({ p, kit, size = 18 }: { p: P.PostFact; kit: Kit; size?: number 
 }
 
 /** A post quoted inside a card or another post: its byline, text clipped to three lines, its first picture small. */
-function Quoted({ p, kit, label }: { p: P.PostFact; kit: Kit; label?: string }) {
+function Quoted({ p, kit, label, network = 'x' }: { p: P.PostFact; kit: Kit; label?: string; network?: P.Network }) {
   const pic = p.media?.[0];
+  const href = kit.feed.postHref(network, p.id);
   return (
     <div class="post-quoted">
       {label && <span class="post-label">{label}</span>}
       <div class="post-quoted-body">
         <div class="post-quoted-text">
-          <Byline p={p} kit={kit} size={16} />
+          <Byline p={p} kit={kit} size={16} network={network} />
           {p.text && (
-            <a class="post-clip" href={p.url} target="_blank" rel="noreferrer">
+            <a class="post-clip" href={href} title="Open the thread" onClick={(e) => e.stopPropagation()}>
               {p.text}
             </a>
           )}
         </div>
         {pic && (
-          <a class="post-thumb" href={p.url} target="_blank" rel="noreferrer">
+          <a class="post-thumb" href={href} title="Open the thread" onClick={(e) => e.stopPropagation()}>
             <img src={pic.url} alt={pic.alt ?? ''} loading="lazy" />
           </a>
         )}
@@ -165,13 +150,19 @@ function Actors({ card, kit }: { card: FeedCard; kit: Kit }) {
 
 function GroupCard({ card, kit }: { card: FeedCard; kit: Kit }) {
   return (
-    <article class={`feed-card ${card.fresh ? 'fresh' : ''}`} data-type={card.type} data-count={card.actors.length} aria-label={kit.feed.cardSentence(card, kit.name)}>
+    <article
+      class={`feed-card ${card.fresh ? 'fresh' : ''} ${card.post ? 'opens' : ''}`}
+      data-type={card.type}
+      data-count={card.actors.length}
+      aria-label={kit.feed.cardSentence(card, kit.name)}
+      onClick={(e) => card.post && kit.feed.opensPost(e) && kit.openPost(card.messages[0].network, card.post.id)}
+    >
       <span class="feed-icon">
         <kit.Icon name={TYPE_ICON[card.type]} size={18} />
       </span>
       <div class="feed-main">
         <Actors card={card} kit={kit} />
-        {card.post && <Quoted p={card.post} kit={kit} />}
+        {card.post && <Quoted p={card.post} kit={kit} network={card.messages[0].network} />}
       </div>
     </article>
   );
@@ -186,7 +177,12 @@ function SaidCard({ card, kit }: { card: FeedCard; kit: Kit }) {
   const text = theirs?.text ?? m.body;
   const link = theirs?.url ?? card.url;
   return (
-    <article class={`feed-card feed-said ${card.fresh ? 'fresh' : ''}`} data-type={card.type} aria-label={kit.feed.cardSentence(card, kit.name)}>
+    <article
+      class={`feed-card feed-said ${card.fresh ? 'fresh' : ''} ${theirs ? 'opens' : ''}`}
+      data-type={card.type}
+      aria-label={kit.feed.cardSentence(card, kit.name)}
+      onClick={(e) => theirs && kit.feed.opensPost(e) && kit.openPost(m.network, theirs.id)}
+    >
       <button class="feed-said-face" onClick={() => openProfile(who)} aria-label={`${name}'s profile`}>
         <kit.Avatar id={who ?? m.id} name={name} url={kit.avatarUrl(who)} size={36} />
         <span class="feed-said-icon">
@@ -209,7 +205,7 @@ function SaidCard({ card, kit }: { card: FeedCard; kit: Kit }) {
             {card.post?.text ? (
               <>
                 :{' '}
-                <a href={card.post.url} target="_blank" rel="noreferrer">
+                <a href={kit.feed.postHref(m.network, card.post.id)} onClick={(e) => e.stopPropagation()}>
                   “{kit.feed.clip(card.post.text)}”
                 </a>
               </>
@@ -220,11 +216,11 @@ function SaidCard({ card, kit }: { card: FeedCard; kit: Kit }) {
         {card.type === 'quote' && <p class="feed-context">quoted your post</p>}
         {text && (
           <p class="feed-text">
-            <Linked text={text} />
+            <kit.Linked text={text} network={m.network} />
           </p>
         )}
-        <Pictures media={theirs?.media} url={link} />
-        {card.type === 'quote' && card.post && <Quoted p={card.post} kit={kit} />}
+        <Pictures media={theirs?.media} url={theirs ? kit.feed.postHref(m.network, theirs.id) : link} />
+        {card.type === 'quote' && card.post && <Quoted p={card.post} kit={kit} network={m.network} />}
         {link && (
           <a class="feed-open" href={link} target="_blank" rel="noreferrer">
             <kit.Icon name="external" size={12} /> Open on {NETWORK_META[m.network].name}
@@ -246,7 +242,7 @@ function OtherCard({ card, kit }: { card: FeedCard; kit: Kit }) {
           {kit.feed.cardSentence(card, kit.name)}
           <span class="feed-when">{kit.ago(card.ts)}</span>
         </p>
-        {card.post && <Quoted p={card.post} kit={kit} />}
+        {card.post && <Quoted p={card.post} kit={kit} network={card.messages[0].network} />}
       </div>
     </article>
   );
@@ -301,11 +297,11 @@ export function FeedView({ c, kit }: { c: P.ConversationView; kit: Kit }) {
 // ------------------------------------------------------------------ profiles
 
 /** One of their posts: pinned, a repost, a reply or a quote says so; then its words, pictures, counts and when. */
-function PostItem({ p, kit, owner }: { p: P.PostFact; kit: Kit; owner: string }) {
+function PostItem({ p, kit, owner, network }: { p: P.PostFact; kit: Kit; owner: string; network: P.Network }) {
   const shown = p.repostOf ?? p;
   const replyTo = shown.replyTo?.author ? kit.handle(shown.replyTo.author) : null;
   return (
-    <article class="post-item" data-post={p.id}>
+    <article class="post-item opens" data-post={p.id} onClick={(e) => kit.feed.opensPost(e) && kit.openPost(network, shown.id)}>
       {p.pinned && (
         <span class="post-mark">
           <kit.Icon name="pin" size={11} /> Pinned
@@ -316,15 +312,15 @@ function PostItem({ p, kit, owner }: { p: P.PostFact; kit: Kit; owner: string })
           <kit.Icon name="repeat" size={11} /> {kit.name(owner)} reposted
         </span>
       )}
-      <Byline p={shown} kit={kit} size={20} />
+      <Byline p={shown} kit={kit} size={20} network={network} />
       {shown.replyTo && <span class="post-mark">Replying to {replyTo ? `@${replyTo}` : 'a post'}</span>}
       {shown.text && (
         <p class="post-text">
-          <Linked text={shown.text} />
+          <kit.Linked text={shown.text} network={network} />
         </p>
       )}
-      <Pictures media={shown.media} url={shown.url} />
-      {shown.quoteOf && <Quoted p={shown.quoteOf} kit={kit} />}
+      <Pictures media={shown.media} url={kit.feed.postHref(network, shown.id)} />
+      {shown.quoteOf && <Quoted p={shown.quoteOf} kit={kit} network={network} />}
       <div class="post-foot">
         <Counts p={shown} kit={kit} />
         <a class="post-open" href={shown.url} target="_blank" rel="noreferrer">
@@ -343,7 +339,7 @@ export function RecentPosts({ abouts, kit }: { abouts: P.PersonAboutView[]; kit:
         <>
           {abouts.length > 1 && <span class="post-mark">@{kit.handle(a.identityId) ?? kit.name(a.identityId)}</span>}
           {a.posts!.map((p) => (
-            <PostItem p={p} kit={kit} owner={a.identityId} />
+            <PostItem p={p} kit={kit} owner={a.identityId} network={a.network} />
           ))}
         </>
       ))}

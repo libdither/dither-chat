@@ -9892,6 +9892,16 @@ html[data-theme='light'] .acc-dot {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* A link in plain text (bits.tsx Linked): a bio, a post. */
+.text-link {
+  color: var(--link);
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+.text-link:hover,
+.text-link:focus-visible {
+  text-decoration: underline;
+}
 .pf-bio-net {
   display: inline-flex;
   align-items: center;

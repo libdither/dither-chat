@@ -44,7 +44,8 @@ Left:
   Remove Nickname once it has one, editing the name on the tile in place; only you see it, docs/chats.md "Names"),
   Copy the handle and the id, Open on the network, Split Into Its Own Person. The merge hint and search sit under the tiles. Before 2026-11-11 the hero
   had a chip per handle and the right column a plain row per identity, with one picture for the person.
-- **About**: each network's bio (on the account tiles instead, for someone with several), the longest first, labelled
+- **About**: each network's bio (on the account tiles instead, for someone with several), its links as links (an
+  address with or without `https://`, a Markdown link, and on X an @handle; `links.ts`, `bits.tsx` Linked), the longest first, labelled
   by network when there is more than one (a network's
   stock line such as WhatsApp's "Available" is left out); their links (connected accounts, GitHub, a phone number
   written two ways once); On Discord since; facts a network adds (Business, Time zone); how many of their messages
@@ -57,7 +58,8 @@ Left:
 - **Mail** (docs/mail.md, "People"), for someone with an email address: their newest threads across your mail
   accounts, how many, and All mail with them. A thread opens in Mail.
 - **Recent posts** (X, [feed.md](feed.md#profiles)): their posts as their profile said them, pinned, reposts, replies
-  and quotes marked, with pictures, counts and a link to each.
+  and quotes marked, with pictures, counts and a link to each. A post opens its thread ([feed.md](feed.md#threads)),
+  and each is logged as a message.
 - **Recent messages**: each with the place's picture (the server's icon for a channel), the place, and when. A feed
   item says what they did ("X notifications", "Liked your post: “…”"). Not shown for someone known only by mail.
 - **Activity** (ui/ActivityCard.tsx): the current status and since when, and their presence now when it is logged; then

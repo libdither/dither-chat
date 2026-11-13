@@ -565,6 +565,33 @@ export interface MessageView {
    * with each post's `author` a hub identity id and its pictures the hub's signed media paths.
    */
   feed?: FeedItem;
+  /**
+   * A logged post's message (variant 'posts', docs/feed.md "Threads"): the post as the network last showed it, with
+   * each `author` a hub identity id and its pictures signed media paths.
+   */
+  post?: PostFact;
+}
+
+/** A post with the hub message it was logged as (docs/feed.md "Threads"). */
+export type PostView = PostFact & { messageId: string | null };
+
+/**
+ * GET /api/posts/:network/:post/thread: a post's thread (PostThread in hub ids), each post logged as a message as it
+ * is read. `stored`: the network was not asked (no account could, or it failed), so this is what the hub logged.
+ */
+export interface PostThreadView {
+  network: Network;
+  /** The post's id on its network. */
+  post: string;
+  focal: PostView | null;
+  ancestors: PostView[];
+  replies: PostView[][];
+  more: string | null;
+  /** The conversation the posts were logged in (variant 'posts'), when there is one. */
+  conversationId: string | null;
+  stored?: string;
+  /** Everyone the posts name, for rendering. */
+  identities: IdentityView[];
 }
 
 /** A forward, shown as a card with where it came from. */

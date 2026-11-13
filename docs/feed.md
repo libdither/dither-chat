@@ -127,13 +127,59 @@ Older pages load as it scrolls. Likes are pink, reposts green, the rest the acce
   Asking X then brings their posts. Their feed items are in **Recent messages** ("X notifications", "Liked your post:
   “…”") and open the feed. The feed is not listed in **In common**.
 
+## Threads
+
+**Any post opens in the app.** A card in the feed (its words, your post quoted in it, its time), a profile's recent
+post, a post quoted in another, a reply in a thread: each opens that post's thread beside the inbox, where a
+conversation would open (`#/inbox/c/pst_<network>_<post id>`, feed.ts `postKey`), full screen with Back on a phone.
+Links, @handles, pictures, names and Open on X inside a card keep doing what they do.
+
+**The page** (`ui/feed/Thread.tsx`, in the feed's chunk): what the post answers, oldest first, each joined to the next
+by a line from its picture; the post itself, large, with its full time, its counts and Open on X; then **Replies**,
+each a short chain as X shows it (a reply and the answers under it), the author continuing their own thread first;
+**Show more replies** while X has more. Every post in it opens its own thread. The header says whose post it is.
+
+**Where it comes from.** `GET /api/posts/:network/:post/thread[?cursor=]` (posts.ts): the hub asks an X account that
+can (capability `posts`, the `post` command, `PostThread`: `focal`, `ancestors`, `replies` as chains, `more`), the way
+X's own post page asks (TweetDetail). Nothing else is sent: nothing liked, viewed or marked. Two devices opening the
+same thread ask once. No account connected, or X failing: the thread comes back from what the hub logged, saying
+why (`stored`): what it answers, back through the posts logged, and the replies logged under it (the author's first),
+with no Show more.
+
+### Posts are logged as messages
+
+Every post the hub reads, in a thread or a profile's recent posts (and a repost's original or a quoted post inside
+one), is kept as a **message**: one conversation per X account, `posts:<your id>`, variant **`posts`**, named "X
+posts". The message's id is `post:<post id>`, its author the post's author, its body the post's words, its reply the
+post it answers, its pictures attachments (each an image; a video's is its poster), and `extra.post` the post as X
+showed it last (its counts change at every read). A post read again is the same message: its words and counts
+updated, nothing doubled; a post already logged through another account stays where it is.
+
+**Why messages, not a store of their own.** Mail has its own tables (`mail_*`, its own `mail_fts` and search,
+docs/mail-design.md) because a mail is not a chat message: subjects, folders and labels, threads by headers, bodies of
+megabytes, a server to keep in step with. A post is a short text by an identity, answering another post, with
+pictures: what a message already is. As a message it gets, with no code of its own: search (full text,
+`from:`, `has:image`, `network:x`, misspellings, `in:"X posts"`); the person's Recent messages, activity and message
+counts; the history of an edit; the media archive keeping its pictures; sync to devices; and the thread read back
+when X cannot be asked, through `reply_to_id`. What a post has that a message lacks (counts, the quoted post, the
+thread's first post as `root`) rides in `extra.post`, as the feed's `FeedItem` does in `extra.feed`.
+
+**Quiet, as the feed is.** The posts conversation is read-only (a message, reaction, edit or setting is refused:
+"X's posts are read-only here", feed.ts `feedRefusalFor`), never unread (store.ts skips its unread count), never
+triaged (logged as backfill, not live), out of the inbox's rows, every unread total (web `isQuietConv`), attention's
+scores and a profile's In common. Everyone in a thread is an identity, not a person: no person is made for them, as
+one is for someone in your notifications. Opening the conversation lists what was logged, newest first; a message
+of it (a search hit, Recent messages) opens its thread (`GET /api/messages/:id/thread`).
+
 ## The demo world
 
 The demo hub has an X account (`demo-x.ts`, made up throughout) with a feed. Five likes on one post, a repost of it,
 a reply, a quote, a mention, two follows and two likes on another post. The newest four arrive live on the first run,
 so triage decides them. `personAbout` for everyone in it, and profiles with posts (pinned, a repost, a reply, a
-quote, pictures). Its markRead, typing and send are logged (actions `readLog`, `typingLog`, `sendLog`) so a script
-can see the hub sent none. scripts/perf-world.ts leaves it out (`createDemoAccounts(store, { x: false })`): the perf
+quote, pictures). Your routing post has a thread: you continuing it, Ravi and you going back and forth, two more
+replies and two on a second page (cursor `more-1`); any other post it knows opens with what it answers. Two bios have
+links. Its markRead, typing and send are logged (actions `readLog`, `typingLog`, `sendLog`), and the threads asked
+for (`postLog`), so a script can see the hub sent nothing else. scripts/perf-world.ts leaves it out (`createDemoAccounts(store, { x: false })`): the perf
 baselines predate it.
 
 ## Checked by
@@ -143,6 +189,13 @@ baselines predate it.
   keeps the posts after, likes silent and replies on the list even from someone set to Always alert, a muted feed
   silent, and the hub refusing a send, a reaction, an edit and settings, keeping reads and typing from X.
 - `packages/web/test/feed.test.ts`: grouping into cards, names as X says them, what is new, the row's words.
+- `packages/hub/test/posts.test.ts`: a thread read in hub ids with the author's chain first, each post logged once as
+  a quiet message (no unread, no triage, no persons), more replies by cursor, a reply's ancestors, search finding
+  logged posts, the thread read back without X, a profile's posts logged, the routes, and nothing sent to X.
+- `packages/web/test/links.test.ts`: links in bios.
+- `scripts/verify-x-threads.ts`: in a real browser on a fresh demo hub, desktop and phone: links in bios, a feed card,
+  a profile's post and a search hit opening their threads, chains and their lines, Show more replies, a reply with what
+  it answers, the posts conversation out of the inbox, nothing sent to X but the reads.
 - `scripts/verify-x-feed.ts`: against a fresh demo hub in a real browser, on a desktop and a phone, dark and light,
   with screenshots (`--shots <dir>`). It checks the row, the cards, the bar, nothing sent to X, a profile's posts,
   counts and Follows you, and the decisions.

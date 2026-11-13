@@ -8,13 +8,23 @@ import type * as P from '@dither-chat/protocol';
 import { FEED_ITEM_TYPES, NETWORK_META } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 
-/** A feed conversation: read-only, kept out of the inbox's rows, People and unread totals; nothing goes to the network. */
+/**
+ * A feed conversation, or the posts the hub logged (variant 'posts', posts.ts): read-only, kept out of the inbox's
+ * rows, People and unread totals; nothing goes to the network.
+ */
 export function isFeed(db: Database, conversationId: string): boolean {
-  return !!db.query(`SELECT 1 FROM conversation WHERE id = ? AND variant = 'feed'`).get(conversationId);
+  return !!db.query(`SELECT 1 FROM conversation WHERE id = ? AND variant IN ('feed', 'posts')`).get(conversationId);
 }
 
 /** Why nothing can be written, reacted with or changed there, in words. */
-export const feedRefusal = (network: P.Network) => `${NETWORK_META[network].name}'s notifications are read-only here: answer on ${NETWORK_META[network].name}`;
+export const feedRefusal = (network: P.Network, variant: string = 'feed') =>
+  `${NETWORK_META[network].name}'s ${variant === 'posts' ? 'posts' : 'notifications'} are read-only here: answer on ${NETWORK_META[network].name}`;
+
+/** The refusal for a conversation that is a feed or logged posts, else null. */
+export function feedRefusalFor(db: Database, conversationId: string): string | null {
+  const r = db.query(`SELECT network, variant FROM conversation WHERE id = ? AND variant IN ('feed', 'posts')`).get(conversationId) as { network: P.Network; variant: string } | null;
+  return r ? feedRefusal(r.network, r.variant) : null;
+}
 
 /**
  * Types that never notify: someone liking, reposting or following is worth a look in the feed, never a sound or a row

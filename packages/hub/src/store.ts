@@ -12,7 +12,7 @@ import { infoFor } from './mediainfo.ts';
 import { TypingRelay, typingTtl } from './typing.ts';
 import { stepTimer } from './startup.ts';
 import { addTables, ingestRelationships, ingestRequests, pendingLinks } from './add.ts';
-import { feedItemOf, feedView } from './feed.ts';
+import { feedItemOf, feedView, postView } from './feed.ts';
 import { keepAbout } from './people.ts';
 import { alertBar, type Facts } from './learn.ts';
 
@@ -1201,7 +1201,8 @@ export class Store {
     // Someone in your notifications (docs/feed.md) is someone: a person, so their profile and what they did are kept
     // and found like anyone you talk with.
     if (!fromSelf && !existed && conv.variant === 'feed') this.ensurePerson(author);
-    if (newForAccount && !fromSelf) {
+    // Logged posts (posts.ts) are read as they are logged: someone opened them.
+    if (newForAccount && !fromSelf && conv.variant !== 'posts') {
       this.db
         .query(
           `UPDATE vantage SET unread = unread + 1, mentions = mentions + ? WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?
@@ -2546,16 +2547,19 @@ export class Store {
       const rx = new Map<string, string[]>();
       for (const x of R.get(r.id) ?? []) (rx.get(`${x.style}|${x.key}`) ?? rx.set(`${x.style}|${x.key}`, []).get(`${x.style}|${x.key}`)!).push(x.identity_id);
       const t = T.get(r.id);
-      const extra = json<{ encryptionWarning?: string; forward?: P.ForwardFact; feed?: unknown }>(r.extra, {});
+      const extra = json<{ encryptionWarning?: string; forward?: P.ForwardFact; feed?: unknown; post?: P.PostFact }>(r.extra, {});
       const encryptionWarning = extra.encryptionWarning;
       const forward = sentForwards.get(r.id) ?? (extra.forward ? this.forwardView(r.network, extra.forward) : null);
       // A feed conversation's message (docs/feed.md): what they did, with hub ids and signed pictures.
       const fi = extra.feed ? feedItemOf(extra) : null;
       const feed = fi ? feedView(fi, r.network, (u) => this.media(u, seenVia[0])) : null;
+      // A logged post (posts.ts, docs/feed.md "Threads"): the post as the network last showed it.
+      const post = extra.post && typeof extra.post === 'object' && typeof extra.post.id === 'string' ? postView({ ...extra.post, text: r.body }, r.network, (u) => this.media(u, seenVia[0])) : null;
       return {
         ...(encryptionWarning ? { encryptionWarning } : {}),
         ...(forward ? { forward } : {}),
         ...(feed ? { feed } : {}),
+        ...(post ? { post } : {}),
         id: r.id,
         conversationId: r.conversation_id,
         network: r.network,

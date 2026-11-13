@@ -4,7 +4,7 @@
  */
 import { expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
-import { cardSentence, clip, feedCards, feedRow, namesPhrase, shortCount } from '../src/feed.ts';
+import { cardSentence, clip, feedCards, feedRow, isPostKey, namesPhrase, parsePostKey, postHref, postKey, postMessageKey, shortCount } from '../src/feed.ts';
 
 const post = (id: string, text = `post ${id}`): P.PostFact => ({ id, url: `https://x.com/me/status/${id}`, ts: 0, author: 'idn_me', text });
 let n = 0;
@@ -90,4 +90,13 @@ test('clipping and counts', () => {
   expect(clip('a  b\nc')).toBe('a b c');
   expect(clip('x'.repeat(100), 10)).toBe(`${'x'.repeat(9)}…`);
   expect([980, 3120, 15200, 1_250_000].map(shortCount)).toEqual(['980', '3.1K', '15K', '1.3M']);
+});
+
+test('post keys: a post and a logged message, there and back', () => {
+    expect(parsePostKey(postKey('x', '1900000000000000001'))).toEqual({ network: 'x', post: '1900000000000000001' });
+    expect(parsePostKey(postMessageKey('msg_abc-D_9'))).toEqual({ message: 'msg_abc-D_9' });
+    expect(parsePostKey('pst_nowhere_1')).toBeNull();
+    expect(parsePostKey('pst_x_12ab')).toBeNull();
+    expect(isPostKey('cnv_x')).toBe(false);
+    expect(postHref('x', '5')).toBe('#/inbox/c/pst_x_5');
 });

@@ -108,7 +108,8 @@ import { Loading } from './Loader.tsx';
 import { Slices, whenIdle } from '../slices.ts';
 import { calendarOn } from '../plans.ts';
 import { PlanChipLazy } from './calendar/lazy.tsx';
-import { FeedViewLazy } from './feed/lazy.tsx';
+import { FeedViewLazy, PostsListLazy, ThreadLazy } from './feed/lazy.tsx';
+import { postMessageKey } from '../feed.ts';
 
 
 // ------------------------------------------------------------------ header
@@ -1436,6 +1437,16 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
       <section class="pane feed-pane">
         <ConvHeader c={c} onBack={onBack} />
         <FeedViewLazy c={c} />
+      </section>
+    );
+  // The public posts the hub logged (docs/feed.md "Threads"): a message opens its thread; else the list of them.
+  if (c.variant === 'posts')
+    return focus ? (
+      <ThreadLazy postKey={postMessageKey(focus)} onBack={onBack} />
+    ) : (
+      <section class="pane feed-pane">
+        <ConvHeader c={c} onBack={onBack} />
+        <PostsListLazy c={c} />
       </section>
     );
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && visibleAccount(a.id));

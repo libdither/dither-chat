@@ -58,6 +58,8 @@ export type Capability =
   | 'configure'
   /** Reads what the network says about one person: bio, mutual spaces and friends (the `profile` command, about.ts PersonAbout). */
   | 'profile'
+  /** Reads a post's thread: what it answers and its replies (the `post` command, feed.ts PostThread). */
+  | 'posts'
   /** Changes the account's own profile: its bio/About (the `setProfile` command). */
   | 'editProfile'
   /**
@@ -522,6 +524,13 @@ export type AdapterCommand =
    * reply.result: PersonAbout
    */
   | { t: 'profile'; id: string; who: string }
+  /**
+   * One post's thread (capability 'posts', docs/feed.md "Threads"): `post` is the network's id for the post. `cursor`,
+   * from an earlier answer's `more`, asks for more replies. Asked only when someone opens the post; the network is
+   * told nothing else (nothing is liked, viewed or marked). Identity facts for every author first, then
+   * reply.result: PostThread
+   */
+  | { t: 'post'; id: string; post: string; cursor?: string }
   /**
    * Change the account's own profile (capability 'editProfile'). Only the fields given change. `bio`: the bio or
    * About text ('' clears it). The adapter checks the network's limit (about.ts BIO_LIMIT) and fails with a plain
