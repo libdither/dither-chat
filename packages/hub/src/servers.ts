@@ -14,7 +14,7 @@ type Cmd =
   | { t: 'about'; target: P.AboutTarget }
   | { t: 'scheduledEvents'; space: string }
   | { t: 'rsvp'; space: string; event: string; occurrence?: string; interested: boolean }
-  | { t: 'leave'; target: P.AboutTarget; silent?: boolean }
+  | { t: 'leave'; target: P.AboutTarget; silent?: boolean; admins?: string[]; forget?: true }
   | { t: 'gate'; space: string }
   | { t: 'answerGate'; space: string; answer: P.GateAnswer }
   | { t: 'setNick'; space: string; nick: string };
@@ -323,15 +323,25 @@ export class Servers {
     const leaving = fresh?.leaving;
     if (!leaving?.can) throw new ServersError(leaving?.reason ?? `You cannot leave this ${kind} from here.`, 403);
     const silent = b.silent === true && leaving.silent === true;
+    // Signal: its only admin names who takes over (quitGroup --admin), from the members a fresh read lists.
+    const admins: string[] = [];
+    for (const hid of Array.isArray(b.admins) ? b.admins : []) {
+      const n = typeof hid === 'string' ? this.d.store.nativeOf('identity', hid) : null;
+      if (!n || n.network !== t.network || !fresh.members?.list.some((m) => m.id === n.nativeId)) throw new ServersError('Only someone still in it can take over as admin', 400);
+      if (hid === acc.self_identity) throw new ServersError('That is you', 400);
+      admins.push(n.nativeId);
+    }
+    if (leaving.needsAdmin && !admins.length) throw new ServersError('You are its only admin: pick who becomes admin as you leave', 409);
+    const forget = b.forget === true && leaving.canForget === true;
     // Its name now: once left, the hub may forget it.
     const name = (kind === 'space' ? this.d.store.one<{ name: string }>('SELECT name FROM space WHERE id = ?', id) : this.d.store.one<{ name: string | null }>('SELECT name FROM conversation WHERE id = ?', id))?.name ?? kind;
     let r: P.LeaveResult;
     try {
-      r = await this.d.command<P.LeaveResult>(acc.id, { t: 'leave', target, ...(silent ? { silent } : {}) }, 45_000);
+      r = await this.d.command<P.LeaveResult>(acc.id, { t: 'leave', target, ...(silent ? { silent } : {}), ...(admins.length ? { admins } : {}), ...(forget ? { forget: true as const } : {}) }, 45_000);
     } catch (e) {
       throw new ServersError(String((e as Error).message ?? e), 502);
     }
-    this.d.note?.(acc.id, `[leave] left ${name}${silent ? ' without telling the others' : ''}`);
+    this.d.note?.(acc.id, `[leave] left ${name}${silent ? ' without telling the others' : ''}${admins.length ? `, making ${admins.length === 1 ? 'someone' : `${admins.length} people`} admin` : ''}${forget ? ', and forgot it on this device' : ''}`);
     if (kind === 'space') this.d.store.db.query('DELETE FROM scheduled_event WHERE space_id = ? AND account_id = ?').run(id, acc.id);
     this.d.store.db.query('DELETE FROM space_gate WHERE space_id = ? AND account_id = ?').run(id, acc.id);
     return { left: r?.left !== false };
@@ -459,7 +469,12 @@ export class Servers {
       if ((m = path.match(/^\/api\/(spaces|conversations)\/([\w-]+)\/leave$/)) && method === 'POST') {
         fromPage();
         const b = await body<P.LeaveRequest>();
-        const r = await this.leave(m[1] === 'spaces' ? 'space' : 'conversation', m[2], { ...(typeof b.accountId === 'string' ? { accountId: b.accountId } : {}), ...(b.silent === true ? { silent: true } : {}) });
+        const r = await this.leave(m[1] === 'spaces' ? 'space' : 'conversation', m[2], {
+          ...(typeof b.accountId === 'string' ? { accountId: b.accountId } : {}),
+          ...(b.silent === true ? { silent: true } : {}),
+          ...(Array.isArray(b.admins) ? { admins: b.admins } : {}),
+          ...(b.forget === true ? { forget: true } : {}),
+        });
         this.d.flush?.();
         return Response.json(r);
       }
