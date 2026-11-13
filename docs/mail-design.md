@@ -511,6 +511,7 @@ so `SYNC_VERSION` stays.
 | `PUT /api/mail/senders/:address` | `{ override?, images? }` |
 | `POST /api/mail/send` | `{ clientId, accountId, kind: 'new'\|'reply'\|'replyAll'\|'forward', replyTo?, to, cc, bcc, subject, text, quote: boolean, uploads: string[], forwardParts?: {messageId, attachmentId}[] }` → `{ ok, outboxId }` |
 | `DELETE /api/mail/outbox/:id` | undo while held |
+| `POST /api/mail/outbox/:id/send` | send now: ends the hold (an item already on its way answers as it is) |
 | `GET/PUT/DELETE /api/mail/drafts/:key` | hub-side drafts |
 | `GET /api/mail/search?q=&cursor=&server=1` | §11 |
 | `POST /api/mail/refresh/:accountId` | pull to refresh: changes now |
