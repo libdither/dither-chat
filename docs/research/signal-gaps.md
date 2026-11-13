@@ -88,39 +88,39 @@ A side finding: `MessageFact.extra` (quote, poll, sticker, storyReply, viewOnce,
 
 - (b) M: nicknames can be read but not set. `displayNameOf` reads `nickGivenName/nickFamilyName/nickName`, but
   `updateContact --nick-given-name/--nick-family-name` is never called. dither-chat's per-account nicknames (#99)
-  could write through.
-- (b) L: contact notes. The `note` is shown in the profile facts, but `updateContact --note` is never called.
-- (a) L: the system contact name. `updateContact -n/--given-name/--family-name` is unused.
-- (a) L: hiding or forgetting a contact. `removeContact --hide | --forget` is unused.
+  could write through. **done** (net-gaps): IdentityFact `nickname`, `setContact`; the hub shares it with your own nickname both ways (docs/profile.md).
+- (b) L: contact notes. The `note` is shown in the profile facts, but `updateContact --note` is never called. **done** (net-gaps): IdentityFact `note`, `setContact`; joined with the person's note when both changed.
+- (a) L: the system contact name. `updateContact -n/--given-name/--family-name` is unused. **not built**: it is your phone's address book's name; dither's nickname is yours instead.
+- (a) L: hiding or forgetting a contact. `removeContact --hide | --forget` is unused. Hiding **done** (net-gaps): `remove` with `contact` (Signal's Remove). Forgetting **not built**: it drops what signal-cli knows of them.
 - (a) M: blocking and unblocking outside requests. `block`/`unblock` (people and groups) are only used to answer
   requests, and `unblock` never is. The `relationships`/`disconnect` capabilities are not advertised, though
   `listContacts` gives `isBlocked`, contact membership and `isHidden`, and a sync `blockedNumbers/blockedGroupIds`
-  only triggers a resnapshot.
+  only triggers a resnapshot. **done** (net-gaps): `block` (people and groups, About.blocked), `remove` with `blocked`, `relationships`/`disconnect` advertised, contacts and blocks as the account's list; a blocked person never alerts.
 - (a) M: the archived flag. `JsonContact.isArchived` (1:1s archived on the phone) is never mapped to the hub's own
-  archive. Groups have no such JSON field (e).
+  archive. Groups have no such JSON field (e). **done** (net-gaps): ConversationFact.archived on 1:1s; the hub hides or shows the chat when it changes (Settings → Appearance, Follow your phone's archive, on by default).
 - (a) M: your own profile name, About emoji and picture. `updateProfile` is called with `about` only. `--given-name,
-  --family-name, --about-emoji, --avatar, --remove-avatar` are unused, and protocol `setProfile` carries only `bio`.
-- (a) L: contact colour. `JsonContact.color` (the chat colour) is ignored.
+  --family-name, --about-emoji, --avatar, --remove-avatar` are unused, and protocol `setProfile` carries only `bio`. **done** (net-gaps): `setProfile` `name`, `emoji`, `avatar` (PersonAbout.editable).
+- (a) L: contact colour. `JsonContact.color` (the chat colour) is ignored. **not built**: dither has no per-chat colour to put it in.
 - (a) L: `profile.mobileCoinAddress` and `internal.capabilities/unidentifiedAccessMode/sharesPhoneNumber/
-  discoverableByPhonenumber` (`listContacts --internal`) are ignored.
+  discoverableByPhonenumber` (`listContacts --internal`) are ignored. **not built**: nothing here would show them.
 - (a) M: your own username and username link. `updateAccount -u <name> / --delete-username` returns `{username,
   usernameLink}`, but nothing sets or reads it. ROADMAP's "A Signal username code waits on the adapter" for My code is
-  this. Reading it without setting it is limited (e).
+  this. Reading it without setting it is limited (e). **done** (net-gaps): `setProfile` `username` (set or delete), PersonAbout.username, My code shows the link; a username set on the phone shows without one (e8).
 - (a) L: privacy toggles. `updateAccount --discoverable-by-number, --number-sharing,
-  --unrestricted-unidentified-sender` are unused.
-- (a) L: `listContacts --name <text>` (search by contact or profile name) is unused. The hub searches its own copy.
+  --unrestricted-unidentified-sender` are unused. **not built**: signal-cli cannot read their current state (e6), so a switch would show a guess.
+- (a) L: `listContacts --name <text>` (search by contact or profile name) is unused. The hub searches its own copy. **not built**: the hub's copy holds the same names.
 - (d) L: profile freshness. About changes become `customStatus` only when the adapter happens to read contacts
   (snapshots every 30 min, or opening a profile). Signal pushes no profile changes, but `isProfileKeyUpdate` and
-  `hasProfileKey` are dropped as housekeeping and could trigger a targeted re-read.
+  `hasProfileKey` are dropped as housekeeping and could trigger a targeted re-read. **done** (net-gaps): a profile key update re-reads that person (once in ten minutes at most).
 
 ## Sync and storage (other devices)
 
 - (d) M: message requests answered on the phone. signal-cli's manager has
   `MessageEnvelope.Sync.messageRequestResponse`, but `JsonSyncMessage` does not serialize it, so the adapter guesses
-  (re-reads 5 s and 30 s after an "empty" sync). See (e).
+  (re-reads 5 s and 30 s after an "empty" sync). See (e). **not built**: e1; needs a signal-cli patch.
 - (a) L: sync request (`sendSyncRequest`) is used only by the manual `resync` action, never automatically after a
-  relink or a long outage.
-- (a) L: `sendContacts` (push your contacts to linked devices) applies to a primary device only. It does not apply here.
+  relink or a long outage. **done** (net-gaps): once after linking and after a day without the daemon, not again within the hour.
+- (a) L: `sendContacts` (push your contacts to linked devices) applies to a primary device only. It does not apply here. **not built**: primary only.
 
 ## Stories
 
@@ -174,18 +174,18 @@ A side finding: `MessageFact.extra` (quote, poll, sticker, storyReply, viewOnce,
   number changed" notice, no verified state, no verify flow. `listIdentities` (`fingerprint, safetyNumber,
   scannableSafetyNumber, trustLevel` UNTRUSTED/TRUSTED_UNVERIFIED/TRUSTED_VERIFIED, `addedTimestamp`) and `trust
   -v <safety number>` are unused. signal-cli has no identity-change event (e), but a periodic `listIdentities`
-  diff on `addedTimestamp` would find changes.
+  diff on `addedTimestamp` would find changes. **done** (net-gaps): `listIdentities` diff each snapshot (a line in the 1:1, PersonAbout.safety with its QR bytes, `verify` and `clear`); the trust mode stays `always` (documented in dither-accounts docs/signal.md).
 - (a) L: linked devices. `listDevices` (`id, name, createdTimestamp, lastSeenTimestamp`) is unused and could feed
-  the account page's layers. `removeDevice` and `updateDevice` apply to a primary device only.
+  the account page's layers. `removeDevice` and `updateDevice` apply to a primary device only. **done** (net-gaps): on the account page's Session (signal-cli version, this device, every device), read on start and every 6 hours.
 - (a) L/M: relink leaves a stale device. `relink` deletes the data dir (`rmSync`) without `unregister`, which on a
   linked device removes itself from the account, so the old "dither-chat" entry stays in the phone's Linked devices
-  until Signal ages it out (about 30 days of inactivity). `deleteLocalAccountData` is also unused.
-- (a) L: renaming this device (`updateAccount -n/--device-name`) after linking is unused. The name is fixed at `link -n`.
+  until Signal ages it out (about 30 days of inactivity). `deleteLocalAccountData` is also unused. **Done as far as signal-cli allows** (net-gaps): this row is wrong about `unregister`: on a linked device 0.14.8 only clears its push token and marks it unregistered locally (AccountHelper.unregister), and removeDevice is primary-only, so nothing can take it off the account. Relink now renames it "dither-chat (old)" first, and the link screen says to remove it on the phone.
+- (a) L: renaming this device (`updateAccount -n/--device-name`) after linking is unused. The name is fixed at `link -n`. **done** (net-gaps): the action `renameDevice` { name } (dither-accounts' Try it), shown on the account page.
 - (a) M: captchas. `submitRateLimitChallenge --challenge <token> --captcha <token>` is unused. A
   `RATE_LIMIT_FAILURE` with `token`, or a join that needs a captcha, becomes `{check: 'captcha'}`, and nothing lets
-  the owner solve it (signalcaptchas.org) and submit the token.
+  the owner solve it (signalcaptchas.org) and submit the token. **done** (net-gaps): a rate-limit challenge becomes a `captcha` attention with signalcaptchas.org's page and a field for the pasted link, then `submitRateLimitChallenge` (action `submitCaptcha`). A join's captcha stays a `{check: 'captcha'}`, nothing done.
 - (a) L: `setPin/removePin`, `startChangeNumber/finishChangeNumber`, `register/verify` and `addDevice` apply to a
-  primary device only (NotPrimaryDeviceException). They are out of scope for a linked device.
+  primary device only (NotPrimaryDeviceException). They are out of scope for a linked device. **not built**: primary only.
 
 ## Attachments
 
@@ -217,19 +217,19 @@ A side finding: `MessageFact.extra` (quote, poll, sticker, storyReply, viewOnce,
 
 ## Misc
 
-- (a) L: the version probe. `version` is used only as the health probe. Its answer is not shown on the account page.
+- (a) L: the version probe. `version` is used only as the health probe. Its answer is not shown on the account page. **done** (net-gaps): shown on the account page (Session, and the signal-cli layer's note).
 - (a) L: `getAvatar` (contact, profile or group, base64) is unused. Avatars are read from `<dir>/avatars/*` on disk,
-  which is equivalent but depends on signal-cli's file naming.
-- (a) L: `--receive-mode manual` with `subscribeReceive/unsubscribeReceive` is not needed (on-connection is used).
+  which is equivalent but depends on signal-cli's file naming. **not built**: the files on disk are the same pictures.
+- (a) L: `--receive-mode manual` with `subscribeReceive/unsubscribeReceive` is not needed (on-connection is used). **not built**: not needed.
 - (a) L: the JSON-RPC multi-account mode (daemon without `-a`: `listAccounts`, `startLink`/`finishLink` returning
   `deviceLinkUri`) is unused. Linking runs a separate `signal-cli link` process instead. That works, but it means two
-  JVMs during a relink.
+  JVMs during a relink. **not built**: the separate link process works; two JVMs only during a relink.
 - (a) L: `sourceDevice`, `serverReceivedTimestamp` and `serverDeliveredTimestamp` are ignored. They could order
   messages by server time, or say "sent from desktop". **done** (net-gaps): kept in `extra` (`sourceDevice`, `serverReceivedTs`, `serverDeliveredTs`), not shown yet.
 - (a) L: `isEndSession`, `isProfileKeyUpdate` and `hasProfileKey` are treated as housekeeping and dropped (fine), and
-  could be used as re-read triggers.
+  could be used as re-read triggers. `isProfileKeyUpdate` **done** (net-gaps) as a re-read trigger; the rest stay dropped.
 - (d) L: history. A linked device gets none (`history` → `{count:0, done:true}`). History is only via the backup
-  import (docs/import-signal.md). See (e) for link-and-sync.
+  import (docs/import-signal.md). See (e) for link-and-sync. **not built**: e13.
 
 ## (e) Hard limits: Signal features signal-cli 0.14.8 cannot deliver
 
@@ -282,7 +282,8 @@ The second group is not implemented in signal-cli at all:
 ## signal-cli facts
 
 - Version: 0.14.8 (`/nix/store/q88ymckbisd4y2c6v1zsz6hzmfjy7vq5-signal-cli-0.14.8`). Bundled libsignal-client
-  0.102.1, signal-service-java 2.15.3_unofficial_153. Adapter docs and comments say 0.14.9.
+  0.102.1, signal-service-java 2.15.3_unofficial_153. Adapter docs and comments said 0.14.9
+  (fixed in net-gaps: nixpkgs#signal-cli, which dither-accounts builds, is 0.14.8).
 - JSON-RPC notifications: `receive` (`{account, envelope, exception}`), and `callEvent` (`JsonCallEvent`) after
   `subscribeCallEvents`. Results carry `subscription` when subscribed manually.
 - JSON-RPC params are the CLI `--long-flag` names in camelCase (`groupId`, `targetTimestamp`, `quoteTimestamp`,

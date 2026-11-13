@@ -905,6 +905,8 @@ export interface RequestView {
   answers: RequestAnswer[];
   /** The network flagged it, in its words: possible spam, or someone you share nothing with. */
   warning: string | null;
+  /** The network filed it as spam: it never notifies, and sits last. */
+  spam?: boolean;
 }
 
 export interface SearchHit {

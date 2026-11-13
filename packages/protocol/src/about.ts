@@ -11,6 +11,7 @@
  */
 import type { MediaUrl } from './adapter.ts';
 import { NETWORK_META, type Network } from './ontology.ts';
+import type { AboutLeaving, InviteLinkFact, InviteOptions } from './servers.ts';
 
 /** Who may do something, as far as the networks agree. */
 export type Who = 'everyone' | 'admins';
@@ -103,6 +104,12 @@ export interface AboutInvite {
   reason?: string;
   /** A Matrix address (alias) or room id, which works as a link without anyone making one. */
   derived?: boolean;
+  /** Every link the account may see, newest first (capability 'inviteLinks'); `link` is then the newest of them. */
+  links?: InviteLinkFact[];
+  /** The space's own short address, which never runs out (Discord's vanity URL). */
+  vanity?: string;
+  /** The expiry and use limits a new link may have, and the defaults (capability 'inviteLinks'). */
+  options?: InviteOptions;
 }
 
 export interface AboutPinned {
@@ -237,6 +244,12 @@ export interface About {
   pinned?: AboutPinned;
   /** Read-only details only some networks have: "Room version", "Verification level", "Created". */
   facts?: { label: string; value: string }[];
+  /** Leaving it (capability 'leave', servers.ts). */
+  leaving?: AboutLeaving;
+  /** Your own nickname here (capability 'nick', the `setNick` command): value null for none. */
+  nick?: { value: string | null; canEdit: boolean; reason?: string; max?: number };
+  /** You blocked this group: nothing from it reaches you (capability 'block'; the `block` command changes it). */
+  blocked?: boolean;
 }
 
 export interface AboutTarget {
@@ -247,7 +260,7 @@ export interface AboutTarget {
 /** One change. `invite` makes, replaces or turns off the invite link; `pin` pins or unpins a message. */
 export type AboutChange =
   | { [K in AboutKey]: { key: K; value: AboutValues[K] } }[AboutKey]
-  | { key: 'invite'; op: 'create' | 'revoke' }
+  | { key: 'invite'; op: 'create' | 'revoke'; /** create: seconds, 0 never. */ maxAge?: number; /** create: 0 no limit. */ maxUses?: number; temporary?: boolean; /** revoke: which link, else the newest. */ code?: string }
   | { key: 'pin'; message: string; remove?: boolean };
 
 // ---------------------------------------------------------------- per network
@@ -380,7 +393,7 @@ export const HISTORY_LABEL: Record<HistoryVisibility, string> = {
  */
 export function aboutChangeProblem(network: Network, kind: AboutTarget['kind'], change: AboutChange): string | null {
   const rules = ABOUT_RULES[network];
-  if (change.key === 'invite') return change.op === 'create' || change.op === 'revoke' ? null : 'unknown invite operation';
+  if (change.key === 'invite') return inviteChangeProblem(change);
   if (change.key === 'pin') return typeof change.message === 'string' && change.message ? null : 'which message?';
   if (!ABOUT_KEYS.includes(change.key)) return `unknown setting ${String(change.key)}`;
   if (!rules[kind].includes(change.key)) return `${ABOUT_LABEL[change.key]} is not a setting here`;
@@ -418,6 +431,15 @@ export function aboutChangeProblem(network: Network, kind: AboutTarget['kind'], 
   }
 }
 
+/** An invite change's shape: create with whole, non-negative limits, revoke with a code if any. */
+function inviteChangeProblem(c: Extract<AboutChange, { key: 'invite' }>): string | null {
+  if (c.op !== 'create' && c.op !== 'revoke') return 'unknown invite operation';
+  const whole = (n: unknown) => n === undefined || (typeof n === 'number' && Number.isInteger(n) && n >= 0);
+  if (!whole(c.maxAge) || !whole(c.maxUses)) return 'an expiry and a use limit are whole numbers';
+  if (c.code !== undefined && (typeof c.code !== 'string' || !/^[\w-]{1,64}$/.test(c.code))) return 'which link?';
+  return null;
+}
+
 // ---------------------------------------------------------------- people
 
 /**
@@ -452,17 +474,36 @@ export interface PersonAbout {
   links?: { label: string; value: string; url?: string; verified?: boolean }[];
   /** Anything else worth a line: "Business account", "Local time". */
   facts?: { label: string; value: string }[];
-  /**
-   * Your own private note on them on this network (capability 'notes': Discord's Note), asked with the profile only.
-   * Absent: none, or the network did not say.
-   */
-  note?: string;
   /** Badges the network shows on their profile, by name, with the network's picture. */
   badges?: { name: string; icon?: MediaUrl }[];
   /** A frame drawn around their picture (Discord's avatar decoration). */
   decoration?: MediaUrl;
   /** Their profile's own colours, as CSS hex, top first (Discord's theme colours). */
   themeColors?: string[];
+  /** Your safety number with them (capability 'safetyNumbers'). */
+  safety?: SafetyNumber;
+  /** When the person is you: what the `setProfile` command can change on this account. Absent: only the bio. */
+  editable?: ProfileField[];
+  /** When the person is you: your username and its link, where the network has them and one is set. */
+  username?: { name: string; link?: string };
+}
+
+/** What `setProfile` may change: the bio, the profile name, the emoji by the bio, the picture, the username, pronouns, the banner and its colour. */
+export type ProfileField = 'bio' | 'name' | 'emoji' | 'avatar' | 'username' | 'pronouns' | 'banner' | 'accent';
+
+/**
+ * A safety number (Signal): the digits two people compare to know nobody sits between them, and what their phones
+ * scan instead. `trust`: verified (you compared it and said so), unverified (trusted as first seen, Signal's default),
+ * untrusted (it changed and is not accepted yet).
+ */
+export interface SafetyNumber {
+  /** The digits, without spaces (Signal shows 60 in 12 groups of 5). */
+  digits: string;
+  /** What Signal's QR code holds, base64: shown as a QR code of those bytes, for their phone to scan. */
+  scannable?: string;
+  trust: 'verified' | 'unverified' | 'untrusted';
+  /** ms epoch: when their key last changed, if it changed since this device first saw it. */
+  changedAt?: number;
 }
 
 /**

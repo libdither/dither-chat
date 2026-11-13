@@ -66,9 +66,9 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 |---|---|---|---|---|---|
 | Pin / unpin a message | PIN (`/channels/{c}/messages/pins/{m}` put/del) | read (pin events, PlaceProfile pinned list, Unpin button); about.ts throws "Pinning is not supported on Discord yet" | b | M | Protocol `AboutChange {key:'pin'}` and UI exist; only the adapter refuses. client-path |
 | Pinned list fetch | PINS (`/messages/pins`), PINS_ACK | pins seen only as they happen or via loaded messages | d | M | A channel's existing pins are unknown until messages load |
-| Mark unread | MESSAGE_ACK with `manual: true` | markRead only | a | M | Hub has "Later" but cannot push an unread state back to Discord |
-| Bulk ack | BULK_ACK (`/read-states/ack-bulk`) | markRead one channel at a time | d | L | The hub's paced mark-all queue could use one request |
-| Read-state sync for non-channel things (forum unread, guild events, profile) | USER_NON_CHANNEL_ACK, PROFILE_READ_STATE, FORUM_UNREADS | none | a | L | |
+| Mark unread | MESSAGE_ACK with `manual: true` | markRead only | a | M | Hub has "Later" but cannot push an unread state back to Discord **done** (net-gaps): Mark Unread in the message menu (hub `unread.ts`) sends a manual ack; one made in Discord comes back as `read` with `manual` and moves the hub's read point back |
+| Bulk ack | BULK_ACK (`/read-states/ack-bulk`) | markRead one channel at a time | d | L | The hub's paced mark-all queue could use one request **done** (net-gaps): the read queue sends up to 50 per request (`markReadMany`) through the client's BULK_ACK |
+| Read-state sync for non-channel things (forum unread, guild events, profile) | USER_NON_CHANNEL_ACK, PROFILE_READ_STATE, FORUM_UNREADS | none | a | L | **not built**: L, and no forum unreads, event or profile read state in the hub to sync |
 | Saved messages / bookmarks | GET_SAVED_MESSAGES, PUT/DELETE_SAVED_MESSAGE, GET_BOOKMARKS, SAVED_MESSAGE_CREATE/DELETE, SAVED_MESSAGES_UPDATE | none | a | M | Pull them in as hub-side "kept"/marks; two-way sync is cheap. client-path |
 | Reminders ("Remind me") | MESSAGE_REMINDER_DUE, saved-messages `due_at` | none (hub has its own Later) | a | M | Could map onto dither's Later both ways |
 | Scheduled messages | SCHEDULED_MESSAGES (+ _SEND, _UPDATE, _DELETE), SCHEDULED_MESSAGE_DRAFT_CHANGE | none | a | M | Send later, natively (survives the hub being down). A hub-side send-later would work on every network |
@@ -99,17 +99,17 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 
 | Feature | Discord has | dither has | Class | Value | Notes |
 |---|---|---|---|---|---|
-| Recent mentions inbox | MENTIONS (`/users/@me/mentions`), LOAD_RECENT_MENTIONS(_SUCCESS), RECENT_MENTION_DELETE | none; dither sees mentions only in messages it ingested | a | H | The one place to learn about mentions in unopened guild channels while idle (the "blocked" ROADMAP row). Polling it at human rates is client-path |
-| Notification center ("For You": friend accepted, reactions, mentions, event reminders) | NOTIF_CENTER_ITEMS (+ _ACK, _BULK_ACK), NOTIFICATION_CENTER_ITEM_CREATE/DELETE/COMPLETED | none | a | M | Gateway pushes NOTIFICATION_CENTER_ITEM_CREATE live: a cheap subscribe for "someone reacted to your message" |
-| ICYMI / guild feed / highlights | ICYMI, GUILD_FEED, LOAD_ICYMI_*, DISABLE_SERVER_HIGHLIGHT_NOTIFICATIONS | none | a | L | Discord's own ranking; dither has its own |
-| Per-guild/channel notification level (all/mentions/none, suppress @everyone/roles, mobile push) | USER_GUILD_SETTINGS(_BULK), USER_GUILD_SETTINGS_* actions | mute + level read once at snapshot; no live updates; no write | b | M | Changes made in Discord after start are missed until restart (USER_GUILD_SETTINGS_* not forwarded). Writing would sync dither's mute back |
-| Mute channel/guild/DM with a timer | USER_GUILD_SETTINGS patch `mute_config`, CHANNEL_MUTE_EXPIRED | read only | b | M | Hiding in dither does not mute on Discord, so phone Discord still buzzes |
-| Thread notification settings | THREAD_MEMBER_SETTINGS | none | a | L | |
-| Account-wide notification settings | ACCOUNT_NOTIFICATION_SETTINGS, …_DECLARATIVE_SETTINGS | none | a | L | |
-| Message requests (DMs from non-friends) | MESSAGE_REQUESTS, MESSAGE_REQUEST_ACCEPT_OPTIMISTIC, CHANNEL_RECIPIENT_REJECT_BATCH, channel `is_message_request` | not distinguished; a request DM looks like any DM | a | H | dither may alert on strangers Discord itself hides. The hub already has a requests inbox (add.md) that could hold them; accept/reject is client-path |
-| Spam-filtered DMs | channel `is_spam`, `2021-12_inferno_spam_redaction` | not distinguished | a | M | Same as above |
-| Safety warnings in DMs | ADD_SAFETY_WARNING, CHANNEL_SAFETY_WARNINGS_ACK, DELETE_SAFETY_WARNINGS | none | a | L | |
-| Unread counts per channel from Discord's read states | ReadStateStore (mention_count, last_message_id) | snapshot + MESSAGE_ACK | d | M | Live CHANNEL_UNREAD_UPDATE is not forwarded |
+| Recent mentions inbox | MENTIONS (`/users/@me/mentions`), LOAD_RECENT_MENTIONS(_SUCCESS), RECENT_MENTION_DELETE | none; dither sees mentions only in messages it ingested | a | H | The one place to learn about mentions in unopened guild channels while idle (the "blocked" ROADMAP row). Polling it at human rates is client-path **done** (net-gaps): asked through the client's RecentMentionsActions (REST fallback) after a snapshot and on a notification-center mention, at most every 5 min; hits are `late` message facts, triaged as live only under 10 min old (LATE_NEWS_MS) |
+| Notification center ("For You": friend accepted, reactions, mentions, event reminders) | NOTIF_CENTER_ITEMS (+ _ACK, _BULK_ACK), NOTIFICATION_CENTER_ITEM_CREATE/DELETE/COMPLETED | none | a | M | Gateway pushes NOTIFICATION_CENTER_ITEM_CREATE live: a cheap subscribe for "someone reacted to your message" **done** (net-gaps), passive: mention items are late mentions (or ask the list), REACTION_NOTIFICATION_SENT is a reaction fact on your message; friend accepted comes as relationships already; event reminders, ack and bulk-ack **not built** (no Discord events surface in the hub yet) |
+| ICYMI / guild feed / highlights | ICYMI, GUILD_FEED, LOAD_ICYMI_*, DISABLE_SERVER_HIGHLIGHT_NOTIFICATIONS | none | a | L | Discord's own ranking; dither has its own **not built**: Discord's own ranking; dither ranks its inbox itself |
+| Per-guild/channel notification level (all/mentions/none, suppress @everyone/roles, mobile push) | USER_GUILD_SETTINGS(_BULK), USER_GUILD_SETTINGS_* actions | mute + level read once at snapshot; no live updates; no write | b | M | Changes made in Discord after start are missed until restart (USER_GUILD_SETTINGS_* not forwarded). Writing would sync dither's mute back **done** (net-gaps): USER_GUILD_SETTINGS_* and the mute expiries forwarded, the changed places' facts again (`{}` clears); suppress @everyone/roles read into NativeMute (suppressEveryone lowers triage's would-notify); writing levels other than mute **not built** |
+| Mute channel/guild/DM with a timer | USER_GUILD_SETTINGS patch `mute_config`, CHANNEL_MUTE_EXPIRED | read only | b | M | Hiding in dither does not mute on Discord, so phone Discord still buzzes **done** (net-gaps): "Mute on Discord…" with Discord's timers on a place's About, through NotificationSettingsActions; dither's own Mute unchanged and separate; CHANNEL_MUTE_EXPIRED/GUILD_MUTE_EXPIRED handled |
+| Thread notification settings | THREAD_MEMBER_SETTINGS | none | a | L | **not built**: L; thread member flags live in a store the hook does not read, and active threads are not in the snapshot |
+| Account-wide notification settings | ACCOUNT_NOTIFICATION_SETTINGS, …_DECLARATIVE_SETTINGS | none | a | L | **not built**: no hub surface for them; dither's own rules and quiet hours decide |
+| Message requests (DMs from non-friends) | MESSAGE_REQUESTS, MESSAGE_REQUEST_ACCEPT_OPTIMISTIC, CHANNEL_RECIPIENT_REJECT_BATCH, channel `is_message_request` | not distinguished; a request DM looks like any DM | a | H | dither may alert on strangers Discord itself hides. The hub already has a requests inbox (add.md) that could hold them; accept/reject is client-path **done** (net-gaps): `is_message_request` DMs are `message` RequestFacts (`message:<channel>`), held silent under Requests; Accept (consent_status 2), Decline (batch-reject) and Block through the client's request module or its REST helper |
+| Spam-filtered DMs | channel `is_spam`, `2021-12_inferno_spam_redaction` | not distinguished | a | M | Same as above **done** (net-gaps): `is_spam` DMs are message requests with `spam`: never notified, last under Requests, off the Requests row's count |
+| Safety warnings in DMs | ADD_SAFETY_WARNING, CHANNEL_SAFETY_WARNINGS_ACK, DELETE_SAFETY_WARNINGS | none | a | L | **not built**: L; needs the DM's `safety_warnings` picked, a ConversationFact field and a web banner line |
+| Unread counts per channel from Discord's read states | ReadStateStore (mention_count, last_message_id) | snapshot + MESSAGE_ACK | d | M | Live CHANNEL_UNREAD_UPDATE is not forwarded **partly done** (net-gaps): MESSAGE_ACK now reads the gateway's `newMentionCount` and `manual`; CHANNEL_UNREAD_UPDATE (last message ids, not read points) **not built**: it says nothing the messages do not |
 
 ## Threads, forums, channels
 
@@ -156,28 +156,28 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 
 | Feature | Discord has | dither has | Class | Value | Notes |
 |---|---|---|---|---|---|
-| Scheduled events: list, details, interested count | GUILD_EVENTS_FOR_GUILD, GUILD_SCHEDULED_EVENT_CREATE/UPDATE/DELETE, GUILD_EVENT_USER_COUNTS, USER_GUILD_EVENTS | none | a | H | They arrive in GUILD_CREATE and the gateway: passive. A natural feed for dither-calendar |
-| RSVP ("Interested") | USER_GUILD_EVENT (put/del), GUILD_SCHEDULED_EVENT_USER_ADD/REMOVE | none | a | M | client-path |
-| Event recurrence exceptions | GUILD_EVENT_EXCEPTIONS, GUILD_SCHEDULED_EVENT_EXCEPTION_* | none | a | L | Needed for correct calendar recurrences |
-| Create/edit events | GUILD_EVENTS_FOR_GUILD post | none | a | L | |
-| Onboarding (pick channels/roles on join) | GUILD_ONBOARDING, GUILD_ONBOARDING_RESPONSES, GUILD_ONBOARDING_* | join returns "rules" wait (rulesWait) | d | M | After joining from dither, onboarding prompts cannot be answered; some servers hide channels until done |
-| Membership screening / rules gate | GUILD_MEMBER_VERIFICATION, GUILD_MEMBER_REQUEST_TO_JOIN | detected as a check | d | M | add.md: "Ask" not built |
-| Join requests (apply to join) | GUILD_JOIN_REQUEST(S), GUILD_JOIN_REQUEST_CREATE/UPDATE, types 52–54 | not built (docs/chat.md "Not built: Ask") | a | L | |
-| Leave a server | GUILD_LEAVE (`/users/@me/guilds/{id}` del) | none | a | M | Protocol has `leave` events but no command |
-| Server nickname (self) | GUILD_MEMBER_NICK, SET_GUILD_MEMBER | read (nickOf); dither has per-account local nicknames only | b | L | |
-| Per-server profile (avatar, bio, banner) | USER_GUILD_PROFILE, GUILD_MEMBER_PROFILE_UPDATE | not read | a | L | |
-| Server tag / clan identity | USER_SET_GUILD_IDENTITY (`/users/@me/clan`) | none | a | L | |
-| Role self-assign via onboarding / role connections | GUILD_ROLE_CONNECTIONS_*, APPLICATION_USER_ROLE_CONNECTIONS | none | a | L | |
+| Scheduled events: list, details, interested count | GUILD_EVENTS_FOR_GUILD, GUILD_SCHEDULED_EVENT_CREATE/UPDATE/DELETE, GUILD_EVENT_USER_COUNTS, USER_GUILD_EVENTS | none | a | H | They arrive in GUILD_CREATE and the gateway: passive. A natural feed for dither-calendar **done** (net-gaps): passive from the store and gateway, a server's Events card, a calendar feed (docs/servers.md) |
+| RSVP ("Interested") | USER_GUILD_EVENT (put/del), GUILD_SCHEDULED_EVENT_USER_ADD/REMOVE | none | a | M | client-path **done** (net-gaps): Interested on and off, the series or one occurrence |
+| Event recurrence exceptions | GUILD_EVENT_EXCEPTIONS, GUILD_SCHEDULED_EVENT_EXCEPTION_* | none | a | L | Needed for correct calendar recurrences **done** (net-gaps): read, as EXDATEs and moved occurrences in the calendar feed |
+| Create/edit events | GUILD_EVENTS_FOR_GUILD post | none | a | L | **not built**: Discord's form has many parts (place, picture, recurrence); not cheap |
+| Onboarding (pick channels/roles on join) | GUILD_ONBOARDING, GUILD_ONBOARDING_RESPONSES, GUILD_ONBOARDING_* | join returns "rules" wait (rulesWait) | d | M | After joining from dither, onboarding prompts cannot be answered; some servers hide channels until done **done** (net-gaps): answered from the server's page through the client's own onboarding actions |
+| Membership screening / rules gate | GUILD_MEMBER_VERIFICATION, GUILD_MEMBER_REQUEST_TO_JOIN | detected as a check | d | M | add.md: "Ask" not built **done** (net-gaps): the rules shown, agreed only by the owner's tick |
+| Join requests (apply to join) | GUILD_JOIN_REQUEST(S), GUILD_JOIN_REQUEST_CREATE/UPDATE, types 52–54 | not built (docs/chat.md "Not built: Ask") | a | L | **done** (net-gaps): the application's questions answered from the server's page, its outcome as a gate event |
+| Leave a server | GUILD_LEAVE (`/users/@me/guilds/{id}` del) | none | a | M | Protocol has `leave` events but no command **done** (net-gaps): `leave` command, confirm, the owner told why not; group DMs and Signal groups left to a later package |
+| Server nickname (self) | GUILD_MEMBER_NICK, SET_GUILD_MEMBER | read (nickOf); dither has per-account local nicknames only | b | L | **done** (net-gaps): `setNick`, a card on the server's page |
+| Per-server profile (avatar, bio, banner) | USER_GUILD_PROFILE, GUILD_MEMBER_PROFILE_UPDATE | not read | a | L | **not built**: not cheap enough this round |
+| Server tag / clan identity | USER_SET_GUILD_IDENTITY (`/users/@me/clan`) | none | a | L | **not built**: not read yet |
+| Role self-assign via onboarding / role connections | GUILD_ROLE_CONNECTIONS_*, APPLICATION_USER_ROLE_CONNECTIONS | none | a | L | **not built**: roles through onboarding are; role connections are not |
 | Server folders (sidebar) | user settings proto guild_folders, GUILD_FOLDER_* | none; dither has its own folders | a | M | Importing Discord's folders once would seed dither's sidebar for free (USER_SETTINGS_PROTO is already in the client). **done** (net-gaps): read with the settings proto; "Add Discord's folders to your sidebar" makes new folders once, never moving one you placed |
-| Server discovery / directory | GUILD_DISCOVERY*, GLOBAL_DISCOVERY_SERVERS, DIRECTORY_CHANNEL_* | none | a | L | |
-| Server templates | GUILD_TEMPLATE(S) | none | a | L | |
-| Server boosting | APPLIED_GUILD_BOOST*, GUILD_BOOST types 8–11 | system lines | d | L | |
-| Server shop / role subscriptions / guild products | SERVER_SHOP, GUILD_ROLE_SUBSCRIPTION_*, GUILD_PRODUCT* | none | a | L | |
-| Guild home / server guide / welcome screen | GUILD_HOME_SETTINGS, GUILD_WELCOME_SCREEN | none | a | L | |
-| Server theme / powerups | GUILD_THEME, GUILD_POWERUPS, exp `2026-04_server_theme` | none | a | L | |
-| Invite create / revoke / list | INSTANT_INVITES, GUILD_INSTANT_INVITES, INVITE del | AboutChange `invite` exists; about.ts throws "Invite links are not supported on Discord yet" | b | M | Protocol/UI exist (Show QR beside a place's invite link); adapter refuses. client-path |
-| Friend invites (links that add a friend) | FRIEND_INVITES | accept yes (`inviteAccept` with friend) | d | L | Creating one: no |
-| Vanity URL | GUILD_VANITY_URL | not shown | a | L | |
+| Server discovery / directory | GUILD_DISCOVERY*, GLOBAL_DISCOVERY_SERVERS, DIRECTORY_CHANNEL_* | none | a | L | **not built**: out of scope |
+| Server templates | GUILD_TEMPLATE(S) | none | a | L | **not built**: out of scope |
+| Server boosting | APPLIED_GUILD_BOOST*, GUILD_BOOST types 8–11 | system lines | d | L | **not built**: out of scope (system lines only) |
+| Server shop / role subscriptions / guild products | SERVER_SHOP, GUILD_ROLE_SUBSCRIPTION_*, GUILD_PRODUCT* | none | a | L | **not built**: monetisation |
+| Guild home / server guide / welcome screen | GUILD_HOME_SETTINGS, GUILD_WELCOME_SCREEN | none | a | L | **not built**: out of scope |
+| Server theme / powerups | GUILD_THEME, GUILD_POWERUPS, exp `2026-04_server_theme` | none | a | L | **not built**: out of scope |
+| Invite create / revoke / list | INSTANT_INVITES, GUILD_INSTANT_INVITES, INVITE del | AboutChange `invite` exists; about.ts throws "Invite links are not supported on Discord yet" | b | M | Protocol/UI exist (Show QR beside a place's invite link); adapter refuses. client-path **done** (net-gaps): links listed with uses and expiry, made with Discord's choices, turned off |
+| Friend invites (links that add a friend) | FRIEND_INVITES | accept yes (`inviteAccept` with friend) | d | L | Creating one: no **not built**: making one is left out |
+| Vanity URL | GUILD_VANITY_URL | not shown | a | L | **done** (net-gaps): shown on the server's invite card |
 
 ## Moderation and admin
 
@@ -202,13 +202,13 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 | Feature | Discord has | dither has | Class | Value | Notes |
 |---|---|---|---|---|---|
 | Ignore user (soft block) | IGNORE_USER, RELATIONSHIP_IGNORE_USER_SUCCESS / _UNIGNORE_ | none | a | M | ROADMAP "Block, ignore" later; ignore is the cheap one. **done** (net-gaps): Ignore / Stop Ignoring in a person's menu (docs/account-self.md); an ignored person never alerts |
-| Block a user | USER_RELATIONSHIP put type 2 | blocks are read (relationships) and unblock is supported (`remove`); no block action | b | M | client-path via RelationshipActions. **done** (net-gaps): Block in a person's menu, `block` through addRelationship type 2; a blocked person never alerts |
+| Block a user | USER_RELATIONSHIP put type 2 | blocks are read (relationships) and unblock is supported (`remove`); no block action | b | M | client-path via RelationshipActions. **done** (net-gaps): the shared `block` command (with Signal's), Block and Unblock in a person's menu, through addRelationship type 2 / removeRelationship; a blocked person never alerts |
 | Friend nicknames (yours for them) | relationship `nickname` | deliberately not read (docs/chat.md) | – | – | A user decision, not a gap. **not built**: the owner's decision stands |
-| User notes (your private note on someone) | NOTE / NOTES, USER_NOTE_UPDATE | none; dither has its own profile note | a | M | One-time import plus sync would merge them. client-path. **done** (net-gaps): read with the profile only, written with `setNote`; a replaced note goes into the dither note first |
+| User notes (your private note on someone) | NOTE / NOTES, USER_NOTE_UPDATE | none; dither has its own profile note | a | M | One-time import plus sync would merge them. client-path. **done** (net-gaps): `contactNotes` as Signal's: read with a profile only, joined with your dither note so neither is lost, written back with `setContact` |
 | Friend suggestions / friend finder / contact sync | FRIEND_SUGGESTIONS, FRIEND_SUGGESTION_CREATE, FRIEND_FINDER, CONNECTION_SYNC_CONTACTS | none | a | L | **not built**: L, and contact sync would upload the owner's address book |
 | Profile: banner, pronouns, theme colors, effects, decorations, badges | USER_PROFILE (banner, pronouns, theme_colors, profile_effect, avatar_decoration), USER_BADGES | profile.ts maps bio, mutuals, connections | d | L | **done** (net-gaps): badges, theme colours and the avatar decoration added to banner and pronouns; profile effects not built (animation only) |
 | Profile widgets / game profile | USER_PROFILE_WIDGETS, GAME_PROFILE, exp `2026-03_voice_badge` | none | a | L | **not built**: L, game-only |
-| Edit own profile beyond bio | `/users/@me/profile` patch: pronouns, banner, accent; USER patch: avatar, global_name; RECENT_AVATARS | bio only (`setProfile`) | d | M | Display name and avatar are the useful ones. **done** (net-gaps): `setProfile` takes displayName, pronouns, avatar, banner, accent (capabilities editName, editPronouns, editAvatar, editBanner) |
+| Edit own profile beyond bio | `/users/@me/profile` patch: pronouns, banner, accent; USER patch: avatar, global_name; RECENT_AVATARS | bio only (`setProfile`) | d | M | Display name and avatar are the useful ones. **done** (net-gaps): `setProfile` takes name, avatar (Signal's fields) and pronouns, banner, accent, where the profile's `editable` lists them |
 | Own presence status (online/idle/DND/invisible) | USER_SETTINGS_PROTO status, opcode 3 | the sandbox sits at whatever it is; no control | a | M | DND sync with dither quiet hours is an obvious pairing. client-path via settings proto. **done** (net-gaps): `setPresence` through the settings proto; opt-in Do not disturb during quiet hours |
 | Own custom status | USER_SETTINGS_PROTO custom_status | read for friends only; cannot set own | b | M | dither has a `customStatus` event already. **done** (net-gaps): text, emoji and when it clears; a server's own emoji only in the live view |
 | Activities / rich presence of friends (playing, listening) | PresenceStore activities, USER_ACTIVITY_* | custom status only (game/song changes skipped on purpose) | d | L | Adversarial-gate material; the skip was intended. **not built**: the skip stays intended |
@@ -267,7 +267,7 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 | Presence | `presence` event → profile Activity | – | – | ROADMAP: next |
 | `reactors` list | adapter + protocol + web Reactions.tsx | – | – | Done |
 | `threads` command | hub index jobs only | c | L | Not offered as a "show archived threads" button in a channel |
-| Discord `mute` in ConversationFact | read at snapshot | d | M | The hub uses it for triage, but it never updates live (above) |
+| Discord `mute` in ConversationFact | read at snapshot | d | M | The hub uses it for triage, but it never updates live (above) **done** (net-gaps): live through the settings actions above |
 
 ## Counts
 

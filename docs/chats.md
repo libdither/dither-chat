@@ -60,8 +60,10 @@ opens, then leaves the browser.
 ## Names
 
 **A nickname is one account's.** You can give any account of someone's a nickname of your own (`identity.nickname`):
-only you see it, the hub never sends it to a network, and no sync overwrites it (a network's own nicknames, a Discord
-friend nickname or a Signal contact name, stay what the account's display name says). Wherever that account's name
+only you see it, and no sync overwrites it (a Discord friend nickname or a Signal contact name stay what the account's
+display name says). One exception, since 2026-11 (net-gaps): a network that keeps a private nickname of your own for
+someone (Signal's, capability `contactNotes`) shares it both ways: the network's becomes yours when you had none (or
+still had what it said before), and yours goes to it (docs/profile.md, "Your nickname and note on the network"). Wherever that account's name
 shows, the nickname shows instead: an account's name as you see it is your nickname for it, else its display name,
 else its handle, else its id (`accountName` in `chatroutes.ts`, `identityName` in `model.ts`, `shownName` and `SHOWN`
 in the hub's `store.ts`).

@@ -1,10 +1,12 @@
 # An account's own self
 
-What a network says of your account itself, and three things you do to one person there: block, ignore, and your
-private note on them. Protocol `packages/protocol/src/self.ts`, hub `packages/hub/src/accountself.ts`, web
-`ui/AccountSelf.tsx` and `ui/ProfileSelf.tsx` (each a chunk of its own). Discord is the first network with it (its
-extractor lives in dither-accounts, docs/chat.md "The account itself"); the protocol names are network-neutral, so
-another adapter adds its own by saying the same capabilities.
+What a network says of your account itself, and ignoring someone there. Protocol `packages/protocol/src/self.ts`, hub
+`packages/hub/src/accountself.ts`, web `ui/AccountSelf.tsx` and `ui/ProfileSelf.tsx` (each a chunk of its own, with
+its own styles). Discord is the first network with it (its extractor lives in dither-accounts, docs/chat.md "The
+account itself"); the protocol names are network-neutral, so another adapter adds its own by saying the same
+capabilities. Blocking, your note on someone on the network, and your profile's name and picture are the shared paths
+Signal brought (docs/profile.md: Block, "Your nickname and note on the network", "Your own bio"): Discord now speaks
+them too.
 
 Nothing here was run against a real account: the Discord side is built from the client's own code and tested on
 fakes, the hub and page on the demo world.
@@ -50,32 +52,33 @@ server already in one of your folders stays where you put it; a folder whose ser
 the hub has none of, is skipped and said. It can be run again to bring in what is new; nothing is ever moved or
 removed.
 
-## Block and ignore
+## Ignore, and block
 
-In a person's menu (More): **Ignore on Discord** (or Stop Ignoring) and **Block on Discord**, for each of their
-accounts on a network one of your connected accounts can do it on. Block asks first; Unblock is under How you stand
-(docs/add.md). An ignored person shows an Ignored tag.
+In a person's menu (More): **Ignore on Discord** (or Stop Ignoring), for each of their accounts on a network one of
+your connected accounts can do it on, and not for someone you blocked. An ignored person shows an Ignored tag. Whom
+each account ignores comes as the `ignored` event (the whole list), and is set at once when you do it here. Messages
+from someone any of your accounts ignores never alert: triage makes them silent before anything else weighs them ("You
+ignore them on Discord").
 
-Messages from someone any of your accounts blocked or ignores never alert: triage makes them silent before anything
-else weighs them ("You ignore them on Discord"). Whom each account ignores comes as the `ignored` event (the whole
-list), and is set at once when you do it here.
+**Block on Discord…** is the shared `block` command (people.ts, docs/profile.md), with Unblock: Discord's adapter says
+`block` and does it with the client's own Block (a person only; Discord has no blocking of groups). Nothing from
+someone blocked alerts (triage's blockedByYou).
 
 ## Your note on them
 
-With `notes`: your private note on someone on Discord shows in the Note card of their profile, under your dither note.
-It is asked only with their profile, as Discord's own profile asks, never for everyone.
-
-Neither text is ever lost:
-
-- **Add to my note here** copies the network's note below yours, once.
-- Changing the network's note: what it said before goes into your dither note first, unless it is there already.
+Discord's adapter says `contactNotes`, as Signal's does: your private note on someone comes with their identity when
+their profile is opened (never for everyone), and the hub joins it with your dither note so neither text is lost, then
+sends the joined note back (docs/profile.md, "Your nickname and note on the network"). Discord keeps 256 characters: a
+joined note longer than that is refused there and stays whole here. Discord's nickname for a friend is not read or
+written (your choice, docs/chats.md).
 
 ## Your own profile
 
-On your own profile, under your bio: your display name, pronouns, picture, banner and banner colour, each where the
-account's capabilities say it may (`editName`, `editPronouns`, `editAvatar`, `editBanner`). Discord's limits are
-checked first (32 characters for a name, 40 for pronouns, pictures up to 10 MB); a banner picture without Nitro is
-Discord's refusal, said as it said it.
+On your own profile, under your bio: your name and picture (SignalPeople.tsx's OwnProfileExtras) and your pronouns,
+banner and banner colour (ProfileSelf.tsx), each where the profile's `editable` lists it; Discord's lists `bio`, `name`,
+`avatar`, `pronouns`, `banner` and `accent`. All go through `PUT /api/identities/:id/about`. Discord's limits are
+checked by its adapter (32 characters for a name, 40 for pronouns, pictures up to 10 MB); a banner picture without
+Nitro is Discord's refusal, said as it said it.
 
 A profile also shows what the network adds beyond text: badges, the frame on the picture, and the profile's colours.
 
@@ -83,10 +86,8 @@ A profile also shows what the network adds beyond text: badges, the frame on the
 
 | Route | What |
 |---|---|
-| `POST /api/self/people/:identity/block` | `{ accountId? }`: AddResult |
 | `POST /api/self/people/:identity/ignore` | `{ ignored, accountId? }`: `{ ignored }` |
-| `PUT /api/self/identities/:identity/note` | `{ note, accountId? }`: `{ note, personNote }` (your dither note when it changed) |
-| `PUT /api/self/identities/:identity/profile` | your own identity only; `{ displayName?, pronouns?, avatar?, banner?, accent? }`, pictures as upload ids (docs/uploads.md) or null |
+| `PUT /api/identities/:identity/about` | (shared) also `{ pronouns?, banner?, accent? }`, the banner as an upload id (docs/uploads.md) or null |
 | `GET /api/self/:account/sessions` | SessionsResult |
 | `POST /api/self/:account/presence` | `{ state?, status? }` (`status: null` clears it): OwnPresence |
 | `POST /api/self/:account/folders/import` | FolderImportResult |

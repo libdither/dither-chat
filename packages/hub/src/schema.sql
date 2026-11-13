@@ -79,7 +79,9 @@ CREATE TABLE IF NOT EXISTS identity (
   person_id    TEXT REFERENCES person(id) ON DELETE SET NULL,
   seen_via     TEXT,                           -- an account id that can fetch this identity's media
   status       TEXT,                           -- JSON { text, emoji, at }: their custom status or About, as last heard
-  nickname     TEXT,                           -- your own name for this account, only you see it: set here, never by a network
+  nickname     TEXT,                           -- your own name for this account, only you see it: set here, or taken from your private nickname on its network
+  net_nickname TEXT,                           -- your private nickname for them as their network last said it (Signal), '' none; NULL never said
+  net_note     TEXT,                           -- your private note about them as their network last said it (Signal), '' none; NULL never said
   updated_at   INTEGER NOT NULL,
   UNIQUE (network, native_id)
 );

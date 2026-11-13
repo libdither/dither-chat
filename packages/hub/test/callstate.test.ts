@@ -137,6 +137,17 @@ describe('ringing', () => {
     expect(ringMuted(store, view)).toBe(true);
   });
 
+  test('a call in an open message request stays off devices', () => {
+    hear(fact({ nativeId: 'c7r', ringsSelf: true }));
+    const view = rings[0].call;
+    store.setRule('conversation', cid, null);
+    expect(ringMuted(store, view)).toBe(false);
+    store.db.run(`INSERT INTO add_request (id, account_id, native_id, kind, target_kind, target_native, target_id, ts, answers) VALUES ('req_t', ?, 'message:ann', 'message', 'conversation', ?, ?, 1, '[]')`, [dc.id, DM, cid]);
+    expect(ringMuted(store, view)).toBe(true);
+    store.db.run(`DELETE FROM add_request WHERE id = 'req_t'`);
+    expect(ringMuted(store, view)).toBe(false);
+  });
+
   test('Decline goes to the adapter, the network way, then stops the ring', async () => {
     hear(fact({ nativeId: 'c8', ringsSelf: true }));
     const id = rings[0].call.id;

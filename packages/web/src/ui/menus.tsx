@@ -32,6 +32,7 @@ import { canIndex, startIndexing } from './Indexing.tsx';
 import { arrangeEntries, folderEntries, placeConvs } from './Organize.tsx';
 import { openConv } from './Sidebar.tsx';
 import { viewer, type ViewerImage } from './Viewer.tsx';
+import { canMarkUnread, markUnreadFrom } from '../unread.ts';
 import { openAttachment, openWith, save } from './fileopen.tsx';
 import { fileKind, fileMime, openFileViewer, VIEWABLE } from '../files.ts';
 import { inviteRef } from '../invites.ts';
@@ -197,6 +198,7 @@ function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): M
       m.authorId && { label: self ? 'Your Profile' : 'Profile', icon: 'user', track: 'profile', run: () => openProfile(m.authorId) },
       hasHistory(m) && { label: 'Message History', icon: 'clock', track: 'history', run: () => (historyOf.value = m) },
     ],
+    [canMarkUnread(m, self) && { label: 'Mark Unread', icon: 'mail', track: 'mark unread', run: () => void markUnreadFrom(m) }],
     replyEntries(m),
     marks ? markEntries(m) : [],
     // Google Messages has no unsend: a delete only takes it off your phone.

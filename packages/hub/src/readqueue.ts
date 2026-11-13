@@ -2,11 +2,15 @@
  * Mark many conversations read. The hub's own state changes at once; telling each network follows
  * one read at a time, because every read is a request and Discord rate-limits them.
  *
+ * An account whose network marks many read in one request (Discord's bulk ack, capability 'markReadMany') is sent a
+ * batch at a time instead, on the same pace.
+ *
  * The queue is a table, so a restart picks up where it left off. An offline account just waits. A failed
  * read backs off and tries again a few times, and holds up the rest of that account so a rate limit is respected.
  */
 
 import type * as P from '@dither-chat/protocol';
+import { MARK_READ_MANY_MAX } from '@dither-chat/protocol';
 import type { Store } from './store.ts';
 import { requestHeld } from './add.ts';
 
@@ -17,7 +21,7 @@ const BACKOFF = 30_000;
 
 interface Link {
   online(accountId: string): boolean;
-  command(accountId: string, cmd: { t: 'markRead'; conversation: string; upTo: string }, timeoutMs?: number): Promise<unknown>;
+  command(accountId: string, cmd: { t: 'markRead'; conversation: string; upTo: string } | { t: 'markReadMany'; items: { conversation: string; upTo: string }[] }, timeoutMs?: number): Promise<unknown>;
 }
 
 type Row = { account_id: string; conversation_id: string; up_to: string; attempts: number };
@@ -74,6 +78,12 @@ export class ReadQueue {
     const runs: Promise<void>[] = [];
     for (const { account_id: id } of accounts) {
       if (this.busy.has(id) || (this.notBefore.get(id) ?? 0) > now || !this.link.online(id)) continue;
+      // An account that marks many read in one request (capability 'markReadMany') takes a batch; others one at a time.
+      if (this.many(id)) {
+        const rows = this.store.raw<Row>('SELECT * FROM read_queue WHERE account_id = ? AND next_at <= ? ORDER BY rowid LIMIT ?', id, now, MARK_READ_MANY_MAX);
+        if (rows.length) runs.push(this.sendMany(id, rows, now));
+        continue;
+      }
       const row = this.store.one<Row>('SELECT * FROM read_queue WHERE account_id = ? AND next_at <= ? ORDER BY rowid LIMIT 1', id, now);
       if (row) runs.push(this.send(row, now));
     }
@@ -104,6 +114,53 @@ export class ReadQueue {
       } else {
         const wait = BACKOFF * 2 ** (attempts - 1);
         s.db.query('UPDATE read_queue SET attempts = ?, next_at = ? WHERE account_id = ? AND conversation_id = ?').run(attempts, now + wait, row.account_id, row.conversation_id);
+        this.notBefore.set(acc.id, now + wait);
+      }
+    } finally {
+      this.busy.delete(acc.id);
+    }
+    this.report();
+  }
+
+  private many(accountId: string): boolean {
+    try {
+      return (JSON.parse(this.store.account(accountId)?.capabilities ?? '[]') as string[]).includes('markReadMany');
+    } catch {
+      return false;
+    }
+  }
+
+  /** A batch of one account's reads in one request, as its network's own client marks many read. */
+  private async sendMany(accountId: string, rows: Row[], now: number) {
+    const s = this.store;
+    const acc = s.account(accountId);
+    const del = (r: Row) => s.db.query('DELETE FROM read_queue WHERE account_id = ? AND conversation_id = ?').run(r.account_id, r.conversation_id);
+    const items: { conversation: string; upTo: string }[] = [];
+    const sent: Row[] = [];
+    for (const r of rows) {
+      const conv = s.nativeOf('conversation', r.conversation_id);
+      // An open message request tells the sender nothing until it is accepted (add.ts).
+      if (!conv || !acc || requestHeld(s.db, r.conversation_id)) del(r);
+      else {
+        items.push({ conversation: conv.nativeId, upTo: r.up_to });
+        sent.push(r);
+      }
+    }
+    if (!acc || !items.length) return this.report();
+    this.busy.add(acc.id);
+    this.notBefore.set(acc.id, now + this.pace[acc.network]);
+    try {
+      await this.link.command(acc.id, { t: 'markReadMany', items }, 30_000);
+      for (const r of sent) del(r);
+    } catch (e) {
+      const attempts = Math.max(...sent.map((r) => r.attempts)) + 1;
+      if (attempts >= MAX_ATTEMPTS) {
+        console.warn(`read queue: giving up on ${sent.length} conversations for ${acc.id}: ${(e as Error).message}`);
+        for (const r of sent) del(r);
+        this.failed += sent.length;
+      } else {
+        const wait = BACKOFF * 2 ** (attempts - 1);
+        for (const r of sent) s.db.query('UPDATE read_queue SET attempts = ?, next_at = ? WHERE account_id = ? AND conversation_id = ?').run(attempts, now + wait, r.account_id, r.conversation_id);
         this.notBefore.set(acc.id, now + wait);
       }
     } finally {

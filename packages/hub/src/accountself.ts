@@ -1,7 +1,7 @@
 /**
  * An account's own self (docs/account-self.md, protocol self.ts): what its network wants done (notices), its presence
- * and status, its folders and privacy as the network keeps them, where it is signed in, and block, ignore and your
- * private note on someone. Every write starts with the owner's click; the one thing that runs by itself is the opt-in
+ * and status, its folders and privacy as the network keeps them, where it is signed in, and ignoring someone (blocking
+ * and network notes are people.ts's, shared with Signal). Every write starts with the owner's click; the one thing that runs by itself is the opt-in
  * "Do not disturb during quiet hours", which only an owner's tick turns on.
  *
  * Its own tables (account_self, person_ignore). The store hands it the events, the server its routes under /api/self/.
@@ -145,14 +145,12 @@ export function accountSelfView(store: Store, accountId: string): { self?: P.Acc
 }
 
 /**
- * Why a message from this identity must not alert, if it must not: an account of yours blocked or ignores them on
- * their network. Asked by triage before anything else weighs the message.
+ * Why a message from this identity must not alert, if it must not: an account of yours ignores them on their network.
+ * Asked by triage before anything else weighs the message (a block is triage's own blockedByYou, before this).
  */
 export function quietAuthor(db: Database, identityId: string | null): string | null {
   if (!identityId) return null;
   selfTables(db);
-  const blocked = db.query(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'person_link'`).get() && db.query(`SELECT 1 FROM person_link WHERE identity_id = ? AND relationship = 'blocked' LIMIT 1`).get(identityId);
-  if (blocked) return 'You blocked them';
   if (db.query('SELECT 1 FROM person_ignore WHERE identity_id = ? LIMIT 1').get(identityId)) return 'You ignore them';
   return null;
 }
@@ -171,12 +169,8 @@ export interface SelfDeps {
   command: <T>(accountId: string, cmd: any, timeoutMs?: number) => Promise<T>;
   note: (accountId: string, line: string) => void;
   flush: () => void;
-  /** Spooled uploads (uploads.ts): a picture for the profile. */
-  uploads: { get: (ids: string[]) => P.OutgoingAttachment[] | null; remove: (ids: string[]) => void };
   /** Quiet hours as set (triage.ts), for the opt-in Do not disturb. */
   quietHours: () => P.QuietHours | null;
-  /** Kept profile answers changed (people.ts keeps them in `about`). */
-  profileChanged?: (identityId: string) => void;
 }
 
 export class SelfError extends Error {
@@ -256,15 +250,6 @@ export class AccountSelf {
     }
   }
 
-  /** Block someone on their network (capability 'block'). */
-  async block(identityId: string, b: { accountId?: unknown }): Promise<P.AddResult> {
-    const { acc, native } = this.accountFor(identityId, 'block', 'Blocking', b.accountId);
-    const r = (await this.ask<P.AddResult>(acc, { t: 'block', identity: native })) ?? {};
-    this.d.note(acc.id, `[self] blocked someone${r.check ? `: wants a ${r.check} check, nothing done` : ''}`);
-    this.d.flush();
-    return r;
-  }
-
   /** Ignore someone or stop (capability 'ignore'). The account's `ignored` event follows; the hub's list waits for it. */
   async ignore(identityId: string, b: { ignored?: unknown; accountId?: unknown }): Promise<{ ignored: boolean }> {
     if (typeof b.ignored !== 'boolean') throw new SelfError('Say ignored: true or false');
@@ -277,34 +262,6 @@ export class AccountSelf {
     this.d.note(acc.id, `[self] ${now ? 'ignored' : 'stopped ignoring'} someone`);
     this.d.flush();
     return { ignored: now };
-  }
-
-  /**
-   * Your private note on someone on their network (capability 'notes'). Neither text is ever lost: a note the network
-   * had that this one replaces, and that your dither note does not hold yet, is added to your dither note first.
-   */
-  async setNote(identityId: string, b: { note?: unknown; accountId?: unknown }): Promise<{ note: string; personNote: string | null }> {
-    if (typeof b.note !== 'string') throw new SelfError('Say note: the text, or "" to clear it');
-    const s = this.d.store;
-    const { acc, native } = this.accountFor(identityId, 'notes', 'Notes', b.accountId);
-    const limit = SELF_LIMITS[acc.network]?.note;
-    const text = b.note.trim();
-    if (limit && bioLength(text) > limit) throw new SelfError(`Too long for ${NETWORK_META[acc.network].name}: ${bioLength(text)} characters, and a note takes ${limit}`, 400);
-    const kept = s.db.query('SELECT data FROM about WHERE target_id = ? AND account_id = ?').get(identityId, acc.id) as Row | null;
-    const old = (parse<P.PersonAbout>(kept?.data)?.note ?? '').trim();
-    const personNote = old && old !== text ? keepInPersonNote(s, identityId, old, NETWORK_META[acc.network].name) : null;
-    const r = (await this.ask<{ note?: unknown }>(acc, { t: 'setNote', who: native, note: text })) ?? {};
-    const now = typeof r.note === 'string' ? r.note : text;
-    if (kept) {
-      const data = parse<P.PersonAbout>(kept.data) ?? {};
-      if (now) data.note = now;
-      else delete data.note;
-      s.db.query('UPDATE about SET data = ? WHERE target_id = ? AND account_id = ?').run(JSON.stringify(data), identityId, acc.id);
-    }
-    s.dirty.identities.add(identityId);
-    this.d.profileChanged?.(identityId);
-    this.d.flush();
-    return { note: now, personNote };
   }
 
   /** Your presence and status line (capability 'setPresence'). */
@@ -341,61 +298,6 @@ export class AccountSelf {
     const acc = this.ready(accountId, 'sessions', 'Listing where you are signed in');
     const r = (await this.ask<P.SessionsResult>(acc, { t: 'sessions' }, 30_000)) ?? { sessions: [] };
     return { sessions: Array.isArray(r.sessions) ? r.sessions.filter((x) => x && typeof x.id === 'string').slice(0, 100) : [] };
-  }
-
-  /** Your own profile beyond the bio (capabilities editName, editAvatar, editPronouns, editBanner). */
-  async setProfile(identityId: string, b: { displayName?: unknown; pronouns?: unknown; avatar?: unknown; banner?: unknown; accent?: unknown }): Promise<P.PersonAbout> {
-    const s = this.d.store;
-    const acc = s.accounts().find((a) => a.self_identity === identityId);
-    if (!acc) throw new SelfError('Only your own profile can be changed', 403);
-    const lim = SELF_LIMITS[acc.network] ?? {};
-    const change: P.ProfileChange = {};
-    const uploads: string[] = [];
-    const need = (cap: P.Capability, what: string) => {
-      if (!caps(acc).includes(cap)) throw new SelfError(`Your ${what} on ${NETWORK_META[acc.network].name} cannot be changed from here`, 409);
-    };
-    if (b.displayName !== undefined) {
-      need('editName', 'name');
-      if (typeof b.displayName !== 'string') throw new SelfError('displayName: a string');
-      const n = b.displayName.trim();
-      if (lim.displayName && bioLength(n) > lim.displayName) throw new SelfError(`A name takes ${lim.displayName} characters, this one has ${bioLength(n)}`);
-      change.displayName = n;
-    }
-    if (b.pronouns !== undefined) {
-      need('editPronouns', 'pronouns');
-      if (typeof b.pronouns !== 'string') throw new SelfError('pronouns: a string');
-      const n = b.pronouns.trim();
-      if (lim.pronouns && bioLength(n) > lim.pronouns) throw new SelfError(`Pronouns take ${lim.pronouns} characters, these have ${bioLength(n)}`);
-      change.pronouns = n;
-    }
-    const picture = (key: 'avatar' | 'banner', v: unknown) => {
-      need(key === 'avatar' ? 'editAvatar' : 'editBanner', key === 'avatar' ? 'picture' : 'banner');
-      if (v === null) return null;
-      if (typeof v !== 'string') throw new SelfError(`${key}: an upload id, or null to remove it`);
-      const f = this.d.uploads.get([v]);
-      if (!f?.length) throw new SelfError('That upload has expired: choose the picture again', 410);
-      if (!f[0].mime.startsWith('image/')) throw new SelfError('That is not a picture');
-      if (lim.avatarBytes && f[0].size > lim.avatarBytes) throw new SelfError(`${NETWORK_META[acc.network].name} takes pictures up to ${lim.avatarBytes / 1024 / 1024} MB`, 413);
-      uploads.push(v);
-      return f[0];
-    };
-    if (b.avatar !== undefined) change.avatar = picture('avatar', b.avatar);
-    if (b.banner !== undefined) change.banner = picture('banner', b.banner);
-    if (b.accent !== undefined) {
-      need('editBanner', 'profile colour');
-      if (b.accent !== null && (typeof b.accent !== 'string' || !/^#[0-9a-f]{6}$/i.test(b.accent))) throw new SelfError('accent: a colour like #5865f2, or null');
-      change.accent = b.accent as string | null;
-    }
-    if (!Object.keys(change).length) throw new SelfError('Nothing to change');
-    if (!this.d.online(acc.id)) throw new SelfError(`${this.label(acc)} is not connected`, 409);
-    try {
-      const about = await this.ask<P.PersonAbout>(acc, { t: 'setProfile', change } as never);
-      this.d.note(acc.id, `[self] changed your profile: ${Object.keys(change).join(', ')}`);
-      return about ?? {};
-    } finally {
-      this.d.uploads.remove(uploads);
-      this.d.flush();
-    }
   }
 
   /**
@@ -497,10 +399,7 @@ export class AccountSelf {
     try {
       // Every write is a click on the hub's own page: a browser sends Origin, and the server refused other sites'.
       if (method !== 'GET' && !req.headers.get('origin')) throw new SelfError('This is done from the app itself', 403);
-      if ((m = path.match(/^\/api\/self\/people\/([\w-]+)\/block$/)) && method === 'POST') return Response.json(await this.block(m[1], await body()));
       if ((m = path.match(/^\/api\/self\/people\/([\w-]+)\/ignore$/)) && method === 'POST') return Response.json(await this.ignore(m[1], await body()));
-      if ((m = path.match(/^\/api\/self\/identities\/([\w-]+)\/note$/)) && method === 'PUT') return Response.json(await this.setNote(m[1], await body()));
-      if ((m = path.match(/^\/api\/self\/identities\/([\w-]+)\/profile$/)) && method === 'PUT') return Response.json(await this.setProfile(m[1], await body()));
       if ((m = path.match(/^\/api\/self\/([\w-]+)\/sessions$/)) && method === 'GET') return Response.json(await this.sessions(m[1]));
       if ((m = path.match(/^\/api\/self\/([\w-]+)\/presence$/)) && method === 'POST') return Response.json(await this.setPresence(m[1], await body()));
       if ((m = path.match(/^\/api\/self\/([\w-]+)\/folders\/import$/)) && method === 'POST') return Response.json(this.importFolders(m[1]));
@@ -511,17 +410,4 @@ export class AccountSelf {
     }
     return Response.json({ error: 'not found' }, { status: 404 });
   }
-}
-
-/**
- * Adds a network's note to the person's dither note, unless it holds that text already. Returns the dither note after.
- * The text goes after what is there, on a line of its own, saying where it came from.
- */
-export function keepInPersonNote(store: Store, identityId: string, text: string, network: string): string {
-  const pid = store.ensurePerson(identityId);
-  const cur = ((store.db.query('SELECT note FROM person WHERE id = ?').get(pid) as Row | null)?.note as string | null) ?? '';
-  if (cur.includes(text)) return cur;
-  const next = `${cur.trimEnd()}${cur.trim() ? '\n\n' : ''}${network} note: ${text}`;
-  store.updatePerson(pid, { note: next });
-  return next;
 }

@@ -10,6 +10,8 @@ import { ACCOUNT_COLORS, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
 import type { PushService } from './push.ts';
 import type { ReadQueue } from './readqueue.ts';
+import { setNativeMute } from './nativemute.ts';
+import { markUnreadFrom } from './unread.ts';
 import { validQuietHours, type Triage } from './triage.ts';
 import type { TriageVotes } from './votes.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
@@ -39,6 +41,7 @@ import { hostAllowed, hostNames } from './hosts.ts';
 import { noteWork, pathShape } from './stalls.ts';
 import { fetchPublicToFile } from './fetchsafe.ts';
 import { AboutError, Abouts } from './about.ts';
+import { Servers } from './servers.ts';
 import { asked, attempt, candidatesAttempt } from './attempts.ts';
 import { Groups } from './groups.ts';
 import { People } from './people.ts';
@@ -216,6 +219,8 @@ export class HubServer {
   readonly self: AccountSelf;
   /** Joining, adding people, and requests waiting on you (add.ts, docs/add.md). */
   readonly adding: Adding;
+  /** Scheduled events, leaving, and what a space asks on joining (servers.ts, docs/servers.md). */
+  readonly servers: Servers;
   /** Your marks on whether a message needs a reply (replymarks.ts). */
   private get marks(): ReplyMarks {
     return (this._marks ??= new ReplyMarks(this.store));
@@ -266,8 +271,12 @@ export class HubServer {
     });
     this.groups = new Groups({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line) });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
-    this.self = new AccountSelf({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), uploads: this.uploads, quietHours: () => store.quietHours() });
+    this.self = new AccountSelf({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), quietHours: () => store.quietHours() });
+    this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line) });
+    // A note joined from yours and the network's goes back to the network (store.ts networkNotes).
+    store.contactNotesOut = (id, change) => this.people.pushContactNotes(id, change);
     this.adding = new Adding({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), liveView: (a) => !!sup.liveViewUrl?.(a) || !!store.account(a)?.live_view });
+    this.servers = new Servers({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a), note: (a, line) => sup.note(a, line), flush: () => this.flush(), aboutView: (k, i, n, a, ab) => this.abouts.view(k, i, n, a, ab, Date.now(), undefined, true) });
     sup.calls = this.calls;
     this.clicks = new ClickCounts(store.db);
     this.usage = new UsageStore(store.db, (changed, removed, all) => {
@@ -621,6 +630,8 @@ export class HubServer {
     if (path === '/api/add' || path.startsWith('/api/add/') || path.startsWith('/api/requests') || path === '/api/people' || /^\/api\/people\/[\w-]+\/remove$/.test(path)) return (await this.adding.route(req, url, path))!;
     // An account's own self, block, ignore and notes (accountself.ts).
     if (path.startsWith('/api/self/')) return (await this.self.route(req, url, path))!;
+    // Scheduled events, leaving, and what a space asks on joining (servers.ts).
+    if (Servers.handles(path)) return (await this.servers.route(req, url, path))!;
     // Reply marks (replymarks.ts, docs/inbox.md "Marks"): on a message, its mail twin, and on an inbox row.
     if ((m = path.match(/^\/api\/(mail\/)?messages\/([\w-]+)\/reply-mark$/)) && method === 'POST') {
       const b = await body<{ mark?: unknown; surface?: unknown; device?: unknown }>();
@@ -811,12 +822,57 @@ export class HubServer {
     // What the network says about one identity (people.ts, docs/profile.md). ?fresh=1 asks even if a recent answer is kept.
     if ((m = path.match(/^\/api\/identities\/([\w-]+)\/about$/))) {
       if (!s.nativeOf('identity', m[1])) return bad('no such identity', 404);
-      // Your own bio, on a network whose adapter can change it (capability 'editProfile').
+      // Your own profile, on a network whose adapter can change it (capability 'editProfile'): the bio, and where it
+      // says so the name, emoji, picture (an upload id, or null) and username (null deletes it).
       if (method === 'PUT') {
-        const b = await body<{ bio?: unknown }>();
-        if (typeof b.bio !== 'string') return bad('bio: a string');
+        const b = await body<{ bio?: unknown; name?: unknown; emoji?: unknown; avatar?: unknown; username?: unknown; pronouns?: unknown; banner?: unknown; accent?: unknown }>();
+        const change: P.ProfileChange = {};
+        if (b.bio !== undefined) {
+          if (typeof b.bio !== 'string') return bad('bio: a string');
+          change.bio = b.bio;
+        }
+        if (b.name !== undefined) {
+          if (typeof b.name !== 'string' || !b.name.trim()) return bad('name: a name');
+          change.name = b.name.trim().slice(0, 200);
+        }
+        if (b.emoji !== undefined) {
+          if (typeof b.emoji !== 'string') return bad('emoji: an emoji, or "" for none');
+          change.emoji = b.emoji;
+        }
+        if (b.username !== undefined) {
+          if (b.username !== null && typeof b.username !== 'string') return bad('username: a name, or null to delete it');
+          change.username = b.username;
+        }
+        if (b.avatar !== undefined) {
+          if (b.avatar === null) change.avatar = null;
+          else {
+            const file = typeof b.avatar === 'string' ? this.uploads.get([b.avatar])?.[0] : undefined;
+            if (!file) return bad('avatar: an upload id, or null to remove the picture');
+            change.avatar = file;
+          }
+        }
+        // Pronouns, the banner and its colour (docs/account-self.md, Discord).
+        if (b.pronouns !== undefined) {
+          if (typeof b.pronouns !== 'string') return bad('pronouns: a string, or "" for none');
+          change.pronouns = b.pronouns.trim().slice(0, 200);
+        }
+        if (b.banner !== undefined) {
+          if (b.banner === null) change.banner = null;
+          else {
+            const file = typeof b.banner === 'string' ? this.uploads.get([b.banner])?.[0] : undefined;
+            if (!file) return bad('banner: an upload id, or null to remove it');
+            change.banner = file;
+          }
+        }
+        if (b.accent !== undefined) {
+          if (b.accent !== null && (typeof b.accent !== 'string' || !/^#[0-9a-f]{6}$/i.test(b.accent))) return bad('accent: a colour like #5865f2, or null');
+          change.accent = b.accent as string | null;
+        }
+        if (!Object.keys(change).length) return bad('bio, name, emoji, avatar, username, pronouns, banner or accent');
         try {
-          const v = await this.people.setBio(m[1], b.bio);
+          const v = await this.people.setOwn(m[1], change);
+          if (change.avatar) this.uploads.remove([b.avatar as string]);
+          if (change.banner) this.uploads.remove([b.banner as string]);
           this.flush();
           return ok(v);
         } catch (e) {
@@ -826,6 +882,27 @@ export class HubServer {
       const v = await this.people.get(m[1], url.searchParams.get('fresh') === '1');
       this.flush();
       return ok(v);
+    }
+    // Your safety number with someone: mark it verified ({ safetyNumber }) or clear that ({ clear: true }).
+    if ((m = path.match(/^\/api\/identities\/([\w-]+)\/verify$/)) && method === 'POST') {
+      try {
+        const v = await this.people.verify(m[1], await body<{ safetyNumber?: unknown; clear?: unknown }>());
+        this.flush();
+        return ok(v);
+      } catch (e) {
+        return bad((e as Error).message, (e as { status?: number }).status ?? 500);
+      }
+    }
+    // Block someone or a group, or ({ unblock: true }) unblock them, on the owner's click (capability 'block').
+    if ((m = path.match(/^\/api\/(identities|conversations)\/([\w-]+)\/block$/)) && method === 'POST') {
+      const b = await body<{ unblock?: unknown }>();
+      try {
+        const v = m[1] === 'identities' ? await this.people.block(m[2], b.unblock === true) : await this.people.blockConversation(m[2], b.unblock === true);
+        this.flush();
+        return ok(v);
+      } catch (e) {
+        return bad((e as Error).message, (e as { status?: number }).status ?? 500);
+      }
     }
     if ((m = path.match(/^\/api\/identities\/([\w-]+)\/person$/)) && method === 'POST') {
       if (!s.nativeOf('identity', m[1])) return bad('no such identity', 404);
@@ -878,6 +955,19 @@ export class HubServer {
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/timeline$/))) return ok(s.personTimeline(m[1], parseCursor(url.searchParams.get('before')), Math.min(num('limit') ?? 60, 200)));
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/notify$/))) return ok(this.triage.effectiveLevel(m[1]));
+    // Muting a place on its network itself, with a timer (nativemute.ts, docs/notifications.md "Muted on the network").
+    if ((m = path.match(/^\/api\/(conversations|spaces)\/([\w-]+)\/native-mute$/)) && method === 'POST') {
+      // A click on the hub's own page: a browser sends Origin, and the server has refused any other site's.
+      if (!req.headers.get('origin')) return bad('Muting on the network is done from the app itself', 403);
+      try {
+        const v = await setNativeMute(s, this.sup, m[1] === 'spaces' ? 'space' : 'conversation', m[2], await body<{ muted?: unknown; minutes?: unknown }>());
+        this.flush();
+        return ok(v);
+      } catch (e) {
+        if (e instanceof AboutError) return bad(e.message, e.status);
+        throw e;
+      }
+    }
     // About and settings (about.ts, docs/group-settings.md). GET reads, POST changes one thing.
     if ((m = path.match(/^\/api\/(conversations|spaces)\/([\w-]+)\/about$/))) {
       const kind = m[1] === 'spaces' ? 'space' : 'conversation';
@@ -1135,6 +1225,13 @@ export class HubServer {
       const r = await this.sup.command(accountId, { t: 'history', conversation: conv.nativeId, beforeTs: b.beforeTs, limit: b.limit ?? 50 }, 60_000).catch((e) => ({ error: String(e.message) }));
       return ok(r ?? { count: 0, done: true });
     }
+    // Mark Unread from a message on (unread.ts): here at once, and on each network that can.
+    if ((m = path.match(/^\/api\/messages\/([\w-]+)\/unread$/)) && method === 'POST') {
+      const r = markUnreadFrom(s, this.sup, m[1]);
+      if (!r) return bad('no such message', 404);
+      this.flush();
+      return ok(r);
+    }
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/react$/)) && method === 'POST') {
       const b = await body<{ key: string; remove?: boolean; style?: P.ReactionStyle; accountId?: string }>();
       if (!b.key) return bad('nothing to react with');
@@ -1252,6 +1349,8 @@ export class HubServer {
       const b = await body<{ name?: unknown; note?: unknown }>();
       if (b.name !== undefined) return bad(NICKNAME_MOVED);
       s.updatePerson(m[1], { ...(typeof b.note === 'string' ? { note: b.note } : {}) });
+      // Kept on their networks too, where an account keeps notes (capability 'contactNotes').
+      if (typeof b.note === 'string') this.people.pushPersonNote(m[1], b.note);
       this.flush();
       return ok();
     }
@@ -1261,6 +1360,8 @@ export class HubServer {
       if (b.nickname !== null && typeof b.nickname !== 'string') return bad('Say nickname: a name, or null to take it away');
       if (s.isSelf(m[1])) return bad('your own accounts go by the names you gave them on their networks');
       if (!s.setIdentityNickname(m[1], b.nickname ? b.nickname.trim().slice(0, 200) : null)) return bad('no such identity', 404);
+      // Kept on their network too, where the account keeps nicknames (capability 'contactNotes').
+      this.people.pushContactNotes(m[1], { nickname: b.nickname ? b.nickname.trim().slice(0, 200) : '' });
       this.flush();
       return ok({ identity: s.identitiesByIds([m[1]])[0] });
     }

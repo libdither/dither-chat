@@ -114,3 +114,42 @@ export interface CalendarProposalAnswer {
   location: string | null;
   updatedAt: number;
 }
+
+/**
+ * A network's scheduled event (a Discord server's), as dither-calendar may read it: the hub's
+ * GET /api/calendar/network-events?since=<ms> (loopback, like the rest of its API; docs/servers.md). Times as a plan's.
+ * Not read by dither-calendar yet: shaped for it, and to be added on its side together with this.
+ */
+export interface NetworkEventEntry {
+  /** The hub's event id: stable across edits. */
+  key: string;
+  network: string;
+  title: string; // <= 200 chars, "(No title)" if empty
+  description: string | null;
+  location: string | null; // "Voice channel · Server", or the place outside, <= 200 chars
+  allDay: false;
+  startAt: number;
+  endAt: number | null;
+  timeZone: 'UTC';
+  /** RFC 5545 RRULE body ("FREQ=WEEKLY;BYDAY=TU"), or null for once. */
+  rrule: string | null;
+  /** Occurrences called off: their original starts (EXDATE). */
+  exdates: number[];
+  /** Occurrences moved: original start (RECURRENCE-ID) to the new time. */
+  moved: { original: number; startAt: number; endAt: number | null }[];
+  status: 'scheduled' | 'active' | 'completed' | 'cancelled';
+  /** You said Interested (null: not known). */
+  interested: boolean | null;
+  /** The space's name. */
+  place: string;
+  spaceId: string;
+  /** Opens it in the network's own app. */
+  open: string | null;
+  updatedAt: number;
+}
+
+/** GET /api/calendar/network-events?since=<ms>: the events changed since then (0: all), soonest first. */
+export interface NetworkEvents {
+  now: number;
+  events: NetworkEventEntry[];
+}

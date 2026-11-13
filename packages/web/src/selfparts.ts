@@ -1,35 +1,26 @@
 /**
  * What the profile and account pages offer of an account's own self (docs/account-self.md), as plain functions:
- * which of someone's accounts can be blocked or ignored from here, a network note added to yours without losing
- * either, and when a status set to clear after a while clears. ui/ProfileSelf.tsx and ui/AccountSelf.tsx draw them.
+ * which of someone's accounts can be ignored from here, and when a status set to clear after a while clears.
+ * ui/ProfileSelf.tsx and ui/AccountSelf.tsx draw them.
  */
 import type * as P from '@dither-chat/protocol';
 
 export interface SelfOffer {
   identity: P.IdentityView;
-  /** Ignore or Stop Ignoring is offered; `ignored` says which. */
-  ignore: boolean;
+  /** Ignore or Stop Ignoring: which. */
   ignored: boolean;
-  block: boolean;
 }
 
-/** For each of their accounts: Ignore (or Stop) and Block, where a connected account of yours on that network can. A block hides both. */
+/** Their accounts Ignore (or Stop Ignoring) is offered for: where a connected account of yours on that network can, and you have not blocked them. */
 export function selfOffers(ids: P.IdentityView[], ignored: P.ProfileView['ignored'], links: P.PersonLinkView[], accounts: Iterable<P.AccountView>): SelfOffer[] {
   const list = [...accounts];
   const able = (network: P.Network, cap: P.Capability) => list.some((a) => a.network === network && a.status === 'online' && a.capabilities.includes(cap));
   return ids
     .map((i) => {
       const blocked = links.some((l) => l.identityId === i.id && l.relationship === 'blocked');
-      return { identity: i, ignore: !blocked && able(i.network, 'ignore'), ignored: (ignored ?? []).some((x) => x.identityId === i.id), block: !blocked && able(i.network, 'block') };
+      return !blocked && able(i.network, 'ignore') ? { identity: i, ignored: (ignored ?? []).some((x) => x.identityId === i.id) } : null;
     })
-    .filter((o) => o.ignore || o.block);
-}
-
-/** Your note with a network's note added below it, unless it holds that text already: neither text is lost. */
-export function withNetworkNote(note: string | null, network: string, text: string): string {
-  const cur = note ?? '';
-  if (!text.trim() || cur.includes(text)) return cur;
-  return `${cur.trimEnd()}${cur.trim() ? '\n\n' : ''}${network} note: ${text}`;
+    .filter((o): o is SelfOffer => !!o);
 }
 
 const HOUR = 3_600_000;

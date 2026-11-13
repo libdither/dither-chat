@@ -1,37 +1,25 @@
 /**
  * The account's own self on its network (docs/account-self.md): what the network says needs doing before it carries
  * on (notices), its presence and status as others see them, its settings as the network keeps them (folders, privacy),
- * where it is signed in, and three things done to one person: block, ignore, and your private note on them.
+ * where it is signed in, and ignoring someone. Blocking is the `block` command and your note on someone the
+ * `contactNotes` capability (adapter.ts), shared with Signal; your profile's fields are setProfile's (PersonAbout.editable).
  *
  * All of it is additive to the adapter protocol (adapter.ts takes these unions in): an adapter that says nothing of it
  * is an older one, and the hub and page offer each part only where the account's capabilities name it.
  */
 
-import type { OutgoingAttachment } from './adapter.ts';
 import type { Network } from './ontology.ts';
 
 export type SelfCapability =
-  /** Blocks someone, the network's own way (the `block` command). Unblocking is the `remove` command's. */
-  | 'block'
   /**
    * Ignores someone or stops ignoring them (the `ignore` command): their messages stay but are kept out of the way
    * (Discord's Ignore). The account's list of whom it ignores comes as `ignored` events.
    */
   | 'ignore'
-  /** Reads your private note on someone with their profile (PersonAbout.note) and writes it (the `setNote` command). */
-  | 'notes'
   /** Sets your own presence and status line (the `setPresence` command); `selfState` events say them. */
   | 'setPresence'
   /** Lists where the account is signed in (the `sessions` command), asked when the owner opens that list. */
-  | 'sessions'
-  /** setProfile takes `displayName`: your name as everyone sees it on the network. */
-  | 'editName'
-  /** setProfile takes `avatar`: your picture. */
-  | 'editAvatar'
-  /** setProfile takes `pronouns`. */
-  | 'editPronouns'
-  /** setProfile takes `banner` and `accent`: the picture or colour across the top of your profile. */
-  | 'editBanner';
+  | 'sessions';
 
 /**
  * Something the network wants the owner to do on the account, as it says it: verify a phone or email, agree to new
@@ -124,21 +112,6 @@ export interface PresenceChange {
   status?: OwnStatus | null;
 }
 
-/**
- * What `setProfile` changes (capability 'editProfile' for bio; the others each by its own capability). Only the fields
- * given change; '' or null clears one where the network allows.
- */
-export interface ProfileChange {
-  bio?: string;
-  displayName?: string;
-  pronouns?: string;
-  /** A picture in the hub's spool, or null to remove yours. */
-  avatar?: OutgoingAttachment | null;
-  banner?: OutgoingAttachment | null;
-  /** CSS hex colour, or null. */
-  accent?: string | null;
-}
-
 /** The adapter's events of these. */
 export type SelfEvent =
   /** Everything the network wants done on the account now: the whole list, an empty one when nothing. */
@@ -149,20 +122,16 @@ export type SelfEvent =
 
 /** The hub's commands of these. */
 export type SelfCommand =
-  /** Block someone (capability 'block'). reply.result: AddResult (add.ts) with the relationship after. */
-  | { t: 'block'; id: string; identity: string }
   /** Ignore them, or (ignored: false) stop (capability 'ignore'). reply.result: { ignored: boolean }; an `ignored` event follows. */
   | { t: 'ignore'; id: string; identity: string; ignored: boolean }
-  /** Your private note on them ('' clears it) (capability 'notes'). reply.result: { note: string } as the network now has it. */
-  | { t: 'setNote'; id: string; who: string; note: string }
   /** Your presence and status (capability 'setPresence'). reply.result: OwnPresence as it now stands. */
   | { t: 'setPresence'; id: string; change: PresenceChange }
   /** Where the account is signed in (capability 'sessions'). reply.result: SessionsResult. */
   | { t: 'sessions'; id: string };
 
 /** The networks' limits on these, in characters as bioLength counts them (about.ts). */
-export const SELF_LIMITS: Partial<Record<Network, { note?: number; statusText?: number; displayName?: number; pronouns?: number; avatarBytes?: number }>> = {
-  discord: { note: 256, statusText: 128, displayName: 32, pronouns: 40, avatarBytes: 10 * 1024 * 1024 },
+export const SELF_LIMITS: Partial<Record<Network, { note?: number; statusText?: number; name?: number; pronouns?: number; avatarBytes?: number }>> = {
+  discord: { note: 256, statusText: 128, name: 32, pronouns: 40, avatarBytes: 10 * 1024 * 1024 },
 };
 
 export const PRESENCE_LABEL: Record<OwnPresenceState, string> = {

@@ -1,6 +1,6 @@
 /**
  * The demo's side of an account's own self (accountself.ts, docs/account-self.md): a Discord demo account answers
- * block, ignore, notes, presence, sessions and the profile fields beyond the bio as the real adapter does, and says its
+ * block, ignore, presence, sessions and the profile fields beyond the bio as the real adapter does, and says its
  * presence and folders after connect. Kept in its account dir, so a restart keeps what was set. No notice by default:
  * a verify script asks for one (action `notice`), so the demo's account card stays as it was otherwise.
  */
@@ -10,19 +10,21 @@ import type * as P from '@dither-chat/protocol';
 import { OWN_PRESENCE_STATES, SELF_LIMITS } from '@dither-chat/protocol';
 
 /** The self capabilities the demo's Discord accounts have. */
-export const DEMO_SELF_CAPS: P.Capability[] = ['block', 'ignore', 'notes', 'setPresence', 'sessions', 'editName', 'editAvatar', 'editPronouns', 'editBanner'];
+export const DEMO_SELF_CAPS: P.Capability[] = ['block', 'ignore', 'setPresence', 'sessions'];
+
+/** What setProfile takes on Discord (PersonAbout.editable). */
+const EDITABLE: P.ProfileField[] = ['bio', 'name', 'avatar', 'pronouns', 'banner', 'accent'];
 
 interface State {
   presence: P.OwnPresence;
   ignored: string[];
-  notes: Record<string, string>;
   name?: string;
   pronouns?: string;
   avatar?: string | null;
   notices: P.AccountNotice[];
 }
 
-const SELF_COMMANDS = new Set(['block', 'ignore', 'setNote', 'setPresence', 'sessions']);
+const SELF_COMMANDS = new Set(['block', 'ignore', 'setPresence', 'sessions']);
 
 export class DemoSelf {
   private state: State;
@@ -33,12 +35,12 @@ export class DemoSelf {
     private emit: (ev: P.AdapterEvent) => void,
     /** The account's own spaces, communities first, in the order the demo has them. */
     private spaces: string[],
-    /** Blocks someone the way the demo's Add does (its list says it). */
-    private block: (who: string) => void,
+    /** Blocks someone the way the demo's Add does (its list says it), or with null unblocks them. */
+    private block: (who: string, blocked: boolean) => void,
   ) {
     const f = join(dir, 'self.json');
     const kept = existsSync(f) ? (JSON.parse(readFileSync(f, 'utf8')) as Partial<State>) : {};
-    this.state = { presence: { state: 'online' }, ignored: [], notes: {}, notices: [], ...kept };
+    this.state = { presence: { state: 'online' }, ignored: [], notices: [], ...kept };
   }
 
   private save() {
@@ -60,14 +62,13 @@ export class DemoSelf {
     this.emit({ t: 'identity', identity: { ...this.self, isSelf: true, ...(this.state.name ? { displayName: this.state.name } : {}) } });
   }
 
-  /** A profile as the demo has it, with your note on them and your own fields. */
+  /** A profile as the demo has it, with your own fields and what setProfile takes. */
   decorate(who: string, about: P.PersonAbout): P.PersonAbout {
     if (this.network !== 'discord') return about;
-    const note = this.state.notes[who];
     const me = who === this.self.nativeId;
     return {
       ...about,
-      ...(note ? { note } : {}),
+      ...(me ? { editable: EDITABLE } : {}),
       ...(me && this.state.name ? { displayName: this.state.name } : {}),
       ...(me && this.state.pronouns !== undefined ? (this.state.pronouns ? { pronouns: this.state.pronouns } : { pronouns: undefined }) : {}),
       ...(!me ? { badges: [{ name: 'Early Supporter' }] } : {}),
@@ -77,9 +78,10 @@ export class DemoSelf {
   /** setProfile beyond the bio: what it takes, the rest left to the demo's own bio handling. */
   profileChange(change: P.ProfileChange): string | null {
     const lim = SELF_LIMITS.discord!;
-    if (change.displayName !== undefined && [...change.displayName].length > lim.displayName!) return `global_name: must be ${lim.displayName} or fewer in length`;
+    if (change.name !== undefined && [...change.name].length > lim.name!) return `global_name: must be ${lim.name} or fewer in length`;
     if (change.banner) return 'Banners need Discord Nitro';
-    if (change.displayName !== undefined) this.state.name = change.displayName || undefined;
+    if (change.emoji !== undefined || change.username !== undefined) return 'Not on Discord';
+    if (change.name !== undefined) this.state.name = change.name || undefined;
     if (change.pronouns !== undefined) this.state.pronouns = change.pronouns;
     if (change.avatar !== undefined) this.state.avatar = change.avatar ? change.avatar.name : null;
     this.save();
@@ -90,12 +92,13 @@ export class DemoSelf {
   /** One of the self commands, answered; null when it is not one. */
   command(cmd: P.AdapterCommand): { result: unknown } | { error: string } | null {
     if (!SELF_COMMANDS.has(cmd.t) || this.network !== 'discord') return null;
-    const c = cmd as P.SelfCommand;
+    const c = cmd as Extract<P.AdapterCommand, { t: 'block' | 'ignore' | 'setPresence' | 'sessions' }>;
     switch (c.t) {
       case 'block':
-        if (c.identity === this.self.nativeId) return { error: 'That is this account' };
-        this.block(c.identity);
-        return { result: { identity: c.identity, relationship: 'blocked' } satisfies P.AddResult };
+        if (c.target.kind !== 'identity') return { error: 'Discord blocks people, not groups' };
+        if (c.target.nativeId === this.self.nativeId) return { error: 'That is this account' };
+        this.block(c.target.nativeId, !c.unblock);
+        return { result: { blocked: !c.unblock } };
       case 'ignore': {
         const set = new Set(this.state.ignored);
         if (c.ignored) set.add(c.identity);
@@ -104,14 +107,6 @@ export class DemoSelf {
         this.save();
         this.emit({ t: 'ignored', identities: this.state.ignored });
         return { result: { ignored: c.ignored } };
-      }
-      case 'setNote': {
-        const note = c.note.trim();
-        if ([...note].length > SELF_LIMITS.discord!.note!) return { error: 'note: Must be 256 or fewer in length.' };
-        if (note) this.state.notes[c.who] = note;
-        else delete this.state.notes[c.who];
-        this.save();
-        return { result: { note } };
       }
       case 'setPresence': {
         const p: P.OwnPresence = { ...this.state.presence };

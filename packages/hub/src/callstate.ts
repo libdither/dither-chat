@@ -22,6 +22,7 @@ import type * as P from '@dither-chat/protocol';
 import { callSeconds, RING } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
+import { requestHeld } from './add.ts';
 
 type Row = Record<string, any>;
 
@@ -445,8 +446,12 @@ export async function callRoute(d: CallRouteDeps, req: Request, url: URL, path: 
 
 // ------------------------------------------------------------------ ringing your devices
 
-/** A mute on the chat, the caller, the account, the network or everything keeps a ring off your devices (the ring card still shows). */
+/**
+ * A mute on the chat, the caller, the account, the network or everything keeps a ring off your devices (the ring card
+ * still shows). So does an open message request: someone you have not accepted cannot ring your phone (docs/add.md).
+ */
 export function ringMuted(store: Store, c: Pick<P.CallView, 'conversationId' | 'accountId' | 'network' | 'callerId'>): boolean {
+  if (requestHeld(store.db, c.conversationId)) return true;
   const rules = new Map(store.rules().map((r) => [`${r.scope}:${r.target ?? ''}`, r.level]));
   const person = c.callerId ? ((store.db.query('SELECT person_id FROM identity WHERE id = ?').get(c.callerId) as Row | null)?.person_id ?? null) : null;
   for (const key of [`conversation:${c.conversationId}`, person ? `person:${person}` : '', `account:${c.accountId}`, `network:${c.network}`, 'global:']) {

@@ -36,7 +36,7 @@ import { describeActivity, type ActivityStore, type Features } from './activity.
 import { ALERT_BAR, alertBar, describeWeight, emptyModel, importance, learnedFrom, predict, prior, THRESHOLDS, tierFrom, TIER_NAME, words, type Facts, type Level, type Model, type Namer, type TierContext } from './learn.ts';
 import { InteractionLog } from './interact.ts';
 import { conversing, CONVERSING_REASON } from './tiers.ts';
-import { requestHeld } from './add.ts';
+import { blockedByYou, requestHeld } from './add.ts';
 import { quietAuthor } from './accountself.ts';
 
 type Row = Record<string, any>;
@@ -327,6 +327,15 @@ export class Triage {
     return NATIVE_DEFAULT[c.shape as P.Shape] ?? 'mentions';
   }
 
+  /** Does a space this conversation is in say @everyone and @here do not notify there (NativeMute.suppressEveryone)? */
+  suppressesEveryone(c: Row): boolean {
+    const parent = c.shape === 'thread' && c.parent_id ? (c.parent_id as string) : null;
+    for (const sp of this.ancestors(parent ?? c.id))
+      for (const r of this.store.raw<Row>(`SELECT native_mute FROM vantage WHERE target_kind = 'space' AND target_id = ? AND native_mute IS NOT NULL`, sp.id))
+        if ((JSON.parse(r.native_mute) as P.NativeMute).suppressEveryone === true) return true;
+    return false;
+  }
+
   async decide(messageId: string, now = Date.now()): Promise<Decision | null> {
     const d = this.decideByRules(messageId);
     if (d) await this.withActivity(d, messageId, now);
@@ -523,7 +532,11 @@ export class Triage {
       reasons.push('A message request: it waits under Requests until you accept it');
       return { decision: 'silent', score: null, reasons, decidedBy: 'rules', title, body };
     }
-    // Someone you blocked or ignore on their network never alerts (accountself.ts).
+    if (author && blockedByYou(s.db, author.id)) {
+      reasons.push('From someone you blocked');
+      return { decision: 'silent', score: null, reasons, decidedBy: 'rules', title, body };
+    }
+    // Someone you ignore on their network never alerts either (accountself.ts).
     const shut = quietAuthor(s.db, m.author_id);
     if (shut) {
       reasons.push(`${shut} on ${NETWORK_META[c.network as P.Network].name}`);
@@ -534,7 +547,8 @@ export class Triage {
     const how = this.addressed(f, c);
     const native = this.nativeLevel(c);
     const net = NETWORK_META[c.network as P.Network].name;
-    const about = f.mention || f.reply || f.everyone;
+    // @everyone and @here in a server set to suppress them (Discord's own setting) would not have notified you.
+    const about = f.mention || f.reply || (f.everyone && !this.suppressesEveryone(c));
     // Would the network itself have notified you? Replies to you ping on Discord, @everyone wherever mentions do. A
     // place you once set to mentions only says the same of itself.
     const mentionsOnly = eff.level === 'mentions' && !eff.native;

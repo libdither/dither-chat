@@ -10914,6 +10914,56 @@ button.msg-edited.link:hover {
   color: var(--danger);
 }
 
+/* Your profile beyond the bio, and safety numbers (SignalPeople.tsx). */
+.pf-own-extras {
+  display: grid;
+  gap: 8px;
+  margin: 6px 0 10px;
+}
+.pf-own-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.pf-own-row > span:first-child {
+  min-width: 9em;
+  color: var(--text-dim);
+}
+.pf-own-row .input {
+  flex: 1 1 10em;
+  min-width: 0;
+}
+.pf-own-row .pf-own-emoji {
+  flex: 0 0 4.5em;
+}
+.pf-safety-one + .pf-safety-one {
+  margin-top: 14px;
+}
+.pf-safety-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.pf-safety-digits {
+  display: grid;
+  grid-template-columns: repeat(4, max-content);
+  gap: 4px 14px;
+  margin-bottom: 10px;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+}
+.pf-safety-qr {
+  max-width: 220px;
+  margin-bottom: 10px;
+}
+.captcha-solve {
+  display: grid;
+  gap: 6px;
+}
+
 /* The people graph (graph/GraphView.tsx): a canvas under the filters, with a card for what is picked. */
 .side-graph {
   margin-left: auto;
@@ -13915,4 +13965,117 @@ h1:hover > .pair-nick-edit,
   display: flex;
   gap: 6px;
   margin-top: 2px;
+}
+
+/* A server's page beyond its settings (ServerParts.tsx, docs/servers.md): its events, what it asks on joining, its
+   invite links. */
+.srv-events {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.srv-event {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.srv-event.over {
+  opacity: 0.6;
+}
+.srv-event-cover {
+  width: 100%;
+  max-height: 140px;
+  object-fit: cover;
+}
+.srv-event-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  min-width: 0;
+}
+.srv-event-when {
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+.srv-event[data-status='active'] .srv-event-when b {
+  color: var(--accent);
+}
+.srv-event-name {
+  font-size: 14px;
+}
+.srv-event-where {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.srv-event-desc {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+}
+.srv-event-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.srv-event-btns {
+  display: flex;
+  gap: 6px;
+}
+.srv-rules {
+  margin: 4px 0 8px;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.srv-check {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 4px 0;
+}
+.srv-question {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+}
+.srv-prompt {
+  border: none;
+  padding: 0;
+  margin: 8px 0;
+}
+.srv-prompt legend {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.srv-link {
+  margin-bottom: 8px;
+}
+.srv-vanity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 8px;
+}
+.srv-new-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+.srv-new-link label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }

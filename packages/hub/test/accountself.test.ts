@@ -1,8 +1,8 @@
 /**
  * An account's own self (accountself.ts, docs/account-self.md): notices kept as the network says them, presence and
- * folders in the account's view, the routes under /api/self/ (block, ignore, note, presence, sessions, profile fields,
- * folders imported once), messages from someone blocked or ignored never alerting, and the opt-in Do not disturb
- * during quiet hours. Against the demo world's adapters run in process.
+ * folders in the account's view, the routes under /api/self/ (ignore, presence, sessions, folders imported once), an
+ * ignored person's messages never alerting, Discord's block and profile fields through people.ts's shared paths, and
+ * the opt-in Do not disturb during quiet hours. Against the demo world's adapters run in process.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -24,7 +24,6 @@ const offline = new Set<string>();
 const notes: string[] = [];
 const adapters = new Map<string, { command: (c: P.AdapterCommand) => void; stop(): void }>();
 const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
-const uploads = new Map<string, P.OutgoingAttachment>();
 
 const MAIN = 'acc_demo-discord-main';
 const SIG = 'acc_demo-signal';
@@ -75,7 +74,6 @@ beforeAll(() => {
     command,
     note: (_a, line) => notes.push(line),
     flush: () => store.flush(),
-    uploads: { get: (ids) => (ids.every((i) => uploads.has(i)) ? ids.map((i) => uploads.get(i)!) : null), remove: (ids) => ids.forEach((i) => uploads.delete(i)) },
     quietHours: () => store.quietHours(),
   });
 });
@@ -112,7 +110,7 @@ describe('what the account says of itself', () => {
   });
 });
 
-describe('block and ignore', () => {
+describe('ignore, and block through the shared command', () => {
   test('a write without Origin is refused, and an unknown person is a 404', async () => {
     const quinn = idn('discord', 'quinn.dev');
     expect((await call('POST', `/api/self/people/${quinn.id}/ignore`, { ignored: true }, {})).status).toBe(403);
@@ -141,38 +139,14 @@ describe('block and ignore', () => {
     expect(quietAuthor(store.db, quinn.id)).toBeNull();
   });
 
-  test('blocking goes through the network and its list says it; refused for an account that is offline', async () => {
+  test("Discord's block is the shared `block` command (people.ts): its list says it, and unblock takes it back", async () => {
     const theo = idn('discord', 'theo.k');
-    offline.add(MAIN);
-    offline.add('acc_demo-discord-alt');
-    expect((await call('POST', `/api/self/people/${theo.id}/block`, {})).status).toBe(409);
-    offline.clear();
-    const r = await call('POST', `/api/self/people/${theo.id}/block`, { accountId: MAIN });
-    expect(r.json.relationship).toBe('blocked');
-    expect(linkOf(store.db, MAIN, theo.id)).toBe('blocked');
-    expect(quietAuthor(store.db, theo.id)).toBe('You blocked them');
-  });
-});
-
-describe('notes', () => {
-  test("a note is written to the network, and one it replaces is kept in your dither note first", async () => {
-    const ravi = idn('discord', 'ravi_p');
-    const people = new People({ store, online: () => true, command: (a, c, t) => command(a, c) as never });
-    expect((await call('PUT', `/api/self/identities/${ravi.id}/note`, { note: 'x'.repeat(300) })).status).toBe(400);
-    const first = await call('PUT', `/api/self/identities/${ravi.id}/note`, { note: 'met at RustConf' });
-    expect(first.json).toEqual({ note: 'met at RustConf', personNote: null });
-    // The profile carries it, asked the way a profile is.
-    const about = await people.get(ravi.id, true);
-    expect(about.note).toBe('met at RustConf');
-    const second = await call('PUT', `/api/self/identities/${ravi.id}/note`, { note: 'owes me a review' });
-    expect(second.json.note).toBe('owes me a review');
-    expect(second.json.personNote).toContain('Discord note: met at RustConf');
-    // Kept once: replacing it again with the same old text does not add it twice.
-    await call('PUT', `/api/self/identities/${ravi.id}/note`, { note: 'met at RustConf' });
-    const pid = store.one<{ person_id: string }>('SELECT person_id FROM identity WHERE id = ?', ravi.id)!.person_id;
-    const kept = store.one<{ note: string }>('SELECT note FROM person WHERE id = ?', pid)!.note;
-    expect(kept.match(/met at RustConf/g)!.length).toBe(1);
-    expect(kept).toContain('owes me a review');
+    const people = new People({ store, online: (a) => !offline.has(a), command: (a, c) => command(a, c) as never });
+    expect(await people.block(theo.id, false)).toMatchObject({ blocked: true });
+    expect(linkOf(store.db, MAIN, theo.id) ?? linkOf(store.db, 'acc_demo-discord-alt', theo.id)).toBe('blocked');
+    expect(await people.block(theo.id, true)).toMatchObject({ blocked: false });
+    // An ignore is this module's; a block is triage's own (blockedByYou), so this says nothing of it.
+    expect(quietAuthor(store.db, theo.id)).toBeNull();
   });
 });
 
@@ -194,26 +168,18 @@ describe('presence, sessions and profile', () => {
     expect(r.json.sessions.filter((s: P.AccountSession) => s.current).length).toBe(1);
   });
 
-  test('your name, pronouns and picture: checked, sent, the upload let go; a banner without Nitro is the network’s no', async () => {
+  test("your name and pronouns through setProfile where the profile's `editable` lists them; a banner without Nitro is Discord's no", async () => {
     const me = store.account(MAIN)!.self_identity!;
-    expect((await call('PUT', `/api/self/identities/${idn('discord', 'ravi_p').id}/profile`, { displayName: 'x' })).status).toBe(403);
-    expect((await call('PUT', `/api/self/identities/${me}/profile`, { displayName: 'x'.repeat(33) })).status).toBe(400);
-    expect((await call('PUT', `/api/self/identities/${me}/profile`, {})).status).toBe(400);
-    const r = await call('PUT', `/api/self/identities/${me}/profile`, { displayName: 'Zed', pronouns: 'they/them' });
-    expect(r.json.displayName).toBe('Zed');
-    expect(r.json.pronouns).toBe('they/them');
+    const people = new People({ store, online: () => true, command: (a, c) => command(a, c) as never });
+    const own = await people.get(me, true);
+    expect(own.editable).toEqual(['bio', 'name', 'avatar', 'pronouns', 'banner', 'accent']);
+    const v = await people.setOwn(me, { name: 'Zed', pronouns: 'they/them' });
+    expect(v.pronouns).toBe('they/them');
     expect(store.one<{ display_name: string }>('SELECT display_name FROM identity WHERE id = ?', me)!.display_name).toBe('Zed');
-    const path = join(dir, 'pic.png');
+    const path = join(dir, 'b.png');
     writeFileSync(path, 'png');
-    uploads.set('u1', { path, name: 'pic.png', mime: 'image/png', size: 3, kind: 'image' });
-    expect((await call('PUT', `/api/self/identities/${me}/profile`, { avatar: 'u1' })).status).toBe(200);
-    expect(uploads.has('u1')).toBe(false);
-    expect((await call('PUT', `/api/self/identities/${me}/profile`, { avatar: 'u1' })).status).toBe(410);
-    uploads.set('u2', { path, name: 'b.png', mime: 'image/png', size: 3, kind: 'image' });
-    const banner = await call('PUT', `/api/self/identities/${me}/profile`, { banner: 'u2' });
-    expect(banner.status).toBe(502);
-    expect(banner.json.error).toContain('Nitro');
-    expect(uploads.has('u2')).toBe(false);
+    await expect(people.setOwn(me, { banner: { path, name: 'b.png', mime: 'image/png', size: 3, kind: 'image' } })).rejects.toThrow('Nitro');
+    await expect(people.setOwn(me, { emoji: '🙂' })).rejects.toThrow('cannot be changed');
   });
 });
 
