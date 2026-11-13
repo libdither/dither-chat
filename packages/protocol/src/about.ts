@@ -10,6 +10,7 @@
  * how reactions work there. What is allowed in one place comes from the adapter, as ReactionContext does.
  */
 import type { MediaUrl } from './adapter.ts';
+import type { PostFact } from './feed.ts';
 import { NETWORK_META, type Network } from './ontology.ts';
 
 /** Who may do something, as far as the networks agree. */
@@ -452,6 +453,15 @@ export interface PersonAbout {
   links?: { label: string; value: string; url?: string; verified?: boolean }[];
   /** Anything else worth a line: "Business account", "Local time". */
   facts?: { label: string; value: string }[];
+  /**
+   * Their recent posts, newest first (X: up to 20 from their profile's Posts tab, reposts included, a pinned one
+   * first with `pinned`). Only in an answer to `profile`, never in a `personAbout` event.
+   */
+  posts?: PostFact[];
+  /** Follower and following counts and their posts in all, where the network shows them. */
+  counts?: { followers?: number; following?: number; posts?: number };
+  /** They follow you (X). */
+  followsYou?: boolean;
 }
 
 /**

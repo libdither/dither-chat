@@ -31,8 +31,12 @@ export type Shape =
   | 'thread' //  hangs off a parent conversation: Discord thread / forum post, Matrix m.thread
   | 'self'; //   notes to self: Signal Note to Self, Matrix room with only you
 
-/** Network-flavoured presentation of a conversation. Purely cosmetic for routing. */
-export type Variant = 'text' | 'announcement' | 'forum' | 'voice' | 'stage' | 'media' | 'rules';
+/**
+ * Network-flavoured presentation of a conversation. Purely cosmetic for routing, except `feed`: a network's
+ * notifications about you (X's likes, reposts, replies, mentions, quotes and follows; feed.ts), read-only, shape
+ * 'channel' with no space. Nothing is sent there: no message, read mark or typing.
+ */
+export type Variant = 'text' | 'announcement' | 'forum' | 'voice' | 'stage' | 'media' | 'rules' | 'feed';
 
 /**
  * community: something you join and that has its own membership and moderation

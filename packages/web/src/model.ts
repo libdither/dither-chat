@@ -166,7 +166,7 @@ export function convLabel(c: P.ConversationView): string {
 
 export function kindLabel(c: P.ConversationView): string {
   const n = netName(c.network);
-  const variant = { text: '', announcement: 'announcement ', forum: 'forum ', voice: 'voice ', stage: 'stage ', media: 'media ', rules: 'rules ' }[c.variant] ?? '';
+  const variant = { text: '', announcement: 'announcement ', forum: 'forum ', voice: 'voice ', stage: 'stage ', media: 'media ', rules: 'rules ', feed: 'notifications ' }[c.variant] ?? '';
   switch (c.shape) {
     case 'direct':
       return c.network === 'discord' || c.network === 'matrix' ? `${n} DM` : `${n} chat`;
