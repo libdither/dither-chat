@@ -170,6 +170,8 @@ CREATE INDEX IF NOT EXISTS message_ts ON message(ts);
 CREATE INDEX IF NOT EXISTS message_author_ts ON message(author_id, ts);
 -- Deleted and disappeared messages, for Settings → Message history's Forget (docs/history.md).
 CREATE INDEX IF NOT EXISTS message_gone ON message(gone_how) WHERE gone_how IS NOT NULL;
+-- Logged posts by the post they answer (posts.ts, docs/feed.md "Threads"): a thread read back from what was logged.
+CREATE INDEX IF NOT EXISTS message_post_reply ON message(reply_to_id) WHERE native_id LIKE 'post:%';
 
 -- Full-text search over bodies, kept current by triggers. Store backfills it once for older databases.
 -- It follows message.rowid, so after a VACUUM run: INSERT INTO message_fts(message_fts) VALUES ('rebuild');
@@ -638,6 +640,9 @@ CREATE TABLE IF NOT EXISTS about (
   fetched_at INTEGER NOT NULL,
   PRIMARY KEY (target_id, account_id)
 ) WITHOUT ROWID;
+-- People's Friends and Following read the follows in kept profiles (add.ts profileFollows, docs/profile.md
+-- "Connections"): only these rows, not every profile with its posts. The query repeats this WHERE to use it.
+CREATE INDEX IF NOT EXISTS about_following ON about(account_id) WHERE json_extract(data, '$.relationship') = 'following';
 
 -- History (docs/history.md). What changed about places and people: old and new as JSON, who did it when the
 -- network says. Message-level history lives in message_event and receipt, which go with their message.

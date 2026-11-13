@@ -5,6 +5,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { RELATIONSHIP_LABEL, withList } from '@dither-chat/protocol';
+import { connections, connectionTags, withChanges, type Connection } from '../connections.ts';
 import { useEffect, useState } from 'preact/hooks';
 import { ago, fullTime } from '../format.ts';
 import { bioEditor, bioLeft } from '../bio.ts';
@@ -12,11 +13,11 @@ import { openers } from '../direct.ts';
 import { composeTo } from '../mail/people.ts';
 import { senderLine } from '../mail/model.ts';
 import { countText, countTitle } from '../msgcount.ts';
-import { communitiesOf, convLabel, convTitle, directsOf, externalProfile, identityName, kindLabel, netName, plainBody, rootCommunity } from '../model.ts';
-import { profileLinks } from '../requests.ts';
+import { communitiesOf, convLabel, convTitle, directsOf, externalProfile, identityName, kindLabel, netName, bioText, plainBody, rootCommunity } from '../model.ts';
 import { api, db, go, isSelfIdentity, openMessage, openProfile, rev, setRule, toast } from '../state.ts';
 import { messageSomeone } from './Palette.tsx';
-import { Avatar, Empty, NetBadge, NetGlyph } from './bits.tsx';
+import { Avatar, Empty, Linked, NetBadge, NetGlyph } from './bits.tsx';
+import { isQuietConv } from '../feed.ts';
 import { copy, groups, openMenu, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import { nicknamable, nicknameEntries, NicknamedName, NicknameInput, ownName } from './Nickname.tsx';
@@ -24,7 +25,7 @@ import { ActivityCard } from './ActivityCard.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
 import { copyEntries, identityMenu, personMenu } from './menus.tsx';
 import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, Tag } from './ProfileShell.tsx';
-import { ConnectActions, ProfileLinks } from './Requests.tsx';
+import { ConnectActions, ProfileConnections } from './Requests.tsx';
 import { openConv } from './Sidebar.tsx';
 import { Loading } from './Loader.tsx';
 import { peopleExtras } from './peopleExtras.ts';
@@ -139,7 +140,7 @@ function AccountTile({ i, bio, since, go: open, goLabel, menu: menuOf }: { i: P.
             {since ? ` · since ${since}` : ''}
           </small>
         </span>
-        {bio && <p class="pf-acct-bio">{plainBody(bio, i.network)}</p>}
+        {bio && <p class="pf-acct-bio"><Linked text={bioText(bio, i.network)} network={i.network} /></p>}
       </div>
     </div>
   );
@@ -232,7 +233,7 @@ function OwnBio({ identity, about, account, label, onSaved }: { identity: P.Iden
       <div class="pf-bio pf-own-bio">
         {tag}
         <div class="about-text multi">
-          <p>{bio ? plainBody(bio, identity.network) : <em>No bio on {net} yet</em>}</p>
+          <p>{bio ? <Linked text={bioText(bio, identity.network)} network={identity.network} /> : <em>No bio on {net} yet</em>}</p>
           <button class="icon-btn small about-pencil" title={`Change your bio on ${net}`} aria-label={`Change your bio on ${net}`} onClick={() => (setDraft(bio), setError(null))}>
             <Icon name="pencil" size={13} />
           </button>
@@ -275,12 +276,15 @@ function OwnBio({ identity, about, account, label, onSaved }: { identity: P.Iden
   );
 }
 
-/** How each of your accounts stands with them, from the accounts' own lists, with Remove friend and the like. */
-function ProfileLinksCard({ ids, links, abouts, onEnded }: { ids: P.IdentityView[]; links: P.PersonLinkView[]; abouts: Record<string, P.PersonAboutView | undefined>; onEnded: (identityId: string, accountId: string) => void }) {
-  if (!profileLinks(ids, links, abouts).length) return null;
+/**
+ * Connections (connections.ts): how each of your accounts stands with them, in one vocabulary across networks (a
+ * Discord friend and an X mutual follow are both Friends), with Remove friend, Unfollow and the like.
+ */
+function ConnectionsCard({ ids, list, onEnded }: { ids: P.IdentityView[]; list: Connection[]; onEnded: (identityId: string, accountId: string) => void }) {
+  if (!list.length) return null;
   return (
-    <Card title="How you stand" icon="users" class="pf-standing">
-      <ProfileLinks identities={ids} links={links} abouts={abouts} onEnded={onEnded} />
+    <Card title="Connections" icon="users" count={list.length > 1 ? list.length : undefined} class="pf-standing">
+      <ProfileConnections identities={ids} list={list} onEnded={onEnded} />
     </Card>
   );
 }
@@ -327,9 +331,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const [merging, setMerging] = useState(false);
   // The hero's pencil, for a person of one account: its nickname (Nickname.tsx).
   const [naming, setNaming] = useState(false);
-  // Links ended from this page (`account|identity`), until the profile is fetched again.
-  const [ended, setEnded] = useState<string[]>([]);
-  useEffect(() => setEnded([]), [personId, identityId]);
+  // How this page changed where an account stands with them (`account|identity` → the newest word), until the profile
+  // is fetched again: ended (stranger), or made (Add friend, Accept). connections.ts withChanges.
+  const [changed, setChanged] = useState<Record<string, P.PersonRelationship>>({});
+  useEffect(() => setChanged({}), [personId, identityId]);
+  const change = (accountId: string | null, identityId: string, rel: P.PersonRelationship) => accountId && setChanged((x) => ({ ...x, [`${accountId}|${identityId}`]: rel }));
   const [filter, setFilter] = useState('');
   const person = personId ? db.persons.get(personId) : undefined;
   // The hub's merge search: people by any name or handle (an email address too), and email identities no person holds.
@@ -415,7 +421,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   }
   const sharedSpaces = [...spaces.values()].sort((a, b) => b.messages - a.messages || a.s.name.localeCompare(b.s.name));
   // A network's notifications are not a place you share (docs/feed.md): what they did there is in Recent messages.
-  const groupChats = convs.filter((x) => x.c.variant !== 'feed' && (x.c.shape === 'group' || (x.c.shape === 'channel' && !x.c.spaceIds.length)));
+  const groupChats = convs.filter((x) => !isQuietConv(x.c) && (x.c.shape === 'group' || (x.c.shape === 'channel' && !x.c.spaceIds.length)));
   const mutualFriends = onePerPerson([...new Set(said.flatMap((a) => a.mutualFriends ?? []))]);
   const friends = onePerPerson([...new Set(said.flatMap((a) => a.friends ?? []))]).filter((iid) => !isSelfIdentity(iid));
 
@@ -452,8 +458,10 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       return !seen.has(k) && seen.add(k);
     });
   const facts = said.flatMap((a) => (a.facts ?? []).map((f) => ({ ...f, network: a.network })));
-  // A sent request and following show as the buttons that say so (Requests.tsx ConnectActions).
-  const relations = said.filter((a) => a.relationship && a.relationship !== 'stranger' && (isSelf || (a.relationship !== 'requested' && a.relationship !== 'following')));
+  // How your accounts stand with them, in one vocabulary (connections.ts), with what this page changed laid over it.
+  const now = withChanges(profile.links ?? [], abouts, changed);
+  const conns = isSelf ? [] : connections(ids, now.links, now.abouts);
+  const askedBy = said.filter((a) => a.relationship === 'requesting');
 
   // ---- merging
   const candidates = [...db.persons.values()].filter((x) => x.id !== person?.id && !x.isSelf);
@@ -597,15 +605,26 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           {isSelf && <Tag tone="accent">You</Tag>}
           {first?.isBot && <Tag tone="muted">Bot</Tag>}
           {pronouns && <Tag>{pronouns}</Tag>}
-          {[...new Set(relations.map((a) => a.relationship!))].map((rel) => {
-            const where = relations.filter((a) => a.relationship === rel).map((a) => a.network);
-            return (
-              <Tag icon={rel === 'friend' ? 'users' : rel === 'blocked' ? 'x' : 'user'} tone={rel === 'friend' ? 'accent' : rel === 'blocked' ? 'warn' : undefined} title={`${RELATIONSHIP_LABEL[rel]} on ${where.map(netName).join(' and ')}`}>
-                {RELATIONSHIP_LABEL[rel]}
-                {nets.length > 1 && where.map((n) => <NetGlyph network={n} size={11} />)}
-              </Tag>
-            );
-          })}
+          {/* The words a tag stands for ("Friends on Discord; You follow each other on X") are its hover and, hidden, what a screen reader says. */}
+          {connectionTags(conns).map((t) => (
+            <Tag icon={t.kind === 'friend' ? 'users' : t.kind === 'blocked' ? 'x' : 'user'} tone={t.kind === 'friend' ? 'accent' : t.kind === 'blocked' ? 'warn' : undefined} title={t.title} kind={t.kind} networks={t.networks}>
+              {t.label}
+              {t.networks.map((n) => (
+                <NetGlyph network={n} size={11} decorative />
+              ))}
+              <span class="sr-only">: {t.title}</span>
+            </Tag>
+          ))}
+          {/* They asked you: a request, not a connection yet; Accept and Decline are in the row below. */}
+          {!isSelf && askedBy.length > 0 && (
+            <Tag icon="userPlus" tone="accent" title={`Wants to be friends on ${askedBy.map((a) => netName(a.network)).join(' and ')}`} kind="requesting" networks={askedBy.map((a) => a.network)}>
+              {RELATIONSHIP_LABEL.requesting}
+              {askedBy.map((a) => (
+                <NetGlyph network={a.network} size={11} decorative />
+              ))}
+              <span class="sr-only"> on {askedBy.map((a) => netName(a.network)).join(' and ')}</span>
+            </Tag>
+          )}
           {!isSelf &&
             S?.ignoredNets(ids, profile).map((n) => (
               <Tag icon="bellOff" tone="muted" title={`You ignore them on ${netName(n)}: their messages never alert`}>
@@ -626,7 +645,16 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         <>
           {!isSelf && messageOptions > 0 && (messageOptions === 1 ? <Action primary icon="send" label="Message" onClick={message} /> : <Action primary icon="send" label="Message" menu={messageMenu} />)}
           {!isSelf && <Action icon="merge" label="Merge" title="Merge another identity in" onClick={() => setMerging(!merging)} />}
-          {!isSelf && <ConnectActions identities={ids} abouts={abouts} onChanged={learn} />}
+          {!isSelf && (
+            <ConnectActions
+              identities={ids}
+              abouts={abouts}
+              onChanged={(a) => {
+                if (a.relationship) change(a.accountId, a.identityId, a.relationship);
+                learn(a);
+              }}
+            />
+          )}
           {ids.length > 0 && <Action icon="copy" label="Copy" menu={() => ({ label: 'Copy', items: copyEntries(ids) })} />}
           {blocks.length > 0 && <Action icon="x" label="Block" menu={() => ({ label: 'Block', items: blocks })} />}
           <Action icon="more" label="More" menu={moreMenu} />
@@ -707,7 +735,9 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
                   <NetGlyph network={a.network} size={11} /> {netName(a.network)}
                 </span>
               )}
-              <p>{plainBody(a.bio!, a.network)}</p>
+              <p>
+                <Linked text={bioText(a.bio!, a.network)} network={a.network} />
+              </p>
             </div>
           ))
         ) : asking ? (
@@ -734,10 +764,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
             )}
           </div>
         )}
-        {said.some((a) => a.counts || a.followsYou) && (
+        {/* Counts are facts about their account; whether they follow you is a connection (Connections, the hero). */}
+        {said.some((a) => a.counts) && (
           <div class="pf-follow">
             {said
-              .filter((a) => a.counts || a.followsYou)
+              .filter((a) => a.counts)
               .map((a) => (
                 <span class="pf-follow-line" data-network={a.network}>
                   {(said.length > 1 || nets.length > 1) && <NetGlyph network={a.network} size={11} />}
@@ -756,7 +787,6 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
                       <b>{a.counts.posts.toLocaleString()}</b> posts
                     </span>
                   )}
-                  {a.followsYou && <Tag tone="accent">Follows you</Tag>}
                 </span>
               ))}
           </div>
@@ -868,9 +898,9 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
               const c = db.conversations.get(m.conversationId);
               return (
                 <button class="pf-row pf-msg" onClick={() => openMessage(m.conversationId, m.id)} title={fullTime(m.ts)}>
-                  {c && c.variant !== 'feed' ? <PlaceIcon c={c} size={28} /> : <NetBadge network={m.network} size={28} />}
+                  {c && !isQuietConv(c) ? <PlaceIcon c={c} size={28} /> : <NetBadge network={m.network} size={28} />}
                   <span class="pf-row-text">
-                    <small class="pf-msg-where">{c ? (c.shape === 'direct' ? `Direct message · ${netName(c.network)}` : c.variant === 'feed' ? `${netName(c.network)} notifications` : convLabel(c)) : 'Unknown'}</small>
+                    <small class="pf-msg-where">{c ? (c.shape === 'direct' ? `Direct message · ${netName(c.network)}` : c.variant === 'feed' ? `${netName(c.network)} notifications` : c.variant === 'posts' ? `${netName(c.network)} posts` : convLabel(c)) : 'Unknown'}</small>
                     <span class="pf-msg-body">{m.feed ? feedLine(m.feed, m.body) : plainBody(m.body, m.network) || (m.attachments.length ? 'Attachment' : m.kind === 'encrypted' ? 'Encrypted message' : '')}</span>
                   </span>
                   <span class="pf-row-time">{ago(m.ts)}</span>
@@ -918,12 +948,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       {!isSelf && extras && <extras.SafetyCard abouts={said} name={name} onChanged={learn} />}
 
       {!isSelf && (
-        <ProfileLinksCard
+        <ConnectionsCard
           ids={ids}
-          links={(profile.links ?? []).filter((l) => !ended.includes(`${l.accountId}|${l.identityId}`))}
-          abouts={Object.fromEntries(Object.entries(abouts).map(([k, a]) => [k, a && ended.includes(`${a.accountId}|${k}`) ? { ...a, relationship: 'stranger' as const } : a]))}
+          list={conns}
           onEnded={(identityId, accountId) => {
-            setEnded((x) => [...x, `${accountId}|${identityId}`]);
+            change(accountId, identityId, 'stranger');
             const a = abouts[identityId];
             if (a && a.accountId === accountId) learn({ ...a, relationship: 'stranger' });
           }}

@@ -123,7 +123,7 @@ Additive; `PROTOCOL_VERSION` stays 1.
 | POST /api/add `{accountId, ref, action, confirm?}` | `AddResultView`: the conversation to open (its view), the space, the identity, `pending`, `check`, `notes`, and where the check is done (`liveView`, `managerUrl`). Message is refused here: it is POST /api/directs |
 | GET /api/requests | `{ requests: RequestView[] }` (each with `warning`) |
 | POST /api/requests/:id `{answer, confirm?}` | `AddResultView` (with `confirm`, the network's words, when it wants one first) |
-| GET /api/people `?relationship=&account=` | `PeopleLinksView`: the accounts' list entries (friend, requested, blocked, contact, following), by name, with their identities |
+| GET /api/people `?relationship=&account=` | `PeopleLinksView`: the accounts' list entries (friend, requested, blocked, contact, following), by name, with their identities; then follows from the accounts' kept profiles (`from: 'profile'`, `seenAt`) for accounts with no list (no `relationships` capability: X), never your own identities nor anyone already on that account's list, and `followsYou` on a follow they return. `friend` also has the follows that are mutual (docs/profile.md "Connections") |
 | POST /api/people/:identityId/remove `{relationship, accountId?}` | `AddResultView` with the relationship after. Only from the page (a browser's Origin, same-origin); without accountId, the one account whose list says so |
 
 Refusals: 400 for a reading `parseAdd` would not give or one from another network, 404 for no such account or request,
@@ -327,9 +327,11 @@ someone you know notifies once; and a profile has the buttons for how you stand 
 - **Profile buttons.** From what each network says about how you stand with them (`relationship`): a stranger gets
   **Add friend** (Discord), **Follow** (X, Instagram) or **Add contact** (Telegram), through `POST /api/add` with a
   reading made from their identity, as the account that asked about them where it can; someone who asked you gets
-  **Accept** and **Decline** for that open request; a request you sent says **Request sent**, someone you follow
-  **Following**. Nothing shows where no connected account has the capability (`connect`, `requests`) or the network
-  has no such way. The hub writes the new relationship into the profile it keeps, so a reload says the same until
+  **Accept** and **Decline** for that open request. A request you sent and someone you follow are not buttons: the
+  hero's tags and Connections say them (docs/profile.md "Connections"; before 2026-11-13 they were disabled buttons,
+  **Request sent** and **Following**). Nothing shows where no connected account has the capability (`connect`,
+  `requests`) or the network has no such way: no X adapter has `connect` today, so X has no Follow (the demo X account
+  stopped claiming it on 2026-11-13). The hub writes the new relationship into the profile it keeps, so a reload says the same until
   the network is asked again. Code: packages/web/src/requests.ts (pure), ui/Requests.tsx.
 
 Checked by scripts/verify-requests.ts against a demo hub: the row with 5, the buttons on the requester and on a
@@ -346,7 +348,10 @@ How each of your accounts stands with someone, and ending it (2026-11-09). An in
   keeps it in `person_link (account_id, identity_id, relationship, since)`: a `relationships` event replaces the
   account's rows, a `relationship` event changes one, and `stranger` removes it. A request accepted, an Add friend
   and a remove write their result there at once when the account has a list. A profile's relationship comes from it
-  when the account has them on it, else from the network's profile (people.ts).
+  when the account has them on it, else from the network's profile (people.ts). An account with no list of follows
+  (X) still says whom you follow and who follows you back in the profiles it reads, asked or seen in its
+  notifications; People's Following and Friends take those from the kept profiles (`about`), as of when each was
+  said (docs/profile.md "Connections").
 - **Flagged requests.** A request the network flagged carries its words (`warning`): Discord's "Discord filed this
   request as possible spam" or "Discord says you share no server or friend with them". The card shows them above the
   buttons, and Accept takes a second click: the step repeats the words and says "Nothing is accepted yet. Accept it

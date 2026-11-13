@@ -2,98 +2,89 @@
 /** @jsx h */
 /** @jsxFrag Fragment */
 /**
- * A network's notifications as cards (docs/feed.md), and a person's recent posts: the chunk lazy.tsx loads.
+ * A network's notifications drawn by post (docs/feed.md "The feed's page"), and a person's recent posts: the chunk
+ * lazy.tsx loads.
  *
- * A card is one thing that happened: the same thing done to the same post one after another is one card ("Alice, Bob
- * and 3 others liked your post", their pictures stacked, each name and picture opening their profile), your post
- * quoted under it. A reply, mention or quote is a card of its own with their post's words and pictures. Nothing here
+ * Each post of yours that something happened to is one card: the post, small (you know it), then what people said
+ * under it in full (replies, quotes), then who liked or reposted it as one quiet line that opens the list. A mention,
+ * or a reply the feed has no post of yours for, is their post on its own; follows are a row of faces. Nothing here
  * writes to the network: a quiet bar says where answering happens, with a link there.
  */
 // Classic JSX (the pragmas above): preact's own `h`, so this chunk needs no jsx-runtime chunk split off the app's start.
-import { Fragment, h } from 'preact';
+import { Fragment, h, type ComponentChildren } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
-import { useEffect, useMemo, useRef } from 'preact/hooks';
-import type { FeedCard } from '../../feed.ts';
-import { loadTimeline, markRead, openProfile, timelineKey, timelines } from '../../state.ts';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import type { FeedTalk, FeedUnit } from '../../feed.ts';
+import { api, db, loadTimeline, markRead, openProfile, timelineKey, timelines } from '../../state.ts';
 import { timelineRev } from '../../versions.ts';
 import type { Kit } from './lazy.tsx';
+import { ReactorsList } from './Actions.tsx';
+import { Row } from './Post.tsx';
 import './feed.css';
 
-const TYPE_ICON: Record<P.FeedItemType, string> = { like: 'heart', repost: 'repeat', reply: 'reply', mention: 'at', quote: 'quote', follow: 'userPlus', other: 'bell' };
-/** At most this many pictures in a card's row of faces. */
-const FACES = 8;
+export { PostsList, ThreadView } from './Thread.tsx';
 
-/** Plain text with its links as links (X expands them). */
-function Linked({ text }: { text: string }) {
-  const parts = text.split(/(https?:\/\/[^\s]+)/g);
+type PostUnit = Extract<FeedUnit, { kind: 'post' }>;
+/** Under a post, at most this many of what people said before "N more". */
+const TALK_SHOWN = 3;
+/** At most this many faces on a line. */
+const FACES = 4;
+function Faces({ ids, kit, size = 20 }: { ids: string[]; kit: Kit; size?: number }) {
   return (
-    <>
-      {parts.map((p, i) =>
-        i % 2 ? (
-          <a href={p} target="_blank" rel="noreferrer">
-            {p.replace(/^https?:\/\/(www\.)?/, '')}
-          </a>
-        ) : (
-          p
-        ),
-      )}
-    </>
-  );
-}
-
-function Pictures({ media, url, one }: { media?: P.PostMedia[]; url?: string; one?: boolean }) {
-  const shown = (media ?? []).slice(0, one ? 1 : 4);
-  if (!shown.length) return null;
-  return (
-    <a class={`post-media ${one ? 'one' : `n${shown.length}`}`} href={url} target="_blank" rel="noreferrer" title="Open on the network">
-      {shown.map((m) => (
-        <span class="post-pic">
-          <img src={m.url} alt={m.alt ?? ''} loading="lazy" />
-          {m.kind !== 'image' && <span class="post-pic-kind">{m.kind === 'gif' ? 'GIF' : '▶'}</span>}
-        </span>
+    <span class="feed-stack">
+      {ids.slice(0, FACES).map((id) => (
+        <kit.Avatar id={id} name={kit.name(id)} url={kit.avatarUrl(id)} size={size} />
       ))}
-    </a>
-  );
-}
-
-/** Who wrote a post: their picture, name and handle, opening their profile; then when, linking to the post. */
-function Byline({ p, kit, size = 18 }: { p: P.PostFact; kit: Kit; size?: number }) {
-  const who = p.author ?? null;
-  const name = who ? kit.name(who) : 'Someone';
-  const handle = kit.handle(who);
-  return (
-    <span class="post-by">
-      <button class="post-who" onClick={(e) => (e.stopPropagation(), openProfile(who))} title={`${name}'s profile`}>
-        <kit.Avatar id={who ?? p.id} name={name} url={kit.avatarUrl(who)} size={size} />
-        <b>{name}</b>
-        {handle && <span class="post-handle">@{handle}</span>}
-      </button>
-      <a class="post-time" href={p.url} target="_blank" rel="noreferrer" title={kit.fullTime(p.ts)}>
-        {kit.ago(p.ts)}
-      </a>
     </span>
   );
 }
 
-/** A post quoted inside a card or another post: its byline, text clipped to three lines, its first picture small. */
-function Quoted({ p, kit, label }: { p: P.PostFact; kit: Kit; label?: string }) {
+/** Your post at the head of its card, small: who and when, its words clipped, its first picture; opens its thread. */
+function Mine({ p, kit, network }: { p: P.PostFact; kit: Kit; network: P.Network }) {
+  const who = p.author ?? null;
   const pic = p.media?.[0];
   return (
-    <div class="post-quoted">
-      {label && <span class="post-label">{label}</span>}
-      <div class="post-quoted-body">
-        <div class="post-quoted-text">
-          <Byline p={p} kit={kit} size={16} />
-          {p.text && (
-            <a class="post-clip" href={p.url} target="_blank" rel="noreferrer">
-              {p.text}
-            </a>
-          )}
-        </div>
-        {pic && (
-          <a class="post-thumb" href={p.url} target="_blank" rel="noreferrer">
-            <img src={pic.url} alt={pic.alt ?? ''} loading="lazy" />
+    <a class="feed-mine" href={kit.feed.postHref(network, p.id)} title="Open the thread" onClick={(e) => e.stopPropagation()}>
+      <kit.Avatar id={who ?? p.id} name={kit.name(who)} url={kit.avatarUrl(who)} size={22} />
+      <span class="feed-mine-body">
+        <span class="feed-mine-head">
+          <b>{kit.isSelf(who) ? 'Your post' : kit.name(who)}</b>{' '}
+          <span class="post-handle" title={kit.fullTime(p.ts)}>
+            · {kit.ago(p.ts)}
+          </span>
+        </span>
+        {p.text ? <span class="post-clip">{p.text}</span> : <span class="post-clip muted">{pic ? 'A picture' : 'A post'}</span>}
+      </span>
+      {pic && <img class="feed-mine-pic" src={pic.url} alt={pic.alt ?? ''} loading="lazy" />}
+    </a>
+  );
+}
+
+/** Someone's post that talks to you: theirs in full, opening its thread; the words alone when the network sent no post. */
+function Talk({ t, kit, network, above, size, under }: { t: FeedTalk; kit: Kit; network: P.Network; above?: ComponentChildren; size?: number; under?: string }) {
+  const m = t.message;
+  const tag = t.fresh ? 'new' : t.type === 'quote' ? 'quoted' : undefined;
+  if (t.theirs) return <Row p={t.theirs} kit={kit} network={network} line={false} size={size ?? 30} tag={tag} above={above} hideQuote={under} />;
+  const link = m.feed?.url;
+  return (
+    <div class="thread-post">
+      <button class="thread-face" onClick={() => openProfile(m.authorId)} aria-label={`${kit.name(m.authorId)}'s profile`}>
+        <kit.Avatar id={m.authorId ?? m.id} name={kit.name(m.authorId)} url={kit.avatarUrl(m.authorId)} size={size ?? 30} />
+      </button>
+      <div class="thread-main">
+        {above}
+        <span class="thread-head">
+          <b>{kit.name(m.authorId)}</b>
+          <span class="post-handle">· {kit.ago(m.ts)}</span>
+          {tag && <span class={`post-tag ${tag === 'new' ? 'new' : ''}`}>{tag}</span>}
+        </span>
+        <p class="post-text">
+          <kit.Linked text={m.body} network={network} markdown={false} />
+        </p>
+        {link && (
+          <a class="post-open" href={link} target="_blank" rel="noreferrer">
+            <kit.Icon name="external" size={12} /> Open on {NETWORK_META[network].name}
           </a>
         )}
       </div>
@@ -101,153 +92,138 @@ function Quoted({ p, kit, label }: { p: P.PostFact; kit: Kit; label?: string }) 
   );
 }
 
-function Counts({ p, kit }: { p: P.PostFact; kit: Kit }) {
-  const c = p.counts;
-  if (!c) return null;
-  const items: [string, number | undefined, string][] = [
-    ['reply', c.replies, 'repl'],
-    ['repeat', c.reposts, 'repost'],
-    ['heart', c.likes, 'like'],
-    ['eye', c.views, 'view'],
-  ];
-  const word = (n: number, w: string) => (w === 'repl' ? (n === 1 ? 'reply' : 'replies') : n === 1 ? w : `${w}s`);
+/** Who liked and reposted a post: Likes and Reposts, each ranked for you by the hub (Actions.tsx ReactorsList). */
+function Reactors({ u, kit }: { u: PostUnit; kit: Kit }) {
+  const [tab, setTab] = useState<'like' | 'repost'>(u.reactors.like.length ? 'like' : 'repost');
+  const counts = kit.feed.reactionCounts(u);
   return (
-    <span class="post-counts">
-      {items
-        .filter(([, n]) => n !== undefined)
-        .map(([, n, label]) => (
-          <span title={`${n!.toLocaleString()} ${word(n!, label)}`}>
-            {kit.feed.shortCount(n!)} {word(n!, label)}
-          </span>
-        ))}
-    </span>
-  );
-}
-
-/** The faces and names of a card: each opens their profile. Up to three by name, else two and how many others. */
-function Actors({ card, kit }: { card: FeedCard; kit: Kit }) {
-  const n = card.actors.length;
-  const named = n <= 3 ? card.actors : card.actors.slice(0, 2);
-  const others = n - named.length;
-  return (
-    <>
-      <div class="feed-faces">
-        {card.actors.slice(0, FACES).map((id) => (
-          <button class="feed-face" onClick={() => openProfile(id)} title={kit.name(id)} aria-label={`${kit.name(id)}'s profile`}>
-            <kit.Avatar id={id} name={kit.name(id)} url={kit.avatarUrl(id)} size={30} />
+    <div class="feed-reactors" role="region" aria-label="Who reacted">
+      <div class="feed-reactors-tabs">
+        {(['like', 'repost'] as const).map((k) => (
+          <button aria-pressed={tab === k} class={`feed-tab ${tab === k ? 'on' : ''}`} onClick={() => setTab(k)}>
+            {k === 'like' ? 'Likes' : 'Reposts'} <span class="feed-tab-n">{kit.feed.shortCount(counts[k])}</span>
           </button>
         ))}
-        {n > FACES && <span class="feed-faces-more">+{n - FACES}</span>}
       </div>
-      <p class="feed-what">
-        {named.map((id, i) => (
-          <>
-            {i > 0 && (i === named.length - 1 && !others ? ' and ' : ', ')}
-            <button class="feed-name" onClick={() => openProfile(id)}>
-              {kit.name(id)}
-            </button>
-          </>
-        ))}
-        {others > 0 && (
-          <span class="feed-others" title={card.actors.slice(named.length).map(kit.name).join(', ')}>
-            {' '}
-            and {others} other{others === 1 ? '' : 's'}
-          </span>
-        )}{' '}
-        {kit.feed.FEED_VERB[card.type]}
-        <span class="feed-when" title={kit.fullTime(card.ts)}>
-          {kit.ago(card.ts)}
-        </span>
-      </p>
-    </>
+      <ReactorsList network={u.network} post={u.post.id} kind={tab} kit={kit} count={counts[tab]} />
+    </div>
   );
 }
 
-function GroupCard({ card, kit }: { card: FeedCard; kit: Kit }) {
+/** One post of yours and what came of it. */
+function PostCard({ u, kit }: { u: PostUnit; kit: Kit }) {
+  const [all, setAll] = useState(false);
+  const [open, setOpen] = useState(false);
+  const talk = all ? u.talk : u.talk.slice(0, TALK_SHOWN);
+  const counts = kit.feed.reactionCounts(u);
+  const reacted = u.reactors.like.length + u.reactors.repost.length > 0;
+  const replies = counts.reply;
+  const phrase = kit.feed.reactorsPhrase(u, kit.name);
   return (
-    <article class={`feed-card ${card.fresh ? 'fresh' : ''}`} data-type={card.type} data-count={card.actors.length} aria-label={kit.feed.cardSentence(card, kit.name)}>
-      <span class="feed-icon">
-        <kit.Icon name={TYPE_ICON[card.type]} size={18} />
-      </span>
-      <div class="feed-main">
-        <Actors card={card} kit={kit} />
-        {card.post && <Quoted p={card.post} kit={kit} />}
-      </div>
-    </article>
-  );
-}
-
-/** A reply, a mention or a quote: their post, with what it answers. */
-function SaidCard({ card, kit }: { card: FeedCard; kit: Kit }) {
-  const m = card.messages[0];
-  const theirs = card.theirs;
-  const who = m.authorId;
-  const name = kit.name(who);
-  const text = theirs?.text ?? m.body;
-  const link = theirs?.url ?? card.url;
-  return (
-    <article class={`feed-card feed-said ${card.fresh ? 'fresh' : ''}`} data-type={card.type} aria-label={kit.feed.cardSentence(card, kit.name)}>
-      <button class="feed-said-face" onClick={() => openProfile(who)} aria-label={`${name}'s profile`}>
-        <kit.Avatar id={who ?? m.id} name={name} url={kit.avatarUrl(who)} size={36} />
-        <span class="feed-said-icon">
-          <kit.Icon name={TYPE_ICON[card.type]} size={11} />
-        </span>
-      </button>
-      <div class="feed-main">
-        <div class="feed-said-head">
-          <button class="feed-name" onClick={() => openProfile(who)}>
-            {name}
-          </button>
-          {kit.handle(who) && <span class="post-handle">@{kit.handle(who)}</span>}
-          <span class="feed-when" title={kit.fullTime(card.ts)}>
-            {kit.ago(card.ts)}
-          </span>
+    <article class={`feed-unit ${u.fresh ? 'fresh' : ''}`} data-unit="post" data-post={u.post.id}>
+      <Mine p={u.post} kit={kit} network={u.network} />
+      {talk.length > 0 && (
+        <div class="feed-talk">
+          {talk.map((t) => (
+            <Talk t={t} kit={kit} network={u.network} under={u.post.id} />
+          ))}
         </div>
-        {card.type === 'reply' && (
-          <p class="feed-context">
-            replied to your post
-            {card.post?.text ? (
-              <>
-                :{' '}
-                <a href={card.post.url} target="_blank" rel="noreferrer">
-                  “{kit.feed.clip(card.post.text)}”
-                </a>
-              </>
-            ) : null}
-          </p>
+      )}
+      <div class="feed-unit-foot">
+        {u.talk.length > TALK_SHOWN && (
+          <button class="feed-link" onClick={() => setAll(!all)}>
+            {all ? 'Fewer' : `${u.talk.length - TALK_SHOWN} more`}
+          </button>
         )}
-        {card.type === 'mention' && <p class="feed-context">mentioned you</p>}
-        {card.type === 'quote' && <p class="feed-context">quoted your post</p>}
-        {text && (
-          <p class="feed-text">
-            <Linked text={text} />
-          </p>
-        )}
-        <Pictures media={theirs?.media} url={link} />
-        {card.type === 'quote' && card.post && <Quoted p={card.post} kit={kit} />}
-        {link && (
-          <a class="feed-open" href={link} target="_blank" rel="noreferrer">
-            <kit.Icon name="external" size={12} /> Open on {NETWORK_META[m.network].name}
+        {replies > 0 && (
+          <a class="feed-link" href={kit.feed.postHref(u.network, u.post.id)}>
+            The thread: {replies.toLocaleString()} {replies === 1 ? 'reply' : 'replies'} ›
           </a>
         )}
       </div>
+      {reacted && (
+        <>
+          <button class="feed-react" aria-expanded={open} onClick={() => setOpen(!open)}>
+            <span class="feed-react-counts">
+              {counts.like > 0 && (
+                <span class="like">
+                  <kit.Icon name="heart" size={13} /> {kit.feed.shortCount(counts.like)}
+                </span>
+              )}
+              {counts.repost > 0 && (
+                <span class="repost">
+                  <kit.Icon name="repeat" size={13} /> {kit.feed.shortCount(counts.repost)}
+                </span>
+              )}
+            </span>
+            <span class="feed-react-who">{phrase}</span>
+            <Faces ids={u.reactors.like.length ? u.reactors.like : u.reactors.repost} kit={kit} size={18} />
+            <kit.Icon name={open ? 'chevronUp' : 'chevronDown'} size={14} />
+          </button>
+          {open && <Reactors u={u} kit={kit} />}
+        </>
+      )}
     </article>
   );
 }
 
-function OtherCard({ card, kit }: { card: FeedCard; kit: Kit }) {
+const SAID: Record<FeedTalk['type'], (hasPost: boolean) => string> = {
+  mention: () => 'mentioned you',
+  reply: () => 'replied to you',
+  quote: () => 'quoted you',
+};
+
+function Unit({ u, kit }: { u: FeedUnit; kit: Kit }) {
+  if (u.kind === 'post') return <PostCard u={u} kit={kit} />;
+  if (u.kind === 'said')
+    return (
+      <article class={`feed-unit ${u.fresh ? 'fresh' : ''}`} data-unit="said">
+        <Talk
+          t={u.talk}
+          kit={kit}
+          network={u.network}
+          size={36}
+          above={
+            <span class="post-mark">
+              <kit.Icon name={u.talk.type === 'mention' ? 'at' : u.talk.type} size={11} /> {SAID[u.talk.type](false)}
+            </span>
+          }
+        />
+      </article>
+    );
+  if (u.kind === 'follow')
+    return (
+      <article class={`feed-unit feed-slim ${u.fresh ? 'fresh' : ''}`} data-unit="follow">
+        <span class="feed-slim-icon">
+          <kit.Icon name="userPlus" size={16} />
+        </span>
+        <span class="feed-stack">
+          {u.actors.slice(0, 8).map((id) => (
+            <button class="feed-face" onClick={() => openProfile(id)} title={kit.name(id)} aria-label={`${kit.name(id)}'s profile`}>
+              <kit.Avatar id={id} name={kit.name(id)} url={kit.avatarUrl(id)} size={24} />
+            </button>
+          ))}
+        </span>
+        <span class="feed-slim-what">
+          <b>{kit.feed.namesPhrase(u.actors.slice(0, 3).map(kit.name), u.actors.length)}</b> followed you
+        </span>
+        <span class="feed-when" title={kit.fullTime(u.ts)}>
+          {kit.ago(u.ts)}
+        </span>
+      </article>
+    );
   return (
-    <article class={`feed-card ${card.fresh ? 'fresh' : ''}`} data-type="other">
-      <span class="feed-icon">
-        <kit.Icon name="bell" size={18} />
+    <article class={`feed-unit feed-slim ${u.fresh ? 'fresh' : ''}`} data-unit="other">
+      <span class="feed-slim-icon">
+        <kit.Icon name="bell" size={16} />
       </span>
-      <div class="feed-main">
-        <p class="feed-what">
-          {kit.feed.cardSentence(card, kit.name)}
-          <span class="feed-when">{kit.ago(card.ts)}</span>
-        </p>
-        {card.post && <Quoted p={card.post} kit={kit} />}
-      </div>
+      <span class="feed-slim-what">
+        {u.text}
+        {u.post?.text && <span class="muted"> · “{kit.feed.clip(u.post.text, 60)}”</span>}
+      </span>
+      <span class="feed-when" title={kit.fullTime(u.ts)}>
+        {kit.ago(u.ts)}
+      </span>
     </article>
   );
 }
@@ -255,7 +231,8 @@ function OtherCard({ card, kit }: { card: FeedCard; kit: Kit }) {
 /** The feed below its header. Read on the hub as it shows (the network is told nothing); older pages as it scrolls. */
 export function FeedView({ c, kit }: { c: P.ConversationView; kit: Kit }) {
   const tkey = timelineKey('c', c.id);
-  timelineRev(tkey).value;
+  // A message patched in place (an edit, a delete) keeps the array and its length: the revision tells.
+  const rev = timelineRev(tkey).value;
   useEffect(() => void loadTimeline(tkey), [tkey]);
   const t = timelines.get(tkey);
   // What was new when it opened stays marked while it is open.
@@ -264,21 +241,29 @@ export function FeedView({ c, kit }: { c: P.ConversationView; kit: Kit }) {
   useEffect(() => {
     if (unread && document.visibilityState === 'visible') markRead(c.id);
   }, [c.id, unread, t?.messages.length]);
-  const cards = useMemo(() => kit.feed.feedCards(t?.messages ?? [], readTs), [t?.messages, t?.messages.length, readTs]);
+  const units = useMemo(() => kit.feed.feedUnits(t?.messages ?? [], readTs), [t?.messages, rev, readTs]);
   const scroller = useRef<HTMLDivElement>(null);
   const onScroll = () => {
     const el = scroller.current;
     if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 400 && t?.hasMore && !t.loading) void loadTimeline(tkey, true);
   };
+  // A page of likes on two posts is two cards: older pages load until the list fills the pane or there are no more,
+  // so scrolling is never what finds them.
+  useEffect(() => {
+    const el = scroller.current;
+    if (el && t?.hasMore && !t.loading && el.scrollHeight <= el.clientHeight + 400) void loadTimeline(tkey, true);
+  }, [units.length, t?.hasMore, t?.loading]);
   const net = NETWORK_META[c.network].name;
   const open = kit.feed.notificationsUrl(c.network);
   return (
     <>
       <div class="feed-scroll" ref={scroller} onScroll={onScroll} data-feed-view={c.id}>
         <div class="feed-list">
-          {cards.map((card) => (card.type === 'reply' || card.type === 'mention' || card.type === 'quote' ? <SaidCard key={card.key} card={card} kit={kit} /> : card.type === 'other' ? <OtherCard key={card.key} card={card} kit={kit} /> : <GroupCard key={card.key} card={card} kit={kit} />))}
+          {units.map((u) => (
+            <Unit key={u.key} u={u} kit={kit} />
+          ))}
           {t?.loading && <kit.Loading inline label="Loading notifications…" />}
-          {!t?.loading && !cards.length && (
+          {!t?.loading && !t?.hasMore && !units.length && (
             <kit.Empty icon="bell" title="Nothing yet">
               When people like, repost, reply to or quote your posts on {net}, mention you or follow you, it shows here.
             </kit.Empty>
@@ -300,54 +285,34 @@ export function FeedView({ c, kit }: { c: P.ConversationView; kit: Kit }) {
 
 // ------------------------------------------------------------------ profiles
 
-/** One of their posts: pinned, a repost, a reply or a quote says so; then its words, pictures, counts and when. */
-function PostItem({ p, kit, owner }: { p: P.PostFact; kit: Kit; owner: string }) {
-  const shown = p.repostOf ?? p;
-  const replyTo = shown.replyTo?.author ? kit.handle(shown.replyTo.author) : null;
-  return (
-    <article class="post-item" data-post={p.id}>
-      {p.pinned && (
-        <span class="post-mark">
-          <kit.Icon name="pin" size={11} /> Pinned
-        </span>
-      )}
-      {p.repostOf && (
-        <span class="post-mark">
-          <kit.Icon name="repeat" size={11} /> {kit.name(owner)} reposted
-        </span>
-      )}
-      <Byline p={shown} kit={kit} size={20} />
-      {shown.replyTo && <span class="post-mark">Replying to {replyTo ? `@${replyTo}` : 'a post'}</span>}
-      {shown.text && (
-        <p class="post-text">
-          <Linked text={shown.text} />
-        </p>
-      )}
-      <Pictures media={shown.media} url={shown.url} />
-      {shown.quoteOf && <Quoted p={shown.quoteOf} kit={kit} />}
-      <div class="post-foot">
-        <Counts p={shown} kit={kit} />
-        <a class="post-open" href={shown.url} target="_blank" rel="noreferrer">
-          <kit.Icon name="external" size={12} /> Open
-        </a>
-      </div>
-    </article>
-  );
-}
-
-/** Each X account's recent posts, as its profile said them, newest first after a pinned one. */
+/** Each X account's recent posts, as its profile said them, newest first after a pinned one: posts as a thread draws them. */
 export function RecentPosts({ abouts, kit }: { abouts: P.PersonAboutView[]; kit: Kit }) {
   return (
     <div class="post-list">
       {abouts.map((a) => (
         <>
           {abouts.length > 1 && <span class="post-mark">@{kit.handle(a.identityId) ?? kit.name(a.identityId)}</span>}
-          {a.posts!.map((p) => (
-            <PostItem p={p} kit={kit} owner={a.identityId} />
-          ))}
+          {a.posts!.map((p) => {
+            const shown = p.repostOf ?? p;
+            const replyTo = shown.replyTo?.author ? kit.handle(shown.replyTo.author) : null;
+            const marks = (p.pinned || shown.replyTo) && (
+              <>
+                {p.pinned && (
+                  <span class="post-mark">
+                    <kit.Icon name="pin" size={11} /> Pinned
+                  </span>
+                )}
+                {shown.replyTo && <span class="post-mark">Replying to {replyTo ? `@${replyTo}` : 'a post'}</span>}
+              </>
+            );
+            return (
+              <div class="post-item" data-post={p.id}>
+                <Row p={p} kit={kit} network={a.network} line={false} size={28} above={marks || undefined} />
+              </div>
+            );
+          })}
         </>
       ))}
     </div>
   );
 }
-

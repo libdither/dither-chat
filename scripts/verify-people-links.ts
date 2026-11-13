@@ -255,9 +255,13 @@ try {
   await p.until(`!!document.querySelector('.plink-row')`, 8000);
   const names = await p.eval<string[]>(`[...document.querySelectorAll('.plink-row .row-title')].map((e) => e.textContent.trim())`);
   check(names.includes('Alice Chen') && names.includes('Nitro Drops') && names.includes('Ravi'), 'Friends lists everyone your accounts are friends with', names);
-  check(new Set(names).size === names.length, 'each person once', names);
+  // The demo's X Alice is a person of her own until merged: same name, another row.
+  const keys = await p.eval<string[]>(`[...document.querySelectorAll('.plink-row')].map((e) => e.dataset.plink)`);
+  check(new Set(keys).size === keys.length, 'each person once', names);
+  // X's mutual follows are Friends too (docs/profile.md "Connections"), from the profiles X showed.
+  check(names.includes('Nora') && (await text(`.plink-row[data-plink="${boot.identities.find((i: any) => i.network === 'x' && i.handle === 'nora_on_nets').id}"] .plink-kind`)) === 'You follow each other on X', "and the X accounts you follow each other with, saying so", names);
   check(!(await has('.sidebar .side-sub')) && !(await has('.people-accounts')) && !(await has('.plink-end')), 'one row of chips, no subtitle, no × on the rows');
-  check((await text('.people-chips')).replace(/\s+/g, ' ') === 'Chats Friends Contacts', 'chips for the lists these accounts keep: no X or Instagram here, so no Following', await text('.people-chips'));
+  check((await text('.people-chips')).replace(/\s+/g, ' ') === 'Chats Friends Contacts Following', 'chips for the lists these accounts keep, and Following for X', await text('.people-chips'));
   const theoRow = `.plink-row[data-plink="${theo.id}"]`;
   const raviRow = `.plink-row[data-plink="${ravi.id}"]`;
   const dotsOf = (row: string) => p.eval<string>(`document.querySelector(${JSON.stringify(`${row} .plink-dots`)})?.dataset.accounts ?? ''`);
@@ -271,7 +275,7 @@ try {
   await click('.people-acc-btn');
   await p.until(`!!document.querySelector('.cm [role="menuitemradio"]')`, 3000);
   const accItems = await p.eval<string[]>(`[...document.querySelectorAll('.cm [role="menuitemradio"]')].map((e) => e.innerText.trim())`);
-  check(accItems.join() === 'All accounts,Discord main,Discord alt' && (await count('.cm .cm-dot')) === 3, 'its menu: all accounts and each, each with its colour', accItems);
+  check(accItems.join() === 'All accounts,Discord main,Discord alt,X personal' && (await count('.cm .cm-dot')) === 4, 'its menu: all accounts and each, each with its colour', accItems);
   await shot('links-08-people-desktop');
   await clickText('.cm [role="menuitemradio"]', 'Discord alt');
   await p.until(`document.querySelector('.people-acc-btn').innerText.includes('Discord alt')`, 3000);
@@ -302,7 +306,8 @@ try {
   await escape();
   await Bun.sleep(200);
   check((await count('.plink-row')) === names.length, 'Esc empties it');
-  const talked = await p.eval<boolean[]>(`[...document.querySelectorAll('.plink-row .plink-talked')].map((e) => !!e.textContent)`);
+  // A row you never talked on says what the link is instead (.plink-kind).
+  const talked = await p.eval<boolean[]>(`[...document.querySelectorAll('.plink-row .row-preview')].map((e) => e.classList.contains('plink-talked') && !!e.textContent)`);
   check(talked.indexOf(false) === -1 || talked.slice(talked.indexOf(false)).every((x) => !x), 'by default, whom you talked with last first', talked);
   await click('.side-sort');
   await p.until(`!!document.querySelector('.cm [role="menuitemradio"]')`, 3000);

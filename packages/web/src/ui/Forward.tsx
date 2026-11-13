@@ -15,6 +15,7 @@ import { api, db, go, isSelfIdentity, openProfile, prefs, rev, toast } from '../
 import { Avatar, Modal, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { openConv } from './Sidebar.tsx';
+import { isQuietConv } from '../feed.ts';
 
 export const forwarding = signal<P.MessageView | null>(null);
 
@@ -51,7 +52,7 @@ function ForwardDialog({ m, onClose }: { m: P.MessageView; onClose: () => void }
   const all = useMemo(
     () =>
       [...db.conversations.values()]
-        .filter((c) => visibleConv(c) && c.variant !== 'forum' && c.vantages.length > 0)
+        .filter((c) => visibleConv(c) && c.variant !== 'forum' && !isQuietConv(c) && c.vantages.length > 0)
         .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0)),
     [rev.value],
   );

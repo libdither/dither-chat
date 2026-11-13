@@ -66,7 +66,7 @@ test('a reading for someone known by identity, only one parseAdd itself would gi
   expect(identityRef(who('x', '46', null))).toBeNull();
 });
 
-test('profile buttons by how you stand: a stranger, someone who asked, a request sent, following', () => {
+test('profile buttons by how you stand: a stranger, someone who asked; none for a request sent or a follow (the tags say those)', () => {
   const nova = who('discord', '123456789012345678', 'nova.wav');
   const both = [acc('acc_alt', 'discord', ['connect', 'requests']), acc('acc_d', 'discord', ['connect', 'requests'])];
   // Through the account that asked about them, when it can.
@@ -75,8 +75,8 @@ test('profile buttons by how you stand: a stranger, someone who asked, a request
   expect(relation({ network: 'telegram', relationship: 'stranger', accountId: null }, who('telegram', '777', '@lena_k'), [acc('t', 'telegram', ['connect'])], [])).toMatchObject({ kind: 'connect', action: 'contact' });
   const asked = req('f', 'friend', 1, { from: nova.id });
   expect(relation({ network: 'discord', relationship: 'requesting', accountId: 'acc_d' }, nova, both, [req('m', 'message', 1), asked])).toEqual({ kind: 'answer', request: asked });
-  expect(relation({ network: 'discord', relationship: 'requested', accountId: 'acc_d' }, nova, both, [])).toEqual({ kind: 'state', label: 'Request sent' });
-  expect(relation({ network: 'instagram', relationship: 'following', accountId: null }, who('instagram', '45', 'film.cat'), [], [])).toEqual({ kind: 'state', label: 'Following' });
+  expect(relation({ network: 'discord', relationship: 'requested', accountId: 'acc_d' }, nova, both, [])).toBeNull();
+  expect(relation({ network: 'instagram', relationship: 'following', accountId: null }, who('instagram', '45', 'film.cat'), [], [])).toBeNull();
   expect(relation({ network: 'discord', relationship: 'friend', accountId: 'acc_d' }, nova, both, [])).toBeNull();
 });
 
@@ -200,6 +200,8 @@ test("People's chips: chats, and each kind of list an account here keeps", () =>
   const ids = (xs: { id: string }[]) => xs.map((x) => x.id);
   expect(ids(peopleFilters([acc('d', 'discord', ['relationships']), acc('t', 'telegram', ['relationships'])]))).toEqual(['chats', 'friend', 'contact']);
   expect(ids(peopleFilters([acc('x', 'x', ['relationships'])]))).toEqual(['chats', 'following']);
+  // X's follows come from the profiles it reads, list or not: Following, and Friends for those who follow back.
+  expect(ids(peopleFilters([acc('x', 'x', ['profile'])]))).toEqual(['chats', 'friend', 'following']);
   // No account keeps a list: no chips at all.
   expect(peopleFilters([acc('d', 'discord', ['connect']), acc('m', 'matrix', ['relationships'])])).toEqual([]);
 });

@@ -2,6 +2,7 @@ import { createPortal, type ComponentChildren, type JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
 import { GLYPH } from '../brand.ts';
+import { linkParts } from '../links.ts';
 import { hueOf, initials } from '../format.ts';
 import { annotateAccounts, netColor, netName } from '../model.ts';
 import { db, go } from '../state.ts';
@@ -12,9 +13,10 @@ import { onMenu } from './ContextMenu.tsx';
 import { accountMenu } from './menus.tsx';
 import { drawLater } from './Later.tsx';
 
-export function NetGlyph({ network, size = 14, color }: { network: P.Network; size?: number; color?: string }) {
+/** `decorative`: hidden from screen readers, for where the network is already said in words around it. */
+export function NetGlyph({ network, size = 14, color, decorative }: { network: P.Network; size?: number; color?: string; decorative?: boolean }) {
   return (
-    <svg class="net-glyph" width={size} height={size} viewBox="0 0 24 24" fill={color ?? 'currentColor'} aria-label={netName(network)}>
+    <svg class="net-glyph" width={size} height={size} viewBox="0 0 24 24" fill={color ?? 'currentColor'} {...(decorative ? { 'aria-hidden': 'true' as const } : { 'aria-label': netName(network) })}>
       <path d={GLYPH[network]} />
     </svg>
   );
@@ -192,6 +194,27 @@ export function Menu({ trigger, children, align = 'left', up }: { trigger: (open
   );
 }
 
+/**
+ * Plain text with its links as links (links.ts): web addresses with or without their scheme, Markdown links, and on
+ * X an @handle. Each opens in a new tab; a click on one does not reach what the text sits in. `markdown` false: a
+ * Markdown link stays as written (a post).
+ */
+export function Linked({ text, network, markdown = true }: { text: string; network?: P.Network; markdown?: boolean }) {
+  return (
+    <>
+      {linkParts(text, network, markdown).map((p) =>
+        typeof p === 'string' ? (
+          p
+        ) : (
+          <a class="text-link" href={p.href} target="_blank" rel="noreferrer noopener" onClick={(e) => e.stopPropagation()}>
+            {p.label}
+          </a>
+        ),
+      )}
+    </>
+  );
+}
+
 export function Empty({ icon, title, children }: { icon: string; title: string; children?: ComponentChildren }) {
   return (
     <div class="empty">
@@ -204,6 +227,6 @@ export function Empty({ icon, title, children }: { icon: string; title: string; 
 
 export function variantIcon(v: P.Variant, shape?: P.Shape): string {
   if (shape === 'thread') return 'thread';
-  return { text: 'hash', announcement: 'announcement', forum: 'forum', voice: 'voice', stage: 'stage', media: 'media', rules: 'rules', feed: 'bell' }[v] ?? 'hash';
+  return { text: 'hash', announcement: 'announcement', forum: 'forum', voice: 'voice', stage: 'stage', media: 'media', rules: 'rules', feed: 'bell', posts: 'quote' }[v] ?? 'hash';
 }
 

@@ -122,14 +122,13 @@ export type Relation =
   /** A stranger you can reach: this action, through this account. */
   | { kind: 'connect'; action: 'friend' | 'follow' | 'contact'; accountId: string; ref: P.AddRef }
   /** They asked you: the open request to answer. */
-  | { kind: 'answer'; request: P.RequestView }
-  /** Nothing to do but say so. */
-  | { kind: 'state'; label: string };
+  | { kind: 'answer'; request: P.RequestView };
 
 /**
  * What a profile offers on one network, from how the network says you stand with them: Add friend, Follow or Add
- * contact for a stranger where an account can; Accept or Decline what they asked; "Request sent", "Following".
- * Null where nothing can be done: no account with the capability, no way on that network.
+ * contact for a stranger where an account can; Accept or Decline what they asked. Null where nothing can be done (no
+ * account with the capability, no way on that network) and where there is only something to say, such as a request
+ * sent or a follow: the hero's tags and Connections say those (connections.ts).
  */
 export function relation(
   about: Pick<P.PersonAboutView, 'network' | 'relationship' | 'accountId'>,
@@ -151,10 +150,6 @@ export function relation(
       const request = requests.find((r) => r.from === identity.id && (r.kind === 'friend' || r.kind === 'follow') && ids.has(r.accountId));
       return request ? { kind: 'answer', request } : null;
     }
-    case 'requested':
-      return { kind: 'state', label: 'Request sent' };
-    case 'following':
-      return { kind: 'state', label: 'Following' };
     default:
       return null;
   }
@@ -206,17 +201,26 @@ export const PEOPLE_FILTERS: { id: 'chats' | 'friend' | 'contact' | 'following';
 ];
 export type PeopleFilter = (typeof PEOPLE_FILTERS)[number]['id'];
 
-/** Where each kind of list is: friends on Discord, address books, follows on X and Instagram. */
+/** Where each kind of list is: friends on Discord, address books, follows on X and Instagram (mutual ones are Friends too). */
 const LIST_NETWORKS: Record<Exclude<PeopleFilter, 'chats'>, readonly P.Network[]> = {
   friend: ['discord'],
   contact: ['telegram', 'signal', 'whatsapp', 'gmessages'],
   following: ['x', 'instagram'],
 };
 
-/** The filters worth a chip: chats, and each kind some account here keeps a list of. None but chats: no chips. */
+/** Networks of follows, whose accounts' profiles say whom you follow and who follows you back without a list. */
+const FOLLOW_NETWORKS: readonly P.Network[] = ['x', 'instagram'];
+
+/**
+ * The filters worth a chip: chats, and each kind some account here keeps a list of. An X or Instagram account's
+ * follows come from the profiles it reads (docs/profile.md "Connections"), so it gives Following, and Friends for
+ * those who follow back, with or without a list. None but chats: no chips.
+ */
 export function peopleFilters(accounts: Iterable<Pick<P.AccountView, 'network' | 'capabilities'>>): typeof PEOPLE_FILTERS {
-  const nets = new Set([...accounts].filter((a) => a.capabilities.includes('relationships')).map((a) => a.network));
-  const shown = PEOPLE_FILTERS.filter((f) => f.id === 'chats' || LIST_NETWORKS[f.id].some((n) => nets.has(n)));
+  const all = [...accounts];
+  const nets = new Set(all.filter((a) => a.capabilities.includes('relationships')).map((a) => a.network));
+  const follows = all.some((a) => FOLLOW_NETWORKS.includes(a.network) && a.capabilities.includes('profile'));
+  const shown = PEOPLE_FILTERS.filter((f) => f.id === 'chats' || LIST_NETWORKS[f.id].some((n) => nets.has(n)) || (follows && (f.id === 'friend' || f.id === 'following')));
   return shown.length > 1 ? shown : [];
 }
 

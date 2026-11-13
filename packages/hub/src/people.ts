@@ -18,6 +18,8 @@ export interface PeopleDeps {
   command: <T>(accountId: string, cmd: PeopleCommand, timeoutMs?: number) => Promise<T>;
   /** A line in the account's log (supervisor note), for changes made on the owner's click. */
   note?: (accountId: string, line: string) => void;
+  /** A profile's posts, logged as messages (posts.ts). */
+  posts?: (accountId: string, posts: P.PostFact[]) => void;
 }
 
 type PeopleCommand =
@@ -109,6 +111,7 @@ export class People {
       try {
         const about = await this.d.command<P.PersonAbout>(accountId, { t: 'profile', who: n.nativeId }, 20_000);
         this.keep(identityId, accountId, n.network, about);
+        if (about?.posts?.length) this.d.posts?.(accountId, about.posts);
         return this.view(identityId, accountId, about ?? {}, Date.now(), undefined);
       } catch (e) {
         const stale = `Could not ask ${net}: ${(e as Error).message}`;
@@ -347,7 +350,15 @@ export function keepAbout(store: Store, identityId: string, accountId: string, n
   if (unasked) {
     if (k && k.at >= at) return false;
     const { posts: _, ...seen } = about;
-    about = { ...seen, ...(k?.about.posts ? { posts: k.about.posts } : {}), unasked: true } as Kept;
+    // How this account and they follow each other (docs/profile.md "Connections"): a profile seen in passing that
+    // does not say keeps what this account's last one said, until a profile asked for says otherwise.
+    const mine = s.one<Row>('SELECT data FROM about WHERE target_id = ? AND account_id = ?', identityId, accountId);
+    const last = mine ? (JSON.parse(mine.data) as Kept) : null;
+    const follows = {
+      ...(seen.relationship === undefined && last?.relationship !== undefined ? { relationship: last.relationship } : {}),
+      ...(seen.followsYou === undefined && last?.followsYou !== undefined ? { followsYou: last.followsYou } : {}),
+    };
+    about = { ...seen, ...follows, ...(k?.about.posts ? { posts: k.about.posts } : {}), unasked: true } as Kept;
   }
   // What their profile said before, if it says something else now (docs/history.md).
   if (k)

@@ -154,7 +154,7 @@ try {
   check(!/\bAvailable\b/.test(about + accounts), 'not WhatsApp’s stock “Available”');
   check((await text('.pf-status')).includes('at the crag'), 'their status, with its text');
   const tags = await text('.pf-tags');
-  check(tags.includes('she/her') && tags.includes('Friend') && tags.includes('In your contacts'), 'pronouns and how you stand with them, once each', tags);
+  check(tags.includes('she/her') && tags.includes('Friend') && /\bContact\b/.test(tags) && (tags.match(/\bFriend\b/g) ?? []).length === 1, 'pronouns and how you stand with them, once each', tags);
   check(about.includes('GitHub') && about.match(/Phone/g)?.length === 1, 'their links, one number written two ways shown once', about.match(/Phone|GitHub/g));
   const common = await card('In common');
   check(common.includes('libdither') && common.includes('as alice (testing)') && common.includes('Testers'), 'a server in common, with their nickname and role there', common.split('\n').slice(0, 6));

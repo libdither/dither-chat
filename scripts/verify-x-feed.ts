@@ -10,7 +10,7 @@
  * a quote and a mention with their words and pictures, your post quoted with a thumbnail); no composer, a bar with
  * Open on X; reading it marks it read on the hub and sends X no read mark, no typing and nothing else; sends there
  * are refused; likes never notify and the reply is a silent row on the list; a name opens the profile, which shows
- * their bio, follow counts, Follows you, and Recent posts (pinned, a repost, a reply, a quote) from asking X.
+ * their bio, follow counts, that you follow each other, and Recent posts (pinned, a repost, a reply, a quote) from asking X.
  */
 import { mkdirSync, mkdtempSync, openSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -94,7 +94,9 @@ try {
     const r = document.querySelector('.feed-row');
     const side = r.closest('.side-scroll');
     const kids = [...side.children];
-    const firstRanked = side.querySelector('[data-row]');
+    // A ranked row may sit in a wrapper with its reply mark (ReplyMark.tsx): the side's child that holds it.
+    let firstRanked = side.querySelector('[data-row]');
+    while (firstRanked && firstRanked.parentElement !== side) firstRanked = firstRanked.parentElement;
     return {
       title: r.querySelector('.row-title').textContent,
       count: r.querySelector('.requests-count')?.textContent ?? null,
@@ -110,31 +112,37 @@ try {
   check('the feed is not one of the ranked inbox rows', !row.feedRanked);
   if (shots) await page.shot(join(shots, 'x-feed-row-desktop.png'));
 
-  // ------------------------------------------------------------------ the feed, desktop
+  // ------------------------------------------------------------------ the feed, desktop: by post
   await page.eval(`document.querySelector('.feed-row').click()`);
-  await page.until(`location.hash.includes(${JSON.stringify(feed.id)}) && document.querySelectorAll('.feed-card').length > 0`, 20000);
-  await page.until(`document.querySelectorAll('.feed-card').length >= 7`, 10000).catch(() => {});
-  const cards = await page.eval<any[]>(`[...document.querySelectorAll('.feed-card')].map((c) => ({
-    type: c.dataset.type, count: Number(c.dataset.count ?? 0), faces: c.querySelectorAll('.feed-face').length, text: c.textContent,
-    quoted: !!c.querySelector('.post-quoted'), thumb: !!c.querySelector('.post-thumb img'), pics: c.querySelectorAll('.post-media img').length, fresh: c.classList.contains('fresh'),
+  await page.until(`location.hash.includes(${JSON.stringify(feed.id)}) && document.querySelectorAll('.feed-unit').length >= 4`, 20000);
+  const units = await page.eval<any[]>(`[...document.querySelectorAll('.feed-unit')].map((u) => ({
+    unit: u.dataset.unit, text: u.textContent, mine: u.querySelector('.feed-mine')?.textContent ?? '', pic: !!u.querySelector('.feed-mine-pic'),
+    talk: [...u.querySelectorAll('.feed-talk .thread-post')].map((t) => t.textContent), react: u.querySelector('.feed-react')?.textContent ?? null,
+    likes: u.querySelector('.feed-react-counts .like')?.textContent.trim() ?? null, reposts: u.querySelector('.feed-react-counts .repost')?.textContent.trim() ?? null,
+    quotedInTalk: !!u.querySelector('.feed-talk .post-quoted'),
+    pics: u.querySelectorAll('.post-media img').length, fresh: u.classList.contains('fresh'),
   }))`);
-  const likes5 = cards.find((c) => c.type === 'like' && c.count === 5);
-  check('five likes on one post are one card with five faces and two names said', !!likes5 && likes5.faces === 5 && /Theo, Maya K\. and 3 others liked your post/.test(likes5.text), likes5?.text);
-  check('…with your post quoted under it, its picture as a thumbnail', !!likes5?.quoted && !!likes5?.thumb);
-  check('two likes on another post are a card of their own', cards.some((c) => c.type === 'like' && c.count === 2 && /Alice Chen and Nora liked your post/.test(c.text)), cards.filter((c) => c.type === 'like').map((c) => c.text));
-  check('two follows are one card', cards.some((c) => c.type === 'follow' && c.count === 2 && /Sam and Lee followed you/.test(c.text)), cards.filter((c) => c.type === 'follow').map((c) => c.text));
-  check('a repost card', cards.some((c) => c.type === 'repost' && /Nora reposted your post/.test(c.text)));
-  const reply = cards.find((c) => c.type === 'reply');
-  check('a reply shows their words and what it answers', !!reply && /replied to your post: “Greedy routing/.test(reply.text) && /Does it hold up under churn/.test(reply.text), reply?.text);
-  const quote = cards.find((c) => c.type === 'quote');
-  check('a quote shows their words and your post quoted', !!quote && /cleanest one-line summary/.test(quote.text) && quote.quoted, quote?.text);
-  const mention = cards.find((c) => c.type === 'mention');
-  check('a mention shows their words and their picture', !!mention && /discrete Morse theory/.test(mention.text) && mention.pics === 1, mention);
-  check('newest first, and what was new when it opened is marked', cards[0]?.type === 'reply' && cards[0].fresh && !cards[cards.length - 1].fresh, cards.map((c) => `${c.type}${c.fresh ? '*' : ''}`));
-  const bar = await page.eval<any>(`(() => { const b = document.querySelector('.feed-bar'); return { composer: !!document.querySelector('.composer'), text: b?.textContent ?? '', href: b?.querySelector('a')?.href ?? null }; })()`);
-  check('no composer: a bar saying replies happen on X, with Open on X', !bar.composer && /happen on X/.test(bar.text) && bar.href === 'https://x.com/notifications', bar);
-  check('nothing sideways on a desktop', (await overflow('.feed-scroll')) === 0);
+  const routing = units.find((u) => /Greedy routing/.test(u.mine));
+  const sheaves = units.find((u) => /Sheafification/.test(u.mine));
+  check('your post is one card: small at its head, with its picture', !!routing && routing.unit === 'post' && routing.pic, routing?.mine);
+  check("…Ravi's reply under it in full, marked new", !!routing && routing.talk.length === 1 && /Ravi/.test(routing.talk[0]) && /Does it hold up under churn/.test(routing.talk[0]) && /new/.test(routing.talk[0]), routing?.talk);
+  check('…five likes and a repost as one quiet line: counts as X gives them, who by name', !!routing?.react && routing.likes === '41' && routing.reposts === '3' && /Liked by Theo, Maya K\. and 3 others/.test(routing.react), routing?.react);
+  check("another post: Lee's quote under it (not quoting the post again), its likes by name", !!sheaves && /cleanest one-line summary/.test(sheaves.talk.join(' ')) && /quoted/.test(sheaves.talk.join(' ')) && !sheaves.quotedInTalk && /Liked by Alice Chen and Nora/.test(sheaves.react ?? ''), sheaves);
+  check('two follows are one row', units.some((u) => u.unit === 'follow' && /Sam and Lee followed you/.test(u.text)), units.filter((u) => u.unit === 'follow').map((u) => u.text));
+  const mention = units.find((u) => u.unit === 'said');
+  check('a mention is their post on its own, with its picture', !!mention && /mentioned you/.test(mention.text) && /discrete Morse theory/.test(mention.text) && mention.pics === 1, mention);
+  check('newest activity first, and what was new when it opened is marked', units[0] === routing && routing.fresh && !units[units.length - 1].fresh, units.map((u) => `${u.unit}${u.fresh ? '*' : ''}`));
   if (shots) await page.shot(join(shots, 'x-feed-desktop.png'));
+
+  // Who reacted: the line opens the list, from the hub, every one named.
+  await page.eval(`[...document.querySelectorAll('.feed-unit')].find((u) => /Greedy routing/.test(u.querySelector('.feed-mine')?.textContent ?? '')).querySelector('.feed-react').click()`);
+  await page.until(`document.querySelectorAll('.feed-reactors .post-reactor').length >= 5`, 10000);
+  const likers = await page.eval<any>(`(() => { const r = document.querySelector('.feed-reactors'); return { people: [...r.querySelectorAll('.post-reactor-name b')].map((b) => b.textContent), note: r.querySelector('.post-reactors-note')?.textContent ?? '' }; })()`);
+  check('the line opens who liked it, from X and ranked for you: the five your notifications named among them', ['Theo', 'Maya K.', 'Quinn', 'Ravi', 'Alice Chen'].every((n) => likers.people.includes(n)) && likers.people.length >= 8, likers);
+  if (shots) await page.shot(join(shots, 'x-feed-likers-desktop.png'));
+  await page.eval(`[...document.querySelectorAll('.feed-reactors .feed-tab')].find((b) => b.textContent.startsWith('Reposts')).click()`);
+  await page.until(`[...document.querySelectorAll('.feed-reactors .post-reactor-name b')].map((b) => b.textContent).join() .includes('Nora')`, 5000).then(() => check('…and who reposted it', true), () => check('…and who reposted it', false));
+
 
   // ------------------------------------------------------------------ read on the hub only, nothing sent to X
   await until(async () => (await json('/api/bootstrap')).conversations.find((c: any) => c.id === feed.id)?.vantages.every((v: any) => v.unread === 0), 10_000, 'the feed was not marked read');
@@ -151,7 +159,11 @@ try {
   check('the row stays a day after it was read, with no count', await page.eval<boolean>(`!!document.querySelector('.feed-row') && !document.querySelector('.feed-row .requests-count')`));
 
   // ------------------------------------------------------------------ a name opens their profile
-  await page.eval(`[...document.querySelectorAll('.feed-card[data-type="like"]')].find((c) => c.dataset.count === '2').querySelector('.feed-name').click()`);
+  await page.eval(`(() => { const b = [...document.querySelectorAll('.feed-unit')].find((u) => /Greedy routing/.test(u.querySelector('.feed-mine')?.textContent ?? '')).querySelector('.feed-react'); if (b.getAttribute('aria-expanded') !== 'true') b.click(); })()`);
+  await page.until(`!!document.querySelector('.feed-reactors .feed-tab')`, 10000);
+  await page.eval(`[...document.querySelectorAll('.feed-reactors .feed-tab')].find((b) => b.textContent.startsWith('Likes')).click()`);
+  await page.until(`document.querySelectorAll('.feed-reactors .post-reactor').length >= 5`, 10000);
+  await page.eval(`[...document.querySelectorAll('.feed-reactors .post-reactor')].find((b) => /Alice Chen/.test(b.textContent)).click()`);
   await page.until(`location.hash.startsWith('#/p/') && !!document.querySelector('.pf-posts .post-item')`, 20000);
   await page.until(`!!document.querySelector('.pf-follow')`, 5000).catch(() => {});
   const prof = await page.eval<any>(`(() => ({
@@ -161,18 +173,21 @@ try {
     replying: [...document.querySelectorAll('.pf-posts .post-mark')].some((m) => m.textContent.includes('Replying to')),
     quote: !!document.querySelector('.pf-posts .post-item .post-quoted'),
     counts: document.querySelector('.pf-follow')?.textContent ?? '',
+    connections: document.querySelector('.pf-standing')?.textContent ?? '',
+    tags: [...document.querySelectorAll('.pf-tag[data-kind]')].map((t) => t.dataset.kind),
     bio: document.querySelector('.pf-bio')?.textContent ?? '',
     recent: [...document.querySelectorAll('.pf-msg')].map((m) => m.textContent),
   }))()`);
-  check('a name in a card opens their profile, with Recent posts from X', prof.posts >= 4 && prof.pinned && prof.repost && prof.replying && prof.quote, prof);
-  check('…their bio, follow counts and Follows you', /Distributed systems/.test(prof.bio) && /2,310 followers/.test(prof.counts) && /512 following/.test(prof.counts) && /Follows you/.test(prof.counts), { bio: prof.bio, counts: prof.counts });
+  check('a name in the list of who liked it opens their profile, with Recent posts from X', prof.posts >= 4 && prof.pinned && prof.repost && prof.replying && prof.quote, prof);
+  // Following each other is a connection (docs/profile.md "Connections"); the counts stay facts in About.
+  check('…their bio, follow counts, and that you follow each other', /Distributed systems/.test(prof.bio) && /2,310 followers/.test(prof.counts) && /512 following/.test(prof.counts) && /You follow each other on X/.test(prof.connections) && prof.tags.includes('friend'), { bio: prof.bio, counts: prof.counts, connections: prof.connections, tags: prof.tags });
   check('…and what they did in Recent messages', prof.recent.some((t: string) => /X notifications/.test(t) && /Liked your post/.test(t)), prof.recent);
   if (shots) await page.shot(join(shots, 'x-profile-desktop.png'));
 
   // ------------------------------------------------------------------ light
   await setTheme('dither-light');
   await load(`#/inbox/c/${feed.id}`);
-  await page.until(`document.querySelectorAll('.feed-card').length >= 7`, 20000);
+  await page.until(`document.querySelectorAll('.feed-unit').length >= 4`, 20000);
   check('the feed in a light theme', (await page.eval(`document.documentElement.dataset.theme`)) === 'light', await page.eval(`document.documentElement.dataset.theme`));
   if (shots) await page.shot(join(shots, 'x-feed-light.png'));
   await setTheme('dither-dark');
@@ -183,13 +198,13 @@ try {
   await page.until(`!!document.querySelector('.app.phone .feed-row')`, 20000);
   if (shots) await page.shot(join(shots, 'x-feed-row-phone.png'));
   await page.eval(`document.querySelector('.feed-row').click()`);
-  await page.until(`document.querySelectorAll('.feed-card').length >= 7 && !!document.querySelector('.feed-bar')`, 20000);
+  await page.until(`document.querySelectorAll('.feed-unit').length >= 4 && !!document.querySelector('.feed-bar')`, 20000);
   await Bun.sleep(400);
   const phone = await page.eval<any>(`(() => { const b = document.querySelector('.feed-bar').getBoundingClientRect(); return { barIn: b.bottom <= innerHeight + 1 && b.top > 0, back: !!document.querySelector('.conv-head .back') }; })()`);
   check('on a phone: the feed full width, its bar on screen, a Back button', phone.barIn && phone.back, phone);
   check('nothing sideways on a phone', (await overflow('.feed-scroll')) === 0, await overflow('.feed-scroll'));
   if (shots) await page.shot(join(shots, 'x-feed-phone.png'));
-  await page.eval(`document.querySelector('.feed-card[data-type="reply"] .feed-name').click()`);
+  await page.eval(`document.querySelector('.feed-talk .post-who').click()`);
   await page.until(`location.hash.startsWith('#/p/') && !!document.querySelector('.pf-posts .post-item')`, 20000);
   check("a reply's name opens the profile on a phone too", true);
   if (shots) await page.shot(join(shots, 'x-profile-phone.png'));

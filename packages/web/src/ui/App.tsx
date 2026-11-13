@@ -45,6 +45,8 @@ import { NoticesPaneLazy } from './Notices.tsx';
 import { CalendarPane } from './calendar/CalendarPane.tsx';
 import { calendarLink, calendarOn } from '../plans.ts';
 import { countKey } from '../clicklog.ts';
+import { ThreadLazy } from './feed/lazy.tsx';
+import { isPostKey } from '../feed.ts';
 
 /** A conversation's details panel: the person's, for a DM of someone reached by several routes (their chat's page). */
 function convDetail(id: string): { kind: 'conv' | 'person'; id: string } {
@@ -62,6 +64,8 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
     case 'inbox':
       // A mail thread from the inbox opens in the reader, beside the inbox (docs/mail.md).
       if (r.conv?.startsWith('mth_')) return { pane: <MailCenterLazy thread={r.conv} onBack={back} /> };
+      // A post's thread (docs/feed.md "Threads"), beside the inbox as a conversation is.
+      if (isPostKey(r.conv)) return { pane: <ThreadLazy key={r.conv} postKey={r.conv!} onBack={back} /> };
       // A group of notices (a notification's conversation, quiet hours' summary) opens under Notices.
       if (r.conv?.startsWith('ntg_')) return { pane: <NoticesPaneLazy onBack={back} /> };
       return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: convDetail(r.conv) } : { pane: <CatchUp /> };

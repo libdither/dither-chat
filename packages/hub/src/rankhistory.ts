@@ -8,6 +8,7 @@
  * log's stays) and the mutes as they are now. Metadata only: never what was said.
  */
 import type { Database } from 'bun:sqlite';
+import { QUIET_VARIANTS_SQL } from './feed.ts';
 import type * as P from '@dither-chat/protocol';
 import { decayed } from '@dither-chat/protocol';
 import { emptyTally, foldMessage, freshState, PIN_FOR, scoreConversation, sumTallies, voteDirection, votesAt, type ConvState, type ScoreInput, type Scored, type Tally } from './attention.ts';
@@ -20,8 +21,8 @@ type Row = Record<string, any>;
 /** Ids that are you: the accounts' own, and the identities of the person marked as you. */
 export const SELF_SQL = `(SELECT self_identity FROM account WHERE self_identity IS NOT NULL UNION SELECT i.id FROM person p CROSS JOIN identity i ON i.person_id = p.id WHERE p.is_self = 1)`;
 /** What the inbox always lists (attention.ts LISTED). */
-const LISTED = `(c.shape IN ('direct', 'group', 'self') OR (c.shape = 'channel' AND NOT EXISTS (
-  SELECT 1 FROM space_edge e WHERE e.child_kind = 'conversation' AND e.child_id = c.id)))`;
+const LISTED = `(c.variant NOT IN ${QUIET_VARIANTS_SQL} AND (c.shape IN ('direct', 'group', 'self') OR (c.shape = 'channel' AND NOT EXISTS (
+  SELECT 1 FROM space_edge e WHERE e.child_kind = 'conversation' AND e.child_id = c.id))))`;
 
 /** One conversation the inbox may list. */
 export interface Conv {

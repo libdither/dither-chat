@@ -1,4 +1,4 @@
-/* A network's notifications as cards, and a person's recent posts (docs/feed.md). Loaded with the feed's chunk. */
+/* A network's notifications by post, threads and a person's recent posts (docs/feed.md). Loaded with the feed's chunk. */
 .feed-pane {
   overflow: hidden;
 }
@@ -14,51 +14,6 @@
   display: flex;
   flex-direction: column;
 }
-.feed-card {
-  --feed-tone: var(--accent);
-  display: flex;
-  gap: 12px;
-  padding: 14px 12px 14px 10px;
-  border-bottom: 1px solid var(--border-soft);
-  border-left: 3px solid transparent;
-}
-.feed-card.fresh {
-  border-left-color: var(--feed-tone);
-  background: color-mix(in oklab, var(--feed-tone) 6%, transparent);
-}
-.feed-card[data-type='like'] {
-  --feed-tone: #f91880;
-}
-.feed-card[data-type='repost'] {
-  --feed-tone: #00ba7c;
-}
-.feed-card[data-type='other'] {
-  --feed-tone: var(--text-faint);
-}
-.feed-icon {
-  flex: none;
-  width: 36px;
-  display: flex;
-  justify-content: flex-end;
-  padding-top: 6px;
-  color: var(--feed-tone);
-}
-.feed-card[data-type='like'] .feed-icon .icon {
-  fill: currentColor;
-}
-.feed-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.feed-faces {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
-}
 .feed-face {
   padding: 0;
   border-radius: 50%;
@@ -66,82 +21,22 @@
 }
 .feed-face:hover,
 .feed-face:focus-visible {
-  outline: 2px solid var(--feed-tone);
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
-}
-.feed-faces-more {
-  font-size: 12px;
-  color: var(--text-faint);
-  padding-left: 4px;
-}
-.feed-what,
-.feed-context,
-.feed-text {
-  margin: 0;
-}
-.feed-what {
-  color: var(--text-dim);
-}
-.feed-name {
-  padding: 0;
-  font-weight: 650;
-  color: var(--text);
-}
-.feed-name:hover {
-  text-decoration: underline;
 }
 .feed-when {
   margin-left: 8px;
   font-size: 12px;
   color: var(--text-faint);
 }
-.feed-said-face {
-  position: relative;
-  flex: none;
-  padding: 0;
-  align-self: flex-start;
-  line-height: 0;
-}
-.feed-said-icon {
-  position: absolute;
-  right: -4px;
-  bottom: -4px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: var(--feed-tone);
-  color: var(--on-accent);
-  box-shadow: 0 0 0 2px var(--bg-center);
-}
-.feed-said-head {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0 6px;
-}
-.feed-said-head .feed-when {
-  margin-left: 0;
-}
-.feed-context {
-  font-size: 13px;
-  color: var(--text-faint);
-}
-.feed-context a {
-  color: var(--text-dim);
-}
-.feed-text,
 .post-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   margin: 0;
 }
-.feed-text a,
 .post-text a {
   color: var(--link);
 }
-.feed-open,
 .post-open {
   display: inline-flex;
   align-items: center;
@@ -151,7 +46,6 @@
   color: var(--text-faint);
   text-decoration: none;
 }
-.feed-open:hover,
 .post-open:hover {
   color: var(--link);
 }
@@ -192,21 +86,6 @@
   padding: 8px 10px;
   background: var(--bg-raised);
 }
-.post-label {
-  font-size: 12px;
-  color: var(--text-faint);
-}
-.post-quoted-body {
-  display: flex;
-  gap: 10px;
-}
-.post-quoted-text {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
 .post-clip {
   display: -webkit-box;
   -webkit-line-clamp: 3;
@@ -219,20 +98,6 @@
 }
 .post-clip:hover {
   color: var(--text);
-}
-.post-thumb {
-  flex: none;
-  width: 72px;
-  height: 72px;
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--bg-hover);
-}
-.post-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
 }
 .post-by {
   display: flex;
@@ -256,15 +121,11 @@
 .post-who:hover b {
   text-decoration: underline;
 }
-.post-handle,
-.post-time {
+.post-handle {
   color: var(--text-faint);
   font-size: 12px;
   white-space: nowrap;
   text-decoration: none;
-}
-.post-time:hover {
-  text-decoration: underline;
 }
 .post-media {
   display: grid;
@@ -329,12 +190,6 @@
   font-size: 12px;
   color: var(--text-faint);
 }
-.post-foot {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
 .post-counts {
   display: flex;
   gap: 12px;
@@ -342,26 +197,1010 @@
   font-size: 12px;
   color: var(--text-faint);
 }
-.post-foot .post-open {
+
+/* A card or post that opens its thread (docs/feed.md "Threads"). */
+.opens {
+  cursor: pointer;
+}
+.post-item.opens:hover {
+  background: color-mix(in oklab, var(--text) 3%, transparent);
+}
+.post-item.opens {
+  border-radius: 8px;
+  padding-left: 6px;
+  padding-right: 6px;
+  margin: 0 -6px;
+}
+
+/* A post's thread: what it answers joined by a line, the post large, the replies in chains. */
+.thread-list {
+  gap: 0;
+}
+.thread-stored {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.thread-post {
+  display: flex;
+  gap: 10px;
+  padding: 10px 8px 0;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.thread-post:hover {
+  background: color-mix(in oklab, var(--text) 3%, transparent);
+}
+.thread-post:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.thread-face {
+  flex: none;
+  padding: 0;
+  align-self: flex-start;
+  border-radius: 50%;
+}
+.thread-post .thread-face {
+  position: relative;
+}
+/* The line down from one post's picture to the next post's. */
+.thread-post.line .thread-face::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 40px;
+  width: 2px;
+  height: 9999px;
+  transform: translateX(-50%);
+  background: var(--border);
+}
+.thread-post.line {
+  overflow: hidden;
+}
+.thread-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 12px;
+}
+.thread-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 14px;
+}
+.thread-head .post-who {
+  flex: 0 1 auto;
+}
+.thread-focal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 8px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.thread-focal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+}
+.thread-focal-head .post-who {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+}
+.thread-focal-text {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.45;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.thread-focal-time {
+  color: var(--text-faint);
+  font-size: 13px;
+}
+.thread-focal-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+}
+.thread-focal-foot .post-open {
   margin-left: auto;
+}
+.post-counts.big {
+  font-size: 13px;
+}
+.post-counts b {
+  color: var(--text);
+  font-weight: 600;
+}
+.thread-quoted {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-decoration: none;
+  color: inherit;
+}
+.thread-quoted:hover {
+  border-color: var(--text-faint);
+}
+.thread-quoted-pic {
+  max-width: 100%;
+  max-height: 180px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+.thread-replies-head {
+  margin: 14px 8px 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.thread-chain {
+  border-bottom: 1px solid var(--border-soft);
+  padding-bottom: 2px;
+}
+.thread-none {
+  margin: 14px 8px;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+.thread-more {
+  align-self: center;
+  margin: 14px 0;
+}
+
+/* The feed by post (docs/feed.md "The feed's page"): your post small, what people said under it in full, who reacted
+   as one quiet line opening the list. */
+.feed-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 13px;
+}
+.feed-tab:hover {
+  background: var(--bg-hover);
+}
+.feed-tab.on {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.feed-tab-n {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.feed-unit {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 10px 12px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  border-left: 3px solid transparent;
+}
+.feed-unit.fresh {
+  border-left-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 5%, transparent);
+}
+.feed-unit > .thread-post {
+  padding-top: 0;
+}
+.feed-mine {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-decoration: none;
+}
+.feed-mine:hover {
+  border-color: var(--text-faint);
+}
+.feed-mine-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.feed-mine-head b {
+  color: var(--text);
+  font-weight: 600;
+}
+.feed-mine-pic {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+/* What people said under it: indented under your post, joined by a line on the left. */
+.feed-talk {
+  margin: 6px 0 0 10px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+}
+.feed-talk .thread-post {
+  padding-top: 6px;
+}
+.feed-talk .thread-main {
+  padding-bottom: 6px;
+}
+.post-tag {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-faint);
+}
+.post-tag.new {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.feed-unit-foot {
+  display: flex;
+  gap: 14px;
+  margin-left: 20px;
+}
+.feed-unit-foot:empty {
+  display: none;
+}
+.feed-link {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 13px;
+  text-decoration: none;
+  padding: 2px 0;
+}
+.feed-link:hover {
+  text-decoration: underline;
+}
+.feed-react {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: left;
+}
+.feed-react:hover {
+  background: var(--bg-hover);
+}
+.feed-react-counts {
+  display: inline-flex;
+  gap: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.feed-react-counts > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.feed-react-counts .like {
+  color: #f91880;
+}
+.feed-react-counts .like .icon {
+  fill: currentColor;
+}
+.feed-react-counts .repost {
+  color: #00ba7c;
+}
+.feed-react-who {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.feed-stack {
+  display: inline-flex;
+  flex: none;
+}
+.feed-stack > * + * {
+  margin-left: -6px;
+}
+.feed-stack .avatar,
+.feed-stack .feed-face {
+  box-shadow: 0 0 0 2px var(--bg-center);
+  border-radius: 50%;
+}
+.feed-reactors {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.feed-reactors-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.feed-person {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-soft);
+}
+.feed-person:hover {
+  background: var(--bg-hover);
+}
+.feed-person-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.feed-reactors-note {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+.feed-slim {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  color: var(--text-dim);
+  font-size: 13.5px;
+}
+.feed-slim-icon {
+  flex: none;
+  width: 30px;
+  display: flex;
+  justify-content: center;
+  color: var(--accent);
+}
+.feed-slim-what {
+  flex: 1;
+  min-width: 0;
+}
+.feed-slim-what b {
+  color: var(--text);
+}
+.post-item {
+  padding: 0;
+}
+/* A picture in the feed stays a glance: the thread shows it whole. */
+.feed-unit .post-media {
+  max-height: 260px;
+  overflow: hidden;
+}
+
+
+/* A post's replies as a comment section (Comments.tsx): tree, compact, flat or chains. */
+.thread-replies-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: 14px 8px 6px;
+}
+.thread-replies-bar .thread-replies-head {
+  margin: 0;
+}
+.thread-replies-n {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.ct {
+  padding: 4px 8px 8px;
+}
+.ct-node {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.ct-side {
+  flex: none;
+  width: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.ct-face {
+  padding: 0;
+  border-radius: 50%;
+  line-height: 0;
+  flex: none;
+}
+/* The line down a reply's left, under its picture: clicking it folds the branch, as on Reddit. */
+.ct-rail {
+  flex: 1;
+  width: 16px;
+  min-height: 8px;
+  margin-top: 4px;
+  padding: 0;
+  border-radius: 4px;
+  background: linear-gradient(var(--border), var(--border)) center / 2px 100% no-repeat;
+  cursor: pointer;
+}
+.ct-rail:hover,
+.ct-rail:focus-visible {
+  background-image: linear-gradient(var(--accent), var(--accent));
+}
+.ct-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ct-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+  min-height: 24px;
+  align-items: center;
+}
+.ct-head .post-who {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.ct-time {
+  text-decoration: none;
+  white-space: nowrap;
+}
+.ct-time:hover {
+  text-decoration: underline;
+}
+.post-tag.op {
+  border-color: transparent;
+  background: color-mix(in oklab, var(--accent) 22%, transparent);
+  color: var(--accent);
+}
+.ct-folded {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.ct-text {
+  margin: 0;
+  font-size: 14px;
+}
+.ct-kids {
+  display: flex;
+  flex-direction: column;
+}
+.ct-more,
+.ct-continue,
+.ct-unfold {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 2px 0;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 12.5px;
+  text-decoration: none;
+}
+.ct-more:hover,
+.ct-continue:hover,
+.ct-unfold:hover {
+  text-decoration: underline;
+}
+.ct-node.folded .ct-main {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+.ct-more-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.thread-chain > .ct-more-wrap {
+  margin: 0 0 8px 54px;
+}
+.ct-more-why {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+/* Compact: no pictures, a narrow indent, [–] to fold. */
+.ct.compact .ct-node {
+  gap: 4px;
+  margin-top: 6px;
+}
+.ct.compact .ct-side {
+  width: 22px;
+}
+.ct.compact .ct-head {
+  font-size: 12px;
+  min-height: 18px;
+  color: var(--text-faint);
+}
+.ct.compact .ct-text {
+  font-size: 13.5px;
+}
+.ct.compact .post-counts {
+  display: none;
+}
+.ct-toggle {
+  padding: 0;
+  font: 11px var(--mono);
+  color: var(--text-faint);
+}
+.ct-toggle:hover {
+  color: var(--accent);
+}
+/* Flat: a reply to the post, everything under it one level in. */
+.ct-flat {
+  padding: 12px 0 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.ct-flat-top {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ct-flat .ct-head {
+  gap: 8px;
+}
+.ct-flat-top > :not(.ct-head) {
+  margin-left: 40px;
+}
+.ct-flat-toggle {
+  margin: 6px 0 0 40px;
+  padding: 2px 0;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.ct-flat-kids {
+  margin-left: 40px;
+  display: flex;
+  flex-direction: column;
+}
+.ct-flat-reply {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 10px;
+}
+.ct-flat-reply > :not(.ct-head) {
+  margin-left: 32px;
+}
+.ct-to {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.ct-flat > .ct-more {
+  margin-left: 40px;
+}
+
+
+/* Answering (Actions.tsx, Composer.tsx): the bar under a post, who reacted, the composer. */
+.post-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 2px 0 0 -8px;
+  color: var(--text-faint);
+}
+.post-actions.big {
+  justify-content: space-between;
+  max-width: 460px;
+  margin: 0;
+  padding: 4px 0;
+  border-top: 1px solid var(--border-soft);
+}
+.pa-slot,
+.pa-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.pa-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 44px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: inherit;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+.post-actions.big .pa-btn {
+  font-size: 13px;
+  padding: 7px 10px;
+}
+.pa-btn:hover,
+.pa-btn:focus-visible {
+  background: var(--bg-hover);
+}
+.pa-btn.reply:hover {
+  color: var(--accent);
+}
+.pa-btn.repost:hover,
+.pa-btn.repost.on {
+  color: #00ba7c;
+}
+.pa-btn.like:hover,
+.pa-btn.like.on {
+  color: #f91880;
+}
+.pa-btn.like.on .icon {
+  fill: currentColor;
+}
+.pa-btn:disabled {
+  opacity: 0.7;
+}
+.pa-views {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  font-size: 12.5px;
+}
+/* Over the page at the body (Actions.tsx Floating): no scrolling box clips them. */
+.pa-float {
+  position: fixed;
+  z-index: 120;
+}
+.ct-style-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+}
+.pa-menu,
+.pa-pop,
+.ct-style-menu {
+  min-width: 180px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-raised);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.35);
+  overflow: hidden;
+}
+.pa-menu button,
+.ct-style-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  text-align: left;
+  font-weight: 600;
+}
+.pa-menu button:hover,
+.ct-style-menu button:hover {
+  background: var(--bg-hover);
+}
+.pa-pop {
+  width: min(340px, calc(100vw - 16px));
+  max-height: 380px;
+  overflow-y: auto;
+}
+.post-reactors {
+  display: flex;
+  flex-direction: column;
+}
+.post-reactors-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px 6px;
+  font-size: 13px;
+}
+.post-reactors-sort {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+.post-reactors-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 4px;
+}
+.post-reactor {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 12px;
+  text-align: left;
+}
+.post-reactor:hover,
+.post-reactor:focus-visible {
+  background: var(--bg-hover);
+}
+.post-reactor-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.post-reactor-name {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.post-reactor-why {
+  color: var(--text-dim);
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sheet .post-reactors {
+  min-height: 0;
+  overflow-y: auto;
+}
+.post-reactors-note {
+  margin: 0;
+  padding: 6px 12px 10px;
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+.post-reactors-more {
+  margin: 0 12px 8px;
+}
+/* The composer. */
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-raised);
+}
+.composer:focus-within {
+  border-color: color-mix(in oklab, var(--accent) 60%, var(--border));
+}
+.compose-to {
+  color: var(--text-faint);
+  font-size: 13px;
+}
+.compose-to b {
+  color: var(--accent);
+  font-weight: 600;
+}
+/* The text over a copy of itself: the copy marks what is past the limit, the text area stays plain to type in. */
+.compose-box {
+  position: relative;
+}
+.compose-back,
+.compose-text {
+  /* The same width for the marks behind as for the text, scrollbar or not. */
+  scrollbar-gutter: stable;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.45;
+  padding: 2px 0;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 0;
+}
+.compose-back {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: transparent;
+  pointer-events: none;
+}
+.compose-back mark {
+  color: transparent;
+  background: color-mix(in oklab, #f4212e 32%, transparent);
+  border-radius: 2px;
+}
+.compose-text {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  resize: none;
+  background: transparent;
+  color: var(--text);
+  outline: none;
+}
+.compose-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-soft);
+}
+.compose-spacer {
+  flex: 1;
+}
+.compose-hint {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.compose-error {
+  color: var(--danger);
+  font-size: 12.5px;
+}
+.compose-left {
+  font-size: 12.5px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.compose-left.warn {
+  color: #ffd400;
+}
+.compose-left.over {
+  color: #f4212e;
+  font-weight: 700;
+}
+.compose-ring {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  font-variant-numeric: tabular-nums;
+}
+.compose-ring .ring-track {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 2.5;
+}
+.compose-ring .ring-fill {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  transition: stroke-dashoffset 0.12s;
+}
+.compose-ring.warn .ring-fill {
+  stroke: #ffd400;
+}
+.compose-ring.over .ring-fill {
+  stroke: #f4212e;
+}
+.compose-ring .ring-n {
+  position: absolute;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.compose-ring.over .ring-n {
+  position: static;
+  color: #f4212e;
+  font-weight: 700;
+}
+.compose-ring.over svg + .ring-n {
+  position: absolute;
+}
+.compose-send {
+  border-radius: 999px;
+  padding: 6px 16px;
+  font-weight: 700;
+}
+.compose-cancel {
+  border-radius: 999px;
+}
+.compose-closed {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 8px 0 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  color: var(--text-faint);
+  text-align: left;
+}
+.compose-closed:hover {
+  border-color: var(--border);
+}
+.compose-closed span:first-child {
+  flex: 1;
+}
+.compose-closed-btn {
+  padding: 4px 14px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--accent) 45%, transparent);
+  color: var(--text);
+  font-weight: 700;
+  font-size: 13px;
+}
+/* The style menu: a quiet word beside Replies. */
+.ct-style {
+  position: relative;
+}
+.ct-style-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.ct-style-btn:hover,
+.ct-style-btn[aria-expanded='true'] {
+  color: var(--text-dim);
+  background: var(--bg-hover);
+}
+.ct-style-menu {
+  left: auto;
+  right: 0;
+  width: 270px;
+}
+.ct-style-menu button {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+.ct-style-menu button span {
+  color: var(--text-faint);
+  font-weight: 400;
+  font-size: 12px;
+}
+.ct-style-menu button.on b::after {
+  content: ' ✓';
+  color: var(--accent);
+}
+.thread-focal .composer,
+.thread-focal .compose-closed {
+  margin-top: 4px;
 }
 
 @media (max-width: 820px) {
+  .ct-side {
+    width: 20px;
+  }
+  .ct-node {
+    gap: 6px;
+  }
+  .thread-focal-text {
+    font-size: 16px;
+  }
   .feed-scroll {
     padding: 4px 8px 16px;
   }
-  .feed-card {
-    gap: 10px;
-    padding: 12px 8px 12px 6px;
-  }
-  .feed-icon {
-    width: 26px;
-  }
   .feed-bar {
     margin: 0 8px calc(8px + env(safe-area-inset-bottom, 0px));
-  }
-  .post-thumb {
-    width: 56px;
-    height: 56px;
   }
 }

@@ -22,7 +22,7 @@ import { ingestServers } from './servers.ts';
 import { ingestApps } from './apps.ts';
 import { ingestThreadFacts, threadParts, type ThreadParts } from './threads.ts';
 import { type DueReminder, ingestSaved } from './saved.ts';
-import { feedItemOf, feedView } from './feed.ts';
+import { feedItemOf, feedView, postView } from './feed.ts';
 import { keepAbout } from './people.ts';
 import { alertBar, type Facts } from './learn.ts';
 import { attachmentExtra, attachmentRich, embedViews, richView, type StoredExtra } from './rich.ts';
@@ -1302,7 +1302,8 @@ export class Store {
     // Someone in your notifications (docs/feed.md) is someone: a person, so their profile and what they did are kept
     // and found like anyone you talk with.
     if (!fromSelf && !existed && conv.variant === 'feed') this.ensurePerson(author);
-    if (newForAccount && !fromSelf) {
+    // Logged posts (posts.ts) are read as they are logged: someone opened them.
+    if (newForAccount && !fromSelf && conv.variant !== 'posts') {
       this.db
         .query(
           `UPDATE vantage SET unread = unread + 1, mentions = mentions + ? WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?
@@ -2692,7 +2693,7 @@ export class Store {
       const rx = new Map<string, string[]>();
       for (const x of R.get(r.id) ?? []) (rx.get(`${x.style}|${x.key}`) ?? rx.set(`${x.style}|${x.key}`, []).get(`${x.style}|${x.key}`)!).push(x.identity_id);
       const t = T.get(r.id);
-      const extra = json<StoredExtra & { encryptionWarning?: string; forward?: P.ForwardFact; feed?: unknown }>(r.extra, {});
+      const extra = json<StoredExtra & { encryptionWarning?: string; forward?: P.ForwardFact; feed?: unknown; post?: P.PostFact }>(r.extra, {});
       const encryptionWarning = extra.encryptionWarning;
       const forward = sentForwards.get(r.id) ?? (extra.forward ? this.forwardView(r.network, extra.forward) : null);
       const rich = sealed ? undefined : richView(extra, r.network, r.body, this.linkedMessage);
@@ -2700,10 +2701,13 @@ export class Store {
       // A feed conversation's message (docs/feed.md): what they did, with hub ids and signed pictures.
       const fi = extra.feed ? feedItemOf(extra) : null;
       const feed = fi ? feedView(fi, r.network, (u) => this.media(u, seenVia[0])) : null;
+      // A logged post (posts.ts, docs/feed.md "Threads"): the post as the network last showed it.
+      const post = extra.post && typeof extra.post === 'object' && typeof extra.post.id === 'string' ? postView({ ...extra.post, text: r.body }, r.network, (u) => this.media(u, seenVia[0])) : null;
       return {
         ...(encryptionWarning ? { encryptionWarning } : {}),
         ...(forward ? { forward } : {}),
         ...(feed ? { feed } : {}),
+        ...(post ? { post } : {}),
         ...extras,
         id: r.id,
         conversationId: r.conversation_id,
@@ -2886,6 +2890,23 @@ export class Store {
       ? this.messageViews(this.db.query(`SELECT * FROM message WHERE id IN (${replyIds.map(() => '?').join(',')})`).all(...replyIds) as Row[])
       : [];
     return { messages: msgs, identities: this.identitiesOf([...msgs, ...quoted]), hasMore, ...(quoted.length ? { quoted } : {}) } as P.MessagePage;
+  }
+
+  /**
+   * What the feeds said about one post (docs/feed.md "The feed's page"): every like, repost, reply and quote of it in
+   * any account's feed of its network, newest first, as a page. The page's list of who liked or reposted it reads
+   * this, whatever pages of the feed it holds.
+   */
+  postActivity(network: P.Network, postId: string, limit = 1000): P.MessagePage {
+    const rows = this.db
+      .query(
+        `SELECT m.* FROM message m JOIN conversation c ON c.id = m.conversation_id
+         WHERE c.variant = 'feed' AND c.network = ? AND m.deleted = 0 AND json_extract(m.extra, '$.feed.post.id') = ?
+         ORDER BY m.ts DESC LIMIT ?`,
+      )
+      .all(network, postId, limit + 1) as Row[];
+    const msgs = this.messageViews(rows.slice(0, limit));
+    return { messages: msgs, identities: this.identitiesOf(msgs), hasMore: rows.length > limit } as P.MessagePage;
   }
 
   /** Every direct conversation with a person, merged into one timeline. */

@@ -88,13 +88,14 @@ try {
   await settled();
   check(await has('.pf-action[data-action="friend"]'), 'on a stranger: Add friend', await text('.pf-action'));
   await click('.pf-action[data-action="friend"]');
-  await p.until(`!!document.querySelector('.pf-action[data-action="relationship"]')`, 8000);
-  check((await text('.pf-action[data-action="relationship"]')).includes('Request sent') && !(await has('.pf-action[data-action="friend"]')), 'Add friend becomes "Request sent"', await text('.pf-action'));
+  // The hero's tag and Connections say it (docs/profile.md "Connections"), not a button.
+  await p.until(`!!document.querySelector('.pf-tag[data-kind="requested"]')`, 8000);
+  check((await text('.pf-tag[data-kind="requested"]')).includes('Request sent') && !(await has('.pf-action[data-action="friend"]')), 'Add friend becomes "Request sent"', await text('.pf-tag'));
   await p.eval('location.reload()').catch(() => {});
   await Bun.sleep(600);
   await p.until(`!!document.querySelector('.profile-page')`, 20000);
   await settled();
-  check((await text('.pf-action[data-action="relationship"]')).includes('Request sent'), 'and still so after a reload', await text('.pf-action'));
+  check((await text('.pf-tag[data-kind="requested"]')).includes('Request sent') && (await text('.pf-standing')).includes('Friend request sent on Discord'), 'and still so after a reload', await text('.pf-tag'));
   await shot('requests-03-sent');
   // Without the connect capability on either Discord account: no button at all.
   await action(DMAIN, 'capabilities', { without: ['connect'] });

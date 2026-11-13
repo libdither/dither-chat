@@ -18,7 +18,8 @@ command (`packages/protocol/src/about.ts` `PersonAbout`).
   the name (for a person of one account, with a pencil on hover for that account's nickname, also under More), then a
   line of what it is: a person's handle (click to copy), or for someone with several accounts their
   networks' marks and "N accounts", which scrolls to them; a place's network, kind,
-  member and channel counts. Tags under it: pronouns, Friend / In your contacts (with the networks' marks), You, Bot;
+  member and channel counts. Tags under it: pronouns, one per kind of connection with the networks' marks (Friend,
+  Contact, You follow, Follows you, Request sent, Blocked: "Connections" below), Wants to be friends, You, Bot;
   for a place End-to-end encrypted, Age-restricted, Only admins send, your role there, Muted. A person's status line
   last.
 - **Actions.** One row. A person: Message (straight to your chat with them, every route together, where the message
@@ -48,11 +49,12 @@ Left:
   Remove Nickname once it has one, editing the name on the tile in place; only you see it, docs/chats.md "Names"),
   Copy the handle and the id, Open on the network, Split Into Its Own Person. The merge hint and search sit under the tiles. Before 2026-11-11 the hero
   had a chip per handle and the right column a plain row per identity, with one picture for the person.
-- **About**: each network's bio (on the account tiles instead, for someone with several), the longest first, labelled
+- **About**: each network's bio (on the account tiles instead, for someone with several), its links as links (an
+  address with or without `https://`, a Markdown link, and on X an @handle; `links.ts`, `bits.tsx` Linked), the longest first, labelled
   by network when there is more than one (a network's
   stock line such as WhatsApp's "Available" is left out); their links (connected accounts, GitHub, a phone number
   written two ways once); On Discord since; facts a network adds (Business, Time zone); how many of their messages
-  the hub has, since when. A network that could not be asked says why, in a line.
+  the hub has, since when; follower, following and post counts (X). A network that could not be asked says why, in a line.
   Badges, the frame on their picture and their profile's colours, where the network shows them. On your own page,
   under your bio: your name, pronouns, picture and banner on each network that lets you change them here
   (docs/account-self.md).
@@ -64,7 +66,8 @@ Left:
 - **Mail** (docs/mail.md, "People"), for someone with an email address: their newest threads across your mail
   accounts, how many, and All mail with them. A thread opens in Mail.
 - **Recent posts** (X, [feed.md](feed.md#profiles)): their posts as their profile said them, pinned, reposts, replies
-  and quotes marked, with pictures, counts and a link to each.
+  and quotes marked, with pictures, counts and a link to each. A post opens its thread ([feed.md](feed.md#threads)),
+  and each is logged as a message.
 - **Recent messages**: each with the place's picture (the server's icon for a channel), the place, and when. A feed
   item says what they did ("X notifications", "Liked your post: “…”"). Not shown for someone known only by mail.
 - **Activity** (ui/ActivityCard.tsx): the current status and since when, and their presence now when it is logged; then
@@ -76,9 +79,9 @@ Left:
 Right:
 - **Mutual friends** (Discord), or on your own page **Friends**: your Discord friends, Signal and WhatsApp
   contacts and Matrix direct chats, each person once. Click one for theirs.
-- **How you stand**: each of your accounts that has them on its list (friend, request sent, blocked, contact,
-  following), from the accounts' own lists, else what a profile said, with Remove friend, Cancel request, Unblock,
-  Remove contact or Unfollow where the account can; each asks first (docs/add.md, "Relationships").
+- **Connections** (below): how each of your accounts stands with them, grouped by kind, with Remove friend, Cancel
+  request, Unblock, Remove contact or Unfollow where the account can; each asks first (docs/add.md,
+  "Relationships"). Called How you stand until 2026-11-13.
 - **Accounts**, for someone with one account: it (by its name as you see it, and its own beside the handle when you
   gave it a nickname), with Open on the network; a hint when someone elsewhere has the
   same name, saying where ("Alice Chen on Signal", "Alice Chen <alice@…>"), and the merge search, which finds people by any name
@@ -157,9 +160,69 @@ null for one it does not have), friends into identities, pictures into signed me
 | X | bio | | | from the profile | following, Follows you | (hub's own) | | | website | follower, following and post counts; recent posts |
 
 **X** also answers with the person's recent posts (`PersonAbout.posts`, up to 20, a pinned one first), shown in a
-**Recent posts** card after About, and its counts and **Follows you** go in About ([feed.md](feed.md#profiles)). The
+**Recent posts** card after About; its counts go in About and its following and `followsYou` in Connections
+([feed.md](feed.md#profiles), below). The
 people in your X notifications have their profile kept without asking (a `personAbout` event): their page shows it at
 once, says it came from your notifications, and still asks X when opened, for their posts.
+
+### Connections
+
+How each of your accounts stands with them, in **one vocabulary across networks** (2026-11-13, from the owner: "discord
+friends and twitter follows should be similar kinds of things"). Code: `packages/web/src/connections.ts` (pure),
+`ProfileConnections` in ui/Requests.tsx; the data is the accounts' lists (`ProfileView.links`, docs/add.md
+"Relationships") and what each network's profile said (`relationship`, `followsYou`).
+
+| Kind | What it covers | The row says | Ends with |
+|---|---|---|---|
+| **Friend** | a Discord friend; an X (or Instagram) account you follow and that follows you | Friends on Discord · You follow each other on X | Remove friend · (Unfollow, once X can) |
+| **Contact** | in your Telegram, Signal or WhatsApp address book (Google Messages too) | In your Telegram contacts | Remove contact |
+| **You follow** | you follow them, they do not follow you | You follow them on X | (Unfollow, once X can) |
+| **Follows you** | they follow you, you do not follow them | Follows you on X | nothing |
+| **Request sent** | a friend request of yours waiting | Friend request sent on Discord | Cancel request |
+| **Blocked** | blocked | Blocked on Discord | Unblock |
+
+- **Each stays per account**: one row per account of yours and account of theirs, with the network's badge, its own
+  word for it, which of their accounts (with several) and which of yours ("alice.chen ⇄ main"), and since when where
+  the network says. Rows are grouped under the kind, in the order above, each group a list named for its kind. The
+  hero has one tag per kind with the networks it is on ("Friend" with Discord and X marks, "Contact" with Telegram,
+  Signal and WhatsApp); a screen reader hears what it stands for ("Friend: Friends on Discord; You follow each other
+  on X"), the hover shows the same. Two Remove friend buttons (Discord main and alt) are named apart by account.
+- **Nothing X cannot do.** Neither X adapter (the extractor nor the demo) can follow or unfollow (no `connect` or
+  `disconnect` capability), so an X row has no Unfollow and the hero no Follow or Follow back. They come with those
+  capabilities, through the same `connect` and `remove` paths as Discord's (docs/add.md).
+- **Changed on the page.** Ending one or making one (Remove friend, Unblock, Add friend, Accept) shows at once and
+  stays until the profile is fetched again: Remove friend and then Add friend says Request sent (connections.ts
+  `withChanges`).
+- **Counts are not connections.** Followers, following and posts are facts about their account: they stay in About.
+  Someone asking to be your friend is a request, not yet a connection: the hero says "Wants to be friends" and has
+  Accept and Decline.
+- **Only what the networks say.** A follow back counts only when the same account of yours follows them and its
+  profile of them says `followsYou`. X keeps no list the hub reads, so its follows are as of each account's last
+  profile of them (asked, or in your notifications); the network is asked again when the page opens. A profile seen
+  in a notification that leaves the follow fields out keeps the account's last known ones; a profile asked for is the
+  whole answer, so one without them means no follow. An account that keeps a list (`relationships`) is believed over
+  its profiles, so someone dropped from the list is gone even if an older profile said following. Your own identities
+  are never a connection (your second X account following your first).
+- **The profile says what People says.** `ProfileView.links` carries the same follows from kept profiles as People's
+  lists (hub add.ts `profileLinksOf`), per account, so with two X accounts the one that followed them months ago still
+  counts though the other asked last.
+- **People's lists use the same words.** Friends has Discord friends and the X accounts you follow each other with;
+  Contacts the address books; Following everyone you follow. The Friends and Following chips show where an account
+  keeps such a list, and for any X or Instagram account that reads profiles. A row says when you last talked, or
+  else what the link is ("You follow each other on X"), with the networks' marks when it is on several. The hub adds
+  the profile-made follows to `GET /api/people` (`from: 'profile'`, docs/add.md), reading only the kept profiles that
+  say following (index `about_following`).
+
+Before 2026-11-13 the right column said **How you stand** in each network's own label (Friend, In your contacts, You
+follow them), the hero left out follows and requests (disabled **Following** and **Request sent** buttons said them),
+and About had X's **Follows you** tag beside the counts. Three ways were drawn on the demo world (the PR has the
+pictures): one Connections card grouped by kind (built); the connection as a chip on each of their account tiles,
+with no card (left: your friendship is per account of yours, Discord main and alt, which a tile of theirs cannot
+hold, and someone with one account has no tiles); and a table of each network, you to them and them to you (left: the
+phone networks have no direction, so half of it is empty, and it reads heavier than the list).
+
+Checked by `scripts/verify-profile-relationships.ts` against a fresh demo hub, on a desktop and a phone, and by
+`packages/web/test/connections.test.ts` and `packages/hub/test/links.test.ts`.
 
 ### Message counts
 

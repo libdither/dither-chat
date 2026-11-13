@@ -101,9 +101,9 @@ const LIVE = 4;
 
 const BIO: Record<Who, { bio: string; followers: number; following: number; posts: number; followsYou?: boolean; location?: string }> = {
   self: { bio: 'Building dither: one inbox for every network. Routing, sheaves, sheep.', followers: 812, following: 301, posts: 2210 },
-  alice: { bio: 'Distributed systems at a small company. Rust, coffee, long walks.', followers: 2310, following: 512, posts: 8120, followsYou: true },
+  alice: { bio: 'Distributed systems at a small company. Rust, coffee, long walks. https://alicechen.dev/notes', followers: 2310, following: 512, posts: 8120, followsYou: true },
   ravi: { bio: 'Routing protocols and the people who break them.', followers: 640, following: 220, posts: 1900, followsYou: true },
-  quinn: { bio: 'Writer. Mostly about software, sometimes about birds.', followers: 15200, following: 870, posts: 22100 },
+  quinn: { bio: 'Writer. Mostly about software, sometimes about birds. quinnwrites.blog', followers: 15200, following: 870, posts: 22100 },
   maya: { bio: 'PhD student, networks and graphs.', followers: 410, following: 390, posts: 760, followsYou: true },
   theo: { bio: 'I make small tools for big repos.', followers: 980, following: 1020, posts: 5400 },
   nora: { bio: 'Networks researcher. Opinions are cached.', followers: 3300, following: 610, posts: 12000, followsYou: true },
@@ -122,7 +122,8 @@ function aboutOf(who: Who): P.PersonAbout {
     bio: b.bio,
     createdAt: Date.UTC(2014 + (Number(i.nativeId.slice(-2)) % 9), Number(i.nativeId.slice(-3, -1)) % 12, 3),
     counts: { followers: b.followers, following: b.following, posts: b.posts },
-    ...(who === 'self' ? {} : { followsYou: !!b.followsYou, relationship: who === 'alice' || who === 'nora' ? ('following' as const) : ('stranger' as const) }),
+    // You follow Alice and Nora, who follow you back (Friends, docs/profile.md "Connections"), and Quinn, who does not.
+    ...(who === 'self' ? {} : { followsYou: !!b.followsYou, relationship: who === 'alice' || who === 'nora' || who === 'quinn' ? ('following' as const) : ('stranger' as const) }),
     links: [{ label: 'Website', value: `${i.handle}.example`, url: `https://${i.handle}.example` }],
   };
 }
@@ -143,6 +144,90 @@ function postsOf(who: Who, epoch: number): P.PostFact[] {
 }
 
 /**
+ * The threads (docs/feed.md "Threads"): your routing post continued by you and answered by five people (two on a
+ * second page), with a tree under it eight deep in places: Ravi and you on churn, Alice's question opening a branch on
+ * the tail and landmarks that Nora, Lee, Sam and Maya carry on, Theo's on the browser. Each post is read as X reads
+ * it: its replies, each with the first answers under it as a chain of up to three, so the tree's other branches come
+ * only by opening them. Any other post the demo knows answers with what it answers.
+ */
+function threads(epoch: number, made: readonly P.PostFact[] = []) {
+  const me = X.self;
+  const mine = yourPosts(epoch);
+  const r = mine.routing;
+  const under = (n: number, who: P.IdentityFact, min: number, text: string, to: P.PostFact, x: Partial<P.PostFact> = {}) =>
+    post(epoch, n, who, min, text, { replyTo: { id: to.id, author: to.author }, root: r.id, ...x });
+  const cont1 = under(30, me, 299, 'Setup: a random geometric graph, each node knowing only its 8 nearest neighbours. Stretch is the routed path over the shortest one.', r, { counts: { likes: 12 } });
+  const cont2 = under(31, me, 298, 'Median stretch 1.08, p99 1.29. The simulator is in sim/ and runs in about a minute.', cont1, { counts: { likes: 9 } });
+  const ravi = feed(epoch).find((x) => x.item.type === 'reply')!.item.theirs!;
+  const raviIn = { ...ravi, root: r.id };
+  const ans = under(32, me, 35, 'Under 20% churn stretch goes to about 1.6 until the neighbour tables refill, roughly ten seconds. Plot coming.', raviIn, { counts: { likes: 4 } });
+  const ravi2 = under(33, X.ravi, 30, 'Ten seconds is better than I guessed. Is the refill pushed or pulled?', ans, { counts: { likes: 1 } });
+  const pulled = under(38, me, 20, 'Pulled: a node with a short table asks its neighbours every 500 ms until it is full again.', ravi2, { counts: { likes: 2 } });
+  const noraChurn = under(39, X.nora, 28, 'We saw the same on our testbed. The refill is the whole game.', ans, { counts: { likes: 3 } });
+  const alice = under(34, X.alice, 160, 'The plot in the repo is lovely. What does the tail look like at 10M?', r, { counts: { likes: 6 } });
+  const tail = under(40, me, 150, 'At 10M the p99 is 1.34. The tail grows with the diameter, slowly.', alice, { counts: { likes: 5 } });
+  const alice2 = under(41, X.alice, 140, 'So the tail is the diameter, more or less. Makes sense.', tail, { counts: { likes: 1 } });
+  const nora = under(42, X.nora, 145, 'Did you try landmarks? They usually fix exactly that tail.', tail, { counts: { likes: 4 } });
+  const land = under(43, me, 120, 'Four landmarks bring p99 to 1.2, for four more entries per node.', nora, { counts: { likes: 7 } });
+  const nora2 = under(44, X.nora, 100, 'That is a good trade.', land, { counts: { likes: 1 } });
+  const lee = under(45, X.lee, 110, 'Landmarks are a cover, so this is a sheaf question in disguise.', land, { counts: { likes: 9 } });
+  const sam = under(46, X.sam, 90, 'Everything is a sheaf question in disguise.', lee, { counts: { likes: 11 } });
+  const maya2 = under(47, X.maya, 60, 'Can confirm, my advisor says this every week.', sam, { counts: { likes: 5 } });
+  const lee2 = under(48, X.lee, 50, 'Your advisor is right.', maya2, { counts: { likes: 2 } });
+  const maya = under(35, X.maya, 95, 'Citing this in my qualifying exam, thank you.', r, { counts: { likes: 2 } });
+  const theo = under(36, X.theo, 70, 'Any chance the simulator runs in the browser?', r);
+  const wasm = under(49, me, 55, 'It is about 400 lines of Rust with no threads, so wasm should be easy. Want to try?', theo, { counts: { likes: 3 } });
+  const theo2 = under(50, X.theo, 50, 'On it this weekend.', wasm, { counts: { likes: 2 } });
+  const quinn = under(37, X.quinn, 65, 'Saving this for the weekend.', r, { counts: { likes: 1 } });
+  // What you posted here (a reply goes under what it answers).
+  const tree = [cont1, cont2, raviIn, ans, ravi2, pulled, noraChurn, alice, tail, alice2, nora, land, nora2, lee, sam, maya2, lee2, maya, theo, wasm, theo2, quinn, ...made];
+  const kids = (id: string) => tree.filter((p) => p.replyTo?.id === id);
+  // Each post's reply count is what is under it, as X counts it.
+  for (const p of [r, ...tree]) p.counts = { ...p.counts, replies: kids(p.id).length };
+  // X counts a reply under Maya's that it never shows (a reply it filters out): "1 more reply" there brings nothing.
+  maya.counts = { ...maya.counts, replies: 1 };
+  const all = [r, ...tree];
+  // A reply and the first answers under it, as X shows one in a thread.
+  const chain = (p: P.PostFact) => {
+    const c = [p];
+    for (let k = kids(p.id)[0]; k && c.length < 3; k = kids(k.id)[0]) c.push(k);
+    return c;
+  };
+  const thread = (id: string, cursor?: string): P.PostThread | null => {
+    if (id === r.id)
+      return cursor === 'more-1'
+        ? { focal: { ...r, root: r.id }, ancestors: [], replies: [chain(theo), chain(quinn)], more: null }
+        : { focal: { ...r, root: r.id }, ancestors: [], replies: [cont1, raviIn, alice, maya].map(chain), more: 'more-1' };
+    const at = all.find((p) => p.id === id);
+    const known = at ?? [...Object.values(mine), ...feed(epoch).flatMap((x) => [x.item.post, x.item.theirs]), ...(Object.keys(X) as Who[]).flatMap((w) => postsOf(w, epoch))].find((p) => p?.id === id);
+    if (!known) return null;
+    const ancestors: P.PostFact[] = [];
+    for (let p = known; p.replyTo; ) {
+      const up = all.find((q) => q.id === p.replyTo!.id);
+      if (!up) break;
+      ancestors.unshift(up);
+      p = up;
+    }
+    // The author continuing first, as X shows it.
+    const replies = kids(id).sort((a, b) => Number(b.author === known.author) - Number(a.author === known.author));
+    return { focal: known, ancestors, replies: replies.map(chain), more: null };
+  };
+  return Object.assign(thread, { known: (id: string) => all.find((p) => p.id === id) ?? [...Object.values(mine), ...feed(epoch).flatMap((x) => [x.item.post, x.item.theirs]), ...(Object.keys(X) as Who[]).flatMap((w) => postsOf(w, epoch))].find((p) => p?.id === id) ?? null });
+}
+
+/** People who liked or reposted your routing post beyond those in your notifications (X names them on asking). */
+const FANS = [
+  person(20, 'graphs_daily', 'Graphs Daily', '#3b5bdb'),
+  person(21, 'kenji_net', 'Kenji', '#2f9e44'),
+  person(22, 'p2p_paula', 'Paula', '#c2255c'),
+  person(23, 'dist_sys_digest', 'Distributed Systems Digest', '#5f3dc4'),
+  person(24, 'oscar_o', 'Oscar', '#e8590c'),
+  person(25, 'mesh_mira', 'Mira', '#0c8599'),
+  person(26, 'b_routing', 'Bea', '#862e9c'),
+];
+const FAN_FOLLOWERS = [184_000, 2_100, 640, 51_000, 90, 12_400, 310];
+
+/**
  * X, played: the feed conversation and its messages, profiles of the people in it, their posts on asking. Nothing
  * here is ever sent anywhere; markRead and typing are logged for the verify script, which checks the hub sent none.
  */
@@ -152,6 +237,15 @@ export class DemoX implements InprocAdapter {
   private readLog: { conversation: string; upTo: string; at: number }[] = [];
   private typingLog: { conversation: string; at: number }[] = [];
   private refused: string[] = [];
+  /** Every command that is not a read (action writeLog): what would have changed something on X, sent or not. */
+  private writes: string[] = [];
+  /** What you did here: posts liked and reposted, and posts written. */
+  private liked = new Set<string>();
+  private reposted = new Set<string>();
+  private made: P.PostFact[] = [];
+  /** The next like or repost is refused (action failNextAct): the verify script sees the page take it back. */
+  private failNext = false;
+  private postLog: { post: string; cursor?: string; at: number }[] = [];
 
   constructor(
     private acc: AccountRow,
@@ -163,7 +257,8 @@ export class DemoX implements InprocAdapter {
     this.epoch = JSON.parse(this.acc.config || '{}').epoch ?? Date.now();
     const marker = join(this.dir, 'seeded');
     const firstRun = !existsSync(marker);
-    emit({ t: 'hello', network: 'x', version: 'demo', capabilities: ['send', 'history', 'markRead', 'typing', 'react', 'profile', 'connect', 'openDirect'] });
+    // No `connect` or `disconnect`: it cannot follow or unfollow, as the real extractor cannot yet.
+    emit({ t: 'hello', network: 'x', version: 'demo', capabilities: ['send', 'history', 'markRead', 'typing', 'react', 'profile', 'posts', 'postActions', 'publish', 'postReactors', 'openDirect'] });
     emit({ t: 'status', status: 'online', self: { ...X.self, isSelf: true } });
     // Identity facts first, then what X showed about each of them (their profile came with the notification).
     for (const [k, i] of Object.entries(X)) if (k !== 'self') emit({ t: 'identity', identity: i });
@@ -199,6 +294,7 @@ export class DemoX implements InprocAdapter {
   command(cmd: P.AdapterCommand) {
     const reply = (result?: unknown) => 'id' in cmd && this.emit({ t: 'reply', id: cmd.id, ok: true, result });
     const fail = (error: string) => 'id' in cmd && this.emit({ t: 'reply', id: cmd.id, ok: false, error });
+    if (cmd.t !== 'profile' && cmd.t !== 'post' && cmd.t !== 'postReactors' && cmd.t !== 'history' && cmd.t !== 'action') this.writes.push(cmd.t === 'postAct' ? `postAct:${cmd.act}` : cmd.t);
     switch (cmd.t) {
       case 'profile': {
         const who = this.whoOf(cmd.who);
@@ -206,6 +302,60 @@ export class DemoX implements InprocAdapter {
         // A repost or a quote names its author: their facts come first, as the real extractor sends them.
         for (const k of ['quinn'] as Who[]) this.emit({ t: 'identity', identity: X[k] });
         return reply({ ...aboutOf(who), posts: postsOf(who, this.epoch) } satisfies P.PersonAbout);
+      }
+      case 'post': {
+        this.postLog.push({ post: cmd.post, ...(cmd.cursor ? { cursor: cmd.cursor } : {}), at: Date.now() });
+        const t = threads(this.epoch, this.made)(cmd.post, cmd.cursor);
+        if (!t) return fail('X did not give this post');
+        const v = (p: P.PostFact) => this.viewed(p);
+        return reply({ ...t, ...(t.focal ? { focal: v(t.focal) } : {}), ancestors: t.ancestors.map(v), replies: t.replies.map((c) => c.map(v)) } satisfies P.PostThread);
+      }
+      case 'postAct': {
+        if (this.failNext) {
+          this.failNext = false;
+          return fail('X said no (the demo was asked to refuse this one)');
+        }
+        const on = !cmd.act.startsWith('un');
+        const set = cmd.act.endsWith('like') ? this.liked : this.reposted;
+        if (on) set.add(cmd.post);
+        else set.delete(cmd.post);
+        return reply({ liked: this.liked.has(cmd.post), reposted: this.reposted.has(cmd.post) } satisfies P.PostViewer);
+      }
+      case 'publish': {
+        const known = threads(this.epoch, this.made).known;
+        const to = cmd.replyTo ? known(cmd.replyTo) : null;
+        if (cmd.replyTo && !to) return fail('That post is gone');
+        const quoted = cmd.quote ? known(cmd.quote) : null;
+        const id = pid(2000 + this.made.length);
+        const p: P.PostFact = {
+          id,
+          url: url(X.self, id),
+          ts: Date.now(),
+          author: X.self.nativeId,
+          text: cmd.text,
+          ...(to ? { replyTo: { id: to.id, ...(to.author ? { author: to.author } : {}) }, root: to.root ?? to.id } : {}),
+          ...(quoted ? { quoteOf: quoted } : {}),
+          counts: { replies: 0, reposts: 0, likes: 0, views: 0 },
+        };
+        this.made.push(p);
+        return reply(p satisfies P.PostFact);
+      }
+      case 'postReactors': {
+        const known = threads(this.epoch, this.made).known(cmd.post);
+        if (!known) return fail('X did not give this post');
+        // X names who liked a post only to its author.
+        if (cmd.kind === 'like' && known.author !== X.self.nativeId) return reply({ who: [], more: null } satisfies P.ReactorsPage);
+        const fromFeed = feed(this.epoch).filter((x) => x.item.type === cmd.kind && x.item.post?.id === cmd.post).map((x) => X[x.who]);
+        const fans = known.id === yourPosts(this.epoch).routing.id ? (cmd.kind === 'like' ? FANS : FANS.slice(0, 2)) : [];
+        const all = [...fans.slice(0, 2), ...fromFeed, ...fans.slice(2)];
+        all.forEach((i) => this.emit({ t: 'identity', identity: i }));
+        const page = cmd.cursor === 'r-1' ? all.slice(8) : all.slice(0, 8);
+        const who = page.map((i) => {
+          const fan = FANS.indexOf(i);
+          const k = (Object.keys(X) as Who[]).find((w) => X[w] === i);
+          return { id: i.nativeId, followers: fan >= 0 ? FAN_FOLLOWERS[fan] : k ? BIO[k].followers : undefined, followsYou: k ? !!BIO[k].followsYou : false };
+        });
+        return reply({ who, more: !cmd.cursor && all.length > 8 ? 'r-1' : null } satisfies P.ReactorsPage);
       }
       case 'history':
         return reply({ count: 0, done: true } satisfies P.HistoryResult);
@@ -223,10 +373,19 @@ export class DemoX implements InprocAdapter {
         this.refused.push(`${cmd.t}:${cmd.conversation}`);
         return fail('the demo X account sends nothing');
       case 'action':
-        return reply(cmd.action === 'readLog' ? { reads: this.readLog } : cmd.action === 'typingLog' ? { typing: this.typingLog } : cmd.action === 'sendLog' ? { sent: this.refused } : { note: 'demo X has no such action' });
+        return reply(cmd.action === 'readLog' ? { reads: this.readLog } : cmd.action === 'typingLog' ? { typing: this.typingLog } : cmd.action === 'sendLog' ? { sent: this.refused } : cmd.action === 'postLog' ? { posts: this.postLog } : cmd.action === 'writeLog' ? { writes: this.writes } : cmd.action === 'failNextAct' ? ((this.failNext = true), { note: 'the next like or repost is refused' }) : { note: 'demo X has no such action' });
       default:
         if ('id' in cmd) fail('the demo X account cannot do that');
     }
+  }
+
+  /** A post as you see it: what you did to it, and its counts with it. */
+  private viewed(p: P.PostFact): P.PostFact {
+    const liked = this.liked.has(p.id);
+    const reposted = this.reposted.has(p.id);
+    if (!liked && !reposted) return p;
+    const c = p.counts ?? {};
+    return { ...p, viewer: { liked, reposted }, counts: { ...c, likes: (c.likes ?? 0) + Number(liked), reposts: (c.reposts ?? 0) + Number(reposted) } };
   }
 
   stop() {}
