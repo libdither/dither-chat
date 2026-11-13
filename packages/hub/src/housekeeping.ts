@@ -122,7 +122,7 @@ export class NightlyBackup {
 
 /** A consistent copy of a WAL database from a second, read-only connection in a child process. */
 async function vacuumInto(from: string, to: string) {
-  const script = `import { Database } from 'bun:sqlite'; const db = new Database(process.argv[1], { readonly: true }); db.exec("VACUUM INTO '" + process.argv[2].replace(/'/g, "''") + "'"); db.close();`;
+  const script = `import { Database } from 'bun:sqlite'; const db = new Database(process.argv[1], { readonly: true }); db.exec("PRAGMA busy_timeout = 10000"); db.exec("VACUUM INTO '" + process.argv[2].replace(/'/g, "''") + "'"); db.close();`;
   const proc = Bun.spawn(['bun', '-e', script, from, to], { stdout: 'ignore', stderr: 'pipe' });
   const code = await proc.exited;
   if (code !== 0) throw new Error(`VACUUM INTO exited ${code}: ${(await new Response(proc.stderr).text()).trim()}`);

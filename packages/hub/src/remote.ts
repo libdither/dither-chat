@@ -264,9 +264,14 @@ export class RoutedSupervisor extends Supervisor {
       },
       onEvents: (account, events) => {
         noteWork(`adapter events (${events.length})`);
-        this.mail?.events(account, events);
+        try {
+          this.mail?.events(account, events);
+        } catch (e) {
+          // Mail catches up by itself (mail.changes); the chat events below must not wait on it.
+          console.error(`[${account}] mail events failed:`, e);
+        }
         if (!this.remote.has(account)) return;
-        for (const ev of events) this.handle(account, ev as P.AdapterEvent);
+        this.apply(account, events as P.AdapterEvent[]);
       },
       onGap: (account, dropped) => {
         // A mail account catches up with mail.changes; nothing restarts.
