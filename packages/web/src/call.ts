@@ -9,7 +9,8 @@
 
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { changed, db, toast } from './state.ts';
+import { CALL_INPUT_DEFAULT, callInput } from '@dither-chat/protocol';
+import { changed, db, prefs, toast } from './state.ts';
 
 export interface CallStats {
   /** Media bytes this device sent and received so far. */
@@ -35,7 +36,16 @@ export interface ActiveCall {
   since: number;
   note?: string;
   stats?: CallStats;
+  /** Present when the call is a stage. */
+  stage?: P.CallStage;
+  /** Sounds and emoji others sent in the last few seconds, newest last. */
+  effects: { at: number; effect: P.CallEffect }[];
+  /** The soundboard's sounds, once asked for (null while asking). */
+  sounds?: { list: P.CallSound[]; reason?: string } | null;
 }
+
+/** How long a sound or an emoji someone sent stays on the call's bar. */
+const EFFECT_MS = 6000;
 
 export const activeCall = signal<ActiveCall | null>(null);
 
@@ -45,6 +55,10 @@ export interface Transport {
   signal(data: unknown): void;
   setMuted(muted: boolean): void;
   setDeafened(deafened: boolean): void;
+  /** Direct mode: the people's volumes and mutes for this account, by native user id, as the call's state says them. */
+  setVolumes?(byUser: Map<string, { volume: number; muted: boolean }>): void;
+  /** Direct mode: when the microphone counts as speaking. */
+  setInput?(input: P.CallInput): void;
   stats(): Promise<CallStats | null>;
   stop(): void;
 }
@@ -52,6 +66,9 @@ export interface Transport {
 export interface TransportHost {
   mic: MediaStream;
   speaker: HTMLAudioElement;
+  /** Started with the click that started the call, so it may play: where a person at another volume plays from. */
+  ctx: AudioContext | null;
+  input: P.CallInput;
   sendSignal(data: unknown): void;
   /** Direct mode: news the account's sandbox should mirror (e.g. speaking). */
   note(data: unknown): void;
@@ -64,6 +81,7 @@ let ws: WebSocket | null = null;
 let transport: Transport | null = null;
 let mic: MediaStream | null = null;
 let speaker: HTMLAudioElement | null = null;
+let ctx: AudioContext | null = null;
 let statsTimer: ReturnType<typeof setInterval> | null = null;
 /** Direct mode's own speaking news, laid over the sandbox's participant list. */
 const speakingLocal = new Map<string, boolean>();
@@ -78,23 +96,39 @@ export function canCall(c: P.ConversationView): string | null {
   return accounts[0]?.id ?? null;
 }
 
-/** Start from a click: the microphone prompt and audio playback both need the gesture. */
-export async function startCall(conversationId: string, accountId: string, mode: P.CallMode) {
+/**
+ * A direct or group conversation an online account can start a call in, ringing the others (capability 'ringCalls').
+ */
+export function canRing(c: P.ConversationView): string | null {
+  if (c.shape !== 'direct' && c.shape !== 'group') return null;
+  const a = c.vantages.map((v) => db.accounts.get(v.accountId)).find((a) => !!a && a.capabilities.includes('calls') && a.capabilities.includes('ringCalls') && a.status === 'online');
+  return a?.id ?? null;
+}
+
+/** Start from a click: the microphone prompt and audio playback both need the gesture. `ring`: ring the others (a DM or group). */
+export async function startCall(conversationId: string, accountId: string, mode: P.CallMode, ring = false) {
   if (activeCall.value && activeCall.value.phase !== 'ended') leaveCall();
   speaker = new Audio();
   speaker.autoplay = true;
   // Unlocks playback on iOS while the click still counts.
   speaker.play().catch(() => {});
-  activeCall.value = { conversationId, accountId, mode, phase: 'connecting', muted: false, deafened: false, participants: [], since: Date.now() };
   try {
-    mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
+    ctx = new AudioContext();
+    void ctx.resume().catch(() => {});
+  } catch {
+    ctx = null;
+  }
+  activeCall.value = { conversationId, accountId, mode, phase: 'connecting', muted: false, deafened: false, participants: [], since: Date.now(), effects: [] };
+  const input = myInput();
+  try {
+    mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: input.noiseSuppression, autoGainControl: true }, video: false });
   } catch (e: any) {
     end(`No microphone: ${e?.message ?? e}`);
     return;
   }
   const sock = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/call`);
   ws = sock;
-  sock.onopen = () => sock.send(JSON.stringify({ op: 'join', account: accountId, conversation: conversationId, mode } satisfies P.CallClientMessage));
+  sock.onopen = () => sock.send(JSON.stringify({ op: 'join', account: accountId, conversation: conversationId, mode, ...(ring ? { ring: true } : {}), input } satisfies P.CallClientMessage));
   sock.onmessage = (e) => onServer(JSON.parse(e.data) as P.CallServerMessage);
   sock.onclose = () => {
     if (ws === sock) end(activeCall.value?.note ?? 'Call ended');
@@ -109,6 +143,8 @@ async function onServer(m: P.CallServerMessage) {
       const host: TransportHost = {
         mic: mic!,
         speaker: speaker!,
+        ctx,
+        input: myInput(),
         sendSignal: (data) => send({ op: 'signal', data }),
         note: (data) => send({ op: 'note', data }),
         setSpeaking: (id, on) => {
@@ -129,6 +165,7 @@ async function onServer(m: P.CallServerMessage) {
         return;
       }
       patch({ phase: 'live', since: Date.now() });
+      transport.setVolumes?.(volumesOf(activeCall.value?.participants ?? []));
       statsTimer = setInterval(async () => {
         const s = await transport?.stats().catch(() => null);
         if (s) patch({ stats: s });
@@ -147,9 +184,22 @@ async function onServer(m: P.CallServerMessage) {
         const local = native ? speakingLocal.get(native) : undefined;
         return cur.mode === 'direct' && local !== undefined ? { ...p, speaking: local } : p;
       });
-      patch({ participants });
+      patch({ participants, stage: st.stage });
+      transport?.setVolumes?.(volumesOf(participants));
       return;
     }
+    case 'effect': {
+      const now = Date.now();
+      patch({ effects: [...cur.effects.filter((e) => now - e.at < EFFECT_MS), { at: now, effect: m.effect }].slice(-5) });
+      setTimeout(() => {
+        const a = activeCall.value;
+        if (a) patch({ effects: a.effects.filter((e) => Date.now() - e.at < EFFECT_MS) });
+      }, EFFECT_MS + 50);
+      return;
+    }
+    case 'sounds':
+      patch({ sounds: { list: m.sounds, ...(m.reason ? { reason: m.reason } : {}) } });
+      return;
     case 'ended':
       patch({ note: m.reason });
       end(m.reason);
@@ -191,6 +241,62 @@ export function setDeafened(deafened: boolean) {
   send({ op: 'mute', muted, deafened });
 }
 
+/** This device's microphone choices (Settings → Calls). */
+export function myInput(): P.CallInput {
+  return callInput(prefs.value.callInput ?? CALL_INPUT_DEFAULT);
+}
+
+/** The people's volumes and mutes for this account, by native user id (what the direct transport plays by). */
+function volumesOf(participants: P.CallParticipant[]): Map<string, { volume: number; muted: boolean }> {
+  const out = new Map<string, { volume: number; muted: boolean }>();
+  for (const p of participants) {
+    const native = db.identities.get(p.id)?.nativeId;
+    if (native && (p.volume !== undefined || p.localMute)) out.set(native, { volume: p.volume ?? 100, muted: !!p.localMute });
+  }
+  return out;
+}
+
+/** Can the account in this call do it? */
+export function callCan(cap: P.Capability): boolean {
+  const a = activeCall.value;
+  return !!a && !!db.accounts.get(a.accountId)?.capabilities.includes(cap);
+}
+
+/** One person's volume (0 to VOLUME_MAX) or mute in this call, for this account only. Shown at once; the state confirms. */
+export function setPersonVolume(identityId: string, change: { volume?: number; muted?: boolean }) {
+  const a = activeCall.value;
+  if (!a) return;
+  const participants = a.participants.map((p) => (p.id === identityId ? { ...p, ...(change.volume !== undefined ? { volume: change.volume } : {}), ...(change.muted !== undefined ? { localMute: change.muted } : {}) } : p));
+  patch({ participants });
+  transport?.setVolumes?.(volumesOf(participants));
+  send({ op: 'local', user: identityId, ...change });
+}
+
+/** The microphone's handling changed in Settings: the live call follows. */
+export function applyCallInput(input: P.CallInput) {
+  if (!activeCall.value || activeCall.value.phase === 'ended') return;
+  mic?.getAudioTracks().forEach((t) => void t.applyConstraints({ ...t.getConstraints(), noiseSuppression: input.noiseSuppression }).catch(() => {}));
+  transport?.setInput?.(input);
+  send({ op: 'input', input });
+}
+
+/** A stage action; `user` (an identity id) for a moderator's invite or move to the audience. */
+export function stageAction(action: P.StageAction, user?: string) {
+  send({ op: 'stage', action, ...(user ? { user } : {}) });
+}
+
+/** Ask once for the sounds this account may play here. */
+export function askSounds() {
+  const a = activeCall.value;
+  if (!a || a.sounds !== undefined) return;
+  patch({ sounds: null });
+  send({ op: 'sounds' });
+}
+
+export function playSound(s: P.CallSound) {
+  send({ op: 'sound', sound: s.id, guild: s.guild });
+}
+
 function end(reason: string) {
   if (activeCall.value?.phase !== 'ended') console.warn('call ended:', reason);
   const sock = ws;
@@ -206,6 +312,8 @@ function end(reason: string) {
   mic = null;
   if (speaker) speaker.srcObject = null;
   speaker = null;
+  void ctx?.close().catch(() => {});
+  ctx = null;
   speakingLocal.clear();
   if (activeCall.value && activeCall.value.phase !== 'ended') {
     patch({ phase: 'ended', note: reason });

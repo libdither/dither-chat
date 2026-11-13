@@ -33,6 +33,8 @@ import { startCheckpointer } from './checkpoint.ts';
 import { sliced } from './slices.ts';
 import { StallWatch, timedWrite } from './stalls.ts';
 import { NdjsonFile, setSpanThrowHook, setTraceSink, span, spansBetween, type Span } from './trace.ts';
+import { inQuietHours } from './triage.ts';
+import { onRing, ringMuted, ringWords, sweepCalls } from './callstate.ts';
 import { CalendarAccounts, seedCalendarAccount } from './calendar-account.ts';
 import { ErrorLog, jobFailed, reportError, setErrorLog } from './errors.ts';
 
@@ -268,6 +270,25 @@ const pushClearFailed = (e: unknown) => {
   console.error('push clear failed', e);
   jobFailed('push: clear', e);
 };
+/**
+ * A call ringing you (callstate.ts, docs/calls.md "Ringing"): once, as an alert that sounds on every device, with
+ * Answer and Decline; taken back from the devices that can take it back (the Android app) when it stops ringing.
+ * Quiet hours, a mute that covers it and device rules keep it off; the ring card in open pages shows either way.
+ */
+onRing(store, (n) => {
+  const c = n.call;
+  const tag = `call:${c.id}`;
+  if (n.kind === 'stop') {
+    push.clear(tag).catch((e) => console.error('push clear failed', e));
+    return;
+  }
+  if (ringMuted(store, c) || inQuietHours(store.quietHours(), Date.now())) return;
+  const { title, body } = ringWords(store, c);
+  const look = store.notifyLook(c.conversationId, undefined);
+  const call = { id: c.id, tag, canAnswer: c.canAnswer, canDecline: c.canDecline };
+  push.notify(title, body, c.conversationId, { ...look, call, level: 'push', tier: 'push' }, devices.quietOn(c.conversationId, false), 'push').catch((e) => console.error('push failed', e));
+});
+
 // Read anywhere since its notification went out: off the phones. New requests that settled: judged, once each.
 setInterval(
   () =>
@@ -279,6 +300,8 @@ setInterval(
       // List rows 12 hours old leave the phones; held ones whose chat was read are over (phonelist.ts).
       for (const cid of phone.sweep()) push.clear(cid).catch(pushClearFailed);
       for (const n of requestNotices.due()) deliverRequest(n);
+      // Rings the network left hanging stop, as missed (callstate.ts).
+      sweepCalls(store);
     }),
   5_000,
 );
@@ -425,6 +448,8 @@ const server = new HubServer(store, sup, triage, {
   mail,
   notices: notices ?? undefined,
   calendar: calendars,
+  // A reminder you set on a network (Discord's "Remind me") notifies like an alert; quiet hours hold it quiet (saved.ts).
+  onSavedReminder: (n) => deliver(n.title, n.body, n.conversationId, n.messageId, ['A reminder you set on Discord'], server.replyFields(n.conversationId, n.messageId), 'held', inQuietHours(store.quietHours(), Date.now()) ? 'quiet' : 'push'),
   turn: process.env.DITHER_TURN_URLS && process.env.DITHER_TURN_SECRET ? { urls: process.env.DITHER_TURN_URLS.split(',').map((u) => u.trim()), secret: process.env.DITHER_TURN_SECRET } : undefined,
   onDemoReset: !demo ? undefined : async () => {
     for (const a of store.accounts().filter((a) => a.demo)) {

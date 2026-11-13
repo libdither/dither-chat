@@ -162,6 +162,30 @@ export function pickHolds(to: string, at: number, routes: { id: string; lastMess
   return !routes.some((r) => r.id !== to && (r.lastMessageAt ?? 0) > at);
 }
 
+/**
+ * Whether the conversation you came from says how to reach them: one they are in, as a participant or as the author
+ * of a message loaded there (a Discord server's channel, where you clicked their name). A DM with someone else, or a
+ * place they were not seen in, says nothing of them: from a Discord DM with Sam to Kit's page from the people list,
+ * and Kit wrote on Signal last, Kit's page sends through Signal (not the Discord account you were reading on).
+ * `isTheirs` says whether an identity is one of theirs.
+ */
+export function cameFromThem(from: { participantIds: readonly string[] }, loaded: readonly { authorId: string | null }[], isTheirs: (identityId: string) => boolean): boolean {
+  return from.participantIds.some(isTheirs) || loaded.some((m) => m.authorId != null && isTheirs(m.authorId));
+}
+
+/**
+ * What tells the route of the chat's latest message from the one a message goes through now, for the quiet hint at
+ * the end of the message box's line ("last message on Signal"): the network where they differ, else their account,
+ * else yours. Null when it is the same route (or nothing tells them apart), and then the line says nothing more.
+ */
+export function lastRouteTells(to: RouteKey, last: RouteKey | null | undefined): 'network' | 'theirs' | 'mine' | null {
+  if (!last || last.id === to.id) return null;
+  if (last.network !== to.network) return 'network';
+  if (last.theirs !== to.theirs) return 'theirs';
+  if (last.mine !== to.mine) return 'mine';
+  return null;
+}
+
 // ------------------------------------------------------------------ the inbox
 
 /** One route's inbox row, as the merge needs it (model.ts makes these of the hub's scores). */

@@ -3,6 +3,8 @@
  * through the hub's push path like a message's (main.ts). Requests from strangers, message requests among them, only
  * count on the inbox's Requests row.
  *
+ * A request the network filed as spam never notifies.
+ *
  * Someone you know: they have a person here, or they share a group, a conversation or a server with the account the
  * request came to. A message request's own conversation makes a person and a shared conversation, which say nothing.
  *
@@ -111,6 +113,8 @@ export function judgeRequest(store: Store, accountId: string, nativeId: string, 
   if (!r) return null;
   if (!db.query('INSERT OR IGNORE INTO add_request_seen (account_id, native_id, at) VALUES (?, ?, ?)').run(accountId, nativeId, now).changes) return null;
   if (r.ts < now - REQUEST_NOTICE.recentMs || !r.from_id) return null;
+  // Filed as spam by the network (Discord's spam folder): quieter still, never a notification, whoever it is.
+  if (r.spam) return null;
   const held = r.kind === 'message' && r.target_kind === 'conversation' ? r.target_id : null;
   if (!knownTo(db, accountId, r.from_id, held)) return null;
   if (silenced(store, accountId, r.network, r.person_id)) return null;

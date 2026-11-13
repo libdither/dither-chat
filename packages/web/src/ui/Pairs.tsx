@@ -5,8 +5,8 @@
  * chat's, what tells it apart (the network, their account, yours), and every part here asks it.
  *
  * Where a message goes, first to last: the route you picked on this page (a tag in the timeline, the message box's
- * line, the list under the name); the DM the page was opened as; where you came from (from a Discord group on one of
- * your accounts, the DM through that account); the route you chose last time (the hub keeps it, chats.ts); the route
+ * line, the list under the name); the DM the page was opened as; where you came from, if they are there (from a Discord
+ * group of theirs on one of your accounts, the DM through that account); the route you chose last time (the hub keeps it, chats.ts); the route
  * of the latest message. A pick, here or the hub's, gives way once a message comes on another route after it
  * (chatroutes.ts pickHolds), unless a draft waits in the picked route's box.
  */
@@ -14,11 +14,11 @@ import type * as P from '@dither-chat/protocol';
 import { effect, signal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { badgeDiffers, headIdents, leadTells, pickHolds, tagTells, tagText, tells, type HeadName, type RouteKey, type Side } from '../chatroutes.ts';
+import { badgeDiffers, cameFromThem, headIdents, lastRouteTells, leadTells, pickHolds, tagTells, tagText, tells, type HeadName, type RouteKey, type Side } from '../chatroutes.ts';
 import { ago, hueOf, initials } from '../format.ts';
 import { identityName, netColor, netName, visibleAccount } from '../model.ts';
 import { phone } from '../phone.ts';
-import { api, db, go, isSelfIdentity, prefs, route, setPrefs, toast } from '../state.ts';
+import { api, db, go, isSelfIdentity, prefs, route, setPrefs, timelineKey, timelines, toast } from '../state.ts';
 import { AccountChip, Avatar, Count, Menu, NetBadge, NetGlyph } from './bits.tsx';
 
 // ------------------------------------------------------------------ pairs
@@ -177,14 +177,19 @@ export function focusedPair(personId: string, directs: P.ConversationView[], at?
   const latest = (xs: P.ConversationView[]) => [...xs].sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))[0];
   const from = cameFrom.value ? db.conversations.get(cameFrom.value) : null;
   if (from) {
-    // Their DM itself; else a DM through the account you were reading on; else one on that network.
+    // Their DM itself; else, if they are there (chatroutes.ts cameFromThem), a DM through the account you were
+    // reading on, else one on that network. A DM with someone else says nothing of how to reach them.
     const same = directs.find((d) => d.id === from.id);
     if (same) return same;
-    const accs = new Set(from.vantages.map((v) => v.accountId));
-    const viaAcc = directs.filter((d) => d.vantages.some((v) => accs.has(v.accountId)));
-    if (viaAcc.length) return latest(viaAcc);
-    const onNet = directs.filter((d) => d.network === from.network);
-    if (onNet.length) return latest(onNet);
+    const isTheirs = (id: string) => db.identities.get(id)?.personId === personId;
+    const loaded = timelines.get(timelineKey('c', from.id))?.messages ?? [];
+    if (cameFromThem(from, loaded, isTheirs)) {
+      const accs = new Set(from.vantages.map((v) => v.accountId));
+      const viaAcc = directs.filter((d) => d.vantages.some((v) => accs.has(v.accountId)));
+      if (viaAcc.length) return latest(viaAcc);
+      const onNet = directs.filter((d) => d.network === from.network);
+      if (onNet.length) return latest(onNet);
+    }
   }
   // The hub's chosen route, by the same rule against messages that came since it said so.
   const chosen = chats.value[personId]?.route;
@@ -320,7 +325,40 @@ export function PairLead({ person, directs, focus, onFocus }: { person: P.Person
           <Token label={myName(cur)} picture={<MyPicture p={cur} size={16} />} options={mine.map((p) => ({ id: p.conv.id, label: myName(p), picture: <MyPicture p={p} size={16} /> }))} onPick={onFocus} />
         </>
       )}
+      <LastRoute directs={directs} focus={focus} onFocus={onFocus} />
     </span>
+  );
+}
+
+/**
+ * A quiet hint at the end of the message box's line when the message would go another way than the chat's latest
+ * message came: "last message on Signal" (else "with kit.work", "via zyn.alt": chatroutes.ts lastRouteTells). A
+ * click sends through that route; on a phone it only says so, as the line's names do.
+ */
+function LastRoute({ directs, focus, onFocus }: { directs: P.ConversationView[]; focus: P.ConversationView; onFocus: (convId: string) => void }) {
+  const last = directs.reduce<P.ConversationView | null>((a, d) => (!a || (d.lastMessageAt ?? 0) > (a.lastMessageAt ?? 0) ? d : a), null);
+  if (!last?.lastMessageAt) return null;
+  const tells = lastRouteTells(routeKey(focus), routeKey(last));
+  if (!tells) return null;
+  const p = pairOf(last);
+  const where = tells === 'network' ? `on ${netName(last.network)}` : tells === 'theirs' ? `with ${theirName(p)}` : `via ${myName(p)}`;
+  const title = `The last message was ${where} (${ago(last.lastMessageAt)}); this one goes ${tells === 'network' ? `on ${netName(focus.network)}` : routeTitle(focus).replace(/^Send /, '')}`;
+  const body = (
+    <>
+      {tells === 'network' && <NetGlyph network={last.network} size={10} />}
+      last message {where}
+    </>
+  );
+  if (phone.value)
+    return (
+      <span class="pair-last" title={title}>
+        {body}
+      </span>
+    );
+  return (
+    <button class="pair-last" data-track="last route" title={`${title}. Click to send there.`} onClick={() => onFocus(last.id)}>
+      {body}
+    </button>
   );
 }
 

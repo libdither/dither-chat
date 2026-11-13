@@ -146,7 +146,8 @@ async function smallTargets(scope: string, min = 40): Promise<string[]> {
       if (!r.width || r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) continue;
       if (el.closest('.msg-body, .crumbs, .reactions')) continue;
       const cs = getComputedStyle(el);
-      if (cs.visibility === 'hidden' || el.disabled) continue;
+      // Clipped away: there for a screen reader only, not to be tapped (a row's ↩ button, ui/ReplyMark.tsx).
+      if (cs.visibility === 'hidden' || el.disabled || cs.clipPath === 'inset(50%)') continue;
       const after = getComputedStyle(el, '::after');
       const grow = after.content !== 'none' && after.position === 'absolute' ? -2 * Math.min(parseFloat(after.top) || 0, 0) : 0;
       if (r.height + grow < ${min} || r.width + grow < Math.min(${min}, 32)) out.push((el.getAttribute('aria-label') || el.textContent.trim().slice(0, 24) || el.className) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height));
@@ -205,10 +206,10 @@ try {
   check('no sideways overflow: list beside the peeking card', !(await overflow()).length, await overflow());
   await shot('39-phone-peek');
 
-  // Swipe left on the list: the page comes back.
-  await swipe([300, 500], [40, 500]);
+  // Swipe left from the peeking card: the page comes back. (On the inbox's rows a left swipe is the row's: ReplyMark.tsx.)
+  await swipe([370, 500], [60, 500]);
   s = await state();
-  check('swipe left beside the peeking card brings the conversation back', s.hash === conv && s.cls.includes('rest-open'), s);
+  check('swipe left from the peeking card brings the conversation back', s.hash === conv && s.cls.includes('rest-open'), s);
 
   // A short, slow swipe goes back to where it was.
   await swipe([30, 420], [110, 420], { steps: 10, ms: 40 });
@@ -506,7 +507,7 @@ try {
   await back();
   s = await state();
   check('the phone\'s back from it shows the inbox', s.hash === '#/inbox' && s.cls.includes('rest-peek'), s);
-  await swipe([300, 500], [40, 500]);
+  await swipe([370, 500], [60, 500]);
   s = await state();
   check('swipe left brings the DM back', s.hash === `#/inbox/c/${dm}` && s.cls.includes('rest-open'), s);
   sent = await swipeBack();
@@ -514,7 +515,7 @@ try {
   check('swipe right from it shows the inbox', s.hash === '#/inbox' && s.cls.includes('rest-peek') && sent === PEEK_X, { ...s, sent });
   // An entry whose one before is not its list (history from before this, or from a wider window): the swipe puts the
   // list in the page's place rather than stepping back to that other page.
-  await swipe([300, 500], [40, 500]);
+  await swipe([370, 500], [60, 500]);
   await settle(`#/inbox/c/${dm}`);
   await page.eval(`history.replaceState({ prev: ${JSON.stringify(devHash)} }, '')`);
   const entries = await page.eval<number>('history.length');

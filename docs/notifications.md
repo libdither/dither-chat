@@ -49,7 +49,9 @@ For every new live message from someone else, in this order (`triage.ts`, `Triag
    level, and below the list when it is not.
 
 A place kept to the list (you set it to List only, or it is muted on its own network) is never a Conversation and
-never read for an alert: its messages are on the list or below it. Quiet hours come last and hold alerts only.
+never read for an alert: its messages are on the list or below it. A message its sender sent silently (Discord's
+@silent) never alerts, whatever decided it: it stays a Conversation or a list row ([rich-messages.md](rich-messages.md)).
+Quiet hours come last and hold alerts only.
 
 Every decision is stored with its reasons in words, the deciding one first ("A direct message", "Reads as urgent: the
 local model's answer is 0.31 against a bar of 0.05", "On the list: importance 72%, at or over your level of 60%"), so
@@ -501,6 +503,42 @@ something the network would have notified you about), `requestId` and no `conver
 through `deliverRequest` in main.ts, judged by `packages/hub/src/requestnotify.ts` 20 seconds after it arrives and
 only when under two days old. Quiet hours do not hold it, since it is silent; an account, a network or everything set to
 Mute, and device rules for its account or network, keep it off. Its activity log kind is `request`.
+
+A request the network filed as spam (Discord's spam folder, `RequestFact.spam`) never notifies, whoever it is from: it
+waits last under Requests, under "Filed as spam", and the inbox's Requests row says how many without counting them.
+
+## From the network itself
+
+What a network knows about your attention beyond messages as they come (protocol `attention.ts`; Discord's side in
+dither-accounts' docs/chat.md "Attention"). None of it makes the phone sound more often, except a true mention that
+arrives a little late.
+
+- **Mentions heard late.** Discord's client does not load every server channel, so a mention in one nobody opened can
+  reach the hub only through its own recent-mentions list, which the account asks for after it connects and when its
+  notification center says something new came (never more often than every five minutes). Each hit is a message with
+  `late` (capability `mentions`). The hub keeps it as it keeps backfill, unread and counted as a mention, so the inbox
+  sees it; and while it is younger than ten minutes by its own time (`LATE_NEWS_MS`, `latenews.ts`) it is triaged as a
+  live message is, so a mention found a minute late can still be a Conversation or an alert. Older, it never notifies.
+  A message the hub already had is never news again. @everyone, @here and role mentions found this way are
+  `mentionsAll`, never "about you".
+- **@everyone suppressed.** A server set in Discord to suppress @everyone and @here (`NativeMute.suppressEveryone` on
+  its space) makes an @everyone there something the network would not have notified you about, so its importance
+  starts lower (`Triage.suppressesEveryone`). Role mentions suppressed are kept (`suppressRoles`) but not used yet.
+- **Mutes changed in Discord** come at once: a mute set, changed or cleared in any Discord app, or running out,
+  sends the place's fact again; a cleared one carries an empty `mute` (`{}`), which clears the hub's (a fact without
+  `mute` leaves it as it was). "Muted on the network" in triage follows.
+- **Muted on the network.** A place's About has, under Notifications, the network's own mute beside dither's: "Mute on
+  Discord…" for 15 minutes, an hour, 3, 8 or 24 hours, or until turned off, and "Unmute on Discord" while one is on
+  (capability `mute`, POST `/api/(conversations|spaces)/:id/native-mute`, `nativemute.ts`). It goes through every
+  connected account that sees the place and can, and stops Discord's own apps too. dither's Mute is unchanged: it
+  only decides what dither notifies, and the two are separate on purpose.
+- **Marked unread.** Mark Unread on someone's message (the message menu) moves the read point back to just before it
+  on every account that sees the chat, counts again, and tells each network that can (capability `markUnread`,
+  Discord's manual ack; POST `/api/messages/:id/unread`, `unread.ts`); the page goes back to the inbox, as the open
+  chat would read it again at once. Marked unread in Discord's own app, it comes the other way: a `read` with
+  `manual`, the one read event that moves the read point back.
+- **Many read at once.** Mark all read's paced queue sends an account that can (capability `markReadMany`, Discord's
+  bulk ack) up to 50 conversations in one request instead of one each.
 
 ## The feed
 

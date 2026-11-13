@@ -101,10 +101,13 @@ describe('reading', () => {
     expect(v.invite?.link).toContain('signal.group');
   });
 
-  test('a Signal group where only admins edit and you are not one: nothing editable, and why', async () => {
+  test('a Signal group where only admins edit and you are not one: no setting editable, and why; pinning still is', async () => {
     const v = await abouts.get('conversation', conv('signal', (c) => c.name === 'Family').id);
     expect(v.fields.name).toMatchObject({ canEdit: false, reason: expect.stringContaining('Only admins') });
-    expect(v.canConfigure).toBe(false);
+    expect(Object.values(v.fields).some((f) => f?.canEdit)).toBe(false);
+    // Whoever may send may pin (docs/polls.md), so the About still changes something.
+    expect(v.pinned?.canEdit).toBe(true);
+    expect(v.canConfigure).toBe(true);
     expect(v.rules?.find((r) => r.what.startsWith('Edit name'))).toMatchObject({ who: 'Only admins', you: false });
   });
 

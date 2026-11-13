@@ -520,3 +520,20 @@ test('pictures fetched through an account that left go; the rest, and emoji, sta
   await w.message({ t: 'keepAccounts', ids: ['acc_1'] });
   expect([...w.media.m.keys()].map((u) => u.slice('https://hub.example'.length))).toEqual(['/media/s/a?a=acc_1', '/media/s/d', '/emoji/discord/1']);
 });
+
+test('a call ringing you (docs/calls.md): one per call, kept up, Answer opens the chat and Decline stops it everywhere', async () => {
+  const w = worker();
+  await w.push({ title: 'Ann is calling', body: 'Discord call. Answer or decline.', conversationId: 'cnv_1', call: { id: 'cll_1', tag: 'call:cll_1', canAnswer: true, canDecline: true } });
+  expect(w.shown[0].o).toMatchObject({ tag: 'call:cll_1', requireInteraction: true, renotify: true });
+  expect(actions(w)).toEqual(['answer', 'decline']);
+  await w.click(w.shown[0].o.data, 'decline');
+  expect(w.fetched.at(-1)).toMatchObject({ url: '/api/calls/cll_1/decline', method: 'POST' });
+  expect(w.opened).toEqual([]);
+  await w.click(w.shown[0].o.data, 'answer');
+  expect(w.opened.at(-1)).toContain('/#/inbox/c/cnv_1');
+  // Signal from here: no Answer, and Decline only where the account can.
+  const sig = worker();
+  await sig.push({ title: 'Ann is calling', conversationId: 'cnv_2', call: { id: 'cll_2', canAnswer: false, canDecline: false } });
+  expect(actions(sig)).toEqual([]);
+  expect(sig.shown[0].o.tag).toBe('call:cll_2');
+});

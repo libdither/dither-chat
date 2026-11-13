@@ -8,6 +8,7 @@ import { ABOUT_LABEL, aboutChangeProblem, ADD_MEMBERS_MAX, addMembersNotBuilt, N
 import { hubId } from '@dither-chat/protocol/ids';
 import { addTables, givePace, takePace } from './add.ts';
 import type { Attempt } from './attempts.ts';
+import { lockedModeration, moderationView } from './moderation.ts';
 import { feedRefusal, isFeed } from './feed.ts';
 import type { Store } from './store.ts';
 
@@ -94,6 +95,8 @@ export class Abouts {
     const acc = this.d.store.account(accountId)!;
     if (!this.d.online(accountId)) throw new AboutError(`${NETWORK_META[t.network].name} · ${acc.label} is not connected`, 409);
     if (!caps(this.d.store, accountId).includes('configure')) throw new AboutError(`${acc.label} cannot change settings on ${NETWORK_META[t.network].name}`, 409);
+    // A new picture goes to adapters that take one (the hub gave it a file:// URL in its upload spool).
+    if (change.key === 'avatar' && !caps(this.d.store, accountId).includes('setPicture')) throw new AboutError(`Changing the picture isn't built for ${acc.label} on ${NETWORK_META[t.network].name} yet.`, 409);
     const target = { kind, nativeId: t.nativeId };
     // Never on a stale answer: what this account may do can have changed since the panel opened.
     const fresh = await this.d.command<P.About>(accountId, { t: 'about', target }, 30_000).catch((e: Error) => {
@@ -221,7 +224,8 @@ export class Abouts {
     return { accountId, added, invited, failed, about };
   }
 
-  private keep(targetId: string, accountId: string, about: P.About) {
+  /** Keep this account's About of a place (moderation.ts keeps the one a change answers with). */
+  keep(targetId: string, accountId: string, about: P.About) {
     // Settings that changed since this account last said (docs/history.md). Name, description and picture come with
     // the conversation itself and are logged there.
     const prev = this.kept(targetId, accountId);
@@ -285,25 +289,35 @@ export class Abouts {
         ...(m.role ? { role: m.role } : {}),
         ...(m.rank !== undefined ? { rank: m.rank } : {}),
         ...(m.color ? { color: m.color } : {}),
+        ...(m.label && typeof m.label === 'object' ? { label: m.label } : {}),
+        ...(m.mod && typeof m.mod === 'object' ? { mod: m.mod } : {}),
       })),
       total: about.members.total,
       complete: about.members.complete,
     };
     let pinned: P.AboutView['pinned'];
     if (about.pinned) {
-      const found = about.pinned.messages.map((n) => s.messageView(hubId('msg', network, n))).filter((m): m is P.MessageView => !!m && !m.deleted);
-      pinned = { messages: found, missing: about.pinned.messages.length - found.length, canEdit: about.pinned.canEdit, ...(about.pinned.reason ? { reason: about.pinned.reason } : {}) };
+      const ids = about.pinned.messages.map((n) => hubId('msg', network, n));
+      // Pins the hub saw that a network without a readable list could not name (polls.ts sits beside: docs/polls.md).
+      if (!about.pinned.complete && kind === 'conversation') for (const m of pinnedSeen(s, id)) if (!ids.includes(m)) ids.push(m);
+      const found = ids.map((m) => s.messageView(m)).filter((m): m is P.MessageView => !!m && !m.deleted);
+      pinned = { messages: found, missing: ids.length - found.length, canEdit: about.pinned.canEdit, ...(about.pinned.reason ? { reason: about.pinned.reason } : {}) };
     }
     const coverage = kind === 'space' && s.one<{ n: number }>(`SELECT 1 AS n FROM space WHERE id = ? AND kind = 'community'`, id) ? s.memberCoverage(id) : undefined;
     const adding = addingOf(s, kind, id, network, accountId, about.adding, stale);
     const canConfigure =
-      configurable && !stale && (Object.values(fields).some((f) => f?.canEdit) || !!about.invite?.canCreate || !!about.invite?.canRevoke || !!about.pinned?.canEdit);
+      configurable && !stale && (Object.values(fields).some((f) => f?.canEdit) || !!about.invite?.canCreate || !!about.invite?.canRevoke || !!about.pinned?.canEdit || !!about.nick?.canEdit);
+    const moderation = moderationView(s, acc, network, about.moderation);
+    const named = [...(members?.list.map((m) => m.identityId) ?? []), ...(moderation?.banned ?? []), ...(moderation?.requesting ?? [])];
     return {
       ...about,
       fields,
       members,
-      identities: s.identitiesByIds(members?.list.map((m) => m.identityId) ?? []),
+      moderation,
+      identities: s.identitiesByIds([...new Set(named)]),
       pinned,
+      // A group's owner in hub ids, as the members are (threads.ts AboutOwnership).
+      ...(about.ownership ? { ownership: { ...about.ownership, ...(about.ownership.owner ? { owner: acc ? s.ensureIdentity(acc, about.ownership.owner) : hubId('idn', network, about.ownership.owner) } : {}) } } : {}),
       ...(adding ? { adding } : { adding: undefined }),
       ...(coverage ? { coverage } : {}),
       target: { kind, id },
@@ -380,6 +394,10 @@ export function readOnly(about: P.About, reason: string): P.About {
     ...(about.invite ? { invite: { ...about.invite, canCreate: false, canRevoke: false, reason } } : {}),
     ...(about.pinned ? { pinned: { ...about.pinned, canEdit: false, reason } } : {}),
     ...(about.adding ? { adding: { ...about.adding, can: false, reason } } : {}),
+    ...(about.leaving ? { leaving: { ...about.leaving, can: false, reason } } : {}),
+    ...(about.nick ? { nick: { ...about.nick, canEdit: false, reason } } : {}),
+    ...(about.moderation ? { moderation: lockedModeration(about.moderation, reason) } : {}),
+    ...(about.label ? { label: { ...about.label, canEdit: false, reason } } : {}),
   };
 }
 
@@ -399,4 +417,16 @@ function addingOf(s: Store, kind: Kind, id: string, network: P.Network, accountI
   if (able || kind !== 'conversation') return undefined;
   const group = s.one<{ shape: string }>('SELECT shape FROM conversation WHERE id = ?', id)?.shape === 'group';
   return group ? { can: false, reason: addMembersNotBuilt(network), who: 'known', mode: 'add' } : undefined;
+}
+
+/** Messages of a conversation the hub last saw pinned (their latest pin or unpin event is a pin), newest pin first. */
+export function pinnedSeen(s: { db: { query(sql: string): { all(...a: unknown[]): unknown[] } } }, conversationId: string): string[] {
+  const rows = s.db
+    .query(
+      `SELECT e.message_id, MAX(e.at) AS at, (SELECT e2.kind FROM message_event e2 WHERE e2.message_id = e.message_id AND e2.kind IN ('pin', 'unpin') ORDER BY e2.at DESC, e2.rowid DESC LIMIT 1) AS last
+       FROM message_event e JOIN message m ON m.id = e.message_id
+       WHERE m.conversation_id = ? AND e.kind IN ('pin', 'unpin') GROUP BY e.message_id ORDER BY at DESC LIMIT 50`,
+    )
+    .all(conversationId) as { message_id: string; last: string }[];
+  return rows.filter((r) => r.last === 'pin').map((r) => r.message_id);
 }

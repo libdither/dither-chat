@@ -6,6 +6,7 @@
 import type { About, AboutFields, AddWho, GroupRule, PersonAbout, PersonRelationship } from './about.ts';
 import type { AddAction, AddCheck, AddPreview, AddRef, LinkRelationship, RequestAnswer, RequestFact } from './add.ts';
 import type { Capability, NativeMute, ReceiptState } from './adapter.ts';
+import type { MentionScope } from './mentions.ts';
 import type {
   AccountStatus,
   AttachmentKind,
@@ -23,8 +24,14 @@ import type {
 } from './ontology.ts';
 import type { ArrangeSettings, UsageKind, UsageView } from './usage.ts';
 import type { FileInfo } from './files.ts';
+import type { AboutModerationView, MemberMod, MessageModeration } from './moderation.ts';
+import type { RichView, VoiceFact } from './rich.ts';
+import type { PollView } from './poll.ts';
 import type { MailAccess, MailAccountView, MailboxView, MailBootstrap, MailOutboxView, MailThreadView } from './mail.ts';
 import type { CalendarLinkView, CalendarNotifyRef, CalendarPlanView } from './calendar.ts';
+import type { AccountSelfView } from './self.ts';
+import type { ContactCardView, MissingAttachmentFact, QuoteView, SendFailureView, StoryReplyView } from './extra.ts';
+import type { ForumView, ThreadView } from './threads.ts';
 import type { FeedItem, PostFact } from './feed.ts';
 import type { NoticesBoot } from './notices.ts';
 
@@ -42,6 +49,8 @@ export interface AccountView {
   createdAt: number;
   /** Set when dither-accounts runs it rather than this hub (docs/accounts.md). Absent from older hubs. */
   managedBy?: AccountManaged;
+  /** What its network says of the account itself: notices, presence, folders (self.ts). Absent until it says any. */
+  self?: AccountSelfView;
   /** A calendar account's service address (docs/calendar.md); null when its config has none that works. */
   url?: string | null;
 }
@@ -184,6 +193,10 @@ export interface ConversationView {
   nativeMute: NativeMute | null;
   /** direct: a friend request between one of your accounts here and the other person, waiting on one side (docs/add.md). */
   pending?: PendingLinkView;
+  /** A thread's following, tags and first message (threads.ts). */
+  thread?: ThreadView;
+  /** A forum or media channel's tags and default order (threads.ts). */
+  forum?: ForumView;
 }
 
 /**
@@ -224,6 +237,15 @@ export interface AttachmentView {
   url: string;
   /** What the file is by its bytes, once the hub has kept and looked at them (files.ts, docs/files.md). */
   info?: FileInfo;
+  /** As AttachmentFact has them (docs/rich-messages.md): alt text, spoiler, explicit, voice message. */
+  alt?: string;
+  spoiler?: true;
+  explicit?: true;
+  voice?: VoiceFact;
+  /** Recorded as a voice note (extra.ts AttachmentNote). */
+  voiceNote?: true;
+  /** Its own caption, where the network has one per file. */
+  caption?: string;
 }
 
 /** A file uploaded to the hub and waiting to be sent. */
@@ -347,6 +369,19 @@ export interface EmbedView {
   author?: string;
   image?: string;
   fields?: { name: string; value: string }[];
+  /** The colour bar down its side, CSS hex. */
+  color?: string;
+  footer?: string;
+  footerIcon?: string;
+  /** The time it shows in its footer, ms. */
+  timestamp?: number;
+  authorIcon?: string;
+  authorUrl?: string;
+  /**
+   * A video: `url` is a player page (YouTube, Twitch, Vimeo) loaded only once clicked (`player`), or a file the
+   * <video> plays (`gifv` loops it silently, as a GIF).
+   */
+  video?: { url: string; width?: number; height?: number; player?: true; gifv?: true };
 }
 
 export interface CustomEmojiView {
@@ -370,7 +405,7 @@ export interface ReactionView {
  * A conversation's or space's About as the web app gets it (about.ts, docs/group-settings.md): the adapter's answer
  * in hub ids, from the account that asked. When no account could ask, the last answer the hub kept, with `stale`.
  */
-export interface AboutView extends Omit<About, 'members' | 'pinned' | 'fields'> {
+export interface AboutView extends Omit<About, 'members' | 'pinned' | 'fields' | 'moderation'> {
   target: { kind: 'conversation' | 'space'; id: string };
   network: Network;
   /** The account whose view this is. null: none could ask, and nothing was kept. */
@@ -382,10 +417,12 @@ export interface AboutView extends Omit<About, 'members' | 'pinned' | 'fields'> 
   canConfigure: boolean;
   fields: AboutFields;
   members?: {
-    list: { identityId: string; role?: string; rank?: number; color?: string }[];
+    list: { identityId: string; role?: string; rank?: number; color?: string; label?: { text?: string; emoji?: string }; mod?: MemberMod }[];
     total?: number;
     complete: boolean;
   };
+  /** About.moderation with hub identity ids for the banned and those asking to join. */
+  moderation?: AboutModerationView;
   /** The members' identities, since strangers in a big place are not in the bootstrap. */
   identities: IdentityView[];
   /** A space's members your accounts have seen, with the adversarial `members` setting on. */
@@ -515,6 +552,8 @@ export interface ReactionContextView {
   existingOnly?: boolean;
   custom: { id: string; name: string; icon: string | null; emoji: CustomEmojiView[] }[];
   super?: { available: boolean; reason?: string };
+  /** What this account may do to others' messages here (moderation.ts). */
+  moderation?: MessageModeration;
 }
 
 /** How often you have reacted with something: the quick row and "frequently used". */
@@ -563,6 +602,20 @@ export interface MessageView {
   replyMark?: ReplyMark;
   /** This message forwards another: body and attachments are what was forwarded. */
   forward?: ForwardView;
+  /** Controls, marks and the rest of rich.ts, when it has any (docs/rich-messages.md). */
+  rich?: RichView;
+  /** What the message quotes, as the message itself carries it (extra.ts QuoteFact). Shown when replyToId is not stored. */
+  quote?: QuoteView;
+  /** Contact cards shared in it. */
+  contacts?: ContactCardView[];
+  /** A reply (or reaction) to a story. */
+  storyReply?: StoryReplyView;
+  /** Your message did not reach these people (it reached the others). */
+  failed?: SendFailureView[];
+  /** Files it had that the account could not download. */
+  missingAttachments?: MissingAttachmentFact[];
+  /** A poll, with its votes as the hub has them (poll.ts). */
+  poll?: PollView;
   /**
    * A feed conversation's message (variant 'feed', docs/feed.md): what they did, as the adapter's `extra.feed` said,
    * with each post's `author` a hub identity id and its pictures the hub's signed media paths.
@@ -630,8 +683,16 @@ export interface PlacePrefView {
   open: boolean;
   /** Conversations: has its own sidebar entry, as communities do by default. */
   railed: boolean;
+  /** Whom the @ picker offers here (docs/mentions.md). Absent: as the place it is in says, else the default. */
+  mentionScope?: MentionScope;
+  /** The @ picker's friends and everyone only on this chat's network. Absent: inherited, else false. */
+  mentionSameNetwork?: boolean;
 }
-export type PlacePrefPatch = { kind: PlaceKind; id: string } & Partial<Omit<PlacePrefView, 'kind' | 'id'>>;
+/** The fields present change; null takes a mention setting away, so the place inherits it again. */
+export type PlacePrefPatch = { kind: PlaceKind; id: string } & Partial<Omit<PlacePrefView, 'kind' | 'id' | 'mentionScope' | 'mentionSameNetwork'>> & {
+  mentionScope?: MentionScope | null;
+  mentionSameNetwork?: boolean | null;
+};
 
 /** A category is a yes/no question asked of each place (hub categorize.ts). */
 export interface CategoryView {
@@ -720,6 +781,8 @@ export interface ProfileView {
   abouts: PersonAboutView[];
   /** How each of your accounts stands with them, from the accounts' own lists (capability 'relationships'). */
   links?: PersonLinkView[];
+  /** Your accounts that ignore them on their network (capability 'ignore', self.ts): their messages never alert. */
+  ignored?: { accountId: string; identityId: string }[];
   /**
    * Spaces your accounts' clients have seen them as a member of, last seen first. Only with the adversarial `members`
    * setting on; not every space they are in.
@@ -901,6 +964,8 @@ export interface RequestView {
   answers: RequestAnswer[];
   /** The network flagged it, in its words: possible spam, or someone you share nothing with. */
   warning: string | null;
+  /** The network filed it as spam: it never notifies, and sits last. */
+  spam?: boolean;
 }
 
 export interface SearchHit {
@@ -1136,6 +1201,10 @@ export type ClientEvent =
    * pending copy by id before the answer to its POST arrives. Of the moment, like `typing`: not journaled.
    */
   | { t: 'sent'; conversationId: string; clientId: string; messageId: string }
+  /** Calls that changed: ringing you, going on, or just over (call.ts CallView, docs/calls.md "Ringing"). Of the moment. */
+  | { t: 'calls'; calls: import('./call.ts').CallView[] }
+  /** Voice channels whose people or status line changed (call.ts VoiceChannelView). Of the moment. */
+  | { t: 'voice'; channels: import('./call.ts').VoiceChannelView[] }
   /**
    * Plans the calendar found in chats changed (docs/calendar.md): these, or all of them with `replace`. Of the moment,
    * like `typing`: not journaled. A page asks GET /api/plans again whenever its live socket (re)opens and on `resync`.
@@ -1176,8 +1245,14 @@ export type ClientEvent =
   | { t: 'mail.progress'; accountId: string; sync: MailAccountView['sync'] }
   /** Every item the outbox still shows (held, queued, sending, failed, or sent a little while ago): the whole list. */
   | { t: 'mail.outbox'; items: MailOutboxView[] }
+  /** Messages to send later changed (sending.ts, docs/sending.md): the whole list the hub sends. Of the moment, not journaled. */
+  | { t: 'scheduled'; items: import('./sending.ts').ScheduledSendView[] }
   /** Ends a frame whose changes went into the journal: a client holding everything up to here can resume from `seq`. */
   | { t: 'sync'; seq: number }
+  /** How an interaction with a bot went (apps.ts, docs/apps.md). Of the moment: not journaled. */
+  | { t: 'interaction'; interaction: import('./apps.ts').InteractionView }
+  /** A bot opened a form in answer to one of yours (apps.ts). Of the moment. */
+  | { t: 'appModal'; modal: import('./apps.ts').AppModalView }
   | { t: 'resync' };
 
 // ------------------------------------------------------------------ delta sync (docs/sync.md)
@@ -1271,6 +1346,11 @@ export interface RetentionSettings extends KeepSettings {
   /** Who is in which server, from what the network's client loads anyway (passive). Adversarial. */
   members: boolean;
   /**
+   * Who is in which voice channel when you are not, from what the network's client is sent anyway (passive), and when
+   * each of them joined and left. Adversarial. Absent (a hub from before it): off.
+   */
+  voice?: boolean;
+  /**
    * Adversarial features shown, after the warning (docs/history.md): their switches, and what they kept, in sight.
    * Statuses, presence and members are logged only while shown. Deleted and disappearing messages are kept as their
    * switches say whether shown or not: hiding never loses a message, it only keeps what was kept out of sight.
@@ -1294,6 +1374,7 @@ export const DEFAULT_RETENTION: RetentionSettings = {
   statuses: false,
   presence: false,
   members: false,
+  voice: false,
   adversarial: false,
   show: 'shown',
   showIn: {},
@@ -1308,7 +1389,7 @@ export interface RetentionChange {
 }
 
 /** Switches whose turning off is confirmed (PUT /api/retention takes `confirm: true` for it). */
-export const RETENTION_GUARDED = ['deleted', 'disappearing', 'statuses', 'presence', 'members', 'adversarial'] as const satisfies readonly (keyof RetentionSettings)[];
+export const RETENTION_GUARDED = ['deleted', 'disappearing', 'statuses', 'presence', 'members', 'voice', 'adversarial'] as const satisfies readonly (keyof RetentionSettings)[];
 
 /** Whether kept deleted and disappeared messages show in this chat. */
 export const showsGone = (r: RetentionSettings, conversationId: string | null | undefined): boolean =>
@@ -1325,7 +1406,7 @@ export interface PresenceView {
 export const ADVERSARIAL_KEEPS = ['deleted', 'disappearing'] as const satisfies readonly (keyof KeepSettings)[];
 
 /** What Forget erases, one kind at a time (POST /api/retention/erase); GET /api/retention/kept says which have anything kept. */
-export const KEPT_KINDS = ['deleted', 'disappeared', 'edits', 'reactions', 'receipts', 'changes', 'statuses', 'presence', 'members'] as const;
+export const KEPT_KINDS = ['deleted', 'disappeared', 'edits', 'reactions', 'receipts', 'changes', 'statuses', 'presence', 'members', 'voice'] as const;
 export type KeptKind = (typeof KEPT_KINDS)[number];
 
 /**

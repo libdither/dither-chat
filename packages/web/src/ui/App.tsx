@@ -12,6 +12,8 @@ import { Icon } from './icons.tsx';
 import { ContextMenuLayer } from './ContextMenu.tsx';
 import { TooltipLayer } from './Tooltip.tsx';
 import { ForwardLayer } from './Forward.tsx';
+import { AppsHostLazy } from './apps/lazy.tsx';
+import { SendingLayer } from './SendExtras.tsx';
 import { IndexLayer } from './Indexing.tsx';
 import { CatchUp } from './CatchUp.tsx';
 import { HowItSorts } from './HowItSorts.tsx';
@@ -21,6 +23,7 @@ import { ProfilePane } from './Profile.tsx';
 import { PlaceProfile } from './PlaceProfile.tsx';
 import { GraphPane } from './GraphPane.tsx';
 import { MessageHistoryLayer } from './MessageHistory.tsx';
+import { ThreadsLayerLazy } from './ThreadsLazy.tsx';
 import { Rail } from './Rail.tsx';
 import { TitleBar } from './TitleBar.tsx';
 import { FindShortcut, SearchPane } from './Search.tsx';
@@ -30,6 +33,7 @@ import { FolderSidebar, homeRoute, InboxSidebar, PeopleSidebar, SpaceSidebar, Sp
 import { ConversationPane, PersonPane } from './Timeline.tsx';
 import { Toasts } from './Toasts.tsx';
 import { CallDock } from './Call.tsx';
+import { RingCards } from './Ringing.tsx';
 import { Viewer } from './Viewer.tsx';
 import { PEEK, panel, usePager, type Rest } from './Pager.ts';
 import { Boot } from './Loader.tsx';
@@ -374,13 +378,17 @@ export function App() {
       )}
       {addingAccount.value && <AddAccount onClose={() => (addingAccount.value = false)} />}
       <CallDock />
+      <RingCards />
       <ReactionLayer />
       <MessageHistoryLayer />
+      <ThreadsLayerLazy />
       <Toasts />
       <DragLayer />
       <ContextMenuLayer />
       <TooltipLayer />
       <ForwardLayer />
+      <AppsHostLazy />
+      <SendingLayer />
       <IndexLayer />
       <Palette />
       <FindShortcut />

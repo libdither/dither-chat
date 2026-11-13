@@ -80,12 +80,16 @@ import { openConv } from './Sidebar.tsx';
 import { viewer, type ViewerImage } from './Viewer.tsx';
 import { JoinCallButton } from './Call.tsx';
 import { EmojiComplete, insertAtCaret } from './EmojiComplete.tsx';
+import { SlashCommandsLazy } from './apps/lazy.tsx';
+import { claimSend } from '../apps.ts';
+import { MentionComplete } from './MentionComplete.tsx';
 import { loadEmoji } from '../emoji.ts';
 import { isLottie, isSticker, Sticker } from './Sticker.tsx';
 import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
 import { TypingBar } from './Typing.tsx';
 import { useGrow } from './grow.ts';
 import { AttachSheet, CameraView, SendScreen } from './Attach.tsx';
+import { mediaOffer, StickerButton, stickerInstaller, ViewOnceChip, VoiceButton } from './ComposerMedia.tsx';
 import { CAPTURE_ACCEPT, MEDIA_ACCEPT, opensSendScreen } from '../camera.ts';
 import { phone, touchOnly } from '../phone.ts';
 import { composerDone, composerTyped } from '../typing.ts';
@@ -93,6 +97,9 @@ import { noteSeen } from '../activity.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { ForwardCard, forwarding } from './Forward.tsx';
 import { InviteCards } from './InviteCard.tsx';
+import { PollCardLazy, PollMakerLazy } from './PollLazy.tsx';
+import { pollMaker } from '../polls.ts';
+import { AttachmentNote, ContactCards, MissingFiles, played, QuoteFallback, SendFailures, StoryReplyLine, withoutCardLines } from './MessageExtras.tsx';
 import { attachmentMenu, conversationMenu, identityMenu, imageMenu, linkMenu, messageMenu, openAttachment, personMenu } from './menus.tsx';
 import { fileFacts, fileIcon, fileKind, openFileViewer, VIEWABLE } from '../files.ts';
 import { desk } from '../desk.ts';
@@ -108,6 +115,10 @@ import { Loading } from './Loader.tsx';
 import { Slices, whenIdle } from '../slices.ts';
 import { calendarOn } from '../plans.ts';
 import { PlanChipLazy } from './calendar/lazy.tsx';
+import { AltBadge, EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voice } from './rich/parts.tsx';
+import { VoicePeople } from './Ringing.tsx';
+import { ForumLazy } from './ThreadsLazy.tsx';
+import { ScheduledStrip, useSendExtras } from './SendExtras.tsx';
 import { FeedViewLazy } from './feed/lazy.tsx';
 
 
@@ -340,13 +351,24 @@ function useMdContext(network: P.Network) {
       const c = convByNative(network, nativeId);
       return c ? convTitle(c) : null;
     },
+    person: (id: string) => db.persons.get(id)?.name ?? null,
+    identity: (id: string) => {
+      const i = db.identities.get(id);
+      return i ? { name: authorName(id), network: netName(i.network) } : null;
+    },
   };
 }
 
 /** The text; `tail` (your message's ticks) sits right after its last word. */
 function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
   // Only mentions and room links read the db (names may arrive later); other bodies render once.
-  const html = useMemo(() => renderMarkdown(m.body, useMdContext(m.network)), [m.body, m.network, /<[@#]/.test(m.body) ? metaRev.value : 0]);
+  // A role's name comes with the message (docs/rich-messages.md); a relative <t:…:R> moves on with the list.
+  const roles = m.rich?.roles;
+  const relative = /<t:-?\d+:R>/.test(m.body);
+  const html = useMemo(
+    () => renderMarkdown(m.body, { ...useMdContext(m.network), role: (id) => roles?.find((r) => r.id === id) ?? null }),
+    [m.body, m.network, /<[@#]/.test(m.body) ? metaRev.value : 0, roles, relative ? rev.value : 0],
+  );
   if (m.deleted) return <div class="msg-body deleted">{m.gone?.how === 'disappeared' ? 'Message disappeared' : 'Message deleted'}</div>;
   if (m.kind === 'encrypted')
     return (
@@ -360,11 +382,19 @@ function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
     if (el.classList?.contains('spoiler')) el.classList.add('shown');
     const user = el.dataset?.user;
     if (user) openProfile(db.identityByNative.get(`${m.network}:${user}`));
+    // A reference names a person, or one of their accounts (docs/mentions.md).
+    if (el.dataset?.person) go({ view: 'profile', person: el.dataset.person });
+    else if (el.dataset?.identity) openProfile(el.dataset.identity);
     // An invite link opens the New box on it, not the browser; the link's menu still opens it there.
     const a = el.closest?.('a[href]') as HTMLAnchorElement | null;
     if (a && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && inviteRef(a.href)) {
       e.preventDefault();
       openPalette({ kind: 'new', mode: 'join' }, a.href);
+    }
+    // A sticker pack link opens its menu, where Install Sticker Pack is (ComposerMedia.tsx).
+    else if (a && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && stickerInstaller(a.href, m.seenVia)) {
+      e.preventDefault();
+      openMenu({ x: e.clientX, y: e.clientY }, linkMenu(a.href, m));
     }
   };
   if (tail)
@@ -422,11 +452,16 @@ function Edited({ m }: { m: P.MessageView }) {
 
 /** A mark beside the time: pinned. How far your message got sits after its text (`Ticks`). */
 function Marks({ m }: { m: P.MessageView }) {
-  return m.pinned ? (
-    <span class="msg-pin" title="Pinned">
-      <Icon name="pin" size={11} />
-    </span>
-  ) : null;
+  return (
+    <>
+      {m.pinned && (
+        <span class="msg-pin" title="Pinned">
+          <Icon name="pin" size={11} />
+        </span>
+      )}
+      <RichMarks m={m} />
+    </>
+  );
 }
 
 function Attachments({ m }: { m: P.MessageView }) {
@@ -443,14 +478,21 @@ function Attachments({ m }: { m: P.MessageView }) {
           const w = a.width ?? a.info?.width ?? 400;
           const h = a.height ?? a.info?.height ?? 300;
           const scale = Math.min(1, 400 / w, 300 / h);
-          return (
+          const img = (
             <a class="att-img" data-att={i} href={a.url} target="_blank" rel="noreferrer" onClick={(e) => openViewer(e, images, images.indexOf(a))} style={{ width: `${Math.round(w * scale)}px`, aspectRatio: `${w} / ${h}` }}>
-              <img src={a.url} alt={a.name ?? ''} loading="lazy" />
+              <img src={a.url} alt={a.alt ?? a.name ?? ''} loading="lazy" />
+              <AltBadge alt={a.alt} />
             </a>
           );
+          return withNote(a, veiled(a) ? <Veil a={a}>{img}</Veil> : img);
         }
-        if (kind === 'video') return <video class="att-video" data-att={i} src={a.url} controls preload="metadata" />;
-        if (kind === 'audio') return <audio class="att-audio" data-att={i} src={a.url} controls preload="metadata" />;
+        if (kind === 'video') {
+          const video = <video class="att-video" data-att={i} src={a.url} controls preload="metadata" onPlay={() => played(m)} />;
+          return withNote(a, veiled(a) ? <Veil a={a}>{video}</Veil> : video);
+        }
+        // A voice message with its waveform and length (docs/rich-messages.md).
+        if (a.voice) return withNote(a, <Voice a={a} index={i} />);
+        if (kind === 'audio') return withNote(a, <audio class="att-audio" data-att={i} src={a.url} controls preload="metadata" onPlay={() => played(m)} />);
         const fk = fileKind(a);
         // A kind with a viewer opens in it (Viewer.tsx); any other opens in its app when the helper or the phone can,
         // else downloads (a type the hub won't show, HTML or SVG, straight away rather than through an empty tab).
@@ -458,19 +500,31 @@ function Attachments({ m }: { m: P.MessageView }) {
           if (VIEWABLE.has(fk)) e.preventDefault(), openFileViewer(a, m);
           else if (desk.value?.files || android?.opensFiles()) e.preventDefault(), openAttachment(a);
         };
-        return (
+        return withNote(
+          a,
           <a class="att-file" data-att={i} data-kind={fk} href={a.url} target="_blank" rel="noreferrer" download={showsInline(a.mime) ? undefined : (a.name ?? true)} onClick={open}>
             <Icon name={fileIcon(fk, a.info?.language)} size={22} />
             <span>
               <b>{a.name ?? 'file'}</b>
               <small>{fileFacts(a)}</small>
             </span>
-          </a>
+          </a>,
         );
       })}
     </div>
   );
 }
+
+/** A file with its voice-note label or caption under it (MessageExtras.tsx), or the file alone. */
+const withNote = (a: P.AttachmentView, el: ComponentChildren) =>
+  a.voiceNote || a.caption ? (
+    <div class="att-with-note">
+      {el}
+      <AttachmentNote a={a} />
+    </div>
+  ) : (
+    el
+  );
 
 function Embeds({ m }: { m: P.MessageView }) {
   if (!m.embeds.length) return null;
@@ -479,8 +533,13 @@ function Embeds({ m }: { m: P.MessageView }) {
   return (
     <div class="embeds">
       {m.embeds.map((e) => (
-        <div class="embed">
-          {(e.provider || e.author) && <small>{[e.provider, e.author].filter(Boolean).join(' · ')}</small>}
+        <div class="embed" style={e.color && /^#[0-9a-f]{6}$/i.test(e.color) ? { borderLeftColor: e.color } : undefined}>
+          {(e.provider || e.author) && (
+            <small class="embed-by">
+              {e.authorIcon && <img class="embed-icon" src={e.authorIcon} alt="" loading="lazy" onError={(ev) => ev.currentTarget.remove()} />}
+              {[e.provider, e.author].filter(Boolean).join(' · ')}
+            </small>
+          )}
           {e.title && (e.url && /^https?:\/\//i.test(e.url) ? <a class="embed-title" href={e.url} target="_blank" rel="noreferrer noopener">{e.title}</a> : <b class="embed-title">{e.title}</b>)}
           {e.description && <div class="msg-body" dangerouslySetInnerHTML={md(e.description)} />}
           {e.fields?.map((f) => (
@@ -489,8 +548,16 @@ function Embeds({ m }: { m: P.MessageView }) {
               <div class="msg-body" dangerouslySetInnerHTML={md(f.value)} />
             </div>
           ))}
-          {e.image && (
-            <img class="embed-image" src={e.image} alt="" loading="lazy" onClick={(ev) => openViewer(ev, [{ url: e.image!, name: e.title }], 0)} onError={(ev) => ev.currentTarget.remove()} />
+          {e.video ? (
+            <EmbedVideo e={e} />
+          ) : (
+            e.image && <img class="embed-image" src={e.image} alt="" loading="lazy" onClick={(ev) => openViewer(ev, [{ url: e.image!, name: e.title }], 0)} onError={(ev) => ev.currentTarget.remove()} />
+          )}
+          {(e.footer || e.timestamp) && (
+            <small class="embed-by">
+              {e.footerIcon && <img class="embed-icon" src={e.footerIcon} alt="" loading="lazy" onError={(ev) => ev.currentTarget.remove()} />}
+              {[e.footer, e.timestamp ? fullTime(e.timestamp) : null].filter(Boolean).join(' · ')}
+            </small>
           )}
         </div>
       ))}
@@ -599,6 +666,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           <span>{target.deleted ? 'Message deleted' : plainBody(target.body, target.network).slice(0, 120) || 'Attachment'}</span>
         </button>
       )}
+      {!target && m.quote && <QuoteFallback m={m} />}
       <div class="msg-gutter">
         {grouped ? (
           <span class="msg-time-hover" title={hover ? fullTime(m.ts) : undefined}>
@@ -640,22 +708,30 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           <Gone m={m} />
         ) : m.forward && !m.deleted ? (
           <ForwardCard m={m}>
+            <RichHead m={m} />
             <Body m={m.forward.text !== undefined ? { ...m, body: m.forward.text } : m} tail={ticks} />
             <Attachments m={m} />
             <Embeds m={m} />
             <InviteCards m={m} body={m.forward.text ?? m.body} />
+            <RichFoot m={m} />
           </ForwardCard>
         ) : (
           <>
-            <Body m={m} tail={ticks} />
+            <RichHead m={m} />
+            <StoryReplyLine m={m} />
+            {m.poll ? <PollCardLazy m={m} fallback={<Body m={m} />} /> : <Body m={m.contacts ? withoutCardLines(m) : m} tail={ticks} />}
             <Attachments m={m} />
+            <MissingFiles m={m} />
+            <ContactCards m={m} />
             <Embeds m={m} />
             <InviteCards m={m} body={m.body} />
+            <RichFoot m={m} />
           </>
         )}
-        {ticks && (!m.body || m.deleted) && <span class="msg-marks">{ticks}</span>}
+        <SendFailures m={m} />
+        {ticks && (!m.body || m.deleted || (m.poll && !m.forward)) && <span class="msg-marks">{ticks}</span>}
         {grouped && (m.editedTs || m.edits) && <Edited m={m} />}
-        {grouped && m.pinned && (
+        {grouped && (m.pinned || m.rich?.silent || m.rich?.marks) && (
           <span class="msg-marks">
             <Marks m={m} />
           </span>
@@ -1039,6 +1115,9 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   const [review, setReview] = useState(false);
   // The emoji button's picker, beside what opened it (Reactions.tsx).
   const [emojiAt, setEmojiAt] = useState<DOMRect | null>(null);
+  // Stickers, recording and view-once, where the sending account has them (ComposerMedia.tsx).
+  const offer = mediaOffer(sender, canAttach);
+  const [viewOnce, setViewOnce] = useState(false);
   const addFiles = async (list: File[]) => {
     if (!list.length || !conv) return;
     if (!canAttach) return toast({ kind: 'error', title: 'Cannot send files here', body: conv.encrypted ? 'Set up encryption on the account\'s page to send files in encrypted Matrix rooms.' : `${netName(conv.network)} is not set up to send files.` });
@@ -1054,6 +1133,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
     setCamera(false);
     setReview(false);
     setEmojiAt(null);
+    setViewOnce(false);
   }, [targets.convId]);
   const files = att.sendable;
   const draftKey = `dither-chat:draft:${targets.convId}`;
@@ -1097,6 +1177,8 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
     if (reply) ta.current?.focus();
   }, [reply]);
   const submit = () => {
+    // A slash command picked over the box runs instead of the text being sent (ui/apps, docs/apps.md).
+    if (!edit && claimSend(targets.convId)) return;
     const body = text.trim();
     if ((!body && !files.length) || disabledReason || (att.failed && !edit)) return;
     if (edit) {
@@ -1105,15 +1187,37 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       if (body !== m.body) void editMessage(m, body);
       return;
     }
-    send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id, files: files.map((f) => f.file), uploads: files.map((f) => f.job!) });
+    send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id, files: files.map((f) => f.file), uploads: files.map((f) => f.job!), ...extras.opts, ...(viewOnce && offer.viewOnce && files.length ? { media: { viewOnce: true } } : {}) });
+    extras.sent();
     composerDone();
     type('');
     att.clear(true);
     clearReply();
     setReview(false);
+    setViewOnce(false);
+  };
+  /** A sticker or a recording goes at once, on its own, as a reply when one is open. */
+  const sendMedia = (opts: { files?: File[]; media?: { sticker?: string; voice?: P.VoiceOut } }) => {
+    send(targets.convId, '', { accountId: targets.accountId, replyTo: reply?.id, ...opts });
+    clearReply();
   };
   const canSend = !((!text.trim() && !files.length) || !!disabledReason || (att.failed && !edit));
   const sendTitle = att.failed && !edit ? 'A file did not upload: try it again or remove it' : undefined;
+  // Reply without a ping, send silently, send later (SendExtras.tsx, docs/sending.md).
+  const extras = useSendExtras({
+    conv,
+    sender,
+    reply,
+    canSend,
+    blocked: !!edit || !!disabledReason,
+    draft: async () => ({ body: text.trim(), attachments: (await Promise.all(files.map((f) => f.job!.settle()))).map((u) => u.id) }),
+    done: () => {
+      composerDone();
+      type('');
+      att.clear(true);
+      clearReply();
+    },
+  });
   const onText = (v: string) => {
     type(v);
     // Editing a sent message is not typing a new one.
@@ -1121,6 +1225,14 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   };
   const limit = conv ? `up to ${ATTACHMENT_LIMITS[conv.network].bytes / 1024 / 1024} MB each` : '';
   const attaching = canAttach && !edit && !disabledReason;
+  // Making a poll (docs/polls.md): where an account here makes them, not in an open message request.
+  const [polling, setPolling] = useState(false);
+  const pollAccount = conv && !edit && !disabledReason ? pollMaker(targets.convId, sender?.id) : null;
+  const pollBtn = pollAccount && !onPhone && (
+    <button class="icon-btn poll-btn" data-track="poll" onClick={() => setPolling(true)} title="New poll" aria-label="New poll">
+      <Icon name="list" size={17} />
+    </button>
+  );
   const openCamera = () => {
     // No camera API at all: the system's camera, from this tap.
     if (!navigator.mediaDevices?.getUserMedia) return capture.current?.click();
@@ -1200,11 +1312,18 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       <Icon name="smile" size={onPhone ? 20 : 18} />
     </button>
   );
-  const sendBtn = (
-    <button class="send-btn" data-track="send" disabled={!canSend} onClick={submit} aria-label="Send" title={sendTitle}>
-      <Icon name="send" size={17} />
-    </button>
+  const sendBtn =
+    attaching && offer.record && !text.trim() && !files.length ? (
+      <VoiceButton conversationId={targets.convId} onPhone={onPhone} voice={offer.voice} onSend={(f, voice) => sendMedia({ files: [f], ...(voice ? { media: { voice } } : {}) })} />
+    ) : (
+      <button class="send-btn" data-track="send" disabled={!canSend} onClick={submit} aria-label="Send" title={sendTitle}>
+        <Icon name="send" size={17} />
+      </button>
+    );
+  const stickerBtn = conv && !disabledReason && !edit && offer.stickers && (
+    <StickerButton conversationId={targets.convId} accountId={targets.accountId ?? sender?.id} onPhone={onPhone} onSend={(st) => sendMedia({ media: { sticker: st.id } })} />
   );
+  const viewOnceChip = offer.viewOnce && files.length > 0 && !edit && <ViewOnceChip on={viewOnce} set={setViewOnce} />;
   return (
     <div
       class={`composer ${dropping ? 'dropping' : ''}`}
@@ -1222,6 +1341,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
         void addFiles([...e.dataTransfer.files]);
       }}
     >
+      <ScheduledStrip conversationId={targets.convId} />
       {edit && (
         <div class="composer-reply">
           <Icon name="pencil" size={13} /> Editing your message
@@ -1234,13 +1354,17 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
         <div class="composer-reply">
           <Icon name="reply" size={13} /> Replying to <b>{isSelfIdentity(reply.authorId) ? 'yourself' : authorName(reply.authorId)}</b>
           <span>{plainBody(reply.body, reply.network).slice(0, 80)}</span>
+          {extras.replyToggle}
           <button class="icon-btn small" data-track="cancel reply" onClick={clearReply} aria-label="Cancel reply">
             <Icon name="x" size={13} />
           </button>
         </div>
       )}
       <AttachedFiles files={att.files} remove={att.remove} />
+      {viewOnceChip}
       <EmojiComplete ta={ta} convId={targets.convId} network={conv?.network} />
+      {!edit && <SlashCommandsLazy ta={ta} convId={targets.convId} accountId={sender?.id} text={text} />}
+      <MentionComplete ta={ta} convId={targets.convId} network={conv?.network} accountId={sender?.id} />
       {attaching && (
         <>
           <input
@@ -1304,12 +1428,14 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
               box
             )}
             {emojiBtn}
+            {stickerBtn}
             {attaching && (
               <button class="icon-btn composer-camera" data-track="camera" onClick={openCamera} aria-label="Take a photo or video">
                 <Icon name="camera" size={20} />
               </button>
             )}
           </div>
+          {extras.button}
           {sendBtn}
         </div>
       ) : (
@@ -1319,6 +1445,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
               <Icon name="paperclip" size={17} />
             </button>
           )}
+          {pollBtn}
           {sendAsMenu}
           {lead ? (
             <div class={`pair-lead ${text ? 'raised' : ''}`}>
@@ -1329,6 +1456,8 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
             box
           )}
           {emojiBtn}
+          {stickerBtn}
+          {extras.button}
           {sendBtn}
         </div>
       )}
@@ -1341,7 +1470,17 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           onClose={() => setEmojiAt(null)}
         />
       )}
-      {sheet && <AttachSheet limit={limit} onClose={() => setSheet(false)} onPhotos={() => photos.current?.click()} onFile={() => picker.current?.click()} />}
+      {sheet && (
+        <AttachSheet
+          limit={limit}
+          onClose={() => setSheet(false)}
+          onPhotos={() => photos.current?.click()}
+          onFile={() => picker.current?.click()}
+          onPoll={pollAccount ? () => setPolling(true) : undefined}
+          {...(offer.viewOnce ? { onViewOnce: () => (setViewOnce(true), photos.current?.click()) } : {})}
+        />
+      )}
+      {polling && conv && <PollMakerLazy conversationId={targets.convId} network={conv.network} accountId={pollAccount?.id} onClose={() => setPolling(false)} />}
       {camera && (
         <CameraView
           onClose={() => setCamera(false)}
@@ -1365,6 +1504,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           onAddMore={() => photos.current?.click()}
           onClose={() => setReview(false)}
           enterSends={() => !touchKeyboard()}
+          extra={viewOnceChip}
         />
       )}
     </div>
@@ -1386,22 +1526,6 @@ export function composerBlocker(c: P.ConversationView, accountId?: string): stri
 function firstUnread(convs: P.ConversationView[]): number | null {
   const ts = convs.flatMap((c) => c.vantages.filter((v) => v.unread > 0).map((v) => v.lastReadTs ?? 0));
   return ts.length ? Math.min(...ts) : null;
-}
-
-function ForumView({ c }: { c: P.ConversationView }) {
-  const posts = threadsOf(c.id);
-  return (
-    <div class="forum">
-      {c.topic && <p class="forum-topic">{c.topic}</p>}
-      {posts.length === 0 && <Empty icon="forum" title="No posts loaded" />}
-      {posts.map((t) => (
-        <button class="forum-post" onClick={() => openConv(t)}>
-          <b>{convTitle(t)}</b>
-          <span>{t.lastMessage ? `${authorName(t.lastMessage.authorId)}: ${plainBody(t.lastMessage.text, t.network)}` : ''}</span>
-        </button>
-      ))}
-    </div>
-  );
 }
 
 /** Signal's conversations exist only from the first message on, which is worth saying while there is none. */
@@ -1446,11 +1570,13 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
     <section class="pane">
       <ConvHeader c={c} onBack={onBack} />
       {!held && c.pending && <LinkBanner c={c} />}
-      {c.variant === 'forum' ? (
-        <ForumView c={c} />
+      {/* A forum's or media channel's messages are its posts (ui/Threads.tsx, docs/threads.md). */}
+      {c.variant === 'forum' || c.variant === 'media' ? (
+        <ForumLazy c={c} />
       ) : (
         <>
           {voice && <div class="voice-note"><Icon name="voice" size={14} /> Voice isn't relayed. This shows the channel's text chat.</div>}
+          {voice && <VoicePeople conversationId={c.id} size={22} names class="voice-here" />}
           <NotStartedNote c={c} />
           <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} onReply={setReply} firstUnreadTs={unreadAt} focus={focus} />
         </>
@@ -1458,7 +1584,7 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
       <TypingBar convIds={[c.id]} />
       {held ? (
         <RequestBar r={held} />
-      ) : (
+      ) : c.variant === 'forum' || c.variant === 'media' ? null : (
         <Composer
           targets={{ convId: c.id, accountId: sendAsValue }}
           placeholder={`Message ${c.shape === 'direct' ? convTitle(c) : convLabel(c)}`}

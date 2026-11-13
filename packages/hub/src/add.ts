@@ -66,6 +66,8 @@ export function addTables(db: Database) {
   db.exec('CREATE INDEX IF NOT EXISTS add_request_target ON add_request(target_id)');
   // The network's words when it flagged a request (added after the table was).
   if (!(db.query(`SELECT 1 FROM pragma_table_info('add_request') WHERE name = 'warning'`).get())) db.exec('ALTER TABLE add_request ADD COLUMN warning TEXT');
+  // The network filed it as spam (RequestFact.spam): it never notifies.
+  if (!(db.query(`SELECT 1 FROM pragma_table_info('add_request') WHERE name = 'spam'`).get())) db.exec('ALTER TABLE add_request ADD COLUMN spam INTEGER NOT NULL DEFAULT 0');
   // Each account's list: friends, requests it sent, blocks, contacts, follows (the relationships events). Replaced
   // by a `relationships` event, changed by a `relationship` one; 'stranger' is no row.
   db.exec(`CREATE TABLE IF NOT EXISTS person_link (
@@ -131,6 +133,7 @@ export function requestViews(store: Store): P.RequestView[] {
     ts: r.ts,
     answers: JSON.parse(r.answers),
     warning: r.warning ?? null,
+    ...(r.spam ? { spam: true } : {}),
   }));
 }
 
@@ -152,7 +155,7 @@ const heldBy = (db: Database, accountId: string, nativeId?: string): string[] =>
 /** A fact the adapter sent, if it is one: anything else is dropped. */
 function validRequest(f: unknown): f is P.RequestFact {
   const r = f as P.RequestFact;
-  return !!r && typeof r.nativeId === 'string' && !!r.nativeId && REQUEST_KINDS.includes(r.kind) && typeof r.ts === 'number' && Array.isArray(r.answers) && (r.from === undefined || typeof r.from === 'string') && (r.warning === undefined || typeof r.warning === 'string') &&
+  return !!r && typeof r.nativeId === 'string' && !!r.nativeId && REQUEST_KINDS.includes(r.kind) && typeof r.ts === 'number' && Array.isArray(r.answers) && (r.from === undefined || typeof r.from === 'string') && (r.warning === undefined || typeof r.warning === 'string') && (r.spam === undefined || typeof r.spam === 'boolean') &&
     (r.target === undefined || ((r.target.kind === 'space' || r.target.kind === 'conversation') && typeof r.target.nativeId === 'string'));
 }
 
@@ -161,11 +164,11 @@ function putRequest(store: Store, acc: AccountRow, f: P.RequestFact) {
   const targetId = t ? hubId(t.kind === 'space' ? 'spc' : 'cnv', acc.network, t.nativeId) : null;
   store.db
     .query(
-      `INSERT INTO add_request (id, account_id, native_id, kind, from_id, target_kind, target_native, target_id, target_name, target_members, ts, answers, warning)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO add_request (id, account_id, native_id, kind, from_id, target_kind, target_native, target_id, target_name, target_members, ts, answers, warning, spam)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO UPDATE SET kind = excluded.kind, from_id = excluded.from_id, target_kind = excluded.target_kind, target_native = excluded.target_native,
          target_id = excluded.target_id, target_name = excluded.target_name, target_members = excluded.target_members, ts = excluded.ts, answers = excluded.answers,
-         warning = excluded.warning`,
+         warning = excluded.warning, spam = excluded.spam`,
     )
     .run(
       requestId(acc.id, f.nativeId),
@@ -181,6 +184,7 @@ function putRequest(store: Store, acc: AccountRow, f: P.RequestFact) {
       f.ts,
       JSON.stringify(f.answers.filter((a) => REQUEST_ANSWERS.includes(a))),
       f.warning?.trim() ? f.warning.trim().slice(0, 300) : null,
+      f.spam === true ? 1 : 0,
     );
   return targetId;
 }
@@ -281,6 +285,12 @@ export function ingestRelationships(store: Store, acc: AccountRow, ev: Extract<P
 export function linkOf(db: Database, accountId: string, identityId: string): P.LinkRelationship | null {
   addTables(db);
   return ((db.query('SELECT relationship FROM person_link WHERE account_id = ? AND identity_id = ?').get(accountId, identityId) as Row | null)?.relationship as P.LinkRelationship) ?? null;
+}
+
+/** Whether one of your accounts blocked them (its own list says so): nothing from them alerts. */
+export function blockedByYou(db: Database, identityId: string): boolean {
+  addTables(db);
+  return !!db.query(`SELECT 1 FROM person_link WHERE identity_id = ? AND relationship = 'blocked' LIMIT 1`).get(identityId);
 }
 
 const linkView = (r: Row): P.PersonLinkView => ({ accountId: r.account_id, identityId: r.identity_id, personId: r.person_id ?? null, relationship: r.relationship, since: r.since ?? null });

@@ -85,7 +85,7 @@ export function RequestsRow() {
       <span class="row-main">
         <span class="row-top">
           <span class="row-title">
-            Requests <span class="requests-count">{row.count}</span>
+            Requests {row.count > 0 && <span class="requests-count">{row.count}</span>}
           </span>
           <span class="row-time">{ago(row.lastAt)}</span>
         </span>
@@ -93,6 +93,7 @@ export function RequestsRow() {
           <span class="row-preview">
             {row.names.join(', ')}
             {row.count > row.names.length ? '…' : ''}
+            {row.spam ? `${row.names.length ? ' · ' : ''}${row.spam} filed as spam` : ''}
           </span>
         </span>
       </span>

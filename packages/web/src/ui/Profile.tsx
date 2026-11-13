@@ -27,6 +27,16 @@ import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, Tag } from 
 import { ConnectActions, ProfileLinks } from './Requests.tsx';
 import { openConv } from './Sidebar.tsx';
 import { Loading } from './Loader.tsx';
+import { peopleExtras } from './peopleExtras.ts';
+import { Stories } from './StoriesLazy.tsx';
+
+import { signal } from '@preact/signals';
+
+/** Your note on their network, Block and Ignore, badges, your own fields (ProfileSelf.tsx): a chunk of its own, loaded with the first profile. */
+type Self = typeof import('./ProfileSelf.tsx');
+const selfParts = signal<Self | null>(null);
+let selfLoading: Promise<unknown> | null = null;
+const loadSelf = () => (selfLoading ??= import('./ProfileSelf.tsx').then((m) => (selfParts.value = m), () => (selfLoading = null)));
 import { RecentPostsLazy } from './feed/lazy.tsx';
 import { clip, FEED_VERB } from '../feed.ts';
 
@@ -180,7 +190,9 @@ function useProfile(personId?: string, identityId?: string) {
       .catch(() => {});
     return () => void (live = false);
   }, [personId, identityId, signature]);
-  return { profile, abouts, counts, learn, asking: asking > 0, refresh: () => profile && profile !== 'none' && ask(profile.identityIds, true) };
+  // A change made from this page (ProfileSelf.tsx: a note, an ignore, a block), until the profile is fetched again.
+  const update = (patch: Partial<P.ProfileView>) => setProfile((p) => (p && p !== 'none' ? { ...p, ...patch } : p));
+  return { profile, abouts, counts, learn, update, asking: asking > 0, refresh: () => profile && profile !== 'none' && ask(profile.identityIds, true) };
 }
 
 /** Your own bio on one network, and a way to change it, within the network's limit. */
@@ -308,7 +320,9 @@ function MailCard({ mail, list, name }: { mail: NonNullable<P.ProfileView['mail'
 
 export function ProfilePane({ personId, identityId, onBack }: { personId?: string; identityId?: string; onBack: () => void }) {
   rev.value;
-  const { profile, abouts, counts, learn, asking, refresh } = useProfile(personId, identityId);
+  const { profile, abouts, counts, learn, update, asking, refresh } = useProfile(personId, identityId);
+  const S = selfParts.value;
+  useEffect(() => void loadSelf(), []);
   const [merging, setMerging] = useState(false);
   // The hero's pencil, for a person of one account: its nickname (Nickname.tsx).
   const [naming, setNaming] = useState(false);
@@ -358,6 +372,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const startable = isSelf ? [] : nets.filter((n) => !directs.some((d) => d.network === n)).map((n) => ids.find((i) => i.network === n)!).filter((i) => openers(accounts, i.network).length > 0);
   const rule = person ? db.rules.find((x) => x.scope === 'person' && x.target === person.id) : undefined;
   const said = ids.map((i) => abouts[i.id]).filter((a): a is P.PersonAboutView => !!a);
+  // Safety numbers, blocking and your own profile beyond the bio: their own chunk, loaded once a profile shows.
+  const extras = peopleExtras();
   const discord = said.find((a) => a.network === 'discord');
 
   /** Person actions need a Person; someone seen only in a channel gets one the first time you act. */
@@ -473,18 +489,19 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   // Their addresses, while the composer can start a mail (slice 5).
   const emails = isSelf || !composeTo.run ? [] : ids.filter((i) => i.network === 'email');
   const email = (i: P.IdentityView) => composeTo.run?.({ name: i.displayName, email: i.nativeId, identityId: i.id, ...(i.personId ? { personId: i.personId } : {}) });
+  // Message opens your chat with them, every route together; which accounts it goes between is chosen there (the
+  // message box's line). Only with no chat yet does it offer where to start one (an account's own menu always can).
   const messageMenu = (): MenuSpec => ({
     label: 'Message',
     items: groups(
-      directs.length > 1 && person ? [{ label: 'All Chats Together', icon: 'merge', run: () => go({ view: 'people', person: person.id }) }] : [],
-      directs.map((d): MenuEntry => ({ label: `On ${netName(d.network)}`, icon: 'send', run: () => go({ view: 'inbox', conv: d.id }) })),
       startable.map((i): MenuEntry => ({ label: `Start on ${netName(i.network)}`, icon: 'plus', run: () => messageSomeone(i.id) })),
       emails.map((i): MenuEntry => ({ label: `Email ${i.nativeId}`, icon: 'mail', run: () => email(i) })),
     ),
   });
-  const messageOptions = (directs.length > 1 ? 1 : 0) + directs.length + startable.length + emails.length;
+  const messageOptions = directs.length ? 1 : startable.length + emails.length;
   const message = () => {
-    if (directs.length === 1) go({ view: 'inbox', conv: directs[0].id });
+    if (directs.length > 1 && person) go({ view: 'people', person: person.id });
+    else if (directs.length) go({ view: 'inbox', conv: [...directs].sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))[0].id });
     else if (startable.length === 1) messageSomeone(startable[0].id);
     else if (emails.length === 1) email(emails[0]);
   };
@@ -494,6 +511,10 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       // One account's nickname is theirs (with several, each tile has its own).
       ids.length === 1 && !first?.isBot ? nicknameEntries(first, () => setNaming(true)) : [],
       [!isSelf && { label: 'Merge Another Identity In', icon: 'merge', run: () => setMerging(true) }, { label: 'Ask the Networks Again', icon: 'refresh', run: refresh }],
+      // Block or unblock, where an account can (Signal): asked again after, so the page says how you stand.
+      isSelf ? [] : (peopleExtras()?.blockEntries(ids, profile.links ?? [], abouts, () => void refresh()) ?? []),
+      // Ignore on their networks (ProfileSelf.tsx).
+      isSelf || !S ? [] : S.selfEntries(ids, profile, profile.links ?? [], update),
     );
     // What the page already shows as a button is not repeated.
     const shown = new Set(['Profile', 'Message']);
@@ -584,6 +605,12 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
               </Tag>
             );
           })}
+          {!isSelf &&
+            S?.ignoredNets(ids, profile).map((n) => (
+              <Tag icon="bellOff" tone="muted" title={`You ignore them on ${netName(n)}: their messages never alert`}>
+                Ignored{nets.length > 1 && <NetGlyph network={n} size={11} />}
+              </Tag>
+            ))}
         </>
       }
       status={
@@ -598,7 +625,6 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         <>
           {!isSelf && messageOptions > 0 && (messageOptions === 1 ? <Action primary icon="send" label="Message" onClick={message} /> : <Action primary icon="send" label="Message" menu={messageMenu} />)}
           {!isSelf && <ConnectActions identities={ids} abouts={abouts} onChanged={learn} />}
-          {directs.length > 1 && person && <Action icon="merge" label="All chats" onClick={() => go({ view: 'people', person: person.id })} />}
           <Action icon="more" label="More" menu={moreMenu} />
         </>
       }
@@ -660,8 +686,12 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       )}
       <Card title="About" icon="info" extra={asking ? <span class="pf-asking">Asking…</span> : undefined}>
         {editable.map(({ i, account }) => (
-          <OwnBio identity={i} about={abouts[i.id]} account={account} label={editable.length + bios.length > 1 || nets.length > 1} onSaved={learn} />
+          <>
+            <OwnBio identity={i} about={abouts[i.id]} account={account} label={editable.length + bios.length > 1 || nets.length > 1} onSaved={learn} />
+            {extras && <extras.OwnProfileExtras identity={i} about={abouts[i.id]} onSaved={learn} />}
+          </>
         ))}
+        {isSelf && S && ids.map((i) => <S.OwnProfileFields identity={i} about={abouts[i.id]} onSaved={learn} />)}
         {several ? (
           // Each account's bio is on its tile (Accounts, above).
           !bios.length && !editable.length && !asking && <p class="pf-empty">No bio on any of their accounts.</p>
@@ -739,6 +769,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
             ],
           ]}
         />
+        {S && <S.ProfileExtras said={said} />}
         {said.filter((a) => a.unasked && !a.stale).map((a) => (
           <p class="pf-stale">
             <NetGlyph network={a.network} size={11} /> <span title={fullTime(a.fetchedAt)}>As {netName(a.network)} showed them in your notifications.</span>
@@ -818,6 +849,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         </Card>
       )}
 
+      {ids
+        .filter((i) => i.network === 'signal' && !isSelfIdentity(i.id))
+        .map((i) => (
+          <Stories identityId={i.id} network={i.network} />
+        ))}
       {profile.mail && <MailCard mail={profile.mail} list={withList(person?.id ?? first.id)} name={name} />}
 
       {(profile.recent.length > 0 || chatNets.length > 0) && (
@@ -874,6 +910,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
               {people(mutualFriends)}
             </Card>
           )}
+
+      {!isSelf && extras && <extras.SafetyCard abouts={said} name={name} onChanged={learn} />}
 
       {!isSelf && (
         <ProfileLinksCard

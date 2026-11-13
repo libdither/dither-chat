@@ -215,6 +215,17 @@ export class Uploads {
     return out;
   }
 
+  /** The names of these uploads, or null if any is gone or has not all arrived. Not counted as a use. */
+  names(ids: string[]): string[] | null {
+    const out: string[] = [];
+    for (const id of ids) {
+      const m = this.items.get(id);
+      if (!m || this.writing.has(id) || this.received(id) !== m.size) return null;
+      out.push(m.name);
+    }
+    return out;
+  }
+
   remove(ids: string[]) {
     for (const id of ids) {
       if (!this.items.delete(id)) continue;
@@ -223,7 +234,11 @@ export class Uploads {
     }
   }
 
+  /** Uploads something else still waits to send (a message to send later, sendlater.ts): the sweep leaves them. */
+  held: (() => Set<string>) | null = null;
+
   sweep(now = Date.now()) {
-    for (const [id, m] of this.items) if (now - m.at > KEEP && !this.writing.has(id)) this.remove([id]);
+    const held = this.held?.() ?? null;
+    for (const [id, m] of this.items) if (now - m.at > KEEP && !this.writing.has(id) && !held?.has(id)) this.remove([id]);
   }
 }

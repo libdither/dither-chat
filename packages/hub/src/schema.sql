@@ -79,7 +79,9 @@ CREATE TABLE IF NOT EXISTS identity (
   person_id    TEXT REFERENCES person(id) ON DELETE SET NULL,
   seen_via     TEXT,                           -- an account id that can fetch this identity's media
   status       TEXT,                           -- JSON { text, emoji, at }: their custom status or About, as last heard
-  nickname     TEXT,                           -- your own name for this account, only you see it: set here, never by a network
+  nickname     TEXT,                           -- your own name for this account, only you see it: set here, or taken from your private nickname on its network
+  net_nickname TEXT,                           -- your private nickname for them as their network last said it (Signal), '' none; NULL never said
+  net_note     TEXT,                           -- your private note about them as their network last said it (Signal), '' none; NULL never said
   updated_at   INTEGER NOT NULL,
   UNIQUE (network, native_id)
 );
@@ -211,7 +213,9 @@ CREATE TABLE IF NOT EXISTS attachment (
   width      INTEGER,
   height     INTEGER,
   url        TEXT NOT NULL,                  -- MediaUrl as the adapter gave it
-  position   INTEGER NOT NULL DEFAULT 0
+  position   INTEGER NOT NULL DEFAULT 0,
+  alt        TEXT,                           -- its description (alt text), searched (rich.ts)
+  extra      TEXT                            -- JSON: spoiler, explicit, voice (hub rich.ts attachmentExtra)
 );
 CREATE INDEX IF NOT EXISTS attachment_message ON attachment(message_id);
 
@@ -264,7 +268,8 @@ CREATE TABLE IF NOT EXISTS folder_item (
   PRIMARY KEY (folder_id, item_kind, item_id)
 );
 
--- How you arranged your sidebar: order, pins, hidden places, closed folders.
+-- How you arranged your sidebar: order, pins, hidden places, closed folders. And whom the @ picker offers there
+-- (docs/mentions.md): NULL inherits from the place it is in.
 CREATE TABLE IF NOT EXISTS place_pref (
   kind      TEXT NOT NULL CHECK (kind IN ('folder', 'space', 'conversation')),
   id        TEXT NOT NULL,
@@ -273,6 +278,8 @@ CREATE TABLE IF NOT EXISTS place_pref (
   hidden    INTEGER NOT NULL DEFAULT 0,
   open      INTEGER NOT NULL DEFAULT 0,
   railed    INTEGER NOT NULL DEFAULT 0,
+  mention_scope TEXT,                         -- here | friends | everyone
+  mention_same  INTEGER,                      -- 1: friends and everyone only on the chat's network
   PRIMARY KEY (kind, id)
 );
 

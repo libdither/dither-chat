@@ -6,7 +6,8 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { netName } from '../model.ts';
 import { NUMBER_WARNING, ownCode, qrSvg, readScan, SCAN_CAMERA_TEXT, type ScanResult } from '../qr.ts';
 import { type CameraState, type Decoder, readPicture, startCamera } from '../qrscan.ts';
-import { db } from '../state.ts';
+import type * as P from '@dither-chat/protocol';
+import { api, db } from '../state.ts';
 import { NetBadge } from './bits.tsx';
 import { Icon } from './icons.tsx';
 
@@ -52,6 +53,21 @@ export function QrLink({ url, label, title }: { url: string; label: string; titl
   );
 }
 
+/** Your username and its link on a network that has them (Signal), from your own profile as last asked. */
+function useOwnUsername(a: P.AccountView | undefined): P.PersonAbout['username'] {
+  const [u, setU] = useState<{ id: string; u: P.PersonAbout['username'] } | null>(null);
+  const id = a?.network === 'signal' ? a.selfIdentityId : null;
+  useEffect(() => {
+    if (!id) return;
+    let live = true;
+    api<P.PersonAboutView>(`/api/identities/${id}/about`)
+      .then((v) => live && setU({ id, u: v.username }))
+      .catch(() => {});
+    return () => void (live = false);
+  }, [id]);
+  return u && u.id === id ? u.u : undefined;
+}
+
 /** Each account's own code, one at a time; a phone number stays hidden until tapped, every time this opens. */
 export function MyCodes() {
   const accounts = [...db.accounts.values()].filter((a) => a.network !== 'email');
@@ -60,7 +76,8 @@ export function MyCodes() {
   const a = accounts.find((x) => x.id === pick) ?? accounts[0];
   if (!a) return <p class="set-help">Add an account first: each one gets a code here.</p>;
   const me = a.selfIdentityId ? db.identities.get(a.selfIdentityId) : undefined;
-  const own = me ? ownCode(a.network, me) : { code: null, notes: [`${a.label} has not said who it is yet, so there is no code to show.`] };
+  const username = useOwnUsername(a);
+  const own = me ? ownCode(a.network, me, username) : { code: null, notes: [`${a.label} has not said who it is yet, so there is no code to show.`] };
   const code = own.code;
   const hidden = code?.number && shown !== a.id;
   return (

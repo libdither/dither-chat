@@ -66,6 +66,7 @@ const STOPS: Partial<Record<keyof P.RetentionSettings, string>> = {
   statuses: 'Stop logging statuses?',
   presence: 'Stop logging presence?',
   members: 'Stop recording server members?',
+  voice: 'Stop recording who is in voice channels?',
   adversarial: 'Hide adversarial features? What their switches keep goes on being kept, out of sight. Turn a switch off to stop it.',
 };
 
