@@ -138,7 +138,13 @@ export class DemoModeration {
 
   /** What this account may do to others' messages in a conversation. */
   messages(target: P.AboutTarget): P.MessageModeration | undefined {
-    const about = this.h.about(target);
+    // A place this demo account does not have (a seeded world's): nothing to moderate, and the context still answers.
+    let about: P.About;
+    try {
+      about = this.h.about(target);
+    } catch {
+      return undefined;
+    }
     if (!this.moderated(target, about) || !this.h.admin(target) || this.place(this.key(target)).ended) return undefined;
     return this.h.network === 'discord' ? { delete: true, reactions: true } : { delete: true };
   }
