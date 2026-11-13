@@ -816,7 +816,7 @@ export class HubServer {
       // Everything changed so far is in the journal, so the position below covers what this reads.
       this.flush();
       const calendar = this.opts.calendar?.link();
-      return ok({ ...s.bootstrap(), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), ...(this.opts.mail ? { mail: this.opts.mail.bootstrap() } : {}), requests: requestViews(s), ...(calendar ? { calendar: calendar.view() } : {}), ...(this.opts.notices ? { notices: this.opts.notices.boot() } : {}), sync: s.journal.position() } satisfies P.Bootstrap);
+      return ok({ ...s.bootstrap(), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), ...(this.opts.mail ? { mail: this.opts.mail.bootstrap() } : {}), requests: requestViews(s), ...(calendar ? { calendar: calendar.view() } : {}), ...(this.opts.notices ? { notices: this.opts.notices.boot() } : {}), sync: s.journal.position(), boot: this.boot } satisfies P.Bootstrap);
     }
     // Plans the calendar found in chats, from the hub's cache (calendar.ts): the chips under messages.
     if (path === '/api/plans' && method === 'GET') {

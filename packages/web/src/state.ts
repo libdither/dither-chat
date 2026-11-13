@@ -1212,7 +1212,7 @@ function bootstrap() {
       const res = await fetch('/api/bootstrap');
       const text = await res.text();
       if (!res.ok) throw new Error(text.slice(0, 200) || `${res.status}`);
-      const b = JSON.parse(text) as P.Bootstrap & { boot?: string };
+      const b = JSON.parse(text) as P.Bootstrap;
       applyBootstrap(b);
       synced = !!b.sync && ws?.readyState === WebSocket.OPEN && gen === socketGen;
       sawHub(b.boot);

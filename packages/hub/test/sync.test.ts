@@ -440,6 +440,14 @@ describe('a client applying deltas ends up where a fresh bootstrap puts it', () 
     expect(r.inbox).toEqual([]);
     expect(JSON.stringify(r).length).toBeLessThan(2500);
   });
+
+  test('a bootstrap names the hub process as a sync does, so a page that reconnects by either sees a restart', async () => {
+    const r = await resync(step);
+    if (r.full) throw new Error('refused');
+    const b = await get<P.Bootstrap>('/api/bootstrap');
+    expect(b.boot).toBeTruthy();
+    expect(b.boot).toBe(r.boot);
+  });
 });
 
 // ------------------------------------------------------------------ positions and fallbacks
