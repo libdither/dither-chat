@@ -238,10 +238,16 @@ try {
   const ravisTitle = await page.eval<string>(`[...document.querySelectorAll('.ct-node')].find((n) => n.querySelector(':scope > .ct-main .post-who b')?.textContent === 'Ravi').querySelector(':scope > .ct-main .pa-btn.like').title`);
   check("someone else's post: no list of who liked it (X shows it only to its author)", !/hover to see who/.test(ravisTitle), ravisTitle);
 
+  // The refused like stays taken back after the tree changed under it (two replies were added on top).
+  const stillOff = await page.eval<boolean>(`![...document.querySelectorAll('.ct-node[data-depth="0"]')].find((n) => /Setup: a random geometric graph/.test(n.querySelector(':scope > .ct-main .ct-text')?.textContent ?? '')).querySelector(':scope > .ct-main .pa-btn.like').classList.contains('on')`);
+  check('…and stays taken back when the tree changes around it', stillOff);
+
   // ------------------------------------------------------------------ in Chains the menu is over the page, not clipped
   await page.eval(`document.querySelector('.ct-style-btn').click()`);
   await page.eval(`[...document.querySelectorAll('.ct-style-menu button')].find((b) => /Chains/.test(b.textContent)).click()`);
   await page.until(`document.querySelectorAll('.thread-chain .thread-post.line').length > 0`, 3000);
+  await page.eval(`document.querySelector('.thread-chain .thread-post.line .pa-btn.repost').scrollIntoView({ block: 'center' })`);
+  await Bun.sleep(150);
   await page.eval(`document.querySelector('.thread-chain .thread-post.line .pa-btn.repost').click()`);
   await page.until(`!!document.querySelector('.pa-float.pa-menu')`, 3000);
   const vis = await page.eval<any>(`(() => { const m = document.querySelector('.pa-float.pa-menu').getBoundingClientRect(); const hit = document.elementFromPoint(m.x + m.width / 2, m.y + m.height / 2); return { h: Math.round(m.height), onTop: !!hit?.closest('.pa-menu'), inWindow: m.bottom <= innerHeight && m.top >= 0 }; })()`);

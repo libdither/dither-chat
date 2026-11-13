@@ -176,7 +176,7 @@ function Node({ n, depth, ctx, compact }: { n: TreeNode; depth: number; ctx: Com
               ) : (
                 <div class="ct-kids">
                   {n.children.map((c) => (
-                    <Node n={c} depth={depth + 1} ctx={ctx} compact={compact} />
+                    <Node key={c.post.id} n={c} depth={depth + 1} ctx={ctx} compact={compact} />
                   ))}
                 </div>
               ))}
@@ -213,7 +213,7 @@ function FlatBranch({ n, ctx }: { n: TreeNode; ctx: CommentCtx }) {
       {!folded && below.length > 0 && (
         <div class="ct-flat-kids">
           {below.map(({ node, to }) => (
-            <div class="ct-flat-reply" data-post={node.post.id}>
+            <div class="ct-flat-reply" key={node.post.id} data-post={node.post.id}>
               <Head p={node.post} ctx={ctx} avatar={24} folded={false} size={0} />
               {to && node.post.author !== to && <span class="ct-to">to @{ctx.kit.handle(to) ?? ctx.kit.name(to)}</span>}
               <Body p={node.post} ctx={ctx} />
@@ -240,7 +240,7 @@ export function Comments({ nodes, style, ctx }: { nodes: TreeNode[]; style: Comm
           const first = chain[0];
           const to = !tops.has(first.id) && first.replyTo?.author ? ctx.kit.handle(first.replyTo.author) : null;
           return (
-            <div class="thread-chain">
+            <div class="thread-chain" key={first.id}>
               {chain.map((p, i) => (
                 <Row p={p} kit={ctx.kit} network={ctx.network} line={i < chain.length - 1} above={i === 0 && to ? <span class="post-mark">Replying to @{to}</span> : undefined} below={ctx.below?.(p)} />
               ))}
@@ -255,14 +255,14 @@ export function Comments({ nodes, style, ctx }: { nodes: TreeNode[]; style: Comm
     return (
       <div class="ct ct-flatlist">
         {nodes.map((n) => (
-          <FlatBranch n={n} ctx={ctx} />
+          <FlatBranch key={n.post.id} n={n} ctx={ctx} />
         ))}
       </div>
     );
   return (
     <div class={`ct ${style === 'compact' ? 'compact' : 'tree'}`}>
       {nodes.map((n) => (
-        <Node n={n} depth={0} ctx={ctx} compact={style === 'compact'} />
+        <Node key={n.post.id} n={n} depth={0} ctx={ctx} compact={style === 'compact'} />
       ))}
     </div>
   );

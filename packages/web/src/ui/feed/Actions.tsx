@@ -323,9 +323,12 @@ export function PostActions({ p, ctx, big }: { p: P.PostFact; ctx: AnswerCtx; bi
       },
       (e) => {
         done();
-        // Only this one goes back: a repost pressed meanwhile stands.
-        setViewer((v) => ({ ...v, [key]: was }));
-        setCounts((c) => (c[count] !== undefined && was !== on ? { ...c, [count]: Math.max(0, c[count]! + (on ? -1 : 1)) } : c));
+        // Only this one goes back: a repost pressed meanwhile stands. The thread's record goes back with it.
+        let v2: P.PostViewer = {};
+        let c2: P.PostFact['counts'] = {};
+        setViewer((v) => (v2 = { ...v, [key]: was }));
+        setCounts((c) => (c2 = c[count] !== undefined && was !== on ? { ...c, [count]: Math.max(0, c[count]! + (on ? -1 : 1)) } : c));
+        setTimeout(() => ctx.onActed?.(p.id, { viewer: v2, counts: c2 }));
         kit.toast({ title: `Could not ${act.replace(/^un/, 'undo ')}`, body: (e as Error).message, kind: 'error' });
       },
     );
