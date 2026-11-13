@@ -118,6 +118,12 @@ object Notifications {
         Thread {
             val shown = if (tier == "digest") {
                 listRow(app, conv ?: request?.let { "request:$it" } ?: "inbox", d, hash, nid, device, marks)
+            } else if (notice != null) {
+                // Not a conversation: no shortcut, no Conversations section. One plain notification per group (tagged
+                // with it, so the hub's clear takes it away), sounding only when the hub says so.
+                val look = Looks.of(app, d.optString("network"), d.optString("icon").ifEmpty { null }, title)
+                post(app, conv ?: "notice:$notice", title, d.optString("body"), hash, nid = nid, device = device, look = look, quiet = !d.optBoolean("alert", true), marks = marks)
+                true
             } else if (conv != null) {
                 conversation(app, conv, d, tier, hash, replyTo, canReply, nid, device, marks)
                 true
@@ -463,7 +469,7 @@ object Notifications {
     }
 
     /** A notification that is neither a conversation's nor a list row: a test, a reply that did not go. */
-    fun post(c: Context, tag: String, title: String, body: String, hash: String?, sticky: Boolean = false, nid: String? = null, device: String? = null, look: Looks.Look? = null, quiet: Boolean = false) {
+    fun post(c: Context, tag: String, title: String, body: String, hash: String?, sticky: Boolean = false, nid: String? = null, device: String? = null, look: Looks.Look? = null, quiet: Boolean = false, marks: Marks? = null) {
         val b = Notification.Builder(c, if (quiet) QUIET else MESSAGES)
             .setSmallIcon(look?.small ?: R.drawable.ic_notification)
             .setColor(look?.color ?: c.getColor(R.color.accent))
@@ -474,7 +480,7 @@ object Notifications {
             .setContentIntent(open(c, hash, tag.hashCode()))
             .setAutoCancel(!sticky)
         look?.large?.let { b.setLargeIcon(Icon.createWithBitmap(it)) }
-        actions(c, b, tag, nid, device, null, false, null, list = false)
+        actions(c, b, tag, nid, device, marks, false, null, list = false)
         nm(c).notify(tag, ID, b.build())
     }
 
