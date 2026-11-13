@@ -29,7 +29,8 @@ Everything the networks' own clients can do that dither cannot, feature by featu
 | Search Japanese and other unspaced text | H | L | done | Scans inside words, so unspaced text is found. Slower than the index on a large database; a trigram index would fix that |
 | Index attachment filenames and embed text | M | L | next | Only message bodies are searched today, and a picture's alt text when no message text matches ([rich-messages.md](rich-messages.md)) |
 | Search Discord and Matrix themselves, on an explicit click | M | M | done | [indexing.md](indexing.md): places in jev's order, six at a time, paced per account, hits kept. Run against the demo and the extractors' fakes, not a live account |
-| Index jobs: a server, a folder of servers or a channel fetched whole, members walked, repeating | H | M | done | [indexing.md](indexing.md). Repeats fetch only what is new (history spans). Archived threads the hub never saw are not found yet. Not run on a live account |
+| Index jobs: a server, a folder of servers or a channel fetched whole, members walked, repeating | H | M | done | [indexing.md](indexing.md). Repeats fetch only what is new (history spans). Archived threads the hub never saw are not found by a job yet (Browse Threads lists them on request, threads.md). Not run on a live account |
+| Threads, forums and group DMs: follow a thread and its notifications, start threads and forum posts with tags, archive and lock, archived and private threads, Publish, run a group DM you own (docs/threads.md) | M | M | done | net-gaps (discord-threads). Hub, protocol, demo and web done and tested; the Discord side in dither-accounts is tested on a replica of the client only. Not run on a live account |
 | Signal history beyond what the hub received | L | H | blocked | A linked device gets no history |
 | Reorder channels inside a server | L | M | later | The network's order is usually what people want |
 

@@ -13,6 +13,7 @@ import type { MediaUrl } from './adapter.ts';
 import { NETWORK_META, type Network } from './ontology.ts';
 import type { AboutLeaving, InviteLinkFact, InviteOptions } from './servers.ts';
 import { PIN_DURATIONS } from './poll.ts';
+import type { AboutOwnership, AboutThread } from './threads.ts';
 
 /** Who may do something, as far as the networks agree. */
 export type Who = 'everyone' | 'admins';
@@ -256,6 +257,10 @@ export interface About {
   nick?: { value: string | null; canEdit: boolean; reason?: string; max?: number };
   /** You blocked this group: nothing from it reaches you (capability 'block'; the `block` command changes it). */
   blocked?: boolean;
+  /** A thread's archiving, locking and following (threads.ts). */
+  thread?: AboutThread;
+  /** A group with an owner: who, and whether this account may remove people or hand it over (threads.ts). */
+  ownership?: AboutOwnership;
 }
 
 export interface AboutTarget {

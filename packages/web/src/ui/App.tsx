@@ -21,6 +21,7 @@ import { ProfilePane } from './Profile.tsx';
 import { PlaceProfile } from './PlaceProfile.tsx';
 import { GraphPane } from './GraphPane.tsx';
 import { MessageHistoryLayer } from './MessageHistory.tsx';
+import { ThreadsLayerLazy } from './ThreadsLazy.tsx';
 import { Rail } from './Rail.tsx';
 import { TitleBar } from './TitleBar.tsx';
 import { FindShortcut, SearchPane } from './Search.tsx';
@@ -370,6 +371,7 @@ export function App() {
       <RingCards />
       <ReactionLayer />
       <MessageHistoryLayer />
+      <ThreadsLayerLazy />
       <Toasts />
       <DragLayer />
       <ContextMenuLayer />

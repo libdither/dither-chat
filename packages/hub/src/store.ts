@@ -18,6 +18,7 @@ import { lateNews } from './latenews.ts';
 import { eraseVoice, ingestCallEvent, voiceKept } from './callstate.ts';
 import { applyPollUpdate, pollSeen, pollViews } from './polls.ts';
 import { ingestServers } from './servers.ts';
+import { ingestThreadFacts, threadParts, type ThreadParts } from './threads.ts';
 import { alertBar, type Facts } from './learn.ts';
 import { attachmentExtra, attachmentRich, embedViews, richView, type StoredExtra } from './rich.ts';
 
@@ -650,6 +651,8 @@ export class Store {
           break;
         case 'conversation':
           this.conversation(acc, ev.conversation);
+          // A thread's following and tags, a forum's tags (threads.ts).
+          ingestThreadFacts(this, acc, ev.conversation);
           break;
         case 'leave':
           this.leave(acc, ev.kind, ev.nativeId);
@@ -2306,7 +2309,21 @@ export class Store {
     const vs = this.db.query(`SELECT * FROM vantage WHERE target_kind = 'conversation' AND target_id = ?`).all(id) as Row[];
     const last = r.last_message_id ? (this.db.query('SELECT * FROM message WHERE id = ?').get(r.last_message_id) as Row) : null;
     const other = r.shape === 'direct' ? parts.find((p) => !this.isSelf(p)) : undefined;
-    return this.assembleConversation(r, spaceIds, parts, vs, last, this.peerOf(r, parts), other ? pendingLinks(this.db, [other]) : undefined);
+    return this.assembleConversation(r, spaceIds, parts, vs, last, this.peerOf(r, parts), other ? pendingLinks(this.db, [other]) : undefined, this.threadPartsOf([r]).get(id));
+  }
+
+  /** Threads' and forums' parts of these conversations, with each post's first message (threads.ts). */
+  private threadPartsOf(rows: Row[]): Map<string, ThreadParts & { firstRow?: Row | null }> {
+    const parts = threadParts(this, rows as never) as Map<string, ThreadParts & { firstRow?: Row | null }>;
+    const firsts = [...parts.values()].map((p) => p.firstId).filter((x): x is string => !!x);
+    if (!firsts.length) return parts;
+    const found = new Map((this.db.query('SELECT * FROM message WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0').all(JSON.stringify(firsts)) as Row[]).map((m) => [m.id as string, m]));
+    for (const [cid, p] of parts) {
+      const m = p.firstId ? found.get(p.firstId) : undefined;
+      // A post's first message is in the post; a thread started from a message has its starter in the channel.
+      if (m && m.conversation_id === cid) p.firstRow = m;
+    }
+    return parts;
   }
 
   /** Many conversations at once, as bootstrap() reads them: a handful of queries rather than five per conversation. */
@@ -2327,9 +2344,10 @@ export class Store {
       q(`SELECT m.* FROM message m WHERE m.id IN (SELECT last_message_id FROM conversation WHERE id IN (SELECT value FROM json_each(?)))`).map((m) => [m.id as string, m]),
     );
     const pending = rows.some((r) => r.shape === 'direct') ? pendingLinks(this.db) : undefined;
+    const threads = this.threadPartsOf(rows);
     return rows.map((r) => {
       const ps = (parts.get(r.id) ?? []).map((p) => p.identity_id as string);
-      return this.assembleConversation(r, (edges.get(r.id) ?? []).map((e) => e.parent_id), ps, vants.get(r.id) ?? [], lasts.get(r.last_message_id) ?? null, this.peerOf(r, ps), pending);
+      return this.assembleConversation(r, (edges.get(r.id) ?? []).map((e) => e.parent_id), ps, vants.get(r.id) ?? [], lasts.get(r.last_message_id) ?? null, this.peerOf(r, ps), pending, threads.get(r.id));
     });
   }
 
@@ -2340,7 +2358,7 @@ export class Store {
     return ((this.db.query('SELECT person_id FROM identity WHERE id = ?').get(peer) as Row) ?? {}).person_id ?? null;
   }
 
-  private assembleConversation(r: Row, spaceIds: string[], parts: string[], vs: Row[], last: Row | null, peer: string | null, links?: Map<string, P.PendingLinkView>): P.ConversationView {
+  private assembleConversation(r: Row, spaceIds: string[], parts: string[], vs: Row[], last: Row | null, peer: string | null, links?: Map<string, P.PendingLinkView>, th?: ThreadParts & { firstRow?: Row | null }): P.ConversationView {
     const via = vs[0]?.account_id ?? null;
     // A DM: a friend request between one of its accounts and the other person, either way (add.ts pendingLinks).
     const other = r.shape === 'direct' && links?.size ? parts.find((p) => !this.isSelf(p)) : undefined;
@@ -2365,7 +2383,20 @@ export class Store {
       lastMessageAt: r.last_message_at,
       nativeMute: json(vs.find((v) => v.native_mute)?.native_mute ?? null, null),
       ...(pending ? { pending } : {}),
+      ...(th?.thread || th?.firstRow ? { thread: this.threadView(th, via) } : {}),
+      ...(th?.forum ? { forum: th.forum } : {}),
     };
+  }
+
+  /** A thread's view: its facts, its first message as a preview, and that message's first picture for a gallery. */
+  private threadView(th: ThreadParts & { firstRow?: Row | null }, via: string | null): P.ThreadView {
+    const base = th.thread ?? { following: [], notFollowing: [], notify: null, muted: false, mutedUntil: null, locked: false, tags: [], pinned: false, private: false, ownerId: null, createdAt: null, messageCount: null };
+    let cover: string | null = null;
+    if (th.firstRow) {
+      const a = this.db.query(`SELECT url FROM attachment WHERE message_id = ? AND kind = 'image' ORDER BY position LIMIT 1`).get(th.firstRow.id) as Row | null;
+      cover = a ? this.media(a.url, via) : null;
+    }
+    return { ...base, first: this.preview(th.firstRow ?? null), cover };
   }
 
   // ------------------------------------------------------------ reactions
@@ -3241,6 +3272,7 @@ export class Store {
     const personOf = new Map(identities.map((i) => [i.id, i.personId]));
 
     const links = pendingLinks(db);
+    const threads = this.threadPartsOf(convRows);
     const conversations = convRows.map((r) => {
       const ps = (P_.get(r.id) ?? []).map((p) => p.identity_id);
       const peer = r.shape === 'direct' ? (personOf.get(ps.find((p) => !this.isSelf(p)) ?? '') ?? null) : null;
@@ -3252,6 +3284,7 @@ export class Store {
         r.last_message_id ? (lasts.get(r.last_message_id) ?? null) : null,
         peer,
         links,
+        threads.get(r.id),
       );
     });
 
