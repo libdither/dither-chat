@@ -1,9 +1,10 @@
 /**
  * A poll in the timeline and making one (docs/polls.md): a chunk of its own, loaded the first time a poll is shown
  * or made (PollLazy.tsx). The card has a bar per option, your vote marked, the voters where the network shows them
- * (Signal), and its end; you choose, then Vote. A poll you made ends early from its card where the network allows.
+ * (Signal), and its end. Where the network lets a vote change, a tap votes; where it does not, you choose, then
+ * Vote. A poll you made ends early from its card where the network allows.
  */
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
 import { POLL_RULES, pollDraftProblem, pollHoursLabel } from '@dither-chat/protocol';
 import { renderMarkdown } from '../markdown.ts';
@@ -35,20 +36,31 @@ export function PollCard({ m }: { m: P.MessageView }) {
   const votes = p.options.reduce((n, o) => n + o.count, 0);
   const people = p.voters ?? (p.multi ? null : votes);
   const showCounts = p.ended || mine.length > 0 || !account;
+  // Where a vote can be changed later, a tap votes at once (and a tap on your own choice takes it back); where it
+  // cannot, you choose, then press Vote (docs/polls.md "Voting, making, ending").
+  const atOnce = !!POLL_RULES[m.network]?.voteChangeable;
+  const mineKey = mine.join('\n');
+  // What you tapped shows until the hub's update brings your vote.
+  useEffect(() => setPicked(null), [mineKey]);
+  // A vote that cannot change is final once made.
+  const locked = !atOnce && mine.length > 0;
   const pick = (id: string) => {
-    if (!account || busy) return;
-    if (p.multi) setPicked(choosing.includes(id) ? choosing.filter((x) => x !== id) : [...choosing, id]);
-    else setPicked(choosing[0] === id ? [] : [id]);
+    if (!account || busy || locked) return;
+    const next = p.multi ? (choosing.includes(id) ? choosing.filter((x) => x !== id) : [...choosing, id]) : choosing[0] === id ? [] : [id];
+    if (!atOnce) return setPicked(next);
+    setPicked(next);
+    void send(next, true);
   };
-  const send = async (options: string[]) => {
+  const send = async (options: string[], keep = false) => {
     setBusy(true);
-    if (await vote(m, options)) setPicked(null);
+    const ok = await vote(m, options);
+    if (!ok || !keep) setPicked(null);
     setBusy(false);
   };
   return (
     <div class={`poll-card ${p.ended ? 'ended' : ''}`} data-track-area="poll">
       <div class="poll-q">{p.question}</div>
-      <div class="poll-how">{p.ended ? 'Poll ended' : p.multi ? 'Choose one or more' : 'Choose one'}</div>
+      <div class="poll-how">{p.ended ? 'Poll ended' : `${p.multi ? 'Choose one or more' : 'Choose one'}${account && atOnce ? ' · tap again to take it back' : ''}`}</div>
       <ul class="poll-options" role={account ? (p.multi ? 'group' : 'radiogroup') : undefined}>
         {p.options.map((o) => {
           const on = choosing.includes(o.id);
@@ -60,7 +72,7 @@ export function PollCard({ m }: { m: P.MessageView }) {
                 class={`poll-option ${on ? 'on' : ''} ${o.mine ? 'mine' : ''}`}
                 role={account ? (p.multi ? 'checkbox' : 'radio') : undefined}
                 aria-checked={account ? on : undefined}
-                disabled={!account || busy}
+                disabled={!account || busy || locked}
                 onClick={() => pick(o.id)}
                 title={names.length ? names.join(', ') : undefined}
               >
@@ -85,19 +97,14 @@ export function PollCard({ m }: { m: P.MessageView }) {
           {!p.ended && p.expires ? ` · ${left(p.expires - Date.now())}` : ''}
         </span>
         <span class="poll-actions">
-          {account && changed && (
-            <button class="btn small primary" disabled={busy || (!choosing.length && !mine.length)} onClick={() => send(choosing)}>
-              {choosing.length ? 'Vote' : 'Take vote back'}
+          {account && changed && !atOnce && (
+            <button class="btn small primary" disabled={busy || !choosing.length} onClick={() => send(choosing)} title="A vote here cannot be changed later">
+              Vote
             </button>
           )}
-          {account && changed && (
+          {account && changed && !atOnce && (
             <button class="btn small" disabled={busy} onClick={() => setPicked(null)}>
               Cancel
-            </button>
-          )}
-          {account && !changed && mine.length > 0 && (
-            <button class="btn small" disabled={busy} onClick={() => send([])}>
-              Take vote back
             </button>
           )}
           {canEndPoll(m) && (
