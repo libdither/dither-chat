@@ -1233,6 +1233,14 @@ const ADMIN_IN: Record<AccKey, string[]> = {
   wa: [wgroup('books')],
   tg: [],
 };
+/** A Discord server's roles that may be pinged (docs/mentions.md): the mentionable ones, as its @ list offers them. */
+const DEMO_ROLES: Record<string, P.MentionableRole[]> = {
+  [g.dither]: [
+    { id: snow('role-core'), name: 'core', color: '#e67e22' },
+    { id: snow('role-reviewers'), name: 'reviewers', color: '#3498db' },
+  ],
+  [g.rust]: [{ id: snow('role-helpers'), name: 'Helpers', color: '#2ecc71' }],
+};
 /** Matrix: your power level where it is not 100 or 0. */
 const MX_LEVEL: Record<string, number> = { [room('libdither-mx', 'matrix.org')]: 50 };
 /** Settings that differ from each network's defaults. */
@@ -2219,6 +2227,8 @@ class DemoAdapter implements InprocAdapter {
     const all: P.Capability[] = [
       ...caps,
       ...(this.network === 'discord' ? (['forward', 'members', 'walkMembers', 'listThreads'] as const) : []),
+      // Who a conversation can ping, for the @ picker (docs/mentions.md).
+      ...(this.network === 'discord' || this.network === 'matrix' ? (['mentionables'] as const) : []),
       ...(ADDS_MEMBERS.has(this.network) ? (['addMembers'] as const) : []),
       ...(MAKES_GROUPS.has(this.network) ? (['createGroup'] as const) : []),
       // The networks whose servers search (netsearch.ts).
@@ -2357,6 +2367,37 @@ class DemoAdapter implements InprocAdapter {
     for (const i of found) if (WALKABLE.includes(i)) this.emit({ t: 'identity', identity: i });
     this.emit({ t: 'members', space: cmd.space, source: 'walk', total: everyone.length, members: found.map((i) => ({ who: i.nativeId })) });
     return { count: found.length, total: everyone.length, ...(cmd.recent ? { next: found.length >= cmd.limit ? found[found.length - 1].nativeId : null } : {}) };
+  }
+
+  /**
+   * Who a conversation can ping (docs/mentions.md), as the real adapters answer it, emitting nothing: a DM's or a
+   * group's people; in a server channel, who wrote there lately (no query) or the members whose names match, then its
+   * roles, and @everyone where this account is an admin; a Matrix room's people, and @room from power level 50.
+   */
+  private mentionables(cmd: Extract<P.AdapterCommand, { t: 'mentionables' }>): P.Mentionables {
+    const c = this.findConv(cmd.conversation);
+    if (!c) throw new Error('this demo account is not in that conversation');
+    const q = cmd.query.replace(/^@+/, '').toLowerCase();
+    const known = new Map([...Object.values(D), ...WALKABLE, ...Object.values(M)].map((i) => [i.nativeId, i] as const));
+    const matches = (i: P.IdentityFact) => !q || [i.displayName, i.handle].some((n) => !!n && n.toLowerCase().includes(q));
+    const spoke = new Map<string, number>();
+    for (const [min, author] of [...c.msgs].sort((a, b) => a[0] - b[0])) if (!spoke.has(author.nativeId)) spoke.set(author.nativeId, this.ago(min));
+    const guild = this.network === 'discord' ? this.guildOf(c) : null;
+    const ids = c.fact.participants?.length ? c.fact.participants : !q || !guild ? [...spoke.keys()] : [...spoke.keys(), ...[...Object.values(D), ...WALKABLE].map((i) => i.nativeId)];
+    const people: P.MentionablePerson[] = [];
+    for (const id of new Set(ids)) {
+      const i = known.get(id);
+      if (!i || id === this.self.nativeId || !matches(i)) continue;
+      const at = spoke.get(id);
+      people.push({ nativeId: id, name: i.displayName ?? i.handle ?? id, ...(i.handle ? { handle: i.handle } : {}), ...(i.isBot ? { isBot: true } : {}), ...(at ? { lastSpoke: at } : {}) });
+      if (people.length >= cmd.limit) break;
+    }
+    if (this.network === 'matrix') {
+      const level = ADMIN_IN[this.key].includes(c.fact.nativeId) ? 100 : (MX_LEVEL[c.fact.nativeId] ?? 0);
+      return { people, everyone: level >= 50 };
+    }
+    const roles = (guild ? (DEMO_ROLES[guild] ?? []) : []).filter((r) => !q || r.name.toLowerCase().includes(q));
+    return { people, ...(roles.length ? { roles } : {}), everyone: !!guild && ADMIN_IN[this.key].includes(guild) };
   }
 
   private seedHistory(ago: (min: number) => number) {
@@ -2641,6 +2682,13 @@ class DemoAdapter implements InprocAdapter {
         break;
       case 'walkMembers':
         reply(this.walkMembers(cmd));
+        break;
+      case 'mentionables':
+        try {
+          reply(this.mentionables(cmd));
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
         break;
       case 'threads':
         reply(this.threads(cmd));
