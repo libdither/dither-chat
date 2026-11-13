@@ -1,11 +1,10 @@
 /**
- * dither-calendar beside the hub (docs/calendar.md): the calendar's web app and API under /calendar/, the plans it
- * found in chats kept here for the chips under messages, and its reminders delivered as notifications.
+ * dither-calendar beside the hub (docs/calendar.md): the calendar's web app and API under /calendar/, and the plans it
+ * found in chats kept here for the chips under messages.
  *
- * The calendar is another server on this machine (DITHER_CALENDAR_URL, http://127.0.0.1:8470 by default; off on a demo
- * hub). The hub forwards /calendar/<rest> to it, holds its event stream over loopback, and asks it for the plans that
- * changed whenever the stream says proposals or events did. The calendar never calls the hub about plans; it calls
- * only POST /api/calendar/notify, from loopback with no Origin.
+ * The calendar is a service at the address of the calendar account (calendar-account.ts), http://127.0.0.1:8470 by
+ * default. The hub forwards /calendar/<rest> to it, holds its event stream, and asks it for the plans that changed
+ * whenever the stream says proposals or events did. Its chats and reminders come through the account's adapter link.
  */
 import type * as P from '@dither-chat/protocol';
 
@@ -35,10 +34,14 @@ function page(title: string, text: string, retry: boolean, status: number): Resp
 /** /calendar/* on a hub without a calendar: 404, JSON for the API, else a small page. */
 export function calendarOff(path: string): Response {
   if (path.startsWith('/calendar/api/')) return Response.json({ error: 'calendar is off on this hub' }, { status: 404 });
-  return page('Calendar is not set up on this hub', 'This hub has no calendar beside it (DITHER_CALENDAR_URL, docs/calendar.md).', false, 404);
+  return page('Calendar is not set up on this hub', 'This hub has no calendar account. Add one under Accounts (docs/calendar.md).', false, 404);
 }
 
-/** The calendar's address from the environment: the default on a real hub, never on a demo hub; `off` or empty is none. */
+/**
+ * The calendar's address from the environment: the default on a real hub, never on a demo hub; `off` or empty is none.
+ * Only the first start with calendar accounts reads it (calendar-account.ts seedCalendarAccount); the account says
+ * where the calendar is from then on.
+ */
 export function calendarUrl(env: Record<string, string | undefined>, demo: boolean): string | null {
   const v = (env.DITHER_CALENDAR_URL ?? (demo ? '' : 'http://127.0.0.1:8470')).trim();
   if (demo || !v || v === 'off') return null;
@@ -271,106 +274,5 @@ export class CalendarLink {
     if (this.cache.size <= MAX_PLANS) return;
     const old = [...this.cache.values()].sort((a, b) => a.updatedAt - b.updatedAt);
     for (const p of old.slice(0, this.cache.size - MAX_PLANS)) this.cache.delete(p.id);
-  }
-}
-
-// ------------------------------------------------------------------ reminders
-
-/**
- * Who may call POST /api/calendar/notify: a process on this machine that is not a browser. Caddy reaches the hub over
- * the tailnet address, so a request from another device is never loopback here.
- */
-export function notifyAllowed(ip: string, req: Request): boolean {
-  const v4 = ip.replace(/^::ffff:/, '');
-  return (ip === '::1' || v4.startsWith('127.')) && !req.headers.get('origin');
-}
-
-const str = (x: unknown, max: number): x is string => typeof x === 'string' && x.length <= max;
-const numOrNull = (x: unknown) => x === null || (typeof x === 'number' && Number.isFinite(x));
-const strOrNull = (x: unknown, max: number) => x === null || str(x, max);
-
-/** A ReminderNotice the hub will deliver, or why not. */
-export function checkNotice(x: any): string | null {
-  if (!x || typeof x !== 'object') return 'not an object';
-  if (!str(x.id, 400) || !x.id) return 'id';
-  if (!str(x.eventKey, 300) || !x.eventKey) return 'eventKey';
-  if (!str(x.title, 200)) return 'title';
-  if (typeof x.allDay !== 'boolean') return 'allDay';
-  if (!numOrNull(x.startAt) || !numOrNull(x.endAt)) return 'startAt/endAt';
-  if (!strOrNull(x.startDate, 10)) return 'startDate';
-  if (!str(x.timeZone, 64)) return 'timeZone';
-  if (!strOrNull(x.location, 200)) return 'location';
-  if (!str(x.when, 200)) return 'when';
-  if (typeof x.minutesBefore !== 'number' || !Number.isFinite(x.minutesBefore)) return 'minutesBefore';
-  if (typeof x.late !== 'boolean') return 'late';
-  if (!str(x.open, 300) || !x.open.startsWith('#')) return 'open';
-  if (!strOrNull(x.meetingUrl, 2000) || (x.meetingUrl && !/^https?:\/\//i.test(x.meetingUrl))) return 'meetingUrl';
-  return null;
-}
-
-/** Rule keys for a reminder (devices.ts otherChain): the calendar is a network of its own, `network:calendar`. */
-export const REMINDER_RULE_ID = 'calendar:reminders';
-export function calendarChain(id: string): string[] | null {
-  return id.startsWith('calendar:') ? ['network:calendar'] : null;
-}
-
-/** Ids already delivered: a repeat (the calendar's retry after a lost answer) is answered without notifying again. */
-export const SEEN_MAX = 2000;
-export const SEEN_MS = 48 * 3_600_000;
-
-export interface ReminderDeps {
-  now?: () => number;
-  inQuietHours: (now: number) => boolean;
-  /** Devices whose rules keep calendar reminders off them (devices.quietOn('calendar:reminders')). */
-  quietDevices: () => string[];
-  /** Push registrations that are not phones. */
-  desktops: () => string[];
-  /** The activity log's id for it, or null. */
-  notification: () => string | null;
-  sent: (nid: string, r: { devices: number; accepted: number }) => void;
-  /** To open pages (server.notify). */
-  notify: (ev: Extract<P.ClientEvent, { t: 'notify' }>) => void;
-  push: (title: string, body: string, extra: Record<string, unknown>, skip: string[], level: 'push' | 'quiet') => Promise<{ devices: number; accepted: number }>;
-}
-
-/** The hub's side of a reminder (docs/calendar.md "Reminders"): an alert on every device, or held quiet in quiet hours. */
-export class ReminderDelivery {
-  private seen = new Map<string, { at: number; result: Extract<P.ReminderResult, { ok: true }> | null }>();
-
-  constructor(private deps: ReminderDeps) {}
-
-  async deliver(n: P.ReminderNotice): Promise<P.ReminderResult> {
-    const now = (this.deps.now ?? Date.now)();
-    for (const [id, s] of this.seen) {
-      if (s.at > now - SEEN_MS && this.seen.size <= SEEN_MAX) break;
-      this.seen.delete(id);
-    }
-    const prior = this.seen.get(n.id);
-    if (prior && prior.at > now - SEEN_MS) {
-      return prior.result ? { ...prior.result, duplicate: true } : { ok: true, duplicate: true, tier: 'push', devices: 0, accepted: 0 };
-    }
-    // Taken before the first await, so two posts of the same id at once notify once.
-    this.seen.set(n.id, { at: now, result: null });
-    const tier: 'push' | 'quiet' = this.deps.inQuietHours(now) ? 'quiet' : 'push';
-    const quiet = this.deps.quietDevices();
-    const skip = tier === 'push' ? quiet : [...new Set([...quiet, ...this.deps.desktops()])];
-    const nid = this.deps.notification();
-    const calendar: P.CalendarNotifyRef = { open: n.open, eventKey: n.eventKey, reminderId: n.id, meetingUrl: n.meetingUrl };
-    const title = n.title || '(No title)';
-    const body = [n.when, n.location].filter(Boolean).join(' · ');
-    const reasons = [tier === 'quiet' ? 'Held by quiet hours' : n.late ? 'Calendar reminder, sent late' : 'Calendar reminder'];
-    this.deps.notify({ t: 'notify', title, body, reasons, calendar, ...(tier === 'quiet' ? { level: 'quiet' as const } : {}), ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}) });
-    try {
-      const r = await this.deps.push(title, body, { calendar, tier, level: tier, ...(nid ? { nid } : {}) }, skip, tier);
-      if (nid) this.deps.sent(nid, r);
-      const result = { ok: true as const, tier, devices: r.devices, accepted: r.accepted };
-      this.seen.delete(n.id);
-      this.seen.set(n.id, { at: now, result });
-      return result;
-    } catch (e) {
-      // Not delivered: the calendar retries the same id, and that one is not a repeat.
-      this.seen.delete(n.id);
-      return { ok: false, error: String((e as Error)?.message ?? e) };
-    }
   }
 }

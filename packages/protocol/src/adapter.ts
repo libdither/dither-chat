@@ -85,6 +85,8 @@ export type Capability =
   | 'search'
   /** Lists a space's members on request, by name prefix (the `walkMembers` command): an active walk, not only what was seen. */
   | 'walkMembers'
+  /** Bodies keep `<@person:per_…>` and `<@identity:idn_…>` as written: the hub does not lower them (docs/mentions.md). */
+  | 'personRefs'
   /** Lists a channel's threads, archived ones too (the `threads` command), so an index job finds threads nobody opened. */
   | 'listThreads';
 

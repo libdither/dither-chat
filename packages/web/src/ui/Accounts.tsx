@@ -1,6 +1,6 @@
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META, NETWORKS } from '@dither-chat/protocol';
+import { CALENDAR_URL_DEFAULT, NETWORK_META, NETWORKS } from '@dither-chat/protocol';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ago } from '../format.ts';
 import { netName } from '../model.ts';
@@ -764,6 +764,12 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
             <dd>{a.label}</dd>
             <dt>Status</dt>
             <dd>{STATUS[a.status]}</dd>
+            {a.network === 'calendar' && (
+              <>
+                <dt>Calendar at</dt>
+                <dd>{a.url ?? 'no address'}</dd>
+              </>
+            )}
             <dt>Runs in</dt>
             <dd>
               {m ? (
@@ -913,6 +919,13 @@ const NET_HELP: Record<P.Network, { adapter: string; blurb: string; fields: { ke
     blurb: 'Runs X in a sandboxed browser in dither-accounts, for your direct messages. After you add it, open its live view and sign in to X as on your desktop.',
     fields: [],
   },
+  // A calendar service beside the hub (docs/calendar.md): the hub links to it itself, never through dither-accounts.
+  calendar: {
+    adapter: 'calendar',
+    blurb:
+      "Links dither-calendar (or another calendar that speaks the same protocol) at this address. While the account is here, the calendar is too: its pane and tab, the plans it finds in your chats, its reminders, and a Calendar chat where you write what to add. Remove the account to turn all of it off.",
+    fields: [],
+  },
   // Not offered here: mail accounts are added on dither-accounts' page (Mail, below the chat accounts).
   email: {
     adapter: 'imap',
@@ -926,6 +939,7 @@ export function AddAccount({ onClose }: { onClose: () => void }) {
   const [network, setNetwork] = useState<P.Network>('discord');
   const [label, setLabel] = useState('');
   const [homeserver, setHomeserver] = useState('https://matrix.org');
+  const [calendarUrl, setCalendarUrl] = useState(CALENDAR_URL_DEFAULT);
   const [fields, setFields] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const help = NET_HELP[network];
@@ -939,7 +953,7 @@ export function AddAccount({ onClose }: { onClose: () => void }) {
           network,
           adapter: help.adapter,
           label: label.trim() || undefined,
-          config: network === 'matrix' ? { homeserver } : {},
+          config: network === 'matrix' ? { homeserver } : network === 'calendar' ? { url: calendarUrl.trim() } : {},
           secret,
         },
       });
@@ -965,7 +979,7 @@ export function AddAccount({ onClose }: { onClose: () => void }) {
           ))}
         </div>
         <p class="add-blurb">{help.blurb}</p>
-        {db.accountsManager && (
+        {db.accountsManager && network !== 'calendar' && (
           <p class="add-note">
             <Icon name="info" size={14} /> It runs in dither-accounts
             {db.accountsManager.url ? (
@@ -989,6 +1003,14 @@ export function AddAccount({ onClose }: { onClose: () => void }) {
           <>
             <label class="field-label">Homeserver</label>
             <input class="input" value={homeserver} onInput={(e) => setHomeserver((e.target as HTMLInputElement).value)} />
+          </>
+        )}
+        {network === 'calendar' && (
+          <>
+            <label class="field-label">
+              Address <span class="muted-label">— where the calendar runs, as this hub reaches it</span>
+            </label>
+            <input class="input" value={calendarUrl} placeholder={CALENDAR_URL_DEFAULT} onInput={(e) => setCalendarUrl((e.target as HTMLInputElement).value)} />
           </>
         )}
         {help.fields.map((f) => (

@@ -225,7 +225,7 @@ export function describeActivity(f: P.PlaceActivity): string | null {
 
 // ------------------------------------------------------------------ the store
 
-/** `reminder`: a calendar reminder (calendar.ts), with no message or conversation. */
+/** `reminder`: a calendar reminder from before calendar accounts, with no message or conversation (old rows; now a reminder is a message). */
 export type NotificationKind = 'message' | 'held' | 'digest' | 'request' | 'reminder';
 
 export interface Features {

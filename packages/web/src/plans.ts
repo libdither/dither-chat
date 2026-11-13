@@ -1,14 +1,18 @@
 /**
  * Plans dither-calendar found in chats (docs/calendar.md), kept by message so a chip can show under the message that
- * named the time. A hub without a calendar sends no `calendar` in its bootstrap: then `calendarOn` stays false, nothing
- * here is asked for, and the timeline draws nothing more per message.
+ * named the time. A hub without a calendar account sends no `calendar` in its bootstrap: then `calendarOn` stays false,
+ * nothing here is asked for, and the timeline draws nothing more per message.
  *
  * Imports nothing of state.ts: state.ts calls in (applyBootstrap, the socket opening, events).
  */
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 
-/** Whether the hub has a calendar beside it: set from the first bootstrap that says so, and never unset in a session. */
+/**
+ * Whether the hub has a calendar (an enabled calendar account): from the bootstrap, then the `calendar` events, which
+ * turn it on and (`off`) off again when the account comes or goes. Anything drawn per message reads it as a plain value;
+ * what reads `calendarLink` (the rail, the tab bar) follows at once.
+ */
 export let calendarOn = false;
 /** Plans changed: a chip reads this, not the message row (docs/perf.md). */
 export const plansRev = signal(0);
@@ -49,19 +53,42 @@ export function setCalendarLink(v: P.CalendarLinkView | null) {
   calendarLink.value = v;
 }
 
-/** A bootstrap (the hub's, or the snapshot's) is in. Returns true the first time it says there is a calendar. */
-export function calendarFromBootstrap(b: { calendar?: P.CalendarLinkView }): boolean {
-  if (!b.calendar) return false;
-  setCalendarLink(b.calendar);
-  if (calendarOn) return false;
-  calendarOn = true;
-  return true;
+/** The calendar account went: no pane, tab or chips until one comes back. */
+function calendarGone() {
+  if (!calendarOn) return;
+  calendarOn = false;
+  putPlans([], true);
+  calendarLink.value = null;
 }
 
-/** A `plans` or `calendar` event. */
-export function applyPlanEvent(ev: P.ClientEvent) {
+/** A bootstrap (the hub's, or the snapshot's) is in. Returns true when it turns the calendar on; one without a calendar turns it off. */
+export function calendarFromBootstrap(b: { calendar?: P.CalendarLinkView }): boolean {
+  if (!b.calendar) {
+    calendarGone();
+    return false;
+  }
+  const was = calendarOn;
+  calendarOn = true;
+  setCalendarLink(b.calendar);
+  return !was;
+}
+
+/** A `plans` or `calendar` event. Returns true when it turns the calendar on (the caller asks for its plans). */
+export function applyPlanEvent(ev: P.ClientEvent): boolean {
   if (ev.t === 'plans') putPlans(ev.plans, !!ev.replace);
-  else if (ev.t === 'calendar') setCalendarLink({ path: '/calendar/', reachable: ev.reachable, waiting: ev.waiting });
+  else if (ev.t === 'calendar') {
+    if (ev.off) {
+      calendarGone();
+      return false;
+    }
+    const was = calendarOn;
+    calendarOn = true;
+    // A new link value even when only `calendarOn` changed, so what draws the calendar's entries looks again.
+    if (!was) calendarLink.value = { path: '/calendar/', reachable: ev.reachable, waiting: ev.waiting };
+    else setCalendarLink({ path: '/calendar/', reachable: ev.reachable, waiting: ev.waiting });
+    return !was;
+  }
+  return false;
 }
 
 let loading: Promise<void> | null = null;

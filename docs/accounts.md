@@ -141,6 +141,8 @@ The page works the same for an account whatever runs it; for one the manager run
 - **New accounts while the manager is unreachable** are refused (503, "dither-accounts is not reachable…") rather
   than run here: the manager is where accounts live.
 - **Accounts another app or the manager's page added** show here too, under their network, in the first free colour.
+- **A calendar account** ([calendar.md](calendar.md)) never goes to the manager: the hub links the calendar at its
+  address itself, whether or not the manager is up.
 
 Views say who runs an account: `managedBy` (`{ url, origin }`) on an account the manager lists, and `accountsManager`
 in the bootstrap and sync answers. With `DITHER_ACCOUNTS_PUBLIC_URL` set (the manager's page as your browser reaches

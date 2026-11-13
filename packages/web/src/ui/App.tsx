@@ -39,7 +39,7 @@ import { MailCenterLazy, MailComposerLazy, MailSidebarLazy } from './mail/lazy.t
 import { RequestsPane } from './Requests.tsx';
 import { NoticesPaneLazy } from './Notices.tsx';
 import { CalendarPane } from './calendar/CalendarPane.tsx';
-import { calendarOn } from '../plans.ts';
+import { calendarLink, calendarOn } from '../plans.ts';
 import { countKey } from '../clicklog.ts';
 
 /** A conversation's details panel: the person's, for a DM of someone reached by several routes (their chat's page). */
@@ -220,6 +220,8 @@ let lastHome: Route = { view: 'inbox' };
 
 function TabBar({ r }: { r: Route }) {
   rev.value;
+  // The calendar's tab comes and goes with its account (plans.ts).
+  calendarLink.value;
   const tab = tabOf(r);
   const all = totalUnread().badge;
   const attention = [...db.accounts.values()].some((a) => a.attention);

@@ -1,17 +1,20 @@
 /**
- * dither-calendar beside the hub (calendar.ts, docs/calendar.md): /calendar/* forwarded to a fake calendar, the plans
- * kept from its event stream, and reminders delivered. The fake listens on port 0 and holds its event stream open;
- * every wait is on an event (a stream chunk, a broadcast), never a timer.
+ * dither-calendar beside the hub (calendar.ts, calendar-account.ts, docs/calendar.md): /calendar/* forwarded to a fake
+ * calendar, the plans kept from its event stream, the calendar account (its seed, the calendar following it, the
+ * adapter link both ways) and reminders as its messages. The fakes listen on port 0 and hold their streams and sockets
+ * open; every wait is on an event (a stream chunk, a broadcast, a socket frame), never a timer.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { CalendarLink, calendarChain, calendarUrl, checkNotice, notifyAllowed, ReminderDelivery, REMINDER_RULE_ID } from '../src/calendar.ts';
+import { CalendarLink, calendarUrl } from '../src/calendar.ts';
+import { CALENDAR_ADDED, CalendarAccounts, CalendarBridge, CHAT_ADAPTER_PATH, seedCalendarAccount } from '../src/calendar-account.ts';
 import { Devices } from '../src/devices.ts';
 import { HubServer, mediaSigner } from '../src/server.ts';
 import { Store } from '../src/store.ts';
+import { Supervisor } from '../src/supervisor.ts';
 import { Triage } from '../src/triage.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'dither-calendar-'));
@@ -112,10 +115,13 @@ function events() {
   };
 }
 
-const sup = { authorize: () => null, online: () => true, command: async () => ({}), note() {}, liveViewUrl: () => null } as any;
-function hub(opts: { calendar?: CalendarLink; onReminder?: (n: P.ReminderNotice) => Promise<P.ReminderResult> } = {}) {
+const sup = { authorize: () => null, online: () => true, command: async () => ({}), note() {}, liveViewUrl: () => null, writeSecret() {}, start() {}, stop: async () => {}, forget: async () => {} } as any;
+/** A hub with this calendar link on (as an enabled calendar account would have it), or a calendar holder of its own. */
+function hub(opts: { calendar?: CalendarLink; accounts?: (store: Store) => { link(): CalendarLink | undefined; sync(): void } } = {}) {
   const store = new Store(':memory:', mediaSigner('s'));
-  const h = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', ...opts });
+  const link = opts.calendar;
+  const calendar = opts.accounts ? opts.accounts(store) : link ? { link: () => link, sync() {} } : undefined;
+  const h = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', calendar });
   const port = h.start().port!;
   return { h, store, base: `http://127.0.0.1:${port}`, host: `127.0.0.1:${port}` };
 }
@@ -309,120 +315,321 @@ describe('plans from the event stream', () => {
   });
 });
 
-// ------------------------------------------------------------------ reminders
 
-const notice = (over: Partial<P.ReminderNotice> = {}): P.ReminderNotice => ({
-  id: 'evt_1|1800000000000|10',
-  eventKey: 'evt_1',
-  title: 'Standup',
-  allDay: false,
-  startAt: 1_800_000_000_000,
-  endAt: 1_800_000_900_000,
-  startDate: null,
-  timeZone: 'Europe/Berlin',
-  location: 'Room 2',
-  when: 'in 10 min · 10:00–10:15',
-  minutesBefore: 10,
-  late: false,
-  open: '#/day/2026-01-15',
-  meetingUrl: 'https://meet.example/abc',
-  ...over,
+// ------------------------------------------------------------------ the calendar account
+
+describe('the first start with calendar accounts', () => {
+  const fresh = () => new Store(':memory:', mediaSigner('s'));
+  const calendars = (s: Store) => s.accounts().filter((a) => a.network === 'calendar');
+
+  test('a hub that had the default calendar gets an account for it, once', () => {
+    const s = fresh();
+    const acc = seedCalendarAccount(s, {}, false)!;
+    expect(acc).toMatchObject({ network: 'calendar', adapter: 'calendar', label: 'Calendar', enabled: 1, demo: 0 });
+    expect(JSON.parse(acc.config)).toEqual({ url: 'http://127.0.0.1:8470' });
+    expect(s.accountView(acc).url).toBe('http://127.0.0.1:8470');
+    expect(seedCalendarAccount(s, {}, false)).toBeNull();
+    expect(calendars(s)).toHaveLength(1);
+  });
+
+  test('DITHER_CALENDAR_URL says where; off, empty or a demo hub add none', () => {
+    const s = fresh();
+    expect(JSON.parse(seedCalendarAccount(s, { DITHER_CALENDAR_URL: 'http://127.0.0.1:9471/' }, false)!.config)).toEqual({ url: 'http://127.0.0.1:9471' });
+    for (const [env, demo] of [[{ DITHER_CALENDAR_URL: 'off' }, false], [{ DITHER_CALENDAR_URL: '' }, false], [{}, true], [{ DITHER_CALENDAR_URL: 'http://127.0.0.1:9' }, true]] as const) {
+      const t = fresh();
+      expect(seedCalendarAccount(t, env, demo)).toBeNull();
+      expect(calendars(t)).toEqual([]);
+      // Nothing was done, so nothing is written down: a later start without `off` still adds it.
+      expect(t.db.query('SELECT 1 FROM meta WHERE key = ?').get(CALENDAR_ADDED)).toBeNull();
+    }
+  });
+
+  test('removing it sticks: the next start adds none', () => {
+    const s = fresh();
+    const acc = seedCalendarAccount(s, {}, false)!;
+    s.deleteAccount(acc.id);
+    expect(seedCalendarAccount(s, {}, false)).toBeNull();
+    expect(calendars(s)).toEqual([]);
+  });
+
+  test('one added by hand before is left as it is', () => {
+    const s = fresh();
+    s.createAccount({ network: 'calendar', label: 'Mine', color: '#000', adapter: 'calendar', config: { url: 'http://127.0.0.1:9472' } });
+    expect(seedCalendarAccount(s, {}, false)).toBeNull();
+    expect(calendars(s).map((a) => a.label)).toEqual(['Mine']);
+    expect(s.db.query('SELECT 1 FROM meta WHERE key = ?').get(CALENDAR_ADDED)).not.toBeNull();
+  });
 });
 
-describe('reminders', () => {
-  test('only a process on this machine that is not a browser may deliver one', () => {
-    const req = (origin?: string) => new Request('http://127.0.0.1/api/calendar/notify', { method: 'POST', headers: origin ? { origin } : {} });
-    expect(notifyAllowed('127.0.0.1', req())).toBe(true);
-    expect(notifyAllowed('::1', req())).toBe(true);
-    expect(notifyAllowed('::ffff:127.0.0.1', req())).toBe(true);
-    expect(notifyAllowed('100.64.0.9', req())).toBe(false);
-    expect(notifyAllowed('::ffff:100.64.0.9', req())).toBe(false);
-    expect(notifyAllowed('fd7a:115c:a1e0::9', req())).toBe(false);
-    expect(notifyAllowed('127.0.0.1', req('http://127.0.0.1:8470'))).toBe(false);
-    expect(notifyAllowed('127.0.0.1', req('null'))).toBe(false);
+describe('the calendar follows its account', () => {
+  const cal = fakeCalendar();
+  afterAll(() => cal.server.stop(true));
+
+  test('on while an enabled calendar account is; disabling or removing it turns it off, and pages hear both', async () => {
+    const ev = events();
+    const s = new Store(':memory:', mediaSigner('s'));
+    const c = new CalendarAccounts(s, { broadcast: ev.broadcast, demo: false, debounceMs: 0 });
+    c.sync();
+    expect(c.link()).toBeUndefined();
+    c.start();
+    const acc = s.createAccount({ network: 'calendar', label: 'Calendar', color: '#000', adapter: 'calendar', config: { url: cal.url } });
+    c.sync();
+    expect(c.url()).toBe(cal.url);
+    expect(ev.all[0]).toEqual({ t: 'calendar', reachable: false, waiting: 0 });
+    // The link reads the calendar at the account's address.
+    await ev.next((e) => e.t === 'calendar' && e.reachable);
+    s.updateAccount(acc.id, { enabled: 0 });
+    c.sync();
+    expect(c.link()).toBeUndefined();
+    expect(ev.all.at(-1)).toEqual({ t: 'calendar', reachable: false, waiting: 0, off: true });
+    s.updateAccount(acc.id, { enabled: 1 });
+    c.sync();
+    expect(c.link()).toBeDefined();
+    s.deleteAccount(acc.id);
+    c.sync();
+    expect(c.link()).toBeUndefined();
+    expect(ev.all.at(-1)).toMatchObject({ off: true });
+    c.stop();
   });
 
-  test('a bad notice is named', () => {
-    expect(checkNotice(notice())).toBeNull();
-    expect(checkNotice({ ...notice(), id: '' })).toBe('id');
-    expect(checkNotice({ ...notice(), title: 'x'.repeat(201) })).toBe('title');
-    expect(checkNotice({ ...notice(), open: 'day/2026' })).toBe('open');
-    expect(checkNotice({ ...notice(), meetingUrl: 'javascript:alert(1)' })).toBe('meetingUrl');
-    expect(checkNotice(null)).toBe('not an object');
+  test('a demo hub never has one, whatever its accounts say', () => {
+    const s = new Store(':memory:', mediaSigner('s'));
+    const acc = s.createAccount({ network: 'calendar', label: 'Calendar', color: '#000', adapter: 'calendar', config: { url: cal.url } });
+    const c = new CalendarAccounts(s, { broadcast: () => {}, demo: true });
+    c.sync();
+    expect(c.link()).toBeUndefined();
+    expect(c.factory(acc)).toBeNull();
   });
 
-  function deliveryWith(o: { quietHours?: boolean; quiet?: string[] } = {}) {
-    const notified: Extract<P.ClientEvent, { t: 'notify' }>[] = [];
-    const pushed: { title: string; body: string; extra: Record<string, unknown>; skip: string[]; level: string }[] = [];
-    const sent: [string, unknown][] = [];
-    const d = new ReminderDelivery({
-      now: () => 5_000_000,
-      inQuietHours: () => !!o.quietHours,
-      quietDevices: () => o.quiet ?? [],
-      desktops: () => ['laptop'],
-      notification: () => 'nid_1',
-      sent: (nid, r) => void sent.push([nid, r]),
-      notify: (ev) => void notified.push(ev),
-      push: async (title, body, extra, skip, level) => (pushed.push({ title, body, extra, skip, level }), { devices: 2 - skip.length, accepted: 2 - skip.length }),
-    });
-    return { d, notified, pushed, sent };
-  }
-
-  test('an alert, on every device, with where it opens', async () => {
-    const { d, notified, pushed, sent } = deliveryWith();
-    expect(await d.deliver(notice())).toEqual({ ok: true, tier: 'push', devices: 2, accepted: 2 });
-    const calendar = { open: '#/day/2026-01-15', eventKey: 'evt_1', reminderId: 'evt_1|1800000000000|10', meetingUrl: 'https://meet.example/abc' };
-    expect(notified).toEqual([{ t: 'notify', title: 'Standup', body: 'in 10 min · 10:00–10:15 · Room 2', reasons: ['Calendar reminder'], calendar, nid: 'nid_1' }]);
-    expect(pushed).toEqual([{ title: 'Standup', body: 'in 10 min · 10:00–10:15 · Room 2', extra: { calendar, tier: 'push', level: 'push', nid: 'nid_1' }, skip: [], level: 'push' }]);
-    expect(sent).toEqual([['nid_1', { devices: 2, accepted: 2 }]]);
-  });
-
-  test('in quiet hours it is held quiet: no sound, and off the desktops', async () => {
-    const { d, notified, pushed } = deliveryWith({ quietHours: true });
-    expect(await d.deliver(notice())).toMatchObject({ ok: true, tier: 'quiet' });
-    expect(notified[0]).toMatchObject({ level: 'quiet', reasons: ['Held by quiet hours'] });
-    expect(pushed[0]).toMatchObject({ skip: ['laptop'], level: 'quiet', extra: { tier: 'quiet', level: 'quiet' } });
-  });
-
-  test('a device whose rule turns the calendar off is skipped', async () => {
-    const store = new Store(':memory:', mediaSigner('s'));
-    const devices = new Devices(store, new Triage(store));
-    devices.otherChain = calendarChain;
-    devices.hello('dev_phone1', 'Phone', null);
-    devices.hello('dev_laptop1', 'Laptop', null);
-    expect(devices.setRule('dev_phone1', 'network', 'calendar', 'none')).toBeNull();
-    expect(devices.quietOn(REMINDER_RULE_ID, false)).toEqual(['dev_phone1']);
-    const { d, notified, pushed } = deliveryWith({ quiet: devices.quietOn(REMINDER_RULE_ID, false) });
-    await d.deliver(notice());
-    expect(pushed[0].skip).toEqual(['dev_phone1']);
-    expect(notified[0].quiet).toEqual(['dev_phone1']);
-  });
-
-  test('a repeated id is a duplicate, and notifies once, even when both come at once', async () => {
-    const { d, pushed } = deliveryWith();
-    const [a, b] = await Promise.all([d.deliver(notice()), d.deliver(notice())]);
-    expect(a).toEqual({ ok: true, tier: 'push', devices: 2, accepted: 2 });
-    expect(b).toMatchObject({ ok: true, duplicate: true });
-    expect(await d.deliver(notice())).toEqual({ ok: true, duplicate: true, tier: 'push', devices: 2, accepted: 2 });
-    expect(pushed.length).toBe(1);
-    // Another lead time for the same event is its own reminder.
-    await d.deliver(notice({ id: 'evt_1|1800000000000|60', minutesBefore: 60 }));
-    expect(pushed.length).toBe(2);
-  });
-
-  test('over HTTP: from loopback without an Origin only; a bad body is 400', async () => {
-    const got: P.ReminderNotice[] = [];
-    const H = hub({ onReminder: async (n) => (got.push(n), { ok: true, tier: 'push', devices: 0, accepted: 0 }) });
+  test('POST /api/accounts: one calendar, at an http(s) address (the default when none), and removing it turns it off', async () => {
+    let c!: CalendarAccounts;
+    const H = hub({ accounts: (store) => (c = new CalendarAccounts(store, { broadcast: () => {}, demo: false, debounceMs: 0 })) });
+    c.start();
+    const add = (config: unknown) => fetch(`${H.base}/api/accounts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ network: 'calendar', config }) });
     try {
-      const post = (body: unknown, headers: Record<string, string> = {}) => fetch(`${H.base}/api/calendar/notify`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
-      expect((await post(notice(), { origin: H.base })).status).toBe(403);
-      expect((await post({ ...notice(), when: 7 })).status).toBe(400);
-      const ok = await post(notice());
+      expect((await add({ url: 'ftp://x' })).status).toBe(400);
+      const ok = await add({});
       expect(ok.status).toBe(200);
-      expect(await ok.json()).toEqual({ ok: true, tier: 'push', devices: 0, accepted: 0 });
-      expect(got.map((n) => n.id)).toEqual([notice().id]);
+      const view = (await ok.json()) as P.AccountView;
+      expect(view).toMatchObject({ network: 'calendar', label: 'Calendar', url: 'http://127.0.0.1:8470' });
+      expect(H.store.account(view.id)!.adapter).toBe('calendar');
+      expect(H.store.db.query('SELECT 1 FROM meta WHERE key = ?').get(CALENDAR_ADDED)).not.toBeNull();
+      expect(((await (await fetch(`${H.base}/api/bootstrap`)).json()) as P.Bootstrap).calendar).toMatchObject({ path: '/calendar/' });
+      expect((await add({ url: cal.url })).status).toBe(409);
+      expect((await fetch(`${H.base}/api/accounts/${view.id}`, { method: 'DELETE' })).status).toBe(200);
+      expect(c.link()).toBeUndefined();
+      expect(((await (await fetch(`${H.base}/api/bootstrap`)).json()) as P.Bootstrap).calendar).toBeUndefined();
+      expect((await fetch(`${H.base}/calendar/api/state`)).status).toBe(404);
+      // Reminders come as the calendar's messages now: the old door is gone.
+      expect((await fetch(`${H.base}/api/calendar/notify`, { method: 'POST', body: '{}' })).status).toBe(404);
     } finally {
+      c.stop();
       H.h.stop();
     }
+  });
+});
+
+// ------------------------------------------------------------------ the adapter link
+
+type Frame = Record<string, any>;
+/** A calendar service's adapter endpoint: says hello on connect, records the hub's commands, answers as told. */
+function fakeService() {
+  const got: Frame[] = [];
+  const sockets = new Set<any>();
+  const waiters: { pred: (f: Frame) => boolean; resolve: (f: Frame) => void }[] = [];
+  const opened: (() => void)[] = [];
+  const state = { answer: true, refuse: false };
+  const server = Bun.serve({
+    port: 0,
+    hostname: '127.0.0.1',
+    fetch(req, srv) {
+      if (new URL(req.url).pathname === CHAT_ADAPTER_PATH && !state.refuse && srv.upgrade(req, { data: {} })) return undefined;
+      return new Response('no', { status: 404 });
+    },
+    websocket: {
+      open(ws) {
+        sockets.add(ws);
+        const send = (ev: unknown) => ws.send(JSON.stringify(ev));
+        send({ t: 'hello', network: 'calendar', version: 'test', capabilities: ['send', 'personRefs'], protocol: 1 });
+        send({ t: 'status', status: 'online', self: { nativeId: 'owner', displayName: 'You', isSelf: true } });
+        send({ t: 'identity', identity: { nativeId: 'calendar', displayName: 'Calendar' } });
+        send({ t: 'conversation', conversation: { nativeId: 'calendar', shape: 'direct', participants: ['owner', 'calendar'] } });
+        send({ t: 'message', message: { nativeId: 'w1', conversation: 'calendar', author: 'calendar', ts: 1_000, body: 'Tell me what to add.' }, live: false });
+        for (const f of opened.splice(0)) f();
+      },
+      message(ws, raw) {
+        const f = JSON.parse(String(raw)) as Frame;
+        got.push(f);
+        for (const w of waiters.splice(0)) (w.pred(f) ? w.resolve(f) : waiters.push(w));
+        if (f.t === 'send' && state.answer) {
+          ws.send(JSON.stringify({ t: 'message', message: { nativeId: `me:${f.id}`, conversation: f.conversation, author: 'owner', ts: 2_000, body: f.body }, live: true }));
+          ws.send(JSON.stringify({ t: 'reply', id: f.id, ok: true, result: { nativeId: `me:${f.id}` } }));
+          ws.send(JSON.stringify({ t: 'message', message: { nativeId: `re:${f.id}`, conversation: f.conversation, author: 'calendar', ts: 2_001, body: `Added ${f.body}` }, live: true }));
+        }
+      },
+      close(ws) {
+        sockets.delete(ws);
+      },
+    },
+  });
+  return {
+    server,
+    url: `http://127.0.0.1:${server.port}`,
+    got,
+    state,
+    sockets,
+    next: (pred: (f: Frame) => boolean) => new Promise<Frame>((resolve) => waiters.push({ pred, resolve })),
+    connected: () => (sockets.size ? Promise.resolve() : new Promise<void>((r) => opened.push(r))),
+    send: (ev: unknown) => {
+      for (const ws of sockets) ws.send(JSON.stringify(ev));
+    },
+    dropAll: () => {
+      for (const ws of sockets) ws.close(1001, 'going away');
+    },
+  };
+}
+
+describe('the bridge', () => {
+  test('relays the service’s events and the hub’s commands both ways; a command it cannot ask fails at once', async () => {
+    const svc = fakeService();
+    const got: P.AdapterEvent[] = [];
+    const waiters: { pred: (e: P.AdapterEvent) => boolean; resolve: (e: P.AdapterEvent) => void }[] = [];
+    const next = (pred: (e: P.AdapterEvent) => boolean) => new Promise<P.AdapterEvent>((resolve) => waiters.push({ pred, resolve }));
+    const emit = (e: P.AdapterEvent) => {
+      got.push(e);
+      for (const w of waiters.splice(0)) (w.pred(e) ? w.resolve(e) : waiters.push(w));
+    };
+    const b = new CalendarBridge({ url: svc.url });
+    const hello = next((e) => e.t === 'hello');
+    const snapshot = next((e) => e.t === 'message');
+    // Before it is connected: answered at once, not after the supervisor's timeout.
+    const early = next((e) => e.t === 'reply' && e.id === 'c0');
+    b.start(emit);
+    b.command({ t: 'markRead', id: 'c0', conversation: 'calendar', upTo: 'w1' });
+    expect(await early).toEqual({ t: 'reply', id: 'c0', ok: false, error: 'the calendar is not connected' });
+    expect(got[0]).toEqual({ t: 'status', status: 'connecting' });
+    expect(await hello).toMatchObject({ network: 'calendar', capabilities: ['send', 'personRefs'] });
+    await snapshot;
+    const reply = next((e) => e.t === 'reply' && e.id === 'c1');
+    b.command({ t: 'send', id: 'c1', conversation: 'calendar', body: 'dentist friday 3pm' });
+    expect(await reply).toEqual({ t: 'reply', id: 'c1', ok: true, result: { nativeId: 'me:c1' } });
+    expect(svc.got).toEqual([{ t: 'send', id: 'c1', conversation: 'calendar', body: 'dentist friday 3pm' }]);
+    // The service goes away with a command unanswered: it fails now, and the account is offline.
+    svc.state.answer = false;
+    const asked = svc.next((f) => f.id === 'c2');
+    const failed = next((e) => e.t === 'reply' && e.id === 'c2');
+    b.command({ t: 'send', id: 'c2', conversation: 'calendar', body: 'x' });
+    await asked;
+    const offline = next((e) => e.t === 'status' && e.status === 'offline');
+    const again = next((e) => e.t === 'hello');
+    svc.dropAll();
+    expect(await failed).toEqual({ t: 'reply', id: 'c2', ok: false, error: 'the calendar went away before it answered' });
+    await offline;
+    // And it dials again by itself.
+    await again;
+    b.stop();
+    svc.server.stop(true);
+  });
+
+  test('through the supervisor: the service’s chat lands in the hub, and a send goes to it and back', async () => {
+    const svc = fakeService();
+    const store = new Store(':memory:', mediaSigner('s'));
+    const fresh: string[] = [];
+    const c = new CalendarAccounts(store, { broadcast: () => {}, demo: false, debounceMs: 0 });
+    const s = new Supervisor(store, { hubAdapterUrl: 'ws://127.0.0.1:1/adapter', dataDir: dir, repoRoot: dir, inproc: (acc) => c.factory(acc), onFresh: (ids) => void fresh.push(...ids) });
+    // Resolves once what the supervisor applied makes `pred` true.
+    const checks: { pred: () => boolean; resolve: () => void }[] = [];
+    s.onApplied = () => {
+      for (const c of checks.splice(0)) (c.pred() ? c.resolve() : checks.push(c));
+    };
+    const until = (pred: () => boolean) => (pred() ? Promise.resolve() : new Promise<void>((resolve) => checks.push({ pred, resolve })));
+    const acc = store.createAccount({ network: 'calendar', label: 'Calendar', color: '#000', adapter: 'calendar', config: { url: svc.url } });
+    s.start(acc.id);
+    await svc.connected();
+    // The hello, the status and the snapshot are in once the backfilled message is.
+    const welcome = () => store.one<{ body: string }>(`SELECT body FROM message WHERE network = 'calendar' AND native_id = 'w1'`);
+    await until(() => !!welcome());
+    expect(welcome()?.body).toBe('Tell me what to add.');
+    expect(store.account(acc.id)).toMatchObject({ status: 'online', capabilities: JSON.stringify(['send', 'personRefs']) });
+    const conv = store.one<{ id: string; shape: string }>(`SELECT id, shape FROM conversation WHERE network = 'calendar'`)!;
+    expect(conv).toMatchObject({ shape: 'direct' });
+    // Backfill notifies nothing.
+    expect(fresh).toEqual([]);
+    const r = await s.command<{ nativeId: string }>(acc.id, { t: 'send', conversation: 'calendar', body: 'lunch at noon' });
+    expect(r.nativeId).toMatch(/^me:/);
+    await until(() => fresh.length >= 1);
+    // Your own message is not triaged; the calendar's answer is.
+    expect(fresh.length).toBe(1);
+    expect(store.one<{ body: string }>('SELECT body FROM message WHERE id = ?', fresh[0])?.body).toBe('Added lunch at noon');
+    await s.stopAll();
+    svc.server.stop(true);
+  });
+});
+
+// ------------------------------------------------------------------ reminders: the calendar's messages
+
+describe('reminders', () => {
+  const night: P.QuietHours = { enabled: true, start: '22:00', end: '07:00', timezone: 'UTC', allowStarred: true };
+  const at = (h: number) => Date.UTC(2026, 10, 12, h);
+  const world = () => {
+    const store = new Store(':memory:', mediaSigner('s'));
+    const triage = new Triage(store);
+    triage.judge = async () => 0.01;
+    const acc = store.createAccount({ network: 'calendar', label: 'Calendar', color: '#000', adapter: 'calendar', config: { url: 'http://127.0.0.1:1' } });
+    store.ingest(acc, { t: 'status', status: 'online', self: { nativeId: 'owner', isSelf: true } });
+    store.ingest(acc, { t: 'identity', identity: { nativeId: 'calendar', displayName: 'Calendar' } });
+    store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'calendar', shape: 'direct', participants: ['owner', 'calendar'] } });
+    let n = 0;
+    const say = (body: string, extra?: Record<string, unknown>) => {
+      const nativeId = `r${++n}`;
+      store.ingest(acc, { t: 'message', message: { nativeId, conversation: 'calendar', author: 'calendar', ts: at(12) + n, body, ...(extra ? { extra } : {}) }, live: true });
+      return store.one<{ id: string }>('SELECT id FROM message WHERE native_id = ?', nativeId)!.id;
+    };
+    const cid = store.one<{ id: string }>(`SELECT id FROM conversation WHERE network = 'calendar'`)!.id;
+    return { store, triage, acc, say, cid };
+  };
+  const reminder = (over: Partial<P.CalendarReminderRef> = {}) => ({ reminder: { id: 'evt_1|1800000000000|10', eventKey: 'evt_1', open: '#/day/2026-11-12', meetingUrl: null, late: false, ...over } });
+
+  test('a reminder is an alert, the calendar’s other words are not', async () => {
+    const w = world();
+    const d = await w.triage.decide(w.say('**Standup** in 10 min · 10:00–10:15', reminder()), at(12));
+    expect(d).toMatchObject({ decision: 'push', forced: true, reminder: true });
+    expect(d!.reasons[0]).toBe('A reminder from Calendar');
+    const late = await w.triage.decide(w.say('**Standup** now', reminder({ id: 'x', late: true })), at(12));
+    expect(late!.reasons[0]).toBe('A reminder from Calendar, sent late');
+    expect((await w.triage.decide(w.say('Added Dentist · Fri 14 Nov 15:00'), at(12)))?.decision).not.toBe('push');
+  });
+
+  test('in quiet hours it is held quiet, and left out of their summary', async () => {
+    const w = world();
+    w.store.setQuietHours(night);
+    w.store.setQuietHeld(null);
+    const d = await w.triage.decide(w.say('**Standup** in 10 min', reminder()), at(23));
+    expect(d!.decision).toBe('quiet');
+    expect(d!.reasons[0]).toBe('Held by quiet hours until 07:00');
+    expect(w.store.quietHeld()).toBeNull();
+  });
+
+  test('a muted Calendar chat, or one kept to the list, does not alert', async () => {
+    const w = world();
+    w.store.setRule('conversation', w.cid, 'none');
+    expect((await w.triage.decide(w.say('a', reminder()), at(12)))?.decision).toBe('silent');
+    w.store.setRule('conversation', w.cid, 'digest');
+    expect((await w.triage.decide(w.say('b', reminder({ id: 'y' })), at(12)))?.decision).not.toBe('push');
+  });
+
+  test('device rules on the Calendar network keep it off a device, and Mentions only does too', () => {
+    const w = world();
+    const devices = new Devices(w.store, w.triage);
+    devices.hello('dev_phone1', 'Phone', null);
+    devices.hello('dev_laptop1', 'Laptop', null);
+    devices.hello('dev_tablet1', 'Tablet', null);
+    expect(devices.chain(w.cid).at(-1)).toBe('network:calendar');
+    expect(devices.setRule('dev_phone1', 'network', 'calendar', 'none')).toBeNull();
+    expect(devices.setRule('dev_tablet1', 'network', 'calendar', 'mentions')).toBeNull();
+    const id = w.say('**Standup** in 10 min', reminder());
+    // A reminder mentions no one.
+    expect(devices.addressed(id)).toBe(false);
+    expect(devices.quietOn(w.cid, false).sort()).toEqual(['dev_phone1', 'dev_tablet1']);
   });
 });

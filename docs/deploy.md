@@ -29,15 +29,16 @@ chat.tn.example.net {
 }
 ```
 
-**Caddy must reach the hub through the tailnet address, never loopback.** The hub trusts loopback with `/adapter`
-and with calendar reminders (`/api/calendar/notify`, [calendar.md](calendar.md)), so proxying from `127.0.0.1` would
-hand those to every tailnet client. Coming from the tailnet address, both return 403 through the proxy. Check it after
-any change:
+**Caddy must reach the hub through the tailnet address, never loopback.** The hub trusts loopback with `/adapter`, so
+proxying from `127.0.0.1` would hand it to every tailnet client. Coming from the tailnet address, it returns 403 through
+the proxy. Check it after any change:
 
 ```sh
 curl -s -o /dev/null -w '%{http_code}\n' https://chat.tn.example.net/adapter   # 403
-curl -s -o /dev/null -w '%{http_code}\n' -X POST https://chat.tn.example.net/api/calendar/notify   # 403
 ```
+
+The same holds for dither-calendar's `/api/chat-adapter` ([calendar.md](calendar.md)): Caddy reaches the calendar
+through its tailnet address too, so only the hub, on this machine, gets a socket there.
 
 The upstream must also see the client's Host, or the hub's same-origin check refuses every write and the live socket.
 Caddy does this by default for an HTTP upstream.
