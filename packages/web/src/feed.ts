@@ -108,14 +108,11 @@ export interface FeedTalk {
   fresh: boolean;
 }
 
-/** Which units a feed shows: everything, or only people talking (no likes, reposts or follows). */
-export type FeedFilter = 'all' | 'talk';
-
 /**
- * A feed's messages (any order, any pages of it) as units, newest activity first. With `filter` 'talk', only units
- * where someone said something, by when they last did. Each person reacting once per way is one face.
+ * A feed's messages (any order, any pages of it) as units, newest activity first. Each person reacting once per way
+ * is one face.
  */
-export function feedUnits(messages: readonly P.MessageView[], readTs = Infinity, filter: FeedFilter = 'all'): FeedUnit[] {
+export function feedUnits(messages: readonly P.MessageView[], readTs = Infinity): FeedUnit[] {
   const posts = new Map<string, Extract<FeedUnit, { kind: 'post' }>>();
   const out: FeedUnit[] = [];
   const sorted = messages.filter((m) => m.feed && !m.deleted).sort((a, b) => b.ts - a.ts || (a.id < b.id ? 1 : -1));
@@ -150,12 +147,6 @@ export function feedUnits(messages: readonly P.MessageView[], readTs = Infinity,
     }
     out.push({ kind: 'other', key: m.id, text: f.text ?? m.body, ...(f.post ? { post: f.post } : {}), ts: m.ts, talkTs: 0, fresh, network: m.network });
   }
-  // Talk only: a card is new for what was said, not for a like it does not show.
-  if (filter === 'talk')
-    return out
-      .filter((u) => u.talkTs > 0)
-      .map((u) => (u.kind === 'post' ? { ...u, fresh: u.talk.some((x) => x.fresh) } : u))
-      .sort((a, b) => b.talkTs - a.talkTs);
   // Follows one after another (nothing else newer between them) are one row.
   const merged: FeedUnit[] = [];
   for (const u of out) {

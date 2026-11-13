@@ -91,7 +91,8 @@ describe('a thread read from X', () => {
     // Logged: one conversation, read-only and quiet; a message per post, its reply the post it answers.
     expect(store.conversationView(POSTS)).toMatchObject({ variant: 'posts', shape: 'channel' });
     const n = (store.one<{ n: number }>('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ?', POSTS)!).n;
-    expect(n).toBe(8);
+    // The post, then its replies with the first answers under each, as X shows them: 1 + 2 + 3 + 3 + 1.
+    expect(n).toBe(10);
     const answer = t.replies[1][1];
     const row = store.one<Record<string, any>>('SELECT * FROM message WHERE id = ?', answer.messageId!)!;
     expect(row.reply_to_id).toBe(msgOf(t.replies[1][0].id));
@@ -110,16 +111,16 @@ describe('a thread read from X', () => {
 
     // Read again: nothing new, nothing doubled.
     await posts.thread('x', id);
-    expect((store.one<{ n: number }>('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ?', POSTS)!).n).toBe(8);
+    expect((store.one<{ n: number }>('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ?', POSTS)!).n).toBe(10);
   });
 
   test('more replies come with the cursor and are logged too', async () => {
     const posts = new Posts(deps());
     const t = await posts.thread('x', routingId(), 'more-1');
     expect(sent.at(-1)).toMatchObject({ t: 'post', cursor: 'more-1' });
-    expect(t.replies.flat().map((p) => p.author)).toEqual([idn(X.theo), idn(X.quinn)]);
+    expect(t.replies.map((c) => c.map((p) => p.author))).toEqual([[idn(X.theo), idn(X.self), idn(X.theo)], [idn(X.quinn)]]);
     expect(t.more).toBeNull();
-    expect((store.one<{ n: number }>('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ?', POSTS)!).n).toBe(10);
+    expect((store.one<{ n: number }>('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ?', POSTS)!).n).toBe(14);
   });
 
   test('a reply opens with what it answers above it', async () => {
@@ -127,7 +128,21 @@ describe('a thread read from X', () => {
     const ravi = store.messageViews([store.one<Record<string, any>>(`SELECT * FROM message WHERE native_id LIKE 'reply:%'`)!])[0].feed!.theirs!;
     const t = await posts.thread('x', ravi.id);
     expect(t.ancestors.map((p) => p.id)).toEqual([routingId()]);
-    expect(t.replies.flat()).toHaveLength(1);
+    // Your answer, Ravi's question under it and yours under that, as one chain.
+    expect(t.replies.map((c) => c.map((p) => p.author))).toEqual([[idn(X.self), idn(X.ravi), idn(X.self)]]);
+  });
+
+  test('a thread brings the posts logged under it before, at any depth, that X did not show this time', async () => {
+    // Ravi's thread (above) logged your answer to his second question; the routing post's first page shows only three
+    // down that chain, so the fourth comes as logged, and nothing X showed comes twice.
+    const t = await new Posts(deps()).thread('x', routingId());
+    const shown = new Set(t.replies.flat().map((p) => p.id));
+    expect(t.logged?.length).toBeGreaterThan(0);
+    expect(t.logged!.some((p) => p.author === idn(X.self) && /Pulled/.test(p.text))).toBe(true);
+    expect(t.logged!.every((p) => !shown.has(p.id) && p.messageId)).toBe(true);
+    // Its replies answer posts in the thread.
+    const known = new Set([routingId(), ...shown, ...t.logged!.map((p) => p.id)]);
+    expect(t.logged!.every((p) => known.has(p.replyTo!.id))).toBe(true);
   });
 
   test('search finds a logged post by its words and its author', () => {
@@ -149,7 +164,7 @@ describe('without X', () => {
     expect(t.focal!.id).toBe(routingId());
     // The author's own continuation first, then the others, each with what was logged under it.
     expect(t.replies[0][0].author).toBe(idn(X.self));
-    expect(t.replies.find((c) => c[0].author === idn(X.ravi))!.map((p) => p.author)).toEqual([idn(X.ravi), idn(X.self), idn(X.ravi)]);
+    expect(t.replies.find((c) => c[0].author === idn(X.ravi))!.map((p) => p.author)).toEqual([idn(X.ravi), idn(X.self), idn(X.ravi), idn(X.self)]);
     expect(t.replies.length).toBe(6);
     const deep = await posts.thread('x', t.replies.find((c) => c[0].author === idn(X.ravi))![2].id);
     expect(deep.ancestors.map((p) => p.author)).toEqual([idn(X.self), idn(X.ravi), idn(X.self)]);
@@ -181,12 +196,14 @@ describe('what the review found', () => {
     expect((await posts.thread('x', routingId(), 'again')).more).toBeNull();
   });
 
-  test('a thread read again within two minutes is answered without asking X', async () => {
+  test('a thread read again within two minutes is answered without asking X, with what was logged since', async () => {
     const posts = new Posts(deps());
-    await posts.thread('x', routingId());
+    const first = await posts.thread('x', routingId());
     const n = sent.length;
-    await posts.thread('x', routingId());
+    posts.log(acc.id, [{ id: '881', url: 'https://x.com/i/web/status/881', ts: Date.now(), author: X.sam.nativeId, text: 'Logged since', replyTo: { id: first.replies[0][0].id } }]);
+    const again = await posts.thread('x', routingId());
     expect(sent.length).toBe(n);
+    expect(again.logged?.some((p) => p.id === '881')).toBe(true);
   });
 
   test("the stored thread finds replies logged through another account", async () => {

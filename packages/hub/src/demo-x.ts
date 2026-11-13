@@ -144,7 +144,10 @@ function postsOf(who: Who, epoch: number): P.PostFact[] {
 
 /**
  * The threads (docs/feed.md "Threads"): your routing post continued by you and answered by five people (two on a
- * second page), Ravi and you going back and forth under it; any other post the demo knows, with what it answers.
+ * second page), with a tree under it eight deep in places: Ravi and you on churn, Alice's question opening a branch on
+ * the tail and landmarks that Nora, Lee, Sam and Maya carry on, Theo's on the browser. Each post is read as X reads
+ * it: its replies, each with the first answers under it as a chain of up to three, so the tree's other branches come
+ * only by opening them. Any other post the demo knows answers with what it answers.
  */
 function threads(epoch: number) {
   const me = X.self;
@@ -152,22 +155,45 @@ function threads(epoch: number) {
   const r = mine.routing;
   const under = (n: number, who: P.IdentityFact, min: number, text: string, to: P.PostFact, x: Partial<P.PostFact> = {}) =>
     post(epoch, n, who, min, text, { replyTo: { id: to.id, author: to.author }, root: r.id, ...x });
-  const cont1 = under(30, me, 299, 'Setup: a random geometric graph, each node knowing only its 8 nearest neighbours. Stretch is the routed path over the shortest one.', r, { counts: { likes: 12, replies: 1 } });
+  const cont1 = under(30, me, 299, 'Setup: a random geometric graph, each node knowing only its 8 nearest neighbours. Stretch is the routed path over the shortest one.', r, { counts: { likes: 12 } });
   const cont2 = under(31, me, 298, 'Median stretch 1.08, p99 1.29. The simulator is in sim/ and runs in about a minute.', cont1, { counts: { likes: 9 } });
   const ravi = feed(epoch).find((x) => x.item.type === 'reply')!.item.theirs!;
   const raviIn = { ...ravi, root: r.id };
-  const ans = under(32, me, 35, 'Under 20% churn stretch goes to about 1.6 until the neighbour tables refill, roughly ten seconds. Plot coming.', raviIn, { counts: { likes: 4, replies: 1 } });
+  const ans = under(32, me, 35, 'Under 20% churn stretch goes to about 1.6 until the neighbour tables refill, roughly ten seconds. Plot coming.', raviIn, { counts: { likes: 4 } });
   const ravi2 = under(33, X.ravi, 30, 'Ten seconds is better than I guessed. Is the refill pushed or pulled?', ans, { counts: { likes: 1 } });
+  const pulled = under(38, me, 20, 'Pulled: a node with a short table asks its neighbours every 500 ms until it is full again.', ravi2, { counts: { likes: 2 } });
+  const noraChurn = under(39, X.nora, 28, 'We saw the same on our testbed. The refill is the whole game.', ans, { counts: { likes: 3 } });
   const alice = under(34, X.alice, 160, 'The plot in the repo is lovely. What does the tail look like at 10M?', r, { counts: { likes: 6 } });
+  const tail = under(40, me, 150, 'At 10M the p99 is 1.34. The tail grows with the diameter, slowly.', alice, { counts: { likes: 5 } });
+  const alice2 = under(41, X.alice, 140, 'So the tail is the diameter, more or less. Makes sense.', tail, { counts: { likes: 1 } });
+  const nora = under(42, X.nora, 145, 'Did you try landmarks? They usually fix exactly that tail.', tail, { counts: { likes: 4 } });
+  const land = under(43, me, 120, 'Four landmarks bring p99 to 1.2, for four more entries per node.', nora, { counts: { likes: 7 } });
+  const nora2 = under(44, X.nora, 100, 'That is a good trade.', land, { counts: { likes: 1 } });
+  const lee = under(45, X.lee, 110, 'Landmarks are a cover, so this is a sheaf question in disguise.', land, { counts: { likes: 9 } });
+  const sam = under(46, X.sam, 90, 'Everything is a sheaf question in disguise.', lee, { counts: { likes: 11 } });
+  const maya2 = under(47, X.maya, 60, 'Can confirm, my advisor says this every week.', sam, { counts: { likes: 5 } });
+  const lee2 = under(48, X.lee, 50, 'Your advisor is right.', maya2, { counts: { likes: 2 } });
   const maya = under(35, X.maya, 95, 'Citing this in my qualifying exam, thank you.', r, { counts: { likes: 2 } });
   const theo = under(36, X.theo, 70, 'Any chance the simulator runs in the browser?', r);
+  const wasm = under(49, me, 55, 'It is about 400 lines of Rust with no threads, so wasm should be easy. Want to try?', theo, { counts: { likes: 3 } });
+  const theo2 = under(50, X.theo, 50, 'On it this weekend.', wasm, { counts: { likes: 2 } });
   const quinn = under(37, X.quinn, 65, 'Saving this for the weekend.', r, { counts: { likes: 1 } });
-  const all = [r, cont1, cont2, raviIn, ans, ravi2, alice, maya, theo, quinn];
+  const tree = [cont1, cont2, raviIn, ans, ravi2, pulled, noraChurn, alice, tail, alice2, nora, land, nora2, lee, sam, maya2, lee2, maya, theo, wasm, theo2, quinn];
+  const kids = (id: string) => tree.filter((p) => p.replyTo?.id === id);
+  // Each post's reply count is what is under it, as X counts it.
+  for (const p of [r, ...tree]) p.counts = { ...p.counts, replies: kids(p.id).length };
+  const all = [r, ...tree];
+  // A reply and the first answers under it, as X shows one in a thread.
+  const chain = (p: P.PostFact) => {
+    const c = [p];
+    for (let k = kids(p.id)[0]; k && c.length < 3; k = kids(k.id)[0]) c.push(k);
+    return c;
+  };
   const thread = (id: string, cursor?: string): P.PostThread | null => {
     if (id === r.id)
       return cursor === 'more-1'
-        ? { focal: { ...r, root: r.id }, ancestors: [], replies: [[theo], [quinn]], more: null }
-        : { focal: { ...r, root: r.id }, ancestors: [], replies: [[cont1, cont2], [raviIn, ans, ravi2], [alice], [maya]], more: 'more-1' };
+        ? { focal: { ...r, root: r.id }, ancestors: [], replies: [chain(theo), chain(quinn)], more: null }
+        : { focal: { ...r, root: r.id }, ancestors: [], replies: [cont1, raviIn, alice, maya].map(chain), more: 'more-1' };
     const at = all.find((p) => p.id === id);
     const known = at ?? [...Object.values(mine), ...feed(epoch).flatMap((x) => [x.item.post, x.item.theirs]), ...(Object.keys(X) as Who[]).flatMap((w) => postsOf(w, epoch))].find((p) => p?.id === id);
     if (!known) return null;
@@ -178,7 +204,9 @@ function threads(epoch: number) {
       ancestors.unshift(up);
       p = up;
     }
-    return { focal: known, ancestors, replies: all.filter((p) => p.replyTo?.id === id).map((p) => [p]), more: null };
+    // The author continuing first, as X shows it.
+    const replies = kids(id).sort((a, b) => Number(b.author === known.author) - Number(a.author === known.author));
+    return { focal: known, ancestors, replies: replies.map(chain), more: null };
   };
   return thread;
 }

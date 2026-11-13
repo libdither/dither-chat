@@ -7,16 +7,15 @@
  *
  * Each post of yours that something happened to is one card: the post, small (you know it), then what people said
  * under it in full (replies, quotes), then who liked or reposted it as one quiet line that opens the list. A mention,
- * or a reply the feed has no post of yours for, is their post on its own; follows are a row of faces. "Replies and
- * mentions" leaves out likes, reposts and follows altogether. Nothing here writes to the network: a quiet bar says
- * where answering happens, with a link there.
+ * or a reply the feed has no post of yours for, is their post on its own; follows are a row of faces. Nothing here
+ * writes to the network: a quiet bar says where answering happens, with a link there.
  */
 // Classic JSX (the pragmas above): preact's own `h`, so this chunk needs no jsx-runtime chunk split off the app's start.
 import { Fragment, h, type ComponentChildren } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { FeedFilter, FeedTalk, FeedUnit } from '../../feed.ts';
+import type { FeedTalk, FeedUnit } from '../../feed.ts';
 import { api, db, loadTimeline, markRead, openProfile, timelineKey, timelines } from '../../state.ts';
 import { timelineRev } from '../../versions.ts';
 import type { Kit } from './lazy.tsx';
@@ -30,16 +29,6 @@ type PostUnit = Extract<FeedUnit, { kind: 'post' }>;
 const TALK_SHOWN = 3;
 /** At most this many faces on a line. */
 const FACES = 4;
-const FILTER_KEY = 'dither.feed.filter';
-
-function readFilter(): FeedFilter {
-  try {
-    return localStorage.getItem(FILTER_KEY) === 'talk' ? 'talk' : 'all';
-  } catch {
-    return 'all';
-  }
-}
-
 function Faces({ ids, kit, size = 20 }: { ids: string[]; kit: Kit; size?: number }) {
   return (
     <span class="feed-stack">
@@ -167,7 +156,7 @@ function Reactors({ u, kit }: { u: PostUnit; kit: Kit }) {
 }
 
 /** One post of yours and what came of it. */
-function PostCard({ u, kit, filter }: { u: PostUnit; kit: Kit; filter: FeedFilter }) {
+function PostCard({ u, kit }: { u: PostUnit; kit: Kit }) {
   const [all, setAll] = useState(false);
   const [open, setOpen] = useState(false);
   const talk = all ? u.talk : u.talk.slice(0, TALK_SHOWN);
@@ -197,7 +186,7 @@ function PostCard({ u, kit, filter }: { u: PostUnit; kit: Kit; filter: FeedFilte
           </a>
         )}
       </div>
-      {filter === 'all' && reacted && (
+      {reacted && (
         <>
           <button class="feed-react" aria-expanded={open} onClick={() => setOpen(!open)}>
             <span class="feed-react-counts">
@@ -229,8 +218,8 @@ const SAID: Record<FeedTalk['type'], (hasPost: boolean) => string> = {
   quote: () => 'quoted you',
 };
 
-function Unit({ u, kit, filter }: { u: FeedUnit; kit: Kit; filter: FeedFilter }) {
-  if (u.kind === 'post') return <PostCard u={u} kit={kit} filter={filter} />;
+function Unit({ u, kit }: { u: FeedUnit; kit: Kit }) {
+  if (u.kind === 'post') return <PostCard u={u} kit={kit} />;
   if (u.kind === 'said')
     return (
       <article class={`feed-unit ${u.fresh ? 'fresh' : ''}`} data-unit="said">
@@ -297,49 +286,31 @@ export function FeedView({ c, kit }: { c: P.ConversationView; kit: Kit }) {
   useEffect(() => {
     if (unread && document.visibilityState === 'visible') markRead(c.id);
   }, [c.id, unread, t?.messages.length]);
-  const [filter, setFilter] = useState<FeedFilter>(readFilter);
-  const pick = (f: FeedFilter) => {
-    setFilter(f);
-    try {
-      localStorage.setItem(FILTER_KEY, f);
-    } catch {
-      /* a private window: the choice lasts while the page is open */
-    }
-  };
-  const units = useMemo(() => kit.feed.feedUnits(t?.messages ?? [], readTs, filter), [t?.messages, rev, readTs, filter]);
-  const freshTalk = useMemo(() => kit.feed.feedUnits(t?.messages ?? [], readTs, 'talk').reduce((n, u) => n + (u.kind === 'post' ? u.talk.filter((x) => x.fresh).length : u.fresh ? 1 : 0), 0), [t?.messages, rev, readTs]);
+  const units = useMemo(() => kit.feed.feedUnits(t?.messages ?? [], readTs), [t?.messages, rev, readTs]);
   const scroller = useRef<HTMLDivElement>(null);
   const onScroll = () => {
     const el = scroller.current;
     if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 400 && t?.hasMore && !t.loading) void loadTimeline(tkey, true);
   };
-  // A page of likes on two posts is two cards, and filtered it may be none: older pages load until the list fills the
-  // pane or there are no more, so scrolling is never what finds them.
+  // A page of likes on two posts is two cards: older pages load until the list fills the pane or there are no more,
+  // so scrolling is never what finds them.
   useEffect(() => {
     const el = scroller.current;
     if (el && t?.hasMore && !t.loading && el.scrollHeight <= el.clientHeight + 400) void loadTimeline(tkey, true);
-  }, [units.length, t?.hasMore, t?.loading, filter]);
+  }, [units.length, t?.hasMore, t?.loading]);
   const net = NETWORK_META[c.network].name;
   const open = kit.feed.notificationsUrl(c.network);
   return (
     <>
       <div class="feed-scroll" ref={scroller} onScroll={onScroll} data-feed-view={c.id}>
         <div class="feed-list">
-          <div class="feed-filter" role="group" aria-label="Show">
-            <button aria-pressed={filter === 'all'} class={`feed-tab ${filter === 'all' ? 'on' : ''}`} onClick={() => pick('all')}>
-              Everything
-            </button>
-            <button aria-pressed={filter === 'talk'} class={`feed-tab ${filter === 'talk' ? 'on' : ''}`} onClick={() => pick('talk')} title="Leave out likes, reposts and follows">
-              Replies and mentions {freshTalk > 0 && <span class="feed-tab-n">{freshTalk}</span>}
-            </button>
-          </div>
           {units.map((u) => (
-            <Unit key={u.key} u={u} kit={kit} filter={filter} />
+            <Unit key={u.key} u={u} kit={kit} />
           ))}
           {t?.loading && <kit.Loading inline label="Loading notifications…" />}
           {!t?.loading && !t?.hasMore && !units.length && (
-            <kit.Empty icon="bell" title={filter === 'talk' ? 'Nobody has said anything yet' : 'Nothing yet'}>
-              {filter === 'talk' ? `When people reply to, quote or mention you on ${net}, it shows here.` : `When people like, repost, reply to or quote your posts on ${net}, mention you or follow you, it shows here.`}
+            <kit.Empty icon="bell" title="Nothing yet">
+              When people like, repost, reply to or quote your posts on {net}, mention you or follow you, it shows here.
             </kit.Empty>
           )}
         </div>

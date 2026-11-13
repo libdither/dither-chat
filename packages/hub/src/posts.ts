@@ -28,6 +28,9 @@ const caps = (store: Store, accountId: string): P.Capability[] => JSON.parse(sto
 const STORED_CHAIN = 4;
 /** And this many replies under the post. */
 const STORED_REPLIES = 60;
+/** A thread's logged posts below it: this deep, at most this many. */
+const LOGGED_DEPTH = 10;
+const LOGGED_MAX = 500;
 
 /** The posts conversation's native id for an account: one per account, as its feed is. */
 export function postsConvNative(store: Store, acc: AccountRow): string {
@@ -75,7 +78,7 @@ export class Posts {
   /** Reads in flight, so two devices opening one thread ask once. */
   private asking = new Map<string, Promise<P.PostThreadView>>();
   /** The last answers from the network, by post (first pages only). */
-  private recent = new Map<string, { at: number; view: P.PostThreadView }>();
+  private recent = new Map<string, { at: number; t: P.PostThread; accountId: string }>();
 
   constructor(private d: PostsDeps) {}
 
@@ -126,16 +129,9 @@ export class Posts {
     const live = this.asking.get(key);
     if (live) return live;
     const hit = !cursor ? this.recent.get(key) : null;
-    if (hit && Date.now() - hit.at < CACHE_MS) return Promise.resolve(hit.view);
-    const p = this.ask(network, post, cursor)
-      .then((v) => {
-        if (!cursor && !v.stored) {
-          this.recent.set(key, { at: Date.now(), view: v });
-          for (const [k, r] of this.recent) if (Date.now() - r.at >= CACHE_MS) this.recent.delete(k);
-        }
-        return v;
-      })
-      .finally(() => this.asking.delete(key));
+    // What X said is reused; the view is made again, so the branches logged since (opened under a reply) come with it.
+    if (hit && Date.now() - hit.at < CACHE_MS) return Promise.resolve(this.view(network, post, hit.accountId, hit.t, undefined));
+    const p = this.ask(network, post, cursor).finally(() => this.asking.delete(key));
     this.asking.set(key, p);
     return p;
   }
@@ -158,6 +154,10 @@ export class Posts {
         // A page of more replies that brings none, or the same cursor back, is the end: no button that never ends.
         if (cursor && (!t.replies.flat().length || t.more === cursor)) t.more = null;
         this.log(accountId, [...(t.focal ? [t.focal] : []), ...t.ancestors, ...t.replies.flat()]);
+        if (!cursor) {
+          this.recent.set(`${network}:${post}:`, { at: Date.now(), t, accountId });
+          for (const [k, r] of this.recent) if (Date.now() - r.at >= CACHE_MS) this.recent.delete(k);
+        }
         return this.view(network, post, accountId, t, undefined);
       } catch (e) {
         // A page of more replies has nothing logged to fall back on beyond the first page.
@@ -178,7 +178,10 @@ export class Posts {
       const m = s.one<Row>('SELECT id FROM message WHERE id = ?', hubId('msg', network, postNativeId(shown.id)));
       return { ...postView(p, network, media), messageId: m?.id ?? null };
     };
-    const all = [...(t.focal ? [t.focal] : []), ...t.ancestors, ...t.replies.flat()];
+    const shown = [...(t.focal ? [t.focal] : []), ...t.ancestors, ...t.replies.flat()];
+    const ids = new Set(shown.map((p) => p.id));
+    const logged = t.focal ? this.logged(network, post).filter((p) => !ids.has(p.id)) : [];
+    const all = [...shown, ...logged];
     const named = new Set<string>();
     for (const p of all) {
       for (const n of postAuthors(p)) named.add(hubId('idn', network, n));
@@ -193,10 +196,27 @@ export class Posts {
       ancestors: t.ancestors.map(one),
       replies: t.replies.map((c) => c.map(one)),
       more: t.more,
+      ...(logged.length ? { logged: logged.map(one) } : {}),
       conversationId: conv && s.one('SELECT 1 FROM conversation WHERE id = ?', conv) ? conv : null,
       ...(stored ? { stored } : {}),
       identities: s.identitiesByIds(named),
     };
+  }
+
+  /** Posts logged under a post, any depth to LOGGED_DEPTH, oldest first (through message_post_reply). */
+  private logged(network: P.Network, post: string): P.PostFact[] {
+    const rows = this.d.store.db
+      .query(
+        `WITH RECURSIVE d(id, depth) AS (
+           SELECT ?, 0
+           UNION ALL
+           SELECT m.id, d.depth + 1 FROM message m JOIN d ON m.reply_to_id = d.id
+           WHERE d.depth < ? AND m.native_id LIKE 'post:%' AND m.deleted = 0
+         )
+         SELECT m.* FROM d JOIN message m ON m.id = d.id WHERE d.depth > 0 ORDER BY m.ts LIMIT ?`,
+      )
+      .all(hubId('msg', network, postNativeId(post)), LOGGED_DEPTH, LOGGED_MAX) as Row[];
+    return rows.map((r) => this.postOf(r)).filter((p): p is P.PostFact => !!p);
   }
 
   /** The post's message, as logged: the post in its `extra`, else rebuilt from the message. */

@@ -118,8 +118,7 @@ drawn by post, it reads as what it is: your posts and what came of them.
   you" ("replied to you", "quoted you").
 - **Follows** one after another are one slim row: their faces (each opening their profile), "Sam and Lee followed
   you", when. Anything else X notifies about is a slim row in X's words.
-- **Everything / Replies and mentions.** The second leaves out likes, reposts and follows altogether, ordered by when
-  someone last said something, with how many said something new. The choice is kept on the device.
+
 - **What was new when it opened** is marked with a coloured edge, and stays marked while the page is open. The page
   marks the feed read on the hub as it shows.
 - **The bar** in place of the composer: "Replies, likes and follows happen on X." and **Open on X**
@@ -133,8 +132,8 @@ by the dozen and ask nothing of you, as much room as a reply. By post, the post 
 the card is about, and likes are a number with names behind it. Four layouts were drawn before this one (the PR has
 them): replies first with likes folded into lines; by post with mentions and followers in sections after; tabs as
 on X's own page; mentions in a section first and the like list open in place. By post, in one stream ordered by
-activity, kept the most context for the least reading, and the filter answers "don't show me likes" without a
-setting.
+activity, kept the most context for the least reading. A "Replies and mentions" filter came with it at first and
+went: with likes already one line per post, everything is barely longer than talk alone.
 
 ### A feed of posts, for any network
 
@@ -174,17 +173,38 @@ conversation would open (`#/inbox/c/pst_<network>_<post id>`, feed.ts `postKey`)
 Links, @handles, pictures, names and Open on X inside a card keep doing what they do.
 
 **The page** (`ui/feed/Thread.tsx`, in the feed's chunk): what the post answers, oldest first, each joined to the next
-by a line from its picture; the post itself, large, with its full time, its counts and Open on X; then **Replies**,
-each a short chain as X shows it (a reply and the answers under it), the author continuing their own thread first;
-**Show more replies** while X has more. Every post in it opens its own thread. The header says whose post it is.
+by a line from its picture; the post itself, large, with its full time, its counts and Open on X; then **Replies** as a
+comment section; **Show more replies** while X has more. The header says whose post it is.
+
+**Replies as a tree** (`ui/feed/tree.ts`, `Comments.tsx`). Every post known under the post goes under the one it
+answers: X's chains (a reply and the first answers under it), the branches the hub logged before (`logged`, below),
+and the branches opened since. Siblings keep the order they first came in, X's order: the author's own continuation
+first, then what X ranks highest. Where X counts more replies under a post than are known, **N more replies** reads
+that post's thread and puts its replies in place, as Reddit's "load more comments". Four ways to draw it, chosen above
+the replies and kept on the device:
+
+- **Tree** (the default, as Reddit): each reply's picture, name, OP on the post's author, time (which opens the reply
+  as a thread of its own), words, pictures and likes; under it its replies, one step in, with a line down its left
+  that **folds the branch** when clicked ("Alice Chen · 8 more replies", Show to unfold). Past six deep, **Continue
+  this thread** opens the branch as a thread, what it answers above it.
+- **Compact** (as Hacker News): the same tree without pictures or counts, a narrow indent, [–] and [+] to fold.
+- **Flat** (as YouTube and Discourse): each reply to the post, then everything under it one level in, oldest first,
+  each saying whom it answers ("to @ravi_routes"), folded with Hide replies.
+- **Chains** (as X): each branch as a chain joined by its pictures, a branch's other answers as chains after it.
+
+A network that gives its comments as a tree (Reddit, Mastodon) gives the same tree; a network with one level of
+replies (YouTube) is the Flat style already.
 
 **Where it comes from.** `GET /api/posts/:network/:post/thread[?cursor=]` (posts.ts): the hub asks an X account that
 can (capability `posts`, the `post` command, `PostThread`: `focal`, `ancestors`, `replies` as chains, `more`), the way
 X's own post page asks (TweetDetail). Nothing else is sent: nothing liked, viewed or marked. Two devices opening the
 same thread ask once, and a thread read in the last two minutes is answered from that read (back and forth between a
-post and its replies asks X once). The hub waits up to 150 s: the extractor paces its reads. A page of more replies
-that brings none, or the same cursor back, ends Show more. No account connected, or X failing: the thread comes back from what the hub logged, saying
-why (`stored`): what it answers, back through the posts logged, and the replies logged under it (the author's first),
+post and its replies asks X once; the view is made again from that read, so what was logged since comes with it).
+The hub waits up to 150 s: the extractor paces its reads. A page of more replies that brings none, or the same cursor
+back, ends Show more. With the thread come **the posts logged under it before** that X did not show this time
+(`logged`: any depth to 10, any account, at most 500, through `message_post_reply`), so a branch opened once stays
+in the tree. No account connected, or X failing: the thread comes back from what the hub logged, saying why
+(`stored`): what it answers, back through the posts logged, and the replies logged under it (the author's first),
 with no Show more.
 
 ### Posts are logged as messages
@@ -236,19 +256,24 @@ baselines predate it.
   keeps the posts after, likes silent and replies on the list even from someone set to Always alert, a muted feed
   silent, and the hub refusing a send, a reaction, an edit and settings, keeping reads and typing from X.
 - `packages/web/test/feed.test.ts`: units by post (likes, reposts, replies and quotes on one post as one, by its
-  newest activity), mentions and follows on their own, Replies and mentions, what is new, the reactions line's words
+  newest activity), mentions and follows on their own, what is new, the reactions line's words
   and counts; the inbox row's cards, names as X says them.
 - `packages/hub/test/posts.test.ts`: a thread read in hub ids with the author's chain first, each post logged once as
   a quiet message (no unread, no triage, no persons), more replies by cursor, a reply's ancestors, search finding
   logged posts, the thread read back without X, a profile's posts logged, the routes, and nothing sent to X.
 - `packages/web/test/links.test.ts`: links in bios.
 - `scripts/verify-x-threads.ts`: in a real browser on a fresh demo hub, desktop and phone: links in bios, a feed card,
-  a profile's post and a search hit opening their threads, chains and their lines, Show more replies, a reply with what
-  it answers, the posts conversation out of the inbox, nothing sent to X but the reads.
+  a profile's post and a search hit opening their threads, the replies as a tree, branches opened in place eight deep,
+  Continue this thread, folding, the Compact, Flat and Chains styles, Show more replies, a reply with what it answers,
+  the logged branches coming back, the posts conversation out of the inbox, nothing sent to X but the reads. With
+  `--shots`, a tour (`tour-01` … `tour-09`).
 - `scripts/verify-x-feed.ts`: against a fresh demo hub in a real browser, on a desktop and a phone, dark and light,
   with screenshots (`--shots <dir>`). It checks the row, the feed by post (your post small, the reply under it, the
-  reactions line, the list of who liked and reposted it, the quote, the mention, the follows), Replies and mentions,
+  reactions line, the list of who liked and reposted it, the quote, the mention, the follows),
   the bar, nothing sent to X, a profile's posts, counts and Follows you, and the decisions.
-- `packages/hub/test/posts.test.ts` also checks `GET /api/posts/:network/:post/activity`.
+- `packages/hub/test/posts.test.ts` also checks `GET /api/posts/:network/:post/activity`, and the branches logged
+  before coming back with a thread (also from the two-minute read).
+- `packages/web/test/tree.test.ts`: chains and logged branches as one tree, a post seen twice, posts outside the
+  thread, cycles, what is hidden to load, the tree read back as chains.
 
 Not run against a real X account.

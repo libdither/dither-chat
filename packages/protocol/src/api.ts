@@ -587,6 +587,11 @@ export interface PostThreadView {
   ancestors: PostView[];
   replies: PostView[][];
   more: string | null;
+  /**
+   * Posts the hub logged under it before, at any depth (to 10) and through any account, that `replies` does not hold:
+   * the branches opened earlier, so the comment tree keeps them (docs/feed.md "Threads").
+   */
+  logged?: PostView[];
   /** The conversation the posts were logged in (variant 'posts'), when there is one. */
   conversationId: string | null;
   stored?: string;
