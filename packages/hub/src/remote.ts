@@ -39,7 +39,7 @@ function kindsOf(events: { t: string }[]): string {
 }
 
 /** The kinds this hub hands to the manager when they are new. */
-export const MANAGED_KINDS = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x'];
+export const MANAGED_KINDS = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x', 't3'];
 
 /** The attention an account gets while the manager cannot run it, and when the manager no longer has it. */
 const NOT_RUNNING = 'Not running in dither-accounts: ';

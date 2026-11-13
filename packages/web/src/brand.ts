@@ -13,4 +13,6 @@ export const GLYPH = {
   email: "M2 4h20a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 2v.5l10 6.25L22 6.5V6zm20 2.86-9.47 5.92a1 1 0 0 1-1.06 0L2 8.86V18h20z",
   // A calendar of our own (not a brand): the calendar account (docs/calendar.md).
   calendar: "M7 1h2v2h6V1h2v2h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h2V1zM5 9v10h14V9H5zm2 2h4v4H7v-4z",
+  // Not a brand either: a terminal prompt, for T3 Code's coding threads (dither-accounts' docs/t3.md).
+  t3: "M2.6 5.4 4.4 3.6 12.8 12l-8.4 8.4-1.8-1.8L9.2 12zM13 18h9v2.4h-9z",
 } as const;
