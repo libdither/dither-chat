@@ -71,7 +71,7 @@ import { openPalette } from './Palette.tsx';
 import { reactionContext } from '../reactions.ts';
 import { openAbout } from './About.tsx';
 import { AccountChip, Avatar, Empty, Menu, NetGlyph, variantIcon } from './bits.tsx';
-import { HoverReactions, ReactionBar, useLongPress } from './Reactions.tsx';
+import { HoverReactions, InsertPicker, ReactionBar, useLongPress } from './Reactions.tsx';
 import { Icon } from './icons.tsx';
 import { TriageWhy, tierIcon, tierName } from './Marks.tsx';
 import { MessageHistory, Ticks } from './MessageHistory.tsx';
@@ -79,7 +79,9 @@ import { detailsShown, showDetails, swipeReply } from './Pager.ts';
 import { openConv } from './Sidebar.tsx';
 import { viewer, type ViewerImage } from './Viewer.tsx';
 import { JoinCallButton } from './Call.tsx';
-import { EmojiComplete } from './EmojiComplete.tsx';
+import { EmojiComplete, insertAtCaret } from './EmojiComplete.tsx';
+import { loadEmoji } from '../emoji.ts';
+import { isLottie, isSticker, Sticker } from './Sticker.tsx';
 import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
 import { TypingBar } from './Typing.tsx';
 import { useGrow } from './grow.ts';
@@ -430,11 +432,12 @@ function Attachments({ m }: { m: P.MessageView }) {
   if (!m.attachments.length) return null;
   // A file the network called just a file whose bytes are a picture, a video or a sound shows as one (files.ts).
   const media = (a: P.AttachmentView) => (a.kind === 'file' && a.info && /^(image|video|audio)$/.test(a.info.kind) ? (a.info.kind as P.AttachmentKind) : a.kind);
-  const images = m.attachments.filter((a) => media(a) === 'image');
+  const images = m.attachments.filter((a) => media(a) === 'image' && !isSticker(m, a));
   return (
     <div class="atts">
       {m.attachments.map((a, i) => {
         const kind = media(a);
+        if (isSticker(m, a)) return <Sticker a={a} index={i} />;
         if (kind === 'image') {
           const w = a.width ?? a.info?.width ?? 400;
           const h = a.height ?? a.info?.height ?? 300;
@@ -553,7 +556,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
     const att = el?.closest<HTMLElement>('[data-att]');
     if (att) {
       const a = m.attachments[Number(att.dataset.att)];
-      if (a) return attachmentMenu(a, m, m.attachments.filter((x) => x.kind === 'image').map((x) => ({ url: x.url, name: x.name, width: x.width, height: x.height })), reply);
+      if (a) return attachmentMenu(a, m, m.attachments.filter((x) => x.kind === 'image' && !isLottie(x)).map((x) => ({ url: x.url, name: x.name, width: x.width, height: x.height })), reply);
     }
     const img = el?.closest<HTMLImageElement>('img.embed-image');
     if (img) return imageMenu(img.src, null, m, reply);
@@ -1033,6 +1036,8 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   const [sheet, setSheet] = useState(false);
   const [camera, setCamera] = useState(false);
   const [review, setReview] = useState(false);
+  // The emoji button's picker, beside what opened it (Reactions.tsx).
+  const [emojiAt, setEmojiAt] = useState<DOMRect | null>(null);
   const addFiles = async (list: File[]) => {
     if (!list.length || !conv) return;
     if (!canAttach) return toast({ kind: 'error', title: 'Cannot send files here', body: conv.encrypted ? 'Set up encryption on the account\'s page to send files in encrypted Matrix rooms.' : `${netName(conv.network)} is not set up to send files.` });
@@ -1047,6 +1052,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
     setSheet(false);
     setCamera(false);
     setReview(false);
+    setEmojiAt(null);
   }, [targets.convId]);
   const files = att.sendable;
   const draftKey = `dither-chat:draft:${targets.convId}`;
@@ -1179,6 +1185,20 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       }}
     />
   );
+  const emojiBtn = conv && !disabledReason && (
+    <button
+      class="icon-btn composer-emoji"
+      data-track="emoji"
+      title="Emoji"
+      aria-label="Emoji"
+      aria-expanded={!!emojiAt}
+      // The catalog loads while the pointer is on its way, so the picker opens whole.
+      onPointerEnter={() => void loadEmoji()}
+      onClick={(e) => setEmojiAt(emojiAt ? null : (e.currentTarget as HTMLElement).getBoundingClientRect())}
+    >
+      <Icon name="smile" size={onPhone ? 20 : 18} />
+    </button>
+  );
   const sendBtn = (
     <button class="send-btn" data-track="send" disabled={!canSend} onClick={submit} aria-label="Send" title={sendTitle}>
       <Icon name="send" size={17} />
@@ -1282,6 +1302,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
             ) : (
               box
             )}
+            {emojiBtn}
             {attaching && (
               <button class="icon-btn composer-camera" data-track="camera" onClick={openCamera} aria-label="Take a photo or video">
                 <Icon name="camera" size={20} />
@@ -1306,8 +1327,18 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           ) : (
             box
           )}
+          {emojiBtn}
           {sendBtn}
         </div>
+      )}
+      {emojiAt && conv && (
+        <InsertPicker
+          conversationId={targets.convId}
+          network={conv.network}
+          anchor={emojiAt}
+          onInsert={(t) => ta.current && insertAtCaret(ta.current, t, !onPhone)}
+          onClose={() => setEmojiAt(null)}
+        />
       )}
       {sheet && <AttachSheet limit={limit} onClose={() => setSheet(false)} onPhotos={() => photos.current?.click()} onFile={() => picker.current?.click()} />}
       {camera && (

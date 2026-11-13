@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, REACTION_RULES } from '@dither-chat/protocol';
 import { emojiNow, loadEmoji, searchEmoji, SKIN_TONES, skinOf } from '../emoji.ts';
+import { customMarkup } from '../emojiComplete.ts';
 import { fullTime } from '../format.ts';
 import { authorName, convTitle, netName, plainBody } from '../model.ts';
 import { hasMine, knownReactionContext, pickerFor, quickReactions, reactionContext, reactionScope, reactorsFor, reactorsLabel, replacing, toggleReaction, type Picked } from '../reactions.ts';
@@ -238,18 +239,33 @@ function cells(items: Item[], flat: Item[], mine: Set<string>) {
 }
 
 /**
+ * What the picker is for: reacting to a message, or putting an emoji into what you are writing (the composer's button).
+ * Writing takes Unicode emoji anywhere, and a server's custom emoji only on Discord, as its <:name:id> markup; a
+ * Matrix pack's go only as reactions (EmojiComplete.tsx says the same).
+ */
+type Target = { kind: 'react'; m: P.MessageView } | { kind: 'insert'; conversationId: string; network: P.Network; insert: (text: string) => void };
+
+/** A custom emoji that can go into a message's text: Discord's, by its name:id key. */
+const inTextKey = (key: string) => /^\S+:\d+$/.test(key);
+
+/**
  * Discord's emoji picker: search with skin tones across the top, a rail of categories (your frequent ones, each
  * server's or pack's custom emoji, then Unicode's) down the side, and the emoji under the pointer named along the
  * bottom. On a network that keeps one reaction per person, that bottom line also says which of yours a pick replaces.
  */
-function Picker({ m, anchor, onClose }: { m: P.MessageView; anchor: DOMRect | null; onClose: () => void }) {
-  const rules = REACTION_RULES[m.network];
-  const net = NETWORK_META[m.network].name;
+function Picker({ target, anchor, onClose }: { target: Target; anchor: DOMRect | null; onClose: () => void }) {
+  const m = target.kind === 'react' ? target.m : null;
+  const network = m ? m.network : (target as Extract<Target, { kind: 'insert' }>).network;
+  const conversationId = m ? m.conversationId : (target as Extract<Target, { kind: 'insert' }>).conversationId;
+  const inserting = !m;
+  // Writing: no reaction rules apply (one per person, a limit on kinds, free text).
+  const rules = inserting ? {} as Partial<(typeof REACTION_RULES)[P.Network]> : REACTION_RULES[network];
+  const net = NETWORK_META[network].name;
   const sheet = isSheet();
   const [q, setQ] = useState('');
   // Both are usually known already, so the picker draws whole in its first frame instead of filling in.
   const [catalog, setCatalog] = useState(emojiNow);
-  const [ctx, setCtx] = useState(() => knownReactionContext(m.conversationId));
+  const [ctx, setCtx] = useState(() => knownReactionContext(conversationId));
   const [superOn, setSuperOn] = useState(false);
   const [tonesOpen, setTonesOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
@@ -262,9 +278,9 @@ function Picker({ m, anchor, onClose }: { m: P.MessageView; anchor: DOMRect | nu
   const flat = useRef<Item[]>([]);
   useEffect(() => {
     if (!catalog) loadEmoji().then(setCatalog);
-    reactionContext(m.conversationId).then(setCtx);
+    reactionContext(conversationId).then(setCtx);
     if (!sheet) search.current?.focus();
-  }, [m.id]);
+  }, [m?.id ?? conversationId]);
 
   // Place it next to whatever opened it, inside the window.
   useLayoutEffect(() => {
@@ -277,16 +293,21 @@ function Picker({ m, anchor, onClose }: { m: P.MessageView; anchor: DOMRect | nu
   }, [anchor]);
 
   const style: P.ReactionStyle = superOn ? 'super' : 'normal';
-  const onMessage = m.reactions.filter((r, i, all) => all.findIndex((x) => x.key === r.key) === i);
+  const onMessage = m ? m.reactions.filter((r, i, all) => all.findIndex((x) => x.key === r.key) === i) : [];
   const distinctFull = rules.maxDistinct !== undefined && onMessage.length >= rules.maxDistinct;
-  const existingOnly = !!ctx?.existingOnly || distinctFull;
-  const swap = replacing(m);
-  const mine = useMemo(() => new Set(m.reactions.filter((r) => r.style === style && hasMine(r)).map((r) => r.key)), [m.reactions, style]);
+  const existingOnly = !inserting && (!!ctx?.existingOnly || distinctFull);
+  const swap = m ? replacing(m) : undefined;
+  const mine = useMemo(() => new Set(m ? m.reactions.filter((r) => r.style === style && hasMine(r)).map((r) => r.key) : []), [m?.reactions, style]);
+  // The custom emoji this pick can use: all of them for a reaction; for writing, Discord's alone.
+  const groups = useMemo(
+    () => (!inserting ? (ctx?.custom ?? []) : network !== 'discord' ? [] : (ctx?.custom ?? []).map((g) => ({ ...g, emoji: g.emoji.filter((e) => inTextKey(e.key)) })).filter((g) => g.emoji.length)),
+    [ctx, inserting, network],
+  );
 
   const { sections, customs, names } = useMemo(() => {
     const names = new Map<string, string>();
     for (const c of catalog ?? []) for (const e of c.emoji) for (const s of e.skins) names.set(s, `:${e.id}:`);
-    const customs = new Map(ctx?.custom.flatMap((g) => g.emoji.map((e) => [e.key, { e, from: g.name }] as const)) ?? []);
+    const customs = new Map(groups.flatMap((g) => g.emoji.map((e) => [e.key, { e, from: g.name }] as const)));
     const item = (key: string, emoji?: P.CustomEmojiView): Item => {
       const c = customs.get(key);
       const e = emoji ?? c?.e;
@@ -296,13 +317,13 @@ function Picker({ m, anchor, onClose }: { m: P.MessageView; anchor: DOMRect | nu
     if (onMessage.length) sections.push({ id: 'here', title: 'On this message', kind: 'here', items: onMessage.map((r) => item(r.key, r.emoji)) });
     if (!existingOnly) {
       // Your usage is counted per network; here one emoji is one button, and only what works on this network shows.
-      const frequent = db.reactionUsage.filter((u, i, all) => (u.network === m.network || !u.emoji) && (!isCustomKey(u.key) || customs.has(u.key)) && all.findIndex((x) => x.key === u.key) === i).slice(0, 18);
+      const frequent = db.reactionUsage.filter((u, i, all) => (u.network === network || !u.emoji) && (!isCustomKey(u.key) || customs.has(u.key)) && all.findIndex((x) => x.key === u.key) === i).slice(0, 18);
       if (frequent.length) sections.push({ id: 'frequent', title: 'Frequently used', kind: 'custom', icon: 'clock', items: frequent.map((u) => item(u.key, u.emoji)) });
-      ctx?.custom.forEach((g) => sections.push({ id: `custom:${g.id}`, title: g.name, kind: 'custom', img: g.icon, items: g.emoji.map((e) => item(e.key, e)) }));
+      groups.forEach((g) => sections.push({ id: `custom:${g.id}`, title: g.name, kind: 'custom', img: g.icon, items: g.emoji.map((e) => item(e.key, e)) }));
       for (const c of catalog ?? []) sections.push({ id: c.id, title: c.name, kind: 'unicode', icon: CATEGORY_ICON[c.id] ?? 'smile', items: c.emoji.map((e) => ({ key: skinOf(e, tone), name: `:${e.id}:` })) });
     }
     return { sections, customs, names };
-  }, [catalog, ctx, tone, existingOnly]);
+  }, [catalog, groups, tone, existingOnly]);
 
   const query = q.trim().toLowerCase();
   const hits = useMemo((): Item[] => {
@@ -338,9 +359,15 @@ function Picker({ m, anchor, onClose }: { m: P.MessageView; anchor: DOMRect | nu
     ));
   }, [query, hits, sections, collapsed, mine]);
 
-  const pick = (p: Picked, el: HTMLElement) => {
+  /** `keep`: Shift held, as in Discord, so several go in one after another. */
+  const pick = (p: Picked, el: HTMLElement, keep = false) => {
+    if (target.kind === 'insert') {
+      target.insert(p.emoji ? (customMarkup(p.emoji) ?? `:${p.emoji.name}:`) : p.key);
+      if (!keep) onClose();
+      return;
+    }
     if (style === 'super') burst(el, { key: p.key, emoji: p.emoji });
-    toggleReaction(m, p, style);
+    toggleReaction(target.m, p, style);
     onClose();
   };
   const first = hits[0] ?? (rules.freeText && q.trim() ? { key: q.trim(), name: q.trim() } : null);
@@ -377,7 +404,7 @@ function Picker({ m, anchor, onClose }: { m: P.MessageView; anchor: DOMRect | nu
   const railBox = useRef<HTMLElement>(null);
   useEffect(() => railBox.current?.querySelector('.ep-rail-btn.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }), [active]);
 
-  if (ctx && !ctx.canReact) {
+  if (!inserting && ctx && !ctx.canReact) {
     return (
       <Shell sheet={sheet} box={box} onClose={onClose}>
         <div class="ep-blocked">
@@ -388,7 +415,9 @@ function Picker({ m, anchor, onClose }: { m: P.MessageView; anchor: DOMRect | nu
     );
   }
 
-  const note = superOn
+  const note = inserting
+    ? null
+    : superOn
     ? 'Super reaction: plays an effect for everyone looking at this message.'
     : distinctFull
       ? `${net} allows ${rules.maxDistinct} different reactions on a message, and this one is full. You can still add to these.`
@@ -402,7 +431,7 @@ function Picker({ m, anchor, onClose }: { m: P.MessageView; anchor: DOMRect | nu
   const rail = !query && sections.filter((s) => s.kind !== 'here');
 
   return (
-    <Shell sheet={sheet} box={box} onClose={onClose}>
+    <Shell sheet={sheet} box={box} onClose={onClose} label={inserting ? 'Emoji' : undefined}>
       <div class="ep-head">
         {existingOnly ? (
           <span class="ep-head-title">Add to a reaction on this message</span>
@@ -417,7 +446,7 @@ function Picker({ m, anchor, onClose }: { m: P.MessageView; anchor: DOMRect | nu
                 scroller.current?.scrollTo(0, 0);
               }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && first) pick(first, e.currentTarget as HTMLElement);
+                if (e.key === 'Enter' && first) pick(first, e.currentTarget as HTMLElement, e.shiftKey);
               }}
             />
             {q ? (
@@ -453,7 +482,7 @@ function Picker({ m, anchor, onClose }: { m: P.MessageView; anchor: DOMRect | nu
             )}
           </div>
         )}
-        {ctx?.super?.available && (
+        {!inserting && ctx?.super?.available && (
           <button class={`ep-tool ep-super ${superOn ? 'on' : ''}`} title="Super reaction" aria-pressed={superOn} onClick={() => setSuperOn(!superOn)}>
             <Icon name="zap" size={15} />
             <span>Super</span>
@@ -480,7 +509,7 @@ function Picker({ m, anchor, onClose }: { m: P.MessageView; anchor: DOMRect | nu
           onScroll={spy}
           onClick={(e) => {
             const hit = at(e);
-            if (hit) pick(hit.it, hit.el);
+            if (hit) pick(hit.it, hit.el, e.shiftKey);
           }}
           onMouseOver={(e) => {
             const hit = at(e);
@@ -541,14 +570,14 @@ function Inspector({ hovered, fallback, note, mine, swap, superOn, names }: { ho
   );
 }
 
-function Shell({ sheet, box, onClose, children }: { sheet: boolean; box: { current: HTMLDivElement | null }; onClose: () => void; children: any }) {
+function Shell({ sheet, box, onClose, label = 'Add a reaction', children }: { sheet: boolean; box: { current: HTMLDivElement | null }; onClose: () => void; label?: string; children: any }) {
   if (sheet)
     return (
-      <Sheet onClose={onClose} label="Add a reaction" class="emoji-picker" tall>
+      <Sheet onClose={onClose} label={label} class="emoji-picker" tall>
         {children}
       </Sheet>
     );
-  return <Popover box={box} onClose={onClose} class="emoji-picker" label="Add a reaction">{children}</Popover>;
+  return <Popover box={box} onClose={onClose} class="emoji-picker" label={label}>{children}</Popover>;
 }
 
 /** Desktop: floats beside what opened it. */
@@ -631,6 +660,14 @@ function Reactors({ m, reactionKey, style, anchor, onClose }: { m: P.MessageView
   );
 }
 
+/**
+ * The composer's emoji button opens this: the same picker, putting what you pick into what you are writing. Shift
+ * keeps it open for another.
+ */
+export function InsertPicker({ conversationId, network, anchor, onInsert, onClose }: { conversationId: string; network: P.Network; anchor: DOMRect | null; onInsert: (text: string) => void; onClose: () => void }) {
+  return <Picker target={{ kind: 'insert', conversationId, network, insert: onInsert }} anchor={anchor} onClose={onClose} />;
+}
+
 /** Mounted once at the app root. */
 export function ReactionLayer() {
   rev.value;
@@ -643,7 +680,7 @@ export function ReactionLayer() {
   const w = reactorsFor.value;
   return (
     <>
-      {p && <Picker key={p.message.id} m={p.message} anchor={p.anchor} onClose={() => (pickerFor.value = null)} />}
+      {p && <Picker key={p.message.id} target={{ kind: 'react', m: p.message }} anchor={p.anchor} onClose={() => (pickerFor.value = null)} />}
       {w && <Reactors m={w.message} reactionKey={w.key} style={w.style} anchor={w.anchor} onClose={() => (reactorsFor.value = null)} />}
     </>
   );

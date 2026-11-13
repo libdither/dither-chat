@@ -427,6 +427,30 @@ const SUPER_COLORS = ['#ff7ad9', '#7c5cff', '#4ad7ff'];
 const badge = (glyph: string, a: string, b: string) =>
   `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="${a}"/><stop offset="1" stop-color="${b}"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="url(#g)"/><text x="32" y="44" font-size="34" text-anchor="middle" font-family="sans-serif" fill="#fff">${glyph}</text></svg>`)}`;
 
+/**
+ * Discord stickers as the extractor maps them (dither-accounts, extractors/discord/src/map.ts): a picture, and a Lottie
+ * animation (Discord's own stickers are these), each 160 px, in a message of kind 'sticker' with no words.
+ */
+const STICKER_LOTTIE = {
+  v: '5.7.4', fr: 30, ip: 0, op: 60, w: 160, h: 160,
+  layers: [{
+    ty: 4, ind: 1, ip: 0, op: 60, st: 0,
+    ks: {
+      o: { a: 0, k: 100 }, r: { a: 0, k: 0 }, p: { a: 0, k: [80, 80, 0] }, a: { a: 0, k: [0, 0, 0] },
+      s: { a: 1, k: [
+        { t: 0, s: [60, 60, 100], i: { x: [0.5], y: [1] }, o: { x: [0.5], y: [0] } },
+        { t: 30, s: [100, 100, 100], i: { x: [0.5], y: [1] }, o: { x: [0.5], y: [0] } },
+        { t: 60, s: [60, 60, 100] },
+      ] },
+    },
+    shapes: [{ ty: 'el', p: { a: 0, k: [0, 0] }, s: { a: 0, k: [120, 120] } }, { ty: 'fl', c: { a: 0, k: [0.49, 0.36, 1, 1] }, o: { a: 0, k: 100 } }],
+  }],
+};
+const DEMO_STICKERS: Record<'picture' | 'lottie', P.AttachmentFact> = {
+  picture: { nativeId: 'sticker:1100000000000000001', kind: 'image', mime: 'image/png', name: 'Pogo', width: 160, height: 160, url: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160"><circle cx="80" cy="80" r="70" fill="#f2a541"/><text x="80" y="104" font-size="72" text-anchor="middle" font-family="sans-serif" fill="#fff">GG</text></svg>')}` },
+  lottie: { nativeId: 'sticker:1100000000000000002', kind: 'image', mime: 'application/x-lottie+json', name: 'Pulse', width: 160, height: 160, url: `data:application/json,${encodeURIComponent(JSON.stringify(STICKER_LOTTIE))}` },
+};
+
 const DEMO_EMOJI: P.CustomEmojiFact[] = [
   { key: 'dither:9001', name: 'dither', url: badge('D', '#7c5cff', '#b79bff') },
   { key: 'shipit:9002', name: 'shipit', url: badge('!', '#ff8c61', '#e86a92') },
@@ -572,8 +596,11 @@ const CONVS: DemoConv[] = [
     acc: ['dalt'],
     fact: { nativeId: snow('dm-jordan'), shape: 'direct', participants: [D.zyn.nativeId, D.jordan.nativeId] },
     msgs: [
+      [4 * DAY + 30, D.jordan, 'Jordan accepted your friend request.', { kind: 'system' }],
       [4 * DAY, D.jordan, 'watched your pantheon run, the radiance fight was clean'],
       [4 * DAY - 10, D.zyn, 'thanks!! still losing time in the pogo section'],
+      [4 * DAY - 12, D.jordan, '', { kind: 'sticker', att: [DEMO_STICKERS.picture] }],
+      [4 * DAY - 13, D.jordan, '', { kind: 'sticker', att: [DEMO_STICKERS.lottie] }],
       [6 * H, D.jordan, 'try the route in #routes, saves like 2s'],
     ],
     unread: 1,
@@ -1762,7 +1789,16 @@ const MEMBER_LAST = ['', '_dev', '42', 'x', '.art', 'bot', '_rs', '99', 'kun', '
 function networkMessages(c: DemoConv, network: P.Network, ago: (min: number) => number, self: P.IdentityFact): P.MessageFact[] {
   const pool = Object.values(POOLS[network] ?? D).filter((i) => i !== self);
   const first = c.msgs.length ? Math.max(...c.msgs.map((m) => m[0])) : 60 * 24;
-  const seeded = c.msgs.map(([min, author, body], i) => ({ nativeId: `${c.fact.nativeId}~${i}`, conversation: c.fact.nativeId, author: author.nativeId, ts: ago(min), body }));
+  // As the first sync sent them: a system line, a sticker or a file stays one when the network sends it again.
+  const seeded = c.msgs.map(([min, author, body, o = {}], i) => ({
+    nativeId: `${c.fact.nativeId}~${i}`,
+    conversation: c.fact.nativeId,
+    author: author.nativeId,
+    ts: ago(min),
+    body,
+    kind: o.kind ?? (o.att?.length ? 'media' : 'text'),
+    ...(o.att ? { attachments: o.att } : {}),
+  }));
   const k = parseInt(h('a' + c.fact.nativeId).toString('hex').slice(0, 6), 16);
   const archive = Array.from({ length: ARCHIVE_SIZE }, (_, i) => {
     const back = ARCHIVE_SIZE - i;

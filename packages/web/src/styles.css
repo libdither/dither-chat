@@ -1490,6 +1490,26 @@ code {
   object-fit: cover;
   display: block;
 }
+/* A sticker stands on its own, at the 160 px its network draws it: no frame, no crop (ui/Sticker.tsx). */
+.sticker {
+  display: block;
+  width: 160px;
+  height: 160px;
+  object-fit: contain;
+}
+.sticker-lottie svg {
+  display: block;
+}
+.sticker-missing {
+  display: inline-flex;
+  width: auto;
+  height: auto;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px dashed var(--border-soft);
+  color: var(--text-faint);
+  font-size: 0.9em;
+}
 .embeds {
   display: flex;
   flex-direction: column;
@@ -2361,6 +2381,15 @@ code {
 .attach-btn {
   align-self: center;
   margin-left: -6px;
+}
+/* The composer's emoji button, beside send (Reactions.tsx, InsertPicker). */
+.composer-emoji {
+  align-self: center;
+  color: var(--text-faint);
+}
+.composer-emoji:hover,
+.composer-emoji[aria-expanded='true'] {
+  color: var(--text);
 }
 .composer-box {
   display: flex;
@@ -4978,7 +5007,8 @@ code {
     background: var(--bg-input);
     border: 1px solid var(--border);
   }
-  .composer-row .composer-camera {
+  .composer-row .composer-camera,
+  .composer-row .composer-emoji {
     flex: none;
     width: 40px;
     height: 40px;
