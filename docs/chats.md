@@ -29,8 +29,13 @@ in step. Group chats that are "the same group on two networks" would need a stor
 
 Routes are listed newest first. A message without a route goes through the chat's **default route**:
 
-1. the route you chose (`chat_route`), while the chat still has it;
+1. the route you chose (`chat_route`), while the chat still has it and no message has come on another of its routes
+   since you chose it;
 2. otherwise, the conversation of the latest message, through the account that last sent there.
+
+A choice is for the conversation as it stood: switched to Discord, and they have written on Signal since, the chat
+sends through Signal again. The page's own picks below give way by the same rule (`pickHolds` in `chatroutes.ts`),
+except while a draft waits in the picked route's box, so the box never changes under what you are typing.
 
 The page adds guesses in front of that, because it knows things the hub doesn't. From first to last:
 

@@ -4,7 +4,7 @@
  * checked in a browser against the multiaccount demo.
  */
 import { expect, test } from 'bun:test';
-import { accountName, badgeDiffers, chatKey, groupChats, headIdents, labelText, leadTells, mergeRoutes, tagTells, tagText, tells, type HeadName, type RouteKey, type RoutePart } from '../src/chatroutes.ts';
+import { accountName, badgeDiffers, chatKey, groupChats, headIdents, labelText, leadTells, mergeRoutes, pickHolds, tagTells, tagText, tells, type HeadName, type RouteKey, type RoutePart } from '../src/chatroutes.ts';
 import { inboxSnapshot, inboxView, rank, type Ranked } from '../src/ordering.ts';
 
 const r = (id: string, network: string, theirs: string, mine: string): RouteKey => ({ id, network, theirs, mine });
@@ -193,4 +193,12 @@ test('an account goes by your nickname for it, and the handle rule compares the 
       ['b', 'mo.draws'],
     ]),
   );
+});
+
+test('a pick holds until a message comes on another route after it', () => {
+  // Switched to Discord at 1000 (an hour before, the tab still open); she wrote on Signal at 2000.
+  expect(pickHolds('disc', 1000, [{ id: 'disc', lastMessageAt: 900 }, { id: 'sig', lastMessageAt: 800 }])).toBe(true);
+  expect(pickHolds('disc', 1000, [{ id: 'sig', lastMessageAt: 2000 }, { id: 'disc', lastMessageAt: 900 }])).toBe(false);
+  // Messages on the picked route itself, or none at all, keep it.
+  expect(pickHolds('disc', 1000, [{ id: 'disc', lastMessageAt: 3000 }, { id: 'sig', lastMessageAt: null }])).toBe(true);
 });
