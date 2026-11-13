@@ -40,6 +40,7 @@ import { syncResponse } from './sync.ts';
 import { TypingGate } from './typing.ts';
 import { hostAllowed, hostNames } from './hosts.ts';
 import { noteWork, pathShape, timedWrite } from './stalls.ts';
+import { parseTraceparent, span, startSpan } from './trace.ts';
 import { fetchPublicToFile } from './fetchsafe.ts';
 import { AboutError, Abouts } from './about.ts';
 import { Servers } from './servers.ts';
@@ -381,13 +382,28 @@ export class HubServer {
     this.self.start();
     const self = this;
     const guarded = (handler: (req: Request, server: Server<WsData>) => Promise<Response | undefined> | Response | undefined) =>
-      async (req: Request, server: Server<WsData>) => {
-        try {
-          return await compress(req, await handler(req, server));
-        } catch (e: any) {
-          console.error('request failed', req.method, new URL(req.url).pathname, e);
-          return Response.json({ error: String(e?.message ?? e) }, { status: 500 });
-        }
+      (req: Request, server: Server<WsData>) => {
+        // Each request is a span named by its method and its path without ids (docs/tracing.md); one that brings a
+        // traceparent joins that trace. It ends when the response starts: a stream's body is not in it.
+        const route = pathShape(new URL(req.url).pathname);
+        return span(
+          `${req.method} ${route}`,
+          { 'http.method': req.method, 'http.route': route },
+          async (s) => {
+            try {
+              const res = await compress(req, await handler(req, server));
+              // No response: the socket was upgraded.
+              s.set({ 'http.status': res?.status ?? 101 });
+              if (res && res.status >= 500) s.fail(`status ${res.status}`);
+              return res;
+            } catch (e: any) {
+              console.error('request failed', req.method, new URL(req.url).pathname, e);
+              s.set({ 'http.status': 500 }).fail(e);
+              return Response.json({ error: String(e?.message ?? e) }, { status: 500 });
+            }
+          },
+          { parent: parseTraceparent(req.headers.get('traceparent')) },
+        );
       };
     const tls = this.opts.tls;
     const websocket: WebSocketHandler<WsData> = {
@@ -485,6 +501,8 @@ export class HubServer {
   flush() {
     // What a flush writes (attention's folds, one transaction per conversation; the journal) is one transaction: one
     // commit, and each commit waits for the disk on the hub's thread. The frame goes out once it is committed.
+    // Every 80 ms: a span only when there was something to send (docs/tracing.md).
+    const s = startSpan('flush');
     let events: P.ClientEvent[] = [];
     let frame: string | null = null;
     try {
@@ -499,8 +517,14 @@ export class HubServer {
       // the store gave up goes out and into the journal on its own.
       console.error('flush: one transaction failed; sending what changed as it is', e);
       frame = this.record(events);
+      s.fail(e);
     }
     if (frame) for (const c of this.clients) c.send(frame);
+    if (!events.length) s.drop();
+    else {
+      s.set({ events: events.length });
+      s.end();
+    }
   }
 
   /** What changed since the last flush: the store's, mail's, and the scores they move. */
@@ -641,7 +665,6 @@ export class HubServer {
   private async route(req: Request, server: Server<WsData>): Promise<Response | undefined> {
     const url = new URL(req.url);
     const path = url.pathname;
-    noteWork(`${req.method} ${pathShape(path)}`);
     const ip = server.requestIP(req)?.address ?? '';
 
     if (path === '/adapter') {

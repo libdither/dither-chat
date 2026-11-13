@@ -404,6 +404,18 @@ export class MailOutbox {
     return back;
   }
 
+  /** Send now, while it is held: the hold ends here and it goes as it would have at the end of the countdown. */
+  sendNow(id: string): P.MailOutboxView {
+    const r = this.row(id);
+    if (!r || r.state === 'undone') throw bad('no such send', 404);
+    if (r.state === 'held') {
+      this.run(`UPDATE mail_outbox SET hold_until = ?, updated_at = ? WHERE id = ?`, this.now(), this.now(), id);
+      this.dirty = true;
+      this.pump();
+    }
+    return this.item(id)!;
+  }
+
   /** A failed or sent item is not shown any more. */
   dismiss(id: string) {
     const r = this.row(id);
@@ -750,6 +762,12 @@ export const sendRoutes: MailRouter = (hub) => {
       method: 'DELETE',
       path: /^\/api\/mail\/outbox\/([\w-]+)$/,
       handle: ({ params }) => ok({ ok: true, ...box.undo(params[0]) }),
+    },
+    {
+      // Send now, ending the hold; an item already on its way answers as it is.
+      method: 'POST',
+      path: /^\/api\/mail\/outbox\/([\w-]+)\/send$/,
+      handle: ({ params }) => ok({ ok: true, item: box.sendNow(params[0]) }),
     },
     {
       method: 'POST',

@@ -162,6 +162,20 @@ describe('hold and undo', () => {
     expect(await status(w, Promise.resolve().then(() => w.hub.outbox.undo(second.outboxId)))).toBe(409);
   });
 
+  test('Send now ends the hold: it goes at once, and again is harmless', async () => {
+    const w = await world({ holdMs: 60_000 });
+    const { outboxId } = await clock.wait(w.hub.outbox.accept(reply(w)));
+    expect(state(w, outboxId)).toBe('held');
+    w.hub.outbox.sendNow(outboxId);
+    await until(() => state(w, outboxId) === 'sent', 4000, 'sent');
+    expect(sends(w)).toBe(1);
+    expect(w.hub.outbox.sendNow(outboxId).state).toBe('sent');
+    await clock.advance(100);
+    expect(sends(w)).toBe(1);
+    expect(await status(w, Promise.resolve().then(() => w.hub.outbox.undo(outboxId)))).toBe(409);
+    expect(await status(w, Promise.resolve().then(() => w.hub.outbox.sendNow('mob_nope')))).toBe(404);
+  });
+
   test('the outbox event carries the whole list; a sent item can be dismissed', async () => {
     const w = await world();
     w.hub.flush();
@@ -473,7 +487,7 @@ describe('once, and across a restart', () => {
     expect(w.hub.store.one<{ n: number }>('SELECT COUNT(*) AS n FROM mail_outbox')!.n).toBe(1);
   });
 
-  test('through the routes: compose, send, undo', async () => {
+  test('through the routes: compose, send, undo, send now', async () => {
     const w = await world({ holdMs: 2000 });
     const call = (method: string, path: string, body?: unknown) => clock.wait(w.hub.route(new Request(`http://hub${path}`, { method, ...(body ? { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } } : {}) }), new URL(`http://hub${path}`)));
     const start = (await (await call('GET', `/api/mail/compose?kind=reply&message=${msg('<dinner-1@x>')}&tz=UTC`))!.json()) as P.MailComposeStart;
@@ -492,6 +506,11 @@ describe('once, and across a restart', () => {
     expect([none!.status, ((await none!.json()) as { drafts: unknown[] }).drafts]).toEqual([200, []]);
     const refused = await call('POST', '/api/mail/send', { ...start.draft, clientId: cid(), from: 'x@y.example' });
     expect(refused!.status).toBe(422);
+    // Send now, through its route: the hold ends and it goes.
+    const again = (await (await call('POST', '/api/mail/send', { ...start.draft, clientId: cid(), text: 'Right away' }))!.json()) as { outboxId: string };
+    const now = (await (await call('POST', `/api/mail/outbox/${again.outboxId}/send`, {}))!.json()) as { item: P.MailOutboxView };
+    expect(['queued', 'sending', 'sent']).toContain(now.item.state);
+    await until(() => state(w, again.outboxId) === 'sent', 4000, 'sent now');
   });
 
   test('a send the hub stopped in the middle of: may have been sent, draft kept; a held one goes after the restart', async () => {

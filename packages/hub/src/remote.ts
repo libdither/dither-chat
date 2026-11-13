@@ -24,9 +24,17 @@ import { join, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { NETWORKS } from '@dither-chat/protocol';
 import { ACCOUNT_COLORS, type AccountRow } from './store.ts';
-import { noteWork, timedWork } from './stalls.ts';
+import { timedWork } from './stalls.ts';
+import { span } from './trace.ts';
 import { Supervisor } from './supervisor.ts';
 import type { MailSink } from './mail/backend.ts';
+
+/** A batch's event kinds with how many of each, for its span: `message×3,typing`. */
+function kindsOf(events: { t: string }[]): string {
+  const n = new Map<string, number>();
+  for (const e of events) n.set(e.t, (n.get(e.t) ?? 0) + 1);
+  return [...n].map(([k, c]) => (c > 1 ? `${k}×${c}` : k)).join(',');
+}
 
 /** The kinds this hub hands to the manager when they are new. */
 export const MANAGED_KINDS = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x'];
@@ -57,7 +65,9 @@ export interface AccountView {
 interface Client {
   accounts: AccountView[];
   connected: boolean;
-  callRaw(account: string, op: string, input?: Record<string, unknown>, timeoutMs?: number): Promise<unknown>;
+  /** `trace` (a W3C traceparent) is carried to the manager, which makes its spans children of the hub's; a client
+   * before it leaves it out. */
+  callRaw(account: string, op: string, input?: Record<string, unknown>, timeoutMs?: number, o?: { trace?: string }): Promise<unknown>;
   admin(action: Record<string, unknown>, timeoutMs?: number): Promise<any>;
   liveViewUrl(account: string): string;
   close(): void;
@@ -262,17 +272,22 @@ export class RoutedSupervisor extends Supervisor {
         this.mail?.accounts(list);
         if (this.mailWaiting) void this.readMailAccess();
       },
-      onEvents: (account, events) => {
-        noteWork(`adapter events (${events.length})`);
-        try {
-          if (this.mail) timedWork('mail: events', () => this.mail!.events(account, events));
-        } catch (e) {
-          // Mail catches up by itself (mail.changes); the chat events below must not wait on it.
-          console.error(`[${account}] mail events failed:`, e);
-        }
-        if (!this.remote.has(account)) return;
-        this.apply(account, events as P.AdapterEvent[]);
-      },
+      onEvents: (account, events) =>
+        span(
+          'adapter events',
+          { account, events: events.length, kinds: kindsOf(events) },
+          () => {
+            try {
+              if (this.mail) timedWork('mail: events', () => this.mail!.events(account, events));
+            } catch (e) {
+              // Mail catches up by itself (mail.changes); the chat events below must not wait on it.
+              console.error(`[${account}] mail events failed:`, e);
+            }
+            if (!this.remote.has(account)) return;
+            void this.apply(account, events as P.AdapterEvent[]);
+          },
+          { note: `adapter events (${events.length})` },
+        ),
       onGap: (account, dropped) => {
         // A mail account catches up with mail.changes; nothing restarts.
         if (this.mail?.gap(account)) return;
@@ -435,7 +450,8 @@ export class RoutedSupervisor extends Supervisor {
     if (!this.remote.has(accountId)) return super.command<T>(accountId, cmd, timeoutMs);
     if (!this.client) return Promise.reject(new Error('adapter is not connected'));
     const { t, ...input } = cmd as { t: string; [k: string]: unknown };
-    return this.client.callRaw(accountId, t, input, timeoutMs) as Promise<T>;
+    const client = this.client;
+    return span(`command ${t}`, { account: accountId, op: t, via: 'manager' }, (s) => client.callRaw(accountId, t, input, timeoutMs, s.traceparent ? { trace: s.traceparent } : undefined) as Promise<T>);
   }
 
   override writeSecret(id: string, secret: unknown) {

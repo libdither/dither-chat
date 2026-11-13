@@ -166,6 +166,11 @@ log's summary the hub logs `checkpoints: N in the first 10 min, the longest X ms
 says they kept up. If the thread fails, the hub logs `checkpoints: the worker … the hub's connection checkpoints
 again` and SQLite's own checkpoints come back, holds and all.
 
+Every hold of 200 ms or more, at any time, is also kept in `traces/event-loop-stalls.ndjson` in the data directory,
+with the spans that were on the thread and the CPU time and page faults in it, and every request, command and job is a
+span in `traces/hub.trace.ndjson` (docs/tracing.md). After a deploy:
+`bun scripts/trace-summary.ts --data ~/.local/share/dither-chat --since 15m`, and the same with `--stalls`.
+
 CI starts the hub on databases older hubs left (`packages/hub/test/old-database.test.ts`, fixtures in
 `packages/hub/test/fixtures/old-db/`): it must copy the database aside, migrate, log that line and read back what the old
 hub stored. `bun scripts/old-db-fixture.ts <commit> <name>` makes another fixture from an older commit's demo hub

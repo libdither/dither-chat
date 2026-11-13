@@ -15,6 +15,7 @@ import type { AccountRow, Store } from './store.ts';
 import { acquireLock, releaseLock } from './lock.ts';
 import { sliced, type SliceOptions } from './slices.ts';
 import { timedWrite } from './stalls.ts';
+import { span } from './trace.ts';
 
 export interface InprocAdapter {
   start(emit: (ev: P.AdapterEvent) => void): void;
@@ -310,7 +311,7 @@ export class Supervisor {
     } catch {
       return;
     }
-    this.apply(ws.data.accountId, [ev]);
+    span(`adapter event ${ev.t}`, { account: ws.data.accountId }, () => this.apply(ws.data.accountId, [ev]));
   }
 
   /** Events held after the database was locked, by account, with all that came after them for that account. */
@@ -480,7 +481,7 @@ export class Supervisor {
     const r = this.running.get(accountId);
     const id = crypto.randomUUID();
     const full = { ...cmd, id } as P.AdapterCommand;
-    return new Promise<T>((resolve, reject) => {
+    return span(`command ${cmd.t}`, { account: accountId, op: cmd.t, via: r?.inproc ? 'in-process' : 'socket' }, () => new Promise<T>((resolve, reject) => {
       if (!r?.ws && !r?.inproc) return reject(new Error('adapter is not connected'));
       const timer = setTimeout(() => {
         this.pending.delete(id);
@@ -489,6 +490,6 @@ export class Supervisor {
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer });
       if (r.inproc) queueMicrotask(() => r.inproc!.command(full));
       else r.ws!.send(JSON.stringify(full));
-    });
+    }));
   }
 }
