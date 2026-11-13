@@ -27,6 +27,7 @@ import type { AboutChange, AboutTarget, PersonRelationship } from './about.ts';
 import type { AddAction, AddRef, RelationshipFact, RequestAnswer, RequestFact } from './add.ts';
 import type { CallMode, CallState } from './call.ts';
 import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, ReactionStyle, Shape, SpaceKind, Variant } from './ontology.ts';
+import type { ProfileChange, SelfCapability, SelfCommand, SelfEvent } from './self.ts';
 
 /** How far a message got with someone: their device has it, they read it, they played it (a voice note, a video). */
 export type ReceiptState = 'delivered' | 'read' | 'played';
@@ -86,7 +87,9 @@ export type Capability =
   /** Lists a space's members on request, by name prefix (the `walkMembers` command): an active walk, not only what was seen. */
   | 'walkMembers'
   /** Lists a channel's threads, archived ones too (the `threads` command), so an index job finds threads nobody opened. */
-  | 'listThreads';
+  | 'listThreads'
+  /** The account's own self and block, ignore, notes (self.ts, docs/account-self.md). */
+  | SelfCapability;
 
 // ---------------------------------------------------------------- facts
 
@@ -387,7 +390,9 @@ export type AdapterEvent =
   | { t: 'relationship'; fact: RelationshipFact }
   | { t: 'reply'; id: string; ok: true; result?: unknown }
   | { t: 'reply'; id: string; ok: false; error: string }
-  | { t: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; msg: string; data?: unknown };
+  | { t: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; msg: string; data?: unknown }
+  /** Notices, own presence and settings, whom it ignores (self.ts). */
+  | SelfEvent;
 
 // ---------------------------------------------------------------- hub -> adapter
 
@@ -519,9 +524,10 @@ export type AdapterCommand =
   /**
    * Change the account's own profile (capability 'editProfile'). Only the fields given change. `bio`: the bio or
    * About text ('' clears it). The adapter checks the network's limit (about.ts BIO_LIMIT) and fails with a plain
-   * error past it. reply.result: PersonAbout of the account itself as it now stands.
+   * error past it. The other fields each need their own capability (self.ts ProfileChange). reply.result: PersonAbout
+   * of the account itself as it now stands.
    */
-  | { t: 'setProfile'; id: string; change: { bio?: string } }
+  | { t: 'setProfile'; id: string; change: ProfileChange }
   /** reply.result for join: { direct?: DirectVoiceSession }. One call per account at a time. */
   | { t: 'call'; id: string; call: string; op: 'join'; conversation: string; mode: CallMode; muted?: boolean; deafened?: boolean }
   | { t: 'call'; id: string; call: string; op: 'leave' }
@@ -561,6 +567,8 @@ export type AdapterCommand =
   | { t: 'createGroup'; id: string; name?: string; people: string[] }
   /** Account-specific actions, e.g. 'relogin', 'startLink', 'resync'. */
   | { t: 'action'; id: string; action: string; args?: unknown }
-  | { t: 'shutdown' };
+  | { t: 'shutdown' }
+  /** Block, ignore, notes, own presence, sessions (self.ts). */
+  | SelfCommand;
 
 export type AdapterCommandType = AdapterCommand['t'];

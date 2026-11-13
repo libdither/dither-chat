@@ -37,6 +37,7 @@ import { ALERT_BAR, alertBar, describeWeight, emptyModel, importance, learnedFro
 import { InteractionLog } from './interact.ts';
 import { conversing, CONVERSING_REASON } from './tiers.ts';
 import { requestHeld } from './add.ts';
+import { quietAuthor } from './accountself.ts';
 
 type Row = Record<string, any>;
 
@@ -520,6 +521,12 @@ export class Triage {
     }
     if (requestHeld(s.db, c.id)) {
       reasons.push('A message request: it waits under Requests until you accept it');
+      return { decision: 'silent', score: null, reasons, decidedBy: 'rules', title, body };
+    }
+    // Someone you blocked or ignore on their network never alerts (accountself.ts).
+    const shut = quietAuthor(s.db, m.author_id);
+    if (shut) {
+      reasons.push(`${shut} on ${NETWORK_META[c.network as P.Network].name}`);
       return { decision: 'silent', score: null, reasons, decidedBy: 'rules', title, body };
     }
 

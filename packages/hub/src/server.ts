@@ -41,6 +41,7 @@ import { AboutError, Abouts } from './about.ts';
 import { asked, attempt, candidatesAttempt } from './attempts.ts';
 import { Groups } from './groups.ts';
 import { People } from './people.ts';
+import { AccountSelf, ignoredOf } from './accountself.ts';
 import { peopleGraph } from './graph.ts';
 import type { MailHub } from './mail/index.ts';
 import { mailPeople } from './mail/people.ts';
@@ -209,6 +210,8 @@ export class HubServer {
   readonly abouts: Abouts;
   readonly groups: Groups;
   readonly people: People;
+  /** The account's own self, block, ignore and notes (accountself.ts). */
+  readonly self: AccountSelf;
   /** Joining, adding people, and requests waiting on you (add.ts, docs/add.md). */
   readonly adding: Adding;
   /** Your marks on whether a message needs a reply (replymarks.ts). */
@@ -259,6 +262,7 @@ export class HubServer {
     });
     this.groups = new Groups({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line) });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
+    this.self = new AccountSelf({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), uploads: this.uploads, quietHours: () => store.quietHours() });
     this.adding = new Adding({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), liveView: (a) => !!sup.liveViewUrl?.(a) || !!store.account(a)?.live_view });
     sup.calls = this.calls;
     this.clicks = new ClickCounts(store.db);
@@ -271,6 +275,7 @@ export class HubServer {
   }
 
   start() {
+    this.self.start();
     const self = this;
     const guarded = (handler: (req: Request, server: Server<WsData>) => Promise<Response | undefined> | Response | undefined) =>
       async (req: Request, server: Server<WsData>) => {
@@ -605,6 +610,8 @@ export class HubServer {
     }
     // Joining and adding, and requests (add.ts).
     if (path === '/api/add' || path.startsWith('/api/add/') || path.startsWith('/api/requests') || path === '/api/people' || /^\/api\/people\/[\w-]+\/remove$/.test(path)) return (await this.adding.route(req, url, path))!;
+    // An account's own self, block, ignore and notes (accountself.ts).
+    if (path.startsWith('/api/self/')) return (await this.self.route(req, url, path))!;
     // Reply marks (replymarks.ts, docs/inbox.md "Marks"): on a message, its mail twin, and on an inbox row.
     if ((m = path.match(/^\/api\/(mail\/)?messages\/([\w-]+)\/reply-mark$/)) && method === 'POST') {
       const b = await body<{ mark?: unknown; surface?: unknown; device?: unknown }>();
@@ -683,7 +690,7 @@ export class HubServer {
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/profile$/)) || (m = path.match(/^\/api\/identities\/([\w-]+)\/profile$/))) {
       const p = s.profile(path.startsWith('/api/persons/') ? { personId: m[1] } : { identityId: m[1] });
       const mail = p && mailPeople(this.opts.mail)?.profile(p.identityIds);
-      return p ? ok({ ...p, abouts: this.people.kept(p.identityIds), links: linksOf(s.db, p.identityIds), ...(mail ? { mail } : {}) }) : bad('nobody by that id', 404);
+      return p ? ok({ ...p, abouts: this.people.kept(p.identityIds), links: linksOf(s.db, p.identityIds), ...((i) => (i.length ? { ignored: i } : {}))(ignoredOf(s.db, p.identityIds)), ...(mail ? { mail } : {}) }) : bad('nobody by that id', 404);
     }
     // Their message count per server, estimated from what the hub holds (msgcount.ts, docs/profile.md).
     if ((m = path.match(/^\/api\/(persons|identities)\/([\w-]+)\/activity$/))) {

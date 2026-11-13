@@ -452,6 +452,17 @@ export interface PersonAbout {
   links?: { label: string; value: string; url?: string; verified?: boolean }[];
   /** Anything else worth a line: "Business account", "Local time". */
   facts?: { label: string; value: string }[];
+  /**
+   * Your own private note on them on this network (capability 'notes': Discord's Note), asked with the profile only.
+   * Absent: none, or the network did not say.
+   */
+  note?: string;
+  /** Badges the network shows on their profile, by name, with the network's picture. */
+  badges?: { name: string; icon?: MediaUrl }[];
+  /** A frame drawn around their picture (Discord's avatar decoration). */
+  decoration?: MediaUrl;
+  /** Their profile's own colours, as CSS hex, top first (Discord's theme colours). */
+  themeColors?: string[];
 }
 
 /**

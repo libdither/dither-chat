@@ -24,7 +24,8 @@ command (`packages/protocol/src/about.ts` `PersonAbout`).
 - **Actions.** One row. A person: Message (one network: straight there; several: a menu of each network, the merged
   thread, and starting a chat where there is none), All chats, More. A place: Open, Their profile (a DM), Mark
   read, Mute, Search, Copy link, More. **More** is the same menu the person or place has everywhere else, minus what
-  the row already has, plus Merge Another Identity In and Ask the Networks Again for a person. It has no Open on
+  the row already has, plus Merge Another Identity In and Ask the Networks Again for a person, and Ignore and Block
+  on a network whose account can (docs/account-self.md). It has no Open on
   <network>: the browser is rarely signed in to the network's site, so Copy holds the profile link instead.
 - **Two columns**, one on a phone (under 900 px). Left: what it is and what you share. Right: how you stand with it.
 
@@ -49,6 +50,9 @@ Left:
   stock line such as WhatsApp's "Available" is left out); their links (connected accounts, GitHub, a phone number
   written two ways once); On Discord since; facts a network adds (Business, Time zone); how many of their messages
   the hub has, since when. A network that could not be asked says why, in a line.
+  Badges, the frame on their picture and their profile's colours, where the network shows them. On your own page,
+  under your bio: your name, pronouns, picture and banner on each network that lets you change them here
+  (docs/account-self.md).
 - **In common** (on your own page, **Your places**): servers as tiles with their icon, their nickname and roles
   there, or how many messages they wrote in it; then group chats with their picture, kind, and how many messages are
   from them. Discord's mutual servers count even where they never wrote; the rest comes from messages and member
@@ -77,7 +81,7 @@ Right:
 - **Notifications**: Always alert, a person rule `all`: every message of theirs is an alert
   ([notifications.md](notifications.md#rules)). Stars left the app on 2026-11-10 and the hub cleared the old ones
   once (`clearStars`, packages/hub/src/store.ts), so Always alert is the only way to have someone always get through.
-- **Note**: yours only, kept on the hub.
+- **Note**: yours only, kept on the hub. Under it, your private note on them on a network that keeps one (Discord's Note), asked with the profile, with Add to my note here; changing it keeps what it said before in yours (docs/account-self.md).
 
 ### Your own bio
 

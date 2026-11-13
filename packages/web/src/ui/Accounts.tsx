@@ -14,6 +14,12 @@ import { TelegramSignIns } from './TelegramSignIns.tsx';
 import { MailAccessNote, MailAccountRows } from './mail/MailAccounts.tsx';
 import { Loading } from './Loader.tsx';
 
+/** What the network wants done, your status there, folders and sessions (AccountSelf.tsx): a chunk of its own. */
+type SelfParts = typeof import('./AccountSelf.tsx');
+const selfParts = signal<SelfParts | null>(null);
+let selfLoading: Promise<unknown> | null = null;
+const loadSelf = () => (selfLoading ??= import('./AccountSelf.tsx').then((m) => (selfParts.value = m), () => (selfLoading = null)));
+
 /** The add-account dialog, opened from the accounts list or from settings. */
 export const addingAccount = signal(false);
 
@@ -69,6 +75,7 @@ export function AccountsSidebar({ active, onAdd }: { active?: string; onAdd: () 
                   {netName(a.network)}
                   {a.demo ? ' · demo data' : ''}
                   {a.attention ? ` · ${a.attention.message}` : ''}
+                  {a.self?.notices.length ? ` · ${a.self.notices[0].title}` : ''}
                 </span>
               </span>
             </span>
@@ -510,6 +517,35 @@ function AttentionBlock({ a }: { a: P.AccountView }) {
   );
 }
 
+/** The cards of what the network wants done (docs/account-self.md): each says it plainly and opens the live view; none is dismissed here. */
+function AccountNotices({ a, openLive }: { a: P.AccountView; openLive: () => void }) {
+  const notices = a.self?.notices ?? [];
+  if (!notices.length) return null;
+  return (
+    <>
+      {notices.map((n) => (
+        <div class={`attention notice ${n.kind}`}>
+          <div class="attention-top">
+            <Icon name={n.kind === 'standing' ? 'alert' : n.kind === 'agreements' ? 'fileText' : 'lock'} size={20} />
+            <div>
+              <b>{n.title}</b>
+              <p>{n.message}</p>
+              <small>
+                {netName(a.network)} said so {ago(n.since)}. It goes when {netName(a.network)} stops saying it.
+              </small>
+            </div>
+          </div>
+          {n.liveView && a.liveView && (
+            <button class="btn primary" onClick={openLive}>
+              <Icon name="monitor" size={15} /> Open live view
+            </button>
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
 /** An account action from the attention, with a toast when it fails. */
 async function attentionAction(a: P.AccountView, action: string, args?: Record<string, unknown>): Promise<boolean> {
   try {
@@ -714,6 +750,8 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
   const [live, setLive] = useState(false);
   const [busy, setBusy] = useState('');
   const [purge, setPurge] = useState(false);
+  const S = selfParts.value;
+  useEffect(() => void loadSelf(), []);
   if (!a) return null;
   const m = a.managedBy;
   // Its session can go too when dither-accounts holds it; an imported one's session is this hub's, and stays.
@@ -755,6 +793,8 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
       </header>
       <div class="account-scroll">
         {a.attention && <AttentionBlock a={a} />}
+        {/* What the network wants done, its status, folders and sessions (AccountSelf.tsx). */}
+        <AccountNotices a={a} openLive={() => setLive(true)} />
         <section class="det-section">
           <h3>Connection</h3>
           <dl class="kv">
@@ -796,6 +836,7 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
         </section>
         {a.network === 'matrix' && !a.demo && <EncryptionSection a={a} />}
         {a.network === 'telegram' && !a.demo && <TelegramSignIns a={a} />}
+        {S && <S.AccountSelfSection a={a} openLive={() => setLive(true)} />}
         <ImportsSection a={a} />
         <section class="det-section">
           <h3>Controls</h3>

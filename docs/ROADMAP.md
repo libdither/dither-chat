@@ -51,7 +51,8 @@ Everything the networks' own clients can do that dither cannot, feature by featu
 | Server members seen (passive, adversarial) | L | M | done | Who your accounts' clients loaded anyway, and "seen N of M listed" on a server's About. Hub side done; Discord's emitter lives in dither-accounts. Walking the member list is an index job's (indexing.md) |
 | Message counts per server, estimated | M | S | done | From stored messages only (docs/profile.md): seen, share with a Wilson interval, and on Discord a total from each channel's age and rate, with a range; none where the data cannot support one |
 | People graph: who shares which servers and groups | M | M | done | From the People header (docs/people-graph.md). Links from group participants, profiles' mutual servers, and members seen when recorded; WebGL with a worker layout, capped at 6,000 nodes by default. Not checked against the live hub's data in a browser |
-| Block, ignore | M | M | later | Differs per network |
+| Block, ignore | M | M | next | Discord (docs/account-self.md): Block and Ignore in a person's menu, and a blocked or ignored person never alerts. Untested on a live account; other networks when their adapters say `block` / `ignore` |
+| Your account itself: notices, status, sessions, folders, notes (docs/account-self.md) | M | M | next | Discord: what it wants done as cards on the account page (never done for you), your status and custom status with an opt-in Do not disturb in quiet hours, where you are signed in, its server folders brought into your sidebar once, your private note beside your own, your name, pronouns, picture and banner. Hub and page tested on the demo world, the extractor on fakes; untested on a live account |
 
 ## Mail
 

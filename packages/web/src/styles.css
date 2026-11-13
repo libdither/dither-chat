@@ -13720,3 +13720,126 @@ h1:hover > .pair-nick-edit,
 .plan-btn:disabled {
   opacity: 0.6;
 }
+
+/* An account's own self (AccountSelf.tsx, ProfileSelf.tsx; docs/account-self.md). */
+.self-presence .seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 10px;
+}
+.self-presence .seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.self-presence .seg-btn.on {
+  border-color: var(--accent);
+  background: var(--accent-soft, transparent);
+}
+.self-presence .presence-dot.invisible {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--text-faint);
+}
+.self-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.self-status .input {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+.self-status .self-emoji {
+  flex: 0 0 3.2em;
+  text-align: center;
+}
+.self-status select.input {
+  flex: 0 1 auto;
+}
+.self-sessions {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.self-sessions li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+.self-sessions small {
+  flex-basis: 100%;
+  color: var(--text-faint);
+}
+.pf-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.pf-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-soft, var(--hover));
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.pf-deco {
+  border-radius: 50%;
+}
+.pf-theme {
+  display: inline-flex;
+  gap: 3px;
+}
+.pf-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.pf-net-note {
+  margin-top: 12px;
+}
+.pf-own-more {
+  margin-top: 6px;
+}
+.pf-own-fields {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+.pf-own-fields .field {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.pf-own-fields .field-row {
+  display: flex;
+  gap: 6px;
+}
+.pf-own-fields .field-row .input {
+  flex: 1;
+  min-width: 0;
+}
+.pf-accent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

@@ -12,6 +12,7 @@ import { infoFor } from './mediainfo.ts';
 import { TypingRelay, typingTtl } from './typing.ts';
 import { stepTimer } from './startup.ts';
 import { addTables, ingestRelationships, ingestRequests, pendingLinks } from './add.ts';
+import { accountSelfView, ingestSelf } from './accountself.ts';
 import { alertBar, type Facts } from './learn.ts';
 
 type Row = Record<string, any>;
@@ -739,6 +740,11 @@ export class Store {
         case 'relationships':
         case 'relationship':
           ingestRelationships(this, acc, ev);
+          break;
+        case 'notices':
+        case 'selfState':
+        case 'ignored':
+          ingestSelf(this, acc, ev);
           break;
         case 'reply':
         case 'log':
@@ -2154,6 +2160,7 @@ export class Store {
       demo: !!r.demo,
       createdAt: r.created_at,
       ...((m) => (m ? { managedBy: m } : {}))(this.accountManaged(r.id)),
+      ...accountSelfView(this, r.id),
     };
   }
 

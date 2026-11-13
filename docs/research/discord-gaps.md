@@ -168,7 +168,7 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 | Per-server profile (avatar, bio, banner) | USER_GUILD_PROFILE, GUILD_MEMBER_PROFILE_UPDATE | not read | a | L | |
 | Server tag / clan identity | USER_SET_GUILD_IDENTITY (`/users/@me/clan`) | none | a | L | |
 | Role self-assign via onboarding / role connections | GUILD_ROLE_CONNECTIONS_*, APPLICATION_USER_ROLE_CONNECTIONS | none | a | L | |
-| Server folders (sidebar) | user settings proto guild_folders, GUILD_FOLDER_* | none; dither has its own folders | a | M | Importing Discord's folders once would seed dither's sidebar for free (USER_SETTINGS_PROTO is already in the client) |
+| Server folders (sidebar) | user settings proto guild_folders, GUILD_FOLDER_* | none; dither has its own folders | a | M | Importing Discord's folders once would seed dither's sidebar for free (USER_SETTINGS_PROTO is already in the client). **done** (net-gaps): read with the settings proto; "Add Discord's folders to your sidebar" makes new folders once, never moving one you placed |
 | Server discovery / directory | GUILD_DISCOVERY*, GLOBAL_DISCOVERY_SERVERS, DIRECTORY_CHANNEL_* | none | a | L | |
 | Server templates | GUILD_TEMPLATE(S) | none | a | L | |
 | Server boosting | APPLIED_GUILD_BOOST*, GUILD_BOOST types 8–11 | system lines | d | L | |
@@ -201,35 +201,35 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 
 | Feature | Discord has | dither has | Class | Value | Notes |
 |---|---|---|---|---|---|
-| Ignore user (soft block) | IGNORE_USER, RELATIONSHIP_IGNORE_USER_SUCCESS / _UNIGNORE_ | none | a | M | ROADMAP "Block, ignore" later; ignore is the cheap one |
-| Block a user | USER_RELATIONSHIP put type 2 | blocks are read (relationships) and unblock is supported (`remove`); no block action | b | M | client-path via RelationshipActions |
-| Friend nicknames (yours for them) | relationship `nickname` | deliberately not read (docs/chat.md) | – | – | A user decision, not a gap |
-| User notes (your private note on someone) | NOTE / NOTES, USER_NOTE_UPDATE | none; dither has its own profile note | a | M | One-time import plus sync would merge them. client-path |
-| Friend suggestions / friend finder / contact sync | FRIEND_SUGGESTIONS, FRIEND_SUGGESTION_CREATE, FRIEND_FINDER, CONNECTION_SYNC_CONTACTS | none | a | L | |
-| Profile: banner, pronouns, theme colors, effects, decorations, badges | USER_PROFILE (banner, pronouns, theme_colors, profile_effect, avatar_decoration), USER_BADGES | profile.ts maps bio, mutuals, connections | d | L | |
-| Profile widgets / game profile | USER_PROFILE_WIDGETS, GAME_PROFILE, exp `2026-03_voice_badge` | none | a | L | |
-| Edit own profile beyond bio | `/users/@me/profile` patch: pronouns, banner, accent; USER patch: avatar, global_name; RECENT_AVATARS | bio only (`setProfile`) | d | M | Display name and avatar are the useful ones |
-| Own presence status (online/idle/DND/invisible) | USER_SETTINGS_PROTO status, opcode 3 | the sandbox sits at whatever it is; no control | a | M | DND sync with dither quiet hours is an obvious pairing. client-path via settings proto |
-| Own custom status | USER_SETTINGS_PROTO custom_status | read for friends only; cannot set own | b | M | dither has a `customStatus` event already |
-| Activities / rich presence of friends (playing, listening) | PresenceStore activities, USER_ACTIVITY_* | custom status only (game/song changes skipped on purpose) | d | L | Adversarial-gate material; the skip was intended |
-| Spotify listen-along / join activity | USER_ACTIVITY_JOIN | none | a | L | |
-| Mutual friends | USER_PROFILE `mutual_friends` | profile.ts reads mutuals (guilds; friends where returned) | d | L | |
+| Ignore user (soft block) | IGNORE_USER, RELATIONSHIP_IGNORE_USER_SUCCESS / _UNIGNORE_ | none | a | M | ROADMAP "Block, ignore" later; ignore is the cheap one. **done** (net-gaps): Ignore / Stop Ignoring in a person's menu (docs/account-self.md); an ignored person never alerts |
+| Block a user | USER_RELATIONSHIP put type 2 | blocks are read (relationships) and unblock is supported (`remove`); no block action | b | M | client-path via RelationshipActions. **done** (net-gaps): Block in a person's menu, `block` through addRelationship type 2; a blocked person never alerts |
+| Friend nicknames (yours for them) | relationship `nickname` | deliberately not read (docs/chat.md) | – | – | A user decision, not a gap. **not built**: the owner's decision stands |
+| User notes (your private note on someone) | NOTE / NOTES, USER_NOTE_UPDATE | none; dither has its own profile note | a | M | One-time import plus sync would merge them. client-path. **done** (net-gaps): read with the profile only, written with `setNote`; a replaced note goes into the dither note first |
+| Friend suggestions / friend finder / contact sync | FRIEND_SUGGESTIONS, FRIEND_SUGGESTION_CREATE, FRIEND_FINDER, CONNECTION_SYNC_CONTACTS | none | a | L | **not built**: L, and contact sync would upload the owner's address book |
+| Profile: banner, pronouns, theme colors, effects, decorations, badges | USER_PROFILE (banner, pronouns, theme_colors, profile_effect, avatar_decoration), USER_BADGES | profile.ts maps bio, mutuals, connections | d | L | **done** (net-gaps): badges, theme colours and the avatar decoration added to banner and pronouns; profile effects not built (animation only) |
+| Profile widgets / game profile | USER_PROFILE_WIDGETS, GAME_PROFILE, exp `2026-03_voice_badge` | none | a | L | **not built**: L, game-only |
+| Edit own profile beyond bio | `/users/@me/profile` patch: pronouns, banner, accent; USER patch: avatar, global_name; RECENT_AVATARS | bio only (`setProfile`) | d | M | Display name and avatar are the useful ones. **done** (net-gaps): `setProfile` takes displayName, pronouns, avatar, banner, accent (capabilities editName, editPronouns, editAvatar, editBanner) |
+| Own presence status (online/idle/DND/invisible) | USER_SETTINGS_PROTO status, opcode 3 | the sandbox sits at whatever it is; no control | a | M | DND sync with dither quiet hours is an obvious pairing. client-path via settings proto. **done** (net-gaps): `setPresence` through the settings proto; opt-in Do not disturb during quiet hours |
+| Own custom status | USER_SETTINGS_PROTO custom_status | read for friends only; cannot set own | b | M | dither has a `customStatus` event already. **done** (net-gaps): text, emoji and when it clears; a server's own emoji only in the live view |
+| Activities / rich presence of friends (playing, listening) | PresenceStore activities, USER_ACTIVITY_* | custom status only (game/song changes skipped on purpose) | d | L | Adversarial-gate material; the skip was intended. **not built**: the skip stays intended |
+| Spotify listen-along / join activity | USER_ACTIVITY_JOIN | none | a | L | **not built**: L, nothing in dither plays along |
+| Mutual friends | USER_PROFILE `mutual_friends` | profile.ts reads mutuals (guilds; friends where returned) | d | L | **done** (already: profile.ts reads them where Discord returns them; the profile shows them) |
 | Connections (linked accounts) | USER_PROFILE connected_accounts | read (pickConnection) | – | – | Done |
 | Username suggestions / pomelo | POMELO_* | n/a | – | – | |
-| Affinities ("people you talk to most") | USER_AFFINITIES_V2, CHANNEL_AFFINITIES_V2, GUILD_AFFINITIES | none | a | L | dither computes its own from history; Discord's could prior the inbox ranking. Odd-traffic is low; the client fetches it itself |
+| Affinities ("people you talk to most") | USER_AFFINITIES_V2, CHANNEL_AFFINITIES_V2, GUILD_AFFINITIES | none | a | L | dither computes its own from history; Discord's could prior the inbox ranking. Odd-traffic is low; the client fetches it itself. **not built**: dither ranks from its own history; a Discord prior needs a replay to show it helps (docs/account-self.md) |
 
 ## Settings, sessions, account
 
 | Feature | Discord has | dither has | Class | Value | Notes |
 |---|---|---|---|---|---|
-| User settings sync (proto: folders, status, appearance, privacy, content filters, DM settings, inline media) | USER_SETTINGS_PROTO, USER_SETTINGS_PROTO_UPDATE | none | a | M | Read-only ingest gives folders, status, "allow DMs from server members", and explicit-content filter in one place |
-| Privacy: DMs from server members, message request toggle | settings proto `restricted_guilds`, `message_request_restricted_guild_ids` | none | a | L | |
-| Active sessions / log out other devices | AUTH_SESSIONS, AUTH_SESSIONS_LOGOUT, SESSIONS_REPLACE, AUTH_SESSION_CHANGE | none | a | M | Useful as a security card: "your Discord is signed in on N devices", and to see the sandbox session itself |
-| Account standing / warnings | ACCOUNT_STANDING, SAFETY_HUB*, USER_REQUIRED_ACTION_UPDATE | login issues only | d | M | An account strike or "required action" (verify phone/age) silently stalls the adapter. Subscribing USER_REQUIRED_ACTION_UPDATE would surface it as an attention card |
-| Age verification / assurance | AGE_VERIFICATION_*, AGE_SIGNAL*, VERIFY_AGE(_V2) | none | a | M | Increasingly gating NSFW/age-restricted channels (UK/AU rules); should show as an attention card, never be automated |
-| MFA / password / email | MFA_*, USER_EMAIL, RESET_PASSWORD | live view only | a | L | Keep it in the live view |
-| Data export (harvest) | USER_HARVEST | import uses its own path (import-discord.md) | a | L | A one-click "request my data" would feed the history importer |
-| Streamer mode | STREAMER_MODE_UPDATE | none | a | L | |
+| User settings sync (proto: folders, status, appearance, privacy, content filters, DM settings, inline media) | USER_SETTINGS_PROTO, USER_SETTINGS_PROTO_UPDATE | none | a | M | Read-only ingest gives folders, status, "allow DMs from server members", and explicit-content filter in one place. **done** (net-gaps), read-only: status, custom status, folders, DM and message-request privacy, the age check, as `selfState`; appearance, content filters and inline media not read |
+| Privacy: DMs from server members, message request toggle | settings proto `restricted_guilds`, `message_request_restricted_guild_ids` | none | a | L | **done** (net-gaps): shown as lines on the account page; changed in the live view |
+| Active sessions / log out other devices | AUTH_SESSIONS, AUTH_SESSIONS_LOGOUT, SESSIONS_REPLACE, AUTH_SESSION_CHANGE | none | a | M | Useful as a security card: "your Discord is signed in on N devices", and to see the sandbox session itself. **done** (net-gaps): "Where is Discord signed in?" on the account page (`sessions`); signing out needs the password: the live view |
+| Account standing / warnings | ACCOUNT_STANDING, SAFETY_HUB*, USER_REQUIRED_ACTION_UPDATE | login issues only | d | M | An account strike or "required action" (verify phone/age) silently stalls the adapter. Subscribing USER_REQUIRED_ACTION_UPDATE would surface it as an attention card. **done** (net-gaps): required actions and the standing (once the client read it) as `notices`, cards on the account page, never dismissed by code |
+| Age verification / assurance | AGE_VERIFICATION_*, AGE_SIGNAL*, VERIFY_AGE(_V2) | none | a | M | Increasingly gating NSFW/age-restricted channels (UK/AU rules); should show as an attention card, never be automated. **done** (net-gaps), partly: REQUIRE_SAFETY_FLOWS as a notice and the age check as a privacy line; a channel's own age gate is met in the live view |
+| MFA / password / email | MFA_*, USER_EMAIL, RESET_PASSWORD | live view only | a | L | Keep it in the live view. **not built**: live view, as intended |
+| Data export (harvest) | USER_HARVEST | import uses its own path (import-discord.md) | a | L | A one-click "request my data" would feed the history importer. **not built**: requested in the live view (Privacy & Safety); the import then reads it (import-discord.md) |
+| Streamer mode | STREAMER_MODE_UPDATE | none | a | L | **not built**: L, a client-display setting |
 | Keybinds, appearance, locale | settings proto | n/a | – | – | |
 
 ## Search and discovery
