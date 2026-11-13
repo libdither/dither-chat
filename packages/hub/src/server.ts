@@ -53,6 +53,7 @@ import { Groups } from './groups.ts';
 import { People } from './people.ts';
 import { AccountSelf, ignoredOf } from './accountself.ts';
 import { mentionables } from './mentions.ts';
+import { lowerForSend } from './mentionrefs.ts';
 import { peopleGraph } from './graph.ts';
 import type { MailHub } from './mail/index.ts';
 import type { Notices } from './notices/index.ts';
@@ -1503,7 +1504,8 @@ export class HubServer {
       if (!(JSON.parse(acc.capabilities) as P.Capability[]).includes(edit ? 'edit' : 'redact')) return bad(`${NETWORK_META[acc.network].name} does not support this here`, 409);
       if (!this.sup.online(acc.id)) return bad(`${acc.label} is not connected`, 409);
       const conversation = s.nativeOf('conversation', msg.conversation_id)!.nativeId;
-      await this.sup.command(acc.id, edit ? { t: 'edit', conversation, message: msg.native_id, body: b.body! } : { t: 'redact', conversation, message: msg.native_id });
+      const text = edit ? lowerForSend(s, msg.conversation_id, JSON.parse(acc.capabilities), b.body!) : '';
+      await this.sup.command(acc.id, edit ? { t: 'edit', conversation, message: msg.native_id, body: text } : { t: 'redact', conversation, message: msg.native_id });
       this.flush();
       return ok();
     }
@@ -2021,12 +2023,14 @@ export class HubServer {
     const media = sendMediaProblem({ sticker, files: files.length, voice: b.voice, viewOnce: b.viewOnce === true }, accCaps, `${acc.label} on ${name}`);
     if (media.error) return bad(media.error, 409);
     if (media.voice) files = files.map((f, i) => (i === 0 ? { ...f, voice: media.voice } : f));
-    const preview = files.length || sticker ? null : await this.linkPreview(accountId, b.body ?? '');
+    // Person and identity references become the network's mentions or plain names (mentionrefs.ts).
+    const text = lowerForSend(s, conversationId, accCaps, b.body ?? '');
+    const preview = files.length || sticker ? null : await this.linkPreview(accountId, text);
     let result: unknown;
     try {
       result = await this.sup.command(
         accountId,
-        { t: 'send', conversation: conv.nativeId, body: b.body ?? '', replyTo, ...(files.length ? { attachments: files } : {}), ...(preview ? { preview } : {}), ...(sticker ? { sticker } : {}), ...(media.viewOnce ? { viewOnce: true } : {}), ...extras },
+        { t: 'send', conversation: conv.nativeId, body: text, replyTo, ...(files.length ? { attachments: files } : {}), ...(preview ? { preview } : {}), ...(sticker ? { sticker } : {}), ...(media.viewOnce ? { viewOnce: true } : {}), ...extras },
         files.length ? 180_000 : undefined,
       );
     } finally {

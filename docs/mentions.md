@@ -4,9 +4,14 @@ Typing `@` in the composer opens a list of who this conversation can ping. Picki
 mention in the message, so the person is notified the way that network notifies, from whichever app they read it in.
 
 This page covers the picker, the hub's endpoint, the adapter command behind it, and what a mention becomes on each
-network. Steps 1 and 2 of the design approved on 2026-11-13 are built: the people here, their roles, and @everyone where
-you may write it, on Discord, Matrix and Telegram (dither-accounts), and from the hub alone elsewhere. Step 3 adds a place setting for whom the picker offers (friends, everyone known, optionally only on the
-chat's network), with `<@person:…>` and `<@identity:…>` tokens that the hub turns into native mentions on send.
+network. Steps 1 to 3 of the design approved on 2026-11-13 are built. Steps 1 and 2: the people here, their roles, and
+@everyone where you may write it, on Discord, Matrix and Telegram (dither-accounts), and from the hub alone elsewhere.
+Step 3: a place setting for whom the picker offers (friends, everyone you know, optionally only on the chat's network),
+with `<@person:…>` and `<@identity:…>` references that the hub lowers on send.
+
+The owner's words: "allow channels to have a configuration option to have @ where it searches friends or everyone
+known, optionally filtered by same platform (i.e. for like a future calendar chat where I might want to refer to a
+specific friend or a specific friend on a platform)."
 
 ## In a body
 
@@ -19,8 +24,13 @@ Canonical bodies (protocol `adapter.ts`, MessageFact) carry mentions as Discord 
 | `<#convNativeId>` | A channel or room (not a mention: nobody is notified) |
 | `@everyone`, `@here` | Discord: everyone who can see the channel, or those of them online |
 | `@room` | Matrix: everyone in the room (Step 2) |
+| `<@person:per_…>` | A hub person, by reference (Step 3). Lowered on send, see [References](#references-and-lowering) |
+| `<@identity:idn_…>` | One of a person's accounts, by reference (Step 3). Lowered the same way |
 
 The web app draws these as chips (`markdown.ts`; Timeline.tsx's `useMdContext` names them from the hub's identities).
+A reference is a chip too: a person's name, or an account's name and network ("Alice · Signal"), opening their page.
+You see them in a Calendar chat, where they stay, and in your own message until the network's copy comes back. One this
+device does not know reads `@someone`, never the id.
 
 ## The picker
 
@@ -45,18 +55,54 @@ with a struck-through bell is text only: the others see a plain @Name and nobody
 networks). A role row is drawn in the role's colour. @everyone and @here appear only when the network says you may write
 them here.
 
+Sections. Past the people here come Friends and Everyone you know, as the place's setting says (below), each under a
+header; with the people here alone there are no headers. A person's row shows the networks they are on. Its bell is
+struck through when they have no account on this chat's network: you get a plain @Name.
+
 Keys, as in the emoji list: arrows move, Enter or Tab puts the row in, Escape closes the list for that `@` until a new
-one is typed. The list listens on the composer in the capture phase, so the composer's own Enter (send) and Escape
+one is typed. On someone with several accounts, → (or the arrow at the row's end) opens them, each as "Alice ·
+Discord", "Alice · Signal" with its own bell; a person from friends or everyone comes first, as what their row puts in.
+Enter or a click on such a person opens them too, while on someone here it puts in their mention here, as before. ← or
+Escape goes back to the list. Tab always puts the row in as it is.
+
+A row here for someone the hub knows as one person on other networks too carries those accounts (`accounts`), so you
+can name one of them: in a Discord channel, Theo's Signal account is put in by reference and goes out as plain @Theo K. The list listens on the composer in the capture phase, so the composer's own Enter (send) and Escape
 (cancel the reply) never see those keys while it is open. On a phone, Enter in the list picks a row, and does not start a
 new line. A pick replaces the `@query` with the row's `insert` (`<@nativeId> `, `<@&id> `, `@everyone `), through
 `execCommand('insertText')`, so it can be undone. It adds a space unless one follows already.
 
 The account asked is the one the composer sends from (the send-as chip, else the connected one).
 
+## The setting: "@ finds"
+
+A place pref (`place_pref.mention_scope`, `place_pref.mention_same`; PlacePrefView `mentionScope`, `mentionSameNetwork`,
+set with `PATCH /api/place-prefs`) on a conversation, a space or a folder:
+
+| `mentionScope` | The About shows | The list offers |
+|---|---|---|
+| `here` | People here | who can be pinged here (section `here`) |
+| `friends` | Here and friends | and section `friends` |
+| `everyone` | Everyone you know | and sections `friends` and `everyone` |
+
+`mentionSameNetwork` ("Only on Discord", named after the chat's network) narrows friends and everyone to the people with
+an account on the chat's network, and shows only those accounts.
+
+Each of the two is inherited on its own from the nearest place that sets it: the conversation; a thread's channel; its
+spaces, nearest first (a channel's category, then its server); then a folder that holds any of those, or for a direct
+chat its person. `null` in a patch takes a setting away. Set nowhere, it is `here` on a messaging network and
+`everyone` in a chat whose account has `personRefs` (the Calendar chat), and every network. Hub `mentionSetting`
+works it out; the web app's About shows what it inherits and from where (`ui/MentionFinds.tsx`).
+
+Where it is set: a chat's or a space's About has an "@ finds" card (a space's sets it for all its channels), with the
+switch hidden where there is no one network to keep to (a Calendar chat). A folder's menu has "@ Finds". The schema
+change is two nullable columns on `place_pref`, added by `addColumns` on start.
+
 ## The endpoint
 
-`GET /api/conversations/:id/mentionables?q=&account=` answers a `MentionablesView` (protocol `mentions.ts`). The code
-is in `packages/hub/src/mentions.ts`; the route is one line in server.ts.
+`GET /api/conversations/:id/mentionables?q=&account=&scope=&same=` answers a `MentionablesView` (protocol
+`mentions.ts`). The code is in `packages/hub/src/mentions.ts`; the route is one line in server.ts. `scope` (`here`,
+`friends`, `everyone`) and `same` (`1` or `0`) override the place's setting; the answer says which it used (`scope`,
+`sameNetwork`).
 
 Sources, merged by identity:
 
@@ -70,8 +116,8 @@ Sources, merged by identity:
 Nothing from the network's answer is stored. A person the network names whom the hub has never seen gets a row without
 `identityId`, its picture signed for the account that answered.
 
-Every row is section `here` and `pings: true`. Its `insert` is `<@nativeId> ` for a person, `<@&id> ` for a role, and
-`@everyone ` / `@here ` on Discord (`@room ` on Matrix) where the answer said `everyone`.
+Every row of these is section `here` and `pings: true`. Its `insert` is `<@nativeId> ` for a person, `<@&id> ` for a
+role, and `@everyone ` / `@here ` on Discord (`@room ` on Matrix) where the answer said `everyone`.
 
 Order:
 
@@ -85,7 +131,52 @@ Order:
 People come before roles, and roles before @everyone, when they match alike. At most 20 people go in an answer, plus
 the roles and @everyone rows that match.
 
-`scope` (Step 3) will add sections after these rows (`friends`, `everyone`) without changing them.
+### Friends and everyone you know
+
+After the rows here, ranked the same way (the match, then how much you talk with them), at most 20 in each:
+
+- `friends`: persons with an account you are friends with or have as a contact on any network (`person_link`,
+  relationship `friend` or `contact`), starred persons, and persons you have a direct chat with.
+- `everyone`: every other person the hub has. With nothing typed it reads your friends and who wrote in the newest
+  2,000 messages anywhere, so the hub never ranks every person it knows; a name typed searches them all by their name
+  and their accounts' names and handles (at most 300 read).
+
+You are never offered, and a person already shown here is not repeated. A row is `kind: 'person'` with `accounts`, one
+`kind: 'identity'` row for each of their accounts (only those on this network with `same`).
+
+What a row puts in:
+
+| | An account on this chat's network | None |
+|---|---|---|
+| A person | `<@nativeId> `, pings (the account the hub would lower a reference to: one in the conversation, else the one who wrote here last, else the newest) | `<@person:per_…> `, does not ping |
+| One of their accounts | `<@nativeId> `, pings | `<@identity:idn_…> `, does not ping |
+
+In a chat whose account has `personRefs` (the Calendar chat) every person and account row puts in a reference, and so
+does a row here for an account the hub stores; none pings, since the calendar notifies nobody.
+
+## References and lowering
+
+`<@person:per_…>` and `<@identity:idn_…>` mean nothing to a network, so the hub lowers them in every body it sends
+(`packages/hub/src/mentionrefs.ts`, `lowerForSend`), unless the account sending has the capability `personRefs`:
+
+- `<@identity:idn_…>`: on the chat's network, `<@nativeId>`; otherwise plain `@Name`, the account's display name (else
+  its handle, else its person's name; never your private nickname for them, never its native id).
+- `<@person:per_…>`: their account on the chat's network becomes `<@nativeId>` (one in the conversation first, then the
+  one who wrote here last, then the newest); with none, plain `@PersonName`.
+- An id the hub does not know becomes `@someone`. The raw id is never sent.
+- References inside code (an inline span or a fenced block) are left as written.
+- A name is written so it can make no token and ping nobody: every `<` and `@` in it is followed by a zero-width
+  space, and so is the leading @ before everyone, here, room, channel or all.
+- Roles, `<@nativeId>` and @everyone are left as they are.
+
+**The owner's decision (2026-11-13): a friend who is not on the chat's network gets the plain `@Name` text only.** The
+hub never sends them a DM or any other notification outside the chat.
+
+Where it runs: the send (`POST /api/conversations/:id/send` and a chat's `POST /api/chats/:id/messages`, server.ts
+`sendNow`), so Send later too, which keeps the reference as written and lowers it when the message goes; an edit
+(`POST /api/messages/:id/edit`), so a body edited to hold a reference is lowered; and a forward's note, for each
+destination (forward.ts). A forwarded message's own references go on as names. Adapters only ever see `<@nativeId>` or
+plain text; the calendar, which declares `personRefs`, is given references and names them itself (docs/calendar.md).
 
 ## The adapter command
 
@@ -159,9 +250,16 @@ Incoming mentions of you set `mentionsSelf` (and `mentionsAll` for @everyone, @h
 
 - `packages/hub/test/mentions.test.ts`: the endpoint against the demo world's adapters run in process. It covers the
   rows and their order, the account asked, partial answers, Signal and WhatsApp groups from the hub alone, Matrix's
-  @room, and that nothing is stored.
+  @room, and that nothing is stored. Step 3: the sections, what a person and an account put in, same network, the
+  setting's inheritance (server, channel, folder, null) and a `personRefs` account.
+- `packages/hub/test/mentionrefs.test.ts`: lowering alone (escaping, unknown ids, several references, code), what the
+  store resolves each to, and every path that sends: the send, a chat's send, an edit, Send later's Send now, a
+  forward's note, and a `personRefs` account given them as written.
 - `packages/web/test/mention-complete.test.ts`: when an `@` opens the list, matching, this device's rows, and merging.
-- `scripts/verify-mentions.ts`: a demo hub of its own and headless Chromium, on desktop and phone width.
+- `packages/web/test/markdown.test.ts`: references as chips.
+- `scripts/verify-mentions.ts`: a demo hub of its own and headless Chromium, on desktop and phone width. Step 3: the
+  About's setting changes the sections, the switch filters, a friend with no account here sends as plain `@Name`, and
+  one on this network as `<@id>`.
 - dither-accounts `extractors/discord/test/mentionables.test.ts` and `hook-mentionables.test.ts`: the mapping, and the
   hook against a small replica of the client's stores.
 - dither-accounts `extractors/matrix/test/mentions.test.ts` (members, the cache, @room both ways) and Telegram's

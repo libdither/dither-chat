@@ -7079,7 +7079,7 @@ body.dragging * {
   border-radius: 50%;
 }
 .msg-author[role='link'],
-.mention[data-user] {
+.mention[role='link'] {
   cursor: pointer;
 }
 .msg-author[role='link']:hover {

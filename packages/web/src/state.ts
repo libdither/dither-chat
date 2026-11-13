@@ -1088,7 +1088,11 @@ export function patchPlaces(items: P.PlacePrefPatch[]) {
   for (const i of items) {
     const k = prefKey(i.kind, i.id);
     const cur = db.placePrefs.get(k) ?? { kind: i.kind, id: i.id, position: null, pinned: false, hidden: false, open: false, railed: false };
-    db.placePrefs.set(k, { ...cur, ...i });
+    const next: P.PlacePrefView = { ...cur, ...(i as Partial<P.PlacePrefView>) };
+    // null takes a mention setting away: inherited again.
+    if (i.mentionScope === null) delete next.mentionScope;
+    if (i.mentionSameNetwork === null) delete next.mentionSameNetwork;
+    db.placePrefs.set(k, next);
   }
   changed('meta');
   return api('/api/place-prefs', { method: 'PATCH', body: { items } }).catch(placeFailed);

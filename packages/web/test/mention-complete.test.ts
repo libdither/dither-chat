@@ -80,3 +80,9 @@ test("the hub's answer replaces this device's rows, unless the network did not a
   expect(mergeRows(hub, local).map((r) => r.name)).toEqual(['Quinn', 'quin_dev']);
   expect(mergeRows({ ...hub, partial: true }, local).map((r) => r.name)).toEqual(['Quinn', 'quin_dev', 'Lev']);
 });
+
+test("with friends and everyone, this device's rows the hub left out go at the end of the people here", () => {
+  const row = (name: string, section: P.MentionRow['section'] = 'here'): P.MentionRow => ({ kind: section === 'here' ? 'identity' : 'person', insert: `<@${name}> `, pings: true, section, name });
+  const hub: P.MentionablesView = { rows: [row('Quinn'), row('Jordan', 'friends'), row('Priya', 'everyone')], partial: true };
+  expect(mergeRows(hub, [row('Lev'), row('Quinn')]).map((r) => r.name)).toEqual(['Quinn', 'Lev', 'Jordan', 'Priya']);
+});

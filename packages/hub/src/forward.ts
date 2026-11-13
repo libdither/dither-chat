@@ -6,6 +6,7 @@
 import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, NETWORK_META } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
+import { lowerForSend, lowerRefs, storeResolve } from './mentionrefs.ts';
 import type { Store } from './store.ts';
 import type { Uploads } from './uploads.ts';
 
@@ -93,7 +94,8 @@ export async function forwardMessage(deps: ForwardDeps, messageId: string, req: 
   };
   const names = (kind: 'user' | 'room', id: string) =>
     kind === 'user' ? store.identityLabel(hubId('idn', m.network, id)) : store.conversationView(hubId('cnv', m.network, id))?.name ?? null;
-  const plain = plainTokens(text, names);
+  // A person or account named by reference (a Calendar chat's) goes on as their name.
+  const plain = plainTokens(lowerRefs(text, storeResolve(store, '')), names);
 
   let files: File[] | null = null;
   const loadFiles = async (): Promise<{ files: File[]; missing: string[] }> => {
@@ -141,10 +143,12 @@ export async function forwardMessage(deps: ForwardDeps, messageId: string, req: 
       let mode = plan.mode;
       let nativeId: string | null = null;
       const skipped: string[] = [];
+      // Your note's references, as this destination's network takes them (mentionrefs.ts).
+      const noteHere = note && lowerForSend(store, t.conversationId, JSON.parse(store.account(plan.accountId)?.capabilities ?? '[]'), note);
       if (mode === 'native') {
         const r = await deps.command<{ nativeId?: string | null; fallback?: string }>(
           plan.accountId,
-          { t: 'forward', conversation: conv.nativeId, source: { conversation: src.conversationNative, message: m.nativeId }, ...(note ? { note } : {}) },
+          { t: 'forward', conversation: conv.nativeId, source: { conversation: src.conversationNative, message: m.nativeId }, ...(noteHere ? { note: noteHere } : {}) },
           60_000,
         );
         if (r?.fallback) mode = 'resend';
@@ -158,7 +162,7 @@ export async function forwardMessage(deps: ForwardDeps, messageId: string, req: 
         const limit = ATTACHMENT_LIMITS[conv.network];
         const fit = all.filter((f) => canFiles && f.bytes.length <= limit.bytes).slice(0, limit.files);
         for (const f of all) if (!fit.includes(f)) skipped.push(f.name);
-        const body = forwardText({ note, text: plain, author, source, network: m.network, dest: conv.network, mode });
+        const body = forwardText({ note: noteHere, text: plain, author, source, network: m.network, dest: conv.network, mode });
         const ids = fit.map((f) => deps.uploads.put(f.bytes, f.name, f.mime).id);
         try {
           const spool = deps.uploads.get(ids) ?? [];

@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } f
 import { dirname, join } from 'node:path';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
-import { calendarAccountUrl, canonicalReactionKey, DEFAULT_RETENTION, parseSearch, PROTOCOL_VERSION, REACTION_RULES } from '@dither-chat/protocol';
+import { calendarAccountUrl, canonicalReactionKey, DEFAULT_RETENTION, MENTION_SCOPES, parseSearch, PROTOCOL_VERSION, REACTION_RULES } from '@dither-chat/protocol';
 import { activityChart, type Zone } from './activitychart.ts';
 import { binsFor, estimateMessages, snowflakeTime, type ChannelInput } from './msgcount.ts';
 import { Journal } from './journal.ts';
@@ -266,6 +266,7 @@ export class Store {
       this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'" });
       this.addColumns('attachment', { alt: 'TEXT', extra: 'TEXT' });
       this.addColumns('notice', { caught: 'INTEGER NOT NULL DEFAULT 0', shown_ts: 'INTEGER', held_at: 'INTEGER' });
+      this.addColumns('place_pref', { mention_scope: 'TEXT', mention_same: 'INTEGER' });
       const oldTriage = this.setAsideTriage();
       const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
       this.db.exec(schema);
@@ -1667,6 +1668,8 @@ export class Store {
       hidden: !!r.hidden,
       open: !!r.open,
       railed: !!r.railed,
+      ...(MENTION_SCOPES.includes(r.mention_scope) ? { mentionScope: r.mention_scope } : {}),
+      ...(r.mention_same !== null && r.mention_same !== undefined ? { mentionSameNetwork: !!r.mention_same } : {}),
     }));
   }
 
@@ -1683,6 +1686,10 @@ export class Store {
                open = COALESCE(?, open), railed = COALESCE(?, railed) WHERE kind = ? AND id = ?`,
           )
           .run(i.position !== undefined ? 1 : 0, i.position ?? null, bit(i.pinned), bit(i.hidden), bit(i.open), bit(i.railed), i.kind, i.id);
+        // The @ picker's setting: null takes it away (inherited again); anything else unknown is left as it is.
+        if (i.mentionScope === null || MENTION_SCOPES.includes(i.mentionScope!)) this.db.query('UPDATE place_pref SET mention_scope = ? WHERE kind = ? AND id = ?').run(i.mentionScope ?? null, i.kind, i.id);
+        if (i.mentionSameNetwork === null || typeof i.mentionSameNetwork === 'boolean')
+          this.db.query('UPDATE place_pref SET mention_same = ? WHERE kind = ? AND id = ?').run(i.mentionSameNetwork === null ? null : i.mentionSameNetwork ? 1 : 0, i.kind, i.id);
       }
     })();
     this.dirty.extra.push({ t: 'placePrefs', prefs: this.placePrefs() });
