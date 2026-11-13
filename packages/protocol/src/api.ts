@@ -26,6 +26,7 @@ import type { FileInfo } from './files.ts';
 import type { RichView, VoiceFact } from './rich.ts';
 import type { MailAccess, MailAccountView, MailboxView, MailBootstrap, MailOutboxView, MailThreadView } from './mail.ts';
 import type { CalendarLinkView, CalendarNotifyRef, CalendarPlanView } from './calendar.ts';
+import type { AccountSelfView } from './self.ts';
 import type { ContactCardView, MissingAttachmentFact, QuoteView, SendFailureView, StoryReplyView } from './extra.ts';
 import type { ForumView, ThreadView } from './threads.ts';
 
@@ -43,6 +44,8 @@ export interface AccountView {
   createdAt: number;
   /** Set when dither-accounts runs it rather than this hub (docs/accounts.md). Absent from older hubs. */
   managedBy?: AccountManaged;
+  /** What its network says of the account itself: notices, presence, folders (self.ts). Absent until it says any. */
+  self?: AccountSelfView;
 }
 
 /** How an account that dither-accounts runs came to be there, and where its page is. */
@@ -745,6 +748,8 @@ export interface ProfileView {
   abouts: PersonAboutView[];
   /** How each of your accounts stands with them, from the accounts' own lists (capability 'relationships'). */
   links?: PersonLinkView[];
+  /** Your accounts that ignore them on their network (capability 'ignore', self.ts): their messages never alert. */
+  ignored?: { accountId: string; identityId: string }[];
   /**
    * Spaces your accounts' clients have seen them as a member of, last seen first. Only with the adversarial `members`
    * setting on; not every space they are in.
