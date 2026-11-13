@@ -23,10 +23,12 @@ command (`packages/protocol/src/about.ts` `PersonAbout`).
   last.
 - **Actions.** One row. A person: Message (straight to your chat with them, every route together, where the message
   box's line chooses the accounts; with no chat yet, starting one, a menu where there are several ways: each account's
-  own menu always has it), More. A place: Open, Their profile (a DM), Mark
+  own menu always has it), Merge (opens the search for someone to merge in; again closes it), Copy (a menu: the
+  handle, id and profile link, a submenu per account for someone with several), Block (a menu, only where one of your
+  accounts can block them: Block or Unblock on each such network), More. A place: Open, Their profile (a DM), Mark
   read, Mute, Search, Copy link, More. **More** is the same menu the person or place has everywhere else, minus what
-  the row already has, plus Merge Another Identity In and Ask the Networks Again for a person, and Ignore on a network
-  whose account can (docs/account-self.md). It has no Open on
+  the row already has, plus Ask the Networks Again for a person, and Ignore on a network
+  whose account can (docs/account-self.md). Copy has no Open on
   <network>: the browser is rarely signed in to the network's site, so Copy holds the profile link instead.
 - **Two columns**, one on a phone (under 900 px). Left: what it is and what you share. Right: how you stand with it.
 

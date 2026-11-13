@@ -530,6 +530,11 @@ export function personMenu(p: P.PersonView, placeKey?: string): MenuSpec {
 
 /** One Copy entry: a handle, an id or a profile link, under each network when someone is on several. */
 function identityCopies(idents: P.IdentityView[]): MenuEntry[] {
+  return idents.length ? [{ label: 'Copy', icon: 'copy', sub: copyEntries(idents) }] : [];
+}
+
+/** What Copy holds: one account's handle, id and profile link, or a submenu of those per account (the profile's Copy button). */
+export function copyEntries(idents: P.IdentityView[]): MenuEntry[] {
   const one = (i: P.IdentityView): MenuEntry[] => {
     const link = externalProfile(i);
     return [
@@ -538,12 +543,10 @@ function identityCopies(idents: P.IdentityView[]): MenuEntry[] {
       link ? { label: 'Copy Profile Link', icon: 'link', run: () => copy(link, 'Link copied') } : null,
     ].filter(Boolean) as MenuEntry[];
   };
-  if (!idents.length) return [];
   // Two identities on one network are told apart by their handle.
   const twice = (i: P.IdentityView) => idents.filter((x) => x.network === i.network).length > 1;
   const name = (i: P.IdentityView) => (twice(i) ? `${netName(i.network)} · ${i.handle ?? i.displayName ?? i.nativeId}` : netName(i.network));
-  const sub = idents.length === 1 ? one(idents[0]) : idents.map((i): MenuEntry => ({ label: name(i), icon: 'copy', sub: one(i) }));
-  return [{ label: 'Copy', icon: 'copy', sub }];
+  return idents.length === 1 ? one(idents[0]) : idents.map((i): MenuEntry => ({ label: name(i), icon: 'copy', sub: one(i) }));
 }
 
 /** An author, an avatar or a mention: the person behind it if the hub merged one, else just this identity. */
