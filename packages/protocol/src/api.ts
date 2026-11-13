@@ -1196,6 +1196,8 @@ export type ClientEvent =
   | { t: 'mail.progress'; accountId: string; sync: MailAccountView['sync'] }
   /** Every item the outbox still shows (held, queued, sending, failed, or sent a little while ago): the whole list. */
   | { t: 'mail.outbox'; items: MailOutboxView[] }
+  /** Messages to send later changed (sending.ts, docs/sending.md): the whole list the hub sends. Of the moment, not journaled. */
+  | { t: 'scheduled'; items: import('./sending.ts').ScheduledSendView[] }
   /** Ends a frame whose changes went into the journal: a client holding everything up to here can resume from `seq`. */
   | { t: 'sync'; seq: number }
   | { t: 'resync' };
