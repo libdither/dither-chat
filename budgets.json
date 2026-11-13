@@ -3,7 +3,7 @@
   "hub": {
     "bootstrap.bytes": { "measured": 430527, "budget": 437693 },
     "bootstrap.zstd": { "measured": 43908, "budget": 44782 },
-    "bootstrap.fields": { "measured": 19198, "budget": 19198, "reason": "Three tiers: the perf world's decisions follow them (every decision has its importance), and a server channel is an inbox row while it holds an unread message on the list" },
+    "bootstrap.fields": { "measured": 19199, "budget": 19199, "reason": "The bootstrap names the hub process (boot), so a page that reconnects by bootstrap checks for a new build after a deploy" },
     "bootstrap.conversations": { "measured": 574, "budget": 574 },
     "bootstrap.identities": { "measured": 146, "budget": 146 },
     "bootstrap.persons": { "measured": 51, "budget": 51 },
