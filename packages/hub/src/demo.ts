@@ -14,6 +14,7 @@ import type * as P from '@dither-chat/protocol';
 import { ABOUT_LABEL as P_ABOUT_LABEL, BIO_LIMIT as P_BIO_LIMIT, NETWORK_META } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
+import { DEMO_SELF_CAPS, DemoSelf } from './demoself.ts';
 import type { InprocAdapter } from './supervisor.ts';
 import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
@@ -1832,6 +1833,8 @@ class DemoAdapter implements InprocAdapter {
   private readLog: { conversation: string; upTo: string; at: number }[] = [];
   private self: P.IdentityFact;
   private adds!: DemoAdd;
+  /** The account's own self (demoself.ts): Discord's demo accounts only. */
+  private selfDemo: DemoSelf | null = null;
   /** Discord servers beyond their channels: events, leaving, gates, nicknames, invite links (demoservers.ts). */
   private servers: DemoServers | null = null;
   /** Moderating, member labels and leaving a Signal group (demomod.ts). */
@@ -2271,6 +2274,8 @@ class DemoAdapter implements InprocAdapter {
       ...(MAKES_GROUPS.has(this.network) ? (['createGroup'] as const) : []),
       // The networks whose servers search (netsearch.ts).
       ...(this.network === 'discord' || this.network === 'matrix' ? (['search'] as const) : []),
+      // Block, ignore, notes, presence, sessions, profile fields (demoself.ts).
+      ...(this.network === 'discord' ? DEMO_SELF_CAPS : []),
       ...(this.network === 'discord' ? DEMO_SERVER_CAPS : []),
       ...(DEMO_MOD_CAPS[this.network] ?? []),
     ];
@@ -2295,6 +2300,11 @@ class DemoAdapter implements InprocAdapter {
     // Joining, adding and requests (docs/add.md): what it joined before, and the requests waiting.
     this.adds = new DemoAdd(this.key, this.network, this.self, this.dir, emit);
     this.adds.start(epoch);
+    if (this.network === 'discord') {
+      const mine = SPACES.filter((x) => x.acc.includes(this.key) && x.fact.kind === 'community').map((x) => x.fact.nativeId);
+      this.selfDemo = new DemoSelf(this.network, this.self, this.dir, emit, mine, (who, blocked) => this.adds.relate(who, blocked ? 'blocked' : 'stranger'));
+      this.selfDemo.start();
+    }
 
     for (const s of SPACES) if (s.acc.includes(this.key)) emit({ t: 'space', space: s.fact });
     if (this.network === 'discord') this.startServers(epoch);
@@ -2585,6 +2595,12 @@ class DemoAdapter implements InprocAdapter {
 
   command(cmd: P.AdapterCommand) {
     const reply = (result?: unknown) => 'id' in cmd && this.emit({ t: 'reply', id: cmd.id, ok: true, result });
+    const own = this.selfDemo?.command(cmd);
+    if (own && 'id' in cmd) {
+      if ('error' in own) this.emit({ t: 'reply', id: cmd.id, ok: false, error: own.error });
+      else reply(own.result);
+      return;
+    }
     switch (cmd.t) {
       case 'send': {
         const nativeId = `${cmd.conversation}~sent-${Date.now()}`;
@@ -2680,7 +2696,7 @@ class DemoAdapter implements InprocAdapter {
         }
         break;
       case 'profile':
-        reply(this.signalExtras(this.profile(cmd.who), cmd.who));
+        reply(this.selfDemo ? this.selfDemo.decorate(cmd.who, this.signalExtras(this.profile(cmd.who), cmd.who)) : this.signalExtras(this.profile(cmd.who), cmd.who));
         break;
       case 'verify':
         if (cmd.clear) DEMO_VERIFIED.delete(cmd.who);
@@ -2700,6 +2716,12 @@ class DemoAdapter implements InprocAdapter {
       case 'setProfile': {
         // As the real adapters do: the network's limit, then the About as a status on Signal and WhatsApp.
         const bio = cmd.change.bio;
+        const { bio: _bio, ...more } = cmd.change;
+        const refused = !Object.keys(more).length ? null : this.selfDemo ? this.selfDemo.profileChange(more) : 'only the bio can be set';
+        if (refused) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: refused });
+          break;
+        }
         const limit = P_BIO_LIMIT[this.network];
         if (bio !== undefined && limit !== undefined && [...bio].length > limit) {
           this.emit({ t: 'reply', id: cmd.id, ok: false, error: `bio is longer than ${limit} characters` });
@@ -2713,7 +2735,7 @@ class DemoAdapter implements InprocAdapter {
           if (cmd.change.username === null) DEMO_USERNAME.delete(this.self.nativeId);
           else DEMO_USERNAME.set(this.self.nativeId, { name: `${cmd.change.username}.42`, link: 'https://signal.me/#eu/DemoUsernameLink42' });
         }
-        reply(this.signalExtras(this.profile(this.self.nativeId), this.self.nativeId));
+        reply(this.selfDemo ? this.selfDemo.decorate(this.self.nativeId, this.signalExtras(this.profile(this.self.nativeId), this.self.nativeId)) : this.signalExtras(this.profile(this.self.nativeId), this.self.nativeId));
         break;
       }
       case 'leave':
@@ -2800,6 +2822,12 @@ class DemoAdapter implements InprocAdapter {
         if (cmd.action === 'say') {
           const a = cmd.args as { conversation: string; author: string; body: string };
           this.say(a.conversation, { nativeId: a.author }, a.body);
+          reply({ ok: true });
+          break;
+        }
+        // notice: a notice from the network on this account (demoself.ts), or none with args null.
+        if (cmd.action === 'notice' && this.selfDemo) {
+          this.selfDemo.notice((cmd.args as P.AccountNotice | null) ?? null);
           reply({ ok: true });
           break;
         }

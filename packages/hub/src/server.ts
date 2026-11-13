@@ -47,6 +47,7 @@ import { Moderation } from './moderation.ts';
 import { asked, attempt, candidatesAttempt } from './attempts.ts';
 import { Groups } from './groups.ts';
 import { People } from './people.ts';
+import { AccountSelf, ignoredOf } from './accountself.ts';
 import { peopleGraph } from './graph.ts';
 import type { MailHub } from './mail/index.ts';
 import { mailPeople } from './mail/people.ts';
@@ -216,6 +217,8 @@ export class HubServer {
   readonly abouts: Abouts;
   readonly groups: Groups;
   readonly people: People;
+  /** The account's own self, block, ignore and notes (accountself.ts). */
+  readonly self: AccountSelf;
   /** Joining, adding people, and requests waiting on you (add.ts, docs/add.md). */
   readonly adding: Adding;
   /** Scheduled events, leaving, and what a space asks on joining (servers.ts, docs/servers.md). */
@@ -271,6 +274,8 @@ export class HubServer {
       note: (a, line) => sup.note(a, line),
     });
     this.groups = new Groups({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line) });
+    this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
+    this.self = new AccountSelf({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), quietHours: () => store.quietHours() });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line) });
     // A note joined from yours and the network's goes back to the network (store.ts networkNotes).
     store.contactNotesOut = (id, change) => this.people.pushContactNotes(id, change);
@@ -296,6 +301,7 @@ export class HubServer {
   }
 
   start() {
+    this.self.start();
     const self = this;
     const guarded = (handler: (req: Request, server: Server<WsData>) => Promise<Response | undefined> | Response | undefined) =>
       async (req: Request, server: Server<WsData>) => {
@@ -635,6 +641,8 @@ export class HubServer {
     }
     // Joining and adding, and requests (add.ts).
     if (path === '/api/add' || path.startsWith('/api/add/') || path.startsWith('/api/requests') || path === '/api/people' || /^\/api\/people\/[\w-]+\/remove$/.test(path)) return (await this.adding.route(req, url, path))!;
+    // An account's own self, block, ignore and notes (accountself.ts).
+    if (path.startsWith('/api/self/')) return (await this.self.route(req, url, path))!;
     // Scheduled events, leaving, and what a space asks on joining (servers.ts).
     if (Servers.handles(path)) return (await this.servers.route(req, url, path))!;
     // Moderating members, others' messages and reactions, member labels (moderation.ts).
@@ -717,7 +725,7 @@ export class HubServer {
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/profile$/)) || (m = path.match(/^\/api\/identities\/([\w-]+)\/profile$/))) {
       const p = s.profile(path.startsWith('/api/persons/') ? { personId: m[1] } : { identityId: m[1] });
       const mail = p && mailPeople(this.opts.mail)?.profile(p.identityIds);
-      return p ? ok({ ...p, abouts: this.people.kept(p.identityIds), links: linksOf(s.db, p.identityIds), ...(mail ? { mail } : {}) }) : bad('nobody by that id', 404);
+      return p ? ok({ ...p, abouts: this.people.kept(p.identityIds), links: linksOf(s.db, p.identityIds), ...((i) => (i.length ? { ignored: i } : {}))(ignoredOf(s.db, p.identityIds)), ...(mail ? { mail } : {}) }) : bad('nobody by that id', 404);
     }
     // Their message count per server, estimated from what the hub holds (msgcount.ts, docs/profile.md).
     if ((m = path.match(/^\/api\/(persons|identities)\/([\w-]+)\/activity$/))) {
@@ -832,7 +840,7 @@ export class HubServer {
       // Your own profile, on a network whose adapter can change it (capability 'editProfile'): the bio, and where it
       // says so the name, emoji, picture (an upload id, or null) and username (null deletes it).
       if (method === 'PUT') {
-        const b = await body<{ bio?: unknown; name?: unknown; emoji?: unknown; avatar?: unknown; username?: unknown }>();
+        const b = await body<{ bio?: unknown; name?: unknown; emoji?: unknown; avatar?: unknown; username?: unknown; pronouns?: unknown; banner?: unknown; accent?: unknown }>();
         const change: P.ProfileChange = {};
         if (b.bio !== undefined) {
           if (typeof b.bio !== 'string') return bad('bio: a string');
@@ -858,10 +866,28 @@ export class HubServer {
             change.avatar = file;
           }
         }
-        if (!Object.keys(change).length) return bad('bio, name, emoji, avatar or username');
+        // Pronouns, the banner and its colour (docs/account-self.md, Discord).
+        if (b.pronouns !== undefined) {
+          if (typeof b.pronouns !== 'string') return bad('pronouns: a string, or "" for none');
+          change.pronouns = b.pronouns.trim().slice(0, 200);
+        }
+        if (b.banner !== undefined) {
+          if (b.banner === null) change.banner = null;
+          else {
+            const file = typeof b.banner === 'string' ? this.uploads.get([b.banner])?.[0] : undefined;
+            if (!file) return bad('banner: an upload id, or null to remove it');
+            change.banner = file;
+          }
+        }
+        if (b.accent !== undefined) {
+          if (b.accent !== null && (typeof b.accent !== 'string' || !/^#[0-9a-f]{6}$/i.test(b.accent))) return bad('accent: a colour like #5865f2, or null');
+          change.accent = b.accent as string | null;
+        }
+        if (!Object.keys(change).length) return bad('bio, name, emoji, avatar, username, pronouns, banner or accent');
         try {
           const v = await this.people.setOwn(m[1], change);
           if (change.avatar) this.uploads.remove([b.avatar as string]);
+          if (change.banner) this.uploads.remove([b.banner as string]);
           this.flush();
           return ok(v);
         } catch (e) {
