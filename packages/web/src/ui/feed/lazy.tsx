@@ -77,7 +77,8 @@ export function ThreadLazy({ postKey: key, onBack }: { postKey: string; onBack?:
   const { m, failed } = useChunk(true);
   const src = parsePostKey(key);
   if (!src) return <Empty icon="alert" title="Not a post" />;
-  if (m) return <m.ThreadView src={src} kit={kit} onBack={onBack} />;
+  // Keyed by the post: a late answer for one thread never lands in the next.
+  if (m) return <m.ThreadView key={key} src={src} kit={kit} onBack={onBack} />;
   return <section class="pane">{failed ? <Empty icon="alert" title="Could not load the post">Check the connection to the hub, then try again.</Empty> : <Loading fill />}</section>;
 }
 

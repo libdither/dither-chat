@@ -3,8 +3,9 @@
 /** @jsxFrag Fragment */
 /**
  * A post's thread (docs/feed.md "Threads"), in the feed's chunk: what it answers above it, joined by a line, the post
- * itself large, then the replies, each a short chain, and "Show more replies" while the network has more. Every post
- * in it opens its own thread; Open on X is the one way out. The hub logs each post as it reads it.
+ * itself large, then its replies as a comment section (Comments.tsx: a tree as on Reddit, compact, flat or X's
+ * chains), "N more replies" under a reply to open that branch, and "Show more replies" while the network has more.
+ * The hub logs each post as it reads it, and brings back the branches logged before.
  *
  * Also the posts conversation itself (variant 'posts'): what the hub logged, newest first, each opening its thread.
  */
@@ -15,7 +16,19 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { api, db, loadTimeline, openProfile, timelineKey, timelines } from '../../state.ts';
 import { timelineRev } from '../../versions.ts';
 import type { Kit } from './lazy.tsx';
+import { Comments, COMMENT_STYLES, type CommentStyle } from './Comments.tsx';
 import { Counts, Pics, QuotedIn, Row, Text, Who } from './Post.tsx';
+import { replyTree, treeSize, type TreeNode } from './tree.ts';
+
+const STYLE_KEY = 'dither.thread.style';
+function readStyle(): CommentStyle {
+  try {
+    const v = localStorage.getItem(STYLE_KEY);
+    return COMMENT_STYLES.some((s) => s.id === v) ? (v as CommentStyle) : 'tree';
+  } catch {
+    return 'tree';
+  }
+}
 
 type Src = { network: P.Network; post: string } | { message: string };
 
@@ -53,12 +66,23 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
   const [error, setError] = useState<string | null>(null);
   const [more, setMore] = useState<'idle' | 'loading' | string>('idle');
   const key = 'message' in src ? src.message : `${src.network}:${src.post}`;
+  // Branches opened under replies (their threads' replies), folded replies, and the reader's style.
+  const [extra, setExtra] = useState<P.PostView[]>([]);
+  const [loading, setLoading] = useState<ReadonlySet<string>>(new Set());
+  const [done, setDone] = useState<ReadonlySet<string>>(new Set());
+  const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
+  const [style, setStyle] = useState<CommentStyle>(readStyle);
+  const [failed, setFailed] = useState<ReadonlyMap<string, string>>(new Map());
   const scroller = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let live = true;
     setT(null);
     setError(null);
     setMore('idle');
+    setExtra([]);
+    setLoading(new Set());
+    setDone(new Set());
+    setFolded(new Set());
     api<P.PostThreadView>('message' in src ? `/api/messages/${encodeURIComponent(src.message)}/thread` : `/api/posts/${src.network}/${src.post}/thread`).then(
       (v) => {
         if (!live) return;
@@ -85,6 +109,73 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
       },
       (e) => setMore((e as Error).message),
     );
+  };
+  const nodes = useMemo(() => {
+    if (!t?.focal) return [];
+    // Replies as X gave them (their counts newest), then what was logged before that they do not hold, then branches
+    // opened: a later copy wins, so the freshest read of a post is the one kept.
+    const given = t.replies.flat();
+    const ids = new Set(given.map((p) => p.id));
+    return replyTree((t.focal.repostOf ?? t.focal).id, [...(t.logged ?? []).filter((p) => !ids.has(p.id)), ...given, ...extra]);
+  }, [t, extra]);
+  const with_ = (set: ReadonlySet<string>, id: string, on: boolean) => {
+    const next = new Set(set);
+    if (on) next.add(id);
+    else next.delete(id);
+    return next;
+  };
+  /** A reply's branch: its own thread's replies, put into the tree. */
+  const loadUnder = (n: TreeNode) => {
+    if (!t) return;
+    const id = n.post.id;
+    setLoading((l) => with_(l, id, true));
+    setFailed((f) => {
+      const next = new Map(f);
+      next.delete(id);
+      return next;
+    });
+    const fail = (why: string) => {
+      // Kept: X may answer next time. Said, so the button does not just vanish.
+      setFailed((f) => new Map(f).set(id, why));
+      setLoading((l) => with_(l, id, false));
+    };
+    api<P.PostThreadView>(`/api/posts/${t.network}/${id}/thread`).then(
+      (v) => {
+        if (v.stored) return fail(v.stored);
+        v.identities.forEach((i) => db.identities.has(i.id) || db.identities.set(i.id, i));
+        const got = [...v.replies.flat(), ...(v.logged ?? [])];
+        setExtra((e) => {
+          const known = new Set([...t.replies.flat(), ...(t.logged ?? []), ...e].map((p) => p.id));
+          return [...e, ...got.filter((p) => !known.has(p.id))];
+        });
+        // Nothing (more) under it on X: no button that never ends.
+        const known = new Set(nodes.flatMap(function all(x: TreeNode): string[] {
+          return [x.post.id, ...x.children.flatMap(all)];
+        }));
+        if (!got.some((p) => p.replyTo?.id === id && !known.has(p.id))) setDone((d) => with_(d, id, true));
+        setLoading((l) => with_(l, id, false));
+      },
+      (e) => fail((e as Error).message),
+    );
+  };
+  /** Fold or unfold a reply, keeping the keyboard where it was: on the control that now stands for it. */
+  const fold = (id: string) => {
+    const inside = !!document.activeElement?.closest(`[data-post="${CSS.escape(id)}"]`);
+    setFolded((f) => with_(f, id, !f.has(id)));
+    if (inside)
+      setTimeout(() => {
+        const node = scroller.current?.querySelector(`[data-post="${CSS.escape(id)}"]`);
+        (node?.querySelector('.ct-unfold, .ct-toggle, .ct-rail, .ct-flat-toggle') as HTMLElement | null)?.focus();
+      });
+  };
+  const pickStyle = (s: CommentStyle) => {
+    setStyle(s);
+    setFolded(new Set());
+    try {
+      localStorage.setItem(STYLE_KEY, s);
+    } catch {
+      /* a private window: the choice lasts while the page is open */
+    }
   };
   const network = t?.network ?? ('network' in src ? src.network : 'x');
   const net = NETWORK_META[network].name;
@@ -137,15 +228,26 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
                 <Row p={p} kit={kit} network={network} line />
               ))}
               <Focal p={focal} kit={kit} network={network} joined={t.ancestors.length > 0} />
-              {t.replies.length > 0 && <h3 class="thread-replies-head">Replies</h3>}
-              {t.replies.map((chain) => (
-                <div class="thread-chain">
-                  {chain.map((p, i) => (
-                    <Row p={p} kit={kit} network={network} line={i < chain.length - 1} />
-                  ))}
+              {nodes.length > 0 && (
+                <div class="thread-replies-bar">
+                  <h3 class="thread-replies-head">
+                    Replies <span class="thread-replies-n">{treeSize(nodes)}</span>
+                  </h3>
+                  <div class="thread-style" role="group" aria-label="Draw replies as">
+                    {COMMENT_STYLES.map((s) => (
+                      <button class={`feed-tab ${style === s.id ? 'on' : ''}`} aria-pressed={style === s.id} title={s.title} onClick={() => pickStyle(s.id)}>
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              ))}
-              {!t.replies.length && !t.more && <p class="thread-none">{t.stored ? 'No replies logged.' : 'No replies yet.'}</p>}
+              )}
+              <Comments
+                nodes={nodes}
+                style={style}
+                ctx={{ kit, network, op: author, folded, fold, loading, done, failed, load: loadUnder }}
+              />
+              {!nodes.length && !t.more && <p class="thread-none">{t.stored ? 'No replies logged.' : 'No replies yet.'}</p>}
               {t.more && (
                 <button class="btn thread-more" onClick={loadMore} disabled={more === 'loading'}>
                   {more === 'loading' ? 'Loading…' : 'Show more replies'}

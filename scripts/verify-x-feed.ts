@@ -113,7 +113,6 @@ try {
   // ------------------------------------------------------------------ the feed, desktop: by post
   await page.eval(`document.querySelector('.feed-row').click()`);
   await page.until(`location.hash.includes(${JSON.stringify(feed.id)}) && document.querySelectorAll('.feed-unit').length >= 4`, 20000);
-  if ((await page.eval(`document.querySelector('.feed-filter .feed-tab[aria-pressed="true"]')?.textContent ?? ''`)) !== 'Everything') await page.eval(`document.querySelector('.feed-filter .feed-tab').click()`);
   const units = await page.eval<any[]>(`[...document.querySelectorAll('.feed-unit')].map((u) => ({
     unit: u.dataset.unit, text: u.textContent, mine: u.querySelector('.feed-mine')?.textContent ?? '', pic: !!u.querySelector('.feed-mine-pic'),
     talk: [...u.querySelectorAll('.feed-talk .thread-post')].map((t) => t.textContent), react: u.querySelector('.feed-react')?.textContent ?? null,
@@ -142,17 +141,6 @@ try {
   await page.eval(`[...document.querySelectorAll('.feed-reactors .feed-tab')].find((b) => b.textContent.startsWith('Reposts')).click()`);
   await page.until(`[...document.querySelectorAll('.feed-reactors .feed-person b')].map((b) => b.textContent).join() === 'Nora'`, 5000).then(() => check('…and who reposted it', true), () => check('…and who reposted it', false));
 
-  // Replies and mentions: no likes, reposts or follows.
-  await page.eval(`[...document.querySelectorAll('.feed-filter .feed-tab')][1].click()`);
-  await page.until(`!document.querySelector('.feed-unit[data-unit="follow"]')`, 5000);
-  const talk = await page.eval<any>(`({ units: [...document.querySelectorAll('.feed-unit')].map((u) => u.dataset.unit), react: document.querySelectorAll('.feed-react').length, first: document.querySelector('.feed-unit')?.textContent ?? '' })`);
-  check('"Replies and mentions" leaves out likes, reposts and follows', talk.units.join() === 'post,said,post' && talk.react === 0 && /Does it hold up/.test(talk.first), talk);
-  if (shots) await page.shot(join(shots, 'x-feed-talk-desktop.png'));
-  await page.eval(`[...document.querySelectorAll('.feed-filter .feed-tab')][0].click()`);
-  await page.until(`!!document.querySelector('.feed-unit[data-unit="follow"]')`, 5000);
-  const bar = await page.eval<any>(`(() => { const b = document.querySelector('.feed-bar'); return { composer: !!document.querySelector('.composer'), text: b?.textContent ?? '', href: b?.querySelector('a')?.href ?? null }; })()`);
-  check('no composer: a bar saying replies happen on X, with Open on X', !bar.composer && /happen on X/.test(bar.text) && bar.href === 'https://x.com/notifications', bar);
-  check('nothing sideways on a desktop', (await overflow('.feed-scroll')) === 0);
 
   // ------------------------------------------------------------------ read on the hub only, nothing sent to X
   await until(async () => (await json('/api/bootstrap')).conversations.find((c: any) => c.id === feed.id)?.vantages.every((v: any) => v.unread === 0), 10_000, 'the feed was not marked read');

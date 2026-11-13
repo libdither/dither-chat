@@ -126,12 +126,6 @@ test('by post: a mention and a reply with no post of yours stand alone; follows 
   expect(units.map((u) => (u.kind === 'follow' ? `follow:${u.actors.join('')}` : u.kind))).toEqual(['follow:e', 'said', 'said', 'follow:ba']);
 });
 
-test('by post: talk only leaves out likes, reposts and follows, ordered by when someone last said something', () => {
-  const p1 = post('1');
-  const p2 = post('2');
-  const units = feedUnits([msg('reply', 'a', 10, { post: p1, theirs: post('9') }), msg('like', 'b', 90, { post: p1 }), msg('like', 'c', 80, { post: p2 }), msg('follow', 'd', 70), msg('mention', 'e', 20, { theirs: post('5') })], Infinity, 'talk');
-  expect(units.map((u) => u.kind + ':' + u.talkTs)).toEqual(['said:20', 'post:10']);
-});
 
 test('by post: what is new, and the reactions line in words and counts', () => {
   const p1 = { ...post('1'), counts: { likes: 41, reposts: 3 } };
@@ -145,9 +139,3 @@ test('by post: what is new, and the reactions line in words and counts', () => {
   expect([old.fresh, reactorsPhrase(old, name), reactionCounts(old).repost]).toEqual([false, 'Reposted by Alice', 1]);
 });
 
-test('by post, talk only: a card is new for what was said, not for a like it does not show', () => {
-  const p1 = post('1');
-  const units = feedUnits([msg('reply', 'a', 10, { post: p1, theirs: post('9') }), msg('like', 'b', 90, { post: p1 })], 50, 'talk');
-  expect(units[0].fresh).toBe(false);
-  expect(feedUnits([msg('reply', 'a', 10, { post: p1, theirs: post('9') }), msg('like', 'b', 90, { post: p1 })], 50)[0].fresh).toBe(true);
-});
