@@ -82,8 +82,9 @@ service reads.
 4. For the hub, copy the database to `backups/pre-deploy.sqlite` (at most every 6 hours: a schema change is copied by
    the hub itself, and a rollback changes the code, not the database).
 5. Point `current` at the release and restart the service.
-6. Check it. The hub must log `startup: ready` and answer `/api/health`; the manager must answer its `/api/health`.
-   Both must stay up without systemd restarting them, and get the hub's accounts back to as many online as before.
+6. Check it. The hub must log `startup: ready`, answer `/api/health` and connect to the manager (its notices' access
+   leaves `unreachable`); the manager must answer its `/api/health`. Both must stay up without systemd restarting
+   them, and get the hub's accounts back to as many online as before.
 7. If a check fails, `current` goes back to `previous` and the service restarts on it. The commit is marked failed and
    never tried again; the next commit that passes CI is.
 
@@ -124,6 +125,14 @@ OnBootSec=3min
 OnUnitInactiveSec=60s
 [Install]
 WantedBy=timers.target
+```
+
+The hub loads dither-accounts' client from a folder beside its own checkout unless `DITHER_ACCOUNTS_CLIENT` names
+it, and a release folder has no such neighbour. So the hub's unit names the deployed one (a drop-in):
+
+```ini
+[Service]
+Environment=DITHER_ACCOUNTS_CLIENT=%h/.local/share/dither-deploy/accounts/current/packages/client/src/index.ts
 ```
 
 The deployer runs from dither-chat's current release, so it ships its own changes too. A run that is still going when
