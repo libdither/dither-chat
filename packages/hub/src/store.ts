@@ -16,6 +16,7 @@ import { addTables, ingestRelationships, ingestRequests, pendingLinks } from './
 import { lateNews } from './latenews.ts';
 import { eraseVoice, ingestCallEvent, voiceKept } from './callstate.ts';
 import { ingestServers } from './servers.ts';
+import { ingestApps } from './apps.ts';
 import { alertBar, type Facts } from './learn.ts';
 import { attachmentExtra, attachmentRich, embedViews, richView, type StoredExtra } from './rich.ts';
 
@@ -758,6 +759,11 @@ export class Store {
         case 'scheduledEventGone':
         case 'gate':
           ingestServers(this, acc, ev);
+          break;
+        // An interaction's outcome and a form a bot opened (apps.ts): to the page as they come.
+        case 'interaction':
+        case 'appModal':
+          ingestApps(this, acc, ev);
           break;
         case 'reply':
         case 'log':

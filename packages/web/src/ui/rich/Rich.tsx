@@ -3,7 +3,7 @@
 /** @jsxFrag Fragment */
 /**
  * The heavier part of rich messages (docs/rich-messages.md), a chunk loaded the first time a message needs it: a bot's
- * buttons and selects (shown as they are, not pressable yet: link buttons open their link), an activity invite,
+ * buttons and selects (pressed and chosen from here where the account can, docs/apps.md; link buttons open their link), an activity invite,
  * quotes of the stored messages a message links to, the voice-message player and the embed video player.
  */
 // Classic JSX (the pragmas above), and the app's own helpers handed in as `kit` (parts.tsx) rather than imported:
@@ -14,17 +14,17 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Kit } from './parts.tsx';
 import './rich.css';
 
-const NOT_YET = 'Pressing this from dither is not built yet: open the message on its network to use it';
+const NOT_YET = 'None of your accounts here can press this from dither: open the message on its network to use it';
 
 /** A label or emoji written as body Markdown (custom emoji as <:name:id>), drawn as the body draws it. */
 function Label({ text, network, kit }: { text: string; network: P.Network; kit: Kit }) {
   return <span dangerouslySetInnerHTML={{ __html: kit.md(text, network) }} />;
 }
 
-function Button({ c, network, kit }: { c: P.ButtonFact; network: P.Network; kit: Kit }) {
+function Button({ c, m, kit }: { c: P.ButtonFact; m: P.MessageView; kit: Kit }) {
   const inner = (
     <>
-      {c.emoji && <Label text={c.emoji} network={network} kit={kit} />}
+      {c.emoji && <Label text={c.emoji} network={m.network} kit={kit} />}
       {c.label && <span>{c.label}</span>}
       {c.style === 'link' && kit.icon('external', 12)}
     </>
@@ -35,36 +35,96 @@ function Button({ c, network, kit }: { c: P.ButtonFact; network: P.Network; kit:
         {inner}
       </a>
     );
+  // Pressed only by a click of the owner's, once: no press goes while the last one on this message waits.
+  const pressable = !c.disabled && !!c.id && c.style !== 'link' && c.style !== 'premium' && kit.canPress(m);
+  const busy = kit.pressState(m.id)?.state === 'sending';
   return (
-    <button class={`rc-btn ${c.style}`} disabled title={c.disabled ? 'Turned off by the bot' : NOT_YET}>
+    <button class={`rc-btn ${c.style}`} disabled={!pressable || busy} title={c.disabled ? 'Turned off by the bot' : pressable ? undefined : NOT_YET} data-track="bot button" onClick={() => pressable && !busy && void kit.press(m, c.id!)}>
       {inner}
     </button>
   );
 }
 
-function Select({ c, kit }: { c: P.SelectFact; kit: Kit }) {
-  const picked = c.options?.filter((o) => o.default).map((o) => o.label);
-  const what = { string: 'an option', user: 'people', role: 'roles', mentionable: 'people or roles', channel: 'channels' }[c.select];
+const WHAT: Record<P.SelectKind, string> = { string: 'an option', user: 'people', role: 'roles', mentionable: 'people or roles', channel: 'channels' };
+
+/** A select: its options (or the place's people, roles or channels) to choose from, sent once when chosen. */
+function Select({ c, m, kit }: { c: P.SelectFact; m: P.MessageView; kit: Kit }) {
+  const usable = !c.disabled && !!c.id && kit.canPress(m);
+  const min = c.min ?? 1;
+  const max = c.max ?? 1;
+  const [picked, setPicked] = useState<string[]>(() => (c.options ?? []).filter((o) => o.default).map((o) => o.value));
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [q, setQ] = useState('');
+  const [picks, setPicks] = useState<P.AppPickView[]>([]);
+  const box = useRef<HTMLDetailsElement>(null);
+  const busy = kit.pressState(m.id)?.state === 'sending';
+  const fromPlace = c.select !== 'string';
+  useEffect(() => {
+    if (!usable || !fromPlace) return;
+    const t = setTimeout(() => void kit.picks(m.conversationId, c.select, q).then(setPicks, () => setPicks([])), 250);
+    return () => clearTimeout(t);
+  }, [q, usable]);
+  const send = (values: string[]) => {
+    if (busy || values.length < min || values.length > max) return;
+    if (box.current) box.current.open = false;
+    void kit.press(m, c.id!, values);
+  };
+  const toggle = (value: string, name: string) => {
+    setNames((n) => ({ ...n, [value]: name }));
+    if (max === 1) return send([value]);
+    setPicked((p) => (p.includes(value) ? p.filter((x) => x !== value) : p.length >= max ? p : [...p, value]));
+  };
+  const label = picked.length ? picked.map((v) => c.options?.find((o) => o.value === v)?.label ?? names[v] ?? v).join(', ') : (c.placeholder ?? `Pick ${WHAT[c.select]}`);
+  const rows: { value: string; label: string; description?: string }[] = fromPlace ? picks.map((p) => ({ value: p.value, label: p.kind === 'channel' ? `#${p.name}` : p.kind === 'role' ? `@${p.name}` : p.name })) : (c.options ?? []).map((o) => ({ value: o.value, label: o.label, description: o.description }));
   return (
-    <details class="rc-select">
-      <summary title={NOT_YET}>
-        <span>{picked?.length ? picked.join(', ') : (c.placeholder ?? `Pick ${what}`)}</span>
+    <details class="rc-select" ref={box}>
+      <summary title={usable ? undefined : NOT_YET} data-track="bot select">
+        <span>{label}</span>
         {kit.icon('chevronDown', 14)}
       </summary>
-      {c.options?.length ? (
+      {usable && fromPlace && <input class="rc-find" type="search" placeholder={`Find ${WHAT[c.select]} you know here`} value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} />}
+      {rows.length ? (
         <ul>
-          {c.options.map((o) => (
-            <li class={o.default ? 'picked' : ''}>
-              <b>{o.label}</b>
-              {o.description && <small>{o.description}</small>}
-            </li>
-          ))}
+          {rows.map((o) =>
+            usable ? (
+              <li class={picked.includes(o.value) ? 'picked' : ''}>
+                <button class="rc-opt" disabled={busy} aria-pressed={picked.includes(o.value)} onClick={() => toggle(o.value, o.label)}>
+                  <b>{o.label}</b>
+                  {o.description && <small>{o.description}</small>}
+                </button>
+              </li>
+            ) : (
+              <li class={picked.includes(o.value) ? 'picked' : ''}>
+                <b>{o.label}</b>
+                {o.description && <small>{o.description}</small>}
+              </li>
+            ),
+          )}
         </ul>
       ) : (
-        <p class="rc-note">Picks {what} of this place.</p>
+        <p class="rc-note">{fromPlace ? (usable ? `No ${WHAT[c.select]} the hub knows here match.` : `Picks ${WHAT[c.select]} of this place.`) : 'No options.'}</p>
       )}
-      <p class="rc-note">{NOT_YET}.</p>
+      {usable && max > 1 && (
+        <p class="rc-choose">
+          <button class="btn small" disabled={busy || picked.length < min || picked.length > max} data-track="bot select (choose)" onClick={() => send(picked)}>
+            Choose{picked.length ? ` ${picked.length}` : ''}
+          </button>
+          <small>{min === max ? `Pick ${min}` : `Pick ${min} to ${max}`}</small>
+        </p>
+      )}
+      {!usable && <p class="rc-note">{c.disabled ? 'Turned off by the bot.' : `${NOT_YET}.`}</p>}
     </details>
+  );
+}
+
+/** What became of the last press on this message from here. */
+function PressState({ m, kit }: { m: P.MessageView; kit: Kit }) {
+  const v = kit.pressState(m.id);
+  if (!v) return null;
+  return (
+    <div class={`rc-state ${v.state}`} role="status">
+      {kit.words(v)}
+    </div>
   );
 }
 
@@ -94,8 +154,9 @@ export function RichFoot({ m, rich, kit }: { m: P.MessageView; rich: P.RichView;
       {rich.components?.length ? (
         <div class="rc-rows">
           {rich.components.map((row) => (
-            <div class="rc-row">{row.map((c) => (c.kind === 'button' ? <Button c={c} network={m.network} kit={kit} /> : <Select c={c} kit={kit} />))}</div>
+            <div class="rc-row">{row.map((c) => (c.kind === 'button' ? <Button c={c} m={m} kit={kit} /> : <Select c={c} m={m} kit={kit} />))}</div>
           ))}
+          <PressState m={m} kit={kit} />
         </div>
       ) : null}
       {rich.linked?.map((l) => <Linked l={l} network={m.network} kit={kit} />)}

@@ -18,6 +18,7 @@ import type { InprocAdapter } from './supervisor.ts';
 import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
 import { DEMO_SERVER_CAPS, DemoServers } from './demoservers.ts';
+import { DEMO_APP_CAPS, DemoApps } from './demoapps.ts';
 
 type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa' | 'tg';
 
@@ -1833,6 +1834,8 @@ class DemoAdapter implements InprocAdapter {
   private adds!: DemoAdd;
   /** Discord servers beyond their channels: events, leaving, gates, nicknames, invite links (demoservers.ts). */
   private servers: DemoServers | null = null;
+  /** The demo's bot: its controls, commands and forms (demoapps.ts). */
+  private apps: DemoApps | null = null;
   /** Capabilities a verify script took away (action 'capabilities'), to see the page without them. */
   private without = new Set<P.Capability>();
   private network: P.Network;
@@ -2269,6 +2272,7 @@ class DemoAdapter implements InprocAdapter {
       // The networks whose servers search (netsearch.ts).
       ...(this.network === 'discord' || this.network === 'matrix' ? (['search'] as const) : []),
       ...(this.network === 'discord' ? DEMO_SERVER_CAPS : []),
+      ...(this.network === 'discord' ? DEMO_APP_CAPS : []),
     ];
     this.emit({ t: 'hello', network: this.network, version: 'demo', capabilities: all.filter((c) => !this.without.has(c)) });
   }
@@ -2294,6 +2298,10 @@ class DemoAdapter implements InprocAdapter {
 
     for (const s of SPACES) if (s.acc.includes(this.key)) emit({ t: 'space', space: s.fact });
     if (this.network === 'discord') this.startServers(epoch);
+    if (this.network === 'discord') {
+      this.apps = new DemoApps({ key: this.key, selfId: this.self.nativeId, emit, later: (ms, fn) => this.later(ms, fn), snow, botChannel: ch('dither-general'), inConversation: (c) => CONVS.some((x) => x.fact.nativeId === c && x.acc.includes(this.key)) });
+      this.apps.announce(epoch);
+    }
     // Members the client loaded anyway (passive), with Discord's counts: kept only with the adversarial members setting.
     if (this.key === 'dmain')
       emit({
@@ -2674,6 +2682,16 @@ class DemoAdapter implements InprocAdapter {
         reply(this.signalExtras(this.profile(this.self.nativeId), this.self.nativeId));
         break;
       }
+      case 'appCommands':
+      case 'appAutocomplete':
+      case 'interact':
+        try {
+          if (!this.apps) throw new Error(`${cmd.t} is not in this demo network`);
+          reply(cmd.t === 'appCommands' ? this.apps.commands(cmd.kind ?? 'chat') : cmd.t === 'appAutocomplete' ? this.apps.autocomplete(cmd) : this.apps.interact(cmd));
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
+        break;
       case 'scheduledEvents':
       case 'rsvp':
       case 'leave':

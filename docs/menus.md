@@ -36,7 +36,7 @@ One component draws them all (`packages/web/src/ui/ContextMenu.tsx`); what each 
 | Group | Items |
 |---|---|
 | Reactions | quick-reaction row (your 4 most used here), Add Reaction › (6 + Other Reactions…), View Reactions › (who reacted, per emoji) |
-| Actions | Edit Message **E** (own, where the network allows), Reply **R**, Forward **F**, Open Thread, Copy Text **C**, Copy Message Link |
+| Actions | Edit Message **E** (own, where the network allows), Reply **R**, Forward **F**, Apps (apps' message commands, where the account has them: [apps.md](apps.md)), Open Thread, Copy Text **C**, Copy Message Link |
 | Going places | Go to Replied Message, Go to Original Message (forwards), Profile |
 | Marks | Should have alerted (on a message that alerted it reads Alert was wrong), Less like this |
 | Red | Delete Message **Del** (own, where the network allows) |
@@ -53,7 +53,7 @@ reasons at the bottom of the sheet, not among the items. They replaced the four 
 voted to.
 
 Left out: **Pin** and **Mark Unread** (no adapter command, and read state cannot go backwards on the networks
-here), **Create Thread**, **Apps**, **Speak Message**, **Report**. The hover bar gains Forward and a More (…)
+here), **Create Thread**, **Speak Message**, **Report**. The hover bar gains Forward and a More (…)
 button that opens this menu.
 
 ### A conversation or channel (sidebar rows, the channel tree, the header)

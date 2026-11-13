@@ -80,6 +80,8 @@ import { openConv } from './Sidebar.tsx';
 import { viewer, type ViewerImage } from './Viewer.tsx';
 import { JoinCallButton } from './Call.tsx';
 import { EmojiComplete, insertAtCaret } from './EmojiComplete.tsx';
+import { SlashCommandsLazy } from './apps/lazy.tsx';
+import { claimSend } from '../apps.ts';
 import { loadEmoji } from '../emoji.ts';
 import { isLottie, isSticker, Sticker } from './Sticker.tsx';
 import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
@@ -1151,6 +1153,8 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
     if (reply) ta.current?.focus();
   }, [reply]);
   const submit = () => {
+    // A slash command picked over the box runs instead of the text being sent (ui/apps, docs/apps.md).
+    if (!edit && claimSend(targets.convId)) return;
     const body = text.trim();
     if ((!body && !files.length) || disabledReason || (att.failed && !edit)) return;
     if (edit) {
@@ -1295,6 +1299,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       )}
       <AttachedFiles files={att.files} remove={att.remove} />
       <EmojiComplete ta={ta} convId={targets.convId} network={conv?.network} />
+      {!edit && <SlashCommandsLazy ta={ta} convId={targets.convId} accountId={sender?.id} text={text} />}
       {attaching && (
         <>
           <input

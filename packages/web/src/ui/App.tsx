@@ -12,6 +12,7 @@ import { Icon } from './icons.tsx';
 import { ContextMenuLayer } from './ContextMenu.tsx';
 import { TooltipLayer } from './Tooltip.tsx';
 import { ForwardLayer } from './Forward.tsx';
+import { AppsHostLazy } from './apps/lazy.tsx';
 import { IndexLayer } from './Indexing.tsx';
 import { CatchUp } from './CatchUp.tsx';
 import { HowItSorts } from './HowItSorts.tsx';
@@ -375,6 +376,7 @@ export function App() {
       <ContextMenuLayer />
       <TooltipLayer />
       <ForwardLayer />
+      <AppsHostLazy />
       <IndexLayer />
       <Palette />
       <FindShortcut />

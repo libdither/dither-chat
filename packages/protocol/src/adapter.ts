@@ -26,6 +26,7 @@
 import type { AboutChange, AboutTarget, PersonRelationship } from './about.ts';
 import type { AddAction, AddRef, RelationshipFact, RequestAnswer, RequestFact } from './add.ts';
 import type { AttentionCapability, AttentionCommand } from './attention.ts';
+import type { InteractCapability, InteractCommand, InteractEvent } from './apps.ts';
 import type { CallFact, CallMode, CallState, VoiceMember } from './call.ts';
 import type { GateAnswer, ScheduledEventFact, SpaceGate } from './servers.ts';
 import type { LinkPreviewOut } from './extra.ts';
@@ -130,7 +131,9 @@ export type Capability =
   /** Resets the encrypted session with someone in a direct conversation (the `resetSession` command; Signal's end session). */
   | 'resetSession'
   /** Mentions found late, native mutes, unread by hand, many read at once (attention.ts). */
-  | AttentionCapability;
+  | AttentionCapability
+  /** Bots' buttons, selects, slash commands and forms (apps.ts). */
+  | InteractCapability;
 
 // ---------------------------------------------------------------- facts
 
@@ -492,7 +495,9 @@ export type AdapterEvent =
   | { t: 'gate'; space: string; gate: SpaceGate | null }
   | { t: 'reply'; id: string; ok: true; result?: unknown }
   | { t: 'reply'; id: string; ok: false; error: string }
-  | { t: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; msg: string; data?: unknown };
+  | { t: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; msg: string; data?: unknown }
+  /** interaction, appModal (apps.ts). */
+  | InteractEvent;
 
 // ---------------------------------------------------------------- hub -> adapter
 
@@ -724,6 +729,8 @@ export type AdapterCommand =
   | { t: 'action'; id: string; action: string; args?: unknown }
   | { t: 'shutdown' }
   /** mute, markUnread, markReadMany (attention.ts). */
-  | AttentionCommand;
+  | AttentionCommand
+  /** appCommands, appAutocomplete, interact (apps.ts). */
+  | InteractCommand;
 
 export type AdapterCommandType = AdapterCommand['t'];

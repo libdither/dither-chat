@@ -24,6 +24,7 @@ import { Avatar } from './bits.tsx';
 import { closeMenu, copy, groups, menuPoint, openMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { DEVICE_LEVELS } from './DeviceRules.tsx';
 import { forwarding } from './Forward.tsx';
+import { appsFor, can } from '../apps.ts';
 import { addLook } from './Reactions.tsx';
 import { Icon } from './icons.tsx';
 import { nicknameEntries } from './Nickname.tsx';
@@ -188,6 +189,8 @@ function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): M
       canEdit(m) && { label: 'Edit Message', icon: 'pencil', hint: 'E', track: 'edit', run: () => startEditing(m) },
       live && onReply && { label: 'Reply', icon: 'reply', hint: 'R', track: 'reply', run: onReply },
       forwardable(m) && { label: 'Forward', icon: 'forward', hint: 'F', track: 'forward', run: () => (forwarding.value = m) },
+      // Apps' message commands (docs/apps.md): listed and run from a dialog of their own.
+      live && can(m.conversationId, 'interactContext') && { label: 'Apps', icon: 'gamepad', track: 'message apps', run: () => (appsFor.value = m) },
       thread && { label: 'Open Thread', icon: 'thread', track: 'open thread', run: () => openConv(thread) },
       !!text.trim() && !m.deleted && m.kind !== 'encrypted' && { label: 'Copy Text', icon: 'copy', hint: 'C', track: 'copy text', run: () => copy(plainBody(text, m.network), 'Text copied') },
       { label: 'Copy Message Link', icon: 'link', track: 'copy link', run: () => copy(messageLink(m), 'Link copied') },
