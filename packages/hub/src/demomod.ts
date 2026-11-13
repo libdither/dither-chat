@@ -63,8 +63,14 @@ export class DemoModeration {
 
   /** What this adds to an About: who is gone, admins, roles and labels as changed here, and the account's powers. */
   about(target: P.AboutTarget, about: P.About): P.About {
-    if (this.left.has(target.nativeId)) throw new Error('You are no longer in this group.');
     if (!this.moderated(target, about)) return about;
+    if (this.left.has(target.nativeId)) {
+      // As Signal's apps keep a group you left, read-only.
+      const gone = 'You are no longer in this group.';
+      const fields = Object.fromEntries(Object.entries(about.fields).map(([k, f]) => [k, { ...f!, canEdit: false, reason: gone }])) as P.AboutFields;
+      const no = { can: false, reason: gone };
+      return { ...about, fields, ...(about.adding ? { adding: { ...about.adding, ...no } } : {}), moderation: { remove: no, ban: no, admins: no, end: no }, leaving: no };
+    }
     const p = this.place(this.key(target));
     const admin = this.h.admin(target) && !p.ended;
     const self = this.h.selfId;
@@ -158,8 +164,8 @@ export class DemoModeration {
         if (this.h.network !== 'signal') return null;
         const about = this.about(cmd.target, this.h.about(cmd.target));
         if (about.leaving?.needsAdmin && !cmd.admins?.length) throw new Error('You are the only admin: name who becomes admin first.');
+        // No leave event: the group stays, read-only, with its history (as the Signal adapter does).
         this.left.add(cmd.target.nativeId);
-        this.h.emit({ t: 'leave', kind: 'conversation', nativeId: cmd.target.nativeId });
         return { value: { left: true } satisfies P.LeaveResult };
       }
       default:
