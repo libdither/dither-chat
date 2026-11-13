@@ -21,7 +21,9 @@ import { placeConvs } from './Organize.tsx';
 import { Action, Card, Columns, Facts, Hero, ProfilePage, Tag } from './ProfileShell.tsx';
 import { openConv } from './Sidebar.tsx';
 import { Loading } from './Loader.tsx';
+import { ResetSessionCard } from './ResetSession.tsx';
 import { canIndex, startIndexing } from './Indexing.tsx';
+import { VoicePeople } from './Ringing.tsx';
 
 /** "Seen 12 of 1,287 listed (1%) · 214 online": honest about how little that may be. */
 export function coverageText(c: P.MemberCoverageView): string {
@@ -112,6 +114,7 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
         ) : (
           <p class="pf-empty">{conv?.topic ?? space?.topic ?? `${netName(network)} keeps no description for this ${noun.toLowerCase()}.`}</p>
         )}
+        {conv && (conv.variant === 'voice' || conv.variant === 'stage') && <VoicePeople conversationId={conv.id} size={24} names />}
         {error && <p class="about-error">{error}</p>}
         {!view && !error && <Loading inline label={`Asking ${netName(network)}…`} />}
         {view?.stale && (
@@ -206,6 +209,8 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
       </Card>
 
       {conv && retention.value.adversarial && <KeptHere conversationId={conv.id} />}
+
+      {conv && <ResetSessionCard conv={conv} />}
 
       {view?.invite && (
         <div class="pf-card pf-embed">

@@ -93,6 +93,7 @@ import { noteSeen } from '../activity.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { ForwardCard, forwarding } from './Forward.tsx';
 import { InviteCards } from './InviteCard.tsx';
+import { AttachmentNote, ContactCards, MissingFiles, played, QuoteFallback, SendFailures, StoryReplyLine, withoutCardLines } from './MessageExtras.tsx';
 import { attachmentMenu, conversationMenu, identityMenu, imageMenu, linkMenu, messageMenu, openAttachment, personMenu } from './menus.tsx';
 import { fileFacts, fileIcon, fileKind, openFileViewer, VIEWABLE } from '../files.ts';
 import { desk } from '../desk.ts';
@@ -109,6 +110,7 @@ import { Slices, whenIdle } from '../slices.ts';
 import { calendarOn } from '../plans.ts';
 import { PlanChipLazy } from './calendar/lazy.tsx';
 import { AltBadge, EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voice } from './rich/parts.tsx';
+import { VoicePeople } from './Ringing.tsx';
 
 
 // ------------------------------------------------------------------ header
@@ -460,11 +462,15 @@ function Attachments({ m }: { m: P.MessageView }) {
               <AltBadge alt={a.alt} />
             </a>
           );
-          return veiled(a) ? <Veil a={a}>{img}</Veil> : img;
+          return withNote(a, veiled(a) ? <Veil a={a}>{img}</Veil> : img);
         }
-        if (kind === 'video') return veiled(a) ? <Veil a={a}><video class="att-video" data-att={i} src={a.url} controls preload="metadata" /></Veil> : <video class="att-video" data-att={i} src={a.url} controls preload="metadata" />;
-        if (a.voice) return <Voice a={a} index={i} />;
-        if (kind === 'audio') return <audio class="att-audio" data-att={i} src={a.url} controls preload="metadata" />;
+        if (kind === 'video') {
+          const video = <video class="att-video" data-att={i} src={a.url} controls preload="metadata" onPlay={() => played(m)} />;
+          return withNote(a, veiled(a) ? <Veil a={a}>{video}</Veil> : video);
+        }
+        // A voice message with its waveform and length (docs/rich-messages.md).
+        if (a.voice) return withNote(a, <Voice a={a} index={i} />);
+        if (kind === 'audio') return withNote(a, <audio class="att-audio" data-att={i} src={a.url} controls preload="metadata" onPlay={() => played(m)} />);
         const fk = fileKind(a);
         // A kind with a viewer opens in it (Viewer.tsx); any other opens in its app when the helper or the phone can,
         // else downloads (a type the hub won't show, HTML or SVG, straight away rather than through an empty tab).
@@ -472,19 +478,31 @@ function Attachments({ m }: { m: P.MessageView }) {
           if (VIEWABLE.has(fk)) e.preventDefault(), openFileViewer(a, m);
           else if (desk.value?.files || android?.opensFiles()) e.preventDefault(), openAttachment(a);
         };
-        return (
+        return withNote(
+          a,
           <a class="att-file" data-att={i} data-kind={fk} href={a.url} target="_blank" rel="noreferrer" download={showsInline(a.mime) ? undefined : (a.name ?? true)} onClick={open}>
             <Icon name={fileIcon(fk, a.info?.language)} size={22} />
             <span>
               <b>{a.name ?? 'file'}</b>
               <small>{fileFacts(a)}</small>
             </span>
-          </a>
+          </a>,
         );
       })}
     </div>
   );
 }
+
+/** A file with its voice-note label or caption under it (MessageExtras.tsx), or the file alone. */
+const withNote = (a: P.AttachmentView, el: ComponentChildren) =>
+  a.voiceNote || a.caption ? (
+    <div class="att-with-note">
+      {el}
+      <AttachmentNote a={a} />
+    </div>
+  ) : (
+    el
+  );
 
 function Embeds({ m }: { m: P.MessageView }) {
   if (!m.embeds.length) return null;
@@ -626,6 +644,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           <span>{target.deleted ? 'Message deleted' : plainBody(target.body, target.network).slice(0, 120) || 'Attachment'}</span>
         </button>
       )}
+      {!target && m.quote && <QuoteFallback m={m} />}
       <div class="msg-gutter">
         {grouped ? (
           <span class="msg-time-hover" title={hover ? fullTime(m.ts) : undefined}>
@@ -677,13 +696,17 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
         ) : (
           <>
             <RichHead m={m} />
-            <Body m={m} tail={ticks} />
+            <StoryReplyLine m={m} />
+            <Body m={m.contacts ? withoutCardLines(m) : m} tail={ticks} />
             <Attachments m={m} />
+            <MissingFiles m={m} />
+            <ContactCards m={m} />
             <Embeds m={m} />
             <InviteCards m={m} body={m.body} />
             <RichFoot m={m} />
           </>
         )}
+        <SendFailures m={m} />
         {ticks && (!m.body || m.deleted) && <span class="msg-marks">{ticks}</span>}
         {grouped && (m.editedTs || m.edits) && <Edited m={m} />}
         {grouped && (m.pinned || m.rich?.silent || m.rich?.marks) && (
@@ -1474,6 +1497,7 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
       ) : (
         <>
           {voice && <div class="voice-note"><Icon name="voice" size={14} /> Voice isn't relayed. This shows the channel's text chat.</div>}
+          {voice && <VoicePeople conversationId={c.id} size={22} names class="voice-here" />}
           <NotStartedNote c={c} />
           <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} onReply={setReply} firstUnreadTs={unreadAt} focus={focus} />
         </>

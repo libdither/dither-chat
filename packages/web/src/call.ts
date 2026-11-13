@@ -78,8 +78,17 @@ export function canCall(c: P.ConversationView): string | null {
   return accounts[0]?.id ?? null;
 }
 
-/** Start from a click: the microphone prompt and audio playback both need the gesture. */
-export async function startCall(conversationId: string, accountId: string, mode: P.CallMode) {
+/**
+ * A direct or group conversation an online account can start a call in, ringing the others (capability 'ringCalls').
+ */
+export function canRing(c: P.ConversationView): string | null {
+  if (c.shape !== 'direct' && c.shape !== 'group') return null;
+  const a = c.vantages.map((v) => db.accounts.get(v.accountId)).find((a) => !!a && a.capabilities.includes('calls') && a.capabilities.includes('ringCalls') && a.status === 'online');
+  return a?.id ?? null;
+}
+
+/** Start from a click: the microphone prompt and audio playback both need the gesture. `ring`: ring the others (a DM or group). */
+export async function startCall(conversationId: string, accountId: string, mode: P.CallMode, ring = false) {
   if (activeCall.value && activeCall.value.phase !== 'ended') leaveCall();
   speaker = new Audio();
   speaker.autoplay = true;
@@ -94,7 +103,7 @@ export async function startCall(conversationId: string, accountId: string, mode:
   }
   const sock = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/call`);
   ws = sock;
-  sock.onopen = () => sock.send(JSON.stringify({ op: 'join', account: accountId, conversation: conversationId, mode } satisfies P.CallClientMessage));
+  sock.onopen = () => sock.send(JSON.stringify({ op: 'join', account: accountId, conversation: conversationId, mode, ...(ring ? { ring: true } : {}) } satisfies P.CallClientMessage));
   sock.onmessage = (e) => onServer(JSON.parse(e.data) as P.CallServerMessage);
   sock.onclose = () => {
     if (ws === sock) end(activeCall.value?.note ?? 'Call ended');

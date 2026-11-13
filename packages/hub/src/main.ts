@@ -30,6 +30,7 @@ import { StartupTrace } from './startup.ts';
 import { noteWork, StallWatch } from './stalls.ts';
 import { CalendarLink, calendarChain, calendarUrl, ReminderDelivery, REMINDER_RULE_ID } from './calendar.ts';
 import { inQuietHours } from './triage.ts';
+import { onRing, ringMuted, ringWords, sweepCalls } from './callstate.ts';
 
 // Each part of the start, logged in one line once requests are answered (startup.ts).
 const startup = new StartupTrace();
@@ -223,6 +224,25 @@ const reminders = new ReminderDelivery({
   push: (title, body, extra, skip, level) => push.notify(title, body, undefined, extra, skip, level),
 });
 
+/**
+ * A call ringing you (callstate.ts, docs/calls.md "Ringing"): once, as an alert that sounds on every device, with
+ * Answer and Decline; taken back from the devices that can take it back (the Android app) when it stops ringing.
+ * Quiet hours, a mute that covers it and device rules keep it off; the ring card in open pages shows either way.
+ */
+onRing(store, (n) => {
+  const c = n.call;
+  const tag = `call:${c.id}`;
+  if (n.kind === 'stop') {
+    push.clear(tag).catch((e) => console.error('push clear failed', e));
+    return;
+  }
+  if (ringMuted(store, c) || inQuietHours(store.quietHours(), Date.now())) return;
+  const { title, body } = ringWords(store, c);
+  const look = store.notifyLook(c.conversationId, undefined);
+  const call = { id: c.id, tag, canAnswer: c.canAnswer, canDecline: c.canDecline };
+  push.notify(title, body, c.conversationId, { ...look, call, level: 'push', tier: 'push' }, devices.quietOn(c.conversationId, false), 'push').catch((e) => console.error('push failed', e));
+});
+
 // Read anywhere since its notification went out: off the phones. New requests that settled: judged, once each.
 setInterval(() => {
   noteWork('notifications: read and requests');
@@ -233,6 +253,8 @@ setInterval(() => {
   // List rows 12 hours old leave the phones; held ones whose chat was read are over (phonelist.ts).
   for (const cid of phone.sweep()) push.clear(cid).catch((e) => console.error('push clear failed', e));
   for (const n of requestNotices.due()) deliverRequest(n);
+  // Rings the network left hanging stop, as missed (callstate.ts).
+  sweepCalls(store);
 }, 5_000);
 
 // Upkeep (housekeeping.ts): a nightly copy of the database, the media cache under its size, logs rotated, and triage

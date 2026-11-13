@@ -49,7 +49,7 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 | Channel/role mention rendering | `<#id>`, `<@&id>`, `<id:guide>`, `<id:customize>` | `<#id>` rendered; role mentions likely raw | d | L | **done** (net-gaps) |
 | Interaction metadata ("X used /cmd") | `interaction_metadata`, MESSAGE_INTERACTION_DATA, LOAD_MESSAGE_INTERACTION_DATA_SUCCESS | type 20/23 treated as plain | d | L | Who ran the command is lost. **done** (net-gaps) |
 | New system message types 25–56 | MessageType enum (STAGE_*, POLL_RESULT handled; GUILD_JOIN_REQUEST_*, VOICE_HANGOUT_INVITE, PURCHASE_NOTIFICATION, CHAT_WALLPAPER_SET…) | fall back to generic | d | L | Add sentences for stage start/end/topic, hangout invite and join-request outcomes. **done** (net-gaps): 13–17, 22, 25–41, 45, 64, 66 and the notices have words |
-| DM call messages | type 3 CALL with `call.ended_timestamp`/participants | system line | d | M | ROADMAP's "calls without media" wants missed/answered calls and duration |
+| DM call messages | type 3 CALL with `call.ended_timestamp`/participants | system line | d | M | ROADMAP's "calls without media" wants missed/answered calls and duration **done** (net-gaps): "📞 Missed call", "📞 Call, 12 min with …" from call.participants and ended_timestamp |
 | Activity invites in messages | `activity`, `application` on message; VOICE_HANGOUT_INVITE | not picked | a | L | **done** (net-gaps): a line under the message; answering is on Discord |
 | Message link previews (jump to Discord message) | message links unfurl to a quoted preview in the client | link stays a link | a | L | **done** (net-gaps): a stored message shows as a quote; nothing is fetched |
 | Guild "official" messages | IS_GUILD_OFFICIAL, GUILD_OFFICIAL_MESSAGES, exp `2026-03_guild_official_messages` | not marked | a | L | **done** (net-gaps) |
@@ -126,7 +126,7 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 | Announcement channel follow | CHANNEL_FOLLOWERS, CHANNEL_FOLLOWER_CREATED | none | a | L | |
 | Channel permission overwrites | CHANNEL_PERMISSIONS_OVERWRITE | read (canAll / everyoneDenies in About) | b | L | Moderator feature |
 | Channel create/delete/reorder, categories | GUILD_CHANNELS post/patch | none | a | L | ROADMAP: reorder later, low |
-| Voice channel status ("playing X") | UPDATE_VOICE_CHANNEL_STATUS, VOICE_CHANNEL_STATUS_UPDATE | none | a | L | |
+| Voice channel status ("playing X") | UPDATE_VOICE_CHANNEL_STATUS, VOICE_CHANNEL_STATUS_UPDATE | none | a | L | **done** (net-gaps): VOICE_CHANNEL_STATUS_UPDATE and CHANNEL_INFO, shown with the channel's people |
 | Webhooks | CHANNEL_WEBHOOKS, GUILD_WEBHOOKS, WEBHOOKS_UPDATE | none | a | L | |
 | Linked lobbies / game SDK DMs | CHANNEL_LINKED_LOBBY, DM_SDK 18, CHANNEL_LINKED_TO_LOBBY type 49 | none | a | L | |
 | Channel icons / emoji in channel names | CHANNEL_ICON | none | a | L | |
@@ -137,16 +137,16 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 
 | Feature | Discord has | dither has | Class | Value | Notes |
 |---|---|---|---|---|---|
-| Who is in which voice channel (not joined) | VOICE_STATE_UPDATES, VoiceStateStore | only participants of the call you are in (watchCall) | a | H | ROADMAP "who is in Discord voice". Arrives via the gateway for guilds the client has loaded: passive, no request. Same privacy class as presence (adversarial gate) |
-| Incoming DM / group call ringing | CALL_CREATE/UPDATE/DELETE (with `ringing`), CALL_RING, CALL_STOP_RINGING, INCOMING_CALL_MOVE | none | a | H | ROADMAP's "ringing push". Passive subscribe; answer = existing `call join` |
-| Start a DM call (ring others) | CALL_RING, opcode 4 into a DM | call join exists for voice-variant conversations | d | M | Check DMs offer Call and that ring is sent |
+| Who is in which voice channel (not joined) | VOICE_STATE_UPDATES, VoiceStateStore | only participants of the call you are in (watchCall) | a | H | ROADMAP "who is in Discord voice". Arrives via the gateway for guilds the client has loaded: passive, no request. Same privacy class as presence (adversarial gate) **done** (net-gaps): behind the adversarial voice setting, on the channel's row, page and chat (calls.md "Voice channels") |
+| Incoming DM / group call ringing | CALL_CREATE/UPDATE/DELETE (with `ringing`), CALL_RING, CALL_STOP_RINGING, INCOMING_CALL_MOVE | none | a | H | ROADMAP's "ringing push". Passive subscribe; answer = existing `call join` **done** (net-gaps): one alert per call, Answer and Decline (stopRinging), stops on any device (calls.md "Ringing") |
+| Start a DM call (ring others) | CALL_RING, opcode 4 into a DM | call join exists for voice-variant conversations | d | M | Check DMs offer Call and that ring is sent **done** (net-gaps): Call in a DM or group DM joins, then CallActions.ring |
 | Video (camera) | VOICE_STATE `self_video`, MediaEngine video | `video` flag read; no video | d | M | calls.md: video not done |
 | Go Live / screen share, watching streams | STREAM_CREATE/WATCH/DELETE ops 18–22, STREAM_PREVIEW, STREAM_* actions | none | a | M | Watching a friend's stream is a common use |
 | Stage channels | STAGE_INSTANCE_*, STAGE_INSTANCES, message types 27–31, raise hand | mapped as 'stage' variant | d | L | Speaker/audience roles, raise hand absent |
 | Soundboard | SEND_SOUNDBOARD_SOUND, GUILD_SOUNDBOARD_*, opcode 31 | none | a | L | |
 | Voice channel effects (emoji bursts) | VOICE_CHANNEL_EFFECTS, VOICE_CHANNEL_EFFECT_SEND | none | a | L | |
 | Activities (embedded apps in calls) | EMBEDDED_ACTIVITY_*, ACTIVITIES, ACTIVITY_CHANNEL_LAUNCH | none | a | L | Would need the app iframe |
-| Voice hangouts / voice history / "user duration" | CHANNEL_VOICE_HANGOUT, CHANNEL_VOICE_HISTORY, exps `2026-04_voice_user_duration`, `2026-02_past_vc_activity_messages` | none | a | L | Voice history could feed dither's activity log |
+| Voice hangouts / voice history / "user duration" | CHANNEL_VOICE_HANGOUT, CHANNEL_VOICE_HISTORY, exps `2026-04_voice_user_duration`, `2026-02_past_vc_activity_messages` | none | a | L | Voice history could feed dither's activity log **not built**: voice history is a request of ours (GET /channels/{id}/voice-history), not something the client is sent; the voice log under the adversarial setting covers what is passive |
 | Custom call sounds | CUSTOM_CALL_SOUNDS | none | a | L | |
 | Clips | CLIPS_*, CLIP_FEEDBACK | none (desktop-app feature) | a | L | |
 | Server mute/deafen/move members (mod) | GUILD_MEMBER patch `mute`/`deaf`/`channel_id` | none | a | L | |
