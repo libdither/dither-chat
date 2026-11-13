@@ -17,6 +17,8 @@ import { applyPlanEvent, calendarAt, calendarFromBootstrap, loadPlans } from './
 /** What components read to re-render: `rev` for the lists, `metaRev` for names and settings, one per timeline (versions.ts). */
 export { changed, dataVersion, mailRev, metaRev, rev, timelineChanged, timelineRev } from './versions.ts';
 export const connected = signal(false);
+/** Notices on this hub (docs/notices.md): whether it may read them; null when it has none. */
+export const noticesBoot = signal<P.NoticesBoot | null>(null);
 export const loaded = signal(false);
 
 /** The hub's state as this client knows it; syncmodel.ts says how bootstraps and events change it. */
@@ -266,6 +268,7 @@ export function applyBootstrap(b: P.Bootstrap) {
   applyBootstrapTo(db, b);
   // A calendar beside the hub (plans.ts, docs/calendar.md): its plans once the socket is up (now, if it is).
   if (calendarFromBootstrap(b) && ws?.readyState === WebSocket.OPEN) void loadPlans();
+  noticesBoot.value = b.notices ?? null;
   loaded.value = true;
   changed('meta');
   mailChanged();
@@ -436,23 +439,26 @@ export const showsHere = (ev: Extract<P.ClientEvent, { t: 'notify' }>) => (!ev.l
 function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
   if (!showsHere(ev)) return;
   const r = route.value;
-  const here = (!!ev.conversationId && 'conv' in r && r.conv === ev.conversationId) || (!!ev.mailThreadId && r.view === 'mail' && r.thread === ev.mailThreadId);
+  const here = (!!ev.conversationId && 'conv' in r && r.conv === ev.conversationId) || (!!ev.mailThreadId && r.view === 'mail' && r.thread === ev.mailThreadId) || (!!ev.noticeId && r.view === 'notices');
   const viewing = here && document.visibilityState === 'visible';
   if (viewing) return;
   // A calendar reminder (docs/calendar.md) opens the calendar where it is.
   const cal = ev.calendar;
-  const openCal = cal ? () => go({ view: 'calendar', at: calendarAt(cal.open) }) : undefined;
-  toast({ kind: 'notify', title: ev.title, body: ev.body, conversationId: ev.conversationId, reasons: ev.reasons, icon: ev.icon, network: ev.network, ...(openCal ? { action: openCal } : {}) }, 8000);
+  // A notice (docs/notices.md) opens under Notices; its conversation is its group, not a chat.
+  const notice = ev.noticeId;
+  const open = cal ? () => go({ view: 'calendar', at: calendarAt(cal.open) }) : notice ? () => go({ view: 'notices', notice }) : undefined;
+  const conversationId = notice ? undefined : ev.conversationId;
+  toast({ kind: 'notify', title: ev.title, body: ev.body, conversationId, reasons: ev.reasons, icon: ev.icon, network: ev.network, ...(open ? { action: open } : {}) }, 8000);
   if (!prefs.value.pushEnabled && prefs.value.notifications && 'Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
     // A group's own picture goes over the sender's, as in a push (delivery.ts conv).
     const c = ev.conversationId ? db.conversations.get(ev.conversationId) : undefined;
     const conv = c && c.shape !== 'direct' && c.avatar ? { shape: c.shape === 'channel' || c.shape === 'thread' ? 'channel' : 'group', icon: c.avatar } : undefined;
     const show = (reg?: ServiceWorkerRegistration) => {
       // The worker draws the picture and the network's badge, as it does for a push (sw.js).
-      if (reg?.active) return reg.active.postMessage({ t: 'notify', d: { title: ev.title, body: ev.body, conversationId: ev.conversationId, inbox: !ev.conversationId && !cal, icon: ev.icon, network: ev.network, nid: ev.nid, ...(conv ? { conv } : {}), ...(cal ? { calendar: cal } : {}) } });
-      const opts = { body: ev.body, tag: cal ? `calendar:${cal.eventKey}` : (ev.conversationId ?? 'dither-inbox'), icon: conv?.icon ?? ev.icon, data: { conversationId: ev.conversationId, inbox: !ev.conversationId && !cal, calendar: cal } };
+      if (reg?.active) return reg.active.postMessage({ t: 'notify', d: { title: ev.title, body: ev.body, conversationId: ev.conversationId, inbox: !ev.conversationId && !cal, icon: ev.icon, network: ev.network, nid: ev.nid, ...(conv ? { conv } : {}), ...(cal ? { calendar: cal } : {}), ...(notice ? { noticeId: notice } : {}) } });
+      const opts = { body: ev.body, tag: cal ? `calendar:${cal.eventKey}` : (ev.conversationId ?? 'dither-inbox'), icon: conv?.icon ?? ev.icon, data: { conversationId: ev.conversationId, inbox: !ev.conversationId && !cal, calendar: cal, notice } };
       if (reg) reg.showNotification(ev.title, opts);
-      else new Notification(ev.title, opts).onclick = openCal ?? (() => go({ view: 'inbox', conv: ev.conversationId }));
+      else new Notification(ev.title, opts).onclick = open ?? (() => go({ view: 'inbox', conv: ev.conversationId }));
     };
     // Not every browser has service workers, and none has them outside a secure context.
     if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistration().then(show, () => show());

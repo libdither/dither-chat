@@ -38,6 +38,7 @@ export function isPage(r: Route): boolean {
     case 'profile':
     case 'directory':
     case 'requests':
+    case 'notices':
     case 'model':
       return true;
     default:
@@ -69,7 +70,8 @@ export function ownList(r: Route, places: Places): Route {
   switch (r.view) {
     case 'inbox':
     case 'requests':
-      // A chat or a mail thread opened in the inbox (a notification opens one there too), and Requests, a row in it.
+    case 'notices':
+      // A chat or a mail thread opened in the inbox (a notification opens one there too), and Requests and Notices, rows in it.
       return { view: 'inbox' };
     case 'people':
       return { view: 'people' };
@@ -107,8 +109,8 @@ export const listKey = (r: Route, places: Places) => href(ownList(r, places));
  */
 export const listUnder = (r: Route, places: Places): Route | null => (isPage(r) && !opensOver(r) ? ownList(r, places) : null);
 
-/** A page's address without the message it is scrolled to, or the request it shows. */
-const bare = (r: Route) => href(r.view === 'requests' ? { view: 'requests' } : 'msg' in r ? { ...r, msg: undefined } : r);
+/** A page's address without the message it is scrolled to, or the request or notice it shows. */
+const bare = (r: Route) => href(r.view === 'requests' ? { view: 'requests' } : r.view === 'notices' ? { view: 'notices' } : 'msg' in r ? { ...r, msg: undefined } : r);
 
 /**
  * The list entry to write before page `to` when going there `from` a route (null for an entry made outside the

@@ -65,9 +65,10 @@ const originOf = (endpoint: string) => {
 /** A phone, going by a registration's label ("Android app, Pixel", "Chrome on Android", "Safari on iOS"). */
 const PHONE = /android|iphone|ipad|\bios\b/i;
 
-/** Where a tap on an ntfy topic message opens, as a hash: a request under Requests, a reminder in the calendar. */
+/** Where a tap on an ntfy topic message opens, as a hash: a request under Requests, a notice under Notices, a reminder in the calendar. */
 export function clickHash(extra: Record<string, unknown>): string | undefined {
   if (typeof extra.requestId === 'string') return `#/requests/${extra.requestId}`;
+  if (typeof extra.noticeId === 'string') return `#/notices/${extra.noticeId}`;
   const cal = extra.calendar as { open?: unknown } | undefined;
   if (cal && typeof cal.open === 'string') return `#/calendar/${cal.open.replace(/^#\/?/, '')}`;
   return undefined;

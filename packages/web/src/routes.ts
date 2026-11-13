@@ -21,6 +21,8 @@ export type Route =
   | { view: 'mail'; list?: string; thread?: string }
   /** Requests waiting on you (docs/add.md), `request` the one to show. */
   | { view: 'requests'; request?: string }
+  /** What your accounts and services told you (docs/notices.md), `notice` the one to show. */
+  | { view: 'notices'; notice?: string }
   /** dither-calendar beside the hub (docs/calendar.md): `at` is the calendar's own hash without "#/", query and all. */
   | { view: 'calendar'; at?: string };
 
@@ -68,6 +70,8 @@ export function parseHash(h = location.hash): Route {
       return { view: 'inbox', conv: p[1], msg: q.get('m') ?? undefined };
     case 'requests':
       return { view: 'requests', request: p[1] };
+    case 'notices':
+      return { view: 'notices', notice: p[1] };
     case 'mail':
       // #/mail, #/mail/l/<list>, #/mail/t/<thread>, #/mail/l/<list>/t/<thread>
       return p[1] === 'l' ? { view: 'mail', list: p[2], thread: p[3] === 't' ? p[4] : undefined } : { view: 'mail', thread: p[1] === 't' ? p[2] : undefined };
@@ -109,6 +113,8 @@ export function href(r: Route): string {
       return `#/mail${r.list ? `/l/${e(r.list)}` : ''}${r.thread ? `/t/${e(r.thread)}` : ''}`;
     case 'requests':
       return `#/requests${r.request ? `/${e(r.request)}` : ''}`;
+    case 'notices':
+      return `#/notices${r.notice ? `/${e(r.notice)}` : ''}`;
     case 'calendar':
       return r.at ? `#/calendar/${r.at}` : '#/calendar';
   }

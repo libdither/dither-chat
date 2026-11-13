@@ -21,7 +21,7 @@ overrides the path), so dither-chat does not depend on dither-accounts.
 ## What the hub asks for
 
 On its first start in this mode, the hub registers as the app `dither-chat` and keeps `{ app, token }` in
-`$DITHER_DATA/accounts-app.json` (0600). It asks for three things:
+`$DITHER_DATA/accounts-app.json` (0600). It asks for four things:
 
 - **`chat` at manage, on all accounts:** read, write and settings.
 - **`accounts` at manage, for discord, signal, matrix and whatsapp:** add, sign in, start, stop and remove the chat
@@ -30,6 +30,10 @@ On its first start in this mode, the hub registers as the app `dither-chat` and 
   ([mail.md](mail.md)). Mail accounts are added on the manager's page, never by the hub. A hub registered before mail
   asks for it once on its next start (`mailToAsk` in remote.ts); Mail shows whether the request waits for you or was
   declined, with "Ask again".
+- **`notifications` at write, on all accounts:** what your accounts and services tell you (GitHub, dither-accounts'
+  own word about an account), ranked with your chats, and read there when you read them here
+  ([notices.md](notices.md)). Asked once like mail (`noticesToAsk`); an account with both chat and notifications
+  sends its events to both.
 
 Approve them on the manager's page or with `bun ~/Projects/dither-accounts/packages/manager/src/cli.ts apps` and
 `… approve <request>`.

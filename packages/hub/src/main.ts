@@ -10,6 +10,8 @@ import { FakeMailBackend, MailHub, ManagerMailBackend } from './mail/index.ts';
 import { mailPeople } from './mail/people.ts';
 import { mailAttention } from './mail/attention.ts';
 import { mailTriage, type MailNotice } from './mail/triage.ts';
+import { Notices, type NoticeDelivery } from './notices/index.ts';
+import { FakeNoticeSource, seedDemoNotices } from './notices/fake.ts';
 import { Delivery } from './delivery.ts';
 import { Notifier } from './notify.ts';
 import { listByPrior, PhoneList, phoneListMode } from './phonelist.ts';
@@ -109,9 +111,10 @@ devices.otherChain = (id) => otherChain(id);
  * calendar as a network of its own, `network:calendar`), a mail thread once mail is on (below).
  */
 let mailChain: ((id: string) => string[] | null) | null = null;
+let noticeChain: ((id: string) => string[] | null) | null = null;
 function otherChain(id: string): string[] | null {
   if (id.startsWith('req_')) return requestChain(store.db, id);
-  return calendarChain(id) ?? mailChain?.(id) ?? null;
+  return calendarChain(id) ?? mailChain?.(id) ?? noticeChain?.(id) ?? null;
 }
 attention.activity = activity;
 // Message embeddings and jev's answers as content features (docs/embeddings.md): made in the background, never blocking.
@@ -206,6 +209,7 @@ async function judgeLate(id: string) {
 let notifier: Notifier | null = null;
 const deliver: Notifier['message'] = (...a) => notifier?.message(...a);
 const deliverMail = (n: MailNotice) => notifier?.mail(n);
+const deliverNotice = (n: NoticeDelivery) => notifier?.notice(n) ?? false;
 
 /** A request's row on the list sorts as something the network would have notified you about. */
 const REQUEST_IMPORTANCE = 0.8;
@@ -283,7 +287,8 @@ setInterval(
     span('votes and held alerts', {}, () => {
       votes.daily();
       const held = triage.takeHeldSummary();
-      if (held) deliver(held.title, held.body, held.conversationId, held.messageId, ['Quiet hours ended']);
+      // The last held one may be a notice: its tap opens Notices, not a chat.
+      if (held) deliver(held.title, held.body, held.conversationId, held.messageId, ['Quiet hours ended'], held.messageId.startsWith('ntc_') ? { noticeId: held.messageId } : {});
     }),
   60_000,
 );
@@ -291,7 +296,7 @@ setInterval(
 const push = new PushService(store, loadVapidKeys(dataDir), process.env.DITHER_PUSH_SUBJECT ?? process.env.DITHER_PUBLIC_URL ?? 'https://github.com/libdither/dither-chat');
 // Which list rows reach the phones (docs/notifications.md, "The phone's list"). DITHER_PHONE_LIST=shadow sends them all
 // and logs what it would have held; off, as before it.
-const phone = new PhoneList(store.db, { mode: phoneListMode(process.env.DITHER_PHONE_LIST), kept: (now) => triage.marked(now).convs, readTs: (cid) => delivery.readTs(cid) });
+const phone = new PhoneList(store.db, { mode: phoneListMode(process.env.DITHER_PHONE_LIST), kept: (now) => triage.marked(now).convs, readTs: (cid) => delivery.readAllTs(cid) });
 activity.noted = (w) => phone.noted(w);
 if (phone.mode !== 'on') console.log(`phone list: ${phone.mode} (DITHER_PHONE_LIST)`);
 
@@ -349,8 +354,19 @@ const mailTriaged = mailTriage(mail);
 if (mailTriaged) {
   mailTriaged.connect({ store, triage, votes, deliver: (n) => deliverMail(n) });
   mailChain = (id) => mailTriaged.chain(id);
-  delivery.other = mailTriaged;
 }
+// Notices (docs/notices.md): dither-accounts' notifications interface, or a fake source in a demo world; off otherwise.
+const demoNotices = demo ? new FakeNoticeSource() : null;
+const noticeLink = demoNotices ?? (sup instanceof RoutedSupervisor ? { call: (a: string, op: string, input: Record<string, unknown>, t: number) => sup.callNotices(a, op, input, t), askAgain: () => sup.askNoticesAgain() } : null);
+const notices = noticeLink ? new Notices({ store, triage, votes, link: noticeLink, deliver: (n) => deliverNotice(n), managerUrl: accountsPage, access: demoNotices ? 'granted' : 'unreachable' }) : null;
+if (notices) noticeChain = (id) => notices.chain(id);
+if (sup instanceof RoutedSupervisor && notices) sup.notices = notices;
+// Mail threads and groups of notices: their lines, and when they were read (delivery.ts).
+delivery.other = {
+  gather: (id, m) => mailTriaged?.gather(id, m) ?? notices?.gather(id, m) ?? null,
+  readTs: (id) => mailTriaged?.readTs(id) ?? notices?.readTs(id) ?? null,
+  readAllTs: (id) => mailTriaged?.readTs(id) ?? notices?.readAllTs(id) ?? null,
+};
 // Notifications sent before a restart still leave the phones when their chat is read (delivery.ts).
 delivery.restore();
 
@@ -381,6 +397,7 @@ const server = new HubServer(store, sup, triage, {
   votes,
   archiveMedia: !demo,
   mail,
+  notices: notices ?? undefined,
   calendar,
   onReminder: (n) => reminders.deliver(n),
   turn: process.env.DITHER_TURN_URLS && process.env.DITHER_TURN_SECRET ? { urls: process.env.DITHER_TURN_URLS.split(',').map((u) => u.trim()), secret: process.env.DITHER_TURN_SECRET } : undefined,
@@ -420,6 +437,10 @@ if (demo && flag('adversarial') && !store.retention().adversarial) store.setRete
 if (demo && !store.accounts().some((a) => a.demo)) createDemoAccounts(store);
 if (demoMail && !mail.store.account(DEMO_MAIL_ACCOUNT)) seedDemoMail(demoMail);
 else if (demoMail) seedDemoMail(demoMail, mail.store.account(DEMO_MAIL_ACCOUNT)!.created_at);
+if (demoNotices && notices) {
+  seedDemoNotices(demoNotices);
+  demoNotices.attach(notices);
+}
 startup.mark('server');
 // Before the manager's first account list, so mail hears it.
 mail.start();

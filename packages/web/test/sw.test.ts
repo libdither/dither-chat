@@ -347,6 +347,18 @@ test('a request (docs/add.md): silent, a notification of its own, and a tap open
   expect(w.opened).toEqual(['/#/requests/req_abc?n=n7']);
 });
 
+test('a notice (docs/notices.md): one notification per group, its marks, and a tap opens it under Notices', async () => {
+  const w = worker();
+  await w.push({ title: 'GitHub · o/r', body: 'Secret leaked', conversationId: 'ntg_g', noticeId: 'ntc_a', messageId: 'ntc_a', network: 'notice', tier: 'push', level: 'push', alert: true, nid: 'n9', device: 'd' });
+  expect(w.shown.at(-1)!.o).toMatchObject({ tag: 'ntg_g', renotify: true, silent: false });
+  expect(w.shown.at(-1)!.o.actions.map((a: { action: string }) => a.action)).toEqual(['wrong']);
+  await w.click(w.shown.at(-1)!.o.data);
+  expect(w.opened).toEqual(['/#/notices/ntc_a?n=n9']);
+  // A group's id without its notice (quiet hours' summary): Notices.
+  await w.click({ conversationId: 'ntg_g' });
+  expect(w.opened.at(-1)).toBe('/#/notices');
+});
+
 test('a calendar reminder (docs/calendar.md): one per event, Join opens the meeting, a tap opens the calendar there', async () => {
   const w = worker();
   const calendar = { open: '#/day/2026-11-14', eventKey: 'evt_1', reminderId: 'evt_1|1|10', meetingUrl: 'https://meet.example/abc' };

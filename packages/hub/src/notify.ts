@@ -1,11 +1,12 @@
 /**
- * Sending a decided message to the devices (docs/notifications.md, "One notification per conversation"): chat's and
- * mail's. main.ts makes one Notifier and hands it what it sends through.
+ * Sending a decided message to the devices (docs/notifications.md, "One notification per conversation"): chat's,
+ * mail's and notices'. main.ts makes one Notifier and hands it what it sends through.
  */
 import type { ActivityStore } from './activity.ts';
 import type { Delivery } from './delivery.ts';
 import type { Devices } from './devices.ts';
 import type { MailNotice } from './mail/triage.ts';
+import type { NoticeDelivery } from './notices/index.ts';
 import type { PhoneList } from './phonelist.ts';
 import type { PushService } from './push.ts';
 import type { HubServer } from './server.ts';
@@ -95,5 +96,29 @@ export class Notifier {
       .then(() => push.notify(n.title, n.body, n.threadId, { ...n.look, ...mail, messageId: n.messageId, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) }, skip, level))
       .then((r) => nid && activity.sent(nid, r))
       .catch((e) => console.error('push failed', e));
+  }
+
+  /**
+   * A notice's notification (notices/, docs/notices.md), as mail's: an alert, or a row on the list through the
+   * phone's list; one notification per group (its repository, its app: the push's conversation), the devices whose
+   * rules keep Notices, that account or that group off left out, the marks from the notification itself. The push
+   * carries `noticeId`, which the worker and the app open under Notices. Returns whether it went out.
+   */
+  notice(n: NoticeDelivery): boolean {
+    const { activity, devices, push, delivery, server, phone } = this.d;
+    if (n.level === 'digest' && !delivery.listDue(n.group)) return false;
+    if (n.level !== 'digest') phone.higher(n.group);
+    else if (!phone.list(n.group, n.prior, Date.now()).send) return false;
+    const nid = activity.notification({ kind: 'message', messageId: n.id, conversationId: n.group });
+    const quiet = devices.quietOn(n.group, n.addressed);
+    const level = n.level === 'push' ? 'push' : 'quiet';
+    server.notify({ t: 'notify', messageId: n.id, conversationId: n.group, noticeId: n.id, title: n.title, body: n.body, reasons: n.reasons, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(n.level !== 'push' ? { level: n.level } : {}) });
+    const skip = n.level === 'push' ? quiet : [...quiet, ...push.desktops()];
+    const grouped = delivery.plan(n.group, n.id, n.level, n.addressed);
+    this.last = push
+      .notify(n.title, n.body, n.group, { ...n.look, noticeId: n.id, messageId: n.id, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) }, skip, level)
+      .then((r) => nid && activity.sent(nid, r))
+      .catch((e) => console.error('push failed', e));
+    return true;
   }
 }

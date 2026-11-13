@@ -322,7 +322,7 @@ async function show(d) {
     silent: !alert,
     icon: look.icon,
     badge: look.badge,
-    data: { conversationId: d.conversationId, request: d.requestId, inbox: d.inbox, test: d.test, replyTo: d.replyTo, nid: d.nid, device: d.device, messageId: d.messageId, calendar: cal },
+    data: { conversationId: d.conversationId, request: d.requestId, notice: d.noticeId, inbox: d.inbox, test: d.test, replyTo: d.replyTo, nid: d.nid, device: d.device, messageId: d.messageId, calendar: cal },
     actions: actions.slice(0, self.Notification?.maxActions ?? 2),
   });
   return tag;
@@ -411,7 +411,11 @@ self.addEventListener('notificationclick', (e) => {
   // The push's id rides in the hash, so the page can say which visit the tap led to (activity.ts).
   const nid = e.notification.data?.nid;
   const request = e.notification.data?.request;
-  const target = cal ? '/#/calendar/' + String(cal.open).replace(/^#\/?/, '') : (conv ? `/#/inbox/c/${conv}` : request ? `/#/requests/${request}` : inbox ? '/#/inbox' : '/') + (nid && (conv || request || inbox) ? `?n=${encodeURIComponent(nid)}` : '');
+  // A notice (docs/notices.md) opens under Notices, not its group's "conversation".
+  const notice = e.notification.data?.notice;
+  // A group of notices without its notice (quiet hours' summary from an older hub) opens Notices too.
+  const noticesOnly = !notice && typeof conv === 'string' && conv.startsWith('ntg_');
+  const target = cal ? '/#/calendar/' + String(cal.open).replace(/^#\/?/, '') : (notice ? `/#/notices/${notice}` : noticesOnly ? '/#/notices' : conv ? `/#/inbox/c/${conv}` : request ? `/#/requests/${request}` : inbox ? '/#/inbox' : '/') + (nid && (notice || conv || request || inbox) ? `?n=${encodeURIComponent(nid)}` : '');
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (cs) => {
       await outcome(e.notification.data, 'tapped');

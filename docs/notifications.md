@@ -483,6 +483,13 @@ list or below it, by importance. Importance starts at 0.8 for someone you corres
 you in. Bulk mail is never triaged. Mail is on How it sorts with an envelope and notifies with one notification per
 thread; quiet hours hold its alerts and device rules hold it as they hold chat.
 
+## Notices
+
+What your accounts and services tell you through dither-accounts (GitHub's notifications, the manager's word about an
+account that needs you) is triaged with the same model and marks ([notices.md](notices.md)): no Conversation tier;
+the chances start from the source's urgency (high: an alert; normal: the local model reads it; low: below the list)
+and move with your marks. One notification per group (a repository, an app), opening `#/notices/<id>`.
+
 ## Requests
 
 A new friend, follow or join request, an invite, or a message request, from someone you know (they have a person
