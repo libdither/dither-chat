@@ -413,7 +413,9 @@ self.addEventListener('notificationclick', (e) => {
   const request = e.notification.data?.request;
   // A notice (docs/notices.md) opens under Notices, not its group's "conversation".
   const notice = e.notification.data?.notice;
-  const target = cal ? '/#/calendar/' + String(cal.open).replace(/^#\/?/, '') : (notice ? `/#/notices/${notice}` : conv ? `/#/inbox/c/${conv}` : request ? `/#/requests/${request}` : inbox ? '/#/inbox' : '/') + (nid && (notice || conv || request || inbox) ? `?n=${encodeURIComponent(nid)}` : '');
+  // A group of notices without its notice (quiet hours' summary from an older hub) opens Notices too.
+  const noticesOnly = !notice && typeof conv === 'string' && conv.startsWith('ntg_');
+  const target = cal ? '/#/calendar/' + String(cal.open).replace(/^#\/?/, '') : (notice ? `/#/notices/${notice}` : noticesOnly ? '/#/notices' : conv ? `/#/inbox/c/${conv}` : request ? `/#/requests/${request}` : inbox ? '/#/inbox' : '/') + (nid && (notice || conv || request || inbox) ? `?n=${encodeURIComponent(nid)}` : '');
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (cs) => {
       await outcome(e.notification.data, 'tapped');

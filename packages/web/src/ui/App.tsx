@@ -58,6 +58,8 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
     case 'inbox':
       // A mail thread from the inbox opens in the reader, beside the inbox (docs/mail.md).
       if (r.conv?.startsWith('mth_')) return { pane: <MailCenterLazy thread={r.conv} onBack={back} /> };
+      // A group of notices (a notification's conversation, quiet hours' summary) opens under Notices.
+      if (r.conv?.startsWith('ntg_')) return { pane: <NoticesPaneLazy onBack={back} /> };
       return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: convDetail(r.conv) } : { pane: <CatchUp /> };
     case 'people':
       if (r.graph) return { pane: <GraphPane onBack={back} /> };

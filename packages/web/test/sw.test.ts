@@ -354,6 +354,9 @@ test('a notice (docs/notices.md): one notification per group, its marks, and a t
   expect(w.shown.at(-1)!.o.actions.map((a: { action: string }) => a.action)).toEqual(['wrong']);
   await w.click(w.shown.at(-1)!.o.data);
   expect(w.opened).toEqual(['/#/notices/ntc_a?n=n9']);
+  // A group's id without its notice (quiet hours' summary): Notices.
+  await w.click({ conversationId: 'ntg_g' });
+  expect(w.opened.at(-1)).toBe('/#/notices');
 });
 
 test('a calendar reminder (docs/calendar.md): one per event, Join opens the meeting, a tap opens the calendar there', async () => {
