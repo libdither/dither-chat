@@ -59,9 +59,12 @@ show counts only.
 - `POST /api/messages/:id/end-poll` (capability `pollEnd`) works only for your own poll, through the account that
   made it.
 
-The card on phone and desktop: you pick, then press **Vote**. **Take vote back** and **End poll** appear only where
-they apply. Counts show once you have voted, once the poll has ended, or when no account here can vote. A poll can
-also be ended from the message menu (**End Poll**).
+The card on phone and desktop: where the network lets a vote change later (`PollRules.voteChangeable`: Discord and
+Signal), a tap votes at once, as their own apps do. On a one-choice poll a tap on another option moves your vote and
+a tap on your own takes it back; on a several-choice poll each tap adds or takes away that option. Where a vote could
+not be changed, you pick, then press **Vote**, and the vote is final: the options lock and nothing offers to take it
+back. **End poll** appears only on a poll you made. Counts show once you have voted, once the poll has ended, or when
+no account here can vote. A poll can also be ended from the message menu (**End Poll**).
 
 ### Making one
 
