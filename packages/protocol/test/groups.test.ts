@@ -11,6 +11,11 @@ test('each network with a rule: the fewest and the most people', () => {
   expect(createGroupProblem('signal', 'Climbing', 11)).toBe('A Signal group starts with at most 10 people');
   expect(createGroupProblem('matrix', 'House', 10)).toBeNull();
   expect(createGroupProblem('telegram', 'Film', 11)).toBe('A Telegram group starts with at most 10 people');
+  // XChat: a name is optional (X names the group after its people), up to 32 characters as its edit screen allows.
+  expect(createGroupProblem('x', undefined, 0)).toBe('An X group starts with at least 1 person');
+  expect(createGroupProblem('x', undefined, 1)).toBeNull();
+  expect(createGroupProblem('x', '  ', 10)).toBeNull();
+  expect(createGroupProblem('x', 'x'.repeat(33), 3)).toBe("An X group's name is at most 32 characters");
 });
 
 test('a name: required or optional, trimmed, at most so long', () => {
