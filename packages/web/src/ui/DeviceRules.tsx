@@ -10,7 +10,6 @@ import { ago } from '../format.ts';
 import { netName } from '../model.ts';
 import { db, noticesBoot, rev, toast } from '../state.ts';
 import { mailRev } from '../versions.ts';
-import { calendarOn } from '../plans.ts';
 import { AccountChip, NetBadge } from './bits.tsx';
 import { Icon } from './icons.tsx';
 
@@ -103,15 +102,6 @@ function DeviceBlock({ d, mine }: { d: P.DeviceView; mine: boolean }) {
           </>
         );
       })}
-      {/* Calendar reminders (docs/calendar.md): `network:calendar`. A reminder mentions no one, so Mentions only keeps it off too. */}
-      {calendarOn && (
-        <div class="set-rule" data-device-net="calendar">
-          <span class="set-rule-label">
-            <Icon name="calendar" size={18} /> Calendar reminders
-          </span>
-          <DevicePicker value={deviceRule(d, 'network', 'calendar')} onChange={(l) => set('network', 'calendar', l)} />
-        </div>
-      )}
       {/* Notices (docs/notices.md): `network:notice`. "Mentions only" keeps those about you by name (a mention, a review asked of you). */}
       {noticesBoot.value && (
         <div class="set-rule" data-device-net="notice">

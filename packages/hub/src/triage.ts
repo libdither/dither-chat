@@ -30,7 +30,7 @@
  */
 
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META } from '@dither-chat/protocol';
+import { NETWORK_META, reminderOf } from '@dither-chat/protocol';
 import { previewText, type Store } from './store.ts';
 import { describeActivity, type ActivityStore, type Features } from './activity.ts';
 import { ALERT_BAR, alertBar, describeWeight, emptyModel, importance, learnedFrom, predict, prior, THRESHOLDS, tierFrom, TIER_NAME, words, type Facts, type Level, type Model, type Namer, type TierContext } from './learn.ts';
@@ -61,6 +61,8 @@ export interface Decision {
   keyword?: boolean;
   /** A rule of yours made it an alert: the model does not decide. */
   forced?: boolean;
+  /** A reminder from a calendar account (`extra.reminder`, docs/calendar.md): an alert, held quiet in quiet hours and left out of their summary. */
+  reminder?: boolean;
   /** The local model was asked and did not answer in time: the caller may decide again later (`late`). */
   unjudged?: boolean;
   /** The candidate model's chances, kept next to the live ones; it never decides (shadow.ts). */
@@ -334,6 +336,12 @@ export class Triage {
     if (d?.decision !== 'push') return d;
     const q = this.store.quietHours();
     if (!inQuietHours(q, now) || (q!.allowStarred && d.alwaysNotify)) return d;
+    // A reminder is held quiet (phones only, silent) and is not one of the messages the summary counts: it was for then.
+    if (d.reminder) {
+      d.decision = 'quiet';
+      d.reasons.unshift(`Held by quiet hours until ${q!.end}`);
+      return d;
+    }
     // Held: it stays where it would be without the alert, silent.
     d.decision = d.facts?.conv ? 'quiet' : 'digest';
     d.reasons.unshift(`Held by quiet hours until ${q!.end}`);
@@ -558,6 +566,12 @@ export class Triage {
     if (personRule?.level === 'all') {
       reasons.push(`From ${authorName}, who is set to always alert`);
       return done('push', { alwaysNotify: true, forced: true });
+    }
+    // A calendar's reminder (docs/calendar.md): for you and for now, unless you keep the place to the list.
+    const reminder = !feedType && !cap ? reminderOf(m.extra) : null;
+    if (reminder) {
+      reasons.push(reminder.late ? `A reminder from ${net}, sent late` : `A reminder from ${net}`);
+      return done('push', { forced: true, reminder: true });
     }
     if (keyword && !feedType) {
       reasons.push(`Matches keyword “${keyword.target}”`);

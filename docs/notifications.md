@@ -513,13 +513,13 @@ silences it. [feed.md](feed.md#notifications) says why.
 
 ## Reminders
 
-A calendar reminder from dither-calendar ([calendar.md](calendar.md#reminders-post-apicalendarnotify)) is not a
-message either: the calendar says when, and the hub sends it as an **alert**, sounding on every device, with no marks.
-Quiet hours hold it quiet instead (phones only, silent, the reason "Held by quiet hours"), and it is not in quiet
-hours' summary. Its push carries `calendar: {open, eventKey, reminderId, meetingUrl}` with `tier` and `level`, and no
-`conversationId`: its own notification (tag `calendar:<eventKey>`, so a second lead time replaces the first) that
-opens `#/calendar/<open>`, with Join when there is a meeting link. Device rules on Calendar (`network:calendar`) keep
-it off a device. Its activity log kind is `reminder`. A repeated reminder id is answered as a duplicate and not sent.
+A calendar reminder from dither-calendar ([calendar.md](calendar.md)) is a message from the calendar in its chat,
+marked `extra.reminder`: the calendar says when, and triage makes it an **alert** ("A reminder from Calendar"),
+sounding on every device, unless the Calendar chat is muted or List only. Quiet hours hold it quiet instead (phones
+only, silent, "Held by quiet hours until …"), and it is not in quiet hours' summary. Its notification is the Calendar
+chat's, like any message's, so reading the chat clears it. Device rules on Calendar (`network:calendar`) keep it off
+a device, and Mentions only does too, since a reminder mentions no one. A retried reminder is the same message, and
+notifies once. (Before calendar accounts it came as POST /api/calendar/notify, with activity log kind `reminder`.)
 
 ## Elsewhere
 

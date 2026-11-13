@@ -266,7 +266,7 @@ const putIdentity = (i: P.IdentityView) => void (put(db, i) && changed('shown'))
 
 export function applyBootstrap(b: P.Bootstrap) {
   applyBootstrapTo(db, b);
-  // A calendar beside the hub (plans.ts, docs/calendar.md): its plans once the socket is up (now, if it is).
+  // A calendar account on the hub (plans.ts, docs/calendar.md): its plans once the socket is up (now, if it is).
   if (calendarFromBootstrap(b) && ws?.readyState === WebSocket.OPEN) void loadPlans();
   noticesBoot.value = b.notices ?? null;
   loaded.value = true;
@@ -386,7 +386,8 @@ export function applyEvents(events: P.ClientEvent[]) {
       // The calendar's plans and whether it answers (plans.ts): signals of their own, nothing in `db`.
       case 'plans':
       case 'calendar':
-        applyPlanEvent(ev);
+        // A calendar account that came (back): its plans too.
+        if (applyPlanEvent(ev)) void loadPlans();
         break;
     }
     if (eventHooks.size) for (const h of eventHooks) h(ev);
