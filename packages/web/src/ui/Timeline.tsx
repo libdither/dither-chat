@@ -109,6 +109,7 @@ import { Loading } from './Loader.tsx';
 import { Slices, whenIdle } from '../slices.ts';
 import { calendarOn } from '../plans.ts';
 import { PlanChipLazy } from './calendar/lazy.tsx';
+import { AltBadge, EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voice } from './rich/parts.tsx';
 import { VoicePeople } from './Ringing.tsx';
 
 
@@ -347,7 +348,13 @@ function useMdContext(network: P.Network) {
 /** The text; `tail` (your message's ticks) sits right after its last word. */
 function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
   // Only mentions and room links read the db (names may arrive later); other bodies render once.
-  const html = useMemo(() => renderMarkdown(m.body, useMdContext(m.network)), [m.body, m.network, /<[@#]/.test(m.body) ? metaRev.value : 0]);
+  // A role's name comes with the message (docs/rich-messages.md); a relative <t:…:R> moves on with the list.
+  const roles = m.rich?.roles;
+  const relative = /<t:-?\d+:R>/.test(m.body);
+  const html = useMemo(
+    () => renderMarkdown(m.body, { ...useMdContext(m.network), role: (id) => roles?.find((r) => r.id === id) ?? null }),
+    [m.body, m.network, /<[@#]/.test(m.body) ? metaRev.value : 0, roles, relative ? rev.value : 0],
+  );
   if (m.deleted) return <div class="msg-body deleted">{m.gone?.how === 'disappeared' ? 'Message disappeared' : 'Message deleted'}</div>;
   if (m.kind === 'encrypted')
     return (
@@ -423,11 +430,16 @@ function Edited({ m }: { m: P.MessageView }) {
 
 /** A mark beside the time: pinned. How far your message got sits after its text (`Ticks`). */
 function Marks({ m }: { m: P.MessageView }) {
-  return m.pinned ? (
-    <span class="msg-pin" title="Pinned">
-      <Icon name="pin" size={11} />
-    </span>
-  ) : null;
+  return (
+    <>
+      {m.pinned && (
+        <span class="msg-pin" title="Pinned">
+          <Icon name="pin" size={11} />
+        </span>
+      )}
+      <RichMarks m={m} />
+    </>
+  );
 }
 
 function Attachments({ m }: { m: P.MessageView }) {
@@ -444,14 +456,20 @@ function Attachments({ m }: { m: P.MessageView }) {
           const w = a.width ?? a.info?.width ?? 400;
           const h = a.height ?? a.info?.height ?? 300;
           const scale = Math.min(1, 400 / w, 300 / h);
-          return withNote(
-            a,
+          const img = (
             <a class="att-img" data-att={i} href={a.url} target="_blank" rel="noreferrer" onClick={(e) => openViewer(e, images, images.indexOf(a))} style={{ width: `${Math.round(w * scale)}px`, aspectRatio: `${w} / ${h}` }}>
-              <img src={a.url} alt={a.name ?? ''} loading="lazy" />
-            </a>,
+              <img src={a.url} alt={a.alt ?? a.name ?? ''} loading="lazy" />
+              <AltBadge alt={a.alt} />
+            </a>
           );
+          return withNote(a, veiled(a) ? <Veil a={a}>{img}</Veil> : img);
         }
-        if (kind === 'video') return withNote(a, <video class="att-video" data-att={i} src={a.url} controls preload="metadata" onPlay={() => played(m)} />);
+        if (kind === 'video') {
+          const video = <video class="att-video" data-att={i} src={a.url} controls preload="metadata" onPlay={() => played(m)} />;
+          return withNote(a, veiled(a) ? <Veil a={a}>{video}</Veil> : video);
+        }
+        // A voice message with its waveform and length (docs/rich-messages.md).
+        if (a.voice) return withNote(a, <Voice a={a} index={i} />);
         if (kind === 'audio') return withNote(a, <audio class="att-audio" data-att={i} src={a.url} controls preload="metadata" onPlay={() => played(m)} />);
         const fk = fileKind(a);
         // A kind with a viewer opens in it (Viewer.tsx); any other opens in its app when the helper or the phone can,
@@ -493,8 +511,13 @@ function Embeds({ m }: { m: P.MessageView }) {
   return (
     <div class="embeds">
       {m.embeds.map((e) => (
-        <div class="embed">
-          {(e.provider || e.author) && <small>{[e.provider, e.author].filter(Boolean).join(' · ')}</small>}
+        <div class="embed" style={e.color && /^#[0-9a-f]{6}$/i.test(e.color) ? { borderLeftColor: e.color } : undefined}>
+          {(e.provider || e.author) && (
+            <small class="embed-by">
+              {e.authorIcon && <img class="embed-icon" src={e.authorIcon} alt="" loading="lazy" onError={(ev) => ev.currentTarget.remove()} />}
+              {[e.provider, e.author].filter(Boolean).join(' · ')}
+            </small>
+          )}
           {e.title && (e.url && /^https?:\/\//i.test(e.url) ? <a class="embed-title" href={e.url} target="_blank" rel="noreferrer noopener">{e.title}</a> : <b class="embed-title">{e.title}</b>)}
           {e.description && <div class="msg-body" dangerouslySetInnerHTML={md(e.description)} />}
           {e.fields?.map((f) => (
@@ -503,8 +526,16 @@ function Embeds({ m }: { m: P.MessageView }) {
               <div class="msg-body" dangerouslySetInnerHTML={md(f.value)} />
             </div>
           ))}
-          {e.image && (
-            <img class="embed-image" src={e.image} alt="" loading="lazy" onClick={(ev) => openViewer(ev, [{ url: e.image!, name: e.title }], 0)} onError={(ev) => ev.currentTarget.remove()} />
+          {e.video ? (
+            <EmbedVideo e={e} />
+          ) : (
+            e.image && <img class="embed-image" src={e.image} alt="" loading="lazy" onClick={(ev) => openViewer(ev, [{ url: e.image!, name: e.title }], 0)} onError={(ev) => ev.currentTarget.remove()} />
+          )}
+          {(e.footer || e.timestamp) && (
+            <small class="embed-by">
+              {e.footerIcon && <img class="embed-icon" src={e.footerIcon} alt="" loading="lazy" onError={(ev) => ev.currentTarget.remove()} />}
+              {[e.footer, e.timestamp ? fullTime(e.timestamp) : null].filter(Boolean).join(' · ')}
+            </small>
           )}
         </div>
       ))}
@@ -655,13 +686,16 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           <Gone m={m} />
         ) : m.forward && !m.deleted ? (
           <ForwardCard m={m}>
+            <RichHead m={m} />
             <Body m={m.forward.text !== undefined ? { ...m, body: m.forward.text } : m} tail={ticks} />
             <Attachments m={m} />
             <Embeds m={m} />
             <InviteCards m={m} body={m.forward.text ?? m.body} />
+            <RichFoot m={m} />
           </ForwardCard>
         ) : (
           <>
+            <RichHead m={m} />
             <StoryReplyLine m={m} />
             <Body m={m.contacts ? withoutCardLines(m) : m} tail={ticks} />
             <Attachments m={m} />
@@ -669,12 +703,13 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
             <ContactCards m={m} />
             <Embeds m={m} />
             <InviteCards m={m} body={m.body} />
+            <RichFoot m={m} />
           </>
         )}
         <SendFailures m={m} />
         {ticks && (!m.body || m.deleted) && <span class="msg-marks">{ticks}</span>}
         {grouped && (m.editedTs || m.edits) && <Edited m={m} />}
-        {grouped && m.pinned && (
+        {grouped && (m.pinned || m.rich?.silent || m.rich?.marks) && (
           <span class="msg-marks">
             <Marks m={m} />
           </span>
