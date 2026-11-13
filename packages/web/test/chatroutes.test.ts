@@ -4,7 +4,7 @@
  * checked in a browser against the multiaccount demo.
  */
 import { expect, test } from 'bun:test';
-import { accountName, badgeDiffers, cameFromThem, chatKey, groupChats, headIdents, labelText, leadTells, mergeRoutes, pickHolds, tagTells, tagText, tells, type HeadName, type RouteKey, type RoutePart } from '../src/chatroutes.ts';
+import { accountName, badgeDiffers, cameFromThem, chatKey, groupChats, headIdents, labelText, lastRouteTells, leadTells, mergeRoutes, pickHolds, tagTells, tagText, tells, type HeadName, type RouteKey, type RoutePart } from '../src/chatroutes.ts';
 import { inboxSnapshot, inboxView, rank, type Ranked } from '../src/ordering.ts';
 
 const r = (id: string, network: string, theirs: string, mine: string): RouteKey => ({ id, network, theirs, mine });
@@ -213,4 +213,18 @@ test('where you came from counts only where they are: a DM with someone else say
   expect(cameFromThem({ participantIds: [] }, [{ authorId: null }, { authorId: 'kit-disc' }], isKit)).toBe(true);
   // A channel Kit was not seen in.
   expect(cameFromThem({ participantIds: [] }, [{ authorId: 'sam' }], isKit)).toBe(false);
+});
+
+test("the message box says so, quietly, when a message would go another way than the latest one came", () => {
+  const [kitMain, kitWorkMain, kitAlt, , sig] = KIT;
+  // Same route: nothing.
+  expect(lastRouteTells(kitMain, kitMain)).toBeNull();
+  expect(lastRouteTells(kitMain, null)).toBeNull();
+  // Kit wrote on Signal last, and the box sends on Discord: the network.
+  expect(lastRouteTells(kitMain, sig)).toBe('network');
+  // Same network, another account of theirs; else another of yours.
+  expect(lastRouteTells(kitMain, kitWorkMain)).toBe('theirs');
+  expect(lastRouteTells(kitMain, kitAlt)).toBe('mine');
+  // Two conversations nothing tells apart say nothing.
+  expect(lastRouteTells(kitMain, { ...kitMain, id: 'other' })).toBeNull();
 });

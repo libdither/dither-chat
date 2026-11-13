@@ -55,6 +55,10 @@ The page adds guesses in front of that, because it knows things the hub doesn't.
 5. the route you chose (from the hub);
 6. the route of the latest message.
 
+When the message would go another way than the chat's latest message came, the end of the message box's line says
+so, quietly: "last message on Signal" (or "with kit.work", "via zyn.alt" when only an account differs), and a click
+sends through that route (`lastRouteTells` in `chatroutes.ts`, `LastRoute` in `ui/Pairs.tsx`).
+
 The inbox's row for them opens the DM of the latest message, or the route picked this session if there is one, so
 the two agree.
 
