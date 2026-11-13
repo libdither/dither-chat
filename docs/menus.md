@@ -40,6 +40,7 @@ One component draws them all (`packages/web/src/ui/ContextMenu.tsx`); what each 
 | Going places | Go to Replied Message, Go to Original Message (forwards), Profile |
 | Marks | Should have alerted (on a message that alerted it reads Alert was wrong), Less like this |
 | Red | Delete Message **Del** (own, where the network allows) |
+| On Discord | Save Message or Remove From Saved, Remind Me (times, or Pick a Time…), Saved Messages; Remove Embeds (own, with previews); Report on Discord (others': opens it in Discord). Each where the account can ([sending.md](sending.md)) |
 | Developer | Copy Message ID (the network's), Copy dither-chat ID |
 
 Copy Message Link gives the network's own link where there is one (`discord.com/channels/…/…/…`,

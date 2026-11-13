@@ -38,6 +38,7 @@ import { openAttachment, openWith, save } from './fileopen.tsx';
 import { fileKind, fileMime, openFileViewer, VIEWABLE } from '../files.ts';
 import { inviteRef } from '../invites.ts';
 import { threadConvEntries, threadMessageEntries } from '../threads.ts';
+import { sendingEntries } from './sendingMenu.tsx';
 
 export { openAttachment };
 
@@ -203,6 +204,8 @@ function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): M
       hasHistory(m) && { label: 'Message History', icon: 'clock', track: 'history', run: () => (historyOf.value = m) },
     ],
     [canMarkUnread(m, self) && { label: 'Mark Unread', icon: 'mail', track: 'mark unread', run: () => void markUnreadFrom(m) }],
+    // Saved on Discord, Remind Me, Remove Embeds, Report (sendingMenu.tsx, docs/sending.md).
+    sendingEntries(m),
     replyEntries(m),
     marks ? markEntries(m) : [],
     // Google Messages has no unsend: a delete only takes it off your phone.

@@ -34,6 +34,7 @@ import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, Re
 import type { SelfCapability, SelfCommand, SelfEvent } from './self.ts';
 import type { VoiceFact } from './rich.ts';
 import type { ForumFact, ThreadFact, ThreadsCapability, ThreadsCommand } from './threads.ts';
+import type { SendCapability, SendCommand, SendEvent } from './sending.ts';
 
 /** How far a message got with someone: their device has it, they read it, they played it (a voice note, a video). */
 export type ReceiptState = 'delivered' | 'read' | 'played';
@@ -143,6 +144,8 @@ export type Capability =
   | 'setPicture'
   /** Mentions found late, native mutes, unread by hand, many read at once (attention.ts). */
   | AttentionCapability
+  /** Silent sends, replies without a ping, previews taken off, saved messages, the network's scheduled messages (sending.ts). */
+  | SendCapability
   /** The account's own self and block, ignore, notes (self.ts, docs/account-self.md). */
   | SelfCapability
   /** Following threads, starting threads and posts, archiving, publishing, running a group (threads.ts). */
@@ -518,6 +521,8 @@ export type AdapterEvent =
   | { t: 'scheduledEventGone'; space: string; nativeId: string }
   /** What a space asks of this account now (capability 'gates'); null: nothing (passed, approved, or left). */
   | { t: 'gate'; space: string; gate: SpaceGate | null }
+  /** saved, unsaved, reminderDue (sending.ts). */
+  | SendEvent
   | { t: 'reply'; id: string; ok: true; result?: unknown }
   | { t: 'reply'; id: string; ok: false; error: string }
   | { t: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; msg: string; data?: unknown }
@@ -587,7 +592,20 @@ export type AdapterCommand =
   /** Call lab only (scripts/call-lab.ts, DITHER_LAB=1): a command for the lab probe in the sandbox. */
   | { t: 'lab'; id: string; lab: { op: string; [k: string]: unknown }; timeout?: number }
   /** reply.result: { nativeId } of the sent message if known (the echo still arrives as a message fact). */
-  | { t: 'send'; id: string; conversation: string; body: string; replyTo?: string; attachments?: OutgoingAttachment[]; /** capability 'linkPreviews' */ preview?: LinkPreviewOut }
+  | {
+      t: 'send';
+      id: string;
+      conversation: string;
+      body: string;
+      replyTo?: string;
+      attachments?: OutgoingAttachment[];
+      /** capability 'linkPreviews' */
+      preview?: LinkPreviewOut;
+      /** capability 'silentSend': nobody is notified of it (Discord's @silent). Left out by the hub otherwise. */
+      silent?: boolean;
+      /** capability 'replyMention', with replyTo: false, the reply does not ping its author. Absent: the network's default (it pings). */
+      mentionReplied?: boolean;
+    }
   /**
    * Forward a message this account can read, the network's own way (capability 'forward'). `note` goes with it,
    * as the network's own client would send one. reply.result: { nativeId } of the forward, or { fallback: reason }
@@ -788,6 +806,8 @@ export type AdapterCommand =
   | { t: 'shutdown' }
   /** mute, markUnread, markReadMany (attention.ts). */
   | AttentionCommand
+  /** suppressEmbeds, save, savedList, nativeScheduled, cancelScheduled (sending.ts). */
+  | SendCommand
   /** Block, ignore, notes, own presence, sessions (self.ts). */
   | SelfCommand
   /** followThread, threadNotify, threadState, createThread, createPost, crosspost, removeMember, setOwner, setPicture (threads.ts). */

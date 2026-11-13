@@ -21,6 +21,7 @@ import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
 import { DEMO_SERVER_CAPS, DemoServers } from './demoservers.ts';
 import { DEMO_THREAD_CAPS, DemoThreads } from './demothreads.ts';
 import { DEMO_MOD_CAPS, DemoModeration } from './demomod.ts';
+import { DEMO_SEND_CAPS, DemoSending } from './demosending.ts';
 
 type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa' | 'tg';
 
@@ -1842,6 +1843,8 @@ class DemoAdapter implements InprocAdapter {
   private threadsDemo: DemoThreads | null = null;
   /** Moderating, member labels and leaving a Signal group (demomod.ts). */
   private mod: DemoModeration | null = null;
+  /** Silent sends, previews off, saved messages and the network's scheduled ones (demosending.ts). */
+  private sending: DemoSending | null = null;
   /** Capabilities a verify script took away (action 'capabilities'), to see the page without them. */
   private without = new Set<P.Capability>();
   private network: P.Network;
@@ -2286,11 +2289,16 @@ class DemoAdapter implements InprocAdapter {
       ...(this.network === 'discord' ? DEMO_SERVER_CAPS : []),
       ...(this.network === 'discord' ? DEMO_THREAD_CAPS : []),
       ...(DEMO_MOD_CAPS[this.network] ?? []),
+      ...(this.network === 'discord' ? DEMO_SEND_CAPS : []),
     ];
     this.emit({ t: 'hello', network: this.network, version: 'demo', capabilities: all.filter((c) => !this.without.has(c)) });
   }
 
-  start(emit: (ev: P.AdapterEvent) => void) {
+  start(raw: (ev: P.AdapterEvent) => void) {
+    const emit = (ev: P.AdapterEvent) => {
+      this.sending?.seen(ev);
+      raw(ev);
+    };
     this.emit = emit;
     running.set(this.key, this);
     const epoch: number = JSON.parse(this.acc.config || '{}').epoch ?? Date.now();
@@ -2315,7 +2323,10 @@ class DemoAdapter implements InprocAdapter {
     }
 
     for (const s of SPACES) if (s.acc.includes(this.key)) emit({ t: 'space', space: s.fact });
-    if (this.network === 'discord') this.startServers(epoch);
+    if (this.network === 'discord') {
+      this.startServers(epoch);
+      this.sending = new DemoSending({ emit, someDirect: () => CONVS.find((c) => c.acc.includes(this.key) && c.fact.shape === 'direct')?.fact.nativeId ?? null }, epoch);
+    }
     if (DEMO_MOD_CAPS[this.network]) {
       this.mod = new DemoModeration({
         network: this.network,
@@ -2665,7 +2676,7 @@ class DemoAdapter implements InprocAdapter {
         const nativeId = `${cmd.conversation}~sent-${Date.now()}`;
         // The file leaves the spool once this returns, and a demo has nowhere else to keep it.
         const attachments = cmd.attachments?.map((f) => ({ kind: f.kind, mime: f.mime, name: f.name, size: f.size, url: `data:${f.mime};base64,${readFileSync(f.path).toString('base64')}` }));
-        this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), body: cmd.body, replyTo: cmd.replyTo, kind: attachments?.length && !cmd.body ? 'media' : 'text', attachments } });
+        this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), body: cmd.body, replyTo: cmd.replyTo, kind: attachments?.length && !cmd.body ? 'media' : 'text', attachments, ...(cmd.silent ? { silent: true } : {}) } });
         this.sent.set(nativeId, { body: cmd.body, att: attachments });
         reply({ nativeId });
         const conv = CONVS.find((c) => c.fact.nativeId === cmd.conversation);
@@ -2797,6 +2808,19 @@ class DemoAdapter implements InprocAdapter {
         reply(this.selfDemo ? this.selfDemo.decorate(this.self.nativeId, this.signalExtras(this.profile(this.self.nativeId), this.self.nativeId)) : this.signalExtras(this.profile(this.self.nativeId), this.self.nativeId));
         break;
       }
+      case 'suppressEmbeds':
+      case 'save':
+      case 'savedList':
+      case 'nativeScheduled':
+      case 'cancelScheduled':
+        try {
+          const r = this.sending?.command(cmd);
+          if (!r) throw new Error(`${cmd.t} is not in this demo network`);
+          reply(r.value);
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
+        break;
       case 'followThread':
       case 'threadNotify':
       case 'threadState':

@@ -18,6 +18,7 @@ import { lateNews } from './latenews.ts';
 import { eraseVoice, ingestCallEvent, voiceKept } from './callstate.ts';
 import { ingestServers } from './servers.ts';
 import { ingestThreadFacts, threadParts, type ThreadParts } from './threads.ts';
+import { type DueReminder, ingestSaved } from './saved.ts';
 import { alertBar, type Facts } from './learn.ts';
 import { attachmentExtra, attachmentRich, embedViews, richView, type StoredExtra } from './rich.ts';
 
@@ -212,6 +213,8 @@ export class Store {
   readonly typers = new TypingRelay();
   /** People a merge, a split or a new person changed: mail/people.ts sends their mail threads again. */
   personsChanged: ((personIds: string[]) => void) | null = null;
+  /** A reminder set on a network came due (saved.ts): the server notifies. Called inside ingest's transaction. */
+  reminderDue: ((r: DueReminder) => void) | null = null;
   /** How long each step of opening the database took (startup.ts). */
   readonly opening: [string, number][];
 
@@ -767,6 +770,12 @@ export class Store {
         case 'scheduledEventGone':
         case 'gate':
           ingestServers(this, acc, ev);
+          break;
+        // Saved on the network, and its reminders (saved.ts).
+        case 'saved':
+        case 'unsaved':
+        case 'reminderDue':
+          ingestSaved(this, acc, ev, (r) => this.reminderDue?.(r));
           break;
         case 'reply':
         case 'log':
