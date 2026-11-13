@@ -28,7 +28,7 @@ Everything the networks' own clients can do that dither cannot, feature by featu
 | Discord-style search: suggestions as you type, recent searches, grouped results with context, sort, more operators | H | M | done | docs/search.md. Also typo correction and arrow keys through results |
 | Search Japanese and other unspaced text | H | L | done | Scans inside words, so unspaced text is found. Slower than the index on a large database; a trigram index would fix that |
 | Index attachment filenames and embed text | M | L | next | Only message bodies are searched today |
-| Search Discord and Matrix themselves, on an explicit click | M | M | done | [indexing.md](indexing.md): places in jev's order, six at a time, paced per account, hits kept. Run against the demo and the extractors' fakes, not a live account |
+| Search Discord, Matrix and Telegram themselves, on an explicit click | M | M | done | [indexing.md](indexing.md): places in jev's order, six at a time, paced per account, hits kept. Run against the demo and the extractors' fakes, not a live account |
 | Index jobs: a server, a folder of servers or a channel fetched whole, members walked, repeating | H | M | done | [indexing.md](indexing.md). Repeats fetch only what is new (history spans). Archived threads the hub never saw are not found yet. Not run on a live account |
 | Signal history beyond what the hub received | L | H | blocked | A linked device gets no history |
 | Reorder channels inside a server | L | M | later | The network's order is usually what people want |

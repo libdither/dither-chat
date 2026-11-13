@@ -80,7 +80,7 @@ channels added since the last run.
 
 ## Network search
 
-On the search page, under the hub's own results: **Search Discord and Matrix too**. It names only the networks your
+On the search page, under the hub's own results: **Search Discord, Matrix and Telegram too**. It names only the networks your
 accounts can search. It never runs as you type. When the hub found little, the button is the primary one.
 
 **Which places, in what order.**
@@ -89,6 +89,13 @@ accounts can search. It never runs as you type. When the hub found little, the b
   - Discord: every server and every DM or group DM an account with the `search` capability sees. Two accounts in the
     same place make one candidate, asked through the account that is online.
   - Matrix: one candidate per account, because `/search` covers every room in one request.
+  - Telegram: one candidate per account too. Words alone go to `messages.searchGlobal`, which covers every chat
+    and channel the account is in. `in:` searches those chats one at a time with `messages.search` (a forum topic
+    by its topic). `from:` with no chat named searches every private chat and basic group at once, and with words
+    adds a global search held to that person, which reaches supergroups and channels. `has:` becomes one of
+    Telegram's filters (photos, videos, voice, files, links); `has:sticker`, `has:reaction`, two kinds at once and
+    `mentions:` of anyone but you fail the place with a reason. One search makes at most 8 requests (chats × people).
+    Telegram pages newest first, so `sort:oldest` orders the newest 25 oldest first.
 - **Filters.**
   - `network:` and `account:` narrow the accounts.
   - `in:` narrows to the servers holding those channels, and to those channels inside them.
@@ -100,7 +107,7 @@ accounts can search. It never runs as you type. When the hub found little, the b
   - **jev** is jev's P(yes) to "Would people here talk about *query*?". It comes from the categorizer's probe
     (`categorize.ts`), which judges names, topics and channel names, never messages. If jev is not running, the probe
     falls back to keyword matching. A place the probe does not cover (a DM) gets a prior of 0.15. A whole-account
-    place (Matrix) gets 0.6.
+    place (Matrix, Telegram) gets 0.6.
   - **local** is the hub's own hits for the query in that place, as a share of the best place's.
   - **recency** decays over 30 days from the place's last message.
   - jev gets at most 6 s. After that the places are ordered without it.

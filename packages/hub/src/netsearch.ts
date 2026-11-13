@@ -124,7 +124,7 @@ export class NetSearch {
     if (!places.length) {
       s.note = this.store.accounts().some((a) => this.can(a.id))
         ? 'Nothing to search on the networks for this: no place your searching accounts see matches the filters.'
-        : 'None of your accounts can search its network. Discord and Matrix can.';
+        : 'None of your accounts can search its network. Discord, Matrix and Telegram can.';
       return this.view(s.id)!;
     }
     s.places = places;
@@ -246,7 +246,8 @@ export class NetSearch {
         places.set(key, { ...p, network, accountId: acc.id, state: 'queued', total: null, found: 0, fresh: 0, error: null, score: null, rank: 0, asked: false });
       };
       if (network !== 'discord') {
-        // One request covers every room the account is in (Matrix's /search): the place is the account.
+        // One request covers every room the account is in (Matrix's /search, Telegram's global search): the place is
+        // the account.
         const rooms = inConvs ? this.store.raw<Row>(`SELECT native_id FROM conversation WHERE network = ? AND id IN (SELECT value FROM json_each(?))`, network, JSON.stringify(inConvs)).map((r) => r.native_id as string) : null;
         if (rooms && !rooms.length) continue;
         add(`all:${acc.id}`, { kind: 'all', id: acc.id, name: `Everything on ${acc.label}`, scope: { kind: 'all' }, query: { ...base, ...(rooms ? { in: rooms } : {}) } });
