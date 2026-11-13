@@ -25,6 +25,7 @@ import type { ArrangeSettings, UsageKind, UsageView } from './usage.ts';
 import type { FileInfo } from './files.ts';
 import type { MailAccess, MailAccountView, MailboxView, MailBootstrap, MailOutboxView, MailThreadView } from './mail.ts';
 import type { CalendarLinkView, CalendarNotifyRef, CalendarPlanView } from './calendar.ts';
+import type { ContactCardView, MissingAttachmentFact, QuoteView, SendFailureView, StoryReplyView } from './extra.ts';
 
 export interface AccountView {
   id: string;
@@ -220,6 +221,10 @@ export interface AttachmentView {
   url: string;
   /** What the file is by its bytes, once the hub has kept and looked at them (files.ts, docs/files.md). */
   info?: FileInfo;
+  /** Recorded as a voice note (extra.ts AttachmentNote). */
+  voiceNote?: true;
+  /** Its own caption, where the network has one per file. */
+  caption?: string;
 }
 
 /** A file uploaded to the hub and waiting to be sent. */
@@ -559,6 +564,16 @@ export interface MessageView {
   replyMark?: ReplyMark;
   /** This message forwards another: body and attachments are what was forwarded. */
   forward?: ForwardView;
+  /** What the message quotes, as the message itself carries it (extra.ts QuoteFact). Shown when replyToId is not stored. */
+  quote?: QuoteView;
+  /** Contact cards shared in it. */
+  contacts?: ContactCardView[];
+  /** A reply (or reaction) to a story. */
+  storyReply?: StoryReplyView;
+  /** Your message did not reach these people (it reached the others). */
+  failed?: SendFailureView[];
+  /** Files it had that the account could not download. */
+  missingAttachments?: MissingAttachmentFact[];
 }
 
 /** A forward, shown as a card with where it came from. */

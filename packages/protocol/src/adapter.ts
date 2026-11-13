@@ -27,6 +27,7 @@ import type { AboutChange, AboutTarget, PersonRelationship } from './about.ts';
 import type { AddAction, AddRef, RelationshipFact, RequestAnswer, RequestFact } from './add.ts';
 import type { AttentionCapability, AttentionCommand } from './attention.ts';
 import type { CallMode, CallState } from './call.ts';
+import type { LinkPreviewOut } from './extra.ts';
 import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, ReactionStyle, Shape, SpaceKind, Variant } from './ontology.ts';
 
 /** How far a message got with someone: their device has it, they read it, they played it (a voice note, a video). */
@@ -88,6 +89,12 @@ export type Capability =
   | 'walkMembers'
   /** Lists a channel's threads, archived ones too (the `threads` command), so an index job finds threads nobody opened. */
   | 'listThreads'
+  /** Tells the sender you played a voice note or opened a video of theirs (the `viewed` command; Signal's viewed receipt). */
+  | 'viewed'
+  /** Sends a link preview with a message (`send`'s `preview`). Advertised only while the account's own setting allows previews. */
+  | 'linkPreviews'
+  /** Resets the encrypted session with someone in a direct conversation (the `resetSession` command; Signal's end session). */
+  | 'resetSession'
   /** Mentions found late, native mutes, unread by hand, many read at once (attention.ts). */
   | AttentionCapability;
 
@@ -470,7 +477,7 @@ export type AdapterCommand =
   /** Call lab only (scripts/call-lab.ts, DITHER_LAB=1): a command for the lab probe in the sandbox. */
   | { t: 'lab'; id: string; lab: { op: string; [k: string]: unknown }; timeout?: number }
   /** reply.result: { nativeId } of the sent message if known (the echo still arrives as a message fact). */
-  | { t: 'send'; id: string; conversation: string; body: string; replyTo?: string; attachments?: OutgoingAttachment[] }
+  | { t: 'send'; id: string; conversation: string; body: string; replyTo?: string; attachments?: OutgoingAttachment[]; /** capability 'linkPreviews' */ preview?: LinkPreviewOut }
   /**
    * Forward a message this account can read, the network's own way (capability 'forward'). `note` goes with it,
    * as the network's own client would send one. reply.result: { nativeId } of the forward, or { fallback: reason }
@@ -511,6 +518,14 @@ export type AdapterCommand =
    */
   | { t: 'threads'; id: string; conversation: string; archived: boolean; offset: number }
   | { t: 'markRead'; id: string; conversation: string; upTo: string }
+  /**
+   * You played a voice note or opened a video in someone else's message (capability 'viewed'): tell them, the way the
+   * network's own client would. The adapter sends nothing where its rules say not to (a message request, read receipts
+   * off). reply.result: { sent: boolean }
+   */
+  | { t: 'viewed'; id: string; conversation: string; message: string }
+  /** Reset the encrypted session in a direct conversation (capability 'resetSession'). reply.result: {} */
+  | { t: 'resetSession'; id: string; conversation: string }
   /** You are typing here, or (`stop`) no longer: say so on the network, the way its own client would. Best effort. */
   | { t: 'typing'; id: string; conversation: string; stop?: boolean }
   | { t: 'react'; id: string; conversation: string; message: string; key: string; remove?: boolean; style?: ReactionStyle; emoji?: CustomEmojiFact }
