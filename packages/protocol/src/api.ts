@@ -23,6 +23,7 @@ import type {
 } from './ontology.ts';
 import type { ArrangeSettings, UsageKind, UsageView } from './usage.ts';
 import type { FileInfo } from './files.ts';
+import type { RichView, VoiceFact } from './rich.ts';
 import type { MailAccess, MailAccountView, MailboxView, MailBootstrap, MailOutboxView, MailThreadView } from './mail.ts';
 import type { CalendarLinkView, CalendarNotifyRef, CalendarPlanView } from './calendar.ts';
 
@@ -220,6 +221,11 @@ export interface AttachmentView {
   url: string;
   /** What the file is by its bytes, once the hub has kept and looked at them (files.ts, docs/files.md). */
   info?: FileInfo;
+  /** As AttachmentFact has them (docs/rich-messages.md): alt text, spoiler, explicit, voice message. */
+  alt?: string;
+  spoiler?: true;
+  explicit?: true;
+  voice?: VoiceFact;
 }
 
 /** A file uploaded to the hub and waiting to be sent. */
@@ -343,6 +349,19 @@ export interface EmbedView {
   author?: string;
   image?: string;
   fields?: { name: string; value: string }[];
+  /** The colour bar down its side, CSS hex. */
+  color?: string;
+  footer?: string;
+  footerIcon?: string;
+  /** The time it shows in its footer, ms. */
+  timestamp?: number;
+  authorIcon?: string;
+  authorUrl?: string;
+  /**
+   * A video: `url` is a player page (YouTube, Twitch, Vimeo) loaded only once clicked (`player`), or a file the
+   * <video> plays (`gifv` loops it silently, as a GIF).
+   */
+  video?: { url: string; width?: number; height?: number; player?: true; gifv?: true };
 }
 
 export interface CustomEmojiView {
@@ -559,6 +578,8 @@ export interface MessageView {
   replyMark?: ReplyMark;
   /** This message forwards another: body and attachments are what was forwarded. */
   forward?: ForwardView;
+  /** Controls, marks and the rest of rich.ts, when it has any (docs/rich-messages.md). */
+  rich?: RichView;
 }
 
 /** A forward, shown as a card with where it came from. */

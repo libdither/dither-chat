@@ -27,38 +27,38 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 
 | Feature | Discord has (evidence) | dither has | Class | Value | Notes |
 |---|---|---|---|---|---|
-| Message components (buttons, selects) | component types 1–8; INTERACTION_CREATE/SUCCESS/FAILURE, `INTERACTIONS` | `pickMessage` drops `components` | a | M | Bot messages show their text but none of their buttons |
-| Components V2 messages | flag IS_COMPONENTS_V2, types 9–23 (TEXT_DISPLAY, CONTAINER, MEDIA_GALLERY…) | dropped | a | H | Such messages have empty `content` and no embeds, so they arrive **blank**. More bots send them every month. At least flatten TEXT_DISPLAY and MEDIA_GALLERY into body and attachments |
-| Message flags in general | MessageFlags enum above | `flags` not picked | a | M | Several rows below follow from this |
-| Silent messages (@silent) | SUPPRESS_NOTIFICATIONS 4096 | not seen | a | M | dither may alert on something the sender marked silent. A cheap triage input |
-| Voice messages | IS_VOICE_MESSAGE 8192, attachment `duration_secs`/`waveform`, RECORD_VOICE_MESSAGE | shown as a plain audio file | d | M | Gets no waveform, no duration and no "voice message" kind (the hub has a `played` receipt concept from Signal) |
-| Ephemeral / "only you can see" | EPHEMERAL 64 | not marked | a | L | Ephemerals come only by the live gateway, so they are rare in dither |
-| Crossposts (announcement follows) | IS_CROSSPOST 2, CROSSPOSTED 1, `message_reference` type 0 + webhook | shown as a webhook message | d | L | Gets no "from #channel in Server" header |
-| Embeds, full | embed color, footer, timestamp, video, author icon, provider url | picks type/title/description/url/provider/author name/fields/thumbnail/image | d | M | No video embeds (YouTube/Twitch play inline in Discord), no color bar, no footer |
-| SUPPRESS_EMBEDS | flag 4 | not seen | a | L | dither may show a preview the author hid |
-| Attachment alt text | attachment `description` | not picked | a | M | Accessibility; also searchable text |
-| Spoilered attachments | IS_SPOILER / `SPOILER_` filename | not picked | d | M | `\|\|text\|\|` spoilers render, but spoilered images show unblurred |
-| Explicit-media flags | CONTAINS_EXPLICIT_MEDIA, EXPLICIT_MEDIA_SCAN_* | not picked | a | L | Discord blurs these. dither shows them raw |
-| Stickers | `sticker_items`, STICKER, STICKER_ASSET, STICKER_PACKS, MESSAGES_GREET | body becomes `[sticker: name]`; no image | d | M | The sticker CDN url comes from id + format_type; Lottie needs a player |
+| Message components (buttons, selects) | component types 1–8; INTERACTION_CREATE/SUCCESS/FAILURE, `INTERACTIONS` | `pickMessage` drops `components` | a | M | Bot messages show their text but none of their buttons. **done** (net-gaps): kept as rows with their custom ids and shown read-only; link buttons open (rich-messages.md). Pressing is a later `interact` |
+| Components V2 messages | flag IS_COMPONENTS_V2, types 9–23 (TEXT_DISPLAY, CONTAINER, MEDIA_GALLERY…) | dropped | a | H | Such messages have empty `content` and no embeds, so they arrive **blank**. More bots send them every month. At least flatten TEXT_DISPLAY and MEDIA_GALLERY into body and attachments. **done** (net-gaps): flattened into body and attachments, controls kept |
+| Message flags in general | MessageFlags enum above | `flags` not picked | a | M | Several rows below follow from this. **done** (net-gaps) |
+| Silent messages (@silent) | SUPPRESS_NOTIFICATIONS 4096 | not seen | a | M | dither may alert on something the sender marked silent. A cheap triage input. **done** (net-gaps): `MessageFact.silent`; triage never alerts on it |
+| Voice messages | IS_VOICE_MESSAGE 8192, attachment `duration_secs`/`waveform`, RECORD_VOICE_MESSAGE | shown as a plain audio file | d | M | Gets no waveform, no duration and no "voice message" kind (the hub has a `played` receipt concept from Signal). **done** (net-gaps): length and waveform kept, a player with the waveform |
+| Ephemeral / "only you can see" | EPHEMERAL 64 | not marked | a | L | Ephemerals come only by the live gateway, so they are rare in dither. **done** (net-gaps): marked "Only you" |
+| Crossposts (announcement follows) | IS_CROSSPOST 2, CROSSPOSTED 1, `message_reference` type 0 + webhook | shown as a webhook message | d | L | Gets no "from #channel in Server" header. **done** (net-gaps): "from #channel in Server", from the webhook's name |
+| Embeds, full | embed color, footer, timestamp, video, author icon, provider url | picks type/title/description/url/provider/author name/fields/thumbnail/image | d | M | No video embeds (YouTube/Twitch play inline in Discord), no color bar, no footer. **done** (net-gaps): colour bar, footer and time, author icon; YouTube/Twitch/Vimeo players load only when clicked |
+| SUPPRESS_EMBEDS | flag 4 | not seen | a | L | dither may show a preview the author hid. **done** (net-gaps): no embeds shown |
+| Attachment alt text | attachment `description` | not picked | a | M | Accessibility; also searchable text. **done** (net-gaps): shown, and searched (found when no message text matches) |
+| Spoilered attachments | IS_SPOILER / `SPOILER_` filename | not picked | d | M | `\|\|text\|\|` spoilers render, but spoilered images show unblurred. **done** (net-gaps): blurred until clicked |
+| Explicit-media flags | CONTAINS_EXPLICIT_MEDIA, EXPLICIT_MEDIA_SCAN_* | not picked | a | L | Discord blurs these. dither shows them raw. **done** (net-gaps): CONTAINS_EXPLICIT_MEDIA blurred as a spoiler; the EXPLICIT_MEDIA_SCAN_* settings are not read |
+| Stickers | `sticker_items`, STICKER, STICKER_ASSET, STICKER_PACKS, MESSAGES_GREET | body becomes `[sticker: name]`; no image | d | M | The sticker CDN url comes from id + format_type; Lottie needs a player. **done** (#123): checked in net-gaps, nothing missing for reading |
 | Polls, results | `poll` object (answers, counts, expiry, multiselect), MESSAGE_POLL_VOTE_ADD, POLL_RESULT type 46 | question + answer texts as markdown; result as a system line | d | M | No counts, no expiry, no "you voted" |
 | Poll voting | POLL_ANSWERS (put/del `/polls/{id}/answers/@me`) | none | a | M | client-path: one request, like a click |
 | Poll create / end early | CREATE_POLL, POLL_EXPIRE | none | a | L | ROADMAP lists "polls" as later |
-| Timestamp tags `<t:…:R>` | markdown rule | rendered as raw `<t:1731…:R>` | a | M | Easy win in web/src/markdown.ts |
-| Markdown: masked links, headings, lists, subtext | client markdown rules | headings→bold, `-#`→small, lists, quotes, custom emoji | d | L | Numbered lists, nested lists and code highlighting look unchecked |
-| Role mentions | `mention_roles`, `<@&id>` | `mention_roles` not picked; `mentionsSelf` = by name or @everyone | a | H | A ping to a role you hold does not count as a mention, which matters for triage. Needs your roles (GuildMemberStore, self only) |
-| Channel/role mention rendering | `<#id>`, `<@&id>`, `<id:guide>`, `<id:customize>` | `<#id>` rendered; role mentions likely raw | d | L | |
-| Interaction metadata ("X used /cmd") | `interaction_metadata`, MESSAGE_INTERACTION_DATA, LOAD_MESSAGE_INTERACTION_DATA_SUCCESS | type 20/23 treated as plain | d | L | Who ran the command is lost |
-| New system message types 25–56 | MessageType enum (STAGE_*, POLL_RESULT handled; GUILD_JOIN_REQUEST_*, VOICE_HANGOUT_INVITE, PURCHASE_NOTIFICATION, CHAT_WALLPAPER_SET…) | fall back to generic | d | L | Add sentences for stage start/end/topic, hangout invite and join-request outcomes |
+| Timestamp tags `<t:…:R>` | markdown rule | rendered as raw `<t:1731…:R>` | a | M | Easy win in web/src/markdown.ts. **done** (net-gaps): every style, relative ones moving on |
+| Markdown: masked links, headings, lists, subtext | client markdown rules | headings→bold, `-#`→small, lists, quotes, custom emoji | d | L | Numbered lists, nested lists and code highlighting look unchecked. **done** (net-gaps): numbered and nested lists; masked links checked. Code highlighting **not built**: a fence keeps its language only |
+| Role mentions | `mention_roles`, `<@&id>` | `mention_roles` not picked; `mentionsSelf` = by name or @everyone | a | H | A ping to a role you hold does not count as a mention, which matters for triage. Needs your roles (GuildMemberStore, self only). **done** (net-gaps): your roles from the snapshot and your own member updates; a ping to one is `mentionsSelf` |
+| Channel/role mention rendering | `<#id>`, `<@&id>`, `<id:guide>`, `<id:customize>` | `<#id>` rendered; role mentions likely raw | d | L | **done** (net-gaps) |
+| Interaction metadata ("X used /cmd") | `interaction_metadata`, MESSAGE_INTERACTION_DATA, LOAD_MESSAGE_INTERACTION_DATA_SUCCESS | type 20/23 treated as plain | d | L | Who ran the command is lost. **done** (net-gaps) |
+| New system message types 25–56 | MessageType enum (STAGE_*, POLL_RESULT handled; GUILD_JOIN_REQUEST_*, VOICE_HANGOUT_INVITE, PURCHASE_NOTIFICATION, CHAT_WALLPAPER_SET…) | fall back to generic | d | L | Add sentences for stage start/end/topic, hangout invite and join-request outcomes. **done** (net-gaps): 13–17, 22, 25–41, 45, 64, 66 and the notices have words |
 | DM call messages | type 3 CALL with `call.ended_timestamp`/participants | system line | d | M | ROADMAP's "calls without media" wants missed/answered calls and duration |
-| Activity invites in messages | `activity`, `application` on message; VOICE_HANGOUT_INVITE | not picked | a | L | |
-| Message link previews (jump to Discord message) | message links unfurl to a quoted preview in the client | link stays a link | a | L | |
-| Guild "official" messages | IS_GUILD_OFFICIAL, GUILD_OFFICIAL_MESSAGES, exp `2026-03_guild_official_messages` | not marked | a | L | |
-| Hidden suspended user | HIDDEN_SUSPENDED_USER | not marked | a | L | |
-| Edits pushed while idle in unopened guild channels | MESSAGE_UPDATE only for subscribed channels | blocked, as ROADMAP says | d | H | Known limit. Opcode REQUEST_LAST_MESSAGES 34 and `MESSAGE_PREVIEWS` (`/channels/preload-messages`) are what the client uses to preview many channels at once. A possible lever, but odd-traffic |
-| Bulk deletes | MESSAGE_DELETE_BULK | not subscribed | a | M | Mod purges leave ghosts in dither |
-| AutoMod-blocked/flagged content | AUTO_MODERATION_ACTION type 24, MESSAGE_EDIT_FAILED_AUTOMOD, AUTO_MODERATION_CONTENT_DELETED | system line only | d | L | Your own send blocked by AutoMod should come back as an error, and may not |
+| Activity invites in messages | `activity`, `application` on message; VOICE_HANGOUT_INVITE | not picked | a | L | **done** (net-gaps): a line under the message; answering is on Discord |
+| Message link previews (jump to Discord message) | message links unfurl to a quoted preview in the client | link stays a link | a | L | **done** (net-gaps): a stored message shows as a quote; nothing is fetched |
+| Guild "official" messages | IS_GUILD_OFFICIAL, GUILD_OFFICIAL_MESSAGES, exp `2026-03_guild_official_messages` | not marked | a | L | **done** (net-gaps) |
+| Hidden suspended user | HIDDEN_SUSPENDED_USER | not marked | a | L | **done** (net-gaps) |
+| Edits pushed while idle in unopened guild channels | MESSAGE_UPDATE only for subscribed channels | blocked, as ROADMAP says | d | H | Known limit. Opcode REQUEST_LAST_MESSAGES 34 and `MESSAGE_PREVIEWS` (`/channels/preload-messages`) are what the client uses to preview many channels at once. A possible lever, but odd-traffic. **not built**: odd traffic (net-gaps) |
+| Bulk deletes | MESSAGE_DELETE_BULK | not subscribed | a | M | Mod purges leave ghosts in dither. **done** (net-gaps) |
+| AutoMod-blocked/flagged content | AUTO_MODERATION_ACTION type 24, MESSAGE_EDIT_FAILED_AUTOMOD, AUTO_MODERATION_CONTENT_DELETED | system line only | d | L | Your own send blocked by AutoMod should come back as an error, and may not. **done** (net-gaps): a send or edit AutoMod blocks comes back as "This server's AutoMod blocked it: …" |
 | Super-reaction details | `burst_colors`, `count_details`, BURST_REACTION_EFFECT_PLAY | done (style super, colors) | – | – | Not a gap |
-| Reactions added many at once | MESSAGE_REACTION_ADD_MANY | not subscribed | a | L | Batched form some builds use; reactions could be missed |
+| Reactions added many at once | MESSAGE_REACTION_ADD_MANY | not subscribed | a | L | Batched form some builds use; reactions could be missed. **done** (net-gaps): poll votes that come this way are left to polls |
 
 ## Messages: writing and actions
 

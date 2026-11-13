@@ -27,7 +27,7 @@ Everything the networks' own clients can do that dither cannot, feature by featu
 | Search inside one conversation, from its header | M | L | done | A button in the header, or Ctrl+F, scopes search by conversation id |
 | Discord-style search: suggestions as you type, recent searches, grouped results with context, sort, more operators | H | M | done | docs/search.md. Also typo correction and arrow keys through results |
 | Search Japanese and other unspaced text | H | L | done | Scans inside words, so unspaced text is found. Slower than the index on a large database; a trigram index would fix that |
-| Index attachment filenames and embed text | M | L | next | Only message bodies are searched today |
+| Index attachment filenames and embed text | M | L | next | Only message bodies are searched today, and a picture's alt text when no message text matches ([rich-messages.md](rich-messages.md)) |
 | Search Discord and Matrix themselves, on an explicit click | M | M | done | [indexing.md](indexing.md): places in jev's order, six at a time, paced per account, hits kept. Run against the demo and the extractors' fakes, not a live account |
 | Index jobs: a server, a folder of servers or a channel fetched whole, members walked, repeating | H | M | done | [indexing.md](indexing.md). Repeats fetch only what is new (history spans). Archived threads the hub never saw are not found yet. Not run on a live account |
 | Signal history beyond what the hub received | L | H | blocked | A linked device gets no history |
@@ -80,6 +80,7 @@ Built in slices from [mail-design.md](mail-design.md) (its §12); what works now
 | Mark all read | M | L | done | Everywhere, or per server, folder or person. A paced queue on the hub tells the networks and survives restarts |
 | Typing indicator, outgoing | L | L | done | Both ways on every network, with a privacy switch ([typing.md](typing.md)) |
 | Pinned messages, polls, sending stickers from the picker (receiving them is done) | M | M | later | |
+| Rich messages: a bot's controls, Components V2, silent messages, voice messages, spoilers, alt text, role pings, full embeds | H | M | done | [rich-messages.md](rich-messages.md): read-only (pressing a button is later); Discord only so far. Checked against fakes and a real hub Store, not on a live account |
 | Calls without media: timeline events, ringing push, link out, who is in Discord voice | M | M | next | Signal offers already reach the timeline; hangups and Matrix calls do not. No media stack needed |
 | Matrix calls through Element Call | M | H | later | Standalone is cheapest but is a second login. Self-hosting needs LiveKit and a homeserver you control. MatrixRTC is unmerged |
 | Signal 1:1 voice | L | H | later | signal-cli has it experimentally since 0.14.2, voice only, with no packaged tunnel binary, and would need a WebRTC bridge to the PWA |

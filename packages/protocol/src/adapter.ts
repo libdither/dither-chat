@@ -27,6 +27,7 @@ import type { AboutChange, AboutTarget, PersonRelationship } from './about.ts';
 import type { AddAction, AddRef, RelationshipFact, RequestAnswer, RequestFact } from './add.ts';
 import type { CallMode, CallState } from './call.ts';
 import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, ReactionStyle, Shape, SpaceKind, Variant } from './ontology.ts';
+import type { VoiceFact } from './rich.ts';
 
 /** How far a message got with someone: their device has it, they read it, they played it (a voice note, a video). */
 export type ReceiptState = 'delivered' | 'read' | 'played';
@@ -186,6 +187,9 @@ export interface MessageFact {
   reactions?: ReactionFact[];
   /** This message forwards another, as the network marks it. body and attachments are the forwarded content. */
   forward?: ForwardFact;
+  /** Its sender sent it silently (Discord's @silent): it may show and count, but it never alerts (docs/rich-messages.md). */
+  silent?: boolean;
+  /** Embeds as `embeds` (api.ts EmbedView), and the keys of rich.ts RichExtra. */
   extra?: Record<string, unknown>;
 }
 
@@ -252,6 +256,14 @@ export interface AttachmentFact {
   width?: number;
   height?: number;
   url: MediaUrl;
+  /** Its description (alt text), shown with it and searched (docs/rich-messages.md). */
+  alt?: string;
+  /** Marked as a spoiler: drawn blurred until clicked. */
+  spoiler?: boolean;
+  /** The network flagged it as explicit: drawn blurred until clicked, as a spoiler. */
+  explicit?: boolean;
+  /** A voice message (rich.ts VoiceFact): drawn as a player with its waveform. */
+  voice?: VoiceFact;
 }
 
 /** A file to send, in the hub's spool. The adapter reads it during the send; the hub deletes it afterwards. */

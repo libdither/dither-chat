@@ -49,7 +49,9 @@ For every new live message from someone else, in this order (`triage.ts`, `Triag
    level, and below the list when it is not.
 
 A place kept to the list (you set it to List only, or it is muted on its own network) is never a Conversation and
-never read for an alert: its messages are on the list or below it. Quiet hours come last and hold alerts only.
+never read for an alert: its messages are on the list or below it. A message its sender sent silently (Discord's
+@silent) never alerts, whatever decided it: it stays a Conversation or a list row ([rich-messages.md](rich-messages.md)).
+Quiet hours come last and hold alerts only.
 
 Every decision is stored with its reasons in words, the deciding one first ("A direct message", "Reads as urgent: the
 local model's answer is 0.31 against a bar of 0.05", "On the list: importance 72%, at or over your level of 60%"), so

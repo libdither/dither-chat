@@ -13720,3 +13720,82 @@ h1:hover > .pair-nick-edit,
 .plan-btn:disabled {
   opacity: 0.6;
 }
+
+/* Rich messages, the part in the main bundle (ui/rich/parts.tsx, docs/rich-messages.md). */
+.rich-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.rich-line b {
+  color: var(--text-dim);
+}
+.rich-mark {
+  font-size: 10.5px;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border-soft);
+  color: var(--text-faint);
+}
+.veil {
+  position: relative;
+  display: block;
+  cursor: pointer;
+  overflow: hidden;
+  border-radius: 10px;
+}
+.veil > :first-child {
+  filter: blur(28px);
+  pointer-events: none;
+}
+.veil-word {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+}
+.att-img {
+  position: relative;
+}
+.alt-badge {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+}
+.embed-by {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.embed-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.mention.role {
+  background: color-mix(in oklab, currentColor 14%, transparent);
+}
+.md-time {
+  padding: 0 3px;
+  border-radius: 4px;
+  background: var(--bg-raised);
+}
+.msg-body ol {
+  margin: 2px 0;
+  padding-left: 26px;
+  white-space: normal;
+}
