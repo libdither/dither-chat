@@ -221,9 +221,11 @@ server (the most active twelve), **Members** by role.
 
 Right: **Seen as** (when several of your accounts are there: each may see and change different things),
 **Notifications** (the place's rule: Automatic, Always alert, List only or Mute, and under Automatic what holds here
-and from where; [notifications.md](notifications.md#rules)), **Blocking** for a Signal group (Block group asks first,
-then `POST /api/conversations/:id/block`; About.blocked says it is), **Invite link**, **Who can do what**, **Details**
-(your role, the account it is seen as, the native id to copy, when the network last said).
+and from where; [notifications.md](notifications.md#rules)), **Secure session** (a Signal 1:1: Reset secure session, for
+messages from them that could not be decrypted; it asks first, since they see it: [messages.md](messages.md)),
+**Blocking** for a Signal group (Block group asks first, then `POST /api/conversations/:id/block`; About.blocked says
+it is), **Invite link**, **Who can do what**, **Details** (your role, the account it is seen as, the native id to copy,
+when the network last said).
 
 Everything that changes something goes through the same checks as before (docs/group-settings.md): the network's
 rules, then a fresh About through the account whose view it is.

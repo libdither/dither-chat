@@ -22,6 +22,7 @@ import { Action, Card, Columns, Facts, Hero, ProfilePage, Tag } from './ProfileS
 import { openConv } from './Sidebar.tsx';
 import { Loading } from './Loader.tsx';
 import { peopleExtras } from './peopleExtras.ts';
+import { ResetSessionCard } from './ResetSession.tsx';
 import { canIndex, startIndexing } from './Indexing.tsx';
 
 /** "Seen 12 of 1,287 listed (1%) · 214 online": honest about how little that may be. */
@@ -212,6 +213,8 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
       {conv && conv.shape === 'group' && view && view.blocked !== undefined && GroupBlock && (
         <GroupBlock conversationId={conv.id} network={network} blocked={view.blocked} onDone={() => void api<P.AboutView>(`/api/conversations/${conv.id}/about${view.accountId ? `?account=${encodeURIComponent(view.accountId)}` : ''}`).then(replace)} />
       )}
+
+      {conv && <ResetSessionCard conv={conv} />}
 
       {view?.invite && (
         <div class="pf-card pf-embed">

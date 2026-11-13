@@ -17,44 +17,44 @@ Note: adapter comments and docs/signal.md speak of signal-cli **0.14.9**; the st
 
 A side finding: `MessageFact.extra` (quote, poll, sticker, storyReply, viewOnce, expiresInSeconds) is stored by the hub
 (`messages.extra`) but only `extra.embeds` is ever read (store.ts search, embeddings.ts). Nothing in packages/web reads
-`extra`. Every "(c)" below that names an `extra` key comes from this.
+`extra`. Every "(c)" below that names an `extra` key comes from this. **done** (net-gaps): the hub draws `quote`, `contacts`, `storyReply`, `failed`, `missingAttachments` and `attachmentNotes` into MessageView (hub msgextra.ts, protocol extra.ts, docs/messages.md) and the timeline shows them. `poll` stays unread (polls are another package); `sticker` needs nothing more, since #123 draws a `kind: 'sticker'` message's picture as a sticker; `viewOnce` and `expiresInSeconds` stay as they are.
 
 ## Messaging
 
 - (d) H: a reply to a message the hub never saw (anything from before linking) shows no quote at all. The adapter
   puts the quoted author, text and attachment types in `extra.quote` (`JsonQuote.text/attachments/mentions/textStyles`),
-  but the web's `reply-quote` draws only when `target` is a stored message (Timeline.tsx ~589).
+  but the web's `reply-quote` draws only when `target` is a stored message (Timeline.tsx ~589). **done** (net-gaps): the reply's own quote (author, text, a word for its files, a thumbnail when signal-cli sent one) when the quoted message is not stored; a stored one wins.
 - (a) M: incoming link previews are dropped. `JsonDataMessage.previews[]` (`url, title, description, image`) is
-  never read by mapping.ts, and the hub does not unfurl links itself.
-- (a) L: outgoing link previews. `send --preview-url/--preview-title/--preview-description/--preview-image` is unused.
+  never read by mapping.ts, and the hub does not unfurl links itself. **done** (net-gaps): `previews[]` become `extra.embeds`, drawn as Discord's embeds are (picture only when it downloaded).
+- (a) L: outgoing link previews. `send --preview-url/--preview-title/--preview-description/--preview-image` is unused. **done** (net-gaps): the hub fetches the first link under the media proxy's rules (unfurl.ts: public addresses only, 512 KB page, 1 MB picture, 5 s) for an account offering `linkPreviews`, which Signal's offers only while the phone's link-preview setting is on; the adapter sends `previewUrl/Title/Description/Image`.
 - (d) L: an outgoing quote carries only the quoted text (`quoteTimestamp/quoteAuthor/quoteMessage`), not
-  `--quote-attachment`, `--quote-mention` or `--quote-text-style`. A reply to a photo shows no thumbnail on the phone.
-- (a) L: `send --no-urgent` (send without a push to the recipient) is unused. It could go with low-priority sends.
-- (a) L: `send --end-session` (reset the session, for decryption trouble) is unused. There is no "reset secure session".
+  `--quote-attachment`, `--quote-mention` or `--quote-text-style`. A reply to a photo shows no thumbnail on the phone. **done** (net-gaps): `quoteMention`, `quoteTextStyle` and `quoteAttachment` (a picture of 256 KB or less as its own thumbnail) for messages this device has seen since; older ones keep the plain text.
+- (a) L: `send --no-urgent` (send without a push to the recipient) is unused. It could go with low-priority sends. **not built** (net-gaps): nothing in dither marks a send as low priority, so there is nothing to pass it for.
+- (a) L: `send --end-session` (reset the session, for decryption trouble) is unused. There is no "reset secure session". **done** (net-gaps): Reset secure session on a 1:1's About (`resetSession` command and capability), with a line in the conversation.
 - (d) L: a shared contact (`JsonSharedContact`) becomes one text line (name, phones, emails). `address[]`,
-  `organization` (except as the name fallback), `avatar` and the contact's labels are lost, and there is no tap-to-message.
+  `organization` (except as the name fallback), `avatar` and the contact's labels are lost, and there is no tap-to-message. **done** (net-gaps): a card with name, organisation, labelled numbers and emails, addresses and picture, and Message where someone the hub knows has that number (else New message with it); the body keeps the one line.
 - (a) L: a native forward. Signal "forward" is a resend, and the `forward` capability is not advertised, so the hub
-  falls back to its own copy. That is probably fine, though a native one would keep attachments without a re-upload.
+  falls back to its own copy. That is probably fine, though a native one would keep attachments without a re-upload. **not built** (net-gaps): signal-cli has no forward of its own; a "native" one would be the same resend and upload the files again, which the hub's copy already does.
 - (d) M: decryption failures (`receive` notifications with `exception`, e.g. an untrusted identity or an invalid
-  message) are only logged. No system message says "a message from X could not be decrypted".
+  message) are only logged. No system message says "a message from X could not be decrypted". **done** (net-gaps): a system line in the 1:1 with the sender, once per message, nothing asked of anyone; duplicates and your own sends make none.
 - (d) M: a send that fails for some recipients (`results[].type`: `UNREGISTERED_FAILURE`, `IDENTITY_FAILURE`,
   `RATE_LIMIT_FAILURE`+`token`, `NETWORK_FAILURE`, `INVALID_PRE_KEY_FAILURE`) is only logged (`logPartialFailure`). The
-  message shows as sent, with no per-message failure or resend.
+  message shows as sent, with no per-message failure or resend. **done** (net-gaps): `extra.failed` on your message, shown as "Not delivered to Sam (no longer on Signal)". **Resend not built**: signal-cli cannot send a group message to only some members; when nobody gets it the send fails as before.
 - (d) L: a decryption-error retry (`--disable-send-log` is off, so the send log is kept). It works inside signal-cli,
-  but nothing reports a resend.
+  but nothing reports a resend. **not built** (net-gaps): signal-cli resends inside itself and reports nothing of it in JSON, so there is nothing to show.
 
 ## Receipts, typing, read state
 
 - (a) L: no viewed receipts are sent. `sendReceipt --type viewed` is unused, so playing a voice note or opening a video
-  never tells the sender ("played"). Incoming viewed receipts are mapped (`isViewed` → `played`).
+  never tells the sender ("played"). Incoming viewed receipts are mapped (`isViewed` → `played`). **done** (net-gaps): playing a voice note or video sends `sendReceipt --type viewed` once (`viewed` command and capability), never in a message request, only with the phone's read receipts on.
 - (a) M: the account's typing-indicator setting is ignored. signal-cli's `sendTypingMessage` does not check the
   synced configuration (`ConfigurationStore.getTypingIndicators` is read only in IncomingMessageHandler). If typing
   indicators are off on the phone, dither still sends `sendTyping`. Read receipts are safe: `sendReceiptMessage`
   checks `getReadReceipts`, so a read receipt goes only to your own devices when the setting is off. No JSON-RPC
-  method reads the configuration (see (e)), but the adapter could read signal-cli's account file.
-- (a) L: link previews and sealed-sender indicators also live in the synced configuration, and nothing reads them.
+  method reads the configuration (see (e)), but the adapter could read signal-cli's account file. **done** (net-gaps): read-only from signal-cli's account database (`key_value` `config-typing-indicators`); off on the phone: nothing sent; not known: sent as before.
+- (a) L: link previews and sealed-sender indicators also live in the synced configuration, and nothing reads them. **done** (net-gaps) for link previews (`config-link-previews`, gating the previews above), **not built** for sealed-sender indicators: nothing in dither shows them.
 - (c) L: incoming typing in groups and 1:1s is relayed (`typing` event). Nothing is missing here; it is listed only
-  for completeness.
+  for completeness. Nothing to do (net-gaps).
 
 ## Groups and admin
 
@@ -129,7 +129,7 @@ A side finding: `MessageFact.extra` (quote, poll, sticker, storyReply, viewOnce,
   `syncMessage.sentStoryMessage` never arrive.
 - (c) L: a story reply arrives (`dataMessage.storyContext`) and the adapter sets `extra.storyReply`, but the web
   never shows "replied to your story". Story reactions (a reaction with `storyContext` and no text) are dropped
-  ("e.g. a reaction to a story").
+  ("e.g. a reaction to a story"). **done** (net-gaps) (display only): "Replied to your story", and a story reaction as "Reacted ❤️ to your story".
 - (a) L: posting stories (`sendStory -a <file> [-g group] [--no-replies]`), replying to them (`send
   --story-timestamp/--story-author`), reacting (`sendReaction --story`) and deleting (`sendAdminDelete --story`) are unused.
 
@@ -184,17 +184,17 @@ A side finding: `MessageFact.extra` (quote, poll, sticker, storyReply, viewOnce,
 ## Attachments
 
 - (a) L/M: voice notes. `JsonAttachment.isVoiceNote` is ignored (no voice-note player or label), and `send
-  --voice-note` is never sent (no recording UI).
-- (a) L: per-attachment captions. `JsonAttachment.caption` is ignored, and `send` has no caption flag (e).
+  --voice-note` is never sent (no recording UI). **done** (net-gaps) for incoming: a "Voice message" label with the player (`attachmentNotes[].voiceNote`; Signal has no duration or waveform). **Not built**: `send --voice-note`, which waits on recording in the composer (another package).
+- (a) L: per-attachment captions. `JsonAttachment.caption` is ignored, and `send` has no caption flag (e). **done** (net-gaps) for incoming (`attachmentNotes[].caption`, under the file); sending stays (e) e19.
 - (a) L: `uploadTimestamp` and `size` (size is mapped) and `width/height` (mapped) are fine. Thumbnails of quoted
-  attachments (`JsonQuotedAttachment.thumbnail`) are ignored.
+  attachments (`JsonQuotedAttachment.thumbnail`) are ignored. **done** (net-gaps) for quoted thumbnails (see the quote rows above).
 - (a) L: view-once sending. `send --view-once` is unused. Incoming view-once is deliberately shown as a placeholder
   ("open it on your phone"), though signal-cli did download the file. The file is kept on disk, not shown and never
-  purged early.
+  purged early. **not built** (net-gaps): it needs a composer switch and a way to show your own view-once message; incoming view-once stays a placeholder.
 - (a) L: `getAttachment` (base64 by id) is unused, but the adapter reads `<dir>/attachments/<id>` directly, which is
-  equivalent.
+  equivalent. Nothing to do (net-gaps): reading the file is equivalent.
 - (d) L: an attachment whose download failed or was skipped looks the same as a missing `id`, and is silently dropped
-  from the message. The JSON has no "pending" or "failed" status (e).
+  from the message. The JSON has no "pending" or "failed" status (e). **done** (net-gaps) where the JSON lets you tell: no `id`, or no file on disk when signal-cli hands the message over (it downloads first): "Attachment not downloaded: name (size)" (`extra.missingAttachments`).
 
 ## Polls and pins
 
@@ -219,7 +219,7 @@ A side finding: `MessageFact.extra` (quote, poll, sticker, storyReply, viewOnce,
   `deviceLinkUri`) is unused. Linking runs a separate `signal-cli link` process instead. That works, but it means two
   JVMs during a relink. **not built**: the separate link process works; two JVMs only during a relink.
 - (a) L: `sourceDevice`, `serverReceivedTimestamp` and `serverDeliveredTimestamp` are ignored. They could order
-  messages by server time, or say "sent from desktop". **not built**: nothing here orders by server time or says which device sent.
+  messages by server time, or say "sent from desktop". **done** (net-gaps): kept in `extra` (`sourceDevice`, `serverReceivedTs`, `serverDeliveredTs`), not shown yet.
 - (a) L: `isEndSession`, `isProfileKeyUpdate` and `hasProfileKey` are treated as housekeeping and dropped (fine), and
   could be used as re-read triggers. `isProfileKeyUpdate` **done** (net-gaps) as a re-read trigger; the rest stay dropped.
 - (d) L: history. A linked device gets none (`history` → `{count:0, done:true}`). History is only via the backup
