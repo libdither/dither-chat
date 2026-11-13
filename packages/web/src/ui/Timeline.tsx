@@ -93,6 +93,7 @@ import { noteSeen } from '../activity.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { ForwardCard, forwarding } from './Forward.tsx';
 import { InviteCards } from './InviteCard.tsx';
+import { AttachmentNote, ContactCards, MissingFiles, played, QuoteFallback, SendFailures, StoryReplyLine, withoutCardLines } from './MessageExtras.tsx';
 import { attachmentMenu, conversationMenu, identityMenu, imageMenu, linkMenu, messageMenu, openAttachment, personMenu } from './menus.tsx';
 import { fileFacts, fileIcon, fileKind, openFileViewer, VIEWABLE } from '../files.ts';
 import { desk } from '../desk.ts';
@@ -443,14 +444,15 @@ function Attachments({ m }: { m: P.MessageView }) {
           const w = a.width ?? a.info?.width ?? 400;
           const h = a.height ?? a.info?.height ?? 300;
           const scale = Math.min(1, 400 / w, 300 / h);
-          return (
+          return withNote(
+            a,
             <a class="att-img" data-att={i} href={a.url} target="_blank" rel="noreferrer" onClick={(e) => openViewer(e, images, images.indexOf(a))} style={{ width: `${Math.round(w * scale)}px`, aspectRatio: `${w} / ${h}` }}>
               <img src={a.url} alt={a.name ?? ''} loading="lazy" />
-            </a>
+            </a>,
           );
         }
-        if (kind === 'video') return <video class="att-video" data-att={i} src={a.url} controls preload="metadata" />;
-        if (kind === 'audio') return <audio class="att-audio" data-att={i} src={a.url} controls preload="metadata" />;
+        if (kind === 'video') return withNote(a, <video class="att-video" data-att={i} src={a.url} controls preload="metadata" onPlay={() => played(m)} />);
+        if (kind === 'audio') return withNote(a, <audio class="att-audio" data-att={i} src={a.url} controls preload="metadata" onPlay={() => played(m)} />);
         const fk = fileKind(a);
         // A kind with a viewer opens in it (Viewer.tsx); any other opens in its app when the helper or the phone can,
         // else downloads (a type the hub won't show, HTML or SVG, straight away rather than through an empty tab).
@@ -458,19 +460,31 @@ function Attachments({ m }: { m: P.MessageView }) {
           if (VIEWABLE.has(fk)) e.preventDefault(), openFileViewer(a, m);
           else if (desk.value?.files || android?.opensFiles()) e.preventDefault(), openAttachment(a);
         };
-        return (
+        return withNote(
+          a,
           <a class="att-file" data-att={i} data-kind={fk} href={a.url} target="_blank" rel="noreferrer" download={showsInline(a.mime) ? undefined : (a.name ?? true)} onClick={open}>
             <Icon name={fileIcon(fk, a.info?.language)} size={22} />
             <span>
               <b>{a.name ?? 'file'}</b>
               <small>{fileFacts(a)}</small>
             </span>
-          </a>
+          </a>,
         );
       })}
     </div>
   );
 }
+
+/** A file with its voice-note label or caption under it (MessageExtras.tsx), or the file alone. */
+const withNote = (a: P.AttachmentView, el: ComponentChildren) =>
+  a.voiceNote || a.caption ? (
+    <div class="att-with-note">
+      {el}
+      <AttachmentNote a={a} />
+    </div>
+  ) : (
+    el
+  );
 
 function Embeds({ m }: { m: P.MessageView }) {
   if (!m.embeds.length) return null;
@@ -599,6 +613,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           <span>{target.deleted ? 'Message deleted' : plainBody(target.body, target.network).slice(0, 120) || 'Attachment'}</span>
         </button>
       )}
+      {!target && m.quote && <QuoteFallback m={m} />}
       <div class="msg-gutter">
         {grouped ? (
           <span class="msg-time-hover" title={hover ? fullTime(m.ts) : undefined}>
@@ -647,12 +662,16 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           </ForwardCard>
         ) : (
           <>
-            <Body m={m} tail={ticks} />
+            <StoryReplyLine m={m} />
+            <Body m={m.contacts ? withoutCardLines(m) : m} tail={ticks} />
             <Attachments m={m} />
+            <MissingFiles m={m} />
+            <ContactCards m={m} />
             <Embeds m={m} />
             <InviteCards m={m} body={m.body} />
           </>
         )}
+        <SendFailures m={m} />
         {ticks && (!m.body || m.deleted) && <span class="msg-marks">{ticks}</span>}
         {grouped && (m.editedTs || m.edits) && <Edited m={m} />}
         {grouped && m.pinned && (

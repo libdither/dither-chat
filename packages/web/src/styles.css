@@ -13809,3 +13809,110 @@ h1:hover > .pair-nick-edit,
   padding: 6px 16px;
   gap: 10px;
 }
+/* What a message carries besides its text (ui/MessageExtras.tsx, docs/messages.md). */
+.reply-quote-own {
+  cursor: default;
+}
+.reply-quote-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex: none;
+}
+.msg-story-reply {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.att-with-note {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 100%;
+}
+.att-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.att-voice {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-faint);
+}
+.atts-missing {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 5px;
+}
+.att-missing,
+.msg-failed {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.msg-failed {
+  margin-top: 3px;
+  color: var(--danger, var(--text-dim));
+}
+.msg-failed small {
+  color: var(--text-faint);
+}
+.contact-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 5px;
+}
+.contact-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  width: min(320px, 100%);
+  padding: 10px 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.contact-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.contact-card-head span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.contact-card-head small,
+.contact-card-row small {
+  color: var(--text-faint);
+}
+.contact-card-pic {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.contact-card-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.contact-card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}

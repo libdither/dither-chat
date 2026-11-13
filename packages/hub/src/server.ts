@@ -1,6 +1,6 @@
 import type { Server, ServerWebSocket, Socket, WebSocketHandler } from 'bun';
 import { createHmac } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, parseCursor } from './chats.ts';
@@ -26,6 +26,7 @@ import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } fro
 import { clampDays, parseZone } from './activitychart.ts';
 import { compress } from './compress.ts';
 import { forwardMessage } from './forward.ts';
+import { firstLink, unfurl } from './unfurl.ts';
 import { UsageStore } from './usage.ts';
 import { ClickCounts } from './clicks.ts';
 import type { Attention } from './attention.ts';
@@ -221,6 +222,8 @@ export class HubServer {
   readonly boot = Buffer.from(crypto.getRandomValues(new Uint8Array(6))).toString('base64url');
   /** Sends by the client's id for them, so one retried after a lost answer goes out once (state.ts queues sends). */
   private sends = new Map<string, { at: number; done: Promise<Response> }>();
+  /** Messages a viewed receipt was asked for (once each; viewed). */
+  private viewedSent = new Set<string>();
 
   constructor(
     private store: Store,
@@ -1464,6 +1467,13 @@ export class HubServer {
       const b = await body<{ accountId?: string; stop?: boolean }>();
       return ok(this.typing(m[1], b.accountId, !!b.stop));
     }
+    if ((m = path.match(/^\/api\/messages\/([\w-]+)\/viewed$/)) && method === 'POST') return ok(this.viewed(m[1]));
+    if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/reset-session$/)) && method === 'POST') {
+      const b = await body<{ accountId?: string }>();
+      const r = await this.resetSession(m[1], b.accountId);
+      this.flush();
+      return 'error' in r ? bad(r.error, r.status) : ok(r);
+    }
     if (path === '/api/quiet-hours') {
       if (method === 'PUT') {
         const b = await body<Partial<P.QuietHours>>();
@@ -1635,7 +1645,13 @@ export class HubServer {
       if (files.length > limit.files) return bad(`${name} takes ${limit.files} files at a time`, 413);
       if (files.some((f) => f.size > limit.bytes)) return bad(`${name} takes files up to ${limit.bytes / 1024 / 1024} MB`, 413);
     }
-    const result = await this.sup.command(accountId, { t: 'send', conversation: conv.nativeId, body: b.body ?? '', replyTo, ...(files.length ? { attachments: files } : {}) }, files.length ? 180_000 : undefined);
+    const preview = files.length ? null : await this.linkPreview(accountId, b.body ?? '');
+    let result: unknown;
+    try {
+      result = await this.sup.command(accountId, { t: 'send', conversation: conv.nativeId, body: b.body ?? '', replyTo, ...(files.length ? { attachments: files } : {}), ...(preview ? { preview } : {}) }, files.length ? 180_000 : undefined);
+    } finally {
+      if (preview?.image) rmSync(preview.image, { force: true });
+    }
     this.uploads.remove(ids);
     // Message ids are derived from the network's, so this is the message's id whether or not it is stored yet.
     const native = (result as { nativeId?: unknown } | undefined)?.nativeId;
@@ -1664,6 +1680,61 @@ export class HubServer {
     if (!this.typingGate.allow(accountId, conversationId, stop)) return { sent: false, why: 'throttled' };
     this.sup.command(accountId, { t: 'typing', conversation: conv.nativeId, ...(stop ? { stop: true } : {}) }, 15_000).catch(() => {});
     return { sent: true, accountId };
+  }
+
+  /**
+   * A preview of the first link in what you send (unfurl.ts), for an account that sends previews (capability
+   * 'linkPreviews': on Signal, while your phone's link-preview setting is on). Null otherwise, or when the page gives none.
+   */
+  private async linkPreview(accountId: string, body: string): Promise<P.LinkPreviewOut | null> {
+    const acc = this.store.account(accountId);
+    if (!acc || !(JSON.parse(acc.capabilities) as P.Capability[]).includes('linkPreviews')) return null;
+    const url = firstLink(body);
+    if (!url) return null;
+    const dir = join(this.opts.dataDir, 'previews');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    return unfurl(url, dir, crypto.randomUUID()).catch(() => null);
+  }
+
+  /**
+   * You played a voice note or opened a video in someone's message: tell them, through the account that saw it, where its
+   * network has viewed receipts (capability 'viewed'; docs/messages.md). Best effort, once per message, never waited
+   * for; the adapter keeps its network's rules (Signal: read receipts on, not in a message request).
+   */
+  viewed(messageId: string): { sent: boolean; why?: string } {
+    const s = this.store;
+    const row = s.db.query('SELECT conversation_id, native_id, author_id FROM message WHERE id = ?').get(messageId) as { conversation_id: string; native_id: string; author_id: string | null } | null;
+    if (!row) return { sent: false, why: 'no such message' };
+    if (s.isSelf(row.author_id)) return { sent: false, why: 'your own' };
+    if (this.viewedSent.has(messageId)) return { sent: false, why: 'already' };
+    if (requestHeld(s.db, row.conversation_id)) return { sent: false, why: 'a message request' };
+    const conv = s.nativeOf('conversation', row.conversation_id);
+    const accountId = conv && this.pickAccount(row.conversation_id);
+    if (!conv || !accountId || !this.sup.online(accountId)) return { sent: false, why: 'no connected account' };
+    if (!(JSON.parse(s.account(accountId)!.capabilities) as P.Capability[]).includes('viewed')) return { sent: false, why: 'not on this network' };
+    this.viewedSent.add(messageId);
+    if (this.viewedSent.size > 5000) this.viewedSent.delete(this.viewedSent.values().next().value!);
+    this.sup.command(accountId, { t: 'viewed', conversation: conv.nativeId, message: row.native_id }, 30_000).catch(() => {});
+    return { sent: true };
+  }
+
+  /** Reset the encrypted session in a direct conversation (capability 'resetSession'): its About's "Reset secure session". */
+  async resetSession(conversationId: string, requested?: string): Promise<{ ok: true } | { error: string; status: number }> {
+    const s = this.store;
+    const c = s.conversationView(conversationId);
+    const conv = s.nativeOf('conversation', conversationId);
+    if (!c || !conv) return { error: 'no such conversation', status: 404 };
+    if (c.shape !== 'direct') return { error: 'Only a conversation with one person has a secure session to reset', status: 400 };
+    if (requestHeld(s.db, conversationId)) return { error: 'Accept the message request first', status: 409 };
+    const accountId = this.pickAccount(conversationId, requested);
+    if (!accountId || !this.sup.online(accountId)) return { error: 'no connected account can do that here', status: 409 };
+    if (!(JSON.parse(s.account(accountId)!.capabilities) as P.Capability[]).includes('resetSession')) return { error: `Resetting the session is not built for ${NETWORK_META[conv.network].name}`, status: 409 };
+    try {
+      await this.sup.command(accountId, { t: 'resetSession', conversation: conv.nativeId }, 60_000);
+      return { ok: true };
+    } catch (e) {
+      return { error: `The network refused it: ${(e as Error).message}`, status: 502 };
+    }
   }
 
   private sendRefusal(conversationId: string, accountId: string | null): string | null {
