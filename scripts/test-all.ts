@@ -9,7 +9,7 @@
  *
  * One package alone streams its output. For the hub in one process: cd packages/hub && bun test.
  */
-const packages = ['hub', 'protocol', 'web', 'adapter-discord', 'adapter-matrix', 'adapter-signal', 'adapter-whatsapp', 'desk'];
+const packages = ['hub', 'protocol', 'web', 'adapter-discord', 'adapter-matrix', 'adapter-signal', 'adapter-whatsapp', 'desk', 'deploy'];
 /** The hub's suite is the longest by far; its files are independent, so it runs them on worker processes. */
 const HUB_FLAGS = ['--parallel=4'];
 

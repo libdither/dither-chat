@@ -1,0 +1,9 @@
+{
+  "name": "@dither-chat/deploy",
+  "license": "AGPL-3.0-or-later",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/deployer.ts"
+  }
+}
