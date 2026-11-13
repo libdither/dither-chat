@@ -35,7 +35,7 @@ import { changesOf } from './journal.ts';
 import { syncResponse } from './sync.ts';
 import { TypingGate } from './typing.ts';
 import { hostAllowed, hostNames } from './hosts.ts';
-import { noteWork, pathShape } from './stalls.ts';
+import { noteWork, pathShape, timedWrite } from './stalls.ts';
 import { fetchPublicToFile } from './fetchsafe.ts';
 import { AboutError, Abouts } from './about.ts';
 import { asked, attempt, candidatesAttempt } from './attempts.ts';
@@ -388,10 +388,12 @@ export class HubServer {
     let events: P.ClientEvent[] = [];
     let frame: string | null = null;
     try {
-      frame = this.store.db.transaction(() => {
-        events = this.gather();
-        return this.record(events);
-      })();
+      frame = timedWrite('flush', () =>
+        this.store.db.transaction(() => {
+          events = this.gather();
+          return this.record(events);
+        })(),
+      );
     } catch (e) {
       // The commit failed (a lock held past busy_timeout): attention's folds are undone and fold again later; what
       // the store gave up goes out and into the journal on its own.
@@ -636,6 +638,10 @@ export class HubServer {
       return ok();
     }
     if (path === '/api/bootstrap') {
+      // Just after a start the first scores are still being worked out a slice at a time: wait for them rather than
+      // work them all out here at once (a second or more of the hub's thread).
+      const attention = this.opts.attention;
+      if (attention && !attention.hasScores) await attention.firstScores;
       // Everything changed so far is in the journal, so the position below covers what this reads.
       this.flush();
       const calendar = this.opts.calendar;

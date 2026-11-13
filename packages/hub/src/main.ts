@@ -29,7 +29,7 @@ import { NightlyBackup, pruneMediaCacheSteps, rotateAdapterLogs, tightenPermissi
 import { StartupTrace } from './startup.ts';
 import { startCheckpointer } from './checkpoint.ts';
 import { sliced } from './slices.ts';
-import { noteWork, StallWatch } from './stalls.ts';
+import { noteWork, StallWatch, timedWrite } from './stalls.ts';
 import { CalendarLink, calendarChain, calendarUrl, ReminderDelivery, REMINDER_RULE_ID } from './calendar.ts';
 import { inQuietHours } from './triage.ts';
 
@@ -153,12 +153,14 @@ async function triageNow(ids: string[]) {
       if (!conversationId) continue;
       // What the decision writes, in one commit rather than four: each commit waits for the disk, and on a busy
       // machine that wait holds the hub.
-      store.db.transaction(() => {
-        store.setTriage(id, d, d.facts);
-        if (d.features) activity.keepInputs(id, d.features);
-        attention.triaged(id, d);
-        store.triageDone(id);
-      })();
+      timedWrite('triage decision', () =>
+        store.db.transaction(() => {
+          store.setTriage(id, d, d.facts);
+          if (d.features) activity.keepInputs(id, d.features);
+          attention.triaged(id, d);
+          store.triageDone(id);
+        })(),
+      );
       done = true;
       store.dirty.messages.set(id, true);
       if (d.decision === 'push' || d.decision === 'quiet' || d.decision === 'digest') deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', d.decision, d.score, listByPrior(d.facts));
