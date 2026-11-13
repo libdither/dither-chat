@@ -129,7 +129,7 @@ export class Posts {
           : null;
     if (accountId && !why) {
       try {
-        const t = await this.d.command<P.PostThread>(accountId, { t: 'post', post, ...(cursor ? { cursor } : {}) }, 30_000);
+        const t = await this.d.command<P.PostThread>(accountId, { t: 'post', post, ...(cursor ? { cursor } : {}) }, 90_000);
         if (!t || (!t.focal && !cursor)) throw new Error(`${net} did not give this post`);
         this.log(accountId, [...(t.focal ? [t.focal] : []), ...t.ancestors, ...t.replies.flat()]);
         return this.view(network, post, accountId, t, undefined);
