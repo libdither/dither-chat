@@ -24,6 +24,7 @@ import { android } from '../android.ts';
 import { Sheet } from './Sheet.tsx';
 import { chosenTheme, followsSystem, Swatch, ThemeList } from './Themes.tsx';
 import { themeById } from '../themes.ts';
+import { followsArchive, setFollowArchive } from '../arrange.ts';
 
 /** Settings' sections: listed beside them on a desktop, and in a sheet from their header on a phone. */
 export const SECTIONS: [title: string, icon: string, id: string][] = [
@@ -380,6 +381,13 @@ export function SettingsPane() {
           <section class="set-block" id="set-appearance">
             <h3>Appearance</h3>
             <AppearanceTheme />
+            <label class="toggle-row">
+              <input type="checkbox" checked={followsArchive()} onChange={(e) => setFollowArchive((e.target as HTMLInputElement).checked)} />
+              <span>
+                <b>Follow your phone's archive</b>
+                <small>A chat you archive or unarchive on a network (Signal) is hidden or shown in the sidebar here too, when that changes. Something that needs you still shows.</small>
+              </span>
+            </label>
           </section>
 
           <DeskSettings />

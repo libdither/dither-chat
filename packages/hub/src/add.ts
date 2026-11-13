@@ -283,6 +283,12 @@ export function linkOf(db: Database, accountId: string, identityId: string): P.L
   return ((db.query('SELECT relationship FROM person_link WHERE account_id = ? AND identity_id = ?').get(accountId, identityId) as Row | null)?.relationship as P.LinkRelationship) ?? null;
 }
 
+/** Whether one of your accounts blocked them (its own list says so): nothing from them alerts. */
+export function blockedByYou(db: Database, identityId: string): boolean {
+  addTables(db);
+  return !!db.query(`SELECT 1 FROM person_link WHERE identity_id = ? AND relationship = 'blocked' LIMIT 1`).get(identityId);
+}
+
 const linkView = (r: Row): P.PersonLinkView => ({ accountId: r.account_id, identityId: r.identity_id, personId: r.person_id ?? null, relationship: r.relationship, since: r.since ?? null });
 
 /** Every account's list entries for these identities (a profile). */

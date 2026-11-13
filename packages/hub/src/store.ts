@@ -229,7 +229,7 @@ export class Store {
       const reactionsBefore = this.oldReactions();
       const broadcastsUnknown = this.addMentionsAll();
       this.addColumns('message', { gone_how: 'TEXT', gone_at: 'INTEGER', imported: 'INTEGER NOT NULL DEFAULT 0' });
-      this.addColumns('identity', { status: 'TEXT', nickname: 'TEXT' });
+      this.addColumns('identity', { status: 'TEXT', nickname: 'TEXT', net_nickname: 'TEXT', net_note: 'TEXT' });
       this.addColumns('category', { threshold: 'REAL' });
       this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL', was: 'TEXT', alert_mark: 'INTEGER', less_mark: 'INTEGER', marked_at: 'INTEGER' });
       this.addColumns('owed_turn', { dismissed: 'INTEGER NOT NULL DEFAULT 0' });
@@ -860,6 +860,7 @@ export class Store {
       !before || before.handle !== after.handle || before.display_name !== after.display_name || before.avatar_url !== after.avatar_url || before.is_bot !== after.is_bot;
     if (changed) this.dirty.identities.add(id);
 
+    if (!f.isSelf && (f.nickname !== undefined || f.note !== undefined)) this.networkNotes(id, f);
     if (f.isSelf) {
       this.linkSelf(id, f);
       if (acc.self_identity !== id) {
@@ -873,6 +874,41 @@ export class Store {
       this.syncAutoPerson(after.person_id);
     }
     return id;
+  }
+
+  /** Your nickname or note went back to the network (server.ts pushes it through an account with 'contactNotes'). */
+  contactNotesOut?: (identityId: string, change: { nickname?: string; note?: string }) => void;
+
+  /**
+   * Your private nickname and note for someone as their network keeps them (IdentityFact nickname and note: Signal's).
+   * A change there is taken here when what is here is still what the network said before, or nothing. When both sides
+   * changed: the nickname here stays (the network keeps its own), and the two notes are joined and the joined note
+   * goes back, so neither side's text is lost.
+   */
+  private networkNotes(id: string, f: P.IdentityFact) {
+    const r = this.db.query('SELECT nickname, net_nickname, net_note, person_id FROM identity WHERE id = ?').get(id) as Row;
+    if (typeof f.nickname === 'string' && f.nickname !== r.net_nickname) {
+      const mine = r.nickname ?? '';
+      this.db.query('UPDATE identity SET net_nickname = ? WHERE id = ?').run(f.nickname, id);
+      if (mine !== f.nickname && (!mine || mine === (r.net_nickname ?? ''))) this.setIdentityNickname(id, f.nickname || null);
+    }
+    if (typeof f.note === 'string' && f.note !== r.net_note) {
+      this.db.query('UPDATE identity SET net_note = ? WHERE id = ?').run(f.note, id);
+      const pid = r.person_id ?? (f.note ? this.ensurePerson(id) : null);
+      if (!pid) return;
+      const mine = ((this.db.query('SELECT note FROM person WHERE id = ?').get(pid) as Row | null)?.note as string | null) ?? '';
+      const theirs = f.note;
+      if (mine === theirs) return;
+      // Only the network's changed (or there is none here): take it. Theirs holds all of ours: take it too.
+      if (!mine || mine === (r.net_note ?? '') || (theirs && theirs.includes(mine))) this.updatePerson(pid, { note: theirs });
+      // Ours holds all of theirs (or they cleared it while ours changed): ours goes back.
+      else if (!theirs || mine.includes(theirs)) this.contactNotesOut?.(id, { note: mine });
+      else {
+        const joined = `${mine}\n\n${theirs}`;
+        this.updatePerson(pid, { note: joined });
+        this.contactNotesOut?.(id, { note: joined });
+      }
+    }
   }
 
   private linkSelf(identityId: string, f: P.IdentityFact) {
@@ -1015,7 +1051,7 @@ export class Store {
     const parent = f.parentConversation ? hubId('cnv', acc.network, f.parentConversation) : null;
     const before = this.placeSig('conversation', id);
     const spacesBefore = this.parentsOf('conversation', id);
-    const was = this.db.query('SELECT name, topic, avatar_url, shape FROM conversation WHERE id = ?').get(id) as Row | null;
+    const was = this.db.query('SELECT name, topic, avatar_url, shape, archived FROM conversation WHERE id = ?').get(id) as Row | null;
     // A conversation first known only from a message (no name yet) filling in is not a change.
     if (was && (was.name || was.shape === 'direct'))
       this.logChanges('conversation', id, acc.id, [
@@ -1026,11 +1062,12 @@ export class Store {
     this.db
       .query(
         `INSERT INTO conversation (id, network, native_id, shape, variant, parent_id, name, topic, avatar_url, encrypted, archived, last_message_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?)
          ON CONFLICT (network, native_id) DO UPDATE SET
            shape = excluded.shape, variant = excluded.variant, parent_id = COALESCE(excluded.parent_id, parent_id),
            name = COALESCE(excluded.name, name), topic = COALESCE(excluded.topic, topic),
-           avatar_url = COALESCE(excluded.avatar_url, avatar_url), encrypted = excluded.encrypted, archived = excluded.archived,
+           avatar_url = COALESCE(excluded.avatar_url, avatar_url), encrypted = excluded.encrypted,
+           archived = CASE WHEN ? IS NULL THEN archived ELSE excluded.archived END,
            last_message_at = CASE WHEN excluded.last_message_at IS NULL THEN last_message_at ELSE MAX(COALESCE(last_message_at, 0), excluded.last_message_at) END,
            updated_at = excluded.updated_at`,
       )
@@ -1045,11 +1082,15 @@ export class Store {
         f.topic ?? null,
         f.avatarUrl ?? null,
         f.encrypted ? 1 : 0,
-        f.archived ? 1 : 0,
+        // A fact that does not say keeps what was said (Signal says it only from a read of contacts).
+        f.archived === undefined ? null : f.archived ? 1 : 0,
         f.lastMessageAt ?? null,
         Date.now(),
+        f.archived === undefined ? null : 1,
       );
     this.ensureVantage(acc.id, 'conversation', id, f.mute);
+    // Archived or unarchived on the network: hidden or shown here too, when that changes, unless you turned it off.
+    if (f.archived !== undefined && !!was?.archived !== f.archived && this.followArchive()) this.patchPlacePrefs([{ kind: 'conversation', id, hidden: f.archived }]);
     if (f.spaces) {
       this.db.query(`DELETE FROM space_edge WHERE child_kind = 'conversation' AND child_id = ?`).run(id);
       for (const s of f.spaces) {
@@ -1526,6 +1567,12 @@ export class Store {
     });
     tx();
     this.dirty.extra.push({ t: 'folders', folders: this.folders() });
+  }
+
+  /** Whether a network's archive hides and shows chats here (ArrangeSettings.followArchive; on unless turned off). */
+  followArchive(): boolean {
+    const r = this.db.query(`SELECT value FROM arrange_setting WHERE key = 'followArchive'`).get() as Row | null;
+    return r?.value !== 'false';
   }
 
   placePrefs(): P.PlacePrefView[] {

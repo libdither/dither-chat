@@ -1496,6 +1496,10 @@ const EXPIRED = new Set(['oldparty', 'Expired2025xyz', 'OldSwapGroup2025']);
 
 /** Networks whose demo accounts keep a list of who they stand with (capabilities 'relationships' and 'disconnect'). */
 const LISTED = new Set<P.Network>(['discord', 'telegram']);
+/** Signal's demo account: safety numbers, blocking and nicknames kept on the network (net-gaps), as its adapter does. */
+const SIGNAL_PEOPLE: P.Capability[] = ['safetyNumbers', 'block', 'contactNotes'];
+const DEMO_VERIFIED = new Set<string>();
+const DEMO_USERNAME = new Map<string, { name: string; link: string }>();
 
 /** How the demo accounts stand with people from the start, over the contacts in their pools. */
 const DEMO_LINKS: Partial<Record<AccKey, Record<string, P.LinkRelationship>>> = {
@@ -1895,6 +1899,17 @@ class DemoAdapter implements InprocAdapter {
 
   /** The same answers real adapters give, by each network's own rules. */
   /** What each network's profile shows for someone (docs/profile.md), as its adapter would say it. */
+  /** What Signal's adapter adds to a profile: your editable fields and username, or their safety number. */
+  private signalExtras(p: P.PersonAbout, who: string): P.PersonAbout {
+    if (this.network !== 'signal') return p;
+    if (who === this.self.nativeId) {
+      const u = DEMO_USERNAME.get(who);
+      return { ...p, editable: ['bio', 'name', 'emoji', 'avatar', 'username'], ...(u ? { username: u } : {}) };
+    }
+    const digits = demoSafety(who);
+    return { ...p, safety: { digits, scannable: btoa(digits.slice(0, 32)), trust: DEMO_VERIFIED.has(who) ? 'verified' : 'unverified' } };
+  }
+
   private profile(who: string): P.PersonAbout {
     const pool = POOLS[this.network] ?? M;
     const key = (Object.entries(pool) as [string, P.IdentityFact][]).find(([, i]) => i.nativeId === who)?.[0];
@@ -2217,6 +2232,7 @@ class DemoAdapter implements InprocAdapter {
     const all: P.Capability[] = [
       ...caps,
       ...(this.network === 'discord' ? (['forward', 'members', 'walkMembers', 'listThreads'] as const) : []),
+      ...(this.network === 'signal' ? SIGNAL_PEOPLE : []),
       ...(ADDS_MEMBERS.has(this.network) ? (['addMembers'] as const) : []),
       ...(MAKES_GROUPS.has(this.network) ? (['createGroup'] as const) : []),
       // The networks whose servers search (netsearch.ts).
@@ -2589,7 +2605,22 @@ class DemoAdapter implements InprocAdapter {
         reply(this.reactionContext());
         break;
       case 'profile':
-        reply(this.profile(cmd.who));
+        reply(this.signalExtras(this.profile(cmd.who), cmd.who));
+        break;
+      case 'verify':
+        if (cmd.clear) DEMO_VERIFIED.delete(cmd.who);
+        else if (cmd.safetyNumber?.replace(/\D/g, '') === demoSafety(cmd.who)) DEMO_VERIFIED.add(cmd.who);
+        else {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'Their safety number changed since: look again' });
+          break;
+        }
+        reply(this.signalExtras(this.profile(cmd.who), cmd.who));
+        break;
+      case 'block':
+        reply({ blocked: !cmd.unblock });
+        break;
+      case 'setContact':
+        reply({});
         break;
       case 'setProfile': {
         // As the real adapters do: the network's limit, then the About as a status on Signal and WhatsApp.
@@ -2603,7 +2634,11 @@ class DemoAdapter implements InprocAdapter {
           OWN_BIO.set(`${this.network}:${this.self.nativeId}`, bio);
           if (this.network === 'signal' || this.network === 'whatsapp') this.emit({ t: 'customStatus', who: this.self.nativeId, text: bio, ts: Date.now() });
         }
-        reply(this.profile(this.self.nativeId));
+        if (this.network === 'signal' && cmd.change.username !== undefined) {
+          if (cmd.change.username === null) DEMO_USERNAME.delete(this.self.nativeId);
+          else DEMO_USERNAME.set(this.self.nativeId, { name: `${cmd.change.username}.42`, link: 'https://signal.me/#eu/DemoUsernameLink42' });
+        }
+        reply(this.signalExtras(this.profile(this.self.nativeId), this.self.nativeId));
         break;
       }
       case 'about':
@@ -2976,4 +3011,12 @@ function seedDemoProton(fake: FakeMailBackend, now: number) {
   });
   put({ messageId: id('statement'), from: [{ name: 'Nimbus Bank', email: 'statements@nimbus-bank.example' }], subject: 'Your November statement is ready', receivedAt: now - 3 * D, labels: ['Category/Transactions'], text: 'Sign in to see your statement.' });
   put({ messageId: id('scarf'), from: [{ name: 'Rowan', email: 'rowan@example.org' }], subject: 'Found your scarf', receivedAt: now - 4 * D, text: 'You left a green scarf at the reading group. Shall I bring it next week?' });
+}
+
+/** A made-up safety number for someone in the demo world: 60 digits from their id. */
+function demoSafety(who: string): string {
+  let h = 7;
+  let out = '';
+  while (out.length < 60) for (const c of who) out += String((h = (h * 31 + c.charCodeAt(0)) % 1_000_003) % 10);
+  return out.slice(0, 60);
 }

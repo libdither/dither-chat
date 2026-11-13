@@ -8,7 +8,7 @@ import type * as P from '@dither-chat/protocol';
 import { ABOUT_LABEL, ABOUT_RULES, NETWORK_META, RULE_LABEL, RULE_LEVELS } from '@dither-chat/protocol';
 import { fullTime } from '../format.ts';
 import { AUTOMATIC, convTitle, deepLink, effectiveLevel, heldHere, netName, OLDER_RULE, ruleHelp, ruleOn, unreadOf } from '../model.ts';
-import { db, go, href, isSelfIdentity, markRead, openMessage, rev, setRule } from '../state.ts';
+import { api, db, go, href, isSelfIdentity, markRead, openMessage, rev, setRule } from '../state.ts';
 import { AccountChip, Empty, variantIcon } from './bits.tsx';
 import { copy } from './ContextMenu.tsx';
 import { EditableText, InviteSection, MembersSection, PinnedSection, RulesList, SettingRow, settingKeys, useAbout, valueText, type AboutTarget } from './About.tsx';
@@ -21,6 +21,7 @@ import { placeConvs } from './Organize.tsx';
 import { Action, Card, Columns, Facts, Hero, ProfilePage, Tag } from './ProfileShell.tsx';
 import { openConv } from './Sidebar.tsx';
 import { Loading } from './Loader.tsx';
+import { peopleExtras } from './peopleExtras.ts';
 import { canIndex, startIndexing } from './Indexing.tsx';
 
 /** "Seen 12 of 1,287 listed (1%) · 214 online": honest about how little that may be. */
@@ -167,6 +168,7 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
     </>
   );
 
+  const GroupBlock = conv?.shape === 'group' ? peopleExtras()?.GroupBlock : undefined;
   const side = (
     <>
       {accountIds.length > 1 && (
@@ -206,6 +208,10 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
       </Card>
 
       {conv && retention.value.adversarial && <KeptHere conversationId={conv.id} />}
+
+      {conv && conv.shape === 'group' && view && view.blocked !== undefined && GroupBlock && (
+        <GroupBlock conversationId={conv.id} network={network} blocked={view.blocked} onDone={() => void api<P.AboutView>(`/api/conversations/${conv.id}/about${view.accountId ? `?account=${encodeURIComponent(view.accountId)}` : ''}`).then(replace)} />
+      )}
 
       {view?.invite && (
         <div class="pf-card pf-embed">

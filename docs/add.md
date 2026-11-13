@@ -214,7 +214,7 @@ opens it in the app, which is the point for networks with no QR codes of their o
 | Telegram | `https://t.me/<username>` | without a username: `https://t.me/+<number>`, hidden until tapped, which Telegram opens only for people your privacy settings let find you by number |
 | WhatsApp | `https://wa.me/<number>` | always a number: hidden until tapped. An account known only by its LID has none |
 | Discord | `https://discord.com/users/<id>` | opens your profile, where they can send a friend request |
-| Signal | `https://signal.me/#p/+<number>` | hidden until tapped. A username code needs the adapter: Signal makes username links (`signal.me/#eu/…`) on its servers, and the page says so |
+| Signal | `https://signal.me/#p/+<number>` | your username's link (`signal.me/#eu/…`) instead once you set the username from your profile, not hidden: Signal makes the link on its servers and signal-cli shows it only when it sets it, so a username set on the phone shows the number's code and says to set it here |
 | X | `https://x.com/<handle>` | |
 | Instagram | `https://instagram.com/<username>` | |
 | Messenger | `https://m.me/<username>`, else `https://www.facebook.com/profile.php?id=<id>` | |
