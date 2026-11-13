@@ -15,6 +15,7 @@ import { readableSearch, recentSearches, rememberSearch, SearchBox } from './Sea
 import { preloadMail } from './mail/lazy.tsx';
 import { countKey } from '../clicklog.ts';
 import { Loading } from './Loader.tsx';
+import { MoreResults } from './more.tsx';
 
 /** Split a snippet into text and matches. It is plain text, so it stays out of innerHTML. */
 function Snippet({ text, network }: { text: string; network: P.Network }) {
@@ -428,12 +429,26 @@ export function SearchPane({ q, onBack }: { q: string; onBack?: () => void }) {
       live = false;
     };
   }, [q]);
+  const [moreBusy, setMoreBusy] = useState(false);
+  const asking = useRef<string | null>(null);
+  const current = useRef(q);
+  current.current = q;
   const more = async () => {
-    // A corrected search pages on as corrected.
-    const p = await ask(page!.corrected ?? q, page!.next!);
-    absorb(p);
-    setPage({ ...p, corrected: page!.corrected });
-    setHits([...hits, ...p.hits]);
+    const from = page;
+    if (!from?.next || asking.current) return;
+    asking.current = q;
+    setMoreBusy(true);
+    try {
+      // A corrected search pages on as corrected.
+      const p = await ask(from.corrected ?? q, from.next);
+      if (current.current !== q) return; // another search since
+      absorb(p);
+      setPage({ ...p, corrected: from.corrected });
+      setHits((h) => [...h, ...p.hits]);
+    } finally {
+      asking.current = null;
+      setMoreBusy(false);
+    }
   };
   const parsed = parseSearch(q);
   const text = [...parsed.phrases, ...parsed.terms].join(' ');
@@ -507,11 +522,7 @@ export function SearchPane({ q, onBack }: { q: string; onBack?: () => void }) {
         )}
         {page?.mode === 'substring' && visible.length > 0 && <p class="set-help search-note">These match inside words, not whole words.</p>}
         <Results hits={visible} />
-        {page?.next && (
-          <button class="btn ghost small search-more" onClick={more}>
-            More results
-          </button>
-        )}
+        {page?.next && <MoreResults key={page.next} class="btn ghost small search-more" root=".search-results" busy={moreBusy} onMore={() => void more()} />}
         {page && !loading && <NetworkSearch q={q} local={hits} few={!page.next && visible.length < OFFER_UNDER} />}
       </div>
     </section>
