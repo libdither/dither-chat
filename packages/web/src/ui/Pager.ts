@@ -100,9 +100,13 @@ function restCss(rest: Rest): string {
   return rest === 'open' ? 'none' : rest === 'details' ? `translateX(calc(-100% + ${PEEK}px))` : rest === 'peek' ? `translateX(calc(100% - ${PEEK}px))` : 'translateX(calc(100% + 40px))';
 }
 
-/** Can something under the finger scroll sideways that way? Then the swipe is its, not ours. */
+/**
+ * Can something under the finger scroll sideways that way, or does it claim a swipe that way for itself
+ * (`data-claims-swipe="left"`: an inbox row swiped left marks it, ui/ReplyMark.tsx)? Then the swipe is its, not ours.
+ */
 function scrollsSideways(from: HTMLElement | null, stop: HTMLElement, dx: number): boolean {
   for (let n = from; n && n !== stop; n = n.parentElement) {
+    if (n.dataset?.claimsSwipe === (dx < 0 ? 'left' : 'right')) return true;
     if (n.scrollWidth <= n.clientWidth + 1) continue;
     const ox = getComputedStyle(n).overflowX;
     if (ox !== 'auto' && ox !== 'scroll') continue;
@@ -235,6 +239,7 @@ export function usePager(app: { current: HTMLElement | null }, card: { current: 
         return null;
       }
       if (md.rest === 'details' && dx > 0 && (inCard || inDetails)) return setPager('details', 'open', () => md.onDetails(false));
+      // Forward from the peeking card at the edge, or the lists anywhere but on a row that took the swipe (above).
       if (md.rest === 'peek' && dx < 0 && !inDetails) return setPager('peek', 'open', () => md.onForward());
       return null;
     };

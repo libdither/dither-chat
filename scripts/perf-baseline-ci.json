@@ -1,5 +1,5 @@
 {
- "note": "bun scripts/verify-perf.ts --ci --update --runs 5 (docs/perf.md). CI judges the counts marked gate, never the times. Two layout tallies (cold, first opens) are kept at their values of 2026-11-10: this machine measured them lower than a CI runner does. 1x.cold.nodes and 1x.long.reopen.nodes set by hand on 2026-11-11 when long lists began drawing a window of their rows (ui/more.tsx). 1x.cold.layouts is not judged since 2026-11-11: CI read 9, 9, 9, 10, 10 and 11 on main and branches of it in a row, more than the one a steady tally may spread (traces: the same layouts each time, and a varying few at the end as Catch up's cards fill in). The phone pass (p1x.*) was added on 2026-11-11 from five runs on GitHub's runners (the pull request's and four dispatched): 24 of its 25 counts came out the same in all five and are judged; p1x.cold.layouts (8 to 10) is not. a1x.* (fetching ahead, aheadRun) added by hand on 2026-11-11 from three runs of the pass alone: its counts the same in each (12 pages, 12 requests, 5 of 5 and 3 of 3 served), its bytes not (17,909 to 23,262: each run opens rows, which moves the inbox), so not judged. On 2026-11-11 the first opens began drawing in slices (docs/perf.md, \"First opens draw in slices\"), set by hand from local runs of --ci against main: each slice is a layout, so the layouts of the first opens (19 to 34-36), the opens again (6 to 21), the long reopen (1 to 10), the opens after a relaunch (20 to 29-30) and the phone's open (6 to 10-12) went up, and are printed only until five runs on GitHub's runners show how they spread; the phone's screens lost a third to a half of their DOM nodes (a message's hover bar is not drawn on a touch screen, lists draw a screenful first); the Home tab draws the list in two parts (2 list renders). The phone pass's new counts (the Home tab's message renders, the person's and Mail's App renders) are printed only, for the same reason. p1x.you.nodes set by hand on 2026-11-13 to 1220 (from 1200): each device's rules gain a Notices row (docs/notices.md), about ten nodes for each of the perf world's devices; CI read 1220.",
+ "note": "bun scripts/verify-perf.ts --ci --update --runs 5 (docs/perf.md). CI judges the counts marked gate, never the times. Two layout tallies (cold, first opens) are kept at their values of 2026-11-10: this machine measured them lower than a CI runner does. 1x.cold.nodes and 1x.long.reopen.nodes set by hand on 2026-11-11 when long lists began drawing a window of their rows (ui/more.tsx). 1x.cold.layouts is not judged since 2026-11-11: CI read 9, 9, 9, 10, 10 and 11 on main and branches of it in a row, more than the one a steady tally may spread (traces: the same layouts each time, and a varying few at the end as Catch up's cards fill in). The phone pass (p1x.*) was added on 2026-11-11 from five runs on GitHub's runners (the pull request's and four dispatched): 24 of its 25 counts came out the same in all five and are judged; p1x.cold.layouts (8 to 10) is not. a1x.* (fetching ahead, aheadRun) added by hand on 2026-11-11 from three runs of the pass alone: its counts the same in each (12 pages, 12 requests, 5 of 5 and 3 of 3 served), its bytes not (17,909 to 23,262: each run opens rows, which moves the inbox), so not judged. On 2026-11-11 the first opens began drawing in slices (docs/perf.md, \"First opens draw in slices\"), set by hand from local runs of --ci against main: each slice is a layout, so the layouts of the first opens (19 to 34-36), the opens again (6 to 21), the long reopen (1 to 10), the opens after a relaunch (20 to 29-30) and the phone's open (6 to 10-12) went up, and are printed only until five runs on GitHub's runners show how they spread; the phone's screens lost a third to a half of their DOM nodes (a message's hover bar is not drawn on a touch screen, lists draw a screenful first); the Home tab draws the list in two parts (2 list renders). The phone pass's new counts (the Home tab's message renders, the person's and Mail's App renders) are printed only, for the same reason. p1x.you.nodes set by hand on 2026-11-13 to 1220 (from 1200): each device's rules gain a Notices row (docs/notices.md), about ten nodes for each of the perf world's devices; CI read 1220. On 2026-11-13 reply marks moved onto inbox rows (ui/ReplyMark.tsx, docs/inbox.md \"Marks\"): each row that can be marked is wrapped with its ↩ button beside it, two elements a row (its icons are CSS, the swipe's strip is made only while swiping), 96 more on every screen that shows the inbox (main read 2066, 7615, 1611, 2471, 2053, 2074 and 2471 on the --ci run of the same machine); set by hand to the branch's --ci reads: 1x.cold 2162, 1x.long.reopen 7711, p1x.cold 1707, p1x.home and p1x.homeTab 2567, p1x.catchUp 2149, p1x.search 2170.",
  "at": "2026-11-11",
  "runs": 5,
  "pages": 5,
@@ -55,7 +55,7 @@
    "gate": false
   },
   "1x.cold.nodes": {
-   "v": 2111,
+   "v": 2162,
    "kind": "count",
    "gate": true
   },
@@ -170,7 +170,7 @@
    "gate": false
   },
   "1x.long.reopen.nodes": {
-   "v": 7634,
+   "v": 7711,
    "kind": "count",
    "gate": true
   },
@@ -271,7 +271,7 @@
    "gate": false
   },
   "p1x.cold.nodes": {
-   "v": 1663,
+   "v": 1707,
    "kind": "count",
    "gate": true
   },
@@ -321,7 +321,7 @@
    "gate": true
   },
   "p1x.home.nodes": {
-   "v": 2479,
+   "v": 2567,
    "kind": "count",
    "gate": true
   },
@@ -331,7 +331,7 @@
    "gate": true
   },
   "p1x.catchUp.nodes": {
-   "v": 2112,
+   "v": 2149,
    "kind": "count",
    "gate": true
   },
@@ -341,7 +341,7 @@
    "gate": true
   },
   "p1x.search.nodes": {
-   "v": 2121,
+   "v": 2170,
    "kind": "count",
    "gate": true
   },
@@ -361,7 +361,7 @@
    "gate": true
   },
   "p1x.homeTab.nodes": {
-   "v": 2479,
+   "v": 2567,
    "kind": "count",
    "gate": true
   },

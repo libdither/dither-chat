@@ -38,7 +38,8 @@ One number per day, key, page and kind of device:
   control that the browser sends next.
 - Shortcuts and gestures that are not clicks are counted where they are handled, with `countKey`: Ctrl+K, Ctrl+F,
   Enter and Esc in the composer, a context menu's letter keys, mail's keys, Enter in a search box, and on a phone
-  the swipes (back, to and from the details, forward, to reply) and pull to refresh, and Catch up's keys.
+  the swipes (back, to and from the details, forward, to reply, and an inbox row's swipe left for a reply mark) and
+  pull to refresh, and Catch up's keys.
 
 Context menu items carry their key in the menu's spec (`track` on an item, the area as `track` on the spec), never
 their label, which can hold a name ("Message Ann").
@@ -47,7 +48,7 @@ their label, which can hold a name ("Message Ann").
 
 | Area | Keys |
 |---|---|
-| `inbox` | `row (DM\|group\|notes\|channel\|thread\|mail[, unread\|, owes a reply])`, `filter` (the button), `filter (All\|Direct messages\|Groups\|Mail)` (its menu; until 2026-11-09 chips `filter (All\|People\|Groups\|Unread)`), `search`, `search (Enter)`, `search (suggestion)`, `requests row`, `new message`, `row (account needs you)`, `section toggle (Needs you)` (until 2026-11-09 `section toggle`, in every list; from 2026-11-09 to 11-10 also `Waiting on you\|New\|Earlier`) |
+| `inbox` | `row (DM\|group\|notes\|channel\|thread\|mail[, unread\|, owes a reply])`, `filter` (the button), `filter (All\|Direct messages\|Groups\|Mail)` (its menu; until 2026-11-09 chips `filter (All\|People\|Groups\|Unread)`), `search`, `search (Enter)`, `search (suggestion)`, `requests row`, `new message`, `row (account needs you)`, `mark no reply needed` and `mark reply needed` (a row's ↩ button, from 2026-11-13; [inbox.md](inbox.md) "Marks"), on a phone `swipe no reply needed` and `swipe reply needed` (a row swiped left, counted when it marks), `section toggle (Needs you)` (until 2026-11-09 `section toggle`, in every list; from 2026-11-09 to 11-10 also `Waiting on you\|New\|Earlier`) |
 | `catch up` | `done`, `done (mail)`, `later`, `open`, `open (mail)`, `reply box`, `reply sent`, `reply sent (Enter)`, `earlier`, `picture`, `new note`, `mark all read`, `how it sorts`, `how it sorts (all caught up)`, `account needs you`, `reply: try again`, `reply: discard`, `leave the box (Esc)`, `key j`, `key k`, `key Enter`, `key e`, `key l`, `key r` |
 | `how it sorts` | `open`, `open (mail)`, `why`, `why (close)`, `show all`, `below the list (open)`, the learned rules' buttons; inside Why (`how it sorts (why)`): `message`, `message (mail)`, `show all` (until the tiers of 2026-11 also `vote up`, `vote down` and `not interesting (open)`) |
 | `mark` (a message's two marks, wherever they are pressed: How it sorts, a message's bell, the phone's sheet, the mail reader) | `should have alerted`, `alert was wrong`, `less like this` |
