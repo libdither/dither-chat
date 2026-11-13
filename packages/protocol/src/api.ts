@@ -1218,6 +1218,10 @@ export type ClientEvent =
   | { t: 'scheduled'; items: import('./sending.ts').ScheduledSendView[] }
   /** Ends a frame whose changes went into the journal: a client holding everything up to here can resume from `seq`. */
   | { t: 'sync'; seq: number }
+  /** How an interaction with a bot went (apps.ts, docs/apps.md). Of the moment: not journaled. */
+  | { t: 'interaction'; interaction: import('./apps.ts').InteractionView }
+  /** A bot opened a form in answer to one of yours (apps.ts). Of the moment. */
+  | { t: 'appModal'; modal: import('./apps.ts').AppModalView }
   | { t: 'resync' };
 
 // ------------------------------------------------------------------ delta sync (docs/sync.md)

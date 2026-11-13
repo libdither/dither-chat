@@ -26,6 +26,7 @@
 import type { AboutChange, AboutTarget, PersonRelationship } from './about.ts';
 import type { AddAction, AddRef, RelationshipFact, RequestAnswer, RequestFact } from './add.ts';
 import type { AttentionCapability, AttentionCommand } from './attention.ts';
+import type { InteractCapability, InteractCommand, InteractEvent } from './apps.ts';
 import type { PollCapability, PollCommand, PollUpdate } from './poll.ts';
 import type { CallEffect, CallFact, CallInput, CallMode, CallState, StageAction, VoiceMember } from './call.ts';
 import type { GateAnswer, ScheduledEventFact, SpaceGate } from './servers.ts';
@@ -154,6 +155,8 @@ export type Capability =
   | 'setPicture'
   /** Mentions found late, native mutes, unread by hand, many read at once (attention.ts). */
   | AttentionCapability
+  /** Bots' buttons, selects, slash commands and forms (apps.ts). */
+  | InteractCapability
   /** Stickers, voice messages, view-once, stories (media.ts). */
   | MediaCapability
   /** Polls read, voted in, made and ended; pins changed (poll.ts). */
@@ -544,6 +547,8 @@ export type AdapterEvent =
   | { t: 'reply'; id: string; ok: true; result?: unknown }
   | { t: 'reply'; id: string; ok: false; error: string }
   | { t: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; msg: string; data?: unknown }
+  /** interaction, appModal (apps.ts). */
+  | InteractEvent
   /** story, storyGone (media.ts). */
   | MediaEvent
   /** Notices, own presence and settings, whom it ignores (self.ts). */
@@ -839,6 +844,8 @@ export type AdapterCommand =
   | { t: 'shutdown' }
   /** mute, markUnread, markReadMany (attention.ts). */
   | AttentionCommand
+  /** appCommands, appAutocomplete, interact (apps.ts). */
+  | InteractCommand
   /** stickers, addStickerPack, storyViewed, storyReply (media.ts). */
   | MediaCommand
   /** pollVote, pollCreate, pollEnd (poll.ts). */

@@ -19,6 +19,7 @@ import { eraseVoice, ingestCallEvent, voiceKept } from './callstate.ts';
 import { ingestStories } from './media.ts';
 import { applyPollUpdate, pollSeen, pollViews } from './polls.ts';
 import { ingestServers } from './servers.ts';
+import { ingestApps } from './apps.ts';
 import { ingestThreadFacts, threadParts, type ThreadParts } from './threads.ts';
 import { type DueReminder, ingestSaved } from './saved.ts';
 import { alertBar, type Facts } from './learn.ts';
@@ -778,6 +779,11 @@ export class Store {
         case 'scheduledEventGone':
         case 'gate':
           ingestServers(this, acc, ev);
+          break;
+        // An interaction's outcome and a form a bot opened (apps.ts): to the page as they come.
+        case 'interaction':
+        case 'appModal':
+          ingestApps(this, acc, ev);
           break;
         // Stories: on their author's page only, never a message (media.ts).
         case 'story':

@@ -20,6 +20,7 @@ import type { InprocAdapter } from './supervisor.ts';
 import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
 import { DEMO_SERVER_CAPS, DemoServers } from './demoservers.ts';
+import { DEMO_APP_CAPS, DemoApps } from './demoapps.ts';
 import { DEMO_THREAD_CAPS, DemoThreads } from './demothreads.ts';
 import { DEMO_MOD_CAPS, DemoModeration } from './demomod.ts';
 import { DEMO_SEND_CAPS, DemoSending } from './demosending.ts';
@@ -1841,6 +1842,8 @@ class DemoAdapter implements InprocAdapter {
   private selfDemo: DemoSelf | null = null;
   /** Discord servers beyond their channels: events, leaving, gates, nicknames, invite links (demoservers.ts). */
   private servers: DemoServers | null = null;
+  /** The demo's bot: its controls, commands and forms (demoapps.ts). */
+  private apps: DemoApps | null = null;
   /** Discord threads, forums and group DMs beyond messages (demothreads.ts). */
   private threadsDemo: DemoThreads | null = null;
   /** Moderating, member labels and leaving a Signal group (demomod.ts). */
@@ -2318,6 +2321,7 @@ class DemoAdapter implements InprocAdapter {
       // Block, ignore, notes, presence, sessions, profile fields (demoself.ts).
       ...(this.network === 'discord' ? DEMO_SELF_CAPS : []),
       ...(this.network === 'discord' ? DEMO_SERVER_CAPS : []),
+      ...(this.network === 'discord' ? DEMO_APP_CAPS : []),
       // Stickers, voice messages, view-once and stories (demomedia.ts).
       ...(DEMO_MEDIA_CAPS[this.network] ?? []),
       // Polls and pins, as the Discord and Signal adapters have them (docs/polls.md).
@@ -2382,6 +2386,10 @@ class DemoAdapter implements InprocAdapter {
         },
         about: (t) => this.serverAbout(t, this.about(t)),
       });
+    }
+    if (this.network === 'discord') {
+      this.apps = new DemoApps({ key: this.key, selfId: this.self.nativeId, emit, later: (ms, fn) => this.later(ms, fn), snow, botChannel: ch('dither-general'), inConversation: (c) => CONVS.some((x) => x.fact.nativeId === c && x.acc.includes(this.key)) });
+      this.apps.announce(epoch);
     }
     // Members the client loaded anyway (passive), with Discord's counts: kept only with the adversarial members setting.
     if (this.key === 'dmain')
@@ -2882,6 +2890,16 @@ class DemoAdapter implements InprocAdapter {
         reply(this.selfDemo ? this.selfDemo.decorate(this.self.nativeId, this.signalExtras(this.profile(this.self.nativeId), this.self.nativeId)) : this.signalExtras(this.profile(this.self.nativeId), this.self.nativeId));
         break;
       }
+      case 'appCommands':
+      case 'appAutocomplete':
+      case 'interact':
+        try {
+          if (!this.apps) throw new Error(`${cmd.t} is not in this demo network`);
+          reply(cmd.t === 'appCommands' ? this.apps.commands(cmd.kind ?? 'chat') : cmd.t === 'appAutocomplete' ? this.apps.autocomplete(cmd) : this.apps.interact(cmd));
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
+        break;
       case 'suppressEmbeds':
       case 'save':
       case 'savedList':

@@ -7,14 +7,14 @@ footer, a time and a video. The text may ping a role, name a time, or link to an
 dither keeps of all that and how it shows it. Discord is the only network that sends most of it today; the shapes are
 the protocol's, so another adapter can fill them in (Telegram's silent messages, Signal's voice notes).
 
-Everything here is read-only. Nothing is fetched to show it: what the network's own client received is what there is.
+Showing it is read-only: nothing is fetched to show it, and what the network's own client received is what there is. Pressing a bot's buttons and choosing in its selects is in [apps.md](apps.md).
 
 ## What comes through
 
 | What | Protocol | Hub | Web |
 |---|---|---|---|
 | Sent silently (Discord's @silent) | `MessageFact.silent` | kept in the message's `extra`; triage never alerts on it | a crossed-out bell beside the time |
-| A bot's buttons and selects | `extra.components` (rows of `ButtonFact` / `SelectFact`), `extra.application` | passed on as `MessageView.rich` | drawn under the message; link buttons open their link, the rest say they cannot be pressed from dither yet |
+| A bot's buttons and selects | `extra.components` (rows of `ButtonFact` / `SelectFact`), `extra.application` | passed on as `MessageView.rich` | drawn under the message; link buttons open their link; the rest are pressed and chosen from here where an account can ([apps.md](apps.md)) |
 | Components V2 (no content, no embeds) | flattened by the adapter into `body` and `attachments` | as any message | as any message |
 | Only you can see it, the server's own, a suspended author, previews hidden | `extra.marks` | previews hidden: no embeds in the view | small words beside the time |
 | A crosspost from a followed channel | `extra.crosspost` (channel and server names) | `rich` | "from #channel in Server" above the text |
@@ -43,12 +43,13 @@ Its first reason says so: "Sent silently: it never alerts". This holds against y
 person set to Always alert), as Discord's own @silent does: the sender asked that it not sound. It still counts as
 unread, and a mention in it still counts as a mention.
 
-## A bot's controls, and pressing them later
+## A bot's controls
 
-Controls are kept so that a later `interact` command can press them without a new shape: each control has its `id`
+Controls are kept so that the `interact` command can press them without a new shape: each control has its `id`
 (Discord's `custom_id`), the message has its `application` (the bot's application id), and a select says what it
-picks from (`string`, `user`, `role`, `mentionable`, `channel`) with its options. Pressing is not built: a non-link
-button is drawn disabled, and a select opens to show its options and says it cannot be used from here yet.
+picks from (`string`, `user`, `role`, `mentionable`, `channel`) with its options. Pressing and choosing, slash commands
+and the forms bots open are in [apps.md](apps.md). Where no account that has the message can press it, a non-link
+button is drawn disabled and a select opens to show its options only.
 
 A Components V2 message is flattened by the adapter: text displays become paragraphs, a container is a block (a
 spoilered one's text becomes `||…||` and its files spoilers), a separator with a divider is a `───` line, media
@@ -91,7 +92,6 @@ What the Discord extractor (dither-accounts `extractors/discord`) reads, all fro
 
 ## Not built
 
-- Pressing buttons and selects (a later `interact` command), modals.
 - Polls and their results, pins, DM call messages: other work owns them.
 - Edits pushed while idle in channels the client has not opened: Discord sends MESSAGE_UPDATE only for channels the
   client subscribed to, and getting them otherwise would be traffic a person's client does not make.

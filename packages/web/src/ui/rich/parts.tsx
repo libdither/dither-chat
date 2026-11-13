@@ -12,6 +12,7 @@ import { clock } from '../../format.ts';
 import { renderMarkdown } from '../../markdown.ts';
 import { authorName, plainBody } from '../../model.ts';
 import { db, openMessage } from '../../state.ts';
+import { canPress, picksOf, press, pressState, stateWords } from '../../apps.ts';
 import { Icon } from '../icons.tsx';
 
 /** What the chunk uses of the app, handed to it: importing these there would split them off the app's start. */
@@ -23,6 +24,12 @@ const kit = {
   open: openMessage,
   icon: (name: string, size: number) => <Icon name={name} size={size} />,
   points: waveformPoints,
+  // A bot's controls (apps.ts, docs/apps.md).
+  canPress,
+  press,
+  pressState,
+  picks: picksOf,
+  words: stateWords,
 };
 export type Kit = typeof kit;
 

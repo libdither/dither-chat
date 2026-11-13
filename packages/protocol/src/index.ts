@@ -20,6 +20,7 @@ export * from './attention.ts';
 export * from './servers.ts';
 export * from './rich.ts';
 export * from './extra.ts';
+export * from './apps.ts';
 export * from './media.ts';
 export * from './poll.ts';
 export * from './threads.ts';

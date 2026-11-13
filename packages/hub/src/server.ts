@@ -43,6 +43,7 @@ import { noteWork, pathShape } from './stalls.ts';
 import { fetchPublicToFile } from './fetchsafe.ts';
 import { AboutError, Abouts } from './about.ts';
 import { Servers } from './servers.ts';
+import { Apps } from './apps.ts';
 import { Media, MediaError, sendMediaProblem } from './media.ts';
 import { Threads } from './threads.ts';
 import { Moderation } from './moderation.ts';
@@ -246,6 +247,8 @@ export class HubServer {
   readonly adding: Adding;
   /** Scheduled events, leaving, and what a space asks on joining (servers.ts, docs/servers.md). */
   readonly servers: Servers;
+  /** Bots' buttons, selects, slash commands and forms (apps.ts, docs/apps.md). */
+  readonly apps: Apps;
   /** Sticker pages, installing packs, stories (media.ts, docs/media-kinds.md). */
   readonly kinds: Media;
   /** Following threads, starting threads and posts, archiving, publishing, running a group (threads.ts, docs/threads.md). */
@@ -329,6 +332,7 @@ export class HubServer {
       flush: () => this.flush(),
     });
     this.servers = new Servers({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a), note: (a, line) => sup.note(a, line), flush: () => this.flush(), aboutView: (k, i, n, a, ab) => this.abouts.view(k, i, n, a, ab, Date.now(), undefined, true) });
+    this.apps = new Apps({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a), note: (a, line) => sup.note(a, line) });
     this.kinds = new Media({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a), flush: () => this.flush() });
     sup.calls = this.calls;
     this.sendExtras = new SendExtras({
@@ -715,6 +719,8 @@ export class HubServer {
     if (path.startsWith('/api/self/')) return (await this.self.route(req, url, path))!;
     // Scheduled events, leaving, and what a space asks on joining (servers.ts).
     if (Servers.handles(path)) return (await this.servers.route(req, url, path))!;
+    // Bots' buttons, selects, slash commands and forms (apps.ts).
+    if (Apps.handles(path)) return (await this.apps.route(req, url, path, () => this.flush()))!;
     // Following threads, starting threads and posts, archiving, publishing, running a group (threads.ts).
     if (Threads.handles(path)) return (await this.threads.route(req, url, path))!;
     // Moderating members, others' messages and reactions, member labels (moderation.ts).
