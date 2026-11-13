@@ -13,6 +13,7 @@ import { ImportsSection } from './Imports.tsx';
 import { TelegramSignIns } from './TelegramSignIns.tsx';
 import { MailAccessNote, MailAccountRows } from './mail/MailAccounts.tsx';
 import { Loading } from './Loader.tsx';
+import { StoriesSetting } from './StoriesSetting.tsx';
 
 /** The add-account dialog, opened from the accounts list or from settings. */
 export const addingAccount = signal(false);
@@ -831,6 +832,7 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
         </section>
         {a.network === 'matrix' && !a.demo && <EncryptionSection a={a} />}
         {a.network === 'telegram' && !a.demo && <TelegramSignIns a={a} />}
+        {a.capabilities.includes('stories') && <StoriesSetting a={a} />}
         <ImportsSection a={a} />
         <section class="det-section">
           <h3>Controls</h3>

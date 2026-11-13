@@ -36,6 +36,7 @@ import { canMarkUnread, markUnreadFrom } from '../unread.ts';
 import { openAttachment, openWith, save } from './fileopen.tsx';
 import { fileKind, fileMime, openFileViewer, VIEWABLE } from '../files.ts';
 import { inviteRef } from '../invites.ts';
+import { installStickerLink, stickerInstaller } from './ComposerMedia.tsx';
 
 export { openAttachment };
 
@@ -268,12 +269,15 @@ export function linkMenu(url: string, m: P.MessageView | null, onReply?: () => v
   const open = () => void openLink(url).then((ok) => ok || window.open(url, '_blank', 'noopener,noreferrer'));
   // An invite: a click opens the New box on it (InviteCard.tsx), so the browser is one entry down.
   const invite = !!inviteRef(url);
+  // A signal.art sticker pack (docs/media-kinds.md): installed through a Signal account, on this click.
+  const installer = stickerInstaller(url, m?.seenVia);
   return {
     label: 'Link actions',
     track: 'link menu',
     items: groups(
       [
         ...(invite ? [{ label: 'Preview Invite', icon: 'eye', run: () => openPalette({ kind: 'new', mode: 'join' }, url) } as MenuEntry] : []),
+        ...(installer ? [{ label: 'Install Sticker Pack', icon: 'sticker', run: () => void installStickerLink(url, installer) } as MenuEntry] : []),
         { label: invite ? 'Open in Browser' : 'Open Link', icon: 'external', run: open },
         { label: 'Copy Link', icon: 'link', run: () => copy(url, 'Link copied') },
       ],

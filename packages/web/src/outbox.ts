@@ -40,6 +40,15 @@ export interface OutboxEntry {
    */
   unsure?: boolean;
   attempt?: number;
+  /** A sticker, a voice message, view-once (docs/media-kinds.md): sent with the message as they are. */
+  media?: SendMedia;
+}
+
+/** What a send carries beyond text and files (the hub's send body: protocol media.ts). */
+export interface SendMedia {
+  sticker?: string;
+  voice?: { seconds: number; waveform?: string };
+  viewOnce?: boolean;
 }
 
 export interface Outbox {

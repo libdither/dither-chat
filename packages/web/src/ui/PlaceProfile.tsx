@@ -28,6 +28,7 @@ import { canIndex, startIndexing } from './Indexing.tsx';
 import { NetworkMute } from './NetworkMute.tsx';
 import { VoicePeople } from './Ringing.tsx';
 import { useServerParts } from './ServerPartsLazy.tsx';
+import { Stories } from './StoriesLazy.tsx';
 
 /** "Seen 12 of 1,287 listed (1%) · 214 online": honest about how little that may be. */
 export function coverageText(c: P.MemberCoverageView): string {
@@ -222,6 +223,7 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
         <NetworkMute kind={kind} id={id} network={network} accountIds={accountIds} mute={(conv ?? space)?.nativeMute} />
       </Card>
 
+      {conv && conv.shape === 'group' && <Stories conversationId={conv.id} network={conv.network} />}
       {conv && retention.value.adversarial && <KeptHere conversationId={conv.id} />}
 
       {conv && conv.shape === 'group' && view && view.blocked !== undefined && GroupBlock && (

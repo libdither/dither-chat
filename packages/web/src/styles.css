@@ -2476,6 +2476,327 @@ code {
   background: var(--bg-hover);
   color: var(--text-faint);
 }
+/* Stickers, voice messages and view-once in the composer (ui/ComposerMedia.tsx, docs/media-kinds.md). */
+.view-once-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.view-once-chip.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.ss-foot .view-once-chip {
+  margin: 0 12px 8px;
+}
+.voice-rec {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 50px;
+  padding: 7px;
+  background: var(--bg-input);
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+}
+.voice-rec-note {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.voice-rec-note.error {
+  color: var(--danger);
+}
+.voice-rec-dot {
+  width: 10px;
+  height: 10px;
+  margin: 0 4px;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: voice-rec-blink 1.2s ease-in-out infinite;
+}
+@keyframes voice-rec-blink {
+  50% {
+    opacity: 0.3;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-rec-dot {
+    animation: none;
+  }
+}
+.voice-rec-bars {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  min-width: 0;
+}
+.voice-rec-bars i {
+  flex: 1;
+  min-width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.voice-rec-time {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.sticker-picker {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 380px;
+  max-width: calc(100vw - 16px);
+  height: 420px;
+  max-height: calc(100vh - 16px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg, 0 10px 30px rgb(0 0 0 / 0.3));
+}
+.sheet .sticker-picker-body,
+.sticker-picker-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sticker-tabs {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+}
+.sticker-tab {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+}
+.sticker-tab.on {
+  background: var(--bg-hover);
+}
+.sticker-tab img {
+  object-fit: contain;
+}
+.sticker-pack-name {
+  padding: 8px 12px 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.sticker-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 6px;
+  padding: 8px;
+  align-content: start;
+}
+.sticker-choice {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.sticker-choice:hover,
+.sticker-choice:focus-visible {
+  background: var(--bg-hover);
+}
+.sticker-choice img,
+.sticker-choice .sticker {
+  width: 80px;
+  height: 80px;
+  object-fit: contain;
+}
+.sticker-note {
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.sticker-note.small {
+  font-size: 12px;
+  padding-top: 0;
+}
+.sticker-note.error {
+  color: var(--danger);
+}
+.sticker-install {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+}
+.sticker-install input {
+  flex: 1;
+  min-width: 0;
+}
+/* Stories on a person's or group's page (ui/Stories.tsx). */
+.story-strip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 2px 0 6px;
+}
+.story-thumb {
+  flex: none;
+  width: 76px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.story-thumb > .story-media,
+.story-thumb > .story-text {
+  width: 72px;
+  height: 112px;
+  border-radius: 10px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  overflow: hidden;
+  font-size: 10px;
+}
+.story-thumb.seen > .story-media,
+.story-thumb.seen > .story-text {
+  outline-color: var(--border);
+}
+.story-media {
+  object-fit: cover;
+  background: var(--bg-raised);
+}
+.story-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 8px;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.story-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+  color: #fff;
+  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+}
+.story-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.story-bar .icon-btn {
+  color: #fff;
+}
+.story-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+.story-stage > .story-media,
+.story-stage > .story-text {
+  max-width: min(100%, 480px);
+  max-height: 100%;
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  border-radius: 12px;
+  font-size: 22px;
+}
+.story-stage > .story-media {
+  object-fit: contain;
+  background: #000;
+}
+.story-link {
+  font-size: 13px;
+  color: inherit;
+  text-decoration: underline;
+}
+.story-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgb(255 255 255 / 0.15);
+  color: #fff;
+}
+.story-nav.prev {
+  left: 12px;
+}
+.story-nav.next {
+  right: 12px;
+}
+.story-reply {
+  padding: 8px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 520px;
+  width: 100%;
+  margin: 0 auto;
+}
+.story-quick {
+  display: flex;
+  justify-content: space-around;
+  font-size: 22px;
+}
+.story-reply form {
+  display: flex;
+  gap: 8px;
+}
+.story-reply input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid rgb(255 255 255 / 0.3);
+  background: rgb(255 255 255 / 0.08);
+  color: #fff;
+}
+.story-noreply {
+  text-align: center;
+  font-size: 13px;
+  opacity: 0.7;
+  padding: 12px;
+}
 .voice-note {
   display: flex;
   align-items: center;

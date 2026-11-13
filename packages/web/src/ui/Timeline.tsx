@@ -86,6 +86,7 @@ import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
 import { TypingBar } from './Typing.tsx';
 import { useGrow } from './grow.ts';
 import { AttachSheet, CameraView, SendScreen } from './Attach.tsx';
+import { mediaOffer, StickerButton, stickerInstaller, ViewOnceChip, VoiceButton } from './ComposerMedia.tsx';
 import { CAPTURE_ACCEPT, MEDIA_ACCEPT, opensSendScreen } from '../camera.ts';
 import { phone, touchOnly } from '../phone.ts';
 import { composerDone, composerTyped } from '../typing.ts';
@@ -373,6 +374,11 @@ function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
     if (a && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && inviteRef(a.href)) {
       e.preventDefault();
       openPalette({ kind: 'new', mode: 'join' }, a.href);
+    }
+    // A sticker pack link opens its menu, where Install Sticker Pack is (ComposerMedia.tsx).
+    else if (a && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && stickerInstaller(a.href, m.seenVia)) {
+      e.preventDefault();
+      openMenu({ x: e.clientX, y: e.clientY }, linkMenu(a.href, m));
     }
   };
   if (tail)
@@ -1093,6 +1099,9 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   const [review, setReview] = useState(false);
   // The emoji button's picker, beside what opened it (Reactions.tsx).
   const [emojiAt, setEmojiAt] = useState<DOMRect | null>(null);
+  // Stickers, recording and view-once, where the sending account has them (ComposerMedia.tsx).
+  const offer = mediaOffer(sender, canAttach);
+  const [viewOnce, setViewOnce] = useState(false);
   const addFiles = async (list: File[]) => {
     if (!list.length || !conv) return;
     if (!canAttach) return toast({ kind: 'error', title: 'Cannot send files here', body: conv.encrypted ? 'Set up encryption on the account\'s page to send files in encrypted Matrix rooms.' : `${netName(conv.network)} is not set up to send files.` });
@@ -1108,6 +1117,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
     setCamera(false);
     setReview(false);
     setEmojiAt(null);
+    setViewOnce(false);
   }, [targets.convId]);
   const files = att.sendable;
   const draftKey = `dither-chat:draft:${targets.convId}`;
@@ -1159,12 +1169,18 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       if (body !== m.body) void editMessage(m, body);
       return;
     }
-    send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id, files: files.map((f) => f.file), uploads: files.map((f) => f.job!) });
+    send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id, files: files.map((f) => f.file), uploads: files.map((f) => f.job!), ...(viewOnce && offer.viewOnce && files.length ? { media: { viewOnce: true } } : {}) });
     composerDone();
     type('');
     att.clear(true);
     clearReply();
     setReview(false);
+    setViewOnce(false);
+  };
+  /** A sticker or a recording goes at once, on its own, as a reply when one is open. */
+  const sendMedia = (opts: { files?: File[]; media?: { sticker?: string; voice?: P.VoiceOut } }) => {
+    send(targets.convId, '', { accountId: targets.accountId, replyTo: reply?.id, ...opts });
+    clearReply();
   };
   const canSend = !((!text.trim() && !files.length) || !!disabledReason || (att.failed && !edit));
   const sendTitle = att.failed && !edit ? 'A file did not upload: try it again or remove it' : undefined;
@@ -1254,11 +1270,18 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       <Icon name="smile" size={onPhone ? 20 : 18} />
     </button>
   );
-  const sendBtn = (
-    <button class="send-btn" data-track="send" disabled={!canSend} onClick={submit} aria-label="Send" title={sendTitle}>
-      <Icon name="send" size={17} />
-    </button>
+  const sendBtn =
+    attaching && offer.record && !text.trim() && !files.length ? (
+      <VoiceButton conversationId={targets.convId} onPhone={onPhone} voice={offer.voice} onSend={(f, voice) => sendMedia({ files: [f], ...(voice ? { media: { voice } } : {}) })} />
+    ) : (
+      <button class="send-btn" data-track="send" disabled={!canSend} onClick={submit} aria-label="Send" title={sendTitle}>
+        <Icon name="send" size={17} />
+      </button>
+    );
+  const stickerBtn = conv && !disabledReason && !edit && offer.stickers && (
+    <StickerButton conversationId={targets.convId} accountId={targets.accountId ?? sender?.id} onPhone={onPhone} onSend={(st) => sendMedia({ media: { sticker: st.id } })} />
   );
+  const viewOnceChip = offer.viewOnce && files.length > 0 && !edit && <ViewOnceChip on={viewOnce} set={setViewOnce} />;
   return (
     <div
       class={`composer ${dropping ? 'dropping' : ''}`}
@@ -1294,6 +1317,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
         </div>
       )}
       <AttachedFiles files={att.files} remove={att.remove} />
+      {viewOnceChip}
       <EmojiComplete ta={ta} convId={targets.convId} network={conv?.network} />
       {attaching && (
         <>
@@ -1358,6 +1382,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
               box
             )}
             {emojiBtn}
+            {stickerBtn}
             {attaching && (
               <button class="icon-btn composer-camera" data-track="camera" onClick={openCamera} aria-label="Take a photo or video">
                 <Icon name="camera" size={20} />
@@ -1383,6 +1408,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
             box
           )}
           {emojiBtn}
+          {stickerBtn}
           {sendBtn}
         </div>
       )}
@@ -1395,7 +1421,15 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           onClose={() => setEmojiAt(null)}
         />
       )}
-      {sheet && <AttachSheet limit={limit} onClose={() => setSheet(false)} onPhotos={() => photos.current?.click()} onFile={() => picker.current?.click()} />}
+      {sheet && (
+        <AttachSheet
+          limit={limit}
+          onClose={() => setSheet(false)}
+          onPhotos={() => photos.current?.click()}
+          onFile={() => picker.current?.click()}
+          {...(offer.viewOnce ? { onViewOnce: () => (setViewOnce(true), photos.current?.click()) } : {})}
+        />
+      )}
       {camera && (
         <CameraView
           onClose={() => setCamera(false)}
@@ -1419,6 +1453,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           onAddMore={() => photos.current?.click()}
           onClose={() => setReview(false)}
           enterSends={() => !touchKeyboard()}
+          extra={viewOnceChip}
         />
       )}
     </div>

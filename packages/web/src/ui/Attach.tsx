@@ -7,7 +7,7 @@
  * Signal's sheet also shows a grid of recent photos. That would need the Android app to read every photo on the
  * phone; the system's photo picker stands in for it, and needs no permission.
  */
-import { createPortal } from 'preact';
+import { createPortal, type ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { baseType, clockOf, HOLD_MS, nextCamera, photoName, recorderType, videoName, type Cam } from '../camera.ts';
 import { bytes } from '../format.ts';
@@ -19,7 +19,7 @@ import { Sheet } from './Sheet.tsx';
 
 // ------------------------------------------------------------------ the + sheet
 
-export function AttachSheet({ onPhotos, onFile, onClose, limit }: { onPhotos: () => void; onFile: () => void; onClose: () => void; limit: string }) {
+export function AttachSheet({ onPhotos, onFile, onClose, limit, onViewOnce }: { onPhotos: () => void; onFile: () => void; onClose: () => void; limit: string; /** Where the network has view-once (docs/media-kinds.md). */ onViewOnce?: () => void }) {
   // The picker opens from the tap itself, which a browser asks of it; the sheet goes as it opens.
   const pick = (open: () => void) => () => {
     open();
@@ -43,6 +43,15 @@ export function AttachSheet({ onPhotos, onFile, onClose, limit }: { onPhotos: ()
             <small>Any kind, {limit}</small>
           </span>
         </button>
+        {onViewOnce && (
+          <button class="sheet-action attach-action" data-track="view once" onClick={pick(onViewOnce)}>
+            <Icon name="eyeOff" size={22} />
+            <span>
+              View once
+              <small>A photo or video they can open once</small>
+            </span>
+          </button>
+        )}
       </div>
     </Sheet>
   );
@@ -285,6 +294,8 @@ export function SendScreen(props: {
   onAddMore: () => void;
   onClose: () => void;
   enterSends: () => boolean;
+  /** Beside the caption: the view-once switch, where the network has it. */
+  extra?: ComponentChildren;
 }) {
   const { files, remove, text, onText, onSend, onClose } = props;
   const [at, setAt] = useState(0);
@@ -346,6 +357,7 @@ export function SendScreen(props: {
             </span>
           )}
         </div>
+        {props.extra}
         <div class="ss-compose">
           <div class="ss-caption">
             <textarea
