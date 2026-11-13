@@ -8,8 +8,10 @@ import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { fullTime, ago } from '../../format.ts';
 import { authorName } from '../../model.ts';
-import { db, go, isSelfIdentity } from '../../state.ts';
+import { db, go, isSelfIdentity, toast } from '../../state.ts';
 import { Avatar, Empty, Linked } from '../bits.tsx';
+import { useLongPress } from '../Reactions.tsx';
+import { Sheet } from '../Sheet.tsx';
 import { Icon } from '../icons.tsx';
 import { Loading } from '../Loader.tsx';
 import { clip, feedBarLine, feedUnits, namesPhrase, notificationsUrl, opensPost, parsePostKey, postHref, postKey, reactionCounts, reactorsPhrase, shortCount } from '../../feed.ts';
@@ -41,6 +43,10 @@ export const kit = {
   Empty,
   Loading,
   Linked,
+  /** A long press on a phone (Reactions.tsx), a sheet from the bottom, a toast: as the rest of the app has them. */
+  useLongPress,
+  Sheet,
+  toast,
   /** A post's thread, beside the inbox (docs/feed.md "Threads"). */
   openPost: (network: P.Network, post: string) => go({ view: 'inbox', conv: postKey(network, post) }),
   /** feed.ts, which the row draws with too: imported by the chunk, rolldown would split it into a startup file. */

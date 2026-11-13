@@ -184,8 +184,8 @@ comment section; **Show more replies** while X has more. The header says whose p
 answers: X's chains (a reply and the first answers under it), the branches the hub logged before (`logged`, below),
 and the branches opened since. Siblings keep the order they first came in, X's order: the author's own continuation
 first, then what X ranks highest. Where X counts more replies under a post than are known, **N more replies** reads
-that post's thread and puts its replies in place, as Reddit's "load more comments". Four ways to draw it, chosen above
-the replies and kept on the device:
+that post's thread and puts its replies in place, as Reddit's "load more comments". Four ways to draw it, chosen in a
+quiet menu beside Replies ("Tree ▾", each with what it is like) and kept on the device:
 
 - **Tree** (the default, as Reddit): each reply's picture, name, OP on the post's author, time (which opens the reply
   as a thread of its own), words, pictures and likes; under it its replies, one step in, with a line down its left
@@ -210,6 +210,55 @@ back, ends Show more. With the thread come **the posts logged under it before** 
 in the tree. No account connected, or X failing: the thread comes back from what the hub logged, saying why
 (`stored`): what it answers, back through the posts logged, and the replies logged under it (the author's first),
 with no Show more.
+
+## Answering
+
+Posts are no longer only read: under every post in a thread (the post large, each reply in every style) is **the
+bar X has**: Reply, Repost, Like, and the views X counts. Code: `protocol/src/compose.ts` (the rules), `hub/src/posts.ts`
+(`act`, `publish`, `reactors`), `hub/src/reactors.ts` (the ranking), `web/src/ui/feed/Actions.tsx` and `Composer.tsx`.
+
+- **Like and Repost are one press each** (`POST /api/posts/:network/:id/act`, `{ act: 'like' | 'unlike' | 'repost' |
+  'unrepost' }`, the `postAct` command, capability `postActions`). They show at once, filled pink or green, the count
+  one more; if the network says no they go back, with a toast saying why. The logged post follows: `extra.post.viewer`
+  says what you did, its count changes by one only when the state does (pressing Like on a liked post counts nothing).
+  Repost asks first, as X does: **Repost** (or Undo repost) or **Quote**.
+- **Reply and Quote open a composer** where you are: under the post a thread is about there is always a one-line "Post
+  your reply" box (X's), and Reply under any reply opens one under it, focused, "Replying to @handle". Quote opens one
+  with the post quoted under it. What you post goes first in the tree, marked OP, and a toast offers View.
+  `POST /api/posts/:network/publish` (`{ text, replyTo?, quote?, key }`, the `publish` command, capability `publish`)
+  checks the text with the same count the page shows, and posts once per `key` (a composer's own id): a double press or
+  a retried request within ten minutes is answered with the first post. Too long or empty is refused (422) before
+  anything is sent.
+- **Nothing is sent but the press.** No like, view or read is sent on its own; reading a thread still tells X nothing.
+
+### The composer, as X counts
+
+The rules are data (`POST_RULES`), one composer draws them all:
+
+| | X | Reddit (for when a Reddit account comes) |
+| --- | --- | --- |
+| Limit | 280, weighted | 10,000 characters |
+| Counting | twitter-text v3: Latin, Greek, Cyrillic and common punctuation one, other characters (CJK) two, each emoji two (a ZWJ family, a flag: one emoji), every link 23 however long | graphemes |
+| Counter | a ring that fills; from 20 left it grows and shows the number (yellow), at the limit red, past it a negative count in red, and the ring goes past -10 | "1,204 left" from 1,000 left |
+| Past the limit | what is too much marked red in the text itself; Post greyed | the same |
+| Words | Post, Reply, Quote; "Post your reply" | Comment; "Add a comment"; Markdown |
+| Likers | only the author sees who liked (X since 2024) | nobody: a score only |
+
+Ctrl/Cmd+Enter posts, Escape closes; what you write is kept on the device per post answered until it is posted.
+
+### Who reacted
+
+**Hover the Like or Repost button for a moment** (a long press on a phone, as Discord shows who reacted; a sheet
+from the bottom) and a list shows who did it, **most relevant first**, each opening their profile. The feed's
+reactions line opens the same list. `GET /api/posts/:network/:id/reactors?kind=like|repost[&cursor=]`:
+
+- **From X when it can be asked** (the `postReactors` command, capability `postReactors`; X's own "Liked by", asked
+  with its ranking on). X names who liked a post only to its author, so likers show only on your posts; who reposted
+  shows on any. Without X, the people your notifications named, saying so.
+- **Ranked for you** (`reactors.ts`), each part 0 to 1: how much you talk with their person in direct chats over half
+  a year (0.32), how often they react to your posts (0.18), whether you follow each other (0.20), how many follow them
+  (0.22, a million is full) and X's own order (0.08). Each says why: "You talk often", "You follow each other",
+  "Reacted to your posts 3 times", "184K followers".
 
 ### Posts are logged as messages
 
@@ -277,6 +326,15 @@ baselines predate it.
   the bar, nothing sent to X, a profile's posts, counts and that you follow each other, and the decisions.
 - `packages/hub/test/posts.test.ts` also checks `GET /api/posts/:network/:post/activity`, and the branches logged
   before coming back with a thread (also from the two-minute read).
+- `packages/protocol/test/compose.test.ts`: X's count (CJK, emoji sequences, links), its counter (the ring, 20 left,
+  past the limit, past -10, where it goes over), Reddit's rules.
+- `packages/hub/test/posts.test.ts` "answering": a like once (and counted once), a reply posted once per key and
+  logged under its post, a quote, too long or empty refused with nothing sent, who liked ranked with why, someone
+  else's post's likers (X: the author's only), without X the notifications' list; the routes refusing bad input.
+- `scripts/verify-x-answer.ts`: in a real browser, desktop and phone: the bar, who liked on hover (ranked, more,
+  opening a profile), like and repost reaching the demo X once each, Repost asking Repost or Quote, the counter at 100,
+  15 left, 6 over (marked), CJK and links, a reply to the top of the tree, a reply to a reply, Escape, a quote with
+  Ctrl+Enter, the style menu, a long press on a phone showing a sheet, and X getting exactly the presses made.
 - `packages/web/test/tree.test.ts`: chains and logged branches as one tree, a post seen twice, posts outside the
   thread, cycles, what is hidden to load, the tree read back as chains.
 

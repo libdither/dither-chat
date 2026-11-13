@@ -134,12 +134,12 @@ try {
 
   // Who reacted: the line opens the list, from the hub, every one named.
   await page.eval(`[...document.querySelectorAll('.feed-unit')].find((u) => /Greedy routing/.test(u.querySelector('.feed-mine')?.textContent ?? '')).querySelector('.feed-react').click()`);
-  await page.until(`document.querySelectorAll('.feed-reactors .feed-person').length >= 5`, 10000);
-  const likers = await page.eval<any>(`(() => { const r = document.querySelector('.feed-reactors'); return { people: [...r.querySelectorAll('.feed-person b')].map((b) => b.textContent), note: r.querySelector('.feed-reactors-note')?.textContent ?? '' }; })()`);
-  check('the line opens who liked it, newest first, and says how many X counted', likers.people.join(',') === 'Theo,Maya K.,Quinn,Ravi,Alice Chen' && /X counts 41; your notifications named these 5/.test(likers.note), likers);
+  await page.until(`document.querySelectorAll('.feed-reactors .post-reactor').length >= 5`, 10000);
+  const likers = await page.eval<any>(`(() => { const r = document.querySelector('.feed-reactors'); return { people: [...r.querySelectorAll('.post-reactor-name b')].map((b) => b.textContent), note: r.querySelector('.post-reactors-note')?.textContent ?? '' }; })()`);
+  check('the line opens who liked it, from X and ranked for you: the five your notifications named among them', ['Theo', 'Maya K.', 'Quinn', 'Ravi', 'Alice Chen'].every((n) => likers.people.includes(n)) && likers.people.length >= 8, likers);
   if (shots) await page.shot(join(shots, 'x-feed-likers-desktop.png'));
   await page.eval(`[...document.querySelectorAll('.feed-reactors .feed-tab')].find((b) => b.textContent.startsWith('Reposts')).click()`);
-  await page.until(`[...document.querySelectorAll('.feed-reactors .feed-person b')].map((b) => b.textContent).join() === 'Nora'`, 5000).then(() => check('…and who reposted it', true), () => check('…and who reposted it', false));
+  await page.until(`[...document.querySelectorAll('.feed-reactors .post-reactor-name b')].map((b) => b.textContent).join() .includes('Nora')`, 5000).then(() => check('…and who reposted it', true), () => check('…and who reposted it', false));
 
 
   // ------------------------------------------------------------------ read on the hub only, nothing sent to X
@@ -160,8 +160,8 @@ try {
   await page.eval(`(() => { const b = [...document.querySelectorAll('.feed-unit')].find((u) => /Greedy routing/.test(u.querySelector('.feed-mine')?.textContent ?? '')).querySelector('.feed-react'); if (b.getAttribute('aria-expanded') !== 'true') b.click(); })()`);
   await page.until(`!!document.querySelector('.feed-reactors .feed-tab')`, 10000);
   await page.eval(`[...document.querySelectorAll('.feed-reactors .feed-tab')].find((b) => b.textContent.startsWith('Likes')).click()`);
-  await page.until(`document.querySelectorAll('.feed-reactors .feed-person').length >= 5`, 10000);
-  await page.eval(`[...document.querySelectorAll('.feed-reactors .feed-person')].find((b) => /Alice Chen/.test(b.textContent)).click()`);
+  await page.until(`document.querySelectorAll('.feed-reactors .post-reactor').length >= 5`, 10000);
+  await page.eval(`[...document.querySelectorAll('.feed-reactors .post-reactor')].find((b) => /Alice Chen/.test(b.textContent)).click()`);
   await page.until(`location.hash.startsWith('#/p/') && !!document.querySelector('.pf-posts .post-item')`, 20000);
   await page.until(`!!document.querySelector('.pf-follow')`, 5000).catch(() => {});
   const prof = await page.eval<any>(`(() => ({

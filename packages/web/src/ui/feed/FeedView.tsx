@@ -19,6 +19,7 @@ import type { FeedTalk, FeedUnit } from '../../feed.ts';
 import { api, db, loadTimeline, markRead, openProfile, timelineKey, timelines } from '../../state.ts';
 import { timelineRev } from '../../versions.ts';
 import type { Kit } from './lazy.tsx';
+import { ReactorsList } from './Actions.tsx';
 import { Row } from './Post.tsx';
 import './feed.css';
 
@@ -91,36 +92,10 @@ function Talk({ t, kit, network, above, size, under }: { t: FeedTalk; kit: Kit; 
   );
 }
 
-/** Who liked and reposted a post: every one the feeds named (the hub's list, not just the pages held), each opening their profile. */
+/** Who liked and reposted a post: Likes and Reposts, each ranked for you by the hub (Actions.tsx ReactorsList). */
 function Reactors({ u, kit }: { u: PostUnit; kit: Kit }) {
-  const [page, setPage] = useState<P.MessagePage | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    api<P.MessagePage>(`/api/posts/${u.network}/${u.post.id}/activity`).then(
-      (p) => {
-        p.identities.forEach((i) => db.identities.has(i.id) || db.identities.set(i.id, i));
-        setPage(p);
-      },
-      (e) => setError((e as Error).message),
-    );
-  }, [u.key, u.reactors.like.length, u.reactors.repost.length]);
-  const lists = useMemo(() => {
-    const by = { like: [] as P.MessageView[], repost: [] as P.MessageView[] };
-    const seen = new Set<string>();
-    for (const m of page?.messages ?? []) {
-      const ty = m.feed?.type;
-      if ((ty === 'like' || ty === 'repost') && m.authorId && !seen.has(`${ty}:${m.authorId}`)) {
-        seen.add(`${ty}:${m.authorId}`);
-        by[ty].push(m);
-      }
-    }
-    return by;
-  }, [page]);
   const [tab, setTab] = useState<'like' | 'repost'>(u.reactors.like.length ? 'like' : 'repost');
   const counts = kit.feed.reactionCounts(u);
-  const shown = lists[tab];
-  const net = NETWORK_META[u.network].name;
-  const unnamed = counts[tab] - shown.length;
   return (
     <div class="feed-reactors" role="region" aria-label="Who reacted">
       <div class="feed-reactors-tabs">
@@ -130,27 +105,7 @@ function Reactors({ u, kit }: { u: PostUnit; kit: Kit }) {
           </button>
         ))}
       </div>
-      {!page && !error && <kit.Loading inline label="Reading who reacted…" />}
-      {error && <p class="thread-none">{error}</p>}
-      {page &&
-        shown.map((m) => (
-          <button class="feed-person" onClick={() => openProfile(m.authorId)}>
-            <kit.Avatar id={m.authorId!} name={kit.name(m.authorId)} url={kit.avatarUrl(m.authorId)} size={28} />
-            <span class="feed-person-who">
-              <b>{kit.name(m.authorId)}</b>
-              {kit.handle(m.authorId) && <span class="post-handle">@{kit.handle(m.authorId)}</span>}
-            </span>
-            <span class="post-handle" title={kit.fullTime(m.ts)}>
-              {kit.ago(m.ts)}
-            </span>
-          </button>
-        ))}
-      {page && !shown.length && unnamed <= 0 && <p class="feed-reactors-note">Nobody yet.</p>}
-      {page && unnamed > 0 && (
-        <p class="feed-reactors-note">
-          {net} counts {counts[tab].toLocaleString()}; your notifications named {shown.length ? `these ${shown.length}` : 'none of them'}.
-        </p>
-      )}
+      <ReactorsList network={u.network} post={u.post.id} kind={tab} kit={kit} count={counts[tab]} />
     </div>
   );
 }

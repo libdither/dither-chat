@@ -16,7 +16,9 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { api, db, loadTimeline, openProfile, timelineKey, timelines } from '../../state.ts';
 import { timelineRev } from '../../versions.ts';
 import type { Kit } from './lazy.tsx';
-import { Comments, COMMENT_STYLES, type CommentStyle } from './Comments.tsx';
+import { PostActions, type AnswerCtx } from './Actions.tsx';
+import { Comments, COMMENT_STYLES, StyleMenu, type CommentStyle } from './Comments.tsx';
+import { PostComposer } from './Composer.tsx';
 import { Counts, Pics, QuotedIn, Row, Text, Who } from './Post.tsx';
 import { replyTree, treeSize, type TreeNode } from './tree.ts';
 
@@ -33,7 +35,7 @@ function readStyle(): CommentStyle {
 type Src = { network: P.Network; post: string } | { message: string };
 
 /** The post asked for, large: who, its words, pictures, the quote, its full time, counts, and Open on X. */
-function Focal({ p, kit, network, joined }: { p: P.PostView; kit: Kit; network: P.Network; joined: boolean }) {
+function Focal({ p, kit, network, joined, answer, children }: { p: P.PostView; kit: Kit; network: P.Network; joined: boolean; answer: AnswerCtx; children?: preact.ComponentChildren }) {
   const shown = p.repostOf ?? p;
   const who = shown.author ?? null;
   const replyTo = shown.replyTo?.author ? kit.handle(shown.replyTo.author) : null;
@@ -56,6 +58,8 @@ function Focal({ p, kit, network, joined }: { p: P.PostView; kit: Kit; network: 
           <kit.Icon name="external" size={12} /> Open on {NETWORK_META[network].name}
         </a>
       </div>
+      <PostActions p={shown} ctx={answer} big />
+      {children}
     </article>
   );
 }
@@ -73,6 +77,9 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
   const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
   const [style, setStyle] = useState<CommentStyle>(readStyle);
   const [failed, setFailed] = useState<ReadonlyMap<string, string>>(new Map());
+  // Answering: the post a reply or quote is being written to, and what you posted here (first in the tree).
+  const [answering, setAnswering] = useState<{ mode: 'reply' | 'quote'; post: P.PostFact } | null>(null);
+  const [mine, setMine] = useState<P.PostView[]>([]);
   const scroller = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let live = true;
@@ -83,6 +90,8 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
     setLoading(new Set());
     setDone(new Set());
     setFolded(new Set());
+    setAnswering(null);
+    setMine([]);
     api<P.PostThreadView>('message' in src ? `/api/messages/${encodeURIComponent(src.message)}/thread` : `/api/posts/${src.network}/${src.post}/thread`).then(
       (v) => {
         if (!live) return;
@@ -116,8 +125,9 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
     // opened: a later copy wins, so the freshest read of a post is the one kept.
     const given = t.replies.flat();
     const ids = new Set(given.map((p) => p.id));
-    return replyTree((t.focal.repostOf ?? t.focal).id, [...(t.logged ?? []).filter((p) => !ids.has(p.id)), ...given, ...extra]);
-  }, [t, extra]);
+    // Yours first, as Reddit puts what you just wrote at the top.
+    return replyTree((t.focal.repostOf ?? t.focal).id, [...mine, ...(t.logged ?? []).filter((p) => !ids.has(p.id)), ...given, ...extra]);
+  }, [t, extra, mine]);
   const with_ = (set: ReadonlySet<string>, id: string, on: boolean) => {
     const next = new Set(set);
     if (on) next.add(id);
@@ -178,6 +188,34 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
     }
   };
   const network = t?.network ?? ('network' in src ? src.network : 'x');
+  const posted = (p: P.PostView, mode: 'reply' | 'quote') => {
+    setAnswering(null);
+    if (mode === 'reply' && p.replyTo) setMine((m) => [p, ...m]);
+    kit.toast({ title: mode === 'quote' ? 'Quoted' : 'Replied', body: p.text.slice(0, 80), kind: 'info', action: () => kit.openPost(network, p.id), actionLabel: 'View' }, 4000);
+  };
+  const answer: AnswerCtx = {
+    kit,
+    network,
+    onReply: (p) => setAnswering({ mode: 'reply', post: p }),
+    onQuote: (p) => setAnswering({ mode: 'quote', post: p }),
+  };
+  const composerFor = (p: P.PostFact) =>
+    answering && answering.post.id === p.id ? (
+      <PostComposer
+        network={network}
+        target={answering.mode === 'quote' ? { quote: p } : { replyTo: p }}
+        kit={kit}
+        autoFocus
+        onCancel={() => setAnswering(null)}
+        onPosted={(made) => posted(made, answering.mode)}
+      />
+    ) : null;
+  const below = (p: P.PostFact) => (
+    <>
+      <PostActions p={p} ctx={answer} />
+      {composerFor(p)}
+    </>
+  );
   const net = NETWORK_META[network].name;
   const focal = t?.focal;
   const author = focal ? ((focal.repostOf ?? focal).author ?? null) : null;
@@ -227,25 +265,26 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
               {t.ancestors.map((p) => (
                 <Row p={p} kit={kit} network={network} line />
               ))}
-              <Focal p={focal} kit={kit} network={network} joined={t.ancestors.length > 0} />
+              <Focal p={focal} kit={kit} network={network} joined={t.ancestors.length > 0} answer={answer}>
+                {/* The reply box under the post, one line until used, as X shows it; a quote of the post opens in its place. */}
+                {answering && answering.post.id === (focal.repostOf ?? focal).id ? (
+                  composerFor(focal.repostOf ?? focal)
+                ) : (
+                  <PostComposer network={network} target={{ replyTo: focal.repostOf ?? focal }} kit={kit} collapsed onPosted={(made) => posted(made, 'reply')} />
+                )}
+              </Focal>
               {nodes.length > 0 && (
                 <div class="thread-replies-bar">
                   <h3 class="thread-replies-head">
                     Replies <span class="thread-replies-n">{treeSize(nodes)}</span>
                   </h3>
-                  <div class="thread-style" role="group" aria-label="Draw replies as">
-                    {COMMENT_STYLES.map((s) => (
-                      <button class={`feed-tab ${style === s.id ? 'on' : ''}`} aria-pressed={style === s.id} title={s.title} onClick={() => pickStyle(s.id)}>
-                        {s.label}
-                      </button>
-                    ))}
-                  </div>
+                  <StyleMenu style={style} pick={pickStyle} kit={kit} />
                 </div>
               )}
               <Comments
                 nodes={nodes}
                 style={style}
-                ctx={{ kit, network, op: author, folded, fold, loading, done, failed, load: loadUnder }}
+                ctx={{ kit, network, op: author, folded, fold, loading, done, failed, load: loadUnder, below }}
               />
               {!nodes.length && !t.more && <p class="thread-none">{t.stored ? 'No replies logged.' : 'No replies yet.'}</p>}
               {t.more && (

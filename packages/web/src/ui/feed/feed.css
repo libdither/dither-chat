@@ -624,14 +624,6 @@
   color: var(--text-dim);
   font-weight: 600;
 }
-.thread-style {
-  display: flex;
-  gap: 2px;
-}
-.thread-style .feed-tab {
-  padding: 3px 10px;
-  font-size: 12.5px;
-}
 .ct {
   padding: 4px 8px 8px;
 }
@@ -816,6 +808,375 @@
 }
 .ct-flat > .ct-more {
   margin-left: 40px;
+}
+
+
+/* Answering (Actions.tsx, Composer.tsx): the bar under a post, who reacted, the composer. */
+.post-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 2px 0 0 -8px;
+  color: var(--text-faint);
+}
+.post-actions.big {
+  justify-content: space-between;
+  max-width: 460px;
+  margin: 0;
+  padding: 4px 0;
+  border-top: 1px solid var(--border-soft);
+}
+.pa-slot,
+.pa-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.pa-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 44px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: inherit;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+.post-actions.big .pa-btn {
+  font-size: 13px;
+  padding: 7px 10px;
+}
+.pa-btn:hover,
+.pa-btn:focus-visible {
+  background: var(--bg-hover);
+}
+.pa-btn.reply:hover {
+  color: var(--accent);
+}
+.pa-btn.repost:hover,
+.pa-btn.repost.on {
+  color: #00ba7c;
+}
+.pa-btn.like:hover,
+.pa-btn.like.on {
+  color: #f91880;
+}
+.pa-btn.like.on .icon {
+  fill: currentColor;
+}
+.pa-btn:disabled {
+  opacity: 0.7;
+}
+.pa-views {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  font-size: 12.5px;
+}
+.pa-menu,
+.pa-pop,
+.ct-style-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 180px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-raised);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.35);
+  overflow: hidden;
+}
+.pa-menu button,
+.ct-style-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  text-align: left;
+  font-weight: 600;
+}
+.pa-menu button:hover,
+.ct-style-menu button:hover {
+  background: var(--bg-hover);
+}
+.pa-pop {
+  width: 340px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+.post-reactors {
+  display: flex;
+  flex-direction: column;
+}
+.post-reactors-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px 6px;
+  font-size: 13px;
+}
+.post-reactors-sort {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+.post-reactors-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 4px;
+}
+.post-reactor {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 12px;
+  text-align: left;
+}
+.post-reactor:hover,
+.post-reactor:focus-visible {
+  background: var(--bg-hover);
+}
+.post-reactor-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.post-reactor-name {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.post-reactor-why {
+  color: var(--text-dim);
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sheet .post-reactors {
+  min-height: 0;
+  overflow-y: auto;
+}
+.post-reactors-note {
+  margin: 0;
+  padding: 6px 12px 10px;
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+.post-reactors-more {
+  margin: 0 12px 8px;
+}
+/* The composer. */
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-raised);
+}
+.composer:focus-within {
+  border-color: color-mix(in oklab, var(--accent) 60%, var(--border));
+}
+.compose-to {
+  color: var(--text-faint);
+  font-size: 13px;
+}
+.compose-to b {
+  color: var(--accent);
+  font-weight: 600;
+}
+/* The text over a copy of itself: the copy marks what is past the limit, the text area stays plain to type in. */
+.compose-box {
+  position: relative;
+}
+.compose-back,
+.compose-text {
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.45;
+  padding: 2px 0;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 0;
+}
+.compose-back {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: transparent;
+  pointer-events: none;
+}
+.compose-back mark {
+  color: transparent;
+  background: color-mix(in oklab, #f4212e 32%, transparent);
+  border-radius: 2px;
+}
+.compose-text {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  resize: none;
+  background: transparent;
+  color: var(--text);
+  outline: none;
+}
+.compose-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-soft);
+}
+.compose-spacer {
+  flex: 1;
+}
+.compose-hint {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.compose-error {
+  color: var(--danger);
+  font-size: 12.5px;
+}
+.compose-left {
+  font-size: 12.5px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.compose-left.warn {
+  color: #ffd400;
+}
+.compose-left.over {
+  color: #f4212e;
+  font-weight: 700;
+}
+.compose-ring {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  font-variant-numeric: tabular-nums;
+}
+.compose-ring .ring-track {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 2.5;
+}
+.compose-ring .ring-fill {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  transition: stroke-dashoffset 0.12s;
+}
+.compose-ring.warn .ring-fill {
+  stroke: #ffd400;
+}
+.compose-ring.over .ring-fill {
+  stroke: #f4212e;
+}
+.compose-ring .ring-n {
+  position: absolute;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.compose-ring.over .ring-n {
+  position: static;
+  color: #f4212e;
+  font-weight: 700;
+}
+.compose-ring.over svg + .ring-n {
+  position: absolute;
+}
+.compose-send {
+  border-radius: 999px;
+  padding: 6px 16px;
+  font-weight: 700;
+}
+.compose-cancel {
+  border-radius: 999px;
+}
+.compose-closed {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 8px 0 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  color: var(--text-faint);
+  text-align: left;
+}
+.compose-closed:hover {
+  border-color: var(--border);
+}
+.compose-closed span:first-child {
+  flex: 1;
+}
+.compose-closed-btn {
+  padding: 4px 14px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--accent) 45%, transparent);
+  color: var(--text);
+  font-weight: 700;
+  font-size: 13px;
+}
+/* The style menu: a quiet word beside Replies. */
+.ct-style {
+  position: relative;
+}
+.ct-style-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.ct-style-btn:hover,
+.ct-style-btn[aria-expanded='true'] {
+  color: var(--text-dim);
+  background: var(--bg-hover);
+}
+.ct-style-menu {
+  left: auto;
+  right: 0;
+  width: 270px;
+}
+.ct-style-menu button {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+.ct-style-menu button span {
+  color: var(--text-faint);
+  font-weight: 400;
+  font-size: 12px;
+}
+.ct-style-menu button.on b::after {
+  content: ' ✓';
+  color: var(--accent);
+}
+.thread-focal .composer,
+.thread-focal .compose-closed {
+  margin-top: 4px;
 }
 
 @media (max-width: 820px) {

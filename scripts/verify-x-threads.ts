@@ -88,7 +88,7 @@ const thread = () =>
       // The comment tree: each reply's depth and who wrote it, in page order ("2:Nora").
       tree: [...document.querySelectorAll('.ct-node')].map((n) => n.dataset.depth + ':' + (n.querySelector(':scope > .ct-main .post-who b')?.textContent ?? '')),
       flat: [...document.querySelectorAll('.ct-flat')].map((f) => [f.querySelector('.ct-flat-top .post-who b')?.textContent, f.querySelectorAll('.ct-flat-reply').length]),
-      style: document.querySelector('.thread-style [aria-pressed="true"]')?.textContent ?? null,
+      style: document.querySelector('.ct-style-btn')?.textContent.trim() ?? null,
       lines: document.querySelectorAll('.thread-post.line').length,
       more: !!document.querySelector('.thread-more'),
       openOnX: f?.querySelector('.post-open')?.href ?? null,
@@ -171,7 +171,12 @@ try {
   await page.until(`!document.querySelector('.ct-node.folded')`, 5000);
 
   // The other ways to draw it.
-  const pick = (label: string) => page.eval(`[...document.querySelectorAll('.thread-style button')].find((b) => b.textContent === ${JSON.stringify(label)}).click()`);
+  // The style is a quiet menu beside Replies: open it, choose.
+  const pick = async (label: string) => {
+    await page.eval(`document.querySelector('.ct-style-btn').click()`);
+    await page.until(`document.querySelectorAll('.ct-style-menu button').length === 4`, 3000);
+    await page.eval(`[...document.querySelectorAll('.ct-style-menu button')].find((b) => b.querySelector('b').textContent === ${JSON.stringify(label)}).click()`);
+  };
   await pick('Compact');
   await page.until(`!!document.querySelector('.ct.compact')`, 5000);
   const compact = await page.eval<any>(`({ avatars: document.querySelectorAll('.ct.compact .ct-node .avatar').length, toggles: document.querySelectorAll('.ct.compact .ct-toggle').length, nodes: document.querySelectorAll('.ct.compact .ct-node').length })`);

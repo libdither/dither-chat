@@ -77,8 +77,12 @@ const light = (cp: number) => LIGHT.some(([a, b]) => cp >= a && cp <= b);
 const URL = /\bhttps?:\/\/[^\s<>"]+|\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|org|net|io|dev|app|co|ai|gg|xyz|me|tv|fm|uk|de|fr|jp|ca|au|info|blog|link|ly|edu|gov)\b(?:\/[^\s<>"]*)?/giu;
 const EMOJI = /\p{Extended_Pictographic}|\p{Regional_Indicator}|⃣/u;
 
-const segmenter = typeof Intl !== 'undefined' && 'Segmenter' in Intl ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
-const graphemes = (s: string): string[] => (segmenter ? [...segmenter.segment(s)].map((g) => g.segment) : Array.from(s));
+// Made on first use: nothing runs when the module loads, so a bundle that does not count drops it.
+let segmenter: Intl.Segmenter | null | undefined;
+const graphemes = (s: string): string[] => {
+  segmenter ??= typeof Intl !== 'undefined' && 'Segmenter' in Intl ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
+  return segmenter ? [...segmenter.segment(s)].map((g) => g.segment) : Array.from(s);
+};
 
 /** Each piece of the text and what it counts for: so the page can tell where the limit falls. */
 function pieces(text: string, rules: PostRules): { at: number; end: number; weight: number }[] {

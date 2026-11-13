@@ -12,9 +12,10 @@
  *   first, saying whom each answers.
  * - **Chains** (as X): each reply and the answers under it as a chain joined by its pictures.
  */
-import { Fragment, h } from 'preact';
+import { Fragment, h, type ComponentChildren } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { openProfile } from '../../state.ts';
+import { useState } from 'preact/hooks';
 import type { Kit } from './lazy.tsx';
 import { Counts, Pics, QuotedIn, Row, Text, Who } from './Post.tsx';
 import { treeChains, type TreeNode } from './tree.ts';
@@ -26,6 +27,29 @@ export const COMMENT_STYLES: { id: CommentStyle; label: string; title: string }[
   { id: 'flat', label: 'Flat', title: 'One level of replies under each, as on YouTube' },
   { id: 'chains', label: 'Chains', title: 'Each reply and the answers under it in a line, as on X' },
 ];
+/** The style menu: a quiet word beside Replies ("Tree ▾") that opens the four, each with what it is like. */
+export function StyleMenu({ style, pick, kit }: { style: CommentStyle; pick: (s: CommentStyle) => void; kit: Kit }) {
+  const [open, setOpen] = useState(false);
+  const current = COMMENT_STYLES.find((s) => s.id === style)!;
+  return (
+    <span class="ct-style" onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}>
+      <button class="ct-style-btn" aria-haspopup="menu" aria-expanded={open} title="How replies are drawn" onClick={() => setOpen(!open)}>
+        {current.label} <kit.Icon name="chevronDown" size={12} />
+      </button>
+      {open && (
+        <div class="ct-style-menu" role="menu">
+          {COMMENT_STYLES.map((s) => (
+            <button role="menuitemradio" aria-checked={s.id === style} class={s.id === style ? 'on' : ''} onClick={() => (pick(s.id), setOpen(false))}>
+              <b>{s.label}</b>
+              <span>{s.title}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </span>
+  );
+}
+
 /** Past this depth a branch opens as a thread of its own. */
 export const MAX_DEPTH = 6;
 
@@ -42,6 +66,8 @@ export interface CommentCtx {
   /** Branches the network could not be asked for, and why: the button stays, to try again. */
   failed: ReadonlyMap<string, string>;
   load: (n: TreeNode) => void;
+  /** What goes under a reply in place of its counts: its actions, and a composer when answering it. */
+  below?: (p: P.PostFact) => ComponentChildren;
 }
 
 function MoreUnder({ n, ctx, under }: { n: TreeNode; ctx: CommentCtx; under?: boolean }) {
@@ -89,7 +115,7 @@ function Body({ p, ctx }: { p: P.PostView; ctx: CommentCtx }) {
       <Text p={p} kit={ctx.kit} network={ctx.network} cls="post-text ct-text" />
       <Pics media={p.media} />
       {p.quoteOf && <QuotedIn p={p.quoteOf} kit={ctx.kit} network={ctx.network} />}
-      <Counts p={{ ...p, counts: p.counts ? { likes: p.counts.likes, reposts: p.counts.reposts } : undefined }} kit={ctx.kit} />
+      {ctx.below ? ctx.below(p) : <Counts p={{ ...p, counts: p.counts ? { likes: p.counts.likes, reposts: p.counts.reposts } : undefined }} kit={ctx.kit} />}
     </>
   );
 }
@@ -206,7 +232,7 @@ export function Comments({ nodes, style, ctx }: { nodes: TreeNode[]; style: Comm
           return (
             <div class="thread-chain">
               {chain.map((p, i) => (
-                <Row p={p} kit={ctx.kit} network={ctx.network} line={i < chain.length - 1} above={i === 0 && to ? <span class="post-mark">Replying to @{to}</span> : undefined} />
+                <Row p={p} kit={ctx.kit} network={ctx.network} line={i < chain.length - 1} above={i === 0 && to ? <span class="post-mark">Replying to @{to}</span> : undefined} below={ctx.below?.(p)} />
               ))}
               {chain.map((p) => byId.get(p.id)).map((x) => x && <MoreUnder n={x} ctx={ctx} under />)}
             </div>

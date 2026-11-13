@@ -89,7 +89,7 @@ export function Who({ id, kit }: { id: string | null; kit: Kit }) {
 }
 
 /** A post in a thread, small: their picture on the left with the line down to the next, then who, when and what. */
-export function Row({ p, kit, network, line, focal, size = 36, above, tag, hideQuote }: {
+export function Row({ p, kit, network, line, focal, size = 36, above, tag, hideQuote, below }: {
   p: P.PostFact;
   kit: Kit;
   network: P.Network;
@@ -103,6 +103,8 @@ export function Row({ p, kit, network, line, focal, size = 36, above, tag, hideQ
   tag?: string;
   /** Leave out the post it quotes when it is this one (a quote under the post it quotes, in the feed). */
   hideQuote?: string;
+  /** In place of its counts: what can be done to it (Actions.tsx), and a composer answering it. */
+  below?: ComponentChildren;
 }) {
   const shown = p.repostOf ?? p;
   const who = shown.author ?? null;
@@ -132,7 +134,7 @@ export function Row({ p, kit, network, line, focal, size = 36, above, tag, hideQ
         <Text p={shown} kit={kit} network={network} cls="post-text" />
         <Pics media={shown.media} />
         {shown.quoteOf && shown.quoteOf.id !== hideQuote && <QuotedIn p={shown.quoteOf} kit={kit} network={network} />}
-        <Counts p={shown} kit={kit} />
+        {below ?? <Counts p={shown} kit={kit} />}
       </div>
     </article>
   );
