@@ -11,6 +11,7 @@ import { db, go } from '../state.ts';
 import { Modal } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import type { SendPanel } from './SendExtras.tsx';
+import './sendlists.css';
 
 export function SendPanelView({ panel, onClose }: { panel: SendPanel; onClose: () => void }) {
   if (panel.kind === 'later') return <LaterPicker title={panel.title} initial={panel.initial} onPick={(t) => (onClose(), panel.onPick(t))} onClose={onClose} />;

@@ -30,6 +30,7 @@ import type { CallFact, CallMode, CallState, VoiceMember } from './call.ts';
 import type { GateAnswer, ScheduledEventFact, SpaceGate } from './servers.ts';
 import type { LinkPreviewOut } from './extra.ts';
 import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, ReactionStyle, Shape, SpaceKind, Variant } from './ontology.ts';
+import type { SelfCapability, SelfCommand, SelfEvent } from './self.ts';
 import type { VoiceFact } from './rich.ts';
 import type { SendCapability, SendCommand, SendEvent } from './sending.ts';
 
@@ -133,7 +134,9 @@ export type Capability =
   /** Mentions found late, native mutes, unread by hand, many read at once (attention.ts). */
   | AttentionCapability
   /** Silent sends, replies without a ping, previews taken off, saved messages, the network's scheduled messages (sending.ts). */
-  | SendCapability;
+  | SendCapability
+  /** The account's own self and block, ignore, notes (self.ts, docs/account-self.md). */
+  | SelfCapability;
 
 // ---------------------------------------------------------------- facts
 
@@ -345,6 +348,12 @@ export interface ProfileChange {
   emoji?: string;
   avatar?: OutgoingAttachment | null;
   username?: string | null;
+  /** Your pronouns ('' clears them). */
+  pronouns?: string;
+  /** The picture across the top of your profile, or null to remove it (Discord: Nitro only). */
+  banner?: OutgoingAttachment | null;
+  /** The colour across the top when there is no banner picture, CSS hex, or null. */
+  accent?: string | null;
 }
 
 /** What openDirect answers. The conversation fact has already been emitted when this arrives. */
@@ -497,7 +506,9 @@ export type AdapterEvent =
   | SendEvent
   | { t: 'reply'; id: string; ok: true; result?: unknown }
   | { t: 'reply'; id: string; ok: false; error: string }
-  | { t: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; msg: string; data?: unknown };
+  | { t: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; msg: string; data?: unknown }
+  /** Notices, own presence and settings, whom it ignores (self.ts). */
+  | SelfEvent;
 
 // ---------------------------------------------------------------- hub -> adapter
 
@@ -654,7 +665,8 @@ export type AdapterCommand =
    *
    * The other fields are offered only where that PersonAbout's `editable` lists them: `name` your profile name,
    * `emoji` the emoji beside your bio (Signal's About emoji, '' clears), `avatar` a picture in the hub's spool (null
-   * removes yours), `username` your username (Signal picks its number: name.12; null deletes it).
+   * removes yours), `username` your username (Signal picks its number: name.12; null deletes it), `pronouns`,
+   * `banner` (a picture in the spool, or null) and `accent` (a colour across the top of your profile, or null).
    */
   | { t: 'setProfile'; id: string; change: ProfileChange }
   /**
@@ -744,6 +756,8 @@ export type AdapterCommand =
   /** mute, markUnread, markReadMany (attention.ts). */
   | AttentionCommand
   /** suppressEmbeds, save, savedList, nativeScheduled, cancelScheduled (sending.ts). */
-  | SendCommand;
+  | SendCommand
+  /** Block, ignore, notes, own presence, sessions (self.ts). */
+  | SelfCommand;
 
 export type AdapterCommandType = AdapterCommand['t'];
