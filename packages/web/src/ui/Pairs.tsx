@@ -14,7 +14,7 @@ import type * as P from '@dither-chat/protocol';
 import { effect, signal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { badgeDiffers, cameFromThem, headIdents, leadTells, pickHolds, tagTells, tagText, tells, type HeadName, type RouteKey, type Side } from '../chatroutes.ts';
+import { badgeDiffers, cameFromThem, headIdents, lastRouteTells, leadTells, pickHolds, tagTells, tagText, tells, type HeadName, type RouteKey, type Side } from '../chatroutes.ts';
 import { ago, hueOf, initials } from '../format.ts';
 import { identityName, netColor, netName, visibleAccount } from '../model.ts';
 import { phone } from '../phone.ts';
@@ -325,7 +325,40 @@ export function PairLead({ person, directs, focus, onFocus }: { person: P.Person
           <Token label={myName(cur)} picture={<MyPicture p={cur} size={16} />} options={mine.map((p) => ({ id: p.conv.id, label: myName(p), picture: <MyPicture p={p} size={16} /> }))} onPick={onFocus} />
         </>
       )}
+      <LastRoute directs={directs} focus={focus} onFocus={onFocus} />
     </span>
+  );
+}
+
+/**
+ * A quiet hint at the end of the message box's line when the message would go another way than the chat's latest
+ * message came: "last message on Signal" (else "with kit.work", "via zyn.alt": chatroutes.ts lastRouteTells). A
+ * click sends through that route; on a phone it only says so, as the line's names do.
+ */
+function LastRoute({ directs, focus, onFocus }: { directs: P.ConversationView[]; focus: P.ConversationView; onFocus: (convId: string) => void }) {
+  const last = directs.reduce<P.ConversationView | null>((a, d) => (!a || (d.lastMessageAt ?? 0) > (a.lastMessageAt ?? 0) ? d : a), null);
+  if (!last?.lastMessageAt) return null;
+  const tells = lastRouteTells(routeKey(focus), routeKey(last));
+  if (!tells) return null;
+  const p = pairOf(last);
+  const where = tells === 'network' ? `on ${netName(last.network)}` : tells === 'theirs' ? `with ${theirName(p)}` : `via ${myName(p)}`;
+  const title = `The last message was ${where} (${ago(last.lastMessageAt)}); this one goes ${tells === 'network' ? `on ${netName(focus.network)}` : routeTitle(focus).replace(/^Send /, '')}`;
+  const body = (
+    <>
+      {tells === 'network' && <NetGlyph network={last.network} size={10} />}
+      last message {where}
+    </>
+  );
+  if (phone.value)
+    return (
+      <span class="pair-last" title={title}>
+        {body}
+      </span>
+    );
+  return (
+    <button class="pair-last" data-track="last route" title={`${title}. Click to send there.`} onClick={() => onFocus(last.id)}>
+      {body}
+    </button>
   );
 }
 

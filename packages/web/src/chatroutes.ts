@@ -173,6 +173,19 @@ export function cameFromThem(from: { participantIds: readonly string[] }, loaded
   return from.participantIds.some(isTheirs) || loaded.some((m) => m.authorId != null && isTheirs(m.authorId));
 }
 
+/**
+ * What tells the route of the chat's latest message from the one a message goes through now, for the quiet hint at
+ * the end of the message box's line ("last message on Signal"): the network where they differ, else their account,
+ * else yours. Null when it is the same route (or nothing tells them apart), and then the line says nothing more.
+ */
+export function lastRouteTells(to: RouteKey, last: RouteKey | null | undefined): 'network' | 'theirs' | 'mine' | null {
+  if (!last || last.id === to.id) return null;
+  if (last.network !== to.network) return 'network';
+  if (last.theirs !== to.theirs) return 'theirs';
+  if (last.mine !== to.mine) return 'mine';
+  return null;
+}
+
 // ------------------------------------------------------------------ the inbox
 
 /** One route's inbox row, as the merge needs it (model.ts makes these of the hub's scores). */

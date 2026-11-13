@@ -13958,6 +13958,23 @@ html.kb-open .ss-foot {
 .pair-token.fixed {
   border-bottom: none;
 }
+/* The route of the chat's latest message, when this one would go another way (Pairs.tsx LastRoute): out of the way. */
+.pair-last {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 8px;
+  padding: 0;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-style: italic;
+  line-height: inherit;
+  vertical-align: baseline;
+}
+button.pair-last:hover {
+  color: var(--text);
+}
 .pair-token .avatar-net {
   display: none;
 }

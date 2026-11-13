@@ -21,8 +21,9 @@ command (`packages/protocol/src/about.ts` `PersonAbout`).
   member and channel counts. Tags under it: pronouns, Friend / In your contacts (with the networks' marks), You, Bot;
   for a place End-to-end encrypted, Age-restricted, Only admins send, your role there, Muted. A person's status line
   last.
-- **Actions.** One row. A person: Message (one network: straight there; several: a menu of each network, the merged
-  thread, and starting a chat where there is none), All chats, More. A place: Open, Their profile (a DM), Mark
+- **Actions.** One row. A person: Message (straight to your chat with them, every route together, where the message
+  box's line chooses the accounts; with no chat yet, starting one, a menu where there are several ways: each account's
+  own menu always has it), More. A place: Open, Their profile (a DM), Mark
   read, Mute, Search, Copy link, More. **More** is the same menu the person or place has everywhere else, minus what
   the row already has, plus Merge Another Identity In and Ask the Networks Again for a person, and Ignore on a network
   whose account can (docs/account-self.md). It has no Open on

@@ -489,18 +489,19 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   // Their addresses, while the composer can start a mail (slice 5).
   const emails = isSelf || !composeTo.run ? [] : ids.filter((i) => i.network === 'email');
   const email = (i: P.IdentityView) => composeTo.run?.({ name: i.displayName, email: i.nativeId, identityId: i.id, ...(i.personId ? { personId: i.personId } : {}) });
+  // Message opens your chat with them, every route together; which accounts it goes between is chosen there (the
+  // message box's line). Only with no chat yet does it offer where to start one (an account's own menu always can).
   const messageMenu = (): MenuSpec => ({
     label: 'Message',
     items: groups(
-      directs.length > 1 && person ? [{ label: 'All Chats Together', icon: 'merge', run: () => go({ view: 'people', person: person.id }) }] : [],
-      directs.map((d): MenuEntry => ({ label: `On ${netName(d.network)}`, icon: 'send', run: () => go({ view: 'inbox', conv: d.id }) })),
       startable.map((i): MenuEntry => ({ label: `Start on ${netName(i.network)}`, icon: 'plus', run: () => messageSomeone(i.id) })),
       emails.map((i): MenuEntry => ({ label: `Email ${i.nativeId}`, icon: 'mail', run: () => email(i) })),
     ),
   });
-  const messageOptions = (directs.length > 1 ? 1 : 0) + directs.length + startable.length + emails.length;
+  const messageOptions = directs.length ? 1 : startable.length + emails.length;
   const message = () => {
-    if (directs.length === 1) go({ view: 'inbox', conv: directs[0].id });
+    if (directs.length > 1 && person) go({ view: 'people', person: person.id });
+    else if (directs.length) go({ view: 'inbox', conv: [...directs].sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))[0].id });
     else if (startable.length === 1) messageSomeone(startable[0].id);
     else if (emails.length === 1) email(emails[0]);
   };
@@ -624,7 +625,6 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         <>
           {!isSelf && messageOptions > 0 && (messageOptions === 1 ? <Action primary icon="send" label="Message" onClick={message} /> : <Action primary icon="send" label="Message" menu={messageMenu} />)}
           {!isSelf && <ConnectActions identities={ids} abouts={abouts} onChanged={learn} />}
-          {directs.length > 1 && person && <Action icon="merge" label="All chats" onClick={() => go({ view: 'people', person: person.id })} />}
           <Action icon="more" label="More" menu={moreMenu} />
         </>
       }

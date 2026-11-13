@@ -167,11 +167,13 @@ try {
   if (shots) await p.shot(`${shots}/profile-person.png`);
 
   // Their menu's actions live in the hero.
+  // Message goes straight to the chat with every route together: no menu (the message box's line picks the accounts).
+  const at = await p.eval<string>('location.hash');
   await click('.pf-action[title="Message"]');
-  const msg = await menu();
-  check(msg.includes('On Discord') && msg.includes('On Signal') && msg.includes('All Chats Together'), 'Message offers each network and the merged thread', msg);
-  await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
-  await Bun.sleep(150);
+  check((await menu()).length === 0 && (await p.eval<string>('location.hash')).startsWith('#/people/'), 'Message opens their chat, every route together', await p.eval('location.hash'));
+  await p.goto(`${hub}/${at}`);
+  await settled();
+  await Bun.sleep(300);
   await click('.pf-action[title="More"]');
   const more = await menu();
   check(more.filter((m) => m.startsWith('Copy')).length === 1 && more.includes('Copy') && more.includes('Merge Another Identity In'), 'More holds one Copy entry and merging', more);
