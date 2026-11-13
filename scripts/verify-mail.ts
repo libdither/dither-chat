@@ -38,7 +38,8 @@
  * Proton's), only that account's run: its newsletter, which says it is one only in its body, reaches Updates once
  * its body was fetched ahead and is never in Inbox; the receipt Proton sorted into Transactions is in Updates; the
  * stranger's note stays in Inbox; on a phone and a desktop, both themes, nothing off the side. With two accounts, the
- * line under "Mail" picks the account: its menu has each with the colour of its rows' dot, and says what the dot is.
+ * line under "Mail" picks the account: its menu has each with the colour of its rows' dot, and says what the dot is;
+ * on a desktop, the button closes its menu again and opens it once more.
  *
  * With --gmail (a hub started with DITHER_DEMO_MAIL_GMAIL=1: a Gmail account as dither-accounts' imap extractor gives
  * one), only that account's run, on a phone and a desktop in both themes: it is in the account menu; its labels are in
@@ -495,6 +496,15 @@ async function headerless(themeName: string, onPhone: boolean, first: boolean) {
   );
   check(`${tag}: no sideways overflow: the account menu`, !(await overflow()).length, await overflow());
   await shot(`mail-${onPhone ? 'phone' : 'desktop'}-${themeName}-account-menu`);
+  if (!onPhone) {
+    // The button that opened it closes it again, like a dropdown, and opens it once more.
+    await press(await at('.sidebar .mail-acc-btn'));
+    await page.until(`!document.querySelector('.cm')`, 3000).catch(() => {});
+    check(`${tag}: the account button closes its menu again`, !(await has('.cm')));
+    await press(await at('.sidebar .mail-acc-btn'));
+    await page.until(`!!document.querySelector('.cm')`, 3000).catch(() => {});
+    check(`${tag}: and opens it again`, await has('.cm'));
+  }
   await press(await menuItem('zyan@proton.example'));
   await page.until(`location.hash.includes(${JSON.stringify(encodeURIComponent(`v:inbox:${PROTON}`))})`, 5000);
   await page.until(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].some((r) => r.textContent.includes('Found your scarf'))`, 10000);

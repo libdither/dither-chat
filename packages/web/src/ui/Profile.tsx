@@ -105,7 +105,7 @@ function AccountTile({ i, bio, since, go: open, goLabel, menu: menuOf }: { i: P.
               <Icon name={i.network === 'email' ? 'mail' : 'send'} size={14} />
             </button>
           )}
-          <button class="icon-btn small" title={`${name} on ${netName(i.network)}`} aria-label={`More for ${name} on ${netName(i.network)}`} onClick={(e) => openMenu(anchorOf(e), menu())}>
+          <button class="icon-btn small" title={`${name} on ${netName(i.network)}`} aria-label={`More for ${name} on ${netName(i.network)}`} onClick={(e) => openMenu(anchorOf(e), menu(), e.currentTarget)}>
             <Icon name="more" size={14} />
           </button>
         </div>

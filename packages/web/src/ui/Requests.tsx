@@ -658,6 +658,7 @@ export function PeopleAccountPicker({ accounts, current, pick }: { accounts: P.A
           { kind: 'row', render: () => <p class="mail-acc-note">With all accounts showing, each person has a dot in the colour of each account they are on.</p> },
         ],
       },
+      e.currentTarget,
     );
   };
   return (

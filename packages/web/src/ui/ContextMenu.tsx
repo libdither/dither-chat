@@ -67,16 +67,22 @@ export function groups(...gs: (MenuEntry | false | null | undefined | '' | 0)[][
 const isItem = (e: MenuEntry): e is Item => !e.kind || e.kind === 'item';
 const selectable = (e: MenuEntry) => isItem(e) && !e.disabled;
 
-export const contextMenu = signal<(MenuSpec & { x: number; y: number }) | null>(null);
+export const contextMenu = signal<(MenuSpec & { x: number; y: number; from?: Element }) | null>(null);
 
 let lastAt = { x: 0, y: 0 };
 /** Where the last menu opened, for what an item opens in its place (who reacted). */
 export const menuPoint = () => new DOMRect(lastAt.x, lastAt.y, 0, 0);
 
-export function openMenu(at: { x: number; y: number }, spec: MenuSpec | null) {
+/**
+ * `from` is the button that opens it, when a button does: a press on that button doesn't count as outside the menu,
+ * and opening it again from there closes it, so the button opens and closes its menu like a dropdown.
+ */
+export function openMenu(at: { x: number; y: number }, spec: MenuSpec | null, from?: EventTarget | null) {
+  const el = (from ?? undefined) as Element | undefined;
+  if (el && contextMenu.value?.from === el) return void closeMenu();
   if (!spec || !spec.items.length) return;
   lastAt = { x: at.x, y: at.y };
-  contextMenu.value = { ...spec, x: at.x, y: at.y };
+  contextMenu.value = { ...spec, x: at.x, y: at.y, from: el };
 }
 export const closeMenu = () => (contextMenu.value = null);
 
@@ -249,12 +255,14 @@ function Panel({ items, x, y, flipX, depth, onClose, onBack, autoFocus, track }:
   );
 }
 
-function DesktopMenu({ spec, onClose }: { spec: MenuSpec & { x: number; y: number }; onClose: () => void }) {
+function DesktopMenu({ spec, onClose }: { spec: MenuSpec & { x: number; y: number; from?: Element }; onClose: () => void }) {
   useLayer(onClose);
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const before = document.activeElement as HTMLElement | null;
-    const outside = (e: Event) => root.current && !root.current.contains(e.target as Node) && onClose();
+    // A press on the button that opened it is left to that button's click, which closes it (openMenu).
+    const outside = (e: Event) =>
+      root.current && !root.current.contains(e.target as Node) && !(e.type === 'pointerdown' && spec.from?.contains(e.target as Node)) && onClose();
     const gone = () => onClose();
     document.addEventListener('pointerdown', outside, true);
     document.addEventListener('wheel', outside, { capture: true, passive: true });

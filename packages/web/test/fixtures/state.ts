@@ -1,7 +1,8 @@
 /**
- * The one mock of src/state.ts for the tests that need one (snapshot.test.ts, model-memo.test.ts). Bun's module mocks
- * are the whole process's, and the first test file to load state.ts fixes what it exports for the rest: so every such
- * test uses this, which has what each of them reads. Its `db` is a real empty one (syncmodel.ts).
+ * The one mock of src/state.ts for the tests that need one (snapshot.test.ts, model-memo.test.ts,
+ * menu-toggle.test.ts). Bun's module mocks are the whole process's, and the first test file to load state.ts fixes what
+ * it exports for the rest: so every such test uses this, which has what each of them reads. Its `db` is a real empty one
+ * (syncmodel.ts).
  */
 import { emptyDb } from '../../src/syncmodel.ts';
 import { dataVersion } from '../../src/versions.ts';
@@ -19,5 +20,7 @@ export const stateMock = () => ({
   loaded: { value: false },
   quoted: new Map(),
   rev: { value: 0 },
+  route: { value: { view: 'inbox' } },
   timelines: new Map(),
+  toast: () => {},
 });

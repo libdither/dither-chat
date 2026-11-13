@@ -517,7 +517,7 @@ function TriageNote({ m }: { m: P.MessageView }) {
       aria-label={`Notification: ${label}`}
       onClick={(e) => {
         const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        openMenu({ x: r.right - 340, y: r.bottom + 4 }, spec());
+        openMenu({ x: r.right - 340, y: r.bottom + 4 }, spec(), e.currentTarget);
       }}
     >
       <Icon name={tierIcon(t.decision)} size={14} />
@@ -698,7 +698,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
             aria-label="More"
             onClick={(e) => {
               const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              openMenu({ x: r.left, y: r.bottom + 4 }, messageMenu(m, reply));
+              openMenu({ x: r.left, y: r.bottom + 4 }, messageMenu(m, reply), e.currentTarget);
             }}
           >
             <Icon name="more" size={15} />
