@@ -95,6 +95,10 @@ const APPS: App[] = [
       await until(async () => (await hubLogSince(s.hubLogSize)).includes('startup: ready'), 300_000, 'the hub to log "startup: ready"');
       await until(() => health(`${HUB}/api/health`), 60_000, 'the hub to answer /api/health');
       await steady('dither-chat.service', s);
+      // Linked to the manager: a hub that cannot reach it still lists its accounts online from before (2026-11-13: it
+      // could not load the manager's client from a release folder, and nothing else showed it). A fresh hub's notices
+      // say "unreachable" until it has connected and read its grants.
+      await until(hubLinked, 120_000, 'the hub to connect to dither-accounts (its notices access to leave "unreachable")');
       await until(async () => (await onlineAccounts()) >= s.online, 180_000, `its accounts to be online again (${s.online} before)`);
     },
   },
@@ -150,6 +154,13 @@ async function onlineAccounts(): Promise<number> {
   return b.accounts.filter((a) => a.status === 'online').length;
 }
 
+/** Whether the hub is connected to the manager: its notices' access is known (granted, pending or denied). */
+async function hubLinked(): Promise<boolean> {
+  const r = await fetch(`${HUB}/api/notices?limit=1`, { signal: AbortSignal.timeout(10_000) });
+  if (!r.ok) return true; // notices off on this hub: nothing to tell by
+  return ((await r.json()) as { access?: string }).access !== 'unreachable';
+}
+
 async function callsOn(): Promise<number> {
   try {
     const r = await fetch(`${HUB}/api/calls`, { signal: AbortSignal.timeout(3000) });
@@ -180,6 +191,23 @@ async function hubLogSince(offset: number): Promise<string> {
 async function notice(id: string, title: string, body: string, urgency: 'high' | 'normal' | 'low', context: string) {
   log(`notice ${urgency}: ${title} | ${body.replace(/\n/g, ' | ')}`);
   if (dry) return;
+  await postNotice(id, title, body, urgency, context);
+  // Right after the hub restarts, a notice can come between its catch-up and its live connection, and never reach it
+  // (2026-11-13). The same id again replaces it at the manager and reaches the hub as new.
+  const reached = async () => {
+    const r = await fetch(`${HUB}/api/notices?limit=30`, { signal: AbortSignal.timeout(10_000) });
+    const b = (await r.json()) as { items?: { title?: string }[] };
+    return (b.items ?? []).some((n) => n.title === title);
+  };
+  try {
+    await until(reached, 45_000, 'the notice in the hub');
+  } catch {
+    log('  the notice did not reach the hub: posting it again');
+    await postNotice(id, title, body, urgency, context);
+  }
+}
+
+async function postNotice(id: string, title: string, body: string, urgency: 'high' | 'normal' | 'low', context: string) {
   try {
     const token = readFileSync(join(MANAGER_DATA, 'cli.token'), 'utf8').trim();
     const r = await fetch(`${MANAGER}/api/notices/local`, {
@@ -290,20 +318,30 @@ function candidates(a: App, deployedBranchSha: string | null, state: State): Can
   return shas.map((sha) => candidate(a, sha, state));
 }
 
-/** Makes the release for a branch commit and builds it; its sha (for dither-accounts, the merge onto `live`). */
-function makeRelease(a: App, branchSha: string): string {
+/**
+ * Makes the release for a branch commit and builds it; its sha (for dither-accounts, the merge onto `live`). `running`:
+ * the release that runs now. dither-accounts' release is built on `live`, unless `live` holds branch commits newer than
+ * the picked one (someone merged master into it by hand before CI passed): then on what runs, so nothing ships ahead
+ * of its CI (2026-11-13, the first run shipped c5c3dbb that way).
+ */
+function makeRelease(a: App, branchSha: string, running: string): string {
   const tmp = join(dirOf(a), 'releases', `.new-${short(branchSha)}`);
   rmSync(tmp, { recursive: true, force: true });
   tryRun(['git', '-C', repoOf(a), 'worktree', 'prune']);
   let sha = branchSha;
   if (a.overlay) {
-    git(repoOf(a), 'worktree', 'add', '-q', '--detach', tmp, `${a.overlay.remote}/${a.overlay.branch}`);
+    const live = `${a.overlay.remote}/${a.overlay.branch}`;
+    const liveHas = git(repoOf(a), 'merge-base', live, `origin/${a.branch}`);
+    const ahead = tryRun(['git', '-C', repoOf(a), 'merge-base', '--is-ancestor', liveHas, branchSha]) === null;
+    const base = ahead ? running : live;
+    if (ahead) log(`${a.name}: ${live} holds ${a.branch} ${short(liveHas)}, newer than ${short(branchSha)}: building on what runs (${short(running)})`);
+    git(repoOf(a), 'worktree', 'add', '-q', '--detach', tmp, base);
     try {
       git(tmp, 'merge', '-q', '--no-edit', '-m', `Merge ${a.branch} ${short(branchSha)} into ${a.overlay.branch} (deployer)`, branchSha);
     } catch (e) {
       tryRun(['git', '-C', tmp, 'merge', '--abort']);
       git(repoOf(a), 'worktree', 'remove', '--force', tmp);
-      throw new Error(`${a.branch} ${short(branchSha)} does not merge into ${a.overlay.remote}/${a.overlay.branch}: ${(e as Error).message.slice(0, 300)}`);
+      throw new Error(`${a.branch} ${short(branchSha)} does not merge into ${base === live ? live : short(base)}: ${(e as Error).message.slice(0, 300)}`);
     }
     sha = git(tmp, 'rev-parse', 'HEAD');
   } else git(repoOf(a), 'worktree', 'add', '-q', '--detach', tmp, branchSha);
@@ -407,7 +445,7 @@ async function deploy(a: App, state: State, byHand?: string): Promise<'shipped' 
   };
   let rel: string;
   try {
-    rel = makeRelease(a, target);
+    rel = makeRelease(a, target, current);
   } catch (e) {
     const why = (e as Error).message;
     log(`${a.name}: build failed: ${why}`);
@@ -418,7 +456,10 @@ async function deploy(a: App, state: State, byHand?: string): Promise<'shipped' 
   }
   if (a.overlay) state.branchOf[rel] = target;
   saveState(state);
-  if (rel === current) return 'nothing';
+  if (rel === current) {
+    log(`${a.name}: ${a.branch} ${short(target)} is already in what runs (${short(current)})`);
+    return 'nothing';
+  }
   // What came with it, for the notice: the branch's commits since the one that ran.
   const range = deployedBranch && tryRun(['git', '-C', repoOf(a), 'merge-base', '--is-ancestor', deployedBranch, target]) !== null ? `${deployedBranch}..${target}` : `${target}~1..${target}`;
   const subjects = git(repoOf(a), 'log', '--first-parent', '--format=%s', range).split('\n').filter(Boolean);
