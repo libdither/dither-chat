@@ -103,10 +103,12 @@ object Notifications {
         if (!nm(c).areNotificationsEnabled()) return outcome(c, nid, device, "blocked")
         // A request waiting on you (docs/add.md): a row of its own, opening it under Requests.
         val request = d.optString("requestId").ifEmpty { null }
+        // A notice (docs/notices.md): its conversation is its group, and a tap opens it under Notices.
+        val notice = d.optString("noticeId").ifEmpty { null }
         val tier = tierOf(d)
         // The push's id rides in the hash, so the page can say which visit the tap led to (docs/activity.md).
         val n = if (nid != null) "?n=$nid" else ""
-        val hash = if (conv != null) "/inbox/c/$conv$n" else if (request != null) "/requests/$request$n" else if (inbox || tier == "digest") "/inbox$n" else null
+        val hash = if (notice != null) "/notices/$notice$n" else if (conv != null) "/inbox/c/$conv$n" else if (request != null) "/requests/$request$n" else if (inbox || tier == "digest") "/inbox$n" else null
         val title = d.optString("title", "dither-chat")
         val app = c.applicationContext
         val canReply = conv != null && d.optBoolean("canReply")
