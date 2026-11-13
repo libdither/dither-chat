@@ -17,6 +17,7 @@ import type { AccountRow, Store } from './store.ts';
 import type { InprocAdapter } from './supervisor.ts';
 import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
+import { DEMO_SERVER_CAPS, DemoServers } from './demoservers.ts';
 
 type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa' | 'tg';
 
@@ -1378,6 +1379,8 @@ const px = {
   dot: did('px-dot', 'dotmatrix', 'dot matrix'),
 };
 const gp = { pixel: snow('g-pixel'), speed: snow('g-speed') };
+/** The server the demo joins from an invite, which then asks for its rules and onboarding (demoservers.ts). */
+export const DEMO_PIXEL_GUILD = gp.pixel;
 const gdev = mid('@gamedev-bot:matrix.org', 'gamedev bot', { isBot: true });
 const tgx = { film: tid('film-admin', 'filmswap_admin', 'Film Swap admin', false), news: tid('news', 'dithernews_bot', 'Dither News', false) };
 const hoa = W.hoa;
@@ -1824,6 +1827,8 @@ class DemoAdapter implements InprocAdapter {
   private readLog: { conversation: string; upTo: string; at: number }[] = [];
   private self: P.IdentityFact;
   private adds!: DemoAdd;
+  /** Discord servers beyond their channels: events, leaving, gates, nicknames, invite links (demoservers.ts). */
+  private servers: DemoServers | null = null;
   /** Capabilities a verify script took away (action 'capabilities'), to see the page without them. */
   private without = new Set<P.Capability>();
   private network: P.Network;
@@ -1942,6 +1947,32 @@ class DemoAdapter implements InprocAdapter {
     // Telegram says whether they are in your contacts.
     const tg = this.network === 'telegram' && !me ? { relationship: this.adds.relationship(who) ?? (me_?.contact ? 'contact' : 'stranger') } : {};
     return { ...(key === 'kai' ? { pronouns: 'they/them', facts: [{ label: 'Local time', value: 'Europe/Berlin' }] } : {}), ...tg };
+  }
+
+  /** Discord's servers beyond their channels (demoservers.ts): events now, and what their About adds. */
+  private startServers(epoch: number) {
+    const guilds = () => SPACES.filter((x) => x.acc.includes(this.key) && x.fact.kind === 'community').map((x) => x.fact.nativeId);
+    this.servers = new DemoServers(
+      {
+        key: this.key,
+        selfId: this.self.nativeId,
+        emit: (ev) => this.emit(ev),
+        guilds,
+        admin: (guild) => ADMIN_IN[this.key].includes(guild),
+        childrenOf: (guild) => {
+          const spaces = SPACES.filter((x) => x.acc.includes(this.key) && x.fact.parents?.some((p) => p.nativeId === guild)).map((x) => x.fact.nativeId);
+          const under = new Set([guild, ...spaces]);
+          return { spaces, convs: CONVS.filter((c) => c.acc.includes(this.key) && c.fact.spaces?.some((sp) => under.has(sp.nativeId))).map((c) => c.fact.nativeId) };
+        },
+      },
+      { rust: g.rust, dither: g.dither, hk: g.hk, pixel: gp.pixel, rustVoice: ch('rust-voice-general'), ditherVoice: ch('dither-hangout'), lev: D.lev.nativeId },
+      epoch,
+    );
+    this.servers.announce();
+  }
+
+  private serverAbout(target: P.AboutTarget, about: P.About): P.About {
+    return this.servers ? this.servers.about(target, about, this.findSpace(target.nativeId)?.fact.kind === 'community') : about;
   }
 
   private about(target: P.AboutTarget): P.About {
@@ -2221,6 +2252,7 @@ class DemoAdapter implements InprocAdapter {
       ...(MAKES_GROUPS.has(this.network) ? (['createGroup'] as const) : []),
       // The networks whose servers search (netsearch.ts).
       ...(this.network === 'discord' || this.network === 'matrix' ? (['search'] as const) : []),
+      ...(this.network === 'discord' ? DEMO_SERVER_CAPS : []),
     ];
     this.emit({ t: 'hello', network: this.network, version: 'demo', capabilities: all.filter((c) => !this.without.has(c)) });
   }
@@ -2245,6 +2277,7 @@ class DemoAdapter implements InprocAdapter {
     this.adds.start(epoch);
 
     for (const s of SPACES) if (s.acc.includes(this.key)) emit({ t: 'space', space: s.fact });
+    if (this.network === 'discord') this.startServers(epoch);
     // Members the client loaded anyway (passive), with Discord's counts: kept only with the adversarial members setting.
     if (this.key === 'dmain')
       emit({
@@ -2606,10 +2639,24 @@ class DemoAdapter implements InprocAdapter {
         reply(this.profile(this.self.nativeId));
         break;
       }
+      case 'scheduledEvents':
+      case 'rsvp':
+      case 'leave':
+      case 'gate':
+      case 'answerGate':
+      case 'setNick':
+        try {
+          const r = this.servers?.command(cmd);
+          if (!r) throw new Error(`${cmd.t} is not in this demo network`);
+          reply(cmd.t === 'setNick' ? this.serverAbout({ kind: 'space', nativeId: cmd.space }, this.about({ kind: 'space', nativeId: cmd.space })) : r.value);
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
+        break;
       case 'about':
       case 'configure':
         try {
-          reply(cmd.t === 'about' ? this.about(cmd.target) : this.configure(cmd.target, cmd.change));
+          reply(this.serverAbout(cmd.target, cmd.t === 'about' || this.servers?.configureInvite(cmd.target, cmd.change) ? this.about(cmd.target) : this.configure(cmd.target, cmd.change)));
         } catch (e) {
           this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
         }

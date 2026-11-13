@@ -38,6 +38,7 @@ import { hostAllowed, hostNames } from './hosts.ts';
 import { noteWork, pathShape } from './stalls.ts';
 import { fetchPublicToFile } from './fetchsafe.ts';
 import { AboutError, Abouts } from './about.ts';
+import { Servers } from './servers.ts';
 import { asked, attempt, candidatesAttempt } from './attempts.ts';
 import { Groups } from './groups.ts';
 import { People } from './people.ts';
@@ -211,6 +212,8 @@ export class HubServer {
   readonly people: People;
   /** Joining, adding people, and requests waiting on you (add.ts, docs/add.md). */
   readonly adding: Adding;
+  /** Scheduled events, leaving, and what a space asks on joining (servers.ts, docs/servers.md). */
+  readonly servers: Servers;
   /** Your marks on whether a message needs a reply (replymarks.ts). */
   private get marks(): ReplyMarks {
     return (this._marks ??= new ReplyMarks(this.store));
@@ -260,6 +263,7 @@ export class HubServer {
     this.groups = new Groups({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line) });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.adding = new Adding({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), liveView: (a) => !!sup.liveViewUrl?.(a) || !!store.account(a)?.live_view });
+    this.servers = new Servers({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a), note: (a, line) => sup.note(a, line), flush: () => this.flush(), aboutView: (k, i, n, a, ab) => this.abouts.view(k, i, n, a, ab, Date.now(), undefined, true) });
     sup.calls = this.calls;
     this.clicks = new ClickCounts(store.db);
     this.usage = new UsageStore(store.db, (changed, removed, all) => {
@@ -605,6 +609,8 @@ export class HubServer {
     }
     // Joining and adding, and requests (add.ts).
     if (path === '/api/add' || path.startsWith('/api/add/') || path.startsWith('/api/requests') || path === '/api/people' || /^\/api\/people\/[\w-]+\/remove$/.test(path)) return (await this.adding.route(req, url, path))!;
+    // Scheduled events, leaving, and what a space asks on joining (servers.ts).
+    if (Servers.handles(path)) return (await this.servers.route(req, url, path))!;
     // Reply marks (replymarks.ts, docs/inbox.md "Marks"): on a message, its mail twin, and on an inbox row.
     if ((m = path.match(/^\/api\/(mail\/)?messages\/([\w-]+)\/reply-mark$/)) && method === 'POST') {
       const b = await body<{ mark?: unknown; surface?: unknown; device?: unknown }>();

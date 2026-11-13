@@ -12,6 +12,7 @@ import { infoFor } from './mediainfo.ts';
 import { TypingRelay, typingTtl } from './typing.ts';
 import { stepTimer } from './startup.ts';
 import { addTables, ingestRelationships, ingestRequests, pendingLinks } from './add.ts';
+import { ingestServers } from './servers.ts';
 import { alertBar, type Facts } from './learn.ts';
 
 type Row = Record<string, any>;
@@ -739,6 +740,12 @@ export class Store {
         case 'relationships':
         case 'relationship':
           ingestRelationships(this, acc, ev);
+          break;
+        case 'scheduledEvents':
+        case 'scheduledEvent':
+        case 'scheduledEventGone':
+        case 'gate':
+          ingestServers(this, acc, ev);
           break;
         case 'reply':
         case 'log':
