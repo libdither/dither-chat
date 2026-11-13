@@ -11,6 +11,7 @@ import { hubTransport, UploadJob } from './upload.ts';
 import { href, parseHash, type Route } from './routes.ts';
 import { inboxFilterOf, type InboxFilter } from './ordering.ts';
 import { applyPlanEvent, calendarAt, calendarFromBootstrap, loadPlans } from './plans.ts';
+import { applyCalls, applyVoice, loadCalls } from './ringing.ts';
 
 // ------------------------------------------------------------------ data
 
@@ -369,6 +370,13 @@ export function applyEvents(events: P.ClientEvent[]) {
         break;
       case 'typing':
         typing.value = applyTyping(typing.value, ev, Date.now(), isSelfIdentity);
+        break;
+      // Calls ringing you and voice channels (ringing.ts).
+      case 'calls':
+        applyCalls(ev.calls);
+        break;
+      case 'voice':
+        applyVoice(ev.channels);
         break;
       case 'sent': {
         // Which message a send of this page's became, ahead of the answer to its POST: settled below by id.
@@ -1185,6 +1193,7 @@ function bootstrap() {
       freshFromHub();
       performance.mark('dither:fresh');
       loadInbox().catch(() => {});
+      void loadCalls();
       // Timelines asked for before this socket may have missed anything: their newest pages again.
       for (const [key, t] of [...timelines]) if (!t.fetchedAt || t.fetchedAt < since) void reload(key);
       persistSoon(text);

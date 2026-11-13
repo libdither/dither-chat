@@ -108,6 +108,7 @@ import { Loading } from './Loader.tsx';
 import { Slices, whenIdle } from '../slices.ts';
 import { calendarOn } from '../plans.ts';
 import { PlanChipLazy } from './calendar/lazy.tsx';
+import { VoicePeople } from './Ringing.tsx';
 
 
 // ------------------------------------------------------------------ header
@@ -1442,6 +1443,7 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
       ) : (
         <>
           {voice && <div class="voice-note"><Icon name="voice" size={14} /> Voice isn't relayed. This shows the channel's text chat.</div>}
+          {voice && <VoicePeople conversationId={c.id} size={22} names class="voice-here" />}
           <NotStartedNote c={c} />
           <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} onReply={setReply} firstUnreadTs={unreadAt} focus={focus} />
         </>

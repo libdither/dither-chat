@@ -235,14 +235,14 @@ function changed(store: Store, id: string, before: Row | null, now: number) {
   if (step) listeners.get(store)?.({ kind: step, call: view });
 }
 
-/** Calls ringing you or going on, and those that ended in the last hour (GET /api/calls). */
+/** Calls ringing you or going on, and those that ended in the last hour (GET /api/calls/ringing). */
 export function currentCalls(store: Store, now = Date.now()): P.CallView[] {
   callTables(store.db);
   const rows = store.db.query(`SELECT * FROM call_log WHERE state != 'ended' OR ended_at > ? ORDER BY started_at DESC LIMIT 50`).all(now - 3_600_000) as Row[];
   return rows.map((r) => callView(store, r));
 }
 
-/** A conversation's calls, newest first (GET /api/calls?conversation=). */
+/** A conversation's calls, newest first (GET /api/calls/ringing?conversation=). */
 export function conversationCalls(store: Store, conversationId: string, limit = 50): P.CallView[] {
   callTables(store.db);
   return (store.db.query('SELECT * FROM call_log WHERE conversation_id = ? ORDER BY started_at DESC LIMIT ?').all(conversationId, limit) as Row[]).map((r) => callView(store, r));
@@ -412,13 +412,13 @@ export interface CallRouteDeps {
 }
 
 /**
- * GET /api/calls (ringing, going on, the last hour's), ?conversation=<id> for a chat's; POST /api/calls/<id>/decline;
+ * GET /api/calls/ringing (ringing, going on, the last hour's; GET /api/calls is calls.ts's stats), ?conversation=<id> for a chat's; POST /api/calls/<id>/decline;
  * GET /api/voice. Null when the path is not one of these.
  */
 export async function callRoute(d: CallRouteDeps, req: Request, url: URL, path: string): Promise<Response | null> {
   const ok = (v: unknown) => Response.json(v);
   const bad = (error: string, status = 400) => Response.json({ error }, { status });
-  if (path === '/api/calls' && req.method === 'GET') {
+  if (path === '/api/calls/ringing' && req.method === 'GET') {
     const c = url.searchParams.get('conversation');
     return ok({ calls: c ? conversationCalls(d.store, c) : currentCalls(d.store) });
   }

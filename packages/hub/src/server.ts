@@ -605,7 +605,7 @@ export class HubServer {
       return ok(syncResponse({ store: s, attention: this.opts.attention, usage: this.usage, devices: this.opts.devices, mail: this.opts.mail, boot: this.boot }, b));
     }
     // Calls ringing you and voice channels (callstate.ts, docs/calls.md "Ringing").
-    if (path === '/api/calls' || path.startsWith('/api/calls/') || path === '/api/voice') {
+    if (path.startsWith('/api/calls/') || path === '/api/voice') {
       const r = await callRoute({ store: s, online: (a) => this.sup.online(a), command: (a, c, t) => this.sup.command(a, c, t), flush: () => this.flush() }, req, url, path);
       if (r) return r;
     }

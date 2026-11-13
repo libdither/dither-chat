@@ -10,7 +10,7 @@ Everything the networks' own clients can do that dither cannot, feature by featu
 2. **Try it on a real phone.** Install, Web Push, notification clicks and replying from one have only run in desktop Chromium. The phone layout and its gestures have run with touch input in a headless phone emulation ([phone.md](phone.md)), never in iOS Safari or on a real keyboard. No code until something breaks, and everything about notifications depends on it.
 3. **Login beyond tailnet membership.** Anyone on the tailnet can read everything, which matters as soon as another person or a shared device joins it.
 4. **Search reach.** Attachment filenames and embed text. Network search and index jobs are built ([indexing.md](indexing.md)) and need a live Discord test.
-5. **Calls without media.** Call events on every network, a ringing notification and a link to the network's own app.
+5. **Calls without media.** Built for Discord and Signal ([calls.md](calls.md) "Ringing"); needs a live test, and Matrix's.
 
 ## Organising and finding
 
@@ -80,9 +80,9 @@ Built in slices from [mail-design.md](mail-design.md) (its §12); what works now
 | Mark all read | M | L | done | Everywhere, or per server, folder or person. A paced queue on the hub tells the networks and survives restarts |
 | Typing indicator, outgoing | L | L | done | Both ways on every network, with a privacy switch ([typing.md](typing.md)) |
 | Pinned messages, polls, sending stickers from the picker (receiving them is done) | M | M | later | |
-| Calls without media: timeline events, ringing push, link out, who is in Discord voice | M | M | next | Signal offers already reach the timeline; hangups and Matrix calls do not. No media stack needed |
+| Calls without media: timeline events, ringing push, link out, who is in Discord voice | M | M | done (Discord, Signal) | One call model in the hub for both networks ([calls.md](calls.md) "Ringing"): a call that rings you alerts once, with Answer and (Discord) Decline, and stops on any device; call lines say missed, declined, answered elsewhere and how long; a Call button in Discord DMs and groups rings the others; who is in Discord voice channels behind the adversarial voice setting, and their status lines. Tested on fakes only, nothing live yet. Matrix calls not done |
 | Matrix calls through Element Call | M | H | later | Standalone is cheapest but is a second login. Self-hosting needs LiveKit and a homeserver you control. MatrixRTC is unmerged |
-| Signal 1:1 voice | L | H | later | signal-cli has it experimentally since 0.14.2, voice only, with no packaged tunnel binary, and would need a WebRTC bridge to the PWA |
+| Signal 1:1 voice | L | H | later | signal-cli has it experimentally since 0.14.2, voice only, with no packaged tunnel binary (the nix build of 0.14.8 ships none), and would need a WebRTC bridge to the PWA. Declining from dither waits on it too: signal-cli tracks a call only while subscribed to call events, and then hangs up on every caller when it cannot start the tunnel ([calls.md](calls.md) "Signal") |
 | Discord voice | M | H | done | Through the account's own client in its sandbox (bridge), or from the device with Discord's libdave and the hub's TURN relay (direct) ([calls.md](calls.md)). Video is not done |
 | Matrix E2EE rooms: read, write, media, edits, reactions | H | H | done | Opt-in per account, with the Rust crypto library. Verified on a local homeserver only, against clients built on the same library and matrix-nio, not Element |
 | Matrix E2EE: old messages through the key backup | H | M | done | Recovery key, Secret Storage key or passphrase. Keys come per session when a message needs them |

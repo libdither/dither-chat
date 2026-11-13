@@ -167,7 +167,7 @@ export function callLine(c: Pick<CallFact, 'state' | 'outcome' | 'video' | 'outg
   }
 }
 
-/** A call as the hub keeps it (GET /api/calls, the `calls` client event). Hub ids. */
+/** A call as the hub keeps it (GET /api/calls/ringing, the `calls` client event). Hub ids. */
 export interface CallView {
   id: string;
   accountId: string;

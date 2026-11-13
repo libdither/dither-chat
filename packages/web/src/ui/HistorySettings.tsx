@@ -101,6 +101,7 @@ const FORGET: [P.KeptKind, string, string][] = [
   ['statuses', 'Status history', 'logged statuses'],
   ['presence', 'Presence history', 'logged presence'],
   ['members', 'Server members', 'recorded server members'],
+  ['voice', 'Voice channels', 'who was recorded in voice channels'],
 ];
 
 const list = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);

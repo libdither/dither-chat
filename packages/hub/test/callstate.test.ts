@@ -186,3 +186,13 @@ describe('voice channels', () => {
     expect(log()).toEqual([]);
   });
 });
+
+test('GET /api/calls/ringing: what rings and goes on now, or one chat\'s calls', async () => {
+  const deps = { store, online: () => true, command: async <T,>() => ({}) as T, flush: () => {} };
+  const get = (q = '') => callRoute(deps, new Request(`http://hub/api/calls/ringing${q}`), new URL(`http://hub/api/calls/ringing${q}`), '/api/calls/ringing');
+  const now = (await (await get())!.json()).calls as P.CallView[];
+  expect(now.length).toBeGreaterThan(0);
+  const mine = (await (await get(`?conversation=${cid}`))!.json()).calls as P.CallView[];
+  expect(mine.every((c) => c.conversationId === cid)).toBe(true);
+  expect(await callRoute(deps, new Request('http://hub/api/calls'), new URL('http://hub/api/calls'), '/api/calls')).toBeNull();
+});
