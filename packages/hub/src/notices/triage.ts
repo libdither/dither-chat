@@ -160,7 +160,7 @@ export function decideNotice(n: NoticeInput, c: NoticeContext): NoticeDecision {
           : c.judge !== undefined
             ? `Reads as urgent: the local model's answer is ${c.judge} against a bar of ${bar}`
             : n.urgency === 'high'
-              ? `Alert: ${src} says it is urgent`
+              ? `${src} says it is urgent`
               : 'An alert',
       );
     } else if (decision === 'digest') reasons.unshift(`On the list: importance ${pct(p.probs.important)}, at or over your level of ${pct(th.important)}`);

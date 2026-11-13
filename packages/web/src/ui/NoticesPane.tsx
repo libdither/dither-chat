@@ -101,7 +101,7 @@ function NoticeRow({ n, open, focused, onToggle }: { n: P.NoticeView; open: bool
   return (
     <article class={`request-card notice-card ${n.unread ? 'unread' : ''} ${focused ? 'focused' : ''} ${busy ? 'busy' : ''}`} data-notice={n.id} data-tier={tier ?? ''} data-urgency={n.urgency}>
       <button class="notice-head" onClick={onToggle} aria-expanded={open}>
-        {n.unread && <span class="notice-dot" aria-label="Unread" />}
+        <span class={`notice-dot ${n.unread ? '' : 'read'}`} aria-label={n.unread ? 'Unread' : undefined} />
         <span class="notice-text">
           <span class="notice-where">
             {sourceName(n.source)}

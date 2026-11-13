@@ -13798,6 +13798,9 @@ h1:hover > .pair-nick-edit,
   border-radius: 50%;
   background: var(--accent);
 }
+.notice-dot.read {
+  visibility: hidden;
+}
 .notice-text {
   min-width: 0;
   display: flex;

@@ -58,7 +58,7 @@ describe('triage of a notice', () => {
 
   test('reasons say the deciding one first, then what the source said', () => {
     const d = decideNotice(input({ urgency: 'high', reason: 'security_alert' }), ctx());
-    expect(d.reasons).toEqual(['Alert: GitHub says it is urgent', 'GitHub says: security alert (high)']);
+    expect(d.reasons).toEqual(['GitHub says it is urgent', 'GitHub says: security alert (high)']);
     expect(decideNotice(input(), ctx({ judge: 0.6 })).reasons[0]).toBe("Reads as urgent: the local model's answer is 0.6 against a bar of 0.2");
     expect(decideNotice(input({ urgency: 'low' }), ctx()).reasons[0]).toBe('Below the list: importance 15%, under your level of 60%');
     expect(decideNotice(input({ urgency: 'high' }), ctx({ quietHours: { enabled: true, start: '00:00', end: '23:59', timezone: 'UTC' } })).reasons[0]).toBe('Held by quiet hours until 23:59');
