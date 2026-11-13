@@ -143,7 +143,6 @@ describe('viewed receipts and resetting a session', () => {
     expect((await post(`/api/messages/${msg(`${ALICE}:${T + 40}`)}/viewed`)).body).toEqual({ sent: true });
     expect((await post(`/api/messages/${msg(`${ALICE}:${T + 40}`)}/viewed`)).body).toMatchObject({ sent: false, why: 'already' });
     expect((await post(`/api/messages/${msg(`${SELF}:${T + 41}`)}/viewed`)).body).toMatchObject({ sent: false, why: 'your own' });
-    await Bun.sleep(10);
     expect(commands.map((c) => c.cmd)).toEqual([{ t: 'viewed', conversation: DM, message: `${ALICE}:${T + 40}` }]);
     caps(['send']);
     put({ nativeId: `${ALICE}:${T + 42}`, kind: 'media' });
