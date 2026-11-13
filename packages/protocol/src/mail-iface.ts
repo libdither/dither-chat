@@ -145,3 +145,17 @@ export interface OutgoingMail {
   replyTo?: string;
   attachments?: OutgoingFile[];
 }
+
+/** A kind of write an account makes (`details.writes`). */
+export type MailWriteKind = 'seen' | 'flagged' | 'move' | 'trash' | 'junk';
+
+/** `mail.flag` and `mail.trash`: `{}` when every change applied, else the ids that did not change (header). */
+export interface MailWriteAnswer {
+  refused?: string[];
+  unknown?: string[];
+}
+
+/** `mail.move`: new ids in the order asked, null where it did not move (listed) or the server would not say (not). */
+export interface MailMoveAnswer extends MailWriteAnswer {
+  ids: (string | null)[];
+}

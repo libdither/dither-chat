@@ -30,7 +30,9 @@
  * The hub's own writes (mail.flag, mail.move, mail.trash) change it as the extractors do: at most 1000 ids a call, 403
  * on a read grant, `{ dryRun: true }` and no change on a dry run (as the manager answers), mail.changed for every
  * mailbox they touched (an extractor reports this app's own changes), Proton's 501 for `answered`, and a move answering
- * the new ids (or nulls, as an IMAP server without UIDPLUS may).
+ * the new ids (or nulls, as an IMAP server without UIDPLUS may). A write of a kind the status's `details.writes` leaves
+ * out is 501 with no change, as dither-accounts answers. Ids a test made the server turn down or lose (`refuse`) do not
+ * change: a 200 names them (`refused`, `unknown`; null in a move's ids), or, when none changed, 422 `refused` or 404.
  *
  * Gmail (`ids: 'gmail'`) is what dither-accounts' imap extractor sends for an account with the `gmail` preset
  * (extractors/imap/src/{imap,ids,config,smtp}.ts there). Gmail's labels are IMAP mailboxes, so one message is a copy in
@@ -159,6 +161,8 @@ interface Account {
   gm: Map<string, Set<string>>;
   /** Mailboxes that only hold others (IMAP \Noselect: Gmail's `[Gmail]`). */
   noselect: Set<string>;
+  /** Ids whose writes the server turns down (`refused`) or does not find (`unknown`): `refuse`. */
+  refusals: Map<string, 'refused' | 'unknown'>;
 }
 
 /** A mailbox id as dither-accounts' imap extractor makes it (extractors/imap/src/ids.ts): base64url of its path. */
@@ -349,6 +353,7 @@ export class FakeMailBackend implements MailBackend {
       sorted: new Map(),
       gm: new Map(),
       noselect: new Set(gmail ? [GMAIL.parent] : []),
+      refusals: new Map(),
     };
     a.status = this.statusOf(a, online);
     this.accs.set(id, a);
@@ -410,6 +415,16 @@ export class FakeMailBackend implements MailBackend {
   /** The manager dropped events for this account (a gap). */
   gap(id: string) {
     for (const f of this.fns.gap) f(id);
+  }
+
+  /**
+   * From now on, writes on these ids are turned down by the server (`refused`) or find no message (`unknown`): the rest
+   * of the call still changes and the answer names them (the google kind's partial answers). Null lets them be again.
+   */
+  refuse(account: string, ids: string[], how: 'refused' | 'unknown' | null) {
+    const r = this.accs.get(account)!.refusals;
+    for (const id of ids) if (how) r.set(id, how);
+    else r.delete(id);
   }
 
   /** `op` fails once with this error (or each time `when` says so, once per call it matches). */
@@ -978,15 +993,27 @@ export class FakeMailBackend implements MailBackend {
       }
       case 'mail.changes':
         return this.changes(a, String(input.mailboxId), input.state as string | undefined, Number(input.limit) || a.opts.changesPage);
-      case 'mail.flag':
+      case 'mail.flag': {
         if (this.writeIds(a, input) && a.view.dryRun) return { dryRun: true };
-        return this.flag(a, input);
-      case 'mail.move':
-        if (this.writeIds(a, input) && a.view.dryRun) return { dryRun: true };
-        return this.moveTo(a, this.writeIds(a, input), String(input.mailboxId));
-      case 'mail.trash': {
+        this.writable(a, op, input);
+        const { go, part } = this.partial(a, this.writeIds(a, input));
+        return { ...this.flag(a, { ...input, ids: go }), ...part };
+      }
+      case 'mail.move': {
         const ids = this.writeIds(a, input);
         if (a.view.dryRun) return { dryRun: true };
+        this.writable(a, op, input);
+        const { go, part } = this.partial(a, ids);
+        const moved = this.moveTo(a, go, String(input.mailboxId)).ids;
+        // In the order asked: null where it did not move.
+        const to = new Map(go.map((id, i) => [id, moved[i]]));
+        return { ids: ids.map((id) => to.get(id) ?? null), ...part };
+      }
+      case 'mail.trash': {
+        const all = this.writeIds(a, input);
+        if (a.view.dryRun) return { dryRun: true };
+        this.writable(a, op, input);
+        const { go: ids, part } = this.partial(a, all);
         const trash = a.mailboxes.find((b) => b.role === 'trash')?.id;
         // Already in the trash, or there is none: deleted outright.
         for (const id of ids) {
@@ -995,7 +1022,7 @@ export class FakeMailBackend implements MailBackend {
           if (!trash || this.isIn(a, m, trash)) this.remove(a.view.id, id);
           else this.moveTo(a, [id], trash);
         }
-        return {};
+        return part;
       }
       case 'mail.search':
         if (input.idsOnly && (a.status.details as Record<string, unknown> | undefined)?.searchIds) return this.searchIds(a, String(input.query ?? ''), input.mailboxId as string | undefined, Number(input.limit) || 500, input.cursor as string | undefined);
@@ -1090,6 +1117,29 @@ export class FakeMailBackend implements MailBackend {
     const ids = input.ids;
     if (!Array.isArray(ids) || !ids.length || ids.length > 1000 || ids.some((x) => typeof x !== 'string')) throw new MailCallError('ids: 1 to 1000 strings', 400, 'invalid');
     return ids;
+  }
+
+  /** A write of a kind the status's `details.writes` leaves out: 501 before the server hears of it (dither-accounts). */
+  private writable(a: Account, op: string, input: Record<string, any>) {
+    const writes = (a.opts.details as Record<string, unknown> | null)?.writes;
+    if (!Array.isArray(writes)) return;
+    const role = op === 'mail.move' ? a.mailboxes.find((b) => b.id === input.mailboxId)?.role : null;
+    const kinds = op === 'mail.flag' ? (['seen', 'flagged'] as const).filter((k) => typeof input[k] === 'boolean') : [op === 'mail.trash' || role === 'trash' ? 'trash' : role === 'junk' ? 'junk' : 'move'];
+    const no = kinds.find((k) => !writes.includes(k));
+    if (no) throw new MailCallError(`this account does not make ${no} writes`, 501, 'unsupported');
+  }
+
+  /**
+   * A write's ids the server changes (`go`), and the answer's `refused` and `unknown` for the rest (`refuse`). None to
+   * change: 422 `refused` when it turned some down, else 404, as the interface's codes say.
+   */
+  private partial(a: Account, ids: string[]): { go: string[]; part: { refused?: string[]; unknown?: string[] } } {
+    const refused = ids.filter((id) => a.refusals.get(id) === 'refused');
+    const unknown = ids.filter((id) => a.refusals.get(id) === 'unknown');
+    const go = ids.filter((id) => !a.refusals.has(id));
+    if (!go.length && refused.length) throw new MailCallError('the server turned every change down', 422, 'refused');
+    if (!go.length) throw new MailCallError('none of these is a message the server knows', 404);
+    return { go, part: { ...(refused.length ? { refused } : {}), ...(unknown.length ? { unknown } : {}) } };
   }
 
   private flag(a: Account, input: Record<string, any>): Record<string, never> {

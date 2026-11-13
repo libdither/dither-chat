@@ -23,7 +23,7 @@ CREATE INDEX IF NOT EXISTS mail_message_pending_acc ON mail_message(account_id) 
 -- Ops an account answered 501 to (Proton's `answered`): asked for again, they are refused here at once.
 CREATE TABLE IF NOT EXISTS mail_unsupported (
   account_id  TEXT NOT NULL REFERENCES mail_account(id) ON DELETE CASCADE,
-  op          TEXT NOT NULL,                    -- flag.seen | flag.flagged | move
+  op          TEXT NOT NULL,                    -- flag.seen | flag.flagged | move | trash | junk (older rows: move for those too)
   why         TEXT,
   at          INTEGER NOT NULL,
   PRIMARY KEY (account_id, op)

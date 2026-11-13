@@ -5,13 +5,14 @@
  * bar, "Archived · Undo", and what still waits for the hub or the server. Keys: e archives, # trashes, s stars,
  * u marks unread, ! marks junk, Escape lets the selection go.
  *
- * An account the hub may only read shows none of these; one that answered 501 to an op loses that op's buttons.
+ * An account the hub may only read shows none of these; one that answered 501 to an op loses that op's buttons, and
+ * one whose status lists the writes it makes (`writes`: Gmail's, a kind at a time) shows only those (canWrite).
  */
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { lockAxis, rubber } from '../../gesture.ts';
 import { archivedInAll } from '../../mail/filing.ts';
-import { canWrite, clearSelected, destination, lastMove, markRead, move, moveTargets, selected, star, starMessage, toggleSelected, waiting } from '../../mail/ops.ts';
+import { canWrite, clearSelected, destination, lastMove, markRead, move, moveKind, moveTargets, selected, star, starMessage, toggleSelected, waiting } from '../../mail/ops.ts';
 import { haptic, phone, reducedMotion } from '../../phone.ts';
 import { connected, db, go, mailRev, route } from '../../state.ts';
 import { groups, onMenu, openMenu, type MenuEntry, type MenuSpec } from '../ContextMenu.tsx';
@@ -24,7 +25,11 @@ import { noteRowRead } from '../../activity.ts';
 const acc = (t: P.MailThreadView) => db.mail.accounts.get(t.accountId);
 const inInbox = (t: P.MailThreadView) => t.roles.includes('inbox');
 const only = (t: P.MailThreadView, role: string) => t.roles.length > 0 && t.roles.every((r) => r === role || r === 'sent' || r === 'drafts');
-const canMove = (t: P.MailThreadView, to: P.MailMoveTarget) => canWrite(acc(t), 'move') && !!destination(t, to);
+/** Filing it there is offered: the mailbox is there, and the account makes that kind of move (archive, trash, junk). */
+const canMove = (t: P.MailThreadView, to: P.MailMoveTarget) => {
+  const b = destination(t, to);
+  return !!b && canWrite(acc(t), moveKind(b));
+};
 
 /** Leaving the open thread after it was filed away: back to its list. */
 function leave(ids: string[]) {
@@ -52,12 +57,12 @@ export function threadMenu(ts: P.MailThreadView[], from: 'row' | 'reader' | 'sel
   const unread = ts.some((t) => t.unread > 0);
   const flagged = ts.every((t) => t.flagged);
   const oneAccount = ts.every((t) => t.accountId === ts[0].accountId);
-  const targets = oneAccount ? moveTargets(ts[0]).filter((b) => !ts.every((t) => t.mailboxIds.length === 1 && t.mailboxIds[0] === b.id)) : [];
+  const targets = oneAccount ? moveTargets(ts[0]).filter((b) => canWrite(acc(ts[0]), moveKind(b)) && !ts.every((t) => t.mailboxIds.length === 1 && t.mailboxIds[0] === b.id)) : [];
   const anyIn = (role: string) => ts.some((t) => t.roles.includes(role as P.MailboxRole));
   const items = groups(
     [
-      write && ts.every((t) => canWrite(acc(t), 'flag.seen')) && { label: unread ? 'Mark read' : 'Mark unread', icon: unread ? 'eye' : 'mail', hint: unread ? undefined : 'U', run: () => (unread && noteRowRead('mail', ids), markRead(ids, unread), !unread && leave(ids), clearSelected()) },
-      write && ts.every((t) => canWrite(acc(t), 'flag.flagged')) && { label: flagged ? 'Unstar' : 'Star', icon: 'star', hint: 'S', run: () => (star(ids, !flagged), clearSelected()) },
+      write && ts.every((t) => canWrite(acc(t), 'seen')) && { label: unread ? 'Mark read' : 'Mark unread', icon: unread ? 'eye' : 'mail', hint: unread ? undefined : 'U', run: () => (unread && noteRowRead('mail', ids), markRead(ids, unread), !unread && leave(ids), clearSelected()) },
+      write && ts.every((t) => canWrite(acc(t), 'flagged')) && { label: flagged ? 'Unstar' : 'Star', icon: 'star', hint: 'S', run: () => (star(ids, !flagged), clearSelected()) },
     ],
     [
       ts.some(inInbox) && ts.every((t) => canMove(t, 'archive')) && { label: 'Archive', icon: 'archive', hint: 'E', run: () => file(ts, 'archive') },
@@ -92,8 +97,8 @@ export const FILING_THREAD_ACTIONS: ThreadAction[] = [
     run: (t) => leaveAfter(t, 'inbox'),
   },
   { id: 'trash', label: 'Move to the trash', icon: 'trash', place: 'head', show: (t) => roomy() && !only(t, 'trash') && canMove(t, 'trash'), run: (t) => leaveAfter(t, 'trash') },
-  { id: 'star', label: 'Star', icon: 'star', place: 'head', show: (t, a) => roomy() && !t.flagged && canWrite(a, 'flag.flagged'), run: (t) => star([t.id], true) },
-  { id: 'unstar', label: 'Unstar', icon: 'star', place: 'head', show: (t, a) => roomy() && t.flagged && canWrite(a, 'flag.flagged'), run: (t) => star([t.id], false) },
+  { id: 'star', label: 'Star', icon: 'star', place: 'head', show: (t, a) => roomy() && !t.flagged && canWrite(a, 'flagged'), run: (t) => star([t.id], true) },
+  { id: 'unstar', label: 'Unstar', icon: 'star', place: 'head', show: (t, a) => roomy() && t.flagged && canWrite(a, 'flagged'), run: (t) => star([t.id], false) },
   {
     id: 'more',
     label: 'More',
@@ -105,8 +110,8 @@ export const FILING_THREAD_ACTIONS: ThreadAction[] = [
 ];
 
 export const FILING_MESSAGE_ACTIONS: MessageAction[] = [
-  { id: 'star', label: 'Star', icon: 'star', show: (m, _t, a) => !m.flags.flagged && canWrite(a, 'flag.flagged'), run: (m) => starMessage(m, true) },
-  { id: 'unstar', label: 'Unstar', icon: 'star', show: (m, _t, a) => m.flags.flagged && canWrite(a, 'flag.flagged'), run: (m) => starMessage(m, false) },
+  { id: 'star', label: 'Star', icon: 'star', show: (m, _t, a) => !m.flags.flagged && canWrite(a, 'flagged'), run: (m) => starMessage(m, true) },
+  { id: 'unstar', label: 'Unstar', icon: 'star', show: (m, _t, a) => m.flags.flagged && canWrite(a, 'flagged'), run: (m) => starMessage(m, false) },
 ];
 
 // ------------------------------------------------------------------ a row
@@ -283,12 +288,12 @@ export function FilingBar({ list }: { list: string }) {
               <Icon name="archive" size={17} />
             </button>
           )}
-          {write && ts.every((t) => canWrite(acc(t), 'flag.seen')) && (
+          {write && ts.every((t) => canWrite(acc(t), 'seen')) && (
             <button class="icon-btn" aria-label={unread ? 'Mark read' : 'Mark unread'} title={unread ? 'Mark read' : 'Mark unread'} onClick={() => (unread && noteRowRead('mail', ts.map((t) => t.id)), markRead(ts.map((t) => t.id), unread), clearSelected())}>
               <Icon name={unread ? 'eye' : 'mail'} size={17} />
             </button>
           )}
-          {write && ts.every((t) => canWrite(acc(t), 'flag.flagged')) && (
+          {write && ts.every((t) => canWrite(acc(t), 'flagged')) && (
             <button class={`icon-btn ${flagged ? 'on' : ''}`} aria-label={flagged ? 'Unstar' : 'Star'} title={flagged ? 'Unstar' : 'Star'} onClick={() => (star(ts.map((t) => t.id), !flagged), clearSelected())}>
               <Icon name="star" size={17} />
             </button>
@@ -347,7 +352,7 @@ addEventListener('keydown', (e) => {
   const ids = selected.value.size ? [...selected.value] : r.thread ? [r.thread] : [];
   const ts = ids.map((id) => db.mail.threads.get(id)).filter((x): x is P.MailThreadView => !!x);
   if (!ts.length) return;
-  const all = (op: string) => ts.every((t) => canWrite(acc(t), op));
+  const all = (kind: P.MailWriteKind) => ts.every((t) => canWrite(acc(t), kind));
   switch (e.key) {
     case 'e':
       if (!ts.some(inInbox)) return;
@@ -360,11 +365,11 @@ addEventListener('keydown', (e) => {
       file(ts, 'junk');
       break;
     case 's':
-      if (!all('flag.flagged')) return;
+      if (!all('flagged')) return;
       star(ids, !ts.every((t) => t.flagged));
       break;
     case 'u':
-      if (!all('flag.seen')) return;
+      if (!all('seen')) return;
       markRead(ids, false);
       leave(ids);
       clearSelected();

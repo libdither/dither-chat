@@ -10,9 +10,9 @@
  */
 import type { IdentityView, TriageView } from './api.ts';
 import type { FileInfo } from './files.ts';
-import type { MailboxRole } from './mail-iface.ts';
+import type { MailboxRole, MailWriteKind } from './mail-iface.ts';
 
-export type { MailboxRole } from './mail-iface.ts';
+export type { MailboxRole, MailWriteKind } from './mail-iface.ts';
 
 /**
  * Whether this hub may read your mail: `off` without DITHER_ACCOUNTS_URL, `unreachable` while the manager does not
@@ -60,6 +60,11 @@ export interface MailAccountView {
   sendCap?: number;
   /** The most recipients, To, Cc and Bcc together, on one message: `details.maxRecipients`, else 100 on Proton and 500 elsewhere. */
   maxRecipients?: number;
+  /**
+   * The writes the account makes now, as its status says (`details.writes`): a kind not listed is refused here
+   * without a call, and its buttons are hidden. Null or absent: not said, so every write is tried (a 501 says no).
+   */
+  writes?: MailWriteKind[] | null;
 }
 
 /** An account's writes (slice 4). */
@@ -68,7 +73,10 @@ export interface MailOpsView {
   waiting: number;
   /** The last change that could not be made, undone here. */
   error: { message: string; at: number } | null;
-  /** What the account answered 501 to: `flag.seen`, `flag.flagged`, `move`. Its buttons are hidden. */
+  /**
+   * What the account answered 501 to: `flag.seen`, `flag.flagged`, `move`, `trash` or `junk` (a move into the trash
+   * or junk; older rows say `move` for those too). Its buttons are hidden.
+   */
   unsupported: string[];
 }
 

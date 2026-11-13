@@ -246,8 +246,8 @@ export class MailStore {
   /**
    * The extractor's `status` event: online or not, what is wrong, its own addresses, how it syncs, whether it can
    * send (details.canSend, else a failed layer named like sending), and what its server is (idPerMessage, sendCap,
-   * maxRecipients, provider: a status without one keeps what an earlier one said). Returns whether its addresses
-   * changed.
+   * maxRecipients, provider, writes: a status without one keeps what an earlier one said). Returns whether its
+   * addresses changed.
    */
   setStatus(id: string, st: Record<string, any>): boolean {
     const was = this.account(id);
@@ -290,11 +290,15 @@ export class MailStore {
     const searchIds = bit(details[DETAILS.searchIds], was.search_ids);
     const stopped = typeof details[DETAILS.backgroundStopped] === 'string' && details[DETAILS.backgroundStopped] ? String(details[DETAILS.backgroundStopped]) : null;
     const storage = storageOf(details) ?? was.storage ?? null;
-    const next = [JSON.stringify(problem), JSON.stringify(send), address, name, addresses, online, syncMode, headers, perMessage, sendCap, maxRecipients, provider, lane, searchIds, stopped, storage];
-    const prev = [was.problem, was.send, was.address, was.display_name, was.addresses, was.online, was.sync_mode, was.summary_headers ?? null, was.id_per_message ?? null, was.send_cap ?? null, was.max_recipients ?? null, was.provider ?? null, was.background_lane ?? null, was.search_ids ?? null, was.background_stopped ?? null, was.storage ?? null];
+    // The writes it makes now (ops.ts): those it lists are no longer refused for an earlier 501.
+    const listed = writesOf(details[DETAILS.writes]);
+    const writes = listed ? JSON.stringify(listed) : (was.writes ?? null);
+    if (listed?.length && this.run(`DELETE FROM mail_unsupported WHERE account_id = ? AND op IN (SELECT value FROM json_each(?))`, id, JSON.stringify(listed.map(unsupportedOp))).changes) this.dirty.accounts.add(id);
+    const next = [JSON.stringify(problem), JSON.stringify(send), address, name, addresses, online, syncMode, headers, perMessage, sendCap, maxRecipients, provider, lane, searchIds, stopped, storage, writes];
+    const prev = [was.problem, was.send, was.address, was.display_name, was.addresses, was.online, was.sync_mode, was.summary_headers ?? null, was.id_per_message ?? null, was.send_cap ?? null, was.max_recipients ?? null, was.provider ?? null, was.background_lane ?? null, was.search_ids ?? null, was.background_stopped ?? null, was.storage ?? null, was.writes ?? null];
     if (next.every((v, i) => v === prev[i])) return false;
     this.run(
-      'UPDATE mail_account SET problem = ?, send = ?, address = ?, display_name = ?, addresses = ?, online = ?, sync_mode = ?, summary_headers = ?, id_per_message = ?, send_cap = ?, max_recipients = ?, provider = ?, background_lane = ?, search_ids = ?, background_stopped = ?, storage = ? WHERE id = ?',
+      'UPDATE mail_account SET problem = ?, send = ?, address = ?, display_name = ?, addresses = ?, online = ?, sync_mode = ?, summary_headers = ?, id_per_message = ?, send_cap = ?, max_recipients = ?, provider = ?, background_lane = ?, search_ids = ?, background_stopped = ?, storage = ?, writes = ? WHERE id = ?',
       ...next,
       id,
     );
@@ -334,6 +338,11 @@ export class MailStore {
     const keep = change.keep ?? now.keep;
     const paused = change.paused ?? now.paused;
     this.run('INSERT INTO mail_keep (account_id, keep, paused) VALUES (?, ?, ?) ON CONFLICT (account_id) DO UPDATE SET keep = excluded.keep, paused = excluded.paused', accountId, keep ? 1 : 0, paused ? 1 : 0);
+  }
+
+  /** The writes its status says it makes now (`details.writes`, ops.ts); null when no status has said. */
+  writes(accountId: string): M.MailWriteKind[] | null {
+    return writesOf(json<unknown>(this.account(accountId)?.writes, null));
   }
 
   /** Its status says background reads have a lane of their own (`details.backgroundLane`): the archive's calls say `background: true`. */
@@ -1002,6 +1011,7 @@ export class MailStore {
   // ------------------------------------------------------------ views
 
   accountView(r: Row): P.MailAccountView {
+    const writes = writesOf(json<unknown>(r.writes, null));
     const held = this.one<{ n: number; oldest: number | null }>('SELECT COUNT(*) AS n, MIN(received_at) AS oldest FROM mail_message WHERE account_id = ?', r.id);
     const send = json<{ ok: boolean | null; why: string | null; refused?: boolean }>(r.send, { ok: null, why: null });
     return {
@@ -1022,6 +1032,8 @@ export class MailStore {
       ops: this.opsOf(r.id),
       sendCap: sendCapOf(r),
       maxRecipients: maxRecipientsOf(r),
+      // Only once a status has said: absent is "not said" (most accounts, every IMAP and Proton one).
+      ...(writes ? { writes } : {}),
     };
   }
 
@@ -1281,7 +1293,8 @@ export function addressedOf(self: Set<string>, from: string | null, to: M.MailAd
 
 /**
  * The names of the status's `details` that keeping all mail reads (dither-accounts, as agreed; keep.ts): a lane for
- * background reads, an ids-only paged mail.search, why background reads stopped, and the account's storage.
+ * background reads, an ids-only paged mail.search, why background reads stopped, and the account's storage. And
+ * `writes`: the writes the account makes now (ops.ts).
  */
 export const DETAILS = {
   backgroundLane: 'backgroundLane',
@@ -1290,7 +1303,19 @@ export const DETAILS = {
   storage: 'storage',
   storageUsed: 'storageUsed',
   storageTotal: 'storageTotal',
+  writes: 'writes',
 } as const;
+
+const WRITE_KINDS: readonly M.MailWriteKind[] = ['seen', 'flagged', 'move', 'trash', 'junk'];
+
+/** A status's `details.writes` as the kinds the hub knows, once each in their order; null when it is not a list (not said). */
+export function writesOf(v: unknown): M.MailWriteKind[] | null {
+  if (!Array.isArray(v)) return null;
+  return WRITE_KINDS.filter((k) => v.includes(k));
+}
+
+/** The op a kind of write is refused as in mail_unsupported (ops.ts): `flag.seen`, `flag.flagged`, `move`, `trash`, `junk`. */
+export const unsupportedOp = (k: M.MailWriteKind): string => (k === 'seen' || k === 'flagged' ? `flag.${k}` : k);
 
 /** The storage the status says the account uses, as JSON {text, used, total}; null when it says nothing of it. */
 function storageOf(details: Record<string, unknown>): string | null {
@@ -1328,6 +1353,7 @@ export const MAIL_COLUMNS: Record<string, Record<string, string>> = {
   // summary_headers, headers_seen: what the status says of summaries' headers, and whether any summary had some.
   // id_per_message … provider: what the extractor's status says of the account (setStatus).
   // background_lane … storage: keeping all mail (keep.ts), what the status says of background reads and storage.
+  // writes: what the status says the account writes now (ops.ts).
   mail_account: {
     summary_headers: 'INTEGER',
     headers_seen: 'INTEGER',
@@ -1339,6 +1365,7 @@ export const MAIL_COLUMNS: Record<string, Record<string, string>> = {
     search_ids: 'INTEGER',
     background_stopped: 'TEXT',
     storage: 'TEXT',
+    writes: 'TEXT',
   },
   // The server's emailId (Gmail's X-GM-MSGID): empty on rows from before it, and on Proton's, which have none.
   mail_message: { email_id: 'TEXT' },
