@@ -13827,6 +13827,8 @@ h1:hover > .pair-nick-edit,
   display: flex;
   gap: 6px;
   margin-top: 2px;
+}
+
 /* A server's page beyond its settings (ServerParts.tsx, docs/servers.md): its events, what it asks on joining, its
    invite links. */
 .srv-events {
