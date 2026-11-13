@@ -42,6 +42,7 @@ import { noteWork, pathShape } from './stalls.ts';
 import { fetchPublicToFile } from './fetchsafe.ts';
 import { AboutError, Abouts } from './about.ts';
 import { Servers } from './servers.ts';
+import { Media, MediaError, sendMediaProblem } from './media.ts';
 import { asked, attempt, candidatesAttempt } from './attempts.ts';
 import { Groups } from './groups.ts';
 import { People } from './people.ts';
@@ -57,7 +58,19 @@ import { callRoute } from './callstate.ts';
 
 type ClientData = { kind: 'client' };
 /** What a send carries (POST /api/conversations/:id/send, and a chat's /messages). */
-type SendBody = { body?: string; accountId?: string; replyTo?: string; attachments?: string[]; clientId?: string };
+type SendBody = {
+  body?: string;
+  accountId?: string;
+  replyTo?: string;
+  attachments?: string[];
+  clientId?: string;
+  /** A sticker from the picker's page, by its id (media.ts). */
+  sticker?: string;
+  /** The one attached file is a recording: sent as the network's voice message where it has one, else as a file. */
+  voice?: P.VoiceOut;
+  /** The files open once (Signal's view-once). */
+  viewOnce?: boolean;
+};
 /** A browser's live view, carried to the account's VNC socket here, or (remote accounts) to dither-accounts' socket for it. */
 type LiveViewData = { kind: 'liveview'; accountId: string; socket?: string; url?: string; vnc?: Socket<unknown>; up?: WebSocket; queue: Uint8Array[]; closed?: boolean };
 
@@ -218,6 +231,8 @@ export class HubServer {
   readonly adding: Adding;
   /** Scheduled events, leaving, and what a space asks on joining (servers.ts, docs/servers.md). */
   readonly servers: Servers;
+  /** Sticker pages, installing packs, stories (media.ts, docs/media-kinds.md). */
+  readonly kinds: Media;
   /** Your marks on whether a message needs a reply (replymarks.ts). */
   private get marks(): ReplyMarks {
     return (this._marks ??= new ReplyMarks(this.store));
@@ -272,6 +287,7 @@ export class HubServer {
     store.contactNotesOut = (id, change) => this.people.pushContactNotes(id, change);
     this.adding = new Adding({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), liveView: (a) => !!sup.liveViewUrl?.(a) || !!store.account(a)?.live_view });
     this.servers = new Servers({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a), note: (a, line) => sup.note(a, line), flush: () => this.flush(), aboutView: (k, i, n, a, ab) => this.abouts.view(k, i, n, a, ab, Date.now(), undefined, true) });
+    this.kinds = new Media({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a), flush: () => this.flush() });
     sup.calls = this.calls;
     this.clicks = new ClickCounts(store.db);
     this.usage = new UsageStore(store.db, (changed, removed, all) => {
@@ -1014,6 +1030,42 @@ export class HubServer {
         throw e;
       }
     }
+    // Stickers to send and stories (media.ts, docs/media-kinds.md).
+    if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/stickers$/)) && method === 'GET') {
+      try {
+        return ok(await this.kinds.stickers(m[1], url.searchParams.get('account') ?? undefined, url.searchParams.get('cursor') ?? undefined));
+      } catch (e) {
+        if (e instanceof MediaError) return bad(e.message, e.status);
+        return bad(`The network did not list stickers: ${(e as Error).message}`, 502);
+      }
+    }
+    if ((m = path.match(/^\/api\/accounts\/([\w-]+)\/stickers$/)) && method === 'POST') {
+      // From the app itself, on the owner's click: installing a pack changes the account.
+      if (!req.headers.get('origin')) return bad('Sticker packs are installed from the app itself', 403);
+      const b = await body<{ uri?: string }>();
+      if (typeof b.uri !== 'string' || !b.uri.trim()) return bad('Which pack? Paste its link.');
+      try {
+        return ok({ pack: await this.kinds.install(m[1], b.uri.trim().slice(0, 300)) });
+      } catch (e) {
+        if (e instanceof MediaError) return bad(e.message, e.status);
+        return bad(`The network did not install it: ${(e as Error).message}`, 502);
+      }
+    }
+    if (path === '/api/stories' && method === 'GET') {
+      const identityId = url.searchParams.get('identity') ?? undefined;
+      const conversationId = url.searchParams.get('conversation') ?? undefined;
+      if (!identityId && !conversationId) return bad('whose stories?');
+      return ok(this.kinds.stories({ identityId, conversationId }));
+    }
+    if ((m = path.match(/^\/api\/stories\/([\w-]+)\/(viewed|reply)$/)) && method === 'POST') {
+      try {
+        if (m[2] === 'viewed') return ok(this.kinds.viewed(m[1]));
+        return ok(await this.kinds.reply(m[1], await body<{ body?: string; emoji?: string }>()));
+      } catch (e) {
+        if (e instanceof MediaError) return bad(e.message, e.status);
+        return bad(`The network refused it: ${(e as Error).message}`, 502);
+      }
+    }
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/reaction-context$/))) {
       const conv = s.nativeOf('conversation', m[1]);
       if (!conv) return bad('no such conversation', 404);
@@ -1709,7 +1761,8 @@ export class HubServer {
     const ok = (x: unknown) => Response.json(x);
     const bad = (msg: string, status = 400) => Response.json({ error: msg }, { status });
     const ids = b.attachments ?? [];
-    if (!b.body?.trim() && !ids.length) return bad('empty message');
+    const sticker = typeof b.sticker === 'string' && b.sticker ? b.sticker.slice(0, 128) : undefined;
+    if (!b.body?.trim() && !ids.length && !sticker) return bad('empty message');
     const conv = s.nativeOf('conversation', conversationId);
     if (!conv) return bad('no such conversation', 404);
     const accountId = this.pickAccount(conversationId, b.accountId);
@@ -1717,20 +1770,28 @@ export class HubServer {
     const refused = this.sendRefusal(conversationId, accountId);
     if (refused) return bad(refused, 409);
     const replyTo = b.replyTo ? s.nativeOf('message', b.replyTo)?.nativeId : undefined;
-    const files = this.uploads.get(ids);
+    let files = this.uploads.get(ids);
     if (!files) return bad('that upload has expired, attach the file again', 410);
+    const acc = s.account(accountId)!;
+    const accCaps = JSON.parse(acc.capabilities) as P.Capability[];
+    const name = NETWORK_META[conv.network].name;
     if (files.length) {
-      const acc = s.account(accountId)!;
       const limit = ATTACHMENT_LIMITS[conv.network];
-      const name = NETWORK_META[conv.network].name;
-      if (!(JSON.parse(acc.capabilities) as P.Capability[]).includes('sendMedia')) return bad(`${acc.label} cannot send files on ${name}`, 409);
+      if (!accCaps.includes('sendMedia')) return bad(`${acc.label} cannot send files on ${name}`, 409);
       if (files.length > limit.files) return bad(`${name} takes ${limit.files} files at a time`, 413);
       if (files.some((f) => f.size > limit.bytes)) return bad(`${name} takes files up to ${limit.bytes / 1024 / 1024} MB`, 413);
     }
-    const preview = files.length ? null : await this.linkPreview(accountId, b.body ?? '');
+    const media = sendMediaProblem({ sticker, files: files.length, voice: b.voice, viewOnce: b.viewOnce === true }, accCaps, `${acc.label} on ${name}`);
+    if (media.error) return bad(media.error, 409);
+    if (media.voice) files = files.map((f, i) => (i === 0 ? { ...f, voice: media.voice } : f));
+    const preview = files.length || sticker ? null : await this.linkPreview(accountId, b.body ?? '');
     let result: unknown;
     try {
-      result = await this.sup.command(accountId, { t: 'send', conversation: conv.nativeId, body: b.body ?? '', replyTo, ...(files.length ? { attachments: files } : {}), ...(preview ? { preview } : {}) }, files.length ? 180_000 : undefined);
+      result = await this.sup.command(
+        accountId,
+        { t: 'send', conversation: conv.nativeId, body: b.body ?? '', replyTo, ...(files.length ? { attachments: files } : {}), ...(preview ? { preview } : {}), ...(sticker ? { sticker } : {}), ...(media.viewOnce ? { viewOnce: true } : {}) },
+        files.length ? 180_000 : undefined,
+      );
     } finally {
       if (preview?.image) rmSync(preview.image, { force: true });
     }

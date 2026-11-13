@@ -8,6 +8,7 @@
  * first seed and stored in the account config.
  */
 
+import { DEMO_MEDIA_CAPS, DemoMedia } from './demomedia.ts';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
@@ -1831,6 +1832,7 @@ class DemoAdapter implements InprocAdapter {
   private readLog: { conversation: string; upTo: string; at: number }[] = [];
   private self: P.IdentityFact;
   private adds!: DemoAdd;
+  private media!: DemoMedia;
   /** Discord servers beyond their channels: events, leaving, gates, nicknames, invite links (demoservers.ts). */
   private servers: DemoServers | null = null;
   /** Capabilities a verify script took away (action 'capabilities'), to see the page without them. */
@@ -2269,6 +2271,8 @@ class DemoAdapter implements InprocAdapter {
       // The networks whose servers search (netsearch.ts).
       ...(this.network === 'discord' || this.network === 'matrix' ? (['search'] as const) : []),
       ...(this.network === 'discord' ? DEMO_SERVER_CAPS : []),
+      // Stickers, voice messages, view-once and stories (demomedia.ts).
+      ...(DEMO_MEDIA_CAPS[this.network] ?? []),
     ];
     this.emit({ t: 'hello', network: this.network, version: 'demo', capabilities: all.filter((c) => !this.without.has(c)) });
   }
@@ -2291,6 +2295,8 @@ class DemoAdapter implements InprocAdapter {
     // Joining, adding and requests (docs/add.md): what it joined before, and the requests waiting.
     this.adds = new DemoAdd(this.key, this.network, this.self, this.dir, emit);
     this.adds.start(epoch);
+    this.media = new DemoMedia(this.network, this.self.nativeId, emit);
+    if (this.key === 'sig') this.media.start([S.alice.nativeId, S.sam.nativeId], CONVS.find((c) => c.fact.name === 'Climbing crew 🧗')?.fact.nativeId);
 
     for (const s of SPACES) if (s.acc.includes(this.key)) emit({ t: 'space', space: s.fact });
     if (this.network === 'discord') this.startServers(epoch);
@@ -2566,8 +2572,19 @@ class DemoAdapter implements InprocAdapter {
       case 'send': {
         const nativeId = `${cmd.conversation}~sent-${Date.now()}`;
         // The file leaves the spool once this returns, and a demo has nowhere else to keep it.
-        const attachments = cmd.attachments?.map((f) => ({ kind: f.kind, mime: f.mime, name: f.name, size: f.size, url: `data:${f.mime};base64,${readFileSync(f.path).toString('base64')}` }));
-        this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), body: cmd.body, replyTo: cmd.replyTo, kind: attachments?.length && !cmd.body ? 'media' : 'text', attachments } });
+        const sticker = cmd.sticker ? this.media.sticker(cmd.sticker) : null;
+        if (cmd.sticker && !sticker) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'That sticker is not one this account can send' });
+          break;
+        }
+        // View-once: your own copy is not kept to look at, as Signal's apps show it.
+        let attachments: P.AttachmentFact[] | undefined = cmd.viewOnce
+          ? undefined
+          : cmd.attachments?.map((f) => ({ kind: f.kind, mime: f.mime, name: f.name, size: f.size, url: `data:${f.mime};base64,${readFileSync(f.path).toString('base64')}`, ...(f.voice ? { voice: f.voice } : {}) }));
+        if (sticker) attachments = [{ nativeId: `sticker:${sticker.id}`, kind: 'image', mime: sticker.mime, name: sticker.name, width: 160, height: 160, url: sticker.url }];
+        const kind: P.MessageKind = sticker ? 'sticker' : (attachments?.length || cmd.viewOnce) && !cmd.body ? 'media' : 'text';
+        const body = cmd.viewOnce ? cmd.body || '📷 View-once media' : cmd.body;
+        this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), body, replyTo: cmd.replyTo, kind, attachments, ...(cmd.viewOnce ? { extra: { viewOnce: true } } : {}) } });
         this.sent.set(nativeId, { body: cmd.body, att: attachments });
         reply({ nativeId });
         const conv = CONVS.find((c) => c.fact.nativeId === cmd.conversation);
@@ -2636,6 +2653,16 @@ class DemoAdapter implements InprocAdapter {
         break;
       case 'reactionContext':
         reply(this.reactionContext());
+        break;
+      case 'stickers':
+      case 'addStickerPack':
+      case 'storyViewed':
+      case 'storyReply':
+        try {
+          reply(this.media.command(cmd));
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
         break;
       case 'profile':
         reply(this.signalExtras(this.profile(cmd.who), cmd.who));
@@ -2749,6 +2776,10 @@ class DemoAdapter implements InprocAdapter {
           const a = cmd.args as { conversation: string; author: string; body: string };
           this.say(a.conversation, { nativeId: a.author }, a.body);
           reply({ ok: true });
+          break;
+        }
+        if (cmd.action === 'stories') {
+          reply(this.media.command(cmd));
           break;
         }
         // capabilities: say hello again without these (scripts/verify-add.ts), or with everything when none are given.

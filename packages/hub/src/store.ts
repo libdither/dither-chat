@@ -15,6 +15,7 @@ import { stepTimer } from './startup.ts';
 import { addTables, ingestRelationships, ingestRequests, pendingLinks } from './add.ts';
 import { lateNews } from './latenews.ts';
 import { eraseVoice, ingestCallEvent, voiceKept } from './callstate.ts';
+import { ingestStories } from './media.ts';
 import { ingestServers } from './servers.ts';
 import { alertBar, type Facts } from './learn.ts';
 import { attachmentExtra, attachmentRich, embedViews, richView, type StoredExtra } from './rich.ts';
@@ -758,6 +759,11 @@ export class Store {
         case 'scheduledEventGone':
         case 'gate':
           ingestServers(this, acc, ev);
+          break;
+        // Stories: on their author's page only, never a message (media.ts).
+        case 'story':
+        case 'storyGone':
+          ingestStories(this, acc, ev);
           break;
         case 'reply':
         case 'log':

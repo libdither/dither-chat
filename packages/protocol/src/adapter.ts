@@ -31,6 +31,7 @@ import type { GateAnswer, ScheduledEventFact, SpaceGate } from './servers.ts';
 import type { LinkPreviewOut } from './extra.ts';
 import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, ReactionStyle, Shape, SpaceKind, Variant } from './ontology.ts';
 import type { VoiceFact } from './rich.ts';
+import type { MediaCapability, MediaCommand, MediaEvent, VoiceOut } from './media.ts';
 
 /** How far a message got with someone: their device has it, they read it, they played it (a voice note, a video). */
 export type ReceiptState = 'delivered' | 'read' | 'played';
@@ -130,7 +131,9 @@ export type Capability =
   /** Resets the encrypted session with someone in a direct conversation (the `resetSession` command; Signal's end session). */
   | 'resetSession'
   /** Mentions found late, native mutes, unread by hand, many read at once (attention.ts). */
-  | AttentionCapability;
+  | AttentionCapability
+  /** Stickers, voice messages, view-once, stories (media.ts). */
+  | MediaCapability;
 
 // ---------------------------------------------------------------- facts
 
@@ -333,6 +336,8 @@ export interface OutgoingAttachment {
   mime: string;
   size: number;
   kind: AttachmentKind;
+  /** Send it as the network's voice message (capability 'sendVoice', media.ts): the only file of its send. */
+  voice?: VoiceOut;
 }
 
 /** What the `setProfile` command changes: only the fields given (see it there). */
@@ -492,7 +497,9 @@ export type AdapterEvent =
   | { t: 'gate'; space: string; gate: SpaceGate | null }
   | { t: 'reply'; id: string; ok: true; result?: unknown }
   | { t: 'reply'; id: string; ok: false; error: string }
-  | { t: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; msg: string; data?: unknown };
+  | { t: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; msg: string; data?: unknown }
+  /** story, storyGone (media.ts). */
+  | MediaEvent;
 
 // ---------------------------------------------------------------- hub -> adapter
 
@@ -555,7 +562,20 @@ export type AdapterCommand =
   /** Call lab only (scripts/call-lab.ts, DITHER_LAB=1): a command for the lab probe in the sandbox. */
   | { t: 'lab'; id: string; lab: { op: string; [k: string]: unknown }; timeout?: number }
   /** reply.result: { nativeId } of the sent message if known (the echo still arrives as a message fact). */
-  | { t: 'send'; id: string; conversation: string; body: string; replyTo?: string; attachments?: OutgoingAttachment[]; /** capability 'linkPreviews' */ preview?: LinkPreviewOut }
+  | {
+      t: 'send';
+      id: string;
+      conversation: string;
+      body: string;
+      replyTo?: string;
+      attachments?: OutgoingAttachment[];
+      /** capability 'linkPreviews' */
+      preview?: LinkPreviewOut;
+      /** A sticker from the `stickers` reply, by its id (capability 'sendStickers'); body may be empty with it. */
+      sticker?: string;
+      /** The files open once (capability 'sendViewOnce'). */
+      viewOnce?: boolean;
+    }
   /**
    * Forward a message this account can read, the network's own way (capability 'forward'). `note` goes with it,
    * as the network's own client would send one. reply.result: { nativeId } of the forward, or { fallback: reason }
@@ -724,6 +744,8 @@ export type AdapterCommand =
   | { t: 'action'; id: string; action: string; args?: unknown }
   | { t: 'shutdown' }
   /** mute, markUnread, markReadMany (attention.ts). */
-  | AttentionCommand;
+  | AttentionCommand
+  /** stickers, addStickerPack, storyViewed, storyReply (media.ts). */
+  | MediaCommand;
 
 export type AdapterCommandType = AdapterCommand['t'];
