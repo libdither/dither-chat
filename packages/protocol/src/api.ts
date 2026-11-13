@@ -27,6 +27,7 @@ import type { RichView, VoiceFact } from './rich.ts';
 import type { MailAccess, MailAccountView, MailboxView, MailBootstrap, MailOutboxView, MailThreadView } from './mail.ts';
 import type { CalendarLinkView, CalendarNotifyRef, CalendarPlanView } from './calendar.ts';
 import type { ContactCardView, MissingAttachmentFact, QuoteView, SendFailureView, StoryReplyView } from './extra.ts';
+import type { ForumView, ThreadView } from './threads.ts';
 
 export interface AccountView {
   id: string;
@@ -182,6 +183,10 @@ export interface ConversationView {
   nativeMute: NativeMute | null;
   /** direct: a friend request between one of your accounts here and the other person, waiting on one side (docs/add.md). */
   pending?: PendingLinkView;
+  /** A thread's following, tags and first message (threads.ts). */
+  thread?: ThreadView;
+  /** A forum or media channel's tags and default order (threads.ts). */
+  forum?: ForumView;
 }
 
 /**

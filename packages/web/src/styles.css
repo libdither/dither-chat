@@ -2523,6 +2523,136 @@ code {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* forum: tags, order, gallery, and the thread forms (ui/Threads.tsx, docs/threads.md) */
+.forum-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.forum-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.forum-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.forum-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.forum-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr));
+  gap: 10px;
+}
+.forum-post.archived {
+  opacity: 0.7;
+}
+.forum-post-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.forum-post .forum-post-head b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.forum-post span.forum-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  white-space: normal;
+}
+.forum-post span.forum-tag,
+.forum-tag {
+  font-size: 11.5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-hover, var(--border-soft));
+  color: var(--text-dim);
+}
+.forum-tag.muted {
+  color: var(--text-faint);
+}
+.forum-post span.forum-preview {
+  color: var(--text-dim);
+}
+.forum-meta {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.forum-post.tile {
+  padding: 8px;
+}
+.forum-cover {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--border-soft);
+}
+.forum-post span.forum-cover.none {
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+}
+.thread-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.thread-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+.thread-form label.forum-check {
+  flex-direction: row;
+}
+.thread-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.thread-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.thread-tabs button {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text-dim);
+}
+.thread-tabs button.on {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.pf-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+}
+.pf-member-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* ---------------------------------------------------------------- menus & modals */
 

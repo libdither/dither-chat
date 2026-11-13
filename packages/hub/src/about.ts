@@ -301,6 +301,8 @@ export class Abouts {
       members,
       identities: s.identitiesByIds(members?.list.map((m) => m.identityId) ?? []),
       pinned,
+      // A group's owner in hub ids, as the members are (threads.ts AboutOwnership).
+      ...(about.ownership ? { ownership: { ...about.ownership, ...(about.ownership.owner ? { owner: acc ? s.ensureIdentity(acc, about.ownership.owner) : hubId('idn', network, about.ownership.owner) } : {}) } } : {}),
       ...(adding ? { adding } : { adding: undefined }),
       ...(coverage ? { coverage } : {}),
       target: { kind, id },

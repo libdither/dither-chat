@@ -64,6 +64,8 @@ export interface MessageMarks {
   official?: true;
   /** Its author's account is suspended; Discord hides their name. */
   hiddenSuspended?: true;
+  /** Published to the channels that follow its announcement channel (Discord's CROSSPOSTED; threads.ts Publish). */
+  published?: true;
 }
 
 /** A message published from a followed announcement channel elsewhere: where it came from, in words. */

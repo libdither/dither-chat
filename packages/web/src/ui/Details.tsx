@@ -10,6 +10,7 @@ import { openConv } from './Sidebar.tsx';
 import { Menuable } from './ContextMenu.tsx';
 import { identityMenu } from './menus.tsx';
 import { openAbout } from './About.tsx';
+import { ableAccount, threadDialog } from '../threads.ts';
 
 function Section({ title, children }: { title: string; children: any }) {
   return (
@@ -194,13 +195,18 @@ export function ConversationDetails({ convId }: { convId: string }) {
           </Section>
         )}
 
-        {threads.length > 0 && (
+        {(threads.length > 0 || (c.shape === 'channel' && !!ableAccount(c, 'listThreads'))) && (
           <Section title={c.variant === 'forum' ? `Posts (${threads.length})` : `Threads (${threads.length})`}>
             {threads.map((t) => (
               <button class="link-row" onClick={() => openConv(t)}>
                 <Icon name="thread" size={13} /> {convTitle(t)}
               </button>
             ))}
+            {c.shape === 'channel' && c.variant !== 'voice' && c.variant !== 'stage' && ableAccount(c, 'listThreads') && (
+              <button class="link-row" onClick={() => (threadDialog.value = { kind: 'browse', convId: c.id, tab: 'archived' })}>
+                <Icon name="archive" size={13} /> Show archived {c.variant === 'forum' || c.variant === 'media' ? 'posts' : 'threads'}
+              </button>
+            )}
           </Section>
         )}
       </div>

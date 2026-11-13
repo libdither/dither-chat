@@ -31,6 +31,7 @@ import type { GateAnswer, ScheduledEventFact, SpaceGate } from './servers.ts';
 import type { LinkPreviewOut } from './extra.ts';
 import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, ReactionStyle, Shape, SpaceKind, Variant } from './ontology.ts';
 import type { VoiceFact } from './rich.ts';
+import type { ForumFact, ThreadFact, ThreadsCapability, ThreadsCommand } from './threads.ts';
 
 /** How far a message got with someone: their device has it, they read it, they played it (a voice note, a video). */
 export type ReceiptState = 'delivered' | 'read' | 'played';
@@ -130,7 +131,9 @@ export type Capability =
   /** Resets the encrypted session with someone in a direct conversation (the `resetSession` command; Signal's end session). */
   | 'resetSession'
   /** Mentions found late, native mutes, unread by hand, many read at once (attention.ts). */
-  | AttentionCapability;
+  | AttentionCapability
+  /** Following threads, starting threads and posts, archiving, publishing, running a group (threads.ts). */
+  | ThreadsCapability;
 
 // ---------------------------------------------------------------- facts
 
@@ -219,6 +222,10 @@ export interface ConversationFact {
   participants?: string[];
   mute?: NativeMute;
   lastMessageAt?: number;
+  /** A thread's own facts: whether you follow it, its tags, who started it (threads.ts). */
+  thread?: ThreadFact;
+  /** A forum or media channel's tags and default order (threads.ts). */
+  forum?: ForumFact;
 }
 
 /**
@@ -521,6 +528,8 @@ export interface ThreadsResult {
   more: boolean;
   /** The network is still indexing this channel's threads (Discord's 202): ask the same again after this long. */
   retryAfterMs?: number;
+  /** The page's threads, native ids in the network's order (threads.ts ThreadPageView); absent from an older adapter. */
+  ids?: string[];
 }
 
 /** What a network search asks for, from the hub's query language (search.ts) in the network's terms. */
@@ -594,7 +603,7 @@ export type AdapterCommand =
    * the archived ones. Discord's user route is DiscordChatExporter's: /channels/{id}/threads/search. Conversation
    * facts for the threads first (each with parentConversation), then reply.result: ThreadsResult.
    */
-  | { t: 'threads'; id: string; conversation: string; archived: boolean; offset: number }
+  | { t: 'threads'; id: string; conversation: string; archived: boolean; offset: number; /** Only private archived threads this account is in (capability 'myThreads'). */ mine?: boolean }
   | { t: 'markRead'; id: string; conversation: string; upTo: string }
   /**
    * You played a voice note or opened a video in someone else's message (capability 'viewed'): tell them, the way the
@@ -724,6 +733,8 @@ export type AdapterCommand =
   | { t: 'action'; id: string; action: string; args?: unknown }
   | { t: 'shutdown' }
   /** mute, markUnread, markReadMany (attention.ts). */
-  | AttentionCommand;
+  | AttentionCommand
+  /** followThread, threadNotify, threadState, createThread, createPost, crosspost, removeMember, setOwner, setPicture (threads.ts). */
+  | ThreadsCommand;
 
 export type AdapterCommandType = AdapterCommand['t'];

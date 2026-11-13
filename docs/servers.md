@@ -66,8 +66,8 @@ The page's parts are a lazy chunk (`web/src/ui/ServerParts.tsx`), loaded the fir
 
 - dither-calendar reading `/api/calendar/network-events` (its own repo), and events in the hub's Ctrl+K.
 - Making or editing events (L): Discord's form has many parts (place, picture, recurrence); open the event in Discord.
-- Leaving a Discord group DM or a Signal group: the command and `About.leaving` are shaped for them (`silent` for
-  Discord's "without telling the others"); a later package builds them.
+- Leaving a Signal group: the command and `About.leaving` are shaped for it. A Discord group DM (silently, where
+  asked) and closing a DM are built: docs/threads.md.
 - Friend invites (links that add you as a friend): accepting works (docs/add.md); making one is left out.
 - Per-server profiles (avatar, bio, banner), server tags, role connections: not read yet.
 - Discovery, templates, boosting, the shop and role subscriptions, the server guide and home, themes: not built.
