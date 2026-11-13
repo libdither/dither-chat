@@ -59,6 +59,20 @@ not advertised when they are not.
   it does here. Reactions already on the message come first, and yours are marked. Enter picks the first search
   result. On Matrix, any text works. On a phone it is a bottom sheet with the rail along the bottom.
 
+**Writing with it.** The composer's smiley button, beside send (in the box on a phone), opens the same picker to put
+an emoji into what you are writing, at the caret: Unicode emoji anywhere, and on Discord the custom emoji the
+context allows, as Discord's own `<:name:id>` markup (a Matrix pack's go only as reactions, as with `:` completion).
+None of the reaction parts show (on this message, super, one per person). A pick closes it; Shift keeps it open for
+another. On a phone it is the bottom sheet and the box stays unfocused, so the keyboard stays down.
+
+**Stickers.** Discord stickers arrive as attachments of their own (dither-accounts, `extractors/discord/src/map.ts`):
+a PNG or APNG from `cdn.discordapp.com/stickers/{id}.png`, a GIF from the media proxy, and a Lottie animation
+(Discord's own stickers) as its JSON, mime `application/x-lottie+json`. A sticker with no words is a message of kind
+`sticker` with an empty body, which previews as "Sticker". The timeline draws any sticker at 160 px with no frame
+(`ui/Sticker.tsx`); a Lottie one plays through lottie-web's light player (SVG, no expressions), a lazy chunk loaded the
+first time one comes on screen, moving only while it is in sight and not at all under reduced motion. Signal and
+WhatsApp stickers, also messages of kind `sticker`, get the same look. Sending stickers is not built yet.
+
 **Replacing, not adding.** On Signal and WhatsApp a person keeps one reaction per message, so once you have one,
 another replaces it. The add button shows it: arrows where the plus was (`smileSwap`), with the title "Change your
 reaction". Your reaction is marked in the hover row and the long-press row, the message menu says "Change Reaction",

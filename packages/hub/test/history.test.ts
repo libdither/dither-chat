@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { DEFAULT_RETENTION } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
-import { Store, type AccountRow } from '../src/store.ts';
+import { previewText, Store, type AccountRow } from '../src/store.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'dither-history-'));
 let store: Store;
@@ -96,6 +96,22 @@ describe('edits', () => {
     store.ingest(sig, { t: 'message', message: { nativeId: 'e2', conversation: 'g1', author: 'ann', ts: 1, editedTs: 2, body: 'two' } });
     expect(msg(hubId('msg', 'signal', 'e2')).edits).toBeUndefined();
     store.setRetention(ADV);
+  });
+
+  test('a system line or a sticker worded anew by its extractor is not an edit', () => {
+    const put = (nativeId: string, kind: P.MessageKind, body: string, attachments?: P.AttachmentFact[]) =>
+      store.ingest(dc, { t: 'message', message: { nativeId, conversation: 'c1', author: 'ann', ts: 5, kind, body, attachments } });
+    put('s1', 'system', '(unsupported message type 67)');
+    put('s1', 'system', 'Ann accepted your friend request.');
+    expect(msg(hubId('msg', 'discord', 's1')).edits).toBeUndefined();
+    expect(msg(hubId('msg', 'discord', 's1')).body).toBe('Ann accepted your friend request.');
+    // A sticker named in words by an older extractor, then shown as itself.
+    put('s2', 'text', '[sticker: Wave]');
+    put('s2', 'sticker', '', [{ nativeId: 'sticker:7', kind: 'image', mime: 'image/png', name: 'Wave', width: 160, height: 160, url: 'https://cdn.discordapp.com/stickers/7.png' }]);
+    const m = msg(hubId('msg', 'discord', 's2'));
+    expect(m.edits).toBeUndefined();
+    expect([m.kind, m.body, m.attachments.map((a) => a.name)]).toEqual(['sticker', '', ['Wave']]);
+    expect(previewText(m.body, m.kind)).toBe('Sticker');
   });
 });
 

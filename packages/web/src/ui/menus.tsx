@@ -2,6 +2,7 @@
  * What each thing's right-click menu (or long-press sheet) holds, in Discord's names and order where Discord has
  * the same action. The reasoning per surface is in docs/menus.md.
  */
+import { isLottie } from './Sticker.tsx';
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, RULE_LABEL, RULE_LEVELS, showsInline } from '@dither-chat/protocol';
 import { fullTime } from '../format.ts';
@@ -236,7 +237,8 @@ async function copyImage(url: string) {
 const absolute = (url: string) => new URL(url, location.href).href;
 
 export function attachmentMenu(a: P.AttachmentView, m: P.MessageView | null, images: ViewerImage[] = [], onReply?: () => void): MenuSpec {
-  const image = a.kind === 'image';
+  // A Lottie sticker is an animation's JSON, not a picture to open or copy.
+  const image = a.kind === 'image' && !isLottie(a);
   const noun = image ? 'Image' : a.kind === 'video' ? 'Video' : a.kind === 'audio' ? 'Audio' : 'File';
   const items = groups(
     [

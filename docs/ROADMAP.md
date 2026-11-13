@@ -79,7 +79,7 @@ Built in slices from [mail-design.md](mail-design.md) (its §12); what works now
 | See what a file is, and view it in the app | H | M | done | The hub reads each kept file's type, pages, lines, entries, size and length from its bytes, in the background; text and code, Markdown, JSON, CSV, PDF (pdf.js) and archive viewers in chunks of their own, HTML, SVG and XML as source ([files.md](files.md)). Verified in headless Chromium against the demo's files, not on the live hub's or in the Android app |
 | Mark all read | M | L | done | Everywhere, or per server, folder or person. A paced queue on the hub tells the networks and survives restarts |
 | Typing indicator, outgoing | L | L | done | Both ways on every network, with a privacy switch ([typing.md](typing.md)) |
-| Pinned messages, polls, stickers from the picker | M | M | later | |
+| Pinned messages, polls, sending stickers from the picker (receiving them is done) | M | M | later | |
 | Calls without media: timeline events, ringing push, link out, who is in Discord voice | M | M | next | Signal offers already reach the timeline; hangups and Matrix calls do not. No media stack needed |
 | Matrix calls through Element Call | M | H | later | Standalone is cheapest but is a second login. Self-hosting needs LiveKit and a homeserver you control. MatrixRTC is unmerged |
 | Signal 1:1 voice | L | H | later | signal-cli has it experimentally since 0.14.2, voice only, with no packaged tunnel binary, and would need a WebRTC bridge to the PWA |

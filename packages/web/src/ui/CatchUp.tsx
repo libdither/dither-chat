@@ -20,6 +20,7 @@ import { db, discardSend, go, inbox, isSelfIdentity, loadMailTriage, loadTimelin
 import { composerDone, composerTyped } from '../typing.ts';
 import { Avatar } from './bits.tsx';
 import { useGrow } from './grow.ts';
+import { isLottie } from './Sticker.tsx';
 import { Icon } from './icons.tsx';
 import { composerBlocker } from './Timeline.tsx';
 import { TIER_ICON } from './Marks.tsx';
@@ -460,8 +461,8 @@ function ConvAvatar({ c }: { c: P.ConversationView }) {
   return <Avatar id={c.peerPersonId ?? c.id} name={convTitle(c)} url={url} size={32} square={c.shape !== 'direct'} network={c.network} accountIds={accountIds} icon={c.shape === 'self' ? '✎' : undefined} />;
 }
 
-/** A picture in a card: a file the network called just a file shows as one when its bytes are a picture. */
-const isImage = (a: P.AttachmentView) => a.kind === 'image' || (a.kind === 'file' && a.info?.kind === 'image');
+/** A picture in a card: a file the network called just a file shows as one when its bytes are a picture. A Lottie sticker is an animation, named rather than shown. */
+const isImage = (a: P.AttachmentView) => !isLottie(a) && (a.kind === 'image' || (a.kind === 'file' && a.info?.kind === 'image'));
 
 function CardMessage({ m, names }: { m: P.MessageView; names: boolean }) {
   const self = isSelfIdentity(m.authorId);
@@ -500,7 +501,7 @@ function CardMessage({ m, names }: { m: P.MessageView; names: boolean }) {
       )}
       {files.map((a) => (
         <span class="cu-file">
-          <Icon name="paperclip" size={11} /> {a.name ?? 'file'}
+          <Icon name={isLottie(a) ? 'smile' : 'paperclip'} size={11} /> {a.name ?? 'file'}
         </span>
       ))}
     </div>

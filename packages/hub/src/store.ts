@@ -97,6 +97,8 @@ export function triageView(t: Row): P.TriageView {
 
 export function previewText(body: string, kind: string): string {
   if (kind === 'encrypted') return 'Encrypted message';
+  // A sticker with no words of its own (Discord's are pictures alone) still says what it is.
+  if (kind === 'sticker' && !body.trim()) return 'Sticker';
   // Keep <@id> / <#id> tokens intact: the client resolves them to names.
   const t = body
     .replace(/```[\s\S]*?```/g, '[code]')
@@ -1123,8 +1125,11 @@ export class Store {
     const convBefore = old ? this.placeSig('conversation', cid) : null;
     const replyTo = f.replyTo ? hubId('msg', acc.network, f.replyTo) : null;
     const thread = f.threadRoot ? hubId('cnv', acc.network, f.threadRoot) : null;
-    // An edit: the words it had before, if this source's edits are kept (docs/history.md).
-    if (old && !old.deleted && old.body && f.body !== old.body && this.keeps('edits', acc)) this.messageEvent(id, 'edit', { body: old.body }, author, acc.id, f.editedTs ?? Date.now());
+    // An edit: the words it had before, if this source's edits are kept (docs/history.md). A system line or a sticker
+    // that comes back worded otherwise (an extractor that learned a new message type, or to show a sticker as itself)
+    // was never edited by anyone.
+    const reworded = old && [old.kind, f.kind].some((k) => k === 'system' || k === 'sticker');
+    if (old && !old.deleted && old.body && f.body !== old.body && !reworded && this.keeps('edits', acc)) this.messageEvent(id, 'edit', { body: old.body }, author, acc.id, f.editedTs ?? Date.now());
     this.db
       .query(
         `INSERT INTO message (id, conversation_id, network, native_id, author_id, ts, edited_ts, kind, body, reply_to_id, thread_id, mentions_self, mentions_all, extra)

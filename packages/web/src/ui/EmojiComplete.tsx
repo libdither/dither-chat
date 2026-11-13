@@ -21,6 +21,17 @@ function replaceRange(el: HTMLTextAreaElement, start: number, end: number, text:
   }
 }
 
+/**
+ * Puts `text` in at the caret, or over the selection, the way typing would (the composer's emoji button). `focus`
+ * false leaves the box unfocused, so a phone's keyboard stays down while the picker is up.
+ */
+export function insertAtCaret(el: HTMLTextAreaElement, text: string, focus = true) {
+  const { selectionStart: start, selectionEnd: end } = el;
+  if (focus) return replaceRange(el, start, end, text);
+  el.setRangeText(text, start, end, 'end');
+  el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+}
+
 export function EmojiComplete({ ta, convId, network }: { ta: { current: HTMLTextAreaElement | null }; convId: string; network?: P.Network }) {
   const [trig, setTrig] = useState<Trigger | null>(null);
   const [sel, setSel] = useState(0);
