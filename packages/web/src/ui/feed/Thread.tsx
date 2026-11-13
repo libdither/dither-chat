@@ -80,6 +80,7 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
   // Answering: the post a reply or quote is being written to, and what you posted here (first in the tree).
   const [answering, setAnswering] = useState<{ mode: 'reply' | 'quote'; post: P.PostFact } | null>(null);
   const [mine, setMine] = useState<P.PostView[]>([]);
+  const [acted, setActed] = useState<ReadonlyMap<string, { viewer: P.PostViewer; counts: P.PostFact['counts'] }>>(new Map());
   const scroller = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let live = true;
@@ -92,6 +93,7 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
     setFolded(new Set());
     setAnswering(null);
     setMine([]);
+    setActed(new Map());
     api<P.PostThreadView>('message' in src ? `/api/messages/${encodeURIComponent(src.message)}/thread` : `/api/posts/${src.network}/${src.post}/thread`).then(
       (v) => {
         if (!live) return;
@@ -198,10 +200,13 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
     network,
     onReply: (p) => setAnswering({ mode: 'reply', post: p }),
     onQuote: (p) => setAnswering({ mode: 'quote', post: p }),
+    acted,
+    onActed: (id, st) => setActed((m) => new Map(m).set(id, st)),
   };
   const composerFor = (p: P.PostFact) =>
     answering && answering.post.id === p.id ? (
       <PostComposer
+        key={`${answering.mode}:${p.id}`}
         network={network}
         target={answering.mode === 'quote' ? { quote: p } : { replyTo: p }}
         kit={kit}
@@ -267,10 +272,20 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
               ))}
               <Focal p={focal} kit={kit} network={network} joined={t.ancestors.length > 0} answer={answer}>
                 {/* The reply box under the post, one line until used, as X shows it; a quote of the post opens in its place. */}
-                {answering && answering.post.id === (focal.repostOf ?? focal).id ? (
-                  composerFor(focal.repostOf ?? focal)
+                {answering && answering.post.id === (focal.repostOf ?? focal).id && answering.mode === 'quote' ? (
+                  <div key="quote">{composerFor(focal.repostOf ?? focal)}</div>
                 ) : (
-                  <PostComposer network={network} target={{ replyTo: focal.repostOf ?? focal }} kit={kit} collapsed onPosted={(made) => posted(made, 'reply')} />
+                  // Reply under the post opens this box (focused), rather than a second one.
+                  <PostComposer
+                    key="reply"
+                    network={network}
+                    target={{ replyTo: focal.repostOf ?? focal }}
+                    kit={kit}
+                    collapsed={!(answering && answering.post.id === (focal.repostOf ?? focal).id)}
+                    autoFocus={!!(answering && answering.post.id === (focal.repostOf ?? focal).id)}
+                    onCancel={answering ? () => setAnswering(null) : undefined}
+                    onPosted={(made) => posted(made, 'reply')}
+                  />
                 )}
               </Focal>
               {nodes.length > 0 && (

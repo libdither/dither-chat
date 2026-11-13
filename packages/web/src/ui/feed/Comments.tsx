@@ -15,7 +15,7 @@
 import { Fragment, h, type ComponentChildren } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { openProfile } from '../../state.ts';
-import { useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Kit } from './lazy.tsx';
 import { Counts, Pics, QuotedIn, Row, Text, Who } from './Post.tsx';
 import { treeChains, type TreeNode } from './tree.ts';
@@ -30,9 +30,19 @@ export const COMMENT_STYLES: { id: CommentStyle; label: string; title: string }[
 /** The style menu: a quiet word beside Replies ("Tree ▾") that opens the four, each with what it is like. */
 export function StyleMenu({ style, pick, kit }: { style: CommentStyle; pick: (s: CommentStyle) => void; kit: Kit }) {
   const [open, setOpen] = useState(false);
+  const box = useRef<HTMLSpanElement>(null);
+  // Closes on a press outside it, as a menu does.
+  useEffect(() => {
+    if (!open) return;
+    const down = (e: PointerEvent) => !box.current?.contains(e.target as Node) && setOpen(false);
+    const key = (e: KeyboardEvent) => e.key === 'Escape' && (setOpen(false), box.current?.querySelector<HTMLElement>('.ct-style-btn')?.focus());
+    addEventListener('pointerdown', down, true);
+    addEventListener('keydown', key);
+    return () => (removeEventListener('pointerdown', down, true), removeEventListener('keydown', key));
+  }, [open]);
   const current = COMMENT_STYLES.find((s) => s.id === style)!;
   return (
-    <span class="ct-style" onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}>
+    <span class="ct-style" ref={box}>
       <button class="ct-style-btn" aria-haspopup="menu" aria-expanded={open} title="How replies are drawn" onClick={() => setOpen(!open)}>
         {current.label} <kit.Icon name="chevronDown" size={12} />
       </button>

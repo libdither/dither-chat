@@ -243,6 +243,8 @@ export class DemoX implements InprocAdapter {
   private liked = new Set<string>();
   private reposted = new Set<string>();
   private made: P.PostFact[] = [];
+  /** The next like or repost is refused (action failNextAct): the verify script sees the page take it back. */
+  private failNext = false;
   private postLog: { post: string; cursor?: string; at: number }[] = [];
 
   constructor(
@@ -309,6 +311,10 @@ export class DemoX implements InprocAdapter {
         return reply({ ...t, ...(t.focal ? { focal: v(t.focal) } : {}), ancestors: t.ancestors.map(v), replies: t.replies.map((c) => c.map(v)) } satisfies P.PostThread);
       }
       case 'postAct': {
+        if (this.failNext) {
+          this.failNext = false;
+          return fail('X said no (the demo was asked to refuse this one)');
+        }
         const on = !cmd.act.startsWith('un');
         const set = cmd.act.endsWith('like') ? this.liked : this.reposted;
         if (on) set.add(cmd.post);
@@ -367,7 +373,7 @@ export class DemoX implements InprocAdapter {
         this.refused.push(`${cmd.t}:${cmd.conversation}`);
         return fail('the demo X account sends nothing');
       case 'action':
-        return reply(cmd.action === 'readLog' ? { reads: this.readLog } : cmd.action === 'typingLog' ? { typing: this.typingLog } : cmd.action === 'sendLog' ? { sent: this.refused } : cmd.action === 'postLog' ? { posts: this.postLog } : cmd.action === 'writeLog' ? { writes: this.writes } : { note: 'demo X has no such action' });
+        return reply(cmd.action === 'readLog' ? { reads: this.readLog } : cmd.action === 'typingLog' ? { typing: this.typingLog } : cmd.action === 'sendLog' ? { sent: this.refused } : cmd.action === 'postLog' ? { posts: this.postLog } : cmd.action === 'writeLog' ? { writes: this.writes } : cmd.action === 'failNextAct' ? ((this.failNext = true), { note: 'the next like or repost is refused' }) : { note: 'demo X has no such action' });
       default:
         if ('id' in cmd) fail('the demo X account cannot do that');
     }

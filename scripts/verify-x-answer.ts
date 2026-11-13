@@ -139,12 +139,12 @@ try {
   await until(async () => (await writes())!.length > w0, 5000, 'the like did not reach X');
   check('a like shows at once (42) and reaches X once', (await writes())!.slice(w0).join() === 'postAct:like', (await writes())!.slice(w0));
   await page.eval(`document.querySelector('.thread-focal .pa-btn.repost').click()`);
-  await page.until(`!!document.querySelector('.thread-focal .pa-menu')`, 3000);
-  const menu = await page.eval<string[]>(`[...document.querySelectorAll('.thread-focal .pa-menu button')].map((b) => b.textContent.trim())`);
+  await page.until(`!!document.querySelector('.pa-float.pa-menu')`, 3000);
+  const menu = await page.eval<string[]>(`[...document.querySelectorAll('.pa-float.pa-menu button')].map((b) => b.textContent.trim())`);
   check('repost asks, as X does: Repost or Quote', menu.join('|') === 'Repost|Quote', menu);
   if (shots) await page.shot(join(shots, 'answer-repost-menu.png'));
   w0 = (await writes())!.length;
-  await page.eval(`document.querySelector('.thread-focal .pa-menu button').click()`);
+  await page.eval(`document.querySelector('.pa-float.pa-menu button').click()`);
   await page.until(`document.querySelector('.thread-focal .pa-btn.repost').classList.contains('on')`, 5000);
   await until(async () => (await writes())!.length > w0, 5000, 'the repost did not reach X');
   check('Repost reposts', (await writes())!.slice(w0).join() === 'postAct:repost');
@@ -154,8 +154,27 @@ try {
   const kept = await page.eval<any>(`({ liked: document.querySelector('${focalLike}').classList.contains('on'), reposted: document.querySelector('.thread-focal .pa-btn.repost').classList.contains('on') })`);
   check('read again, X says you liked and reposted it', kept.liked && kept.reposted, kept);
 
+  // A refusal takes back only what it refused.
+  await action('failNextAct');
+  const firstReply = `[...document.querySelectorAll('.ct-node[data-depth="0"]')][0]`;
+  await page.eval(`${firstReply}.querySelector(':scope > .ct-main .pa-btn.like').click()`);
+  await page.until(`!${firstReply}.querySelector(':scope > .ct-main .pa-btn.like').classList.contains('on') && !!document.querySelector('.toast')`, 8000).then(
+    () => check('a like X refuses goes back, with a toast saying why', true),
+    () => check('a like X refuses goes back, with a toast saying why', false),
+  );
+
   // ------------------------------------------------------------------ the composer, counting as X counts
-  await page.eval(`document.querySelector('.thread-focal .compose-closed').click()`);
+  await page.eval(`document.querySelector('.thread-focal .post-actions .pa-btn.reply').click()`);
+  await page.until(`document.activeElement?.classList.contains('compose-text') && !!document.activeElement.closest('.thread-focal')`, 3000).then(
+    () => check('Reply on the post opens its reply box, focused', true),
+    () => check('Reply on the post opens its reply box, focused', false),
+  );
+  await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await page.until(`!!document.querySelector('.thread-focal .compose-closed')`, 3000).then(
+    () => check('Escape on the empty box folds it back to one line', true),
+    () => check('Escape on the empty box folds it back to one line', false),
+  );
+  await page.eval(`document.querySelector('.thread-focal .compose-closed')?.click()`);
   await page.until(`!!document.querySelector('.thread-focal .compose-text')`, 3000);
   const ring = () => page.eval<any>(`(() => { const c = document.querySelector('.thread-focal .composer'); return { level: [...c.classList].find((x) => ['ok', 'warn', 'over'].includes(x)), n: c.querySelector('.ring-n')?.textContent ?? null, svg: !!c.querySelector('.compose-ring svg'), mark: c.querySelector('.compose-back mark')?.textContent ?? null, send: !c.querySelector('.compose-send').disabled, to: c.querySelector('.compose-to')?.textContent ?? null }; })()`);
   await type('.thread-focal .compose-text', 'a'.repeat(100));
@@ -185,6 +204,14 @@ try {
   check('Post: the reply is at the top of the tree, yours (OP)', top.who === 'You' && top.op, top);
   check('…and reached X once', (await writes())!.slice(w0).join() === 'publish', (await writes())!.slice(w0));
   check('…the box is empty again', (await page.eval<string>(`document.querySelector('.thread-focal .compose-text, .thread-focal .compose-closed')?.value ?? ''`)) === '');
+  // A second reply from the same box is a second post, not the first one again.
+  w0 = (await writes())!.length;
+  if (!(await page.eval<boolean>(`!!document.querySelector('.thread-focal .compose-text')`))) await page.eval(`document.querySelector('.thread-focal .compose-closed').click()`);
+  await page.until(`!!document.querySelector('.thread-focal .compose-text')`, 3000);
+  await type('.thread-focal .compose-text', 'And the simulator runs in the browser now.');
+  await page.eval(`document.querySelector('.thread-focal .compose-send').click()`);
+  await page.until(`[...document.querySelectorAll('.ct-node[data-depth="0"]')][0]?.textContent.includes('runs in the browser now')`, 10000);
+  check('a second reply from the same box posts too', (await writes())!.slice(w0).join() === 'publish', (await writes())!.slice(w0));
   if (shots) await page.shot(join(shots, 'answer-replied.png'));
 
   // ------------------------------------------------------------------ a reply to a reply; a quote
@@ -197,8 +224,8 @@ try {
   await page.until(`!document.querySelector('.ct-node .composer')`, 3000);
   check('Escape closes it', true);
   await page.eval(`[...document.querySelectorAll('.ct-node')].find((n) => n.querySelector(':scope > .ct-main .post-who b')?.textContent === 'Alice Chen').querySelector(':scope > .ct-main .pa-btn.repost').click()`);
-  await page.until(`!!document.querySelector('.ct-node .pa-menu')`, 3000);
-  await page.eval(`[...document.querySelectorAll('.ct-node .pa-menu button')].find((b) => /Quote/.test(b.textContent)).click()`);
+  await page.until(`!!document.querySelector('.pa-float.pa-menu')`, 3000);
+  await page.eval(`[...document.querySelectorAll('.pa-float.pa-menu button')].find((b) => /Quote/.test(b.textContent)).click()`);
   await page.until(`!!document.querySelector('.composer[data-composer="quote"] .post-quoted')`, 3000);
   w0 = (await writes())!.length;
   await type('.composer[data-composer="quote"] .compose-text', 'The best question in the thread.');
@@ -211,7 +238,24 @@ try {
   const ravisTitle = await page.eval<string>(`[...document.querySelectorAll('.ct-node')].find((n) => n.querySelector(':scope > .ct-main .post-who b')?.textContent === 'Ravi').querySelector(':scope > .ct-main .pa-btn.like').title`);
   check("someone else's post: no list of who liked it (X shows it only to its author)", !/hover to see who/.test(ravisTitle), ravisTitle);
 
+  // ------------------------------------------------------------------ in Chains the menu is over the page, not clipped
+  await page.eval(`document.querySelector('.ct-style-btn').click()`);
+  await page.eval(`[...document.querySelectorAll('.ct-style-menu button')].find((b) => /Chains/.test(b.textContent)).click()`);
+  await page.until(`document.querySelectorAll('.thread-chain .thread-post.line').length > 0`, 3000);
+  await page.eval(`document.querySelector('.thread-chain .thread-post.line .pa-btn.repost').click()`);
+  await page.until(`!!document.querySelector('.pa-float.pa-menu')`, 3000);
+  const vis = await page.eval<any>(`(() => { const m = document.querySelector('.pa-float.pa-menu').getBoundingClientRect(); const hit = document.elementFromPoint(m.x + m.width / 2, m.y + m.height / 2); return { h: Math.round(m.height), onTop: !!hit?.closest('.pa-menu'), inWindow: m.bottom <= innerHeight && m.top >= 0 }; })()`);
+  check('in Chains the repost menu is whole and on top (not clipped by the chain)', vis.h > 50 && vis.onTop && vis.inWindow, vis);
+  await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 30, y: 300, button: 'left', clickCount: 1 });
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 30, y: 300, button: 'left', clickCount: 1 });
+  await page.until(`!document.querySelector('.pa-float.pa-menu')`, 3000).then(
+    () => check('…and a press outside closes it', true),
+    () => check('…and a press outside closes it', false),
+  );
+
   // ------------------------------------------------------------------ the style menu, out of the way
+  await page.eval(`document.querySelector('.ct-style-btn').click()`);
+  await page.eval(`[...document.querySelectorAll('.ct-style-menu button')].find((b) => /Tree/.test(b.querySelector('b').textContent)).click()`);
   const st = await page.eval<any>(`({ btn: document.querySelector('.ct-style-btn')?.textContent.trim(), segmented: document.querySelectorAll('.thread-replies-bar .feed-tab').length })`);
   check('the style is a quiet word beside Replies ("Tree"), not four buttons', st.btn === 'Tree' && st.segmented === 0, st);
   await page.eval(`document.querySelector('.ct-style-btn').click()`);
@@ -246,7 +290,7 @@ try {
   if (shots) await page.shot(join(shots, 'answer-likers-phone.png'));
 
   const final = (await writes())!;
-  check('X got exactly the presses made: like, repost, a reply, a quote', final.join() === 'postAct:like,postAct:repost,publish,publish', final);
+  check('X got exactly the presses made: like, repost, the refused like, two replies, a quote', final.join() === 'postAct:like,postAct:repost,postAct:like,publish,publish,publish', final);
   const errors = page.errors.filter((e) => !/WebSocket connection|Failed to load resource/.test(e));
   check('no script errors', !errors.length, errors);
 } catch (e) {

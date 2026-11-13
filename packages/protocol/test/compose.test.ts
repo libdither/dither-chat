@@ -40,3 +40,23 @@ test("Reddit's rules: 10,000 characters as read, a line from 1,000 left, Markdow
   expect(REDDIT_RULES.markdown).toBe(true);
   expect(REDDIT_RULES.likersVisible).toBe('none');
 });
+
+test("what X does not link counts as written: emails, @handles, a bare country ending without a path", () => {
+  expect(postLength('user@example.com', X)).toBe(16);
+  expect(postLength('@foo.com', X)).toBe(8);
+  expect(postLength('Read.me now', X)).toBe(11);
+  expect(postLength('e.g. file.txt', X)).toBe(13);
+  // .co and .tv bare are links; any country ending with a path is.
+  expect(postLength('t.co', X)).toBe(23);
+  expect(postLength('youtu.be/abc', X)).toBe(23);
+  expect(postLength('see redd.it/x and amzn.to/x', X)).toBe(4 + 23 + 5 + 23);
+});
+
+test('a bracket the link opened stays in it; © and ® alone are one each; only invisible characters are nothing to send', () => {
+  expect(postLength('http://x.com/a_(b)', X)).toBe(23);
+  expect(postLength('(see http://x.com/a)', X)).toBe(1 + 4 + 23 + 1);
+  expect(postLength('© ®', X)).toBe(3);
+  expect(postLength('©️', X)).toBe(2);
+  expect(composeState('​', X).sendable).toBe(false);
+  expect(composeState('​ hi', X).sendable).toBe(true);
+});

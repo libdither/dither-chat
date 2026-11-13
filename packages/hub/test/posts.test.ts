@@ -264,6 +264,51 @@ describe('answering (docs/feed.md "Answering")', () => {
     expect([...t.replies.flat(), ...(t.logged ?? [])].some((p) => p.id === a.id)).toBe(true);
   });
 
+  test('a key is one post: something else under it is refused, a refusal frees it, no answer keeps it', async () => {
+    const posts = new Posts(deps());
+    const id = routingId();
+    await posts.publish('x', { text: 'First.', replyTo: id, key: 'k2' });
+    await expect(posts.publish('x', { text: 'Second, from the same box.', replyTo: id, key: 'k2' })).rejects.toMatchObject({ status: 409 });
+    // The network says no: nothing posted, the same key tries again and posts.
+    let calls = 0;
+    let mode: 'refuse' | 'ok' | 'timeout' = 'refuse';
+    const flaky = new Posts({
+      ...deps(),
+      command: async <T,>(a: string, cmd: object, t?: number) => {
+        if ((cmd as { t: string }).t !== 'publish') return deps().command<T>(a, cmd, t);
+        calls++;
+        if (mode === 'refuse') throw new Error('You already said that');
+        if (mode === 'timeout') throw new Error('adapter timed out on publish');
+        return deps().command<T>(a, cmd, t);
+      },
+    });
+    await expect(flaky.publish('x', { text: 'Retry me.', key: 'k3' })).rejects.toMatchObject({ status: 502 });
+    mode = 'ok';
+    await flaky.publish('x', { text: 'Retry me.', key: 'k3' });
+    expect(calls).toBe(2);
+    // No answer: it may have posted, so a retry with the key does not post again.
+    mode = 'timeout';
+    await expect(flaky.publish('x', { text: 'Slow.', key: 'k4' })).rejects.toMatchObject({ status: 504, message: expect.stringContaining('may still have posted') });
+    mode = 'ok';
+    await expect(flaky.publish('x', { text: 'Slow.', key: 'k4' })).rejects.toMatchObject({ status: 504 });
+    expect(calls).toBe(3);
+  });
+
+  test("a like shows in a thread read from the two-minute read too; who reacted is asked once in five minutes", async () => {
+    const posts = new Posts(deps());
+    const id = routingId();
+    const first = await posts.thread('x', id);
+    const reply = first.replies[1][0].id;
+    await posts.act('x', reply, 'like');
+    const again = await posts.thread('x', id);
+    expect(again.replies.flat().find((p) => p.id === reply)!.viewer?.liked).toBe(true);
+    await posts.act('x', reply, 'unlike');
+    const n = sent.filter((c) => c.t === 'postReactors').length;
+    await posts.reactors('x', id, 'repost');
+    await posts.reactors('x', id, 'repost');
+    expect(sent.filter((c) => c.t === 'postReactors').length).toBe(n + 1);
+  });
+
   test("a quote names the post it quotes; a post too long by X's count, or empty, is refused and nothing is sent", async () => {
     const posts = new Posts(deps());
     const n = sent.length;

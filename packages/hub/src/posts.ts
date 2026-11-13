@@ -69,6 +69,11 @@ const THREAD_TIMEOUT_MS = 150_000;
 const WRITE_TIMEOUT_MS = 60_000;
 /** A post sent with the same key within this long is the same post: a second press or a retried request posts once. */
 const PUBLISH_DEDUPE_MS = 10 * 60_000;
+/** Who reacted is asked again after this long (a like or repost of yours clears it at once). */
+const REACTORS_CACHE_MS = 5 * 60_000;
+
+/** The network may have done it: the adapter stopped answering, not refused (as server.ts unknownOutcome). */
+const unknownOutcome = (e: unknown) => /timed out|disconnected mid/i.test(String((e as Error)?.message ?? e));
 
 /** A refusal in words, with the HTTP status the route answers with. */
 export class PostsError extends Error {
@@ -185,6 +190,7 @@ export class Posts {
     try {
       viewer = (await this.d.command<P.PostViewer>(accountId, { t: 'postAct', post, act }, WRITE_TIMEOUT_MS)) ?? {};
     } catch (e) {
+      if (unknownOutcome(e)) throw new PostsError(`${NETWORK_META[network].name} did not answer in ${WRITE_TIMEOUT_MS / 1000} seconds. It may still have gone through: look again in a minute.`, 504);
       throw new PostsError((e as Error).message, 502);
     }
     const had = this.loggedPost(network, post);
@@ -198,10 +204,11 @@ export class Posts {
     const next: P.PostFact = { ...had, counts, viewer: { ...had.viewer, ...viewer, [key]: now } };
     this.log(accountId, [next]);
     this.forget(network, post);
+    for (const k of this.reactorsSeen.keys()) if (k.startsWith(`${network}:${post}:`)) this.reactorsSeen.delete(k);
     return { post: this.viewOf(network, accountId, next), viewer: next.viewer! };
   }
 
-  private publishing = new Map<string, { at: number; p: Promise<P.PostView> }>();
+  private publishing = new Map<string, { at: number; p: Promise<P.PostView>; sig: string }>();
 
   /**
    * Write a post: a reply (`replyTo`), a quote (`quote`) or a new one, checked against the network's rules first
@@ -211,13 +218,19 @@ export class Posts {
   publish(network: P.Network, b: { text?: unknown; replyTo?: unknown; quote?: unknown; key?: unknown }): Promise<P.PostView> {
     const key = typeof b.key === 'string' && b.key.length <= 100 ? `${network}:${b.key}` : null;
     for (const [k, v] of this.publishing) if (Date.now() - v.at > PUBLISH_DEDUPE_MS) this.publishing.delete(k);
+    const sig = JSON.stringify([b.text, b.replyTo ?? null, b.quote ?? null]);
     const had = key ? this.publishing.get(key) : null;
-    if (had) return had.p;
+    // The same post again (a double press, a retried request): the first answer. Something else under the same key is
+    // a page that kept its key by mistake: refused rather than dropped.
+    if (had) return had.sig === sig ? had.p : Promise.reject(new PostsError('This box already posted something else: open a new one to post again.', 409));
     const p = this.write(network, b);
     if (key) {
-      this.publishing.set(key, { at: Date.now(), p });
-      // A refusal or a failure posted nothing: the same key may try again.
-      p.catch(() => this.publishing.delete(key));
+      this.publishing.set(key, { at: Date.now(), p, sig });
+      // Refused, or failed with the network's own answer: nothing was posted, the same key may try again. No answer at
+      // all (504): it may have been posted, so the key stays and a retry is answered with this, not a second post.
+      p.catch((e) => {
+        if (!(e instanceof PostsError && e.status === 504)) this.publishing.delete(key);
+      });
     }
     return p;
   }
@@ -243,9 +256,10 @@ export class Posts {
     try {
       made = await this.d.command<P.PostFact>(accountId, { t: 'publish', text, ...(replyTo ? { replyTo } : {}), ...(quote ? { quote } : {}) }, WRITE_TIMEOUT_MS);
     } catch (e) {
+      if (unknownOutcome(e)) throw new PostsError(`${net} did not answer in ${WRITE_TIMEOUT_MS / 1000} seconds. It may still have posted: look on ${net} before posting again.`, 504);
       throw new PostsError((e as Error).message, 502);
     }
-    if (!made?.id) throw new PostsError(`${net} did not say what it posted.`, 502);
+    if (!made?.id) throw new PostsError(`${net} did not say what it posted. It may have posted: look on ${net} before posting again.`, 504);
     // What it answers, as X may leave it out of the made post.
     const p: P.PostFact = { ...made, ...(replyTo && !made.replyTo ? { replyTo: { id: replyTo } } : {}) };
     this.log(accountId, [p]);
@@ -258,11 +272,24 @@ export class Posts {
     this.recent.delete(`${network}:${post}:`);
   }
 
+  private reactorsSeen = new Map<string, { at: number; p: Promise<P.ReactorsView> }>();
+
   /**
-   * Who liked or reposted a post, ranked for you (reactors.ts). From the network when an account can ask (X shows
-   * likers only to the post's author); else the people your notifications named.
+   * Who liked or reposted a post, ranked for you (reactors.ts). Hovering a button asks: an answer is reused for five
+   * minutes (and a read in flight shared), so hovering back and forth asks X once.
    */
-  async reactors(network: P.Network, post: string, kind: 'like' | 'repost', cursor?: string): Promise<P.ReactorsView> {
+  reactors(network: P.Network, post: string, kind: 'like' | 'repost', cursor?: string): Promise<P.ReactorsView> {
+    const key = `${network}:${post}:${kind}:${cursor ?? ''}`;
+    for (const [k, v] of this.reactorsSeen) if (Date.now() - v.at > REACTORS_CACHE_MS) this.reactorsSeen.delete(k);
+    const had = this.reactorsSeen.get(key);
+    if (had) return had.p;
+    const p = this.readReactors(network, post, kind, cursor);
+    this.reactorsSeen.set(key, { at: Date.now(), p });
+    p.catch(() => this.reactorsSeen.delete(key));
+    return p;
+  }
+
+  private async readReactors(network: P.Network, post: string, kind: 'like' | 'repost', cursor?: string): Promise<P.ReactorsView> {
     const s = this.d.store;
     const net = NETWORK_META[network].name;
     const rules = postRulesFor(network);
@@ -357,8 +384,14 @@ export class Posts {
     const media = (u: string) => s.mediaUrl(u, accountId);
     const one = (p: P.PostFact): P.PostView => {
       const shown = p.repostOf ?? p;
-      const m = s.one<Row>('SELECT id FROM message WHERE id = ?', hubId('msg', network, postNativeId(shown.id)));
-      return { ...postView(p, network, media), messageId: m?.id ?? null };
+      const m = s.one<Row>('SELECT id, extra FROM message WHERE id = ?', hubId('msg', network, postNativeId(shown.id)));
+      // What you did to it and its counts as logged: a like since a cached read shows (log() keeps them current).
+      let kept: P.PostFact | null = null;
+      try {
+        kept = m?.extra ? ((JSON.parse(m.extra) as { post?: P.PostFact }).post ?? null) : null;
+      } catch {}
+      const q = kept && p === shown ? { ...p, ...(kept.viewer ? { viewer: kept.viewer } : {}), ...(kept.counts ? { counts: kept.counts } : {}) } : p;
+      return { ...postView(q, network, media), messageId: m?.id ?? null };
     };
     const shown = [...(t.focal ? [t.focal] : []), ...t.ancestors, ...t.replies.flat()];
     const ids = new Set(shown.map((p) => p.id));

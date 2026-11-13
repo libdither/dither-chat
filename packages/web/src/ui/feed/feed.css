@@ -876,13 +876,19 @@
   padding: 5px 8px;
   font-size: 12.5px;
 }
-.pa-menu,
-.pa-pop,
+/* Over the page at the body (Actions.tsx Floating): no scrolling box clips them. */
+.pa-float {
+  position: fixed;
+  z-index: 120;
+}
 .ct-style-menu {
   position: absolute;
   z-index: 30;
   top: calc(100% + 4px);
-  left: 0;
+}
+.pa-menu,
+.pa-pop,
+.ct-style-menu {
   min-width: 180px;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -905,7 +911,7 @@
   background: var(--bg-hover);
 }
 .pa-pop {
-  width: 340px;
+  width: min(340px, calc(100vw - 16px));
   max-height: 380px;
   overflow-y: auto;
 }
@@ -1004,6 +1010,8 @@
 }
 .compose-back,
 .compose-text {
+  /* The same width for the marks behind as for the text, scrollbar or not. */
+  scrollbar-gutter: stable;
   font: inherit;
   font-size: 15px;
   line-height: 1.45;

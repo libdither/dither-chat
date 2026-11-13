@@ -19,7 +19,7 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 // Its own path, so the rules ride in this chunk, not the app's start.
 import { composeState, postRulesFor, type PostRules } from '@dither-chat/protocol/compose';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { api } from '../../state.ts';
 import type { Kit } from './lazy.tsx';
 import { QuotedIn } from './Post.tsx';
@@ -45,7 +45,7 @@ const keepDraft = (k: string, v: string) => {
 function Ring({ st, rules }: { st: ReturnType<typeof composeState>; rules: PostRules }) {
   if (rules.counter === 'text')
     return st.showCount ? (
-      <span class={`compose-left ${st.level}`} aria-live="polite">
+      <span class={`compose-left ${st.level}`}>
         {st.remaining >= 0 ? `${st.remaining.toLocaleString()} left` : `${(-st.remaining).toLocaleString()} too many`}
       </span>
     ) : null;
@@ -54,7 +54,7 @@ function Ring({ st, rules }: { st: ReturnType<typeof composeState>; rules: PostR
   const c = 2 * Math.PI * r;
   const size = (r + 3) * 2;
   return (
-    <span class={`compose-ring ${st.level} ${big ? 'big' : ''}`} aria-live="polite" aria-label={st.showCount ? `${st.remaining} characters left` : undefined}>
+    <span class={`compose-ring ${st.level} ${big ? 'big' : ''}`} aria-hidden={!st.showCount} title={st.showCount ? `${st.remaining} left` : undefined}>
       {st.showRing && (
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
           <circle cx={size / 2} cy={size / 2} r={r} class="ring-track" />
@@ -96,13 +96,26 @@ export function PostComposer({
   const [text, setText] = useState(() => readDraft(draftKey));
   const [open, setOpen] = useState(!collapsed || !!text);
   const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const key = useMemo(() => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`), [draftKey]);
+  const [error, setError] = useState<{ text: string; unsure: boolean } | null>(null);
+  // This post's key: the same press again is the same post (posts.ts). A new one after each post, or when you choose
+  // to post again after no answer.
+  const fresh = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+  const [key, setKey] = useState(fresh);
+  useEffect(() => setKey(fresh()), [draftKey]);
   const area = useRef<HTMLTextAreaElement>(null);
   const back = useRef<HTMLDivElement>(null);
+  // Reply pressed under the post: its one-line box opens.
   useEffect(() => {
-    if (autoFocus) area.current?.focus();
-  }, [autoFocus, draftKey]);
+    if (!collapsed) setOpen(true);
+    // Closed again with nothing written (Escape): back to one line. What you wrote keeps it open.
+    else if (!text) setOpen(false);
+  }, [collapsed]);
+  useEffect(() => {
+    if (!autoFocus || !area.current) return;
+    area.current.focus({ preventScroll: true });
+    // The whole box in view, its buttons too.
+    area.current.closest('.composer')?.scrollIntoView({ block: 'nearest' });
+  }, [autoFocus, draftKey, open]);
   useEffect(() => keepDraft(draftKey, text), [text, draftKey]);
   // The box grows with what is written.
   useLayoutEffect(() => {
@@ -127,11 +140,15 @@ export function PostComposer({
         setSending(false);
         setText('');
         keepDraft(draftKey, '');
+        setKey(fresh());
         onPosted(p);
       },
       (e) => {
         setSending(false);
-        setError((e as Error).message);
+        // No answer (504): it may have posted. The text stays, and the key: pressing Post again is answered with the
+        // same, never a second post. "Post again anyway" takes a new key, when you have looked.
+        setError({ text: (e as Error).message, unsure: (e as { status?: number }).status === 504 });
+        setTimeout(() => area.current?.focus());
       },
     );
   };
@@ -141,7 +158,7 @@ export function PostComposer({
   const label = target.quote ? words.quote : target.replyTo ? words.reply : words.post;
   if (!open)
     return (
-      <button class="compose-closed" onClick={() => (setOpen(true), setTimeout(() => area.current?.focus()))}>
+      <button class="compose-closed" onClick={() => (setOpen(true), setTimeout(() => area.current?.focus()))} data-composer="reply">
         <span>{target.replyTo ? words.replyPlaceholder : words.placeholder}</span>
         <span class="compose-closed-btn">{label}</span>
       </button>
@@ -182,11 +199,20 @@ export function PostComposer({
         />
       </div>
       {target.quote && <QuotedIn p={target.quote} kit={kit} network={network} />}
+      {/* Said once when it goes over or comes back, not at every key. */}
+      <span class="sr-only" aria-live="polite">
+        {st.level === 'over' ? `Too long by ${-st.remaining}` : ''}
+      </span>
       <div class="compose-foot">
         {rules.markdown && <span class="compose-hint">Markdown</span>}
         {error && (
           <span class="compose-error" role="alert">
-            {error}
+            {error.text}
+            {error.unsure && (
+              <button class="compose-again" onClick={() => (setKey(fresh()), setError(null))}>
+                Post again anyway
+              </button>
+            )}
           </span>
         )}
         <span class="compose-spacer" />

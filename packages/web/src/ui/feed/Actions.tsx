@@ -8,12 +8,12 @@
  * reacted): ranked for you by the hub (reactors.ts), each opening their profile. Where the network shows likers only
  * to the author (X), only your own posts' likers can be seen.
  */
-import { Fragment, h } from 'preact';
+import { createPortal, Fragment, h, type ComponentChildren } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 // Its own path, so the rules ride in this chunk, not the app's start.
 import { postRulesFor } from '@dither-chat/protocol/compose';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { api, db, openProfile } from '../../state.ts';
 import type { Kit } from './lazy.tsx';
 
@@ -27,6 +27,70 @@ export interface AnswerCtx {
   onReply?: (p: P.PostFact) => void;
   /** Quote this post. */
   onQuote?: (p: P.PostFact) => void;
+  /**
+   * What you did to posts on this page, kept by the page so a bar drawn again (another style, a branch unfolded)
+   * shows it: the post's viewer and counts as last changed here.
+   */
+  acted?: ReadonlyMap<string, { viewer: P.PostViewer; counts: P.PostFact['counts'] }>;
+  onActed?: (post: string, s: { viewer: P.PostViewer; counts: P.PostFact['counts'] }) => void;
+}
+
+/** Answers kept a while per post and kind: hovering back and forth reads once (the hub keeps them too). */
+const seen = new Map<string, { at: number; v: P.ReactorsView }>();
+const SEEN_MS = 5 * 60_000;
+
+/**
+ * A panel over the page, at the body so no scrolling box clips it (a chain's `overflow: hidden`): under its anchor,
+ * above when there is no room, inside the window. Closes on Escape and on a press outside it and its anchor.
+ */
+function Floating({ anchor, onClose, children, label, role = 'dialog', hover }: { anchor: HTMLElement | null; onClose: () => void; children: ComponentChildren; label: string; role?: 'dialog' | 'menu'; hover?: { enter: () => void; leave: () => void } }) {
+  const panel = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  useLayoutEffect(() => {
+    const place = () => {
+      const a = anchor?.getBoundingClientRect();
+      const el = panel.current;
+      if (!a || !el) return;
+      const w = el.offsetWidth;
+      const h = el.offsetHeight;
+      const below = a.bottom + 6 + h <= innerHeight - 8 || a.top - 6 - h < 8;
+      setPos({ top: below ? a.bottom + 6 : a.top - 6 - h, left: Math.max(8, Math.min(a.left, innerWidth - w - 8)) });
+    };
+    place();
+    const ro = new ResizeObserver(place);
+    if (panel.current) ro.observe(panel.current);
+    addEventListener('scroll', place, true);
+    addEventListener('resize', place);
+    return () => (ro.disconnect(), removeEventListener('scroll', place, true), removeEventListener('resize', place));
+  }, [anchor]);
+  useEffect(() => {
+    const down = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!panel.current?.contains(t) && !anchor?.contains(t)) onClose();
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      onClose();
+      anchor?.focus();
+    };
+    addEventListener('pointerdown', down, true);
+    addEventListener('keydown', key);
+    return () => (removeEventListener('pointerdown', down, true), removeEventListener('keydown', key));
+  }, [anchor]);
+  return createPortal(
+    <div
+      ref={panel}
+      class={`pa-float ${role === 'menu' ? 'pa-menu' : 'pa-pop'}`}
+      role={role}
+      aria-label={label}
+      style={pos ? { top: `${pos.top}px`, left: `${pos.left}px` } : { visibility: 'hidden', top: '0', left: '0' }}
+      onPointerEnter={hover?.enter}
+      onPointerLeave={hover?.leave}
+    >
+      {children}
+    </div>,
+    document.body,
+  );
 }
 
 /** Who liked or reposted, ranked: a page from the hub, more on asking. */
@@ -37,13 +101,19 @@ export function ReactorsList({ network, post, kind, kit, count, compact }: { net
   const take = (page: P.ReactorsView) => page.identities.forEach((i) => db.identities.has(i.id) || db.identities.set(i.id, i));
   useEffect(() => {
     let live = true;
+    const k = `${network}:${post}:${kind}`;
+    const had = seen.get(k);
+    if (had && Date.now() - had.at < SEEN_MS) {
+      setV(had.v);
+      return;
+    }
     setV(null);
     setError(null);
     api<P.ReactorsView>(`/api/posts/${network}/${post}/reactors?kind=${kind}`).then(
       (page) => {
-        if (!live) return;
         take(page);
-        setV(page);
+        seen.set(k, { at: Date.now(), v: page });
+        if (live) setV(page);
       },
       (e) => live && setError((e as Error).message),
     );
@@ -55,8 +125,11 @@ export function ReactorsList({ network, post, kind, kit, count, compact }: { net
     api<P.ReactorsView>(`/api/posts/${network}/${post}/reactors?kind=${kind}&cursor=${encodeURIComponent(v.more)}`).then(
       (page) => {
         take(page);
-        const seen = new Set(v.people.map((p) => p.identityId));
-        setV({ ...v, people: [...v.people, ...page.people.filter((p) => !seen.has(p.identityId))], more: page.more });
+        const have = new Set(v.people.map((p) => p.identityId));
+        // One list, most relevant first across the pages read.
+        const next = { ...v, people: [...v.people, ...page.people.filter((p) => !have.has(p.identityId))].sort((a, b) => b.score - a.score), more: page.more };
+        seen.set(`${network}:${post}:${kind}`, { at: Date.now(), v: next });
+        setV(next);
         setMore(false);
       },
       () => setMore(false),
@@ -123,51 +196,75 @@ function CountButton({
   who,
   kit,
   disabled,
+  menu,
 }: {
   kind: 'reply' | 'repost' | 'like';
   on: boolean;
   n?: number;
   label: string;
-  onPress: (e: MouseEvent) => void;
+  onPress: () => void;
   who: (() => h.JSX.Element) | null;
   kit: Kit;
   disabled?: boolean;
+  /** It opens a menu (Repost): said to assistive tech, and the menu drawn over the page. */
+  menu?: { open: boolean; close: () => void; items: ComponentChildren };
 }) {
   const [shown, setShown] = useState<'pop' | 'sheet' | null>(null);
+  const btn = useRef<HTMLButtonElement>(null);
   const enter = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const leave = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const press = kit.useLongPress(() => who && setShown('sheet'));
-  const hover = {
-    onPointerEnter: (e: PointerEvent) => {
-      if (!who || e.pointerType === 'touch') return;
-      clearTimeout(leave.current);
-      enter.current = setTimeout(() => setShown('pop'), HOVER_MS);
-    },
-    onPointerLeave: () => {
-      clearTimeout(enter.current);
-      leave.current = setTimeout(() => setShown((s) => (s === 'pop' ? null : s)), LEAVE_MS);
-    },
+  const stay = () => clearTimeout(leave.current);
+  const go = () => {
+    clearTimeout(enter.current);
+    leave.current = setTimeout(() => setShown((s) => (s === 'pop' ? null : s)), LEAVE_MS);
   };
   useEffect(() => () => (clearTimeout(enter.current), clearTimeout(leave.current)), []);
   return (
-    <span class="pa-slot" {...hover}>
+    <span
+      class="pa-slot"
+      onPointerEnter={(e) => {
+        if (!who || e.pointerType === 'touch' || menu?.open) return;
+        stay();
+        enter.current = setTimeout(() => setShown('pop'), HOVER_MS);
+      }}
+      onPointerLeave={go}
+    >
       <button
+        ref={btn}
         class={`pa-btn ${kind} ${on ? 'on' : ''}`}
-        aria-pressed={kind === 'reply' ? undefined : on}
+        aria-pressed={kind === 'reply' || menu ? undefined : on}
+        aria-haspopup={menu ? 'menu' : undefined}
+        aria-expanded={menu ? menu.open : undefined}
         aria-label={`${label}${n !== undefined ? `, ${n.toLocaleString()}` : ''}`}
         title={who ? `${label} · hold or hover to see who` : label}
-        onClick={onPress}
+        onClick={(e) => {
+          e.stopPropagation();
+          // A press is not a hover: no list opening under the menu or after the like.
+          clearTimeout(enter.current);
+          setShown(null);
+          onPress();
+        }}
         disabled={disabled}
         {...press}
-        onKeyDown={(e) => who && (e.key === 'ArrowDown' || (e.key === 'Enter' && e.shiftKey)) && (e.preventDefault(), setShown('pop'))}
+        onKeyDown={(e) => {
+          // Holding Enter or Space would press it again and again.
+          if (e.repeat && (e.key === 'Enter' || e.key === ' ')) e.preventDefault();
+          if (who && e.key === 'ArrowDown') (e.preventDefault(), setShown('pop'));
+        }}
       >
         <kit.Icon name={kind === 'like' ? 'heart' : kind === 'repost' ? 'repeat' : 'reply'} size={16} />
         {n !== undefined && n > 0 && <span class="pa-n">{kit.feed.shortCount(n)}</span>}
       </button>
+      {menu?.open && (
+        <Floating anchor={btn.current} onClose={menu.close} label={label} role="menu">
+          {menu.items}
+        </Floating>
+      )}
       {shown === 'pop' && who && (
-        <div class="pa-pop" role="dialog" aria-label={kind === 'like' ? 'Liked by' : 'Reposted by'} onPointerEnter={() => clearTimeout(leave.current)} onKeyDown={(e) => e.key === 'Escape' && setShown(null)}>
+        <Floating anchor={btn.current} onClose={() => setShown(null)} label={kind === 'like' ? 'Liked by' : 'Reposted by'} hover={{ enter: stay, leave: go }}>
           {who()}
-        </div>
+        </Floating>
       )}
       {shown === 'sheet' && who && (
         <kit.Sheet onClose={() => setShown(null)} label={kind === 'like' ? 'Liked by' : 'Reposted by'}>
@@ -180,38 +277,55 @@ function CountButton({
 
 /**
  * The bar under a post: reply, repost (a menu: Repost or Undo, and Quote), like, views. `big`: under the post a
- * thread is about. Changes show at once; the network's answer settles them.
+ * thread is about. Changes show at once; the network's answer settles them, and a refusal takes back only its own.
  */
 export function PostActions({ p, ctx, big }: { p: P.PostFact; ctx: AnswerCtx; big?: boolean }) {
   const { kit, network } = ctx;
   const rules = postRulesFor(network);
-  const [viewer, setViewer] = useState<P.PostViewer>(p.viewer ?? {});
-  const [counts, setCounts] = useState(p.counts ?? {});
-  const [busy, setBusy] = useState<string | null>(null);
+  const kept = ctx.acted?.get(p.id);
+  const [viewer, setViewer] = useState<P.PostViewer>(kept?.viewer ?? p.viewer ?? {});
+  const [counts, setCounts] = useState(kept?.counts ?? p.counts ?? {});
+  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const [menu, setMenu] = useState(false);
   useEffect(() => {
-    setViewer(p.viewer ?? {});
-    setCounts(p.counts ?? {});
+    const k = ctx.acted?.get(p.id);
+    setViewer(k?.viewer ?? p.viewer ?? {});
+    setCounts(k?.counts ?? p.counts ?? {});
   }, [p.id, p.viewer?.liked, p.viewer?.reposted, p.counts?.likes, p.counts?.reposts]);
   if (!rules) return null;
   const mine = kit.isSelf(p.author ?? null);
   const act = (act: P.PostAct) => {
     const key = act.endsWith('like') ? 'liked' : 'reposted';
     const count = key === 'liked' ? 'likes' : 'reposts';
+    if (busy.has(key)) return;
     const on = !act.startsWith('un');
-    const before = { viewer, counts };
-    setViewer({ ...viewer, [key]: on });
-    if (counts[count] !== undefined && !!viewer[key] !== on) setCounts({ ...counts, [count]: Math.max(0, counts[count]! + (on ? 1 : -1)) });
-    setBusy(key);
+    const was = !!viewer[key];
+    const nextViewer = { ...viewer, [key]: on };
+    const nextCounts = counts[count] !== undefined && was !== on ? { ...counts, [count]: Math.max(0, counts[count]! + (on ? 1 : -1)) } : counts;
+    setViewer(nextViewer);
+    setCounts(nextCounts);
+    ctx.onActed?.(p.id, { viewer: nextViewer, counts: nextCounts });
+    setBusy((b) => new Set(b).add(key));
+    const done = () =>
+      setBusy((b) => {
+        const n = new Set(b);
+        n.delete(key);
+        return n;
+      });
     api<{ viewer: P.PostViewer }>(`/api/posts/${network}/${p.id}/act`, { method: 'POST', body: { act } }).then(
       (r) => {
-        setViewer((v) => ({ ...v, ...r.viewer }));
-        setBusy(null);
+        done();
+        setViewer((v) => {
+          const n = { ...v, [key]: r.viewer[key] ?? on };
+          ctx.onActed?.(p.id, { viewer: n, counts: nextCounts });
+          return n;
+        });
       },
       (e) => {
-        setViewer(before.viewer);
-        setCounts(before.counts);
-        setBusy(null);
+        done();
+        // Only this one goes back: a repost pressed meanwhile stands.
+        setViewer((v) => ({ ...v, [key]: was }));
+        setCounts((c) => (c[count] !== undefined && was !== on ? { ...c, [count]: Math.max(0, c[count]! + (on ? -1 : 1)) } : c));
         kit.toast({ title: `Could not ${act.replace(/^un/, 'undo ')}`, body: (e as Error).message, kind: 'error' });
       },
     );
@@ -221,32 +335,34 @@ export function PostActions({ p, ctx, big }: { p: P.PostFact; ctx: AnswerCtx; bi
   const list = (kind: 'like' | 'repost', n?: number) => () => <ReactorsList network={network} post={p.id} kind={kind} kit={kit} count={n} compact />;
   return (
     <div class={`post-actions ${big ? 'big' : ''}`} role="group" aria-label="Answer">
-      {rules.actions.reply && ctx.onReply && <CountButton kind="reply" on={false} n={counts.replies} label={rules.words.reply} onPress={(e) => (e.stopPropagation(), ctx.onReply!(p))} who={null} kit={kit} />}
+      {rules.actions.reply && ctx.onReply && <CountButton kind="reply" on={false} n={counts.replies} label={rules.words.reply} onPress={() => ctx.onReply!(p)} who={null} kit={kit} />}
       {rules.actions.repost && (
-        <span class="pa-menu-wrap">
-          <CountButton
-            kind="repost"
-            on={!!viewer.reposted}
-            n={counts.reposts}
-            label={viewer.reposted ? 'Undo repost' : 'Repost'}
-            onPress={(e) => (e.stopPropagation(), setMenu(!menu))}
-            who={(counts.reposts ?? 0) > 0 ? list('repost', counts.reposts) : null}
-            kit={kit}
-            disabled={busy === 'reposted'}
-          />
-          {menu && (
-            <div class="pa-menu" role="menu" onKeyDown={(e) => e.key === 'Escape' && setMenu(false)}>
-              <button role="menuitem" onClick={() => (setMenu(false), act(viewer.reposted ? 'unrepost' : 'repost'))}>
-                <kit.Icon name="repeat" size={14} /> {viewer.reposted ? 'Undo repost' : 'Repost'}
-              </button>
-              {rules.actions.quote && ctx.onQuote && (
-                <button role="menuitem" onClick={() => (setMenu(false), ctx.onQuote!(p))}>
-                  <kit.Icon name="quote" size={14} /> {rules.words.quote}
+        <CountButton
+          kind="repost"
+          on={!!viewer.reposted}
+          n={counts.reposts}
+          label={viewer.reposted ? 'Undo repost' : 'Repost'}
+          onPress={() => setMenu(!menu)}
+          who={(counts.reposts ?? 0) > 0 ? list('repost', counts.reposts) : null}
+          kit={kit}
+          disabled={busy.has('reposted')}
+          menu={{
+            open: menu,
+            close: () => setMenu(false),
+            items: (
+              <>
+                <button role="menuitem" autoFocus onClick={() => (setMenu(false), act(viewer.reposted ? 'unrepost' : 'repost'))}>
+                  <kit.Icon name="repeat" size={14} /> {viewer.reposted ? 'Undo repost' : 'Repost'}
                 </button>
-              )}
-            </div>
-          )}
-        </span>
+                {rules.actions.quote && ctx.onQuote && (
+                  <button role="menuitem" onClick={() => (setMenu(false), ctx.onQuote!(p))}>
+                    <kit.Icon name="quote" size={14} /> {rules.words.quote}
+                  </button>
+                )}
+              </>
+            ),
+          }}
+        />
       )}
       {rules.actions.like && (
         <CountButton
@@ -254,10 +370,10 @@ export function PostActions({ p, ctx, big }: { p: P.PostFact; ctx: AnswerCtx; bi
           on={!!viewer.liked}
           n={counts.likes}
           label={viewer.liked ? 'Unlike' : 'Like'}
-          onPress={(e) => (e.stopPropagation(), act(viewer.liked ? 'unlike' : 'like'))}
+          onPress={() => act(viewer.liked ? 'unlike' : 'like')}
           who={likers && (counts.likes ?? 0) > 0 ? list('like', counts.likes) : null}
           kit={kit}
-          disabled={busy === 'liked'}
+          disabled={busy.has('liked')}
         />
       )}
       {(counts.views ?? 0) > 0 && (

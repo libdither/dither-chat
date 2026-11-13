@@ -73,9 +73,27 @@ const LIGHT: readonly [number, number][] = [
   [8242, 8247],
 ];
 const light = (cp: number) => LIGHT.some(([a, b]) => cp >= a && cp <= b);
-// A link as X sees one: with its scheme, or a bare address on a common ending (twitter-text links those too).
-const URL = /\bhttps?:\/\/[^\s<>"]+|\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|org|net|io|dev|app|co|ai|gg|xyz|me|tv|fm|uk|de|fr|jp|ca|au|info|blog|link|ly|edu|gov)\b(?:\/[^\s<>"]*)?/giu;
-const EMOJI = /\p{Extended_Pictographic}|\p{Regional_Indicator}|⃣/u;
+// A link as X sees one (twitter-text's extractUrls, simplified): with its scheme anywhere; bare, on a known ending,
+// not inside an email address or an @handle. A bare two-letter (country) ending counts only with a path, except .co
+// and .tv, as twitter-text has it.
+const GENERIC = 'com|org|net|edu|gov|mil|int|info|biz|name|pro|io|ai|app|dev|page|link|live|news|blog|site|online|store|tech|club|xyz|art|wiki|social|space|studio|world|zone|tools|codes|cafe|moe|ink|garden|email|today|top|shop|games|media|network|cloud|software|systems';
+const COUNTRY = '[a-z]{2}';
+const URL = new RegExp(
+  `(?<![\\p{L}\\p{N}_@.\\-/])(?:https?://[^\\s<>"]+|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+(?:(${GENERIC})|(${COUNTRY}))(?![\\p{L}\\p{N}_\\-@])(/[^\\s<>"]*)?)`,
+  'giu',
+);
+// An emoji as X counts one (two): shown as a picture by default, asked for with VS16, a flag, a keycap, a ZWJ sequence.
+// © and ® alone are text (one).
+const EMOJI = /\p{Emoji_Presentation}|\p{Extended_Pictographic}\ufe0f|\p{Regional_Indicator}|\u20e3|\u200d/u;
+/** What does not count as something to send: spaces, and the invisible joiners and marks. */
+const BLANK = /[\s\u200b-\u200d\u2060\ufeff]/gu;
+
+/** Trailing punctuation that ends a sentence, not a link; a closing bracket stays when the link opened one. */
+function trimLink(raw: string): string {
+  let t = raw.replace(/[.,;:!?'"\]]+$/u, '');
+  while (t.endsWith(')') && (t.match(/\(/g)?.length ?? 0) < (t.match(/\)/g)?.length ?? 0)) t = t.slice(0, -1).replace(/[.,;:!?'"\]]+$/u, '');
+  return t;
+}
 
 // Made on first use: nothing runs when the module loads, so a bundle that does not count drops it.
 let segmenter: Intl.Segmenter | null | undefined;
@@ -95,8 +113,10 @@ function pieces(text: string, rules: PostRules): { at: number; end: number; weig
   }
   const links: [number, number][] = [];
   for (const m of t.matchAll(URL)) {
-    const raw = m[0].replace(/[.,;:!?'")\]]+$/u, '');
-    links.push([m.index!, m.index! + raw.length]);
+    // A bare country ending with no path is not a link ("read.me now"), but .co and .tv are.
+    if (m[2] && !m[3] && m[2].toLowerCase() !== 'co' && m[2].toLowerCase() !== 'tv') continue;
+    const raw = trimLink(m[0]);
+    if (raw) links.push([m.index!, m.index! + raw.length]);
   }
   let at = 0;
   let li = 0;
@@ -157,6 +177,6 @@ export function composeState(text: string, rules: PostRules): ComposeState {
     showCount: level !== 'ok',
     showRing: rules.counter === 'ring' && remaining >= -10,
     overFrom,
-    sendable: text.trim().length > 0 && remaining >= 0,
+    sendable: text.replace(BLANK, '').length > 0 && remaining >= 0,
   };
 }
