@@ -145,6 +145,21 @@ try {
   await until(() => page.eval(`[...document.querySelectorAll('.toast')].some(t => t.textContent.includes('Replied'))`), 10000, 'the reply toast');
   check('a reply goes, and says where', true);
 
+  // ------------------------------------------------------------------ a phone
+  await page.size(390, 844, true);
+  await page.goto(`${base}/#/inbox/c/${group.id}`);
+  await page.until(`!!document.querySelector('.app.phone .composer textarea')`, 20000);
+  await Bun.sleep(500);
+  const fit = await page.eval<{ sticker: boolean; mic: boolean; right: number; width: number }>(`(() => {
+    const r = (sel) => document.querySelector(sel)?.getBoundingClientRect();
+    return { sticker: !!r('.composer .composer-sticker'), mic: !!r('.composer .composer-mic'), right: Math.round(Math.max(r('.composer .composer-mic')?.right ?? 0, r('.composer-box')?.right ?? 0)), width: innerWidth };
+  })()`);
+  check('on a phone: sticker and microphone in the box, nothing past the edge', fit.sticker && fit.mic && fit.right <= fit.width, fit);
+  if (shots) await page.shot(join(shots, 'phone-composer.png'));
+  await click('.composer-plus');
+  await page.until(`!!document.querySelector('.attach-sheet')`, 5000);
+  check("the phone's attach sheet offers View once on Signal", await page.eval(`!!document.querySelector('.attach-sheet [data-track="view once"]')`));
+
   const errors = page.errors.filter((e) => !/WebSocket connection|Failed to load resource/.test(e));
   check('no script errors', !errors.length, errors);
 } catch (e) {
