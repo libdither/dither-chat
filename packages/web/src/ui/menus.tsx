@@ -37,6 +37,7 @@ import { canMarkUnread, markUnreadFrom } from '../unread.ts';
 import { openAttachment, openWith, save } from './fileopen.tsx';
 import { fileKind, fileMime, openFileViewer, VIEWABLE } from '../files.ts';
 import { inviteRef } from '../invites.ts';
+import { threadConvEntries, threadMessageEntries } from '../threads.ts';
 
 export { openAttachment };
 
@@ -192,6 +193,8 @@ function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): M
       // Apps' message commands (docs/apps.md): listed and run from a dialog of their own.
       live && can(m.conversationId, 'interactContext') && { label: 'Apps', icon: 'gamepad', track: 'message apps', run: () => (appsFor.value = m) },
       thread && { label: 'Open Thread', icon: 'thread', track: 'open thread', run: () => openConv(thread) },
+      // Create Thread, Publish (threads.ts).
+      ...threadMessageEntries(m),
       !!text.trim() && !m.deleted && m.kind !== 'encrypted' && { label: 'Copy Text', icon: 'copy', hint: 'C', track: 'copy text', run: () => copy(plainBody(text, m.network), 'Text copied') },
       { label: 'Copy Message Link', icon: 'link', track: 'copy link', run: () => copy(messageLink(m), 'Link copied') },
     ],
@@ -376,6 +379,8 @@ export function conversationMenu(c: P.ConversationView, why?: string[], owedSinc
         deviceEntries('conversation', c.id),
       ],
       c.shape !== 'thread' ? arrangeEntries(placeKey) : [],
+      // Follow a thread and how it notifies; start, post, browse threads (threads.ts).
+      threadConvEntries(c),
       [
         { label: `Copy ${channel ? 'Channel' : 'Chat'} ID`, icon: 'idBadge', run: () => copy(c.nativeId, 'ID copied') },
         { label: 'Copy dither-chat ID', icon: 'idBadge', run: () => copy(c.id, 'ID copied') },

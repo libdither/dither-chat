@@ -367,8 +367,10 @@ export async function leavePlace(kind: 'space' | 'conversation', id: string, nam
     return;
   }
   if (!confirm(`Leave ${name}?${l.warning ? `\n\n${l.warning}` : ''}\n\nYou stop getting its messages, and need an invite to come back.`)) return;
+  // Where the network can leave quietly (a Discord group DM): asked, never assumed.
+  const silent = l.silent === true && confirm(`Leave ${name} without telling the others?\n\nOK: quietly. Cancel: the group sees that you left.`);
   try {
-    await api<P.LeaveResult>(`/api/${kind === 'space' ? 'spaces' : 'conversations'}/${id}/leave`, { body: { ...(view.accountId ? { accountId: view.accountId } : {}) } });
+    await api<P.LeaveResult>(`/api/${kind === 'space' ? 'spaces' : 'conversations'}/${id}/leave`, { body: { ...(view.accountId ? { accountId: view.accountId } : {}), ...(silent ? { silent: true } : {}) } });
     toast({ kind: 'info', title: `You left ${name}`, body: '' }, 3000);
     go({ view: 'inbox' });
   } catch (e) {

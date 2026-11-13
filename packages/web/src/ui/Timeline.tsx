@@ -113,6 +113,7 @@ import { calendarOn } from '../plans.ts';
 import { PlanChipLazy } from './calendar/lazy.tsx';
 import { AltBadge, EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voice } from './rich/parts.tsx';
 import { VoicePeople } from './Ringing.tsx';
+import { ForumLazy } from './ThreadsLazy.tsx';
 
 
 // ------------------------------------------------------------------ header
@@ -1447,22 +1448,6 @@ function firstUnread(convs: P.ConversationView[]): number | null {
   return ts.length ? Math.min(...ts) : null;
 }
 
-function ForumView({ c }: { c: P.ConversationView }) {
-  const posts = threadsOf(c.id);
-  return (
-    <div class="forum">
-      {c.topic && <p class="forum-topic">{c.topic}</p>}
-      {posts.length === 0 && <Empty icon="forum" title="No posts loaded" />}
-      {posts.map((t) => (
-        <button class="forum-post" onClick={() => openConv(t)}>
-          <b>{convTitle(t)}</b>
-          <span>{t.lastMessage ? `${authorName(t.lastMessage.authorId)}: ${plainBody(t.lastMessage.text, t.network)}` : ''}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
 /** Signal's conversations exist only from the first message on, which is worth saying while there is none. */
 function NotStartedNote({ c }: { c: P.ConversationView }) {
   if (c.network !== 'signal' || c.shape !== 'direct' || c.lastMessage) return null;
@@ -1497,8 +1482,9 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
     <section class="pane">
       <ConvHeader c={c} onBack={onBack} />
       {!held && c.pending && <LinkBanner c={c} />}
-      {c.variant === 'forum' ? (
-        <ForumView c={c} />
+      {/* A forum's or media channel's messages are its posts (ui/Threads.tsx, docs/threads.md). */}
+      {c.variant === 'forum' || c.variant === 'media' ? (
+        <ForumLazy c={c} />
       ) : (
         <>
           {voice && <div class="voice-note"><Icon name="voice" size={14} /> Voice isn't relayed. This shows the channel's text chat.</div>}
@@ -1510,7 +1496,7 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
       <TypingBar convIds={[c.id]} />
       {held ? (
         <RequestBar r={held} />
-      ) : (
+      ) : c.variant === 'forum' || c.variant === 'media' ? null : (
         <Composer
           targets={{ convId: c.id, accountId: sendAsValue }}
           placeholder={`Message ${c.shape === 'direct' ? convTitle(c) : convLabel(c)}`}

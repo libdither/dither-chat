@@ -28,6 +28,7 @@ import { canIndex, startIndexing } from './Indexing.tsx';
 import { NetworkMute } from './NetworkMute.tsx';
 import { VoicePeople } from './Ringing.tsx';
 import { useServerParts } from './ServerPartsLazy.tsx';
+import { useThreadParts } from './ThreadsLazy.tsx';
 
 /** "Seen 12 of 1,287 listed (1%) · 214 online": honest about how little that may be. */
 export function coverageText(c: P.MemberCoverageView): string {
@@ -46,6 +47,8 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
   // A server's scheduled events (ServerParts.tsx): how many, for the Events button.
   const [events, setEvents] = useState(0);
   const sp = useServerParts((kind === 'space' && db.spaces.get(id)?.kind === 'community') || !!view?.leaving || !!view?.nick || !!view?.invite?.options);
+  // A thread's following, archiving and locking; a group's owner, removing and its picture (Threads.tsx).
+  const tp = useThreadParts(!!view?.thread || !!view?.ownership);
   // Add people (docs/group-settings.md): the palette's picker for this group, as the account this page is seen as.
   const addPeople = () => view && kind === 'conversation' && openPalette({ kind: 'add', conversationId: id, accountId: view.accountId, adding: view.adding, onDone: replace });
   const network = (conv ?? space)?.network;
@@ -227,6 +230,9 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
       {conv && conv.shape === 'group' && view && view.blocked !== undefined && GroupBlock && (
         <GroupBlock conversationId={conv.id} network={network} blocked={view.blocked} onDone={() => void api<P.AboutView>(`/api/conversations/${conv.id}/about${view.accountId ? `?account=${encodeURIComponent(view.accountId)}` : ''}`).then(replace)} />
       )}
+
+      {conv && view?.thread && tp && <tp.ThreadCard c={conv} view={view} onDone={replace} />}
+      {conv && view?.ownership && tp && <tp.GroupCard c={conv} view={view} onDone={replace} />}
 
       {conv && <ResetSessionCard conv={conv} />}
 

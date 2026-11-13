@@ -43,6 +43,7 @@ import { fetchPublicToFile } from './fetchsafe.ts';
 import { AboutError, Abouts } from './about.ts';
 import { Servers } from './servers.ts';
 import { Apps } from './apps.ts';
+import { Threads } from './threads.ts';
 import { asked, attempt, candidatesAttempt } from './attempts.ts';
 import { Groups } from './groups.ts';
 import { People } from './people.ts';
@@ -224,6 +225,8 @@ export class HubServer {
   readonly servers: Servers;
   /** Bots' buttons, selects, slash commands and forms (apps.ts, docs/apps.md). */
   readonly apps: Apps;
+  /** Following threads, starting threads and posts, archiving, publishing, running a group (threads.ts, docs/threads.md). */
+  readonly threads: Threads;
   /** Your marks on whether a message needs a reply (replymarks.ts). */
   private get marks(): ReplyMarks {
     return (this._marks ??= new ReplyMarks(this.store));
@@ -279,6 +282,16 @@ export class HubServer {
     // A note joined from yours and the network's goes back to the network (store.ts networkNotes).
     store.contactNotesOut = (id, change) => this.people.pushContactNotes(id, change);
     this.adding = new Adding({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), liveView: (a) => !!sup.liveViewUrl?.(a) || !!store.account(a)?.live_view });
+    this.threads = new Threads({
+      store,
+      online: (a) => sup.online(a),
+      command: (a, c, t) => sup.command(a, c, t),
+      pickAccount: (c, a) => this.pickAccount(c, a),
+      uploads: this.uploads,
+      note: (a, line) => sup.note(a, line),
+      flush: () => this.flush(),
+      aboutView: (k, i, n, a, ab) => this.abouts.view(k, i, n, a, ab, Date.now(), undefined, true),
+    });
     this.servers = new Servers({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a), note: (a, line) => sup.note(a, line), flush: () => this.flush(), aboutView: (k, i, n, a, ab) => this.abouts.view(k, i, n, a, ab, Date.now(), undefined, true) });
     this.apps = new Apps({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a), note: (a, line) => sup.note(a, line) });
     sup.calls = this.calls;
@@ -638,6 +651,8 @@ export class HubServer {
     if (Servers.handles(path)) return (await this.servers.route(req, url, path))!;
     // Bots' buttons, selects, slash commands and forms (apps.ts).
     if (Apps.handles(path)) return (await this.apps.route(req, url, path, () => this.flush()))!;
+    // Following threads, starting threads and posts, archiving, publishing, running a group (threads.ts).
+    if (Threads.handles(path)) return (await this.threads.route(req, url, path))!;
     // Reply marks (replymarks.ts, docs/inbox.md "Marks"): on a message, its mail twin, and on an inbox row.
     if ((m = path.match(/^\/api\/(mail\/)?messages\/([\w-]+)\/reply-mark$/)) && method === 'POST') {
       const b = await body<{ mark?: unknown; surface?: unknown; device?: unknown }>();

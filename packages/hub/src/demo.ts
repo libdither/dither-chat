@@ -20,6 +20,7 @@ import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
 import { DEMO_SERVER_CAPS, DemoServers } from './demoservers.ts';
 import { DEMO_APP_CAPS, DemoApps } from './demoapps.ts';
+import { DEMO_THREAD_CAPS, DemoThreads } from './demothreads.ts';
 
 type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa' | 'tg';
 
@@ -1839,6 +1840,8 @@ class DemoAdapter implements InprocAdapter {
   private servers: DemoServers | null = null;
   /** The demo's bot: its controls, commands and forms (demoapps.ts). */
   private apps: DemoApps | null = null;
+  /** Discord threads, forums and group DMs beyond messages (demothreads.ts). */
+  private threadsDemo: DemoThreads | null = null;
   /** Capabilities a verify script took away (action 'capabilities'), to see the page without them. */
   private without = new Set<P.Capability>();
   private network: P.Network;
@@ -1990,6 +1993,10 @@ class DemoAdapter implements InprocAdapter {
       epoch,
     );
     this.servers.announce();
+  }
+
+  private threadAbout(target: P.AboutTarget, about: P.About): P.About {
+    return this.threadsDemo ? this.threadsDemo.about(target, about) : about;
   }
 
   private serverAbout(target: P.AboutTarget, about: P.About): P.About {
@@ -2278,6 +2285,7 @@ class DemoAdapter implements InprocAdapter {
       ...(this.network === 'discord' ? DEMO_SELF_CAPS : []),
       ...(this.network === 'discord' ? DEMO_SERVER_CAPS : []),
       ...(this.network === 'discord' ? DEMO_APP_CAPS : []),
+      ...(this.network === 'discord' ? DEMO_THREAD_CAPS : []),
     ];
     this.emit({ t: 'hello', network: this.network, version: 'demo', capabilities: all.filter((c) => !this.without.has(c)) });
   }
@@ -2362,7 +2370,53 @@ class DemoAdapter implements InprocAdapter {
     }
     if (firstRun) this.seedHistory(ago);
     if (firstRun) writeFileSync(marker, String(Date.now()));
+    if (this.network === 'discord') this.startThreads();
     scheduleChatter();
+  }
+
+  /** Discord's threads, forums and group DMs (demothreads.ts): the forum's tags and the threads' facts, after the conversations. */
+  private startThreads() {
+    const self = this.self.nativeId;
+    const mine = this.key === 'dmain';
+    this.threadsDemo = new DemoThreads(
+      {
+        selfId: self,
+        emit: (ev) => this.emit(ev),
+        fact: (id) => this.findConv(id)?.fact ?? null,
+        keep: (fact) => void this.made.set(fact.nativeId, { acc: [this.key], fact, msgs: [] }),
+        moderator: (channel) => {
+          const c = this.findConv(channel);
+          const guild = c ? this.guildOf(c) : null;
+          return !!guild && ADMIN_IN[this.key].includes(guild);
+        },
+        id: (k) => snow(`${this.key}-${k}-${Date.now()}-${this.made.size}`),
+      },
+      {
+        forums: mine ? { [ch('rust-help')]: { tags: [{ id: snow('tag-solved'), name: 'Solved', emoji: '✅', moderated: true }, { id: snow('tag-async'), name: 'async' }, { id: snow('tag-cargo'), name: 'cargo' }], sort: 'activity', layout: 'list' } } : {},
+        threads: mine
+          ? {
+              [T.rustHelpAsync]: { joined: true, owner: D.owl.nativeId, tags: [snow('tag-solved'), snow('tag-async')], createdAt: this.ago(7 * 60) },
+              [T.rustHelpWs]: { joined: false, owner: D.bea.nativeId, tags: [snow('tag-cargo')], createdAt: this.ago(DAY + 300) },
+              [T.ditherBoot]: { joined: true, notify: 'all', owner: self, createdAt: this.ago(2 * DAY) },
+            }
+          : {},
+        archived: mine
+          ? [
+              {
+                fact: { nativeId: snow('t-rust-old'), shape: 'thread', name: 'Is there a no_std HashMap?', parentConversation: ch('rust-help'), thread: { owner: D.hannah.nativeId, tags: [snow('tag-solved')], createdAt: this.ago(40 * DAY) } },
+                first: { nativeId: snow('t-rust-old'), author: D.hannah.nativeId, ts: this.ago(40 * DAY), body: 'Looking for a HashMap that works without std. hashbrown?' },
+              },
+              {
+                fact: { nativeId: snow('t-dither-secret'), shape: 'thread', name: 'release planning', parentConversation: ch('dither-dev'), thread: { owner: self, private: true, createdAt: this.ago(20 * DAY) } },
+                first: { nativeId: snow('t-dither-secret-1'), author: self, ts: this.ago(20 * DAY), body: 'Dates for the next release, before we say them anywhere.' },
+                mine: true,
+              },
+            ]
+          : [],
+        owns: mine ? [snow('gdm-raid')] : [],
+      },
+    );
+    this.threadsDemo.announce();
   }
 
   /** Things that changed and things taken back, once, so history has something to show (docs/history.md). */
@@ -2401,10 +2455,15 @@ class DemoAdapter implements InprocAdapter {
 
   /** A channel's threads, as Discord's thread search lists them: the demo's are all active, none archived. */
   private threads(cmd: Extract<P.AdapterCommand, { t: 'threads' }>): P.ThreadsResult {
-    const found = cmd.archived ? [] : CONVS.filter((c) => c.acc.includes(this.key) && c.fact.shape === 'thread' && c.fact.parentConversation === cmd.conversation);
+    // Archived ones (and your private ones) from demothreads.ts, with their first messages.
+    if (cmd.archived) {
+      const ids = cmd.offset ? [] : (this.threadsDemo?.archived(cmd.conversation, cmd.mine === true) ?? []);
+      return { count: ids.length, more: false, ids };
+    }
+    const found = CONVS.filter((c) => c.acc.includes(this.key) && c.fact.shape === 'thread' && c.fact.parentConversation === cmd.conversation);
     const page = found.slice(cmd.offset, cmd.offset + 25);
     for (const c of page) this.emit({ t: 'conversation', conversation: c.fact });
-    return { count: page.length, more: cmd.offset + page.length < found.length };
+    return { count: page.length, more: cmd.offset + page.length < found.length, ids: page.map((c) => c.fact.nativeId) };
   }
 
   /** Members by name prefix, as Discord's member search answers it, or (`recent`) a page of the newest, as its op 35 does. */
@@ -2714,9 +2773,38 @@ class DemoAdapter implements InprocAdapter {
           this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
         }
         break;
+      case 'followThread':
+      case 'threadNotify':
+      case 'threadState':
+      case 'createThread':
+      case 'createPost':
+      case 'crosspost':
+      case 'removeMember':
+      case 'setOwner':
+      case 'setPicture':
+        try {
+          const r = this.threadsDemo?.command(cmd, (target) => this.threadAbout(target, this.about(target)));
+          if (!r) throw new Error(`${cmd.t} is not in this demo network`);
+          reply(r.value);
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
+        break;
+      case 'leave':
+        // A group DM or a DM (demothreads.ts); a server (demoservers.ts).
+        if (cmd.target.kind === 'conversation') {
+          try {
+            const r = this.threadsDemo?.command(cmd, (target) => this.about(target));
+            if (!r) throw new Error('Leaving this is not in this demo network');
+            reply(r.value);
+          } catch (e) {
+            this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+          }
+          break;
+        }
+      // falls through: a server
       case 'scheduledEvents':
       case 'rsvp':
-      case 'leave':
       case 'gate':
       case 'answerGate':
       case 'setNick':
@@ -2731,7 +2819,7 @@ class DemoAdapter implements InprocAdapter {
       case 'about':
       case 'configure':
         try {
-          reply(this.serverAbout(cmd.target, cmd.t === 'about' || this.servers?.configureInvite(cmd.target, cmd.change) ? this.about(cmd.target) : this.configure(cmd.target, cmd.change)));
+          reply(this.threadAbout(cmd.target, this.serverAbout(cmd.target, cmd.t === 'about' || this.servers?.configureInvite(cmd.target, cmd.change) ? this.about(cmd.target) : this.configure(cmd.target, cmd.change))));
         } catch (e) {
           this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
         }
