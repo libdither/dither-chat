@@ -9,6 +9,7 @@ import { hubId } from '@dither-chat/protocol/ids';
 import { addTables, givePace, takePace } from './add.ts';
 import type { Attempt } from './attempts.ts';
 import { lockedModeration, moderationView } from './moderation.ts';
+import { feedRefusal, isFeed } from './feed.ts';
 import type { Store } from './store.ts';
 
 export interface AboutDeps {
@@ -85,6 +86,7 @@ export class Abouts {
   async configure(kind: Kind, id: string, change: P.AboutChange, requested?: string): Promise<P.AboutView> {
     const t = this.target(kind, id);
     if (!t) throw new AboutError(`no such ${kind}`, 404);
+    if (kind === 'conversation' && isFeed(this.d.store.db, id)) throw new AboutError(feedRefusal(t.network), 409);
     if (!change || typeof change !== 'object' || typeof (change as { key?: unknown }).key !== 'string') throw new AboutError('what should change?', 400);
     const problem = aboutChangeProblem(t.network, kind, change);
     if (problem) throw new AboutError(problem, 400);
@@ -146,6 +148,7 @@ export class Abouts {
   async addMembers(id: string, b: { identities?: unknown; accountId?: unknown }, a?: Attempt): Promise<P.AddMembersView> {
     const t = this.target('conversation', id);
     if (!t) throw new AboutError('no such conversation', 404);
+    if (isFeed(this.d.store.db, id)) throw new AboutError(feedRefusal(t.network), 409);
     // For the hub's log (attempts.ts), filled in as it becomes known.
     if (a) a.network = t.network;
     const wanted = Array.isArray(b.identities) ? [...new Set(b.identities)] : [];

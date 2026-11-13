@@ -39,6 +39,7 @@ import { InteractionLog } from './interact.ts';
 import { conversing, CONVERSING_REASON } from './tiers.ts';
 import { blockedByYou, requestHeld } from './add.ts';
 import { quietAuthor } from './accountself.ts';
+import { FEED_REASON, feedItemOf, QUIET_FEED } from './feed.ts';
 
 type Row = Record<string, any>;
 
@@ -200,7 +201,7 @@ export class Triage {
     if (c.shape === 'channel') {
       const sp = this.ancestors(c.id)[0];
       const top = sp ? this.communityOf(sp.id) : null;
-      return `#${c.name ?? 'channel'}${top ? ` · ${top.name}` : ''}`;
+      return `${c.network === 'discord' ? '#' : ''}${c.name ?? 'channel'}${top ? ` · ${top.name}` : ''}`;
     }
     return c.name ?? 'Group';
   }
@@ -538,8 +539,10 @@ export class Triage {
 
     const eff = this.effectiveLevel(c.id);
     const where = this.placeName(c);
-    const title = c.shape === 'direct' ? `${where} · ${NETWORK_META[c.network as P.Network].name}` : where;
-    const body = `${c.shape === 'direct' ? '' : authorName + ': '}${previewText(m.body, m.kind) || (m.kind === 'media' ? 'Sent an attachment' : '')}`;
+    // A network's notifications about you (docs/feed.md): what they did decides, not who they are or what it says.
+    const feedType: P.FeedItemType | null = c.variant === 'feed' ? (feedItemOf(m.extra ? JSON.parse(m.extra) : null)?.type ?? 'other') : null;
+    const title = c.shape === 'direct' || feedType ? `${where} · ${NETWORK_META[c.network as P.Network].name}` : where;
+    const body = `${c.shape === 'direct' ? '' : authorName + (feedType && feedType !== 'other' ? ` (${FEED_REASON[feedType]})` : '') + ': '}${previewText(m.body, m.kind) || (m.kind === 'media' ? 'Sent an attachment' : '')}`;
 
     if (eff.level === 'none') {
       reasons.push(`Silenced: ${eff.source}`);
@@ -559,6 +562,10 @@ export class Triage {
       reasons.push(`${shut} on ${NETWORK_META[c.network as P.Network].name}`);
       return { decision: 'silent', score: null, reasons, decidedBy: 'rules', title, body };
     }
+    if (feedType && QUIET_FEED.has(feedType)) {
+      reasons.push(`${NETWORK_META[c.network as P.Network].name} notifications: ${feedType === 'other' ? FEED_REASON.other : `${authorName} ${FEED_REASON[feedType]}`}. Likes, reposts and follows wait in the feed and never notify`);
+      return { decision: 'silent', score: null, reasons, decidedBy: 'rules', title, body };
+    }
 
     const f = this.facts(m, c, author);
     const how = this.addressed(f, c);
@@ -569,18 +576,20 @@ export class Triage {
     // Would the network itself have notified you? Replies to you ping on Discord, @everyone wherever mentions do. A
     // place you once set to mentions only says the same of itself.
     const mentionsOnly = eff.level === 'mentions' && !eff.native;
-    const notify = mentionsOnly ? about : native === 'all' || (native === 'mentions' && about);
-    // Kept to the list: your rule (List only), or muted on its network.
-    const cap = eff.level === 'digest';
+    // The network did notify you of a reply, mention or quote in its feed: that is what the feed is.
+    const notify = feedType ? true : mentionsOnly ? about : native === 'all' || (native === 'mentions' && about);
+    // Kept to the list: your rule (List only), or muted on its network; a feed's replies, mentions and quotes always.
+    const cap = eff.level === 'digest' || !!feedType;
     // Keywords match what people typed, not mention tokens like <@123>.
     const plain = m.body.replace(/<[@#][^>]+>/g, ' ');
     const keyword = s
       .rules()
       .filter((r) => r.scope === 'keyword' && r.target && r.level === 'all')
       .find((r) => new RegExp(`\\b${r.target!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(plain));
-    const personRule = person ? s.rules().find((r) => r.scope === 'person' && r.target === person.id) : null;
-    const always = eff.level === 'all' && !eff.native;
-    const forced = personRule?.level === 'all' || !!keyword || always;
+    // Nothing in a feed alerts, not even from someone set to Always alert (docs/feed.md): answering happens on the network.
+    const personRule = person && !feedType ? s.rules().find((r) => r.scope === 'person' && r.target === person.id) : null;
+    const always = eff.level === 'all' && !eff.native && !feedType;
+    const forced = !feedType && (personRule?.level === 'all' || !!keyword || always);
     const facts: Facts = { ...f, base: forced ? 'push' : 'drop', score: how.score, explicit: eff.explicit, native, notify, ...(cap ? { cap } : {}) };
     const done = (decision: Level, extra: Partial<Decision> = {}): Decision => ({ decision, score: null, reasons, decidedBy: 'rules', title, body, facts, ...extra });
 
@@ -588,7 +597,7 @@ export class Triage {
       reasons.push(`From ${authorName}, who is set to always alert`);
       return done('push', { alwaysNotify: true, forced: true });
     }
-    if (keyword) {
+    if (keyword && !feedType) {
       reasons.push(`Matches keyword “${keyword.target}”`);
       return done('push', { keyword: true, forced: true });
     }
@@ -597,7 +606,8 @@ export class Triage {
       return done('push', { forced: true });
     }
     if (author?.is_bot) reasons.push('From a bot');
-    if (cap) reasons.push(eff.native ? `Muted in ${net}: kept to the list` : `List only: ${eff.source}`);
+    if (feedType) reasons.push(`${NETWORK_META[c.network as P.Network].name} notifications: ${FEED_REASON[feedType]}, kept to the list (at most a silent row)`);
+    else if (cap) reasons.push(eff.native ? `Muted in ${net}: kept to the list` : `List only: ${eff.source}`);
     else if (notify) reasons.push(mentionsOnly || native !== 'all' ? (f.mention ? 'Mentions you' : f.reply ? 'Replies to your message' : 'Pings @everyone') : `${net} notifies every message here`);
     else {
       reasons.push(mentionsOnly ? `Mentions only: ${eff.source}` : native === 'none' ? `Muted in ${net}` : `${net} notifies only mentions here`);

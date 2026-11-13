@@ -126,7 +126,7 @@ export function SortButton({ scope, class: cls }: { scope: SortScope; class?: st
       aria-haspopup="menu"
       onClick={(e) => {
         const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        openMenu({ x: r.left, y: r.bottom + 4 }, { items: sortEntries(scope), label: 'Order', head: <div class="cm-sheet-title">Order</div> });
+        openMenu({ x: r.left, y: r.bottom + 4 }, { items: sortEntries(scope), label: 'Order', head: <div class="cm-sheet-title">Order</div> }, e.currentTarget);
       }}
     >
       <SortIcon size={15} />

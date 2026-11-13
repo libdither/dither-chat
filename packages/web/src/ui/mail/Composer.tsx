@@ -708,6 +708,7 @@ export function DraftsLine() {
             head: <div class="cm-sheet-title">Drafts</div>,
             items: list.map((x) => ({ label: label(x), icon: x.draft.kind === 'forward' ? 'forward' : x.draft.kind === 'new' ? 'pencil' : 'reply', run: () => openCompose({ kind: x.draft.kind, draftKey: x.key }) })),
           },
+          e.currentTarget,
         );
       }}
     >

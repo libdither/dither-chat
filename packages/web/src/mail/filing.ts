@@ -5,6 +5,9 @@
  * Archive takes a thread out of Inbox (into Archive, or All mail where there is none); trash and junk take it out of
  * everything but Sent and Drafts; Inbox or a folder takes it out of the folders it is in, except that on Gmail Inbox is
  * a copy from All Mail and its labels stay (hub ops.ts copyFrom).
+ *
+ * What an account lets the page offer is here too (canWrite): the kinds of write its status lists, less what it
+ * answered 501 to.
  */
 import type * as P from '@dither-chat/protocol';
 
@@ -63,3 +66,25 @@ export function undoTarget(boxes: Boxes, before: P.MailThreadView, to: P.MailMov
   const dest = destinationIn(boxes, before, to)?.id;
   return before.mailboxIds.find((id) => id !== dest && !NOT_FOLDER.has(boxes.get(id)?.role ?? '')) ?? null;
 }
+
+// ------------------------------------------------------------------ what an account allows
+
+/** What the hub keeps an account's 501 to each kind of write as (its ops view's `unsupported`). */
+const REFUSED_AS: Record<P.MailWriteKind, string> = { seen: 'flag.seen', flagged: 'flag.flagged', move: 'move', trash: 'trash', junk: 'junk' };
+
+/**
+ * May the page offer this kind of write on the account? It may write (not a read grant), its status's `writes` do not
+ * leave the kind out, and it did not answer 501 to it (a `move` refused before kinds were told apart counts for the
+ * trash and junk too, while the status lists no writes). `flag.seen` and `flag.flagged` are seen and flagged.
+ */
+export function canWrite(a: P.MailAccountView | undefined, kind?: P.MailWriteKind | 'flag.seen' | 'flag.flagged'): boolean {
+  if (!a || a.level !== 'write') return false;
+  if (!kind) return true;
+  const k: P.MailWriteKind = kind === 'flag.seen' ? 'seen' : kind === 'flag.flagged' ? 'flagged' : kind;
+  if (a.writes && !a.writes.includes(k)) return false;
+  const refused = a.ops?.unsupported ?? [];
+  return !refused.includes(REFUSED_AS[k]) && !(!a.writes && (k === 'trash' || k === 'junk') && refused.includes('move'));
+}
+
+/** The kind of write a move into this mailbox is: into the trash, into junk, or any other move (archive, Inbox, a folder or label). */
+export const moveKind = (b: P.MailboxView | null | undefined): P.MailWriteKind => (b?.role === 'trash' ? 'trash' : b?.role === 'junk' ? 'junk' : 'move');

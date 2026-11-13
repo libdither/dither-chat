@@ -135,6 +135,8 @@ const view = (w: World, hdr: string) => w.hub.store.threadView(w.hub.store.threa
 const rows = (w: World) => w.hub.store.one<{ n: number }>('SELECT COUNT(*) AS n FROM mail_message WHERE account_id = ?', ACC)!.n;
 const subjects = (w: World, key: string) => w.hub.store.listThreads(key, null, 100)!.threads.map((t) => t.subject);
 const moves = (w: World) => w.fake.calls.filter((c) => c.op === 'mail.move');
+/** A message's thread as its summary gave it, which writes send back beside its id (threadIds). */
+const threadOnServer = (m: { threadId: string | null; messageId: string | null }) => m.threadId ?? m.messageId;
 
 describe('what the extractor says', () => {
   test('Gmail by its provider, though neither its address nor its mailboxes say so; one id a message; its caps', async () => {
@@ -241,7 +243,8 @@ describe('filing', () => {
     expect(subjects(w, 'v:inbox:*')).toContain('Old photos');
     expect(subjects(w, mailboxList(box(w, ALL).id))).toContain('Old photos');
     await clock.wait(ops.idle());
-    expect(moves(w).map((c) => c.input)).toEqual([{ ids: [j1.id], mailboxId: INBOX }]);
+    // Its thread beside its id (threadIds): Gmail on the web changes mail by thread.
+    expect(moves(w).map((c) => c.input)).toEqual([{ ids: [j1.id], threadIds: [threadOnServer(j1)], mailboxId: INBOX }]);
     expect(w.fake.labelsOnServer(ACC, j1.id)).toEqual(['Work', '\\Inbox'].sort());
     expect(boxesOnServer(w, '<j1@x>')).toEqual([INBOX, ALL, WORK].sort());
     // Where Gmail has it, at once: Inbox by the message's own id, All Mail as it was.
@@ -263,7 +266,7 @@ describe('filing', () => {
     ops.move({ threadIds: [threadOf(w, '<n1@x>')], to: box(w, WORK).id });
     expect(view(w, '<n1@x>').roles).not.toContain('inbox');
     await clock.wait(ops.idle());
-    expect(moves(w).map((c) => c.input)).toEqual([{ ids: [n1.id], mailboxId: WORK }]);
+    expect(moves(w).map((c) => c.input)).toEqual([{ ids: [n1.id], threadIds: [threadOnServer(n1)], mailboxId: WORK }]);
     expect(boxesOnServer(w, '<n1@x>')).toEqual([ALL, WORK].sort());
     expect(where(w, '<n1@x>')).toEqual([ALL, WORK].sort());
     // Sam's question, in Inbox and labelled Work, into a label of its own: Work stays (the move names no mailbox it
@@ -292,7 +295,8 @@ describe('filing', () => {
     expect(subjects(w, 'v:inbox:*')).not.toContain('Dinner on Friday?');
     // idle() returns once nothing could go within a second: had the archive been held for Undo, it would not have gone.
     await clock.wait(ops.idle());
-    expect(moves(w).map((c) => ({ ...c.input, ids: [...c.input.ids].sort() }))).toEqual([{ ids, mailboxId: ALL }]);
+    const th = threadOnServer(onServer(w, '<s1@x>'));
+    expect(moves(w).map((c) => ({ ...c.input, ids: [...c.input.ids].sort() }))).toEqual([{ ids, threadIds: [th, th], mailboxId: ALL }]);
     expect(boxesOnServer(w, '<s1@x>')).toEqual([ALL, IMPORTANT, WORK].sort());
     expect(boxesOnServer(w, '<s3@x>')).toEqual([ALL]);
     expect(where(w, '<s1@x>')).toEqual([ALL]);
@@ -302,7 +306,7 @@ describe('filing', () => {
     expect(ops.move({ threadIds: [t], to: 'inbox' })).toEqual({ ok: true, threads: 1, messages: 2 });
     expect(view(w, '<s1@x>').roles).toEqual(expect.arrayContaining(['inbox', 'all']));
     await clock.wait(ops.idle());
-    expect(moves(w).slice(1).map((c) => ({ ...c.input, ids: [...c.input.ids].sort() }))).toEqual([{ ids, mailboxId: INBOX }]);
+    expect(moves(w).slice(1).map((c) => ({ ...c.input, ids: [...c.input.ids].sort() }))).toEqual([{ ids, threadIds: [th, th], mailboxId: INBOX }]);
     expect(boxesOnServer(w, '<s1@x>')).toEqual([INBOX, ALL, IMPORTANT, WORK].sort());
     expect(boxesOnServer(w, '<s2@x>')).toEqual([ALL, SENT].sort());
     expect(where(w, '<s1@x>')).toEqual([ALL, INBOX].sort());
@@ -356,7 +360,7 @@ describe('filing', () => {
     const flags = () => w.fake.calls.filter((c) => c.op === 'mail.flag').map((c) => c.input);
     ops.flag({ threadIds: [t], flagged: true });
     await clock.wait(ops.idle());
-    expect(flags()).toEqual([{ ids: [s3.id], flagged: true }]);
+    expect(flags()).toEqual([{ ids: [s3.id], threadIds: [threadOnServer(s3)], flagged: true }]);
     expect(onServer(w, '<s3@x>').flags.flagged).toBe(true);
     await clock.wait(w.hub.sync(ACC)!.catchUp());
     expect(view(w, '<s1@x>')).toMatchObject({ flagged: true, pending: false });

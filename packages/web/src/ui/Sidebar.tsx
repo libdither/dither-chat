@@ -55,6 +55,7 @@ import { openAbout } from './About.tsx';
 import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapshot } from '../arrange.ts';
 import { inboxSnap, shownInbox } from '../inbox.ts';
 import { linkAccounts, PeopleAccountPicker, PeopleLinks, RequestsRow, usePeopleLinks } from './Requests.tsx';
+import { FeedRows } from './FeedRow.tsx';
 import { nameMatches, peopleFilters, type PeopleFilter } from '../requests.ts';
 import { SortButton, SortIcon, useFlip } from './Reorganize.tsx';
 import { rememberSearch, SearchBox } from './SearchBox.tsx';
@@ -325,6 +326,7 @@ function InboxFilterButton({ filter }: { filter: InboxFilter }) {
         head: <div class="cm-sheet-title">Show</div>,
         items: choices.map((f): MenuEntry => ({ label: f.label, checked: f.id === filter, radio: true, track: `filter (${f.label})`, run: () => setPrefs({ inboxFilter: f.id }) })),
       },
+      e.currentTarget,
     );
   };
   const label = filter === 'all' ? 'Show: all conversations' : `Showing only ${on.label.toLowerCase()}`;
@@ -420,6 +422,7 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
           </>
         )}
         <RequestsRow />
+        <FeedRows />
         {rows.slice(0, drawn).map(row)}
         {more}
         {!rows.length && <p class="inbox-empty">{EMPTY[filter]}</p>}
@@ -502,6 +505,7 @@ function LinkSortButton() {
               ...LINK_SORTS.map((m): MenuEntry => ({ label: m.label, radio: true, checked: m.id === mode, track: `order (${m.label})`, run: () => setPrefs({ peopleLinkSort: m.id }) })),
             ],
           },
+          e.currentTarget,
         );
       }}
     >

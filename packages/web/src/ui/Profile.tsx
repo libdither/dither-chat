@@ -37,6 +37,16 @@ type Self = typeof import('./ProfileSelf.tsx');
 const selfParts = signal<Self | null>(null);
 let selfLoading: Promise<unknown> | null = null;
 const loadSelf = () => (selfLoading ??= import('./ProfileSelf.tsx').then((m) => (selfParts.value = m), () => (selfLoading = null)));
+import { RecentPostsLazy } from './feed/lazy.tsx';
+import { clip, FEED_VERB } from '../feed.ts';
+
+/** A feed item in their Recent messages (docs/feed.md): "Liked your post: “…”", or what they wrote. */
+function feedLine(f: P.FeedItem, body: string): string {
+  if (f.type === 'reply' || f.type === 'mention' || f.type === 'quote') return `${FEED_VERB[f.type][0].toUpperCase()}${FEED_VERB[f.type].slice(1)}: ${clip(f.theirs?.text ?? body, 140)}`;
+  if (f.type === 'other') return f.text ?? body;
+  const verb = `${FEED_VERB[f.type][0].toUpperCase()}${FEED_VERB[f.type].slice(1)}`;
+  return f.post?.text ? `${verb}: “${clip(f.post.text)}”` : verb;
+}
 
 /** What a network's profile holds at most, for when it says little. */
 const WHAT_NETWORKS_SHARE: Record<P.Network, string> = {
@@ -115,7 +125,7 @@ function AccountTile({ i, bio, since, go: open, goLabel, menu: menuOf }: { i: P.
               <Icon name={i.network === 'email' ? 'mail' : 'send'} size={14} />
             </button>
           )}
-          <button class="icon-btn small" title={`${name} on ${netName(i.network)}`} aria-label={`More for ${name} on ${netName(i.network)}`} onClick={(e) => openMenu(anchorOf(e), menu())}>
+          <button class="icon-btn small" title={`${name} on ${netName(i.network)}`} aria-label={`More for ${name} on ${netName(i.network)}`} onClick={(e) => openMenu(anchorOf(e), menu(), e.currentTarget)}>
             <Icon name="more" size={14} />
           </button>
         </div>
@@ -402,7 +412,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     }
   }
   const sharedSpaces = [...spaces.values()].sort((a, b) => b.messages - a.messages || a.s.name.localeCompare(b.s.name));
-  const groupChats = convs.filter((x) => x.c.shape === 'group' || (x.c.shape === 'channel' && !x.c.spaceIds.length));
+  // A network's notifications are not a place you share (docs/feed.md): what they did there is in Recent messages.
+  const groupChats = convs.filter((x) => x.c.variant !== 'feed' && (x.c.shape === 'group' || (x.c.shape === 'channel' && !x.c.spaceIds.length)));
   const mutualFriends = onePerPerson([...new Set(said.flatMap((a) => a.mutualFriends ?? []))]);
   const friends = onePerPerson([...new Set(said.flatMap((a) => a.friends ?? []))]).filter((iid) => !isSelfIdentity(iid));
 
@@ -718,6 +729,33 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
             )}
           </div>
         )}
+        {said.some((a) => a.counts || a.followsYou) && (
+          <div class="pf-follow">
+            {said
+              .filter((a) => a.counts || a.followsYou)
+              .map((a) => (
+                <span class="pf-follow-line" data-network={a.network}>
+                  {(said.length > 1 || nets.length > 1) && <NetGlyph network={a.network} size={11} />}
+                  {a.counts?.followers !== undefined && (
+                    <span>
+                      <b>{a.counts.followers.toLocaleString()}</b> followers
+                    </span>
+                  )}
+                  {a.counts?.following !== undefined && (
+                    <span>
+                      <b>{a.counts.following.toLocaleString()}</b> following
+                    </span>
+                  )}
+                  {a.counts?.posts !== undefined && (
+                    <span>
+                      <b>{a.counts.posts.toLocaleString()}</b> posts
+                    </span>
+                  )}
+                  {a.followsYou && <Tag tone="accent">Follows you</Tag>}
+                </span>
+              ))}
+          </div>
+        )}
         <Facts
           rows={[
             ...dedupe([
@@ -731,12 +769,23 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           ]}
         />
         {S && <S.ProfileExtras said={said} />}
+        {said.filter((a) => a.unasked && !a.stale).map((a) => (
+          <p class="pf-stale">
+            <NetGlyph network={a.network} size={11} /> <span title={fullTime(a.fetchedAt)}>As {netName(a.network)} showed them in your notifications.</span>
+          </p>
+        ))}
         {said.filter((a) => a.stale).map((a) => (
           <p class="pf-stale">
             <NetGlyph network={a.network} size={11} /> {a.stale}
           </p>
         ))}
       </Card>
+
+      {said.some((a) => a.posts?.length) && (
+        <Card title="Recent posts" icon="send" count={said.reduce((n, a) => n + (a.posts?.length ?? 0), 0)} class="pf-posts">
+          <RecentPostsLazy abouts={said} />
+        </Card>
+      )}
 
       <ActivityCard
         path={changesPath}
@@ -814,10 +863,10 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
               const c = db.conversations.get(m.conversationId);
               return (
                 <button class="pf-row pf-msg" onClick={() => openMessage(m.conversationId, m.id)} title={fullTime(m.ts)}>
-                  {c ? <PlaceIcon c={c} size={28} /> : <NetBadge network={m.network} size={28} />}
+                  {c && c.variant !== 'feed' ? <PlaceIcon c={c} size={28} /> : <NetBadge network={m.network} size={28} />}
                   <span class="pf-row-text">
-                    <small class="pf-msg-where">{c ? (c.shape === 'direct' ? `Direct message · ${netName(c.network)}` : convLabel(c)) : 'Unknown'}</small>
-                    <span class="pf-msg-body">{plainBody(m.body, m.network) || (m.attachments.length ? 'Attachment' : m.kind === 'encrypted' ? 'Encrypted message' : '')}</span>
+                    <small class="pf-msg-where">{c ? (c.shape === 'direct' ? `Direct message · ${netName(c.network)}` : c.variant === 'feed' ? `${netName(c.network)} notifications` : convLabel(c)) : 'Unknown'}</small>
+                    <span class="pf-msg-body">{m.feed ? feedLine(m.feed, m.body) : plainBody(m.body, m.network) || (m.attachments.length ? 'Attachment' : m.kind === 'encrypted' ? 'Encrypted message' : '')}</span>
                   </span>
                   <span class="pf-row-time">{ago(m.ts)}</span>
                 </button>

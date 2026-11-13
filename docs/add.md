@@ -292,6 +292,8 @@ someone you know notifies once; and a profile has the buttons for how you stand 
   whatever the filter: how many, who asked, and when the newest came. It counts on no badge: a request is not unread.
   What a network filed as spam (Discord's spam DMs) is not counted or named there either, only said ("2 filed as
   spam"), and waits last in the view under "Filed as spam"; it never notifies.
+  Under it, a network's notifications about you have a row of their own built the same way (X's likes, reposts,
+  replies and follows: [feed.md](feed.md)).
   Opening it is the Requests view (`#/requests`; `#/requests/<id>` shows one card, outlined). On a desktop it is the
   main pane, beside the inbox; on a phone a full-screen list over it, with Back.
 - **A card per request**, grouped in this order: friend requests, invites (to groups, servers and rooms), message

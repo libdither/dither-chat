@@ -513,8 +513,12 @@ export class ActivityStore {
     return { pushes, incoming, visits, own };
   }
 
-  /** Messages read a page at a time by `gatherSteps` (a test's smaller one shows the pages). */
-  featurePage = 2048;
+  /**
+   * Messages read a page at a time by `gatherSteps` (a test's smaller one shows the pages). A page is one statement:
+   * with its rows not in memory, 2,048 of them took 2.85 s on a copy of the live hub, a minute after a new device's
+   * first load; 512 is a quarter of that at worst.
+   */
+  featurePage = 512;
   /** How `featuresSliced` shares the hub's thread (slices.ts); a test's clock and pauses. */
   slices: SliceOptions = {};
 

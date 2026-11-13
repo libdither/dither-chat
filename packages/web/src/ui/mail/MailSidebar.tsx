@@ -41,7 +41,7 @@ function ProblemStrips() {
   );
 }
 
-function mailboxMenu(s: typeof db.mail, at: { x: number; y: number }) {
+function mailboxMenu(s: typeof db.mail, at: { x: number; y: number }, from: EventTarget | null) {
   const items: MenuEntry[] = [];
   for (const a of s.accounts.values()) {
     const boxes = [...s.mailboxes.values()].filter((b) => b.accountId === a.id && !holdsOnlyMailboxes(b, s.mailboxes.values())).sort((x, y) => (x.role === 'inbox' ? -1 : y.role === 'inbox' ? 1 : x.path.localeCompare(y.path)));
@@ -49,7 +49,7 @@ function mailboxMenu(s: typeof db.mail, at: { x: number; y: number }) {
     items.push({ kind: 'label', label: a.address ?? a.label });
     for (const b of boxes) items.push({ label: b.path.replace(/\//g, ' / '), icon: b.role === 'inbox' ? 'inbox' : b.role === 'sent' ? 'send' : b.role === 'trash' ? 'trash' : b.role === 'archive' || b.role === 'all' ? 'archive' : 'folder', run: () => go({ view: 'mail', list: mailboxList(b.id) }) });
   }
-  openMenu(at, { items, label: 'Mailboxes', head: <div class="cm-sheet-title">Mailboxes</div> });
+  openMenu(at, { items, label: 'Mailboxes', head: <div class="cm-sheet-title">Mailboxes</div> }, from);
 }
 
 /** Every account's colour in one dot: all of their mail. */
@@ -78,6 +78,7 @@ function AccountPicker({ accounts, scoped, pick }: { accounts: P.MailAccountView
           { kind: 'row', render: () => <p class="mail-acc-note">With all accounts showing, a dot in the account's colour comes before each sender's name.</p> },
         ],
       },
+      e.currentTarget,
     );
   };
   return (
@@ -149,7 +150,7 @@ export function MailSidebar({ list, active }: { list?: string; active?: string }
               title="Mailboxes"
               onClick={(e) => {
                 const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                mailboxMenu(s, { x: r.left, y: r.bottom + 4 });
+                mailboxMenu(s, { x: r.left, y: r.bottom + 4 }, e.currentTarget);
               }}
             >
               <Icon name="folder" size={16} />

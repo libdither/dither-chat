@@ -166,7 +166,7 @@ export function convLabel(c: P.ConversationView): string {
 
 export function kindLabel(c: P.ConversationView): string {
   const n = netName(c.network);
-  const variant = { text: '', announcement: 'announcement ', forum: 'forum ', voice: 'voice ', stage: 'stage ', media: 'media ', rules: 'rules ' }[c.variant] ?? '';
+  const variant = { text: '', announcement: 'announcement ', forum: 'forum ', voice: 'voice ', stage: 'stage ', media: 'media ', rules: 'rules ', feed: 'notifications ' }[c.variant] ?? '';
   switch (c.shape) {
     case 'direct':
       return c.network === 'discord' || c.network === 'matrix' ? `${n} DM` : `${n} chat`;
@@ -181,6 +181,8 @@ export function kindLabel(c: P.ConversationView): string {
     case 'channel':
       if (c.network === 'discord') return `Discord ${variant}channel`;
       if (c.network === 'matrix') return c.spaceIds.length ? `Matrix ${variant}room` : 'Matrix room (no space)';
+      // A Telegram forum's topic (dither-accounts' forums as spaces); its "channels" are broadcast groups.
+      if (c.network === 'telegram') return 'Telegram topic';
       return `${n} ${variant}channel`;
   }
 }
@@ -594,12 +596,13 @@ export function sumUnread(convs: P.ConversationView[]): Unread {
 
 /**
  * Everything shown, summed: the app's badge and the Home tab's. Once per `rev`. Not an open message request's: that
- * waits under Requests, on no badge (docs/add.md).
+ * waits under Requests, on no badge (docs/add.md); nor a network's notifications, which have a row of their own
+ * (docs/feed.md).
  */
 export function totalUnread(): Unread {
   return memo('totalUnread', () => {
     const held = heldByRequest();
-    return sumUnread([...db.conversations.values()].filter((c) => visibleConv(c) && !held.has(c.id)));
+    return sumUnread([...db.conversations.values()].filter((c) => visibleConv(c) && !held.has(c.id) && c.variant !== 'feed'));
   });
 }
 
@@ -751,7 +754,8 @@ function convRows(): ConvInboxRow[] {
     const held = heldByRequest();
     for (const c of db.conversations.values()) {
       const a = db.attention.get(c.id);
-      if ((!a && !inboxShape(c)) || !visibleConv(c) || held.has(c.id)) continue;
+      // A network's notifications are their own row, under Requests (ui/FeedRow.tsx, docs/feed.md).
+      if ((!a && !inboxShape(c)) || !visibleConv(c) || held.has(c.id) || c.variant === 'feed') continue;
       const row: ConvInboxRow = a ? { kind: 'conv', key: c.id, conv: c, score: a.score, needs: a.needs, reasons: a.reasons, owedSince: a.owedSince } : unscored(c);
       if (!row.needs && c.shape !== 'self' && placePref('conversation', c.id).hidden) continue;
       const u = unreadOf(c);

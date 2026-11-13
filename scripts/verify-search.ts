@@ -1,7 +1,7 @@
 /**
  * Search, end to end against a demo hub in headless Chromium: the box's operator suggestions (people with pictures),
  * picking one by keyboard, a misspelt search corrected, hits grouped by conversation with context, recent searches,
- * walking the results with the arrow keys, the sort control, and Ctrl+F in a chat.
+ * walking the results with the arrow keys, the sort control, Ctrl+F in a chat, and more results loading on scroll.
  *
  *   bun scripts/verify-search.ts http://127.0.0.1:8791 /tmp/dc-search-shots
  * Only reads; still, point it at a demo hub (--demo) with its own data dir.
@@ -130,6 +130,15 @@ try {
   await type('in:gen');
   check((await rows()).some((r) => r.includes('general')) && (await onTop()), 'the inbox box suggests too, on top of the list below it', await rows());
   await p.shot(join(shots, 'sidebar-suggest.png'));
+
+  // More results load as the list nears its end, no tap needed.
+  await p.goto(`${hub}/#/search?q=the`);
+  await p.until(`document.querySelectorAll('.search-hit').length > 0 && !!document.querySelector('.search-more')`, 10000);
+  const before = await p.eval<number>(`document.querySelectorAll('.search-hit').length`);
+  await p.eval(`(() => { const l = document.querySelector('.search-results'); l.scrollTop = l.scrollHeight; })()`);
+  await p.until(`document.querySelectorAll('.search-hit').length > ${before}`, 8000).catch(() => {});
+  const after = await p.eval<number>(`document.querySelectorAll('.search-hit').length`);
+  check(after > before, 'scrolling to the end loads more results', { before, after });
 
   await p.size(390, 844, true);
   await p.goto(`${hub}/#/search`);

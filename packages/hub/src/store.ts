@@ -22,6 +22,8 @@ import { ingestServers } from './servers.ts';
 import { ingestApps } from './apps.ts';
 import { ingestThreadFacts, threadParts, type ThreadParts } from './threads.ts';
 import { type DueReminder, ingestSaved } from './saved.ts';
+import { feedItemOf, feedView } from './feed.ts';
+import { keepAbout } from './people.ts';
 import { alertBar, type Facts } from './learn.ts';
 import { attachmentExtra, attachmentRich, embedViews, richView, type StoredExtra } from './rich.ts';
 
@@ -185,6 +187,9 @@ const PRESENCE_DEVICES = new Set<string>(['desktop', 'mobile', 'web']);
  */
 const MIGRATIONS = 5;
 
+/** How long a write waits for another connection's lock before it fails (PRAGMA busy_timeout). */
+export const BUSY_MS = 2000;
+
 /** mail/schema*.sql as MailStore runs them (mail/store.ts mailSchemas), read here without importing mail's store. */
 function mailSchemaText(): string {
   const dir = new URL('./mail/', import.meta.url);
@@ -225,8 +230,19 @@ export class Store {
     const timer = stepTimer();
     this.opening = timer.out;
     this.db = new Database(path, { create: true, strict: true });
+    // Another process opening this database (a backup's VACUUM INTO, the sqlite3 shell) can hold a lock for a moment,
+    // most often while it opens or closes. Without a wait every write in that moment fails (SQLITE_BUSY): 26 on the
+    // live hub in one backup. With it a write waits up to BUSY_MS, on the hub's one thread, so not much longer than a
+    // lock held for an open on a busy machine; past it the write fails as before (adapter events wait and are applied
+    // again: supervisor.ts).
+    this.db.exec(`PRAGMA busy_timeout = ${BUSY_MS}`);
     // Outside any transaction: inside one, SQLite ignores foreign_keys.
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
+    // A commit is written to the log without waiting for the disk; the log reaches the disk at each checkpoint (about
+    // every second, checkpoint.ts). The owner's choice (2026-11-13): on a busy disk every fsync of a commit held the
+    // hub's one thread, four or so for each message. A power cut or a crash of the machine (not of the hub) can lose
+    // the commits since the last checkpoint; it cannot corrupt the database (docs/deploy.md, "Durability").
+    this.db.exec('PRAGMA synchronous = NORMAL');
     timer.step('db open');
     const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
     // A schema (or migration code) this database has not met yet: copy it first (backups/pre-migrate-*), then take
@@ -796,6 +812,10 @@ export class Store {
         case 'reminderDue':
           ingestSaved(this, acc, ev, (r) => this.reminderDue?.(r));
           break;
+        case 'personAbout':
+          // What the network showed unasked (X: the people in your notifications), kept as an asked profile is.
+          keepAbout(this, this.ensureIdentity(acc, ev.who), acc.id, acc.network, ev.about, ev.ts, true);
+          break;
         case 'reply':
         case 'log':
           break;
@@ -1120,7 +1140,8 @@ export class Store {
         `INSERT INTO conversation (id, network, native_id, shape, variant, parent_id, name, topic, avatar_url, encrypted, archived, last_message_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?)
          ON CONFLICT (network, native_id) DO UPDATE SET
-           shape = excluded.shape, variant = excluded.variant, parent_id = COALESCE(excluded.parent_id, parent_id),
+           shape = excluded.shape, variant = excluded.variant,
+           parent_id = CASE WHEN excluded.shape = 'thread' THEN COALESCE(excluded.parent_id, parent_id) ELSE excluded.parent_id END,
            name = COALESCE(excluded.name, name), topic = COALESCE(excluded.topic, topic),
            avatar_url = COALESCE(excluded.avatar_url, avatar_url), encrypted = excluded.encrypted,
            archived = CASE WHEN ? IS NULL THEN archived ELSE excluded.archived END,
@@ -1269,13 +1290,16 @@ export class Store {
     if (!existed) this.ingested.set(cid, Math.min(this.ingested.get(cid) ?? Infinity, f.ts));
     const newForAccount = this.db.query('INSERT OR IGNORE INTO message_seen (message_id, account_id) VALUES (?, ?)').run(id, acc.id).changes > 0;
 
-    const conv = this.db.query('SELECT last_message_at, last_message_id FROM conversation WHERE id = ?').get(cid) as Row;
+    const conv = this.db.query('SELECT last_message_at, last_message_id, variant FROM conversation WHERE id = ?').get(cid) as Row;
     if (conv.last_message_at == null || f.ts >= conv.last_message_at) {
       this.db.query('UPDATE conversation SET last_message_id = ?, last_message_at = ? WHERE id = ?').run(id, f.ts, cid);
       // The list shows who wrote the last message; a live one brings its author along anyway.
       if (!live && conv.last_message_id !== id) this.dirty.identities.add(author);
     }
     const fromSelf = author === acc.self_identity || this.isSelf(author);
+    // Someone in your notifications (docs/feed.md) is someone: a person, so their profile and what they did are kept
+    // and found like anyone you talk with.
+    if (!fromSelf && !existed && conv.variant === 'feed') this.ensurePerson(author);
     if (newForAccount && !fromSelf) {
       this.db
         .query(
@@ -2659,14 +2683,18 @@ export class Store {
       const rx = new Map<string, string[]>();
       for (const x of R.get(r.id) ?? []) (rx.get(`${x.style}|${x.key}`) ?? rx.set(`${x.style}|${x.key}`, []).get(`${x.style}|${x.key}`)!).push(x.identity_id);
       const t = T.get(r.id);
-      const extra = json<StoredExtra & { encryptionWarning?: string; forward?: P.ForwardFact }>(r.extra, {});
+      const extra = json<StoredExtra & { encryptionWarning?: string; forward?: P.ForwardFact; feed?: unknown }>(r.extra, {});
       const encryptionWarning = extra.encryptionWarning;
       const forward = sentForwards.get(r.id) ?? (extra.forward ? this.forwardView(r.network, extra.forward) : null);
       const rich = sealed ? undefined : richView(extra, r.network, r.body, this.linkedMessage);
       const { notes, ...extras } = r.extra && !sealed ? this.extraView(r, extra as Record<string, unknown>, seenVia[0]) : {};
+      // A feed conversation's message (docs/feed.md): what they did, with hub ids and signed pictures.
+      const fi = extra.feed ? feedItemOf(extra) : null;
+      const feed = fi ? feedView(fi, r.network, (u) => this.media(u, seenVia[0])) : null;
       return {
         ...(encryptionWarning ? { encryptionWarning } : {}),
         ...(forward ? { forward } : {}),
+        ...(feed ? { feed } : {}),
         ...extras,
         id: r.id,
         conversationId: r.conversation_id,
@@ -2774,7 +2802,8 @@ export class Store {
     if (c.shape === 'self') return 'Notes to self';
     const name = c.name ?? 'a conversation';
     const top = this.communityName(c.spaceIds[0] ?? (c.parentId ? this.conversationView(c.parentId)?.spaceIds[0] : undefined));
-    const label = c.shape === 'channel' || c.shape === 'thread' ? `#${name}` : name;
+    // Discord's channels go by #name, as in its client (model.ts convTitle); a Matrix room or a Telegram topic by its name.
+    const label = c.network === 'discord' && (c.shape === 'channel' || c.shape === 'thread') ? `#${name}` : name;
     return top ? `${label} · ${top}` : label;
   }
 

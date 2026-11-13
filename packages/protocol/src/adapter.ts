@@ -23,7 +23,7 @@
  * native ID on the adapter's own network.
  */
 
-import type { AboutChange, AboutTarget, PersonRelationship } from './about.ts';
+import type { AboutChange, AboutTarget, PersonAbout, PersonRelationship } from './about.ts';
 import type { AddAction, AddRef, RelationshipFact, RequestAnswer, RequestFact } from './add.ts';
 import type { AttentionCapability, AttentionCommand } from './attention.ts';
 import type { InteractCapability, InteractCommand, InteractEvent } from './apps.ts';
@@ -527,6 +527,12 @@ export type AdapterEvent =
   | { t: 'request'; request: RequestFact }
   /** A request answered here or elsewhere, withdrawn, or expired. */
   | { t: 'requestGone'; nativeId: string }
+  /**
+   * What the network showed about someone without being asked (X: the people in your notifications, whose profile
+   * comes with each one). Their identity fact comes first. The hub keeps it as it keeps an answer to `profile`, unless
+   * it holds one newer; `ts` is when it was seen. Never with `posts`.
+   */
+  | { t: 'personAbout'; who: string; about: PersonAbout; ts: number }
   /**
    * The account's friends, requests it sent, blocks, contacts and follows (capability 'relationships', add.ts), sent
    * after connect: the whole list, replacing the hub's. Incoming requests are not in it; they are RequestFacts.

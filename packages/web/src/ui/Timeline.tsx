@@ -118,6 +118,7 @@ import { AltBadge, EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voic
 import { VoicePeople } from './Ringing.tsx';
 import { ForumLazy } from './ThreadsLazy.tsx';
 import { ScheduledStrip, useSendExtras } from './SendExtras.tsx';
+import { FeedViewLazy } from './feed/lazy.tsx';
 
 
 // ------------------------------------------------------------------ header
@@ -575,7 +576,7 @@ function TriageNote({ m }: { m: P.MessageView }) {
       aria-label={`Notification: ${label}`}
       onClick={(e) => {
         const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        openMenu({ x: r.right - 340, y: r.bottom + 4 }, spec());
+        openMenu({ x: r.right - 340, y: r.bottom + 4 }, spec(), e.currentTarget);
       }}
     >
       <Icon name={tierIcon(t.decision)} size={14} />
@@ -765,7 +766,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
             aria-label="More"
             onClick={(e) => {
               const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              openMenu({ x: r.left, y: r.bottom + 4 }, messageMenu(m, reply));
+              openMenu({ x: r.left, y: r.bottom + 4 }, messageMenu(m, reply), e.currentTarget);
             }}
           >
             <Icon name="more" size={15} />
@@ -1543,6 +1544,14 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
   useEffect(() => setReply(null), [convId]);
   useEffect(() => void reactionContext(convId), [convId]);
   if (!c) return <Empty icon="groups" title="Conversation not found" />;
+  // A network's notifications about you: cards, and no composer (docs/feed.md).
+  if (c.variant === 'feed')
+    return (
+      <section class="pane feed-pane">
+        <ConvHeader c={c} onBack={onBack} />
+        <FeedViewLazy c={c} />
+      </section>
+    );
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && visibleAccount(a.id));
   const sendAsValue = prefs.value.sendAs[c.id] ?? accounts.find((a) => a.status === 'online')?.id ?? accounts[0]?.id;
   const voice = c.variant === 'voice' || c.variant === 'stage';

@@ -516,6 +516,160 @@ corruption on a crash, but a power cut could lose the last commits. That is a ch
 `test/stalls.test.ts` holds it: deciding on a message in a channel of 1,200 messages reads them a hundred at a time
 (a test's page) with a turn between, gets the features one read gets, and reads nothing the next time.
 
+### Checkpoints, long batches and the rest (2026-11-13)
+
+After #116 the live hub's first ten minutes still read 60–64 holds (24–34 s), one to three over a second (5.2–5.6 s),
+and later single events held it for 5 s and bursts of hundreds of events for 2–10 s. The same sealed copy reproduced
+them, with:
+- the copy's own traffic replayed as above;
+- four devices on the live socket;
+- a synthetic media cache with the live one's 78,882 names;
+- big batches as the live log shows them: a history fetch of 1,340 messages, a snapshot of 300 conversations and 300
+  identities, a member list of 1,000, eight pages of 20.
+
+The profile, by hold:
+
+- **Checkpoints.** The 6–10 s holds were single small commits (an ingest, a pending-triage row) spending seconds in
+  SQLite's `run`. That is SQLite's automatic checkpoint: the commit that takes the write-ahead log past 1,000 pages
+  copies the log back into the 1.4 GB database file and fsyncs it, inside itself. After a burst of writes the copy is
+  big, and it is why `flush` (which commits the journal) led the live log's labelled totals. The hub's connection
+  now does no checkpoints (`wal_autocheckpoint = 0`). A worker thread with its own connection runs a passive one every
+  second (`checkpoint.ts`): it waits for nobody and nobody waits for it, and commits are as safe as before. In ten
+  minutes of the replay it ran 599–601, the longest 0.5–1.6 s on its own thread. If the worker stops, the hub's
+  connection checkpoints again as SQLite would.
+- **Long batches** from the manager were applied one event at a time, each in its own transaction, all at once: 2.5 s
+  for the 1,340 and 2.7 s for the snapshot. `Supervisor.apply` now applies a batch of more than 32 events, or one
+  queued behind others, 32 at a time. Each slice is one transaction, with a turn of the event loop between. Small
+  batches go in at once, as before, but in one transaction. Same events, same order. An account held for a locked
+  database (#124) keeps its queued batches behind what it holds.
+- **Upkeep at 60 s** (and every six hours) listed and stat'ed the media cache's 78,882 names, then checked every
+  `.mime` again: 3 s on the live hub. It is now a generator, 512 names a slice (`pruneMediaCacheSteps`), and the same
+  files go.
+- **A flush** commits once: attention's folds (a transaction for each conversation) and the journal are one
+  transaction, and the frame goes to devices after the commit.
+- **Attention's rescore of everything** (every five minutes, after the learned order refits, and the first scoring at
+  each start) scores 64 conversations a slice. Devices get the whole list once the first scores are done; a bootstrap
+  before then works them out as it did.
+- **The bootstrap** compresses its zstd on the thread pool (`Bun.zstdCompress`, the same bytes) and remembers each
+  picture's signed link (`mediaSigner`), which was 15k HMACs a bootstrap on the live hub. Its bytes are unchanged
+  (budgets.json).
+
+Main and this side by side over the same ten minutes of replayed traffic, at the same load (6–14), from the hub's own
+stall lines. "Without polls" leaves out the holds that had one of the test's 60 bootstrap requests in them:
+
+| | main | this |
+|---|---|---|
+| holds of 200 ms or more, their sum, the longest | 101, 53.6 s, 5.3 s | 90, 39.6 s, 2.3 s |
+| over a second | 10 | 5 |
+| without polls | 52, 34.4 s, 5.3 s | 49, 26.4 s, 2.3 s |
+| with a poll in them, the longest | 1.9 s | 0.73 s |
+| the first minute | 7, 2.4 s, 0.69 s | 4, 1.5 s, 0.52 s |
+
+A profiled run of this at a lower load put it at 46 holds, 19.4 s, the longest 1.8 s.
+
+What is left is commits waiting for a busy disk. Each one fsyncs (`synchronous` stays FULL), and a few of them in a
+row take a second or two when other work on the machine has the disk: in the comparison run the checkpointer's own
+copies took up to 1.6 s on its thread. A message is now about four commits (its batch, its triage decision, the
+flush, the embedder's own database). Fewer would need the writes on a thread of their own, or `synchronous = NORMAL`,
+which is the owner's choice.
+
+`test/stalls.test.ts` holds it, by counts:
+- a cache walk takes 512 names a slice and lets the same files go;
+- a 1,000-event batch is applied 32 to a transaction with a turn between, in order;
+- with the checkpointer the hub's commits copy nothing back, and its thread copies all of the log;
+- a flush writes inside one transaction and sends after it;
+- the sliced rescore gives the same scores, 64 at most between turns.
+
+### synchronous = NORMAL (2026-11-13)
+
+With #132 deployed, the live hub's ten minutes still read 178 holds of 200 ms or more (74.7 s, six over a second, the
+median 332 ms). Most were "adapter events" and "flush": commits, each waiting on the hub's one thread for an fsync of
+the log (`synchronous` was SQLite's default, FULL), about eight for each message. The longest, one of 5–6 s in each
+deploy's first minutes, was a few small commits waiting on the disk ("The first minutes after a start", below).
+
+The owner chose `synchronous = NORMAL` (store.ts, embeddings.ts). In WAL mode a commit is then written to the log
+without waiting for the disk, and the log reaches the disk at checkpoints, which the checkpoint thread runs about every
+second (checkpoint.ts). A clean stop checkpoints everything first (main.ts). A power cut or a crash of the machine can
+lose about the last second; a crash of the hub loses nothing; nothing can be corrupted (docs/deploy.md, "Durability").
+
+The sealed copy with the copy's traffic replayed, four devices on the live socket, the bootstrap polled every 5 s for
+four minutes, and a fresh headless Chromium profile loading the app after that (one browser at a time):
+
+| | FULL (main) | NORMAL |
+|---|---|---|
+| fsyncs in three minutes of the replay (66 messages) | 543, all on the hub's thread | 19, all on the checkpoint thread |
+| the 90 s after the fresh browser loads: holds, sum, longest | 21, 16.0 s, 3.1 s | 4, 1.2 s, 0.34 s |
+| the whole run: holds of 200 ms or more, sum, longest | 62, 30.1 s, 3.1 s | 50, 19.4 s, 2.3 s |
+| without the bootstrap polls' holds | 28, 19.0 s, 3.1 s | 16, 8.4 s, 2.3 s |
+
+What is left is mostly reads: the first scores at a start, the five-minute rescore's reads, and the bootstrap's own.
+
+### The first minutes after a start (2026-11-13)
+
+Deploys 32 to 35 each had one hold of 5.2 to 6.4 s, somewhere 115 to 304 s after the start, labelled only small
+batches of adapter events and a flush. At first it seemed to follow the deploy's check, a fresh browser profile loading
+the app; deploy 35 had it at 115 s with the check run only after the ten minutes, so it is not that. On the sealed copy
+with the copy's traffic replayed, a fresh browser at four minutes gave a 3.1 s hold on main, as a burst of writes to
+the disk makes the hub's fsync of each commit wait behind it (`synchronous` FULL). With NORMAL (#146) that browser's
+90 s held the hub 1.2 s in all, 0.34 s at most.
+
+A single hold of seconds made of a few small transactions fits a commit waiting on the disk. In the first minutes after
+a start much of the database is written (the triage and attention catch-up, mail's first sync, the embedder) and the
+checkpoints copy it back, so an fsync can wait behind a lot. NORMAL takes the fsync out of the commit. To be sure, a
+write transaction that takes 500 ms or more is now logged with what it was (`timedWrite`, stalls.ts):
+`slow write: 5.6 s in one transaction (adapter events (2))`. It is a transaction of adapter events, a flush, or a triage
+decision.
+
+What the profile found besides, each a single statement that reads from the disk when its pages are not in memory
+(after a start, or after a new device's first load has read widely):
+
+- **Activity's 90-day walk** read 2,048 messages a page: one page took 2.85 s cold. Now 512 a page.
+- **The five-minute rescore** read what to score in three queries before its first slice: 1.96 s cold. Each query is
+  a slice now.
+- **The first scores at a start** are worked out a slice at a time (#132), but a bootstrap that came first worked them
+  all out at once: 1.6–2.0 s at 0 s on the copy and on deploy 35 ("attention: first scoring, attention: rescore all,
+  GET /api/bootstrap ×2"). A bootstrap now waits for them.
+
+`test/stalls.test.ts` holds each: the slow-write line, the rescore's three reads a slice each, and a bootstrap that
+waits for the first scores instead of asking for them.
+
+With NORMAL and these together, the same six minutes on the copy (a fresh browser at four minutes, profiled, at a low
+load) held the hub 24 times for 200 ms or more, 5.6 s in all, the longest 0.32 s; without the test's own bootstrap
+polls, 4 times and 1.1 s. What is left is mostly the bootstrap's reads. Whether to move the hub's writes to a thread of
+their own: [writer-thread.md](writer-thread.md) (not now; move the bootstrap's build to a reader first).
+
+### Mail's body cache, every six seconds (2026-11-13)
+
+With NORMAL live (deploy 36) the ten minutes still read 113 holds of 200 ms or more, 79 of them 500–700 ms, and they
+came every 5.9–6.1 s. That is mail's body cache (`mail/cache.ts`): each body the keep-all archive fetches (about one a
+second) asks for a sweep 5 s later, and a sweep took 480–560 ms on a copy of the live database, where nothing was over
+either cap:
+
+- **The bodies too big to cache** were found with `keep = -1 AND used_at < ?` by the `used_at` index. Every body was
+  older than ten minutes, so it read all 14,199 rows. `keep` is the last column, after the text and the html, so each
+  read went through the body itself (519 MB), once to list them and once more to delete them: 175 ms each. A partial
+  index on just those (`mail_body_big`, schema-big.sql) finds them in 0–2 ms. On the live hub there are none.
+- **The caps** added up every row's bytes, bodies and search text, for the accounts that do not keep all their mail.
+  On the live hub that is no account, which took 120 ms to find out. When every account with mail keeps all of it, the
+  sweep now says 0 without adding up.
+- The sweep notes itself (`mail: cache sweep`). Mail's other work that an answer from its backend sets off is noted
+  and logged as `slow: <time> in <what>` past 500 ms: pages of summaries, bodies, its events.
+
+The first sweep after a start reads those bodies from the disk, not from memory. It comes 5 s after the first body the
+archive fetches, which can be minutes after the start. That is likely the single 5.6–6.4 s hold of every deploy's first
+minutes, labelled only with the small adapter batches around it. The partial index removes that read as well.
+
+On the copy, a body about every second through the hub's own MailStore and BodyCache, for 46 s:
+
+| | main | this |
+|---|---|---|
+| holds of 100 ms or more | 8 (1,237 ms, then 460–520 ms, every ~6 s) | 0 |
+| one sweep | 480–560 ms | 3–4 ms |
+
+The index is new in the mail schema, so the first start with it copies the database aside before migrating (the
+`pre-migrate copy` in the startup line, 7–26 s on the live hub). `test/stalls.test.ts` checks the plan, and that a
+sweep with every account keeping all its mail adds up nothing.
+
 ## The snapshot after each open (2026-11-11)
 
 Opening a conversation saves the device's snapshot 1.5 s later, when the page is idle (snapshot.ts). Opening one marks

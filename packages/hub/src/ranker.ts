@@ -21,7 +21,7 @@ import { EXPLORE_REASON } from '@dither-chat/protocol';
 import { drawZ, epochOf, EXAM_AT, EXPLORE_EPOCH, EXPLORE_SCALE, FEATURES, FIT, fitRankSteps, GUESSED_CURVE, HORIZON, predict, PRIOR, rankFeatures, Z_CLIP, type Moment, type Prediction, type RankModel } from './rank.ts';
 import { flagged, isChoice, loadWorld, momentOf, mutedBy, Rebuild } from './rankhistory.ts';
 import { noteWork } from './stalls.ts';
-import type { Store } from './store.ts';
+import { BUSY_MS, type Store } from './store.ts';
 import type { Triage } from './triage.ts';
 
 type Row = Record<string, any>;
@@ -169,6 +169,7 @@ export class InboxRanker implements AttentionJudge {
     noteWork('inbox ranking refit');
     const now = this.now();
     const own = this.file ? new Database(this.file, { readonly: true }) : null;
+    own?.exec(`PRAGMA busy_timeout = ${BUSY_MS}`);
     const db = own ?? this.store.db;
     let rebuild: Rebuild | null = null;
     const pause = () => new Promise((r) => setTimeout(r, pauseMs));

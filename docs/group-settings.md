@@ -234,6 +234,7 @@ network: nothing bridges two. It follows the rules of adding people, above.
 | Signal | a group | anyone the account knows | 1 to 10 | required, up to 32 | one signal-cli `updateGroup` with a name and members and no group id; someone whose profile key it lacks comes in invited |
 | Matrix | a room | anyone the account knows | 1 to 10 | required, up to 255 | `POST /createRoom` `{ name, invite, preset: 'private_chat' }`, encrypted as the adapter's own DMs are where it can; everyone is invited, in once they accept |
 | Telegram | a group | anyone the account knows (their privacy settings may refuse) | 1 to 10 | required, up to 128 | `messages.createChat { users, title }`; whom it could not add (`missingInvitees`) comes back refused with the privacy sentence |
+| X | an XChat group | anyone X's own search offers as addable to a group | 1 to 10 | optional, up to 32 (X's edit screen); without one X names it after its people | X's New message → Create a group in the sandbox, the people picked from its own search; a name is set after on its Edit Group screen |
 | WhatsApp | — | — | — | — | left out, for the reason adding people is: make it on your phone and it shows up here. The bridge has a test that it never creates a group |
 
 The numbers are `GROUP_RULES` in `packages/protocol/src/about.ts`. "How many" counts the others, not you. A name is

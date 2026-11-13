@@ -60,8 +60,10 @@ Left:
   how many they posted when one can be made (below, "Message counts").
 - **Mail** (docs/mail.md, "People"), for someone with an email address: their newest threads across your mail
   accounts, how many, and All mail with them. A thread opens in Mail.
-- **Recent messages**: each with the place's picture (the server's icon for a channel), the place, and when. Not
-  shown for someone known only by mail.
+- **Recent posts** (X, [feed.md](feed.md#profiles)): their posts as their profile said them, pinned, reposts, replies
+  and quotes marked, with pictures, counts and a link to each.
+- **Recent messages**: each with the place's picture (the server's icon for a channel), the place, and when. A feed
+  item says what they did ("X notifications", "Liked your post: “…”"). Not shown for someone known only by mail.
 - **Activity** (ui/ActivityCard.tsx): the current status and since when, and their presence now when it is logged; then
   the activity chart (below, "Activity"); then, with adversarial features shown (docs/history.md), the logged status
   history and presence history (each stretch with how long it lasted), each collapsed until opened. Absent when there
@@ -149,6 +151,12 @@ null for one it does not have), friends into identities, pictures into signed me
 | Signal | About | About emoji | | | contact, blocked | (hub's own) | | contacts | phone | |
 | WhatsApp | About | | | | contact, blocked | (hub's own) | | address book | phone | business |
 | Matrix | | | where the server keeps them | | has a DM | (hub's own) | | DM partners | matrix.to | time zone |
+| X | bio | | | from the profile | following, Follows you | (hub's own) | | | website | follower, following and post counts; recent posts |
+
+**X** also answers with the person's recent posts (`PersonAbout.posts`, up to 20, a pinned one first), shown in a
+**Recent posts** card after About, and its counts and **Follows you** go in About ([feed.md](feed.md#profiles)). The
+people in your X notifications have their profile kept without asking (a `personAbout` event): their page shows it at
+once, says it came from your notifications, and still asks X when opened, for their posts.
 
 ### Message counts
 

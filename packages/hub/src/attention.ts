@@ -16,6 +16,7 @@ import type { Store } from './store.ts';
 import type { Triage } from './triage.ts';
 import type { ActivityStore } from './activity.ts';
 import { requestHeld } from './add.ts';
+import { sliced, whole, type SliceOptions } from './slices.ts';
 import { noteWork } from './stalls.ts';
 import { foldMark, NEEDS_HOLD } from './replymarks.ts';
 import { DEFAULT_OWED_TABLE, fitOwedTable, OWED_SHOWN, owedChance, rateBucket, turnRate, validTable, type OwedTable, type OwedTurn } from './owed.ts';
@@ -42,6 +43,8 @@ export const FEATURE_VERSION = 4;
 const QUIET = 5_000;
 /** Scores move with time (an unanswered message ages, recency fades): all are recomputed this often. */
 export const RESCORE_EVERY = 5 * MIN;
+/** Conversations scored between turns of the event loop when all are. */
+export const RESCORE_STEP = 64;
 
 // ------------------------------------------------------------------ features
 
@@ -725,6 +728,10 @@ export class Attention {
   /** Conversations to fold and score at the next sync. */
   private pending = new Set<string>();
   private scored = false;
+  /** Whether the first scores are in (list() works them out at once otherwise). */
+  get hasScores(): boolean {
+    return this.scored;
+  }
   private selfPerson: string | null = null;
   private timers: ReturnType<typeof setInterval>[] = [];
   /** Answers from an AttentionJudge, by conversation (follow-up). */
@@ -967,9 +974,10 @@ export class Attention {
 
   private input(cid: string, now: number): (ScoreInput & { listed: boolean }) | null {
     const db = this.store.db;
-    const c = db.query(`SELECT c.id, c.shape, c.last_message_at, ${LISTED} AS listed FROM conversation c WHERE c.id = ?`).get(cid) as Row | null;
-    // An open message request waits under Requests, not in the inbox (add.ts).
-    if (!c || requestHeld(db, cid)) return null;
+    const c = db.query(`SELECT c.id, c.shape, c.variant, c.last_message_at, ${LISTED} AS listed FROM conversation c WHERE c.id = ?`).get(cid) as Row | null;
+    // An open message request waits under Requests, not in the inbox (add.ts); a network's notifications have a row
+    // of their own (docs/feed.md).
+    if (!c || c.variant === 'feed' || requestHeld(db, cid)) return null;
     const v = db.query(`SELECT MAX(unread) AS unread, MAX(mentions) AS mentions, MIN(COALESCE(last_read_ts, 0)) AS read FROM vantage WHERE target_kind = 'conversation' AND target_id = ?`).get(cid) as Row;
     const unread = v?.unread ?? 0;
     const mentions = v?.mentions ?? 0;
@@ -1115,19 +1123,45 @@ export class Attention {
 
   /** Every conversation the inbox may list, scored now. Returns what changed. */
   rescoreAll(now = this.now()): P.ClientEvent[] {
+    return whole(this.rescoreAllSteps(now));
+  }
+
+  /** How `rescoreAllSliced` shares the hub's thread (slices.ts); a test's clock and pauses. */
+  slices: SliceOptions = {};
+  private rescoring: Promise<P.ClientEvent[]> | null = null;
+  /** The first scoring after start (main.ts sends the whole list once it is done). */
+  firstScores: Promise<unknown> = Promise.resolve();
+
+  /**
+   * The same, a slice at a time: every listed conversation scored is most of a second on the live hub (every five
+   * minutes, and after the learned order refits). One at a time; a second call while one runs gets its answer.
+   */
+  rescoreAllSliced(now = this.now(), o: SliceOptions = this.slices): Promise<P.ClientEvent[]> {
+    this.rescoring ??= sliced('attention: rescore all', this.rescoreAllSteps(now), o).finally(() => (this.rescoring = null));
+    return this.rescoring;
+  }
+
+  private *rescoreAllSteps(now: number): Generator<number, P.ClientEvent[]> {
     const db = this.store.db;
     this.refreshSelf();
     this.noteIngested();
     const ids = new Set<string>(this.views.keys());
+    // Three reads, a slice each: with the pages not in memory (after a start, or a new device's first load) the last
+    // walks two weeks of triage and their messages from disk, seconds on a busy machine.
     for (const r of db.query(`SELECT c.id FROM conversation c WHERE ${LISTED}`).all() as Row[]) ids.add(r.id);
+    yield 1;
     for (const r of db.query(`SELECT DISTINCT target_id AS id FROM vantage WHERE target_kind = 'conversation' AND mentions > 0`).all() as Row[]) ids.add(r.id);
+    yield 1;
     for (const r of db.query(`SELECT DISTINCT m.conversation_id AS id FROM triage t JOIN message m ON m.id = t.message_id WHERE t.decision IN ('push', 'quiet', 'digest') AND t.created_at > ?`).all(now - 14 * DAY) as Row[]) ids.add(r.id);
     const items: P.AttentionView[] = [];
     const removed: string[] = [];
+    yield 1;
+    let done = 0;
     for (const id of ids) {
       const r = this.rescore(id, now);
       if (r === 'removed') removed.push(id);
       else if (r) items.push(r);
+      if (++done % RESCORE_STEP === 0) yield RESCORE_STEP;
     }
     this.fromSources(now, true, items, removed);
     this.scored = true;
@@ -1222,7 +1256,12 @@ export class Attention {
 
   /** The background pump, and scores that move with time. `send` broadcasts to clients. */
   start(send: (events: P.ClientEvent[]) => void) {
-    this.rescoreAll();
+    // The first scores a slice at a time too: the hub is answering by now. A bootstrap before they are done works them
+    // out at once (list()).
+    this.firstScores = this.rescoreAllSliced().catch((e) => {
+      console.error('attention: first scoring failed', e);
+      return [];
+    });
     let busy = false;
     const pumpSoon = () => {
       if (busy) return;
@@ -1247,8 +1286,9 @@ export class Attention {
             console.error('attention: owed table fit failed', e);
           }
         }
-        noteWork('attention: rescore all');
-        send(this.rescoreAll());
+        void this.rescoreAllSliced()
+          .then(send)
+          .catch((e) => console.error('attention: rescore failed', e));
       }, RESCORE_EVERY),
     );
   }

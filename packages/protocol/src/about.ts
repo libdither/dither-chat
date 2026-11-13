@@ -10,6 +10,7 @@
  * how reactions work there. What is allowed in one place comes from the adapter, as ReactionContext does.
  */
 import type { MediaUrl } from './adapter.ts';
+import type { PostFact } from './feed.ts';
 import { NETWORK_META, type Network } from './ontology.ts';
 import type { AboutLeaving, InviteLinkFact, InviteOptions } from './servers.ts';
 import { PIN_DURATIONS } from './poll.ts';
@@ -209,6 +210,8 @@ export const GROUP_RULES: Partial<Record<Network, GroupRule>> = {
   signal: { noun: 'group', who: 'known', mode: 'add', name: 'required', nameMax: 32, min: 1, max: 10 },
   matrix: { noun: 'room', who: 'known', mode: 'invite', name: 'required', nameMax: 255, min: 1, max: 10 },
   telegram: { noun: 'group', who: 'known', mode: 'add', name: 'required', nameMax: 128, min: 1, max: 10 },
+  // XChat (X's web client): New message → Create a group, people its search offers as addable, a name of up to 32.
+  x: { noun: 'group', who: 'known', mode: 'add', name: 'optional', nameMax: 32, min: 1, max: 10 },
 };
 
 /** What `createGroup` answers, in native ids. */
@@ -232,7 +235,8 @@ export interface CreateGroupResult {
 export function createGroupProblem(network: Network, name: string | undefined, people: number): string | null {
   const r = GROUP_RULES[network];
   if (!r) return createGroupNotBuilt(network);
-  const what = `A ${NETWORK_META[network].name} ${r.noun}`;
+  const net = NETWORK_META[network].name;
+  const what = `${/^[AEIOX]/.test(net) ? 'An' : 'A'} ${net} ${r.noun}`;
   const them = (n: number) => (r.who === 'friends' ? (n === 1 ? 'friend' : 'friends') : n === 1 ? 'person' : 'people');
   if (people < r.min) return `${what} starts with at least ${r.min} ${them(r.min)}`;
   if (people > r.max) return `${what} starts with at most ${r.max} ${them(r.max)}`;
@@ -370,10 +374,11 @@ export const ABOUT_RULES: Record<Network, AboutRules> = {
     conversation: ['name', 'avatar'],
     space: [],
   },
-  // XChat groups: name, picture and a description of up to 500 characters (X's web client).
+  // XChat groups: a name of up to 32 characters, a picture and a description of up to 500 (X's web client).
   x: {
     conversation: ['name', 'avatar', 'topic'],
     space: [],
+    nameMax: 32,
     topicMax: 500,
   },
   // Mail has no conversations or spaces to set anything on.
@@ -540,6 +545,15 @@ export interface PersonAbout {
   editable?: ProfileField[];
   /** When the person is you: your username and its link, where the network has them and one is set. */
   username?: { name: string; link?: string };
+  /**
+   * Their recent posts, newest first (X: up to 20 from their profile's Posts tab, reposts included, a pinned one
+   * first with `pinned`). Only in an answer to `profile`, never in a `personAbout` event.
+   */
+  posts?: PostFact[];
+  /** Follower and following counts and their posts in all, where the network shows them. */
+  counts?: { followers?: number; following?: number; posts?: number };
+  /** They follow you (X). */
+  followsYou?: boolean;
 }
 
 /** What `setProfile` may change: the bio, the profile name, the emoji by the bio, the picture, the username, pronouns, the banner and its colour. */

@@ -92,6 +92,14 @@ the first chance. Copies you made yourself are never removed. Before opening a d
 seen, the hub also copies it to `backups/pre-migrate-<time>.sqlite` (newest five kept), and every migration runs in
 one transaction. Mail's schema files (`packages/hub/src/mail/schema*.sql`) count as the schema too.
 
+A copy of the live database by hand: `sqlite3 hub.sqlite "VACUUM INTO 'backups/<name>.sqlite'"`, or let the hub's own
+nightly copy be the one. Never `cp` it: in WAL mode the file alone is not the database. Any other connection to it can
+hold a lock for a moment, mostly while it opens or closes, and the hub's writes then wait for it (`busy_timeout`, 2 s
+on the hub's one thread). A copy by a script that opens it read-only from bun locked out the live hub's writes 26
+times in one 30 s backup (2026-11-13) before the hub waited; the sqlite3 shell did not in the same test. Past 2 s a
+write fails as before: an adapter's event then waits with those after it and is applied again a second later
+(`packages/hub/src/supervisor.ts`), and other writes log the failure.
+
 Every six hours it clears partial downloads from `media-cache/`. The cache itself is kept indefinitely: the media
 archive (`packages/hub/src/mediaarchive.ts`) fills it with every remote attachment soon after it arrives, because Discord's links
 expire. Each kept file is then looked at once for what it really is (`mediainfo.ts`, [files.md](files.md)), in the
@@ -102,6 +110,19 @@ silent, never marked (nor voted on before the tiers), in conversations you never
 
 To restore, stop the hub, move `hub.sqlite`, `hub.sqlite-wal` and `hub.sqlite-shm` aside, copy a backup to
 `hub.sqlite`, and start it. Clients notice and download everything again.
+
+**Durability.** The hub's database is in WAL mode with `synchronous = NORMAL` (`packages/hub/src/store.ts`; the
+embedder's database too), the owner's choice of 2026-11-13. A commit is written to the log and the hub goes on without
+waiting for the disk; the log reaches the disk at each checkpoint, which a thread of the hub's runs about every second
+(`checkpoint.ts`), and a clean stop checkpoints everything before it exits.
+
+- A crash of the hub alone loses nothing: what it committed is in the log, and the next start reads it.
+- A power cut, or a crash of the machine, can lose what was committed since the last checkpoint: about the last
+  second. It cannot corrupt the database.
+- The nightly copies, the copies before a migration and the ZFS snapshots are as before.
+
+Before, every commit waited for an fsync on the hub's one thread, about four for each message; on a busy disk that
+was most of what still held the hub (docs/perf.md, "synchronous = NORMAL (2026-11-13)").
 
 To deploy a new version: `git pull && bun install && bun run web:build && systemctl --user restart dither-chat`.
 Installed apps notice the new service worker when reopened, when the hub comes back after the restart, or within an
@@ -138,6 +159,12 @@ stalls: 46 of 200 ms or more in the first 10 min, the longest 802 ms (GET /api/h
 
 A request's own work is a hold of its own: a bootstrap is 0.25–0.7 s of it on the live hub's database. `nothing
 noted` means the work that held it does not note itself yet (`noteWork`).
+
+SQLite's checkpoints (copying the write-ahead log back into `hub.sqlite`) run on a thread of their own
+(`packages/hub/src/checkpoint.ts`), not inside whichever commit of the hub's passes 1,000 pages. Beside the stall
+log's summary the hub logs `checkpoints: N in the first 10 min, the longest X ms off the hub's thread`: N near 600
+says they kept up. If the thread fails, the hub logs `checkpoints: the worker … the hub's connection checkpoints
+again` and SQLite's own checkpoints come back, holds and all.
 
 CI starts the hub on databases older hubs left (`packages/hub/test/old-database.test.ts`, fixtures in
 `packages/hub/test/fixtures/old-db/`): it must copy the database aside, migrate, log that line and read back what the old

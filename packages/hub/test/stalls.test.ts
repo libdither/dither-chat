@@ -9,20 +9,30 @@
  * slice may go over SLICE_ROWS (a row read, or an example visited once) by more than one step. The answers are the
  * same as running the work straight through, to the last bit. The refit's real times are printed, not judged.
  */
+import { Database } from 'bun:sqlite';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ActivityStore } from '../src/activity.ts';
 import { DIMS, EmbeddingStore, Embeddings, fitProbe, fitProbeSteps, unit, type JevClient } from '../src/embeddings.ts';
 import { MediaArchiver } from '../src/mediaarchive.ts';
+import { BodyCache, storeBody } from '../src/mail/cache.ts';
+import { MailStore } from '../src/mail/store.ts';
+import type * as M from '@dither-chat/protocol/mail-iface';
 import { SLICE_ROWS, sliced, whole, type SliceOptions } from '../src/slices.ts';
-import { noteWork, pathShape, StallWatch } from '../src/stalls.ts';
+import { noteWork, pathShape, SLOW_WRITE_MS, StallWatch, timedWork, timedWrite } from '../src/stalls.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
 import { SELF_SQL } from '../src/interact.ts';
 import { SELF_SQL as RANK_SELF_SQL } from '../src/rankhistory.ts';
 import { selfIdentities } from '../src/embeddings.ts';
+import type * as P from '@dither-chat/protocol';
+import { Attention, RESCORE_STEP } from '../src/attention.ts';
+import { startCheckpointer } from '../src/checkpoint.ts';
+import { CACHE_STEP, pruneMediaCache, pruneMediaCacheSteps } from '../src/housekeeping.ts';
+import { HubServer } from '../src/server.ts';
+import { EVENTS_STEP, Supervisor } from '../src/supervisor.ts';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -327,6 +337,262 @@ describe('the identities that are you', () => {
   });
 });
 
+describe('upkeep', () => {
+  test("the media cache's walk stats a few hundred files between turns, and lets the same files go", async () => {
+    const make = (d: string) => {
+      mkdirSync(d, { recursive: true });
+      for (let i = 0; i < 1500; i++) {
+        writeFileSync(join(d, `f${i}`), 'x'.repeat(10));
+        writeFileSync(join(d, `f${i}.mime`), 'image/png');
+      }
+      // Orphaned .mime files and old partial downloads go.
+      for (let i = 0; i < 40; i++) writeFileSync(join(d, `gone${i}.mime`), 'image/png');
+    };
+    const root = mkdtempSync(join(tmpdir(), 'dither-stalls-cache-'));
+    try {
+      make(join(root, 'a'));
+      make(join(root, 'b'));
+      const now = Date.now() + 2 * HOUR;
+      const straight = pruneMediaCache(join(root, 'a'), 10 * 1000, now);
+      const slices: number[] = [];
+      const sliced_ = await sliced('cache', pruneMediaCacheSteps(join(root, 'b'), 10 * 1000, now), everyChance(slices));
+      expect(sliced_).toEqual(straight);
+      expect(Math.max(...slices)).toBeLessThanOrEqual(CACHE_STEP);
+      // 3,040 names listed and looked at, then listed again for the .mime files: a slice each few hundred.
+      expect(slices.length).toBeGreaterThanOrEqual(Math.floor((3 * 3040) / CACHE_STEP));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("a long batch of an adapter's events", () => {
+  test('is applied EVENTS_STEP at a time, each slice one transaction, with turns between, all in order', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dither-stalls-batch-'));
+    const store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
+    store.db.exec('PRAGMA synchronous = OFF');
+    try {
+      const acc = store.createAccount({ network: 'discord', label: 'main', color: '#000', adapter: 'discord' });
+      store.ingest(acc, { t: 'status', status: 'online', self: { nativeId: 'me', displayName: 'Me' } });
+      store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'busy', shape: 'channel', name: 'busy' } });
+      const sup = new Supervisor(store, { hubAdapterUrl: '', dataDir: dir, repoRoot: dir, inproc: () => null, onFresh: () => {} });
+      const slices: number[] = [];
+      const txs: number[] = [];
+      sup.slices = everyChance(slices);
+      sup.onApplied = (n) => txs.push(n);
+      const N = 1000;
+      // A history page as big as the live hub's biggest (1,340), and a small one right behind it.
+      const page: P.AdapterEvent[] = Array.from({ length: N }, (_, i) => ({ t: 'message', message: { nativeId: `h${i}`, conversation: 'busy', author: `a${i % 9}`, ts: Date.UTC(2026, 0, 1) + i * 60_000, body: `old ${i}` }, live: false }));
+      sup.apply(acc.id, page);
+      sup.apply(acc.id, [{ t: 'message', message: { nativeId: 'after', conversation: 'busy', author: 'a1', ts: Date.UTC(2026, 5, 1), body: 'after' } }]);
+      await sup.drained();
+      expect(Math.max(...txs)).toBe(EVENTS_STEP);
+      expect(txs.reduce((a, b) => a + b, 0)).toBe(N + 1);
+      expect(txs.length).toBe(Math.ceil(N / EVENTS_STEP) + 1);
+      expect(slices.length).toBe(txs.length);
+      const rows = store.db.query(`SELECT native_id FROM message WHERE native_id LIKE 'h%' OR native_id = 'after' ORDER BY rowid`).all() as { native_id: string }[];
+      expect(rows.map((r) => r.native_id)).toEqual([...page.map((e) => (e as any).message.nativeId), 'after']);
+    } finally {
+      store.db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('checkpoints', () => {
+  test("the hub's commits wait for no disk: they get there at checkpoints (synchronous NORMAL, the owner's choice)", () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dither-stalls-sync-'));
+    const store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
+    try {
+      expect(store.db.query('PRAGMA synchronous').get()).toEqual({ synchronous: 1 });
+      expect(store.db.query('PRAGMA journal_mode').get()).toEqual({ journal_mode: 'wal' });
+    } finally {
+      store.db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the hub's commits leave the log to the checkpointer's thread, which copies all of it back", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dither-stalls-checkpoint-'));
+    const file = join(dir, 'hub.sqlite');
+    const store = new Store(file, (raw) => raw ?? null);
+    const write = () => {
+      store.db.exec('CREATE TABLE IF NOT EXISTS scratch (b BLOB)');
+      for (let k = 0; k < 30; k++) store.db.exec('INSERT INTO scratch (b) SELECT randomblob(4000) FROM (SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9 UNION ALL SELECT 10) a, (SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9 UNION ALL SELECT 10) b');
+    };
+    const wal = () => statSync(`${file}-wal`).size;
+    try {
+      // SQLite's default: a commit past 1,000 pages copies the log back, inside it, so the log stays near that.
+      write();
+      expect(wal()).toBeLessThan(2000 * 4096);
+      let done!: (r: { log: number; checkpointed: number }) => void;
+      const first = new Promise<{ log: number; checkpointed: number }>((r) => (done = r));
+      const c = startCheckpointer(store.db, file, { everyMs: 3_600_000, onDone: (r) => done(r) });
+      try {
+        // With the checkpointer: no commit of the hub's copies anything back.
+        write();
+        expect(wal()).toBeGreaterThan(2500 * 4096);
+      } finally {
+        c.stop();
+      }
+      const d = startCheckpointer(store.db, file, { everyMs: 1, onDone: (r) => done(r) });
+      try {
+        const r = await first;
+        expect(r.log).toBeGreaterThan(2500);
+        expect(r.checkpointed).toBe(r.log);
+      } finally {
+        d.stop();
+      }
+    } finally {
+      store.db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('a flush', () => {
+  test("writes what it writes in one transaction, and sends the frame once that is committed", () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dither-stalls-flush-'));
+    const store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
+    try {
+      const acc = store.createAccount({ network: 'matrix', label: 'm', color: '#000', adapter: 'matrix' });
+      store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'room', shape: 'group', name: 'Room' } });
+      const seen: boolean[] = [];
+      const attention = { sync: () => (seen.push(store.db.inTransaction), []) };
+      const hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', attention: attention as any });
+      const sent: { inTx: boolean; frame: string }[] = [];
+      (hub as unknown as { clients: Set<{ send(f: string): void }> }).clients.add({ send: (frame) => void sent.push({ inTx: store.db.inTransaction, frame }) });
+      hub.flush();
+      expect(seen).toEqual([true]);
+      expect(sent.length).toBe(1);
+      expect(sent[0].inTx).toBe(false);
+    } finally {
+      store.db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('a bootstrap just after a start', () => {
+  test('waits for the first scores, worked out a slice at a time, rather than working them all out at once', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dither-stalls-boot-'));
+    const store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
+    let release!: () => void;
+    let asked!: () => void;
+    const askedYet = new Promise<void>((r) => (asked = r));
+    const listedWhenReady: boolean[] = [];
+    let ready = false;
+    const attention = {
+      get hasScores() {
+        asked();
+        return ready;
+      },
+      firstScores: new Promise<void>((r) => (release = r)),
+      list() {
+        listedWhenReady.push(ready);
+        return [];
+      },
+      sync: () => [],
+    };
+    const hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', attention: attention as any });
+    const port = hub.start().port!;
+    try {
+      const answer = fetch(`http://127.0.0.1:${port}/api/bootstrap`).then((r) => r.json());
+      // The request is in, has asked, and waits.
+      await askedYet;
+      expect(listedWhenReady).toEqual([]);
+      ready = true;
+      release();
+      expect(Array.isArray((await answer).conversations)).toBe(true);
+      expect(listedWhenReady).toEqual([true]);
+    } finally {
+      hub.stop();
+      store.db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("attention's rescore of everything", () => {
+  test('gives the scores it gives straight through, at most RESCORE_STEP conversations between turns', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dither-stalls-rescore-'));
+    const store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
+    store.db.exec('PRAGMA synchronous = OFF');
+    try {
+      const acc = store.createAccount({ network: 'signal', label: 'main', color: '#000', adapter: 'signal' });
+      store.ingest(acc, { t: 'status', status: 'online', self: { nativeId: 'me', displayName: 'Me' } });
+      const now = Date.UTC(2026, 10, 12, 12);
+      store.db.transaction(() => {
+        for (let i = 0; i < 300; i++) {
+          store.ingest(acc, { t: 'conversation', conversation: { nativeId: `dm${i}`, shape: 'direct', participants: [`p${i}`, 'me'] } });
+          store.ingest(acc, { t: 'message', message: { nativeId: `m${i}`, conversation: `dm${i}`, author: `p${i}`, ts: now - i * 60_000, body: `hi ${i}` } });
+        }
+      })();
+      const triage = new Triage(store);
+      const straight = new Attention(store, triage, () => now).rescoreAll(now);
+      const slices: number[] = [];
+      const b = new Attention(store, triage, () => now);
+      const inSlices = await b.rescoreAllSliced(now, everyChance(slices));
+      expect(inSlices).toEqual(straight);
+      expect((straight[0] as Extract<P.ClientEvent, { t: 'attention' }>).items.length).toBe(300);
+      // The three reads of what to score are a slice each, then the scoring.
+      expect(slices.slice(0, 3)).toEqual([1, 1, 1]);
+      expect(Math.max(...slices)).toBeLessThanOrEqual(RESCORE_STEP);
+      expect(slices.length).toBeGreaterThanOrEqual(Math.floor(300 / RESCORE_STEP));
+    } finally {
+      store.db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("mail's body cache", () => {
+  /** A mail store with one account and `n` messages with bodies; `kept`: the account keeps all its mail. */
+  function mailWorld(n: number, kept: boolean) {
+    const T0 = Date.UTC(2026, 10, 1, 12);
+    const db = new Database(':memory:', { strict: true });
+    const st = new MailStore(db, () => T0 + 3_600_000);
+    st.keepAll = kept;
+    st.upsertAccount({ id: 'acc_cacheTest1', kind: 'imap', label: 'Mail', level: 'write', dryRun: false, online: true });
+    st.putMailboxes('acc_cacheTest1', [{ id: 'INBOX', name: 'Inbox', path: 'INBOX', parentId: null, role: 'inbox', unread: 0, total: n }]);
+    const box = st.mailboxByNative('acc_cacheTest1', 'INBOX')!;
+    const sums: M.MailSummary[] = Array.from({ length: n }, (_, i) => ({
+      id: `INBOX.1.${i}`, mailboxId: 'INBOX', messageId: `<m${i}@example.org>`, threadId: null, from: [{ name: 'Al', email: 'al@example.org' }],
+      to: [{ name: null, email: 'me@example.com' }], cc: [], subject: `Hello ${i}`, date: T0 + i, receivedAt: T0 + i,
+      flags: { seen: true, flagged: false, answered: false, draft: false }, labels: [], size: 100, preview: null, hasAttachments: false,
+    }) as M.MailSummary);
+    st.ingest('acc_cacheTest1', box, sums);
+    for (const m of sums) {
+      const id = st.one<{ id: string }>('SELECT message_id AS id FROM mail_location WHERE native_id = ?', m.id)!.id;
+      storeBody(st, id, { ...m, bcc: [], replyTo: [], inReplyTo: null, references: [], text: 'a body '.repeat(50), html: null, attachments: [] } as M.MailMessage);
+    }
+    // Every statement the cache prepares, to count what it reads.
+    const asked: string[] = [];
+    const query = db.query.bind(db);
+    (db as unknown as { query: typeof db.query }).query = ((sql: string) => (asked.push(sql), query(sql))) as typeof db.query;
+    return { st, db, asked };
+  }
+
+  test('finds the bodies too big to cache by an index, not by reading every body to its keep column', () => {
+    const { db } = mailWorld(3, true);
+    for (const sql of ['SELECT message_id FROM mail_body WHERE keep = -1 AND used_at < ?', 'DELETE FROM mail_body WHERE keep = -1 AND used_at < ?'])
+      expect((db.query(`EXPLAIN QUERY PLAN ${sql}`).all(0) as { detail: string }[]).map((r) => r.detail)).toEqual(['SEARCH mail_body USING INDEX mail_body_big (used_at<?)']);
+  });
+
+  test('when every account keeps all its mail, a sweep adds up no row; when one does not, it adds up as before', () => {
+    const kept = mailWorld(40, true);
+    kept.asked.length = 0;
+    expect(new BodyCache(kept.st).sweep()).toEqual({ bodies: [], text: 0 });
+    expect(kept.asked.filter((q) => /SUM\(/.test(q))).toEqual([]);
+    const capped = mailWorld(40, false);
+    capped.asked.length = 0;
+    const sizes = new BodyCache(capped.st).sizes();
+    expect(capped.asked.filter((q) => /SUM\(/.test(q)).length).toBe(2);
+    expect(sizes.bodies).toBe(capped.st.one<{ n: number }>('SELECT SUM(bytes) AS n FROM mail_body')!.n);
+    expect(sizes.text).toBe(capped.st.one<{ n: number }>('SELECT SUM(bytes) AS n FROM mail_text')!.n);
+  });
+});
+
 describe('the stall log', () => {
   test('a late timer is a stall, with the work that began in it; ten minutes on, one line sums them up', () => {
     const lines: string[] = [];
@@ -350,6 +616,18 @@ describe('the stall log', () => {
       'stalls: 1 of 200 ms or more in the first 10 min, the longest 23.8 s (embeddings refit, GET /api/conversations/:id/messages)',
       'stall: 2.5 s from 600.7 s after start: media archive',
     ]);
+  });
+
+  test('a write transaction of SLOW_WRITE_MS or more is logged with what it was; a quicker one is not', () => {
+    const lines: string[] = [];
+    let t = 0;
+    const now = () => t;
+    expect(timedWrite('flush', () => ((t += SLOW_WRITE_MS - 1), 'quick'), (l) => lines.push(l), now)).toBe('quick');
+    expect(timedWrite('adapter events (2)', () => ((t += 5600), 'slow'), (l) => lines.push(l), now)).toBe('slow');
+    expect(lines).toEqual(['slow write: 5.6 s in one transaction (adapter events (2))']);
+    // Work that runs in one piece and is not a transaction of its own (mail's applies): the same, worded for it.
+    expect(timedWork('mail: 300 summaries', () => ((t += 700), 3), (l) => lines.push(l), now)).toBe(3);
+    expect(lines.at(-1)).toBe('slow: 700 ms in mail: 300 summaries');
   });
 
   test('paths without their ids', () => {

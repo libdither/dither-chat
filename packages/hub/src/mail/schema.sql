@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS mail_account (
   search_ids   INTEGER,                         -- status.details.searchIds: 1 its search pages ids only (keep.ts audits)
   background_stopped TEXT,                      -- status.details.backgroundStopped: 'challenge' | 'signedOut' | 'quota'; NULL: reading
   storage      TEXT,                            -- JSON {text, used, total}: what the status says of the account's storage
+  writes       TEXT,                            -- JSON ['seen', 'flagged', 'move', 'trash', 'junk']: status.details.writes, what it writes now; NULL: not said
   hidden      INTEGER NOT NULL DEFAULT 0,
   gone_at      INTEGER,                         -- access ended: everything of it goes 24 h later
   created_at   INTEGER NOT NULL

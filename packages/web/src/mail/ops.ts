@@ -49,7 +49,8 @@ export const clearSelected = () => void (selected.value.size && (selected.value 
 
 // ------------------------------------------------------------------ what an account allows
 
-export const canWrite = (a: P.MailAccountView | undefined, op?: string) => !!a && a.level === 'write' && !(op && a.ops?.unsupported.includes(op));
+// canWrite: may the page offer this kind of write on the account (mail/filing.ts); moveKind: which kind a move is.
+export { canWrite, moveKind } from './filing.ts';
 
 /** The mailbox `to` names in this thread's account. Archive is All mail where there is no Archive. */
 export const destination = (t: P.MailThreadView, to: P.MailMoveTarget) => destinationIn(db.mail.mailboxes, t, to);
