@@ -8,27 +8,42 @@
  * 5/s). A move takes the locations current when it is sent, so a move made elsewhere meanwhile is not undone. Only a
  * message's latest change goes: one undone before it was sent never leaves the hub.
  *
+ * Each call sends `threadIds` beside `ids`, in the same order: each message's thread as its summary gave it
+ * (mail_message.native_thread, null when none). The google kind changes mail by thread; IMAP and Proton ignore it.
+ *
  * Answers (§3.7): a dry run's answer undoes it (nothing reached the account); success clears `pending`, so the server's
  * flags win again; a move puts the message where the answer says, or with a null id leaves that to the next changes
- * pass. 404 drops the change and asks what changed. 403 undoes every change waiting for the account and makes it
- * read-only. 501 undoes it and remembers the op as unsupported, so it is refused at once next time (Proton's `answered`).
- * 410 catches up and tries again. Anything else is tried again from 2 s, doubling, ten times, then undone. While the
- * manager or the account is away, changes wait, through a restart too; when it is back, a changes pass goes first
- * (§3.6).
+ * pass. A 200 may apply in part: ids it lists in `refused` (the server turned them down) or `unknown` (it could not find
+ * them) are undone here alone, with `undone` for their threads and a line saying why, while the rest stands; a move's
+ * null for one of these means it stayed. Any `unknown` also asks what changed, as the hub's ids may be stale. 404 drops
+ * the change and asks what changed. 403 undoes every change waiting for the account and makes it read-only. 422 (none
+ * of it applied) undoes it. 501 undoes it and remembers its kind as unsupported, so it is refused at once next time
+ * (Proton's `answered`). 410 catches up and tries again. Anything else is tried again from 2 s, doubling, ten times,
+ * then undone. While the manager or the account is away, changes wait, through a restart too; when it is back, a
+ * changes pass goes first (§3.6).
+ *
+ * Kinds of write: `seen`, `flagged`, `move` (archive, Inbox, a folder or label), `trash` and `junk` (a move into
+ * them). An account whose status lists the kinds it makes (`details.writes`, kept in mail_account.writes; Gmail's,
+ * one kind at a time) is refused the others here, at once and with no call ("Gmail can't archive from here yet"); a
+ * change already waiting when a status drops its kind is undone without a call. A status that lists a kind clears
+ * that kind's 501. With no list (IMAP, Proton) every kind is tried, as before.
  *
  * Read state (§14 Q3): a thread a page read (MailHub's `read`: a second in view) is marked read on the server as well,
- * unless the setting says "only when I mark it". An account with a read grant keeps read state here only (slice 1's
- * seen_local) and refuses every other write.
+ * unless the setting says "only when I mark it", or the account does not mark mail read from here (a 501, or `seen`
+ * not listed). An account with a read grant keeps read state here only (slice 1's seen_local) and refuses every other
+ * write.
  *
  * MailHub gains an event here, `filed`: what this hub changed, as it shows, and `undone` when the server refused it.
  */
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
+import type { MailWriteKind } from '@dither-chat/protocol/mail-iface';
 import { sleep, unref } from '../clock.ts';
 import { asMailError, MailCallError } from './backend.ts';
 import type { MailHub } from './index.ts';
 import { P0 } from './queue.ts';
 import type { MailRouter } from './routes.ts';
+import { unsupportedOp } from './store.ts';
 import type { AccountSync } from './sync.ts';
 
 declare module './index.ts' {
@@ -47,6 +62,8 @@ export type MailAction = 'read' | 'unread' | 'star' | 'unstar' | 'archive' | 'in
 type Row = Record<string, any>;
 type Bit = 0 | 1;
 type FlagKey = 'seen' | 'flagged';
+/** A message in a write call: its id there, the mailbox a move takes it from, and its thread there (`threadIds`). */
+type Item = { mid: string; native: string; from: string; copy?: boolean; thread: string | null };
 
 /** mail_message.pending: changes made here the server has not confirmed. */
 export interface Pending {
@@ -67,6 +84,11 @@ const MAX_ATTEMPTS = 10;
 const NOT_FOLDER = new Set(['sent', 'drafts', 'all', 'flagged', 'important']);
 const STAYS = new Set(['sent', 'drafts']);
 const ROLE_NAMES: Record<string, string> = { archive: 'Archive', inbox: 'Inbox', trash: 'Trash', junk: 'Junk' };
+
+/** A move's kind of write by where it goes: into the trash, into junk, or anywhere else. */
+const moveKind = (dest: Row | null | undefined): MailWriteKind => (dest?.role === 'trash' ? 'trash' : dest?.role === 'junk' ? 'junk' : 'move');
+/** An answer's `refused` or `unknown`: the ids in it. */
+const idSet = (x: unknown) => new Set(Array.isArray(x) ? x.filter((v): v is string => typeof v === 'string') : []);
 
 const json = <T>(s: string | null | undefined, d: T): T => {
   if (!s) return d;
@@ -194,7 +216,8 @@ export class MailOps {
     const groups = this.targets(req.threadIds, req.messageIds);
     const picked = new Map<string, Row[]>();
     for (const [accountId, g] of groups) {
-      const acc = this.checkAccount(accountId, k === 'seen' ? 'read' : 'write', `flag.${k}`);
+      const acc = this.checkAccount(accountId, k === 'seen' ? 'read' : 'write');
+      this.checkWrite(acc, k, k === 'seen' ? (v ? 'read' : 'unread') : v ? 'star' : 'unstar');
       const out: Row[] = [];
       for (const ms of g.threads.values()) {
         const mine = (m: Row) => m.addressed === 'self';
@@ -224,9 +247,10 @@ export class MailOps {
     const plans: { accountId: string; dest: Row; action: MailAction; ms: Row[] }[] = [];
     // Every account is checked before anything changes.
     for (const [accountId, g] of groups) {
-      const acc = this.checkAccount(accountId, 'write', 'move');
+      const acc = this.checkAccount(accountId, 'write');
       const dest = this.destination(acc, req.to);
       const action: MailAction = req.to in ROLE_NAMES ? (req.to as MailAction) : 'move';
+      this.checkWrite(acc, moveKind(dest), action);
       plans.push({ accountId, dest, action, ms: [...[...g.threads.values()].flat(), ...g.messages] });
     }
     let threads = 0;
@@ -239,13 +263,16 @@ export class MailOps {
     return { ok: true, threads, messages };
   }
 
-  /** The page read these threads (a second in view): read on the server too, unless you mark it yourself. */
+  /**
+   * The page read these threads (a second in view): read on the server too, unless you mark it yourself, or the
+   * account does not mark mail read from here (a 501, or its status's writes leave out `seen`): then only here.
+   */
   readInView(threadIds: string[]) {
     if (this.settings().markRead !== 'view' || !threadIds.length) return;
     const groups = this.targets(threadIds, []);
     for (const [accountId, g] of groups) {
       const a = this.hub.store.account(accountId);
-      if (!a || a.level !== 'write' || a.gone_at || this.unsupported(accountId, 'flag.seen')) continue;
+      if (!a || a.level !== 'write' || a.gone_at || this.refusal(a, 'seen')) continue;
       const ms = [...g.threads.values()].flat().filter((m) => this.flagOf(m, 'seen') === 0);
       if (ms.length) this.applyFlag(accountId, ms, 'seen', 1);
     }
@@ -271,18 +298,51 @@ export class MailOps {
   }
 
   /** May this account take the change? `need`: read is enough for marking read (here only, with a read grant). */
-  private checkAccount(accountId: string, need: 'read' | 'write', op: string): Row {
+  private checkAccount(accountId: string, need: 'read' | 'write'): Row {
     const a = this.hub.store.account(accountId);
     if (!a) throw new MailCallError('no such mail account', 404);
     if (!a.level || a.gone_at) throw new MailCallError('dither-chat no longer has access to this account', 410);
     if (need === 'write' && a.level !== 'write') throw new MailCallError('dither-accounts lets dither-chat read this account, not change it', 403);
-    const u = this.unsupported(accountId, op);
-    if (u && a.level === 'write') throw new MailCallError(u.why ?? `${a.label} does not support this`, 501);
     return a;
   }
 
-  private unsupported(accountId: string, op: string): { why: string | null } | null {
-    return this.one('SELECT why FROM mail_unsupported WHERE account_id = ? AND op = ?', accountId, op);
+  /** Does the account make this kind of write? Refused at once (501) when it does not, before anything changes. */
+  private checkWrite(acc: Row, kind: MailWriteKind, action: MailAction) {
+    if (acc.level !== 'write') return;
+    const why = this.refusal(acc, kind, action);
+    if (why) throw new MailCallError(why, 501);
+  }
+
+  /**
+   * Why the account would refuse this kind of write, or null: its status lists the writes it makes and this is not
+   * one, or it answered 501 to it before (mail_unsupported). Before kinds were told apart a move into the trash or
+   * junk was refused as `move`; while the status says nothing of writes, such a row still holds for them.
+   */
+  private refusal(acc: Row, kind: MailWriteKind, action?: MailAction): string | null {
+    const writes = this.hub.store.writes(acc.id);
+    if (writes && !writes.includes(kind)) return this.notWritten(acc, kind, action);
+    const ops = [unsupportedOp(kind), ...(!writes && (kind === 'trash' || kind === 'junk') ? ['move'] : [])];
+    const u = this.one<{ why: string | null }>('SELECT why FROM mail_unsupported WHERE account_id = ? AND op IN (SELECT value FROM json_each(?)) LIMIT 1', acc.id, JSON.stringify(ops));
+    return u ? (u.why ?? `${acc.label} does not support this`) : null;
+  }
+
+  /** A write the account's status does not list, in a sentence: "Gmail can't archive from here yet". */
+  private notWritten(acc: Row, kind: MailWriteKind, action?: MailAction): string {
+    const what =
+      kind === 'seen'
+        ? 'mark mail read or unread'
+        : kind === 'flagged'
+          ? 'star mail'
+          : kind === 'trash'
+            ? 'move mail to the trash'
+            : kind === 'junk'
+              ? 'mark mail as junk'
+              : action === 'archive'
+                ? 'archive'
+                : action === 'inbox'
+                  ? 'move mail back to Inbox'
+                  : 'move mail into folders or labels';
+    return `${acc.provider ?? (acc.kind === 'google' ? 'Gmail' : 'This account')} can't ${what} from here yet`;
   }
 
   /** Where `to` is in this account. Archive is All mail where there is no Archive (Gmail: out of Inbox). */
@@ -549,18 +609,23 @@ export class MailOps {
     const k: FlagKey = 'seen' in args ? 'seen' : 'flagged';
     const dest = op.op === 'move' ? this.hub.store.mailbox(args.to) : null;
     if (op.op === 'move' && !dest) return this.undo(op, 'that mailbox is gone');
-    const items: { mid: string; native: string; from: string; copy?: boolean }[] = [];
+    // A status since it was made says the account does not make this write: undone, with no call.
+    const kind = this.writeKind(op);
+    const writes = this.hub.store.writes(op.account_id);
+    if (writes && !writes.includes(kind)) return this.undo(op, this.notWritten(this.hub.store.account(op.account_id) ?? {}, kind, this.actionOf(op)));
+    const items: Item[] = [];
     const nothing: string[] = [];
     // Out of Gmail's All Mail into anything but Trash or Spam it stays there: dither-accounts' imap extractor copies
     // (imap.ts copiesInstead), Gmail on the web only adds the label. Either way its place in All Mail is kept.
     const copies = op.op === 'move' && dest!.role !== 'trash' && dest!.role !== 'junk' && this.hub.store.gmail(op.account_id);
     for (const mid of json<string[]>(op.message_ids, [])) {
-      const m = this.one<{ pending: string | null }>('SELECT pending FROM mail_message WHERE id = ?', mid);
+      const m = this.one<{ pending: string | null; native_thread: string | null }>('SELECT pending, native_thread FROM mail_message WHERE id = ?', mid);
       const p = json<Pending>(m?.pending, {});
+      const thread = m?.native_thread ?? null;
       if (op.op === 'flag') {
         if (p[k]?.op !== op.id) continue;
         const at = this.hub.store.nativeOf(mid);
-        if (at) items.push({ mid, native: at.id, from: '' });
+        if (at) items.push({ mid, native: at.id, from: '', thread });
         else nothing.push(mid);
       } else {
         const mv = p.move;
@@ -570,7 +635,7 @@ export class MailOps {
         const from = mv.copy
           ? locs.find((l) => l.mailbox_id === mv.copy && !locs.some((x) => x.mailbox_id === dest!.id))
           : locs.filter((l) => l.mailbox_id !== dest!.id && mv.hide.includes(l.mailbox_id)).sort((a, b) => Number(NOT_FOLDER.has(a.role ?? '')) - Number(NOT_FOLDER.has(b.role ?? '')))[0];
-        if (from) items.push({ mid, native: from.native_id, from: from.mailbox_id, copy: copies && from.role === 'all' });
+        if (from) items.push({ mid, native: from.native_id, from: from.mailbox_id, copy: copies && from.role === 'all', thread });
         else nothing.push(mid);
       }
     }
@@ -582,7 +647,9 @@ export class MailOps {
     }
     this.run('UPDATE mail_op SET sent_at = ? WHERE id = ?', this.now(), op.id);
     this.lastCall.set(op.account_id, this.now());
-    const input = op.op === 'flag' ? { ids: items.map((i) => i.native), [k]: !!args[k] } : { ids: items.map((i) => i.native), mailboxId: dest!.native_id };
+    // Each id's thread beside it, for an extractor that changes mail by thread (the google kind); the others ignore it.
+    const ids = { ids: items.map((i) => i.native), threadIds: items.map((i) => i.thread) };
+    const input = op.op === 'flag' ? { ...ids, [k]: !!args[k] } : { ...ids, mailboxId: dest!.native_id };
     let res: unknown;
     try {
       res = await sync.queue.run(P0, null, () => this.hub.backend!.call(op.account_id, `mail.${op.op}`, input));
@@ -594,16 +661,25 @@ export class MailOps {
     this.acked(op, items, dest, res, sync);
   }
 
-  private acked(op: Row, items: { mid: string; native: string; from: string; copy?: boolean }[], dest: Row | null, res: unknown, sync: AccountSync) {
+  private acked(op: Row, items: Item[], dest: Row | null, res: unknown, sync: AccountSync) {
     const touched = new Set<string>();
     const moved: string[] = [];
     let lost = false;
-    const newIds = (res as { ids?: (string | null)[] } | null)?.ids;
+    const answer = (res ?? {}) as { ids?: (string | null)[]; refused?: unknown; unknown?: unknown };
+    const newIds = answer.ids;
+    // Part of it: what the server turned down (refused) or could not find (unknown) did not change, so it is undone
+    // here; the rest stands. A move's null for one of these means it stayed where it was.
+    const refused = idSet(answer.refused);
+    const unknown = idSet(answer.unknown);
+    const listed = (it: Item) => refused.has(it.native) || unknown.has(it.native);
+    const back = items.filter(listed);
+    if (back.length) this.revert(op.account_id, back.map((it) => it.mid), op.id, this.actionOf(op));
     // Gmail shows a message in Trash or Spam there alone, over IMAP and on the web: All Mail and its labels lost it with
     // this move.
     const alone = !!dest && (dest.role === 'trash' || dest.role === 'junk') && this.hub.store.gmail(op.account_id);
     this.db.transaction(() => {
       items.forEach((it, i) => {
+        if (listed(it)) return;
         const m = this.one('SELECT thread_id, pending FROM mail_message WHERE id = ?', it.mid);
         if (!m) return;
         const p = json<Pending>(m.pending, {});
@@ -632,11 +708,25 @@ export class MailOps {
       for (const t of touched) this.hub.store.recompute(t);
       this.run('DELETE FROM mail_op WHERE id = ?', op.id);
     })();
-    this.errors.delete(op.account_id);
+    if (back.length) this.errors.set(op.account_id, { message: `${this.describe(op, back.length)}: ${this.partly(op.account_id, back, refused)}`, at: this.now() });
+    else this.errors.delete(op.account_id);
     this.hub.store.dirty.accounts.add(op.account_id);
     this.sweep(op.account_id, moved);
-    // The server would not say where they went: the next changes pass finds them.
-    if (lost) void sync.catchUp();
+    // The server would not say where they went, or could not find some (the hub's ids may be stale): the next changes
+    // pass finds them.
+    if (lost || unknown.size) void sync.catchUp();
+  }
+
+  /** Why part of a write did not happen, in a sentence: "Gmail turned them down", "the server turned 2 down and could not find 1". */
+  private partly(accountId: string, back: Item[], refused: Set<string>): string {
+    const a = this.hub.store.account(accountId);
+    const who = a?.provider ?? (a?.kind === 'google' ? 'Gmail' : 'the server');
+    const r = back.filter((it) => refused.has(it.native)).length;
+    const u = back.length - r;
+    const them = back.length === 1 ? 'it' : 'them';
+    if (!u) return `${who} turned ${them} down`;
+    if (!r) return `${who} could not find ${them}`;
+    return `${who} turned ${r} down and could not find ${u}`;
   }
 
   private failed(op: Row, e: MailCallError, sync: AccountSync) {
@@ -663,14 +753,21 @@ export class MailOps {
     }
   }
 
-  private kindOf(op: Row): string {
-    return op.op === 'flag' ? `flag.${'seen' in json<Row>(op.args, {}) ? 'seen' : 'flagged'}` : 'move';
+  /** The op's kind of write (`details.writes`): a move into the trash is `trash`, into junk `junk`. */
+  private writeKind(op: Row): MailWriteKind {
+    const args = json<Row>(op.args, {});
+    return op.op === 'flag' ? ('seen' in args ? 'seen' : 'flagged') : moveKind(this.hub.store.mailbox(args.to));
   }
 
-  /** What the op was, for its error line: "Could not archive 3 messages". */
-  private describe(op: Row): string {
+  /** What mail_unsupported keeps an op's 501 as: `flag.seen`, `flag.flagged`, `move`, `trash` or `junk`. */
+  private kindOf(op: Row): string {
+    return unsupportedOp(this.writeKind(op));
+  }
+
+  /** What the op was, for its error line: "Could not archive 3 messages". `count`: of its messages, when only some. */
+  private describe(op: Row, count?: number): string {
     const args = json<Record<string, any>>(op.args, {});
-    const n = json<string[]>(op.message_ids, []).length;
+    const n = count ?? json<string[]>(op.message_ids, []).length;
     const what = n === 1 ? 'a message' : `${n} messages`;
     if (op.op === 'flag') return 'seen' in args ? `Could not mark ${what} ${args.seen ? 'read' : 'unread'}` : `Could not ${args.flagged ? 'star' : 'unstar'} ${what}`;
     const b = this.hub.store.mailbox(args.to);

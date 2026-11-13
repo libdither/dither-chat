@@ -206,9 +206,21 @@ As built, where it differs from §7: "Always from" is its own table, `mail_sende
   there is fetched first, then they go. A change the page could not hand to the hub waits in the page and goes when
   the connection is back, once.
 - **When the server says no** (§3.7): 404 drops the change and fetches what changed; 403 undoes every change waiting
-  for the account and makes it read only here; 501 undoes it and hides that button for the account from then on
-  (Proton's `answered`); 410 lists the mailbox again and tries again; anything else is tried again, from 2 s,
-  doubling, ten times, then undone. What failed shows above the list until you dismiss it.
+  for the account and makes it read only here; 422 (it applied none of it) undoes it; 501 undoes it and hides that
+  button for the account from then on (Proton's `answered`); 410 lists the mailbox again and tries again; anything
+  else is tried again, from 2 s, doubling, ten times, then undone. What failed shows above the list until you dismiss
+  it.
+- **In part.** A write may apply to some messages and not others (dither-accounts' google kind): the answer names
+  the ids the server `refused` and those it could not find (`unknown`), and only those are undone here, with a line
+  saying why; the rest stands. A move's null id for one of these means it stayed where it was; a null id it does not
+  name means it moved and the next changes pass finds where. `unknown` asks what changed too. Each write call sends
+  each message's thread beside its id (`threadIds`), which the google kind uses and IMAP and Proton ignore.
+- **What an account writes.** An account's status may list the writes it makes now (`details.writes`: `seen`,
+  `flagged`, `move` for archive, Inbox and folders or labels, `trash`, `junk`). Gmail on the web gains them a kind at
+  a time. A kind it leaves out is refused at once with no call ("Gmail can't archive from here yet"), its buttons and
+  menu items are hidden (web `canWrite`), and read in view keeps read state here only when `seen` is not listed. A
+  status that lists a kind clears an earlier 501 for it. Without a list (IMAP, Proton) every kind is tried, as
+  before. The hub keeps the list in `mail_account.writes` and shows it as the account's `writes`.
 - **A read grant** keeps read state here only (as slice 1 did) and shows no filing buttons.
 
 Moved into Trash or Junk, a message keeps its new place here, but those mailboxes are not kept up by the hub (slice 2
@@ -897,8 +909,9 @@ others were asked, because an IMAP move is a removal there and an addition elsew
 - Tests: `hub/test/mail-thread.test.ts` (threading, as a table), `mail-store.test.ts`, `mail-sync.test.ts` (the fake:
   first-sync order, `more`, 410, moves, Proton-like state, arrivals, gaps, the manager away, access ending, the delta
   sync), `mail-ops.test.ts` (writes on the fake: pending, batches of 1000, 404/403/501/410, a restart with changes
-  waiting, the manager away, read in view and its setting, a read grant), `mail-gmail.test.ts` (a Gmail account:
-  "Gmail" above) and `web/test/mail-model.test.ts`, `mail-text.test.ts`, `mail-ops.test.ts`.
+  waiting, the manager away, read in view and its setting, a read grant, `threadIds`, answers in part, an account's
+  listed writes), `mail-gmail.test.ts` (a Gmail account: "Gmail" above) and `web/test/mail-model.test.ts`,
+  `mail-text.test.ts`, `mail-ops.test.ts`.
 - Slice 3: `mail-sanitize.test.ts` (a hostile corpus, each output parsed again against the allowlist),
   `mail-images.test.ts` (the token, private addresses in every spelling, DNS rebinding, redirects, not-an-image, size,
   headers) and `mail-parts.test.ts` (the routes on the fake).
