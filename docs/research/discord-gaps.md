@@ -72,9 +72,9 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 | Saved messages / bookmarks | GET_SAVED_MESSAGES, PUT/DELETE_SAVED_MESSAGE, GET_BOOKMARKS, SAVED_MESSAGE_CREATE/DELETE, SAVED_MESSAGES_UPDATE | none | a | M | Pull them in as hub-side "kept"/marks; two-way sync is cheap. client-path |
 | Reminders ("Remind me") | MESSAGE_REMINDER_DUE, saved-messages `due_at` | none (hub has its own Later) | a | M | Could map onto dither's Later both ways |
 | Scheduled messages | SCHEDULED_MESSAGES (+ _SEND, _UPDATE, _DELETE), SCHEDULED_MESSAGE_DRAFT_CHANGE | none | a | M | Send later, natively (survives the hub being down). A hub-side send-later would work on every network |
-| Send voice message | RECORD_VOICE_MESSAGE, IS_VOICE_MESSAGE upload with waveform | files only | a | L | |
-| Send stickers | STICKER_PACKS, `sticker_ids` on send | none | a | L | ROADMAP: later |
-| GIF picker | GIFS_SEARCH/TRENDING/SUGGEST (Tenor/Klipy) | none | a | L | Pasting a link already works |
+| Send voice message | RECORD_VOICE_MESSAGE, IS_VOICE_MESSAGE upload with waveform | files only | a | L | **done** (net-gaps): recorded in the composer, rewrapped as Ogg Opus, sent through the upload path with the flag, length and waveform ([media-kinds.md](../media-kinds.md)) |
+| Send stickers | STICKER_PACKS, `sticker_ids` on send | none | a | L | ROADMAP: later. **done** (net-gaps): a picker of what the client's stores hold and its own sendability rule allows, sent with MessageActions.sendStickers; packs it has not loaded are not fetched ([media-kinds.md](../media-kinds.md)) |
+| GIF picker | GIFS_SEARCH/TRENDING/SUGGEST (Tenor/Klipy) | none | a | L | Pasting a link already works. **not built**: the results' pictures come from Tenor's or Klipy's servers, which the hub or the page would then load too ([media-kinds.md](../media-kinds.md)) |
 | Silent send (@silent) | SUPPRESS_NOTIFICATIONS on send | none | a | L | One flag in the send payload |
 | Reply without ping | `allowed_mentions.replied_user` (SET_PENDING_REPLY_SHOULD_MENTION) | hook sends `messageReference` only, so every reply pings | d | M | A toggle in the composer; one field in sendMessage options |
 | Suppress embeds on own message | MESSAGE patch flags 4 | none | a | L | |

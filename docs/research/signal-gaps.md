@@ -126,12 +126,17 @@ A side finding: `MessageFact.extra` (quote, poll, sticker, storyReply, viewOnce,
 
 - (a) L/M: stories are switched off entirely by `--ignore-stories`. `JsonStoryMessage` (`fileAttachment`,
   `textAttachment{text, style, colors, gradient, preview}`, `allowsReplies`, `groupId`) and
-  `syncMessage.sentStoryMessage` never arrive.
+  `syncMessage.sentStoryMessage` never arrive. **done** (net-gaps): behind a per-account setting, off by default, read
+  when the daemon starts; stories show on a contact's or group's page for their day, never in the inbox or as a
+  notification ([media-kinds.md](../media-kinds.md)). Your own from the phone are kept but not shown yet.
 - (c) L: a story reply arrives (`dataMessage.storyContext`) and the adapter sets `extra.storyReply`, but the web
   never shows "replied to your story". Story reactions (a reaction with `storyContext` and no text) are dropped
   ("e.g. a reaction to a story"). **done** (net-gaps) (display only): "Replied to your story", and a story reaction as "Reacted ❤️ to your story".
 - (a) L: posting stories (`sendStory -a <file> [-g group] [--no-replies]`), replying to them (`send
   --story-timestamp/--story-author`), reacting (`sendReaction --story`) and deleting (`sendAdminDelete --story`) are unused.
+  **done** (net-gaps) for replying and reacting, and a viewed receipt on opening one only with read receipts on.
+  **not built**: posting (without a group it goes to the phone's whole My Story audience, which dither cannot read) and
+  deleting.
 
 ## Calls
 
@@ -154,10 +159,13 @@ A side finding: `MessageFact.extra` (quote, poll, sticker, storyReply, viewOnce,
 
 ## Stickers
 
-- (a) M: sending stickers. `send --sticker <packId>:<stickerId>` is unused, and the UI has no sticker picker.
+- (a) M: sending stickers. `send --sticker <packId>:<stickerId>` is unused, and the UI has no sticker picker. **done**
+  (net-gaps): the composer's sticker picker ([media-kinds.md](../media-kinds.md)).
 - (a) L: listing installed packs (`listStickerPacks` → `packId, url, installed, title, author, cover, stickers[]`),
   installing from a signal.art link (`addStickerPack --uri`), fetching one sticker (`getSticker`) and making packs
   (`uploadStickerPack`) are unused. The adapter reads `stickers/<pack>/manifest.json` from disk for emoji and mime.
+  **done** (net-gaps) for listing, installing from a link (pasted, or a link's menu) and getSticker for a picture not on
+  disk yet. **not built**: making packs.
 - (c) L: incoming stickers come in as `kind: 'sticker'` with an image attachment and `extra.sticker`. The web has no
   sticker-specific rendering (no `'sticker'` match in web/src), so they render as an image.
 
@@ -190,13 +198,16 @@ A side finding: `MessageFact.extra` (quote, poll, sticker, storyReply, viewOnce,
 ## Attachments
 
 - (a) L/M: voice notes. `JsonAttachment.isVoiceNote` is ignored (no voice-note player or label), and `send
-  --voice-note` is never sent (no recording UI). **done** (net-gaps) for incoming: a "Voice message" label with the player (`attachmentNotes[].voiceNote`; Signal has no duration or waveform). **Not built**: `send --voice-note`, which waits on recording in the composer (another package).
+  --voice-note` is never sent (no recording UI). **done** (net-gaps) for incoming: a "Voice message" label with the player (`attachmentNotes[].voiceNote`; Signal has no duration or waveform). **Not built**: `send --voice-note`, which waits on recording in the composer (another package). **done** (net-gaps,
+  media-kinds): recorded in the composer and sent with `--voice-note` ([media-kinds.md](../media-kinds.md)).
 - (a) L: per-attachment captions. `JsonAttachment.caption` is ignored, and `send` has no caption flag (e). **done** (net-gaps) for incoming (`attachmentNotes[].caption`, under the file); sending stays (e) e19.
 - (a) L: `uploadTimestamp` and `size` (size is mapped) and `width/height` (mapped) are fine. Thumbnails of quoted
   attachments (`JsonQuotedAttachment.thumbnail`) are ignored. **done** (net-gaps) for quoted thumbnails (see the quote rows above).
 - (a) L: view-once sending. `send --view-once` is unused. Incoming view-once is deliberately shown as a placeholder
   ("open it on your phone"), though signal-cli did download the file. The file is kept on disk, not shown and never
   purged early. **not built** (net-gaps): it needs a composer switch and a way to show your own view-once message; incoming view-once stays a placeholder.
+  **done** (net-gaps, media-kinds): sent from a View once switch where files are attached (your copy is a placeholder),
+  and the file signal-cli downloaded for an incoming one is deleted once it is mapped.
 - (a) L: `getAttachment` (base64 by id) is unused, but the adapter reads `<dir>/attachments/<id>` directly, which is
   equivalent. Nothing to do (net-gaps): reading the file is equivalent.
 - (d) L: an attachment whose download failed or was skipped looks the same as a missing `id`, and is silently dropped
