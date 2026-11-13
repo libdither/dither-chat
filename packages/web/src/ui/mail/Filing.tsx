@@ -304,7 +304,7 @@ export function FilingBar({ list }: { list: string }) {
             title="More"
             onClick={(e) => {
               const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              openMenu({ x: r.left, y: r.bottom + 4 }, threadMenu(ts, 'selection'));
+              openMenu({ x: r.left, y: r.bottom + 4 }, threadMenu(ts, 'selection'), e.currentTarget);
             }}
           >
             <Icon name="more" size={17} />

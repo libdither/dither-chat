@@ -324,6 +324,7 @@ function InboxFilterButton({ filter }: { filter: InboxFilter }) {
         head: <div class="cm-sheet-title">Show</div>,
         items: choices.map((f): MenuEntry => ({ label: f.label, checked: f.id === filter, radio: true, track: `filter (${f.label})`, run: () => setPrefs({ inboxFilter: f.id }) })),
       },
+      e.currentTarget,
     );
   };
   const label = filter === 'all' ? 'Show: all conversations' : `Showing only ${on.label.toLowerCase()}`;
@@ -501,6 +502,7 @@ function LinkSortButton() {
               ...LINK_SORTS.map((m): MenuEntry => ({ label: m.label, radio: true, checked: m.id === mode, track: `order (${m.label})`, run: () => setPrefs({ peopleLinkSort: m.id }) })),
             ],
           },
+          e.currentTarget,
         );
       }}
     >

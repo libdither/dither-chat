@@ -122,7 +122,7 @@ export function Action({ icon, label, onClick, menu, primary, title, disabled, k
       onClick={(e) => {
         if (menu) {
           const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-          openMenu({ x: r.left, y: r.bottom + 4 }, menu());
+          openMenu({ x: r.left, y: r.bottom + 4 }, menu(), e.currentTarget);
         } else onClick?.();
       }}
     >

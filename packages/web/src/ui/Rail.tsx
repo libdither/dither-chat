@@ -297,8 +297,9 @@ export function Rail() {
           title={`Order: ${SORT_LABELS[sortOf('rail')]}`}
           sub="Change the order, or organize servers"
           onClick={() => {
-            const b = scroll.current?.querySelector('.rail-sort')?.getBoundingClientRect();
-            openMenu({ x: (b?.right ?? 72) + 4, y: b?.top ?? 0 }, { items: sortEntries('rail'), label: 'Order servers', head: <div class="cm-sheet-title">Order servers</div> });
+            const el = scroll.current?.querySelector('.rail-sort');
+            const b = el?.getBoundingClientRect();
+            openMenu({ x: (b?.right ?? 72) + 4, y: b?.top ?? 0 }, { items: sortEntries('rail'), label: 'Order servers', head: <div class="cm-sheet-title">Order servers</div> }, el);
           }}
         >
           <SortIcon size={18} />
