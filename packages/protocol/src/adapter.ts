@@ -27,6 +27,7 @@ import type { AboutChange, AboutTarget, PersonRelationship } from './about.ts';
 import type { AddAction, AddRef, RelationshipFact, RequestAnswer, RequestFact } from './add.ts';
 import type { AttentionCapability, AttentionCommand } from './attention.ts';
 import type { CallFact, CallMode, CallState, VoiceMember } from './call.ts';
+import type { GateAnswer, ScheduledEventFact, SpaceGate } from './servers.ts';
 import type { LinkPreviewOut } from './extra.ts';
 import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, ReactionStyle, Shape, SpaceKind, Variant } from './ontology.ts';
 
@@ -100,6 +101,18 @@ export type Capability =
   | 'walkMembers'
   /** Lists a channel's threads, archived ones too (the `threads` command), so an index job finds threads nobody opened. */
   | 'listThreads'
+  /** Says a space's scheduled events (the scheduledEvent(s) events) and reads them fresh (the `scheduledEvents` command, servers.ts). */
+  | 'events'
+  /** Says Interested in a scheduled event, or takes it back (the `rsvp` command). */
+  | 'rsvp'
+  /** Leaves a conversation or space (the `leave` command), where its About's `leaving` says it may. */
+  | 'leave'
+  /** Reads what a space asks before you are in (rules, an application, onboarding) and answers it (`gate`, `answerGate`). */
+  | 'gates'
+  /** Lists invite links and makes them with an expiry and a use limit (About.invite.links, options; `configure` invite). */
+  | 'inviteLinks'
+  /** Sets your own nickname in a space (About.nick, the `setNick` command). */
+  | 'nick'
   /** Tells the sender you played a voice note or opened a video of theirs (the `viewed` command; Signal's viewed receipt). */
   | 'viewed'
   /** Sends a link preview with a message (`send`'s `preview`). Advertised only while the account's own setting allows previews. */
@@ -432,6 +445,14 @@ export type AdapterEvent =
   | { t: 'relationships'; list: RelationshipFact[] }
   /** One changed; relationship 'stranger': it is gone. */
   | { t: 'relationship'; fact: RelationshipFact }
+  /** A space's scheduled events, the whole list (capability 'events'), replacing what the hub kept for this account. */
+  | { t: 'scheduledEvents'; space: string; events: ScheduledEventFact[] }
+  /** One scheduled event new or changed. */
+  | { t: 'scheduledEvent'; event: ScheduledEventFact }
+  /** One gone (deleted; not merely over or cancelled, which are statuses). */
+  | { t: 'scheduledEventGone'; space: string; nativeId: string }
+  /** What a space asks of this account now (capability 'gates'); null: nothing (passed, approved, or left). */
+  | { t: 'gate'; space: string; gate: SpaceGate | null }
   | { t: 'reply'; id: string; ok: true; result?: unknown }
   | { t: 'reply'; id: string; ok: false; error: string }
   | { t: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; msg: string; data?: unknown };
@@ -619,6 +640,28 @@ export type AdapterCommand =
    * Identity facts, then the new conversation's fact (shape 'group', its participants), then reply.result: CreateGroupResult.
    */
   | { t: 'createGroup'; id: string; name?: string; people: string[] }
+  /**
+   * A space's scheduled events as the network has them now (capability 'events'): what opening its events list in the
+   * network's own client reads, counts and your answers included. reply.result: ScheduledEventsResult.
+   */
+  | { t: 'scheduledEvents'; id: string; space: string }
+  /**
+   * Say Interested in a scheduled event, or take it back (capability 'rsvp'); `occurrence`: one occurrence of a repeating
+   * event (EventException.nativeId or its original start as a string), else the series. reply.result: ScheduledEventFact.
+   */
+  | { t: 'rsvp'; id: string; space: string; event: string; occurrence?: string; interested: boolean }
+  /**
+   * Leave a conversation or space (capability 'leave'): a Discord server or group DM, a Signal group. The hub has
+   * checked a fresh About's `leaving`. `silent`: without telling the others, where the network can. The leave event
+   * first, then reply.result: LeaveResult.
+   */
+  | { t: 'leave'; id: string; target: AboutTarget; silent?: boolean }
+  /** What a space asks of this account now (capability 'gates'). reply.result: SpaceGate | null. */
+  | { t: 'gate'; id: string; space: string }
+  /** The owner's answer to it, checked against gateAnswerProblem (capability 'gates'). reply.result: GateResult. */
+  | { t: 'answerGate'; id: string; space: string; answer: GateAnswer }
+  /** Your own nickname in a space, '' to clear it (capability 'nick', checked against nickProblem). reply.result: the About as it now stands. */
+  | { t: 'setNick'; id: string; space: string; nick: string }
   /** Account-specific actions, e.g. 'relogin', 'startLink', 'resync'. */
   | { t: 'action'; id: string; action: string; args?: unknown }
   | { t: 'shutdown' }

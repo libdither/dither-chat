@@ -11,6 +11,7 @@
  */
 import type { MediaUrl } from './adapter.ts';
 import { NETWORK_META, type Network } from './ontology.ts';
+import type { AboutLeaving, InviteLinkFact, InviteOptions } from './servers.ts';
 
 /** Who may do something, as far as the networks agree. */
 export type Who = 'everyone' | 'admins';
@@ -103,6 +104,12 @@ export interface AboutInvite {
   reason?: string;
   /** A Matrix address (alias) or room id, which works as a link without anyone making one. */
   derived?: boolean;
+  /** Every link the account may see, newest first (capability 'inviteLinks'); `link` is then the newest of them. */
+  links?: InviteLinkFact[];
+  /** The space's own short address, which never runs out (Discord's vanity URL). */
+  vanity?: string;
+  /** The expiry and use limits a new link may have, and the defaults (capability 'inviteLinks'). */
+  options?: InviteOptions;
 }
 
 export interface AboutPinned {
@@ -237,6 +244,10 @@ export interface About {
   pinned?: AboutPinned;
   /** Read-only details only some networks have: "Room version", "Verification level", "Created". */
   facts?: { label: string; value: string }[];
+  /** Leaving it (capability 'leave', servers.ts). */
+  leaving?: AboutLeaving;
+  /** Your own nickname here (capability 'nick', the `setNick` command): value null for none. */
+  nick?: { value: string | null; canEdit: boolean; reason?: string; max?: number };
 }
 
 export interface AboutTarget {
@@ -247,7 +258,7 @@ export interface AboutTarget {
 /** One change. `invite` makes, replaces or turns off the invite link; `pin` pins or unpins a message. */
 export type AboutChange =
   | { [K in AboutKey]: { key: K; value: AboutValues[K] } }[AboutKey]
-  | { key: 'invite'; op: 'create' | 'revoke' }
+  | { key: 'invite'; op: 'create' | 'revoke'; /** create: seconds, 0 never. */ maxAge?: number; /** create: 0 no limit. */ maxUses?: number; temporary?: boolean; /** revoke: which link, else the newest. */ code?: string }
   | { key: 'pin'; message: string; remove?: boolean };
 
 // ---------------------------------------------------------------- per network
@@ -380,7 +391,7 @@ export const HISTORY_LABEL: Record<HistoryVisibility, string> = {
  */
 export function aboutChangeProblem(network: Network, kind: AboutTarget['kind'], change: AboutChange): string | null {
   const rules = ABOUT_RULES[network];
-  if (change.key === 'invite') return change.op === 'create' || change.op === 'revoke' ? null : 'unknown invite operation';
+  if (change.key === 'invite') return inviteChangeProblem(change);
   if (change.key === 'pin') return typeof change.message === 'string' && change.message ? null : 'which message?';
   if (!ABOUT_KEYS.includes(change.key)) return `unknown setting ${String(change.key)}`;
   if (!rules[kind].includes(change.key)) return `${ABOUT_LABEL[change.key]} is not a setting here`;
@@ -416,6 +427,15 @@ export function aboutChangeProblem(network: Network, kind: AboutTarget['kind'], 
     default:
       return typeof v === 'boolean' ? null : 'on or off';
   }
+}
+
+/** An invite change's shape: create with whole, non-negative limits, revoke with a code if any. */
+function inviteChangeProblem(c: Extract<AboutChange, { key: 'invite' }>): string | null {
+  if (c.op !== 'create' && c.op !== 'revoke') return 'unknown invite operation';
+  const whole = (n: unknown) => n === undefined || (typeof n === 'number' && Number.isInteger(n) && n >= 0);
+  if (!whole(c.maxAge) || !whole(c.maxUses)) return 'an expiry and a use limit are whole numbers';
+  if (c.code !== undefined && (typeof c.code !== 'string' || !/^[\w-]{1,64}$/.test(c.code))) return 'which link?';
+  return null;
 }
 
 // ---------------------------------------------------------------- people

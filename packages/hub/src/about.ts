@@ -294,7 +294,7 @@ export class Abouts {
     const coverage = kind === 'space' && s.one<{ n: number }>(`SELECT 1 AS n FROM space WHERE id = ? AND kind = 'community'`, id) ? s.memberCoverage(id) : undefined;
     const adding = addingOf(s, kind, id, network, accountId, about.adding, stale);
     const canConfigure =
-      configurable && !stale && (Object.values(fields).some((f) => f?.canEdit) || !!about.invite?.canCreate || !!about.invite?.canRevoke || !!about.pinned?.canEdit);
+      configurable && !stale && (Object.values(fields).some((f) => f?.canEdit) || !!about.invite?.canCreate || !!about.invite?.canRevoke || !!about.pinned?.canEdit || !!about.nick?.canEdit);
     return {
       ...about,
       fields,
@@ -377,6 +377,8 @@ export function readOnly(about: P.About, reason: string): P.About {
     ...(about.invite ? { invite: { ...about.invite, canCreate: false, canRevoke: false, reason } } : {}),
     ...(about.pinned ? { pinned: { ...about.pinned, canEdit: false, reason } } : {}),
     ...(about.adding ? { adding: { ...about.adding, can: false, reason } } : {}),
+    ...(about.leaving ? { leaving: { ...about.leaving, can: false, reason } } : {}),
+    ...(about.nick ? { nick: { ...about.nick, canEdit: false, reason } } : {}),
   };
 }
 

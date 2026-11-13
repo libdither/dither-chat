@@ -6,6 +6,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { ABOUT_LABEL, ABOUT_RULES, NETWORK_META, RULE_LABEL, RULE_LEVELS } from '@dither-chat/protocol';
+import { useState } from 'preact/hooks';
 import { fullTime } from '../format.ts';
 import { AUTOMATIC, convTitle, deepLink, effectiveLevel, heldHere, netName, OLDER_RULE, ruleHelp, ruleOn, unreadOf } from '../model.ts';
 import { db, go, href, isSelfIdentity, markRead, openMessage, rev, setRule } from '../state.ts';
@@ -25,6 +26,7 @@ import { ResetSessionCard } from './ResetSession.tsx';
 import { canIndex, startIndexing } from './Indexing.tsx';
 import { NetworkMute } from './NetworkMute.tsx';
 import { VoicePeople } from './Ringing.tsx';
+import { useServerParts } from './ServerPartsLazy.tsx';
 
 /** "Seen 12 of 1,287 listed (1%) · 214 online": honest about how little that may be. */
 export function coverageText(c: P.MemberCoverageView): string {
@@ -40,6 +42,9 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
   const conv = kind === 'conversation' ? db.conversations.get(id) : undefined;
   const space = kind === 'space' ? db.spaces.get(id) : undefined;
   const { view, error, busy, as, setAs, change, replace } = useAbout({ kind, id });
+  // A server's scheduled events (ServerParts.tsx): how many, for the Events button.
+  const [events, setEvents] = useState(0);
+  const sp = useServerParts((kind === 'space' && db.spaces.get(id)?.kind === 'community') || !!view?.leaving || !!view?.nick || !!view?.invite?.options);
   // Add people (docs/group-settings.md): the palette's picker for this group, as the account this page is seen as.
   const addPeople = () => view && kind === 'conversation' && openPalette({ kind: 'add', conversationId: id, accountId: view.accountId, adding: view.adding, onDone: replace });
   const network = (conv ?? space)?.network;
@@ -100,6 +105,8 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
           <Action icon={ruleOf === 'none' ? 'bell' : 'bellOff'} label={ruleOf === 'none' ? 'Unmute' : 'Mute'} onClick={() => setRule(kind, id, ruleOf === 'none' ? null : 'none')} />
           {conv && <Action icon="search" label="Search" onClick={() => go({ view: 'search', q: `in:${conv.id}` })} />}
           {link && <Action icon="link" label="Copy link" onClick={() => copy(link, 'Link copied')} />}
+          {space?.kind === 'community' && events > 0 && <Action icon="calendar" label="Events" title="Its scheduled events" onClick={() => document.getElementById('srv-events')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />}
+          {view?.leaving && <Action icon="back" label="Leave" title={view.leaving.can ? `Leave this ${noun.toLowerCase()}` : view.leaving.reason} onClick={() => void sp?.leavePlace(kind, id, title, view)} />}
           {indexable && <Action icon="archive" label="Index…" kind="index" title={`Index this ${noun.toLowerCase()}: its whole history, and its members`} onClick={() => startIndexing(kind, id)} />}
           <Action icon="more" label="More" menu={() => (conv ? conversationMenu(conv) : spaceMenu(space!))} />
         </>
@@ -109,6 +116,7 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
 
   const main = (
     <>
+      {space?.kind === 'community' && sp && <sp.GateCard spaceId={space.id} accountId={view?.accountId} />}
       <Card title="About" icon="info">
         {f.topic || view === null ? (
           <EditableText setting={f.topic} fallback={conv?.topic ?? space?.topic ?? ''} label="Description" multiline busy={busy === 'topic'} onSave={(v) => change({ key: 'topic', value: v }, 'Description changed')} max={ABOUT_RULES[network].topicMax} />
@@ -125,6 +133,8 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
         )}
         <Facts rows={(view?.facts ?? []).map((x): [string, string] => [x.label, x.value])} />
       </Card>
+
+      {space?.kind === 'community' && sp && <sp.EventsCard id="srv-events" spaceId={space.id} accountId={view?.accountId} onCount={setEvents} />}
 
       {view && keys.length > 0 && (
         <Card title="Settings" icon="settings" class="pf-settings">
@@ -214,7 +224,14 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
 
       {conv && <ResetSessionCard conv={conv} />}
 
-      {view?.invite && (
+      {space && view?.nick && sp && <sp.NickCard spaceId={space.id} view={view} onDone={replace} />}
+
+      {view?.invite?.options && sp && (
+        <div class="pf-card pf-embed">
+          <sp.InviteLinks inv={view.invite} busy={busy === 'invite'} onChange={(c, what) => change(c, what)} />
+        </div>
+      )}
+      {view?.invite && !view.invite.options && (
         <div class="pf-card pf-embed">
           <InviteSection inv={view.invite} busy={busy === 'invite'} onChange={(op) => change({ key: 'invite', op }, op === 'create' ? 'New invite link made' : 'Invite link turned off')} />
         </div>

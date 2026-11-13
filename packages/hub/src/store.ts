@@ -15,6 +15,7 @@ import { stepTimer } from './startup.ts';
 import { addTables, ingestRelationships, ingestRequests, pendingLinks } from './add.ts';
 import { lateNews } from './latenews.ts';
 import { eraseVoice, ingestCallEvent, voiceKept } from './callstate.ts';
+import { ingestServers } from './servers.ts';
 import { alertBar, type Facts } from './learn.ts';
 
 type Row = Record<string, any>;
@@ -749,6 +750,12 @@ export class Store {
         case 'voice':
         case 'voiceStatus':
           ingestCallEvent(this, acc, ev);
+          break;
+        case 'scheduledEvents':
+        case 'scheduledEvent':
+        case 'scheduledEventGone':
+        case 'gate':
+          ingestServers(this, acc, ev);
           break;
         case 'reply':
         case 'log':
