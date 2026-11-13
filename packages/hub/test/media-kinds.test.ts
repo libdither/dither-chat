@@ -44,8 +44,6 @@ const refused = async (p: Promise<unknown> | (() => unknown)) => {
   }
   throw new Error('it went through');
 };
-/** Lets the in-process adapter's reply land. */
-const settle = () => new Promise((r) => setTimeout(r, 0));
 
 const deps = {
   get store() {
@@ -204,14 +202,13 @@ describe('stories', () => {
     expect(store.one(`SELECT 1 FROM story WHERE native_id = 'g:1'`)).toBeNull();
   });
 
-  test('opening one tells the adapter once', async () => {
+  test('opening one tells the adapter once', () => {
     const [s] = media.stories({ identityId: identity('signal', 'Alice Chen') });
     const before = sent.length;
     expect(media.viewed(s.id)).toEqual({ sent: true });
     expect(media.viewed(s.id)).toEqual({ sent: false });
     expect(sent.slice(before).map((x) => [x.cmd.t, x.cmd.story])).toEqual([['storyViewed', s.id && store.one<{ native_id: string }>('SELECT native_id FROM story WHERE id = ?', s.id)!.native_id]]);
     expect(media.stories({ identityId: identity('signal', 'Alice Chen') })[0].viewed).toBe(true);
-    await settle();
   });
 
   test('a reply goes through the account that heard it, to the group of a group story', async () => {
