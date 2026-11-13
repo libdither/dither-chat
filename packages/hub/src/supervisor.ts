@@ -14,6 +14,7 @@ import { writeSecretFile } from '@dither-chat/protocol/secret-file';
 import type { AccountRow, Store } from './store.ts';
 import { acquireLock, releaseLock } from './lock.ts';
 import { sliced, type SliceOptions } from './slices.ts';
+import { timedWrite } from './stalls.ts';
 
 export interface InprocAdapter {
   start(emit: (ev: P.AdapterEvent) => void): void;
@@ -372,7 +373,7 @@ export class Supervisor {
   private applyNow(accountId: string, events: P.AdapterEvent[]) {
     let busyAt = -1;
     try {
-      this.store.db.transaction(() => {
+      timedWrite(`adapter events (${events.length})`, () => this.store.db.transaction(() => {
         for (let i = 0; i < events.length; i++) {
           let r: 'busy' | void;
           try {
@@ -386,7 +387,7 @@ export class Supervisor {
             return;
           }
         }
-      })();
+      })());
     } catch (e) {
       // The commit itself met the lock: none of them is in.
       if (!isBusy(e)) throw e;

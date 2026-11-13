@@ -728,6 +728,10 @@ export class Attention {
   /** Conversations to fold and score at the next sync. */
   private pending = new Set<string>();
   private scored = false;
+  /** Whether the first scores are in (list() works them out at once otherwise). */
+  get hasScores(): boolean {
+    return this.scored;
+  }
   private selfPerson: string | null = null;
   private timers: ReturnType<typeof setInterval>[] = [];
   /** Answers from an AttentionJudge, by conversation (follow-up). */
@@ -1142,12 +1146,16 @@ export class Attention {
     this.refreshSelf();
     this.noteIngested();
     const ids = new Set<string>(this.views.keys());
+    // Three reads, a slice each: with the pages not in memory (after a start, or a new device's first load) the last
+    // walks two weeks of triage and their messages from disk, seconds on a busy machine.
     for (const r of db.query(`SELECT c.id FROM conversation c WHERE ${LISTED}`).all() as Row[]) ids.add(r.id);
+    yield 1;
     for (const r of db.query(`SELECT DISTINCT target_id AS id FROM vantage WHERE target_kind = 'conversation' AND mentions > 0`).all() as Row[]) ids.add(r.id);
+    yield 1;
     for (const r of db.query(`SELECT DISTINCT m.conversation_id AS id FROM triage t JOIN message m ON m.id = t.message_id WHERE t.decision IN ('push', 'quiet', 'digest') AND t.created_at > ?`).all(now - 14 * DAY) as Row[]) ids.add(r.id);
     const items: P.AttentionView[] = [];
     const removed: string[] = [];
-    yield ids.size;
+    yield 1;
     let done = 0;
     for (const id of ids) {
       const r = this.rescore(id, now);

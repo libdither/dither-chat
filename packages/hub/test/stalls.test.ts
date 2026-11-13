@@ -17,7 +17,7 @@ import { ActivityStore } from '../src/activity.ts';
 import { DIMS, EmbeddingStore, Embeddings, fitProbe, fitProbeSteps, unit, type JevClient } from '../src/embeddings.ts';
 import { MediaArchiver } from '../src/mediaarchive.ts';
 import { SLICE_ROWS, sliced, whole, type SliceOptions } from '../src/slices.ts';
-import { noteWork, pathShape, StallWatch } from '../src/stalls.ts';
+import { noteWork, pathShape, SLOW_WRITE_MS, StallWatch, timedWrite } from '../src/stalls.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
 import { SELF_SQL } from '../src/interact.ts';
@@ -469,6 +469,46 @@ describe('a flush', () => {
   });
 });
 
+describe('a bootstrap just after a start', () => {
+  test('waits for the first scores, worked out a slice at a time, rather than working them all out at once', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dither-stalls-boot-'));
+    const store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
+    let release!: () => void;
+    let asked!: () => void;
+    const askedYet = new Promise<void>((r) => (asked = r));
+    const listedWhenReady: boolean[] = [];
+    let ready = false;
+    const attention = {
+      get hasScores() {
+        asked();
+        return ready;
+      },
+      firstScores: new Promise<void>((r) => (release = r)),
+      list() {
+        listedWhenReady.push(ready);
+        return [];
+      },
+      sync: () => [],
+    };
+    const hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', attention: attention as any });
+    const port = hub.start().port!;
+    try {
+      const answer = fetch(`http://127.0.0.1:${port}/api/bootstrap`).then((r) => r.json());
+      // The request is in, has asked, and waits.
+      await askedYet;
+      expect(listedWhenReady).toEqual([]);
+      ready = true;
+      release();
+      expect(Array.isArray((await answer).conversations)).toBe(true);
+      expect(listedWhenReady).toEqual([true]);
+    } finally {
+      hub.stop();
+      store.db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("attention's rescore of everything", () => {
   test('gives the scores it gives straight through, at most RESCORE_STEP conversations between turns', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dither-stalls-rescore-'));
@@ -491,7 +531,9 @@ describe("attention's rescore of everything", () => {
       const inSlices = await b.rescoreAllSliced(now, everyChance(slices));
       expect(inSlices).toEqual(straight);
       expect((straight[0] as Extract<P.ClientEvent, { t: 'attention' }>).items.length).toBe(300);
-      expect(Math.max(...slices.slice(1))).toBeLessThanOrEqual(RESCORE_STEP);
+      // The three reads of what to score are a slice each, then the scoring.
+      expect(slices.slice(0, 3)).toEqual([1, 1, 1]);
+      expect(Math.max(...slices)).toBeLessThanOrEqual(RESCORE_STEP);
       expect(slices.length).toBeGreaterThanOrEqual(Math.floor(300 / RESCORE_STEP));
     } finally {
       store.db.close();
@@ -523,6 +565,15 @@ describe('the stall log', () => {
       'stalls: 1 of 200 ms or more in the first 10 min, the longest 23.8 s (embeddings refit, GET /api/conversations/:id/messages)',
       'stall: 2.5 s from 600.7 s after start: media archive',
     ]);
+  });
+
+  test('a write transaction of SLOW_WRITE_MS or more is logged with what it was; a quicker one is not', () => {
+    const lines: string[] = [];
+    let t = 0;
+    const now = () => t;
+    expect(timedWrite('flush', () => ((t += SLOW_WRITE_MS - 1), 'quick'), (l) => lines.push(l), now)).toBe('quick');
+    expect(timedWrite('adapter events (2)', () => ((t += 5600), 'slow'), (l) => lines.push(l), now)).toBe('slow');
+    expect(lines).toEqual(['slow write: 5.6 s in one transaction (adapter events (2))']);
   });
 
   test('paths without their ids', () => {

@@ -108,3 +108,21 @@ export class StallWatch {
     this.timer = null;
   }
 }
+
+/** A write transaction this long or longer is logged (`timedWrite`). */
+export const SLOW_WRITE_MS = 500;
+
+/**
+ * A write transaction, logged when it took SLOW_WRITE_MS or more: its statements and its commit, which waits on the
+ * hub's thread for the disk (synchronous FULL) or for another connection's lock (busy_timeout). A hold the stall log
+ * names only as "adapter events" or "flush" is then one of these, or plainly not.
+ */
+export function timedWrite<T>(what: string, fn: () => T, log: (line: string) => void = (l) => console.warn(l), now: () => number = () => performance.now()): T {
+  const t = now();
+  try {
+    return fn();
+  } finally {
+    const ms = now() - t;
+    if (ms >= SLOW_WRITE_MS) log(`slow write: ${secs(ms)} in one transaction (${what})`);
+  }
+}

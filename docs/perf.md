@@ -584,9 +584,8 @@ which is the owner's choice.
 
 With #132 deployed, the live hub's ten minutes still read 178 holds of 200 ms or more (74.7 s, six over a second, the
 median 332 ms). Most were "adapter events" and "flush": commits, each waiting on the hub's one thread for an fsync of
-the log (`synchronous` was SQLite's default, FULL), about eight for each message. The longest came in the first minutes
-after a start, when a new device loaded the app (the deploy's check, a fresh browser profile): its first seconds write
-to the disk, and every fsync of the hub's waited behind them.
+the log (`synchronous` was SQLite's default, FULL), about eight for each message. The longest, one of 5–6 s in each
+deploy's first minutes, was a few small commits waiting on the disk ("The first minutes after a start", below).
 
 The owner chose `synchronous = NORMAL` (store.ts, embeddings.ts). In WAL mode a commit is then written to the log
 without waiting for the disk, and the log reaches the disk at checkpoints, which the checkpoint thread runs about every
@@ -604,6 +603,40 @@ four minutes, and a fresh headless Chromium profile loading the app after that (
 | without the bootstrap polls' holds | 28, 19.0 s, 3.1 s | 16, 8.4 s, 2.3 s |
 
 What is left is mostly reads: the first scores at a start, the five-minute rescore's reads, and the bootstrap's own.
+
+### The first minutes after a start (2026-11-13)
+
+Deploys 32 to 35 each had one hold of 5.2 to 6.4 s, somewhere 115 to 304 s after the start, labelled only small
+batches of adapter events and a flush. At first it seemed to follow the deploy's check, a fresh browser profile loading
+the app; deploy 35 had it at 115 s with the check run only after the ten minutes, so it is not that. On the sealed copy
+with the copy's traffic replayed, a fresh browser at four minutes gave a 3.1 s hold on main, as a burst of writes to
+the disk makes the hub's fsync of each commit wait behind it (`synchronous` FULL). With NORMAL (#146) that browser's
+90 s held the hub 1.2 s in all, 0.34 s at most.
+
+A single hold of seconds made of a few small transactions fits a commit waiting on the disk. In the first minutes after
+a start much of the database is written (the triage and attention catch-up, mail's first sync, the embedder) and the
+checkpoints copy it back, so an fsync can wait behind a lot. NORMAL takes the fsync out of the commit. To be sure, a
+write transaction that takes 500 ms or more is now logged with what it was (`timedWrite`, stalls.ts):
+`slow write: 5.6 s in one transaction (adapter events (2))`. It is a transaction of adapter events, a flush, or a triage
+decision.
+
+What the profile found besides, each a single statement that reads from the disk when its pages are not in memory
+(after a start, or after a new device's first load has read widely):
+
+- **Activity's 90-day walk** read 2,048 messages a page: one page took 2.85 s cold. Now 512 a page.
+- **The five-minute rescore** read what to score in three queries before its first slice: 1.96 s cold. Each query is
+  a slice now.
+- **The first scores at a start** are worked out a slice at a time (#132), but a bootstrap that came first worked them
+  all out at once: 1.6–2.0 s at 0 s on the copy and on deploy 35 ("attention: first scoring, attention: rescore all,
+  GET /api/bootstrap ×2"). A bootstrap now waits for them.
+
+`test/stalls.test.ts` holds each: the slow-write line, the rescore's three reads a slice each, and a bootstrap that
+waits for the first scores instead of asking for them.
+
+With NORMAL and these together, the same six minutes on the copy (a fresh browser at four minutes, profiled, at a low
+load) held the hub 24 times for 200 ms or more, 5.6 s in all, the longest 0.32 s; without the test's own bootstrap
+polls, 4 times and 1.1 s. What is left is mostly the bootstrap's reads. Whether to move the hub's writes to a thread of
+their own: [writer-thread.md](writer-thread.md) (not now; move the bootstrap's build to a reader first).
 
 ## The snapshot after each open (2026-11-11)
 
