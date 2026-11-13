@@ -25,7 +25,7 @@
 
 import type { AboutChange, AboutTarget, PersonRelationship } from './about.ts';
 import type { AddAction, AddRef, RelationshipFact, RequestAnswer, RequestFact } from './add.ts';
-import type { CallMode, CallState } from './call.ts';
+import type { CallFact, CallMode, CallState, VoiceMember } from './call.ts';
 import type { LinkPreviewOut } from './extra.ts';
 import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, ReactionStyle, Shape, SpaceKind, Variant } from './ontology.ts';
 
@@ -51,6 +51,17 @@ export type Capability =
   | 'liveView'
   /** Voice calls (see call.ts). */
   | 'calls'
+  /** Says when calls ring you, go on and end, in conversations you are not calling in from here (the `callState` event). */
+  | 'callStates'
+  /** Stops a call ringing for you, the network's own way (the `declineCall` command). */
+  | 'declineCall'
+  /** A call joined in a direct or group conversation rings the others there (the call join's `ring`). */
+  | 'ringCalls'
+  /**
+   * Says who is in which voice channel when you are not in it (the `voice` event): only what the network's client was
+   * sent anyway, no request of its own. Kept only with the adversarial `voice` setting on.
+   */
+  | 'voicePresence'
   /** Forwarding a message it can read into another conversation, the network's own way (the `forward` command). */
   | 'forward'
   /** Reads a conversation's or space's settings, members and permissions (the `about` command, about.ts). */
@@ -376,6 +387,15 @@ export type AdapterEvent =
   | { t: 'typing'; conversation: string; author: string; stop?: boolean; ttl?: number; name?: string }
   /** A call this hub started: bridge signalling for the device, the call's state, or its end. */
   | { t: 'call'; call: string; signal?: unknown; state?: CallState; ended?: string }
+  /** A call ringing you, going on, or over (capability 'callStates', call.ts CallFact): the whole fact each time. */
+  | { t: 'callState'; call: CallFact }
+  /**
+   * Everyone in one voice channel now (capability 'voicePresence'), replacing what the hub had for it; [] is nobody.
+   * `space`: its guild. Only what the network's client was sent anyway. Kept only with the adversarial `voice` setting.
+   */
+  | { t: 'voice'; conversation: string; space?: string; members: VoiceMember[]; ts?: number }
+  /** A voice channel's status line ("playing chess"), set by whoever is in it; null clears it. Not about anyone: kept like a topic. */
+  | { t: 'voiceStatus'; conversation: string; text: string | null }
   /**
    * Requests waiting on you (capability 'requests', add.ts): the account's whole list, sent after connect. It replaces
    * the hub's; until one comes the hub keeps what it had, so a network that knows its list only later loses nothing.
@@ -537,8 +557,13 @@ export type AdapterCommand =
    * error past it. reply.result: PersonAbout of the account itself as it now stands.
    */
   | { t: 'setProfile'; id: string; change: { bio?: string } }
-  /** reply.result for join: { direct?: DirectVoiceSession }. One call per account at a time. */
-  | { t: 'call'; id: string; call: string; op: 'join'; conversation: string; mode: CallMode; muted?: boolean; deafened?: boolean }
+  /**
+   * reply.result for join: { direct?: DirectVoiceSession }. One call per account at a time. `ring` (capability
+   * 'ringCalls'): in a direct or group conversation, ring the others as the network's own call button does.
+   */
+  | { t: 'call'; id: string; call: string; op: 'join'; conversation: string; mode: CallMode; muted?: boolean; deafened?: boolean; ring?: boolean }
+  /** Stop a call ringing for you (capability 'declineCall'): `call` is the CallFact's nativeId. reply.result: {} */
+  | { t: 'declineCall'; id: string; conversation: string; call: string }
   | { t: 'call'; id: string; call: string; op: 'leave' }
   | { t: 'call'; id: string; call: string; op: 'mute'; muted: boolean; deafened: boolean }
   | { t: 'call'; id: string; call: string; op: 'signal' | 'note'; data: unknown }

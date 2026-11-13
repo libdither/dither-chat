@@ -14,6 +14,7 @@ first two, statuses, presence and server members, Adversarial features), everywh
 | **Statuses** (adversarial) | each change to people's custom statuses (the About on Signal and WhatsApp); the current one is kept either way | the Activity section of a profile: a list, and marks above its chart (docs/profile.md) |
 | **Presence** (adversarial) | each time people you follow come online, go idle or do not disturb, or go offline, and on which devices; nothing at all while off | the Activity section of a profile: a list, and a band under its chart (docs/profile.md) |
 | **Server members** (adversarial, passive) | who your accounts' clients saw as a member of each server, with nick, roles and when they joined, and the server's member and online counts: only what the client loaded anyway (message authors, the member list in view), never a walk of the list | "Members seen: 5 of 1,287 listed" on a server's About; the server under In common on a profile; its links in the people graph (docs/people-graph.md) |
+| **Voice channels** (adversarial, passive) | who is in each Discord voice channel when you are not, as your accounts' clients are told anyway, and each join and leave; nothing while off | a voice channel's row, its page and its chat (docs/calls.md "Voice channels") |
 
 Each adversarial switch says where what it keeps shows, in the words of the last column ("Where it shows: in full in
 the chat, marked Deleted"). "Deleted and disappeared messages in chats" is Shown or Hidden, and each chat can say
