@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
+import { defaultRoute } from '../src/chats.ts';
 import { HubServer, mediaSigner } from '../src/server.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
@@ -98,10 +99,24 @@ describe('routes', () => {
 
   test('a chosen route is kept, one the chat does not have is refused, and null forgets it', async () => {
     const r = { conversationId: cnv('discord', 'dm-exe-alt'), accountId: alt.id };
-    expect((await call('PATCH', `/api/chats/person:${kit}`, { route: r })).json.route).toEqual({ ...r, why: 'chosen' });
-    expect((await chat()).route).toEqual({ ...r, why: 'chosen' });
+    expect((await call('PATCH', `/api/chats/person:${kit}`, { route: r })).json.route).toMatchObject({ ...r, why: 'chosen' });
+    expect((await chat()).route).toEqual({ ...r, why: 'chosen', at: expect.any(Number) });
     expect((await call('PATCH', `/api/chats/person:${kit}`, { route: { conversationId: cnv('discord', 'dm-exe-alt'), accountId: main.id } })).status).toBe(409);
     expect((await call('PATCH', `/api/chats/person:${kit}`, { route: null })).json.route.why).toBe('latest');
+  });
+
+  test('a chosen route gives way once a message comes on another route after it, and holds against older ones', () => {
+    const route = (conversationId: string, accountId: string, lastTs: number): P.ChatRoute =>
+      ({ conversationId, accountId, network: 'discord', theirIdentityId: null, myIdentityId: null, lastTs, unread: 0, mentions: 0 }) as P.ChatRoute;
+    const id = 'person:pick-test';
+    store.db.query('INSERT INTO chat_route (chat_id, conversation_id, account_id, set_at) VALUES (?, ?, ?, 5000)').run(id, 'disc', main.id);
+    // Chose Discord at 5000; Signal's latest is from before: Discord holds.
+    expect(defaultRoute(store, id, [route('disc', main.id, 4000), route('sig', sig.id, 4500)])).toEqual({ conversationId: 'disc', accountId: main.id, why: 'chosen', at: 5000 });
+    // She wrote on Signal at 6000: the chat moved on, and it goes where she wrote.
+    expect(defaultRoute(store, id, [route('sig', sig.id, 6000), route('disc', main.id, 4000)])).toEqual({ conversationId: 'sig', accountId: sig.id, why: 'latest' });
+    // A newer message on the chosen route itself keeps it.
+    expect(defaultRoute(store, id, [route('disc', main.id, 7000), route('sig', sig.id, 4500)])?.why).toBe('chosen');
+    store.db.query('DELETE FROM chat_route WHERE chat_id = ?').run(id);
   });
 
   test('a conversation is a chat of its own, and an unknown id is not one', async () => {

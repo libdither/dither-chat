@@ -65,6 +65,11 @@ export interface OtherThreads {
   gather(id: string, messageId: string): Omit<Grouped, 'alert'> | null;
   /** Read up to this time (the newest shown at or before it counts as read); null: not one of its own. */
   readTs(id: string): number | null;
+  /**
+   * Read up to this time counting everything in it, not only what a notification showed (the phone list's held
+   * episodes); absent: as readTs.
+   */
+  readAllTs?(id: string): number | null;
 }
 
 export class Delivery {
@@ -136,6 +141,11 @@ export class Delivery {
     }
     for (const cid of out) this.showing.delete(cid);
     return out;
+  }
+
+  /** Read up to this time counting all it holds (phonelist.ts's held episodes): for a chat, as readTs. */
+  readAllTs(conversationId: string): number {
+    return this.other?.readAllTs?.(conversationId) ?? this.readTs(conversationId);
   }
 
   /** Read up to this time anywhere: a chat's read marker, or a mail thread's own (OtherThreads). */

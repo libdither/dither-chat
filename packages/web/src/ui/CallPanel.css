@@ -1,0 +1,96 @@
+/* The open call dock (CallPanel.tsx): loaded with its chunk. */
+.call-person {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.call-person:disabled {
+  cursor: default;
+}
+.call-people li.local-mute .call-avatar {
+  opacity: 0.5;
+}
+.call-flag.server {
+  color: var(--bg-raised);
+  background: var(--danger);
+}
+.call-tags {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-height: 14px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.call-vol {
+  font-variant-numeric: tabular-nums;
+}
+.call-volume {
+  width: 100%;
+  min-width: 180px;
+  margin: 4px 0;
+}
+.call-section {
+  margin: 10px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.call-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.call-stage-topic {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.call-stage-you {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.call-sounds {
+  margin-top: 10px;
+}
+.call-sounds-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.call-sounds-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+.call-sound {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--bg-active);
+  background: none;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

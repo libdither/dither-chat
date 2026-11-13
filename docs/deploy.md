@@ -29,26 +29,27 @@ chat.tn.example.net {
 }
 ```
 
-**Caddy must reach the hub through the tailnet address, never loopback.** The hub trusts loopback with `/adapter`
-and with calendar reminders (`/api/calendar/notify`, [calendar.md](calendar.md)), so proxying from `127.0.0.1` would
-hand those to every tailnet client. Coming from the tailnet address, both return 403 through the proxy. Check it after
-any change:
+**Caddy must reach the hub through the tailnet address, never loopback.** The hub trusts loopback with `/adapter`, so
+proxying from `127.0.0.1` would hand it to every tailnet client. Coming from the tailnet address, it returns 403 through
+the proxy. Check it after any change:
 
 ```sh
 curl -s -o /dev/null -w '%{http_code}\n' https://chat.tn.example.net/adapter   # 403
-curl -s -o /dev/null -w '%{http_code}\n' -X POST https://chat.tn.example.net/api/calendar/notify   # 403
 ```
+
+The same holds for dither-calendar's `/api/chat-adapter` ([calendar.md](calendar.md)): Caddy reaches the calendar
+through its tailnet address too, so only the hub, on this machine, gets a socket there.
 
 The upstream must also see the client's Host, or the hub's same-origin check refuses every write and the live socket.
 Caddy does this by default for an HTTP upstream.
 
 ### The service
 
-`~/.config/systemd/user/dither-chat.service`:
+`~/.config/systemd/user/dither-chat.service` (the deployer below gives it `current` as its working directory):
 
 ```ini
 [Service]
-WorkingDirectory=%h/Projects/dither-chat
+WorkingDirectory=%h/.local/share/dither-deploy/chat/current
 Environment=DITHER_DATA=%h/Projects/dither-chat/.data
 Environment=DITHER_PORT=8460
 Environment=DITHER_PUBLIC_URL=https://chat.tn.example.net
@@ -59,6 +60,84 @@ WantedBy=default.target
 ```
 
 Without `loginctl enable-linger $USER` a user service stops when you log out and does not start at boot.
+
+### Deploying itself
+
+A merge to `main` is live a few minutes later, without anyone deploying it: the deployer
+(`packages/deploy/src/deployer.ts`) ships dither-chat and dither-accounts from their default branches. A user timer
+runs it about once a minute. One run looks at both apps and ships what is new, dither-accounts first.
+
+**Releases.** Each app runs from a release folder of its own, `~/.local/share/dither-deploy/<app>/releases/<sha>`, a
+git worktree of the deployer's own clone, built once (`bun install --frozen-lockfile`, the web build). The service's
+`WorkingDirectory` is the app's `current` link, and `previous` is the release before it. Nobody edits a release, so
+what a service runs is always the commit it started on. Work happens in your own checkout or a worktree, which no
+service reads.
+
+**One run, per app:**
+
+1. Fetch, and pick the newest commit since the deployed one whose CI `check` passed (`plan.ts` `pick`). A commit still
+   in CI is waited for only when nothing newer has passed.
+2. Build its release. A build that fails is told and never tried again.
+3. Wait while a call is on (`GET /api/calls`).
+4. For the hub, copy the database to `backups/pre-deploy.sqlite` (at most every 6 hours: a schema change is copied by
+   the hub itself, and a rollback changes the code, not the database).
+5. Point `current` at the release and restart the service.
+6. Check it. The hub must log `startup: ready`, answer `/api/health` and connect to the manager (its notices' access
+   leaves `unreachable`); the manager must answer its `/api/health`. Both must stay up without systemd restarting
+   them, and get the hub's accounts back to as many online as before.
+7. If a check fails, `current` goes back to `previous` and the service restarts on it. The commit is marked failed and
+   never tried again; the next commit that passes CI is.
+
+Either way the manager's notices say what happened (dither-accounts `POST /api/notices/local`), so it reaches the
+inbox and the phone: "Deployed dither-chat a14daa9" with the pull requests it brought (low), "Rolled back …" (high),
+"Did not deploy …" (normal). The log is `~/.local/share/dither-deploy/deploy.log`; what it remembers (failed commits,
+CI answers) is `state.json` beside it.
+
+**dither-accounts** runs its public `master` with one private commit on top: the `live` branch of a private remote,
+named by `DITHER_DEPLOY_ACCOUNTS_PRIVATE` (its git URL; unset, public `master` alone is deployed). Its release is `live` with the picked `master` commit merged in; once that holds, it is pushed back as `live`. A merge that
+conflicts is told and not deployed.
+
+**Holding.** A pull request labelled `hold-deploy` does not deploy by itself, nor does anything merged after it
+(those commits contain it); what merged before it still does. You are told once. Use it for a change that needs hands,
+such as one that must go out with a change to the other app. To stop an app's deploys altogether, put a file at
+`~/.local/share/dither-deploy/<app>/hold` (say why in it); delete it to go on. By hand:
+
+```sh
+bun packages/deploy/src/deployer.ts --dry               # what a run would do
+bun packages/deploy/src/deployer.ts ship chat <sha>     # ship this commit now, whatever its CI or a hold says
+bun packages/deploy/src/deployer.ts init chat <sha>     # set the current release without a restart (first setup)
+```
+
+The units, in `~/.config/systemd/user/`:
+
+```ini
+# dither-deploy.service
+[Service]
+Type=oneshot
+Environment=PATH=%h/.nix-profile/bin:/etc/profiles/per-user/%u/bin:/run/current-system/sw/bin
+Environment=DITHER_DEPLOY_ACCOUNTS_PRIVATE=https://github.com/<you>/<private repo>.git
+ExecStart=/etc/profiles/per-user/%u/bin/bun %h/.local/share/dither-deploy/chat/current/packages/deploy/src/deployer.ts
+TimeoutStartSec=40min
+
+# dither-deploy.timer
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=60s
+[Install]
+WantedBy=timers.target
+```
+
+The hub loads dither-accounts' client from a folder beside its own checkout unless `DITHER_ACCOUNTS_CLIENT` names
+it, and a release folder has no such neighbour. So the hub's unit names the deployed one (a drop-in):
+
+```ini
+[Service]
+Environment=DITHER_ACCOUNTS_CLIENT=%h/.local/share/dither-deploy/accounts/current/packages/client/src/index.ts
+```
+
+The deployer runs from dither-chat's current release, so it ships its own changes too. A run that is still going when
+the timer fires is not started twice (a oneshot). It needs `gh` signed in (for CI and labels) and git able to fetch and
+push the private remote.
 
 ### Who can reach it
 
@@ -165,6 +244,11 @@ SQLite's checkpoints (copying the write-ahead log back into `hub.sqlite`) run on
 log's summary the hub logs `checkpoints: N in the first 10 min, the longest X ms off the hub's thread`: N near 600
 says they kept up. If the thread fails, the hub logs `checkpoints: the worker … the hub's connection checkpoints
 again` and SQLite's own checkpoints come back, holds and all.
+
+Every hold of 200 ms or more, at any time, is also kept in `traces/event-loop-stalls.ndjson` in the data directory,
+with the spans that were on the thread and the CPU time and page faults in it, and every request, command and job is a
+span in `traces/hub.trace.ndjson` (docs/tracing.md). After a deploy:
+`bun scripts/trace-summary.ts --data ~/.local/share/dither-chat --since 15m`, and the same with `--stalls`.
 
 CI starts the hub on databases older hubs left (`packages/hub/test/old-database.test.ts`, fixtures in
 `packages/hub/test/fixtures/old-db/`): it must copy the database aside, migrate, log that line and read back what the old

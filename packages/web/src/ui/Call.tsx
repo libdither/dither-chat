@@ -1,28 +1,57 @@
 import { useEffect, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
-import { activeCall, canCall, leaveCall, setDeafened, setMuted, startCall } from '../call.ts';
-import { db, go, prefs, rev } from '../state.ts';
+import { activeCall, canCall, canRing, leaveCall, setDeafened, setMuted, startCall } from '../call.ts';
+import { callIn } from '../ringing.ts';
+import { db, prefs, rev } from '../state.ts';
 import { convTitle } from '../model.ts';
-import { Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';
 
-/** The header's join button, on conversations an online account can call in. */
+type PanelParts = typeof import('./CallPanel.tsx');
+let panel: PanelParts | null = null;
+let loading: Promise<PanelParts> | null = null;
+
+/** The open dock's chunk, asked for only once the dock is open. */
+function useCallPanel(want: boolean): PanelParts['CallPanel'] | null {
+  const [p, setP] = useState(panel);
+  useEffect(() => {
+    if (!want || p) return;
+    (loading ??= import('./CallPanel.tsx').then(
+      (m) => (panel = m),
+      (e) => {
+        loading = null;
+        throw e;
+      },
+    )).then(setP, () => {});
+  }, [want]);
+  return p?.CallPanel ?? null;
+}
+
+/**
+ * The header's call button: Join on voice channels an online account can call in; Call on a DM or group whose account
+ * can ring the others (or Join, when a call is going on there already).
+ */
 export function JoinCallButton({ c }: { c: P.ConversationView }) {
   rev.value;
-  const accountId = canCall(c);
+  const voiceAccount = canCall(c);
+  const ringAccount = voiceAccount ? null : canRing(c);
+  const accountId = voiceAccount ?? ringAccount;
   const call = activeCall.value;
   if (!accountId) return null;
   const here = call && call.conversationId === c.id && call.phase !== 'ended';
+  const going = !!ringAccount && !!callIn(c.id);
+  const ring = !!ringAccount && !going;
+  const label = here ? 'Leave' : ring ? 'Call' : 'Join';
+  const title = here ? 'Leave the call' : ring ? 'Call: ring everyone here' : 'Join the call';
   return (
     <button
       class={`hdr-btn call-join ${here ? 'on' : ''}`}
-      data-track={here ? 'leave call' : 'join call'}
-      title={here ? 'Leave the call' : 'Join the call'}
-      aria-label={here ? 'Leave the call' : 'Join the call'}
-      onClick={() => (here ? leaveCall() : void startCall(c.id, accountId, prefs.value.callMode))}
+      data-track={here ? 'leave call' : ring ? 'start call' : 'join call'}
+      title={title}
+      aria-label={title}
+      onClick={() => (here ? leaveCall() : void startCall(c.id, accountId, prefs.value.callMode, ring))}
     >
       <Icon name={here ? 'phoneOff' : 'phone'} size={16} />
-      <span class="hdr-btn-label">{here ? 'Leave' : 'Join'}</span>
+      <span class="hdr-btn-label">{label}</span>
     </button>
   );
 }
@@ -33,16 +62,14 @@ function elapsed(since: number, now: number) {
   return `${m}:${String(s % 60).padStart(2, '0')}`;
 }
 
-function kb(n: number) {
-  return n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.round(n / 1e3)} kB`;
-}
-
 /** The call in progress, wherever you are in the app. Tap it for the people in it. */
 export function CallDock() {
   rev.value;
   const call = activeCall.value;
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(Date.now());
+  // The open dock is a chunk of its own (CallPanel.tsx), loaded the first time it opens.
+  const Panel = useCallPanel(open);
   useEffect(() => {
     if (!call) return;
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -52,6 +79,7 @@ export function CallDock() {
   const c = db.conversations.get(call.conversationId);
   const title = c ? convTitle(c) : 'Call';
   const speaking = call.participants.filter((p) => p.speaking);
+  const effect = call.effects.at(-1)?.effect;
   const status = call.phase === 'connecting' ? 'Connecting…' : call.phase === 'ended' ? (call.note ?? 'Call ended') : elapsed(call.since, now);
   return (
     <section class={`call-dock ${open ? 'open' : ''} ${call.phase}`} aria-label="Call" data-call-stats={call.stats ? JSON.stringify(call.stats) : undefined} data-call-phase={call.phase}>
@@ -63,7 +91,7 @@ export function CallDock() {
             <small>
               {status}
               {call.phase === 'live' && ` · ${call.mode === 'direct' ? 'direct' : 'bridge'}`}
-              {speaking.length > 0 && ` · ${speaking.map((p) => name(p.id)).join(', ')}`}
+              {effect ? ` · ${name(effect.who)}: ${effect.sound ? `${effect.emoji ? `${effect.emoji} ` : '🔊 '}${effect.sound.name}` : effect.emoji}` : speaking.length > 0 && ` · ${speaking.map((p) => name(p.id)).join(', ')}`}
             </small>
           </span>
         </button>
@@ -79,35 +107,7 @@ export function CallDock() {
           </button>
         </div>
       </div>
-      {open && (
-        <div class="call-dock-body">
-          <ul class="call-people">
-            {call.participants.map((p) => {
-              const idn = db.identities.get(p.id);
-              return (
-                <li class={p.speaking ? 'speaking' : ''}>
-                  <span class="call-avatar">
-                    <Avatar id={idn?.personId ?? p.id} name={name(p.id)} url={idn?.avatar ?? null} size={40} network="discord" />
-                  </span>
-                  <span class="call-name">{name(p.id)}</span>
-                  {(p.muted || p.deafened) && <Icon name={p.deafened ? 'headphonesOff' : 'micOff'} size={14} class="call-flag" />}
-                </li>
-              );
-            })}
-            {call.participants.length === 0 && <li class="call-empty">{call.phase === 'connecting' ? 'Joining…' : 'Nobody else is here yet.'}</li>}
-          </ul>
-          {call.stats && (
-            <p class="call-stats">
-              {call.stats.codec ?? 'audio'} · {call.stats.path ?? '?'} · {call.stats.rttMs ?? '?'} ms · ↑{kb(call.stats.sent)} ↓{kb(call.stats.received)}
-            </p>
-          )}
-          {c && (
-            <button class="call-goto" onClick={() => go({ view: 'inbox', conv: c.id })}>
-              Open {title}
-            </button>
-          )}
-        </div>
-      )}
+      {open && (Panel ? <Panel call={call} /> : <div class="call-dock-body call-empty">Loading…</div>)}
     </section>
   );
 }

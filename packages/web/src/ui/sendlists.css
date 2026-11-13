@@ -1,0 +1,112 @@
+/* Send later's picker and list, and what you saved on Discord (SendLists.tsx, docs/sending.md): loaded with their chunk. */
+.send-lists .muted {
+  color: var(--text-faint);
+}
+.send-lists .small {
+  font-size: 12px;
+}
+.send-lists p {
+  margin: 4px 0;
+}
+.later-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.later-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+.later-custom {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.later-custom input,
+.scheduled-edit input,
+.scheduled-edit textarea {
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+  max-width: 100%;
+}
+.later-actions,
+.scheduled-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.scheduled-actions {
+  justify-content: flex-start;
+  margin-top: 6px;
+}
+.sched-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.sched-tabs button {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  color: var(--text-dim);
+  padding: 3px 12px;
+  cursor: pointer;
+}
+.sched-tabs button.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.scheduled-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.scheduled-row {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+.scheduled-row.held,
+.scheduled-row.failed {
+  border-color: var(--danger);
+}
+.scheduled-row.sent {
+  opacity: 0.7;
+}
+.scheduled-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.scheduled-head .link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+}
+.scheduled-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13.5px;
+}
+.scheduled-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}

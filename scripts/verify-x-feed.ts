@@ -94,7 +94,9 @@ try {
     const r = document.querySelector('.feed-row');
     const side = r.closest('.side-scroll');
     const kids = [...side.children];
-    const firstRanked = side.querySelector('[data-row]');
+    // A ranked row may sit in a wrapper with its reply mark (ReplyMark.tsx): the side's child that holds it.
+    let firstRanked = side.querySelector('[data-row]');
+    while (firstRanked && firstRanked.parentElement !== side) firstRanked = firstRanked.parentElement;
     return {
       title: r.querySelector('.row-title').textContent,
       count: r.querySelector('.requests-count')?.textContent ?? null,

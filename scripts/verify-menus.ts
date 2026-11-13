@@ -95,7 +95,9 @@ await rightClick(at.x, at.y, 8);
 check((await menuOpen()) === 0, 'Shift+right-click opens no menu of ours');
 
 // kept inside the window
-const corner = await p.eval<{ x: number; y: number }>(`(() => { const ms = [...document.querySelectorAll('.msg:not(.system):not(.pending)')]; const r = ms[ms.length - 1].getBoundingClientRect(); return { x: Math.min(innerWidth - 4, r.right - 4), y: r.bottom - 4 }; })()`);
+// The last message in view first: the right-click above scrolled the first to the centre, and when the timeline's
+// first slice has drawn many messages by then (docs/perf.md, "First opens draw in slices") the last is below the window.
+const corner = await p.eval<{ x: number; y: number }>(`(() => { const ms = [...document.querySelectorAll('.msg:not(.system):not(.pending)')]; ms[ms.length - 1].scrollIntoView({ block: 'end' }); const r = ms[ms.length - 1].getBoundingClientRect(); return { x: Math.min(innerWidth - 4, r.right - 4), y: r.bottom - 4 }; })()`);
 await rightClick(corner.x, corner.y);
 const box = await p.eval<{ l: number; t: number; r: number; b: number } | null>(`(() => { const r = document.querySelector('.cm')?.getBoundingClientRect(); return r && { l: r.left, t: r.top, r: r.right, b: r.bottom }; })()`);
 check(box && box.r <= 1280 && box.b <= 800 && box.l >= 0 && box.t >= 0, `a menu opened in the corner stays inside the window (${JSON.stringify(box)})`);

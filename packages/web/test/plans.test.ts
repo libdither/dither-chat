@@ -70,3 +70,22 @@ test('plans by the message that named the time; a replace drops the rest; the an
   applyPlanEvent({ t: 'calendar', reachable: false, waiting: 0 });
   expect(calendarLink.value).toEqual({ path: '/calendar/', reachable: false, waiting: 0 });
 });
+
+test('the calendar comes and goes with its account: off drops the plans and the link, the next event brings it back', async () => {
+  const plans = await import('../src/plans.ts');
+  expect(calendarFromBootstrap({ calendar: { path: '/calendar/', reachable: true, waiting: 1 } })).toBe(false);
+  expect(plans.calendarOn).toBe(true);
+  applyPlanEvent({ t: 'plans', plans: [plan({ id: 'prp_9', messageId: 'msg_9' })], replace: true });
+  expect(applyPlanEvent({ t: 'calendar', reachable: false, waiting: 0, off: true })).toBe(false);
+  expect(plans.calendarOn).toBe(false);
+  expect(calendarLink.value).toBeNull();
+  expect(planByMessage.size).toBe(0);
+  // Back: on again, and the caller is told to read its plans.
+  expect(applyPlanEvent({ t: 'calendar', reachable: false, waiting: 0 })).toBe(true);
+  expect(plans.calendarOn).toBe(true);
+  expect(calendarLink.value).toEqual({ path: '/calendar/', reachable: false, waiting: 0 });
+  expect(applyPlanEvent({ t: 'calendar', reachable: true, waiting: 3 })).toBe(false);
+  // A bootstrap from a hub whose calendar account went turns it off too.
+  expect(calendarFromBootstrap({})).toBe(false);
+  expect(plans.calendarOn).toBe(false);
+});

@@ -22,6 +22,7 @@ import { storeBody } from './cache.ts';
 import { MAIL_LIMITS } from './limits.ts';
 import { MailQueue, P0, P1, type Priority } from './queue.ts';
 import type { Ingested, MailStore } from './store.ts';
+import { jobFailed } from '../errors.ts';
 
 type Row = Record<string, any>;
 
@@ -305,7 +306,7 @@ export class AccountSync {
       })
       .then(
         () => (nested ? undefined : this.settle()),
-        (e) => this.ctx.log(`[${this.accountId}] changes: ${asMailError(e).message}`),
+        (e) => (this.ctx.log(`[${this.accountId}] changes: ${asMailError(e).message}`), jobFailed('mail: changes', e, { account: this.accountId })),
       );
   }
 

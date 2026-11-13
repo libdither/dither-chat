@@ -347,6 +347,18 @@ test('a request (docs/add.md): silent, a notification of its own, and a tap open
   expect(w.opened).toEqual(['/#/requests/req_abc?n=n7']);
 });
 
+test('a notice (docs/notices.md): one notification per group, its marks, and a tap opens it under Notices', async () => {
+  const w = worker();
+  await w.push({ title: 'GitHub · o/r', body: 'Secret leaked', conversationId: 'ntg_g', noticeId: 'ntc_a', messageId: 'ntc_a', network: 'notice', tier: 'push', level: 'push', alert: true, nid: 'n9', device: 'd' });
+  expect(w.shown.at(-1)!.o).toMatchObject({ tag: 'ntg_g', renotify: true, silent: false });
+  expect(w.shown.at(-1)!.o.actions.map((a: { action: string }) => a.action)).toEqual(['wrong']);
+  await w.click(w.shown.at(-1)!.o.data);
+  expect(w.opened).toEqual(['/#/notices/ntc_a?n=n9']);
+  // A group's id without its notice (quiet hours' summary): Notices.
+  await w.click({ conversationId: 'ntg_g' });
+  expect(w.opened.at(-1)).toBe('/#/notices');
+});
+
 test('a calendar reminder (docs/calendar.md): one per event, Join opens the meeting, a tap opens the calendar there', async () => {
   const w = worker();
   const calendar = { open: '#/day/2026-11-14', eventKey: 'evt_1', reminderId: 'evt_1|1|10', meetingUrl: 'https://meet.example/abc' };
@@ -507,4 +519,21 @@ test('pictures fetched through an account that left go; the rest, and emoji, sta
   for (const p of ['/media/s/a?a=acc_1', '/media/s/b?a=acc_2', '/media/s/c?a=acc_2', '/media/s/d', '/emoji/discord/1']) await w.get(p);
   await w.message({ t: 'keepAccounts', ids: ['acc_1'] });
   expect([...w.media.m.keys()].map((u) => u.slice('https://hub.example'.length))).toEqual(['/media/s/a?a=acc_1', '/media/s/d', '/emoji/discord/1']);
+});
+
+test('a call ringing you (docs/calls.md): one per call, kept up, Answer opens the chat and Decline stops it everywhere', async () => {
+  const w = worker();
+  await w.push({ title: 'Ann is calling', body: 'Discord call. Answer or decline.', conversationId: 'cnv_1', call: { id: 'cll_1', tag: 'call:cll_1', canAnswer: true, canDecline: true } });
+  expect(w.shown[0].o).toMatchObject({ tag: 'call:cll_1', requireInteraction: true, renotify: true });
+  expect(actions(w)).toEqual(['answer', 'decline']);
+  await w.click(w.shown[0].o.data, 'decline');
+  expect(w.fetched.at(-1)).toMatchObject({ url: '/api/calls/cll_1/decline', method: 'POST' });
+  expect(w.opened).toEqual([]);
+  await w.click(w.shown[0].o.data, 'answer');
+  expect(w.opened.at(-1)).toContain('/#/inbox/c/cnv_1');
+  // Signal from here: no Answer, and Decline only where the account can.
+  const sig = worker();
+  await sig.push({ title: 'Ann is calling', conversationId: 'cnv_2', call: { id: 'cll_2', canAnswer: false, canDecline: false } });
+  expect(actions(sig)).toEqual([]);
+  expect(sig.shown[0].o.tag).toBe('call:cll_2');
 });

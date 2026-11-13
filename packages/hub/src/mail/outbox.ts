@@ -32,6 +32,7 @@ import { MAIL_LIMITS } from './limits.ts';
 import { P0 } from './queue.ts';
 import type { MailRouter } from './routes.ts';
 import { maxRecipientsOf, sendCapOf } from './store.ts';
+import { jobFailed } from '../errors.ts';
 
 type Row = Record<string, any>;
 
@@ -404,6 +405,18 @@ export class MailOutbox {
     return back;
   }
 
+  /** Send now, while it is held: the hold ends here and it goes as it would have at the end of the countdown. */
+  sendNow(id: string): P.MailOutboxView {
+    const r = this.row(id);
+    if (!r || r.state === 'undone') throw bad('no such send', 404);
+    if (r.state === 'held') {
+      this.run(`UPDATE mail_outbox SET hold_until = ?, updated_at = ? WHERE id = ?`, this.now(), this.now(), id);
+      this.dirty = true;
+      this.pump();
+    }
+    return this.item(id)!;
+  }
+
   /** A failed or sent item is not shown any more. */
   dismiss(id: string) {
     const r = this.row(id);
@@ -500,6 +513,7 @@ export class MailOutbox {
       this.sent(this.row(id) ?? r, res ?? {});
     } catch (e) {
       this.log(`[outbox ${id}] ${asMailError(e).message}`);
+      jobFailed('mail: outbox', e, { outbox: id });
     } finally {
       this.running.delete(id);
       this.pump();
@@ -750,6 +764,12 @@ export const sendRoutes: MailRouter = (hub) => {
       method: 'DELETE',
       path: /^\/api\/mail\/outbox\/([\w-]+)$/,
       handle: ({ params }) => ok({ ok: true, ...box.undo(params[0]) }),
+    },
+    {
+      // Send now, ending the hold; an item already on its way answers as it is.
+      method: 'POST',
+      path: /^\/api\/mail\/outbox\/([\w-]+)\/send$/,
+      handle: ({ params }) => ok({ ok: true, item: box.sendNow(params[0]) }),
     },
     {
       method: 'POST',

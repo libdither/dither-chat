@@ -29,8 +29,13 @@ in step. Group chats that are "the same group on two networks" would need a stor
 
 Routes are listed newest first. A message without a route goes through the chat's **default route**:
 
-1. the route you chose (`chat_route`), while the chat still has it;
+1. the route you chose (`chat_route`), while the chat still has it and no message has come on another of its routes
+   since you chose it;
 2. otherwise, the conversation of the latest message, through the account that last sent there.
+
+A choice is for the conversation as it stood: switched to Discord, and they have written on Signal since, the chat
+sends through Signal again. The page's own picks below give way by the same rule (`pickHolds` in `chatroutes.ts`),
+except while a draft waits in the picked route's box, so the box never changes under what you are typing.
 
 The page adds guesses in front of that, because it knows things the hub doesn't. From first to last:
 
@@ -41,11 +46,18 @@ The page adds guesses in front of that, because it knows things the hub doesn't.
    page sends through that DM;
 4. opened as the person (`#/people/<id>`), **where you came from**, if that was a conversation:
    - their DM itself;
-   - otherwise a DM through the account you were reading on (coming from a Discord server on `zyansheep`, the DM
-     through `zyansheep`);
-   - otherwise a DM on that network;
+   - otherwise, if they are there (a participant, or the author of a message loaded there), a DM through the account
+     you were reading on (coming from a Discord server on `zyansheep`, the DM through `zyansheep`), else a DM on that
+     network;
+   - a conversation they are not in (a DM with someone else, a channel they were not seen in) says nothing of them,
+     and the steps below decide: from a Discord DM with Sam to Kit's page from the people list, and Kit wrote on Signal
+     last, Kit's page sends through Signal (`cameFromThem` in `chatroutes.ts`);
 5. the route you chose (from the hub);
 6. the route of the latest message.
+
+When the message would go another way than the chat's latest message came, the end of the message box's line says
+so, quietly: "last message on Signal" (or "with kit.work", "via zyn.alt" when only an account differs), and a click
+sends through that route (`lastRouteTells` in `chatroutes.ts`, `LastRoute` in `ui/Pairs.tsx`).
 
 The inbox's row for them opens the DM of the latest message, or the route picked this session if there is one, so
 the two agree.
@@ -60,8 +72,10 @@ opens, then leaves the browser.
 ## Names
 
 **A nickname is one account's.** You can give any account of someone's a nickname of your own (`identity.nickname`):
-only you see it, the hub never sends it to a network, and no sync overwrites it (a network's own nicknames, a Discord
-friend nickname or a Signal contact name, stay what the account's display name says). Wherever that account's name
+only you see it, and no sync overwrites it (a Discord friend nickname or a Signal contact name stay what the account's
+display name says). One exception, since 2026-11 (net-gaps): a network that keeps a private nickname of your own for
+someone (Signal's, capability `contactNotes`) shares it both ways: the network's becomes yours when you had none (or
+still had what it said before), and yours goes to it (docs/profile.md, "Your nickname and note on the network"). Wherever that account's name
 shows, the nickname shows instead: an account's name as you see it is your nickname for it, else its display name,
 else its handle, else its id (`accountName` in `chatroutes.ts`, `identityName` in `model.ts`, `shownName` and `SHOWN`
 in the hub's `store.ts`).

@@ -210,6 +210,15 @@ export async function undoSend(id: string): Promise<{ draftKey: string; draft: P
   return r;
 }
 
+/** Send now, while it is held: the countdown ends and it goes. */
+export async function sendNow(id: string) {
+  const r = await api<{ item: P.MailOutboxView | null }>(`/api/mail/outbox/${encodeURIComponent(id)}/send`, { method: 'POST', body: {} });
+  if (r.item && db.mail.outbox.has(id)) {
+    db.mail.outbox.set(id, r.item);
+    mailChanged();
+  }
+}
+
 export function dismissSend(id: string) {
   db.mail.outbox.delete(id);
   mailChanged();

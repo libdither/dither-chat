@@ -21,6 +21,7 @@ import { sliced, whole, type SliceOptions } from './slices.ts';
 import { noteWork } from './stalls.ts';
 import { foldMark, NEEDS_HOLD } from './replymarks.ts';
 import { DEFAULT_OWED_TABLE, fitOwedTable, OWED_SHOWN, owedChance, rateBucket, turnRate, validTable, type OwedTable, type OwedTurn } from './owed.ts';
+import { jobFailed } from './errors.ts';
 
 type Row = Record<string, any>;
 
@@ -1263,6 +1264,7 @@ export class Attention {
     // out at once (list()).
     this.firstScores = this.rescoreAllSliced().catch((e) => {
       console.error('attention: first scoring failed', e);
+      jobFailed('attention: first scoring', e);
       return [];
     });
     let busy = false;
@@ -1287,11 +1289,12 @@ export class Attention {
             this.fitOwed();
           } catch (e) {
             console.error('attention: owed table fit failed', e);
+            jobFailed('attention: owed table fit', e);
           }
         }
         void this.rescoreAllSliced()
           .then(send)
-          .catch((e) => console.error('attention: rescore failed', e));
+          .catch((e) => (console.error('attention: rescore failed', e), jobFailed('attention: rescore', e)));
       }, RESCORE_EVERY),
     );
   }

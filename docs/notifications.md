@@ -49,7 +49,9 @@ For every new live message from someone else, in this order (`triage.ts`, `Triag
    level, and below the list when it is not.
 
 A place kept to the list (you set it to List only, or it is muted on its own network) is never a Conversation and
-never read for an alert: its messages are on the list or below it. Quiet hours come last and hold alerts only.
+never read for an alert: its messages are on the list or below it. A message its sender sent silently (Discord's
+@silent) never alerts, whatever decided it: it stays a Conversation or a list row ([rich-messages.md](rich-messages.md)).
+Quiet hours come last and hold alerts only.
 
 Every decision is stored with its reasons in words, the deciding one first ("A direct message", "Reads as urgent: the
 local model's answer is 0.31 against a bar of 0.05", "On the list: importance 72%, at or over your level of 60%"), so
@@ -483,6 +485,13 @@ list or below it, by importance. Importance starts at 0.8 for someone you corres
 you in. Bulk mail is never triaged. Mail is on How it sorts with an envelope and notifies with one notification per
 thread; quiet hours hold its alerts and device rules hold it as they hold chat.
 
+## Notices
+
+What your accounts and services tell you through dither-accounts (GitHub's notifications, the manager's word about an
+account that needs you) is triaged with the same model and marks ([notices.md](notices.md)): no Conversation tier;
+the chances start from the source's urgency (high: an alert; normal: the local model reads it; low: below the list)
+and move with your marks. One notification per group (a repository, an app), opening `#/notices/<id>`.
+
 ## Requests
 
 A new friend, follow or join request, an invite, or a message request, from someone you know (they have a person
@@ -495,6 +504,42 @@ through `deliverRequest` in main.ts, judged by `packages/hub/src/requestnotify.t
 only when under two days old. Quiet hours do not hold it, since it is silent; an account, a network or everything set to
 Mute, and device rules for its account or network, keep it off. Its activity log kind is `request`.
 
+A request the network filed as spam (Discord's spam folder, `RequestFact.spam`) never notifies, whoever it is from: it
+waits last under Requests, under "Filed as spam", and the inbox's Requests row says how many without counting them.
+
+## From the network itself
+
+What a network knows about your attention beyond messages as they come (protocol `attention.ts`; Discord's side in
+dither-accounts' docs/chat.md "Attention"). None of it makes the phone sound more often, except a true mention that
+arrives a little late.
+
+- **Mentions heard late.** Discord's client does not load every server channel, so a mention in one nobody opened can
+  reach the hub only through its own recent-mentions list, which the account asks for after it connects and when its
+  notification center says something new came (never more often than every five minutes). Each hit is a message with
+  `late` (capability `mentions`). The hub keeps it as it keeps backfill, unread and counted as a mention, so the inbox
+  sees it; and while it is younger than ten minutes by its own time (`LATE_NEWS_MS`, `latenews.ts`) it is triaged as a
+  live message is, so a mention found a minute late can still be a Conversation or an alert. Older, it never notifies.
+  A message the hub already had is never news again. @everyone, @here and role mentions found this way are
+  `mentionsAll`, never "about you".
+- **@everyone suppressed.** A server set in Discord to suppress @everyone and @here (`NativeMute.suppressEveryone` on
+  its space) makes an @everyone there something the network would not have notified you about, so its importance
+  starts lower (`Triage.suppressesEveryone`). Role mentions suppressed are kept (`suppressRoles`) but not used yet.
+- **Mutes changed in Discord** come at once: a mute set, changed or cleared in any Discord app, or running out,
+  sends the place's fact again; a cleared one carries an empty `mute` (`{}`), which clears the hub's (a fact without
+  `mute` leaves it as it was). "Muted on the network" in triage follows.
+- **Muted on the network.** A place's About has, under Notifications, the network's own mute beside dither's: "Mute on
+  Discord…" for 15 minutes, an hour, 3, 8 or 24 hours, or until turned off, and "Unmute on Discord" while one is on
+  (capability `mute`, POST `/api/(conversations|spaces)/:id/native-mute`, `nativemute.ts`). It goes through every
+  connected account that sees the place and can, and stops Discord's own apps too. dither's Mute is unchanged: it
+  only decides what dither notifies, and the two are separate on purpose.
+- **Marked unread.** Mark Unread on someone's message (the message menu) moves the read point back to just before it
+  on every account that sees the chat, counts again, and tells each network that can (capability `markUnread`,
+  Discord's manual ack; POST `/api/messages/:id/unread`, `unread.ts`); the page goes back to the inbox, as the open
+  chat would read it again at once. Marked unread in Discord's own app, it comes the other way: a `read` with
+  `manual`, the one read event that moves the read point back.
+- **Many read at once.** Mark all read's paced queue sends an account that can (capability `markReadMany`, Discord's
+  bulk ack) up to 50 conversations in one request instead of one each.
+
 ## The feed
 
 A network's notifications about you (X's likes, reposts, replies, mentions, quotes and follows, [feed.md](feed.md))
@@ -506,13 +551,13 @@ silences it. [feed.md](feed.md#notifications) says why.
 
 ## Reminders
 
-A calendar reminder from dither-calendar ([calendar.md](calendar.md#reminders-post-apicalendarnotify)) is not a
-message either: the calendar says when, and the hub sends it as an **alert**, sounding on every device, with no marks.
-Quiet hours hold it quiet instead (phones only, silent, the reason "Held by quiet hours"), and it is not in quiet
-hours' summary. Its push carries `calendar: {open, eventKey, reminderId, meetingUrl}` with `tier` and `level`, and no
-`conversationId`: its own notification (tag `calendar:<eventKey>`, so a second lead time replaces the first) that
-opens `#/calendar/<open>`, with Join when there is a meeting link. Device rules on Calendar (`network:calendar`) keep
-it off a device. Its activity log kind is `reminder`. A repeated reminder id is answered as a duplicate and not sent.
+A calendar reminder from dither-calendar ([calendar.md](calendar.md)) is a message from the calendar in its chat,
+marked `extra.reminder`: the calendar says when, and triage makes it an **alert** ("A reminder from Calendar"),
+sounding on every device, unless the Calendar chat is muted or List only. Quiet hours hold it quiet instead (phones
+only, silent, "Held by quiet hours until …"), and it is not in quiet hours' summary. Its notification is the Calendar
+chat's, like any message's, so reading the chat clears it. Device rules on Calendar (`network:calendar`) keep it off
+a device, and Mentions only does too, since a reminder mentions no one. A retried reminder is the same message, and
+notifies once. (Before calendar accounts it came as POST /api/calendar/notify, with activity log kind `reminder`.)
 
 ## Elsewhere
 

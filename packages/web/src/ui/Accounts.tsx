@@ -1,6 +1,6 @@
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META, NETWORKS } from '@dither-chat/protocol';
+import { CALENDAR_URL_DEFAULT, NETWORK_META, NETWORKS } from '@dither-chat/protocol';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ago } from '../format.ts';
 import { netName } from '../model.ts';
@@ -13,6 +13,13 @@ import { ImportsSection } from './Imports.tsx';
 import { TelegramSignIns } from './TelegramSignIns.tsx';
 import { MailAccessNote, MailAccountRows } from './mail/MailAccounts.tsx';
 import { Loading } from './Loader.tsx';
+import { StoriesSetting } from './StoriesSetting.tsx';
+
+/** What the network wants done, your status there, folders and sessions (AccountSelf.tsx): a chunk of its own. */
+type SelfParts = typeof import('./AccountSelf.tsx');
+const selfParts = signal<SelfParts | null>(null);
+let selfLoading: Promise<unknown> | null = null;
+const loadSelf = () => (selfLoading ??= import('./AccountSelf.tsx').then((m) => (selfParts.value = m), () => (selfLoading = null)));
 
 /** The add-account dialog, opened from the accounts list or from settings. */
 export const addingAccount = signal(false);
@@ -69,6 +76,7 @@ export function AccountsSidebar({ active, onAdd }: { active?: string; onAdd: () 
                   {netName(a.network)}
                   {a.demo ? ' · demo data' : ''}
                   {a.attention ? ` · ${a.attention.message}` : ''}
+                  {a.self?.notices.length ? ` · ${a.self.notices[0].title}` : ''}
                 </span>
               </span>
             </span>
@@ -498,6 +506,7 @@ function AttentionBlock({ a }: { a: P.AccountView }) {
           {(at.detail as any).emoji}
         </p>
       )}
+      {at.kind === 'captcha' && !!(at.detail as { captcha?: P.CaptchaCheck } | undefined)?.captcha?.url && <SolveCaptcha account={a} check={(at.detail as { captcha: P.CaptchaCheck }).captcha} />}
       {at.kind === 'login' && !at.liveView && (a.network === 'gmessages' ? <SignInWith account={a} what="cookies" /> : a.network === 'telegram' || a.network === 'matrix' ? <SignInWith account={a} what="password" /> : null)}
       {at.liveView && (
         <button class="btn primary" onClick={() => setLive(true)}>
@@ -510,6 +519,35 @@ function AttentionBlock({ a }: { a: P.AccountView }) {
   );
 }
 
+/** The cards of what the network wants done (docs/account-self.md): each says it plainly and opens the live view; none is dismissed here. */
+function AccountNotices({ a, openLive }: { a: P.AccountView; openLive: () => void }) {
+  const notices = a.self?.notices ?? [];
+  if (!notices.length) return null;
+  return (
+    <>
+      {notices.map((n) => (
+        <div class={`attention notice ${n.kind}`}>
+          <div class="attention-top">
+            <Icon name={n.kind === 'standing' ? 'alert' : n.kind === 'agreements' ? 'fileText' : 'lock'} size={20} />
+            <div>
+              <b>{n.title}</b>
+              <p>{n.message}</p>
+              <small>
+                {netName(a.network)} said so {ago(n.since)}. It goes when {netName(a.network)} stops saying it.
+              </small>
+            </div>
+          </div>
+          {n.liveView && a.liveView && (
+            <button class="btn primary" onClick={openLive}>
+              <Icon name="monitor" size={15} /> Open live view
+            </button>
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
 /** An account action from the attention, with a toast when it fails. */
 async function attentionAction(a: P.AccountView, action: string, args?: Record<string, unknown>): Promise<boolean> {
   try {
@@ -519,6 +557,40 @@ async function attentionAction(a: P.AccountView, action: string, args?: Record<s
     toast({ kind: 'error', title: 'That did not work', body: e.message });
     return false;
   }
+}
+
+/**
+ * A captcha to solve in your own browser (Signal's rate-limit challenge): open its page, solve it, and paste the link
+ * "Open Signal" points at. Nothing here solves it.
+ */
+function SolveCaptcha({ account, check }: { account: P.AccountView; check: P.CaptchaCheck }) {
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    if (await attentionAction(account, check.action, { captcha: value.trim() })) {
+      setValue('');
+      toast({ kind: 'info', title: 'Sent', body: `${netName(account.network)} takes it from here.` });
+    }
+    setBusy(false);
+  };
+  return (
+    <div class="captcha-solve">
+      <p class="det-note">
+        Open{' '}
+        <a href={check.url} target="_blank" rel="noopener noreferrer">
+          the captcha page
+        </a>
+        , solve it, then copy the link of “Open Signal” (right-click, or long-press on a phone) and paste it here.
+      </p>
+      <div class="qr-pair">
+        <input class="input" autocomplete="off" spellcheck={false} placeholder="signalcaptcha://…" value={value} onInput={(e) => setValue((e.target as HTMLInputElement).value)} aria-label="The captcha link" />
+        <button class="btn primary" disabled={busy || !value.trim()} onClick={() => void submit()}>
+          {busy ? 'Sending…' : 'Send'}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 /** Telegram's sign-in by number: the code it sent, again, or back to a QR code. */
@@ -714,6 +786,8 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
   const [live, setLive] = useState(false);
   const [busy, setBusy] = useState('');
   const [purge, setPurge] = useState(false);
+  const S = selfParts.value;
+  useEffect(() => void loadSelf(), []);
   if (!a) return null;
   const m = a.managedBy;
   // Its session can go too when dither-accounts holds it; an imported one's session is this hub's, and stays.
@@ -755,6 +829,8 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
       </header>
       <div class="account-scroll">
         {a.attention && <AttentionBlock a={a} />}
+        {/* What the network wants done, its status, folders and sessions (AccountSelf.tsx). */}
+        <AccountNotices a={a} openLive={() => setLive(true)} />
         <section class="det-section">
           <h3>Connection</h3>
           <dl class="kv">
@@ -764,6 +840,12 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
             <dd>{a.label}</dd>
             <dt>Status</dt>
             <dd>{STATUS[a.status]}</dd>
+            {a.network === 'calendar' && (
+              <>
+                <dt>Calendar at</dt>
+                <dd>{a.url ?? 'no address'}</dd>
+              </>
+            )}
             <dt>Runs in</dt>
             <dd>
               {m ? (
@@ -796,6 +878,8 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
         </section>
         {a.network === 'matrix' && !a.demo && <EncryptionSection a={a} />}
         {a.network === 'telegram' && !a.demo && <TelegramSignIns a={a} />}
+        {a.capabilities.includes('stories') && <StoriesSetting a={a} />}
+        {S && <S.AccountSelfSection a={a} openLive={() => setLive(true)} />}
         <ImportsSection a={a} />
         <section class="det-section">
           <h3>Controls</h3>
@@ -913,6 +997,19 @@ const NET_HELP: Record<P.Network, { adapter: string; blurb: string; fields: { ke
     blurb: 'Runs X in a sandboxed browser in dither-accounts, for your direct messages. After you add it, open its live view and sign in to X as on your desktop.',
     fields: [],
   },
+  // Runs only in dither-accounts, beside T3 Code on the same machine (its docs/t3.md).
+  t3: {
+    adapter: 't3',
+    blurb: "Shows T3 Code's coding threads as chats: each thread a conversation with its agent, under its project, and what you write goes to the thread as its next turn. It runs in dither-accounts on the machine T3 Code runs on, through T3's own command line, and needs nothing to sign in. Which projects it shows is set on dither-accounts' page (all by default).",
+    fields: [],
+  },
+  // A calendar service beside the hub (docs/calendar.md): the hub links to it itself, never through dither-accounts.
+  calendar: {
+    adapter: 'calendar',
+    blurb:
+      "Links dither-calendar (or another calendar that speaks the same protocol) at this address. While the account is here, the calendar is too: its pane and tab, the plans it finds in your chats, its reminders, and a Calendar chat where you write what to add. Remove the account to turn all of it off.",
+    fields: [],
+  },
   // Not offered here: mail accounts are added on dither-accounts' page (Mail, below the chat accounts).
   email: {
     adapter: 'imap',
@@ -926,6 +1023,7 @@ export function AddAccount({ onClose }: { onClose: () => void }) {
   const [network, setNetwork] = useState<P.Network>('discord');
   const [label, setLabel] = useState('');
   const [homeserver, setHomeserver] = useState('https://matrix.org');
+  const [calendarUrl, setCalendarUrl] = useState(CALENDAR_URL_DEFAULT);
   const [fields, setFields] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const help = NET_HELP[network];
@@ -939,7 +1037,7 @@ export function AddAccount({ onClose }: { onClose: () => void }) {
           network,
           adapter: help.adapter,
           label: label.trim() || undefined,
-          config: network === 'matrix' ? { homeserver } : {},
+          config: network === 'matrix' ? { homeserver } : network === 'calendar' ? { url: calendarUrl.trim() } : {},
           secret,
         },
       });
@@ -965,7 +1063,7 @@ export function AddAccount({ onClose }: { onClose: () => void }) {
           ))}
         </div>
         <p class="add-blurb">{help.blurb}</p>
-        {db.accountsManager && (
+        {db.accountsManager && network !== 'calendar' && (
           <p class="add-note">
             <Icon name="info" size={14} /> It runs in dither-accounts
             {db.accountsManager.url ? (
@@ -989,6 +1087,14 @@ export function AddAccount({ onClose }: { onClose: () => void }) {
           <>
             <label class="field-label">Homeserver</label>
             <input class="input" value={homeserver} onInput={(e) => setHomeserver((e.target as HTMLInputElement).value)} />
+          </>
+        )}
+        {network === 'calendar' && (
+          <>
+            <label class="field-label">
+              Address <span class="muted-label">— where the calendar runs, as this hub reaches it</span>
+            </label>
+            <input class="input" value={calendarUrl} placeholder={CALENDAR_URL_DEFAULT} onInput={(e) => setCalendarUrl((e.target as HTMLInputElement).value)} />
           </>
         )}
         {help.fields.map((f) => (

@@ -25,6 +25,7 @@ import { foldMark } from '../replymarks.ts';
 import { mailClassifier } from './classify.ts';
 import type { MailHub } from './index.ts';
 import type { MailRouter } from './routes.ts';
+import { jobFailed } from '../errors.ts';
 
 type Row = Record<string, any>;
 
@@ -154,6 +155,7 @@ export class MailAttention implements AttentionSource {
     } catch (e) {
       // A closed database (the hub stopping).
       console.warn(`mail attention: ${(e as Error)?.message ?? e}`);
+      jobFailed('mail: attention', e);
       return;
     }
     // Their tallies may move what the listed rows say.

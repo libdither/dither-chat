@@ -22,6 +22,7 @@ import { SHOWN, type Store } from './store.ts';
 import type { Triage } from './triage.ts';
 import { gatherOutcomes, implicitLabel } from './labels.ts';
 import { shadowSummary } from './shadow.ts';
+import { jobFailed } from './errors.ts';
 
 type Row = Record<string, any>;
 const HOUR = 3_600_000;
@@ -250,6 +251,7 @@ export class TriageVotes {
       this.state.candidateFrom = { votes: cx.filter((e) => e.vote).length, implicit: cx.filter((e) => !e.vote).length };
     } catch (e) {
       console.error('triage: the shadow model could not learn', e);
+      jobFailed('triage: shadow model', e);
     }
   }
 
@@ -271,7 +273,7 @@ export class TriageVotes {
     if (!this.previewBusy && (!this.previewCache || now - this.previewCache.at >= PREVIEW_EVERY || now < this.previewCache.at)) {
       this.previewBusy = this.refreshPreview(now)
         // The hub stopping while it reads is not worth a line.
-        .catch((e) => /closed/i.test(String(e)) || console.error('triage: the list preview could not be worked out', e))
+        .catch((e) => /closed/i.test(String(e)) || (console.error('triage: the list preview could not be worked out', e), jobFailed('triage: list preview', e)))
         .finally(() => (this.previewBusy = null));
     }
     return this.previewCache?.rows ?? [];

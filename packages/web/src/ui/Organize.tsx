@@ -7,6 +7,7 @@ import { openMenu, type MenuEntry } from './ContextMenu.tsx';
 import { placeMenu } from './menus.tsx';
 import { arrangedRail, freezeOrder, organizing, sortOf } from '../arrange.ts';
 import { canIndex, startIndexing } from './Indexing.tsx';
+import { FINDS_LABEL } from './MentionFinds.tsx';
 
 const randomId = () => 'fld_' + Math.random().toString(36).slice(2, 12);
 const splitKey = (key: string) => {
@@ -113,6 +114,12 @@ export function folderEntries(id: string): MenuEntry[][] {
     [
       { label: open ? 'Close in Sidebar' : 'Open in Sidebar', icon: 'folder', run: () => patchPlaces([{ kind: 'folder', id, open: !open }]) },
       { label: 'Open as List', icon: 'groups', run: () => go({ view: 'folder', folder: id }) },
+      // Whom the @ list offers in the folder's chats that do not say (docs/mentions.md).
+      {
+        label: '@ Finds',
+        icon: 'at',
+        sub: ([null, 'here', 'friends', 'everyone'] as const).map((s): MenuEntry => ({ label: s ? FINDS_LABEL[s] : 'Default', radio: true, checked: (placePref('folder', id).mentionScope ?? null) === s, run: () => patchPlaces([{ kind: 'folder', id, mentionScope: s }]) })),
+      },
       ...(canIndex('folder', id) ? [{ label: 'Index Servers in This Folder…', icon: 'archive', run: () => startIndexing('folder', id) }] : []),
       {
         label: 'Rename Folder…',

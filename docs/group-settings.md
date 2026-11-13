@@ -18,7 +18,7 @@ it but do not yet, **w** the network allows the change but we do not offer it, *
 |---|---|---|---|---|
 | Name | R W (channels, threads, group DMs, categories, servers) | R W (groups) | R W (rooms, spaces) | R W (groups, communities) |
 | Description / topic | R W (channels); server description R | R W | R W | R W |
-| Picture | R w | R w | R w | R w |
+| Picture | R W (servers; group DMs w) | R W | R w | R w |
 | Members | R: the ones the client has loaded (up to 200), with their top role and its colour; group DM recipients | R, with admin | R (`joined_members`, up to 500), with power level | R, with admin / owner |
 | Adding people | W: group DMs, friends only, 10 in all | W (as `addMembers` allows) | W: an invite (power level `invite`) | w: left out on purpose |
 | Roles | R (server roles by position) | admin / member | Owner (room v12 creators) / Admin / Moderator / Level N | owner / admin / member |
@@ -28,7 +28,7 @@ it but do not yet, **w** the network allows the change but we do not offer it, *
 | Slow mode | R W | — | — | — |
 | Age-restricted | R W (channel NSFW) | — | — | — |
 | Only admins send | R | R W | R W (`events_default` against `users_default`) | R W |
-| Join approval | r | R: unknown (signal-cli does not say) | as `joinRule: ask` | R W |
+| Join approval | r | W: set, never read (signal-cli does not say) | as `joinRule: ask` | R W |
 | Join rule | — | — | R W (open / invite / ask / space) | — |
 | History visibility | — | — | R W | — |
 | Encryption | — | R (always on) | R W (on only) | R (always on) |
@@ -38,9 +38,11 @@ it but do not yet, **w** the network allows the change but we do not offer it, *
 panel opens, and writes nobody has tried on a live account yet); Signal and WhatsApp keep no list of pins to read
 (one would have to be built from pin events); and pictures upload differently on every network (JPEG only on
 WhatsApp, a file path on Signal, a data URI on Discord, an upload then a state event on Matrix), so they could
-only be checked against fakes. Adding people to a group is offered where the network's own client offers it to
-you (below, "Adding people"), except on WhatsApp, whose enforcement looks for it. Removing people, changing roles
-and banning are not offered anywhere.
+only be checked against fakes; Signal's group picture and a Discord server's icon are now written (2026-11-12,
+against fakes). Adding people to a group is offered where the network's own client offers it to you (below, "Adding
+people"), except on WhatsApp, whose enforcement looks for it. Removing people, roles, timeouts and banning are
+[moderation.md](moderation.md) (Signal and Discord only); so are a Discord channel's thread-hiding, user limit and
+bitrate, a server's description, and your own member label in a Signal group.
 
 ## Discord
 
@@ -99,7 +101,8 @@ Notes:
 2. **`updateGroup` without `groupId` creates a new group.** The adapter refuses to call it without one.
 3. `updateGroup` is not atomic: each field is its own group change and message. One field per call, then re-read.
 4. If you are only *invited*, any `updateGroup` accepts the invitation. Invited-only groups never reach the hub.
-5. Join approval cannot be read: `groupInviteLink` is set whether or not approval is on, so the panel says so.
+5. Join approval cannot be read: `groupInviteLink` is set whether or not approval is on, so the panel says so. It
+   can still be set, with the link on (`AboutSetting.writeOnly`: "Unknown: set it…").
 6. The server enforces permissions, signal-cli does not (except sending in announcement groups): an unauthorized
    change comes back as a generic error, so controls are gated up front.
 7. Blocking has side effects on your phone (a message-request response, a profile key rotation) and is not

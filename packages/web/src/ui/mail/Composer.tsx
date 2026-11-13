@@ -30,6 +30,7 @@ import {
   saveDraft,
   send,
   sendingAgain,
+  sendNow,
   undoSend,
 } from '../../mail/drafts.ts';
 import { dropLayer, phone, pushLayer } from '../../phone.ts';
@@ -629,6 +630,11 @@ function OutboxStrip() {
               </>
             )}
           </span>
+          {o.state === 'held' && (
+            <button class="btn small mc-send-now" title="Send it without waiting" onClick={() => void sendNow(o.id).catch(() => {})}>
+              Send now
+            </button>
+          )}
           {o.state === 'held' && (
             <button
               class="btn small mc-undo"

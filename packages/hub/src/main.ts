@@ -10,6 +10,8 @@ import { FakeMailBackend, MailHub, ManagerMailBackend } from './mail/index.ts';
 import { mailPeople } from './mail/people.ts';
 import { mailAttention } from './mail/attention.ts';
 import { mailTriage, type MailNotice } from './mail/triage.ts';
+import { Notices, type NoticeDelivery } from './notices/index.ts';
+import { FakeNoticeSource, seedDemoNotices } from './notices/fake.ts';
 import { Delivery } from './delivery.ts';
 import { Notifier } from './notify.ts';
 import { listByPrior, PhoneList, phoneListMode } from './phonelist.ts';
@@ -29,9 +31,12 @@ import { NightlyBackup, pruneMediaCacheSteps, rotateAdapterLogs, tightenPermissi
 import { StartupTrace } from './startup.ts';
 import { startCheckpointer } from './checkpoint.ts';
 import { sliced } from './slices.ts';
-import { noteWork, StallWatch, timedWrite } from './stalls.ts';
-import { CalendarLink, calendarChain, calendarUrl, ReminderDelivery, REMINDER_RULE_ID } from './calendar.ts';
+import { StallWatch, timedWrite } from './stalls.ts';
+import { NdjsonFile, setSpanThrowHook, setTraceSink, span, spansBetween, type Span } from './trace.ts';
 import { inQuietHours } from './triage.ts';
+import { onRing, ringMuted, ringWords, sweepCalls } from './callstate.ts';
+import { CalendarAccounts, seedCalendarAccount } from './calendar-account.ts';
+import { ErrorLog, jobFailed, reportError, setErrorLog } from './errors.ts';
 
 // Each part of the start, logged in one line once requests are answered (startup.ts).
 const startup = new StartupTrace();
@@ -41,8 +46,15 @@ startup.mark('code');
 process.umask(0o077);
 // One stray throw must not take the hub down. systemd would restart it, but every client would then start over with a
 // full download, and what was queued would wait for the next start. Log it and carry on.
-process.on('uncaughtException', (e) => console.error('uncaught exception (the hub keeps running)', e));
-process.on('unhandledRejection', (e) => console.error('unhandled rejection (the hub keeps running)', e));
+// Both also go to traces/errors.ndjson (errors.ts) once it is open, below.
+process.on('uncaughtException', (e) => {
+  console.error('uncaught exception (the hub keeps running)', e);
+  reportError({ source: 'uncaught', where: 'process', error: e });
+});
+process.on('unhandledRejection', (e) => {
+  console.error('unhandled rejection (the hub keeps running)', e);
+  reportError({ source: 'rejection', where: 'process', error: e });
+});
 
 const args = process.argv.slice(2);
 const flag = (n: string) => args.includes(`--${n}`) || process.env[`DITHER_${n.toUpperCase()}`] === '1';
@@ -69,7 +81,36 @@ const secretPath = join(dataDir, 'hub-secret');
 if (!existsSync(secretPath)) writeFileSync(secretPath, Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url'), { mode: 0o600 });
 chmodSync(secretPath, 0o600);
 const secret = readFileSync(secretPath, 'utf8').trim();
+// Every finished span to traces/hub.trace.ndjson, every hold of the event loop to traces/event-loop-stalls.ndjson,
+// both rotated by size (docs/tracing.md; scripts/trace-summary.ts reads them). DITHER_TRACE=0 turns them off.
+const traceOn = opt('trace', '1') !== '0';
+const traceFile = traceOn ? new NdjsonFile(join(dataDir, 'traces/hub.trace.ndjson')) : null;
+const stallFile = traceOn ? new NdjsonFile(join(dataDir, 'traces/event-loop-stalls.ndjson'), { maxBytes: 2 * 1024 * 1024, keep: 3 }) : null;
+if (traceFile) setTraceSink(traceFile.push);
+// Every real error, the hub's and the page's, to traces/errors.ndjson (errors.ts; the contract dither-accounts'
+// bugwatch reads, docs/tracing.md "Errors"). Off with the trace.
+const errorFile = traceOn ? new NdjsonFile(join(dataDir, 'traces/errors.ndjson'), { maxBytes: 5 * 1024 * 1024, keep: 5 }) : null;
+const errorLog = errorFile ? new ErrorLog(errorFile.push, { root: repoRoot, version: buildVersion() }).start() : null;
+setErrorLog(errorLog);
+// A span a throw ended is a job that failed, but for a request (its 5xx is reported as one, server.ts) and a command to
+// an adapter (what came of it is its caller's to say: a refusal can be expected).
+setSpanThrowHook((name, e) => {
+  if (!/^[A-Z]+ \//.test(name) && !name.startsWith('command ')) jobFailed(name, e);
+});
 startup.mark('data dir');
+
+/** This build's git short sha: DITHER_VERSION, else the checkout's HEAD; undefined when neither says. */
+function buildVersion(): string | undefined {
+  const v = process.env.DITHER_VERSION?.trim();
+  if (v) return v.slice(0, 40);
+  try {
+    const r = Bun.spawnSync(['git', 'rev-parse', '--short=8', 'HEAD'], { cwd: repoRoot, stdout: 'pipe', stderr: 'ignore' });
+    const sha = r.success ? r.stdout.toString().trim() : '';
+    return /^[0-9a-f]{7,40}$/.test(sha) ? sha : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 const store = new Store(join(dataDir, 'hub.sqlite'), mediaSigner(secret));
 startup.add(store.opening);
@@ -97,14 +138,12 @@ const delivery = new Delivery(store, triage);
 // New requests from someone you know notify once (docs/add.md "Requests").
 const requestNotices = new RequestNotifier(store);
 devices.otherChain = (id) => otherChain(id);
-/**
- * Rule keys for what is not a chat conversation: a request (its account, its network), a calendar reminder (the
- * calendar as a network of its own, `network:calendar`), a mail thread once mail is on (below).
- */
+/** Rule keys for what is not a chat conversation: a request (its account, its network), a mail thread once mail is on (below). */
 let mailChain: ((id: string) => string[] | null) | null = null;
+let noticeChain: ((id: string) => string[] | null) | null = null;
 function otherChain(id: string): string[] | null {
   if (id.startsWith('req_')) return requestChain(store.db, id);
-  return calendarChain(id) ?? mailChain?.(id) ?? null;
+  return mailChain?.(id) ?? noticeChain?.(id) ?? null;
 }
 attention.activity = activity;
 // Message embeddings and jev's answers as content features (docs/embeddings.md): made in the background, never blocking.
@@ -126,6 +165,7 @@ function alertJudge(): Judge | null {
     return async (text) => (await jev.judge(STOP_QUESTION, [text]))[0] ?? null;
   } catch (e) {
     console.error(`alerts: ${(e as Error).message}; only your rules alert`);
+    jobFailed('alerts: model', e);
     return null;
   }
 }
@@ -136,41 +176,47 @@ startup.mark('models');
 let queue = Promise.resolve();
 function triageLater(ids: string[]) {
   store.pendTriage(ids);
-  queue = queue.then(() => triageNow(ids)).catch((e) => console.error('triage queue', e));
+  queue = queue.then(() => triageNow(ids)).catch((e) => {
+    console.error('triage queue', e);
+    jobFailed('triage queue', e);
+  });
 }
 async function triageNow(ids: string[]) {
   // The new messages' content features, if jev answers quickly; else triage goes on without them (embeddings.ts
   // stops waiting for a minute after jev was slow, so a hung jev cannot hold notifications up).
   await embeddings?.prepare(ids, 800).catch(() => {});
-  for (const id of ids) {
-    let done = false;
-    try {
-      noteWork('triage');
-      const d = await triage.decide(id);
-      if (!d) continue;
-      // The message may have gone while it was decided (a leave, a deleted account).
-      const conversationId = store.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', id)?.conversation_id;
-      if (!conversationId) continue;
-      // What the decision writes, in one commit rather than four: each commit waits for the disk, and on a busy
-      // machine that wait holds the hub.
-      timedWrite('triage decision', () =>
-        store.db.transaction(() => {
-          store.setTriage(id, d, d.facts);
-          if (d.features) activity.keepInputs(id, d.features);
-          attention.triaged(id, d);
-          store.triageDone(id);
-        })(),
-      );
-      done = true;
-      store.dirty.messages.set(id, true);
-      if (d.decision === 'push' || d.decision === 'quiet' || d.decision === 'digest') deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', d.decision, d.score, listByPrior(d.facts));
-      // The local model was too slow: the message went out silent, and is read again once it has had time.
-      if (d.unjudged) setTimeout(() => void judgeLate(id), LATE_JUDGE_MS);
-    } catch (e) {
-      console.error('triage failed', id, e);
-    } finally {
-      if (!done) store.triageDone(id);
-    }
+  for (const id of ids) await span('triage', {}, (sp) => triageOne(id, sp));
+}
+async function triageOne(id: string, sp: Span) {
+  let done = false;
+  try {
+    const d = await triage.decide(id);
+    if (!d) return;
+    sp.set({ decision: d.decision, unjudged: !!d.unjudged });
+    // The message may have gone while it was decided (a leave, a deleted account).
+    const conversationId = store.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', id)?.conversation_id;
+    if (!conversationId) return;
+    // What the decision writes, in one commit rather than four: each commit waits for the disk, and on a busy
+    // machine that wait holds the hub.
+    timedWrite('triage decision', () =>
+      store.db.transaction(() => {
+        store.setTriage(id, d, d.facts);
+        if (d.features) activity.keepInputs(id, d.features);
+        attention.triaged(id, d);
+        store.triageDone(id);
+      })(),
+    );
+    done = true;
+    store.dirty.messages.set(id, true);
+    if (d.decision === 'push' || d.decision === 'quiet' || d.decision === 'digest') deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', d.decision, d.score, listByPrior(d.facts));
+    // The local model was too slow: the message went out silent, and is read again once it has had time.
+    if (d.unjudged) setTimeout(() => void judgeLate(id), LATE_JUDGE_MS);
+  } catch (e) {
+    console.error('triage failed', id, e);
+    jobFailed('triage', e);
+    sp.fail(e);
+  } finally {
+    if (!done) store.triageDone(id);
   }
 }
 
@@ -190,6 +236,7 @@ async function judgeLate(id: string) {
     deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', 'push', d.score);
   } catch (e) {
     console.error('late alert check failed', id, e);
+    jobFailed('late alert check', e);
   }
 }
 
@@ -197,6 +244,7 @@ async function judgeLate(id: string) {
 let notifier: Notifier | null = null;
 const deliver: Notifier['message'] = (...a) => notifier?.message(...a);
 const deliverMail = (n: MailNotice) => notifier?.mail(n);
+const deliverNotice = (n: NoticeDelivery) => notifier?.notice(n) ?? false;
 
 /** A request's row on the list sorts as something the network would have notified you about. */
 const REQUEST_IMPORTANCE = 0.8;
@@ -212,41 +260,58 @@ function deliverRequest(n: RequestNotice) {
   push
     .notify(n.title, n.body, undefined, { ...look, requestId: n.requestId, level: 'quiet', tier: 'digest', importance: REQUEST_IMPORTANCE, ...(nid ? { nid } : {}) }, [...quiet, ...push.desktops()], 'quiet')
     .then((r) => nid && activity.sent(nid, r))
-    .catch((e) => console.error('push failed', e));
+    .catch((e) => {
+      console.error('push failed', e);
+      jobFailed('push: request', e);
+    });
 }
 
+const pushClearFailed = (e: unknown) => {
+  console.error('push clear failed', e);
+  jobFailed('push: clear', e);
+};
 /**
- * A calendar reminder (calendar.ts, docs/calendar.md): an alert that sounds on every device, or held quiet (phones only,
- * silent) in quiet hours. Device rules on `network:calendar` keep it off a device. Not part of quiet hours' summary.
+ * A call ringing you (callstate.ts, docs/calls.md "Ringing"): once, as an alert that sounds on every device, with
+ * Answer and Decline; taken back from the devices that can take it back (the Android app) when it stops ringing.
+ * Quiet hours, a mute that covers it and device rules keep it off; the ring card in open pages shows either way.
  */
-const reminders = new ReminderDelivery({
-  inQuietHours: (now) => inQuietHours(store.quietHours(), now),
-  quietDevices: () => devices.quietOn(REMINDER_RULE_ID, false),
-  desktops: () => push.desktops(),
-  notification: () => activity.notification({ kind: 'reminder' }),
-  sent: (nid, r) => activity.sent(nid, r),
-  notify: (ev) => server.notify(ev),
-  push: (title, body, extra, skip, level) => push.notify(title, body, undefined, extra, skip, level),
+onRing(store, (n) => {
+  const c = n.call;
+  const tag = `call:${c.id}`;
+  if (n.kind === 'stop') {
+    push.clear(tag).catch((e) => console.error('push clear failed', e));
+    return;
+  }
+  if (ringMuted(store, c) || inQuietHours(store.quietHours(), Date.now())) return;
+  const { title, body } = ringWords(store, c);
+  const look = store.notifyLook(c.conversationId, undefined);
+  const call = { id: c.id, tag, canAnswer: c.canAnswer, canDecline: c.canDecline };
+  push.notify(title, body, c.conversationId, { ...look, call, level: 'push', tier: 'push' }, devices.quietOn(c.conversationId, false), 'push').catch((e) => console.error('push failed', e));
 });
 
 // Read anywhere since its notification went out: off the phones. New requests that settled: judged, once each.
-setInterval(() => {
-  noteWork('notifications: read and requests');
-  for (const cid of delivery.read()) {
-    phone.read(cid);
-    push.clear(cid).catch((e) => console.error('push clear failed', e));
-  }
-  // List rows 12 hours old leave the phones; held ones whose chat was read are over (phonelist.ts).
-  for (const cid of phone.sweep()) push.clear(cid).catch((e) => console.error('push clear failed', e));
-  for (const n of requestNotices.due()) deliverRequest(n);
-}, 5_000);
+setInterval(
+  () =>
+    span('notifications: read and requests', {}, () => {
+      for (const cid of delivery.read()) {
+        phone.read(cid);
+        push.clear(cid).catch(pushClearFailed);
+      }
+      // List rows 12 hours old leave the phones; held ones whose chat was read are over (phonelist.ts).
+      for (const cid of phone.sweep()) push.clear(cid).catch(pushClearFailed);
+      for (const n of requestNotices.due()) deliverRequest(n);
+      // Rings the network left hanging stop, as missed (callstate.ts).
+      sweepCalls(store);
+    }),
+  5_000,
+);
 
 // Upkeep (housekeeping.ts): a nightly copy of the database, the media cache under its size, logs rotated, and triage
 // rows nobody learns from let go after 90 days.
 const backup = new NightlyBackup({ dataDir, db: join(dataDir, 'hub.sqlite') });
 if (!demo) backup.start();
-const upkeep = async () => {
-  noteWork('upkeep');
+const upkeep = () => span('upkeep', {}, upkeepNow);
+const upkeepNow = async () => {
   try {
     // Tens of thousands of files: a slice at a time (slices.ts).
     const m = await sliced('upkeep: media cache', pruneMediaCacheSteps(join(dataDir, 'media-cache')));
@@ -261,22 +326,27 @@ const upkeep = async () => {
     if (gone) console.log(`triage: let go of ${gone} rows nobody learns from`);
   } catch (e) {
     console.error('upkeep failed', e);
+    jobFailed('upkeep', e);
   }
 };
 setTimeout(() => void upkeep(), 60_000);
 setInterval(() => void upkeep(), 6 * 3_600_000);
 
-setInterval(() => {
-  noteWork('votes and held alerts');
-  votes.daily();
-  const held = triage.takeHeldSummary();
-  if (held) deliver(held.title, held.body, held.conversationId, held.messageId, ['Quiet hours ended']);
-}, 60_000);
+setInterval(
+  () =>
+    span('votes and held alerts', {}, () => {
+      votes.daily();
+      const held = triage.takeHeldSummary();
+      // The last held one may be a notice: its tap opens Notices, not a chat.
+      if (held) deliver(held.title, held.body, held.conversationId, held.messageId, ['Quiet hours ended'], held.messageId.startsWith('ntc_') ? { noticeId: held.messageId } : {});
+    }),
+  60_000,
+);
 
 const push = new PushService(store, loadVapidKeys(dataDir), process.env.DITHER_PUSH_SUBJECT ?? process.env.DITHER_PUBLIC_URL ?? 'https://github.com/libdither/dither-chat');
 // Which list rows reach the phones (docs/notifications.md, "The phone's list"). DITHER_PHONE_LIST=shadow sends them all
 // and logs what it would have held; off, as before it.
-const phone = new PhoneList(store.db, { mode: phoneListMode(process.env.DITHER_PHONE_LIST), kept: (now) => triage.marked(now).convs, readTs: (cid) => delivery.readTs(cid) });
+const phone = new PhoneList(store.db, { mode: phoneListMode(process.env.DITHER_PHONE_LIST), kept: (now) => triage.marked(now).convs, readTs: (cid) => delivery.readAllTs(cid) });
 activity.noted = (w) => phone.noted(w);
 if (phone.mode !== 'on') console.log(`phone list: ${phone.mode} (DITHER_PHONE_LIST)`);
 
@@ -292,6 +362,7 @@ function categoryProvider(): CategoryProvider {
     return new OllamaProvider(process.env.DITHER_OLLAMA_URL ?? 'http://127.0.0.1:11434', name);
   } catch (e) {
     console.error(`categories: ${(e as Error).message}; using keywords`);
+    jobFailed('categories: model', e);
     return new KeywordProvider();
   }
 }
@@ -299,11 +370,14 @@ const categorizer = new Categorizer(store, categoryProvider());
 store.categoryProvider = categorizer.provider.id;
 startup.mark('categories');
 
+// dither-calendar beside the hub (calendar-account.ts, docs/calendar.md): on while an enabled calendar account is. Its
+// account runs in the hub, linked to the calendar's address; never on a demo hub.
+const calendars = new CalendarAccounts(store, { broadcast: (evs) => server.broadcast(evs), demo });
 const supOpts = {
   hubAdapterUrl: `ws://127.0.0.1:${tls ? plainPort : port}/adapter`,
   dataDir,
   repoRoot,
-  inproc: demoFactory,
+  inproc: (acc: Parameters<typeof demoFactory>[0], dir: string) => calendars.factory(acc) ?? demoFactory(acc, dir),
   onFresh: triageLater,
 };
 // dither-accounts (docs/accounts.md): the accounts its manager runs come through it; the rest run here as always.
@@ -334,15 +408,21 @@ const mailTriaged = mailTriage(mail);
 if (mailTriaged) {
   mailTriaged.connect({ store, triage, votes, deliver: (n) => deliverMail(n) });
   mailChain = (id) => mailTriaged.chain(id);
-  delivery.other = mailTriaged;
 }
+// Notices (docs/notices.md): dither-accounts' notifications interface, or a fake source in a demo world; off otherwise.
+const demoNotices = demo ? new FakeNoticeSource() : null;
+const noticeLink = demoNotices ?? (sup instanceof RoutedSupervisor ? { call: (a: string, op: string, input: Record<string, unknown>, t: number) => sup.callNotices(a, op, input, t), askAgain: () => sup.askNoticesAgain() } : null);
+const notices = noticeLink ? new Notices({ store, triage, votes, link: noticeLink, deliver: (n) => deliverNotice(n), managerUrl: accountsPage, access: demoNotices ? 'granted' : 'unreachable' }) : null;
+if (notices) noticeChain = (id) => notices.chain(id);
+if (sup instanceof RoutedSupervisor && notices) sup.notices = notices;
+// Mail threads and groups of notices: their lines, and when they were read (delivery.ts).
+delivery.other = {
+  gather: (id, m) => mailTriaged?.gather(id, m) ?? notices?.gather(id, m) ?? null,
+  readTs: (id) => mailTriaged?.readTs(id) ?? notices?.readTs(id) ?? null,
+  readAllTs: (id) => mailTriaged?.readTs(id) ?? notices?.readAllTs(id) ?? null,
+};
 // Notifications sent before a restart still leave the phones when their chat is read (delivery.ts).
 delivery.restore();
-
-// dither-calendar beside the hub (docs/calendar.md): DITHER_CALENDAR_URL, http://127.0.0.1:8470 by default; `off` or
-// empty for none. Never on a demo hub, so check:boot and the verify scripts never reach a live calendar.
-const calendarAt = calendarUrl(process.env, demo);
-const calendar = calendarAt ? new CalendarLink({ url: calendarAt, broadcast: (evs) => server.broadcast(evs) }) : undefined;
 
 const readQueue = new ReadQueue(store, sup);
 readQueue.start();
@@ -366,8 +446,10 @@ const server = new HubServer(store, sup, triage, {
   votes,
   archiveMedia: !demo,
   mail,
-  calendar,
-  onReminder: (n) => reminders.deliver(n),
+  notices: notices ?? undefined,
+  calendar: calendars,
+  // A reminder you set on a network (Discord's "Remind me") notifies like an alert; quiet hours hold it quiet (saved.ts).
+  onSavedReminder: (n) => deliver(n.title, n.body, n.conversationId, n.messageId, ['A reminder you set on Discord'], server.replyFields(n.conversationId, n.messageId), 'held', inQuietHours(store.quietHours(), Date.now()) ? 'quiet' : 'push'),
   turn: process.env.DITHER_TURN_URLS && process.env.DITHER_TURN_SECRET ? { urls: process.env.DITHER_TURN_URLS.split(',').map((u) => u.trim()), secret: process.env.DITHER_TURN_SECRET } : undefined,
   onDemoReset: !demo ? undefined : async () => {
     for (const a of store.accounts().filter((a) => a.demo)) {
@@ -392,7 +474,8 @@ if (demo && realAccounts.length) {
   console.error(`--demo: ${dataDir} holds real accounts. A demo world needs its own data dir: pass --data <dir> (default .data-demo).`);
   process.exit(1);
 }
-if (!demo && realAccounts.length) {
+// A calendar account alone does not make a hub a real one: a demo world reopened with a calendar beside it keeps its world.
+if (!demo && realAccounts.some((a) => a.network !== 'calendar')) {
   // A real hub carries no demo world. Older hubs mixed them; removing the accounts also drops what only they saw.
   for (const a of store.accounts().filter((a) => a.demo)) {
     store.deleteAccount(a.id);
@@ -403,8 +486,17 @@ if (!demo && realAccounts.length) {
 // A demo world showing adversarial features from the start (scripts/verify-history.ts): before its history is seeded.
 if (demo && flag('adversarial') && !store.retention().adversarial) store.setRetention({ ...store.retention(), adversarial: true, deleted: true, disappearing: true, statuses: true, presence: true, members: true });
 if (demo && !store.accounts().some((a) => a.demo)) createDemoAccounts(store);
+// The first start with calendar accounts: the calendar this hub had by DITHER_CALENDAR_URL (or its default) becomes
+// one, once (calendar-account.ts). Removing it later sticks.
+const seededCalendar = seedCalendarAccount(store, process.env, demo);
+calendars.sync();
+if (seededCalendar) console.log(`calendar: added a calendar account for ${calendars.url()} (once; remove it under Accounts to turn the calendar off)`);
 if (demoMail && !mail.store.account(DEMO_MAIL_ACCOUNT)) seedDemoMail(demoMail);
 else if (demoMail) seedDemoMail(demoMail, mail.store.account(DEMO_MAIL_ACCOUNT)!.created_at);
+if (demoNotices && notices) {
+  seedDemoNotices(demoNotices);
+  demoNotices.attach(notices);
+}
 startup.mark('server');
 // Before the manager's first account list, so mail hears it.
 mail.start();
@@ -419,20 +511,22 @@ startup.mark('adapters');
 server.start();
 startup.mark('http listen');
 // Every hold-up of the event loop from here on, with what began in it, for the first ten minutes (stalls.ts).
-const stalls = new StallWatch().begin();
+const stalls = new StallWatch({ record: stallFile?.push ?? null, spans: spansBetween }).begin();
 // Beside the stall log's summary: whether the checkpoints kept up, and how long the longest took on its own thread.
 setTimeout(() => {
   const c = checkpoints.stats;
   console.log(`checkpoints: ${c.done} in the first 10 min, the longest ${Math.round(c.longestMs)} ms off the hub's thread${c.failed ? `, ${c.failed} failed` : ''}`);
 }, 10 * 60_000).unref();
-calendar?.start();
-noteWork('attention: first scoring');
-attention.start((events) => server.broadcast(events));
+calendars.start();
+span('attention: first scoring', {}, () => attention.start((events) => server.broadcast(events)));
 ranker.onFit = () => {
   void attention
     .rescoreAllSliced()
     .then((events) => server.broadcast(events))
-    .catch((e) => console.error('attention: rescore failed', e));
+    .catch((e) => {
+      console.error('attention: rescore failed', e);
+      jobFailed('attention: rescore', e);
+    });
 };
 ranker.start();
 // Scores live in memory and were worked out afresh: a client resuming from before this start takes the whole list,
@@ -448,11 +542,8 @@ if (leftover.length) {
 }
 // New servers and renamed channels turn up whenever an adapter says so; unchanged places cost a hash.
 void categorizer.refresh();
-setInterval(() => {
-  noteWork('categories');
-  void categorizer.refresh();
-}, 5 * 60_000);
-console.log(`dither-chat hub on ${tls ? 'https' : 'http'}://${hostname}:${port}${tls ? ` (plain http on ${plainPort}: adapters, CA download)` : ''}  data=${dataDir}${calendarAt ? `  calendar=${calendarAt}` : ''}`);
+setInterval(() => void span('categories', {}, () => categorizer.refresh()), 5 * 60_000);
+console.log(`dither-chat hub on ${tls ? 'https' : 'http'}://${hostname}:${port}${tls ? ` (plain http on ${plainPort}: adapters, CA download)` : ''}  data=${dataDir}${calendars.url() ? `  calendar=${calendars.url()}` : ''}`);
 startup.mark('the rest');
 // Ready once the event loop is free to answer: what the start queued (adapters starting, the first refresh) runs first.
 setTimeout(() => {
@@ -469,7 +560,7 @@ const shutdown = async () => {
   ranker.stop();
   attention.stop();
   mail.stop();
-  calendar?.stop();
+  calendars.stop();
   embeddings?.close();
   server.stop();
   await sup.stopAll();
@@ -482,6 +573,10 @@ const shutdown = async () => {
   } catch (e) {
     console.error('the last checkpoint failed', e);
   }
+  errorLog?.stop();
+  traceFile?.close();
+  stallFile?.close();
+  errorFile?.close();
   process.exit(0);
 };
 process.on('SIGINT', shutdown);

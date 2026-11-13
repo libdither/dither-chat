@@ -64,15 +64,18 @@ export function chatRoutes(store: Store, ref: ChatRef): P.ChatRoute[] {
 const same = (a: { conversationId: string; accountId: string }, b: { conversationId: string; accountId: string }) => a.conversationId === b.conversationId && a.accountId === b.accountId;
 
 /**
- * Where a message goes when the sender does not say: the route you chose, while the chat still has it; else the one
- * of the latest message, through the account that sent your latest message there when it still can.
+ * Where a message goes when the sender does not say: the route you chose, while the chat still has it and no message
+ * has come on another of its routes since; else the one of the latest message, through the account that sent your
+ * latest message there when it still can. A choice gives way to the chat moving on, as the page's own picks do
+ * (web chatroutes.ts pickHolds): switched to Discord at one, and she has written on Signal since, it is Signal again.
  */
 export function defaultRoute(store: Store, chatId: string, routes: P.ChatRoute[]): P.ChatView['route'] {
   if (!routes.length) return null;
-  const chosen = store.one<{ conversation_id: string; account_id: string }>('SELECT conversation_id, account_id FROM chat_route WHERE chat_id = ?', chatId);
+  const chosen = store.one<{ conversation_id: string; account_id: string; set_at: number }>('SELECT conversation_id, account_id, set_at FROM chat_route WHERE chat_id = ?', chatId);
   if (chosen) {
     const hit = routes.find((r) => same(r, { conversationId: chosen.conversation_id, accountId: chosen.account_id }));
-    if (hit) return { conversationId: hit.conversationId, accountId: hit.accountId, why: 'chosen' };
+    const since = routes.some((r) => r.conversationId !== chosen.conversation_id && (r.lastTs ?? 0) > chosen.set_at);
+    if (hit && !since) return { conversationId: hit.conversationId, accountId: hit.accountId, why: 'chosen', at: chosen.set_at };
   }
   const conv = routes[0].conversationId;
   const mine = store.one<{ account_id: string }>(

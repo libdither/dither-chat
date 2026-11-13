@@ -1,0 +1,187 @@
+/* Bots and apps, the chunk loaded when one is wanted (ui/apps/Apps.tsx, docs/apps.md). */
+.ac-pop .ac-note {
+  margin: 4px 8px;
+}
+.ac-cmd {
+  flex-wrap: wrap;
+}
+.ac-name {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+.ac-desc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ac-app {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.ac-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+}
+.ac-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.ac-title span {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+.ac-title small,
+.ac-field small,
+.ac-note,
+.ac-actions small {
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+.ac-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ac-field label {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.ac-field label small {
+  font-weight: 400;
+}
+.ac-field input[type='text'],
+.ac-field input[type='number'],
+.ac-field input[type='search'],
+.ac-field select,
+.ac-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  /* 16px keeps a phone from zooming into the field. */
+  font-size: max(13px, min(16px, 1em));
+}
+.ac-req {
+  color: var(--danger);
+}
+.ac-pick {
+  position: relative;
+}
+.ac-pick-list {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  z-index: 2;
+  margin: 2px 0 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+.ac-pick-list.inline {
+  position: static;
+  box-shadow: none;
+}
+.ac-pick-list button {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  text-align: left;
+  color: var(--text);
+}
+.ac-pick-list button:hover,
+.ac-pick-list button[aria-selected='true'] {
+  background: var(--bg-hover);
+}
+.ac-problem {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12.5px;
+}
+.ac-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.ac-actions small {
+  flex: 1;
+}
+.ac-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ac-from {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+.ac-from img {
+  border-radius: 50%;
+}
+.ac-display {
+  font-size: 13.5px;
+}
+.ac-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ac-checks label,
+.ac-check {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-weight: 400;
+  min-height: 32px;
+}
+.ac-checks label small,
+.ac-check small {
+  flex-basis: 100%;
+  padding-left: 24px;
+}
+.ac-apps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ac-app-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  text-align: left;
+  color: var(--text);
+}
+.ac-app-row:hover {
+  background: var(--bg-hover);
+}
+.ac-app-row small {
+  color: var(--text-faint);
+}

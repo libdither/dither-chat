@@ -24,12 +24,22 @@ import { join, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { NETWORKS } from '@dither-chat/protocol';
 import { ACCOUNT_COLORS, type AccountRow } from './store.ts';
-import { noteWork, timedWork } from './stalls.ts';
+import { timedWork } from './stalls.ts';
+import { span } from './trace.ts';
 import { Supervisor } from './supervisor.ts';
 import type { MailSink } from './mail/backend.ts';
+import type { NoticeSink } from './notices/index.ts';
+import { jobFailed } from './errors.ts';
+
+/** A batch's event kinds with how many of each, for its span: `message×3,typing`. */
+function kindsOf(events: { t: string }[]): string {
+  const n = new Map<string, number>();
+  for (const e of events) n.set(e.t, (n.get(e.t) ?? 0) + 1);
+  return [...n].map(([k, c]) => (c > 1 ? `${k}×${c}` : k)).join(',');
+}
 
 /** The kinds this hub hands to the manager when they are new. */
-export const MANAGED_KINDS = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x'];
+export const MANAGED_KINDS = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x', 't3'];
 
 /** The attention an account gets while the manager cannot run it, and when the manager no longer has it. */
 const NOT_RUNNING = 'Not running in dither-accounts: ';
@@ -57,7 +67,9 @@ export interface AccountView {
 interface Client {
   accounts: AccountView[];
   connected: boolean;
-  callRaw(account: string, op: string, input?: Record<string, unknown>, timeoutMs?: number): Promise<unknown>;
+  /** `trace` (a W3C traceparent) is carried to the manager, which makes its spans children of the hub's; a client
+   * before it leaves it out. */
+  callRaw(account: string, op: string, input?: Record<string, unknown>, timeoutMs?: number, o?: { trace?: string }): Promise<unknown>;
   admin(action: Record<string, unknown>, timeoutMs?: number): Promise<any>;
   liveViewUrl(account: string): string;
   close(): void;
@@ -98,6 +110,24 @@ export function mailAccessOf(info: AppSelf | null | undefined): 'granted' | 'pen
 
 /** Ask for mail once: not when it has a grant, or a request is waiting or was declined. */
 export const mailToAsk = (info: AppSelf | null | undefined): boolean => mailAccessOf(info) === null;
+
+/**
+ * The hub's request for notices (docs/notices.md): what your accounts and services tell you, on every account that
+ * has the `notifications` interface (GitHub, dither-accounts' own), at write so reading one here reads it there.
+ */
+export const NOTICES_REQUEST = { interface: 'notifications', level: 'write', accounts: '*', reason: 'Notify you of what your accounts and services tell you, ranked with your chats; mark them read as you read them' } as const;
+
+/** Whether the hub may read notices, as mailAccessOf. */
+export function noticesAccessOf(info: AppSelf | null | undefined): 'granted' | 'pending' | 'denied' | null {
+  if (info?.grants?.some((g) => g.interface === 'notifications')) return 'granted';
+  const asked = (info?.requests ?? []).filter((r) => r.interface === 'notifications');
+  if (asked.some((r) => r.state === 'pending')) return 'pending';
+  if (asked.some((r) => r.state === 'denied')) return 'denied';
+  return null;
+}
+
+/** Ask for notices once, as mail. */
+export const noticesToAsk = (info: AppSelf | null | undefined): boolean => noticesAccessOf(info) === null;
 
 /**
  * The chat kinds this hub runs that it has neither a grant for nor asked about: an open request waits for you, and a
@@ -148,6 +178,8 @@ export class RoutedSupervisor extends Supervisor {
   private wasRemote = new Set<string>();
   /** Mail (mail/backend.ts ManagerMailBackend): its accounts' list and events go there, not to the chat side. */
   mail?: MailSink;
+  /** Notices (notices/index.ts): the notifications interface's accounts and events; a chat account's still go to chat too. */
+  notices?: NoticeSink;
   private mod: ClientModule | null = null;
   private mailTimer: Timer | null = null;
 
@@ -205,6 +237,7 @@ export class RoutedSupervisor extends Supervisor {
       await this.connect();
     } catch (e) {
       console.error(`dither-accounts at ${this.remoteOpts.url} is not reachable (${(e as Error)?.message ?? e}); trying again in 30 s`);
+      jobFailed('dither-accounts: connect', e);
       setTimeout(() => void this.connectOrRetry(), 30_000);
     }
   }
@@ -229,13 +262,19 @@ export class RoutedSupervisor extends Supervisor {
         .requestAccess(url, this.saved!.app, this.saved!.token, [{ interface: 'accounts', level: 'manage', kinds: missing, reason: `Add, sign in and remove ${missing.join(' and ')} accounts too` }])
         .then(
           () => console.log(`dither-accounts: asked to manage ${missing.join(', ')} accounts as well; approve it on the manager's page`),
-          (e) => console.error('dither-accounts: asking for the new kinds failed:', e),
+          (e) => (console.error('dither-accounts: asking for the new kinds failed:', e), jobFailed('dither-accounts: ask for kinds', e)),
         );
     // Registered before mail (docs/mail.md): ask for it once, for you to approve on its page.
     if (known && info && this.mail && mailToAsk(info) && mod.requestAccess)
       await mod.requestAccess(url, this.saved!.app, this.saved!.token, [MAIL_REQUEST]).then(
         () => ((info = { ...info, requests: [...(info?.requests ?? []), { interface: 'mail', state: 'pending' }] }), console.log("dither-accounts: asked to read and send your mail; approve it on the manager's page")),
-        (e) => console.error('dither-accounts: asking for mail failed:', e),
+        (e) => (console.error('dither-accounts: asking for mail failed:', e), jobFailed('dither-accounts: ask for mail', e)),
+      );
+    // Registered before notices (docs/notices.md): ask for them once too.
+    if (known && info && this.notices && noticesToAsk(info) && mod.requestAccess)
+      await mod.requestAccess(url, this.saved!.app, this.saved!.token, [NOTICES_REQUEST]).then(
+        () => ((info = { ...info, requests: [...(info?.requests ?? []), { interface: 'notifications', state: 'pending' }] }), console.log("dither-accounts: asked to read your accounts' notifications; approve it on the manager's page")),
+        (e) => (console.error('dither-accounts: asking for notices failed:', e), jobFailed('dither-accounts: ask for notices', e)),
       );
     if (!known) {
       const reg = await mod.register(url, {
@@ -245,14 +284,16 @@ export class RoutedSupervisor extends Supervisor {
           { interface: 'chat', level: 'manage', accounts: '*', reason: 'Show your chats, send what you write, and manage chats and servers as you ask' },
           { interface: 'accounts', level: 'manage', kinds: MANAGED_KINDS, reason: 'Add, sign in and remove the chat accounts you set up in the hub' },
           ...(this.mail ? [MAIL_REQUEST] : []),
+          ...(this.notices ? [NOTICES_REQUEST] : []),
         ],
       });
-      info = { requests: this.mail ? [{ interface: 'mail', state: 'pending' }] : [] };
+      info = { requests: [...(this.mail ? [{ interface: 'mail', state: 'pending' }] : []), ...(this.notices ? [{ interface: 'notifications', state: 'pending' }] : [])] };
       this.saved = { app: reg.app, token: reg.token, url, remote: [] };
       this.save();
       console.log(`dither-accounts: registered as ${reg.app}; approve its requests on the manager's page`);
     }
     this.mailAccess(mailAccessOf(info) ?? 'pending');
+    this.noticesAccess(noticesAccessOf(info) ?? 'pending');
     this.client = new mod.AccountsClient({
       url,
       app: this.saved!.app,
@@ -260,27 +301,45 @@ export class RoutedSupervisor extends Supervisor {
       onAccounts: (list) => {
         this.accountsChanged(list);
         this.mail?.accounts(list);
-        if (this.mailWaiting) void this.readMailAccess();
+        this.notices?.accounts(list);
+        if (this.mailWaiting || this.noticesWaiting) void this.readMailAccess();
       },
-      onEvents: (account, events) => {
-        noteWork(`adapter events (${events.length})`);
-        try {
-          if (this.mail) timedWork('mail: events', () => this.mail!.events(account, events));
-        } catch (e) {
-          // Mail catches up by itself (mail.changes); the chat events below must not wait on it.
-          console.error(`[${account}] mail events failed:`, e);
-        }
-        if (!this.remote.has(account)) return;
-        this.apply(account, events as P.AdapterEvent[]);
-      },
+      onEvents: (account, events) =>
+        span(
+          'adapter events',
+          { account, events: events.length, kinds: kindsOf(events) },
+          () => {
+            try {
+              if (this.mail) timedWork('mail: events', () => this.mail!.events(account, events));
+            } catch (e) {
+              // Mail catches up by itself (mail.changes); the chat events below must not wait on it.
+              console.error(`[${account}] mail events failed:`, e);
+              jobFailed('mail: events', e, { account });
+            }
+            try {
+              if (this.notices) timedWork('notices: events', () => this.notices!.events(account, events));
+            } catch (e) {
+              // Notices catch up by themselves (notify.list); the chat events below must not wait on them.
+              console.error(`[${account}] notices events failed:`, e);
+              jobFailed('notices: events', e, { account });
+            }
+            if (!this.remote.has(account)) return;
+            void this.apply(account, events as P.AdapterEvent[]);
+          },
+          { note: `adapter events (${events.length})` },
+        ),
       onGap: (account, dropped) => {
-        // A mail account catches up with mail.changes; nothing restarts.
+        // A mail account catches up with mail.changes, and notices with notify.list; nothing restarts, unless it is
+        // a chat account too.
+        const notices = this.notices?.gap(account) ?? false;
         if (this.mail?.gap(account)) return;
+        if (notices && !this.remote.has(account)) return;
         console.warn(`[${account}] the manager dropped ${dropped} events while the hub was away; restarting the adapter for a fresh snapshot`);
-        this.client?.admin({ do: 'restart', account }).catch((e) => console.error(`[${account}] restart after a gap failed:`, e));
+        this.client?.admin({ do: 'restart', account }).catch((e) => (console.error(`[${account}] restart after a gap failed:`, e), jobFailed('dither-accounts: restart after a gap', e, { account })));
       },
       onConnection: (up) => {
         this.mail?.connection(up);
+        this.notices?.connection(up);
         if (up) return;
         for (const id of this.remote.keys()) this.markOffline(id);
       },
@@ -296,17 +355,43 @@ export class RoutedSupervisor extends Supervisor {
   private mailAccess(state: RoutedSupervisor['mailState']) {
     this.mailState = state;
     this.mail?.setAccess(state);
-    // While it waits for you: the manager is asked every minute (and on each account list) whether you answered.
-    if (this.mailWaiting && !this.mailTimer && this.mail) this.mailTimer = setInterval(() => void this.readMailAccess(), 60_000);
-    if (!this.mailWaiting && this.mailTimer) {
+    this.waitTimer();
+  }
+  /** While a grant waits for you: the manager is asked every minute (and on each account list) whether you answered. */
+  private waitTimer() {
+    const waiting = (this.mailWaiting && !!this.mail) || (this.noticesWaiting && !!this.notices);
+    if (waiting && !this.mailTimer) this.mailTimer = setInterval(() => void this.readMailAccess(), 60_000);
+    if (!waiting && this.mailTimer) {
       clearInterval(this.mailTimer);
       this.mailTimer = null;
     }
   }
+  /** Mail's grant and notices', as the manager says them now. */
   private async readMailAccess() {
     if (!this.mod || !this.saved) return;
     const info = (await this.mod.self(this.remoteOpts.url, this.saved.app, this.saved.token).catch(() => null)) as AppSelf | null;
-    if (info) this.mailAccess(mailAccessOf(info) ?? 'pending');
+    if (!info) return;
+    this.mailAccess(mailAccessOf(info) ?? 'pending');
+    this.noticesAccess(noticesAccessOf(info) ?? 'pending');
+  }
+
+  // ---------------------------------------------------------- notices' grant (as mail's)
+
+  private noticesState: 'granted' | 'pending' | 'denied' | 'unreachable' = 'unreachable';
+  private get noticesWaiting() {
+    return this.noticesState === 'pending' || this.noticesState === 'denied';
+  }
+  private noticesAccess(state: RoutedSupervisor['noticesState']) {
+    this.noticesState = state;
+    this.notices?.setAccess(state);
+    this.waitTimer();
+  }
+
+  /** "Ask again" for notices after you declined. */
+  async askNoticesAgain(): Promise<void> {
+    if (!this.mod?.requestAccess || !this.saved) throw new Error('dither-accounts is not reachable');
+    await this.mod.requestAccess(this.remoteOpts.url, this.saved.app, this.saved.token, [NOTICES_REQUEST]);
+    this.noticesAccess('pending');
   }
 
   /** "Ask again" after you declined: a new request on the manager's page. */
@@ -322,6 +407,11 @@ export class RoutedSupervisor extends Supervisor {
     return this.client.callRaw(account, op, input, timeoutMs);
   }
 
+  /** A notices call (notices/index.ts): the same path as mail's. */
+  callNotices(account: string, op: string, input: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
+    return this.callMail(account, op, input, timeoutMs);
+  }
+
   private accountsChanged(list: AccountView[]) {
     const chat = list.filter((a) => a.interfaces.includes('chat') && a.grants.chat);
     const prev = this.remote;
@@ -332,7 +422,7 @@ export class RoutedSupervisor extends Supervisor {
       // Newly the manager's: anything of ours for it stops (an adapter, a start waiting on the lock).
       void super.stop(id);
       // Already online there, so its snapshot went by before this hub could see it: start it over to get one.
-      if (view.online) this.client?.admin({ do: 'restart', account: id }).catch((e) => console.error(`[${id}] restart for a snapshot failed:`, e));
+      if (view.online) this.client?.admin({ do: 'restart', account: id }).catch((e) => (console.error(`[${id}] restart for a snapshot failed:`, e), jobFailed('dither-accounts: restart for a snapshot', e, { account: id })));
     }
     this.remote = now;
     // Views say who runs an account and who made it (managedBy): send again those that changed.
@@ -403,14 +493,14 @@ export class RoutedSupervisor extends Supervisor {
 
   override start(id: string) {
     if (!this.remote.has(id)) return super.start(id);
-    this.client?.admin({ do: 'update', account: id, enabled: true }).catch((e) => console.error(`[${id}] start through the manager failed:`, e));
+    this.client?.admin({ do: 'update', account: id, enabled: true }).catch((e) => (console.error(`[${id}] start through the manager failed:`, e), jobFailed('dither-accounts: start', e, { account: id })));
   }
 
   override async stop(id: string) {
     if (!this.remote.has(id)) return super.stop(id);
     // Disabled in the hub: disabled in the manager, so it stays off across the manager's restarts. Otherwise a stop.
     const disabled = this.storeRef.account(id)?.enabled === 0;
-    await this.client?.admin(disabled ? { do: 'update', account: id, enabled: false } : { do: 'stop', account: id }).catch((e) => console.error(`[${id}] stop through the manager failed:`, e));
+    await this.client?.admin(disabled ? { do: 'update', account: id, enabled: false } : { do: 'stop', account: id }).catch((e) => (console.error(`[${id}] stop through the manager failed:`, e), jobFailed('dither-accounts: stop', e, { account: id })));
   }
 
   override async restart(id: string) {
@@ -435,12 +525,13 @@ export class RoutedSupervisor extends Supervisor {
     if (!this.remote.has(accountId)) return super.command<T>(accountId, cmd, timeoutMs);
     if (!this.client) return Promise.reject(new Error('adapter is not connected'));
     const { t, ...input } = cmd as { t: string; [k: string]: unknown };
-    return this.client.callRaw(accountId, t, input, timeoutMs) as Promise<T>;
+    const client = this.client;
+    return span(`command ${t}`, { account: accountId, op: t, via: 'manager' }, (s) => client.callRaw(accountId, t, input, timeoutMs, s.traceparent ? { trace: s.traceparent } : undefined) as Promise<T>);
   }
 
   override writeSecret(id: string, secret: unknown) {
     if (!this.remote.has(id)) return super.writeSecret(id, secret);
-    this.client?.admin({ do: 'secret', account: id, secret }).catch((e) => console.error(`[${id}] secret through the manager failed:`, e));
+    this.client?.admin({ do: 'secret', account: id, secret }).catch((e) => (console.error(`[${id}] secret through the manager failed:`, e), jobFailed('dither-accounts: secret', e, { account: id })));
   }
 
   /** managedBy for the account's view: set while the manager lists it. */
@@ -471,7 +562,7 @@ export class RoutedSupervisor extends Supervisor {
 
   override async renamed(id: string, label: string) {
     if (!this.remote.has(id)) return;
-    await this.client?.admin({ do: 'update', account: id, label }).catch((e) => console.error(`[${id}] rename through the manager failed:`, e));
+    await this.client?.admin({ do: 'update', account: id, label }).catch((e) => (console.error(`[${id}] rename through the manager failed:`, e), jobFailed('dither-accounts: rename', e, { account: id })));
   }
 
   /** The manager keeps the log where the account lives, which for one it made is not here. */

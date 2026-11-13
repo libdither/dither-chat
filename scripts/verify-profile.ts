@@ -112,16 +112,16 @@ async function mailPeople() {
   check(hint.includes('Alice Chen <alice.chen@example.org>'), 'the hint shows the address that may be her', hint);
   check(!(await p.eval<boolean>(`!!document.querySelector('.pf-mail')`)), 'before a merge her page has no mail');
   // The merge search finds people by address.
-  await click('.pf-action[title="More"]');
-  await p.eval(`[...document.querySelectorAll('[role="menuitem"]')].find((b) => b.textContent.trim() === 'Merge Another Identity In').click()`);
+  await click('.pf-action[title="Merge another identity in"]');
   await p.until(`!!document.querySelector('.merge-box input')`, 3000);
   await typeInto('.merge-box input', 'jo@park');
   await p.until(`[...document.querySelectorAll('.merge-box .link-row')].some((r) => r.textContent.includes('Jo Park'))`, 4000).catch(() => {});
   const byAddress = await p.eval<string[]>(`[...document.querySelectorAll('.merge-box .link-row')].map((r) => r.textContent.trim())`);
   check(byAddress.length === 1 && byAddress[0].includes('Jo Park'), 'the merge search finds someone by their address', byAddress);
-  await typeInto('.merge-box input', '');
-  await Bun.sleep(100);
-  await p.eval(`[...document.querySelectorAll('.merge-box .link-row')].find((r) => r.textContent.includes('Alice Chen')).click()`);
+  // Found by her address: the demo also has an Alice Chen on X, a person of her own with the same name.
+  await typeInto('.merge-box input', 'alice.chen@');
+  await p.until(`document.querySelectorAll('.merge-box .link-row').length === 1`, 4000).catch(() => {});
+  await p.eval(`document.querySelector('.merge-box .link-row').click()`);
   await p.until(`!!document.querySelector('.pf-mail')`, 8000).catch(() => {});
   const merged = await p.eval<{ mail: string; hash: string; accounts: string }>(
     `({ mail: document.querySelector('.pf-mail')?.innerText ?? '', hash: location.hash, accounts: [...document.querySelectorAll('.pf-identity, .pf-acct')].map((e) => e.innerText).join(' | ') })`,
@@ -154,7 +154,7 @@ try {
   check(!/\bAvailable\b/.test(about + accounts), 'not WhatsApp’s stock “Available”');
   check((await text('.pf-status')).includes('at the crag'), 'their status, with its text');
   const tags = await text('.pf-tags');
-  check(tags.includes('she/her') && tags.includes('Friend') && tags.includes('In your contacts'), 'pronouns and how you stand with them, once each', tags);
+  check(tags.includes('she/her') && tags.includes('Friend') && /\bContact\b/.test(tags) && (tags.match(/\bFriend\b/g) ?? []).length === 1, 'pronouns and how you stand with them, once each', tags);
   check(about.includes('GitHub') && about.match(/Phone/g)?.length === 1, 'their links, one number written two ways shown once', about.match(/Phone|GitHub/g));
   const common = await card('In common');
   check(common.includes('libdither') && common.includes('as alice (testing)') && common.includes('Testers'), 'a server in common, with their nickname and role there', common.split('\n').slice(0, 6));
@@ -167,23 +167,29 @@ try {
   if (shots) await p.shot(`${shots}/profile-person.png`);
 
   // Their menu's actions live in the hero.
+  // Message goes straight to the chat with every route together: no menu (the message box's line picks the accounts).
+  const at = await p.eval<string>('location.hash');
   await click('.pf-action[title="Message"]');
-  const msg = await menu();
-  check(msg.includes('On Discord') && msg.includes('On Signal') && msg.includes('All Chats Together'), 'Message offers each network and the merged thread', msg);
-  await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
-  await Bun.sleep(150);
+  check((await menu()).length === 0 && (await p.eval<string>('location.hash')).startsWith('#/people/'), 'Message opens their chat, every route together', await p.eval('location.hash'));
+  await p.goto(`${hub}/${at}`);
+  await settled();
+  await Bun.sleep(300);
+  // Merge, Copy and Block are buttons of their own, beside Message.
+  const buttons = await p.eval<string[]>(`[...document.querySelectorAll('.pf-hero .pf-action')].map((b) => b.textContent.trim())`);
+  check(buttons.indexOf('Merge') === buttons.indexOf('Message') + 1 && buttons.includes('Copy') && buttons.includes('Block'), 'Merge sits right of Message, Copy and Block have buttons', buttons);
   await click('.pf-action[title="More"]');
   const more = await menu();
-  check(more.filter((m) => m.startsWith('Copy')).length === 1 && more.includes('Copy') && more.includes('Merge Another Identity In'), 'More holds one Copy entry and merging', more);
-  check(!more.some((m) => ['Profile', 'Message', 'Star', 'Unstar'].includes(m) || m.startsWith('Open on')), 'but not what the page already has a button for, a star or opening on a network');
-  // Copy holds a menu per network, each with its own: a submenu inside a submenu.
-  await click('.cm-item[aria-haspopup="menu"]');
-  await p.until(`document.querySelectorAll('.cm').length === 2`, 3000).catch(() => {});
-  const nets = await p.eval<string[]>(`[...document.querySelectorAll('.cm.cm-sub .cm-item')].map((b) => b.textContent.trim())`);
+  check(!more.some((m) => m.startsWith('Copy') || m.startsWith('Merge') || m.startsWith('Block') || m.startsWith('Unblock')), 'More holds no Copy, merging or blocking', more);
+  check(!more.some((m) => ['Profile', 'Message', 'Star', 'Unstar'].includes(m) || m.startsWith('Open on')), 'nor what the page already has a button for, a star or opening on a network');
+  await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await Bun.sleep(150);
+  // Copy holds a menu per network, each with its own: a submenu inside it.
+  await click('.pf-action[title="Copy"]');
+  const nets = await menu();
   check(nets.includes('Discord') && nets.includes('Signal'), 'Copy lists each network', nets);
-  const discordAt = await p.eval<string | null>(`[...document.querySelectorAll('.cm.cm-sub .cm-item')].find((b) => b.textContent.trim() === 'Discord')?.dataset.i ?? null`);
-  await click(`.cm.cm-sub .cm-item[data-i="${discordAt}"]`);
-  await p.until(`document.querySelectorAll('.cm').length === 3`, 3000).catch(() => {});
+  const discordAt = await p.eval<string | null>(`[...document.querySelectorAll('.cm .cm-item')].find((b) => b.textContent.trim() === 'Discord')?.dataset.i ?? null`);
+  await click(`.cm .cm-item[data-i="${discordAt}"]`);
+  await p.until(`document.querySelectorAll('.cm').length === 2`, 3000).catch(() => {});
   const copies = await p.eval<string[]>(`[...[...document.querySelectorAll('.cm.cm-sub')].at(-1)?.querySelectorAll('.cm-item') ?? []].map((b) => b.textContent.trim())`);
   check(copies.includes('Copy User ID') && copies.includes('Copy Profile Link'), "and Discord's own menu opens beside it, with the profile link", copies);
   // Close them all.

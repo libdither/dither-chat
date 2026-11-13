@@ -1,15 +1,18 @@
 import type { Server, ServerWebSocket, Socket, WebSocketHandler } from 'bun';
 import { createHmac } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type * as P from '@dither-chat/protocol';
 import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, parseCursor } from './chats.ts';
-import { ATTACHMENT_LIMITS, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, RETENTION_GUARDED, RULE_LEVELS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { ACCOUNT_COLORS, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
 import type { PushService } from './push.ts';
 import type { ReadQueue } from './readqueue.ts';
+import { setNativeMute } from './nativemute.ts';
+import { markUnreadFrom } from './unread.ts';
 import { validQuietHours, type Triage } from './triage.ts';
 import type { TriageVotes } from './votes.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
@@ -26,6 +29,7 @@ import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } fro
 import { clampDays, parseZone } from './activitychart.ts';
 import { compress } from './compress.ts';
 import { forwardMessage } from './forward.ts';
+import { firstLink, unfurl } from './unfurl.ts';
 import { UsageStore } from './usage.ts';
 import { ClickCounts } from './clicks.ts';
 import type { Attention } from './attention.ts';
@@ -36,25 +40,57 @@ import { syncResponse } from './sync.ts';
 import { TypingGate } from './typing.ts';
 import { hostAllowed, hostNames } from './hosts.ts';
 import { noteWork, pathShape, timedWrite } from './stalls.ts';
+import { parseTraceparent, span, startSpan } from './trace.ts';
 import { fetchPublicToFile } from './fetchsafe.ts';
 import { AboutError, Abouts } from './about.ts';
+import { Servers } from './servers.ts';
+import { Apps } from './apps.ts';
+import { Media, MediaError, sendMediaProblem } from './media.ts';
+import { Threads } from './threads.ts';
+import { Moderation } from './moderation.ts';
 import { asked, attempt, candidatesAttempt } from './attempts.ts';
 import { Groups } from './groups.ts';
 import { People } from './people.ts';
+import { AccountSelf, ignoredOf } from './accountself.ts';
+import { mentionables } from './mentions.ts';
+import { lowerForSend } from './mentionrefs.ts';
 import { peopleGraph } from './graph.ts';
 import type { MailHub } from './mail/index.ts';
+import type { Notices } from './notices/index.ts';
 import { mailPeople } from './mail/people.ts';
 import { Adding, profileLinksOf, requestHeld, requestViews } from './add.ts';
 import { feedRefusalFor, isFeed } from './feed.ts';
 import { Posts, PostsError } from './posts.ts';
-import { calendarOff, checkNotice, notifyAllowed, type CalendarLink } from './calendar.ts';
+import { calendarOff, type CalendarLink } from './calendar.ts';
+import { markCalendarAdded } from './calendar-account.ts';
 import { ReplyMarks, type ReplyMark } from './replymarks.ts';
 import { mailAttention } from './mail/attention.ts';
+import { clientReport, jobFailed, PerClientCap, reportedInRequest, reportError, withRequest } from './errors.ts';
+import { callRoute } from './callstate.ts';
+import { handlesPolls, pollRoute } from './polls.ts';
+import { SendExtras } from './sendextras.ts';
+import { reminderWords } from './saved.ts';
 
 
 type ClientData = { kind: 'client' };
 /** What a send carries (POST /api/conversations/:id/send, and a chat's /messages). */
-type SendBody = { body?: string; accountId?: string; replyTo?: string; attachments?: string[]; clientId?: string };
+type SendBody = {
+  body?: string;
+  accountId?: string;
+  replyTo?: string;
+  attachments?: string[];
+  clientId?: string;
+  /** A sticker from the picker's page, by its id (media.ts). */
+  sticker?: string;
+  /** The one attached file is a recording: sent as the network's voice message where it has one, else as a file. */
+  voice?: P.VoiceOut;
+  /** The files open once (Signal's view-once). */
+  viewOnce?: boolean;
+  /** capability 'silentSend' (sending.ts) */
+  silent?: boolean;
+  /** capability 'replyMention' */
+  mentionReplied?: boolean;
+};
 /** A browser's live view, carried to the account's VNC socket here, or (remote accounts) to dither-accounts' socket for it. */
 type LiveViewData = { kind: 'liveview'; accountId: string; socket?: string; url?: string; vnc?: Socket<unknown>; up?: WebSocket; queue: Uint8Array[]; closed?: boolean };
 
@@ -103,10 +139,15 @@ export interface ServerOpts {
   archiveMedia?: boolean;
   /** Mail (mail/index.ts, docs/mail.md): its routes, its part of the bootstrap and of each flush. */
   mail?: MailHub;
-  /** dither-calendar beside the hub (calendar.ts, docs/calendar.md): /calendar/*, GET /api/plans, the bootstrap's `calendar`. */
-  calendar?: CalendarLink;
-  /** A reminder from the calendar (POST /api/calendar/notify, loopback only). */
-  onReminder?: (n: P.ReminderNotice) => Promise<P.ReminderResult>;
+  /** Notices (notices/, docs/notices.md): /api/notices, the bootstrap's `notices`. */
+  notices?: Notices;
+  /**
+   * dither-calendar beside the hub (calendar-account.ts, docs/calendar.md): the link of the calendar account that is on,
+   * if any (/calendar/*, GET /api/plans, the bootstrap's `calendar`), and `sync` after the accounts change.
+   */
+  calendar?: { link(): CalendarLink | undefined; sync(): void };
+  /** A reminder set on a network came due (saved.ts): main.ts notifies it like an alert. */
+  onSavedReminder?: (n: { title: string; body: string; conversationId: string; messageId: string }) => void;
 }
 
 // ------------------------------------------------------------------ access
@@ -167,6 +208,24 @@ export function mediaSigner(secret: string) {
   };
 }
 
+/**
+ * A request answered with 5xx, as a line of traces/errors.ndjson: the route's template, the status, and the answer's
+ * `error` (what the handler caught, an Error's message) when it is JSON. 503 (an account offline, the manager not
+ * reachable: a state the page shows) is left out. 504 is kept: one timeout is explained to you, but the same route
+ * timing out again and again is a bug, and the watcher's spike rule and ignore list tell the two apart.
+ */
+async function reportAnswer(req: Request, route: string, res: Response, trace: string | undefined) {
+  if (res.status === 503) return;
+  let message = `status ${res.status}`;
+  try {
+    if (res.headers.get('content-type')?.includes('json')) {
+      const e = ((await res.clone().json()) as { error?: unknown })?.error;
+      if (typeof e === 'string' && e) message = e;
+    }
+  } catch {}
+  reportError({ source: 'request', where: `${req.method} ${route}`, name: 'HttpError', message, status: res.status, trace });
+}
+
 /** An error after the command went to the adapter: whether it was carried out is not known. */
 const unknownOutcome = (e: unknown) => /timed out|disconnected mid/i.test(String((e as Error)?.message ?? e));
 
@@ -222,8 +281,22 @@ export class HubServer {
   readonly people: People;
   /** Public posts read and logged as messages (posts.ts, docs/feed.md "Threads"). */
   readonly posts: Posts;
+  /** The account's own self, block, ignore and notes (accountself.ts). */
+  readonly self: AccountSelf;
   /** Joining, adding people, and requests waiting on you (add.ts, docs/add.md). */
   readonly adding: Adding;
+  /** Scheduled events, leaving, and what a space asks on joining (servers.ts, docs/servers.md). */
+  readonly servers: Servers;
+  /** Bots' buttons, selects, slash commands and forms (apps.ts, docs/apps.md). */
+  readonly apps: Apps;
+  /** Sticker pages, installing packs, stories (media.ts, docs/media-kinds.md). */
+  readonly kinds: Media;
+  /** Following threads, starting threads and posts, archiving, publishing, running a group (threads.ts, docs/threads.md). */
+  readonly threads: Threads;
+  /** Removing, banning, roles and timeouts, others' messages and reactions, member labels (moderation.ts, docs/moderation.md). */
+  readonly moderation: Moderation;
+  /** Send later, saved on the network, previews off (sendextras.ts, docs/sending.md). */
+  readonly sendExtras: SendExtras;
   /** Your marks on whether a message needs a reply (replymarks.ts). */
   private get marks(): ReplyMarks {
     return (this._marks ??= new ReplyMarks(this.store));
@@ -233,6 +306,8 @@ export class HubServer {
   readonly boot = Buffer.from(crypto.getRandomValues(new Uint8Array(6))).toString('base64url');
   /** Sends by the client's id for them, so one retried after a lost answer goes out once (state.ts queues sends). */
   private sends = new Map<string, { at: number; done: Promise<Response> }>();
+  /** Messages a viewed receipt was asked for (once each; viewed). */
+  private viewedSent = new Set<string>();
 
   constructor(
     private store: Store,
@@ -272,9 +347,58 @@ export class HubServer {
     });
     this.groups = new Groups({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line) });
     this.posts = new Posts({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), changed: () => this.flush() });
-    this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), posts: (a, ps) => this.posts.log(a, ps) });
+    this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
+    this.self = new AccountSelf({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), quietHours: () => store.quietHours() });
+    this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), posts: (a, ps) => this.posts.log(a, ps) });
+    // A note joined from yours and the network's goes back to the network (store.ts networkNotes).
+    store.contactNotesOut = (id, change) => this.people.pushContactNotes(id, change);
     this.adding = new Adding({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), liveView: (a) => !!sup.liveViewUrl?.(a) || !!store.account(a)?.live_view });
+    this.threads = new Threads({
+      store,
+      online: (a) => sup.online(a),
+      command: (a, c, t) => sup.command(a, c, t),
+      pickAccount: (c, a) => this.pickAccount(c, a),
+      uploads: this.uploads,
+      note: (a, line) => sup.note(a, line),
+      flush: () => this.flush(),
+      aboutView: (k, i, n, a, ab) => this.abouts.view(k, i, n, a, ab, Date.now(), undefined, true),
+    });
+    this.moderation = new Moderation({
+      store,
+      online: (a) => sup.online(a),
+      command: (a, c, t) => sup.command(a, c, t),
+      pickAccount: (c, a) => this.pickAccount(c, a),
+      keep: (k, i, n, a, ab) => (this.abouts.keep(i, a, ab), this.abouts.view(k, i, n, a, ab, Date.now(), undefined, true)),
+      note: (a, line) => sup.note(a, line),
+      flush: () => this.flush(),
+    });
+    this.servers = new Servers({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a), note: (a, line) => sup.note(a, line), flush: () => this.flush(), aboutView: (k, i, n, a, ab) => this.abouts.view(k, i, n, a, ab, Date.now(), undefined, true) });
+    this.apps = new Apps({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a), note: (a, line) => sup.note(a, line) });
+    this.kinds = new Media({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a), flush: () => this.flush() });
     sup.calls = this.calls;
+    this.sendExtras = new SendExtras({
+      store,
+      online: (a) => sup.online(a),
+      command: (a, c, t) => sup.command(a, c, t) as Promise<any>,
+      send: (cid, b) => this.sendOnce(cid, b),
+      chatRoute: (chatId, b) => this.chatRoute(chatId, b),
+      pickAccount: (c, a) => this.pickAccount(c, a),
+      files: (ids) => this.uploads.names(ids),
+      dropFiles: (ids) => this.uploads.remove(ids),
+      broadcast: (evs) => this.broadcast(evs),
+      flush: () => this.flush(),
+      messages: (ids) => {
+        const views = store.messageViews(store.raw(`SELECT * FROM message WHERE id IN (SELECT value FROM json_each(?))`, JSON.stringify(ids)));
+        return { messages: views, identities: store.identitiesOf(views) };
+      },
+    });
+    // Files waiting to be sent later stay; a reminder that came due on a network notifies (saved.ts).
+    this.uploads.held = () => this.sendExtras.later.heldUploads();
+    store.reminderDue = (r) => {
+      const w = reminderWords(store.db, r);
+      const cid = w.conversationId;
+      if (cid) queueMicrotask(() => this.opts.onSavedReminder?.({ title: w.title, body: w.body, conversationId: cid, messageId: r.messageId }));
+    };
     this.clicks = new ClickCounts(store.db);
     this.usage = new UsageStore(store.db, (changed, removed, all) => {
       const a = this.opts.attention;
@@ -285,15 +409,37 @@ export class HubServer {
   }
 
   start() {
+    this.self.start();
     const self = this;
     const guarded = (handler: (req: Request, server: Server<WsData>) => Promise<Response | undefined> | Response | undefined) =>
-      async (req: Request, server: Server<WsData>) => {
-        try {
-          return await compress(req, await handler(req, server));
-        } catch (e: any) {
-          console.error('request failed', req.method, new URL(req.url).pathname, e);
-          return Response.json({ error: String(e?.message ?? e) }, { status: 500 });
-        }
+      (req: Request, server: Server<WsData>) => {
+        // Each request is a span named by its method and its path without ids (docs/tracing.md); one that brings a
+        // traceparent joins that trace. It ends when the response starts: a stream's body is not in it.
+        const route = pathShape(new URL(req.url).pathname);
+        return span(
+          `${req.method} ${route}`,
+          { 'http.method': req.method, 'http.route': route },
+          (s) =>
+            withRequest(async () => {
+              try {
+                const raw = await handler(req, server);
+                // An answer of 5xx is an error for traces/errors.ndjson (errors.ts), unless something inside the request
+                // was reported already (an attempt, a job) or the client went away.
+                if (raw && raw.status >= 500 && !reportedInRequest() && !req.signal.aborted) await reportAnswer(req, route, raw, s.traceId);
+                const res = await compress(req, raw);
+                // No response: the socket was upgraded.
+                s.set({ 'http.status': res?.status ?? 101 });
+                if (res && res.status >= 500) s.fail(`status ${res.status}`);
+                return res;
+              } catch (e: any) {
+                console.error('request failed', req.method, new URL(req.url).pathname, e);
+                s.set({ 'http.status': 500 }).fail(e);
+                if (!req.signal.aborted) reportError({ source: 'request', where: `${req.method} ${route}`, error: e, status: 500, trace: s.traceId });
+                return Response.json({ error: String(e?.message ?? e) }, { status: 500 });
+              }
+            }),
+          { parent: parseTraceparent(req.headers.get('traceparent')) },
+        );
       };
     const tls = this.opts.tls;
     const websocket: WebSocketHandler<WsData> = {
@@ -368,12 +514,14 @@ export class HubServer {
     this.mediaInfo.start();
     this.store.journal.prune();
     this.pruneTimer = setInterval(() => this.store.journal.prune(), 3_600_000);
+    this.sendExtras.later.start();
     return this.server;
   }
 
   stop() {
     clearInterval(this.flushTimer);
     clearInterval(this.pruneTimer);
+    this.sendExtras.later.stop();
     this.importer.stop();
     this.gapfill.stopAll();
     this.jobs.stop();
@@ -389,6 +537,8 @@ export class HubServer {
   flush() {
     // What a flush writes (attention's folds, one transaction per conversation; the journal) is one transaction: one
     // commit, and each commit waits for the disk on the hub's thread. The frame goes out once it is committed.
+    // Every 80 ms: a span only when there was something to send (docs/tracing.md).
+    const s = startSpan('flush');
     let events: P.ClientEvent[] = [];
     let frame: string | null = null;
     try {
@@ -402,9 +552,16 @@ export class HubServer {
       // The commit failed (a lock held past busy_timeout): attention's folds are undone and fold again later; what
       // the store gave up goes out and into the journal on its own.
       console.error('flush: one transaction failed; sending what changed as it is', e);
+      jobFailed('flush', e);
       frame = this.record(events);
+      s.fail(e);
     }
     if (frame) for (const c of this.clients) c.send(frame);
+    if (!events.length) s.drop();
+    else {
+      s.set({ events: events.length });
+      s.end();
+    }
   }
 
   /** What changed since the last flush: the store's, mail's, and the scores they move. */
@@ -417,6 +574,7 @@ export class HubServer {
       if (this.opts.mail) events.push(...this.opts.mail.flush());
     } catch (e) {
       console.error('flush: mail failed', e);
+      jobFailed('flush: mail', e);
     }
     const a = this.opts.attention;
     if (a) {
@@ -432,6 +590,7 @@ export class HubServer {
         events.push(...(rules ? a.rescoreAll() : a.sync(changed, removed)));
       } catch (e) {
         console.error('flush: attention failed', e);
+        jobFailed('flush: attention', e);
       }
     }
     return events;
@@ -545,7 +704,6 @@ export class HubServer {
   private async route(req: Request, server: Server<WsData>): Promise<Response | undefined> {
     const url = new URL(req.url);
     const path = url.pathname;
-    noteWork(`${req.method} ${pathShape(path)}`);
     const ip = server.requestIP(req)?.address ?? '';
 
     if (path === '/adapter') {
@@ -564,18 +722,8 @@ export class HubServer {
     // dither-calendar (calendar.ts, docs/calendar.md). Its paths are not under /api/, so the cross-site check is here too.
     if (path === '/calendar' || path.startsWith('/calendar/')) {
       if (req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) return new Response('cross-site request refused', { status: 403 });
-      return this.opts.calendar ? this.opts.calendar.proxy(req, url) : calendarOff(path);
-    }
-    // A reminder from the calendar: a process on this machine, never a browser and never another device.
-    if (path === '/api/calendar/notify') {
-      if (!notifyAllowed(ip, req)) return Response.json({ ok: false, error: 'reminders come from this machine only' }, { status: 403 });
-      if (req.method !== 'POST') return Response.json({ ok: false, error: 'POST only' }, { status: 405 });
-      if (!this.opts.onReminder) return Response.json({ ok: false, error: 'reminders are off on this hub' }, { status: 503 });
-      const n = await req.json().catch(() => null);
-      const why = checkNotice(n);
-      if (why) return Response.json({ ok: false, error: `bad reminder: ${why}` }, { status: 400 });
-      const r = await this.opts.onReminder(n as P.ReminderNotice);
-      return Response.json(r, { status: r.ok ? 200 : 503 });
+      const link = this.opts.calendar?.link();
+      return link ? link.proxy(req, url) : calendarOff(path);
     }
 
     if (path.startsWith('/api/') && req.method !== 'GET' && !sameOrigin(req)) return new Response('cross-site request refused', { status: 403 });
@@ -620,8 +768,31 @@ export class HubServer {
     if ((m = path.match(/^\/media\/([\w-]+)\/([\w-]+)$/))) return this.media(m[1], m[2], url.searchParams.get('a'));
     // Custom emoji inside message bodies: the id is all a body has, and it can only reach Discord's CDN.
     if ((m = path.match(/^\/emoji\/discord\/(\d+)(\.animated)?$/))) return this.fetchMedia(discordEmojiUrl(m[1], !!m[2]), null);
+    if (path === '/api/errors' && req.method === 'POST') return this.clientError(req, ip);
     if (path.startsWith('/api/')) return this.api(req, url, path);
     return this.static(path);
+  }
+
+  /** At most 60 of the page's error reports a minute from one address. */
+  private readonly errorCap = new PerClientCap(60, 60_000);
+
+  /**
+   * POST /api/errors: an error the page met (errors.ts `clientReport`), written to traces/errors.ndjson as app `web`,
+   * source `client`. Authorised like every owner route (this machine or the tailnet, the page's own origin).
+   */
+  private async clientError(req: Request, ip: string): Promise<Response> {
+    if (Number(req.headers.get('content-length') ?? 0) > 16_384) return Response.json({ error: 'too large' }, { status: 413 });
+    const text = await req.text().catch(() => '');
+    if (text.length > 16_384) return Response.json({ error: 'too large' }, { status: 413 });
+    let body: unknown = null;
+    try {
+      body = JSON.parse(text);
+    } catch {}
+    const r = clientReport(body);
+    if (!r) return Response.json({ error: 'Send { name, message, stack, where, status?, version }, where a route template like #/chat/:id' }, { status: 400 });
+    if (!this.errorCap.take(ip)) return Response.json({ error: 'too many reports' }, { status: 429 });
+    reportError(r);
+    return new Response(null, { status: 204 });
   }
 
   private async api(req: Request, url: URL, path: string): Promise<Response> {
@@ -648,18 +819,43 @@ export class HubServer {
       if (attention && !attention.hasScores) await attention.firstScores;
       // Everything changed so far is in the journal, so the position below covers what this reads.
       this.flush();
-      const calendar = this.opts.calendar;
-      return ok({ ...s.bootstrap(), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), ...(this.opts.mail ? { mail: this.opts.mail.bootstrap() } : {}), requests: requestViews(s), ...(calendar ? { calendar: calendar.view() } : {}), sync: s.journal.position() } satisfies P.Bootstrap);
+      const calendar = this.opts.calendar?.link();
+      return ok({ ...s.bootstrap(), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), ...(this.opts.mail ? { mail: this.opts.mail.bootstrap() } : {}), requests: requestViews(s), ...(calendar ? { calendar: calendar.view() } : {}), ...(this.opts.notices ? { notices: this.opts.notices.boot() } : {}), sync: s.journal.position() } satisfies P.Bootstrap);
     }
     // Plans the calendar found in chats, from the hub's cache (calendar.ts): the chips under messages.
-    if (path === '/api/plans' && method === 'GET') return this.opts.calendar ? ok(this.opts.calendar.plansView() satisfies P.PlansView) : bad('calendar is off on this hub', 404);
+    if (path === '/api/plans' && method === 'GET') {
+      const link = this.opts.calendar?.link();
+      return link ? ok(link.plansView() satisfies P.PlansView) : bad('calendar is off on this hub', 404);
+    }
     if (path === '/api/sync' && method === 'POST') {
       const b = await body<P.SyncRequest>();
       this.flush();
       return ok(syncResponse({ store: s, attention: this.opts.attention, usage: this.usage, devices: this.opts.devices, mail: this.opts.mail, boot: this.boot }, b));
     }
+    // Calls ringing you and voice channels (callstate.ts, docs/calls.md "Ringing").
+    if (path.startsWith('/api/calls/') || path === '/api/voice') {
+      const r = await callRoute({ store: s, online: (a) => this.sup.online(a), command: (a, c, t) => this.sup.command(a, c, t), flush: () => this.flush() }, req, url, path);
+      if (r) return r;
+    }
+    // Voting in polls, making them and ending them early (polls.ts, docs/polls.md).
+    if (handlesPolls(path)) {
+      const r = await pollRoute({ store: s, online: (a) => this.sup.online(a), command: (a, c, t) => this.sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a), flush: () => this.flush() }, req, path);
+      if (r) return r;
+    }
     // Joining and adding, and requests (add.ts).
     if (path === '/api/add' || path.startsWith('/api/add/') || path.startsWith('/api/requests') || path === '/api/people' || /^\/api\/people\/[\w-]+\/remove$/.test(path)) return (await this.adding.route(req, url, path))!;
+    // An account's own self, block, ignore and notes (accountself.ts).
+    if (path.startsWith('/api/self/')) return (await this.self.route(req, url, path))!;
+    // Scheduled events, leaving, and what a space asks on joining (servers.ts).
+    if (Servers.handles(path)) return (await this.servers.route(req, url, path))!;
+    // Bots' buttons, selects, slash commands and forms (apps.ts).
+    if (Apps.handles(path)) return (await this.apps.route(req, url, path, () => this.flush()))!;
+    // Following threads, starting threads and posts, archiving, publishing, running a group (threads.ts).
+    if (Threads.handles(path)) return (await this.threads.route(req, url, path))!;
+    // Moderating members, others' messages and reactions, member labels (moderation.ts).
+    if (Moderation.handles(path)) return (await this.moderation.route(req, url, path))!;
+    // Send later, saved on the network, previews off (sendextras.ts, docs/sending.md).
+    if (SendExtras.handles(path)) return (await this.sendExtras.route(req, url, path))!;
     // Reply marks (replymarks.ts, docs/inbox.md "Marks"): on a message, its mail twin, and on an inbox row.
     if ((m = path.match(/^\/api\/(mail\/)?messages\/([\w-]+)\/reply-mark$/)) && method === 'POST') {
       const b = await body<{ mark?: unknown; surface?: unknown; device?: unknown }>();
@@ -694,6 +890,11 @@ export class HubServer {
       const r = this.marks.setRow(ids, b.mark as ReplyMark | null, o);
       this.flush();
       return ok({ mark: b.mark, marked: r.marked, kind: 'message' });
+    }
+    // Notices (notices/index.ts).
+    if (path === '/api/notices' || path.startsWith('/api/notices/')) {
+      const r = this.opts.notices ? await this.opts.notices.route(req, url) : null;
+      return r ?? bad(this.opts.notices ? 'no such notices route' : 'notices are off on this hub', 404);
     }
     // Mail (mail/routes.ts).
     if (path === '/api/mail' || path.startsWith('/api/mail/')) {
@@ -738,7 +939,7 @@ export class HubServer {
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/profile$/)) || (m = path.match(/^\/api\/identities\/([\w-]+)\/profile$/))) {
       const p = s.profile(path.startsWith('/api/persons/') ? { personId: m[1] } : { identityId: m[1] });
       const mail = p && mailPeople(this.opts.mail)?.profile(p.identityIds);
-      return p ? ok({ ...p, abouts: this.people.kept(p.identityIds), links: profileLinksOf(s.db, p.identityIds), ...(mail ? { mail } : {}) }) : bad('nobody by that id', 404);
+      return p ? ok({ ...p, abouts: this.people.kept(p.identityIds), links: profileLinksOf(s.db, p.identityIds), ...((i) => (i.length ? { ignored: i } : {}))(ignoredOf(s.db, p.identityIds)), ...(mail ? { mail } : {}) }) : bad('nobody by that id', 404);
     }
     // Their message count per server, estimated from what the hub holds (msgcount.ts, docs/profile.md).
     if ((m = path.match(/^\/api\/(persons|identities)\/([\w-]+)\/activity$/))) {
@@ -850,12 +1051,57 @@ export class HubServer {
     // What the network says about one identity (people.ts, docs/profile.md). ?fresh=1 asks even if a recent answer is kept.
     if ((m = path.match(/^\/api\/identities\/([\w-]+)\/about$/))) {
       if (!s.nativeOf('identity', m[1])) return bad('no such identity', 404);
-      // Your own bio, on a network whose adapter can change it (capability 'editProfile').
+      // Your own profile, on a network whose adapter can change it (capability 'editProfile'): the bio, and where it
+      // says so the name, emoji, picture (an upload id, or null) and username (null deletes it).
       if (method === 'PUT') {
-        const b = await body<{ bio?: unknown }>();
-        if (typeof b.bio !== 'string') return bad('bio: a string');
+        const b = await body<{ bio?: unknown; name?: unknown; emoji?: unknown; avatar?: unknown; username?: unknown; pronouns?: unknown; banner?: unknown; accent?: unknown }>();
+        const change: P.ProfileChange = {};
+        if (b.bio !== undefined) {
+          if (typeof b.bio !== 'string') return bad('bio: a string');
+          change.bio = b.bio;
+        }
+        if (b.name !== undefined) {
+          if (typeof b.name !== 'string' || !b.name.trim()) return bad('name: a name');
+          change.name = b.name.trim().slice(0, 200);
+        }
+        if (b.emoji !== undefined) {
+          if (typeof b.emoji !== 'string') return bad('emoji: an emoji, or "" for none');
+          change.emoji = b.emoji;
+        }
+        if (b.username !== undefined) {
+          if (b.username !== null && typeof b.username !== 'string') return bad('username: a name, or null to delete it');
+          change.username = b.username;
+        }
+        if (b.avatar !== undefined) {
+          if (b.avatar === null) change.avatar = null;
+          else {
+            const file = typeof b.avatar === 'string' ? this.uploads.get([b.avatar])?.[0] : undefined;
+            if (!file) return bad('avatar: an upload id, or null to remove the picture');
+            change.avatar = file;
+          }
+        }
+        // Pronouns, the banner and its colour (docs/account-self.md, Discord).
+        if (b.pronouns !== undefined) {
+          if (typeof b.pronouns !== 'string') return bad('pronouns: a string, or "" for none');
+          change.pronouns = b.pronouns.trim().slice(0, 200);
+        }
+        if (b.banner !== undefined) {
+          if (b.banner === null) change.banner = null;
+          else {
+            const file = typeof b.banner === 'string' ? this.uploads.get([b.banner])?.[0] : undefined;
+            if (!file) return bad('banner: an upload id, or null to remove it');
+            change.banner = file;
+          }
+        }
+        if (b.accent !== undefined) {
+          if (b.accent !== null && (typeof b.accent !== 'string' || !/^#[0-9a-f]{6}$/i.test(b.accent))) return bad('accent: a colour like #5865f2, or null');
+          change.accent = b.accent as string | null;
+        }
+        if (!Object.keys(change).length) return bad('bio, name, emoji, avatar, username, pronouns, banner or accent');
         try {
-          const v = await this.people.setBio(m[1], b.bio);
+          const v = await this.people.setOwn(m[1], change);
+          if (change.avatar) this.uploads.remove([b.avatar as string]);
+          if (change.banner) this.uploads.remove([b.banner as string]);
           this.flush();
           return ok(v);
         } catch (e) {
@@ -937,6 +1183,27 @@ export class HubServer {
       if (!(network in NETWORK_META)) return bad('no such network', 404);
       return ok(s.postActivity(network, m[2]));
     }
+    // Your safety number with someone: mark it verified ({ safetyNumber }) or clear that ({ clear: true }).
+    if ((m = path.match(/^\/api\/identities\/([\w-]+)\/verify$/)) && method === 'POST') {
+      try {
+        const v = await this.people.verify(m[1], await body<{ safetyNumber?: unknown; clear?: unknown }>());
+        this.flush();
+        return ok(v);
+      } catch (e) {
+        return bad((e as Error).message, (e as { status?: number }).status ?? 500);
+      }
+    }
+    // Block someone or a group, or ({ unblock: true }) unblock them, on the owner's click (capability 'block').
+    if ((m = path.match(/^\/api\/(identities|conversations)\/([\w-]+)\/block$/)) && method === 'POST') {
+      const b = await body<{ unblock?: unknown }>();
+      try {
+        const v = m[1] === 'identities' ? await this.people.block(m[2], b.unblock === true) : await this.people.blockConversation(m[2], b.unblock === true);
+        this.flush();
+        return ok(v);
+      } catch (e) {
+        return bad((e as Error).message, (e as { status?: number }).status ?? 500);
+      }
+    }
     if ((m = path.match(/^\/api\/identities\/([\w-]+)\/person$/)) && method === 'POST') {
       if (!s.nativeOf('identity', m[1])) return bad('no such identity', 404);
       const personId = s.ensurePerson(m[1]);
@@ -967,14 +1234,8 @@ export class HubServer {
       }
       if (m[2] === '/messages' && method === 'POST') {
         const b = await body<SendBody & { route?: { conversationId?: string; accountId?: string } }>();
-        const routes = chatRoutes(s, ref);
-        // Said by the sender; else a reply goes where the message it answers is; else the chat's route.
-        const asked = b.route ? routes.find((r) => r.conversationId === b.route!.conversationId && (!b.route!.accountId || r.accountId === b.route!.accountId)) : undefined;
-        if (b.route && !asked) return bad('that is not a route of this chat', 409);
-        const replied = !asked && b.replyTo ? s.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', b.replyTo) : null;
-        const replyRoute = replied ? routes.find((r) => r.conversationId === replied.conversation_id) : undefined;
-        const r = asked ?? replyRoute ?? defaultRoute(s, id, routes);
-        if (!r) return bad('nowhere to send this', 409);
+        const r = this.chatRoute(id, b);
+        if (typeof r === 'string') return bad(r, 409);
         const { route: _, ...rest } = b;
         return this.sendOnce(r.conversationId, { ...rest, accountId: r.accountId });
       }
@@ -988,13 +1249,39 @@ export class HubServer {
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/timeline$/))) return ok(s.personTimeline(m[1], parseCursor(url.searchParams.get('before')), Math.min(num('limit') ?? 60, 200)));
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/notify$/))) return ok(this.triage.effectiveLevel(m[1]));
+    // Muting a place on its network itself, with a timer (nativemute.ts, docs/notifications.md "Muted on the network").
+    if ((m = path.match(/^\/api\/(conversations|spaces)\/([\w-]+)\/native-mute$/)) && method === 'POST') {
+      // A click on the hub's own page: a browser sends Origin, and the server has refused any other site's.
+      if (!req.headers.get('origin')) return bad('Muting on the network is done from the app itself', 403);
+      try {
+        const v = await setNativeMute(s, this.sup, m[1] === 'spaces' ? 'space' : 'conversation', m[2], await body<{ muted?: unknown; minutes?: unknown }>());
+        this.flush();
+        return ok(v);
+      } catch (e) {
+        if (e instanceof AboutError) return bad(e.message, e.status);
+        throw e;
+      }
+    }
     // About and settings (about.ts, docs/group-settings.md). GET reads, POST changes one thing.
     if ((m = path.match(/^\/api\/(conversations|spaces)\/([\w-]+)\/about$/))) {
       const kind = m[1] === 'spaces' ? 'space' : 'conversation';
       try {
         if (method === 'POST') {
           const b = await body<{ change?: P.AboutChange; accountId?: string }>();
-          const v = await this.abouts.configure(kind, m[2], b.change as P.AboutChange, b.accountId);
+          // A new picture comes as an upload id (/api/uploads); the adapter gets the file as a file:// URL.
+          let upload: string | null = null;
+          let change = b.change as P.AboutChange;
+          if (change?.key === 'avatar') {
+            if (!req.headers.get('origin')) return bad('The picture is changed from the app itself', 403);
+            upload = typeof change.value === 'string' ? change.value : null;
+            const file = upload ? this.uploads.get([upload])?.[0] : undefined;
+            if (!file) return bad('avatar: an upload id');
+            if (!P_PICTURE_TYPES.includes(file.mime)) return bad('A picture is a PNG, JPEG, GIF or WebP image', 415);
+            if (file.size > P_PICTURE_MAX) return bad(`A picture is at most ${P_PICTURE_MAX / 1024 / 1024} MB`, 413);
+            change = { key: 'avatar', value: pathToFileURL(file.path).href };
+          }
+          const v = await this.abouts.configure(kind, m[2], change, b.accountId);
+          if (upload) this.uploads.remove([upload]);
           this.flush();
           return ok(v);
         }
@@ -1059,6 +1346,47 @@ export class HubServer {
         if (e instanceof AboutError) return bad(e.message, e.status);
         throw e;
       }
+    }
+    // Stickers to send and stories (media.ts, docs/media-kinds.md).
+    if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/stickers$/)) && method === 'GET') {
+      try {
+        return ok(await this.kinds.stickers(m[1], url.searchParams.get('account') ?? undefined, url.searchParams.get('cursor') ?? undefined));
+      } catch (e) {
+        if (e instanceof MediaError) return bad(e.message, e.status);
+        return bad(`The network did not list stickers: ${(e as Error).message}`, 502);
+      }
+    }
+    if ((m = path.match(/^\/api\/accounts\/([\w-]+)\/stickers$/)) && method === 'POST') {
+      // From the app itself, on the owner's click: installing a pack changes the account.
+      if (!req.headers.get('origin')) return bad('Sticker packs are installed from the app itself', 403);
+      const b = await body<{ uri?: string }>();
+      if (typeof b.uri !== 'string' || !b.uri.trim()) return bad('Which pack? Paste its link.');
+      try {
+        return ok({ pack: await this.kinds.install(m[1], b.uri.trim().slice(0, 300)) });
+      } catch (e) {
+        if (e instanceof MediaError) return bad(e.message, e.status);
+        return bad(`The network did not install it: ${(e as Error).message}`, 502);
+      }
+    }
+    if (path === '/api/stories' && method === 'GET') {
+      const identityId = url.searchParams.get('identity') ?? undefined;
+      const conversationId = url.searchParams.get('conversation') ?? undefined;
+      if (!identityId && !conversationId) return bad('whose stories?');
+      return ok(this.kinds.stories({ identityId, conversationId }));
+    }
+    if ((m = path.match(/^\/api\/stories\/([\w-]+)\/(viewed|reply)$/)) && method === 'POST') {
+      try {
+        if (m[2] === 'viewed') return ok(this.kinds.viewed(m[1]));
+        return ok(await this.kinds.reply(m[1], await body<{ body?: string; emoji?: string }>()));
+      } catch (e) {
+        if (e instanceof MediaError) return bad(e.message, e.status);
+        return bad(`The network refused it: ${(e as Error).message}`, 502);
+      }
+    }
+    // The composer's @ picker (mentions.ts, docs/mentions.md): who this conversation can ping.
+    if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/mentionables$/)) && method === 'GET') {
+      const v = await mentionables({ store: s, online: (a) => this.sup.online(a), command: (a, c, t) => this.sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a) }, m[1], url.searchParams);
+      return v ? ok(v) : bad('no such conversation', 404);
     }
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/reaction-context$/))) {
       const conv = s.nativeOf('conversation', m[1]);
@@ -1247,6 +1575,13 @@ export class HubServer {
       const r = await this.sup.command(accountId, { t: 'history', conversation: conv.nativeId, beforeTs: b.beforeTs, limit: b.limit ?? 50 }, 60_000).catch((e) => ({ error: String(e.message) }));
       return ok(r ?? { count: 0, done: true });
     }
+    // Mark Unread from a message on (unread.ts): here at once, and on each network that can.
+    if ((m = path.match(/^\/api\/messages\/([\w-]+)\/unread$/)) && method === 'POST') {
+      const r = markUnreadFrom(s, this.sup, m[1]);
+      if (!r) return bad('no such message', 404);
+      this.flush();
+      return ok(r);
+    }
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/react$/)) && method === 'POST') {
       const b = await body<{ key: string; remove?: boolean; style?: P.ReactionStyle; accountId?: string }>();
       if (!b.key) return bad('nothing to react with');
@@ -1296,7 +1631,8 @@ export class HubServer {
       if (!(JSON.parse(acc.capabilities) as P.Capability[]).includes(edit ? 'edit' : 'redact')) return bad(`${NETWORK_META[acc.network].name} does not support this here`, 409);
       if (!this.sup.online(acc.id)) return bad(`${acc.label} is not connected`, 409);
       const conversation = s.nativeOf('conversation', msg.conversation_id)!.nativeId;
-      await this.sup.command(acc.id, edit ? { t: 'edit', conversation, message: msg.native_id, body: b.body! } : { t: 'redact', conversation, message: msg.native_id });
+      const text = edit ? lowerForSend(s, msg.conversation_id, JSON.parse(acc.capabilities), b.body!) : '';
+      await this.sup.command(acc.id, edit ? { t: 'edit', conversation, message: msg.native_id, body: text } : { t: 'redact', conversation, message: msg.native_id });
       this.flush();
       return ok();
     }
@@ -1366,6 +1702,8 @@ export class HubServer {
       const b = await body<{ name?: unknown; note?: unknown }>();
       if (b.name !== undefined) return bad(NICKNAME_MOVED);
       s.updatePerson(m[1], { ...(typeof b.note === 'string' ? { note: b.note } : {}) });
+      // Kept on their networks too, where an account keeps notes (capability 'contactNotes').
+      if (typeof b.note === 'string') this.people.pushPersonNote(m[1], b.note);
       this.flush();
       return ok();
     }
@@ -1375,6 +1713,8 @@ export class HubServer {
       if (b.nickname !== null && typeof b.nickname !== 'string') return bad('Say nickname: a name, or null to take it away');
       if (s.isSelf(m[1])) return bad('your own accounts go by the names you gave them on their networks');
       if (!s.setIdentityNickname(m[1], b.nickname ? b.nickname.trim().slice(0, 200) : null)) return bad('no such identity', 404);
+      // Kept on their network too, where the account keeps nicknames (capability 'contactNotes').
+      this.people.pushContactNotes(m[1], { nickname: b.nickname ? b.nickname.trim().slice(0, 200) : '' });
       this.flush();
       return ok({ identity: s.identitiesByIds([m[1]])[0] });
     }
@@ -1588,6 +1928,13 @@ export class HubServer {
       const b = await body<{ accountId?: string; stop?: boolean }>();
       return ok(this.typing(m[1], b.accountId, !!b.stop));
     }
+    if ((m = path.match(/^\/api\/messages\/([\w-]+)\/viewed$/)) && method === 'POST') return ok(this.viewed(m[1]));
+    if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/reset-session$/)) && method === 'POST') {
+      const b = await body<{ accountId?: string }>();
+      const r = await this.resetSession(m[1], b.accountId);
+      this.flush();
+      return 'error' in r ? bad(r.error, r.status) : ok(r);
+    }
     if (path === '/api/quiet-hours') {
       if (method === 'PUT') {
         const b = await body<Partial<P.QuietHours>>();
@@ -1637,9 +1984,21 @@ export class HubServer {
       if (!NETWORKS.includes(b.network)) return bad('unknown network');
       if (b.adapter !== undefined && !validAdapterName(b.adapter)) return bad('unknown adapter');
       if (s.accounts().some((a) => a.demo)) return bad('This is a demo hub. Real accounts go on a hub with its own data dir, started without --demo.');
+      // A calendar (docs/calendar.md): one, at an http(s) address; the hub runs its link itself.
+      if (b.network === 'calendar') {
+        if (!this.opts.calendar) return bad('This hub has no calendar accounts', 409);
+        if (s.accounts().some((a) => a.network === 'calendar')) return bad('There is a calendar account already. Remove it first to use another calendar.', 409);
+        const given = (b.config as { url?: unknown } | null)?.url;
+        const url = given === undefined || given === '' ? CALENDAR_URL_DEFAULT : calendarAccountUrl(b.config);
+        if (!url) return bad("The calendar's address is an http(s) URL, like http://127.0.0.1:8470");
+        b.config = { url };
+        b.adapter = 'calendar';
+      }
       const used = new Set(s.accounts().map((a) => a.color));
       const color = b.color ?? ACCOUNT_COLORS.find((c) => !used.has(c)) ?? ACCOUNT_COLORS[0];
       const acc = s.createAccount({ network: b.network, label: b.label?.trim() || NETWORK_META[b.network].name, color, adapter: b.adapter ?? b.network, config: b.config });
+      // Added by hand: the first start's seed never adds one again (calendar-account.ts).
+      if (b.network === 'calendar') markCalendarAdded(s);
       if (this.sup.created) {
         try {
           await this.sup.created(acc, b.secret ?? {});
@@ -1653,6 +2012,7 @@ export class HubServer {
         this.sup.writeSecret(acc.id, b.secret ?? {});
         this.sup.start(acc.id);
       }
+      this.opts.calendar?.sync();
       return ok(s.accountView(acc));
     }
     if ((m = path.match(/^\/api\/accounts\/([\w-]+)$/))) {
@@ -1663,6 +2023,7 @@ export class HubServer {
         // ?purge=1: dither-accounts deletes the session's directory too, if it made it.
         await this.sup.forget?.(acc.id, url.searchParams.get('purge') === '1');
         s.deleteAccount(acc.id);
+        this.opts.calendar?.sync();
         this.flush();
         return ok();
       }
@@ -1678,6 +2039,7 @@ export class HubServer {
           await this.sup.stop(acc.id);
           s.updateAccount(acc.id, { status: 'disabled' });
         } else if (b.enabled === true) this.sup.start(acc.id);
+        if (b.enabled !== undefined) this.opts.calendar?.sync();
         return ok();
       }
     }
@@ -1696,6 +2058,23 @@ export class HubServer {
       return new Response(text, { headers: { 'content-type': 'text/plain; charset=utf-8', ...SAFE_HEADERS } });
     }
     return bad('not found', 404);
+  }
+
+  /**
+   * Where a send in a chat goes: the route the sender said; else a reply goes where the message it answers is; else
+   * the chat's route. An error sentence when there is none.
+   */
+  private chatRoute(chatId: string, b: { route?: { conversationId?: string; accountId?: string }; replyTo?: string }): { conversationId: string; accountId: string } | string {
+    const s = this.store;
+    const ref = chatRef(s, chatId);
+    if (!ref) return 'no such chat';
+    const routes = chatRoutes(s, ref);
+    const asked = b.route ? routes.find((r) => r.conversationId === b.route!.conversationId && (!b.route!.accountId || r.accountId === b.route!.accountId)) : undefined;
+    if (b.route && !asked) return 'that is not a route of this chat';
+    const replied = !asked && b.replyTo ? s.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', b.replyTo) : null;
+    const replyRoute = replied ? routes.find((r) => r.conversationId === replied.conversation_id) : undefined;
+    const r = asked ?? replyRoute ?? defaultRoute(s, chatIdOf(ref), routes);
+    return r ? { conversationId: r.conversationId, accountId: r.accountId } : 'nowhere to send this';
   }
 
   /** Read up to a time, here and on the network through each account in it. */
@@ -1742,7 +2121,8 @@ export class HubServer {
     const ok = (x: unknown) => Response.json(x);
     const bad = (msg: string, status = 400) => Response.json({ error: msg }, { status });
     const ids = b.attachments ?? [];
-    if (!b.body?.trim() && !ids.length) return bad('empty message');
+    const sticker = typeof b.sticker === 'string' && b.sticker ? b.sticker.slice(0, 128) : undefined;
+    if (!b.body?.trim() && !ids.length && !sticker) return bad('empty message');
     const conv = s.nativeOf('conversation', conversationId);
     if (!conv) return bad('no such conversation', 404);
     const accountId = this.pickAccount(conversationId, b.accountId);
@@ -1750,17 +2130,39 @@ export class HubServer {
     const refused = this.sendRefusal(conversationId, accountId);
     if (refused) return bad(refused, 409);
     const replyTo = b.replyTo ? s.nativeOf('message', b.replyTo)?.nativeId : undefined;
-    const files = this.uploads.get(ids);
+    let files = this.uploads.get(ids);
     if (!files) return bad('that upload has expired, attach the file again', 410);
+    const acc = s.account(accountId)!;
+    const accCaps = JSON.parse(acc.capabilities) as P.Capability[];
+    const name = NETWORK_META[conv.network].name;
     if (files.length) {
-      const acc = s.account(accountId)!;
       const limit = ATTACHMENT_LIMITS[conv.network];
-      const name = NETWORK_META[conv.network].name;
-      if (!(JSON.parse(acc.capabilities) as P.Capability[]).includes('sendMedia')) return bad(`${acc.label} cannot send files on ${name}`, 409);
+      if (!accCaps.includes('sendMedia')) return bad(`${acc.label} cannot send files on ${name}`, 409);
       if (files.length > limit.files) return bad(`${name} takes ${limit.files} files at a time`, 413);
       if (files.some((f) => f.size > limit.bytes)) return bad(`${name} takes files up to ${limit.bytes / 1024 / 1024} MB`, 413);
     }
-    const result = await this.sup.command(accountId, { t: 'send', conversation: conv.nativeId, body: b.body ?? '', replyTo, ...(files.length ? { attachments: files } : {}) }, files.length ? 180_000 : undefined);
+    // Asked for, but not something this account does: refused rather than sent with a ping or a sound after all.
+    const can = accCaps;
+    if (b.silent === true && !can.includes('silentSend')) return bad(`${acc.label} cannot send silently on ${name}`, 409);
+    const noPing = b.mentionReplied === false && !!replyTo;
+    if (noPing && !can.includes('replyMention')) return bad(`${acc.label} cannot reply without a ping on ${name}`, 409);
+    const extras = { ...(b.silent === true ? { silent: true } : {}), ...(noPing ? { mentionReplied: false } : {}) };
+    const media = sendMediaProblem({ sticker, files: files.length, voice: b.voice, viewOnce: b.viewOnce === true }, accCaps, `${acc.label} on ${name}`);
+    if (media.error) return bad(media.error, 409);
+    if (media.voice) files = files.map((f, i) => (i === 0 ? { ...f, voice: media.voice } : f));
+    // Person and identity references become the network's mentions or plain names (mentionrefs.ts).
+    const text = lowerForSend(s, conversationId, accCaps, b.body ?? '');
+    const preview = files.length || sticker ? null : await this.linkPreview(accountId, text);
+    let result: unknown;
+    try {
+      result = await this.sup.command(
+        accountId,
+        { t: 'send', conversation: conv.nativeId, body: text, replyTo, ...(files.length ? { attachments: files } : {}), ...(preview ? { preview } : {}), ...(sticker ? { sticker } : {}), ...(media.viewOnce ? { viewOnce: true } : {}), ...extras },
+        files.length ? 180_000 : undefined,
+      );
+    } finally {
+      if (preview?.image) rmSync(preview.image, { force: true });
+    }
     this.uploads.remove(ids);
     // Message ids are derived from the network's, so this is the message's id whether or not it is stored yet.
     const native = (result as { nativeId?: unknown } | undefined)?.nativeId;
@@ -1790,6 +2192,61 @@ export class HubServer {
     if (!this.typingGate.allow(accountId, conversationId, stop)) return { sent: false, why: 'throttled' };
     this.sup.command(accountId, { t: 'typing', conversation: conv.nativeId, ...(stop ? { stop: true } : {}) }, 15_000).catch(() => {});
     return { sent: true, accountId };
+  }
+
+  /**
+   * A preview of the first link in what you send (unfurl.ts), for an account that sends previews (capability
+   * 'linkPreviews': on Signal, while your phone's link-preview setting is on). Null otherwise, or when the page gives none.
+   */
+  private async linkPreview(accountId: string, body: string): Promise<P.LinkPreviewOut | null> {
+    const acc = this.store.account(accountId);
+    if (!acc || !(JSON.parse(acc.capabilities) as P.Capability[]).includes('linkPreviews')) return null;
+    const url = firstLink(body);
+    if (!url) return null;
+    const dir = join(this.opts.dataDir, 'previews');
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    return unfurl(url, dir, crypto.randomUUID()).catch(() => null);
+  }
+
+  /**
+   * You played a voice note or opened a video in someone's message: tell them, through the account that saw it, where its
+   * network has viewed receipts (capability 'viewed'; docs/messages.md). Best effort, once per message, never waited
+   * for; the adapter keeps its network's rules (Signal: read receipts on, not in a message request).
+   */
+  viewed(messageId: string): { sent: boolean; why?: string } {
+    const s = this.store;
+    const row = s.db.query('SELECT conversation_id, native_id, author_id FROM message WHERE id = ?').get(messageId) as { conversation_id: string; native_id: string; author_id: string | null } | null;
+    if (!row) return { sent: false, why: 'no such message' };
+    if (s.isSelf(row.author_id)) return { sent: false, why: 'your own' };
+    if (this.viewedSent.has(messageId)) return { sent: false, why: 'already' };
+    if (requestHeld(s.db, row.conversation_id)) return { sent: false, why: 'a message request' };
+    const conv = s.nativeOf('conversation', row.conversation_id);
+    const accountId = conv && this.pickAccount(row.conversation_id);
+    if (!conv || !accountId || !this.sup.online(accountId)) return { sent: false, why: 'no connected account' };
+    if (!(JSON.parse(s.account(accountId)!.capabilities) as P.Capability[]).includes('viewed')) return { sent: false, why: 'not on this network' };
+    this.viewedSent.add(messageId);
+    if (this.viewedSent.size > 5000) this.viewedSent.delete(this.viewedSent.values().next().value!);
+    this.sup.command(accountId, { t: 'viewed', conversation: conv.nativeId, message: row.native_id }, 30_000).catch(() => {});
+    return { sent: true };
+  }
+
+  /** Reset the encrypted session in a direct conversation (capability 'resetSession'): its About's "Reset secure session". */
+  async resetSession(conversationId: string, requested?: string): Promise<{ ok: true } | { error: string; status: number }> {
+    const s = this.store;
+    const c = s.conversationView(conversationId);
+    const conv = s.nativeOf('conversation', conversationId);
+    if (!c || !conv) return { error: 'no such conversation', status: 404 };
+    if (c.shape !== 'direct') return { error: 'Only a conversation with one person has a secure session to reset', status: 400 };
+    if (requestHeld(s.db, conversationId)) return { error: 'Accept the message request first', status: 409 };
+    const accountId = this.pickAccount(conversationId, requested);
+    if (!accountId || !this.sup.online(accountId)) return { error: 'no connected account can do that here', status: 409 };
+    if (!(JSON.parse(s.account(accountId)!.capabilities) as P.Capability[]).includes('resetSession')) return { error: `Resetting the session is not built for ${NETWORK_META[conv.network].name}`, status: 409 };
+    try {
+      await this.sup.command(accountId, { t: 'resetSession', conversation: conv.nativeId }, 60_000);
+      return { ok: true };
+    } catch (e) {
+      return { error: `The network refused it: ${(e as Error).message}`, status: 502 };
+    }
   }
 
   private sendRefusal(conversationId: string, accountId: string | null): string | null {

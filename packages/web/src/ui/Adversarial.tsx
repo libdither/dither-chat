@@ -20,7 +20,7 @@ const KINDS: Kind[] = [
 ];
 
 /** Each switch, and where what it keeps shows (docs/history.md, "Where it shows"). */
-const SWITCHES: { key: 'deleted' | 'disappearing' | 'statuses' | 'presence' | 'members'; label: string; help: string; where: string }[] = [
+const SWITCHES: { key: 'deleted' | 'disappearing' | 'statuses' | 'presence' | 'members' | 'voice'; label: string; help: string; where: string }[] = [
   {
     key: 'deleted',
     label: 'Keep deleted messages',
@@ -51,6 +51,12 @@ const SWITCHES: { key: 'deleted' | 'disappearing' | 'statuses' | 'presence' | 'm
     label: 'Record server members (passive)',
     help: "Who your accounts' clients have seen in each server: message authors and the member list as it loads anyway, never a walk of the whole list.",
     where: "a server's About (seen N of M), and In common on a profile",
+  },
+  {
+    key: 'voice',
+    label: 'Record who is in voice channels (passive)',
+    help: "Who is in each server voice channel when you are not, as your accounts' clients are told anyway, and each time someone joins or leaves one. Nothing of it is kept while this is off.",
+    where: "a voice channel's row and its page",
   },
 ];
 
@@ -101,7 +107,7 @@ export function AdversarialSettings() {
           <p class="set-help">These work against what other people expect of the networks. Hiding them keeps each switch as it is and what was kept out of sight; turning a switch off is asked first. Nothing kept is lost unless you forget it under Message history.</p>
           {SWITCHES.map((x) => (
             <label class="toggle-row">
-              <input type="checkbox" checked={r[x.key]} onChange={(e) => set(x.key, (e.target as HTMLInputElement).checked)} />
+              <input type="checkbox" checked={!!r[x.key]} onChange={(e) => set(x.key, (e.target as HTMLInputElement).checked)} />
               <span>
                 <b>{x.label}</b>
                 <small>{x.help}</small>
@@ -185,6 +191,10 @@ function Warning({ onClose, onYes }: { onClose: () => void; onYes: () => void })
             <li>
               <b>Server members.</b> A record of who is in which server, kept as your client sees them, puts together who knows whom and who goes where.
               People join a server to be in it, not to be listed by its members.
+            </li>
+            <li>
+              <b>Voice channels.</b> A record of who sat in which voice channel, and when, says who spends their evenings with whom. People join a
+              voice channel to talk, not to be logged.
             </li>
           </ul>
           <p>

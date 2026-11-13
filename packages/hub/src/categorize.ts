@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { randomId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
 import type { Store } from './store.ts';
+import { jobFailed } from './errors.ts';
 
 type Row = Record<string, any>;
 
@@ -252,6 +253,7 @@ export class Categorizer {
           scores = await many(part.map((t) => t.input), questions);
         } catch (e) {
           console.warn(`categorize: ${provider.id} failed on ${part.length} places, using keywords: ${(e as Error).message}`);
+          jobFailed('categorize', e, { provider: provider.id });
           provider = this.fallback;
           scores = await Promise.all(part.map((t) => this.fallback.score(t.input, questions)));
         }
@@ -267,6 +269,7 @@ export class Categorizer {
         scores = await provider.score(input, questions);
       } catch (e) {
         console.warn(`categorize: ${provider.id} failed on one place, using keywords: ${(e as Error).message}`);
+        jobFailed('categorize', e, { provider: provider.id });
         provider = this.fallback;
         scores = await provider.score(input, questions);
       }
@@ -288,6 +291,7 @@ export class Categorizer {
       scores = provider.scoreMany ? await provider.scoreMany(inputs, [q]) : await Promise.all(inputs.map((i) => provider.score(i, [q])));
     } catch (e) {
       console.warn(`categorize: ${provider.id} failed on a probe, using keywords: ${(e as Error).message}`);
+      jobFailed('categorize: probe', e, { provider: provider.id });
       provider = this.fallback;
       scores = await Promise.all(inputs.map((i) => this.fallback.score(i, [q])));
     }

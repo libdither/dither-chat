@@ -9,16 +9,23 @@
  * first seed and stored in the account config.
  */
 
+import { DEMO_MEDIA_CAPS, DemoMedia } from './demomedia.ts';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { ABOUT_LABEL as P_ABOUT_LABEL, BIO_LIMIT as P_BIO_LIMIT, NETWORK_META } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
+import { DEMO_SELF_CAPS, DemoSelf } from './demoself.ts';
 import type { InprocAdapter } from './supervisor.ts';
 import { DEMO_X_ACCOUNT, DemoX } from './demo-x.ts';
 import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
+import { DEMO_SERVER_CAPS, DemoServers } from './demoservers.ts';
+import { DEMO_APP_CAPS, DemoApps } from './demoapps.ts';
+import { DEMO_THREAD_CAPS, DemoThreads } from './demothreads.ts';
+import { DEMO_MOD_CAPS, DemoModeration } from './demomod.ts';
+import { DEMO_SEND_CAPS, DemoSending } from './demosending.ts';
 
 type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa' | 'tg';
 
@@ -1233,6 +1240,14 @@ const ADMIN_IN: Record<AccKey, string[]> = {
   wa: [wgroup('books')],
   tg: [],
 };
+/** A Discord server's roles that may be pinged (docs/mentions.md): the mentionable ones, as its @ list offers them. */
+const DEMO_ROLES: Record<string, P.MentionableRole[]> = {
+  [g.dither]: [
+    { id: snow('role-core'), name: 'core', color: '#e67e22' },
+    { id: snow('role-reviewers'), name: 'reviewers', color: '#3498db' },
+  ],
+  [g.rust]: [{ id: snow('role-helpers'), name: 'Helpers', color: '#2ecc71' }],
+};
 /** Matrix: your power level where it is not 100 or 0. */
 const MX_LEVEL: Record<string, number> = { [room('libdither-mx', 'matrix.org')]: 50 };
 /** Settings that differ from each network's defaults. */
@@ -1380,6 +1395,8 @@ const px = {
   dot: did('px-dot', 'dotmatrix', 'dot matrix'),
 };
 const gp = { pixel: snow('g-pixel'), speed: snow('g-speed') };
+/** The server the demo joins from an invite, which then asks for its rules and onboarding (demoservers.ts). */
+export const DEMO_PIXEL_GUILD = gp.pixel;
 const gdev = mid('@gamedev-bot:matrix.org', 'gamedev bot', { isBot: true });
 const tgx = { film: tid('film-admin', 'filmswap_admin', 'Film Swap admin', false), news: tid('news', 'dithernews_bot', 'Dither News', false) };
 const hoa = W.hoa;
@@ -1498,6 +1515,10 @@ const EXPIRED = new Set(['oldparty', 'Expired2025xyz', 'OldSwapGroup2025']);
 
 /** Networks whose demo accounts keep a list of who they stand with (capabilities 'relationships' and 'disconnect'). */
 const LISTED = new Set<P.Network>(['discord', 'telegram']);
+/** Signal's demo account: safety numbers, blocking and nicknames kept on the network (net-gaps), as its adapter does. */
+const SIGNAL_PEOPLE: P.Capability[] = ['safetyNumbers', 'block', 'contactNotes'];
+const DEMO_VERIFIED = new Set<string>();
+const DEMO_USERNAME = new Map<string, { name: string; link: string }>();
 
 /** How the demo accounts stand with people from the start, over the contacts in their pools. */
 const DEMO_LINKS: Partial<Record<AccKey, Record<string, P.LinkRelationship>>> = {
@@ -1826,6 +1847,19 @@ class DemoAdapter implements InprocAdapter {
   private readLog: { conversation: string; upTo: string; at: number }[] = [];
   private self: P.IdentityFact;
   private adds!: DemoAdd;
+  private media!: DemoMedia;
+  /** The account's own self (demoself.ts): Discord's demo accounts only. */
+  private selfDemo: DemoSelf | null = null;
+  /** Discord servers beyond their channels: events, leaving, gates, nicknames, invite links (demoservers.ts). */
+  private servers: DemoServers | null = null;
+  /** The demo's bot: its controls, commands and forms (demoapps.ts). */
+  private apps: DemoApps | null = null;
+  /** Discord threads, forums and group DMs beyond messages (demothreads.ts). */
+  private threadsDemo: DemoThreads | null = null;
+  /** Moderating, member labels and leaving a Signal group (demomod.ts). */
+  private mod: DemoModeration | null = null;
+  /** Silent sends, previews off, saved messages and the network's scheduled ones (demosending.ts). */
+  private sending: DemoSending | null = null;
   /** Capabilities a verify script took away (action 'capabilities'), to see the page without them. */
   private without = new Set<P.Capability>();
   private network: P.Network;
@@ -1897,6 +1931,17 @@ class DemoAdapter implements InprocAdapter {
 
   /** The same answers real adapters give, by each network's own rules. */
   /** What each network's profile shows for someone (docs/profile.md), as its adapter would say it. */
+  /** What Signal's adapter adds to a profile: your editable fields and username, or their safety number. */
+  private signalExtras(p: P.PersonAbout, who: string): P.PersonAbout {
+    if (this.network !== 'signal') return p;
+    if (who === this.self.nativeId) {
+      const u = DEMO_USERNAME.get(who);
+      return { ...p, editable: ['bio', 'name', 'emoji', 'avatar', 'username'], ...(u ? { username: u } : {}) };
+    }
+    const digits = demoSafety(who);
+    return { ...p, safety: { digits, scannable: btoa(digits.slice(0, 32)), trust: DEMO_VERIFIED.has(who) ? 'verified' : 'unverified' } };
+  }
+
   private profile(who: string): P.PersonAbout {
     const pool = POOLS[this.network] ?? M;
     const key = (Object.entries(pool) as [string, P.IdentityFact][]).find(([, i]) => i.nativeId === who)?.[0];
@@ -1944,6 +1989,36 @@ class DemoAdapter implements InprocAdapter {
     // Telegram says whether they are in your contacts.
     const tg = this.network === 'telegram' && !me ? { relationship: this.adds.relationship(who) ?? (me_?.contact ? 'contact' : 'stranger') } : {};
     return { ...(key === 'kai' ? { pronouns: 'they/them', facts: [{ label: 'Local time', value: 'Europe/Berlin' }] } : {}), ...tg };
+  }
+
+  /** Discord's servers beyond their channels (demoservers.ts): events now, and what their About adds. */
+  private startServers(epoch: number) {
+    const guilds = () => SPACES.filter((x) => x.acc.includes(this.key) && x.fact.kind === 'community').map((x) => x.fact.nativeId);
+    this.servers = new DemoServers(
+      {
+        key: this.key,
+        selfId: this.self.nativeId,
+        emit: (ev) => this.emit(ev),
+        guilds,
+        admin: (guild) => ADMIN_IN[this.key].includes(guild),
+        childrenOf: (guild) => {
+          const spaces = SPACES.filter((x) => x.acc.includes(this.key) && x.fact.parents?.some((p) => p.nativeId === guild)).map((x) => x.fact.nativeId);
+          const under = new Set([guild, ...spaces]);
+          return { spaces, convs: CONVS.filter((c) => c.acc.includes(this.key) && c.fact.spaces?.some((sp) => under.has(sp.nativeId))).map((c) => c.fact.nativeId) };
+        },
+      },
+      { rust: g.rust, dither: g.dither, hk: g.hk, pixel: gp.pixel, rustVoice: ch('rust-voice-general'), ditherVoice: ch('dither-hangout'), lev: D.lev.nativeId },
+      epoch,
+    );
+    this.servers.announce();
+  }
+
+  private threadAbout(target: P.AboutTarget, about: P.About): P.About {
+    return this.threadsDemo ? this.threadsDemo.about(target, about) : about;
+  }
+
+  private serverAbout(target: P.AboutTarget, about: P.About): P.About {
+    return this.servers ? this.servers.about(target, about, this.findSpace(target.nativeId)?.fact.kind === 'community') : about;
   }
 
   private about(target: P.AboutTarget): P.About {
@@ -2035,7 +2110,8 @@ class DemoAdapter implements InprocAdapter {
       if (shape === 'direct' || shape === 'self') {
         set('disappearing', true);
         set('encrypted', false, `Always on in ${NETWORK_META_NAME[net]}.`);
-        return { noun, fields, members: { list: members, complete: true }, rules: [{ what: 'Change disappearing messages', who: shape === 'self' ? 'You' : 'Either of you', you: true }] };
+        // Signal keeps no pinned list a linked device reads: the hub adds the pins it saw (docs/polls.md).
+        return { noun, fields, members: { list: members, complete: true }, rules: [{ what: 'Change disappearing messages', who: shape === 'self' ? 'You' : 'Either of you', you: true }], ...(wa ? {} : { pinned: { messages: [], canEdit: true } }) };
       }
       const info = admin || v.editInfo === 'everyone';
       const onlyAdmins = 'Only admins can change this.';
@@ -2071,6 +2147,7 @@ class DemoAdapter implements InprocAdapter {
         you: { role: admin ? 'Admin' : 'Member', rank: admin ? 100 : 0 },
         invite: { link: admin ? place.invite : wa ? null : place.invite, canCreate: admin, canRevoke: admin && !!place.invite, ...(admin ? {} : { reason: 'Only admins can change the invite link.' }) },
         ...(wa && conv ? { facts: [{ label: 'Created', value: '2024-03-02' }] } : []),
+        ...(wa || !conv ? {} : { pinned: { messages: [], canEdit: admin || !v.announceOnly, ...(admin || !v.announceOnly ? {} : { reason: 'Only admins can send messages here.' }) } }),
       };
     }
     // Matrix: power levels.
@@ -2114,6 +2191,31 @@ class DemoAdapter implements InprocAdapter {
     };
   }
 
+  /**
+   * Polls as the network would answer: a vote comes back as Signal's whole vote (its voters shown) or Discord's counts
+   * moved by one; a poll made is a message with extra.poll; ending one closes it (docs/polls.md).
+   */
+  private pollSeq = new Map<string, number>();
+  private poll(cmd: Extract<P.AdapterCommand, { t: 'pollVote' | 'pollCreate' | 'pollEnd' }>): unknown {
+    if (cmd.t === 'pollCreate') {
+      const nativeId = `${cmd.conversation}~poll-${Date.now()}`;
+      const options = cmd.poll.options.map((text, i) => ({ id: this.network === 'signal' ? String(i) : String(i + 1), text }));
+      const poll: P.PollFact = { question: cmd.poll.question, options, ...(cmd.poll.multi ? { multi: true } : {}), ...(cmd.poll.hours ? { expires: Date.now() + cmd.poll.hours * 3_600_000 } : {}), counts: {} };
+      const body = [`**${cmd.poll.question}**`, ...cmd.poll.options.map((o) => `- ${o}`)].join('\n');
+      this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), kind: 'text', body, extra: { poll } } });
+      return { nativeId };
+    }
+    if (cmd.t === 'pollEnd') {
+      this.emit({ t: 'pollUpdate', conversation: cmd.conversation, message: cmd.message, ended: true });
+      return {};
+    }
+    const seq = Math.max(cmd.seq ?? 0, this.pollSeq.get(cmd.message) ?? 0) + 1;
+    this.pollSeq.set(cmd.message, seq);
+    if (this.network === 'signal') this.emit({ t: 'pollUpdate', conversation: cmd.conversation, message: cmd.message, vote: { voter: this.self.nativeId, options: cmd.options, seq, ts: Date.now() } });
+    else this.emit({ t: 'pollUpdate', conversation: cmd.conversation, message: cmd.message, mine: cmd.options });
+    return {};
+  }
+
   /** Apply a change the hub has checked, and say so the way the network would. */
   private configure(target: P.AboutTarget, change: P.AboutChange): P.About {
     const { place, conv, space } = this.place(target);
@@ -2121,7 +2223,9 @@ class DemoAdapter implements InprocAdapter {
     else if (change.key === 'pin') {
       place.pinned = place.pinned.filter((m) => m !== change.message);
       if (!change.remove) place.pinned.unshift(change.message);
-    } else (place.values as Record<string, unknown>)[change.key] = change.value;
+      // As the adapters say their own pins (polls.ts in dither-accounts, the Signal adapter).
+      if (conv) this.emit({ t: 'pin', conversation: target.nativeId, message: change.message, pinned: !change.remove, by: this.self.nativeId, ts: Date.now() });
+    } else if (change.key !== 'avatar') (place.values as Record<string, unknown>)[change.key] = change.value;
     if (change.key === 'name' || change.key === 'topic') {
       if (conv) {
         conv.fact = { ...conv.fact, [change.key]: change.value };
@@ -2219,15 +2323,33 @@ class DemoAdapter implements InprocAdapter {
     const all: P.Capability[] = [
       ...caps,
       ...(this.network === 'discord' ? (['forward', 'members', 'walkMembers', 'listThreads'] as const) : []),
+      ...(this.network === 'signal' ? SIGNAL_PEOPLE : []),
+      // Who a conversation can ping, for the @ picker (docs/mentions.md).
+      ...(this.network === 'discord' || this.network === 'matrix' ? (['mentionables'] as const) : []),
       ...(ADDS_MEMBERS.has(this.network) ? (['addMembers'] as const) : []),
       ...(MAKES_GROUPS.has(this.network) ? (['createGroup'] as const) : []),
       // The networks whose servers search (netsearch.ts).
       ...(this.network === 'discord' || this.network === 'matrix' ? (['search'] as const) : []),
+      // Block, ignore, notes, presence, sessions, profile fields (demoself.ts).
+      ...(this.network === 'discord' ? DEMO_SELF_CAPS : []),
+      ...(this.network === 'discord' ? DEMO_SERVER_CAPS : []),
+      ...(this.network === 'discord' ? DEMO_APP_CAPS : []),
+      // Stickers, voice messages, view-once and stories (demomedia.ts).
+      ...(DEMO_MEDIA_CAPS[this.network] ?? []),
+      // Polls and pins, as the Discord and Signal adapters have them (docs/polls.md).
+      ...(this.network === 'discord' || this.network === 'signal' ? (['polls', 'pollVote', 'pollCreate', 'pollEnd', 'pin'] as const) : []),
+      ...(this.network === 'discord' ? DEMO_THREAD_CAPS : []),
+      ...(DEMO_MOD_CAPS[this.network] ?? []),
+      ...(this.network === 'discord' ? DEMO_SEND_CAPS : []),
     ];
     this.emit({ t: 'hello', network: this.network, version: 'demo', capabilities: all.filter((c) => !this.without.has(c)) });
   }
 
-  start(emit: (ev: P.AdapterEvent) => void) {
+  start(raw: (ev: P.AdapterEvent) => void) {
+    const emit = (ev: P.AdapterEvent) => {
+      this.sending?.seen(ev);
+      raw(ev);
+    };
     this.emit = emit;
     running.set(this.key, this);
     const epoch: number = JSON.parse(this.acc.config || '{}').epoch ?? Date.now();
@@ -2245,8 +2367,42 @@ class DemoAdapter implements InprocAdapter {
     // Joining, adding and requests (docs/add.md): what it joined before, and the requests waiting.
     this.adds = new DemoAdd(this.key, this.network, this.self, this.dir, emit);
     this.adds.start(epoch);
+    this.media = new DemoMedia(this.network, this.self.nativeId, emit);
+    if (this.key === 'sig') this.media.start([S.alice.nativeId, S.sam.nativeId], CONVS.find((c) => c.fact.name === 'Climbing crew 🧗')?.fact.nativeId);
+    if (this.network === 'discord') {
+      const mine = SPACES.filter((x) => x.acc.includes(this.key) && x.fact.kind === 'community').map((x) => x.fact.nativeId);
+      this.selfDemo = new DemoSelf(this.network, this.self, this.dir, emit, mine, (who, blocked) => this.adds.relate(who, blocked ? 'blocked' : 'stranger'));
+      this.selfDemo.start();
+    }
 
     for (const s of SPACES) if (s.acc.includes(this.key)) emit({ t: 'space', space: s.fact });
+    if (this.network === 'discord') {
+      this.startServers(epoch);
+      this.sending = new DemoSending({ emit, someDirect: () => CONVS.find((c) => c.acc.includes(this.key) && c.fact.shape === 'direct')?.fact.nativeId ?? null }, epoch);
+    }
+    if (DEMO_MOD_CAPS[this.network]) {
+      this.mod = new DemoModeration({
+        network: this.network,
+        selfId: this.self.nativeId,
+        emit: (ev) => this.emit(ev),
+        admin: (t) => {
+          const conv = t.kind === 'conversation' ? this.findConv(t.nativeId) : undefined;
+          const where = conv && this.network === 'discord' ? this.guildOf(conv) : null;
+          return ADMIN_IN[this.key].includes(t.nativeId) || (!!where && ADMIN_IN[this.key].includes(where));
+        },
+        guildOf: (t) => {
+          if (this.network !== 'discord') return null;
+          if (t.kind === 'space') return this.findSpace(t.nativeId)?.fact.kind === 'community' ? t.nativeId : null;
+          const conv = this.findConv(t.nativeId);
+          return conv && conv.fact.shape !== 'direct' && conv.fact.shape !== 'group' ? this.guildOf(conv) : null;
+        },
+        about: (t) => this.serverAbout(t, this.about(t)),
+      });
+    }
+    if (this.network === 'discord') {
+      this.apps = new DemoApps({ key: this.key, selfId: this.self.nativeId, emit, later: (ms, fn) => this.later(ms, fn), snow, botChannel: ch('dither-general'), inConversation: (c) => CONVS.some((x) => x.fact.nativeId === c && x.acc.includes(this.key)) });
+      this.apps.announce(epoch);
+    }
     // Members the client loaded anyway (passive), with Discord's counts: kept only with the adversarial members setting.
     if (this.key === 'dmain')
       emit({
@@ -2297,7 +2453,53 @@ class DemoAdapter implements InprocAdapter {
     }
     if (firstRun) this.seedHistory(ago);
     if (firstRun) writeFileSync(marker, String(Date.now()));
+    if (this.network === 'discord') this.startThreads();
     scheduleChatter();
+  }
+
+  /** Discord's threads, forums and group DMs (demothreads.ts): the forum's tags and the threads' facts, after the conversations. */
+  private startThreads() {
+    const self = this.self.nativeId;
+    const mine = this.key === 'dmain';
+    this.threadsDemo = new DemoThreads(
+      {
+        selfId: self,
+        emit: (ev) => this.emit(ev),
+        fact: (id) => this.findConv(id)?.fact ?? null,
+        keep: (fact) => void this.made.set(fact.nativeId, { acc: [this.key], fact, msgs: [] }),
+        moderator: (channel) => {
+          const c = this.findConv(channel);
+          const guild = c ? this.guildOf(c) : null;
+          return !!guild && ADMIN_IN[this.key].includes(guild);
+        },
+        id: (k) => snow(`${this.key}-${k}-${Date.now()}-${this.made.size}`),
+      },
+      {
+        forums: mine ? { [ch('rust-help')]: { tags: [{ id: snow('tag-solved'), name: 'Solved', emoji: '✅', moderated: true }, { id: snow('tag-async'), name: 'async' }, { id: snow('tag-cargo'), name: 'cargo' }], sort: 'activity', layout: 'list' } } : {},
+        threads: mine
+          ? {
+              [T.rustHelpAsync]: { joined: true, owner: D.owl.nativeId, tags: [snow('tag-solved'), snow('tag-async')], createdAt: this.ago(7 * 60) },
+              [T.rustHelpWs]: { joined: false, owner: D.bea.nativeId, tags: [snow('tag-cargo')], createdAt: this.ago(DAY + 300) },
+              [T.ditherBoot]: { joined: true, notify: 'all', owner: self, createdAt: this.ago(2 * DAY) },
+            }
+          : {},
+        archived: mine
+          ? [
+              {
+                fact: { nativeId: snow('t-rust-old'), shape: 'thread', name: 'Is there a no_std HashMap?', parentConversation: ch('rust-help'), thread: { owner: D.hannah.nativeId, tags: [snow('tag-solved')], createdAt: this.ago(40 * DAY) } },
+                first: { nativeId: snow('t-rust-old'), author: D.hannah.nativeId, ts: this.ago(40 * DAY), body: 'Looking for a HashMap that works without std. hashbrown?' },
+              },
+              {
+                fact: { nativeId: snow('t-dither-secret'), shape: 'thread', name: 'release planning', parentConversation: ch('dither-dev'), thread: { owner: self, private: true, createdAt: this.ago(20 * DAY) } },
+                first: { nativeId: snow('t-dither-secret-1'), author: self, ts: this.ago(20 * DAY), body: 'Dates for the next release, before we say them anywhere.' },
+                mine: true,
+              },
+            ]
+          : [],
+        owns: mine ? [snow('gdm-raid')] : [],
+      },
+    );
+    this.threadsDemo.announce();
   }
 
   /** Things that changed and things taken back, once, so history has something to show (docs/history.md). */
@@ -2336,10 +2538,15 @@ class DemoAdapter implements InprocAdapter {
 
   /** A channel's threads, as Discord's thread search lists them: the demo's are all active, none archived. */
   private threads(cmd: Extract<P.AdapterCommand, { t: 'threads' }>): P.ThreadsResult {
-    const found = cmd.archived ? [] : CONVS.filter((c) => c.acc.includes(this.key) && c.fact.shape === 'thread' && c.fact.parentConversation === cmd.conversation);
+    // Archived ones (and your private ones) from demothreads.ts, with their first messages.
+    if (cmd.archived) {
+      const ids = cmd.offset ? [] : (this.threadsDemo?.archived(cmd.conversation, cmd.mine === true) ?? []);
+      return { count: ids.length, more: false, ids };
+    }
+    const found = CONVS.filter((c) => c.acc.includes(this.key) && c.fact.shape === 'thread' && c.fact.parentConversation === cmd.conversation);
     const page = found.slice(cmd.offset, cmd.offset + 25);
     for (const c of page) this.emit({ t: 'conversation', conversation: c.fact });
-    return { count: page.length, more: cmd.offset + page.length < found.length };
+    return { count: page.length, more: cmd.offset + page.length < found.length, ids: page.map((c) => c.fact.nativeId) };
   }
 
   /** Members by name prefix, as Discord's member search answers it, or (`recent`) a page of the newest, as its op 35 does. */
@@ -2357,6 +2564,37 @@ class DemoAdapter implements InprocAdapter {
     for (const i of found) if (WALKABLE.includes(i)) this.emit({ t: 'identity', identity: i });
     this.emit({ t: 'members', space: cmd.space, source: 'walk', total: everyone.length, members: found.map((i) => ({ who: i.nativeId })) });
     return { count: found.length, total: everyone.length, ...(cmd.recent ? { next: found.length >= cmd.limit ? found[found.length - 1].nativeId : null } : {}) };
+  }
+
+  /**
+   * Who a conversation can ping (docs/mentions.md), as the real adapters answer it, emitting nothing: a DM's or a
+   * group's people; in a server channel, who wrote there lately (no query) or the members whose names match, then its
+   * roles, and @everyone where this account is an admin; a Matrix room's people, and @room from power level 50.
+   */
+  private mentionables(cmd: Extract<P.AdapterCommand, { t: 'mentionables' }>): P.Mentionables {
+    const c = this.findConv(cmd.conversation);
+    if (!c) throw new Error('this demo account is not in that conversation');
+    const q = cmd.query.replace(/^@+/, '').toLowerCase();
+    const known = new Map([...Object.values(D), ...WALKABLE, ...Object.values(M)].map((i) => [i.nativeId, i] as const));
+    const matches = (i: P.IdentityFact) => !q || [i.displayName, i.handle].some((n) => !!n && n.toLowerCase().includes(q));
+    const spoke = new Map<string, number>();
+    for (const [min, author] of [...c.msgs].sort((a, b) => a[0] - b[0])) if (!spoke.has(author.nativeId)) spoke.set(author.nativeId, this.ago(min));
+    const guild = this.network === 'discord' ? this.guildOf(c) : null;
+    const ids = c.fact.participants?.length ? c.fact.participants : !q || !guild ? [...spoke.keys()] : [...spoke.keys(), ...[...Object.values(D), ...WALKABLE].map((i) => i.nativeId)];
+    const people: P.MentionablePerson[] = [];
+    for (const id of new Set(ids)) {
+      const i = known.get(id);
+      if (!i || id === this.self.nativeId || !matches(i)) continue;
+      const at = spoke.get(id);
+      people.push({ nativeId: id, name: i.displayName ?? i.handle ?? id, ...(i.handle ? { handle: i.handle } : {}), ...(i.isBot ? { isBot: true } : {}), ...(at ? { lastSpoke: at } : {}) });
+      if (people.length >= cmd.limit) break;
+    }
+    if (this.network === 'matrix') {
+      const level = ADMIN_IN[this.key].includes(c.fact.nativeId) ? 100 : (MX_LEVEL[c.fact.nativeId] ?? 0);
+      return { people, everyone: level >= 50 };
+    }
+    const roles = (guild ? (DEMO_ROLES[guild] ?? []) : []).filter((r) => !q || r.name.toLowerCase().includes(q));
+    return { people, ...(roles.length ? { roles } : {}), everyone: !!guild && ADMIN_IN[this.key].includes(guild) };
   }
 
   private seedHistory(ago: (min: number) => number) {
@@ -2377,6 +2615,13 @@ class DemoAdapter implements InprocAdapter {
     // A pin, a reaction taken back, a role, a status, and your message read.
     msg(`${climb.nativeId}~h-pin`, S.priya, 58, 'Mesa is open till 10 on Thursdays now');
     emit({ t: 'pin', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, pinned: true, by: S.alice.nativeId, ts: ago(57) });
+    // A poll and its votes, as Signal sends them: each voter's whole vote, the later of two winning (docs/polls.md).
+    const poll: P.PollFact = { question: 'Which night this week?', options: [{ id: '0', text: 'Tuesday' }, { id: '1', text: 'Thursday' }, { id: '2', text: 'Both' }] };
+    msg(`${climb.nativeId}~h-poll`, S.sam, 54, '📊 **Which night this week?**\n• Tuesday\n• Thursday\n• Both', { extra: { poll } });
+    const voted = (who: P.IdentityFact, options: string[], seq: number, min: number) => emit({ t: 'pollUpdate', conversation: climb.nativeId, message: `${climb.nativeId}~h-poll`, vote: { voter: who.nativeId, options, seq, ts: ago(min) } });
+    voted(S.priya, ['0'], 1, 53);
+    voted(S.alice, ['2'], 1, 52);
+    voted(S.priya, ['1'], 2, 50);
     emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, author: S.sam.nativeId, key: '😢' });
     emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, author: S.sam.nativeId, key: '😢', remove: true });
     emit({ t: 'role', target: { kind: 'conversation', nativeId: climb.nativeId }, member: S.sam.nativeId, role: 'Admin', given: true, by: S.priya.nativeId, ts: ago(56) });
@@ -2515,12 +2760,29 @@ class DemoAdapter implements InprocAdapter {
 
   command(cmd: P.AdapterCommand) {
     const reply = (result?: unknown) => 'id' in cmd && this.emit({ t: 'reply', id: cmd.id, ok: true, result });
+    const own = this.selfDemo?.command(cmd);
+    if (own && 'id' in cmd) {
+      if ('error' in own) this.emit({ t: 'reply', id: cmd.id, ok: false, error: own.error });
+      else reply(own.result);
+      return;
+    }
     switch (cmd.t) {
       case 'send': {
         const nativeId = `${cmd.conversation}~sent-${Date.now()}`;
         // The file leaves the spool once this returns, and a demo has nowhere else to keep it.
-        const attachments = cmd.attachments?.map((f) => ({ kind: f.kind, mime: f.mime, name: f.name, size: f.size, url: `data:${f.mime};base64,${readFileSync(f.path).toString('base64')}` }));
-        this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), body: cmd.body, replyTo: cmd.replyTo, kind: attachments?.length && !cmd.body ? 'media' : 'text', attachments } });
+        const sticker = cmd.sticker ? this.media.sticker(cmd.sticker) : null;
+        if (cmd.sticker && !sticker) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'That sticker is not one this account can send' });
+          break;
+        }
+        // View-once: your own copy is not kept to look at, as Signal's apps show it.
+        let attachments: P.AttachmentFact[] | undefined = cmd.viewOnce
+          ? undefined
+          : cmd.attachments?.map((f) => ({ kind: f.kind, mime: f.mime, name: f.name, size: f.size, url: `data:${f.mime};base64,${readFileSync(f.path).toString('base64')}`, ...(f.voice ? { voice: f.voice } : {}) }));
+        if (sticker) attachments = [{ nativeId: `sticker:${sticker.id}`, kind: 'image', mime: sticker.mime, name: sticker.name, width: 160, height: 160, url: sticker.url }];
+        const kind: P.MessageKind = sticker ? 'sticker' : (attachments?.length || cmd.viewOnce) && !cmd.body ? 'media' : 'text';
+        const body = cmd.viewOnce ? cmd.body || '📷 View-once media' : cmd.body;
+        this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), body, replyTo: cmd.replyTo, kind, attachments, ...(cmd.viewOnce ? { extra: { viewOnce: true } } : {}), ...(cmd.silent ? { silent: true } : {}) } });
         this.sent.set(nativeId, { body: cmd.body, att: attachments });
         reply({ nativeId });
         const conv = CONVS.find((c) => c.fact.nativeId === cmd.conversation);
@@ -2575,6 +2837,15 @@ class DemoAdapter implements InprocAdapter {
           this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
         }
         break;
+      case 'pollVote':
+      case 'pollCreate':
+      case 'pollEnd':
+        try {
+          reply(this.poll(cmd));
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
+        break;
       case 'react':
         this.emit({ t: 'reaction', conversation: cmd.conversation, message: cmd.message, author: this.self.nativeId, key: cmd.key, remove: cmd.remove, style: cmd.style, ...(cmd.style === 'super' ? { colors: SUPER_COLORS } : {}), emoji: cmd.emoji });
         reply();
@@ -2584,18 +2855,68 @@ class DemoAdapter implements InprocAdapter {
         reply();
         break;
       case 'redact':
+        if (cmd.moderator && !this.mod?.messages({ kind: 'conversation', nativeId: cmd.conversation })?.delete) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'You may not delete others’ messages here.' });
+          break;
+        }
         this.emit({ t: 'delete', conversation: cmd.conversation, nativeId: cmd.message });
         reply();
         break;
-      case 'reactionContext':
-        reply(this.reactionContext());
+      case 'reactionContext': {
+        const moderation = this.mod?.messages({ kind: 'conversation', nativeId: cmd.conversation });
+        reply({ ...this.reactionContext(), ...(moderation ? { moderation } : {}) });
+        break;
+      }
+      case 'moderate':
+      case 'bans':
+      case 'setLabel':
+      case 'clearReactions':
+        try {
+          const r = this.mod?.command(cmd);
+          if (!r) throw new Error(`${cmd.t} is not in this demo network`);
+          if (cmd.t === 'clearReactions') this.emit({ t: 'reactionsCleared', conversation: cmd.conversation, message: cmd.message, ...(cmd.key && !cmd.who ? { key: cmd.key } : {}) });
+          reply(r.value);
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
+        break;
+      case 'stickers':
+      case 'addStickerPack':
+      case 'storyViewed':
+      case 'storyReply':
+        try {
+          reply(this.media.command(cmd));
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
         break;
       case 'profile':
-        reply(this.profile(cmd.who));
+        reply(this.selfDemo ? this.selfDemo.decorate(cmd.who, this.signalExtras(this.profile(cmd.who), cmd.who)) : this.signalExtras(this.profile(cmd.who), cmd.who));
+        break;
+      case 'verify':
+        if (cmd.clear) DEMO_VERIFIED.delete(cmd.who);
+        else if (cmd.safetyNumber?.replace(/\D/g, '') === demoSafety(cmd.who)) DEMO_VERIFIED.add(cmd.who);
+        else {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'Their safety number changed since: look again' });
+          break;
+        }
+        reply(this.signalExtras(this.profile(cmd.who), cmd.who));
+        break;
+      case 'block':
+        reply({ blocked: !cmd.unblock });
+        break;
+      case 'setContact':
+        reply({});
         break;
       case 'setProfile': {
         // As the real adapters do: the network's limit, then the About as a status on Signal and WhatsApp.
         const bio = cmd.change.bio;
+        const { bio: _bio, ...more } = cmd.change;
+        const refused = !Object.keys(more).length ? null : this.selfDemo ? this.selfDemo.profileChange(more) : 'only the bio can be set';
+        if (refused) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: refused });
+          break;
+        }
         const limit = P_BIO_LIMIT[this.network];
         if (bio !== undefined && limit !== undefined && [...bio].length > limit) {
           this.emit({ t: 'reply', id: cmd.id, ok: false, error: `bio is longer than ${limit} characters` });
@@ -2605,13 +2926,93 @@ class DemoAdapter implements InprocAdapter {
           OWN_BIO.set(`${this.network}:${this.self.nativeId}`, bio);
           if (this.network === 'signal' || this.network === 'whatsapp') this.emit({ t: 'customStatus', who: this.self.nativeId, text: bio, ts: Date.now() });
         }
-        reply(this.profile(this.self.nativeId));
+        if (this.network === 'signal' && cmd.change.username !== undefined) {
+          if (cmd.change.username === null) DEMO_USERNAME.delete(this.self.nativeId);
+          else DEMO_USERNAME.set(this.self.nativeId, { name: `${cmd.change.username}.42`, link: 'https://signal.me/#eu/DemoUsernameLink42' });
+        }
+        reply(this.selfDemo ? this.selfDemo.decorate(this.self.nativeId, this.signalExtras(this.profile(this.self.nativeId), this.self.nativeId)) : this.signalExtras(this.profile(this.self.nativeId), this.self.nativeId));
         break;
       }
+      case 'appCommands':
+      case 'appAutocomplete':
+      case 'interact':
+        try {
+          if (!this.apps) throw new Error(`${cmd.t} is not in this demo network`);
+          reply(cmd.t === 'appCommands' ? this.apps.commands(cmd.kind ?? 'chat') : cmd.t === 'appAutocomplete' ? this.apps.autocomplete(cmd) : this.apps.interact(cmd));
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
+        break;
+      case 'suppressEmbeds':
+      case 'save':
+      case 'savedList':
+      case 'nativeScheduled':
+      case 'cancelScheduled':
+        try {
+          const r = this.sending?.command(cmd);
+          if (!r) throw new Error(`${cmd.t} is not in this demo network`);
+          reply(r.value);
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
+        break;
+      case 'followThread':
+      case 'threadNotify':
+      case 'threadState':
+      case 'createThread':
+      case 'createPost':
+      case 'crosspost':
+      case 'removeMember':
+      case 'setOwner':
+      case 'setPicture':
+        try {
+          const r = this.threadsDemo?.command(cmd, (target) => this.threadAbout(target, this.about(target)));
+          if (!r) throw new Error(`${cmd.t} is not in this demo network`);
+          reply(r.value);
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
+        break;
+      case 'leave':
+        // A Signal group (demomod.ts).
+        if (this.network === 'signal') {
+          try {
+            reply(this.mod!.command(cmd)!.value);
+          } catch (e) {
+            this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+          }
+          break;
+        }
+        // A group DM or a DM (demothreads.ts); a server (demoservers.ts).
+        if (cmd.target.kind === 'conversation') {
+          try {
+            const r = this.threadsDemo?.command(cmd, (target) => this.about(target));
+            if (!r) throw new Error('Leaving this is not in this demo network');
+            reply(r.value);
+          } catch (e) {
+            this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+          }
+          break;
+        }
+      // falls through: a server
+      case 'scheduledEvents':
+      case 'rsvp':
+      case 'gate':
+      case 'answerGate':
+      case 'setNick':
+        try {
+          const r = this.servers?.command(cmd);
+          if (!r) throw new Error(`${cmd.t} is not in this demo network`);
+          reply(cmd.t === 'setNick' ? this.serverAbout({ kind: 'space', nativeId: cmd.space }, this.about({ kind: 'space', nativeId: cmd.space })) : r.value);
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
+        break;
       case 'about':
       case 'configure':
         try {
-          reply(cmd.t === 'about' ? this.about(cmd.target) : this.configure(cmd.target, cmd.change));
+          const a = this.threadAbout(cmd.target, this.serverAbout(cmd.target, cmd.t === 'about' || this.servers?.configureInvite(cmd.target, cmd.change) ? this.about(cmd.target) : this.configure(cmd.target, cmd.change)));
+          reply(this.mod ? this.mod.about(cmd.target, a) : a);
         } catch (e) {
           this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
         }
@@ -2642,6 +3043,13 @@ class DemoAdapter implements InprocAdapter {
       case 'walkMembers':
         reply(this.walkMembers(cmd));
         break;
+      case 'mentionables':
+        try {
+          reply(this.mentionables(cmd));
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
+        break;
       case 'threads':
         reply(this.threads(cmd));
         break;
@@ -2668,6 +3076,16 @@ class DemoAdapter implements InprocAdapter {
         if (cmd.action === 'say') {
           const a = cmd.args as { conversation: string; author: string; body: string };
           this.say(a.conversation, { nativeId: a.author }, a.body);
+          reply({ ok: true });
+          break;
+        }
+        if (cmd.action === 'stories') {
+          reply(this.media.command(cmd));
+          break;
+        }
+        // notice: a notice from the network on this account (demoself.ts), or none with args null.
+        if (cmd.action === 'notice' && this.selfDemo) {
+          this.selfDemo.notice((cmd.args as P.AccountNotice | null) ?? null);
           reply({ ok: true });
           break;
         }
@@ -2980,4 +3398,12 @@ function seedDemoProton(fake: FakeMailBackend, now: number) {
   });
   put({ messageId: id('statement'), from: [{ name: 'Nimbus Bank', email: 'statements@nimbus-bank.example' }], subject: 'Your November statement is ready', receivedAt: now - 3 * D, labels: ['Category/Transactions'], text: 'Sign in to see your statement.' });
   put({ messageId: id('scarf'), from: [{ name: 'Rowan', email: 'rowan@example.org' }], subject: 'Found your scarf', receivedAt: now - 4 * D, text: 'You left a green scarf at the reading group. Shall I bring it next week?' });
+}
+
+/** A made-up safety number for someone in the demo world: 60 digits from their id. */
+function demoSafety(who: string): string {
+  let h = 7;
+  let out = '';
+  while (out.length < 60) for (const c of who) out += String((h = (h * 31 + c.charCodeAt(0)) % 1_000_003) % 10);
+  return out.slice(0, 60);
 }

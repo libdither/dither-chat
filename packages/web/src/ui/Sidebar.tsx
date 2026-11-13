@@ -35,7 +35,7 @@ import {
   type InboxRow,
   type RailEntry,
 } from '../model.ts';
-import { db, go, mailRev, metaRev, prefs, rev, route, setPrefs, type InboxFilter, type Route } from '../state.ts';
+import { db, go, isSelfIdentity, mailRev, metaRev, prefs, rev, route, setPrefs, type InboxFilter, type Route } from '../state.ts';
 import { openPalette } from './Palette.tsx';
 import { INBOX_FILTERS } from '../ordering.ts';
 import { senderLine } from '../mail/model.ts';
@@ -47,7 +47,8 @@ import { Icon } from './icons.tsx';
 import { phone } from '../phone.ts';
 import { dropPlace, openPlaceMenu, placeLabel } from './Organize.tsx';
 import { contextMenu, Menuable, onMenu, openMenu, useMenu, type MenuEntry } from './ContextMenu.tsx';
-import { accountMenu, chatMenu, conversationMenu, folderMenuSpec, owedEntries, personMenu, spaceMenu, WhyHere } from './menus.tsx';
+import { accountMenu, chatMenu, conversationMenu, folderMenuSpec, personMenu, spaceMenu, WhyHere } from './menus.tsx';
+import { MarkableRow } from './ReplyMark.tsx';
 import { pickedRoute } from './Pairs.tsx';
 import { chatKey } from '../chatroutes.ts';
 import { groups, type MenuSpec } from './ContextMenu.tsx';
@@ -56,6 +57,7 @@ import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapsho
 import { inboxSnap, shownInbox } from '../inbox.ts';
 import { linkAccounts, PeopleAccountPicker, PeopleLinks, RequestsRow, usePeopleLinks } from './Requests.tsx';
 import { FeedRows } from './FeedRow.tsx';
+import { NoticesRow } from './Notices.tsx';
 import { nameMatches, peopleFilters, type PeopleFilter } from '../requests.ts';
 import { SortButton, SortIcon, useFlip } from './Reorganize.tsx';
 import { rememberSearch, SearchBox } from './SearchBox.tsx';
@@ -63,6 +65,7 @@ import { counting, rendered } from '../perf.ts';
 import { memo } from './memo.ts';
 import { convKind, rowTrack } from '../clicks.ts';
 import { useShown } from './more.tsx';
+import { VoicePeople } from './Ringing.tsx';
 
 // ------------------------------------------------------------------ navigation helpers
 
@@ -164,7 +167,7 @@ export const ConvRow = memo(function ConvRow({ c, active, onClick, showPlace = t
   const place = showPlace ? placeLine(c) : '';
   const isChannel = c.shape === 'channel' || c.shape === 'thread';
   const com = communitiesOf(c)[0];
-  const ctx = useMenu(() => (chat ? chatMenu(chat.person, chat.routes, why, owedSince) : conversationMenu(c, why, owedSince)));
+  const ctx = useMenu(() => (chat ? chatMenu(chat.person, chat.routes, why) : conversationMenu(c, why)));
   return (
     <button
       class={`row conv-row ${active ? 'active' : ''} ${u.unread ? 'unread' : ''} ${u.muted ? 'muted' : ''}`}
@@ -207,9 +210,9 @@ export const ConvRow = memo(function ConvRow({ c, active, onClick, showPlace = t
         {place && <span class="row-place">{place}</span>}
         <span class="row-bottom">
           <span class="row-preview">{preview(c)}</span>
-          {owedSince ? <Owed at={owedSince} /> : null}
           {u.muted && <Icon name={ruleIcon(lvl.level)} size={12} class="row-muted" />}
           {u.badge ? <Count n={u.badge} /> : u.unread && !u.muted ? <span class="unread-dot" /> : null}
+          {owedSince ? <Owed at={owedSince} /> : null}
         </span>
       </span>
     </button>
@@ -233,12 +236,12 @@ function chatOpens(personId: string): string | undefined {
 }
 
 /** A thread's menu in the inbox: why it is here, where it lives in Mail, and whether it is from a person. */
-function mailRowMenu(t: P.MailThreadView, why?: string[], owedSince?: number | null): MenuSpec {
+function mailRowMenu(t: P.MailThreadView, why?: string[]): MenuSpec {
   const title = t.subject || '(no subject)';
   return {
     label: `${title} actions`,
     head: <div class="cm-sheet-title">{title}</div>,
-    items: groups(why?.length ? [{ kind: 'row', render: () => <WhyHere reasons={why} /> }] : [], owedEntries('mail', [t.id], owedSince), [{ label: 'Open in Mail', icon: 'mail', run: () => go({ view: 'mail', thread: t.id }) }], personItems([t])),
+    items: groups(why?.length ? [{ kind: 'row', render: () => <WhyHere reasons={why} /> }] : [], [{ label: 'Open in Mail', icon: 'mail', run: () => go({ view: 'mail', thread: t.id }) }], personItems([t])),
   };
 }
 
@@ -251,7 +254,7 @@ export const MailRow = memo(function MailRow({ id, active, why, owedSince }: { i
   mailRev.value;
   metaRev.value;
   const t = db.mail.threads.get(id);
-  const ctx = useMenu(() => (t ? mailRowMenu(t, why, owedSince) : null));
+  const ctx = useMenu(() => (t ? mailRowMenu(t, why) : null));
   if (!t) return null;
   const other = [...t.from].reverse().find((f) => !f.self) ?? t.from[t.from.length - 1];
   const person = other?.personId ? db.persons.get(other.personId) : undefined;
@@ -280,13 +283,22 @@ export const MailRow = memo(function MailRow({ id, active, why, owedSince }: { i
             <span class="row-subject">{t.subject || '(no subject)'}</span>
             {t.preview ? ` — ${t.preview}` : ''}
           </span>
-          {owedSince ? <Owed at={owedSince} /> : null}
           <Count n={t.unread} />
+          {owedSince ? <Owed at={owedSince} /> : null}
         </span>
       </span>
     </button>
   );
 });
+
+/**
+ * The message "Reply needed" would go on, from a row with no ↩: its newest, when someone else wrote it. None where you
+ * wrote last (nothing waits on you), in notes to self, or where the newest is a system line.
+ */
+function needsTarget(c: P.ConversationView): string | undefined {
+  const m = c.lastMessage;
+  return c.shape !== 'self' && m && m.kind !== 'system' && !isSelfIdentity(m.authorId) ? m.id : undefined;
+}
 
 /** A list's section, folded or open on this device. Its click counts as "section toggle (label)": labels are fixed words. */
 function SectionHead({ id, label, count, actions }: { id: string; label: string; count?: number; actions?: any }) {
@@ -365,17 +377,29 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
   const [drawn, more] = useShown(rows.length);
   const [q, setQ] = useState('');
   const scroll = useRef<HTMLDivElement>(null);
-  useFlip(scroll, snap.v, '[data-row]');
+  // A row and its ↩ button move as one (ReplyMark.tsx); anything else keyed by its own data-row.
+  useFlip(scroll, snap.v, '[data-row-key], [data-row]:not([data-row-key] > [data-row])');
   // A person's chat is one row, active whichever of their DMs is open.
   const activeKey = activeConv ? inboxKeyOf(activeConv) : undefined;
-  const row = (r: InboxRow) =>
-    r.kind === 'mail' ? (
-      <MailRow key={r.key} id={r.key} active={r.key === activeConv} why={r.reasons} owedSince={r.needs ? r.owedSince : null} />
-    ) : r.chat ? (
-      <ConvRow key={r.key} c={r.conv} chat={r.chat} active={r.key === activeKey} onClick={opener(`inbox:${r.key}`, () => go({ view: 'inbox', conv: chatOpens(r.chat!.person.id) ?? r.conv.id }))} why={r.reasons} owedSince={r.needs ? r.owedSince : null} />
-    ) : (
-      <ConvRow key={r.conv.id} c={r.conv} active={r.conv.id === activeConv} onClick={opener(`inbox:${r.conv.id}`, () => go({ view: 'inbox', conv: r.conv.id }))} why={r.reasons} owedSince={r.needs ? r.owedSince : null} />
+  const row = (r: InboxRow) => {
+    const owedSince = r.needs ? r.owedSince : null;
+    if (r.kind === 'mail')
+      return (
+        <MarkableRow key={r.key} rowKey={r.key} kind="mail" ids={[r.key]} owedSince={owedSince} canNeed={false}>
+          <MailRow id={r.key} active={r.key === activeConv} why={r.reasons} owedSince={owedSince} />
+        </MarkableRow>
+      );
+    const latest = needsTarget(r.conv);
+    return (
+      <MarkableRow key={r.key} rowKey={r.key} kind="conversation" ids={r.chat ? r.chat.routes.map((c) => c.id) : [r.conv.id]} owedSince={owedSince} canNeed={!!latest} latest={latest}>
+        {r.chat ? (
+          <ConvRow c={r.conv} chat={r.chat} active={r.key === activeKey} onClick={opener(`inbox:${r.key}`, () => go({ view: 'inbox', conv: chatOpens(r.chat!.person.id) ?? r.conv.id }))} why={r.reasons} owedSince={owedSince} />
+        ) : (
+          <ConvRow c={r.conv} active={r.conv.id === activeConv} onClick={opener(`inbox:${r.conv.id}`, () => go({ view: 'inbox', conv: r.conv.id }))} why={r.reasons} owedSince={owedSince} />
+        )}
+      </MarkableRow>
     );
+  };
   return (
     <div class="sidebar-inner inbox-side" data-track-area="inbox">
       <header class="side-head">
@@ -421,6 +445,7 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
           </>
         )}
         <RequestsRow />
+        <NoticesRow />
         <FeedRows />
         {rows.slice(0, drawn).map(row)}
         {more}
@@ -603,6 +628,7 @@ function ChannelRow({ c, active, depth, onOpen, alsoIn, dots = true }: { c: P.Co
         {dots && <AccountDots network={c.network} accountIds={c.vantages.map((v) => v.accountId)} size={6} />}
         <Count n={u.badge} />
       </button>
+      {(c.variant === 'voice' || c.variant === 'stage') && <VoicePeople conversationId={c.id} class="chan-voice" style={{ paddingLeft: `${36 + depth * 12}px` }} />}
       {shownThreads.map((t) => {
         const tu = unreadOf(t);
         return (

@@ -22,8 +22,9 @@ A device rule covers a network, an account, a community (space) or a conversatio
 The most specific rule on the device wins, in triage's own order: conversation, thread parent, communities (nearest
 first), accounts, network (`devices.ts` `chain`). For mail (docs/mail.md) the chain is the mail thread, its mail
 account, then Email, so "Email off" on a phone leaves mail to the phone's mail app; "Mentions only" keeps mail with
-you in To or answering you. A calendar reminder ([calendar.md](calendar.md)) has the chain `network:calendar` alone,
-so Calendar off on a device keeps reminders off it. Device rules only ever take notifications away. They do not
+you in To or answering you. A calendar reminder ([calendar.md](calendar.md)) is a message in the Calendar chat, so its
+chain ends at `network:calendar`, and Calendar off on a device keeps reminders off it. A notice ([notices.md](notices.md)) has its group, its account,
+then `network:notice` (Notices in the list). Device rules only ever take notifications away. They do not
 change the tier triage chose, quiet hours or the inbox's ranking, and they never make a device show what the
 shared rules hold back. Notify on a conversation is kept only to override a wider rule on the same device.
 

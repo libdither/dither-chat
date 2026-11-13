@@ -6,17 +6,21 @@ import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snap
 import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, emptyDb, identityVersion, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
 import { changed, mailChanged, timelineChanged, timelineRev } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
-import { ECHO_SKEW, mayBeOut, openOutbox, settled, type Echo, type OutboxEntry } from './outbox.ts';
+import { ECHO_SKEW, mayBeOut, openOutbox, settled, type Echo, type OutboxEntry, type SendMedia } from './outbox.ts';
 import { hubTransport, UploadJob } from './upload.ts';
 import { href, parseHash, type Route } from './routes.ts';
 import { inboxFilterOf, type InboxFilter } from './ordering.ts';
 import { applyPlanEvent, calendarAt, calendarFromBootstrap, loadPlans } from './plans.ts';
+import { reportApiFailure } from './errors.ts';
+import { applyCalls, applyVoice, loadCalls } from './ringing.ts';
 
 // ------------------------------------------------------------------ data
 
 /** What components read to re-render: `rev` for the lists, `metaRev` for names and settings, one per timeline (versions.ts). */
 export { changed, dataVersion, mailRev, metaRev, rev, timelineChanged, timelineRev } from './versions.ts';
 export const connected = signal(false);
+/** Notices on this hub (docs/notices.md): whether it may read them; null when it has none. */
+export const noticesBoot = signal<P.NoticesBoot | null>(null);
 export const loaded = signal(false);
 
 /** The hub's state as this client knows it; syncmodel.ts says how bootstraps and events change it. */
@@ -141,6 +145,8 @@ export interface Prefs {
   pushEnabled: boolean;
   /** How this device carries calls: through the account's own client (bridge), or by itself (direct). */
   callMode: 'bridge' | 'direct';
+  /** This device's microphone in calls: noise suppression and sensitivity (Settings → Calls). Absent: CALL_INPUT_DEFAULT. */
+  callInput?: import('@dither-chat/protocol').CallInput;
   /** The inbox's filter (its menu beside the search box). */
   inboxFilter: InboxFilter;
   /** People's filter chip: chats, or one kind of list (docs/add.md "Relationships"). */
@@ -245,16 +251,28 @@ export const apiHooks = new Set<(path: string, init?: { method?: string; body?: 
 
 export async function api<T = any>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
   for (const h of apiHooks) h(path, init);
-  const res = await fetch(path, {
-    method: init?.method ?? (init?.body !== undefined ? 'POST' : 'GET'),
-    body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
-    headers: init?.body !== undefined ? { 'content-type': 'application/json' } : undefined,
-  });
+  const method = init?.method ?? (init?.body !== undefined ? 'POST' : 'GET');
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method,
+      body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
+      headers: init?.body !== undefined ? { 'content-type': 'application/json' } : undefined,
+    });
+  } catch (e) {
+    // The hub not reached (not an abort, not while offline): to traces/errors.ndjson (errors.ts).
+    reportApiFailure(method, path, e);
+    throw e;
+  }
   const text = await res.text();
   // Not everything here is JSON: the account log and the access gate's refusals are plain text.
   const json = res.headers.get('content-type')?.includes('json');
   const data = json && text ? JSON.parse(text) : text || null;
-  if (!res.ok) throw Object.assign(new Error(data?.error ?? (text.slice(0, 200) || `${res.status}`)), { status: res.status });
+  if (!res.ok) {
+    const e = Object.assign(new Error(data?.error ?? (text.slice(0, 200) || `${res.status}`)), { status: res.status });
+    if (res.status >= 500) reportApiFailure(method, path, e, res.status);
+    throw e;
+  }
   return data as T;
 }
 
@@ -264,8 +282,9 @@ const putIdentity = (i: P.IdentityView) => void (put(db, i) && changed('shown'))
 
 export function applyBootstrap(b: P.Bootstrap) {
   applyBootstrapTo(db, b);
-  // A calendar beside the hub (plans.ts, docs/calendar.md): its plans once the socket is up (now, if it is).
+  // A calendar account on the hub (plans.ts, docs/calendar.md): its plans once the socket is up (now, if it is).
   if (calendarFromBootstrap(b) && ws?.readyState === WebSocket.OPEN) void loadPlans();
+  noticesBoot.value = b.notices ?? null;
   loaded.value = true;
   changed('meta');
   mailChanged();
@@ -370,6 +389,13 @@ export function applyEvents(events: P.ClientEvent[]) {
       case 'typing':
         typing.value = applyTyping(typing.value, ev, Date.now(), isSelfIdentity);
         break;
+      // Calls ringing you and voice channels (ringing.ts).
+      case 'calls':
+        applyCalls(ev.calls);
+        break;
+      case 'voice':
+        applyVoice(ev.channels);
+        break;
       case 'sent': {
         // Which message a send of this page's became, ahead of the answer to its POST: settled below by id.
         const tempId = ev.clientId.replace(/~\d+$/, '');
@@ -383,7 +409,8 @@ export function applyEvents(events: P.ClientEvent[]) {
       // The calendar's plans and whether it answers (plans.ts): signals of their own, nothing in `db`.
       case 'plans':
       case 'calendar':
-        applyPlanEvent(ev);
+        // A calendar account that came (back): its plans too.
+        if (applyPlanEvent(ev)) void loadPlans();
         break;
     }
     if (eventHooks.size) for (const h of eventHooks) h(ev);
@@ -436,23 +463,26 @@ export const showsHere = (ev: Extract<P.ClientEvent, { t: 'notify' }>) => (!ev.l
 function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
   if (!showsHere(ev)) return;
   const r = route.value;
-  const here = (!!ev.conversationId && 'conv' in r && r.conv === ev.conversationId) || (!!ev.mailThreadId && r.view === 'mail' && r.thread === ev.mailThreadId);
+  const here = (!!ev.conversationId && 'conv' in r && r.conv === ev.conversationId) || (!!ev.mailThreadId && r.view === 'mail' && r.thread === ev.mailThreadId) || (!!ev.noticeId && r.view === 'notices');
   const viewing = here && document.visibilityState === 'visible';
   if (viewing) return;
   // A calendar reminder (docs/calendar.md) opens the calendar where it is.
   const cal = ev.calendar;
-  const openCal = cal ? () => go({ view: 'calendar', at: calendarAt(cal.open) }) : undefined;
-  toast({ kind: 'notify', title: ev.title, body: ev.body, conversationId: ev.conversationId, reasons: ev.reasons, icon: ev.icon, network: ev.network, ...(openCal ? { action: openCal } : {}) }, 8000);
+  // A notice (docs/notices.md) opens under Notices; its conversation is its group, not a chat.
+  const notice = ev.noticeId;
+  const open = cal ? () => go({ view: 'calendar', at: calendarAt(cal.open) }) : notice ? () => go({ view: 'notices', notice }) : undefined;
+  const conversationId = notice ? undefined : ev.conversationId;
+  toast({ kind: 'notify', title: ev.title, body: ev.body, conversationId, reasons: ev.reasons, icon: ev.icon, network: ev.network, ...(open ? { action: open } : {}) }, 8000);
   if (!prefs.value.pushEnabled && prefs.value.notifications && 'Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
     // A group's own picture goes over the sender's, as in a push (delivery.ts conv).
     const c = ev.conversationId ? db.conversations.get(ev.conversationId) : undefined;
     const conv = c && c.shape !== 'direct' && c.avatar ? { shape: c.shape === 'channel' || c.shape === 'thread' ? 'channel' : 'group', icon: c.avatar } : undefined;
     const show = (reg?: ServiceWorkerRegistration) => {
       // The worker draws the picture and the network's badge, as it does for a push (sw.js).
-      if (reg?.active) return reg.active.postMessage({ t: 'notify', d: { title: ev.title, body: ev.body, conversationId: ev.conversationId, inbox: !ev.conversationId && !cal, icon: ev.icon, network: ev.network, nid: ev.nid, ...(conv ? { conv } : {}), ...(cal ? { calendar: cal } : {}) } });
-      const opts = { body: ev.body, tag: cal ? `calendar:${cal.eventKey}` : (ev.conversationId ?? 'dither-inbox'), icon: conv?.icon ?? ev.icon, data: { conversationId: ev.conversationId, inbox: !ev.conversationId && !cal, calendar: cal } };
+      if (reg?.active) return reg.active.postMessage({ t: 'notify', d: { title: ev.title, body: ev.body, conversationId: ev.conversationId, inbox: !ev.conversationId && !cal, icon: ev.icon, network: ev.network, nid: ev.nid, ...(conv ? { conv } : {}), ...(cal ? { calendar: cal } : {}), ...(notice ? { noticeId: notice } : {}) } });
+      const opts = { body: ev.body, tag: cal ? `calendar:${cal.eventKey}` : (ev.conversationId ?? 'dither-inbox'), icon: conv?.icon ?? ev.icon, data: { conversationId: ev.conversationId, inbox: !ev.conversationId && !cal, calendar: cal, notice } };
       if (reg) reg.showNotification(ev.title, opts);
-      else new Notification(ev.title, opts).onclick = openCal ?? (() => go({ view: 'inbox', conv: ev.conversationId }));
+      else new Notification(ev.title, opts).onclick = open ?? (() => go({ view: 'inbox', conv: ev.conversationId }));
     };
     // Not every browser has service workers, and none has them outside a secure context.
     if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistration().then(show, () => show());
@@ -788,7 +818,7 @@ const sendUploads = new Map<string, UploadJob[]>();
 export const uploadsOf = (tempId: string): UploadJob[] => sendUploads.get(tempId) ?? [];
 
 /** `uploads`: the composer's uploads of `files`, one each, already under way. */
-type SendOpts = { accountId?: string; replyTo?: string; files?: File[]; uploads?: UploadJob[] };
+type SendOpts = { accountId?: string; replyTo?: string; files?: File[]; uploads?: UploadJob[]; media?: SendMedia; /** docs/sending.md */ silent?: boolean; mentionReplied?: boolean };
 /** Sends kept on this device until the hub has them (outbox.ts): a reload or the app being closed does not lose them. */
 const outbox = openOutbox(typeof indexedDB === 'undefined' ? undefined : indexedDB);
 /** Sends not yet through, by tempId: what they need to go out again. The outbox keeps the same. */
@@ -801,7 +831,7 @@ const pendingOf = (e: OutboxEntry): PendingSend => ({ tempId: e.tempId, conversa
 /** Shown at once as pending. Without the hub it waits, and goes out when the hub is back (flushOutgoing). */
 export async function send(conversationId: string, body: string, opts: SendOpts = {}) {
   const tempId = 'tmp-' + Math.random().toString(36).slice(2);
-  const e: OutboxEntry = { tempId, conversationId, body, ts: Date.now(), accountId: opts.accountId, replyTo: opts.replyTo, files: opts.files?.map((f) => ({ name: f.name, type: f.type, blob: f })) };
+  const e: OutboxEntry = { tempId, conversationId, body, ts: Date.now(), accountId: opts.accountId, replyTo: opts.replyTo, files: opts.files?.map((f) => ({ name: f.name, type: f.type, blob: f })), ...(opts.media ? { media: opts.media } : {}), ...(opts.silent ? { silent: true } : {}), ...(opts.mentionReplied === false ? { mentionReplied: false } : {}) };
   pending.value = [...pending.value, pendingOf(e)];
   outgoing.set(tempId, e);
   if (opts.uploads?.length) {
@@ -853,7 +883,7 @@ async function deliver(tempId: string) {
   const post = () => {
     // A message of ours that comes after this may be this send's (settle).
     setPending(tempId, { postedAt: Date.now() });
-    return api<P.SendResult>(`/api/conversations/${o.conversationId}/send`, { body: { body: o.body, accountId: o.accountId, replyTo: o.replyTo, attachments: o.attachments, clientId } });
+    return api<P.SendResult>(`/api/conversations/${o.conversationId}/send`, { body: { body: o.body, accountId: o.accountId, replyTo: o.replyTo, attachments: o.attachments, clientId, ...o.media, ...(o.silent ? { silent: true } : {}), ...(o.mentionReplied === false ? { mentionReplied: false } : {}) } });
   };
   try {
     if (o.files?.length && !o.attachments) await uploadAll();
@@ -1005,7 +1035,7 @@ export function openProfile(identityId: string | null | undefined) {
 /** The message the composer is rewriting. */
 export const editing = signal<P.MessageView | null>(null);
 
-function ownAccount(m: P.MessageView) {
+export function ownAccount(m: P.MessageView) {
   return [...db.accounts.values()].find((a) => a.selfIdentityId === m.authorId);
 }
 export const canEdit = (m: P.MessageView) => !m.deleted && m.kind !== 'system' && !!ownAccount(m)?.capabilities.includes('edit');
@@ -1071,7 +1101,11 @@ export function patchPlaces(items: P.PlacePrefPatch[]) {
   for (const i of items) {
     const k = prefKey(i.kind, i.id);
     const cur = db.placePrefs.get(k) ?? { kind: i.kind, id: i.id, position: null, pinned: false, hidden: false, open: false, railed: false };
-    db.placePrefs.set(k, { ...cur, ...i });
+    const next: P.PlacePrefView = { ...cur, ...(i as Partial<P.PlacePrefView>) };
+    // null takes a mention setting away: inherited again.
+    if (i.mentionScope === null) delete next.mentionScope;
+    if (i.mentionSameNetwork === null) delete next.mentionSameNetwork;
+    db.placePrefs.set(k, next);
   }
   changed('meta');
   return api('/api/place-prefs', { method: 'PATCH', body: { items } }).catch(placeFailed);
@@ -1185,6 +1219,7 @@ function bootstrap() {
       freshFromHub();
       performance.mark('dither:fresh');
       loadInbox().catch(() => {});
+      void loadCalls();
       // Timelines asked for before this socket may have missed anything: their newest pages again.
       for (const [key, t] of [...timelines]) if (!t.fetchedAt || t.fetchedAt < since) void reload(key);
       persistSoon(text);

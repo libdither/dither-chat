@@ -88,8 +88,8 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
   it: someone to send to (To, Cc and Bcc together at most the account's `details.maxRecipients`, else 500, 100 on
   Proton), From one of the account's addresses (422 otherwise), 25 MB a file and the files together at most its
   `details.sendCap` (else 35 MB, 25 MB on Proton; over it is 413, and the composer's count says the same cap). It is
-  held 10 s (`DITHER_MAIL_HOLD_MS`) while a strip says "Sending … in 10 s · Undo"; Undo brings it back into the
-  composer as it was, files and all.
+  held 10 s (`DITHER_MAIL_HOLD_MS`) while a strip says "Sending … in 10 s · Send now · Undo"; Undo brings it back into the
+  composer as it was, files and all, and Send now ends the hold (`POST /api/mail/outbox/:id/send`).
 - **Going out.** Then its files move from the uploads into `<data>/mail-outbox/<id>/` and it goes to `mail.send` ahead
   of background work: files by `path` when the manager is on this machine (DITHER_ACCOUNTS_URL on loopback), else as
   base64; a forward's files are fetched from the server (`mail.attachment`) then. What the account answers:
@@ -122,7 +122,7 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
   `clientId`; meanwhile the draft is on the device.
 
 Routes (`sendRoutes` in outbox.ts): `GET /api/mail/compose?kind=new|reply|replyAll|forward&message=&account=&tz=` fills a
-message in; `POST /api/mail/send` (a `MailSendRequest`); `GET /api/mail/outbox`; `DELETE /api/mail/outbox/:id` is Undo;
+message in; `POST /api/mail/send` (a `MailSendRequest`); `GET /api/mail/outbox`; `DELETE /api/mail/outbox/:id` is Undo; `POST /api/mail/outbox/:id/send` is Send now;
 `POST /api/mail/outbox/:id/dismiss`; `GET /api/mail/drafts[?key=]`, `GET/PUT/DELETE /api/mail/drafts/:key`;
 `GET /api/mail/addresses?q=` completes recipients; `POST /api/mail/accounts/:id/sending` is "Try sending again". The
 `mail.outbox` event carries the outbox's whole list each time (it is not journaled: a sync answer carries it too).

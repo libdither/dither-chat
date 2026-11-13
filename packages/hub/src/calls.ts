@@ -13,9 +13,13 @@
 import type { ServerWebSocket } from 'bun';
 import { createHmac } from 'node:crypto';
 import type * as P from '@dither-chat/protocol';
+import { callInput, STAGE_ACTIONS, VOLUME_MAX } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import type { Store } from './store.ts';
 import type { Supervisor } from './supervisor.ts';
+
+/** An adapter command as the hub sends it, before the supervisor gives it an id. */
+type CommandIn = P.AdapterCommand extends infer C ? (C extends { id: string } ? Omit<C, 'id'> : C) : never;
 
 export type CallSocketData = { kind: 'call'; call?: string };
 export type VoiceSocketData = { kind: 'voice'; call: string; upstreamUrl: string; ua?: string; upstream?: WebSocket; queue: (string | Uint8Array)[] };
@@ -104,13 +108,67 @@ export class Calls {
       this.end(call, 'left', true);
       return;
     }
-    const cmd =
-      msg.op === 'mute'
-        ? ({ t: 'call', call: call.id, op: 'mute', muted: !!msg.muted, deafened: !!msg.deafened } as const)
-        : msg.op === 'signal' || msg.op === 'note'
-          ? ({ t: 'call', call: call.id, op: msg.op, data: msg.data } as const)
-          : null;
-    if (cmd) this.sup.command(call.accountId, cmd, 15_000).catch((e) => send(ws, { t: 'error', message: String(e?.message ?? e) }));
+    let cmd: CommandIn | null;
+    try {
+      cmd = this.inCall(call, msg);
+    } catch (e) {
+      return send(ws, { t: 'error', message: String((e as Error).message) });
+    }
+    if (!cmd) return;
+    const pending = this.sup.command<{ sounds?: P.CallSound[]; reason?: string }>(call.accountId, cmd, 15_000);
+    pending
+      .then((r) => {
+        if (msg.op === 'sounds') send(ws, { t: 'sounds', sounds: Array.isArray(r?.sounds) ? r.sounds : [], ...(r?.reason ? { reason: r.reason } : {}) });
+      })
+      .catch((e) => (msg.op === 'sounds' ? send(ws, { t: 'sounds', sounds: [], reason: String(e?.message ?? e) }) : send(ws, { t: 'error', message: String(e?.message ?? e) })));
+  }
+
+  /** What a device's message in a call asks of the adapter, checked and in native ids; null for nothing. Throws a refusal in words. */
+  private inCall(call: Live, msg: P.CallClientMessage): CommandIn | null {
+    const base = { t: 'call' as const, call: call.id };
+    const need = (cap: P.Capability, what: string) => {
+      if (!this.caps(call.accountId).includes(cap)) throw new Error(`${what} isn't available for this account.`);
+    };
+    const native = (identityId: unknown) => {
+      const n = typeof identityId === 'string' ? this.store.nativeOf('identity', identityId) : null;
+      if (!n || n.network !== call.network) throw new Error('Nobody by that id in this call.');
+      return n.nativeId;
+    };
+    switch (msg.op) {
+      case 'mute':
+        return { ...base, op: 'mute', muted: !!msg.muted, deafened: !!msg.deafened };
+      case 'signal':
+      case 'note':
+        return { ...base, op: msg.op, data: msg.data };
+      case 'local': {
+        need('callVolume', 'Changing one person\'s volume');
+        const volume = typeof msg.volume === 'number' && Number.isFinite(msg.volume) ? Math.max(0, Math.min(VOLUME_MAX, Math.round(msg.volume))) : undefined;
+        if (volume === undefined && typeof msg.muted !== 'boolean') throw new Error('A volume or a mute.');
+        return { ...base, op: 'local', user: native(msg.user), ...(volume !== undefined ? { volume } : {}), ...(typeof msg.muted === 'boolean' ? { muted: msg.muted } : {}) };
+      }
+      case 'input':
+        // Direct mode applies these on the device; the account's client only sends in bridge mode, but keeps them for it.
+        if (!this.caps(call.accountId).includes('callInput')) return null;
+        return { ...base, op: 'input', input: callInput(msg.input) };
+      case 'stage':
+        need('stage', 'Stages');
+        if (!STAGE_ACTIONS.includes(msg.action)) throw new Error('Not a stage action.');
+        if ((msg.action === 'invite' || msg.action === 'audience') !== (msg.user !== undefined)) throw new Error(msg.user === undefined ? 'Whom?' : 'That is about yourself.');
+        return { ...base, op: 'stage', action: msg.action, ...(msg.user !== undefined ? { user: native(msg.user) } : {}) };
+      case 'sounds':
+        need('soundboard', 'The soundboard');
+        return { ...base, op: 'sounds' };
+      case 'sound':
+        need('soundboard', 'The soundboard');
+        if (typeof msg.sound !== 'string' || !/^\d{1,20}$/.test(msg.sound) || typeof msg.guild !== 'string' || !/^\d{1,20}$/.test(msg.guild)) throw new Error('Which sound?');
+        return { ...base, op: 'sound', sound: msg.sound, guild: msg.guild };
+      default:
+        return null;
+    }
+  }
+
+  private caps(accountId: string): P.Capability[] {
+    return JSON.parse(this.store.account(accountId)?.capabilities || '[]');
   }
 
   close(ws: ServerWebSocket<CallSocketData>) {
@@ -141,7 +199,10 @@ export class Calls {
 
     let result: { direct?: P.DirectVoiceSession } | undefined;
     try {
-      result = await this.sup.command(accountId, { t: 'call', call: id, op: 'join', conversation: native.nativeId, mode: msg.mode, muted: msg.muted, deafened: msg.deafened }, 45_000);
+      // Ringing the others only where the adapter can, and only in a direct or group conversation.
+      const ring = !!msg.ring && JSON.parse(acc.capabilities || '[]').includes('ringCalls') && !!this.store.db.query(`SELECT 1 FROM conversation WHERE id = ? AND shape IN ('direct', 'group')`).get(msg.conversation);
+      const input = msg.input !== undefined && JSON.parse(acc.capabilities || '[]').includes('callInput') ? { input: callInput(msg.input) } : {};
+      result = await this.sup.command(accountId, { t: 'call', call: id, op: 'join', conversation: native.nativeId, mode: msg.mode, muted: msg.muted, deafened: msg.deafened, ...(ring ? { ring: true } : {}), ...input }, 45_000);
     } catch (e) {
       this.end(call, 'join failed', false);
       throw e;
@@ -202,6 +263,10 @@ export class Calls {
     }
     if (ev.signal !== undefined) send(call.ws, { t: 'signal', data: ev.signal });
     if (ev.state) send(call.ws, { t: 'state', state: this.hubState(call, ev.state) });
+    if (ev.effect && typeof ev.effect.who === 'string') {
+      const who = hubId('idn', call.network, ev.effect.who);
+      send(call.ws, { t: 'effect', effect: { ...ev.effect, who } });
+    }
     if (ev.ended) this.end(call, ev.ended, false);
   }
 
@@ -214,7 +279,7 @@ export class Calls {
   /** Native user ids become hub identity ids, with the identities alongside so the device can draw them. */
   private hubState(call: Live, st: P.CallState): P.CallState & { identities: P.IdentityView[] } {
     const participants = st.participants.map((p) => ({ ...p, id: hubId('idn', call.network, p.id) }));
-    return { conversation: call.conversation, participants, identities: this.store.identitiesByIds(participants.map((p) => p.id)) };
+    return { conversation: call.conversation, participants, ...(st.stage ? { stage: st.stage } : {}), identities: this.store.identitiesByIds(participants.map((p) => p.id)) };
   }
 
   // ------------------------------------------------------------ voice socket (direct mode)

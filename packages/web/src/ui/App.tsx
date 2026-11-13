@@ -12,6 +12,8 @@ import { Icon } from './icons.tsx';
 import { ContextMenuLayer } from './ContextMenu.tsx';
 import { TooltipLayer } from './Tooltip.tsx';
 import { ForwardLayer } from './Forward.tsx';
+import { AppsHostLazy } from './apps/lazy.tsx';
+import { SendingLayer } from './SendExtras.tsx';
 import { IndexLayer } from './Indexing.tsx';
 import { CatchUp } from './CatchUp.tsx';
 import { HowItSorts } from './HowItSorts.tsx';
@@ -21,6 +23,7 @@ import { ProfilePane } from './Profile.tsx';
 import { PlaceProfile } from './PlaceProfile.tsx';
 import { GraphPane } from './GraphPane.tsx';
 import { MessageHistoryLayer } from './MessageHistory.tsx';
+import { ThreadsLayerLazy } from './ThreadsLazy.tsx';
 import { Rail } from './Rail.tsx';
 import { TitleBar } from './TitleBar.tsx';
 import { FindShortcut, SearchPane } from './Search.tsx';
@@ -30,6 +33,7 @@ import { FolderSidebar, homeRoute, InboxSidebar, PeopleSidebar, SpaceSidebar, Sp
 import { ConversationPane, PersonPane } from './Timeline.tsx';
 import { Toasts } from './Toasts.tsx';
 import { CallDock } from './Call.tsx';
+import { RingCards } from './Ringing.tsx';
 import { Viewer } from './Viewer.tsx';
 import { PEEK, panel, usePager, type Rest } from './Pager.ts';
 import { Boot } from './Loader.tsx';
@@ -37,8 +41,9 @@ import { applyUpdate, updateReady } from '../pwa.ts';
 import { counting, rendered } from '../perf.ts';
 import { MailCenterLazy, MailComposerLazy, MailSidebarLazy } from './mail/lazy.tsx';
 import { RequestsPane } from './Requests.tsx';
+import { NoticesPaneLazy } from './Notices.tsx';
 import { CalendarPane } from './calendar/CalendarPane.tsx';
-import { calendarOn } from '../plans.ts';
+import { calendarLink, calendarOn } from '../plans.ts';
 import { countKey } from '../clicklog.ts';
 import { ThreadLazy } from './feed/lazy.tsx';
 import { isPostKey } from '../feed.ts';
@@ -61,6 +66,8 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       if (r.conv?.startsWith('mth_')) return { pane: <MailCenterLazy thread={r.conv} onBack={back} /> };
       // A post's thread (docs/feed.md "Threads"), beside the inbox as a conversation is.
       if (isPostKey(r.conv)) return { pane: <ThreadLazy key={r.conv} postKey={r.conv!} onBack={back} /> };
+      // A group of notices (a notification's conversation, quiet hours' summary) opens under Notices.
+      if (r.conv?.startsWith('ntg_')) return { pane: <NoticesPaneLazy onBack={back} /> };
       return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: convDetail(r.conv) } : { pane: <CatchUp /> };
     case 'people':
       if (r.graph) return { pane: <GraphPane onBack={back} /> };
@@ -90,6 +97,8 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       return { pane: <MailCenterLazy thread={r.thread} onBack={back} /> };
     case 'requests':
       return { pane: <RequestsPane focus={r.request} onBack={back} /> };
+    case 'notices':
+      return { pane: <NoticesPaneLazy focus={r.notice} onBack={back} /> };
     case 'calendar':
       return { pane: <CalendarPane at={r.at} /> };
   }
@@ -129,6 +138,7 @@ function sidebarFor(r: Route, onAdd: () => void): ComponentChildren {
     case 'mail':
       return <MailSidebarLazy list={r.list} active={r.thread} />;
     case 'requests':
+    case 'notices':
       return <InboxSidebar />;
     case 'calendar':
       return null;
@@ -218,6 +228,8 @@ let lastHome: Route = { view: 'inbox' };
 
 function TabBar({ r }: { r: Route }) {
   rev.value;
+  // The calendar's tab comes and goes with its account (plans.ts).
+  calendarLink.value;
   const tab = tabOf(r);
   const all = totalUnread().badge;
   const attention = [...db.accounts.values()].some((a) => a.attention);
@@ -370,13 +382,17 @@ export function App() {
       )}
       {addingAccount.value && <AddAccount onClose={() => (addingAccount.value = false)} />}
       <CallDock />
+      <RingCards />
       <ReactionLayer />
       <MessageHistoryLayer />
+      <ThreadsLayerLazy />
       <Toasts />
       <DragLayer />
       <ContextMenuLayer />
       <TooltipLayer />
       <ForwardLayer />
+      <AppsHostLazy />
+      <SendingLayer />
       <IndexLayer />
       <Palette />
       <FindShortcut />

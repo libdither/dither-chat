@@ -7,7 +7,6 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, RULE_LABEL, RULE_LEVELS, showsInline } from '@dither-chat/protocol';
 import { fullTime } from '../format.ts';
 import { noteRowRead } from '../activity.ts';
-import { markMessage, markRow, replyMarkEntries } from '../replymarks.ts';
 import { AUTOMATIC, OLDER_RULE, authorName, convTitle, deepLink, directsOf, effectiveLevel, externalProfile, heldHere, netName, plainBody, ruleOn, sumUnread, unreadOf, type Level } from '../model.ts';
 import { deviceRule, myDevice, setDeviceRule } from '../devices.ts';
 import { android } from '../android.ts';
@@ -16,6 +15,7 @@ import { phone } from '../phone.ts';
 import { mark } from '../triage.ts';
 import { desk, openLink } from '../desk.ts';
 import { pickerFor, quickReactions, reactionScope, reactorsFor, replacing, toggleReaction } from '../reactions.ts';
+import { clearReactions, moderatorDelete, modOf } from '../moderate.ts';
 import { api, canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
 import { messageSomeone, openPalette } from './Palette.tsx';
 import { hasHistory, historyOf } from './MessageHistory.tsx';
@@ -24,6 +24,7 @@ import { Avatar } from './bits.tsx';
 import { closeMenu, copy, groups, menuPoint, openMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { DEVICE_LEVELS } from './DeviceRules.tsx';
 import { forwarding } from './Forward.tsx';
+import { appsFor, can } from '../apps.ts';
 import { addLook } from './Reactions.tsx';
 import { Icon } from './icons.tsx';
 import { nicknameEntries } from './Nickname.tsx';
@@ -32,9 +33,14 @@ import { canIndex, startIndexing } from './Indexing.tsx';
 import { arrangeEntries, folderEntries, placeConvs } from './Organize.tsx';
 import { openConv } from './Sidebar.tsx';
 import { viewer, type ViewerImage } from './Viewer.tsx';
+import { canMarkUnread, markUnreadFrom } from '../unread.ts';
 import { openAttachment, openWith, save } from './fileopen.tsx';
 import { fileKind, fileMime, openFileViewer, VIEWABLE } from '../files.ts';
 import { inviteRef } from '../invites.ts';
+import { installStickerLink, stickerInstaller } from './ComposerMedia.tsx';
+import { canEndPoll, endPoll, pin, pinChoices, pinnable } from '../polls.ts';
+import { threadConvEntries, threadMessageEntries } from '../threads.ts';
+import { sendingEntries } from './sendingMenu.tsx';
 
 export { openAttachment };
 
@@ -149,11 +155,6 @@ function markEntries(m: P.MessageView): MenuEntry[] {
   ];
 }
 
-/** Whether it needs a reply, on any message from someone else (docs/inbox.md, "Marks"). */
-function replyEntries(m: P.MessageView): MenuEntry[] {
-  return !isSelfIdentity(m.authorId) && !m.deleted && m.kind !== 'system' ? replyMarkEntries(m.replyMark, (mark) => void markMessage(m, mark)) : [];
-}
-
 /** `marks` false leaves the two triage marks out: the phone's sheet has them under the reasons (`TriageFoot`). */
 function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): MenuEntry[] {
   const scope = reactionScope(m.conversationId);
@@ -187,7 +188,13 @@ function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): M
       canEdit(m) && { label: 'Edit Message', icon: 'pencil', hint: 'E', track: 'edit', run: () => startEditing(m) },
       live && onReply && { label: 'Reply', icon: 'reply', hint: 'R', track: 'reply', run: onReply },
       forwardable(m) && { label: 'Forward', icon: 'forward', hint: 'F', track: 'forward', run: () => (forwarding.value = m) },
+      // Apps' message commands (docs/apps.md): listed and run from a dialog of their own.
+      live && can(m.conversationId, 'interactContext') && { label: 'Apps', icon: 'gamepad', track: 'message apps', run: () => (appsFor.value = m) },
+      pinnable(m) && pinEntry(m),
+      canEndPoll(m) && { label: 'End Poll', icon: 'list', track: 'end poll', run: () => confirm('End this poll now? Nobody can vote after.') && void endPoll(m) },
       thread && { label: 'Open Thread', icon: 'thread', track: 'open thread', run: () => openConv(thread) },
+      // Create Thread, Publish (threads.ts).
+      ...threadMessageEntries(m),
       !!text.trim() && !m.deleted && m.kind !== 'encrypted' && { label: 'Copy Text', icon: 'copy', hint: 'C', track: 'copy text', run: () => copy(plainBody(text, m.network), 'Text copied') },
       { label: 'Copy Message Link', icon: 'link', track: 'copy link', run: () => copy(messageLink(m), 'Link copied') },
     ],
@@ -197,15 +204,48 @@ function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): M
       m.authorId && { label: self ? 'Your Profile' : 'Profile', icon: 'user', track: 'profile', run: () => openProfile(m.authorId) },
       hasHistory(m) && { label: 'Message History', icon: 'clock', track: 'history', run: () => (historyOf.value = m) },
     ],
-    replyEntries(m),
+    [canMarkUnread(m, self) && { label: 'Mark Unread', icon: 'mail', track: 'mark unread', run: () => void markUnreadFrom(m) }],
+    // Saved on Discord, Remind Me, Remove Embeds, Report (sendingMenu.tsx, docs/sending.md).
+    sendingEntries(m),
     marks ? markEntries(m) : [],
     // Google Messages has no unsend: a delete only takes it off your phone.
     [canDelete(m) && { label: m.network === 'gmessages' ? 'Delete From Your Phone' : 'Delete Message', icon: 'trash', hint: 'Del', danger: true, track: 'delete', run: () => deleteMessage(m) }],
+    moderatorEntries(m),
     [
       { label: 'Copy Message ID', icon: 'idBadge', track: 'copy message id', run: () => copy(m.nativeId, 'Message ID copied') },
       { label: 'Copy dither-chat ID', icon: 'idBadge', track: 'copy dither-chat id', run: () => copy(m.id, 'ID copied') },
     ],
   );
+}
+
+/** Pin or Unpin (docs/polls.md "Pins"), with how long where the network's pins run out (Signal). */
+function pinEntry(m: P.MessageView): MenuEntry {
+  if (m.pinned) return { label: 'Unpin Message', icon: 'pin', track: 'unpin', run: () => void pin(m, true) };
+  const choices = pinChoices(m.network);
+  if (!choices.length) return { label: 'Pin Message', icon: 'pin', track: 'pin', run: () => void pin(m, false) };
+  return { label: 'Pin Message', icon: 'pin', track: 'pin', sub: choices.map((c): MenuEntry => ({ label: c.label, track: 'pin (duration)', run: () => void pin(m, false, c.seconds) })) };
+}
+
+/** Someone else's message where this account moderates (docs/moderation.md): delete it, take reactions off. */
+function moderatorEntries(m: P.MessageView): MenuEntry[] {
+  const mod = modOf(m);
+  if (!mod) return [];
+  const label = (r: P.ReactionView) => (r.emoji ? `:${r.emoji.name}:` : r.key.match(/^(.+):\d+$/) ? `:${r.key.split(':')[0]}:` : r.key);
+  return [
+    mod.delete && m.kind !== 'system' && { label: 'Delete Message (Moderator)', icon: 'trash', danger: true, track: 'mod delete', run: () => moderatorDelete(m) },
+    mod.reactions &&
+      m.reactions.length > 0 && {
+        label: 'Remove Reactions',
+        icon: 'smile',
+        danger: true,
+        track: 'mod reactions',
+        sub: [
+          { label: 'All Reactions', danger: true, track: 'mod reactions (all)', run: () => clearReactions(m) },
+          { kind: 'sep' },
+          ...m.reactions.filter((r) => r.style !== 'super').map((r): MenuEntry => ({ label: `Every ${label(r)}`, track: 'mod reactions (one)', run: () => clearReactions(m, r.key, undefined, label(r)) })),
+        ],
+      },
+  ].filter(Boolean) as MenuEntry[];
 }
 
 export function messageMenu(m: P.MessageView, onReply?: () => void): MenuSpec {
@@ -266,12 +306,15 @@ export function linkMenu(url: string, m: P.MessageView | null, onReply?: () => v
   const open = () => void openLink(url).then((ok) => ok || window.open(url, '_blank', 'noopener,noreferrer'));
   // An invite: a click opens the New box on it (InviteCard.tsx), so the browser is one entry down.
   const invite = !!inviteRef(url);
+  // A signal.art sticker pack (docs/media-kinds.md): installed through a Signal account, on this click.
+  const installer = stickerInstaller(url, m?.seenVia);
   return {
     label: 'Link actions',
     track: 'link menu',
     items: groups(
       [
         ...(invite ? [{ label: 'Preview Invite', icon: 'eye', run: () => openPalette({ kind: 'new', mode: 'join' }, url) } as MenuEntry] : []),
+        ...(installer ? [{ label: 'Install Sticker Pack', icon: 'sticker', run: () => void installStickerLink(url, installer) } as MenuEntry] : []),
         { label: invite ? 'Open in Browser' : 'Open Link', icon: 'external', run: open },
         { label: 'Copy Link', icon: 'link', run: () => copy(url, 'Link copied') },
       ],
@@ -331,18 +374,8 @@ export function WhyHere({ reasons }: { reasons: string[] }) {
   );
 }
 
-/**
- * A row that shows a reply you owe (↩): "No reply needed" and "Reply needed" (ticked while held), under "Why it's here"
- * (docs/inbox.md, "Marks"). For a chat of several routes they act on the whole chat.
- */
-export function owedEntries(kind: 'conversation' | 'mail', ids: string[], owedSince: number | null | undefined): MenuEntry[] {
-  if (owedSince == null) return [];
-  const held = ids.some((id) => db.attention.get(id)?.replyMark === 'needs');
-  return replyMarkEntries(held ? 'needs' : null, (mark) => void markRow(kind, ids, mark, held));
-}
-
-/** `why`: the inbox's reasons for where this row sits (docs/inbox.md), shown first; `owedSince`: the row's ↩. */
-export function conversationMenu(c: P.ConversationView, why?: string[], owedSince?: number | null): MenuSpec {
+/** `why`: the inbox's reasons for where this row sits (docs/inbox.md), shown first. */
+export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpec {
   const eff = effectiveLevel(c);
   const own = ruleOn('conversation', c.id);
   const muted = own === 'none';
@@ -356,7 +389,6 @@ export function conversationMenu(c: P.ConversationView, why?: string[], owedSinc
     head: <div class="cm-sheet-title">{convTitle(c)}</div>,
     items: groups(
       why?.length ? [{ kind: 'row', render: () => <WhyHere reasons={why} /> }] : [],
-      owedEntries('conversation', [c.id], owedSince),
       [{ label: 'Mark As Read', icon: 'check', disabled: !unreadOf(c).unread, run: () => (noteRowRead('conversation', [c.id]), markRead(c.id)) }],
       [
         person && { label: 'Profile', icon: 'user', run: () => go({ view: 'profile', person: person.id }) },
@@ -371,6 +403,8 @@ export function conversationMenu(c: P.ConversationView, why?: string[], owedSinc
         deviceEntries('conversation', c.id),
       ],
       c.shape !== 'thread' ? arrangeEntries(placeKey) : [],
+      // Follow a thread and how it notifies; start, post, browse threads (threads.ts).
+      threadConvEntries(c),
       [
         { label: `Copy ${channel ? 'Channel' : 'Chat'} ID`, icon: 'idBadge', run: () => copy(c.nativeId, 'ID copied') },
         { label: 'Copy dither-chat ID', icon: 'idBadge', run: () => copy(c.id, 'ID copied') },
@@ -383,7 +417,7 @@ export function conversationMenu(c: P.ConversationView, why?: string[], owedSinc
  * The inbox's row for a person reached by several routes (model.ts): its actions act on the whole chat. Mark As Read
  * reads every route, Mute and the rule go on each, search looks in every chat with them.
  */
-export function chatMenu(p: P.PersonView, routes: P.ConversationView[], why?: string[], owedSince?: number | null): MenuSpec {
+export function chatMenu(p: P.PersonView, routes: P.ConversationView[], why?: string[]): MenuSpec {
   const rules = routes.map((c) => ruleOn('conversation', c.id));
   // The rule they all have, if they agree; otherwise none is shown as set.
   const own = rules.every((r) => r === rules[0]) ? rules[0] : null;
@@ -394,7 +428,6 @@ export function chatMenu(p: P.PersonView, routes: P.ConversationView[], why?: st
     head: <div class="cm-sheet-title">{p.name}</div>,
     items: groups(
       why?.length ? [{ kind: 'row', render: () => <WhyHere reasons={why} /> }] : [],
-      owedEntries('conversation', ids, owedSince),
       [{ label: 'Mark As Read', icon: 'check', disabled: !routes.some((c) => unreadOf(c).unread), run: () => (noteRowRead('conversation', ids), routes.forEach((c) => markRead(c.id))) }],
       [
         { label: 'Profile', icon: 'user', run: () => go({ view: 'profile', person: p.id }) },
@@ -497,6 +530,11 @@ export function personMenu(p: P.PersonView, placeKey?: string): MenuSpec {
 
 /** One Copy entry: a handle, an id or a profile link, under each network when someone is on several. */
 function identityCopies(idents: P.IdentityView[]): MenuEntry[] {
+  return idents.length ? [{ label: 'Copy', icon: 'copy', sub: copyEntries(idents) }] : [];
+}
+
+/** What Copy holds: one account's handle, id and profile link, or a submenu of those per account (the profile's Copy button). */
+export function copyEntries(idents: P.IdentityView[]): MenuEntry[] {
   const one = (i: P.IdentityView): MenuEntry[] => {
     const link = externalProfile(i);
     return [
@@ -505,12 +543,10 @@ function identityCopies(idents: P.IdentityView[]): MenuEntry[] {
       link ? { label: 'Copy Profile Link', icon: 'link', run: () => copy(link, 'Link copied') } : null,
     ].filter(Boolean) as MenuEntry[];
   };
-  if (!idents.length) return [];
   // Two identities on one network are told apart by their handle.
   const twice = (i: P.IdentityView) => idents.filter((x) => x.network === i.network).length > 1;
   const name = (i: P.IdentityView) => (twice(i) ? `${netName(i.network)} · ${i.handle ?? i.displayName ?? i.nativeId}` : netName(i.network));
-  const sub = idents.length === 1 ? one(idents[0]) : idents.map((i): MenuEntry => ({ label: name(i), icon: 'copy', sub: one(i) }));
-  return [{ label: 'Copy', icon: 'copy', sub }];
+  return idents.length === 1 ? one(idents[0]) : idents.map((i): MenuEntry => ({ label: name(i), icon: 'copy', sub: one(i) }));
 }
 
 /** An author, an avatar or a mention: the person behind it if the hub merged one, else just this identity. */

@@ -21,7 +21,7 @@ overrides the path), so dither-chat does not depend on dither-accounts.
 ## What the hub asks for
 
 On its first start in this mode, the hub registers as the app `dither-chat` and keeps `{ app, token }` in
-`$DITHER_DATA/accounts-app.json` (0600). It asks for three things:
+`$DITHER_DATA/accounts-app.json` (0600). It asks for four things:
 
 - **`chat` at manage, on all accounts:** read, write and settings.
 - **`accounts` at manage, for discord, signal, matrix and whatsapp:** add, sign in, start, stop and remove the chat
@@ -30,6 +30,10 @@ On its first start in this mode, the hub registers as the app `dither-chat` and 
   ([mail.md](mail.md)). Mail accounts are added on the manager's page, never by the hub. A hub registered before mail
   asks for it once on its next start (`mailToAsk` in remote.ts); Mail shows whether the request waits for you or was
   declined, with "Ask again".
+- **`notifications` at write, on all accounts:** what your accounts and services tell you (GitHub, dither-accounts'
+  own word about an account), ranked with your chats, and read there when you read them here
+  ([notices.md](notices.md)). Asked once like mail (`noticesToAsk`); an account with both chat and notifications
+  sends its events to both.
 
 Approve them on the manager's page or with `bun ~/Projects/dither-accounts/packages/manager/src/cli.ts apps` and
 `… approve <request>`.
@@ -85,6 +89,11 @@ in a sandboxed browser there; you sign in in its live view, and a new chat with 
 them as networks (labels, addressing a new chat by @username or phone number, the add dialog's fields, the QR, code,
 password, emoji and cookie steps of their sign-in).
 
+`t3` is T3 Code's coding threads (dither-accounts' docs/t3.md), on the machine where T3 Code runs: each thread a chat
+with its agent (state in the conversation's topic: working, waiting for your answer, finished), its project a space,
+and a message sent there the thread's next turn. It has no sign-in, reactions, files or profiles. A new thread starts
+in T3 Code for now; it shows up here once it exists.
+
 A hub registered before these kinds existed asks the manager on its next start to manage them too
 (`kindsToAsk` in remote.ts): approve that request on the manager's page. A request still open, or one you denied, is
 not asked again.
@@ -137,6 +146,8 @@ The page works the same for an account whatever runs it; for one the manager run
 - **New accounts while the manager is unreachable** are refused (503, "dither-accounts is not reachable…") rather
   than run here: the manager is where accounts live.
 - **Accounts another app or the manager's page added** show here too, under their network, in the first free colour.
+- **A calendar account** ([calendar.md](calendar.md)) never goes to the manager: the hub links the calendar at its
+  address itself, whether or not the manager is up.
 
 Views say who runs an account: `managedBy` (`{ url, origin }`) on an account the manager lists, and `accountsManager`
 in the bootstrap and sync answers. With `DITHER_ACCOUNTS_PUBLIC_URL` set (the manager's page as your browser reaches
