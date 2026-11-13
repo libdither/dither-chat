@@ -22,6 +22,7 @@ import { Action, Card, Columns, Facts, Hero, ProfilePage, Tag } from './ProfileS
 import { openConv } from './Sidebar.tsx';
 import { Loading } from './Loader.tsx';
 import { canIndex, startIndexing } from './Indexing.tsx';
+import { NetworkMute } from './NetworkMute.tsx';
 
 /** "Seen 12 of 1,287 listed (1%) · 214 online": honest about how little that may be. */
 export function coverageText(c: P.MemberCoverageView): string {
@@ -203,6 +204,7 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
         <p class="pf-hint">
           {ruleHelp(ruleOf)}.{!ruleOf && eff ? ` Now: ${heldHere(eff)}.` : ''}
         </p>
+        <NetworkMute kind={kind} id={id} network={network} accountIds={accountIds} mute={(conv ?? space)?.nativeMute} />
       </Card>
 
       {conv && retention.value.adversarial && <KeptHere conversationId={conv.id} />}

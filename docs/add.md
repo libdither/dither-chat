@@ -136,7 +136,7 @@ What each network will do once its adapter has it. **None of the real adapters d
 
 | Network | Look up | Join | Add | Requests |
 |---|---|---|---|---|
-| Discord | invites with server, counts, inviter and expiry; usernames only partly (no lookup without sending the request) | Join; captcha and server rules come back as a check | Add friend (pending until they accept) | friend requests |
+| Discord | invites with server, counts, inviter and expiry; usernames only partly (no lookup without sending the request) | Join; captcha and server rules come back as a check | Add friend (pending until they accept) | friend requests; message requests and spam DMs (`message:<channel>`, spam ones `spam`) |
 | Matrix | `#alias` and `!id` with via servers; users by profile | Join, Ask (knock) | none; Message opens a DM | room and space invites |
 | Telegram | invites, @names (a person, group or channel) | Join, Ask (join requests) | Add contact, which does not share your number | join requests to groups you run |
 | Signal | group links only partly (signal-cli has no preview); usernames and phones | Join (admin approval is pending) | none; Message | message requests, group invites |
@@ -289,6 +289,8 @@ someone you know notifies once; and a profile has the buttons for how you stand 
 
 - **The Requests row.** While anything waits, the one-list inbox has a **Requests** row at its top, under "Needs you",
   whatever the filter: how many, who asked, and when the newest came. It counts on no badge: a request is not unread.
+  What a network filed as spam (Discord's spam DMs) is not counted or named there either, only said ("2 filed as
+  spam"), and waits last in the view under "Filed as spam"; it never notifies.
   Opening it is the Requests view (`#/requests`; `#/requests/<id>` shows one card, outlined). On a desktop it is the
   main pane, beside the inbox; on a phone a full-screen list over it, with Back.
 - **A card per request**, grouped in this order: friend requests, invites (to groups, servers and rooms), message

@@ -10,6 +10,8 @@ import { ACCOUNT_COLORS, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
 import type { PushService } from './push.ts';
 import type { ReadQueue } from './readqueue.ts';
+import { setNativeMute } from './nativemute.ts';
+import { markUnreadFrom } from './unread.ts';
 import { validQuietHours, type Triage } from './triage.ts';
 import type { TriageVotes } from './votes.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
@@ -862,6 +864,19 @@ export class HubServer {
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/timeline$/))) return ok(s.personTimeline(m[1], parseCursor(url.searchParams.get('before')), Math.min(num('limit') ?? 60, 200)));
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/notify$/))) return ok(this.triage.effectiveLevel(m[1]));
+    // Muting a place on its network itself, with a timer (nativemute.ts, docs/notifications.md "Muted on the network").
+    if ((m = path.match(/^\/api\/(conversations|spaces)\/([\w-]+)\/native-mute$/)) && method === 'POST') {
+      // A click on the hub's own page: a browser sends Origin, and the server has refused any other site's.
+      if (!req.headers.get('origin')) return bad('Muting on the network is done from the app itself', 403);
+      try {
+        const v = await setNativeMute(s, this.sup, m[1] === 'spaces' ? 'space' : 'conversation', m[2], await body<{ muted?: unknown; minutes?: unknown }>());
+        this.flush();
+        return ok(v);
+      } catch (e) {
+        if (e instanceof AboutError) return bad(e.message, e.status);
+        throw e;
+      }
+    }
     // About and settings (about.ts, docs/group-settings.md). GET reads, POST changes one thing.
     if ((m = path.match(/^\/api\/(conversations|spaces)\/([\w-]+)\/about$/))) {
       const kind = m[1] === 'spaces' ? 'space' : 'conversation';
@@ -1118,6 +1133,13 @@ export class HubServer {
       if (!conv || !accountId) return ok({ count: 0, done: true });
       const r = await this.sup.command(accountId, { t: 'history', conversation: conv.nativeId, beforeTs: b.beforeTs, limit: b.limit ?? 50 }, 60_000).catch((e) => ({ error: String(e.message) }));
       return ok(r ?? { count: 0, done: true });
+    }
+    // Mark Unread from a message on (unread.ts): here at once, and on each network that can.
+    if ((m = path.match(/^\/api\/messages\/([\w-]+)\/unread$/)) && method === 'POST') {
+      const r = markUnreadFrom(s, this.sup, m[1]);
+      if (!r) return bad('no such message', 404);
+      this.flush();
+      return ok(r);
     }
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/react$/)) && method === 'POST') {
       const b = await body<{ key: string; remove?: boolean; style?: P.ReactionStyle; accountId?: string }>();

@@ -88,7 +88,9 @@ Built in slices from [mail-design.md](mail-design.md) (its §12); what works now
 | Matrix E2EE: old messages through the key backup | H | M | done | Recovery key, Secret Storage key or passphrase. Keys come per session when a message needs them |
 | Matrix E2EE: verifying this device | M | M | done | Emoji with another of your devices, or a Secret Storage key. No QR |
 | Matrix E2EE: verifying other people, sender warnings | M | M | later | Messages from unverified senders look like any other. A plaintext message in an encrypted room is flagged |
-| Discord server channels live while idle | H | ? | blocked | Discord pushes nothing for unopened channels, so they update when opened |
+| Discord server channels live while idle | H | ? | blocked | Discord pushes nothing for unopened channels, so they update when opened. Mentions in them are no longer blocked: see the next row |
+| Discord mentions in unopened channels | H | M | done | From Discord's own recent-mentions list, asked after connecting and when its notification center says something came, at most every five minutes; triaged as live only while under ten minutes old ([notifications.md](notifications.md#from-the-network-itself)). Built against fakes only (2026-11-12, net-gaps), not yet run on a live client |
+| Discord message requests and spam, mutes both ways, Mark Unread, bulk read | M | M | done | Message requests and spam DMs under Requests (spam never notifies); mutes changed in Discord arrive at once and "Mute on Discord" with a timer on a place's About; Mark Unread both ways; mark-all in bulk. Built against fakes only (2026-11-12, net-gaps) |
 
 ## Notifications
 

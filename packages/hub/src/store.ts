@@ -12,6 +12,7 @@ import { infoFor } from './mediainfo.ts';
 import { TypingRelay, typingTtl } from './typing.ts';
 import { stepTimer } from './startup.ts';
 import { addTables, ingestRelationships, ingestRequests, pendingLinks } from './add.ts';
+import { lateNews } from './latenews.ts';
 import { alertBar, type Facts } from './learn.ts';
 
 type Row = Record<string, any>;
@@ -647,7 +648,7 @@ export class Store {
           this.leave(acc, ev.kind, ev.nativeId);
           break;
         case 'message': {
-          const id = this.message(acc, ev.message, !!ev.live);
+          const id = this.message(acc, ev.message, !!ev.live, lateNews(ev));
           if (id) fresh.push(id);
           // Their message ends their typing, as in Discord's client, whether or not the network says so.
           if (ev.live) this.typingStopped(hubId('cnv', acc.network, ev.message.conversation), hubId('idn', acc.network, ev.message.author));
@@ -708,7 +709,8 @@ export class Store {
           if (!this.db.query('SELECT 1 FROM conversation WHERE id = ?').get(cid)) break;
           this.ensureVantage(acc.id, 'conversation', cid);
           const v = this.db.query(`SELECT last_read_ts FROM vantage WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`).get(acc.id, cid) as Row;
-          const upTo = Math.max(v?.last_read_ts ?? 0, ev.upToTs);
+          // Marked unread on the network by hand: the read point moves back (attention.ts). Otherwise only forward.
+          const upTo = ev.manual === true ? ev.upToTs : Math.max(v?.last_read_ts ?? 0, ev.upToTs);
           const counts = ev.unread !== undefined ? { unread: ev.unread, mentions: ev.mentions ?? 0 } : this.countUnread(acc, cid, upTo);
           this.db
             .query(`UPDATE vantage SET last_read_ts = ?, unread = ?, mentions = ? WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`)
@@ -1114,7 +1116,8 @@ export class Store {
   }
 
   /** Returns the message id if it is new and live (needs triage). */
-  private message(acc: AccountRow, f: P.MessageFact, live: boolean): string | null {
+  /** `late`: heard late and still news (lateNews): new to the hub, it is triaged as a live one is. */
+  private message(acc: AccountRow, f: P.MessageFact, live: boolean, late = false): string | null {
     const cid = this.ensureConversation(acc, f.conversation);
     const id = hubId('msg', acc.network, f.nativeId);
     const author = this.ensureIdentity(acc, f.author);
@@ -1193,8 +1196,8 @@ export class Store {
     }
     const changed = before === null || JSON.stringify(this.messageViews([this.db.query('SELECT * FROM message WHERE id = ?').get(id) as Row])) !== before;
     if (changed || this.placeSig('conversation', cid) !== convBefore) this.dirty.conversations.add(cid);
-    if (live || (existed && changed)) this.dirty.messages.set(id, live);
-    return !existed && live && !fromSelf ? id : null;
+    if (live || late || (existed && changed)) this.dirty.messages.set(id, live || (late && !existed));
+    return !existed && (live || late) && !fromSelf ? id : null;
   }
 
   // ------------------------------------------------------------ history imports (imports/engine.ts, docs/import.md)

@@ -25,6 +25,7 @@
 
 import type { AboutChange, AboutTarget, PersonRelationship } from './about.ts';
 import type { AddAction, AddRef, RelationshipFact, RequestAnswer, RequestFact } from './add.ts';
+import type { AttentionCapability, AttentionCommand } from './attention.ts';
 import type { CallMode, CallState } from './call.ts';
 import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, ReactionStyle, Shape, SpaceKind, Variant } from './ontology.ts';
 
@@ -86,7 +87,9 @@ export type Capability =
   /** Lists a space's members on request, by name prefix (the `walkMembers` command): an active walk, not only what was seen. */
   | 'walkMembers'
   /** Lists a channel's threads, archived ones too (the `threads` command), so an index job finds threads nobody opened. */
-  | 'listThreads';
+  | 'listThreads'
+  /** Mentions found late, native mutes, unread by hand, many read at once (attention.ts). */
+  | AttentionCapability;
 
 // ---------------------------------------------------------------- facts
 
@@ -119,10 +122,20 @@ export interface SpaceRef {
   position?: string;
 }
 
+/**
+ * The network's own notification setting for a place. An empty object says nothing is set there: an adapter sends
+ * it to clear a mute it told before (a fact without `mute` leaves the one the hub has).
+ */
 export interface NativeMute {
   level?: 'all' | 'mentions' | 'none';
   /** ms epoch; muted until then. */
   until?: number;
+  /** Muted outright (Discord's Mute), rather than set to notify on nothing. */
+  muted?: boolean;
+  /** A space's: @everyone and @here do not notify there (Discord's "Suppress @everyone and @here"). */
+  suppressEveryone?: boolean;
+  /** A space's: role mentions do not notify there. */
+  suppressRoles?: boolean;
 }
 
 export interface SpaceFact {
@@ -320,15 +333,22 @@ export type AdapterEvent =
   | { t: 'space'; space: SpaceFact }
   | { t: 'conversation'; conversation: ConversationFact }
   | { t: 'leave'; kind: 'space' | 'conversation'; nativeId: string }
-  /** Create or replace (edits re-send the whole message). live=false marks backfill: no notifications. */
-  | { t: 'message'; message: MessageFact; live?: boolean }
+  /**
+   * Create or replace (edits re-send the whole message). live=false marks backfill: no notifications. `late` (with
+   * live=false): a message that concerns you, heard late from the network's own list (Discord's recent mentions,
+   * capability 'mentions'); new to the hub and younger than LATE_NEWS_MS by its own ts, it is triaged as a live one.
+   */
+  | { t: 'message'; message: MessageFact; live?: boolean; late?: boolean }
   /** A message is gone. `reason: 'expired'`: its disappearing timer ran out, rather than someone deleting it. */
   | { t: 'delete'; conversation: string; nativeId: string; reason?: 'expired' }
   | { t: 'reaction'; conversation: string; message: string; author: string; key: string; remove?: boolean; style?: ReactionStyle; colors?: string[]; emoji?: CustomEmojiFact }
   /** A moderator removed every reaction on a message, or every one with this key. */
   | { t: 'reactionsCleared'; conversation: string; message: string; key?: string }
-  /** Read state as the network reports it. Counts override the hub's own tally when given. */
-  | { t: 'read'; conversation: string; upToTs: number; unread?: number; mentions?: number }
+  /**
+   * Read state as the network reports it. Counts override the hub's own tally when given. `manual`: you marked it
+   * unread on the network, so the read point moves back to upToTs (otherwise it only moves forward).
+   */
+  | { t: 'read'; conversation: string; upToTs: number; unread?: number; mentions?: number; manual?: boolean }
   /**
    * History the hub keeps (docs/history.md). `by` is who did it and `ts` when, where the network says; else the hub
    * uses the time it heard.
@@ -561,6 +581,8 @@ export type AdapterCommand =
   | { t: 'createGroup'; id: string; name?: string; people: string[] }
   /** Account-specific actions, e.g. 'relogin', 'startLink', 'resync'. */
   | { t: 'action'; id: string; action: string; args?: unknown }
-  | { t: 'shutdown' };
+  | { t: 'shutdown' }
+  /** mute, markUnread, markReadMany (attention.ts). */
+  | AttentionCommand;
 
 export type AdapterCommandType = AdapterCommand['t'];

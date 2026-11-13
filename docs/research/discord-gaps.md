@@ -66,9 +66,9 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 |---|---|---|---|---|---|
 | Pin / unpin a message | PIN (`/channels/{c}/messages/pins/{m}` put/del) | read (pin events, PlaceProfile pinned list, Unpin button); about.ts throws "Pinning is not supported on Discord yet" | b | M | Protocol `AboutChange {key:'pin'}` and UI exist; only the adapter refuses. client-path |
 | Pinned list fetch | PINS (`/messages/pins`), PINS_ACK | pins seen only as they happen or via loaded messages | d | M | A channel's existing pins are unknown until messages load |
-| Mark unread | MESSAGE_ACK with `manual: true` | markRead only | a | M | Hub has "Later" but cannot push an unread state back to Discord |
-| Bulk ack | BULK_ACK (`/read-states/ack-bulk`) | markRead one channel at a time | d | L | The hub's paced mark-all queue could use one request |
-| Read-state sync for non-channel things (forum unread, guild events, profile) | USER_NON_CHANNEL_ACK, PROFILE_READ_STATE, FORUM_UNREADS | none | a | L | |
+| Mark unread | MESSAGE_ACK with `manual: true` | markRead only | a | M | Hub has "Later" but cannot push an unread state back to Discord **done** (net-gaps): Mark Unread in the message menu (hub `unread.ts`) sends a manual ack; one made in Discord comes back as `read` with `manual` and moves the hub's read point back |
+| Bulk ack | BULK_ACK (`/read-states/ack-bulk`) | markRead one channel at a time | d | L | The hub's paced mark-all queue could use one request **done** (net-gaps): the read queue sends up to 50 per request (`markReadMany`) through the client's BULK_ACK |
+| Read-state sync for non-channel things (forum unread, guild events, profile) | USER_NON_CHANNEL_ACK, PROFILE_READ_STATE, FORUM_UNREADS | none | a | L | **not built**: L, and no forum unreads, event or profile read state in the hub to sync |
 | Saved messages / bookmarks | GET_SAVED_MESSAGES, PUT/DELETE_SAVED_MESSAGE, GET_BOOKMARKS, SAVED_MESSAGE_CREATE/DELETE, SAVED_MESSAGES_UPDATE | none | a | M | Pull them in as hub-side "kept"/marks; two-way sync is cheap. client-path |
 | Reminders ("Remind me") | MESSAGE_REMINDER_DUE, saved-messages `due_at` | none (hub has its own Later) | a | M | Could map onto dither's Later both ways |
 | Scheduled messages | SCHEDULED_MESSAGES (+ _SEND, _UPDATE, _DELETE), SCHEDULED_MESSAGE_DRAFT_CHANGE | none | a | M | Send later, natively (survives the hub being down). A hub-side send-later would work on every network |
@@ -99,17 +99,17 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 
 | Feature | Discord has | dither has | Class | Value | Notes |
 |---|---|---|---|---|---|
-| Recent mentions inbox | MENTIONS (`/users/@me/mentions`), LOAD_RECENT_MENTIONS(_SUCCESS), RECENT_MENTION_DELETE | none; dither sees mentions only in messages it ingested | a | H | The one place to learn about mentions in unopened guild channels while idle (the "blocked" ROADMAP row). Polling it at human rates is client-path |
-| Notification center ("For You": friend accepted, reactions, mentions, event reminders) | NOTIF_CENTER_ITEMS (+ _ACK, _BULK_ACK), NOTIFICATION_CENTER_ITEM_CREATE/DELETE/COMPLETED | none | a | M | Gateway pushes NOTIFICATION_CENTER_ITEM_CREATE live: a cheap subscribe for "someone reacted to your message" |
-| ICYMI / guild feed / highlights | ICYMI, GUILD_FEED, LOAD_ICYMI_*, DISABLE_SERVER_HIGHLIGHT_NOTIFICATIONS | none | a | L | Discord's own ranking; dither has its own |
-| Per-guild/channel notification level (all/mentions/none, suppress @everyone/roles, mobile push) | USER_GUILD_SETTINGS(_BULK), USER_GUILD_SETTINGS_* actions | mute + level read once at snapshot; no live updates; no write | b | M | Changes made in Discord after start are missed until restart (USER_GUILD_SETTINGS_* not forwarded). Writing would sync dither's mute back |
-| Mute channel/guild/DM with a timer | USER_GUILD_SETTINGS patch `mute_config`, CHANNEL_MUTE_EXPIRED | read only | b | M | Hiding in dither does not mute on Discord, so phone Discord still buzzes |
-| Thread notification settings | THREAD_MEMBER_SETTINGS | none | a | L | |
-| Account-wide notification settings | ACCOUNT_NOTIFICATION_SETTINGS, …_DECLARATIVE_SETTINGS | none | a | L | |
-| Message requests (DMs from non-friends) | MESSAGE_REQUESTS, MESSAGE_REQUEST_ACCEPT_OPTIMISTIC, CHANNEL_RECIPIENT_REJECT_BATCH, channel `is_message_request` | not distinguished; a request DM looks like any DM | a | H | dither may alert on strangers Discord itself hides. The hub already has a requests inbox (add.md) that could hold them; accept/reject is client-path |
-| Spam-filtered DMs | channel `is_spam`, `2021-12_inferno_spam_redaction` | not distinguished | a | M | Same as above |
-| Safety warnings in DMs | ADD_SAFETY_WARNING, CHANNEL_SAFETY_WARNINGS_ACK, DELETE_SAFETY_WARNINGS | none | a | L | |
-| Unread counts per channel from Discord's read states | ReadStateStore (mention_count, last_message_id) | snapshot + MESSAGE_ACK | d | M | Live CHANNEL_UNREAD_UPDATE is not forwarded |
+| Recent mentions inbox | MENTIONS (`/users/@me/mentions`), LOAD_RECENT_MENTIONS(_SUCCESS), RECENT_MENTION_DELETE | none; dither sees mentions only in messages it ingested | a | H | The one place to learn about mentions in unopened guild channels while idle (the "blocked" ROADMAP row). Polling it at human rates is client-path **done** (net-gaps): asked through the client's RecentMentionsActions (REST fallback) after a snapshot and on a notification-center mention, at most every 5 min; hits are `late` message facts, triaged as live only under 10 min old (LATE_NEWS_MS) |
+| Notification center ("For You": friend accepted, reactions, mentions, event reminders) | NOTIF_CENTER_ITEMS (+ _ACK, _BULK_ACK), NOTIFICATION_CENTER_ITEM_CREATE/DELETE/COMPLETED | none | a | M | Gateway pushes NOTIFICATION_CENTER_ITEM_CREATE live: a cheap subscribe for "someone reacted to your message" **done** (net-gaps), passive: mention items are late mentions (or ask the list), REACTION_NOTIFICATION_SENT is a reaction fact on your message; friend accepted comes as relationships already; event reminders, ack and bulk-ack **not built** (no Discord events surface in the hub yet) |
+| ICYMI / guild feed / highlights | ICYMI, GUILD_FEED, LOAD_ICYMI_*, DISABLE_SERVER_HIGHLIGHT_NOTIFICATIONS | none | a | L | Discord's own ranking; dither has its own **not built**: Discord's own ranking; dither ranks its inbox itself |
+| Per-guild/channel notification level (all/mentions/none, suppress @everyone/roles, mobile push) | USER_GUILD_SETTINGS(_BULK), USER_GUILD_SETTINGS_* actions | mute + level read once at snapshot; no live updates; no write | b | M | Changes made in Discord after start are missed until restart (USER_GUILD_SETTINGS_* not forwarded). Writing would sync dither's mute back **done** (net-gaps): USER_GUILD_SETTINGS_* and the mute expiries forwarded, the changed places' facts again (`{}` clears); suppress @everyone/roles read into NativeMute (suppressEveryone lowers triage's would-notify); writing levels other than mute **not built** |
+| Mute channel/guild/DM with a timer | USER_GUILD_SETTINGS patch `mute_config`, CHANNEL_MUTE_EXPIRED | read only | b | M | Hiding in dither does not mute on Discord, so phone Discord still buzzes **done** (net-gaps): "Mute on Discord…" with Discord's timers on a place's About, through NotificationSettingsActions; dither's own Mute unchanged and separate; CHANNEL_MUTE_EXPIRED/GUILD_MUTE_EXPIRED handled |
+| Thread notification settings | THREAD_MEMBER_SETTINGS | none | a | L | **not built**: L; thread member flags live in a store the hook does not read, and active threads are not in the snapshot |
+| Account-wide notification settings | ACCOUNT_NOTIFICATION_SETTINGS, …_DECLARATIVE_SETTINGS | none | a | L | **not built**: no hub surface for them; dither's own rules and quiet hours decide |
+| Message requests (DMs from non-friends) | MESSAGE_REQUESTS, MESSAGE_REQUEST_ACCEPT_OPTIMISTIC, CHANNEL_RECIPIENT_REJECT_BATCH, channel `is_message_request` | not distinguished; a request DM looks like any DM | a | H | dither may alert on strangers Discord itself hides. The hub already has a requests inbox (add.md) that could hold them; accept/reject is client-path **done** (net-gaps): `is_message_request` DMs are `message` RequestFacts (`message:<channel>`), held silent under Requests; Accept (consent_status 2), Decline (batch-reject) and Block through the client's request module or its REST helper |
+| Spam-filtered DMs | channel `is_spam`, `2021-12_inferno_spam_redaction` | not distinguished | a | M | Same as above **done** (net-gaps): `is_spam` DMs are message requests with `spam`: never notified, last under Requests, off the Requests row's count |
+| Safety warnings in DMs | ADD_SAFETY_WARNING, CHANNEL_SAFETY_WARNINGS_ACK, DELETE_SAFETY_WARNINGS | none | a | L | **not built**: L; needs the DM's `safety_warnings` picked, a ConversationFact field and a web banner line |
+| Unread counts per channel from Discord's read states | ReadStateStore (mention_count, last_message_id) | snapshot + MESSAGE_ACK | d | M | Live CHANNEL_UNREAD_UPDATE is not forwarded **partly done** (net-gaps): MESSAGE_ACK now reads the gateway's `newMentionCount` and `manual`; CHANNEL_UNREAD_UPDATE (last message ids, not read points) **not built**: it says nothing the messages do not |
 
 ## Threads, forums, channels
 
@@ -267,7 +267,7 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 | Presence | `presence` event → profile Activity | – | – | ROADMAP: next |
 | `reactors` list | adapter + protocol + web Reactions.tsx | – | – | Done |
 | `threads` command | hub index jobs only | c | L | Not offered as a "show archived threads" button in a channel |
-| Discord `mute` in ConversationFact | read at snapshot | d | M | The hub uses it for triage, but it never updates live (above) |
+| Discord `mute` in ConversationFact | read at snapshot | d | M | The hub uses it for triage, but it never updates live (above) **done** (net-gaps): live through the settings actions above |
 
 ## Counts
 
