@@ -2,6 +2,7 @@
 
 Compared with Discord, Element and Signal, from reading this code in October 2026. Value and cost are rough: **H**igh, **M**edium, **L**ow.
 Status is *done*, *next*, *later*, or *blocked* (by a network or its protocol).
+Everything the networks' own clients can do that dither cannot, feature by feature, from mining Discord's web client and signal-cli 0.14.8 (2026-11-12): [research/discord-gaps.md](research/discord-gaps.md) and [research/signal-gaps.md](research/signal-gaps.md).
 
 ## What is next, in order
 
